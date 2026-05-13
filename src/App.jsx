@@ -11,6 +11,8 @@ const ROSTER_GROUPS = [{label:"Setters",pos:["S1","S2"]},{label:"Pins",pos:["Pin
 const DIVS = ["U10","U11","U12","U13","U14","U15","U16"];
 const TM = {U10:["11-1","11-2","11-3"],U11:["11-1","11-2","11-3"],U12:["12-1","12-2","12-3"],U13:["13-1","13-2","13-3"],U14:["14-1","14-2","14-3"],U15:["15-1","15-2","15-3"],U16:["16 Diamond","16-1","16-2"]};
 const EVAL_DATES = ["5/13","5/14","5/20","5/21","5/27","5/28","6/3","6/4","6/9","6/10"];
+const STATUS_OPTS = ["In Progress","Offered","Accepted","Declined","No Offer"];
+const STATUS_COLORS = {"In Progress":"#999999","Offered":"#e91e8c","Accepted":"#22c55e","Declined":"#ef4444","No Offer":"#666666"};
 const C = {bg:"#0a0a0a",card:"#141414",border:"#2a2a2a",gold:"#e91e8c",text:"#ffffff",mut:"#999999",acc:"#ff69b4",red:"#ef4444",grn:"#22c55e"};
 
 function calcUSAV(dob) {
@@ -248,7 +250,7 @@ export default function App() {
     return (
       <div>
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))",gap:12,marginBottom:18}}>
-          {[["Total Athletes",players.length,C.gold],["Evaluated",evald,C.grn],["Assigned",assigned,C.acc]].map(([l,v,c]) =>
+          {[["Total Athletes",players.length,C.gold],["Evaluated",evald,C.grn],["Assigned",assigned,C.acc],["Offered",players.filter(p=>p.status==="Offered").length,"#e91e8c"],["Accepted",players.filter(p=>p.status==="Accepted").length,"#22c55e"]].map(([l,v,c]) =>
             <div key={l} style={{background:C.card,borderRadius:12,padding:"16px 18px",border:"1px solid "+C.border}}>
               <div style={{fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut,marginBottom:5}}>{l}</div>
               <div style={{fontSize:30,fontWeight:800,color:c}}>{v}</div>
@@ -318,7 +320,7 @@ export default function App() {
           <div style={{overflowX:"auto"}}>
             <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0}}>
               <thead><tr>
-                {["#","Player","Prev Team","Pos","Proj",...SKILLS,"Tot","Avg","Team","Notes","\u2713"].map((h,i) =>
+                {["#","Player","Prev Team","Pos","Proj",...SKILLS,"Tot","Avg","Team","Status","Notes","TRY","\u2713"].map((h,i) =>
                   <th key={i} style={{padding:"8px 7px",textAlign:"left",fontSize:9,fontWeight:700,textTransform:"uppercase",color:C.mut,borderBottom:"1px solid "+C.border,background:C.card,position:"sticky",top:0,whiteSpace:"nowrap"}}>{h}</th>
                 )}
               </tr></thead>
@@ -332,6 +334,7 @@ export default function App() {
                         <div style={{fontSize:10,color:C.mut}}>Age {p.age} • {p.usavDiv||p.usav_div}</div>
                         {p.min_level && <Tag c={C.gold}>Min: {p.min_level}</Tag>}
                         {p.supplemental===1 && <Tag c={C.acc}>SUPP</Tag>}
+                        {p.status && p.status !== "In Progress" && <Tag c={STATUS_COLORS[p.status]}>{p.status}</Tag>}
                       </div>
                     </td>
                     <td style={tdS}><input style={{...inpStyle,width:100,fontSize:11,padding:"4px 6px"}} placeholder="Prev team..." value={p.current_team||""} onChange={e=>upd(p.id,{current_team:e.target.value})} /></td>
@@ -349,7 +352,13 @@ export default function App() {
                         {ROSTER_POS.map(rp => { const taken = players.some(o=>o.id!==p.id&&o.team_assignment===p.team_assignment&&o.roster_pos===rp); return <option key={rp} value={rp} disabled={taken}>{rp}{taken?" \u2713":""}</option>; })}
                       </select>}
                     </td>
+                    <td style={tdS}>
+                      <select style={{...inpStyle,fontSize:10,padding:"3px",width:85,color:STATUS_COLORS[p.status||"In Progress"]}} value={p.status||"In Progress"} onChange={e=>upd(p.id,{status:e.target.value})}>
+                        {STATUS_OPTS.map(s=><option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </td>
                     <td style={tdS}><input style={{...inpStyle,width:140,fontSize:11,padding:"4px 6px"}} placeholder="Notes..." value={p.notes||""} onChange={e=>upd(p.id,{notes:e.target.value})} /></td>
+                    <td style={tdS}><input type="checkbox" checked={p.supplemental===1} onChange={e=>upd(p.id,{supplemental:e.target.checked?1:0})} style={{width:16,height:16,cursor:"pointer",accentColor:"#ff69b4"}} title="Using eval as tryout" /></td>
                     <td style={tdS}><input type="checkbox" checked={!!p.eval_complete} onChange={e=>upd(p.id,{eval_complete:e.target.checked})} style={{width:16,height:16,cursor:"pointer",accentColor:C.gold}} /></td>
                   </tr>
                 ))}
@@ -520,11 +529,12 @@ export default function App() {
                 onClick={()=>{const next=active?(p.positions||[]).filter(x=>x!==pos):[...(p.positions||[]),pos]; upd(p.id,{positions:next});}}>{pos} - {POS_LABELS[pos]}</button>;
             })}</div>
           </div>
-          {/* Team/Roster/Prev */}
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:12,marginBottom:14}}>
+          {/* Team/Roster/Prev/Status */}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr 1fr",gap:12,marginBottom:14}}>
             <div><span style={lbl}>Projected</span><select style={editInp} value={p.projected_team||""} onChange={e=>upd(p.id,{projected_team:e.target.value})}>{PROJ_OPTS.map(o=><option key={o} value={o}>{o||"--"}</option>)}</select></div>
             <div><span style={lbl}>Team</span><select style={editInp} value={p.team_assignment||""} onChange={e=>upd(p.id,{team_assignment:e.target.value,roster_pos:""})}><option value="">--</option>{(TM[p.usavDiv||p.usav_div]||[]).map(t=><option key={t} value={t}>{t}</option>)}</select></div>
             <div><span style={lbl}>Roster Pos</span><select style={editInp} value={p.roster_pos||""} onChange={e=>upd(p.id,{roster_pos:e.target.value})}><option value="">--</option>{ROSTER_POS.map(rp=>{const taken=players.some(o=>o.id!==p.id&&o.team_assignment===p.team_assignment&&o.roster_pos===rp);return <option key={rp} value={rp} disabled={taken}>{rp}{taken?" (taken)":""}</option>;})}</select></div>
+            <div><span style={lbl}>Status</span><select style={{...editInp,color:STATUS_COLORS[p.status||"In Progress"]}} value={p.status||"In Progress"} onChange={e=>upd(p.id,{status:e.target.value})}>{STATUS_OPTS.map(s=><option key={s} value={s}>{s}</option>)}</select></div>
             <div><span style={lbl}>Prev Season Team</span><input style={editInp} placeholder="e.g. DSE 13 Diamond" value={p.current_team||""} onChange={e=>upd(p.id,{current_team:e.target.value})} /></div>
           </div>
           {/* Notes */}
@@ -551,8 +561,13 @@ export default function App() {
             {p.leaving_reason && <div style={{marginBottom:10,borderTop:"1px solid "+C.border,paddingTop:8}}><span style={lbl}>Why leaving previous club?</span><div style={{fontSize:13,lineHeight:1.5}}>{p.leaving_reason}</div></div>}
             {p.min_level && <div><span style={lbl}>Min Level</span><div style={{fontSize:13}}>{p.min_level}</div></div>}
           </div>
+          {/* Tryout Toggle */}
+          <div style={{display:"flex",alignItems:"center",gap:10,marginTop:16,padding:"12px 16px",background:p.supplemental===1?"rgba(233,30,140,0.1)":C.bg,borderRadius:10,border:"1px solid "+(p.supplemental===1?C.acc:C.border),cursor:"pointer"}} onClick={()=>upd(p.id,{supplemental:p.supplemental===1?0:1})}>
+            <input type="checkbox" checked={p.supplemental===1} readOnly style={{width:20,height:20,accentColor:"#ff69b4",cursor:"pointer"}} />
+            <span style={{fontSize:14,fontWeight:700,color:p.supplemental===1?C.acc:C.mut}}>{p.supplemental===1?"Using Evaluation as Tryout ✓":"Mark as Using Evaluation for Tryout"}</span>
+          </div>
           {/* Mark Complete */}
-          <div style={{display:"flex",alignItems:"center",gap:10,marginTop:16,padding:"12px 16px",background:p.eval_complete?"rgba(34,197,94,0.1)":C.bg,borderRadius:10,border:"1px solid "+(p.eval_complete?C.grn:C.border),cursor:"pointer"}} onClick={()=>upd(p.id,{eval_complete:!p.eval_complete})}>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginTop:8,padding:"12px 16px",background:p.eval_complete?"rgba(34,197,94,0.1)":C.bg,borderRadius:10,border:"1px solid "+(p.eval_complete?C.grn:C.border),cursor:"pointer"}} onClick={()=>upd(p.id,{eval_complete:!p.eval_complete})}>
             <input type="checkbox" checked={!!p.eval_complete} readOnly style={{width:20,height:20,accentColor:C.gold,cursor:"pointer"}} />
             <span style={{fontSize:14,fontWeight:700,color:p.eval_complete?C.grn:C.mut}}>{p.eval_complete?"Evaluation Complete ✓":"Mark Evaluation Complete"}</span>
           </div>
