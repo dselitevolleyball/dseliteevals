@@ -614,8 +614,21 @@ export default function App() {
                 onClick={()=>{const next=active?(p.positions||[]).filter(x=>x!==pos):[...(p.positions||[]),pos]; upd(p.id,{positions:next});}}>{pos} - {POS_LABELS[pos]}</button>;
             })}</div>
           </div>
-          {/* Team/Roster/Prev/Status */}
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr 1fr",gap:12,marginBottom:14}}>
+          {/* Division/Team/Roster/Prev/Status */}
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(110px,1fr))",gap:12,marginBottom:14}}>
+            <div>
+              <span style={lbl}>USAV Div</span>
+              <select style={editInp} value={p.usavDiv||p.usav_div||""}
+                onChange={e=>{
+                  const v = e.target.value;
+                  if (v !== (p.usavDiv||p.usav_div) && (p.team_assignment || p.roster_pos)) {
+                    if (!window.confirm("Change division to "+v+"? This will clear her team assignment and roster position.")) return;
+                  }
+                  upd(p.id, { usav_div: v, usavDiv: v, team_assignment: "", roster_pos: "" });
+                }}>
+                {DIVS.map(d=><option key={d} value={d}>{d}</option>)}
+              </select>
+            </div>
             <div><span style={lbl}>Projected</span><select style={editInp} value={p.projected_team||""} onChange={e=>upd(p.id,{projected_team:e.target.value})}>{PROJ_OPTS.map(o=><option key={o} value={o}>{o||"--"}</option>)}</select></div>
             <div><span style={lbl}>Team</span><select style={editInp} value={p.team_assignment||""} onChange={e=>upd(p.id,{team_assignment:e.target.value,roster_pos:""})}><option value="">--</option>{(TM[p.usavDiv||p.usav_div]||[]).map(t=><option key={t} value={t}>{t}</option>)}</select></div>
             <div><span style={lbl}>Roster Pos</span><select style={editInp} value={p.roster_pos||""} onChange={e=>upd(p.id,{roster_pos:e.target.value})}><option value="">--</option>{ROSTER_POS.map(rp=>{const taken=players.some(o=>o.id!==p.id&&o.team_assignment===p.team_assignment&&o.roster_pos===rp);return <option key={rp} value={rp} disabled={taken}>{rp}{taken?" (taken)":""}</option>;})}</select></div>
