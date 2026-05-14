@@ -75,6 +75,9 @@ export default function App() {
   const [uploading, setUploading] = useState(false);
   const [uploadMsg, setUploadMsg] = useState("");
   const [saving, setSaving] = useState(false);
+  const [addingPlayer, setAddingPlayer] = useState(false);
+  const [newPlayer, setNewPlayer] = useState({ first_name:"", last_name:"", dob:"", age:"", usav_div:"", positions:[], parent_name:"", parent_email:"", parent_phone:"" });
+  const [addMsg, setAddMsg] = useState("");
   // DnD sensors at App level (hook order must be stable across renders, can't live in renderTeams).
   const dndSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -235,6 +238,41 @@ export default function App() {
     });
   }, [loadPlayers]);
 
+  // Manual one-off player add. Dedup-warns on first+last name match (case-insensitive, trimmed)
+  // — same key we'll use later when merging tryout-registration CSV rows into existing players.
+  const handleAddPlayer = useCallback(async () => {
+    const fn = (newPlayer.first_name||"").trim();
+    const ln = (newPlayer.last_name||"").trim();
+    if (!fn || !ln) { setAddMsg("First and last name are required."); return; }
+    const dup = players.find(p =>
+      (p.first_name||"").toLowerCase().trim() === fn.toLowerCase() &&
+      (p.last_name ||"").toLowerCase().trim() === ln.toLowerCase()
+    );
+    if (dup) {
+      const where = dup.usavDiv || dup.usav_div || "unknown division";
+      if (!window.confirm("A player named " + fn + " " + ln + " already exists (" + where + "). Add another row anyway?")) return;
+    }
+    setAddMsg("Saving...");
+    const usav = newPlayer.usav_div || "U" + calcUSAV(newPlayer.dob);
+    const insert = {
+      first_name: fn,
+      last_name: ln,
+      dob: newPlayer.dob || null,
+      age: newPlayer.age || "",
+      usav_div: usav,
+      positions: newPlayer.positions || [],
+      parent_name: newPlayer.parent_name || "",
+      parent_email: newPlayer.parent_email || "",
+      parent_phone: newPlayer.parent_phone || "",
+    };
+    const { error } = await supabase.from("players").insert(insert);
+    if (error) { setAddMsg("Error: " + error.message); return; }
+    await loadPlayers();
+    setAddingPlayer(false);
+    setNewPlayer({ first_name:"", last_name:"", dob:"", age:"", usav_div:"", positions:[], parent_name:"", parent_email:"", parent_phone:"" });
+    setAddMsg("");
+  }, [newPlayer, players, loadPlayers]);
+
   // Export to CSV
   const exportCSV = useCallback(() => {
     const headers = ["Name","Age","DOB","USAV Div","Reg Group","Positions","Projected","Team","Roster Pos","Current Team","Eval Complete",...SKILLS,"Total","Avg","Notes"];
@@ -337,7 +375,10 @@ export default function App() {
               <div style={{fontSize:14,fontWeight:700,color:C.gold,marginBottom:4}}>Upload New Registrations</div>
               <div style={{fontSize:12,color:C.mut}}>Upload a CSV export from UpperHand to add new players</div>
             </div>
-            <div style={{display:"flex",gap:8,alignItems:"center"}}>
+            <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+              <button onClick={()=>{ setAddingPlayer(true); setAddMsg(""); }} style={{padding:"8px 16px",borderRadius:8,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>
+                + Add Player
+              </button>
               <label style={{padding:"8px 16px",borderRadius:8,background:C.gold,color:"#000",fontWeight:700,fontSize:13,cursor:"pointer"}}>
                 {uploading ? "Uploading..." : "Upload CSV"}
                 <input type="file" accept=".csv" style={{display:"none"}} onChange={e => { if (e.target.files[0]) handleCSVUpload(e.target.files[0]); }} disabled={uploading} />
@@ -766,6 +807,63 @@ export default function App() {
     );
   }
 
+  // ─── ADD PLAYER MODAL ───
+  function renderAddPlayer() {
+    const lbl = {fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut,marginBottom:4,display:"block"};
+    const editInp = {...inpStyle,width:"100%",padding:"8px 10px",fontSize:13};
+    const setF = (k, v) => setNewPlayer(prev => ({ ...prev, [k]: v }));
+    const computedUsav = newPlayer.dob ? "U" + calcUSAV(newPlayer.dob) : "";
+    const close = () => { setAddingPlayer(false); setAddMsg(""); };
+    return (
+      <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:1000,display:"flex",justifyContent:"center",padding:"30px 16px",overflowY:"auto"}} onClick={close}>
+        <div style={{background:C.card,borderRadius:16,border:"1px solid "+C.border,maxWidth:560,width:"100%",maxHeight:"90vh",overflowY:"auto",padding:24}} onClick={e=>e.stopPropagation()}>
+          <div style={{display:"flex",justifyContent:"space-between",marginBottom:16}}>
+            <h2 style={{margin:0,fontSize:20,fontWeight:800,color:C.gold}}>+ Add Player</h2>
+            <button style={{background:"none",border:"none",color:C.mut,fontSize:24,cursor:"pointer"}} onClick={close}>✕</button>
+          </div>
+          <div style={{fontSize:12,color:C.mut,marginBottom:14,fontStyle:"italic"}}>
+            For one-off entries (walk-ins, late registrations). Players from the registration CSV come in via "Upload CSV".
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+            <div><span style={lbl}>First Name *</span><input autoFocus style={editInp} value={newPlayer.first_name} onChange={e=>setF("first_name", e.target.value)} /></div>
+            <div><span style={lbl}>Last Name *</span><input style={editInp} value={newPlayer.last_name} onChange={e=>setF("last_name", e.target.value)} /></div>
+            <div><span style={lbl}>Date of Birth</span><input type="date" style={editInp} value={newPlayer.dob} onChange={e=>setF("dob", e.target.value)} /></div>
+            <div>
+              <span style={lbl}>USAV Division{computedUsav?" (auto: "+computedUsav+")":""}</span>
+              <select style={editInp} value={newPlayer.usav_div} onChange={e=>setF("usav_div", e.target.value)}>
+                <option value="">{computedUsav || "Select…"}</option>
+                {DIVS.map(d=><option key={d} value={d}>{d}</option>)}
+              </select>
+            </div>
+            <div><span style={lbl}>Age (optional)</span><input style={editInp} value={newPlayer.age} onChange={e=>setF("age", e.target.value)} placeholder="e.g. 13" /></div>
+            <div></div>
+          </div>
+          <div style={{marginBottom:14}}>
+            <span style={lbl}>Positions</span>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>{POSITIONS.map(pos => {
+              const active = (newPlayer.positions||[]).includes(pos);
+              return <button key={pos} style={{padding:"6px 12px",borderRadius:8,fontSize:12,fontWeight:700,cursor:"pointer",border:active?"2px solid "+C.gold:"1px solid "+C.border,background:active?"rgba(233,30,140,0.15)":"transparent",color:active?C.gold:C.mut,fontFamily:"inherit"}}
+                onClick={()=>{ const next = active ? newPlayer.positions.filter(x=>x!==pos) : [...(newPlayer.positions||[]),pos]; setF("positions", next); }}>{pos} - {POS_LABELS[pos]}</button>;
+            })}</div>
+          </div>
+          <div style={{borderTop:"1px solid "+C.border,paddingTop:12,marginBottom:12}}>
+            <div style={{fontSize:11,fontWeight:700,color:C.gold,marginBottom:8}}>PARENT / GUARDIAN (OPTIONAL)</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+              <div style={{gridColumn:"1 / -1"}}><span style={lbl}>Name</span><input style={editInp} value={newPlayer.parent_name} onChange={e=>setF("parent_name", e.target.value)} /></div>
+              <div><span style={lbl}>Email</span><input type="email" style={editInp} value={newPlayer.parent_email} onChange={e=>setF("parent_email", e.target.value)} /></div>
+              <div><span style={lbl}>Phone</span><input style={editInp} value={newPlayer.parent_phone} onChange={e=>setF("parent_phone", e.target.value)} placeholder="e.g. 512-555-1234" /></div>
+            </div>
+          </div>
+          {addMsg && <div style={{fontSize:12,marginBottom:10,color:addMsg.startsWith("Error")?C.red:addMsg==="Saving..."?C.mut:C.grn}}>{addMsg}</div>}
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+            <button onClick={close} style={{padding:"10px 18px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Cancel</button>
+            <button onClick={handleAddPlayer} disabled={addMsg==="Saving..."} style={{padding:"10px 18px",borderRadius:8,border:"none",background:C.gold,color:"#000",fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit",opacity:addMsg==="Saving..."?0.5:1}}>Add Player</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={{fontFamily:"Outfit,sans-serif",background:C.bg,color:C.text,minHeight:"100vh"}}>
       <header style={{background:"linear-gradient(135deg,#0f0f0f,#1a1a1a)",borderBottom:"1px solid "+C.border,padding:"12px 18px",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
@@ -796,6 +894,7 @@ export default function App() {
         {view==="rankings" && renderRankings()}
       </div>
       {profileId !== null && renderProfile()}
+      {addingPlayer && renderAddPlayer()}
     </div>
   );
 }
