@@ -44,6 +44,19 @@ export default function App() {
   const [uploading, setUploading] = useState(false);
   const [uploadMsg, setUploadMsg] = useState("");
   const [saving, setSaving] = useState(false);
+  const [unassignedRanks, setUnassignedRanks] = useState({});
+
+  // Load manual unassigned rankings from localStorage (device-local, per-position order)
+  useEffect(() => {
+    try { const s = localStorage.getItem("dselite-unassigned-ranks"); if (s) setUnassignedRanks(JSON.parse(s)); } catch (e) {}
+  }, []);
+  const updateUnassignedRanks = useCallback((updater) => {
+    setUnassignedRanks(prev => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      try { localStorage.setItem("dselite-unassigned-ranks", JSON.stringify(next)); } catch (e) {}
+      return next;
+    });
+  }, []);
 
   // Load all players from Supabase
   const loadPlayers = useCallback(async () => {
@@ -411,24 +424,79 @@ export default function App() {
             </div>
           );
         })}
-        {/* Unassigned */}
-        <div style={{background:C.card,borderRadius:12,padding:"16px 18px",border:"1px solid rgba(239,68,68,0.3)"}}>
-          <div style={{display:"flex",justifyContent:"space-between",marginBottom:10}}>
-            <h3 style={{margin:0,fontSize:17,fontWeight:800,color:C.red}}>Unassigned</h3>
-            <Tag c={C.red}>{divP.filter(p=>!p.team_assignment).length}</Tag>
-          </div>
-          <div style={{display:"flex",flexDirection:"column",gap:3,maxHeight:400,overflowY:"auto"}}>
-            {divP.filter(p=>!p.team_assignment).sort((a,b)=>tot(b)-tot(a)).map(p =>
-              <div key={p.id} style={{display:"flex",justifyContent:"space-between",padding:"5px 8px",background:C.bg,borderRadius:5,fontSize:11,cursor:"pointer"}} onClick={()=>setProfileId(p.id)}>
-                <span style={{fontWeight:600}}>{p.first_name} {p.last_name}</span>
-                <div style={{display:"flex",gap:4,alignItems:"center"}}>
-                  {p.projected_team && <Tag c={C.gold}>{p.projected_team}</Tag>}
-                  <span style={{fontWeight:700,color:C.gold}}>{tot(p)||"\u2014"}</span>
-                </div>
+        {/* Unassigned - grouped by position, manually rankable (ranks stored per-device in localStorage) */}
+        {(() => {
+          const unassigned = divP.filter(p => !p.team_assignment);
+          const groups = {}; POSITIONS.forEach(pos => { groups[pos] = []; }); groups[""] = [];
+          unassigned.forEach(p => {
+            const ps = p.positions || [];
+            if (ps.length === 0) groups[""].push(p);
+            else ps.forEach(pos => { if (groups[pos]) groups[pos].push(p); });
+          });
+          const orderPlayers = (pos, list) => {
+            const stored = unassignedRanks[pos] || [];
+            const idSet = new Set(list.map(p => p.id));
+            const ranked = stored.filter(id => idSet.has(id)).map(id => list.find(p => p.id === id));
+            const rankedIds = new Set(stored);
+            const unranked = list.filter(p => !rankedIds.has(p.id)).sort((a,b) => tot(b) - tot(a));
+            return [...ranked, ...unranked];
+          };
+          const move = (pos, dir, list) => (id) => {
+            updateUnassignedRanks(prev => {
+              const stored = prev[pos] || [];
+              const idSet = new Set(list.map(p => p.id));
+              const ranked = stored.filter(x => idSet.has(x));
+              const rankedSet = new Set(ranked);
+              const unranked = list.filter(p => !rankedSet.has(p.id)).sort((a,b) => tot(b) - tot(a)).map(p => p.id);
+              const order = [...ranked, ...unranked];
+              const i = order.indexOf(id);
+              const j = dir === "up" ? i - 1 : i + 1;
+              if (i < 0 || j < 0 || j >= order.length) return prev;
+              [order[i], order[j]] = [order[j], order[i]];
+              return { ...prev, [pos]: order };
+            });
+          };
+          const resetPos = (pos) => updateUnassignedRanks(prev => { const n = {...prev}; delete n[pos]; return n; });
+          return (
+            <div style={{background:C.card,borderRadius:12,padding:"16px 18px",border:"1px solid rgba(239,68,68,0.3)"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                <h3 style={{margin:0,fontSize:17,fontWeight:800,color:C.red}}>Unassigned</h3>
+                <Tag c={C.red}>{unassigned.length}</Tag>
               </div>
-            )}
-          </div>
-        </div>
+              <div style={{fontSize:10,color:C.mut,marginBottom:8,fontStyle:"italic"}}>Grouped by position. Use \u25b2\u25bc to manually rank (saved on this device only).</div>
+              <div style={{display:"flex",flexDirection:"column",gap:10,maxHeight:600,overflowY:"auto"}}>
+                {[...POSITIONS, ""].map(pos => {
+                  const list = groups[pos];
+                  if (list.length === 0) return null;
+                  const ordered = orderPlayers(pos, list);
+                  const isCustom = !!(unassignedRanks[pos] && unassignedRanks[pos].length);
+                  const label = pos === "" ? "Unspecified" : POS_LABELS[pos] + " (" + pos + ")";
+                  const moveUp = move(pos, "up", list); const moveDown = move(pos, "down", list);
+                  return (
+                    <div key={pos||"none"}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4,paddingBottom:3,borderBottom:"1px solid "+C.border}}>
+                        <span style={{fontSize:11,fontWeight:700,textTransform:"uppercase",color:C.acc}}>{label} \u2022 {list.length}</span>
+                        {isCustom && <button onClick={()=>resetPos(pos)} style={{background:"none",border:"none",color:C.mut,fontSize:9,cursor:"pointer",textDecoration:"underline",fontFamily:"inherit"}}>reset to score order</button>}
+                      </div>
+                      {ordered.map((p, i) => (
+                        <div key={p.id} style={{display:"flex",alignItems:"center",gap:6,padding:"5px 6px",background:C.bg,borderRadius:5,fontSize:11,marginBottom:2}}>
+                          <span style={{fontWeight:700,color:i<3?C.gold:C.mut,minWidth:18,textAlign:"right",fontSize:11}}>{i+1}.</span>
+                          <span style={{flex:1,fontWeight:600,cursor:"pointer"}} onClick={()=>setProfileId(p.id)}>{p.first_name} {p.last_name}</span>
+                          {p.projected_team && <Tag c={C.gold}>{p.projected_team}</Tag>}
+                          <span title="Total points" style={{fontWeight:700,color:C.gold,minWidth:22,textAlign:"right"}}>{tot(p)||"\u2014"}</span>
+                          <span title="Average score" style={{fontWeight:600,color:C.mut,minWidth:26,textAlign:"right",fontSize:10}}>{avg(p)}</span>
+                          <button onClick={()=>moveUp(p.id)} disabled={i===0} title="Move up" style={{background:"none",border:"1px solid "+C.border,borderRadius:3,color:i===0?C.border:C.gold,cursor:i===0?"default":"pointer",padding:"1px 4px",fontSize:9,fontFamily:"inherit"}}>\u25b2</button>
+                          <button onClick={()=>moveDown(p.id)} disabled={i===ordered.length-1} title="Move down" style={{background:"none",border:"1px solid "+C.border,borderRadius:3,color:i===ordered.length-1?C.border:C.gold,cursor:i===ordered.length-1?"default":"pointer",padding:"1px 4px",fontSize:9,fontFamily:"inherit"}}>\u25bc</button>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })}
+                {unassigned.length === 0 && <div style={{textAlign:"center",padding:14,color:C.mut,fontSize:11}}>No unassigned players</div>}
+              </div>
+            </div>
+          );
+        })()}
       </div>
     );
   }
