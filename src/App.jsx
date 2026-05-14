@@ -72,15 +72,14 @@ export default function App() {
   const [players, setPlayers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState("dashboard");
-  const [activeDiv, setActiveDiv] = useState("U14");
+  // Selected age-group tabs. Multi-select: clicking a tab toggles membership.
+  // Always at least one division is selected. Drives Evaluate filter, Teams sections, and Rankings.
+  const [selectedDivs, setSelectedDivs] = useState(["U14"]);
   const [search, setSearch] = useState("");
   const [filterPos, setFilterPos] = useState("");
   const [filterProj, setFilterProj] = useState("");
   const [filterEval, setFilterEval] = useState("all");
   const [filterDate, setFilterDate] = useState("");
-  // Evaluate-tab-only: additional age groups to include alongside activeDiv (multi-select).
-  // Teams and Rankings views still use just activeDiv since they're division-scoped.
-  const [evalExtraDivs, setEvalExtraDivs] = useState([]);
   const [sortBy, setSortBy] = useState("name");
   const [profileId, setProfileId] = useState(null);
   const [uploading, setUploading] = useState(false);
@@ -249,12 +248,12 @@ export default function App() {
     });
   }, [loadPlayers]);
 
-  // Opens the Add Player modal, pre-filling division to the tab the coach is currently looking at.
+  // Opens the Add Player modal, pre-filling division to the first selected age tab.
   const openAddPlayer = useCallback(() => {
-    setNewPlayer({ first_name:"", last_name:"", dob:"", age:"", usav_div: activeDiv, positions:[], parent_name:"", parent_email:"", parent_phone:"" });
+    setNewPlayer({ first_name:"", last_name:"", dob:"", age:"", usav_div: selectedDivs[0] || "U14", positions:[], parent_name:"", parent_email:"", parent_phone:"" });
     setAddMsg("");
     setAddingPlayer(true);
-  }, [activeDiv]);
+  }, [selectedDivs]);
 
   // Manual one-off player add. Dedup-warns on first+last name match (case-insensitive, trimmed)
   // — same key we'll use later when merging tryout-registration CSV rows into existing players.
@@ -314,11 +313,14 @@ export default function App() {
     URL.revokeObjectURL(url);
   }, [players]);
 
-  const divP = useMemo(() => players.filter(p => (p.usavDiv || p.usav_div) === activeDiv), [players, activeDiv]);
+  // Players across all currently-selected age groups (drives Evaluate filter + Rankings combined view).
+  const divP = useMemo(() => {
+    const divSet = new Set(selectedDivs);
+    return players.filter(p => divSet.has(p.usavDiv || p.usav_div));
+  }, [players, selectedDivs]);
 
   const filtered = useMemo(() => {
-    const divSet = new Set([activeDiv, ...evalExtraDivs]);
-    let l = players.filter(p => divSet.has(p.usavDiv || p.usav_div));
+    let l = [...divP];
     if (search) { const s = search.toLowerCase(); l = l.filter(p => (p.first_name + " " + p.last_name).toLowerCase().includes(s)); }
     if (filterPos) l = l.filter(p => (p.positions||[]).includes(filterPos));
     if (filterProj) l = l.filter(p => p.projected_team === filterProj);
@@ -330,7 +332,7 @@ export default function App() {
     else if (sortBy === "age") l.sort((a,b) => parseInt(b.age||0) - parseInt(a.age||0));
     else if (sortBy === "proj") { const o = {"1":0,"1/2":1,"2":2,"2/3":3,"3":4,"":5}; l.sort((a,b) => (o[a.projected_team]||5) - (o[b.projected_team]||5)); }
     return l;
-  }, [players, activeDiv, evalExtraDivs, search, filterPos, filterProj, filterEval, filterDate, sortBy]);
+  }, [divP, search, filterPos, filterProj, filterEval, filterDate, sortBy]);
 
   // ─── PASSWORD GATE ───
   if (!authed) {
@@ -353,7 +355,7 @@ export default function App() {
 
   if (loading) return <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",background:C.bg,color:C.text}}>Loading DS Elite...</div>;
 
-  const activeDivs = DIVS.filter(d => players.some(p => (p.usavDiv||p.usav_div) === d));
+  const divsWithPlayers = DIVS.filter(d => players.some(p => (p.usavDiv||p.usav_div) === d));
 
   function ScoreB({player, skill}) {
     const cur = (player.scores && player.scores[skill]) || 0;
@@ -412,11 +414,11 @@ export default function App() {
         </div>
         {/* Age Group Cards */}
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))",gap:12}}>
-          {activeDivs.map(d => {
+          {divsWithPlayers.map(d => {
             const g = players.filter(p => (p.usavDiv||p.usav_div) === d);
             const ev = g.filter(p => p.eval_complete).length;
             const pct = g.length ? Math.round(ev/g.length*100) : 0;
-            return <div key={d} style={{background:C.card,borderRadius:12,padding:"16px 18px",border:"1px solid "+C.border,cursor:"pointer"}} onClick={() => {setActiveDiv(d);setView("evaluate");}}>
+            return <div key={d} style={{background:C.card,borderRadius:12,padding:"16px 18px",border:"1px solid "+C.border,cursor:"pointer"}} onClick={() => {setSelectedDivs([d]);setView("evaluate");}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
                 <span style={{fontSize:18,fontWeight:800,color:C.gold}}>{d}</span>
                 <Tag c={C.gold}>{g.length}</Tag>
@@ -453,20 +455,6 @@ export default function App() {
           </select>
           <span style={{fontSize:11,color:C.mut,marginLeft:"auto"}}>{saving?"Saving...":filtered.length+" players"}</span>
         </div>
-        {/* Also include: additional age groups to fold into the Evaluate table alongside the active tab */}
-        <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:10,flexWrap:"wrap"}}>
-          <span style={{fontSize:11,color:C.mut,fontWeight:600}}>Also show:</span>
-          {activeDivs.filter(d => d !== activeDiv).map(d => {
-            const active = evalExtraDivs.includes(d);
-            const count = players.filter(p => (p.usavDiv||p.usav_div) === d).length;
-            return <button key={d}
-              onClick={()=>setEvalExtraDivs(prev => active ? prev.filter(x=>x!==d) : [...prev, d])}
-              style={{padding:"3px 10px",borderRadius:12,border:"1px solid "+(active?C.gold:C.border),background:active?"rgba(233,30,140,0.12)":"transparent",color:active?C.gold:C.mut,cursor:"pointer",fontSize:11,fontWeight:600,fontFamily:"inherit"}}>
-              {d} ({count})
-            </button>;
-          })}
-          {evalExtraDivs.length > 0 && <button onClick={()=>setEvalExtraDivs([])} style={{background:"none",border:"none",color:C.mut,fontSize:10,cursor:"pointer",textDecoration:"underline",fontFamily:"inherit",marginLeft:4}}>clear</button>}
-        </div>
         <div style={{background:C.card,borderRadius:12,border:"1px solid "+C.border,overflow:"hidden"}}>
           <div style={{overflowX:"auto"}}>
             <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0}}>
@@ -499,7 +487,7 @@ export default function App() {
                     <td style={tdS}><span style={{fontWeight:600,fontSize:12}}>{avg(p)}</span></td>
                     <td style={tdS}>
                       <select style={{...inpStyle,fontSize:10,padding:"3px",width:90}} value={p.team_assignment||""} onChange={e=>upd(p.id,{team_assignment:e.target.value,roster_pos:""})}>
-                        <option value="">{"—"}</option>{(TM[activeDiv]||[]).map(t=><option key={t} value={t}>{t}</option>)}
+                        <option value="">{"—"}</option>{(TM[p.usavDiv||p.usav_div]||[]).map(t=><option key={t} value={t}>{t}</option>)}
                       </select>
                       {p.team_assignment && <select style={{...inpStyle,fontSize:9,padding:"2px",width:58,marginTop:2,display:"block"}} value={p.roster_pos||""} onChange={e=>upd(p.id,{roster_pos:e.target.value})}>
                         <option value="">Roster</option>
@@ -526,19 +514,41 @@ export default function App() {
   }
 
   // ─── TEAMS ───
+  // Each selected age group renders as its own section with its own DndContext, so drags are
+  // scoped per-division. Team names can repeat across divisions; per-context droppable IDs
+  // keep that unambiguous.
   function renderTeams() {
-    const teams = TM[activeDiv] || [];
-    const divRanks = unassignedRanks[activeDiv] || {};
+    if (!selectedDivs.length) return null;
+    return (
+      <>
+        <div style={{fontSize:11,color:C.mut,marginBottom:10,fontStyle:"italic"}}>
+          Drag a player onto a team card to assign (clears their roster slot). Drag onto Unassigned to remove from a team.
+          Type a rank number to reorder within a position — rank persists across team changes.
+        </div>
+        {selectedDivs.map(div => (
+          <div key={div} style={{marginBottom:24}}>
+            {selectedDivs.length > 1 && <h2 style={{margin:"0 0 10px 0",fontSize:15,fontWeight:800,color:C.gold,textTransform:"uppercase",letterSpacing:1,borderBottom:"1px solid "+C.border,paddingBottom:6}}>{div} — {players.filter(p=>(p.usavDiv||p.usav_div)===div).length} players</h2>}
+            {renderTeamsSection(div)}
+          </div>
+        ))}
+      </>
+    );
+  }
 
-    // Full ordered list of player IDs at (activeDiv, pos), assigned OR unassigned.
+  function renderTeamsSection(div) {
+    const teams = TM[div] || [];
+    const divPlayers = players.filter(p => (p.usavDiv || p.usav_div) === div);
+    const divRanks = unassignedRanks[div] || {};
+
+    // Full ordered list of player IDs at (div, pos), assigned OR unassigned.
     // Stored manual order first, then any remaining players appended by total score desc.
     const fullPosOrder = (pos) => {
-      const allInPos = divP.filter(p => pos === "" ? (p.positions||[]).length === 0 : (p.positions||[]).includes(pos)).map(p => p.id);
+      const allInPos = divPlayers.filter(p => pos === "" ? (p.positions||[]).length === 0 : (p.positions||[]).includes(pos)).map(p => p.id);
       const inSet = new Set(allInPos);
       const stored = (divRanks[pos] || []).filter(id => inSet.has(id));
       const storedSet = new Set(stored);
       const unranked = allInPos.filter(id => !storedSet.has(id))
-        .map(id => divP.find(p => p.id === id))
+        .map(id => divPlayers.find(p => p.id === id))
         .sort((a,b) => tot(b) - tot(a))
         .map(p => p.id);
       return [...stored, ...unranked];
@@ -552,9 +562,9 @@ export default function App() {
       const order = fullPosOrder(pos).filter(id => id !== playerId);
       const clamped = Math.max(1, Math.min(newRank, order.length + 1));
       order.splice(clamped - 1, 0, playerId);
-      persistRanking(activeDiv, pos, order);
+      persistRanking(div, pos, order);
     };
-    const resetPos = (pos) => persistRanking(activeDiv, pos, null);
+    const resetPos = (pos) => persistRanking(div, pos, null);
 
     const handleDragEnd = (event) => {
       const { active, over } = event;
@@ -578,13 +588,9 @@ export default function App() {
 
     return (
       <DndContext sensors={dndSensors} onDragEnd={handleDragEnd}>
-        <div style={{fontSize:11,color:C.mut,marginBottom:10,fontStyle:"italic"}}>
-          Drag a player onto a team card to assign (clears their roster slot). Drag onto Unassigned to remove from a team.
-          Type a rank number to reorder within a position — rank persists across team changes.
-        </div>
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(320px,1fr))",gap:14}}>
           {teams.map(team => {
-            const tp = divP.filter(p => p.team_assignment === team);
+            const tp = divPlayers.filter(p => p.team_assignment === team);
             const rosterMap = {}; tp.forEach(p => { if (p.roster_pos) rosterMap[p.roster_pos] = p; });
             const unslotted = tp.filter(p => !p.roster_pos);
             return (
@@ -637,7 +643,7 @@ export default function App() {
           })}
           {/* Unassigned drop zone with position-grouped lists and global rank inputs */}
           {(() => {
-            const unassigned = divP.filter(p => !p.team_assignment);
+            const unassigned = divPlayers.filter(p => !p.team_assignment);
             const groups = {}; POSITIONS.forEach(pos => { groups[pos] = []; }); groups[""] = [];
             unassigned.forEach(p => {
               const ps = p.positions || [];
@@ -659,7 +665,7 @@ export default function App() {
                       const ra = posRankOf(a.id, pos), rb = posRankOf(b.id, pos);
                       return (ra == null ? 1e9 : ra) - (rb == null ? 1e9 : rb);
                     });
-                    const totalInPos = divP.filter(p => pos === "" ? (p.positions||[]).length === 0 : (p.positions||[]).includes(pos)).length;
+                    const totalInPos = divPlayers.filter(p => pos === "" ? (p.positions||[]).length === 0 : (p.positions||[]).includes(pos)).length;
                     const isCustom = !!(divRanks[pos] && divRanks[pos].length);
                     const label = pos === "" ? "Unspecified" : POS_LABELS[pos] + " (" + pos + ")";
                     return (
@@ -937,12 +943,23 @@ export default function App() {
       </header>
       {view !== "dashboard" && (
         <div style={{display:"flex",gap:4,padding:"10px 18px",borderBottom:"1px solid "+C.border,flexWrap:"wrap"}}>
-          {activeDivs.map(d =>
-            <button key={d} style={{padding:"5px 14px",borderRadius:16,border:"1px solid "+(activeDiv===d?C.gold:C.border),background:activeDiv===d?"rgba(233,30,140,0.12)":"transparent",color:activeDiv===d?C.gold:C.mut,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600}}
-              onClick={()=>{setActiveDiv(d);setSearch("");setFilterPos("");setFilterProj("");setFilterEval("all");setFilterDate("");setEvalExtraDivs([]);}}>
+          {divsWithPlayers.map(d => {
+            const isSelected = selectedDivs.includes(d);
+            const isLast = isSelected && selectedDivs.length === 1;
+            return <button key={d}
+              title={isLast ? "At least one age group must be selected" : (isSelected ? "Click to remove "+d : "Click to add "+d)}
+              style={{padding:"5px 14px",borderRadius:16,border:"1px solid "+(isSelected?C.gold:C.border),background:isSelected?"rgba(233,30,140,0.12)":"transparent",color:isSelected?C.gold:C.mut,cursor:isLast?"default":"pointer",opacity:isLast?0.85:1,fontFamily:"inherit",fontSize:12,fontWeight:600}}
+              onClick={()=>{
+                setSelectedDivs(prev => {
+                  if (prev.includes(d)) {
+                    return prev.length > 1 ? prev.filter(x => x !== d) : prev;
+                  }
+                  return [...prev, d];
+                });
+              }}>
               {d} ({players.filter(p=>(p.usavDiv||p.usav_div)===d).length})
-            </button>
-          )}
+            </button>;
+          })}
         </div>
       )}
       <div style={{padding:"14px 18px",maxWidth:1500,margin:"0 auto"}}>
