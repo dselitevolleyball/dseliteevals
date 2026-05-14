@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { supabase } from "./supabase";
 import Papa from "papaparse";
+import { DndContext, useDraggable, useDroppable, PointerSensor, TouchSensor, useSensor, useSensors } from "@dnd-kit/core";
 
 const POSITIONS = ["S","OH","MB","RS","L","DS","U"];
 const POS_LABELS = {S:"Setter",OH:"Outside Hitter",MB:"Middle Blocker",RS:"Right Side",L:"Libero",DS:"Def Specialist",U:"Utility"};
@@ -22,11 +23,41 @@ function calcUSAV(dob) {
   return 2026 - (m >= 7 ? y : y - 1);
 }
 function tot(p) { const v = Object.values(p.scores||{}); return v.length?v.reduce((a,b)=>a+b,0):0; }
-function avg(p) { const v = Object.values(p.scores||{}); return v.length?(v.reduce((a,b)=>a+b,0)/v.length).toFixed(1):"\u2014"; }
+function avg(p) { const v = Object.values(p.scores||{}); return v.length?(v.reduce((a,b)=>a+b,0)/v.length).toFixed(1):"—"; }
 
 const inpStyle = {background:"#1a1a1a",border:"1px solid "+C.border,borderRadius:6,color:C.text,fontFamily:"inherit",outline:"none"};
 
 function Tag({c,children}) { return <span style={{display:"inline-block",padding:"2px 7px",borderRadius:10,fontSize:10,fontWeight:600,background:c+"22",color:c}}>{children}</span>; }
+
+// DnD wrappers — module-level so they aren't recreated on every App render (which would wipe input state).
+// PointerSensor distance + TouchSensor delay let taps still register as clicks (open profile, focus rank input).
+function DraggablePlayer({ player, children, style }) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: "player-" + player.id });
+  return <div ref={setNodeRef} {...listeners} {...attributes}
+    style={{ ...(style||{}), opacity: isDragging ? 0.3 : 1, touchAction: "manipulation" }}>{children}</div>;
+}
+function DropZone({ id, children, style }) {
+  const { isOver, setNodeRef } = useDroppable({ id });
+  return <div ref={setNodeRef}
+    style={{ ...style, outline: isOver ? "2px solid " + C.gold : "2px solid transparent", outlineOffset: -2, transition: "outline-color 0.1s" }}>{children}</div>;
+}
+function RankInput({ value, max, onCommit }) {
+  const [v, setV] = useState(value == null ? "" : String(value));
+  useEffect(() => { setV(value == null ? "" : String(value)); }, [value]);
+  const commit = () => {
+    const n = parseInt(v);
+    if (!isNaN(n) && n >= 1 && n !== value) onCommit(n);
+    else setV(value == null ? "" : String(value));
+  };
+  return <input type="number" inputMode="numeric" min={1} max={max} value={v}
+    onChange={e => setV(e.target.value)}
+    onBlur={commit}
+    onKeyDown={e => { if (e.key === "Enter") e.target.blur(); }}
+    onPointerDown={e => e.stopPropagation()}
+    onClick={e => e.stopPropagation()}
+    title="Rank within position (1 = top). Persists across team assignment changes."
+    style={{ ...inpStyle, width: 40, fontSize: 11, padding: "3px 4px", textAlign: "center", fontWeight: 700, color: C.gold }} />;
+}
 
 export default function App() {
   const [authed, setAuthed] = useState(!import.meta.env.VITE_APP_PASSWORD);
@@ -44,8 +75,15 @@ export default function App() {
   const [uploading, setUploading] = useState(false);
   const [uploadMsg, setUploadMsg] = useState("");
   const [saving, setSaving] = useState(false);
-  // Manual unassigned rankings, scoped by division+position, synced across all coaches via Supabase
+  // DnD sensors at App level (hook order must be stable across renders, can't live in renderTeams).
+  const dndSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(TouchSensor,   { activationConstraint: { delay: 200, tolerance: 5 } }),
+  );
+  // Manual position rankings, scoped by division+position. Synced across all coaches via Supabase.
   // Shape: { [division]: { [position]: [playerId, ...] } }
+  // Semantics: the list is the ordered ranking of ALL players in (division, position),
+  // regardless of team assignment. Persists across team changes.
   const [unassignedRanks, setUnassignedRanks] = useState({});
 
   const loadRankings = useCallback(async () => {
@@ -125,24 +163,24 @@ export default function App() {
           if (rows[i][0] === "First Name") { headerIdx = i; break; }
         }
         if (headerIdx === -1) { setUploadMsg("Could not find header row. Make sure CSV has 'First Name' column."); setUploading(false); return; }
-        
+
         const headers = rows[headerIdx];
         const newPlayers = [];
-        
+
         for (let i = headerIdx + 1; i < rows.length; i++) {
           const row = rows[i];
           if (!row[0] || !row[0].trim()) continue;
-          
+
           const get = (partial) => {
             const idx = headers.findIndex(h => h && h.toLowerCase().includes(partial));
             return idx >= 0 ? (row[idx] || "").trim() : "";
           };
-          
+
           const fn = get("first name");
           const ln = get("last name");
           const dob = get("dob");
           const usav = calcUSAV(dob);
-          
+
           // Determine reg group from the CSV metadata or filename
           let regGroup = "";
           for (let j = 0; j < headerIdx; j++) {
@@ -151,13 +189,13 @@ export default function App() {
             if (line.includes("u13") || line.includes("u14")) { regGroup = "U13/U14"; break; }
             if (line.includes("u15") || line.includes("u16")) { regGroup = "U15/U16"; break; }
           }
-          
+
           const minLevel = get("minimum level");
           const cleanMin = ["no","n/a","na",""].includes(minLevel.toLowerCase()) ? "" : minLevel;
           const leaving = get("leaving another");
           const cleanLeaving = ["n/a","na","not leaving",""].includes(leaving.toLowerCase()) ? "" : leaving;
           const supp = get("supplemental").toLowerCase() === "yes" ? 1 : 0;
-          
+
           newPlayers.push({
             first_name: fn,
             last_name: ln,
@@ -179,11 +217,11 @@ export default function App() {
             supplemental: supp,
           });
         }
-        
+
         if (newPlayers.length === 0) {
           setUploadMsg("No players found in CSV."); setUploading(false); return;
         }
-        
+
         setUploadMsg("Uploading " + newPlayers.length + " players...");
         const { error } = await supabase.from("players").insert(newPlayers);
         if (error) {
@@ -355,14 +393,14 @@ export default function App() {
           <div style={{overflowX:"auto"}}>
             <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0}}>
               <thead><tr>
-                {["#","Player","Prev Team","Pos","Proj",...SKILLS,"Tot","Avg","Team","Status","Notes","TRY","\u2713"].map((h,i) =>
+                {["#","Player","Prev Team","Pos","Proj",...SKILLS,"Tot","Avg","Team","Status","Notes","TRY","✓"].map((h,i) =>
                   <th key={i} style={{padding:"8px 7px",textAlign:"left",fontSize:9,fontWeight:700,textTransform:"uppercase",color:C.mut,borderBottom:"1px solid "+C.border,background:C.card,position:"sticky",top:0,whiteSpace:"nowrap"}}>{h}</th>
                 )}
               </tr></thead>
               <tbody>
                 {filtered.map(p => (
                   <tr key={p.id}>
-                    <td style={tdS}><input style={{...inpStyle,width:30,padding:"3px",textAlign:"center",fontSize:10}} value={p.tryout_number||""} placeholder="\u2014" onChange={e=>upd(p.id,{tryout_number:e.target.value})} /></td>
+                    <td style={tdS}><input style={{...inpStyle,width:30,padding:"3px",textAlign:"center",fontSize:10}} value={p.tryout_number||""} placeholder="—" onChange={e=>upd(p.id,{tryout_number:e.target.value})} /></td>
                     <td style={tdS}>
                       <div style={{cursor:"pointer"}} onClick={()=>setProfileId(p.id)}>
                         <div style={{fontWeight:700,fontSize:12,color:C.gold}}>{p.first_name} {p.last_name}</div>
@@ -374,17 +412,17 @@ export default function App() {
                     </td>
                     <td style={tdS}><input style={{...inpStyle,width:100,fontSize:11,padding:"4px 6px"}} placeholder="Prev team..." value={p.current_team||""} onChange={e=>upd(p.id,{current_team:e.target.value})} /></td>
                     <td style={tdS}><PosChips player={p} /></td>
-                    <td style={tdS}><select style={{...inpStyle,width:44,fontSize:10,padding:"3px 1px"}} value={p.projected_team||""} onChange={e=>upd(p.id,{projected_team:e.target.value})}>{PROJ_OPTS.map(o=><option key={o} value={o}>{o||"\u2014"}</option>)}</select></td>
+                    <td style={tdS}><select style={{...inpStyle,width:44,fontSize:10,padding:"3px 1px"}} value={p.projected_team||""} onChange={e=>upd(p.id,{projected_team:e.target.value})}>{PROJ_OPTS.map(o=><option key={o} value={o}>{o||"—"}</option>)}</select></td>
                     {SKILLS.map(sk=><td key={sk} style={tdS}><ScoreB player={p} skill={sk} /></td>)}
-                    <td style={tdS}><span style={{fontWeight:800,fontSize:14,color:tot(p)?C.gold:C.mut}}>{tot(p)||"\u2014"}</span></td>
+                    <td style={tdS}><span style={{fontWeight:800,fontSize:14,color:tot(p)?C.gold:C.mut}}>{tot(p)||"—"}</span></td>
                     <td style={tdS}><span style={{fontWeight:600,fontSize:12}}>{avg(p)}</span></td>
                     <td style={tdS}>
                       <select style={{...inpStyle,fontSize:10,padding:"3px",width:90}} value={p.team_assignment||""} onChange={e=>upd(p.id,{team_assignment:e.target.value,roster_pos:""})}>
-                        <option value="">{"\u2014"}</option>{(TM[activeDiv]||[]).map(t=><option key={t} value={t}>{t}</option>)}
+                        <option value="">{"—"}</option>{(TM[activeDiv]||[]).map(t=><option key={t} value={t}>{t}</option>)}
                       </select>
                       {p.team_assignment && <select style={{...inpStyle,fontSize:9,padding:"2px",width:58,marginTop:2,display:"block"}} value={p.roster_pos||""} onChange={e=>upd(p.id,{roster_pos:e.target.value})}>
                         <option value="">Roster</option>
-                        {ROSTER_POS.map(rp => { const taken = players.some(o=>o.id!==p.id&&o.team_assignment===p.team_assignment&&o.roster_pos===rp); return <option key={rp} value={rp} disabled={taken}>{rp}{taken?" \u2713":""}</option>; })}
+                        {ROSTER_POS.map(rp => { const taken = players.some(o=>o.id!==p.id&&o.team_assignment===p.team_assignment&&o.roster_pos===rp); return <option key={rp} value={rp} disabled={taken}>{rp}{taken?" ✓":""}</option>; })}
                       </select>}
                     </td>
                     <td style={tdS}>
@@ -408,113 +446,167 @@ export default function App() {
 
   // ─── TEAMS ───
   function renderTeams() {
-    const teams = TM[activeDiv]||[];
+    const teams = TM[activeDiv] || [];
+    const divRanks = unassignedRanks[activeDiv] || {};
+
+    // Full ordered list of player IDs at (activeDiv, pos), assigned OR unassigned.
+    // Stored manual order first, then any remaining players appended by total score desc.
+    const fullPosOrder = (pos) => {
+      const allInPos = divP.filter(p => pos === "" ? (p.positions||[]).length === 0 : (p.positions||[]).includes(pos)).map(p => p.id);
+      const inSet = new Set(allInPos);
+      const stored = (divRanks[pos] || []).filter(id => inSet.has(id));
+      const storedSet = new Set(stored);
+      const unranked = allInPos.filter(id => !storedSet.has(id))
+        .map(id => divP.find(p => p.id === id))
+        .sort((a,b) => tot(b) - tot(a))
+        .map(p => p.id);
+      return [...stored, ...unranked];
+    };
+    const posRankOf = (playerId, pos) => {
+      const order = fullPosOrder(pos);
+      const i = order.indexOf(playerId);
+      return i >= 0 ? i + 1 : null;
+    };
+    const setPosRank = (playerId, pos, newRank) => {
+      const order = fullPosOrder(pos).filter(id => id !== playerId);
+      const clamped = Math.max(1, Math.min(newRank, order.length + 1));
+      order.splice(clamped - 1, 0, playerId);
+      persistRanking(activeDiv, pos, order);
+    };
+    const resetPos = (pos) => persistRanking(activeDiv, pos, null);
+
+    const handleDragEnd = (event) => {
+      const { active, over } = event;
+      if (!over) return;
+      const playerId = parseInt(String(active.id).replace("player-", ""));
+      const overId = String(over.id);
+      let newTeam = "";
+      if (overId.startsWith("team-")) newTeam = overId.replace("team-", "");
+      const player = players.find(p => p.id === playerId);
+      if (!player || (player.team_assignment || "") === newTeam) return;
+      upd(playerId, { team_assignment: newTeam, roster_pos: "" });
+    };
+
+    // Compact rank chips next to a player's name on team cards (one per position).
+    const posRankTags = (player) => (player.positions || []).map(pos => {
+      const r = posRankOf(player.id, pos);
+      if (r == null) return null;
+      return <span key={pos} title={POS_LABELS[pos]+" rank"}
+        style={{fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:8,background:"rgba(233,30,140,0.18)",color:C.gold,whiteSpace:"nowrap"}}>{pos}#{r}</span>;
+    });
+
     return (
-      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(320px,1fr))",gap:14}}>
-        {teams.map(team => {
-          const tp = divP.filter(p=>p.team_assignment===team);
-          const rosterMap = {}; tp.forEach(p=>{ if(p.roster_pos) rosterMap[p.roster_pos]=p; });
-          const unslotted = tp.filter(p=>!p.roster_pos);
-          return (
-            <div key={team} style={{background:C.card,borderRadius:12,padding:"16px 18px",border:"1px solid "+C.border}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-                <h3 style={{margin:0,fontSize:17,fontWeight:800,color:C.gold}}>{team}</h3>
-                <Tag c={C.acc}>{tp.length} players</Tag>
-              </div>
-              {ROSTER_GROUPS.map(grp => (
-                <div key={grp.label} style={{marginBottom:10}}>
-                  <div style={{fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut,marginBottom:4}}>{grp.label}</div>
-                  {grp.pos.map(rp => {
-                    const player = rosterMap[rp];
-                    return <div key={rp} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 8px",marginBottom:2,background:C.bg,borderRadius:6,border:player?"1px solid "+C.border:"1px dashed "+C.border}}>
-                      <span style={{fontSize:11,fontWeight:700,color:player?C.gold:C.mut,minWidth:36}}>{rp}</span>
-                      {player ? <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flex:1,cursor:"pointer"}} onClick={()=>setProfileId(player.id)}>
-                        <span style={{fontSize:12,fontWeight:600}}>{player.first_name} {player.last_name}</span>
-                        <span style={{fontWeight:800,fontSize:13,color:C.gold}}>{tot(player)||"\u2014"}</span>
-                      </div> : <span style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>open</span>}
-                    </div>;
-                  })}
+      <DndContext sensors={dndSensors} onDragEnd={handleDragEnd}>
+        <div style={{fontSize:11,color:C.mut,marginBottom:10,fontStyle:"italic"}}>
+          Drag a player onto a team card to assign (clears their roster slot). Drag onto Unassigned to remove from a team.
+          Type a rank number to reorder within a position — rank persists across team changes.
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(320px,1fr))",gap:14}}>
+          {teams.map(team => {
+            const tp = divP.filter(p => p.team_assignment === team);
+            const rosterMap = {}; tp.forEach(p => { if (p.roster_pos) rosterMap[p.roster_pos] = p; });
+            const unslotted = tp.filter(p => !p.roster_pos);
+            return (
+              <DropZone key={team} id={"team-"+team}
+                style={{background:C.card,borderRadius:12,padding:"16px 18px",border:"1px solid "+C.border}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+                  <h3 style={{margin:0,fontSize:17,fontWeight:800,color:C.gold}}>{team}</h3>
+                  <Tag c={C.acc}>{tp.length} players</Tag>
                 </div>
-              ))}
-              {unslotted.length>0 && <div style={{marginTop:6}}>
-                <div style={{fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.acc,marginBottom:4}}>No Roster Position</div>
-                {unslotted.map(p => <div key={p.id} style={{display:"flex",justifyContent:"space-between",padding:"5px 8px",marginBottom:2,background:C.bg,borderRadius:6,cursor:"pointer",border:"1px solid rgba(233,30,140,0.3)"}} onClick={()=>setProfileId(p.id)}>
-                  <span style={{fontSize:12,fontWeight:600}}>{p.first_name} {p.last_name}</span>
-                  <span style={{fontWeight:800,fontSize:13,color:C.gold}}>{tot(p)||"\u2014"}</span>
-                </div>)}
-              </div>}
-            </div>
-          );
-        })}
-        {/* Unassigned - grouped by position, manually rankable (synced across coaches via Supabase) */}
-        {(() => {
-          const unassigned = divP.filter(p => !p.team_assignment);
-          const groups = {}; POSITIONS.forEach(pos => { groups[pos] = []; }); groups[""] = [];
-          unassigned.forEach(p => {
-            const ps = p.positions || [];
-            if (ps.length === 0) groups[""].push(p);
-            else ps.forEach(pos => { if (groups[pos]) groups[pos].push(p); });
-          });
-          const divRanks = unassignedRanks[activeDiv] || {};
-          const orderPlayers = (pos, list) => {
-            const stored = divRanks[pos] || [];
-            const idSet = new Set(list.map(p => p.id));
-            const ranked = stored.filter(id => idSet.has(id)).map(id => list.find(p => p.id === id));
-            const rankedIds = new Set(stored);
-            const unranked = list.filter(p => !rankedIds.has(p.id)).sort((a,b) => tot(b) - tot(a));
-            return [...ranked, ...unranked];
-          };
-          const move = (pos, dir, list) => (id) => {
-            const ordered = orderPlayers(pos, list);
-            const i = ordered.findIndex(p => p.id === id);
-            const j = dir === "up" ? i - 1 : i + 1;
-            if (i < 0 || j < 0 || j >= ordered.length) return;
-            const newOrder = ordered.map(p => p.id);
-            [newOrder[i], newOrder[j]] = [newOrder[j], newOrder[i]];
-            persistRanking(activeDiv, pos, newOrder);
-          };
-          const resetPos = (pos) => persistRanking(activeDiv, pos, null);
-          return (
-            <div style={{background:C.card,borderRadius:12,padding:"16px 18px",border:"1px solid rgba(239,68,68,0.3)"}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-                <h3 style={{margin:0,fontSize:17,fontWeight:800,color:C.red}}>Unassigned</h3>
-                <Tag c={C.red}>{unassigned.length}</Tag>
-              </div>
-              <div style={{fontSize:10,color:C.mut,marginBottom:8,fontStyle:"italic"}}>Grouped by position. \u25b2\u25bc rank syncs across all coaches.</div>
-              <div style={{display:"flex",flexDirection:"column",gap:10,maxHeight:600,overflowY:"auto"}}>
-                {[...POSITIONS, ""].map(pos => {
-                  const list = groups[pos];
-                  if (list.length === 0) return null;
-                  const ordered = orderPlayers(pos, list);
-                  const isCustom = !!(divRanks[pos] && divRanks[pos].length);
-                  const label = pos === "" ? "Unspecified" : POS_LABELS[pos] + " (" + pos + ")";
-                  const moveUp = move(pos, "up", list); const moveDown = move(pos, "down", list);
-                  return (
-                    <div key={pos||"none"}>
-                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4,paddingBottom:3,borderBottom:"1px solid "+C.border}}>
-                        <span style={{fontSize:11,fontWeight:700,textTransform:"uppercase",color:C.acc}}>{label} \u2022 {list.length}</span>
-                        {isCustom && <button onClick={()=>resetPos(pos)} style={{background:"none",border:"none",color:C.mut,fontSize:9,cursor:"pointer",textDecoration:"underline",fontFamily:"inherit"}}>reset to score order</button>}
-                      </div>
-                      {ordered.map((p, i) => (
-                        <div key={p.id} style={{display:"flex",alignItems:"center",gap:6,padding:"5px 6px",background:C.bg,borderRadius:5,fontSize:11,marginBottom:2}}>
-                          <span style={{fontWeight:700,color:i<3?C.gold:C.mut,minWidth:18,textAlign:"right",fontSize:11}}>{i+1}.</span>
-                          <span style={{flex:1,fontWeight:600,cursor:"pointer"}} onClick={()=>setProfileId(p.id)}>{p.first_name} {p.last_name}</span>
-                          {p.projected_team && <Tag c={C.gold}>{p.projected_team}</Tag>}
-                          <span title="Total points" style={{fontWeight:700,color:C.gold,minWidth:22,textAlign:"right"}}>{tot(p)||"\u2014"}</span>
-                          <span title="Average score" style={{fontWeight:600,color:C.mut,minWidth:26,textAlign:"right",fontSize:10}}>{avg(p)}</span>
-                          <button onClick={()=>moveUp(p.id)} disabled={i===0} title="Move up" style={{background:"none",border:"1px solid "+C.border,borderRadius:3,color:i===0?C.border:C.gold,cursor:i===0?"default":"pointer",padding:"1px 4px",fontSize:9,fontFamily:"inherit"}}>\u25b2</button>
-                          <button onClick={()=>moveDown(p.id)} disabled={i===ordered.length-1} title="Move down" style={{background:"none",border:"1px solid "+C.border,borderRadius:3,color:i===ordered.length-1?C.border:C.gold,cursor:i===ordered.length-1?"default":"pointer",padding:"1px 4px",fontSize:9,fontFamily:"inherit"}}>\u25bc</button>
+                {ROSTER_GROUPS.map(grp => (
+                  <div key={grp.label} style={{marginBottom:10}}>
+                    <div style={{fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut,marginBottom:4}}>{grp.label}</div>
+                    {grp.pos.map(rp => {
+                      const player = rosterMap[rp];
+                      const inner = (
+                        <div style={{display:"flex",alignItems:"center",gap:6,padding:"5px 8px",marginBottom:2,background:C.bg,borderRadius:6,border:player?"1px solid "+C.border:"1px dashed "+C.border}}>
+                          <span style={{fontSize:11,fontWeight:700,color:player?C.gold:C.mut,minWidth:36}}>{rp}</span>
+                          {player ? (<>
+                            <span style={{fontSize:12,fontWeight:600,flex:1,cursor:"pointer"}} onClick={()=>setProfileId(player.id)}>{player.first_name} {player.last_name}</span>
+                            <div style={{display:"flex",gap:3,alignItems:"center",flexWrap:"wrap",justifyContent:"flex-end"}}>{posRankTags(player)}</div>
+                            <span style={{fontWeight:800,fontSize:13,color:C.gold,minWidth:22,textAlign:"right"}}>{tot(player)||"—"}</span>
+                          </>) : <span style={{fontSize:11,color:C.mut,fontStyle:"italic",flex:1}}>open</span>}
                         </div>
-                      ))}
-                    </div>
-                  );
-                })}
-                {unassigned.length === 0 && <div style={{textAlign:"center",padding:14,color:C.mut,fontSize:11}}>No unassigned players</div>}
-              </div>
-            </div>
-          );
-        })()}
-      </div>
+                      );
+                      return <div key={rp}>{player ? <DraggablePlayer player={player}>{inner}</DraggablePlayer> : inner}</div>;
+                    })}
+                  </div>
+                ))}
+                {unslotted.length>0 && <div style={{marginTop:6}}>
+                  <div style={{fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.acc,marginBottom:4}}>No Roster Position</div>
+                  {unslotted.map(p => (
+                    <DraggablePlayer key={p.id} player={p}>
+                      <div style={{display:"flex",alignItems:"center",gap:6,padding:"5px 8px",marginBottom:2,background:C.bg,borderRadius:6,border:"1px solid rgba(233,30,140,0.3)"}}>
+                        <span style={{fontSize:12,fontWeight:600,flex:1,cursor:"pointer"}} onClick={()=>setProfileId(p.id)}>{p.first_name} {p.last_name}</span>
+                        <div style={{display:"flex",gap:3,alignItems:"center",flexWrap:"wrap",justifyContent:"flex-end"}}>{posRankTags(p)}</div>
+                        <span style={{fontWeight:800,fontSize:13,color:C.gold,minWidth:22,textAlign:"right"}}>{tot(p)||"—"}</span>
+                      </div>
+                    </DraggablePlayer>
+                  ))}
+                </div>}
+                {tp.length === 0 && <div style={{textAlign:"center",padding:10,color:C.mut,fontSize:11,fontStyle:"italic"}}>Drop players here to add to {team}</div>}
+              </DropZone>
+            );
+          })}
+          {/* Unassigned drop zone with position-grouped lists and global rank inputs */}
+          {(() => {
+            const unassigned = divP.filter(p => !p.team_assignment);
+            const groups = {}; POSITIONS.forEach(pos => { groups[pos] = []; }); groups[""] = [];
+            unassigned.forEach(p => {
+              const ps = p.positions || [];
+              if (ps.length === 0) groups[""].push(p);
+              else ps.forEach(pos => { if (groups[pos]) groups[pos].push(p); });
+            });
+            return (
+              <DropZone id="team-" style={{background:C.card,borderRadius:12,padding:"16px 18px",border:"1px solid rgba(239,68,68,0.3)"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                  <h3 style={{margin:0,fontSize:17,fontWeight:800,color:C.red}}>Unassigned</h3>
+                  <Tag c={C.red}>{unassigned.length}</Tag>
+                </div>
+                <div style={{fontSize:10,color:C.mut,marginBottom:8,fontStyle:"italic"}}>Numbers are rank within position across the whole division. Drop a player here to remove from team.</div>
+                <div style={{display:"flex",flexDirection:"column",gap:10,maxHeight:640,overflowY:"auto"}}>
+                  {[...POSITIONS, ""].map(pos => {
+                    const list = groups[pos];
+                    if (list.length === 0) return null;
+                    const ordered = [...list].sort((a,b) => {
+                      const ra = posRankOf(a.id, pos), rb = posRankOf(b.id, pos);
+                      return (ra == null ? 1e9 : ra) - (rb == null ? 1e9 : rb);
+                    });
+                    const totalInPos = divP.filter(p => pos === "" ? (p.positions||[]).length === 0 : (p.positions||[]).includes(pos)).length;
+                    const isCustom = !!(divRanks[pos] && divRanks[pos].length);
+                    const label = pos === "" ? "Unspecified" : POS_LABELS[pos] + " (" + pos + ")";
+                    return (
+                      <div key={pos||"none"}>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4,paddingBottom:3,borderBottom:"1px solid "+C.border}}>
+                          <span style={{fontSize:11,fontWeight:700,textTransform:"uppercase",color:C.acc}}>{label} • {list.length} unassigned / {totalInPos} total</span>
+                          {isCustom && <button onClick={()=>resetPos(pos)} style={{background:"none",border:"none",color:C.mut,fontSize:9,cursor:"pointer",textDecoration:"underline",fontFamily:"inherit"}}>reset to score order</button>}
+                        </div>
+                        {ordered.map(p => {
+                          const rank = posRankOf(p.id, pos);
+                          return (
+                            <DraggablePlayer key={p.id} player={p}>
+                              <div style={{display:"flex",alignItems:"center",gap:6,padding:"5px 6px",background:C.bg,borderRadius:5,fontSize:11,marginBottom:2}}>
+                                {pos !== ""
+                                  ? <RankInput value={rank} max={totalInPos} onCommit={(n)=>setPosRank(p.id, pos, n)} />
+                                  : <span style={{minWidth:40}} />}
+                                <span style={{flex:1,fontWeight:600,cursor:"pointer"}} onClick={()=>setProfileId(p.id)}>{p.first_name} {p.last_name}</span>
+                                {p.projected_team && <Tag c={C.gold}>{p.projected_team}</Tag>}
+                                <span title="Total points" style={{fontWeight:700,color:C.gold,minWidth:22,textAlign:"right"}}>{tot(p)||"—"}</span>
+                                <span title="Average score" style={{fontWeight:600,color:C.mut,minWidth:26,textAlign:"right",fontSize:10}}>{avg(p)}</span>
+                              </div>
+                            </DraggablePlayer>
+                          );
+                        })}
+                      </div>
+                    );
+                  })}
+                  {unassigned.length === 0 && <div style={{textAlign:"center",padding:14,color:C.mut,fontSize:11}}>No unassigned players</div>}
+                </div>
+              </DropZone>
+            );
+          })()}
+        </div>
+      </DndContext>
     );
   }
 
@@ -543,10 +635,10 @@ export default function App() {
                   <td style={tdS}>{p.age}</td>
                   <td style={tdS}><div style={{display:"flex",gap:2,flexWrap:"wrap"}}>{(p.positions||[]).map(pos=><Tag key={pos} c={C.grn}>{pos}</Tag>)}</div></td>
                   <td style={tdS}>{p.projected_team && <Tag c={C.gold}>{p.projected_team}</Tag>}</td>
-                  {SKILLS.map(sk=><td key={sk} style={tdS}><span style={{fontWeight:600,color:(p.scores||{})[sk]>=4?C.grn:(p.scores||{})[sk]>=3?C.gold:(p.scores||{})[sk]?C.red:C.mut}}>{(p.scores||{})[sk]||"\u2014"}</span></td>)}
+                  {SKILLS.map(sk=><td key={sk} style={tdS}><span style={{fontWeight:600,color:(p.scores||{})[sk]>=4?C.grn:(p.scores||{})[sk]>=3?C.gold:(p.scores||{})[sk]?C.red:C.mut}}>{(p.scores||{})[sk]||"—"}</span></td>)}
                   <td style={tdS}><span style={{fontWeight:800,fontSize:15,color:C.gold}}>{tot(p)}</span></td>
                   <td style={tdS}><span style={{fontWeight:600}}>{avg(p)}</span></td>
-                  <td style={tdS}><Tag c={p.team_assignment?C.grn:C.mut}>{p.team_assignment||"\u2014"}</Tag></td>
+                  <td style={tdS}><Tag c={p.team_assignment?C.grn:C.mut}>{p.team_assignment||"—"}</Tag></td>
                 </tr>
               ))}</tbody>
             </table>
@@ -650,7 +742,7 @@ export default function App() {
           <div style={{background:C.bg,borderRadius:10,padding:14}}>
             <div style={{fontSize:11,fontWeight:700,color:C.gold,marginBottom:10}}>REGISTRATION INFO & INTAKE</div>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
-              <div><span style={lbl}>Parent</span><div style={{fontSize:13}}>{p.parent_name||"\u2014"}</div></div>
+              <div><span style={lbl}>Parent</span><div style={{fontSize:13}}>{p.parent_name||"—"}</div></div>
               <div><span style={lbl}>Contact</span><div style={{fontSize:11,wordBreak:"break-all"}}>{p.parent_email}<br/>{p.parent_phone}</div></div>
             </div>
             {[["Position / Experience",p.reg_position],["Strengths / Improvement",p.strength_weakness],["Ideal Coach",p.ideal_coach],["Goals",p.goal],["Starter Preference",p.starter_pref]].map(([label,val])=>
