@@ -24,6 +24,14 @@ function calcUSAV(dob) {
 }
 function tot(p) { const v = Object.values(p.scores||{}); return v.length?v.reduce((a,b)=>a+b,0):0; }
 function avg(p) { const v = Object.values(p.scores||{}); return v.length?(v.reduce((a,b)=>a+b,0)/v.length).toFixed(1):"—"; }
+// A player counts as a returning DS Elite athlete if her Prev Season Team field
+// names DSE / DS Elite. Coaches can correct false positives/negatives by editing
+// the "Prev Season Team" value in the profile modal.
+function isReturningDSE(p) {
+  const t = (p.current_team || "").toUpperCase();
+  return t.includes("DSE") || t.includes("DS ELITE");
+}
+const DSE_COLOR = "#06b6d4";
 
 const inpStyle = {background:"#1a1a1a",border:"1px solid "+C.border,borderRadius:6,color:C.text,fontFamily:"inherit",outline:"none"};
 
@@ -451,7 +459,10 @@ export default function App() {
                     <td style={tdS}><input style={{...inpStyle,width:30,padding:"3px",textAlign:"center",fontSize:10}} value={p.tryout_number||""} placeholder="—" onChange={e=>upd(p.id,{tryout_number:e.target.value})} /></td>
                     <td style={tdS}>
                       <div style={{cursor:"pointer"}} onClick={()=>setProfileId(p.id)}>
-                        <div style={{fontWeight:700,fontSize:12,color:C.gold}}>{p.first_name} {p.last_name}</div>
+                        <div style={{display:"flex",alignItems:"center",gap:5}}>
+                          {isReturningDSE(p) && <Tag c={DSE_COLOR}>DSE</Tag>}
+                          <span style={{fontWeight:700,fontSize:12,color:C.gold}}>{p.first_name} {p.last_name}</span>
+                        </div>
                         <div style={{fontSize:10,color:C.mut}}>Age {p.age} • {p.usavDiv||p.usav_div}</div>
                         {p.min_level && <Tag c={C.gold}>Min: {p.min_level}</Tag>}
                         {p.supplemental===1 && <Tag c={C.acc}>SUPP</Tag>}
@@ -570,7 +581,10 @@ export default function App() {
                         <div style={{display:"flex",alignItems:"center",gap:6,padding:"5px 8px",marginBottom:2,background:C.bg,borderRadius:6,border:player?"1px solid "+C.border:"1px dashed "+C.border}}>
                           <span style={{fontSize:11,fontWeight:700,color:player?C.gold:C.mut,minWidth:36}}>{rp}</span>
                           {player ? (<>
-                            <span style={{fontSize:12,fontWeight:600,flex:1,cursor:"pointer"}} onClick={()=>setProfileId(player.id)}>{player.first_name} {player.last_name}</span>
+                            <span style={{display:"flex",alignItems:"center",gap:4,fontSize:12,fontWeight:600,flex:1,cursor:"pointer"}} onClick={()=>setProfileId(player.id)}>
+                              {isReturningDSE(player) && <Tag c={DSE_COLOR}>DSE</Tag>}
+                              {player.first_name} {player.last_name}
+                            </span>
                             <div style={{display:"flex",gap:3,alignItems:"center",flexWrap:"wrap",justifyContent:"flex-end"}}>{posRankTags(player)}</div>
                             <span style={{fontWeight:800,fontSize:13,color:C.gold,minWidth:22,textAlign:"right"}}>{tot(player)||"—"}</span>
                           </>) : <span style={{fontSize:11,color:C.mut,fontStyle:"italic",flex:1}}>open</span>}
@@ -585,7 +599,10 @@ export default function App() {
                   {unslotted.map(p => (
                     <DraggablePlayer key={p.id} player={p}>
                       <div style={{display:"flex",alignItems:"center",gap:6,padding:"5px 8px",marginBottom:2,background:C.bg,borderRadius:6,border:"1px solid rgba(233,30,140,0.3)"}}>
-                        <span style={{fontSize:12,fontWeight:600,flex:1,cursor:"pointer"}} onClick={()=>setProfileId(p.id)}>{p.first_name} {p.last_name}</span>
+                        <span style={{display:"flex",alignItems:"center",gap:4,fontSize:12,fontWeight:600,flex:1,cursor:"pointer"}} onClick={()=>setProfileId(p.id)}>
+                          {isReturningDSE(p) && <Tag c={DSE_COLOR}>DSE</Tag>}
+                          {p.first_name} {p.last_name}
+                        </span>
                         <div style={{display:"flex",gap:3,alignItems:"center",flexWrap:"wrap",justifyContent:"flex-end"}}>{posRankTags(p)}</div>
                         <span style={{fontWeight:800,fontSize:13,color:C.gold,minWidth:22,textAlign:"right"}}>{tot(p)||"—"}</span>
                       </div>
@@ -637,7 +654,10 @@ export default function App() {
                                 {pos !== ""
                                   ? <RankInput value={rank} max={totalInPos} onCommit={(n)=>setPosRank(p.id, pos, n)} />
                                   : <span style={{minWidth:40}} />}
-                                <span style={{flex:1,fontWeight:600,cursor:"pointer"}} onClick={()=>setProfileId(p.id)}>{p.first_name} {p.last_name}</span>
+                                <span style={{display:"flex",alignItems:"center",gap:4,flex:1,fontWeight:600,cursor:"pointer"}} onClick={()=>setProfileId(p.id)}>
+                                  {isReturningDSE(p) && <Tag c={DSE_COLOR}>DSE</Tag>}
+                                  {p.first_name} {p.last_name}
+                                </span>
                                 {p.projected_team && <Tag c={C.gold}>{p.projected_team}</Tag>}
                                 <span title="Total points" style={{fontWeight:700,color:C.gold,minWidth:22,textAlign:"right"}}>{tot(p)||"—"}</span>
                                 <span title="Average score" style={{fontWeight:600,color:C.mut,minWidth:26,textAlign:"right",fontSize:10}}>{avg(p)}</span>
@@ -679,7 +699,7 @@ export default function App() {
               <tbody>{shown.map((p,i) => (
                 <tr key={p.id}>
                   <td style={tdS}><span style={{fontWeight:800,fontSize:15,color:i<3?C.gold:C.mut}}>#{i+1}</span></td>
-                  <td style={tdS}><span style={{fontWeight:700,fontSize:12,color:C.gold,cursor:"pointer"}} onClick={()=>setProfileId(p.id)}>{p.first_name} {p.last_name}</span></td>
+                  <td style={tdS}><span style={{display:"inline-flex",alignItems:"center",gap:5,fontWeight:700,fontSize:12,color:C.gold,cursor:"pointer"}} onClick={()=>setProfileId(p.id)}>{isReturningDSE(p) && <Tag c={DSE_COLOR}>DSE</Tag>}{p.first_name} {p.last_name}</span></td>
                   <td style={tdS}>{p.age}</td>
                   <td style={tdS}><div style={{display:"flex",gap:2,flexWrap:"wrap"}}>{(p.positions||[]).map(pos=><Tag key={pos} c={C.grn}>{pos}</Tag>)}</div></td>
                   <td style={tdS}>{p.projected_team && <Tag c={C.gold}>{p.projected_team}</Tag>}</td>
@@ -710,7 +730,10 @@ export default function App() {
         <div style={{background:C.card,borderRadius:16,border:"1px solid "+C.border,maxWidth:700,width:"100%",maxHeight:"90vh",overflowY:"auto",padding:24}} onClick={e=>e.stopPropagation()}>
           <div style={{display:"flex",justifyContent:"space-between",marginBottom:16}}>
             <div>
-              <h2 style={{margin:0,fontSize:22,fontWeight:800,color:C.gold}}>{p.first_name} {p.last_name}</h2>
+              <h2 style={{margin:0,fontSize:22,fontWeight:800,color:C.gold,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                {isReturningDSE(p) && <Tag c={DSE_COLOR}>DSE</Tag>}
+                {p.first_name} {p.last_name}
+              </h2>
               <div style={{display:"flex",gap:5,marginTop:6,flexWrap:"wrap"}}>
                 <Tag c={C.gold}>USAV: {p.usavDiv||p.usav_div}</Tag><Tag c={C.acc}>Reg: {p.reg_group}</Tag><Tag c={C.mut}>Age {p.age}</Tag>
                 {(p.positions||[]).map(pos=><Tag key={pos} c={C.grn}>{pos}</Tag>)}
