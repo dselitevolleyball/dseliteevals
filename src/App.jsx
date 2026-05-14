@@ -77,6 +77,7 @@ export default function App() {
   const [filterPos, setFilterPos] = useState("");
   const [filterProj, setFilterProj] = useState("");
   const [filterEval, setFilterEval] = useState("all");
+  const [filterDate, setFilterDate] = useState("");
   const [sortBy, setSortBy] = useState("name");
   const [profileId, setProfileId] = useState(null);
   const [uploading, setUploading] = useState(false);
@@ -317,6 +318,7 @@ export default function App() {
     if (search) { const s = search.toLowerCase(); l = l.filter(p => (p.first_name + " " + p.last_name).toLowerCase().includes(s)); }
     if (filterPos) l = l.filter(p => (p.positions||[]).includes(filterPos));
     if (filterProj) l = l.filter(p => p.projected_team === filterProj);
+    if (filterDate) l = l.filter(p => (p.eval_dates||[]).includes(filterDate));
     if (filterEval === "done") l = l.filter(p => p.eval_complete);
     if (filterEval === "pending") l = l.filter(p => !p.eval_complete);
     if (sortBy === "name") l.sort((a,b) => (a.last_name||"").localeCompare(b.last_name||""));
@@ -324,7 +326,7 @@ export default function App() {
     else if (sortBy === "age") l.sort((a,b) => parseInt(b.age||0) - parseInt(a.age||0));
     else if (sortBy === "proj") { const o = {"1":0,"1/2":1,"2":2,"2/3":3,"3":4,"":5}; l.sort((a,b) => (o[a.projected_team]||5) - (o[b.projected_team]||5)); }
     return l;
-  }, [divP, search, filterPos, filterProj, filterEval, sortBy]);
+  }, [divP, search, filterPos, filterProj, filterEval, filterDate, sortBy]);
 
   // ─── PASSWORD GATE ───
   if (!authed) {
@@ -438,6 +440,9 @@ export default function App() {
           </select>
           <select style={{...inpStyle,padding:"7px 10px",fontSize:12}} value={filterProj} onChange={e=>setFilterProj(e.target.value)}>
             <option value="">All Proj</option>{PROJ_OPTS.filter(Boolean).map(o=><option key={o} value={o}>Team {o}</option>)}
+          </select>
+          <select style={{...inpStyle,padding:"7px 10px",fontSize:12,color:filterDate?C.gold:C.text}} value={filterDate} onChange={e=>setFilterDate(e.target.value)} title="Show only players attending this eval date">
+            <option value="">All Dates</option>{EVAL_DATES.map(d=><option key={d} value={d}>{d}</option>)}
           </select>
           <select style={{...inpStyle,padding:"7px 10px",fontSize:12}} value={sortBy} onChange={e=>setSortBy(e.target.value)}>
             <option value="name">Name</option><option value="score">Score</option><option value="proj">Projected</option>
@@ -916,7 +921,7 @@ export default function App() {
         <div style={{display:"flex",gap:4,padding:"10px 18px",borderBottom:"1px solid "+C.border,flexWrap:"wrap"}}>
           {activeDivs.map(d =>
             <button key={d} style={{padding:"5px 14px",borderRadius:16,border:"1px solid "+(activeDiv===d?C.gold:C.border),background:activeDiv===d?"rgba(233,30,140,0.12)":"transparent",color:activeDiv===d?C.gold:C.mut,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600}}
-              onClick={()=>{setActiveDiv(d);setSearch("");setFilterPos("");setFilterProj("");setFilterEval("all");}}>
+              onClick={()=>{setActiveDiv(d);setSearch("");setFilterPos("");setFilterProj("");setFilterEval("all");setFilterDate("");}}>
               {d} ({players.filter(p=>(p.usavDiv||p.usav_div)===d).length})
             </button>
           )}
