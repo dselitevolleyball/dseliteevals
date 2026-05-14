@@ -44,18 +44,40 @@ export default function App() {
   const [uploading, setUploading] = useState(false);
   const [uploadMsg, setUploadMsg] = useState("");
   const [saving, setSaving] = useState(false);
+  // Manual unassigned rankings, scoped by division+position, synced across all coaches via Supabase
+  // Shape: { [division]: { [position]: [playerId, ...] } }
   const [unassignedRanks, setUnassignedRanks] = useState({});
 
-  // Load manual unassigned rankings from localStorage (device-local, per-position order)
-  useEffect(() => {
-    try { const s = localStorage.getItem("dselite-unassigned-ranks"); if (s) setUnassignedRanks(JSON.parse(s)); } catch (e) {}
+  const loadRankings = useCallback(async () => {
+    const { data, error } = await supabase.from("unassigned_rankings").select("*");
+    if (error) { console.error("Load rankings error:", error); return; }
+    const ranks = {};
+    (data || []).forEach(r => {
+      if (!ranks[r.division]) ranks[r.division] = {};
+      ranks[r.division][r.position] = r.player_ids || [];
+    });
+    setUnassignedRanks(ranks);
   }, []);
-  const updateUnassignedRanks = useCallback((updater) => {
+
+  // Persist a ranking change. Pass playerIds=null to reset (delete the row).
+  const persistRanking = useCallback(async (division, position, playerIds) => {
+    // Optimistic local update
     setUnassignedRanks(prev => {
-      const next = typeof updater === "function" ? updater(prev) : updater;
-      try { localStorage.setItem("dselite-unassigned-ranks", JSON.stringify(next)); } catch (e) {}
+      const next = { ...prev, [division]: { ...(prev[division] || {}) } };
+      if (playerIds === null) delete next[division][position];
+      else next[division][position] = playerIds;
       return next;
     });
+    if (playerIds === null) {
+      const { error } = await supabase.from("unassigned_rankings").delete().match({ division, position });
+      if (error) console.error("Reset ranking error:", error);
+    } else {
+      const { error } = await supabase.from("unassigned_rankings").upsert(
+        { division, position, player_ids: playerIds, updated_at: new Date().toISOString() },
+        { onConflict: "division,position" }
+      );
+      if (error) console.error("Save ranking error:", error);
+    }
   }, []);
 
   // Load all players from Supabase
@@ -72,7 +94,7 @@ export default function App() {
     setLoading(false);
   }, []);
 
-  useEffect(() => { if (authed) loadPlayers(); }, [authed, loadPlayers]);
+  useEffect(() => { if (authed) { loadPlayers(); loadRankings(); } }, [authed, loadPlayers, loadRankings]);
 
   // Save a single player field update to Supabase
   const upd = useCallback(async (id, updates) => {
@@ -424,7 +446,7 @@ export default function App() {
             </div>
           );
         })}
-        {/* Unassigned - grouped by position, manually rankable (ranks stored per-device in localStorage) */}
+        {/* Unassigned - grouped by position, manually rankable (synced across coaches via Supabase) */}
         {(() => {
           const unassigned = divP.filter(p => !p.team_assignment);
           const groups = {}; POSITIONS.forEach(pos => { groups[pos] = []; }); groups[""] = [];
@@ -433,8 +455,9 @@ export default function App() {
             if (ps.length === 0) groups[""].push(p);
             else ps.forEach(pos => { if (groups[pos]) groups[pos].push(p); });
           });
+          const divRanks = unassignedRanks[activeDiv] || {};
           const orderPlayers = (pos, list) => {
-            const stored = unassignedRanks[pos] || [];
+            const stored = divRanks[pos] || [];
             const idSet = new Set(list.map(p => p.id));
             const ranked = stored.filter(id => idSet.has(id)).map(id => list.find(p => p.id === id));
             const rankedIds = new Set(stored);
@@ -442,34 +465,28 @@ export default function App() {
             return [...ranked, ...unranked];
           };
           const move = (pos, dir, list) => (id) => {
-            updateUnassignedRanks(prev => {
-              const stored = prev[pos] || [];
-              const idSet = new Set(list.map(p => p.id));
-              const ranked = stored.filter(x => idSet.has(x));
-              const rankedSet = new Set(ranked);
-              const unranked = list.filter(p => !rankedSet.has(p.id)).sort((a,b) => tot(b) - tot(a)).map(p => p.id);
-              const order = [...ranked, ...unranked];
-              const i = order.indexOf(id);
-              const j = dir === "up" ? i - 1 : i + 1;
-              if (i < 0 || j < 0 || j >= order.length) return prev;
-              [order[i], order[j]] = [order[j], order[i]];
-              return { ...prev, [pos]: order };
-            });
+            const ordered = orderPlayers(pos, list);
+            const i = ordered.findIndex(p => p.id === id);
+            const j = dir === "up" ? i - 1 : i + 1;
+            if (i < 0 || j < 0 || j >= ordered.length) return;
+            const newOrder = ordered.map(p => p.id);
+            [newOrder[i], newOrder[j]] = [newOrder[j], newOrder[i]];
+            persistRanking(activeDiv, pos, newOrder);
           };
-          const resetPos = (pos) => updateUnassignedRanks(prev => { const n = {...prev}; delete n[pos]; return n; });
+          const resetPos = (pos) => persistRanking(activeDiv, pos, null);
           return (
             <div style={{background:C.card,borderRadius:12,padding:"16px 18px",border:"1px solid rgba(239,68,68,0.3)"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
                 <h3 style={{margin:0,fontSize:17,fontWeight:800,color:C.red}}>Unassigned</h3>
                 <Tag c={C.red}>{unassigned.length}</Tag>
               </div>
-              <div style={{fontSize:10,color:C.mut,marginBottom:8,fontStyle:"italic"}}>Grouped by position. Use \u25b2\u25bc to manually rank (saved on this device only).</div>
+              <div style={{fontSize:10,color:C.mut,marginBottom:8,fontStyle:"italic"}}>Grouped by position. \u25b2\u25bc rank syncs across all coaches.</div>
               <div style={{display:"flex",flexDirection:"column",gap:10,maxHeight:600,overflowY:"auto"}}>
                 {[...POSITIONS, ""].map(pos => {
                   const list = groups[pos];
                   if (list.length === 0) return null;
                   const ordered = orderPlayers(pos, list);
-                  const isCustom = !!(unassignedRanks[pos] && unassignedRanks[pos].length);
+                  const isCustom = !!(divRanks[pos] && divRanks[pos].length);
                   const label = pos === "" ? "Unspecified" : POS_LABELS[pos] + " (" + pos + ")";
                   const moveUp = move(pos, "up", list); const moveDown = move(pos, "down", list);
                   return (
