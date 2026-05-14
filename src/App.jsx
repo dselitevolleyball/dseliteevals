@@ -78,6 +78,9 @@ export default function App() {
   const [filterProj, setFilterProj] = useState("");
   const [filterEval, setFilterEval] = useState("all");
   const [filterDate, setFilterDate] = useState("");
+  // Evaluate-tab-only: additional age groups to include alongside activeDiv (multi-select).
+  // Teams and Rankings views still use just activeDiv since they're division-scoped.
+  const [evalExtraDivs, setEvalExtraDivs] = useState([]);
   const [sortBy, setSortBy] = useState("name");
   const [profileId, setProfileId] = useState(null);
   const [uploading, setUploading] = useState(false);
@@ -314,7 +317,8 @@ export default function App() {
   const divP = useMemo(() => players.filter(p => (p.usavDiv || p.usav_div) === activeDiv), [players, activeDiv]);
 
   const filtered = useMemo(() => {
-    let l = [...divP];
+    const divSet = new Set([activeDiv, ...evalExtraDivs]);
+    let l = players.filter(p => divSet.has(p.usavDiv || p.usav_div));
     if (search) { const s = search.toLowerCase(); l = l.filter(p => (p.first_name + " " + p.last_name).toLowerCase().includes(s)); }
     if (filterPos) l = l.filter(p => (p.positions||[]).includes(filterPos));
     if (filterProj) l = l.filter(p => p.projected_team === filterProj);
@@ -326,7 +330,7 @@ export default function App() {
     else if (sortBy === "age") l.sort((a,b) => parseInt(b.age||0) - parseInt(a.age||0));
     else if (sortBy === "proj") { const o = {"1":0,"1/2":1,"2":2,"2/3":3,"3":4,"":5}; l.sort((a,b) => (o[a.projected_team]||5) - (o[b.projected_team]||5)); }
     return l;
-  }, [divP, search, filterPos, filterProj, filterEval, filterDate, sortBy]);
+  }, [players, activeDiv, evalExtraDivs, search, filterPos, filterProj, filterEval, filterDate, sortBy]);
 
   // ─── PASSWORD GATE ───
   if (!authed) {
@@ -448,6 +452,20 @@ export default function App() {
             <option value="name">Name</option><option value="score">Score</option><option value="proj">Projected</option>
           </select>
           <span style={{fontSize:11,color:C.mut,marginLeft:"auto"}}>{saving?"Saving...":filtered.length+" players"}</span>
+        </div>
+        {/* Also include: additional age groups to fold into the Evaluate table alongside the active tab */}
+        <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:10,flexWrap:"wrap"}}>
+          <span style={{fontSize:11,color:C.mut,fontWeight:600}}>Also show:</span>
+          {activeDivs.filter(d => d !== activeDiv).map(d => {
+            const active = evalExtraDivs.includes(d);
+            const count = players.filter(p => (p.usavDiv||p.usav_div) === d).length;
+            return <button key={d}
+              onClick={()=>setEvalExtraDivs(prev => active ? prev.filter(x=>x!==d) : [...prev, d])}
+              style={{padding:"3px 10px",borderRadius:12,border:"1px solid "+(active?C.gold:C.border),background:active?"rgba(233,30,140,0.12)":"transparent",color:active?C.gold:C.mut,cursor:"pointer",fontSize:11,fontWeight:600,fontFamily:"inherit"}}>
+              {d} ({count})
+            </button>;
+          })}
+          {evalExtraDivs.length > 0 && <button onClick={()=>setEvalExtraDivs([])} style={{background:"none",border:"none",color:C.mut,fontSize:10,cursor:"pointer",textDecoration:"underline",fontFamily:"inherit",marginLeft:4}}>clear</button>}
         </div>
         <div style={{background:C.card,borderRadius:12,border:"1px solid "+C.border,overflow:"hidden"}}>
           <div style={{overflowX:"auto"}}>
@@ -921,7 +939,7 @@ export default function App() {
         <div style={{display:"flex",gap:4,padding:"10px 18px",borderBottom:"1px solid "+C.border,flexWrap:"wrap"}}>
           {activeDivs.map(d =>
             <button key={d} style={{padding:"5px 14px",borderRadius:16,border:"1px solid "+(activeDiv===d?C.gold:C.border),background:activeDiv===d?"rgba(233,30,140,0.12)":"transparent",color:activeDiv===d?C.gold:C.mut,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600}}
-              onClick={()=>{setActiveDiv(d);setSearch("");setFilterPos("");setFilterProj("");setFilterEval("all");setFilterDate("");}}>
+              onClick={()=>{setActiveDiv(d);setSearch("");setFilterPos("");setFilterProj("");setFilterEval("all");setFilterDate("");setEvalExtraDivs([]);}}>
               {d} ({players.filter(p=>(p.usavDiv||p.usav_div)===d).length})
             </button>
           )}
