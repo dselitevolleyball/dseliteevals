@@ -238,6 +238,13 @@ export default function App() {
     });
   }, [loadPlayers]);
 
+  // Opens the Add Player modal, pre-filling division to the tab the coach is currently looking at.
+  const openAddPlayer = useCallback(() => {
+    setNewPlayer({ first_name:"", last_name:"", dob:"", age:"", usav_div: activeDiv, positions:[], parent_name:"", parent_email:"", parent_phone:"" });
+    setAddMsg("");
+    setAddingPlayer(true);
+  }, [activeDiv]);
+
   // Manual one-off player add. Dedup-warns on first+last name match (case-insensitive, trimmed)
   // — same key we'll use later when merging tryout-registration CSV rows into existing players.
   const handleAddPlayer = useCallback(async () => {
@@ -376,7 +383,7 @@ export default function App() {
               <div style={{fontSize:12,color:C.mut}}>Upload a CSV export from UpperHand to add new players</div>
             </div>
             <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-              <button onClick={()=>{ setAddingPlayer(true); setAddMsg(""); }} style={{padding:"8px 16px",borderRadius:8,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>
+              <button onClick={openAddPlayer} style={{padding:"8px 16px",borderRadius:8,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>
                 + Add Player
               </button>
               <label style={{padding:"8px 16px",borderRadius:8,background:C.gold,color:"#000",fontWeight:700,fontSize:13,cursor:"pointer"}}>
@@ -871,11 +878,17 @@ export default function App() {
           <span style={{fontSize:22}}>◆</span> DS ELITE
           <span style={{fontSize:11,fontWeight:400,color:C.mut,marginLeft:6}}>2026-27 Tryouts</span>
         </div>
-        <nav style={{display:"flex",gap:3}}>
-          {[["dashboard","Dashboard"],["evaluate","Evaluate"],["teams","Teams"],["rankings","Rankings"]].map(([v,l]) =>
-            <button key={v} style={{padding:"6px 14px",borderRadius:8,border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600,background:view===v?C.gold:"transparent",color:view===v?"#000":C.mut}} onClick={()=>setView(v)}>{l}</button>
-          )}
-        </nav>
+        <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+          <nav style={{display:"flex",gap:3}}>
+            {[["dashboard","Dashboard"],["evaluate","Evaluate"],["teams","Teams"],["rankings","Rankings"]].map(([v,l]) =>
+              <button key={v} style={{padding:"6px 14px",borderRadius:8,border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600,background:view===v?C.gold:"transparent",color:view===v?"#000":C.mut}} onClick={()=>setView(v)}>{l}</button>
+            )}
+          </nav>
+          <button onClick={openAddPlayer} title="Add a player from any view"
+            style={{padding:"6px 12px",borderRadius:8,border:"1px solid "+C.gold,background:"transparent",color:C.gold,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700}}>
+            + Add Player
+          </button>
+        </div>
       </header>
       {view !== "dashboard" && (
         <div style={{display:"flex",gap:4,padding:"10px 18px",borderBottom:"1px solid "+C.border,flexWrap:"wrap"}}>
