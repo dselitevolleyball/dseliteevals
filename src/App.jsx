@@ -10,6 +10,7 @@ const PROJ_OPTS = ["","1","1/2","2","2/3","3"];
 const ROSTER_POS = ["S1","S2","Pin1","Pin2","Pin3","Pin4","M1","M2","M3","L","DS1","DS2","U1","U2"];
 const ROSTER_GROUPS = [{label:"Setters",pos:["S1","S2"]},{label:"Pins",pos:["Pin1","Pin2","Pin3","Pin4"]},{label:"Middles",pos:["M1","M2","M3"]},{label:"Libero/DS",pos:["L","DS1","DS2"]},{label:"Utility",pos:["U1","U2"]}];
 const DIVS = ["U10","U11","U12","U13","U14","U15","U16"];
+const CLINIC_DIVS = ["U14","U15","U16"];
 const TM = {U10:["11-1","11-2","11-3"],U11:["11-1","11-2","11-3"],U12:["12-1","12-2","12-3"],U13:["13-1","13-2","13-3"],U14:["14-1","14-2","14-3"],U15:["15-1","15-2","15-3"],U16:["16 Diamond","16-1","16-2"]};
 const EVAL_DATES = ["5/13","5/14","5/20","5/21","5/27","5/28","6/3","6/4","6/9","6/10"];
 const STATUS_OPTS = ["In Progress","Offered","Accepted","Declined","No Offer"];
@@ -80,6 +81,7 @@ export default function App() {
   const [filterProj, setFilterProj] = useState("");
   const [filterEval, setFilterEval] = useState("all");
   const [filterDate, setFilterDate] = useState("");
+  const [filterClinic, setFilterClinic] = useState("all");
   const [sortBy, setSortBy] = useState("name");
   const [profileId, setProfileId] = useState(null);
   const [uploading, setUploading] = useState(false);
@@ -327,12 +329,15 @@ export default function App() {
     if (filterDate) l = l.filter(p => (p.eval_dates||[]).includes(filterDate));
     if (filterEval === "done") l = l.filter(p => p.eval_complete);
     if (filterEval === "pending") l = l.filter(p => !p.eval_complete);
+    if (filterClinic === "invited") l = l.filter(p => p.id_clinic_invited);
+    else if (filterClinic === "attended") l = l.filter(p => p.id_clinic_attended);
+    else if (filterClinic === "invited_no_show") l = l.filter(p => p.id_clinic_invited && !p.id_clinic_attended);
     if (sortBy === "name") l.sort((a,b) => (a.last_name||"").localeCompare(b.last_name||""));
     else if (sortBy === "score") l.sort((a,b) => tot(b) - tot(a));
     else if (sortBy === "age") l.sort((a,b) => parseInt(b.age||0) - parseInt(a.age||0));
     else if (sortBy === "proj") { const o = {"1":0,"1/2":1,"2":2,"2/3":3,"3":4,"":5}; l.sort((a,b) => (o[a.projected_team]||5) - (o[b.projected_team]||5)); }
     return l;
-  }, [divP, search, filterPos, filterProj, filterEval, filterDate, sortBy]);
+  }, [divP, search, filterPos, filterProj, filterEval, filterDate, filterClinic, sortBy]);
 
   // ─── PASSWORD GATE ───
   if (!authed) {
@@ -453,6 +458,14 @@ export default function App() {
           <select style={{...inpStyle,padding:"7px 10px",fontSize:12}} value={sortBy} onChange={e=>setSortBy(e.target.value)}>
             <option value="name">Name</option><option value="score">Score</option><option value="proj">Projected</option>
           </select>
+          {selectedDivs.some(d => CLINIC_DIVS.includes(d)) && (
+            <select style={{...inpStyle,padding:"7px 10px",fontSize:12,color:filterClinic!=="all"?C.gold:C.text}} value={filterClinic} onChange={e=>setFilterClinic(e.target.value)} title="National Team ID Clinic filter">
+              <option value="all">All Clinic</option>
+              <option value="invited">Invited</option>
+              <option value="attended">Attended</option>
+              <option value="invited_no_show">Invited, no-show</option>
+            </select>
+          )}
           <span style={{fontSize:11,color:C.mut,marginLeft:"auto"}}>{saving?"Saving...":filtered.length+" players"}</span>
         </div>
         <div style={{background:C.card,borderRadius:12,border:"1px solid "+C.border,overflow:"hidden"}}>
@@ -477,6 +490,8 @@ export default function App() {
                         {p.min_level && <Tag c={C.gold}>Min: {p.min_level}</Tag>}
                         {p.supplemental===1 && <Tag c={C.acc}>SUPP</Tag>}
                         {p.status && p.status !== "In Progress" && <Tag c={STATUS_COLORS[p.status]}>{p.status}</Tag>}
+                        {p.id_clinic_invited && <Tag c={C.gold}>INV</Tag>}
+                        {p.id_clinic_attended && <Tag c={C.grn}>ATT</Tag>}
                       </div>
                     </td>
                     <td style={tdS}><input style={{...inpStyle,width:100,fontSize:11,padding:"4px 6px"}} placeholder="Prev team..." value={p.current_team||""} onChange={e=>upd(p.id,{current_team:e.target.value})} /></td>
@@ -837,6 +852,22 @@ export default function App() {
                 onClick={()=>{const next=active?(p.eval_dates||[]).filter(x=>x!==d):[...(p.eval_dates||[]),d]; upd(p.id,{eval_dates:next});}}>{d}</button>;
             })}</div>
           </div>
+          {/* National Team ID Clinic (U14/U15/U16 only) */}
+          {CLINIC_DIVS.includes(p.usavDiv || p.usav_div) && (
+            <div style={{marginBottom:14}}>
+              <span style={lbl}>National Team ID Clinic</span>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                <button onClick={()=>upd(p.id,{id_clinic_invited:!p.id_clinic_invited})}
+                  style={{padding:"8px 16px",borderRadius:8,fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit",border:p.id_clinic_invited?"2px solid "+C.gold:"1px solid "+C.border,background:p.id_clinic_invited?"rgba(233,30,140,0.15)":"transparent",color:p.id_clinic_invited?C.gold:C.mut}}>
+                  {p.id_clinic_invited ? "✓ Invited" : "Mark Invited"}
+                </button>
+                <button onClick={()=>upd(p.id,{id_clinic_attended:!p.id_clinic_attended})}
+                  style={{padding:"8px 16px",borderRadius:8,fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit",border:p.id_clinic_attended?"2px solid "+C.grn:"1px solid "+C.border,background:p.id_clinic_attended?"rgba(34,197,94,0.15)":"transparent",color:p.id_clinic_attended?C.grn:C.mut}}>
+                  {p.id_clinic_attended ? "✓ Attended" : "Mark Attended"}
+                </button>
+              </div>
+            </div>
+          )}
           {/* Registration Info */}
           <div style={{background:C.bg,borderRadius:10,padding:14}}>
             <div style={{fontSize:11,fontWeight:700,color:C.gold,marginBottom:10}}>REGISTRATION INFO & INTAKE</div>

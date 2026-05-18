@@ -34,6 +34,8 @@ CREATE TABLE players (
   current_team TEXT DEFAULT '',
   eval_dates TEXT[] DEFAULT '{}',
   roster_pos TEXT DEFAULT '',
+  id_clinic_invited BOOLEAN NOT NULL DEFAULT FALSE,
+  id_clinic_attended BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
