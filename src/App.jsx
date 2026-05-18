@@ -32,6 +32,13 @@ function isReturningDSE(p) {
   const t = (p.current_team || "").toUpperCase();
   return t.includes("DSE") || t.includes("DS ELITE");
 }
+// Highlights players added to the DB in the last 3 days — surfaces fresh CSV uploads.
+const NEW_PLAYER_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
+function isNewPlayer(p) {
+  if (!p.created_at) return false;
+  const t = new Date(p.created_at).getTime();
+  return Number.isFinite(t) && (Date.now() - t) < NEW_PLAYER_WINDOW_MS;
+}
 
 const inpStyle = {background:"#1a1a1a",border:"1px solid "+C.border,borderRadius:6,color:C.text,fontFamily:"inherit",outline:"none"};
 
@@ -237,18 +244,41 @@ export default function App() {
           setUploadMsg("No players found in CSV."); setUploading(false); return;
         }
 
-        setUploadMsg("Uploading " + newPlayers.length + " players...");
-        const { error } = await supabase.from("players").insert(newPlayers);
+        // Dedup against existing players by first+last name (case-insensitive, trimmed)
+        // — same key as the manual Add Player flow. Re-uploading the UpperHand export
+        // is expected; skip rows that already exist so we don't duplicate everyone.
+        const existingKeys = new Set(
+          players.map(p => ((p.first_name||"").trim().toLowerCase() + "|" + (p.last_name||"").trim().toLowerCase()))
+        );
+        const toInsert = [];
+        const skipped = [];
+        for (const np of newPlayers) {
+          const key = (np.first_name||"").trim().toLowerCase() + "|" + (np.last_name||"").trim().toLowerCase();
+          if (existingKeys.has(key)) { skipped.push(np); continue; }
+          existingKeys.add(key); // also dedup within the CSV itself
+          toInsert.push(np);
+        }
+
+        if (toInsert.length === 0) {
+          setUploadMsg("Nothing new — all " + newPlayers.length + " rows already in DB.");
+          setUploading(false);
+          return;
+        }
+
+        setUploadMsg("Uploading " + toInsert.length + " new players...");
+        const { error } = await supabase.from("players").insert(toInsert);
         if (error) {
           setUploadMsg("Error: " + error.message); setUploading(false); return;
         }
-        setUploadMsg(newPlayers.length + " players uploaded successfully!");
+        const msg = "Added " + toInsert.length + " new player" + (toInsert.length===1?"":"s")
+          + (skipped.length ? ", skipped " + skipped.length + " already in DB." : ".");
+        setUploadMsg(msg);
         await loadPlayers();
         setUploading(false);
       },
       error: (err) => { setUploadMsg("Parse error: " + err.message); setUploading(false); }
     });
-  }, [loadPlayers]);
+  }, [loadPlayers, players]);
 
   // Opens the Add Player modal, pre-filling division to the first selected age tab.
   const openAddPlayer = useCallback(() => {
@@ -487,6 +517,7 @@ export default function App() {
                           <span style={{fontWeight:700,fontSize:12,color:C.gold}}>{p.first_name} {p.last_name}</span>
                         </div>
                         <div style={{fontSize:10,color:C.mut}}>Age {p.age} • {p.usavDiv||p.usav_div}</div>
+                        {isNewPlayer(p) && <Tag c={C.grn}>NEW</Tag>}
                         {p.min_level && <Tag c={C.gold}>Min: {p.min_level}</Tag>}
                         {p.supplemental===1 && <Tag c={C.acc}>SUPP</Tag>}
                         {p.status && p.status !== "In Progress" && <Tag c={STATUS_COLORS[p.status]}>{p.status}</Tag>}
