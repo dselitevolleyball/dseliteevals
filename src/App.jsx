@@ -90,6 +90,8 @@ export default function App() {
   const [filterDate, setFilterDate] = useState("");
   const [filterClinic, setFilterClinic] = useState("all");
   const [sortBy, setSortBy] = useState("name");
+  // Rankings view column sort: key matches a column id in renderRankings' COLS table.
+  const [rankSort, setRankSort] = useState({ key: "total", dir: "desc" });
   const [profileId, setProfileId] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [uploadMsg, setUploadMsg] = useState("");
@@ -754,9 +756,41 @@ export default function App() {
 
   // ─── RANKINGS ───
   function renderRankings() {
-    const ranked = [...divP].filter(p=>tot(p)>0).sort((a,b)=>tot(b)-tot(a));
-    const shown = filterPos ? ranked.filter(p=>(p.positions||[]).includes(filterPos)) : ranked;
     const tdS = {padding:"7px 7px",fontSize:12,borderBottom:"1px solid "+C.border,verticalAlign:"middle"};
+    const PROJ_ORDER = {"1":0,"1/2":1,"2":2,"2/3":3,"3":4,"":5};
+    // Column definitions for the Rankings table. `get` extracts the sort value;
+    // `defDir` is the direction used when first clicking that column (numeric -> desc, text -> asc).
+    const COLS = [
+      { key:"rank",   label:"Rank",   sortable:false },
+      { key:"player", label:"Player", sortable:true,  defDir:"asc",  get:p=>((p.last_name||"")+" "+(p.first_name||"")).toLowerCase() },
+      { key:"age",    label:"Age",    sortable:true,  defDir:"desc", get:p=>parseInt(p.age)||0 },
+      { key:"pos",    label:"Pos",    sortable:true,  defDir:"asc",  get:p=>(p.positions||[]).join(",") },
+      { key:"proj",   label:"Proj",   sortable:true,  defDir:"asc",  get:p=>PROJ_ORDER[p.projected_team]??5 },
+      ...SKILLS.map(sk => ({ key:"sk_"+sk, label:sk, sortable:true, defDir:"desc", get:p=>(p.scores||{})[sk]||0 })),
+      { key:"total",  label:"Total",  sortable:true,  defDir:"desc", get:p=>tot(p) },
+      { key:"avg",    label:"Avg",    sortable:true,  defDir:"desc", get:p=>parseFloat(avg(p))||0 },
+      { key:"team",   label:"Team",   sortable:true,  defDir:"asc",  get:p=>p.team_assignment||"" },
+    ];
+    const activeCol = COLS.find(c => c.key === rankSort.key) || COLS.find(c => c.key === "total");
+    const dirMul = rankSort.dir === "asc" ? 1 : -1;
+    const cmpName = (a,b) => {
+      const an = ((a.last_name||"")+(a.first_name||"")).toLowerCase();
+      const bn = ((b.last_name||"")+(b.first_name||"")).toLowerCase();
+      return an < bn ? -1 : an > bn ? 1 : 0;
+    };
+    const ranked = [...divP].filter(p=>tot(p)>0).sort((a,b) => {
+      const av = activeCol.get(a), bv = activeCol.get(b);
+      if (av < bv) return -1 * dirMul;
+      if (av > bv) return  1 * dirMul;
+      return cmpName(a,b);
+    });
+    const shown = filterPos ? ranked.filter(p=>(p.positions||[]).includes(filterPos)) : ranked;
+    const onSort = (col) => {
+      if (!col.sortable) return;
+      setRankSort(prev => prev.key === col.key
+        ? { key: col.key, dir: prev.dir === "asc" ? "desc" : "asc" }
+        : { key: col.key, dir: col.defDir });
+    };
     return (
       <div>
         <div style={{display:"flex",gap:8,marginBottom:12,alignItems:"center"}}>
@@ -769,7 +803,13 @@ export default function App() {
         <div style={{background:C.card,borderRadius:12,border:"1px solid "+C.border,overflow:"hidden"}}>
           <div style={{overflowX:"auto"}}>
             <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0}}>
-              <thead><tr>{["Rank","Player","Age","Pos","Proj",...SKILLS,"Total","Avg","Team"].map((h,i)=><th key={i} style={{padding:"8px 7px",textAlign:"left",fontSize:9,fontWeight:700,textTransform:"uppercase",color:C.mut,borderBottom:"1px solid "+C.border,background:C.card,position:"sticky",top:0,whiteSpace:"nowrap"}}>{h}</th>)}</tr></thead>
+              <thead><tr>{COLS.map(c => {
+                const isActive = c.key === rankSort.key;
+                const arrow = isActive ? (rankSort.dir === "asc" ? " ▲" : " ▼") : "";
+                return <th key={c.key} onClick={()=>onSort(c)}
+                  style={{padding:"8px 7px",textAlign:"left",fontSize:9,fontWeight:700,textTransform:"uppercase",color:isActive?C.gold:C.mut,borderBottom:"1px solid "+C.border,background:C.card,position:"sticky",top:0,whiteSpace:"nowrap",cursor:c.sortable?"pointer":"default",userSelect:"none"}}
+                  title={c.sortable?"Click to sort":""}>{c.label}{arrow}</th>;
+              })}</tr></thead>
               <tbody>{shown.map((p,i) => (
                 <tr key={p.id}>
                   <td style={tdS}><span style={{fontWeight:800,fontSize:15,color:i<3?C.gold:C.mut}}>#{i+1}</span></td>
