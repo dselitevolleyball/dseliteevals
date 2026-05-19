@@ -501,11 +501,11 @@ export default function App() {
           <span style={{fontSize:11,color:C.mut,marginLeft:"auto"}}>{saving?"Saving...":filtered.length+" players"}</span>
         </div>
         <div style={{background:C.card,borderRadius:12,border:"1px solid "+C.border,overflow:"hidden"}}>
-          <div style={{overflowX:"auto"}}>
+          <div style={{overflow:"auto",maxHeight:"calc(100vh - 200px)"}}>
             <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0}}>
               <thead><tr>
                 {["#","Player","Prev Team","Pos","Proj",...SKILLS,"Tot","Avg","Team","Status","Notes","TRY","✓"].map((h,i) =>
-                  <th key={i} style={{padding:"8px 7px",textAlign:"left",fontSize:9,fontWeight:700,textTransform:"uppercase",color:C.mut,borderBottom:"1px solid "+C.border,background:C.card,position:"sticky",top:0,whiteSpace:"nowrap"}}>{h}</th>
+                  <th key={i} style={{padding:"8px 7px",textAlign:"left",fontSize:9,fontWeight:700,textTransform:"uppercase",color:C.mut,borderBottom:"1px solid "+C.border,background:C.card,position:"sticky",top:0,zIndex:2,whiteSpace:"nowrap",boxShadow:"0 1px 0 "+C.border}}>{h}</th>
                 )}
               </tr></thead>
               <tbody>
