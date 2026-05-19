@@ -36,6 +36,8 @@ CREATE TABLE players (
   roster_pos TEXT DEFAULT '',
   id_clinic_invited BOOLEAN NOT NULL DEFAULT FALSE,
   id_clinic_attended BOOLEAN NOT NULL DEFAULT FALSE,
+  feedback_session_complete BOOLEAN NOT NULL DEFAULT FALSE,
+  parent_feedback_notes TEXT NOT NULL DEFAULT '',
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
