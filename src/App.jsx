@@ -6,6 +6,9 @@ import { DndContext, useDraggable, useDroppable, PointerSensor, TouchSensor, use
 const POSITIONS = ["S","OH","MB","RS","L","DS","U"];
 const POS_LABELS = {S:"Setter",OH:"Outside Hitter",MB:"Middle Blocker",RS:"Right Side",L:"Libero",DS:"Def Specialist",U:"Utility"};
 const SKILLS = ["Serving","Passing","Serve Receive","Attacking","Setting","Blocking","Agility","Communication","Coachability"];
+// Short labels for the Evaluate-table column headers (full name shown on hover).
+// Lets us fit all 9 skill columns on a single screen without horizontal scrolling.
+const SKILL_ABBR = {Serving:"SRV",Passing:"PASS","Serve Receive":"S/R",Attacking:"ATK",Setting:"SET",Blocking:"BLK",Agility:"AGI",Communication:"COM",Coachability:"COACH"};
 const PROJ_OPTS = ["","1","1/2","2","2/3","3"];
 const ROSTER_POS = ["S1","S2","Pin1","Pin2","Pin3","Pin4","M1","M2","M3","L","DS1","DS2","U1","U2"];
 const ROSTER_GROUPS = [{label:"Setters",pos:["S1","S2"]},{label:"Pins",pos:["Pin1","Pin2","Pin3","Pin4"]},{label:"Middles",pos:["M1","M2","M3"]},{label:"Libero/DS",pos:["L","DS1","DS2"]},{label:"Utility",pos:["U1","U2"]}];
@@ -396,9 +399,9 @@ export default function App() {
 
   function ScoreB({player, skill}) {
     const cur = (player.scores && player.scores[skill]) || 0;
-    return <div style={{display:"flex",gap:2}}>{[1,2,3,4,5].map(v => {
+    return <div style={{display:"flex",gap:1}}>{[1,2,3,4,5].map(v => {
       const active = cur === v;
-      return <button key={v} style={{width:28,height:26,borderRadius:5,border:active?"2px solid "+C.gold:"1px solid "+C.border,cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:700,
+      return <button key={v} style={{width:22,height:22,borderRadius:4,padding:0,border:active?"2px solid "+C.gold:"1px solid "+C.border,cursor:"pointer",fontFamily:"inherit",fontSize:10,fontWeight:700,
         background:active?(v>=4?"rgba(34,197,94,0.2)":v>=3?"rgba(233,30,140,0.2)":"rgba(239,68,68,0.15)"):"transparent",
         color:active?(v>=4?C.grn:v>=3?C.gold:C.red):C.mut}} onClick={() => upd(player.id, {scores:{...player.scores,[skill]:cur===v?0:v}})}>{v}</button>;
     })}</div>;
@@ -473,7 +476,7 @@ export default function App() {
 
   // ─── EVALUATE TABLE ───
   function renderEval() {
-    const tdS = {padding:"7px 7px",fontSize:12,borderBottom:"1px solid "+C.border,verticalAlign:"middle"};
+    const tdS = {padding:"5px 4px",fontSize:12,borderBottom:"1px solid "+C.border,verticalAlign:"middle"};
     return (
       <div>
         <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap",alignItems:"center"}}>
@@ -504,14 +507,18 @@ export default function App() {
           <div style={{overflow:"auto",maxHeight:"calc(100vh - 200px)"}}>
             <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0}}>
               <thead><tr>
-                {["#","Player","Prev Team","Pos","Proj",...SKILLS,"Tot","Avg","Team","Status","Notes","TRY","✓"].map((h,i) =>
-                  <th key={i} style={{padding:"8px 7px",textAlign:"left",fontSize:9,fontWeight:700,textTransform:"uppercase",color:C.mut,borderBottom:"1px solid "+C.border,background:C.card,position:"sticky",top:0,zIndex:2,whiteSpace:"nowrap",boxShadow:"0 1px 0 "+C.border}}>{h}</th>
+                {[
+                  {label:"#"},{label:"Player"},{label:"Pos"},{label:"Proj"},
+                  ...SKILLS.map(s => ({label: SKILL_ABBR[s] || s, full: s})),
+                  {label:"Tot"},{label:"Avg"},{label:"Team"},{label:"Notes"},{label:"✓",full:"Evaluation complete"}
+                ].map((h,i) =>
+                  <th key={i} title={h.full||""} style={{padding:"6px 4px",textAlign:"left",fontSize:9,fontWeight:700,textTransform:"uppercase",color:C.mut,borderBottom:"1px solid "+C.border,background:C.card,position:"sticky",top:0,zIndex:2,whiteSpace:"nowrap",boxShadow:"0 1px 0 "+C.border}}>{h.label}</th>
                 )}
               </tr></thead>
               <tbody>
                 {filtered.map(p => (
                   <tr key={p.id}>
-                    <td style={tdS}><input style={{...inpStyle,width:30,padding:"3px",textAlign:"center",fontSize:10}} value={p.tryout_number||""} placeholder="—" onChange={e=>upd(p.id,{tryout_number:e.target.value})} /></td>
+                    <td style={tdS}><input style={{...inpStyle,width:26,padding:"3px",textAlign:"center",fontSize:10}} value={p.tryout_number||""} placeholder="—" onChange={e=>upd(p.id,{tryout_number:e.target.value})} /></td>
                     <td style={tdS}>
                       <div style={{cursor:"pointer"}} onClick={()=>setProfileId(p.id)}>
                         <div style={{display:"flex",alignItems:"center",gap:5}}>
@@ -527,28 +534,21 @@ export default function App() {
                         {p.id_clinic_attended && <Tag c={C.grn}>ATT</Tag>}
                       </div>
                     </td>
-                    <td style={tdS}><input style={{...inpStyle,width:100,fontSize:11,padding:"4px 6px"}} placeholder="Prev team..." value={p.current_team||""} onChange={e=>upd(p.id,{current_team:e.target.value})} /></td>
                     <td style={tdS}><PosChips player={p} /></td>
-                    <td style={tdS}><select style={{...inpStyle,width:44,fontSize:10,padding:"3px 1px"}} value={p.projected_team||""} onChange={e=>upd(p.id,{projected_team:e.target.value})}>{PROJ_OPTS.map(o=><option key={o} value={o}>{o||"—"}</option>)}</select></td>
+                    <td style={tdS}><select style={{...inpStyle,width:40,fontSize:10,padding:"3px 1px"}} value={p.projected_team||""} onChange={e=>upd(p.id,{projected_team:e.target.value})}>{PROJ_OPTS.map(o=><option key={o} value={o}>{o||"—"}</option>)}</select></td>
                     {SKILLS.map(sk=><td key={sk} style={tdS}><ScoreB player={p} skill={sk} /></td>)}
                     <td style={tdS}><span style={{fontWeight:800,fontSize:14,color:tot(p)?C.gold:C.mut}}>{tot(p)||"—"}</span></td>
                     <td style={tdS}><span style={{fontWeight:600,fontSize:12}}>{avg(p)}</span></td>
                     <td style={tdS}>
-                      <select style={{...inpStyle,fontSize:10,padding:"3px",width:90}} value={p.team_assignment||""} onChange={e=>upd(p.id,{team_assignment:e.target.value,roster_pos:""})}>
+                      <select style={{...inpStyle,fontSize:10,padding:"3px",width:74}} value={p.team_assignment||""} onChange={e=>upd(p.id,{team_assignment:e.target.value,roster_pos:""})}>
                         <option value="">{"—"}</option>{(TM[p.usavDiv||p.usav_div]||[]).map(t=><option key={t} value={t}>{t}</option>)}
                       </select>
-                      {p.team_assignment && <select style={{...inpStyle,fontSize:9,padding:"2px",width:58,marginTop:2,display:"block"}} value={p.roster_pos||""} onChange={e=>upd(p.id,{roster_pos:e.target.value})}>
+                      {p.team_assignment && <select style={{...inpStyle,fontSize:9,padding:"2px",width:54,marginTop:2,display:"block"}} value={p.roster_pos||""} onChange={e=>upd(p.id,{roster_pos:e.target.value})}>
                         <option value="">Roster</option>
                         {ROSTER_POS.map(rp => { const taken = players.some(o=>o.id!==p.id&&o.team_assignment===p.team_assignment&&o.roster_pos===rp); return <option key={rp} value={rp} disabled={taken}>{rp}{taken?" ✓":""}</option>; })}
                       </select>}
                     </td>
-                    <td style={tdS}>
-                      <select style={{...inpStyle,fontSize:10,padding:"3px",width:85,color:STATUS_COLORS[p.status||"In Progress"]}} value={p.status||"In Progress"} onChange={e=>upd(p.id,{status:e.target.value})}>
-                        {STATUS_OPTS.map(s=><option key={s} value={s}>{s}</option>)}
-                      </select>
-                    </td>
-                    <td style={tdS}><input style={{...inpStyle,width:140,fontSize:11,padding:"4px 6px"}} placeholder="Notes..." value={p.notes||""} onChange={e=>upd(p.id,{notes:e.target.value})} /></td>
-                    <td style={tdS}><input type="checkbox" checked={p.supplemental===1} onChange={e=>upd(p.id,{supplemental:e.target.checked?1:0})} style={{width:16,height:16,cursor:"pointer",accentColor:"#ff69b4"}} title="Using eval as tryout" /></td>
+                    <td style={tdS}><input style={{...inpStyle,width:90,fontSize:11,padding:"4px 6px"}} placeholder="Notes..." value={p.notes||""} onChange={e=>upd(p.id,{notes:e.target.value})} /></td>
                     <td style={tdS}><input type="checkbox" checked={!!p.eval_complete} onChange={e=>upd(p.id,{eval_complete:e.target.checked})} style={{width:16,height:16,cursor:"pointer",accentColor:C.gold}} /></td>
                   </tr>
                 ))}
