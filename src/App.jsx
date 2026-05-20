@@ -943,9 +943,10 @@ export default function App() {
           {/* Registration Info */}
           <div style={{background:C.bg,borderRadius:10,padding:14}}>
             <div style={{fontSize:11,fontWeight:700,color:C.gold,marginBottom:10}}>REGISTRATION INFO & INTAKE</div>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
-              <div><span style={lbl}>Parent</span><div style={{fontSize:13}}>{p.parent_name||"—"}</div></div>
-              <div><span style={lbl}>Contact</span><div style={{fontSize:11,wordBreak:"break-all"}}>{p.parent_email}<br/>{p.parent_phone}</div></div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:10}}>
+              <div><span style={lbl}>Parent Name</span><input style={editInp} placeholder="Parent name" value={p.parent_name||""} onChange={e=>upd(p.id,{parent_name:e.target.value})} /></div>
+              <div><span style={lbl}>Parent Email</span><input type="email" style={editInp} placeholder="email@example.com" value={p.parent_email||""} onChange={e=>upd(p.id,{parent_email:e.target.value})} /></div>
+              <div><span style={lbl}>Parent Phone</span><input style={editInp} placeholder="555-555-5555" value={p.parent_phone||""} onChange={e=>upd(p.id,{parent_phone:e.target.value})} /></div>
             </div>
             {[["Position / Experience",p.reg_position],["Strengths / Improvement",p.strength_weakness],["Ideal Coach",p.ideal_coach],["Goals",p.goal],["Starter Preference",p.starter_pref]].map(([label,val])=>
               val && val!=="na" && <div key={label} style={{marginBottom:10,borderTop:"1px solid "+C.border,paddingTop:8}}><span style={lbl}>{label}</span><div style={{fontSize:13,lineHeight:1.5}}>{val}</div></div>
