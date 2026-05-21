@@ -95,6 +95,9 @@ export default function App() {
   const [sortBy, setSortBy] = useState("name");
   // Rankings view column sort: key matches a column id in renderRankings' COLS table.
   const [rankSort, setRankSort] = useState({ key: "total", dir: "desc" });
+  // Rankings view date filter — independent from the Evaluate-tab date filter so
+  // switching views doesn't carry the selection over.
+  const [rankDate, setRankDate] = useState("");
   const [profileId, setProfileId] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [uploadMsg, setUploadMsg] = useState("");
@@ -778,12 +781,15 @@ export default function App() {
       const bn = ((b.last_name||"")+(b.first_name||"")).toLowerCase();
       return an < bn ? -1 : an > bn ? 1 : 0;
     };
-    const ranked = [...divP].filter(p=>tot(p)>0).sort((a,b) => {
-      const av = activeCol.get(a), bv = activeCol.get(b);
-      if (av < bv) return -1 * dirMul;
-      if (av > bv) return  1 * dirMul;
-      return cmpName(a,b);
-    });
+    const ranked = [...divP]
+      .filter(p => tot(p) > 0)
+      .filter(p => !rankDate || (p.eval_dates||[]).includes(rankDate))
+      .sort((a,b) => {
+        const av = activeCol.get(a), bv = activeCol.get(b);
+        if (av < bv) return -1 * dirMul;
+        if (av > bv) return  1 * dirMul;
+        return cmpName(a,b);
+      });
     const shown = filterPos ? ranked.filter(p=>(p.positions||[]).includes(filterPos)) : ranked;
     const onSort = (col) => {
       if (!col.sortable) return;
@@ -793,10 +799,14 @@ export default function App() {
     };
     return (
       <div>
-        <div style={{display:"flex",gap:8,marginBottom:12,alignItems:"center"}}>
+        <div style={{display:"flex",gap:8,marginBottom:12,alignItems:"center",flexWrap:"wrap"}}>
           <span style={{fontSize:12,color:C.mut,fontWeight:600}}>Rank by position:</span>
           <select style={{...inpStyle,padding:"7px 10px",fontSize:12}} value={filterPos} onChange={e=>setFilterPos(e.target.value)}>
             <option value="">All</option>{POSITIONS.map(p=><option key={p} value={p}>{p} - {POS_LABELS[p]}</option>)}
+          </select>
+          <span style={{fontSize:12,color:C.mut,fontWeight:600,marginLeft:6}}>Eval date:</span>
+          <select style={{...inpStyle,padding:"7px 10px",fontSize:12,color:rankDate?C.gold:C.text}} value={rankDate} onChange={e=>setRankDate(e.target.value)} title="Limit rankings to players evaluated on this date">
+            <option value="">All Dates</option>{EVAL_DATES.map(d=><option key={d} value={d}>{d}</option>)}
           </select>
           <span style={{fontSize:11,color:C.mut,marginLeft:"auto"}}>{shown.length} ranked</span>
         </div>
