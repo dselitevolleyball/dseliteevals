@@ -92,6 +92,9 @@ export default function App() {
   const [filterEval, setFilterEval] = useState("all");
   const [filterDate, setFilterDate] = useState("");
   const [filterClinic, setFilterClinic] = useState("all");
+  // "Registered since" date filter (YYYY-MM-DD) — drives the email-the-new-batch workflow.
+  const [regSince, setRegSince] = useState("");
+  const [copiedEmails, setCopiedEmails] = useState(false);
   const [sortBy, setSortBy] = useState("name");
   // Rankings view column sort: key matches a column id in renderRankings' COLS table.
   const [rankSort, setRankSort] = useState({ key: "total", dir: "desc" });
@@ -370,12 +373,13 @@ export default function App() {
     if (filterClinic === "invited") l = l.filter(p => p.id_clinic_invited);
     else if (filterClinic === "attended") l = l.filter(p => p.id_clinic_attended);
     else if (filterClinic === "invited_no_show") l = l.filter(p => p.id_clinic_invited && !p.id_clinic_attended);
+    if (regSince) l = l.filter(p => p.created_at && p.created_at >= regSince);
     if (sortBy === "name") l.sort((a,b) => (a.last_name||"").localeCompare(b.last_name||""));
     else if (sortBy === "score") l.sort((a,b) => tot(b) - tot(a));
     else if (sortBy === "age") l.sort((a,b) => parseInt(b.age||0) - parseInt(a.age||0));
     else if (sortBy === "proj") { const o = {"1":0,"1/2":1,"2":2,"2/3":3,"3":4,"":5}; l.sort((a,b) => (o[a.projected_team]||5) - (o[b.projected_team]||5)); }
     return l;
-  }, [divP, search, filterPos, filterProj, filterEval, filterDate, filterClinic, sortBy]);
+  }, [divP, search, filterPos, filterProj, filterEval, filterDate, filterClinic, regSince, sortBy]);
 
   // ─── PASSWORD GATE ───
   if (!authed) {
@@ -423,6 +427,19 @@ export default function App() {
   function renderDashboard() {
     const evald = players.filter(p => p.eval_complete).length;
     const assigned = players.filter(p => p.team_assignment).length;
+    // Group players by the date portion of created_at — surfaces when each
+    // CSV/manual batch was added. Limit to last 21 days so this stays useful.
+    const cutoffMs = Date.now() - 21 * 24 * 60 * 60 * 1000;
+    const byUploadDate = {};
+    players.forEach(p => {
+      if (!p.created_at) return;
+      const t = new Date(p.created_at).getTime();
+      if (!Number.isFinite(t) || t < cutoffMs) return;
+      const key = new Date(p.created_at).toISOString().slice(0, 10); // YYYY-MM-DD
+      if (!byUploadDate[key]) byUploadDate[key] = [];
+      byUploadDate[key].push(p);
+    });
+    const uploadDays = Object.keys(byUploadDate).sort().reverse();
     return (
       <div>
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))",gap:12,marginBottom:18}}>
@@ -455,6 +472,48 @@ export default function App() {
           </div>
           {uploadMsg && <div style={{marginTop:8,fontSize:12,color:uploadMsg.includes("Error")? C.red : C.grn}}>{uploadMsg}</div>}
         </div>
+        {/* Recent Registrations — grouped by created_at date, last 21 days */}
+        {uploadDays.length > 0 && (
+          <div style={{background:C.card,borderRadius:12,padding:"18px 20px",border:"1px solid "+C.border,marginBottom:18}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:10,flexWrap:"wrap",gap:8}}>
+              <div>
+                <div style={{fontSize:14,fontWeight:700,color:C.gold}}>Recent Registrations</div>
+                <div style={{fontSize:12,color:C.mut}}>Players added in the last 21 days, grouped by upload date.</div>
+              </div>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:6}}>
+              {uploadDays.map(day => {
+                const group = byUploadDate[day];
+                const emails = [...new Set(group.map(p => (p.parent_email||"").trim()).filter(Boolean))];
+                const pretty = new Date(day + "T00:00:00").toLocaleDateString(undefined, {weekday:"short", month:"short", day:"numeric"});
+                return (
+                  <div key={day} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"8px 12px",background:C.bg,borderRadius:8,border:"1px solid "+C.border,flexWrap:"wrap"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+                      <span style={{fontSize:13,fontWeight:700,color:C.gold,minWidth:120}}>{pretty}</span>
+                      <Tag c={C.acc}>{group.length} player{group.length===1?"":"s"}</Tag>
+                      <span style={{fontSize:11,color:C.mut}}>{emails.length} parent email{emails.length===1?"":"s"}</span>
+                    </div>
+                    <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                      <button onClick={() => { setRegSince(day); setView("evaluate"); }}
+                        title="Filter the Evaluate view to players registered on or after this date"
+                        style={{padding:"6px 10px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.text,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+                        View
+                      </button>
+                      <button onClick={() => {
+                        if (!emails.length) { window.alert("No parent emails found for this date."); return; }
+                        navigator.clipboard.writeText(emails.join(", ")).then(()=>{ setCopiedEmails(true); setTimeout(()=>setCopiedEmails(false), 2000); });
+                      }} disabled={!emails.length}
+                        style={{padding:"6px 10px",borderRadius:6,border:"1px solid "+(emails.length?C.gold:C.border),background:"transparent",color:emails.length?C.gold:C.mut,fontSize:11,fontWeight:700,cursor:emails.length?"pointer":"default",fontFamily:"inherit"}}>
+                        Copy emails
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            {copiedEmails && <div style={{marginTop:8,fontSize:11,color:C.grn}}>Copied to clipboard.</div>}
+          </div>
+        )}
         {/* Age Group Cards */}
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))",gap:12}}>
           {divsWithPlayers.map(d => {
@@ -504,6 +563,17 @@ export default function App() {
               <option value="invited_no_show">Invited, no-show</option>
             </select>
           )}
+          <span style={{fontSize:11,color:C.mut,marginLeft:8}}>Registered since:</span>
+          <input type="date" style={{...inpStyle,padding:"6px 10px",fontSize:12,color:regSince?C.gold:C.text,colorScheme:"dark"}} value={regSince} onChange={e=>setRegSince(e.target.value)} title="Show only players whose created_at is on or after this date" />
+          {regSince && <button onClick={()=>setRegSince("")} title="Clear date filter" style={{padding:"6px 8px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>×</button>}
+          <button onClick={() => {
+            const emails = filtered.map(p => (p.parent_email||"").trim()).filter(Boolean);
+            const uniq = [...new Set(emails)];
+            if (!uniq.length) { window.alert("No parent emails found for the current filter."); return; }
+            navigator.clipboard.writeText(uniq.join(", ")).then(()=>{ setCopiedEmails(true); setTimeout(()=>setCopiedEmails(false), 2000); });
+          }} title="Copy parent emails of currently visible players to clipboard, comma-separated" style={{padding:"6px 10px",borderRadius:6,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+            {copiedEmails ? "Copied ✓" : "Copy emails"}
+          </button>
           <span style={{fontSize:11,color:C.mut,marginLeft:"auto"}}>{saving?"Saving...":filtered.length+" players"}</span>
         </div>
         <div style={{background:C.card,borderRadius:12,border:"1px solid "+C.border,overflow:"hidden"}}>
