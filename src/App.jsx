@@ -979,6 +979,24 @@ export default function App() {
             <input type="checkbox" checked={!!p.eval_complete} readOnly style={{width:20,height:20,accentColor:C.gold,cursor:"pointer"}} />
             <span style={{fontSize:14,fontWeight:700,color:p.eval_complete?C.grn:C.mut}}>{p.eval_complete?"Evaluation Complete ✓":"Mark Evaluation Complete"}</span>
           </div>
+          {/* Danger zone — delete player. Two-step confirmation guards against mis-clicks. */}
+          <div style={{marginTop:24,paddingTop:16,borderTop:"1px solid "+C.border}}>
+            <div style={{fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.red,marginBottom:8,letterSpacing:0.5}}>Danger Zone</div>
+            <button
+              onClick={async () => {
+                const name = (p.first_name || "") + " " + (p.last_name || "");
+                if (!window.confirm("Delete " + name.trim() + " permanently? This cannot be undone.")) return;
+                if (!window.confirm("Are you sure? All scores, notes, and team assignments for " + name.trim() + " will be lost.")) return;
+                const { error } = await supabase.from("players").delete().eq("id", p.id);
+                if (error) { window.alert("Delete failed: " + error.message); return; }
+                setProfileId(null);
+                await loadPlayers();
+              }}
+              style={{padding:"10px 16px",borderRadius:8,border:"1px solid "+C.red,background:"transparent",color:C.red,fontFamily:"inherit",fontSize:13,fontWeight:700,cursor:"pointer"}}>
+              Delete Player
+            </button>
+            <div style={{fontSize:11,color:C.mut,marginTop:6}}>Removes this player and all their evaluation data from the database. You'll be asked to confirm twice.</div>
+          </div>
         </div>
       </div>
     );
