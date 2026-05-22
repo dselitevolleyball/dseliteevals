@@ -1069,15 +1069,33 @@ export default function App() {
                 onClick={async () => {
                   setAiBusy(true); setAiError(""); setAiResult(""); setAiCopied(false);
                   try {
+                    // Peer comparison within the same age division — only meaningful with enough
+                    // evaluated peers, so band is null when the division has <5 scored players.
+                    const div = p.usavDiv || p.usav_div;
+                    const divPeers = players.filter(o => (o.usavDiv || o.usav_div) === div && tot(o) > 0);
+                    const playerTotal = tot(p);
+                    let division_band = null;
+                    if (playerTotal > 0 && divPeers.length >= 5) {
+                      const betterCount = divPeers.filter(o => tot(o) > playerTotal).length;
+                      const rank = betterCount + 1;
+                      const pct = rank / divPeers.length; // 1/N = best, 1.0 = worst
+                      if (pct <= 0.10)      division_band = "top10";
+                      else if (pct <= 0.25) division_band = "top25";
+                      else if (pct >= 0.90) division_band = "bottom10";
+                      else if (pct >= 0.75) division_band = "bottom25";
+                      else                  division_band = "middle";
+                    }
                     const payload = {
                       first_name: p.first_name, last_name: p.last_name, age: p.age,
-                      usav_div: p.usavDiv || p.usav_div,
+                      usav_div: div,
                       positions: p.positions, scores: p.scores,
                       notes: p.notes, parent_feedback_notes: p.parent_feedback_notes,
                       eval_dates: p.eval_dates,
                       projected_team: p.projected_team, team_assignment: p.team_assignment,
                       status: p.status,
                       strength_weakness: p.strength_weakness, goal: p.goal,
+                      division_band,
+                      division_total_scored: divPeers.length,
                     };
                     const res = await fetch("/api/summarize-player", {
                       method: "POST",
