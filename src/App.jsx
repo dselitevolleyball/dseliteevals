@@ -102,6 +102,14 @@ export default function App() {
   // switching views doesn't carry the selection over.
   const [rankDate, setRankDate] = useState("");
   const [profileId, setProfileId] = useState(null);
+  // AI parent-summary state for the profile modal. Reset whenever the profile changes.
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiResult, setAiResult] = useState("");
+  const [aiError, setAiError] = useState("");
+  const [aiCopied, setAiCopied] = useState(false);
+  useEffect(() => {
+    setAiBusy(false); setAiResult(""); setAiError(""); setAiCopied(false);
+  }, [profileId]);
   const [uploading, setUploading] = useState(false);
   const [uploadMsg, setUploadMsg] = useState("");
   const [saving, setSaving] = useState(false);
@@ -1048,6 +1056,59 @@ export default function App() {
           <div style={{display:"flex",alignItems:"center",gap:10,marginTop:8,padding:"12px 16px",background:p.eval_complete?"rgba(34,197,94,0.1)":C.bg,borderRadius:10,border:"1px solid "+(p.eval_complete?C.grn:C.border),cursor:"pointer"}} onClick={()=>upd(p.id,{eval_complete:!p.eval_complete})}>
             <input type="checkbox" checked={!!p.eval_complete} readOnly style={{width:20,height:20,accentColor:C.gold,cursor:"pointer"}} />
             <span style={{fontSize:14,fontWeight:700,color:p.eval_complete?C.grn:C.mut}}>{p.eval_complete?"Evaluation Complete ✓":"Mark Evaluation Complete"}</span>
+          </div>
+          {/* AI parent-facing summary. Calls /api/summarize-player which proxies Anthropic. */}
+          <div style={{marginTop:16,padding:"14px 16px",background:C.bg,borderRadius:10,border:"1px solid "+C.border}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,flexWrap:"wrap"}}>
+              <div>
+                <div style={{fontSize:12,fontWeight:700,color:C.gold,letterSpacing:0.5}}>AI PARENT SUMMARY</div>
+                <div style={{fontSize:11,color:C.mut,marginTop:2}}>Generates a warm, parent-facing recap you can paste into an email or use as call talking points.</div>
+              </div>
+              <button
+                disabled={aiBusy}
+                onClick={async () => {
+                  setAiBusy(true); setAiError(""); setAiResult(""); setAiCopied(false);
+                  try {
+                    const payload = {
+                      first_name: p.first_name, last_name: p.last_name, age: p.age,
+                      usav_div: p.usavDiv || p.usav_div,
+                      positions: p.positions, scores: p.scores,
+                      notes: p.notes, parent_feedback_notes: p.parent_feedback_notes,
+                      eval_dates: p.eval_dates,
+                      projected_team: p.projected_team, team_assignment: p.team_assignment,
+                      status: p.status,
+                      strength_weakness: p.strength_weakness, goal: p.goal,
+                    };
+                    const res = await fetch("/api/summarize-player", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ player: payload }),
+                    });
+                    const data = await res.json().catch(() => ({}));
+                    if (!res.ok) throw new Error(data.error || ("Request failed (" + res.status + ")"));
+                    setAiResult(data.summary || "");
+                  } catch (e) {
+                    setAiError(e.message || "Generation failed");
+                  } finally {
+                    setAiBusy(false);
+                  }
+                }}
+                style={{padding:"8px 14px",borderRadius:8,border:"none",background:aiBusy?C.border:C.gold,color:aiBusy?C.mut:"#000",fontFamily:"inherit",fontSize:12,fontWeight:700,cursor:aiBusy?"default":"pointer"}}>
+                {aiBusy ? "Writing..." : (aiResult ? "Regenerate" : "Generate Summary")}
+              </button>
+            </div>
+            {aiError && <div style={{marginTop:10,fontSize:12,color:C.red,whiteSpace:"pre-wrap"}}>{aiError}</div>}
+            {aiResult && (
+              <div style={{marginTop:12}}>
+                <div style={{background:"#0a0a0a",border:"1px solid "+C.border,borderRadius:8,padding:"12px 14px",fontSize:13,lineHeight:1.55,whiteSpace:"pre-wrap",color:C.text}}>{aiResult}</div>
+                <div style={{display:"flex",justifyContent:"flex-end",marginTop:8}}>
+                  <button onClick={() => { navigator.clipboard.writeText(aiResult).then(()=>{ setAiCopied(true); setTimeout(()=>setAiCopied(false), 2000); }); }}
+                    style={{padding:"6px 12px",borderRadius:6,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontFamily:"inherit",fontSize:11,fontWeight:700,cursor:"pointer"}}>
+                    {aiCopied ? "Copied ✓" : "Copy to clipboard"}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
           {/* Danger zone — delete player. Two-step confirmation guards against mis-clicks. */}
           <div style={{marginTop:24,paddingTop:16,borderTop:"1px solid "+C.border}}>
