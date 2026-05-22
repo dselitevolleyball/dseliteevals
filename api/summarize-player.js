@@ -39,9 +39,9 @@ The parent will read this either in an email (because they missed the eval sessi
 
 Tone: warm, encouraging, professional, specific. Like a coach who genuinely cares about the player. Conversational but not casual. Use the player's first name throughout. Avoid jargon - if you mention a skill name, briefly explain it in everyday terms.
 
-Structure (3-4 short paragraphs, ~200-300 words total):
+Structure (3-4 short paragraphs, ~220-330 words total):
 1. Open with a warm acknowledgement and 1-2 specific strengths the coaches observed.
-2. If peer comparison data is provided AND the comparative_framing rules below allow it, briefly note how she stacks up against other players we've evaluated in her age group. Otherwise focus on individual context.
+2. If peer comparison data is provided AND the comparative_framing rules below allow it, briefly note how she stacks up against other players we've evaluated in her age group. If a team plan is provided, also use this paragraph (or the next) to describe the broader landscape - how many teams DS Elite is fielding at each competitive level for her age group this year - and where she is currently projecting within that landscape. Stress that the projection is current thinking, not a final decision, and can shift as more information comes in.
 3. One or two areas where she can develop, framed as growth opportunities (not deficits).
 4. Suggested next steps and an invitation for the parent to follow up with questions. Sign off so the coach can add their own name at the bottom (do NOT invent a coach name).
 
@@ -52,13 +52,18 @@ Comparative framing rules (only applies if division_band is present in the paylo
 - division_band = "bottom25" or "bottom10": do NOT mention percentile, ranking, or peer comparison at all. Frame entirely in terms of her own development - skills she's building, what to work on, what growth looks like for her. Phrases like "earlier in her development" are okay only when they fit naturally; never imply she ranks at the bottom.
 - If division_band is missing or null (not enough peers to compare meaningfully), skip the comparison paragraph and use that space for individual context instead.
 
+Team-placement framing rules:
+- DS Elite fields teams at three competitive levels: National (highest), Regional (mid), and Rise (developmental). The team plan in the payload tells you how many of each tier the club is running for THIS age group this season.
+- If projected_team or team_assignment is present, treat it as a working projection based on what coaches have seen so far. Always state explicitly that this projection could change as the evaluation process continues. Acceptable phrasings: "currently projecting toward...", "based on what we've seen so far we'd expect her to fit on...", "this is our current thinking and could shift...".
+- Never describe a projected placement as final, guaranteed, or earned. Never use words like "offer", "cut", "selected", or "made the team".
+- When the team plan is provided, briefly describe the age-group landscape so the parent understands the context (e.g., "we're planning two National-level teams and two Regional teams for this age group this season"). Do NOT list every team name or invent team names not in the data.
+
 Hard rules:
 - ONLY use facts present in the player data. Do not invent details, scores, anecdotes, or quotes.
 - NEVER include raw numeric scores (1-5) or division rank numbers in the prose. Translate scores into qualitative language: a 4 or 5 is "strong" / "comfortable" / "shows real ability"; a 3 is "solid" / "developing nicely"; a 1 or 2 is "an area to keep building" / "still developing".
 - This is feedback after an EVALUATION, not a tryout. Do not use words like "tryout", "made the team", "cut", "selected", "offer".
 - If a player has no scores yet, say so honestly and lean on whatever notes, eval dates, or registration info is available.
 - If coach notes or parent-feedback-session notes are present, weave their substance in. Never quote verbatim.
-- Mention positions and projected team / team assignment positively only if present.
 - Do not mention "AI", "model", "summary", or the fact that this was generated.
 - Output plain text only. No markdown headings, no bold, no bullet points.`;
 
@@ -115,6 +120,23 @@ function buildUserPrompt(player) {
   } else {
     lines.push("");
     lines.push("Peer comparison: not enough evaluated peers in her age division yet to compare meaningfully. Skip the comparison paragraph.");
+  }
+
+  if (player.team_plan && (player.team_plan.national || player.team_plan.regional || player.team_plan.rise)) {
+    const tp = player.team_plan;
+    const parts = [];
+    if (tp.national) parts.push(`${tp.national} National-level team${tp.national===1?"":"s"}`);
+    if (tp.regional) parts.push(`${tp.regional} Regional team${tp.regional===1?"":"s"}`);
+    if (tp.rise)     parts.push(`${tp.rise} Rise (developmental) team${tp.rise===1?"":"s"}`);
+    lines.push("");
+    lines.push(`2026-27 plan for her age group: DS Elite is fielding ${parts.join(", ")}.`);
+    lines.push("Use this to describe the landscape briefly. The plan can still change; treat as the current intent.");
+  }
+
+  if (player.projected_team || player.team_assignment) {
+    lines.push("");
+    if (player.projected_team) lines.push(`Coaches' current projected tier/team: ${player.projected_team} (working projection — frame as "current thinking, could change").`);
+    if (player.team_assignment) lines.push(`Currently penciled in on: ${player.team_assignment} (still subject to change as evaluations continue).`);
   }
 
   lines.push("");

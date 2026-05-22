@@ -15,6 +15,18 @@ const ROSTER_GROUPS = [{label:"Setters",pos:["S1","S2"]},{label:"Pins",pos:["Pin
 const DIVS = ["U10","U11","U12","U13","U14","U15","U16"];
 const CLINIC_DIVS = ["U14","U15","U16"];
 const TM = {U10:["11-1","11-2","11-3"],U11:["11-1","11-2","11-3"],U12:["12-1","12-2","12-3"],U13:["13-1","13-2","13-3","13-4"],U14:["14-1","14-2","14-3","14-4"],U15:["15-1","15-2","15-3"],U16:["16 Diamond","16-1","16-2"]};
+// 2026-27 season club plan: how many teams at each competitive tier per age group.
+// Sent to the AI summary so parents see the broader landscape their daughter is
+// being evaluated against. Edit here when the plan changes.
+const TEAM_PLAN_2026 = {
+  U10: { national: 0, regional: 0, rise: 0 },
+  U11: { national: 0, regional: 1, rise: 1 },
+  U12: { national: 1, regional: 1, rise: 2 },
+  U13: { national: 1, regional: 2, rise: 1 },
+  U14: { national: 2, regional: 2, rise: 0 },
+  U15: { national: 2, regional: 2, rise: 0 },
+  U16: { national: 1, regional: 1, rise: 0 },
+};
 const EVAL_DATES = ["5/13","5/14","5/20","5/21","5/27","5/28","6/3","6/4","6/9","6/10"];
 const STATUS_OPTS = ["In Progress","Offered","Accepted","Declined","No Offer"];
 const STATUS_COLORS = {"In Progress":"#999999","Offered":"#e91e8c","Accepted":"#22c55e","Declined":"#ef4444","No Offer":"#666666"};
@@ -1096,6 +1108,7 @@ export default function App() {
                       strength_weakness: p.strength_weakness, goal: p.goal,
                       division_band,
                       division_total_scored: divPeers.length,
+                      team_plan: TEAM_PLAN_2026[div] || null,
                     };
                     const res = await fetch("/api/summarize-player", {
                       method: "POST",
