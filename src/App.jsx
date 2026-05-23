@@ -634,7 +634,7 @@ export default function App() {
             <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0}}>
               <thead><tr>
                 {[
-                  {label:"#"},{label:"Player"},{label:"Pos"},{label:"Proj"},
+                  {label:"Pinny",full:"Pinny / tryout number"},{label:"Player"},{label:"Pos"},{label:"Proj"},
                   ...SKILLS.map(s => ({label: SKILL_ABBR[s] || s, full: s})),
                   {label:"Tot"},{label:"Avg"},{label:"Team"},{label:"Notes"},{label:"✓",full:"Evaluation complete"}
                 ].map((h,i) =>
@@ -644,7 +644,7 @@ export default function App() {
               <tbody>
                 {filtered.map(p => (
                   <tr key={p.id}>
-                    <td style={tdS}><input style={{...inpStyle,width:26,padding:"3px",textAlign:"center",fontSize:10}} value={p.tryout_number||""} placeholder="—" onChange={e=>upd(p.id,{tryout_number:e.target.value})} /></td>
+                    <td style={tdS}><input style={{...inpStyle,width:44,padding:"4px",textAlign:"center",fontSize:12,fontWeight:700,color:p.tryout_number?C.gold:C.text}} value={p.tryout_number||""} placeholder="—" onChange={e=>upd(p.id,{tryout_number:e.target.value})} /></td>
                     <td style={tdS}>
                       <div style={{cursor:"pointer"}} onClick={()=>setProfileId(p.id)}>
                         <div style={{display:"flex",alignItems:"center",gap:5}}>
@@ -752,6 +752,14 @@ export default function App() {
       upd(playerId, { team_assignment: newTeam, roster_pos: "" });
     };
 
+    // Small pinny-number chip next to a player's name — same source as the
+    // Evaluate table's Pinny column (players.tryout_number). Hidden if blank.
+    const pinnyChip = (player) => {
+      const v = (player.tryout_number || "").trim();
+      if (!v) return null;
+      return <span title="Pinny #" style={{fontSize:9,fontWeight:800,padding:"1px 6px",borderRadius:8,background:"rgba(255,255,255,0.08)",color:C.text,whiteSpace:"nowrap"}}>#{v}</span>;
+    };
+
     // Compact rank chips next to a player's name on team cards (one per position).
     const posRankTags = (player) => (player.positions || []).map(pos => {
       const r = posRankOf(player.id, pos);
@@ -787,7 +795,7 @@ export default function App() {
                               {isReturningDSE(player) && <span title="DS Elite returning athlete" style={{color:C.gold,fontSize:14,fontWeight:800,lineHeight:1}}>◆</span>}
                               {player.first_name} {player.last_name}
                             </span>
-                            <div style={{display:"flex",gap:3,alignItems:"center",flexWrap:"wrap",justifyContent:"flex-end"}}>{posRankTags(player)}</div>
+                            <div style={{display:"flex",gap:3,alignItems:"center",flexWrap:"wrap",justifyContent:"flex-end"}}>{pinnyChip(player)}{posRankTags(player)}</div>
                             <span style={{fontWeight:800,fontSize:13,color:C.gold,minWidth:22,textAlign:"right"}}>{tot(player)||"—"}</span>
                           </>) : <span style={{fontSize:11,color:C.mut,fontStyle:"italic",flex:1}}>open</span>}
                         </div>
@@ -805,7 +813,7 @@ export default function App() {
                           {isReturningDSE(p) && <span title="DS Elite returning athlete" style={{color:C.gold,fontSize:14,fontWeight:800,lineHeight:1}}>◆</span>}
                           {p.first_name} {p.last_name}
                         </span>
-                        <div style={{display:"flex",gap:3,alignItems:"center",flexWrap:"wrap",justifyContent:"flex-end"}}>{posRankTags(p)}</div>
+                        <div style={{display:"flex",gap:3,alignItems:"center",flexWrap:"wrap",justifyContent:"flex-end"}}>{pinnyChip(p)}{posRankTags(p)}</div>
                         <span style={{fontWeight:800,fontSize:13,color:C.gold,minWidth:22,textAlign:"right"}}>{tot(p)||"—"}</span>
                       </div>
                     </DraggablePlayer>
@@ -860,6 +868,7 @@ export default function App() {
                                   {isReturningDSE(p) && <span title="DS Elite returning athlete" style={{color:C.gold,fontSize:14,fontWeight:800,lineHeight:1}}>◆</span>}
                                   {p.first_name} {p.last_name}
                                 </span>
+                                {pinnyChip(p)}
                                 {p.projected_team && <Tag c={C.gold}>{p.projected_team}</Tag>}
                                 <span title="Total points" style={{fontWeight:700,color:C.gold,minWidth:22,textAlign:"right"}}>{tot(p)||"—"}</span>
                                 <span title="Average score" style={{fontWeight:600,color:C.mut,minWidth:26,textAlign:"right",fontSize:10}}>{avg(p)}</span>
@@ -889,6 +898,9 @@ export default function App() {
     const COLS = [
       { key:"rank",   label:"Rank",   sortable:false },
       { key:"player", label:"Player", sortable:true,  defDir:"asc",  get:p=>((p.last_name||"")+" "+(p.first_name||"")).toLowerCase() },
+      // Pinny # (stored as players.tryout_number). Numeric pinnies sort numerically;
+      // blanks sort to the bottom either direction.
+      { key:"pinny",  label:"Pinny",  sortable:true,  defDir:"asc",  get:p=>{ const n=parseInt(p.tryout_number); return isNaN(n)?Number.POSITIVE_INFINITY:n; } },
       { key:"age",    label:"Age",    sortable:true,  defDir:"desc", get:p=>parseInt(p.age)||0 },
       { key:"pos",    label:"Pos",    sortable:true,  defDir:"asc",  get:p=>(p.positions||[]).join(",") },
       { key:"proj",   label:"Proj",   sortable:true,  defDir:"asc",  get:p=>PROJ_ORDER[p.projected_team]??5 },
@@ -947,6 +959,7 @@ export default function App() {
                 <tr key={p.id}>
                   <td style={tdS}><span style={{fontWeight:800,fontSize:15,color:i<3?C.gold:C.mut}}>#{i+1}</span></td>
                   <td style={tdS}><span style={{display:"inline-flex",alignItems:"center",gap:5,fontWeight:700,fontSize:12,color:C.gold,cursor:"pointer"}} onClick={()=>setProfileId(p.id)}>{isReturningDSE(p) && <span title="DS Elite returning athlete" style={{color:C.gold,fontSize:14,fontWeight:800,lineHeight:1}}>◆</span>}{p.first_name} {p.last_name}</span></td>
+                  <td style={tdS}><span style={{fontWeight:700,color:p.tryout_number?C.gold:C.mut}}>{p.tryout_number ? "#"+p.tryout_number : "—"}</span></td>
                   <td style={tdS}>{p.age}</td>
                   <td style={tdS}><div style={{display:"flex",gap:2,flexWrap:"wrap"}}>{(p.positions||[]).map(pos=><Tag key={pos} c={C.grn}>{pos}</Tag>)}</div></td>
                   <td style={tdS}>{p.projected_team && <Tag c={C.gold}>{p.projected_team}</Tag>}</td>
@@ -1026,6 +1039,7 @@ export default function App() {
           </div>
           {/* Division/Team/Roster/Prev/Status */}
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(110px,1fr))",gap:12,marginBottom:14}}>
+            <div><span style={lbl}>Pinny #</span><input style={editInp} placeholder="e.g. 12" value={p.tryout_number||""} onChange={e=>upd(p.id,{tryout_number:e.target.value})} /></div>
             <div>
               <span style={lbl}>USAV Div</span>
               <select style={editInp} value={p.usavDiv||p.usav_div||""}
