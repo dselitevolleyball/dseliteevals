@@ -38,6 +38,8 @@ CREATE TABLE players (
   id_clinic_attended BOOLEAN NOT NULL DEFAULT FALSE,
   feedback_session_complete BOOLEAN NOT NULL DEFAULT FALSE,
   parent_feedback_notes TEXT NOT NULL DEFAULT '',
+  parent_summary TEXT NOT NULL DEFAULT '',
+  parent_summary_updated_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );

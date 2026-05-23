@@ -152,8 +152,17 @@ export default function App() {
   const [aiError, setAiError] = useState("");
   const [aiCopied, setAiCopied] = useState(false);
   const [aiInstruction, setAiInstruction] = useState("");
+  const [aiSavedAt, setAiSavedAt] = useState(null);
+  // When the profile changes, hydrate the AI summary state from the player row
+  // so a previously-generated summary shows up again instead of disappearing.
   useEffect(() => {
-    setAiBusy(false); setAiResult(""); setAiError(""); setAiCopied(false); setAiInstruction("");
+    setAiBusy(false); setAiError(""); setAiCopied(false); setAiInstruction("");
+    const player = players.find(x => x.id === profileId);
+    setAiResult(player?.parent_summary || "");
+    setAiSavedAt(player?.parent_summary_updated_at || null);
+    // Intentionally only re-run when the open profile changes — we don't want
+    // a background players reload to wipe an in-progress edit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profileId]);
   const [uploading, setUploading] = useState(false);
   const [uploadMsg, setUploadMsg] = useState("");
@@ -1122,6 +1131,11 @@ export default function App() {
               <div>
                 <div style={{fontSize:12,fontWeight:700,color:C.gold,letterSpacing:0.5}}>AI PARENT SUMMARY</div>
                 <div style={{fontSize:11,color:C.mut,marginTop:2}}>Generates a warm, parent-facing recap you can paste into an email or use as call talking points.</div>
+                {aiSavedAt && aiResult && (
+                  <div style={{fontSize:10,color:C.mut,marginTop:4,fontStyle:"italic"}}>
+                    Saved · last generated {new Date(aiSavedAt).toLocaleString()}
+                  </div>
+                )}
               </div>
               <button
                 disabled={aiBusy}
@@ -1135,7 +1149,14 @@ export default function App() {
                     });
                     const data = await res.json().catch(() => ({}));
                     if (!res.ok) throw new Error(data.error || ("Request failed (" + res.status + ")"));
-                    setAiResult(data.summary || "");
+                    const summary = data.summary || "";
+                    setAiResult(summary);
+                    // Persist so the summary survives closing the profile / refresh.
+                    if (summary) {
+                      const now = new Date().toISOString();
+                      setAiSavedAt(now);
+                      upd(p.id, { parent_summary: summary, parent_summary_updated_at: now });
+                    }
                   } catch (e) {
                     setAiError(e.message || "Generation failed");
                   } finally {
@@ -1150,7 +1171,15 @@ export default function App() {
             {aiResult && (
               <div style={{marginTop:12}}>
                 <div style={{background:"#0a0a0a",border:"1px solid "+C.border,borderRadius:8,padding:"12px 14px",fontSize:13,lineHeight:1.55,whiteSpace:"pre-wrap",color:C.text}}>{aiResult}</div>
-                <div style={{display:"flex",justifyContent:"flex-end",marginTop:8}}>
+                <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:8}}>
+                  <button onClick={() => {
+                      if (!window.confirm("Clear the saved parent summary for this player?")) return;
+                      setAiResult(""); setAiSavedAt(null); setAiInstruction(""); setAiError("");
+                      upd(p.id, { parent_summary: "", parent_summary_updated_at: null });
+                    }}
+                    style={{padding:"6px 12px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontFamily:"inherit",fontSize:11,fontWeight:700,cursor:"pointer"}}>
+                    Clear saved
+                  </button>
                   <button onClick={() => { navigator.clipboard.writeText(aiResult).then(()=>{ setAiCopied(true); setTimeout(()=>setAiCopied(false), 2000); }); }}
                     style={{padding:"6px 12px",borderRadius:6,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontFamily:"inherit",fontSize:11,fontWeight:700,cursor:"pointer"}}>
                     {aiCopied ? "Copied ✓" : "Copy to clipboard"}
@@ -1186,8 +1215,14 @@ export default function App() {
                           });
                           const data = await res.json().catch(() => ({}));
                           if (!res.ok) throw new Error(data.error || ("Request failed (" + res.status + ")"));
-                          setAiResult(data.summary || "");
+                          const summary = data.summary || "";
+                          setAiResult(summary);
                           setAiInstruction("");
+                          if (summary) {
+                            const now = new Date().toISOString();
+                            setAiSavedAt(now);
+                            upd(p.id, { parent_summary: summary, parent_summary_updated_at: now });
+                          }
                         } catch (e) {
                           setAiError(e.message || "Refinement failed");
                         } finally {
