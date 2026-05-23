@@ -39,6 +39,38 @@ function calcUSAV(dob) {
   return 2026 - (m >= 7 ? y : y - 1);
 }
 function tot(p) { const v = Object.values(p.scores||{}); return v.length?v.reduce((a,b)=>a+b,0):0; }
+
+// Payload sent to /api/summarize-player. Shared by initial generation and
+// the refine flow so both requests describe the player identically.
+function buildPlayerPayload(p, players) {
+  const div = p.usavDiv || p.usav_div;
+  const divPeers = players.filter(o => (o.usavDiv || o.usav_div) === div && tot(o) > 0);
+  const playerTotal = tot(p);
+  let division_band = null;
+  if (playerTotal > 0 && divPeers.length >= 5) {
+    const betterCount = divPeers.filter(o => tot(o) > playerTotal).length;
+    const rank = betterCount + 1;
+    const pct = rank / divPeers.length; // 1/N = best, 1.0 = worst
+    if (pct <= 0.10)      division_band = "top10";
+    else if (pct <= 0.25) division_band = "top25";
+    else if (pct >= 0.90) division_band = "bottom10";
+    else if (pct >= 0.75) division_band = "bottom25";
+    else                  division_band = "middle";
+  }
+  return {
+    first_name: p.first_name, last_name: p.last_name, age: p.age,
+    usav_div: div,
+    positions: p.positions, scores: p.scores,
+    notes: p.notes, parent_feedback_notes: p.parent_feedback_notes,
+    eval_dates: p.eval_dates,
+    projected_team: p.projected_team, team_assignment: p.team_assignment,
+    status: p.status,
+    strength_weakness: p.strength_weakness, goal: p.goal,
+    division_band,
+    division_total_scored: divPeers.length,
+    team_plan: TEAM_PLAN_2026[div] || null,
+  };
+}
 function avg(p) { const v = Object.values(p.scores||{}); return v.length?(v.reduce((a,b)=>a+b,0)/v.length).toFixed(1):"—"; }
 // A player counts as a returning DS Elite athlete if her Prev Season Team field
 // names DSE / DS Elite. Coaches can correct false positives/negatives by editing
@@ -119,8 +151,9 @@ export default function App() {
   const [aiResult, setAiResult] = useState("");
   const [aiError, setAiError] = useState("");
   const [aiCopied, setAiCopied] = useState(false);
+  const [aiInstruction, setAiInstruction] = useState("");
   useEffect(() => {
-    setAiBusy(false); setAiResult(""); setAiError(""); setAiCopied(false);
+    setAiBusy(false); setAiResult(""); setAiError(""); setAiCopied(false); setAiInstruction("");
   }, [profileId]);
   const [uploading, setUploading] = useState(false);
   const [uploadMsg, setUploadMsg] = useState("");
@@ -1079,41 +1112,12 @@ export default function App() {
               <button
                 disabled={aiBusy}
                 onClick={async () => {
-                  setAiBusy(true); setAiError(""); setAiResult(""); setAiCopied(false);
+                  setAiBusy(true); setAiError(""); setAiResult(""); setAiCopied(false); setAiInstruction("");
                   try {
-                    // Peer comparison within the same age division — only meaningful with enough
-                    // evaluated peers, so band is null when the division has <5 scored players.
-                    const div = p.usavDiv || p.usav_div;
-                    const divPeers = players.filter(o => (o.usavDiv || o.usav_div) === div && tot(o) > 0);
-                    const playerTotal = tot(p);
-                    let division_band = null;
-                    if (playerTotal > 0 && divPeers.length >= 5) {
-                      const betterCount = divPeers.filter(o => tot(o) > playerTotal).length;
-                      const rank = betterCount + 1;
-                      const pct = rank / divPeers.length; // 1/N = best, 1.0 = worst
-                      if (pct <= 0.10)      division_band = "top10";
-                      else if (pct <= 0.25) division_band = "top25";
-                      else if (pct >= 0.90) division_band = "bottom10";
-                      else if (pct >= 0.75) division_band = "bottom25";
-                      else                  division_band = "middle";
-                    }
-                    const payload = {
-                      first_name: p.first_name, last_name: p.last_name, age: p.age,
-                      usav_div: div,
-                      positions: p.positions, scores: p.scores,
-                      notes: p.notes, parent_feedback_notes: p.parent_feedback_notes,
-                      eval_dates: p.eval_dates,
-                      projected_team: p.projected_team, team_assignment: p.team_assignment,
-                      status: p.status,
-                      strength_weakness: p.strength_weakness, goal: p.goal,
-                      division_band,
-                      division_total_scored: divPeers.length,
-                      team_plan: TEAM_PLAN_2026[div] || null,
-                    };
                     const res = await fetch("/api/summarize-player", {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ player: payload }),
+                      body: JSON.stringify({ player: buildPlayerPayload(p, players) }),
                     });
                     const data = await res.json().catch(() => ({}));
                     if (!res.ok) throw new Error(data.error || ("Request failed (" + res.status + ")"));
@@ -1137,6 +1141,49 @@ export default function App() {
                     style={{padding:"6px 12px",borderRadius:6,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontFamily:"inherit",fontSize:11,fontWeight:700,cursor:"pointer"}}>
                     {aiCopied ? "Copied ✓" : "Copy to clipboard"}
                   </button>
+                </div>
+                {/* Refine: lets the coach iterate on the generated summary with a follow-up
+                    instruction. Sends previous_summary + instruction to /api/summarize-player. */}
+                <div style={{marginTop:14,paddingTop:12,borderTop:"1px dashed "+C.border}}>
+                  <div style={{fontSize:11,fontWeight:700,color:C.mut,letterSpacing:0.5,marginBottom:6}}>REFINE THIS SUMMARY</div>
+                  <textarea
+                    value={aiInstruction}
+                    onChange={e=>setAiInstruction(e.target.value)}
+                    placeholder='e.g. "Make it shorter", "Mention her serving more", "Warmer tone, less formal"'
+                    disabled={aiBusy}
+                    style={{...editInp,minHeight:54,resize:"vertical",fontSize:12}} />
+                  <div style={{display:"flex",justifyContent:"flex-end",marginTop:8}}>
+                    <button
+                      disabled={aiBusy || !aiInstruction.trim()}
+                      onClick={async () => {
+                        const instruction = aiInstruction.trim();
+                        if (!instruction || !aiResult) return;
+                        const previous = aiResult;
+                        setAiBusy(true); setAiError(""); setAiCopied(false);
+                        try {
+                          const res = await fetch("/api/summarize-player", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                              player: buildPlayerPayload(p, players),
+                              previous_summary: previous,
+                              instruction,
+                            }),
+                          });
+                          const data = await res.json().catch(() => ({}));
+                          if (!res.ok) throw new Error(data.error || ("Request failed (" + res.status + ")"));
+                          setAiResult(data.summary || "");
+                          setAiInstruction("");
+                        } catch (e) {
+                          setAiError(e.message || "Refinement failed");
+                        } finally {
+                          setAiBusy(false);
+                        }
+                      }}
+                      style={{padding:"8px 14px",borderRadius:8,border:"none",background:(aiBusy||!aiInstruction.trim())?C.border:C.gold,color:(aiBusy||!aiInstruction.trim())?C.mut:"#000",fontFamily:"inherit",fontSize:12,fontWeight:700,cursor:(aiBusy||!aiInstruction.trim())?"default":"pointer"}}>
+                      {aiBusy ? "Refining..." : "Refine Summary"}
+                    </button>
+                  </div>
                 </div>
               </div>
             )}

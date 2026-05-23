@@ -6,7 +6,12 @@
 //
 // Request body: { player: { first_name, last_name, age, usav_div, positions,
 //                           scores, notes, parent_feedback_notes, eval_dates,
-//                           projected_team, team_assignment, status, ... } }
+//                           projected_team, team_assignment, status, ... },
+//                  // Optional: when both are present, the model revises the prior
+//                  // summary according to the coach's instruction instead of
+//                  // generating a fresh one.
+//                  previous_summary?: string,
+//                  instruction?:      string }
 // Response: { summary: "<plain text>" }  on success
 //           { error:   "<message>"    }  on failure
 
@@ -162,15 +167,32 @@ export default async function handler(req, res) {
   if (!player || !player.first_name) {
     return res.status(400).json({ error: "Missing player payload" });
   }
+  const previous_summary = typeof body.previous_summary === "string" ? body.previous_summary.trim() : "";
+  const instruction      = typeof body.instruction      === "string" ? body.instruction.trim()      : "";
 
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+  // For a refinement pass, replay the prior turn as an assistant message and
+  // append the coach's revision request. Keeps the original system prompt's
+  // hard rules in force, plus an explicit reminder so the model doesn't drift.
+  const messages = [{ role: "user", content: buildUserPrompt(player) }];
+  if (previous_summary && instruction) {
+    messages.push({ role: "assistant", content: previous_summary });
+    messages.push({
+      role: "user",
+      content:
+        "Please revise the summary above based on this feedback from the coach:\n\n" +
+        instruction +
+        "\n\nKeep all of the original rules in force: no raw numeric scores in prose, no markdown / headings / bullets, do not invent facts beyond the player data already provided, do not mention AI / model / that this is a generated summary, never describe a team placement as final, and keep the tone warm and parent-facing. Output only the full revised summary as plain text.",
+    });
+  }
 
   try {
     const response = await client.messages.create({
       model: "claude-sonnet-4-6",
       max_tokens: 700,
       system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
-      messages: [{ role: "user", content: buildUserPrompt(player) }],
+      messages,
     });
     const text = (response.content || []).filter(b => b.type === "text").map(b => b.text).join("").trim();
     if (!text) return res.status(502).json({ error: "Empty response from model" });
