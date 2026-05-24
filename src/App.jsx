@@ -147,6 +147,10 @@ export default function App() {
   // Coaches admin tab state:
   const [coachesList, setCoachesList]         = useState([]);
   const [coachesLoading, setCoachesLoading]   = useState(false);
+  // Signup email allowlist (admin section of the Coaches tab):
+  const [allowedEmails, setAllowedEmails]       = useState([]);
+  const [allowedLoading, setAllowedLoading]     = useState(false);
+  const [bulkAllowedInput, setBulkAllowedInput] = useState("");
 
   // Bootstrap auth on mount; subscribe to changes so the UI re-renders on
   // login/logout/token-refresh.
@@ -298,6 +302,17 @@ export default function App() {
     setCoachesLoading(false);
   }, []);
   useEffect(() => { if (isApproved && view === "coaches") loadCoaches(); }, [isApproved, view, loadCoaches]);
+
+  // Allowed-signup-emails loader (lives next to loadCoaches so the Coaches
+  // tab can render both lists in one fetch round).
+  const loadAllowedEmails = useCallback(async () => {
+    setAllowedLoading(true);
+    const { data, error } = await supabase.from("allowed_signup_emails").select("*").order("added_at", { ascending: false });
+    if (error) console.error("Load allowed emails error:", error);
+    setAllowedEmails(data || []);
+    setAllowedLoading(false);
+  }, []);
+  useEffect(() => { if (isApproved && view === "coaches") loadAllowedEmails(); }, [isApproved, view, loadAllowedEmails]);
 
   // Activity feed loader (used by the Activity tab). Same hook-order rule.
   const loadActivity = useCallback(async () => {
@@ -543,6 +558,17 @@ export default function App() {
       setLoginBusy(true); setLoginError(""); setLoginInfo("");
       try {
         if (loginMode === "signup") {
+          // Server enforces this too via handle_new_user trigger; the RPC is
+          // here so rejected users get a clean message instead of Supabase's
+          // generic "Database error saving new user".
+          const { data: allowed, error: rpcErr } = await supabase.rpc("is_signup_allowed", { check_email: email });
+          if (rpcErr) {
+            // RPC failure shouldn't block signup — trigger will still gate
+            // server-side. Log and continue.
+            console.warn("is_signup_allowed RPC failed:", rpcErr);
+          } else if (allowed === false) {
+            throw new Error("This email isn't on the approved signup list. Contact the Director of Volleyball to be added.");
+          }
           const { data, error } = await supabase.auth.signUp({
             email, password,
             options: { data: { display_name: loginDisplayName.trim() || email.split("@")[0] } },
@@ -1562,6 +1588,34 @@ export default function App() {
   // the auth gates) so the hook-call order is stable across renders. The
   // render and mutation helpers stay here next to their renderXxx fn.
 
+  // Bulk-add: accepts a textarea full of emails separated by any combination
+  // of whitespace, commas, semicolons. Lowercases, dedupes, skips invalid.
+  const addAllowedEmails = async (raw) => {
+    const parts = (raw || "")
+      .split(/[\s,;]+/)
+      .map(s => s.trim().toLowerCase())
+      .filter(Boolean)
+      .filter(s => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s));
+    if (!parts.length) { window.alert("No valid email addresses found in that input."); return; }
+    const unique = [...new Set(parts)];
+    const rows = unique.map(email => ({
+      email,
+      added_by: coach.id,
+      added_by_name: coach.display_name || coach.email,
+      note: null,
+    }));
+    const { error } = await supabase.from("allowed_signup_emails").upsert(rows, { onConflict: "email" });
+    if (error) { window.alert("Add failed: " + error.message); return; }
+    setBulkAllowedInput("");
+    loadAllowedEmails();
+  };
+  const removeAllowedEmail = async (email) => {
+    if (!window.confirm("Remove " + email + " from the signup allowlist?")) return;
+    const { error } = await supabase.from("allowed_signup_emails").delete().eq("email", email);
+    if (error) { window.alert("Remove failed: " + error.message); return; }
+    loadAllowedEmails();
+  };
+
   const updateCoach = async (id, patch) => {
     // Optimistic local update
     setCoachesList(prev => prev.map(c => c.id === id ? { ...c, ...patch } : c));
@@ -1588,6 +1642,50 @@ export default function App() {
     const pending = coachesList.filter(c => !c.is_approved);
     return (
       <div>
+        {/* Signup allowlist — only emails in this list are permitted to create
+            an account. Enforced both server-side (handle_new_user trigger) and
+            client-side (is_signup_allowed RPC before the signUp call). */}
+        <div style={{background:C.card,borderRadius:12,border:"1px solid "+C.border,padding:"16px 18px",marginBottom:18}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8,flexWrap:"wrap",gap:8}}>
+            <div>
+              <h3 style={{margin:0,fontSize:14,fontWeight:800,color:C.gold,letterSpacing:0.5}}>ALLOWED SIGNUP EMAILS</h3>
+              <div style={{fontSize:11,color:C.mut,marginTop:2}}>Only people whose email is on this list can create an account. {allowedEmails.length} on the list.</div>
+            </div>
+            <button onClick={loadAllowedEmails} disabled={allowedLoading}
+              style={{padding:"4px 10px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+              {allowedLoading ? "Loading…" : "Refresh"}
+            </button>
+          </div>
+          <div style={{display:"flex",gap:8,marginBottom:10,flexWrap:"wrap",alignItems:"flex-start"}}>
+            <textarea value={bulkAllowedInput} onChange={e=>setBulkAllowedInput(e.target.value)}
+              placeholder="Paste one or more emails — separated by commas, spaces, or new lines"
+              rows={2}
+              style={{...inpStyle,flex:"1 1 320px",minHeight:54,padding:"8px 10px",fontSize:12,fontFamily:"inherit",resize:"vertical"}} />
+            <button onClick={()=>addAllowedEmails(bulkAllowedInput)} disabled={!bulkAllowedInput.trim()}
+              style={{padding:"10px 16px",borderRadius:8,border:"none",background:bulkAllowedInput.trim()?C.gold:C.border,color:bulkAllowedInput.trim()?"#000":C.mut,fontFamily:"inherit",fontSize:12,fontWeight:700,cursor:bulkAllowedInput.trim()?"pointer":"default",alignSelf:"stretch"}}>
+              Add
+            </button>
+          </div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:6,maxHeight:200,overflowY:"auto"}}>
+            {allowedEmails.map(row => {
+              const hasAccount = coachesList.some(c => (c.email||"").toLowerCase() === row.email.toLowerCase());
+              return (
+                <span key={row.email}
+                  title={(row.added_by_name ? "Added by "+row.added_by_name+" · " : "") + (row.added_at ? new Date(row.added_at).toLocaleDateString() : "") + (hasAccount ? " · signed up" : "")}
+                  style={{display:"inline-flex",alignItems:"center",gap:6,padding:"4px 6px 4px 10px",borderRadius:20,background:C.bg,border:"1px solid "+(hasAccount?C.grn:C.border),fontSize:11,color:hasAccount?C.grn:C.text}}>
+                  {row.email}
+                  <button onClick={()=>removeAllowedEmail(row.email)} title="Remove from allowlist"
+                    style={{width:18,height:18,borderRadius:9,border:"none",background:"transparent",color:C.mut,cursor:"pointer",fontFamily:"inherit",fontSize:13,lineHeight:1,padding:0}}>×</button>
+                </span>
+              );
+            })}
+            {!allowedEmails.length && <div style={{fontSize:11,color:C.mut,fontStyle:"italic",padding:"8px 0"}}>{allowedLoading ? "Loading…" : "No emails on the allowlist yet."}</div>}
+          </div>
+          <div style={{fontSize:10,color:C.mut,marginTop:8,lineHeight:1.5}}>
+            Green chips have already signed up and appear in the Coaches list below. Removing an email here does not delete an existing account — use the Coaches list for that.
+          </div>
+        </div>
+
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12,flexWrap:"wrap",gap:8}}>
           <div>
             <h2 style={{margin:0,fontSize:18,fontWeight:800,color:C.gold}}>Coaches</h2>

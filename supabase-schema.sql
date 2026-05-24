@@ -120,3 +120,22 @@ CREATE POLICY change_log_select_approved ON change_log
   FOR SELECT USING (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved));
 CREATE POLICY change_log_insert_approved ON change_log
   FOR INSERT WITH CHECK (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved));
+
+-- ───── Signup allowlist (added 20260524) ─────────────────────────────
+-- Only emails in this table can create an account; enforced server-side by
+-- the handle_new_user trigger and pre-checked client-side via the
+-- is_signup_allowed(text) RPC.
+CREATE TABLE allowed_signup_emails (
+  email          TEXT         PRIMARY KEY,
+  added_by       UUID         REFERENCES auth.users(id) ON DELETE SET NULL,
+  added_by_name  TEXT,
+  added_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+  note           TEXT
+);
+ALTER TABLE allowed_signup_emails ENABLE ROW LEVEL SECURITY;
+CREATE POLICY allowed_emails_select_approved ON allowed_signup_emails
+  FOR SELECT USING (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved));
+CREATE POLICY allowed_emails_insert_admin ON allowed_signup_emails
+  FOR INSERT WITH CHECK (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_admin));
+CREATE POLICY allowed_emails_delete_admin ON allowed_signup_emails
+  FOR DELETE USING (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_admin));
