@@ -1925,13 +1925,75 @@ export default function App() {
       return snap || (entry.player_id ? "Player #"+entry.player_id : "—");
     };
 
+    // Collapse the raw entries into "sessions" — consecutive changes by the
+    // same coach to the same player whose gap is <= 10 minutes get rolled
+    // into one row so the feed stays scannable when a coach is rapid-firing
+    // score taps. Walk ascending so groups extend forward in time, then
+    // reverse for display (newest session first).
+    const GAP_MS = 10 * 60 * 1000;
+    const ascending = [...activityLog].reverse();
+    const groups = [];
+    for (const e of ascending) {
+      const last = groups[groups.length - 1];
+      const within = last
+        && last.player_id === e.player_id
+        && last.actor_id  === e.actor_id
+        && (new Date(e.created_at) - new Date(last.lastTime)) <= GAP_MS;
+      if (within) {
+        last.entries.push(e);
+        last.lastTime = e.created_at;
+      } else {
+        groups.push({
+          player_id: e.player_id,
+          actor_id: e.actor_id,
+          actor_name: e.actor_name,
+          actor_email: e.actor_email,
+          firstTime: e.created_at,
+          lastTime: e.created_at,
+          entries: [e],
+        });
+      }
+    }
+    groups.reverse();
+
+    // Summary of a group: action breakdown + union of fields touched.
+    const summarizeGroup = (g) => {
+      const actions = {};
+      const fields = new Set();
+      for (const e of g.entries) {
+        actions[e.action] = (actions[e.action] || 0) + 1;
+        if (e.action === "update" && e.field_changes) {
+          Object.keys(e.field_changes).forEach(f => fields.add(f));
+        }
+      }
+      const total = g.entries.length;
+      const dominant = Object.entries(actions).sort((a,b) => b[1]-a[1])[0][0];
+      const fieldList = [...fields];
+      let text;
+      if (total === 1) {
+        text = formatChange(g.entries[0]);
+      } else if (Object.keys(actions).length === 1 && dominant === "update") {
+        text = total + " edits · " + (fieldList.length
+          ? fieldList.slice(0,6).join(", ") + (fieldList.length > 6 ? ", …" : "")
+          : "no visible field changes");
+      } else if (Object.keys(actions).length === 1) {
+        text = total + " " + dominant + (total > 1 ? "s" : "");
+      } else {
+        const parts = Object.entries(actions).map(([a,n]) => n + " " + a + (n>1 ? "s" : ""));
+        text = parts.join(" + ") + (fieldList.length
+          ? " · " + fieldList.slice(0,4).join(", ") + (fieldList.length > 4 ? ", …" : "")
+          : "");
+      }
+      return { text, total, dominant };
+    };
+
     const td = {padding:"7px 10px",fontSize:12,borderBottom:"1px solid "+C.border,verticalAlign:"top"};
     const th = {padding:"8px 10px",textAlign:"left",fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut,borderBottom:"1px solid "+C.border,background:C.card,whiteSpace:"nowrap"};
     return (
       <div>
         <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12,flexWrap:"wrap"}}>
           <h2 style={{margin:0,fontSize:18,fontWeight:800,color:C.gold}}>Activity</h2>
-          <span style={{fontSize:11,color:C.mut}}>Last 300 changes</span>
+          <span style={{fontSize:11,color:C.mut}}>{groups.length} session{groups.length===1?"":"s"} · {activityLog.length} change{activityLog.length===1?"":"s"} (grouped per player, ≤10 min gap)</span>
           <div style={{marginLeft:"auto",display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
             <select value={activityActor} onChange={e=>setActivityActor(e.target.value)}
               style={{...inpStyle,padding:"6px 10px",fontSize:12}}>
@@ -1962,33 +2024,65 @@ export default function App() {
                 <th style={th}>Change</th>
               </tr></thead>
               <tbody>
-                {activityLog.map(entry => {
-                  const actionColor = entry.action === "insert" ? C.grn : entry.action === "delete" ? C.red : C.gold;
+                {groups.map(g => {
+                  const { text, total, dominant } = summarizeGroup(g);
+                  const actionColor = dominant === "insert" ? C.grn : dominant === "delete" ? C.red : C.gold;
+                  const sameTime = g.firstTime === g.lastTime;
+                  const timeStr = sameTime
+                    ? new Date(g.firstTime).toLocaleString()
+                    : new Date(g.firstTime).toLocaleString() + " – " + new Date(g.lastTime).toLocaleTimeString();
+                  const key = "g-" + g.entries[0].id + "-" + g.entries[g.entries.length-1].id;
                   return (
-                    <tr key={entry.id}>
-                      <td style={{...td,color:C.mut,whiteSpace:"nowrap"}}>{new Date(entry.created_at).toLocaleString()}</td>
-                      <td style={td}>{entry.actor_name || entry.actor_email || <span style={{color:C.mut}}>unknown</span>}</td>
-                      <td style={td}><span style={{fontSize:10,fontWeight:800,padding:"2px 7px",borderRadius:8,background:actionColor+"22",color:actionColor,textTransform:"uppercase"}}>{entry.action}</span></td>
+                    <tr key={key}>
+                      <td style={{...td,color:C.mut,whiteSpace:"nowrap"}}>{timeStr}</td>
+                      <td style={td}>{g.actor_name || g.actor_email || <span style={{color:C.mut}}>unknown</span>}</td>
                       <td style={td}>
-                        {entry.player_id
-                          ? <span style={{color:C.gold,cursor:"pointer",fontWeight:600}} onClick={()=>{const p = players.find(x=>x.id===entry.player_id); if (p) setProfileId(p.id);}}>{playerName(entry)}</span>
-                          : <span style={{color:C.mut}}>{playerName(entry)}</span>}
+                        <span style={{fontSize:10,fontWeight:800,padding:"2px 7px",borderRadius:8,background:actionColor+"22",color:actionColor,textTransform:"uppercase",whiteSpace:"nowrap"}}>
+                          {total === 1 ? dominant : (total + "× " + dominant)}
+                        </span>
                       </td>
                       <td style={td}>
-                        <div style={{color:C.text}}>{formatChange(entry)}</div>
-                        {entry.action === "update" && entry.field_changes && (
+                        {g.player_id
+                          ? <span style={{color:C.gold,cursor:"pointer",fontWeight:600}} onClick={()=>{const p = players.find(x=>x.id===g.player_id); if (p) setProfileId(p.id);}}>{playerName(g.entries[0])}</span>
+                          : <span style={{color:C.mut}}>{playerName(g.entries[0])}</span>}
+                      </td>
+                      <td style={td}>
+                        <div style={{color:C.text}}>{text}</div>
+                        {total > 1 ? (
+                          <details style={{marginTop:4}}>
+                            <summary style={{fontSize:10,color:C.mut,cursor:"pointer"}}>Show {total} individual changes</summary>
+                            <div style={{marginTop:6,paddingLeft:10,borderLeft:"2px solid "+C.border}}>
+                              {g.entries.slice().reverse().map(e => {
+                                const ec = e.action === "insert" ? C.grn : e.action === "delete" ? C.red : C.gold;
+                                return (
+                                  <div key={e.id} style={{marginBottom:8,fontSize:11}}>
+                                    <span style={{color:C.mut}}>{new Date(e.created_at).toLocaleTimeString()} · </span>
+                                    <span style={{fontWeight:700,color:ec,textTransform:"uppercase",fontSize:10}}>{e.action}</span>
+                                    <span style={{color:C.text}}> · {formatChange(e)}</span>
+                                    {e.action === "update" && e.field_changes && (
+                                      <details style={{marginTop:2,paddingLeft:14}}>
+                                        <summary style={{fontSize:10,color:C.mut,cursor:"pointer"}}>diff</summary>
+                                        <pre style={{margin:"4px 0 0 0",padding:8,background:C.bg,border:"1px solid "+C.border,borderRadius:6,fontSize:10,color:C.text,overflow:"auto",maxHeight:200,whiteSpace:"pre-wrap"}}>{JSON.stringify(e.field_changes, null, 2)}</pre>
+                                      </details>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </details>
+                        ) : (g.entries[0].action === "update" && g.entries[0].field_changes && (
                           <details style={{marginTop:4}}>
                             <summary style={{fontSize:10,color:C.mut,cursor:"pointer"}}>Show diff</summary>
-                            <pre style={{margin:"4px 0 0 0",padding:8,background:C.bg,border:"1px solid "+C.border,borderRadius:6,fontSize:10,color:C.text,overflow:"auto",maxHeight:200,whiteSpace:"pre-wrap"}}>{JSON.stringify(entry.field_changes, null, 2)}</pre>
+                            <pre style={{margin:"4px 0 0 0",padding:8,background:C.bg,border:"1px solid "+C.border,borderRadius:6,fontSize:10,color:C.text,overflow:"auto",maxHeight:200,whiteSpace:"pre-wrap"}}>{JSON.stringify(g.entries[0].field_changes, null, 2)}</pre>
                           </details>
-                        )}
+                        ))}
                       </td>
                     </tr>
                   );
                 })}
               </tbody>
             </table>
-            {!activityLog.length && <div style={{padding:24,textAlign:"center",color:C.mut,fontSize:12}}>{activityLoading ? "Loading…" : "No activity yet."}</div>}
+            {!groups.length && <div style={{padding:24,textAlign:"center",color:C.mut,fontSize:12}}>{activityLoading ? "Loading…" : "No activity yet."}</div>}
           </div>
         </div>
       </div>
