@@ -705,7 +705,8 @@ export default function App() {
     return (
       <>
         <div style={{fontSize:11,color:C.mut,marginBottom:10,fontStyle:"italic"}}>
-          Drag a player onto a team card to assign (clears their roster slot). Drag onto Unassigned to remove from a team.
+          Drag a player onto a team card to assign (clears their roster slot). Drag onto Unassigned, Declined, or Not Invited to change status.
+          Click the "+ offer" chip on a team player to cycle offer → accepted → none.
           Type a rank number to reorder within a position — rank persists across team changes.
         </div>
         {selectedDivs.map(div => (
@@ -754,11 +755,35 @@ export default function App() {
       if (!over) return;
       const playerId = parseInt(String(active.id).replace("player-", ""));
       const overId = String(over.id);
-      let newTeam = "";
-      if (overId.startsWith("team-")) newTeam = overId.replace("team-", "");
       const player = players.find(p => p.id === playerId);
-      if (!player || (player.team_assignment || "") === newTeam) return;
-      upd(playerId, { team_assignment: newTeam, roster_pos: "" });
+      if (!player) return;
+      const now = new Date().toISOString();
+      // Terminal-status buckets — clear team assignment and stamp the status.
+      if (overId === "bucket-declined") {
+        if (player.offer_status === "declined" && !player.team_assignment) return;
+        upd(playerId, { team_assignment: "", roster_pos: "", offer_status: "declined", offer_decision_at: now });
+        return;
+      }
+      if (overId === "bucket-not_invited") {
+        if (player.offer_status === "not_invited" && !player.team_assignment) return;
+        upd(playerId, { team_assignment: "", roster_pos: "", offer_status: "not_invited", offer_made_at: null, offer_decision_at: null });
+        return;
+      }
+      // Team drops (including unassigned via team-""). If the player was declined
+      // or not-invited, reset that status — they're back in the offer pipeline.
+      if (overId.startsWith("team-")) {
+        const newTeam = overId.replace("team-", "");
+        const currentTeam = player.team_assignment || "";
+        const isTerminal = player.offer_status === "declined" || player.offer_status === "not_invited";
+        if (currentTeam === newTeam && !isTerminal) return;
+        const updates = { team_assignment: newTeam, roster_pos: "" };
+        if (isTerminal) {
+          updates.offer_status = "";
+          updates.offer_made_at = null;
+          updates.offer_decision_at = null;
+        }
+        upd(playerId, updates);
+      }
     };
 
     // Small pinny-number chip next to a player's name — same source as the
@@ -767,6 +792,33 @@ export default function App() {
       const v = (player.tryout_number || "").trim();
       if (!v) return null;
       return <span title="Pinny #" style={{fontSize:9,fontWeight:800,padding:"1px 6px",borderRadius:8,background:"rgba(255,255,255,0.08)",color:C.text,whiteSpace:"nowrap"}}>#{v}</span>;
+    };
+
+    // Click-to-cycle offer-status chip on team-card player rows:
+    //   none → "made" → "accepted" → none. Declined / not_invited are set by
+    //   dragging to those buckets, not by clicking the chip.
+    const cycleOffer = (player) => {
+      const cur = player.offer_status || "";
+      const now = new Date().toISOString();
+      const updates = {};
+      if (cur === "" || cur === "declined" || cur === "not_invited") {
+        updates.offer_status = "made"; updates.offer_made_at = now; updates.offer_decision_at = null;
+      } else if (cur === "made") {
+        updates.offer_status = "accepted"; updates.offer_decision_at = now;
+      } else {
+        updates.offer_status = ""; updates.offer_made_at = null; updates.offer_decision_at = null;
+      }
+      upd(player.id, updates);
+    };
+    const offerChip = (player) => {
+      const s = player.offer_status || "";
+      let label, bg, fg, border = "none";
+      if (s === "made")          { label = "OFFER";     bg = "rgba(245,158,11,0.22)"; fg = "#f59e0b"; }
+      else if (s === "accepted") { label = "✓ ACCEPTED"; bg = "rgba(34,197,94,0.22)";  fg = C.grn; }
+      else                       { label = "+ offer";   bg = "transparent";           fg = C.mut; border = "1px dashed "+C.border; }
+      return <span title="Click to cycle: none → offer made → accepted → none"
+        onClick={(e) => { e.stopPropagation(); cycleOffer(player); }}
+        style={{fontSize:9,fontWeight:800,padding:"1px 6px",borderRadius:8,background:bg,color:fg,whiteSpace:"nowrap",cursor:"pointer",border,userSelect:"none"}}>{label}</span>;
     };
 
     // Compact rank chips next to a player's name on team cards (one per position).
@@ -784,12 +836,18 @@ export default function App() {
             const tp = divPlayers.filter(p => p.team_assignment === team);
             const rosterMap = {}; tp.forEach(p => { if (p.roster_pos) rosterMap[p.roster_pos] = p; });
             const unslotted = tp.filter(p => !p.roster_pos);
+            const offerPending  = tp.filter(p => p.offer_status === "made").length;
+            const offerAccepted = tp.filter(p => p.offer_status === "accepted").length;
             return (
               <DropZone key={team} id={"team-"+team}
                 style={{background:C.card,borderRadius:12,padding:"16px 18px",border:"1px solid "+C.border}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,gap:6,flexWrap:"wrap"}}>
                   <h3 style={{margin:0,fontSize:17,fontWeight:800,color:C.gold}}>{team}</h3>
-                  <Tag c={C.acc}>{tp.length} players</Tag>
+                  <div style={{display:"flex",gap:4,alignItems:"center",flexWrap:"wrap",justifyContent:"flex-end"}}>
+                    <Tag c={C.acc}>{tp.length} players</Tag>
+                    {offerPending  > 0 && <Tag c="#f59e0b">{offerPending} pending</Tag>}
+                    {offerAccepted > 0 && <Tag c={C.grn}>{offerAccepted} accepted</Tag>}
+                  </div>
                 </div>
                 {ROSTER_GROUPS.map(grp => (
                   <div key={grp.label} style={{marginBottom:10}}>
@@ -804,7 +862,7 @@ export default function App() {
                               {isReturningDSE(player) && <span title="DS Elite returning athlete" style={{color:C.gold,fontSize:14,fontWeight:800,lineHeight:1}}>◆</span>}
                               {player.first_name} {player.last_name}
                             </span>
-                            <div style={{display:"flex",gap:3,alignItems:"center",flexWrap:"wrap",justifyContent:"flex-end"}}>{pinnyChip(player)}{posRankTags(player)}</div>
+                            <div style={{display:"flex",gap:3,alignItems:"center",flexWrap:"wrap",justifyContent:"flex-end"}}>{offerChip(player)}{pinnyChip(player)}{posRankTags(player)}</div>
                             <span style={{fontWeight:800,fontSize:13,color:C.gold,minWidth:22,textAlign:"right"}}>{tot(player)||"—"}</span>
                           </>) : <span style={{fontSize:11,color:C.mut,fontStyle:"italic",flex:1}}>open</span>}
                         </div>
@@ -822,7 +880,7 @@ export default function App() {
                           {isReturningDSE(p) && <span title="DS Elite returning athlete" style={{color:C.gold,fontSize:14,fontWeight:800,lineHeight:1}}>◆</span>}
                           {p.first_name} {p.last_name}
                         </span>
-                        <div style={{display:"flex",gap:3,alignItems:"center",flexWrap:"wrap",justifyContent:"flex-end"}}>{pinnyChip(p)}{posRankTags(p)}</div>
+                        <div style={{display:"flex",gap:3,alignItems:"center",flexWrap:"wrap",justifyContent:"flex-end"}}>{offerChip(p)}{pinnyChip(p)}{posRankTags(p)}</div>
                         <span style={{fontWeight:800,fontSize:13,color:C.gold,minWidth:22,textAlign:"right"}}>{tot(p)||"—"}</span>
                       </div>
                     </DraggablePlayer>
@@ -832,9 +890,11 @@ export default function App() {
               </DropZone>
             );
           })}
-          {/* Unassigned drop zone with position-grouped lists and global rank inputs */}
+          {/* Unassigned drop zone with position-grouped lists and global rank inputs.
+              Declined / not-invited players have their own buckets below, so we
+              exclude them here to keep this column focused on players still in play. */}
           {(() => {
-            const unassigned = divPlayers.filter(p => !p.team_assignment);
+            const unassigned = divPlayers.filter(p => !p.team_assignment && p.offer_status !== "declined" && p.offer_status !== "not_invited");
             const groups = {}; POSITIONS.forEach(pos => { groups[pos] = []; }); groups[""] = [];
             unassigned.forEach(p => {
               const ps = p.positions || [];
@@ -889,6 +949,63 @@ export default function App() {
                     );
                   })}
                   {unassigned.length === 0 && <div style={{textAlign:"center",padding:14,color:C.mut,fontSize:11}}>No unassigned players</div>}
+                </div>
+              </DropZone>
+            );
+          })()}
+          {/* Declined Offer bucket — players whose families said no. */}
+          {(() => {
+            const declined = divPlayers.filter(p => p.offer_status === "declined");
+            return (
+              <DropZone id="bucket-declined" style={{background:C.card,borderRadius:12,padding:"16px 18px",border:"1px solid rgba(245,158,11,0.45)"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                  <h3 style={{margin:0,fontSize:17,fontWeight:800,color:"#f59e0b"}}>Declined Offer</h3>
+                  <Tag c="#f59e0b">{declined.length}</Tag>
+                </div>
+                <div style={{fontSize:10,color:C.mut,marginBottom:8,fontStyle:"italic"}}>Drop a player here when the family has declined. Drag back to a team or Unassigned to reconsider.</div>
+                <div style={{display:"flex",flexDirection:"column",gap:3,maxHeight:640,overflowY:"auto"}}>
+                  {declined.map(p => (
+                    <DraggablePlayer key={p.id} player={p}>
+                      <div style={{display:"flex",alignItems:"center",gap:6,padding:"5px 8px",background:C.bg,borderRadius:5,fontSize:11}}>
+                        <span style={{display:"flex",alignItems:"center",gap:4,flex:1,fontWeight:600,cursor:"pointer"}} onClick={()=>setProfileId(p.id)}>
+                          {isReturningDSE(p) && <span title="DS Elite returning athlete" style={{color:C.gold,fontSize:14,fontWeight:800,lineHeight:1}}>◆</span>}
+                          {p.first_name} {p.last_name}
+                        </span>
+                        {pinnyChip(p)}
+                        {(p.positions||[]).map(pos => <span key={pos} style={{fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:8,background:"rgba(34,197,94,0.18)",color:C.grn}}>{pos}</span>)}
+                        {p.offer_decision_at && <span title="When declined" style={{fontSize:9,color:C.mut,whiteSpace:"nowrap"}}>{new Date(p.offer_decision_at).toLocaleDateString()}</span>}
+                      </div>
+                    </DraggablePlayer>
+                  ))}
+                  {declined.length === 0 && <div style={{textAlign:"center",padding:14,color:C.mut,fontSize:11}}>No declined offers</div>}
+                </div>
+              </DropZone>
+            );
+          })()}
+          {/* Not Invited bucket — players the staff explicitly excluded from offers. */}
+          {(() => {
+            const notInvited = divPlayers.filter(p => p.offer_status === "not_invited");
+            return (
+              <DropZone id="bucket-not_invited" style={{background:C.card,borderRadius:12,padding:"16px 18px",border:"1px dashed "+C.border}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                  <h3 style={{margin:0,fontSize:17,fontWeight:800,color:C.mut}}>Not Invited</h3>
+                  <Tag c={C.mut}>{notInvited.length}</Tag>
+                </div>
+                <div style={{fontSize:10,color:C.mut,marginBottom:8,fontStyle:"italic"}}>Drop players here who aren't being offered a spot. Drag back to a team or Unassigned to reconsider.</div>
+                <div style={{display:"flex",flexDirection:"column",gap:3,maxHeight:640,overflowY:"auto"}}>
+                  {notInvited.map(p => (
+                    <DraggablePlayer key={p.id} player={p}>
+                      <div style={{display:"flex",alignItems:"center",gap:6,padding:"5px 8px",background:C.bg,borderRadius:5,fontSize:11,opacity:0.85}}>
+                        <span style={{display:"flex",alignItems:"center",gap:4,flex:1,fontWeight:600,cursor:"pointer"}} onClick={()=>setProfileId(p.id)}>
+                          {isReturningDSE(p) && <span title="DS Elite returning athlete" style={{color:C.gold,fontSize:14,fontWeight:800,lineHeight:1}}>◆</span>}
+                          {p.first_name} {p.last_name}
+                        </span>
+                        {pinnyChip(p)}
+                        {(p.positions||[]).map(pos => <span key={pos} style={{fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:8,background:"rgba(34,197,94,0.18)",color:C.grn}}>{pos}</span>)}
+                      </div>
+                    </DraggablePlayer>
+                  ))}
+                  {notInvited.length === 0 && <div style={{textAlign:"center",padding:14,color:C.mut,fontSize:11}}>No players marked not invited</div>}
                 </div>
               </DropZone>
             );

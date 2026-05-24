@@ -40,6 +40,9 @@ CREATE TABLE players (
   parent_feedback_notes TEXT NOT NULL DEFAULT '',
   parent_summary TEXT NOT NULL DEFAULT '',
   parent_summary_updated_at TIMESTAMPTZ,
+  offer_status TEXT NOT NULL DEFAULT '',
+  offer_made_at TIMESTAMPTZ,
+  offer_decision_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
