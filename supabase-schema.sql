@@ -50,9 +50,12 @@ CREATE TABLE players (
 -- Enable Row Level Security
 ALTER TABLE players ENABLE ROW LEVEL SECURITY;
 
--- Allow all operations with the anon key (simple setup - no auth required)
-CREATE POLICY "Allow all access" ON players
-  FOR ALL USING (true) WITH CHECK (true);
+-- Approved-coach access only (replaces the legacy "Allow all access" policy
+-- as of the 20260524 auth migration).
+CREATE POLICY players_all_approved ON players
+  FOR ALL
+  USING      (EXISTS (SELECT 1 FROM public.coaches c WHERE c.id = auth.uid() AND c.is_approved))
+  WITH CHECK (EXISTS (SELECT 1 FROM public.coaches c WHERE c.id = auth.uid() AND c.is_approved));
 
 -- Auto-update the updated_at timestamp
 CREATE OR REPLACE FUNCTION update_updated_at()
@@ -71,3 +74,49 @@ CREATE TRIGGER players_updated_at
 -- Create index for faster queries
 CREATE INDEX idx_players_usav_div ON players(usav_div);
 CREATE INDEX idx_players_team ON players(team_assignment);
+
+-- ───── Coaches profile table (added 20260524) ────────────────────────
+-- One row per Supabase Auth user; auto-created by the on_auth_user_created
+-- trigger. First signup is auto-promoted to admin + approved.
+CREATE TABLE coaches (
+  id            UUID         PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  email         TEXT         NOT NULL,
+  display_name  TEXT         NOT NULL DEFAULT '',
+  is_admin      BOOLEAN      NOT NULL DEFAULT FALSE,
+  is_approved   BOOLEAN      NOT NULL DEFAULT FALSE,
+  created_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+  last_seen_at  TIMESTAMPTZ
+);
+CREATE INDEX coaches_email_idx ON coaches (email);
+ALTER TABLE coaches ENABLE ROW LEVEL SECURITY;
+CREATE POLICY coaches_select_authenticated ON coaches
+  FOR SELECT USING (auth.uid() IS NOT NULL);
+CREATE POLICY coaches_update_self_or_admin ON coaches
+  FOR UPDATE
+  USING      (auth.uid() = id OR EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_admin))
+  WITH CHECK (auth.uid() = id OR EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_admin));
+CREATE POLICY coaches_delete_admin ON coaches
+  FOR DELETE USING (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_admin));
+
+-- ───── Audit log (added 20260524) ────────────────────────────────────
+-- Populated by an AFTER trigger on players that captures the actor (from the
+-- coaches table via auth.uid()) and a field-level diff of the change.
+CREATE TABLE change_log (
+  id             BIGSERIAL    PRIMARY KEY,
+  player_id      INTEGER      REFERENCES players(id) ON DELETE SET NULL,
+  table_name     TEXT         NOT NULL DEFAULT 'players',
+  action         TEXT         NOT NULL,
+  field_changes  JSONB,
+  actor_id       UUID         REFERENCES auth.users(id) ON DELETE SET NULL,
+  actor_email    TEXT,
+  actor_name     TEXT,
+  created_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+CREATE INDEX change_log_created_at_idx ON change_log (created_at DESC);
+CREATE INDEX change_log_player_id_idx  ON change_log (player_id);
+CREATE INDEX change_log_actor_id_idx   ON change_log (actor_id);
+ALTER TABLE change_log ENABLE ROW LEVEL SECURITY;
+CREATE POLICY change_log_select_approved ON change_log
+  FOR SELECT USING (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved));
+CREATE POLICY change_log_insert_approved ON change_log
+  FOR INSERT WITH CHECK (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved));

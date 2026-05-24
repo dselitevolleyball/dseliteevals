@@ -122,8 +122,66 @@ function RankInput({ value, max, onCommit }) {
 }
 
 export default function App() {
-  const [authed, setAuthed] = useState(!import.meta.env.VITE_APP_PASSWORD);
-  const [pw, setPw] = useState("");
+  // ─── Auth state ─────────────────────────────────────────────────────
+  // We use Supabase Auth (email + password). Each coach has their own login.
+  // `session` is the raw Supabase session; `coach` is the matching row in
+  // public.coaches (display_name, is_admin, is_approved). The app is gated
+  // until `coach.is_approved` is true — the FIRST signup is auto-approved as
+  // admin by the handle_new_user trigger, every other signup waits.
+  const [authChecking, setAuthChecking] = useState(true);
+  const [session, setSession]           = useState(null);
+  const [coach, setCoach]               = useState(null);
+  // Login/signup form state (only used pre-auth):
+  const [loginMode, setLoginMode]               = useState("login"); // "login" | "signup"
+  const [loginEmail, setLoginEmail]             = useState("");
+  const [loginPassword, setLoginPassword]       = useState("");
+  const [loginDisplayName, setLoginDisplayName] = useState("");
+  const [loginBusy, setLoginBusy]               = useState(false);
+  const [loginError, setLoginError]             = useState("");
+  const [loginInfo, setLoginInfo]               = useState("");
+  // Activity tab state (audit log):
+  const [activityLog, setActivityLog]         = useState([]);
+  const [activityLoading, setActivityLoading] = useState(false);
+  const [activityActor, setActivityActor]     = useState("");
+  const [activityAction, setActivityAction]   = useState("");
+  // Coaches admin tab state:
+  const [coachesList, setCoachesList]         = useState([]);
+  const [coachesLoading, setCoachesLoading]   = useState(false);
+
+  // Bootstrap auth on mount; subscribe to changes so the UI re-renders on
+  // login/logout/token-refresh.
+  useEffect(() => {
+    let mounted = true;
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!mounted) return;
+      setSession(session);
+      setAuthChecking(false);
+    });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, s) => {
+      setSession(s);
+    });
+    return () => { mounted = false; subscription.unsubscribe(); };
+  }, []);
+
+  // Whenever the session changes, look up (or refetch) the coach profile row.
+  // Also stamp last_seen_at — useful in the Coaches admin screen.
+  useEffect(() => {
+    if (!session) { setCoach(null); return; }
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase.from("coaches").select("*").eq("id", session.user.id).maybeSingle();
+      if (cancelled) return;
+      setCoach(data || null);
+      if (data) {
+        supabase.from("coaches").update({ last_seen_at: new Date().toISOString() }).eq("id", session.user.id);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [session]);
+
+  const isApproved = !!coach?.is_approved;
+  const isAdmin    = !!coach?.is_admin;
+
   const [players, setPlayers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState("dashboard");
@@ -227,7 +285,7 @@ export default function App() {
     setLoading(false);
   }, []);
 
-  useEffect(() => { if (authed) { loadPlayers(); loadRankings(); } }, [authed, loadPlayers, loadRankings]);
+  useEffect(() => { if (isApproved) { loadPlayers(); loadRankings(); } }, [isApproved, loadPlayers, loadRankings]);
 
   // Save a single player field update to Supabase
   const upd = useCallback(async (id, updates) => {
@@ -443,19 +501,112 @@ export default function App() {
     return l;
   }, [divP, search, filterPos, filterProj, filterEval, filterDate, filterClinic, regSince, sortBy]);
 
-  // ─── PASSWORD GATE ───
-  if (!authed) {
+  // ─── AUTH GATES ──────────────────────────────────────────────────────
+  // 1. While bootstrapping the session, render a quiet loading screen so we
+  //    don't flash the login form for users who already have a session.
+  if (authChecking) {
+    return <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",background:C.bg,color:C.mut}}>Checking session…</div>;
+  }
+
+  // 2. No session -> login / signup form.
+  if (!session) {
+    const submitAuth = async (e) => {
+      if (e && e.preventDefault) e.preventDefault();
+      const email    = loginEmail.trim();
+      const password = loginPassword;
+      if (!email || !password) { setLoginError("Email and password are required."); return; }
+      setLoginBusy(true); setLoginError(""); setLoginInfo("");
+      try {
+        if (loginMode === "signup") {
+          const { data, error } = await supabase.auth.signUp({
+            email, password,
+            options: { data: { display_name: loginDisplayName.trim() || email.split("@")[0] } },
+          });
+          if (error) throw error;
+          if (!data.session) {
+            // Email confirmation is enabled in Supabase; user must confirm.
+            setLoginInfo("Account created. Check your email for a confirmation link, then sign in.");
+            setLoginMode("login");
+          }
+          // If a session is returned (email confirmation disabled), the
+          // onAuthStateChange listener will pick it up and route us in.
+        } else {
+          const { error } = await supabase.auth.signInWithPassword({ email, password });
+          if (error) throw error;
+        }
+      } catch (err) {
+        setLoginError(err.message || "Authentication failed");
+      } finally {
+        setLoginBusy(false);
+      }
+    };
     return (
-      <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",background:C.bg}}>
-        <div style={{background:C.card,padding:40,borderRadius:16,border:"1px solid "+C.border,textAlign:"center",maxWidth:360}}>
-          <div style={{fontSize:28,fontWeight:800,color:C.gold,marginBottom:4}}>◆ DS ELITE</div>
-          <div style={{fontSize:13,color:C.mut,marginBottom:24}}>Tryout Evaluations 2026-27</div>
-          <input type="password" placeholder="Enter access code" value={pw} onChange={e => setPw(e.target.value)}
-            onKeyDown={e => { if (e.key === "Enter" && pw === import.meta.env.VITE_APP_PASSWORD) setAuthed(true); }}
-            style={{...inpStyle,width:"100%",padding:"12px 16px",fontSize:15,marginBottom:12,textAlign:"center"}} />
-          <button onClick={() => { if (pw === import.meta.env.VITE_APP_PASSWORD) setAuthed(true); }}
-            style={{width:"100%",padding:"12px",borderRadius:8,border:"none",background:C.gold,color:"#000",fontFamily:"inherit",fontSize:14,fontWeight:700,cursor:"pointer"}}>
-            Enter
+      <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",background:C.bg,padding:16}}>
+        <form onSubmit={submitAuth} style={{background:C.card,padding:32,borderRadius:16,border:"1px solid "+C.border,maxWidth:400,width:"100%"}}>
+          <div style={{textAlign:"center",marginBottom:20}}>
+            <div style={{fontSize:28,fontWeight:800,color:C.gold,marginBottom:4}}>◆ DS ELITE</div>
+            <div style={{fontSize:13,color:C.mut}}>Tryout Evaluations 2026-27</div>
+          </div>
+          <div style={{display:"flex",gap:4,marginBottom:18,background:C.bg,borderRadius:8,padding:3}}>
+            {["login","signup"].map(m => (
+              <button key={m} type="button" onClick={()=>{setLoginMode(m);setLoginError("");setLoginInfo("");}}
+                style={{flex:1,padding:"8px 0",borderRadius:6,border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700,background:loginMode===m?C.gold:"transparent",color:loginMode===m?"#000":C.mut}}>
+                {m === "login" ? "Sign In" : "Sign Up"}
+              </button>
+            ))}
+          </div>
+          {loginMode === "signup" && (
+            <label style={{display:"block",marginBottom:10}}>
+              <span style={{fontSize:11,fontWeight:700,color:C.mut,textTransform:"uppercase"}}>Display Name</span>
+              <input type="text" value={loginDisplayName} onChange={e=>setLoginDisplayName(e.target.value)} placeholder="e.g. Sarah Smith" autoComplete="name"
+                style={{...inpStyle,width:"100%",padding:"10px 14px",fontSize:14,marginTop:3}} />
+            </label>
+          )}
+          <label style={{display:"block",marginBottom:10}}>
+            <span style={{fontSize:11,fontWeight:700,color:C.mut,textTransform:"uppercase"}}>Email</span>
+            <input type="email" value={loginEmail} onChange={e=>setLoginEmail(e.target.value)} autoComplete="email" autoFocus
+              style={{...inpStyle,width:"100%",padding:"10px 14px",fontSize:14,marginTop:3}} />
+          </label>
+          <label style={{display:"block",marginBottom:14}}>
+            <span style={{fontSize:11,fontWeight:700,color:C.mut,textTransform:"uppercase"}}>Password</span>
+            <input type="password" value={loginPassword} onChange={e=>setLoginPassword(e.target.value)} autoComplete={loginMode==="signup"?"new-password":"current-password"} minLength={6}
+              style={{...inpStyle,width:"100%",padding:"10px 14px",fontSize:14,marginTop:3}} />
+          </label>
+          {loginError && <div style={{fontSize:12,color:C.red,marginBottom:10,whiteSpace:"pre-wrap"}}>{loginError}</div>}
+          {loginInfo  && <div style={{fontSize:12,color:C.grn,marginBottom:10,whiteSpace:"pre-wrap"}}>{loginInfo}</div>}
+          <button type="submit" disabled={loginBusy}
+            style={{width:"100%",padding:"12px",borderRadius:8,border:"none",background:loginBusy?C.border:C.gold,color:loginBusy?C.mut:"#000",fontFamily:"inherit",fontSize:14,fontWeight:700,cursor:loginBusy?"default":"pointer"}}>
+            {loginBusy ? "Please wait…" : (loginMode==="signup" ? "Create Account" : "Sign In")}
+          </button>
+          {loginMode === "signup" && (
+            <div style={{fontSize:10,color:C.mut,marginTop:12,textAlign:"center",lineHeight:1.5}}>
+              New accounts require approval by an existing admin before you can access the app.
+            </div>
+          )}
+        </form>
+      </div>
+    );
+  }
+
+  // 3. Session exists but the coach row hasn't loaded yet — brief loading.
+  if (!coach) {
+    return <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",background:C.bg,color:C.mut}}>Loading profile…</div>;
+  }
+
+  // 4. Logged in but not yet approved by an admin.
+  if (!coach.is_approved) {
+    return (
+      <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",background:C.bg,padding:16}}>
+        <div style={{background:C.card,padding:32,borderRadius:16,border:"1px solid "+C.border,maxWidth:420,textAlign:"center"}}>
+          <div style={{fontSize:24,fontWeight:800,color:C.gold,marginBottom:6}}>◆ Awaiting Approval</div>
+          <div style={{fontSize:13,color:C.text,marginBottom:6}}>Hi {coach.display_name || coach.email}.</div>
+          <div style={{fontSize:13,color:C.mut,marginBottom:20,lineHeight:1.6}}>
+            Your account has been created but an admin needs to approve it before you can access the eval data.
+            Ping the Director of Volleyball — they can approve you from the <b>Coaches</b> tab.
+          </div>
+          <button onClick={async ()=>{ await supabase.auth.signOut(); }}
+            style={{padding:"10px 20px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.mut,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700}}>
+            Sign out
           </button>
         </div>
       </div>
@@ -1377,6 +1528,242 @@ export default function App() {
     );
   }
 
+  // ─── COACHES (USER MANAGEMENT) ────────────────────────────────────────
+  // Admin-only. Lists every signed-up coach with controls to approve, mark
+  // admin, edit display name, and remove. The first signup is auto-approved
+  // as admin; all subsequent coaches land here awaiting approval.
+  const loadCoaches = useCallback(async () => {
+    setCoachesLoading(true);
+    const { data, error } = await supabase.from("coaches").select("*").order("created_at", { ascending: true });
+    if (error) console.error("Load coaches error:", error);
+    setCoachesList(data || []);
+    setCoachesLoading(false);
+  }, []);
+  useEffect(() => { if (isApproved && view === "coaches") loadCoaches(); }, [isApproved, view, loadCoaches]);
+
+  const updateCoach = async (id, patch) => {
+    // Optimistic local update
+    setCoachesList(prev => prev.map(c => c.id === id ? { ...c, ...patch } : c));
+    const { error } = await supabase.from("coaches").update(patch).eq("id", id);
+    if (error) { window.alert("Update failed: " + error.message); loadCoaches(); }
+    if (id === coach.id) {
+      setCoach(prev => prev ? { ...prev, ...patch } : prev);
+    }
+  };
+  const removeCoach = async (target) => {
+    if (target.id === coach.id) { window.alert("You can't remove your own account from here. Use Sign Out instead."); return; }
+    if (!window.confirm("Remove "+(target.display_name||target.email)+" from the coaches list? Their login still exists in Supabase Auth until you delete it there, but they will no longer be able to access the app.")) return;
+    const { error } = await supabase.from("coaches").delete().eq("id", target.id);
+    if (error) { window.alert("Remove failed: " + error.message); return; }
+    loadCoaches();
+  };
+
+  function renderCoaches() {
+    if (!isAdmin) {
+      return <div style={{padding:24,color:C.mut,textAlign:"center"}}>Coach management is admin-only.</div>;
+    }
+    const th = {padding:"8px 10px",textAlign:"left",fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut,borderBottom:"1px solid "+C.border,background:C.card,whiteSpace:"nowrap"};
+    const td = {padding:"8px 10px",fontSize:12,borderBottom:"1px solid "+C.border,verticalAlign:"middle"};
+    const pending = coachesList.filter(c => !c.is_approved);
+    return (
+      <div>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12,flexWrap:"wrap",gap:8}}>
+          <div>
+            <h2 style={{margin:0,fontSize:18,fontWeight:800,color:C.gold}}>Coaches</h2>
+            <div style={{fontSize:11,color:C.mut,marginTop:2}}>{coachesList.length} total · {pending.length} awaiting approval</div>
+          </div>
+          <button onClick={loadCoaches} disabled={coachesLoading}
+            style={{padding:"6px 12px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+            {coachesLoading ? "Loading…" : "Refresh"}
+          </button>
+        </div>
+        {pending.length > 0 && (
+          <div style={{background:"rgba(245,158,11,0.08)",border:"1px solid rgba(245,158,11,0.35)",borderRadius:10,padding:"10px 14px",marginBottom:12,fontSize:12,color:"#f59e0b"}}>
+            {pending.length} coach{pending.length===1?" is":"es are"} waiting to be approved.
+          </div>
+        )}
+        <div style={{background:C.card,borderRadius:12,border:"1px solid "+C.border,overflow:"hidden"}}>
+          <div style={{overflowX:"auto"}}>
+            <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0}}>
+              <thead><tr>
+                <th style={th}>Display Name</th>
+                <th style={th}>Email</th>
+                <th style={th}>Approved</th>
+                <th style={th}>Admin</th>
+                <th style={th}>Last seen</th>
+                <th style={th}>Joined</th>
+                <th style={th}></th>
+              </tr></thead>
+              <tbody>
+                {coachesList.map(c => {
+                  const isSelf = c.id === coach.id;
+                  return (
+                    <tr key={c.id} style={{background: c.is_approved ? "transparent" : "rgba(245,158,11,0.05)"}}>
+                      <td style={td}>
+                        <input style={{...inpStyle,padding:"5px 8px",fontSize:12,width:"100%",minWidth:120}}
+                          value={c.display_name||""}
+                          onChange={e => updateCoach(c.id, { display_name: e.target.value })}
+                          placeholder="(no name)" />
+                      </td>
+                      <td style={{...td,color:C.mut}}>{c.email}{isSelf && <span style={{color:C.gold,marginLeft:6,fontSize:10}}>(you)</span>}</td>
+                      <td style={td}>
+                        <label style={{display:"inline-flex",alignItems:"center",gap:6,cursor:isSelf?"default":"pointer"}}>
+                          <input type="checkbox" checked={!!c.is_approved} disabled={isSelf}
+                            onChange={e => updateCoach(c.id, { is_approved: e.target.checked })}
+                            style={{width:16,height:16,accentColor:C.grn,cursor:isSelf?"default":"pointer"}} />
+                          <span style={{fontSize:11,color:c.is_approved?C.grn:C.mut,fontWeight:600}}>{c.is_approved?"Yes":"No"}</span>
+                        </label>
+                      </td>
+                      <td style={td}>
+                        <label style={{display:"inline-flex",alignItems:"center",gap:6,cursor:isSelf?"default":"pointer"}}>
+                          <input type="checkbox" checked={!!c.is_admin} disabled={isSelf}
+                            onChange={e => updateCoach(c.id, { is_admin: e.target.checked })}
+                            style={{width:16,height:16,accentColor:C.gold,cursor:isSelf?"default":"pointer"}} />
+                          <span style={{fontSize:11,color:c.is_admin?C.gold:C.mut,fontWeight:600}}>{c.is_admin?"Yes":"No"}</span>
+                        </label>
+                      </td>
+                      <td style={{...td,color:C.mut,whiteSpace:"nowrap"}}>{c.last_seen_at ? new Date(c.last_seen_at).toLocaleString() : "—"}</td>
+                      <td style={{...td,color:C.mut,whiteSpace:"nowrap"}}>{new Date(c.created_at).toLocaleDateString()}</td>
+                      <td style={td}>
+                        {!isSelf && (
+                          <button onClick={()=>removeCoach(c)}
+                            style={{padding:"4px 10px",borderRadius:6,border:"1px solid "+C.red,background:"transparent",color:C.red,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+                            Remove
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            {!coachesList.length && <div style={{padding:24,textAlign:"center",color:C.mut,fontSize:12}}>{coachesLoading ? "Loading…" : "No coaches yet."}</div>}
+          </div>
+        </div>
+        <div style={{fontSize:11,color:C.mut,marginTop:10,lineHeight:1.6}}>
+          Coaches sign up at the login screen and appear here awaiting your approval.
+          Display names show up in the Activity log so coaches see who made each change.
+          You can't toggle your own admin / approved flags (use the Supabase Dashboard if you ever need to).
+        </div>
+      </div>
+    );
+  }
+
+  // ─── ACTIVITY (AUDIT LOG) ─────────────────────────────────────────────
+  // Global feed of every change to a player row, attributed to the coach who
+  // made it. Populated server-side by the players_audit trigger.
+  const loadActivity = useCallback(async () => {
+    setActivityLoading(true);
+    let q = supabase.from("change_log").select("*").order("created_at", { ascending: false }).limit(300);
+    if (activityActor)  q = q.eq("actor_id", activityActor);
+    if (activityAction) q = q.eq("action", activityAction);
+    const { data, error } = await q;
+    if (error) console.error("Load activity error:", error);
+    setActivityLog(data || []);
+    setActivityLoading(false);
+  }, [activityActor, activityAction]);
+  useEffect(() => { if (isApproved && view === "activity") loadActivity(); }, [isApproved, view, loadActivity]);
+
+  function renderActivity() {
+    // Distinct actors / actions for the filter dropdowns. We compute from the
+    // currently-loaded log so a freshly-loaded feed has the right options.
+    const distinctActors = Array.from(new Map(
+      activityLog.filter(e => e.actor_id).map(e => [e.actor_id, e.actor_name || e.actor_email || "Unknown"])
+    ).entries()); // [[id, name], ...]
+
+    const formatChange = (entry) => {
+      // For updates: "5 fields changed: scores, notes, …"
+      // For insert/delete: name from the row snapshot.
+      if (entry.action === "update") {
+        const fields = entry.field_changes ? Object.keys(entry.field_changes) : [];
+        if (!fields.length) return "(no visible changes)";
+        return fields.length === 1 ? "Changed " + fields[0] : fields.length + " fields: " + fields.slice(0,5).join(", ") + (fields.length>5?", …":"");
+      }
+      const row = entry.field_changes || {};
+      const name = ((row.first_name||"") + " " + (row.last_name||"")).trim();
+      if (entry.action === "insert") return "Added " + (name || "player #"+(entry.player_id||"?"));
+      if (entry.action === "delete") return "Deleted " + (name || "player #"+(entry.player_id||"?"));
+      return entry.action;
+    };
+    const playerName = (entry) => {
+      // Try to find current player; fall back to snapshot fields for deletes.
+      const p = entry.player_id ? players.find(x => x.id === entry.player_id) : null;
+      if (p) return p.first_name + " " + p.last_name;
+      const row = entry.field_changes || {};
+      const snap = ((row.first_name||"") + " " + (row.last_name||"")).trim();
+      return snap || (entry.player_id ? "Player #"+entry.player_id : "—");
+    };
+
+    const td = {padding:"7px 10px",fontSize:12,borderBottom:"1px solid "+C.border,verticalAlign:"top"};
+    const th = {padding:"8px 10px",textAlign:"left",fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut,borderBottom:"1px solid "+C.border,background:C.card,whiteSpace:"nowrap"};
+    return (
+      <div>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12,flexWrap:"wrap"}}>
+          <h2 style={{margin:0,fontSize:18,fontWeight:800,color:C.gold}}>Activity</h2>
+          <span style={{fontSize:11,color:C.mut}}>Last 300 changes</span>
+          <div style={{marginLeft:"auto",display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+            <select value={activityActor} onChange={e=>setActivityActor(e.target.value)}
+              style={{...inpStyle,padding:"6px 10px",fontSize:12}}>
+              <option value="">All coaches</option>
+              {distinctActors.map(([id,name]) => <option key={id} value={id}>{name}</option>)}
+            </select>
+            <select value={activityAction} onChange={e=>setActivityAction(e.target.value)}
+              style={{...inpStyle,padding:"6px 10px",fontSize:12}}>
+              <option value="">All actions</option>
+              <option value="update">Updates</option>
+              <option value="insert">Adds</option>
+              <option value="delete">Deletes</option>
+            </select>
+            <button onClick={loadActivity} disabled={activityLoading}
+              style={{padding:"6px 12px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+              {activityLoading ? "Loading…" : "Refresh"}
+            </button>
+          </div>
+        </div>
+        <div style={{background:C.card,borderRadius:12,border:"1px solid "+C.border,overflow:"hidden"}}>
+          <div style={{overflowX:"auto",maxHeight:"calc(100vh - 220px)"}}>
+            <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0}}>
+              <thead><tr>
+                <th style={th}>When</th>
+                <th style={th}>Coach</th>
+                <th style={th}>Action</th>
+                <th style={th}>Player</th>
+                <th style={th}>Change</th>
+              </tr></thead>
+              <tbody>
+                {activityLog.map(entry => {
+                  const actionColor = entry.action === "insert" ? C.grn : entry.action === "delete" ? C.red : C.gold;
+                  return (
+                    <tr key={entry.id}>
+                      <td style={{...td,color:C.mut,whiteSpace:"nowrap"}}>{new Date(entry.created_at).toLocaleString()}</td>
+                      <td style={td}>{entry.actor_name || entry.actor_email || <span style={{color:C.mut}}>unknown</span>}</td>
+                      <td style={td}><span style={{fontSize:10,fontWeight:800,padding:"2px 7px",borderRadius:8,background:actionColor+"22",color:actionColor,textTransform:"uppercase"}}>{entry.action}</span></td>
+                      <td style={td}>
+                        {entry.player_id
+                          ? <span style={{color:C.gold,cursor:"pointer",fontWeight:600}} onClick={()=>{const p = players.find(x=>x.id===entry.player_id); if (p) setProfileId(p.id);}}>{playerName(entry)}</span>
+                          : <span style={{color:C.mut}}>{playerName(entry)}</span>}
+                      </td>
+                      <td style={td}>
+                        <div style={{color:C.text}}>{formatChange(entry)}</div>
+                        {entry.action === "update" && entry.field_changes && (
+                          <details style={{marginTop:4}}>
+                            <summary style={{fontSize:10,color:C.mut,cursor:"pointer"}}>Show diff</summary>
+                            <pre style={{margin:"4px 0 0 0",padding:8,background:C.bg,border:"1px solid "+C.border,borderRadius:6,fontSize:10,color:C.text,overflow:"auto",maxHeight:200,whiteSpace:"pre-wrap"}}>{JSON.stringify(entry.field_changes, null, 2)}</pre>
+                          </details>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            {!activityLog.length && <div style={{padding:24,textAlign:"center",color:C.mut,fontSize:12}}>{activityLoading ? "Loading…" : "No activity yet."}</div>}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // ─── ADD PLAYER MODAL ───
   function renderAddPlayer() {
     const lbl = {fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut,marginBottom:4,display:"block"};
@@ -1442,8 +1829,15 @@ export default function App() {
           <span style={{fontSize:11,fontWeight:400,color:C.mut,marginLeft:6}}>2026-27 Tryouts</span>
         </div>
         <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-          <nav style={{display:"flex",gap:3}}>
-            {[["dashboard","Dashboard"],["evaluate","Evaluate"],["teams","Teams"],["rankings","Rankings"]].map(([v,l]) =>
+          <nav style={{display:"flex",gap:3,flexWrap:"wrap"}}>
+            {[
+              ["dashboard","Dashboard"],
+              ["evaluate","Evaluate"],
+              ["teams","Teams"],
+              ["rankings","Rankings"],
+              ["activity","Activity"],
+              ...(isAdmin ? [["coaches","Coaches"]] : []),
+            ].map(([v,l]) =>
               <button key={v} style={{padding:"6px 14px",borderRadius:8,border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600,background:view===v?C.gold:"transparent",color:view===v?"#000":C.mut}} onClick={()=>setView(v)}>{l}</button>
             )}
           </nav>
@@ -1451,9 +1845,19 @@ export default function App() {
             style={{padding:"6px 12px",borderRadius:8,border:"1px solid "+C.gold,background:"transparent",color:C.gold,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700}}>
             + Add Player
           </button>
+          <div style={{display:"flex",alignItems:"center",gap:6,marginLeft:6,paddingLeft:10,borderLeft:"1px solid "+C.border}}>
+            <span style={{fontSize:11,color:C.mut}} title={coach.email}>
+              {coach.display_name || coach.email}{isAdmin && <span style={{color:C.gold,marginLeft:4,fontSize:9}}>ADMIN</span>}
+            </span>
+            <button onClick={async ()=>{ await supabase.auth.signOut(); }}
+              title="Sign out"
+              style={{padding:"4px 10px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,cursor:"pointer",fontFamily:"inherit",fontSize:10,fontWeight:700}}>
+              Sign out
+            </button>
+          </div>
         </div>
       </header>
-      {view !== "dashboard" && (
+      {view !== "dashboard" && view !== "activity" && view !== "coaches" && (
         <div style={{display:"flex",gap:4,padding:"10px 18px",borderBottom:"1px solid "+C.border,flexWrap:"wrap"}}>
           {divsWithPlayers.map(d => {
             const isSelected = selectedDivs.includes(d);
@@ -1479,6 +1883,8 @@ export default function App() {
         {view==="evaluate" && renderEval()}
         {view==="teams" && renderTeams()}
         {view==="rankings" && renderRankings()}
+        {view==="activity" && renderActivity()}
+        {view==="coaches"  && renderCoaches()}
       </div>
       {profileId !== null && renderProfile()}
       {addingPlayer && renderAddPlayer()}
