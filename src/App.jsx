@@ -287,6 +287,31 @@ export default function App() {
 
   useEffect(() => { if (isApproved) { loadPlayers(); loadRankings(); } }, [isApproved, loadPlayers, loadRankings]);
 
+  // Coaches list loader (used by the admin Coaches tab). Lives up here, NOT
+  // next to renderCoaches, so the hook call order stays stable across the
+  // auth-gate early returns below.
+  const loadCoaches = useCallback(async () => {
+    setCoachesLoading(true);
+    const { data, error } = await supabase.from("coaches").select("*").order("created_at", { ascending: true });
+    if (error) console.error("Load coaches error:", error);
+    setCoachesList(data || []);
+    setCoachesLoading(false);
+  }, []);
+  useEffect(() => { if (isApproved && view === "coaches") loadCoaches(); }, [isApproved, view, loadCoaches]);
+
+  // Activity feed loader (used by the Activity tab). Same hook-order rule.
+  const loadActivity = useCallback(async () => {
+    setActivityLoading(true);
+    let q = supabase.from("change_log").select("*").order("created_at", { ascending: false }).limit(300);
+    if (activityActor)  q = q.eq("actor_id", activityActor);
+    if (activityAction) q = q.eq("action", activityAction);
+    const { data, error } = await q;
+    if (error) console.error("Load activity error:", error);
+    setActivityLog(data || []);
+    setActivityLoading(false);
+  }, [activityActor, activityAction]);
+  useEffect(() => { if (isApproved && view === "activity") loadActivity(); }, [isApproved, view, loadActivity]);
+
   // Save a single player field update to Supabase
   const upd = useCallback(async (id, updates) => {
     // Optimistic update
@@ -1532,14 +1557,10 @@ export default function App() {
   // Admin-only. Lists every signed-up coach with controls to approve, mark
   // admin, edit display name, and remove. The first signup is auto-approved
   // as admin; all subsequent coaches land here awaiting approval.
-  const loadCoaches = useCallback(async () => {
-    setCoachesLoading(true);
-    const { data, error } = await supabase.from("coaches").select("*").order("created_at", { ascending: true });
-    if (error) console.error("Load coaches error:", error);
-    setCoachesList(data || []);
-    setCoachesLoading(false);
-  }, []);
-  useEffect(() => { if (isApproved && view === "coaches") loadCoaches(); }, [isApproved, view, loadCoaches]);
+  //
+  // loadCoaches / loadActivity hooks live at the top of the component (above
+  // the auth gates) so the hook-call order is stable across renders. The
+  // render and mutation helpers stay here next to their renderXxx fn.
 
   const updateCoach = async (id, patch) => {
     // Optimistic local update
@@ -1652,17 +1673,8 @@ export default function App() {
   // ─── ACTIVITY (AUDIT LOG) ─────────────────────────────────────────────
   // Global feed of every change to a player row, attributed to the coach who
   // made it. Populated server-side by the players_audit trigger.
-  const loadActivity = useCallback(async () => {
-    setActivityLoading(true);
-    let q = supabase.from("change_log").select("*").order("created_at", { ascending: false }).limit(300);
-    if (activityActor)  q = q.eq("actor_id", activityActor);
-    if (activityAction) q = q.eq("action", activityAction);
-    const { data, error } = await q;
-    if (error) console.error("Load activity error:", error);
-    setActivityLog(data || []);
-    setActivityLoading(false);
-  }, [activityActor, activityAction]);
-  useEffect(() => { if (isApproved && view === "activity") loadActivity(); }, [isApproved, view, loadActivity]);
+  // (loadActivity useCallback + useEffect live at the top of the component,
+  // above the auth gates, to keep React's hook-call order stable.)
 
   function renderActivity() {
     // Distinct actors / actions for the filter dropdowns. We compute from the
