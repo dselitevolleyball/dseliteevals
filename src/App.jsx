@@ -556,37 +556,71 @@ export default function App() {
       const password = loginPassword;
       if (!email || !password) { setLoginError("Email and password are required."); return; }
       setLoginBusy(true); setLoginError(""); setLoginInfo("");
+      // Flip the form into Sign In mode with a friendly banner. Called both
+      // by the pre-check (clean path) and by the catch block when Supabase
+      // rejects a duplicate signup with "already registered" or a rate-limit
+      // error.
+      const redirectToSignIn = (reason) => {
+        setLoginMode("login");
+        setLoginPassword("");
+        setLoginError("");
+        setLoginInfo(reason || "Looks like you already have an account. Sign in with your existing password below.");
+      };
+      // Match the family of Supabase Auth errors that mean "this email is
+      // already in use" so we can recover instead of just showing the raw
+      // message ("Email rate limit exceeded", "User already registered", etc.)
+      const looksLikeDuplicateSignup = (msg) => {
+        const m = (msg || "").toLowerCase();
+        return m.includes("already registered")
+            || m.includes("already exists")
+            || m.includes("user already")
+            || m.includes("rate limit")
+            || m.includes("over_email_send_rate_limit");
+      };
       try {
         if (loginMode === "signup") {
-          // Server enforces this too via handle_new_user trigger; the RPC is
-          // here so rejected users get a clean message instead of Supabase's
-          // generic "Database error saving new user".
+          // 1. Pre-check the email allowlist — clean rejection message.
           const { data: allowed, error: rpcErr } = await supabase.rpc("is_signup_allowed", { check_email: email });
           if (rpcErr) {
-            // RPC failure shouldn't block signup — trigger will still gate
-            // server-side. Log and continue.
             console.warn("is_signup_allowed RPC failed:", rpcErr);
           } else if (allowed === false) {
             throw new Error("This email isn't on the approved signup list. Contact the Director of Volleyball to be added.");
           }
+          // 2. Pre-check whether this email already has an account. If yes,
+          //    flip to Sign In mode instead of letting Supabase return a
+          //    confusing rate-limit error on the second attempt.
+          const { data: alreadyRegistered, error: regErr } = await supabase.rpc("is_email_registered", { check_email: email });
+          if (regErr) {
+            console.warn("is_email_registered RPC failed:", regErr);
+          } else if (alreadyRegistered === true) {
+            redirectToSignIn();
+            return;
+          }
+          // 3. Actually create the account.
           const { data, error } = await supabase.auth.signUp({
             email, password,
             options: { data: { display_name: loginDisplayName.trim() || email.split("@")[0] } },
           });
-          if (error) throw error;
+          if (error) {
+            if (looksLikeDuplicateSignup(error.message)) { redirectToSignIn(); return; }
+            throw error;
+          }
           if (!data.session) {
-            // Email confirmation is enabled in Supabase; user must confirm.
             setLoginInfo("Account created. Check your email for a confirmation link, then sign in.");
             setLoginMode("login");
           }
-          // If a session is returned (email confirmation disabled), the
-          // onAuthStateChange listener will pick it up and route us in.
         } else {
           const { error } = await supabase.auth.signInWithPassword({ email, password });
           if (error) throw error;
         }
       } catch (err) {
-        setLoginError(err.message || "Authentication failed");
+        // Catch-all: if even a sign-in error looks like the duplicate-signup
+        // family (rare, but possible if the user toggled tabs), redirect.
+        if (loginMode === "signup" && looksLikeDuplicateSignup(err.message)) {
+          redirectToSignIn();
+        } else {
+          setLoginError(err.message || "Authentication failed");
+        }
       } finally {
         setLoginBusy(false);
       }
