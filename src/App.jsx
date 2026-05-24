@@ -311,7 +311,10 @@ export default function App() {
     setCoachesList(data || []);
     setCoachesLoading(false);
   }, []);
-  useEffect(() => { if (isApproved && view === "coaches") loadCoaches(); }, [isApproved, view, loadCoaches]);
+  // Load coaches as soon as we're approved (not only when the Coaches tab
+  // is opened) so the admin "N coaches awaiting approval" banner has data
+  // on every page.
+  useEffect(() => { if (isApproved) loadCoaches(); }, [isApproved, loadCoaches]);
 
   // Allowed-signup-emails loader (lives next to loadCoaches so the Coaches
   // tab can render both lists in one fetch round).
@@ -632,16 +635,14 @@ export default function App() {
       };
       try {
         if (loginMode === "signup") {
-          // 1. Pre-check the email allowlist — clean rejection message.
-          const { data: allowed, error: rpcErr } = await supabase.rpc("is_signup_allowed", { check_email: email });
-          if (rpcErr) {
-            console.warn("is_signup_allowed RPC failed:", rpcErr);
-          } else if (allowed === false) {
-            throw new Error("This email isn't on the approved signup list. Contact the Director of Volleyball to be added.");
-          }
-          // 2. Pre-check whether this email already has an account. If yes,
-          //    flip to Sign In mode instead of letting Supabase return a
-          //    confusing rate-limit error on the second attempt.
+          // Anyone can sign up; the trigger auto-approves allowlisted emails
+          // and parks the rest on "Awaiting Approval" until the admin acts.
+          // (We used to hard-block non-allowlisted emails here; we removed
+          // that so unknown coaches can request access.)
+          //
+          // Pre-check whether this email already has an account. If yes,
+          // flip to Sign In mode instead of letting Supabase return a
+          // confusing rate-limit error on the second attempt.
           const { data: alreadyRegistered, error: regErr } = await supabase.rpc("is_email_registered", { check_email: email });
           if (regErr) {
             console.warn("is_email_registered RPC failed:", regErr);
@@ -735,7 +736,7 @@ export default function App() {
           )}
           {loginMode === "signup" && (
             <div style={{fontSize:10,color:C.mut,marginTop:12,textAlign:"center",lineHeight:1.5}}>
-              New accounts require approval by an existing admin before you can access the app.
+              Pre-approved coaches will be signed in immediately. Anyone else will be parked on an "Awaiting Approval" screen until the admin lets them in.
             </div>
           )}
         </form>
@@ -1753,7 +1754,7 @@ export default function App() {
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8,flexWrap:"wrap",gap:8}}>
             <div>
               <h3 style={{margin:0,fontSize:14,fontWeight:800,color:C.gold,letterSpacing:0.5}}>ALLOWED SIGNUP EMAILS</h3>
-              <div style={{fontSize:11,color:C.mut,marginTop:2}}>Only people whose email is on this list can create an account. {allowedEmails.length} on the list.</div>
+              <div style={{fontSize:11,color:C.mut,marginTop:2}}>Coaches with emails on this list are auto-approved on signup (no waiting). Anyone else can still sign up but lands on the "Awaiting Approval" screen until you approve them below. {allowedEmails.length} on the list.</div>
             </div>
             <button onClick={loadAllowedEmails} disabled={allowedLoading}
               style={{padding:"4px 10px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
@@ -2071,6 +2072,24 @@ export default function App() {
           </div>
         </div>
       </header>
+      {/* Admin notification: a coach has signed up and is waiting for
+          approval. Loaded eagerly via the always-on loadCoaches effect so
+          this banner shows on every tab, not just the Coaches one. */}
+      {isAdmin && (() => {
+        const pending = coachesList.filter(c => !c.is_approved);
+        if (pending.length === 0 || view === "coaches") return null;
+        return (
+          <div style={{background:"rgba(245,158,11,0.10)",borderBottom:"1px solid rgba(245,158,11,0.4)",padding:"8px 18px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,flexWrap:"wrap"}}>
+            <span style={{fontSize:12,color:"#f59e0b",fontWeight:600}}>
+              {pending.length} coach{pending.length === 1 ? " is" : "es are"} waiting for approval{pending.length <= 3 ? ": " + pending.map(c => c.display_name || c.email).join(", ") : ""}.
+            </span>
+            <button onClick={() => setView("coaches")}
+              style={{padding:"5px 12px",borderRadius:6,border:"1px solid #f59e0b",background:"transparent",color:"#f59e0b",fontFamily:"inherit",fontSize:11,fontWeight:700,cursor:"pointer"}}>
+              Review
+            </button>
+          </div>
+        );
+      })()}
       {view !== "dashboard" && view !== "activity" && view !== "coaches" && (
         <div style={{display:"flex",gap:4,padding:"10px 18px",borderBottom:"1px solid "+C.border,flexWrap:"wrap"}}>
           {divsWithPlayers.map(d => {
