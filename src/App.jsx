@@ -6,6 +6,10 @@ import { DndContext, useDraggable, useDroppable, PointerSensor, TouchSensor, use
 const POSITIONS = ["S","OH","MB","RS","L","DS","U"];
 const POS_LABELS = {S:"Setter",OH:"Outside Hitter",MB:"Middle Blocker",RS:"Right Side",L:"Libero",DS:"Def Specialist",U:"Utility"};
 const SKILLS = ["Serving","Passing","Serve Receive","Attacking","Setting","Blocking","Agility","Communication","Coachability"];
+// Skills that contribute to the displayed Total and Average. Blocking is
+// tracked (still scoreable, still shown as a column) but intentionally not
+// included in stats — it gets evaluated separately by position coaches.
+const STATS_SKILLS = SKILLS.filter(s => s !== "Blocking");
 // Short labels for the Evaluate-table column headers (full name shown on hover).
 // Lets us fit all 9 skill columns on a single screen without horizontal scrolling.
 const SKILL_ABBR = {Serving:"SRV",Passing:"PASS","Serve Receive":"S/R",Attacking:"ATK",Setting:"SET",Blocking:"BLK",Agility:"AGI",Communication:"COM",Coachability:"COACH"};
@@ -38,7 +42,11 @@ function calcUSAV(dob) {
   const y = parseInt(parts[0]); const m = parseInt(parts[1]);
   return 2026 - (m >= 7 ? y : y - 1);
 }
-function tot(p) { const v = Object.values(p.scores||{}); return v.length?v.reduce((a,b)=>a+b,0):0; }
+// Total = sum of stat-skill scores only (Blocking is excluded).
+function tot(p) {
+  const s = p.scores || {};
+  return STATS_SKILLS.reduce((sum, sk) => sum + (s[sk] || 0), 0);
+}
 
 // Payload sent to /api/summarize-player. Shared by initial generation and
 // the refine flow so both requests describe the player identically.
@@ -71,7 +79,15 @@ function buildPlayerPayload(p, players) {
     team_plan: TEAM_PLAN_2026[div] || null,
   };
 }
-function avg(p) { const v = Object.values(p.scores||{}); return v.length?(v.reduce((a,b)=>a+b,0)/v.length).toFixed(1):"—"; }
+// Average = mean of scored stat-skills (Blocking is excluded). A skill with
+// no score is skipped from the denominator so a partially-evaluated player
+// still gets a meaningful average.
+function avg(p) {
+  const s = p.scores || {};
+  const vals = STATS_SKILLS.map(sk => s[sk]).filter(v => v && v > 0);
+  if (!vals.length) return "—";
+  return (vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1);
+}
 // A player counts as a returning DS Elite athlete if her Prev Season Team field
 // names DSE / DS Elite. Coaches can correct false positives/negatives by editing
 // the "Prev Season Team" value in the profile modal.
@@ -1438,7 +1454,7 @@ export default function App() {
           {/* Score Summary */}
           <div style={{background:totalScore>0?"linear-gradient(135deg,rgba(233,30,140,0.15),rgba(34,197,94,0.1))":C.bg,borderRadius:12,padding:"14px 18px",marginBottom:16,border:"1px solid "+(totalScore>0?C.gold:C.border)}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-              <div><div style={{fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut}}>Total</div><div style={{fontSize:36,fontWeight:800,color:totalScore>0?C.gold:C.mut}}>{totalScore||0}<span style={{fontSize:16,fontWeight:400,color:C.mut}}>/45</span></div></div>
+              <div><div style={{fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut}} title="Sum of stat-skill scores (Blocking excluded)">Total</div><div style={{fontSize:36,fontWeight:800,color:totalScore>0?C.gold:C.mut}}>{totalScore||0}<span style={{fontSize:16,fontWeight:400,color:C.mut}}>/40</span></div></div>
               <div style={{textAlign:"center"}}><div style={{fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut}}>Avg</div><div style={{fontSize:28,fontWeight:800,color:totalScore>0?C.grn:C.mut}}>{avg(p)}</div></div>
               <div style={{textAlign:"right"}}><div style={{fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut}}>Scored</div><div style={{fontSize:28,fontWeight:800,color:scoredCount===9?C.grn:C.gold}}>{scoredCount}<span style={{fontSize:16,fontWeight:400,color:C.mut}}>/9</span></div></div>
             </div>
