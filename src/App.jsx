@@ -139,6 +139,13 @@ export default function App() {
   const [loginBusy, setLoginBusy]               = useState(false);
   const [loginError, setLoginError]             = useState("");
   const [loginInfo, setLoginInfo]               = useState("");
+  // Set when supabase-js fires a PASSWORD_RECOVERY event (user clicked the
+  // reset link in their email). Gates a "Set new password" screen ahead of
+  // every other auth gate so it always wins.
+  const [recoveryMode, setRecoveryMode]         = useState(false);
+  const [newPassword, setNewPassword]           = useState("");
+  const [newPasswordBusy, setNewPasswordBusy]   = useState(false);
+  const [newPasswordError, setNewPasswordError] = useState("");
   // Activity tab state (audit log):
   const [activityLog, setActivityLog]         = useState([]);
   const [activityLoading, setActivityLoading] = useState(false);
@@ -161,7 +168,10 @@ export default function App() {
       setSession(session);
       setAuthChecking(false);
     });
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, s) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, s) => {
+      // Fired when the user clicks the password-reset link in their email.
+      // Flag it so the "Set new password" gate renders ahead of the main app.
+      if (event === "PASSWORD_RECOVERY") setRecoveryMode(true);
       setSession(s);
     });
     return () => { mounted = false; subscription.unsubscribe(); };
@@ -548,7 +558,50 @@ export default function App() {
     return <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",background:C.bg,color:C.mut}}>Checking session…</div>;
   }
 
-  // 2. No session -> login / signup form.
+  // 2. Password-recovery gate. Fires when the user clicked the reset link in
+  //    their email and supabase-js exchanged the token for a recovery session.
+  //    Comes BEFORE the no-session gate because by this point they technically
+  //    do have a session — but it's only good for setting a new password.
+  if (recoveryMode) {
+    const submitNewPassword = async (e) => {
+      if (e && e.preventDefault) e.preventDefault();
+      if (!newPassword || newPassword.length < 6) { setNewPasswordError("Pick a password at least 6 characters long."); return; }
+      setNewPasswordBusy(true); setNewPasswordError("");
+      const { error } = await supabase.auth.updateUser({ password: newPassword });
+      setNewPasswordBusy(false);
+      if (error) { setNewPasswordError(error.message || "Couldn't update password."); return; }
+      // Clear the flag and the field; the recovery session is now upgraded to
+      // a normal session, so the main app gates will let them through.
+      setRecoveryMode(false);
+      setNewPassword("");
+    };
+    return (
+      <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",background:C.bg,padding:16}}>
+        <form onSubmit={submitNewPassword} style={{background:C.card,padding:32,borderRadius:16,border:"1px solid "+C.border,maxWidth:400,width:"100%"}}>
+          <div style={{textAlign:"center",marginBottom:18}}>
+            <div style={{fontSize:24,fontWeight:800,color:C.gold,marginBottom:4}}>◆ Set a new password</div>
+            <div style={{fontSize:12,color:C.mut}}>You followed a password-reset link. Choose a new password and you'll be signed in.</div>
+          </div>
+          <label style={{display:"block",marginBottom:14}}>
+            <span style={{fontSize:11,fontWeight:700,color:C.mut,textTransform:"uppercase"}}>New Password</span>
+            <input type="password" value={newPassword} onChange={e=>setNewPassword(e.target.value)} autoComplete="new-password" minLength={6} autoFocus
+              style={{...inpStyle,width:"100%",padding:"10px 14px",fontSize:14,marginTop:3}} />
+          </label>
+          {newPasswordError && <div style={{fontSize:12,color:C.red,marginBottom:10,whiteSpace:"pre-wrap"}}>{newPasswordError}</div>}
+          <button type="submit" disabled={newPasswordBusy}
+            style={{width:"100%",padding:"12px",borderRadius:8,border:"none",background:newPasswordBusy?C.border:C.gold,color:newPasswordBusy?C.mut:"#000",fontFamily:"inherit",fontSize:14,fontWeight:700,cursor:newPasswordBusy?"default":"pointer"}}>
+            {newPasswordBusy ? "Saving…" : "Save & Sign In"}
+          </button>
+          <button type="button" onClick={async ()=>{ await supabase.auth.signOut(); setRecoveryMode(false); setNewPassword(""); }}
+            style={{width:"100%",marginTop:10,padding:"8px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontFamily:"inherit",fontSize:11,fontWeight:700,cursor:"pointer"}}>
+            Cancel
+          </button>
+        </form>
+      </div>
+    );
+  }
+
+  // 3. No session -> login / signup form.
   if (!session) {
     const submitAuth = async (e) => {
       if (e && e.preventDefault) e.preventDefault();
@@ -663,6 +716,23 @@ export default function App() {
             style={{width:"100%",padding:"12px",borderRadius:8,border:"none",background:loginBusy?C.border:C.gold,color:loginBusy?C.mut:"#000",fontFamily:"inherit",fontSize:14,fontWeight:700,cursor:loginBusy?"default":"pointer"}}>
             {loginBusy ? "Please wait…" : (loginMode==="signup" ? "Create Account" : "Sign In")}
           </button>
+          {loginMode === "login" && (
+            <div style={{textAlign:"center",marginTop:12}}>
+              <button type="button"
+                onClick={async () => {
+                  const email = loginEmail.trim();
+                  if (!email) { setLoginError("Enter your email above first, then click Forgot password."); return; }
+                  setLoginBusy(true); setLoginError(""); setLoginInfo("");
+                  const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin });
+                  setLoginBusy(false);
+                  if (error) { setLoginError(error.message || "Couldn't send reset email."); return; }
+                  setLoginInfo("If an account exists for " + email + ", a password-reset link is on its way. Check your inbox (and spam folder).");
+                }}
+                style={{background:"none",border:"none",color:C.mut,fontFamily:"inherit",fontSize:11,cursor:"pointer",textDecoration:"underline"}}>
+                Forgot password?
+              </button>
+            </div>
+          )}
           {loginMode === "signup" && (
             <div style={{fontSize:10,color:C.mut,marginTop:12,textAlign:"center",lineHeight:1.5}}>
               New accounts require approval by an existing admin before you can access the app.
@@ -673,12 +743,12 @@ export default function App() {
     );
   }
 
-  // 3. Session exists but the coach row hasn't loaded yet — brief loading.
+  // 4. Session exists but the coach row hasn't loaded yet — brief loading.
   if (!coach) {
     return <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",background:C.bg,color:C.mut}}>Loading profile…</div>;
   }
 
-  // 4. Logged in but not yet approved by an admin.
+  // 5. Logged in but not yet approved by an admin.
   if (!coach.is_approved) {
     return (
       <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",background:C.bg,padding:16}}>
