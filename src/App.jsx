@@ -1078,7 +1078,7 @@ export default function App() {
       <>
         <div style={{fontSize:11,color:C.mut,marginBottom:10,fontStyle:"italic"}}>
           Drag a player onto a team card to assign (clears their roster slot). Drag onto Unassigned, Declined, or Not Invited to change status.
-          Click the "+ offer" chip on a team player to cycle offer → accepted → locked (signed + deposit) → none.
+          Click the "+ offer" chip on a team player to cycle locked (signed + deposit) → offer → accepted → none.
           Type a rank number to reorder within a position — rank persists across team changes.
         </div>
         {selectedDivs.map(div => (
@@ -1167,23 +1167,27 @@ export default function App() {
     };
 
     // Click-to-cycle offer-status chip on team-card player rows:
-    //   none → "made" → "accepted" → "locked" → none.
-    //   "locked" means the family has signed the agreement and the deposit
-    //   is in — the spot is fully secured. Declined / not_invited are still
-    //   set by dragging to those buckets, not by clicking the chip.
+    //   none → "locked" → "made" → "accepted" → none.
+    //   "locked" comes first so a coach processing a signed agreement + paid
+    //   deposit only needs ONE click to mark the player. Coaches who are
+    //   still mid-flow with a family can click again to step through the
+    //   "made" (offered) and "accepted" (verbal yes) intermediate states.
+    //   Declined / not_invited are set by dragging to those buckets, not by
+    //   clicking the chip.
     const cycleOffer = (player) => {
       const cur = player.offer_status || "";
       const now = new Date().toISOString();
       const updates = {};
       if (cur === "" || cur === "declined" || cur === "not_invited") {
+        // Locked is the terminal "signed + deposit in" state. Stamp
+        // offer_decision_at so the audit log has a "this is when the deal
+        // closed" timestamp (offer_made_at is left null because there was
+        // no separate offer-extended step in this one-click flow).
+        updates.offer_status = "locked"; updates.offer_decision_at = now;
+      } else if (cur === "locked") {
         updates.offer_status = "made"; updates.offer_made_at = now; updates.offer_decision_at = null;
       } else if (cur === "made") {
         updates.offer_status = "accepted"; updates.offer_decision_at = now;
-      } else if (cur === "accepted") {
-        // Locked is the terminal "signed + deposit in" state. We don't stamp
-        // a separate timestamp for it; offer_decision_at already captured
-        // when they accepted, and the change_log row records the transition.
-        updates.offer_status = "locked";
       } else {
         updates.offer_status = ""; updates.offer_made_at = null; updates.offer_decision_at = null;
       }
@@ -1192,11 +1196,13 @@ export default function App() {
     const offerChip = (player) => {
       const s = player.offer_status || "";
       let label, bg, fg, border = "none";
-      if (s === "made")          { label = "OFFER";      bg = "rgba(245,158,11,0.22)"; fg = "#f59e0b"; }
-      else if (s === "accepted") { label = "✓ ACCEPTED"; bg = "rgba(34,197,94,0.22)";  fg = C.grn; }
-      else if (s === "locked")   { label = "★ LOCKED";   bg = "rgba(233,30,140,0.30)"; fg = C.gold; }
-      else                       { label = "+ offer";    bg = "transparent";           fg = C.mut; border = "1px dashed "+C.border; }
-      return <span title="Click to cycle: none → offer made → accepted → locked (signed + deposit) → none"
+      // Locked uses purple (#a855f7) — distinct from gold (brand pink), green
+      // (accepted), amber (made), and red (declined/danger) used elsewhere.
+      if (s === "locked")        { label = "★ LOCKED";   bg = "rgba(168,85,247,0.25)";  fg = "#a855f7"; }
+      else if (s === "made")     { label = "OFFER";      bg = "rgba(245,158,11,0.22)";  fg = "#f59e0b"; }
+      else if (s === "accepted") { label = "✓ ACCEPTED"; bg = "rgba(34,197,94,0.22)";   fg = C.grn; }
+      else                       { label = "+ offer";    bg = "transparent";            fg = C.mut; border = "1px dashed "+C.border; }
+      return <span title="Click to cycle: none → ★ locked (signed + deposit) → offer made → accepted → none"
         onClick={(e) => { e.stopPropagation(); cycleOffer(player); }}
         style={{fontSize:9,fontWeight:800,padding:"1px 6px",borderRadius:8,background:bg,color:fg,whiteSpace:"nowrap",cursor:"pointer",border,userSelect:"none"}}>{label}</span>;
     };
@@ -1226,9 +1232,9 @@ export default function App() {
                   <h3 style={{margin:0,fontSize:17,fontWeight:800,color:C.gold}}>{team}</h3>
                   <div style={{display:"flex",gap:4,alignItems:"center",flexWrap:"wrap",justifyContent:"flex-end"}}>
                     <Tag c={C.acc}>{tp.length} players</Tag>
-                    {offerPending  > 0 && <Tag c="#f59e0b">{offerPending} pending</Tag>}
+                    {offerLocked   > 0 && <Tag c="#a855f7">{offerLocked} locked</Tag>}
                     {offerAccepted > 0 && <Tag c={C.grn}>{offerAccepted} accepted</Tag>}
-                    {offerLocked   > 0 && <Tag c={C.gold}>{offerLocked} locked</Tag>}
+                    {offerPending  > 0 && <Tag c="#f59e0b">{offerPending} pending</Tag>}
                   </div>
                 </div>
                 {ROSTER_GROUPS.map(grp => (
