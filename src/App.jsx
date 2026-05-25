@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { supabase } from "./supabase";
 import Papa from "papaparse";
 import { DndContext, useDraggable, useDroppable, PointerSensor, TouchSensor, useSensor, useSensors } from "@dnd-kit/core";
@@ -119,6 +119,55 @@ function DropZone({ id, children, style }) {
   return <div ref={setNodeRef}
     style={{ ...style, outline: isOver ? "2px solid " + C.gold : "2px solid transparent", outlineOffset: -2, transition: "outline-color 0.1s" }}>{children}</div>;
 }
+// Debounced text input/textarea. Holds keystrokes locally and only fires
+// onCommit once the user has paused typing for `delay` ms (or blurs the
+// field, or the component unmounts). Keeps the Supabase players row — and
+// the change_log audit trail — from getting one write per character.
+function DebouncedField({ value, onCommit, delay = 800, multiline = false, ...rest }) {
+  const [local, setLocal]   = useState(value ?? "");
+  const localRef            = useRef(local);
+  const lastSyncedRef       = useRef(value ?? "");
+  const timeoutRef          = useRef(null);
+  const onCommitRef         = useRef(onCommit);
+  useEffect(() => { localRef.current    = local;    }, [local]);
+  useEffect(() => { onCommitRef.current = onCommit; }, [onCommit]);
+  // Sync from props when the external value changes and we're NOT mid-edit
+  // (no pending timeout). Without the timeout guard, a fast prop refresh
+  // would clobber what the user just typed.
+  useEffect(() => {
+    const v = value ?? "";
+    if (v !== lastSyncedRef.current && !timeoutRef.current) {
+      setLocal(v);
+      lastSyncedRef.current = v;
+    }
+  }, [value]);
+  const flush = () => {
+    if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
+    const v = localRef.current;
+    if (v !== lastSyncedRef.current) {
+      lastSyncedRef.current = v;
+      onCommitRef.current(v);
+    }
+  };
+  const handleChange = (e) => {
+    const v = e.target.value;
+    setLocal(v);
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    timeoutRef.current = setTimeout(() => {
+      timeoutRef.current = null;
+      const cur = localRef.current;
+      if (cur !== lastSyncedRef.current) {
+        lastSyncedRef.current = cur;
+        onCommitRef.current(cur);
+      }
+    }, delay);
+  };
+  // Flush on unmount so closing a modal mid-edit still persists.
+  useEffect(() => () => flush(), []); // eslint-disable-line react-hooks/exhaustive-deps
+  const Tag = multiline ? "textarea" : "input";
+  return <Tag {...rest} value={local} onChange={handleChange} onBlur={flush} />;
+}
+
 function RankInput({ value, max, onCommit }) {
   const [v, setV] = useState(value == null ? "" : String(value));
   useEffect(() => { setV(value == null ? "" : String(value)); }, [value]);
@@ -976,7 +1025,7 @@ export default function App() {
               <tbody>
                 {filtered.map(p => (
                   <tr key={p.id}>
-                    <td style={tdS}><input style={{...inpStyle,width:44,padding:"4px",textAlign:"center",fontSize:12,fontWeight:700,color:p.tryout_number?C.gold:C.text}} value={p.tryout_number||""} placeholder="—" onChange={e=>upd(p.id,{tryout_number:e.target.value})} /></td>
+                    <td style={tdS}><DebouncedField style={{...inpStyle,width:44,padding:"4px",textAlign:"center",fontSize:12,fontWeight:700,color:p.tryout_number?C.gold:C.text}} value={p.tryout_number||""} placeholder="—" onCommit={v=>upd(p.id,{tryout_number:v})} /></td>
                     <td style={tdS}>
                       <div style={{cursor:"pointer"}} onClick={()=>setProfileId(p.id)}>
                         <div style={{display:"flex",alignItems:"center",gap:5}}>
@@ -1006,7 +1055,7 @@ export default function App() {
                         {ROSTER_POS.map(rp => { const taken = players.some(o=>o.id!==p.id&&o.team_assignment===p.team_assignment&&o.roster_pos===rp); return <option key={rp} value={rp} disabled={taken}>{rp}{taken?" ✓":""}</option>; })}
                       </select>}
                     </td>
-                    <td style={tdS}><input style={{...inpStyle,width:90,fontSize:11,padding:"4px 6px"}} placeholder="Notes..." value={p.notes||""} onChange={e=>upd(p.id,{notes:e.target.value})} /></td>
+                    <td style={tdS}><DebouncedField style={{...inpStyle,width:90,fontSize:11,padding:"4px 6px"}} placeholder="Notes..." value={p.notes||""} onCommit={v=>upd(p.id,{notes:v})} /></td>
                     <td style={tdS}><input type="checkbox" checked={!!p.eval_complete} onChange={e=>upd(p.id,{eval_complete:e.target.checked})} style={{width:16,height:16,cursor:"pointer",accentColor:C.gold}} /></td>
                   </tr>
                 ))}
@@ -1488,7 +1537,7 @@ export default function App() {
           </div>
           {/* Division/Team/Roster/Prev/Status */}
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(110px,1fr))",gap:12,marginBottom:14}}>
-            <div><span style={lbl}>Pinny #</span><input style={editInp} placeholder="e.g. 12" value={p.tryout_number||""} onChange={e=>upd(p.id,{tryout_number:e.target.value})} /></div>
+            <div><span style={lbl}>Pinny #</span><DebouncedField style={editInp} placeholder="e.g. 12" value={p.tryout_number||""} onCommit={v=>upd(p.id,{tryout_number:v})} /></div>
             <div>
               <span style={lbl}>USAV Div</span>
               <select style={editInp} value={p.usavDiv||p.usav_div||""}
@@ -1506,11 +1555,11 @@ export default function App() {
             <div><span style={lbl}>Team</span><select style={editInp} value={p.team_assignment||""} onChange={e=>upd(p.id,{team_assignment:e.target.value,roster_pos:""})}><option value="">--</option>{(TM[p.usavDiv||p.usav_div]||[]).map(t=><option key={t} value={t}>{t}</option>)}</select></div>
             <div><span style={lbl}>Roster Pos</span><select style={editInp} value={p.roster_pos||""} onChange={e=>upd(p.id,{roster_pos:e.target.value})}><option value="">--</option>{ROSTER_POS.map(rp=>{const taken=players.some(o=>o.id!==p.id&&o.team_assignment===p.team_assignment&&o.roster_pos===rp);return <option key={rp} value={rp} disabled={taken}>{rp}{taken?" (taken)":""}</option>;})}</select></div>
             <div><span style={lbl}>Status</span><select style={{...editInp,color:STATUS_COLORS[p.status||"In Progress"]}} value={p.status||"In Progress"} onChange={e=>upd(p.id,{status:e.target.value})}>{STATUS_OPTS.map(s=><option key={s} value={s}>{s}</option>)}</select></div>
-            <div><span style={lbl}>Prev Season Team</span><input style={editInp} placeholder="e.g. DSE 13 Diamond" value={p.current_team||""} onChange={e=>upd(p.id,{current_team:e.target.value})} /></div>
+            <div><span style={lbl}>Prev Season Team</span><DebouncedField style={editInp} placeholder="e.g. DSE 13 Diamond" value={p.current_team||""} onCommit={v=>upd(p.id,{current_team:v})} /></div>
           </div>
           {/* Notes */}
-          <div style={{marginBottom:14}}><span style={lbl}>Coach Notes</span><textarea style={{...editInp,minHeight:70,resize:"vertical"}} placeholder="Notes..." value={p.notes||""} onChange={e=>upd(p.id,{notes:e.target.value})} /></div>
-          <div style={{marginBottom:14}}><span style={lbl}>Parent Feedback Session Notes</span><textarea style={{...editInp,minHeight:70,resize:"vertical"}} placeholder="Notes from the parent feedback conversation..." value={p.parent_feedback_notes||""} onChange={e=>upd(p.id,{parent_feedback_notes:e.target.value})} /></div>
+          <div style={{marginBottom:14}}><span style={lbl}>Coach Notes</span><DebouncedField multiline style={{...editInp,minHeight:70,resize:"vertical"}} placeholder="Notes..." value={p.notes||""} onCommit={v=>upd(p.id,{notes:v})} /></div>
+          <div style={{marginBottom:14}}><span style={lbl}>Parent Feedback Session Notes</span><DebouncedField multiline style={{...editInp,minHeight:70,resize:"vertical"}} placeholder="Notes from the parent feedback conversation..." value={p.parent_feedback_notes||""} onCommit={v=>upd(p.id,{parent_feedback_notes:v})} /></div>
           {/* Eval Dates */}
           <div style={{marginBottom:14}}>
             <span style={lbl}>Eval Sessions</span>
@@ -1540,9 +1589,9 @@ export default function App() {
           <div style={{background:C.bg,borderRadius:10,padding:14}}>
             <div style={{fontSize:11,fontWeight:700,color:C.gold,marginBottom:10}}>REGISTRATION INFO & INTAKE</div>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:10}}>
-              <div><span style={lbl}>Parent Name</span><input style={editInp} placeholder="Parent name" value={p.parent_name||""} onChange={e=>upd(p.id,{parent_name:e.target.value})} /></div>
-              <div><span style={lbl}>Parent Email</span><input type="email" style={editInp} placeholder="email@example.com" value={p.parent_email||""} onChange={e=>upd(p.id,{parent_email:e.target.value})} /></div>
-              <div><span style={lbl}>Parent Phone</span><input style={editInp} placeholder="555-555-5555" value={p.parent_phone||""} onChange={e=>upd(p.id,{parent_phone:e.target.value})} /></div>
+              <div><span style={lbl}>Parent Name</span><DebouncedField style={editInp} placeholder="Parent name" value={p.parent_name||""} onCommit={v=>upd(p.id,{parent_name:v})} /></div>
+              <div><span style={lbl}>Parent Email</span><DebouncedField type="email" style={editInp} placeholder="email@example.com" value={p.parent_email||""} onCommit={v=>upd(p.id,{parent_email:v})} /></div>
+              <div><span style={lbl}>Parent Phone</span><DebouncedField style={editInp} placeholder="555-555-5555" value={p.parent_phone||""} onCommit={v=>upd(p.id,{parent_phone:v})} /></div>
             </div>
             {[["Position / Experience",p.reg_position],["Strengths / Improvement",p.strength_weakness],["Ideal Coach",p.ideal_coach],["Goals",p.goal],["Starter Preference",p.starter_pref]].map(([label,val])=>
               val && val!=="na" && <div key={label} style={{marginBottom:10,borderTop:"1px solid "+C.border,paddingTop:8}}><span style={lbl}>{label}</span><div style={{fontSize:13,lineHeight:1.5}}>{val}</div></div>
@@ -1840,9 +1889,9 @@ export default function App() {
                   return (
                     <tr key={c.id} style={{background: c.is_approved ? "transparent" : "rgba(245,158,11,0.05)"}}>
                       <td style={td}>
-                        <input style={{...inpStyle,padding:"5px 8px",fontSize:12,width:"100%",minWidth:120}}
+                        <DebouncedField style={{...inpStyle,padding:"5px 8px",fontSize:12,width:"100%",minWidth:120}}
                           value={c.display_name||""}
-                          onChange={e => updateCoach(c.id, { display_name: e.target.value })}
+                          onCommit={v => updateCoach(c.id, { display_name: v })}
                           placeholder="(no name)" />
                       </td>
                       <td style={{...td,color:C.mut}}>{c.email}{isSelf && <span style={{color:C.gold,marginLeft:6,fontSize:10}}>(you)</span>}</td>
