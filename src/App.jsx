@@ -16,9 +16,9 @@ const SKILL_ABBR = {Serving:"SRV",Passing:"PASS","Serve Receive":"S/R",Attacking
 const PROJ_OPTS = ["","1","1/2","2","2/3","3"];
 const ROSTER_POS = ["S1","S2","Pin1","Pin2","Pin3","Pin4","M1","M2","M3","L","DS1","DS2","U1","U2"];
 const ROSTER_GROUPS = [{label:"Setters",pos:["S1","S2"]},{label:"Pins",pos:["Pin1","Pin2","Pin3","Pin4"]},{label:"Middles",pos:["M1","M2","M3"]},{label:"Libero/DS",pos:["L","DS1","DS2"]},{label:"Utility",pos:["U1","U2"]}];
-const DIVS = ["U10","U11","U12","U13","U14","U15","U16"];
-const CLINIC_DIVS = ["U14","U15","U16"];
-const TM = {U10:["11-1","11-2","11-3"],U11:["11-1","11-2","11-3"],U12:["12-1","12-2","12-3"],U13:["13-1","13-2","13-3","13-4"],U14:["14-1","14-2","14-3","14-4"],U15:["15-1","15-2","15-3"],U16:["16 Diamond","16-1","16-2"]};
+const DIVS = ["U10","U11","U12","U13","U14","U15","U16","U17"];
+const CLINIC_DIVS = ["U14","U15","U16","U17"];
+const TM = {U10:["11-1","11-2","11-3"],U11:["11-1","11-2","11-3"],U12:["12-1","12-2","12-3"],U13:["13-1","13-2","13-3","13-4"],U14:["14-1","14-2","14-3","14-4"],U15:["15-1","15-2","15-3"],U16:["16 Diamond","16-1","16-2"],U17:["17-1"]};
 // 2026-27 season club plan: how many teams at each competitive tier per age group.
 // Sent to the AI summary so parents see the broader landscape their daughter is
 // being evaluated against. Edit here when the plan changes.
@@ -459,6 +459,7 @@ export default function App() {
             if (line.includes("u11") || line.includes("u12")) { regGroup = "U11/U12"; break; }
             if (line.includes("u13") || line.includes("u14")) { regGroup = "U13/U14"; break; }
             if (line.includes("u15") || line.includes("u16")) { regGroup = "U15/U16"; break; }
+            if (line.includes("u17") || line.includes("u18")) { regGroup = "U17/U18"; break; }
           }
 
           const minLevel = get("minimum level");
