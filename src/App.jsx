@@ -17,7 +17,7 @@ const PROJ_OPTS = ["","1","1/2","2","2/3","3"];
 const ROSTER_POS = ["S1","S2","Pin1","Pin2","Pin3","Pin4","M1","M2","M3","L","DS1","DS2","U1","U2"];
 const ROSTER_GROUPS = [{label:"Setters",pos:["S1","S2"]},{label:"Pins",pos:["Pin1","Pin2","Pin3","Pin4"]},{label:"Middles",pos:["M1","M2","M3"]},{label:"Libero/DS",pos:["L","DS1","DS2"]},{label:"Utility",pos:["U1","U2"]}];
 const DIVS = ["U10","U11","U12","U13","U14","U15","U16","U17"];
-const CLINIC_DIVS = ["U14","U15","U16","U17"];
+const CLINIC_DIVS = ["U13","U14","U15","U16","U17"];
 const TM = {U10:["11-1","11-2","11-3"],U11:["11-1","11-2","11-3"],U12:["12-1","12-2","12-3"],U13:["13-1","13-2","13-3","13-4"],U14:["14-1","14-2","14-3","14-4"],U15:["15-1","15-2","15-3"],U16:["16 Diamond","16-1","16-2"],U17:["17-1"]};
 // 2026-27 season club plan: how many teams at each competitive tier per age group.
 // Sent to the AI summary so parents see the broader landscape their daughter is
@@ -1450,9 +1450,9 @@ export default function App() {
     return (
       <div>
         <div style={{display:"flex",gap:8,marginBottom:12,alignItems:"center",flexWrap:"wrap"}}>
-          <span style={{fontSize:12,color:C.mut,fontWeight:600}}>Rank by position:</span>
-          <select style={{...inpStyle,padding:"7px 10px",fontSize:12}} value={filterPos} onChange={e=>setFilterPos(e.target.value)}>
-            <option value="">All</option>{POSITIONS.map(p=><option key={p} value={p}>{p} - {POS_LABELS[p]}</option>)}
+          <span style={{fontSize:12,color:C.mut,fontWeight:600}}>Position:</span>
+          <select style={{...inpStyle,padding:"7px 10px",fontSize:12,color:filterPos?C.gold:C.text}} value={filterPos} onChange={e=>setFilterPos(e.target.value)} title="Filter the ranking to a single position">
+            <option value="">All positions</option>{POSITIONS.map(p=><option key={p} value={p}>{p} - {POS_LABELS[p]}</option>)}
           </select>
           <span style={{fontSize:12,color:C.mut,fontWeight:600,marginLeft:6}}>Eval date:</span>
           <select style={{...inpStyle,padding:"7px 10px",fontSize:12,color:rankDate?C.gold:C.text}} value={rankDate} onChange={e=>setRankDate(e.target.value)} title="Limit rankings to players evaluated on this date">
@@ -1586,7 +1586,7 @@ export default function App() {
                 onClick={()=>{const next=active?(p.eval_dates||[]).filter(x=>x!==d):[...(p.eval_dates||[]),d]; upd(p.id,{eval_dates:next});}}>{d}</button>;
             })}</div>
           </div>
-          {/* National Team ID Clinic (U14/U15/U16 only) */}
+          {/* National Team ID Clinic (U13–U17 only) */}
           {CLINIC_DIVS.includes(p.usavDiv || p.usav_div) && (
             <div style={{marginBottom:14}}>
               <span style={lbl}>National Team ID Clinic</span>
