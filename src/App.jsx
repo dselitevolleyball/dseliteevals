@@ -223,6 +223,15 @@ export default function App() {
   const [allowedEmails, setAllowedEmails]       = useState([]);
   const [allowedLoading, setAllowedLoading]     = useState(false);
   const [bulkAllowedInput, setBulkAllowedInput] = useState("");
+  // Tournament planning tab state:
+  const [tournaments, setTournaments]                       = useState([]);
+  const [tournamentAssignments, setTournamentAssignments]   = useState([]);
+  const [tournamentsLoading, setTournamentsLoading]         = useState(false);
+  const [teamsList, setTeamsList]                           = useState([]);
+  const [blackoutDates, setBlackoutDates]                   = useState([]);
+  const [tnFilters, setTnFilters]                           = useState({ search: "", ageFor: "", qualifierOnly: false, dateFrom: "", dateTo: "", hideClosed: false, hideCancelled: true });
+  const [addingTournament, setAddingTournament]             = useState(false);
+  const [newTournament, setNewTournament]                   = useState({ name: "", start_date: "", end_date: "", location: "", venue: "", age_low: "", age_high: "", gender: "Female", is_qualifier: false, source: "manual", status: "", notes: "" });
 
   // Bootstrap auth on mount; subscribe to changes so the UI re-renders on
   // login/logout/token-refresh.
@@ -404,6 +413,106 @@ export default function App() {
     setActivityLoading(false);
   }, [activityActor, activityAction]);
   useEffect(() => { if (isApproved && view === "activity") loadActivity(); }, [isApproved, view, loadActivity]);
+
+  // ─── Realtime sync ──────────────────────────────────────────────────
+  // Subscribe to Postgres change events on the tables the eval site cares
+  // about so each coach's screen updates without manual refresh. Players are
+  // patched in-place (the hot path); coaches and rankings just refetch on
+  // any change since their payloads are small. RLS still applies — coaches
+  // only receive events for rows they're allowed to read.
+  useEffect(() => {
+    if (!isApproved) return;
+    const playerChannel = supabase
+      .channel("realtime-players")
+      .on("postgres_changes", { event: "*", schema: "public", table: "players" }, (payload) => {
+        if (payload.eventType === "INSERT") {
+          setPlayers(prev => {
+            if (prev.some(p => p.id === payload.new.id)) return prev;
+            const next = [...prev, payload.new];
+            next.sort((a, b) => (a.last_name || "").localeCompare(b.last_name || ""));
+            return next;
+          });
+        } else if (payload.eventType === "UPDATE") {
+          setPlayers(prev => prev.map(p => p.id === payload.new.id ? { ...p, ...payload.new } : p));
+        } else if (payload.eventType === "DELETE") {
+          setPlayers(prev => prev.filter(p => p.id !== payload.old.id));
+        }
+      })
+      .subscribe();
+    const coachChannel = supabase
+      .channel("realtime-coaches")
+      .on("postgres_changes", { event: "*", schema: "public", table: "coaches" }, () => { loadCoaches(); })
+      .subscribe();
+    const rankingsChannel = supabase
+      .channel("realtime-rankings")
+      .on("postgres_changes", { event: "*", schema: "public", table: "unassigned_rankings" }, () => { loadRankings(); })
+      .subscribe();
+    return () => {
+      supabase.removeChannel(playerChannel);
+      supabase.removeChannel(coachChannel);
+      supabase.removeChannel(rankingsChannel);
+    };
+  }, [isApproved, loadCoaches, loadRankings]);
+
+  // Activity feed live updates — only subscribe while that tab is open, since
+  // change_log INSERTs fire on every player write and the feed is otherwise
+  // cheap to refetch.
+  useEffect(() => {
+    if (!isApproved || view !== "activity") return;
+    const channel = supabase
+      .channel("realtime-change_log")
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "change_log" }, (payload) => {
+        setActivityLog(prev => {
+          if (prev.some(e => e.id === payload.new.id)) return prev;
+          return [payload.new, ...prev].slice(0, 300);
+        });
+      })
+      .subscribe();
+    return () => supabase.removeChannel(channel);
+  }, [isApproved, view]);
+
+  // ─── Tournament planning data loaders ───────────────────────────────
+  // teams + blackouts are small and used cross-app (conflict counts, badges)
+  // so we load them eagerly. Tournaments + assignments are heavier and only
+  // fetched when the Tournaments tab is opened.
+  const loadTeamsList = useCallback(async () => {
+    const { data, error } = await supabase.from("teams").select("*").order("sort_order");
+    if (error) console.error("Load teams error:", error);
+    setTeamsList(data || []);
+  }, []);
+  const loadBlackouts = useCallback(async () => {
+    const { data, error } = await supabase.from("blackout_dates").select("*").order("date_start");
+    if (error) console.error("Load blackouts error:", error);
+    setBlackoutDates(data || []);
+  }, []);
+  useEffect(() => { if (isApproved) { loadTeamsList(); loadBlackouts(); } }, [isApproved, loadTeamsList, loadBlackouts]);
+
+  const loadTournaments = useCallback(async () => {
+    setTournamentsLoading(true);
+    const [tRes, aRes] = await Promise.all([
+      supabase.from("tournaments").select("*").order("start_date"),
+      supabase.from("tournament_assignments").select("*"),
+    ]);
+    if (tRes.error) console.error("Load tournaments error:", tRes.error);
+    if (aRes.error) console.error("Load tournament assignments error:", aRes.error);
+    setTournaments(tRes.data || []);
+    setTournamentAssignments(aRes.data || []);
+    setTournamentsLoading(false);
+  }, []);
+  useEffect(() => { if (isApproved && view === "tournaments") loadTournaments(); }, [isApproved, view, loadTournaments]);
+
+  // Realtime sync for tournament planning (separate channel — only when on
+  // that tab so we don't burn a websocket connection elsewhere).
+  useEffect(() => {
+    if (!isApproved || view !== "tournaments") return;
+    const ch = supabase
+      .channel("realtime-tournaments")
+      .on("postgres_changes", { event: "*", schema: "public", table: "tournaments" }, () => loadTournaments())
+      .on("postgres_changes", { event: "*", schema: "public", table: "tournament_assignments" }, () => loadTournaments())
+      .on("postgres_changes", { event: "*", schema: "public", table: "teams" }, () => loadTeamsList())
+      .subscribe();
+    return () => supabase.removeChannel(ch);
+  }, [isApproved, view, loadTournaments, loadTeamsList]);
 
   // Save a single player field update to Supabase
   const upd = useCallback(async (id, updates) => {
@@ -2155,6 +2264,406 @@ export default function App() {
     );
   }
 
+  // ─── TOURNAMENT PLANNING ───
+  // Per-tournament helpers and the main render fn. Assignments are stored as
+  // (tournament_id, team_id, division); we let coaches add/remove assignments
+  // inline on each tournament card, and we surface coach conflicts at the top
+  // of the page so they can't ship a schedule that double-books a coach.
+
+  // Build a "coach -> list of {tournament, team_id}" map and find pairs of
+  // overlapping tournaments for the same coach.
+  const tournamentConflicts = useMemo(() => {
+    const tById = new Map(tournaments.map(t => [t.id, t]));
+    const teamById = new Map(teamsList.map(t => [t.id, t]));
+    const coachToItems = new Map(); // coach name -> [{ tournament, team_id }]
+    for (const a of tournamentAssignments) {
+      const tn = tById.get(a.tournament_id);
+      const tm = teamById.get(a.team_id);
+      if (!tn || !tm) continue;
+      const coaches = [tm.head_coach, tm.assistant_coach].filter(Boolean);
+      for (const coach of coaches) {
+        if (!coachToItems.has(coach)) coachToItems.set(coach, []);
+        coachToItems.get(coach).push({ tournament: tn, team_id: a.team_id });
+      }
+    }
+    const conflicts = [];
+    for (const [coach, items] of coachToItems) {
+      // Sort by start date so the pair shown is in chronological order
+      const sorted = [...items].sort((a, b) => a.tournament.start_date.localeCompare(b.tournament.start_date));
+      for (let i = 0; i < sorted.length; i++) {
+        for (let j = i + 1; j < sorted.length; j++) {
+          const a = sorted[i].tournament, b = sorted[j].tournament;
+          if (a.id === b.id) continue;
+          // Date ranges overlap?
+          if (a.start_date <= b.end_date && b.start_date <= a.end_date) {
+            conflicts.push({
+              coach,
+              a: { tournament: a, team_id: sorted[i].team_id },
+              b: { tournament: b, team_id: sorted[j].team_id },
+            });
+          }
+        }
+      }
+    }
+    return conflicts;
+  }, [tournaments, tournamentAssignments, teamsList]);
+
+  // Quick lookup: which blackouts overlap a given date range?
+  const blackoutsForRange = (startDate, endDate) =>
+    blackoutDates.filter(b => b.date_start <= endDate && b.date_end >= startDate);
+
+  // Assignment mutations.
+  const assignTeamToTournament = async (tournamentId, teamId, division) => {
+    if (!tournamentId || !teamId) return;
+    const { error } = await supabase.from("tournament_assignments").upsert(
+      { tournament_id: tournamentId, team_id: teamId, division: division || null },
+      { onConflict: "tournament_id,team_id" }
+    );
+    if (error) { window.alert("Assign failed: " + error.message); return; }
+    loadTournaments();
+  };
+  const removeAssignment = async (assignmentId) => {
+    const { error } = await supabase.from("tournament_assignments").delete().eq("id", assignmentId);
+    if (error) { window.alert("Remove failed: " + error.message); return; }
+    loadTournaments();
+  };
+  const updateAssignmentDivision = async (assignmentId, division) => {
+    const { error } = await supabase.from("tournament_assignments").update({ division: division || null }).eq("id", assignmentId);
+    if (error) { window.alert("Update failed: " + error.message); return; }
+    loadTournaments();
+  };
+
+  const createTournament = async () => {
+    const t = newTournament;
+    if (!t.name.trim() || !t.start_date || !t.end_date) { window.alert("Name, start date, and end date are required."); return; }
+    const row = {
+      name: t.name.trim(),
+      start_date: t.start_date,
+      end_date: t.end_date,
+      location: t.location.trim() || null,
+      venue: t.venue.trim() || null,
+      age_low: t.age_low ? parseInt(t.age_low) : null,
+      age_high: t.age_high ? parseInt(t.age_high) : null,
+      gender: t.gender || null,
+      is_qualifier: !!t.is_qualifier,
+      source: t.source || "manual",
+      status: t.status.trim() || null,
+      notes: t.notes.trim() || null,
+      format: "Three Day Format",
+    };
+    const { error } = await supabase.from("tournaments").insert(row);
+    if (error) { window.alert("Create failed: " + error.message); return; }
+    setAddingTournament(false);
+    setNewTournament({ name: "", start_date: "", end_date: "", location: "", venue: "", age_low: "", age_high: "", gender: "Female", is_qualifier: false, source: "manual", status: "", notes: "" });
+    loadTournaments();
+  };
+  const deleteTournament = async (id, name) => {
+    if (!window.confirm("Delete tournament \"" + name + "\"? Any team assignments to it will also be removed.")) return;
+    const { error } = await supabase.from("tournaments").delete().eq("id", id);
+    if (error) { window.alert("Delete failed: " + error.message); return; }
+    loadTournaments();
+  };
+  const toggleCancelled = async (t) => {
+    const { error } = await supabase.from("tournaments").update({ cancelled: !t.cancelled }).eq("id", t.id);
+    if (error) { window.alert("Update failed: " + error.message); return; }
+    loadTournaments();
+  };
+
+  function TournamentCard({ tn }) {
+    // Assignments for this tournament with looked-up team.
+    const teamById = new Map(teamsList.map(t => [t.id, t]));
+    const myAssignments = tournamentAssignments.filter(a => a.tournament_id === tn.id);
+    const conflictsHere = tournamentConflicts.filter(c => c.a.tournament.id === tn.id || c.b.tournament.id === tn.id);
+    const conflictTeamIds = new Set();
+    conflictsHere.forEach(c => { conflictTeamIds.add(c.a.team_id); conflictTeamIds.add(c.b.team_id); });
+    const blackouts = blackoutsForRange(tn.start_date, tn.end_date);
+    const isCancelled = tn.cancelled;
+    const [assignTeam, setAssignTeam] = [null, null]; // placeholder so eslint quiets; we use local state via DOM
+    const cardStyle = {
+      background: isCancelled ? "rgba(239,68,68,0.05)" : C.card,
+      borderRadius: 12,
+      border: "1px solid " + (conflictsHere.length ? C.red : isCancelled ? "rgba(239,68,68,0.3)" : C.border),
+      padding: "14px 16px",
+      marginBottom: 10,
+      opacity: isCancelled ? 0.7 : 1,
+    };
+    const ageLabel = (tn.age_low != null && tn.age_high != null)
+      ? (tn.age_low === tn.age_high ? "U" + tn.age_low : "U" + tn.age_low + "–U" + tn.age_high)
+      : "—";
+    // Eligible teams: those whose division's number falls in [age_low, age_high].
+    const ageOf = (div) => parseInt((div || "").replace(/[^0-9]/g, "")) || 0;
+    const eligibleTeams = teamsList.filter(t => {
+      if (!t.active) return false;
+      const a = ageOf(t.division);
+      if (tn.age_low != null && a && a < tn.age_low) return false;
+      if (tn.age_high != null && a && a > tn.age_high) return false;
+      // Already assigned? Hide from the dropdown.
+      if (myAssignments.some(asg => asg.team_id === t.id)) return false;
+      return true;
+    });
+    return (
+      <div style={cardStyle}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,flexWrap:"wrap"}}>
+          <div style={{flex:"1 1 320px",minWidth:0}}>
+            <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+              <h3 style={{margin:0,fontSize:15,fontWeight:800,color:isCancelled?C.mut:C.gold,textDecoration:isCancelled?"line-through":"none"}}>{tn.name}</h3>
+              {tn.is_qualifier && <Tag c="#a855f7">QUALIFIER</Tag>}
+              {conflictsHere.length > 0 && <Tag c={C.red}>{conflictsHere.length} CONFLICT{conflictsHere.length===1?"":"S"}</Tag>}
+              {blackouts.length > 0 && <Tag c="#f59e0b">{blackouts.map(b => b.name).join(" / ")}</Tag>}
+            </div>
+            <div style={{fontSize:11,color:C.mut,marginTop:3,display:"flex",gap:10,flexWrap:"wrap"}}>
+              <span><b style={{color:C.text}}>{new Date(tn.start_date+"T00:00").toLocaleDateString()}</b>{" – "}<b style={{color:C.text}}>{new Date(tn.end_date+"T00:00").toLocaleDateString()}</b></span>
+              <span>{ageLabel}{tn.gender ? " · "+tn.gender : ""}</span>
+              {tn.location && <span>{tn.location}</span>}
+              {tn.status && <span style={{color:tn.status.includes("Open")?C.grn:C.mut}}>{tn.status}</span>}
+            </div>
+            {tn.venue && <div style={{fontSize:10,color:C.mut,marginTop:2}}>{tn.venue}</div>}
+          </div>
+          <div style={{display:"flex",gap:5,alignItems:"center"}}>
+            <button onClick={()=>toggleCancelled(tn)}
+              title={isCancelled?"Restore":"Mark cancelled"}
+              style={{padding:"4px 8px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+              {isCancelled ? "Restore" : "Cancel"}
+            </button>
+            <button onClick={()=>deleteTournament(tn.id, tn.name)}
+              title="Delete tournament"
+              style={{padding:"4px 8px",borderRadius:6,border:"1px solid "+C.red,background:"transparent",color:C.red,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+              Delete
+            </button>
+          </div>
+        </div>
+
+        {/* Assignments */}
+        <div style={{marginTop:10,paddingTop:10,borderTop:"1px solid "+C.border}}>
+          <div style={{fontSize:10,fontWeight:700,color:C.mut,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>
+            Teams going ({myAssignments.length})
+          </div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:8}}>
+            {myAssignments.map(a => {
+              const tm = teamById.get(a.team_id);
+              const conflict = conflictTeamIds.has(a.team_id);
+              const bg = conflict ? "rgba(239,68,68,0.18)" : C.bg;
+              const fg = conflict ? C.red : C.text;
+              return (
+                <span key={a.id}
+                  style={{display:"inline-flex",alignItems:"center",gap:4,padding:"4px 8px",borderRadius:8,background:bg,border:"1px solid "+(conflict?C.red:C.border),fontSize:11,color:fg}}>
+                  <span style={{fontWeight:700}}>{a.team_id}</span>
+                  {tm && tm.level && <span style={{fontSize:9,color:C.mut}}>· {tm.level}</span>}
+                  <select value={a.division||""} onChange={e=>updateAssignmentDivision(a.id, e.target.value)}
+                    title="Playing division"
+                    style={{...inpStyle,fontSize:10,padding:"1px 4px",marginLeft:4}}>
+                    <option value="">— div —</option>
+                    <option value="Open">Open</option>
+                    <option value="USA">USA</option>
+                    <option value="American">American</option>
+                    <option value="Liberty">Liberty</option>
+                    <option value="National">National</option>
+                    <option value="Patriot">Patriot</option>
+                    <option value="Freedom">Freedom</option>
+                  </select>
+                  <button onClick={()=>removeAssignment(a.id)} title="Remove"
+                    style={{width:16,height:16,borderRadius:8,border:"none",background:"transparent",color:C.mut,cursor:"pointer",fontFamily:"inherit",fontSize:13,lineHeight:1,padding:0}}>×</button>
+                </span>
+              );
+            })}
+            {!myAssignments.length && <span style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>No teams assigned.</span>}
+          </div>
+          {!isCancelled && eligibleTeams.length > 0 && (
+            <div style={{display:"flex",gap:6,alignItems:"center"}}>
+              <select id={"assign-team-"+tn.id} defaultValue=""
+                style={{...inpStyle,fontSize:11,padding:"5px 8px"}}>
+                <option value="">+ Assign team…</option>
+                {eligibleTeams.map(t => <option key={t.id} value={t.id}>{t.id}{t.level?" — "+t.level:""}</option>)}
+              </select>
+              <button onClick={()=>{
+                  const sel = document.getElementById("assign-team-"+tn.id);
+                  if (!sel || !sel.value) return;
+                  const teamId = sel.value;
+                  assignTeamToTournament(tn.id, teamId, "");
+                  sel.value = "";
+                }}
+                style={{padding:"5px 12px",borderRadius:6,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+                Add
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  function renderTournaments() {
+    const teamById = new Map(teamsList.map(t => [t.id, t]));
+    // Filtering
+    const filtered = tournaments.filter(t => {
+      if (tnFilters.hideCancelled && t.cancelled) return false;
+      if (tnFilters.qualifierOnly && !t.is_qualifier) return false;
+      if (tnFilters.hideClosed && (t.status||"").toLowerCase().includes("closed")) return false;
+      if (tnFilters.search) {
+        const s = tnFilters.search.toLowerCase();
+        const hay = (t.name + " " + (t.location||"") + " " + (t.venue||"")).toLowerCase();
+        if (!hay.includes(s)) return false;
+      }
+      if (tnFilters.ageFor) {
+        const n = parseInt(tnFilters.ageFor);
+        if (t.age_low != null && n < t.age_low) return false;
+        if (t.age_high != null && n > t.age_high) return false;
+      }
+      if (tnFilters.dateFrom && t.end_date < tnFilters.dateFrom) return false;
+      if (tnFilters.dateTo && t.start_date > tnFilters.dateTo) return false;
+      return true;
+    });
+    return (
+      <div>
+        {/* Header + filters */}
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10,flexWrap:"wrap",gap:8}}>
+          <div>
+            <h2 style={{margin:0,fontSize:18,fontWeight:800,color:C.gold}}>Tournaments</h2>
+            <div style={{fontSize:11,color:C.mut,marginTop:2}}>
+              {tournaments.length} total · {filtered.length} shown · {tournamentAssignments.length} team assignments · {tournamentConflicts.length} coach conflict{tournamentConflicts.length===1?"":"s"}
+            </div>
+          </div>
+          <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+            <button onClick={()=>setAddingTournament(true)}
+              style={{padding:"6px 14px",borderRadius:6,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+              + Add tournament
+            </button>
+            <button onClick={loadTournaments} disabled={tournamentsLoading}
+              style={{padding:"6px 12px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+              {tournamentsLoading ? "Loading…" : "Refresh"}
+            </button>
+          </div>
+        </div>
+        {/* Filter row */}
+        <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center",marginBottom:12,padding:"8px 10px",background:C.card,borderRadius:10,border:"1px solid "+C.border}}>
+          <DebouncedField placeholder="Search name / city / venue"
+            value={tnFilters.search} onCommit={v=>setTnFilters(prev=>({...prev,search:v}))}
+            style={{...inpStyle,padding:"6px 10px",fontSize:12,minWidth:200}} />
+          <select value={tnFilters.ageFor} onChange={e=>setTnFilters(prev=>({...prev,ageFor:e.target.value}))}
+            title="Show tournaments whose age range includes this age"
+            style={{...inpStyle,padding:"6px 10px",fontSize:12,color:tnFilters.ageFor?C.gold:C.text}}>
+            <option value="">All ages</option>
+            {[10,11,12,13,14,15,16,17,18].map(a => <option key={a} value={a}>U{a}</option>)}
+          </select>
+          <label style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:11,color:C.mut,cursor:"pointer"}}>
+            <input type="checkbox" checked={tnFilters.qualifierOnly} onChange={e=>setTnFilters(prev=>({...prev,qualifierOnly:e.target.checked}))} />
+            Qualifiers only
+          </label>
+          <label style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:11,color:C.mut,cursor:"pointer"}}>
+            <input type="checkbox" checked={tnFilters.hideClosed} onChange={e=>setTnFilters(prev=>({...prev,hideClosed:e.target.checked}))} />
+            Hide closed
+          </label>
+          <label style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:11,color:C.mut,cursor:"pointer"}}>
+            <input type="checkbox" checked={tnFilters.hideCancelled} onChange={e=>setTnFilters(prev=>({...prev,hideCancelled:e.target.checked}))} />
+            Hide cancelled
+          </label>
+          <span style={{fontSize:11,color:C.mut,marginLeft:4}}>Dates:</span>
+          <input type="date" value={tnFilters.dateFrom} onChange={e=>setTnFilters(prev=>({...prev,dateFrom:e.target.value}))}
+            style={{...inpStyle,padding:"5px 8px",fontSize:11,colorScheme:"dark",color:tnFilters.dateFrom?C.gold:C.text}} />
+          <span style={{fontSize:11,color:C.mut}}>to</span>
+          <input type="date" value={tnFilters.dateTo} onChange={e=>setTnFilters(prev=>({...prev,dateTo:e.target.value}))}
+            style={{...inpStyle,padding:"5px 8px",fontSize:11,colorScheme:"dark",color:tnFilters.dateTo?C.gold:C.text}} />
+          {(tnFilters.search || tnFilters.ageFor || tnFilters.qualifierOnly || tnFilters.hideClosed || tnFilters.dateFrom || tnFilters.dateTo) && (
+            <button onClick={()=>setTnFilters({ search:"", ageFor:"", qualifierOnly:false, dateFrom:"", dateTo:"", hideClosed:false, hideCancelled:true })}
+              style={{padding:"4px 8px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+              Clear
+            </button>
+          )}
+        </div>
+        {/* Conflict alert */}
+        {tournamentConflicts.length > 0 && (
+          <details open style={{marginBottom:14,background:"rgba(239,68,68,0.08)",border:"1px solid "+C.red,borderRadius:10,padding:"10px 14px"}}>
+            <summary style={{cursor:"pointer",fontSize:12,fontWeight:800,color:C.red}}>
+              {tournamentConflicts.length} coach conflict{tournamentConflicts.length===1?"":"s"} detected
+            </summary>
+            <div style={{marginTop:8,display:"flex",flexDirection:"column",gap:5}}>
+              {tournamentConflicts.map((c, i) => (
+                <div key={i} style={{fontSize:11,color:C.text,lineHeight:1.5}}>
+                  <b style={{color:C.red}}>{c.coach}</b> would be at <b>{c.a.team_id}</b> (<i>{c.a.tournament.name}</i>) AND <b>{c.b.team_id}</b> (<i>{c.b.tournament.name}</i>) on {new Date(c.a.tournament.start_date+"T00:00").toLocaleDateString()}.
+                </div>
+              ))}
+            </div>
+          </details>
+        )}
+        {/* Tournament cards, grouped by month so the wall-of-cards is scannable */}
+        {filtered.length === 0 ? (
+          <div style={{padding:30,textAlign:"center",color:C.mut,fontSize:12,background:C.card,borderRadius:10,border:"1px solid "+C.border}}>
+            {tournamentsLoading ? "Loading tournaments…" : "No tournaments match these filters."}
+          </div>
+        ) : (
+          (() => {
+            const groups = {};
+            for (const t of filtered) {
+              const key = t.start_date.slice(0,7); // YYYY-MM
+              if (!groups[key]) groups[key] = [];
+              groups[key].push(t);
+            }
+            const keys = Object.keys(groups).sort();
+            return keys.map(k => {
+              const monthLabel = new Date(k + "-01T00:00").toLocaleString(undefined, { month: "long", year: "numeric" });
+              return (
+                <div key={k} style={{marginBottom:18}}>
+                  <h3 style={{margin:"0 0 8px 0",fontSize:13,fontWeight:800,color:C.acc,textTransform:"uppercase",letterSpacing:1,borderBottom:"1px solid "+C.border,paddingBottom:5}}>
+                    {monthLabel} · {groups[k].length}
+                  </h3>
+                  {groups[k].map(tn => <TournamentCard key={tn.id} tn={tn} />)}
+                </div>
+              );
+            });
+          })()
+        )}
+      </div>
+    );
+  }
+
+  // Modal: Add a tournament manually. Bulk paste import will land in a
+  // follow-up — this covers the "I found one elsewhere, add it" case.
+  function renderAddTournament() {
+    const lbl = {fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut,marginBottom:4,display:"block"};
+    const editInp = {...inpStyle,width:"100%",padding:"8px 10px",fontSize:13};
+    const setF = (k, v) => setNewTournament(prev => ({ ...prev, [k]: v }));
+    const close = () => { setAddingTournament(false); };
+    return (
+      <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:1000,display:"flex",justifyContent:"center",padding:"30px 16px",overflowY:"auto"}} onClick={close}>
+        <div style={{background:C.card,borderRadius:16,border:"1px solid "+C.border,maxWidth:640,width:"100%",maxHeight:"90vh",overflowY:"auto",padding:24}} onClick={e=>e.stopPropagation()}>
+          <div style={{display:"flex",justifyContent:"space-between",marginBottom:14}}>
+            <h2 style={{margin:0,fontSize:18,fontWeight:800,color:C.gold}}>Add Tournament</h2>
+            <button onClick={close} style={{background:"none",border:"none",color:C.mut,fontSize:22,cursor:"pointer"}}>×</button>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+            <div style={{gridColumn:"1 / -1"}}><span style={lbl}>Name *</span><input style={editInp} autoFocus value={newTournament.name} onChange={e=>setF("name", e.target.value)} placeholder="e.g. 2027 Lone Star Regional Championship" /></div>
+            <div><span style={lbl}>Start Date *</span><input type="date" style={editInp} value={newTournament.start_date} onChange={e=>setF("start_date", e.target.value)} /></div>
+            <div><span style={lbl}>End Date *</span><input type="date" style={editInp} value={newTournament.end_date} onChange={e=>setF("end_date", e.target.value)} /></div>
+            <div><span style={lbl}>Location (city, state)</span><input style={editInp} value={newTournament.location} onChange={e=>setF("location", e.target.value)} placeholder="e.g. Austin, TX" /></div>
+            <div><span style={lbl}>Venue</span><input style={editInp} value={newTournament.venue} onChange={e=>setF("venue", e.target.value)} placeholder="e.g. Austin Convention Center" /></div>
+            <div><span style={lbl}>Age Low</span><input type="number" style={editInp} value={newTournament.age_low} onChange={e=>setF("age_low", e.target.value)} placeholder="12" /></div>
+            <div><span style={lbl}>Age High</span><input type="number" style={editInp} value={newTournament.age_high} onChange={e=>setF("age_high", e.target.value)} placeholder="18" /></div>
+            <div><span style={lbl}>Gender</span>
+              <select style={editInp} value={newTournament.gender} onChange={e=>setF("gender", e.target.value)}>
+                <option>Female</option><option>Male</option><option>Male / Female</option>
+              </select>
+            </div>
+            <div><span style={lbl}>Source</span>
+              <select style={editInp} value={newTournament.source} onChange={e=>setF("source", e.target.value)}>
+                <option value="manual">manual</option><option value="USAV">USAV</option><option value="AAU">AAU</option><option value="JVA">JVA</option><option value="Lone Star Region">Lone Star Region</option><option value="other">other</option>
+              </select>
+            </div>
+            <div style={{gridColumn:"1 / -1"}}><span style={lbl}>Status</span><input style={editInp} value={newTournament.status} onChange={e=>setF("status", e.target.value)} placeholder="e.g. Registration Open" /></div>
+            <div style={{gridColumn:"1 / -1",display:"flex",alignItems:"center",gap:6}}>
+              <input type="checkbox" id="newt-q" checked={newTournament.is_qualifier} onChange={e=>setF("is_qualifier", e.target.checked)} />
+              <label htmlFor="newt-q" style={{fontSize:12,color:C.text,cursor:"pointer"}}>Is qualifier</label>
+            </div>
+            <div style={{gridColumn:"1 / -1"}}><span style={lbl}>Notes</span><textarea style={{...editInp,minHeight:60,resize:"vertical"}} value={newTournament.notes} onChange={e=>setF("notes", e.target.value)} /></div>
+          </div>
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+            <button onClick={close} style={{padding:"10px 18px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Cancel</button>
+            <button onClick={createTournament} style={{padding:"10px 18px",borderRadius:8,border:"none",background:C.gold,color:"#000",fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Save</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // ─── ADD PLAYER MODAL ───
   function renderAddPlayer() {
     const lbl = {fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut,marginBottom:4,display:"block"};
@@ -2226,6 +2735,7 @@ export default function App() {
               ["evaluate","Evaluate"],
               ["teams","Teams"],
               ["rankings","Rankings"],
+              ["tournaments","Tournaments"],
               ["activity","Activity"],
               ...(isAdmin ? [["coaches","Coaches"]] : []),
             ].map(([v,l]) =>
@@ -2266,7 +2776,7 @@ export default function App() {
           </div>
         );
       })()}
-      {view !== "dashboard" && view !== "activity" && view !== "coaches" && (
+      {view !== "dashboard" && view !== "activity" && view !== "coaches" && view !== "tournaments" && (
         <div style={{display:"flex",gap:4,padding:"10px 18px",borderBottom:"1px solid "+C.border,flexWrap:"wrap"}}>
           {divsWithPlayers.map(d => {
             const isSelected = selectedDivs.includes(d);
@@ -2294,9 +2804,11 @@ export default function App() {
         {view==="rankings" && renderRankings()}
         {view==="activity" && renderActivity()}
         {view==="coaches"  && renderCoaches()}
+        {view==="tournaments" && renderTournaments()}
       </div>
       {profileId !== null && renderProfile()}
       {addingPlayer && renderAddPlayer()}
+      {addingTournament && renderAddTournament()}
     </div>
   );
 }
