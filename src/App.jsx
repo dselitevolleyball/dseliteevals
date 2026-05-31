@@ -219,6 +219,167 @@ function parseJVCTournaments(text) {
   return out;
 }
 
+// ─── Bulk tournament import (SportWrench format) ────────────────────────
+// SportWrench list pages render each tournament twice (an "Additional Info"
+// block + a "Main Info" block) interspersed with navigation chrome. The
+// reliable anchor is a {Name line} followed by a {City, ST Venue} line.
+// We walk lines pair-by-pair, find that anchor, then look forward for a
+// date line in any of these shapes:
+//   "Month D–D, YYYY"           (single-month range)
+//   "Month D, YYYY"             (single date)
+//   "Month D – Month D, YYYY"   (cross-month range)
+// and pull Gender + Sanctioning Body from their keyword-anchored sections.
+// Dedup by (name + start_date) collapses the duplicate Additional/Main pair
+// into one row.
+const SW_LOC_RE = /^[A-Z][^,\n]+,\s*[A-Z]{2}(?:\s+\S|$)/;
+const SW_DATE_RES = [
+  /^([A-Z][a-z]+)\s+(\d{1,2})\s*[–-]\s*([A-Z][a-z]+)\s+(\d{1,2}),\s*(\d{4})$/,   // cross-month
+  /^([A-Z][a-z]+)\s+(\d{1,2})\s*[–-]\s*(\d{1,2}),\s*(\d{4})$/,                    // same-month range
+  /^([A-Z][a-z]+)\s+(\d{1,2}),\s*(\d{4})$/,                                       // single day
+];
+const SW_JUNK = new Set([
+  "Schedule/Results", "Buy Tickets", "Register Teams", "Register Here",
+  "Favorite", "Location", "Current", "Upcoming", "Past", "All", "Favorites",
+  "Detailed View", "Filters", "Support", "Sign In",
+  "Main Info", "Additional Info", "Ticket Info", "Event Info", "About Event",
+  "Sales Open", "Prices", "Start Date", "Team Registration", "Deadlines",
+  "Teams Fee", "Divisions", "Clubs", "Teams", "Genders", "Sanctioning Body",
+  "Additional Info", "Main Info", "Not Available",
+]);
+function parseSportWrenchTournaments(text) {
+  const lines = (text || "")
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1")
+    .split(/\r?\n/)
+    .map(l => l.trim())
+    .filter(Boolean);
+  const out = [];
+  const seen = new Set();
+  let i = 0;
+  while (i < lines.length - 1) {
+    const line = lines[i];
+    const next = lines[i + 1];
+    // Skip obvious chrome / search-bar text.
+    if (SW_JUNK.has(line) || line === "s" || line.startsWith("Search by")) { i++; continue; }
+    // Require the next line to look like "City, ST Venue".
+    if (!SW_LOC_RE.test(next)) { i++; continue; }
+    const name = line;
+    let location = next, venue = "";
+    const lm = /^(.+?,\s*[A-Z]{2})\s+(.+)$/.exec(next);
+    if (lm) { location = lm[1]; venue = lm[2]; }
+    // Find a date line in the next ~40 lines.
+    let startDate = null, endDate = null;
+    let dateAt = -1;
+    for (let j = i + 2; j < Math.min(i + 50, lines.length); j++) {
+      const ln = lines[j];
+      let m, mo, mo2;
+      if ((m = SW_DATE_RES[0].exec(ln))) {
+        mo = TN_MONTH_MAP[m[1].toLowerCase()];
+        mo2 = TN_MONTH_MAP[m[3].toLowerCase()];
+        if (mo && mo2) {
+          startDate = m[5] + "-" + mo + "-" + m[2].padStart(2,"0");
+          endDate   = m[5] + "-" + mo2 + "-" + m[4].padStart(2,"0");
+          dateAt = j;
+          break;
+        }
+      } else if ((m = SW_DATE_RES[1].exec(ln))) {
+        mo = TN_MONTH_MAP[m[1].toLowerCase()];
+        if (mo) {
+          startDate = m[4] + "-" + mo + "-" + m[2].padStart(2,"0");
+          endDate   = m[4] + "-" + mo + "-" + m[3].padStart(2,"0");
+          dateAt = j;
+          break;
+        }
+      } else if ((m = SW_DATE_RES[2].exec(ln))) {
+        mo = TN_MONTH_MAP[m[1].toLowerCase()];
+        if (mo) {
+          startDate = m[3] + "-" + mo + "-" + m[2].padStart(2,"0");
+          endDate   = startDate;
+          dateAt = j;
+          break;
+        }
+      }
+    }
+    if (!startDate) { i++; continue; }
+    // Dedup against the previous "Additional Info" / "Main Info" pass for
+    // the same tournament.
+    const key = (name + "|" + startDate).toLowerCase();
+    if (seen.has(key)) { i = dateAt + 1; continue; }
+    seen.add(key);
+    // End-of-entry boundary: next "Register Teams" line, or next anchor pair.
+    let endIdx = dateAt + 1;
+    while (endIdx < lines.length) {
+      if (lines[endIdx] === "Register Teams") break;
+      // Also break if we hit the next entry's anchor pair.
+      if (endIdx + 1 < lines.length && !SW_JUNK.has(lines[endIdx]) && SW_LOC_RE.test(lines[endIdx + 1])) break;
+      endIdx++;
+    }
+    const block = lines.slice(i, endIdx);
+    const blockText = block.join("\n");
+    // Gender (from the "Genders" header followed by Male/Female/Co-ed lines).
+    let gender = "Female";
+    const gIdx = block.indexOf("Genders");
+    if (gIdx >= 0) {
+      const tags = [];
+      for (let k = gIdx + 1; k < Math.min(gIdx + 5, block.length); k++) {
+        if (/^(Male|Female|Co-?ed)$/i.test(block[k])) tags.push(block[k]);
+        else break;
+      }
+      const hasMale = tags.some(t => /^Male$/i.test(t));
+      const hasFem  = tags.some(t => /^Female$/i.test(t));
+      gender = hasMale && hasFem ? "Male / Female" : hasMale ? "Male" : "Female";
+    }
+    // Sanctioning body becomes part of the source so we can filter by it
+    // (USAV / AAU / JVA / Other).
+    let sanction = "";
+    const sIdx = block.indexOf("Sanctioning Body");
+    if (sIdx >= 0 && sIdx + 1 < block.length) sanction = block[sIdx + 1];
+    // Age range: scan for "NN-NN" or "NNU" patterns in 8-19 across the block.
+    let ageLow = null, ageHigh = null;
+    const ranges = blockText.match(/(\d{1,2})\s*U?\s*[-–]\s*(\d{1,2})\s*U/g) || [];
+    for (const r of ranges) {
+      const rm = /(\d{1,2})\s*U?\s*[-–]\s*(\d{1,2})/.exec(r);
+      if (!rm) continue;
+      const lo = parseInt(rm[1]), hi = parseInt(rm[2]);
+      if (lo >= 8 && lo <= 19 && hi >= 8 && hi <= 19) {
+        if (ageLow == null || lo < ageLow) ageLow = lo;
+        if (ageHigh == null || hi > ageHigh) ageHigh = hi;
+      }
+    }
+    const single = blockText.match(/\b(\d{1,2})U\b/g) || [];
+    for (const s of single) {
+      const n = parseInt(s);
+      if (n >= 8 && n <= 19) {
+        if (ageLow == null || n < ageLow) ageLow = n;
+        if (ageHigh == null || n > ageHigh) ageHigh = n;
+      }
+    }
+    // Day count -> "X Day Format"
+    const dStart = new Date(startDate + "T00:00").getTime();
+    const dEnd   = new Date(endDate   + "T00:00").getTime();
+    const days   = Math.round((dEnd - dStart) / 86400000) + 1;
+    const words  = { 1:"One",2:"Two",3:"Three",4:"Four",5:"Five",6:"Six",7:"Seven" };
+    const format = days > 7 ? days + " Day Format" : (words[days] || days) + " Day Format";
+    out.push({
+      name,
+      start_date: startDate,
+      end_date: endDate,
+      location,
+      venue,
+      age_low: ageLow,
+      age_high: ageHigh,
+      gender,
+      format,
+      status: "",
+      cancelled: false,
+      source: sanction ? "SportWrench:" + sanction : "SportWrench",
+      divisions: [],
+      notes: null,
+    });
+    i = endIdx + 1;
+  }
+  return out;
+}
+
 function calcUSAV(dob) {
   if (!dob) return 12;
   const parts = dob.split("-");
@@ -758,8 +919,9 @@ export default function App() {
   const bulkImportPreview = useMemo(() => {
     if (!bulkImportText.trim()) return { parsed: [], newOnes: [], dupes: [] };
     let parsed = [];
-    if (bulkImportSource === "USAV")      parsed = parseUSAVTournaments(bulkImportText);
-    else if (bulkImportSource === "JVC")  parsed = parseJVCTournaments(bulkImportText);
+    if (bulkImportSource === "USAV")              parsed = parseUSAVTournaments(bulkImportText);
+    else if (bulkImportSource === "JVC")          parsed = parseJVCTournaments(bulkImportText);
+    else if (bulkImportSource === "SportWrench")  parsed = parseSportWrenchTournaments(bulkImportText);
     const existing = new Set(tournaments.map(t => (t.name + "|" + t.start_date).toLowerCase()));
     const newOnes = [], dupes = [];
     for (const p of parsed) {
@@ -3240,12 +3402,15 @@ export default function App() {
               style={{...inpStyle,padding:"5px 10px",fontSize:12}}>
               <option value="USAV">USAV / TournamentCentral</option>
               <option value="JVC">JVC Tournaments (NIKE / Boston / NERVA)</option>
+              <option value="SportWrench">SportWrench (AAU / USAV / JVA listings)</option>
             </select>
             <span style={{fontSize:10,color:C.mut,fontStyle:"italic"}}>Send me another source's text if you need a parser for it.</span>
           </div>
           <textarea value={bulkImportText} onChange={e=>setBulkImportText(e.target.value)}
             placeholder={bulkImportSource === "JVC"
               ? "Paste the JVC listing text here. Expected format:\n\nDECEMBER 2026\n\nDec. 12-13:  NIKE Florida Holiday Challenge  (Daytona Beach, FL)\nGirls 10-18s\n\nDec. 12-13:  NIKE Wicked Good Challenge (Providence, RI)\nGirls 12-16s, 17 Club"
+              : bulkImportSource === "SportWrench"
+              ? "Paste the SportWrench listing text here. Anchor pattern:\n\nTournament Name\nCity, ST Venue Name\n\nLocation\n\nFavorite\n\n[Additional Info or Main Info block]\nMonth D–D, YYYY\n…"
               : "Paste the USAV / TournamentCentral text here. Expected format:\n\n2027 Some Tournament Name\nThree Day Format Age: 12-18 Female\nJan 16, 2027 - Jan 18, 2027\nAustin, TX - Some Venue\nRegistration Open"}
             style={{...inpStyle,width:"100%",minHeight:280,padding:"10px 12px",fontSize:12,fontFamily:"ui-monospace, SFMono-Regular, Menlo, monospace",resize:"vertical"}} />
           {/* Live preview */}
