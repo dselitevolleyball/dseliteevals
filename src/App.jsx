@@ -122,6 +122,103 @@ function parseUSAVTournaments(text) {
   return out;
 }
 
+// ─── Bulk tournament import (JVC format) ────────────────────────────────
+// Parses listings from JVC Tournaments (the NIKE / Boston / NERVA family).
+// Structure:
+//   MONTH YYYY                       <- section header that anchors the year
+//
+//   *Mon. DD-DD:  Tournament Name  (City, ST[-PENDING NOTE])
+//   Girls 10-18s, 17 Open, ...       <- age + division info on next line(s)
+//   *Optional commentary starting with *
+//
+// Names may carry leading and/or trailing asterisks (highlight markers) which
+// we strip. Pending venue note becomes the status.
+const JVC_MONTH_NUM = { jan:1, feb:2, mar:3, apr:4, may:5, jun:6, jul:7, aug:8, sep:9, oct:10, nov:11, dec:12, january:1, february:2, march:3, april:4, june:6, july:7, august:8, september:9, october:10, november:11, december:12 };
+const JVC_HEADER_RE = /^\*{0,4}\s*([A-Z][a-z]{2})\.\s+(\d{1,2})-(\d{1,2}):\s*(.+?)\s*\(([^)]+)\)\s*\*{0,4}\s*$/;
+const JVC_MONTH_CTX_RE = /^([A-Z][A-Z]+)\s+(\d{4})\s*$/;
+const JVC_DIV_NAMES = ["Open", "USA", "American", "Liberty", "National", "Club", "Patriot", "Freedom", "Premier", "Select"];
+function parseJVCTournaments(text) {
+  const lines = (text || "")
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1")
+    .split(/\r?\n/)
+    .map(l => l.trim())
+    .filter(Boolean);
+  const out = [];
+  let curYear = null;
+  for (let i = 0; i < lines.length; i++) {
+    const ln = lines[i];
+    // Month section header → set the year context.
+    const mc = JVC_MONTH_CTX_RE.exec(ln);
+    if (mc) {
+      const mn = JVC_MONTH_NUM[mc[1].toLowerCase()];
+      if (mn) curYear = parseInt(mc[2]);
+      continue;
+    }
+    // Tournament header
+    const dh = JVC_HEADER_RE.exec(ln);
+    if (!dh || !curYear) continue;
+    const month = JVC_MONTH_NUM[dh[1].toLowerCase()];
+    if (!month) continue;
+    const startDay = parseInt(dh[2]);
+    const endDay = parseInt(dh[3]);
+    const name = dh[4].replace(/\*+/g, "").trim();
+    const locFull = dh[5].trim();
+    const startDate = curYear + "-" + String(month).padStart(2,"0") + "-" + String(startDay).padStart(2,"0");
+    const endDate   = curYear + "-" + String(month).padStart(2,"0") + "-" + String(endDay).padStart(2,"0");
+    // Location split: "City, ST" or "City, ST-NOTE"
+    let location = locFull, pendingNote = "";
+    const lm = /^(.+?),\s*([A-Z]{2})(?:\s*-\s*(.+))?$/.exec(locFull);
+    if (lm) {
+      location = lm[1].trim() + ", " + lm[2];
+      if (lm[3]) pendingNote = lm[3].trim();
+    }
+    // Subsequent description lines (until next header or month ctx).
+    const descLines = [];
+    let j = i + 1;
+    while (j < lines.length) {
+      const nl = lines[j];
+      if (JVC_HEADER_RE.test(nl)) break;
+      if (JVC_MONTH_CTX_RE.test(nl)) break;
+      descLines.push(nl);
+      j++;
+    }
+    const descText = descLines.join(" ");
+    // Ages: any 8-19 number in the description
+    const ages = (descText.match(/\b\d{1,2}\b/g) || []).map(s => parseInt(s)).filter(n => n >= 8 && n <= 19);
+    const ageLow  = ages.length ? Math.min(...ages) : null;
+    const ageHigh = ages.length ? Math.max(...ages) : null;
+    // Gender from Girls/Boys keywords
+    const hasFem = /girls/i.test(descText);
+    const hasMal = /boys/i.test(descText);
+    const gender = hasMal && hasFem ? "Male / Female" : hasMal ? "Male" : "Female";
+    // Divisions called out in the description
+    const divisions = JVC_DIV_NAMES.filter(d => new RegExp("\\b" + d + "\\b", "i").test(descText));
+    // Format words from day count
+    const days = endDay - startDay + 1;
+    const formatWords = {1:"One",2:"Two",3:"Three",4:"Four",5:"Five",6:"Six",7:"Seven"};
+    const format = (formatWords[days] || days) + " Day Format";
+    const status = pendingNote && /pending/i.test(pendingNote) ? "Pending Site Confirmation" : "";
+    out.push({
+      name,
+      start_date: startDate,
+      end_date: endDate,
+      location,
+      venue: "",
+      age_low: ageLow,
+      age_high: ageHigh,
+      gender,
+      format,
+      status,
+      cancelled: false,
+      source: "JVC",
+      divisions,
+      notes: descLines.length ? descLines.join("\n") : null,
+    });
+    i = j - 1; // for-loop will increment to j next iteration
+  }
+  return out;
+}
+
 function calcUSAV(dob) {
   if (!dob) return 12;
   const parts = dob.split("-");
@@ -660,7 +757,9 @@ export default function App() {
   // "already in the DB" by (name|start_date). Also above the gates.
   const bulkImportPreview = useMemo(() => {
     if (!bulkImportText.trim()) return { parsed: [], newOnes: [], dupes: [] };
-    const parsed = bulkImportSource === "USAV" ? parseUSAVTournaments(bulkImportText) : [];
+    let parsed = [];
+    if (bulkImportSource === "USAV")      parsed = parseUSAVTournaments(bulkImportText);
+    else if (bulkImportSource === "JVC")  parsed = parseJVCTournaments(bulkImportText);
     const existing = new Set(tournaments.map(t => (t.name + "|" + t.start_date).toLowerCase()));
     const newOnes = [], dupes = [];
     for (const p of parsed) {
@@ -3135,16 +3234,19 @@ export default function App() {
             </div>
             <button onClick={close} style={{background:"none",border:"none",color:C.mut,fontSize:22,cursor:"pointer"}}>×</button>
           </div>
-          <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:8}}>
+          <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:8,flexWrap:"wrap"}}>
             <span style={lbl}>Source format:</span>
             <select value={bulkImportSource} onChange={e=>setBulkImportSource(e.target.value)}
               style={{...inpStyle,padding:"5px 10px",fontSize:12}}>
               <option value="USAV">USAV / TournamentCentral</option>
+              <option value="JVC">JVC Tournaments (NIKE / Boston / NERVA)</option>
             </select>
-            <span style={{fontSize:10,color:C.mut,fontStyle:"italic"}}>(More formats can be added — for now USAV is the only one with a parser.)</span>
+            <span style={{fontSize:10,color:C.mut,fontStyle:"italic"}}>Send me another source's text if you need a parser for it.</span>
           </div>
           <textarea value={bulkImportText} onChange={e=>setBulkImportText(e.target.value)}
-            placeholder={"Paste the listing text here. Format expected:\n\n2027 Some Tournament Name\nThree Day Format Age: 12-18 Female\nJan 16, 2027 - Jan 18, 2027\nAustin, TX - Some Venue\nRegistration Open"}
+            placeholder={bulkImportSource === "JVC"
+              ? "Paste the JVC listing text here. Expected format:\n\nDECEMBER 2026\n\nDec. 12-13:  NIKE Florida Holiday Challenge  (Daytona Beach, FL)\nGirls 10-18s\n\nDec. 12-13:  NIKE Wicked Good Challenge (Providence, RI)\nGirls 12-16s, 17 Club"
+              : "Paste the USAV / TournamentCentral text here. Expected format:\n\n2027 Some Tournament Name\nThree Day Format Age: 12-18 Female\nJan 16, 2027 - Jan 18, 2027\nAustin, TX - Some Venue\nRegistration Open"}
             style={{...inpStyle,width:"100%",minHeight:280,padding:"10px 12px",fontSize:12,fontFamily:"ui-monospace, SFMono-Regular, Menlo, monospace",resize:"vertical"}} />
           {/* Live preview */}
           {bulkImportText.trim() ? (
