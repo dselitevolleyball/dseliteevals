@@ -229,9 +229,14 @@ export default function App() {
   const [tournamentsLoading, setTournamentsLoading]         = useState(false);
   const [teamsList, setTeamsList]                           = useState([]);
   const [blackoutDates, setBlackoutDates]                   = useState([]);
-  const [tnFilters, setTnFilters]                           = useState({ search: "", ageFor: "", qualifierOnly: false, dateFrom: "", dateTo: "", hideClosed: false, hideCancelled: true });
+  const [tnFilters, setTnFilters]                           = useState({ search: "", ageFor: "", qualifierOnly: false, dateFrom: "", dateTo: "", hideClosed: false, hideCancelled: true, startsOn: [], state: "", numDays: "", divisions: [] });
+  const [tnView, setTnView]                                 = useState("list"); // "list" | "calendar"
+  const [tnSelectedTeams, setTnSelectedTeams]               = useState(new Set()); // empty = all shown
+  const [tnCalFrom, setTnCalFrom]                           = useState("2026-08-01");
+  const [tnCalTo, setTnCalTo]                               = useState("2027-06-30");
   const [addingTournament, setAddingTournament]             = useState(false);
-  const [newTournament, setNewTournament]                   = useState({ name: "", start_date: "", end_date: "", location: "", venue: "", age_low: "", age_high: "", gender: "Female", is_qualifier: false, source: "manual", status: "", notes: "" });
+  const [editingTournament, setEditingTournament]           = useState(null);
+  const [newTournament, setNewTournament]                   = useState({ name: "", start_date: "", end_date: "", location: "", venue: "", age_low: "", age_high: "", gender: "Female", is_qualifier: false, source: "manual", status: "", notes: "", divisions: [] });
 
   // Bootstrap auth on mount; subscribe to changes so the UI re-renders on
   // login/logout/token-refresh.
@@ -549,6 +554,17 @@ export default function App() {
     }
     return conflicts;
   }, [tournaments, tournamentAssignments, teamsList]);
+
+  // Distinct US states (from "City, ST" format) for the location filter
+  // dropdown. Also above the auth gates to keep hook order stable.
+  const stateOptions = useMemo(() => {
+    const set = new Set();
+    for (const t of tournaments) {
+      const m = (t.location || "").match(/,\s*([A-Z]{2})\s*$/);
+      if (m) set.add(m[1]);
+    }
+    return [...set].sort();
+  }, [tournaments]);
 
   // Save a single player field update to Supabase
   const upd = useCallback(async (id, updates) => {
@@ -2300,6 +2316,17 @@ export default function App() {
     );
   }
 
+  // Tournament-related constants used by the cards, filters, and forms.
+  const TN_DIVISIONS = ["Open", "USA", "American", "Liberty", "National", "Patriot", "Freedom", "Premier", "Select", "Club"];
+  const TN_DOW_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const tnDaysBetween = (start, end) => {
+    const a = new Date(start + "T00:00").getTime();
+    const b = new Date(end + "T00:00").getTime();
+    return Math.round((b - a) / (24*60*60*1000)) + 1;
+  };
+  const tnStartDow = (start) => new Date(start + "T00:00").getDay();
+  const tnStateOf = (loc) => { const m = (loc || "").match(/,\s*([A-Z]{2})\s*$/); return m ? m[1] : ""; };
+
   // ─── TOURNAMENT PLANNING ───
   // Per-tournament helpers and the main render fn. Assignments are stored as
   // (tournament_id, team_id, division); we let coaches add/remove assignments
@@ -2331,7 +2358,7 @@ export default function App() {
     loadTournaments();
   };
 
-  const createTournament = async () => {
+  const saveTournament = async () => {
     const t = newTournament;
     if (!t.name.trim() || !t.start_date || !t.end_date) { window.alert("Name, start date, and end date are required."); return; }
     const row = {
@@ -2347,12 +2374,45 @@ export default function App() {
       source: t.source || "manual",
       status: t.status.trim() || null,
       notes: t.notes.trim() || null,
+      divisions: Array.isArray(t.divisions) ? t.divisions : [],
       format: "Three Day Format",
     };
-    const { error } = await supabase.from("tournaments").insert(row);
-    if (error) { window.alert("Create failed: " + error.message); return; }
+    let error;
+    if (editingTournament) {
+      ({ error } = await supabase.from("tournaments").update(row).eq("id", editingTournament.id));
+    } else {
+      ({ error } = await supabase.from("tournaments").insert(row));
+    }
+    if (error) { window.alert("Save failed: " + error.message); return; }
     setAddingTournament(false);
-    setNewTournament({ name: "", start_date: "", end_date: "", location: "", venue: "", age_low: "", age_high: "", gender: "Female", is_qualifier: false, source: "manual", status: "", notes: "" });
+    setEditingTournament(null);
+    setNewTournament({ name: "", start_date: "", end_date: "", location: "", venue: "", age_low: "", age_high: "", gender: "Female", is_qualifier: false, source: "manual", status: "", notes: "", divisions: [] });
+    loadTournaments();
+  };
+  const openEditTournament = (tn) => {
+    setEditingTournament(tn);
+    setNewTournament({
+      name: tn.name || "",
+      start_date: tn.start_date || "",
+      end_date: tn.end_date || "",
+      location: tn.location || "",
+      venue: tn.venue || "",
+      age_low: tn.age_low != null ? String(tn.age_low) : "",
+      age_high: tn.age_high != null ? String(tn.age_high) : "",
+      gender: tn.gender || "Female",
+      is_qualifier: !!tn.is_qualifier,
+      source: tn.source || "manual",
+      status: tn.status || "",
+      notes: tn.notes || "",
+      divisions: Array.isArray(tn.divisions) ? [...tn.divisions] : [],
+    });
+    setAddingTournament(true);
+  };
+  const toggleTournamentDivision = async (tn, division) => {
+    const cur = Array.isArray(tn.divisions) ? tn.divisions : [];
+    const next = cur.includes(division) ? cur.filter(d => d !== division) : [...cur, division];
+    const { error } = await supabase.from("tournaments").update({ divisions: next }).eq("id", tn.id);
+    if (error) { window.alert("Update failed: " + error.message); return; }
     loadTournaments();
   };
   const deleteTournament = async (id, name) => {
@@ -2418,6 +2478,11 @@ export default function App() {
             {tn.venue && <div style={{fontSize:10,color:C.mut,marginTop:2}}>{tn.venue}</div>}
           </div>
           <div style={{display:"flex",gap:5,alignItems:"center"}}>
+            <button onClick={()=>openEditTournament(tn)}
+              title="Edit tournament"
+              style={{padding:"4px 8px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+              Edit
+            </button>
             <button onClick={()=>toggleCancelled(tn)}
               title={isCancelled?"Restore":"Mark cancelled"}
               style={{padding:"4px 8px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
@@ -2429,6 +2494,22 @@ export default function App() {
               Delete
             </button>
           </div>
+        </div>
+
+        {/* Divisions chips — click to toggle. Empty = nothing tagged for
+            this tournament; the Divisions filter on the list shows only
+            tournaments that match the user's selected divisions. */}
+        <div style={{marginTop:8,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+          <span style={{fontSize:9,fontWeight:700,color:C.mut,textTransform:"uppercase",letterSpacing:0.5}}>Divisions:</span>
+          {TN_DIVISIONS.map(div => {
+            const on = (tn.divisions || []).includes(div);
+            return (
+              <span key={div} onClick={()=>toggleTournamentDivision(tn, div)}
+                style={{padding:"2px 8px",borderRadius:10,fontSize:10,fontWeight:700,cursor:"pointer",border:on?"1px solid "+C.gold:"1px dashed "+C.border,background:on?"rgba(233,30,140,0.18)":"transparent",color:on?C.gold:C.mut,userSelect:"none"}}>
+                {div}
+              </span>
+            );
+          })}
         </div>
 
         {/* Assignments */}
@@ -2491,8 +2572,9 @@ export default function App() {
   }
 
   function renderTournaments() {
-    const teamById = new Map(teamsList.map(t => [t.id, t]));
-    // Filtering
+    // Filtering (used by Listings view; Calendar respects only the team
+    // multi-select since "what's the calendar of selected teams" doesn't
+    // need the listing filters).
     const filtered = tournaments.filter(t => {
       if (tnFilters.hideCancelled && t.cancelled) return false;
       if (tnFilters.qualifierOnly && !t.is_qualifier) return false;
@@ -2509,20 +2591,39 @@ export default function App() {
       }
       if (tnFilters.dateFrom && t.end_date < tnFilters.dateFrom) return false;
       if (tnFilters.dateTo && t.start_date > tnFilters.dateTo) return false;
+      if (tnFilters.startsOn.length > 0 && !tnFilters.startsOn.includes(tnStartDow(t.start_date))) return false;
+      if (tnFilters.state && tnStateOf(t.location) !== tnFilters.state) return false;
+      if (tnFilters.numDays) {
+        const d = tnDaysBetween(t.start_date, t.end_date);
+        if (tnFilters.numDays === "4+") { if (d < 4) return false; }
+        else if (d !== parseInt(tnFilters.numDays)) return false;
+      }
+      if (tnFilters.divisions.length > 0) {
+        const dvs = t.divisions || [];
+        if (!tnFilters.divisions.some(d => dvs.includes(d))) return false;
+      }
       return true;
     });
+    const hasActiveFilters = tnFilters.search || tnFilters.ageFor || tnFilters.qualifierOnly || tnFilters.hideClosed || tnFilters.dateFrom || tnFilters.dateTo || tnFilters.startsOn.length || tnFilters.state || tnFilters.numDays || tnFilters.divisions.length;
     return (
       <div>
-        {/* Header + filters */}
+        {/* Header + view dropdown */}
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10,flexWrap:"wrap",gap:8}}>
-          <div>
+          <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
             <h2 style={{margin:0,fontSize:18,fontWeight:800,color:C.gold}}>Tournaments</h2>
-            <div style={{fontSize:11,color:C.mut,marginTop:2}}>
-              {tournaments.length} total · {filtered.length} shown · {tournamentAssignments.length} team assignments · {tournamentConflicts.length} coach conflict{tournamentConflicts.length===1?"":"s"}
+            <select value={tnView} onChange={e=>setTnView(e.target.value)}
+              style={{...inpStyle,padding:"6px 12px",fontSize:12,fontWeight:700,color:C.gold,minWidth:140}}>
+              <option value="list">Listings</option>
+              <option value="calendar">Calendar</option>
+            </select>
+            <div style={{fontSize:11,color:C.mut}}>
+              {tnView === "list"
+                ? <>{tournaments.length} total · {filtered.length} shown · {tournamentAssignments.length} assignments · {tournamentConflicts.length} conflict{tournamentConflicts.length===1?"":"s"}</>
+                : <>Calendar view · {tournamentConflicts.length} coach conflict{tournamentConflicts.length===1?"":"s"}</>}
             </div>
           </div>
           <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
-            <button onClick={()=>setAddingTournament(true)}
+            <button onClick={()=>{ setEditingTournament(null); setNewTournament({ name: "", start_date: "", end_date: "", location: "", venue: "", age_low: "", age_high: "", gender: "Female", is_qualifier: false, source: "manual", status: "", notes: "", divisions: [] }); setAddingTournament(true); }}
               style={{padding:"6px 14px",borderRadius:6,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
               + Add tournament
             </button>
@@ -2532,8 +2633,9 @@ export default function App() {
             </button>
           </div>
         </div>
-        {/* Filter row */}
-        <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center",marginBottom:12,padding:"8px 10px",background:C.card,borderRadius:10,border:"1px solid "+C.border}}>
+        {tnView === "calendar" ? renderTournamentCalendar() : (<>
+        {/* Filter row 1 — primary filters */}
+        <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center",marginBottom:6,padding:"8px 10px",background:C.card,borderRadius:10,border:"1px solid "+C.border}}>
           <DebouncedField placeholder="Search name / city / venue"
             value={tnFilters.search} onCommit={v=>setTnFilters(prev=>({...prev,search:v}))}
             style={{...inpStyle,padding:"6px 10px",fontSize:12,minWidth:200}} />
@@ -2542,6 +2644,21 @@ export default function App() {
             style={{...inpStyle,padding:"6px 10px",fontSize:12,color:tnFilters.ageFor?C.gold:C.text}}>
             <option value="">All ages</option>
             {[10,11,12,13,14,15,16,17,18].map(a => <option key={a} value={a}>U{a}</option>)}
+          </select>
+          <select value={tnFilters.state} onChange={e=>setTnFilters(prev=>({...prev,state:e.target.value}))}
+            title="Filter by US state"
+            style={{...inpStyle,padding:"6px 10px",fontSize:12,color:tnFilters.state?C.gold:C.text}}>
+            <option value="">All locations</option>
+            {stateOptions.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <select value={tnFilters.numDays} onChange={e=>setTnFilters(prev=>({...prev,numDays:e.target.value}))}
+            title="Number of days the tournament runs"
+            style={{...inpStyle,padding:"6px 10px",fontSize:12,color:tnFilters.numDays?C.gold:C.text}}>
+            <option value="">Any length</option>
+            <option value="1">1 day</option>
+            <option value="2">2 days</option>
+            <option value="3">3 days</option>
+            <option value="4+">4+ days</option>
           </select>
           <label style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:11,color:C.mut,cursor:"pointer"}}>
             <input type="checkbox" checked={tnFilters.qualifierOnly} onChange={e=>setTnFilters(prev=>({...prev,qualifierOnly:e.target.checked}))} />
@@ -2555,17 +2672,46 @@ export default function App() {
             <input type="checkbox" checked={tnFilters.hideCancelled} onChange={e=>setTnFilters(prev=>({...prev,hideCancelled:e.target.checked}))} />
             Hide cancelled
           </label>
-          <span style={{fontSize:11,color:C.mut,marginLeft:4}}>Dates:</span>
+          {hasActiveFilters ? (
+            <button onClick={()=>setTnFilters({ search:"", ageFor:"", qualifierOnly:false, dateFrom:"", dateTo:"", hideClosed:false, hideCancelled:true, startsOn:[], state:"", numDays:"", divisions:[] })}
+              style={{padding:"4px 8px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit",marginLeft:"auto"}}>
+              Clear all
+            </button>
+          ) : null}
+        </div>
+        {/* Filter row 2 — day-of-week + date range */}
+        <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center",marginBottom:6,padding:"6px 10px",background:C.card,borderRadius:10,border:"1px solid "+C.border}}>
+          <span style={{fontSize:11,color:C.mut,fontWeight:600}}>Starts on:</span>
+          {TN_DOW_NAMES.map((name, idx) => {
+            const on = tnFilters.startsOn.includes(idx);
+            return (
+              <span key={idx} onClick={()=>setTnFilters(prev=>({...prev,startsOn: on ? prev.startsOn.filter(x=>x!==idx) : [...prev.startsOn, idx]}))}
+                style={{padding:"3px 9px",borderRadius:10,fontSize:11,fontWeight:700,cursor:"pointer",border:on?"1px solid "+C.gold:"1px solid "+C.border,background:on?"rgba(233,30,140,0.18)":"transparent",color:on?C.gold:C.mut,userSelect:"none"}}>
+                {name}
+              </span>
+            );
+          })}
+          <span style={{fontSize:11,color:C.mut,marginLeft:8}}>Dates:</span>
           <input type="date" value={tnFilters.dateFrom} onChange={e=>setTnFilters(prev=>({...prev,dateFrom:e.target.value}))}
             style={{...inpStyle,padding:"5px 8px",fontSize:11,colorScheme:"dark",color:tnFilters.dateFrom?C.gold:C.text}} />
           <span style={{fontSize:11,color:C.mut}}>to</span>
           <input type="date" value={tnFilters.dateTo} onChange={e=>setTnFilters(prev=>({...prev,dateTo:e.target.value}))}
             style={{...inpStyle,padding:"5px 8px",fontSize:11,colorScheme:"dark",color:tnFilters.dateTo?C.gold:C.text}} />
-          {(tnFilters.search || tnFilters.ageFor || tnFilters.qualifierOnly || tnFilters.hideClosed || tnFilters.dateFrom || tnFilters.dateTo) && (
-            <button onClick={()=>setTnFilters({ search:"", ageFor:"", qualifierOnly:false, dateFrom:"", dateTo:"", hideClosed:false, hideCancelled:true })}
-              style={{padding:"4px 8px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
-              Clear
-            </button>
+        </div>
+        {/* Filter row 3 — divisions */}
+        <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center",marginBottom:12,padding:"6px 10px",background:C.card,borderRadius:10,border:"1px solid "+C.border}}>
+          <span style={{fontSize:11,color:C.mut,fontWeight:600}}>Divisions:</span>
+          {TN_DIVISIONS.map(div => {
+            const on = tnFilters.divisions.includes(div);
+            return (
+              <span key={div} onClick={()=>setTnFilters(prev=>({...prev,divisions: on ? prev.divisions.filter(x=>x!==div) : [...prev.divisions, div]}))}
+                style={{padding:"3px 9px",borderRadius:10,fontSize:11,fontWeight:700,cursor:"pointer",border:on?"1px solid "+C.gold:"1px solid "+C.border,background:on?"rgba(233,30,140,0.18)":"transparent",color:on?C.gold:C.mut,userSelect:"none"}}>
+                {div}
+              </span>
+            );
+          })}
+          {tnFilters.divisions.length > 0 && (
+            <span style={{fontSize:10,color:C.mut,marginLeft:6,fontStyle:"italic"}}>matches tournaments that include ANY selected division</span>
           )}
         </div>
         {/* Conflict alert */}
@@ -2610,22 +2756,194 @@ export default function App() {
             });
           })()
         )}
+        </>)}
       </div>
     );
   }
 
-  // Modal: Add a tournament manually. Bulk paste import will land in a
-  // follow-up — this covers the "I found one elsewhere, add it" case.
+  // ─── TOURNAMENT CALENDAR VIEW ─────────────────────────────────────────
+  // Rows = weekends (Sat) in the chosen date range. Columns = selected teams.
+  // Each cell shows the tournament that team is going to that weekend, or
+  // empty. Blackout weekends are tinted amber; conflict cells are red.
+  function renderTournamentCalendar() {
+    const activeTeams = teamsList.filter(t => t.active);
+    const teamsToShow = activeTeams.filter(t => tnSelectedTeams.size === 0 || tnSelectedTeams.has(t.id));
+    // Generate Saturdays between tnCalFrom and tnCalTo
+    const weeks = [];
+    {
+      const start = new Date(tnCalFrom + "T00:00");
+      const end = new Date(tnCalTo + "T00:00");
+      // advance to first Saturday on or after start
+      let d = new Date(start);
+      while (d.getDay() !== 6) d.setDate(d.getDate() + 1);
+      while (d <= end) {
+        const sat = new Date(d);
+        const fri = new Date(sat); fri.setDate(fri.getDate() - 1);
+        const sun = new Date(sat); sun.setDate(sun.getDate() + 1);
+        weeks.push({
+          fri: fri.toISOString().slice(0,10),
+          sat: sat.toISOString().slice(0,10),
+          sun: sun.toISOString().slice(0,10),
+        });
+        d.setDate(d.getDate() + 7);
+      }
+    }
+    // Index assignments by (team_id, weekend-key). A weekend matches if the
+    // tournament's date range overlaps Fri-Sun of that weekend.
+    const tnById = new Map(tournaments.map(t => [t.id, t]));
+    const cellMap = new Map();
+    const cellKey = (teamId, sat) => teamId + ":" + sat;
+    for (const a of tournamentAssignments) {
+      const tn = tnById.get(a.tournament_id);
+      if (!tn) continue;
+      for (const wk of weeks) {
+        if (tn.start_date <= wk.sun && tn.end_date >= wk.fri) {
+          const k = cellKey(a.team_id, wk.sat);
+          if (!cellMap.has(k)) cellMap.set(k, []);
+          cellMap.get(k).push({ assignment: a, tournament: tn });
+          break; // assign to the FIRST overlapping weekend only
+        }
+      }
+    }
+    // Conflict lookup: (team_id, weekend) pairs that are in a conflict
+    const conflictCells = new Set();
+    for (const c of tournamentConflicts) {
+      for (const wk of weeks) {
+        if (c.a.tournament.start_date <= wk.sun && c.a.tournament.end_date >= wk.fri) conflictCells.add(cellKey(c.a.team_id, wk.sat));
+        if (c.b.tournament.start_date <= wk.sun && c.b.tournament.end_date >= wk.fri) conflictCells.add(cellKey(c.b.team_id, wk.sat));
+      }
+    }
+    const blackoutFor = (wk) => blackoutDates.filter(b => b.date_start <= wk.sun && b.date_end >= wk.fri);
+
+    const abbreviate = (name, n = 22) => name.length > n ? name.slice(0, n-1) + "…" : name;
+    const fmtMD = (iso) => { const d = new Date(iso + "T00:00"); return (d.getMonth()+1) + "/" + d.getDate(); };
+
+    return (
+      <div>
+        {/* Team multi-select chips */}
+        <div style={{background:C.card,borderRadius:10,border:"1px solid "+C.border,padding:"10px 12px",marginBottom:10}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6,gap:8,flexWrap:"wrap"}}>
+            <span style={{fontSize:11,fontWeight:700,color:C.mut,textTransform:"uppercase",letterSpacing:0.5}}>Teams ({tnSelectedTeams.size === 0 ? activeTeams.length : tnSelectedTeams.size} shown)</span>
+            <div style={{display:"flex",gap:6}}>
+              <button onClick={()=>setTnSelectedTeams(new Set())}
+                style={{padding:"3px 8px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+                Show all
+              </button>
+              <button onClick={()=>setTnSelectedTeams(new Set(activeTeams.filter(t => t.level === "National").map(t => t.id)))}
+                style={{padding:"3px 8px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+                Nationals only
+              </button>
+              <button onClick={()=>setTnSelectedTeams(new Set(activeTeams.filter(t => t.level === "Regional").map(t => t.id)))}
+                style={{padding:"3px 8px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+                Regionals only
+              </button>
+            </div>
+          </div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
+            {activeTeams.map(team => {
+              const on = tnSelectedTeams.size === 0 || tnSelectedTeams.has(team.id);
+              return (
+                <span key={team.id}
+                  onClick={()=>setTnSelectedTeams(prev => {
+                    // First click into a chip: if "all" is implied, start a new set with everything EXCEPT this one toggled off
+                    if (prev.size === 0) {
+                      const all = new Set(activeTeams.map(t => t.id));
+                      all.delete(team.id);
+                      return all;
+                    }
+                    const next = new Set(prev);
+                    if (next.has(team.id)) next.delete(team.id); else next.add(team.id);
+                    return next.size === activeTeams.length ? new Set() : next;
+                  })}
+                  style={{padding:"3px 9px",borderRadius:10,fontSize:11,fontWeight:700,cursor:"pointer",border:on?"1px solid "+C.gold:"1px solid "+C.border,background:on?"rgba(233,30,140,0.18)":"transparent",color:on?C.gold:C.mut,userSelect:"none"}}>
+                  {team.id}{team.level ? " · " + team.level.slice(0,3) : ""}
+                </span>
+              );
+            })}
+          </div>
+          <div style={{display:"flex",gap:6,alignItems:"center",marginTop:10}}>
+            <span style={{fontSize:11,color:C.mut,fontWeight:600}}>Season range:</span>
+            <input type="date" value={tnCalFrom} onChange={e=>setTnCalFrom(e.target.value)}
+              style={{...inpStyle,padding:"5px 8px",fontSize:11,colorScheme:"dark",color:C.gold}} />
+            <span style={{fontSize:11,color:C.mut}}>to</span>
+            <input type="date" value={tnCalTo} onChange={e=>setTnCalTo(e.target.value)}
+              style={{...inpStyle,padding:"5px 8px",fontSize:11,colorScheme:"dark",color:C.gold}} />
+          </div>
+        </div>
+        {/* Calendar grid */}
+        <div style={{background:C.card,borderRadius:10,border:"1px solid "+C.border,overflow:"hidden"}}>
+          <div style={{overflowX:"auto",maxHeight:"calc(100vh - 280px)"}}>
+            <table style={{borderCollapse:"separate",borderSpacing:0,minWidth:"100%",fontSize:11}}>
+              <thead>
+                <tr>
+                  <th style={{padding:"7px 10px",position:"sticky",top:0,left:0,zIndex:3,background:C.card,borderBottom:"1px solid "+C.border,borderRight:"1px solid "+C.border,textAlign:"left",fontSize:10,fontWeight:700,color:C.mut,textTransform:"uppercase",whiteSpace:"nowrap"}}>Weekend</th>
+                  {teamsToShow.map(team => (
+                    <th key={team.id} style={{padding:"7px 8px",position:"sticky",top:0,zIndex:2,background:C.card,borderBottom:"1px solid "+C.border,fontSize:9,fontWeight:700,color:C.gold,textTransform:"uppercase",whiteSpace:"nowrap",minWidth:90,textAlign:"left"}}>
+                      {team.id}
+                      <div style={{fontSize:8,fontWeight:600,color:C.mut,textTransform:"none"}}>{team.head_coach || ""}{team.assistant_coach ? "/" + team.assistant_coach : ""}</div>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {weeks.map(wk => {
+                  const bo = blackoutFor(wk);
+                  const rowBg = bo.length ? "rgba(245,158,11,0.06)" : "transparent";
+                  return (
+                    <tr key={wk.sat} style={{background:rowBg}}>
+                      <td style={{padding:"6px 10px",position:"sticky",left:0,zIndex:1,background:bo.length?"rgba(245,158,11,0.10)":C.card,borderBottom:"1px solid "+C.border,borderRight:"1px solid "+C.border,whiteSpace:"nowrap",minWidth:140}}>
+                        <div style={{fontSize:11,fontWeight:700,color:C.text}}>{fmtMD(wk.fri)}–{fmtMD(wk.sun)}</div>
+                        {bo.length > 0 && <div style={{fontSize:9,color:"#f59e0b",fontWeight:600}}>{bo.map(b => b.name).join(" / ")}</div>}
+                      </td>
+                      {teamsToShow.map(team => {
+                        const k = cellKey(team.id, wk.sat);
+                        const items = cellMap.get(k) || [];
+                        const isConflict = conflictCells.has(k);
+                        const bg = isConflict ? "rgba(239,68,68,0.18)" : "transparent";
+                        return (
+                          <td key={team.id} style={{padding:"5px 6px",borderBottom:"1px solid "+C.border,background:bg,verticalAlign:"top",minWidth:90}}>
+                            {items.length === 0 ? (
+                              <span style={{color:C.mut,fontSize:11}}>—</span>
+                            ) : items.map(it => (
+                              <div key={it.assignment.id} title={it.tournament.name + (it.assignment.division ? " · " + it.assignment.division : "")}
+                                style={{fontSize:10,fontWeight:600,color:isConflict?C.red:C.text,lineHeight:1.3,marginBottom:2}}>
+                                {abbreviate(it.tournament.name, 26)}
+                                {it.assignment.division && <span style={{color:C.mut,fontSize:9}}> · {it.assignment.division}</span>}
+                              </div>
+                            ))}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                })}
+                {!weeks.length && (
+                  <tr><td colSpan={teamsToShow.length + 1} style={{padding:20,textAlign:"center",color:C.mut}}>No weekends in the selected date range.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Modal: Add OR Edit a tournament. `editingTournament` is set when we
+  // opened from a card's Edit button; otherwise we're creating new.
   function renderAddTournament() {
     const lbl = {fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut,marginBottom:4,display:"block"};
     const editInp = {...inpStyle,width:"100%",padding:"8px 10px",fontSize:13};
     const setF = (k, v) => setNewTournament(prev => ({ ...prev, [k]: v }));
-    const close = () => { setAddingTournament(false); };
+    const close = () => { setAddingTournament(false); setEditingTournament(null); };
+    const toggleDiv = (d) => setNewTournament(prev => ({
+      ...prev,
+      divisions: (prev.divisions||[]).includes(d) ? prev.divisions.filter(x=>x!==d) : [...(prev.divisions||[]), d],
+    }));
     return (
       <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:1000,display:"flex",justifyContent:"center",padding:"30px 16px",overflowY:"auto"}} onClick={close}>
         <div style={{background:C.card,borderRadius:16,border:"1px solid "+C.border,maxWidth:640,width:"100%",maxHeight:"90vh",overflowY:"auto",padding:24}} onClick={e=>e.stopPropagation()}>
           <div style={{display:"flex",justifyContent:"space-between",marginBottom:14}}>
-            <h2 style={{margin:0,fontSize:18,fontWeight:800,color:C.gold}}>Add Tournament</h2>
+            <h2 style={{margin:0,fontSize:18,fontWeight:800,color:C.gold}}>{editingTournament ? "Edit Tournament" : "Add Tournament"}</h2>
             <button onClick={close} style={{background:"none",border:"none",color:C.mut,fontSize:22,cursor:"pointer"}}>×</button>
           </div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
@@ -2651,11 +2969,25 @@ export default function App() {
               <input type="checkbox" id="newt-q" checked={newTournament.is_qualifier} onChange={e=>setF("is_qualifier", e.target.checked)} />
               <label htmlFor="newt-q" style={{fontSize:12,color:C.text,cursor:"pointer"}}>Is qualifier</label>
             </div>
+            <div style={{gridColumn:"1 / -1"}}>
+              <span style={lbl}>Divisions</span>
+              <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
+                {TN_DIVISIONS.map(d => {
+                  const on = (newTournament.divisions||[]).includes(d);
+                  return (
+                    <span key={d} onClick={()=>toggleDiv(d)}
+                      style={{padding:"4px 10px",borderRadius:10,fontSize:11,fontWeight:700,cursor:"pointer",border:on?"1px solid "+C.gold:"1px dashed "+C.border,background:on?"rgba(233,30,140,0.18)":"transparent",color:on?C.gold:C.mut,userSelect:"none"}}>
+                      {d}
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
             <div style={{gridColumn:"1 / -1"}}><span style={lbl}>Notes</span><textarea style={{...editInp,minHeight:60,resize:"vertical"}} value={newTournament.notes} onChange={e=>setF("notes", e.target.value)} /></div>
           </div>
           <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
             <button onClick={close} style={{padding:"10px 18px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Cancel</button>
-            <button onClick={createTournament} style={{padding:"10px 18px",borderRadius:8,border:"none",background:C.gold,color:"#000",fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Save</button>
+            <button onClick={saveTournament} style={{padding:"10px 18px",borderRadius:8,border:"none",background:C.gold,color:"#000",fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>{editingTournament ? "Save changes" : "Save"}</button>
           </div>
         </div>
       </div>
