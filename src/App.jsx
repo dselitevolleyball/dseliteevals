@@ -514,6 +514,42 @@ export default function App() {
     return () => supabase.removeChannel(ch);
   }, [isApproved, view, loadTournaments, loadTeamsList]);
 
+  // Coach conflicts memo — must live ABOVE the auth gates so React sees the
+  // same hook call order on every render path (pre-auth and post-auth alike).
+  const tournamentConflicts = useMemo(() => {
+    const tById = new Map(tournaments.map(t => [t.id, t]));
+    const teamById = new Map(teamsList.map(t => [t.id, t]));
+    const coachToItems = new Map();
+    for (const a of tournamentAssignments) {
+      const tn = tById.get(a.tournament_id);
+      const tm = teamById.get(a.team_id);
+      if (!tn || !tm) continue;
+      const coaches = [tm.head_coach, tm.assistant_coach].filter(Boolean);
+      for (const coach of coaches) {
+        if (!coachToItems.has(coach)) coachToItems.set(coach, []);
+        coachToItems.get(coach).push({ tournament: tn, team_id: a.team_id });
+      }
+    }
+    const conflicts = [];
+    for (const [coach, items] of coachToItems) {
+      const sorted = [...items].sort((a, b) => a.tournament.start_date.localeCompare(b.tournament.start_date));
+      for (let i = 0; i < sorted.length; i++) {
+        for (let j = i + 1; j < sorted.length; j++) {
+          const a = sorted[i].tournament, b = sorted[j].tournament;
+          if (a.id === b.id) continue;
+          if (a.start_date <= b.end_date && b.start_date <= a.end_date) {
+            conflicts.push({
+              coach,
+              a: { tournament: a, team_id: sorted[i].team_id },
+              b: { tournament: b, team_id: sorted[j].team_id },
+            });
+          }
+        }
+      }
+    }
+    return conflicts;
+  }, [tournaments, tournamentAssignments, teamsList]);
+
   // Save a single player field update to Supabase
   const upd = useCallback(async (id, updates) => {
     // Optimistic update
@@ -2269,44 +2305,6 @@ export default function App() {
   // (tournament_id, team_id, division); we let coaches add/remove assignments
   // inline on each tournament card, and we surface coach conflicts at the top
   // of the page so they can't ship a schedule that double-books a coach.
-
-  // Build a "coach -> list of {tournament, team_id}" map and find pairs of
-  // overlapping tournaments for the same coach.
-  const tournamentConflicts = useMemo(() => {
-    const tById = new Map(tournaments.map(t => [t.id, t]));
-    const teamById = new Map(teamsList.map(t => [t.id, t]));
-    const coachToItems = new Map(); // coach name -> [{ tournament, team_id }]
-    for (const a of tournamentAssignments) {
-      const tn = tById.get(a.tournament_id);
-      const tm = teamById.get(a.team_id);
-      if (!tn || !tm) continue;
-      const coaches = [tm.head_coach, tm.assistant_coach].filter(Boolean);
-      for (const coach of coaches) {
-        if (!coachToItems.has(coach)) coachToItems.set(coach, []);
-        coachToItems.get(coach).push({ tournament: tn, team_id: a.team_id });
-      }
-    }
-    const conflicts = [];
-    for (const [coach, items] of coachToItems) {
-      // Sort by start date so the pair shown is in chronological order
-      const sorted = [...items].sort((a, b) => a.tournament.start_date.localeCompare(b.tournament.start_date));
-      for (let i = 0; i < sorted.length; i++) {
-        for (let j = i + 1; j < sorted.length; j++) {
-          const a = sorted[i].tournament, b = sorted[j].tournament;
-          if (a.id === b.id) continue;
-          // Date ranges overlap?
-          if (a.start_date <= b.end_date && b.start_date <= a.end_date) {
-            conflicts.push({
-              coach,
-              a: { tournament: a, team_id: sorted[i].team_id },
-              b: { tournament: b, team_id: sorted[j].team_id },
-            });
-          }
-        }
-      }
-    }
-    return conflicts;
-  }, [tournaments, tournamentAssignments, teamsList]);
 
   // Quick lookup: which blackouts overlap a given date range?
   const blackoutsForRange = (startDate, endDate) =>
