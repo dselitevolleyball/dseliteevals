@@ -36,6 +36,92 @@ const STATUS_OPTS = ["In Progress","Offered","Accepted","Declined","No Offer"];
 const STATUS_COLORS = {"In Progress":"#999999","Offered":"#e91e8c","Accepted":"#22c55e","Declined":"#ef4444","No Offer":"#666666"};
 const C = {bg:"#0a0a0a",card:"#141414",border:"#2a2a2a",gold:"#e91e8c",text:"#ffffff",mut:"#999999",acc:"#ff69b4",red:"#ef4444",grn:"#22c55e"};
 
+// ─── Bulk tournament import (USAV format) ───────────────────────────────
+// Parses the format used by USAV / TournamentCentral listings:
+//   {NAME (one or two lines)}
+//   {Three/Two/Four} Day Format Age: {LOW}-{HIGH} {Female|Male|Male / Female}
+//   {Month Day, YYYY} - {Month Day, YYYY}
+//   {City, ST} - {Venue}
+//   {trailing status flags: Watch Now / Book Hotels / Registration X / etc}
+// Robust to markdown link syntax (`[label](url)`) since paste from a webpage
+// often includes that wrapper.
+const TN_MONTH_MAP = { jan:"01",feb:"02",mar:"03",apr:"04",may:"05",jun:"06",jul:"07",aug:"08",sep:"09",oct:"10",nov:"11",dec:"12", january:"01",february:"02",march:"03",april:"04",june:"06",july:"07",august:"08",september:"09",october:"10",november:"11",december:"12" };
+const TN_FORMAT_RE = /^([A-Za-z]+)\s+Day\s+Format\s+Age:\s*(\d+)\s*-\s*(\d+)\s+(Male\s*\/\s*Female|Female\s*\/\s*Male|Male|Female)\s*$/i;
+const TN_DATE_RANGE_RE = /^([A-Za-z]+\s+\d{1,2},\s*\d{4})\s*-\s*([A-Za-z]+\s+\d{1,2},\s*\d{4})$/;
+function parseMonthDateString(s) {
+  const m = /^([A-Za-z]+)\s+(\d{1,2}),\s*(\d{4})$/.exec((s||"").trim());
+  if (!m) return null;
+  const mo = TN_MONTH_MAP[m[1].toLowerCase()];
+  if (!mo) return null;
+  return m[3] + "-" + mo + "-" + m[2].padStart(2,"0");
+}
+function parseUSAVTournaments(text) {
+  const cleanLines = (text || "")
+    // strip markdown link syntax: [label](url) -> label
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1")
+    .split(/\r?\n/)
+    .map(l => l.trim())
+    .filter(Boolean);
+  const out = [];
+  let i = 0;
+  while (i < cleanLines.length) {
+    // Find next format line anchoring a tournament entry.
+    let fIdx = -1;
+    for (let j = i; j < cleanLines.length; j++) {
+      if (TN_FORMAT_RE.test(cleanLines[j])) { fIdx = j; break; }
+    }
+    if (fIdx === -1) break;
+    // Name: lines between i and fIdx (usually one line, occasionally two).
+    const rawName = cleanLines.slice(i, fIdx).join(" ").trim();
+    const cancelled = /cancelled/i.test(rawName);
+    const postponed = /postponed/i.test(rawName);
+    const name = rawName.replace(/^CANCELLED\s*-\s*/i, "").replace(/^Postponed\s*-\s*/i, "").replace(/\s*-\s*CANCELLED.*$/i, "").trim() || "Untitled";
+    const fm = TN_FORMAT_RE.exec(cleanLines[fIdx]);
+    const format = (fm[1] || "Three") + " Day Format";
+    const ageLow = parseInt(fm[2]);
+    const ageHigh = parseInt(fm[3]);
+    const gender = fm[4].replace(/\s+/g, " ").trim();
+    // Date range on the next line.
+    const dateLine = cleanLines[fIdx + 1] || "";
+    const dm = TN_DATE_RANGE_RE.exec(dateLine);
+    if (!dm) { i = fIdx + 1; continue; }
+    const startDate = parseMonthDateString(dm[1]);
+    const endDate = parseMonthDateString(dm[2]);
+    if (!startDate || !endDate) { i = fIdx + 1; continue; }
+    // Location line: "City, ST - Venue"
+    const locLine = cleanLines[fIdx + 2] || "";
+    let location = locLine, venue = "";
+    const ds = locLine.match(/^(.*?)\s+-\s+(.+)$/);
+    if (ds) { location = ds[1].trim(); venue = ds[2].trim(); }
+    // Status: any trailing lines until the next format anchor.
+    let j = fIdx + 3;
+    const statusParts = [];
+    while (j < cleanLines.length) {
+      if (TN_FORMAT_RE.test(cleanLines[j])) break;
+      // If the line after this one is a format line, this is the next
+      // tournament's name — stop here.
+      if (j + 1 < cleanLines.length && TN_FORMAT_RE.test(cleanLines[j + 1])) break;
+      statusParts.push(cleanLines[j]);
+      j++;
+    }
+    const statusText = statusParts.join(" ");
+    let status = "";
+    const sm = /Registration\s+(Closed|Open|Opens?\s+-\s+[A-Za-z]+\s+\d{1,2},\s*\d{4})/i.exec(statusText);
+    if (sm) status = sm[0].trim();
+    out.push({
+      name, start_date: startDate, end_date: endDate,
+      location, venue,
+      age_low: ageLow, age_high: ageHigh, gender,
+      format, status,
+      cancelled: cancelled || postponed,
+      source: "USAV",
+      divisions: [],
+    });
+    i = j;
+  }
+  return out;
+}
+
 function calcUSAV(dob) {
   if (!dob) return 12;
   const parts = dob.split("-");
@@ -237,6 +323,10 @@ export default function App() {
   const [addingTournament, setAddingTournament]             = useState(false);
   const [editingTournament, setEditingTournament]           = useState(null);
   const [newTournament, setNewTournament]                   = useState({ name: "", start_date: "", end_date: "", location: "", venue: "", age_low: "", age_high: "", gender: "Female", is_qualifier: false, source: "manual", status: "", notes: "", divisions: [] });
+  const [bulkImportOpen, setBulkImportOpen]                 = useState(false);
+  const [bulkImportText, setBulkImportText]                 = useState("");
+  const [bulkImportSource, setBulkImportSource]             = useState("USAV");
+  const [bulkImporting, setBulkImporting]                   = useState(false);
 
   // Bootstrap auth on mount; subscribe to changes so the UI re-renders on
   // login/logout/token-refresh.
@@ -565,6 +655,20 @@ export default function App() {
     }
     return [...set].sort();
   }, [tournaments]);
+
+  // Bulk-import preview: parse the paste live and split into "new" vs
+  // "already in the DB" by (name|start_date). Also above the gates.
+  const bulkImportPreview = useMemo(() => {
+    if (!bulkImportText.trim()) return { parsed: [], newOnes: [], dupes: [] };
+    const parsed = bulkImportSource === "USAV" ? parseUSAVTournaments(bulkImportText) : [];
+    const existing = new Set(tournaments.map(t => (t.name + "|" + t.start_date).toLowerCase()));
+    const newOnes = [], dupes = [];
+    for (const p of parsed) {
+      const k = (p.name + "|" + p.start_date).toLowerCase();
+      if (existing.has(k)) dupes.push(p); else newOnes.push(p);
+    }
+    return { parsed, newOnes, dupes };
+  }, [bulkImportText, bulkImportSource, tournaments]);
 
   // Save a single player field update to Supabase
   const upd = useCallback(async (id, updates) => {
@@ -2408,6 +2512,18 @@ export default function App() {
     });
     setAddingTournament(true);
   };
+  const importBulkTournaments = async () => {
+    const { newOnes, dupes } = bulkImportPreview;
+    if (!newOnes.length) { window.alert("No new tournaments to import (" + dupes.length + " already exist)."); return; }
+    setBulkImporting(true);
+    const { error } = await supabase.from("tournaments").insert(newOnes);
+    setBulkImporting(false);
+    if (error) { window.alert("Import failed: " + error.message); return; }
+    setBulkImportOpen(false);
+    setBulkImportText("");
+    loadTournaments();
+    window.alert("Imported " + newOnes.length + " new tournament" + (newOnes.length===1?"":"s") + (dupes.length ? " (skipped " + dupes.length + " duplicate" + (dupes.length===1?"":"s") + ")" : "") + ".");
+  };
   const toggleTournamentDivision = async (tn, division) => {
     const cur = Array.isArray(tn.divisions) ? tn.divisions : [];
     const next = cur.includes(division) ? cur.filter(d => d !== division) : [...cur, division];
@@ -2623,6 +2739,11 @@ export default function App() {
             </div>
           </div>
           <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+            <button onClick={()=>setBulkImportOpen(true)}
+              title="Paste tournament listings from USAV / TournamentCentral and import them at once"
+              style={{padding:"6px 14px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.text,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+              Bulk import
+            </button>
             <button onClick={()=>{ setEditingTournament(null); setNewTournament({ name: "", start_date: "", end_date: "", location: "", venue: "", age_low: "", age_high: "", gender: "Female", is_qualifier: false, source: "manual", status: "", notes: "", divisions: [] }); setAddingTournament(true); }}
               style={{padding:"6px 14px",borderRadius:6,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
               + Add tournament
@@ -2994,6 +3115,95 @@ export default function App() {
     );
   }
 
+  // ─── BULK IMPORT TOURNAMENTS MODAL ───
+  // Paste raw text (USAV / TournamentCentral format), preview what was
+  // parsed, dedup against (name + start_date) in the DB, import the new
+  // ones. The Source dropdown is there for future formats (AAU, JVA, etc.).
+  function renderBulkImport() {
+    const lbl = {fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut,marginBottom:4,display:"block"};
+    const close = () => { setBulkImportOpen(false); };
+    const { parsed, newOnes, dupes } = bulkImportPreview;
+    return (
+      <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:1000,display:"flex",justifyContent:"center",padding:"30px 16px",overflowY:"auto"}} onClick={close}>
+        <div style={{background:C.card,borderRadius:16,border:"1px solid "+C.border,maxWidth:780,width:"100%",maxHeight:"92vh",overflowY:"auto",padding:24}} onClick={e=>e.stopPropagation()}>
+          <div style={{display:"flex",justifyContent:"space-between",marginBottom:14}}>
+            <div>
+              <h2 style={{margin:0,fontSize:18,fontWeight:800,color:C.gold}}>Bulk Import Tournaments</h2>
+              <div style={{fontSize:11,color:C.mut,marginTop:3,lineHeight:1.5}}>
+                Paste the tournament listings from USAV / TournamentCentral exactly as you see them. The parser pulls out name, dates, location, age range, gender, and status, then imports any that aren't already in the database (matched by name + start date).
+              </div>
+            </div>
+            <button onClick={close} style={{background:"none",border:"none",color:C.mut,fontSize:22,cursor:"pointer"}}>×</button>
+          </div>
+          <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:8}}>
+            <span style={lbl}>Source format:</span>
+            <select value={bulkImportSource} onChange={e=>setBulkImportSource(e.target.value)}
+              style={{...inpStyle,padding:"5px 10px",fontSize:12}}>
+              <option value="USAV">USAV / TournamentCentral</option>
+            </select>
+            <span style={{fontSize:10,color:C.mut,fontStyle:"italic"}}>(More formats can be added — for now USAV is the only one with a parser.)</span>
+          </div>
+          <textarea value={bulkImportText} onChange={e=>setBulkImportText(e.target.value)}
+            placeholder={"Paste the listing text here. Format expected:\n\n2027 Some Tournament Name\nThree Day Format Age: 12-18 Female\nJan 16, 2027 - Jan 18, 2027\nAustin, TX - Some Venue\nRegistration Open"}
+            style={{...inpStyle,width:"100%",minHeight:280,padding:"10px 12px",fontSize:12,fontFamily:"ui-monospace, SFMono-Regular, Menlo, monospace",resize:"vertical"}} />
+          {/* Live preview */}
+          {bulkImportText.trim() ? (
+            <div style={{marginTop:12,padding:"10px 12px",background:C.bg,borderRadius:8,border:"1px solid "+C.border}}>
+              <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap",marginBottom:8}}>
+                <span style={{fontSize:12,color:C.text,fontWeight:700}}>
+                  Parsed {parsed.length} tournament{parsed.length===1?"":"s"}
+                </span>
+                {newOnes.length > 0 && <span style={{fontSize:11,color:C.grn,fontWeight:700}}>· {newOnes.length} new</span>}
+                {dupes.length > 0 && <span style={{fontSize:11,color:C.mut,fontWeight:700}}>· {dupes.length} already in DB</span>}
+                {parsed.length === 0 && <span style={{fontSize:11,color:C.red}}>· couldn't recognize this format</span>}
+              </div>
+              {parsed.length > 0 && (
+                <div style={{maxHeight:240,overflowY:"auto"}}>
+                  <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+                    <thead><tr>
+                      <th style={{textAlign:"left",padding:"4px 6px",color:C.mut,borderBottom:"1px solid "+C.border,fontSize:10,textTransform:"uppercase"}}>Status</th>
+                      <th style={{textAlign:"left",padding:"4px 6px",color:C.mut,borderBottom:"1px solid "+C.border,fontSize:10,textTransform:"uppercase"}}>Dates</th>
+                      <th style={{textAlign:"left",padding:"4px 6px",color:C.mut,borderBottom:"1px solid "+C.border,fontSize:10,textTransform:"uppercase"}}>Name</th>
+                      <th style={{textAlign:"left",padding:"4px 6px",color:C.mut,borderBottom:"1px solid "+C.border,fontSize:10,textTransform:"uppercase"}}>Ages</th>
+                      <th style={{textAlign:"left",padding:"4px 6px",color:C.mut,borderBottom:"1px solid "+C.border,fontSize:10,textTransform:"uppercase"}}>Location</th>
+                    </tr></thead>
+                    <tbody>
+                      {parsed.map((p, i) => {
+                        const k = (p.name + "|" + p.start_date).toLowerCase();
+                        const isDupe = dupes.some(d => (d.name + "|" + d.start_date).toLowerCase() === k);
+                        return (
+                          <tr key={i} style={{opacity:isDupe?0.5:1}}>
+                            <td style={{padding:"4px 6px",color:isDupe?C.mut:C.grn,fontWeight:700,fontSize:10,whiteSpace:"nowrap"}}>{isDupe ? "DUP" : "NEW"}</td>
+                            <td style={{padding:"4px 6px",color:C.mut,whiteSpace:"nowrap"}}>{p.start_date}{p.start_date!==p.end_date?" → "+p.end_date:""}</td>
+                            <td style={{padding:"4px 6px",color:C.text,fontWeight:p.cancelled?400:600,textDecoration:p.cancelled?"line-through":"none"}}>{p.name}</td>
+                            <td style={{padding:"4px 6px",color:C.mut,whiteSpace:"nowrap"}}>U{p.age_low}–U{p.age_high} {p.gender}</td>
+                            <td style={{padding:"4px 6px",color:C.mut}}>{p.location}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div style={{marginTop:10,fontSize:11,color:C.mut,fontStyle:"italic"}}>Paste tournament listings above and the parsed preview will appear here.</div>
+          )}
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:14}}>
+            <button onClick={close}
+              style={{padding:"10px 18px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>
+              Cancel
+            </button>
+            <button onClick={importBulkTournaments} disabled={!newOnes.length || bulkImporting}
+              style={{padding:"10px 18px",borderRadius:8,border:"none",background:(newOnes.length && !bulkImporting)?C.gold:C.border,color:(newOnes.length && !bulkImporting)?"#000":C.mut,fontWeight:700,fontSize:13,cursor:(newOnes.length && !bulkImporting)?"pointer":"default",fontFamily:"inherit"}}>
+              {bulkImporting ? "Importing…" : newOnes.length ? "Import " + newOnes.length + " new" : "Nothing to import"}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // ─── ADD PLAYER MODAL ───
   function renderAddPlayer() {
     const lbl = {fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut,marginBottom:4,display:"block"};
@@ -3139,6 +3349,7 @@ export default function App() {
       {profileId !== null && renderProfile()}
       {addingPlayer && renderAddPlayer()}
       {addingTournament && renderAddTournament()}
+      {bulkImportOpen && renderBulkImport()}
     </div>
   );
 }
