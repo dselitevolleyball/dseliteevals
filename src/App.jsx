@@ -1134,7 +1134,13 @@ export default function App() {
 
   const filtered = useMemo(() => {
     let l = [...divP];
-    if (search) { const s = search.toLowerCase(); l = l.filter(p => (p.first_name + " " + p.last_name).toLowerCase().includes(s)); }
+    if (search) {
+      const s = search.toLowerCase();
+      l = l.filter(p => (
+        (p.first_name + " " + p.last_name).toLowerCase().includes(s) ||
+        (p.tryout_number || "").toString().toLowerCase().includes(s)
+      ));
+    }
     if (filterPos) l = l.filter(p => (p.positions||[]).includes(filterPos));
     if (filterProj) l = l.filter(p => p.projected_team === filterProj);
     if (filterDate) l = l.filter(p => (p.eval_dates||[]).includes(filterDate));
@@ -1509,7 +1515,7 @@ export default function App() {
     return (
       <div>
         <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap",alignItems:"center"}}>
-          <input style={{...inpStyle,padding:"7px 12px",fontSize:13,width:180}} placeholder="Search..." value={search} onChange={e=>setSearch(e.target.value)} />
+          <input style={{...inpStyle,padding:"7px 12px",fontSize:13,width:180}} placeholder="Search name or pinny #" value={search} onChange={e=>setSearch(e.target.value)} />
           <select style={{...inpStyle,padding:"7px 10px",fontSize:12}} value={filterPos} onChange={e=>setFilterPos(e.target.value)}>
             <option value="">All Pos</option>{POSITIONS.map(p=><option key={p} value={p}>{p}</option>)}
           </select>
