@@ -18,6 +18,10 @@ const ROSTER_POS = ["S1","S2","Pin1","Pin2","Pin3","Pin4","M1","M2","M3","L","DS
 const ROSTER_GROUPS = [{label:"Setters",pos:["S1","S2"]},{label:"Pins",pos:["Pin1","Pin2","Pin3","Pin4"]},{label:"Middles",pos:["M1","M2","M3"]},{label:"Libero/DS",pos:["L","DS1","DS2"]},{label:"Utility",pos:["U1","U2"]}];
 const DIVS = ["U10","U11","U12","U13","U14","U15","U16","U17"];
 const CLINIC_DIVS = ["U13","U14","U15","U16","U17"];
+// Specific National Team ID Clinic dates a player attended (multi-select).
+// Mirrors the EVAL_DATES pattern — short M/D strings. Edit here when the
+// club adds more clinic dates.
+const CLINIC_DATES = ["6/2"];
 const TM = {U10:["11-1","11-2","11-3"],U11:["11-1","11-2","11-3"],U12:["12-1","12-2","12-3"],U13:["13-1","13-2","13-3","13-4"],U14:["14-1","14-2","14-3","14-4"],U15:["15-1","15-2","15-3"],U16:["16 Diamond","16-1","16-2"],U17:["17-1"]};
 // 2026-27 season club plan: how many teams at each competitive tier per age group.
 // Sent to the AI summary so parents see the broader landscape their daughter is
@@ -635,6 +639,7 @@ export default function App() {
   const [filterEval, setFilterEval] = useState("all");
   const [filterDate, setFilterDate] = useState("");
   const [filterClinic, setFilterClinic] = useState("all");
+  const [filterClinicDate, setFilterClinicDate] = useState(""); // "" = any; "6/2" = only players who attended that clinic date
   // "Registered since" date filter (YYYY-MM-DD) — drives the email-the-new-batch workflow.
   const [regSince, setRegSince] = useState("");
   const [copiedEmails, setCopiedEmails] = useState(false);
@@ -1138,13 +1143,14 @@ export default function App() {
     if (filterClinic === "invited") l = l.filter(p => p.id_clinic_invited);
     else if (filterClinic === "attended") l = l.filter(p => p.id_clinic_attended);
     else if (filterClinic === "invited_no_show") l = l.filter(p => p.id_clinic_invited && !p.id_clinic_attended);
+    if (filterClinicDate) l = l.filter(p => (p.clinic_dates||[]).includes(filterClinicDate));
     if (regSince) l = l.filter(p => p.created_at && p.created_at >= regSince);
     if (sortBy === "name") l.sort((a,b) => (a.last_name||"").localeCompare(b.last_name||""));
     else if (sortBy === "score") l.sort((a,b) => tot(b) - tot(a));
     else if (sortBy === "age") l.sort((a,b) => parseInt(b.age||0) - parseInt(a.age||0));
     else if (sortBy === "proj") { const o = {"1":0,"1/2":1,"2":2,"2/3":3,"3":4,"":5}; l.sort((a,b) => (o[a.projected_team]||5) - (o[b.projected_team]||5)); }
     return l;
-  }, [divP, search, filterPos, filterProj, filterEval, filterDate, filterClinic, regSince, sortBy]);
+  }, [divP, search, filterPos, filterProj, filterEval, filterDate, filterClinic, filterClinicDate, regSince, sortBy]);
 
   // ─── AUTH GATES ──────────────────────────────────────────────────────
   // 1. While bootstrapping the session, render a quiet loading screen so we
@@ -1522,6 +1528,12 @@ export default function App() {
               <option value="invited">Invited</option>
               <option value="attended">Attended</option>
               <option value="invited_no_show">Invited, no-show</option>
+            </select>
+          )}
+          {selectedDivs.some(d => CLINIC_DIVS.includes(d)) && (
+            <select style={{...inpStyle,padding:"7px 10px",fontSize:12,color:filterClinicDate?C.gold:C.text}} value={filterClinicDate} onChange={e=>setFilterClinicDate(e.target.value)} title="Show only players who attended a specific clinic date">
+              <option value="">Any clinic date</option>
+              {CLINIC_DATES.map(d => <option key={d} value={d}>Attended {d}</option>)}
             </select>
           )}
           <span style={{fontSize:11,color:C.mut,marginLeft:8}}>Registered since:</span>
@@ -2125,6 +2137,20 @@ export default function App() {
                   style={{padding:"8px 16px",borderRadius:8,fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit",border:p.id_clinic_attended?"2px solid "+C.grn:"1px solid "+C.border,background:p.id_clinic_attended?"rgba(34,197,94,0.15)":"transparent",color:p.id_clinic_attended?C.grn:C.mut}}>
                   {p.id_clinic_attended ? "✓ Attended" : "Mark Attended"}
                 </button>
+              </div>
+              {/* Date-specific clinic attendance — the Evaluate tab has a
+                  matching filter so coaches can pull up "who came to 6/2"
+                  in one click. */}
+              <div style={{marginTop:8,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                <span style={{fontSize:10,fontWeight:700,color:C.mut,textTransform:"uppercase",letterSpacing:0.5,marginRight:4}}>Date attended:</span>
+                {CLINIC_DATES.map(d => {
+                  const active = (p.clinic_dates||[]).includes(d);
+                  return <button key={d}
+                    onClick={()=>{ const next = active ? (p.clinic_dates||[]).filter(x=>x!==d) : [...(p.clinic_dates||[]),d]; upd(p.id,{clinic_dates:next}); }}
+                    style={{padding:"6px 12px",borderRadius:6,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",border:active?"2px solid "+C.gold:"1px solid "+C.border,background:active?"rgba(233,30,140,0.2)":"transparent",color:active?C.gold:C.mut}}>
+                    {d}
+                  </button>;
+                })}
               </div>
             </div>
           )}
