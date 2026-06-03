@@ -1623,7 +1623,7 @@ export default function App() {
       <>
         <div style={{fontSize:11,color:C.mut,marginBottom:10,fontStyle:"italic"}}>
           Drag a player onto a team card to assign (clears their roster slot). Drag onto Unassigned, Declined, or Not Invited to change status.
-          Click the "+ offer" chip on a team player to cycle locked (signed + deposit) → offer → accepted → none.
+          Click the "+ offer" chip on a team player to cycle ★ locked (signed + deposit) → offer → ✓ accepted → waiting (for tryouts) → ✗ declined → none.
           Type a rank number to reorder within a position — rank persists across team changes.
         </div>
         {selectedDivs.map(div => (
@@ -1712,42 +1712,55 @@ export default function App() {
     };
 
     // Click-to-cycle offer-status chip on team-card player rows:
-    //   none → "locked" → "made" → "accepted" → none.
+    //   none → "locked" → "made" → "accepted" → "waiting" → "declined" → none.
     //   "locked" comes first so a coach processing a signed agreement + paid
-    //   deposit only needs ONE click to mark the player. Coaches who are
-    //   still mid-flow with a family can click again to step through the
-    //   "made" (offered) and "accepted" (verbal yes) intermediate states.
-    //   Declined / not_invited are set by dragging to those buckets, not by
-    //   clicking the chip.
+    //   deposit only needs ONE click. The intermediate states (made, accepted,
+    //   waiting for tryouts, declined) are reachable by clicking again.
+    //   Cycling INTO declined clears team_assignment + roster_pos so the
+    //   player moves off the team card automatically — matches the
+    //   drag-to-Declined-bucket behaviour. not_invited is still bucket-only.
     const cycleOffer = (player) => {
       const cur = player.offer_status || "";
       const now = new Date().toISOString();
       const updates = {};
-      if (cur === "" || cur === "declined" || cur === "not_invited") {
-        // Locked is the terminal "signed + deposit in" state. Stamp
-        // offer_decision_at so the audit log has a "this is when the deal
-        // closed" timestamp (offer_made_at is left null because there was
-        // no separate offer-extended step in this one-click flow).
+      if (cur === "" || cur === "not_invited") {
         updates.offer_status = "locked"; updates.offer_decision_at = now;
       } else if (cur === "locked") {
         updates.offer_status = "made"; updates.offer_made_at = now; updates.offer_decision_at = null;
       } else if (cur === "made") {
         updates.offer_status = "accepted"; updates.offer_decision_at = now;
+      } else if (cur === "accepted") {
+        // Waiting on tryouts — keep timestamps as-is; this is a pre-decision
+        // hold state. No team-assignment side-effects.
+        updates.offer_status = "waiting";
+      } else if (cur === "waiting") {
+        // Family declined — clear team slot just like a drag to the bucket.
+        updates.offer_status = "declined";
+        updates.offer_decision_at = now;
+        updates.team_assignment = "";
+        updates.roster_pos = "";
       } else {
-        updates.offer_status = ""; updates.offer_made_at = null; updates.offer_decision_at = null;
+        // From declined (or anything unknown) back to no-status.
+        updates.offer_status = "";
+        updates.offer_made_at = null;
+        updates.offer_decision_at = null;
       }
       upd(player.id, updates);
     };
     const offerChip = (player) => {
       const s = player.offer_status || "";
       let label, bg, fg, border = "none";
-      // Locked uses purple (#a855f7) — distinct from gold (brand pink), green
-      // (accepted), amber (made), and red (declined/danger) used elsewhere.
+      // Five distinct colors — purple (locked), amber (made), green
+      // (accepted), cyan (waiting), red (declined) — chosen to be readable
+      // against the dark card background and not collide with any of the
+      // other chips already in use (pos rank, pinny, etc.).
       if (s === "locked")        { label = "★ LOCKED";   bg = "rgba(168,85,247,0.25)";  fg = "#a855f7"; }
       else if (s === "made")     { label = "OFFER";      bg = "rgba(245,158,11,0.22)";  fg = "#f59e0b"; }
       else if (s === "accepted") { label = "✓ ACCEPTED"; bg = "rgba(34,197,94,0.22)";   fg = C.grn; }
+      else if (s === "waiting")  { label = "WAITING";    bg = "rgba(6,182,212,0.22)";   fg = "#06b6d4"; }
+      else if (s === "declined") { label = "✗ DECLINED"; bg = "rgba(239,68,68,0.22)";   fg = C.red; }
       else                       { label = "+ offer";    bg = "transparent";            fg = C.mut; border = "1px dashed "+C.border; }
-      return <span title="Click to cycle: none → ★ locked (signed + deposit) → offer made → accepted → none"
+      return <span title="Click to cycle: none → ★ locked → offer → ✓ accepted → waiting (tryouts) → ✗ declined → none"
         onClick={(e) => { e.stopPropagation(); cycleOffer(player); }}
         style={{fontSize:9,fontWeight:800,padding:"1px 6px",borderRadius:8,background:bg,color:fg,whiteSpace:"nowrap",cursor:"pointer",border,userSelect:"none"}}>{label}</span>;
     };
@@ -1770,6 +1783,7 @@ export default function App() {
             const offerPending  = tp.filter(p => p.offer_status === "made").length;
             const offerAccepted = tp.filter(p => p.offer_status === "accepted").length;
             const offerLocked   = tp.filter(p => p.offer_status === "locked").length;
+            const offerWaiting  = tp.filter(p => p.offer_status === "waiting").length;
             return (
               <DropZone key={team} id={"team-"+team}
                 style={{background:C.card,borderRadius:12,padding:"16px 18px",border:"1px solid "+C.border}}>
@@ -1780,6 +1794,7 @@ export default function App() {
                     {offerLocked   > 0 && <Tag c="#a855f7">{offerLocked} locked</Tag>}
                     {offerAccepted > 0 && <Tag c={C.grn}>{offerAccepted} accepted</Tag>}
                     {offerPending  > 0 && <Tag c="#f59e0b">{offerPending} pending</Tag>}
+                    {offerWaiting  > 0 && <Tag c="#06b6d4">{offerWaiting} waiting</Tag>}
                   </div>
                 </div>
                 {ROSTER_GROUPS.map(grp => (
