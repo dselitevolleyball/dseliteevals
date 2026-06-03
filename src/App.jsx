@@ -1734,11 +1734,13 @@ export default function App() {
         // hold state. No team-assignment side-effects.
         updates.offer_status = "waiting";
       } else if (cur === "waiting") {
-        // Family declined — clear team slot just like a drag to the bucket.
+        // Family declined. Intentionally NOT clearing team_assignment /
+        // roster_pos here — coaches asked the chip to mark status only and
+        // leave the player on the card so they can keep iterating (e.g.
+        // cycle back through if the family changes their mind). Drag to
+        // the Declined Offer bucket is still the way to move them off.
         updates.offer_status = "declined";
         updates.offer_decision_at = now;
-        updates.team_assignment = "";
-        updates.roster_pos = "";
       } else {
         // From declined (or anything unknown) back to no-status.
         updates.offer_status = "";
@@ -1919,6 +1921,7 @@ export default function App() {
                           {isReturningDSE(p) && <span title="DS Elite returning athlete" style={{color:C.gold,fontSize:14,fontWeight:800,lineHeight:1}}>◆</span>}
                           {p.first_name} {p.last_name}
                         </span>
+                        {offerChip(p)}
                         {pinnyChip(p)}
                         {(p.positions||[]).map(pos => <span key={pos} style={{fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:8,background:"rgba(34,197,94,0.18)",color:C.grn}}>{pos}</span>)}
                         {p.offer_decision_at && <span title="When declined" style={{fontSize:9,color:C.mut,whiteSpace:"nowrap"}}>{new Date(p.offer_decision_at).toLocaleDateString()}</span>}
