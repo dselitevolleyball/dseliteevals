@@ -3057,9 +3057,7 @@ export default function App() {
               <option value="calendar">Team Calendar</option>
             </select>
             <div style={{fontSize:11,color:C.mut}}>
-              {tnView === "list"
-                ? <>{tournaments.length} total · {filtered.length} shown · {tournamentAssignments.length} assignments · {tournamentConflicts.length} conflict{tournamentConflicts.length===1?"":"s"}</>
-                : <>Calendar view · {tournamentConflicts.length} coach conflict{tournamentConflicts.length===1?"":"s"}</>}
+              {tournaments.length} total · {filtered.length} match filters · {tournamentAssignments.length} assignments · {tournamentConflicts.length} conflict{tournamentConflicts.length===1?"":"s"}
             </div>
           </div>
           <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
@@ -3078,10 +3076,6 @@ export default function App() {
             </button>
           </div>
         </div>
-        {tnView === "calendar" ? renderTournamentCalendar(filtered)
-         : tnView === "browse" ? renderTournamentBrowser(filtered)
-         : tnView === "month" ? renderTournamentMonthView(filtered)
-         : (<>
         {/* Filter row 1 — primary filters */}
         <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center",marginBottom:6,padding:"8px 10px",background:C.card,borderRadius:10,border:"1px solid "+C.border}}>
           <DebouncedField placeholder="Search name / city / venue"
@@ -3177,6 +3171,10 @@ export default function App() {
             </div>
           </details>
         )}
+        {tnView === "calendar" ? renderTournamentCalendar(filtered)
+         : tnView === "browse" ? renderTournamentBrowser(filtered)
+         : tnView === "month" ? renderTournamentMonthView(filtered)
+         : (<>
         {/* Tournament cards, grouped by month so the wall-of-cards is scannable */}
         {filtered.length === 0 ? (
           <div style={{padding:30,textAlign:"center",color:C.mut,fontSize:12,background:C.card,borderRadius:10,border:"1px solid "+C.border}}>
