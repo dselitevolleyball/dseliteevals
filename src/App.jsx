@@ -1623,6 +1623,110 @@ export default function App() {
   // Each selected age group renders as its own section with its own DndContext, so drags are
   // scoped per-division. Team names can repeat across divisions; per-context droppable IDs
   // keep that unambiguous.
+  // Per-player onboarding grid for accepted athletes. Coaches use this once
+  // teams are formed to chase down sign-ups before the season starts.
+  function renderTracker() {
+    if (!selectedDivs.length) return <div style={{padding:20,color:C.mut,fontSize:12}}>Pick a division above to see its tracker.</div>;
+    const COLS = [
+      ["sportsengine_registered","SportsEngine"],
+      ["sportsyou_registered","SportsYou"],
+      ["lonestar_member","Lone Star"],
+      ["jersey_tryout_complete","Jersey Tryout"],
+    ];
+    const accepted = players.filter(p => selectedDivs.includes(p.usavDiv || p.usav_div) && p.offer_status === "accepted");
+    return (
+      <>
+        <div style={{fontSize:11,color:C.mut,marginBottom:10,fontStyle:"italic"}}>
+          Accepted players for the selected division(s). Click a cell to toggle. Same four flags are editable on the player card.
+        </div>
+        {selectedDivs.map(div => {
+          const teams = TM[div] || [];
+          const divAccepted = accepted.filter(p => (p.usavDiv || p.usav_div) === div);
+          if (divAccepted.length === 0) {
+            return (
+              <div key={div} style={{marginBottom:18,padding:14,background:C.card,borderRadius:10,border:"1px solid "+C.border}}>
+                <div style={{fontSize:13,fontWeight:800,color:C.gold,marginBottom:4}}>{div}</div>
+                <div style={{fontSize:11,color:C.mut}}>No accepted players yet in {div}.</div>
+              </div>
+            );
+          }
+          // Group accepted players by team_assignment, with anything missing
+          // a team assignment shown last under "(no team yet)".
+          const groups = [];
+          for (const t of teams) {
+            const tp = divAccepted.filter(p => p.team_assignment === t);
+            if (tp.length) groups.push([t, tp]);
+          }
+          const noTeam = divAccepted.filter(p => !p.team_assignment || !teams.includes(p.team_assignment));
+          if (noTeam.length) groups.push(["(no team yet)", noTeam]);
+          return (
+            <div key={div} style={{marginBottom:24}}>
+              {selectedDivs.length > 1 && <h2 style={{margin:"0 0 10px 0",fontSize:15,fontWeight:800,color:C.gold,textTransform:"uppercase",letterSpacing:1,borderBottom:"1px solid "+C.border,paddingBottom:6}}>{div}</h2>}
+              {groups.map(([team, roster]) => {
+                const totals = COLS.map(([k]) => roster.filter(p => p[k]).length);
+                return (
+                  <div key={team} style={{marginBottom:16,background:C.card,borderRadius:12,border:"1px solid "+C.border,overflow:"hidden"}}>
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 14px",background:C.bg,borderBottom:"1px solid "+C.border,flexWrap:"wrap",gap:8}}>
+                      <div style={{fontSize:13,fontWeight:800,color:C.gold}}>{team} <span style={{color:C.mut,fontWeight:600,fontSize:11,marginLeft:6}}>· {roster.length} accepted</span></div>
+                      <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                        {COLS.map(([k,label],i) => (
+                          <span key={k} style={{fontSize:10,fontWeight:700,padding:"3px 8px",borderRadius:8,background:totals[i]===roster.length?"rgba(34,197,94,0.18)":"rgba(255,255,255,0.04)",color:totals[i]===roster.length?C.grn:C.mut,border:"1px solid "+C.border}}>
+                            {label}: {totals[i]}/{roster.length}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    <div style={{overflowX:"auto"}}>
+                      <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+                        <thead>
+                          <tr style={{background:C.bg}}>
+                            <th style={{textAlign:"left",padding:"8px 12px",fontSize:10,fontWeight:700,color:C.mut,letterSpacing:0.5,borderBottom:"1px solid "+C.border}}>PLAYER</th>
+                            <th style={{textAlign:"left",padding:"8px 8px",fontSize:10,fontWeight:700,color:C.mut,letterSpacing:0.5,borderBottom:"1px solid "+C.border}}>POS</th>
+                            {COLS.map(([k,label]) => (
+                              <th key={k} style={{textAlign:"center",padding:"8px 8px",fontSize:10,fontWeight:700,color:C.mut,letterSpacing:0.5,borderBottom:"1px solid "+C.border}}>{label}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {roster
+                            .slice()
+                            .sort((a,b) => (a.last_name||"").localeCompare(b.last_name||""))
+                            .map(p => (
+                              <tr key={p.id} style={{borderBottom:"1px solid "+C.border}}>
+                                <td style={{padding:"8px 12px"}}>
+                                  <span onClick={()=>setProfileId(p.id)} style={{cursor:"pointer",fontWeight:700,color:C.text}}>
+                                    {p.first_name} {p.last_name}
+                                  </span>
+                                  {p.roster_pos && <span style={{fontSize:10,color:C.mut,marginLeft:6}}>#{p.roster_pos}</span>}
+                                </td>
+                                <td style={{padding:"8px 8px",color:C.mut,fontSize:11}}>{(p.positions||[]).join("/") || "—"}</td>
+                                {COLS.map(([k]) => {
+                                  const on = !!p[k];
+                                  return (
+                                    <td key={k} style={{padding:"6px 8px",textAlign:"center"}}>
+                                      <span onClick={()=>upd(p.id,{[k]:!on})}
+                                        title={on?"Click to mark not done":"Click to mark done"}
+                                        style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:32,height:24,borderRadius:6,cursor:"pointer",fontSize:14,fontWeight:800,border:"1px solid "+(on?C.grn:C.border),background:on?"rgba(34,197,94,0.18)":"transparent",color:on?C.grn:C.mut,userSelect:"none"}}>
+                                        {on?"✓":""}
+                                      </span>
+                                    </td>
+                                  );
+                                })}
+                              </tr>
+                            ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })}
+      </>
+    );
+  }
+
   function renderTeams() {
     if (!selectedDivs.length) return null;
     return (
@@ -2207,6 +2311,28 @@ export default function App() {
           <div style={{display:"flex",alignItems:"center",gap:10,marginTop:8,padding:"12px 16px",background:p.feedback_session_complete?"rgba(34,197,94,0.1)":C.bg,borderRadius:10,border:"1px solid "+(p.feedback_session_complete?C.grn:C.border),cursor:"pointer"}} onClick={()=>upd(p.id,{feedback_session_complete:!p.feedback_session_complete})}>
             <input type="checkbox" checked={!!p.feedback_session_complete} readOnly style={{width:20,height:20,accentColor:C.gold,cursor:"pointer"}} />
             <span style={{fontSize:14,fontWeight:700,color:p.feedback_session_complete?C.grn:C.mut}}>{p.feedback_session_complete?"Feedback Session Completed ✓":"Mark Feedback Session Completed"}</span>
+          </div>
+          {/* Team Onboarding Tracker — same four flags shown on the Tracker tab.
+              Visible here so a coach can flip them straight from the profile too. */}
+          <div style={{marginTop:14,padding:"12px 14px",background:C.bg,borderRadius:10,border:"1px solid "+C.border}}>
+            <div style={{fontSize:11,fontWeight:700,color:C.gold,marginBottom:8,letterSpacing:0.5}}>TEAM ONBOARDING</div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))",gap:8}}>
+              {[
+                ["sportsengine_registered","SportsEngine Registration"],
+                ["sportsyou_registered","SportsYou Registration"],
+                ["lonestar_member","Lone Star Membership"],
+                ["jersey_tryout_complete","Jersey Tryout Complete"],
+              ].map(([key,label]) => {
+                const on = !!p[key];
+                return (
+                  <div key={key} onClick={()=>upd(p.id,{[key]:!on})}
+                    style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:on?"rgba(34,197,94,0.1)":"transparent",borderRadius:8,border:"1px solid "+(on?C.grn:C.border),cursor:"pointer"}}>
+                    <input type="checkbox" checked={on} readOnly style={{width:16,height:16,accentColor:C.gold,cursor:"pointer"}} />
+                    <span style={{fontSize:12,fontWeight:700,color:on?C.grn:C.mut}}>{label}{on?" ✓":""}</span>
+                  </div>
+                );
+              })}
+            </div>
           </div>
           {/* Mark Complete */}
           <div style={{display:"flex",alignItems:"center",gap:10,marginTop:8,padding:"12px 16px",background:p.eval_complete?"rgba(34,197,94,0.1)":C.bg,borderRadius:10,border:"1px solid "+(p.eval_complete?C.grn:C.border),cursor:"pointer"}} onClick={()=>upd(p.id,{eval_complete:!p.eval_complete})}>
@@ -3938,6 +4064,7 @@ export default function App() {
               ["dashboard","Dashboard"],
               ["evaluate","Evaluate"],
               ["teams","Teams"],
+              ["tracker","Tracker"],
               ["rankings","Rankings"],
               ["tournaments","Tournaments"],
               ["activity","Activity"],
@@ -4005,6 +4132,7 @@ export default function App() {
         {view==="dashboard" && renderDashboard()}
         {view==="evaluate" && renderEval()}
         {view==="teams" && renderTeams()}
+        {view==="tracker" && renderTracker()}
         {view==="rankings" && renderRankings()}
         {view==="activity" && renderActivity()}
         {view==="coaches"  && renderCoaches()}
