@@ -3065,7 +3065,7 @@ export default function App() {
             </button>
           </div>
         </div>
-        {tnView === "calendar" ? renderTournamentCalendar() : (<>
+        {tnView === "calendar" ? renderTournamentCalendar(filtered) : (<>
         {/* Filter row 1 — primary filters */}
         <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center",marginBottom:6,padding:"8px 10px",background:C.card,borderRadius:10,border:"1px solid "+C.border}}>
           <DebouncedField placeholder="Search name / city / venue"
@@ -3197,7 +3197,7 @@ export default function App() {
   // Rows = weekends (Sat) in the chosen date range. Columns = selected teams.
   // Each cell shows the tournament that team is going to that weekend, or
   // empty. Blackout weekends are tinted amber; conflict cells are red.
-  function renderTournamentCalendar() {
+  function renderTournamentCalendar(filteredTournaments) {
     const activeTeams = teamsList.filter(t => t.active);
     const teamsToShow = activeTeams.filter(t => tnSelectedTeams.size === 0 || tnSelectedTeams.has(t.id));
     // Generate Saturdays between tnCalFrom and tnCalTo
@@ -3246,6 +3246,23 @@ export default function App() {
       }
     }
     const blackoutFor = (wk) => blackoutDates.filter(b => b.date_start <= wk.sun && b.date_end >= wk.fri);
+    // A weekend counts as a "3-day" weekend if a school-out day lands on the
+    // adjacent Friday or Monday — Memorial / Labor / MLK / Presidents Day
+    // (Monday holidays), Good Friday (Friday school out), DSISD long breaks,
+    // etc. Pulled straight from the blackout_dates table so adding a custom
+    // DSISD blackout automatically marks the adjacent weekend.
+    const isThreeDayWeekend = (wk) => {
+      const monDate = new Date(wk.sun + "T00:00");
+      monDate.setDate(monDate.getDate() + 1);
+      const monISO = monDate.toISOString().slice(0,10);
+      return blackoutDates.some(b =>
+        (b.date_start <= wk.fri  && b.date_end >= wk.fri) ||
+        (b.date_start <= monISO && b.date_end >= monISO)
+      );
+    };
+    // Tournaments matching the Listings filter that overlap this weekend.
+    const tournamentsThisWeekend = (wk) =>
+      (filteredTournaments || []).filter(t => t.start_date <= wk.sun && t.end_date >= wk.fri);
 
     const abbreviate = (name, n = 22) => name.length > n ? name.slice(0, n-1) + "…" : name;
     const fmtMD = (iso) => { const d = new Date(iso + "T00:00"); return (d.getMonth()+1) + "/" + d.getDate(); };
@@ -3255,7 +3272,7 @@ export default function App() {
         {/* Team multi-select chips */}
         <div style={{background:C.card,borderRadius:10,border:"1px solid "+C.border,padding:"10px 12px",marginBottom:10}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6,gap:8,flexWrap:"wrap"}}>
-            <span style={{fontSize:11,fontWeight:700,color:C.mut,textTransform:"uppercase",letterSpacing:0.5}}>Teams ({tnSelectedTeams.size === 0 ? activeTeams.length : tnSelectedTeams.size} shown)</span>
+            <span style={{fontSize:11,fontWeight:700,color:C.mut,textTransform:"uppercase",letterSpacing:0.5}}>Teams ({tnSelectedTeams.size === 0 ? activeTeams.length : tnSelectedTeams.size} shown) · per-weekend tournament list respects the Listings filter</span>
             <div style={{display:"flex",gap:6}}>
               <button onClick={()=>setTnSelectedTeams(new Set())}
                 style={{padding:"3px 8px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
@@ -3320,12 +3337,33 @@ export default function App() {
               <tbody>
                 {weeks.map(wk => {
                   const bo = blackoutFor(wk);
-                  const rowBg = bo.length ? "rgba(245,158,11,0.06)" : "transparent";
+                  const isLong = isThreeDayWeekend(wk);
+                  const tnrsThis = tournamentsThisWeekend(wk);
+                  const rowBg = bo.length ? "rgba(245,158,11,0.06)" : isLong ? "rgba(6,182,212,0.05)" : "transparent";
                   return (
                     <tr key={wk.sat} style={{background:rowBg}}>
-                      <td style={{padding:"6px 10px",position:"sticky",left:0,zIndex:1,background:bo.length?"rgba(245,158,11,0.10)":C.card,borderBottom:"1px solid "+C.border,borderRight:"1px solid "+C.border,whiteSpace:"nowrap",minWidth:140}}>
+                      <td style={{padding:"6px 10px",position:"sticky",left:0,zIndex:1,background:bo.length?"rgba(245,158,11,0.10)":isLong?"rgba(6,182,212,0.08)":C.card,borderBottom:"1px solid "+C.border,borderRight:"1px solid "+C.border,whiteSpace:"normal",minWidth:170,maxWidth:230,verticalAlign:"top"}}>
                         <div style={{fontSize:11,fontWeight:700,color:C.text}}>{fmtMD(wk.fri)}–{fmtMD(wk.sun)}</div>
                         {bo.length > 0 && <div style={{fontSize:9,color:"#f59e0b",fontWeight:600}}>{bo.map(b => b.name).join(" / ")}</div>}
+                        {isLong && (
+                          <span style={{display:"inline-block",marginTop:3,fontSize:8,fontWeight:800,padding:"1px 6px",borderRadius:8,background:"rgba(6,182,212,0.22)",color:"#06b6d4",letterSpacing:0.5}}>3-DAY (DSISD)</span>
+                        )}
+                        {tnrsThis.length > 0 && (
+                          <details style={{marginTop:4}}>
+                            <summary style={{fontSize:9,fontWeight:700,color:C.grn,cursor:"pointer",listStyle:"none"}}>
+                              {tnrsThis.length} tournament{tnrsThis.length===1?"":"s"} this wknd ▾
+                            </summary>
+                            <div style={{marginTop:3,paddingLeft:6,borderLeft:"2px solid "+C.border}}>
+                              {tnrsThis.map(t => (
+                                <div key={t.id} title={t.name + " · " + (t.location||"")}
+                                  style={{fontSize:9,color:C.text,lineHeight:1.4,marginBottom:2}}>
+                                  {t.is_qualifier && <span style={{color:"#a855f7",fontWeight:700,marginRight:3}}>Q</span>}
+                                  {abbreviate(t.name, 34)}
+                                </div>
+                              ))}
+                            </div>
+                          </details>
+                        )}
                       </td>
                       {teamsToShow.map(team => {
                         const k = cellKey(team.id, wk.sat);
