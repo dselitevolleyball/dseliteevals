@@ -2732,7 +2732,7 @@ export default function App() {
   }
 
   // Tournament-related constants used by the cards, filters, and forms.
-  const TN_DIVISIONS = ["Open", "USA", "American", "Liberty", "National", "Patriot", "Freedom", "Premier", "Select", "Club"];
+  const TN_DIVISIONS = ["Open", "USA", "American", "Liberty", "National", "Elite", "Patriot", "Freedom", "Premier", "Select", "Club"];
   const TN_DOW_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const tnDaysBetween = (start, end) => {
     const a = new Date(start + "T00:00").getTime();
