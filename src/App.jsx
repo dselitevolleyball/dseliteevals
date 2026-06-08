@@ -2796,6 +2796,7 @@ export default function App() {
       status: t.status.trim() || null,
       notes: t.notes.trim() || null,
       divisions: Array.isArray(t.divisions) ? t.divisions : [],
+      wish_list: Array.isArray(t.wish_list) ? t.wish_list : [],
       format: "Three Day Format",
     };
     let error;
@@ -2807,7 +2808,7 @@ export default function App() {
     if (error) { window.alert("Save failed: " + error.message); return; }
     setAddingTournament(false);
     setEditingTournament(null);
-    setNewTournament({ name: "", start_date: "", end_date: "", location: "", venue: "", age_low: "", age_high: "", gender: "Female", is_qualifier: false, source: "manual", status: "", notes: "", divisions: [] });
+    setNewTournament({ name: "", start_date: "", end_date: "", location: "", venue: "", age_low: "", age_high: "", gender: "Female", is_qualifier: false, source: "manual", status: "", notes: "", divisions: [], wish_list: [] });
     loadTournaments();
   };
   const openEditTournament = (tn) => {
@@ -2826,6 +2827,7 @@ export default function App() {
       status: tn.status || "",
       notes: tn.notes || "",
       divisions: Array.isArray(tn.divisions) ? [...tn.divisions] : [],
+      wish_list: Array.isArray(tn.wish_list) ? [...tn.wish_list] : [],
     });
     setAddingTournament(true);
   };
@@ -2901,6 +2903,9 @@ export default function App() {
               {tn.is_qualifier && <Tag c="#a855f7">QUALIFIER</Tag>}
               {conflictsHere.length > 0 && <Tag c={C.red}>{conflictsHere.length} CONFLICT{conflictsHere.length===1?"":"S"}</Tag>}
               {blackouts.length > 0 && <Tag c="#f59e0b">{blackouts.map(b => b.name).join(" / ")}</Tag>}
+              {Array.isArray(tn.wish_list) && tn.wish_list.length > 0 && (
+                <Tag c="#f59e0b">★ {tn.wish_list.join(" · ")}</Tag>
+              )}
             </div>
             <div style={{fontSize:11,color:C.mut,marginTop:3,display:"flex",gap:10,flexWrap:"wrap"}}>
               <span><b style={{color:C.text}}>{new Date(tn.start_date+"T00:00").toLocaleDateString()}</b>{" – "}<b style={{color:C.text}}>{new Date(tn.end_date+"T00:00").toLocaleDateString()}</b></span>
@@ -3063,7 +3068,7 @@ export default function App() {
               style={{padding:"6px 14px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.text,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
               Bulk import
             </button>
-            <button onClick={()=>{ setEditingTournament(null); setNewTournament({ name: "", start_date: "", end_date: "", location: "", venue: "", age_low: "", age_high: "", gender: "Female", is_qualifier: false, source: "manual", status: "", notes: "", divisions: [] }); setAddingTournament(true); }}
+            <button onClick={()=>{ setEditingTournament(null); setNewTournament({ name: "", start_date: "", end_date: "", location: "", venue: "", age_low: "", age_high: "", gender: "Female", is_qualifier: false, source: "manual", status: "", notes: "", divisions: [], wish_list: [] }); setAddingTournament(true); }}
               style={{padding:"6px 14px",borderRadius:6,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
               + Add tournament
             </button>
@@ -3729,9 +3734,39 @@ export default function App() {
                 })}
               </div>
             </div>
+            <div style={{gridColumn:"1 / -1"}}>
+              <span style={lbl}>Wish list (teams that want to go)</span>
+              <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
+                {teamsList.filter(t => t.active).map(t => {
+                  const on = (newTournament.wish_list||[]).includes(t.id);
+                  return (
+                    <span key={t.id}
+                      onClick={()=>setNewTournament(prev => ({
+                        ...prev,
+                        wish_list: (prev.wish_list||[]).includes(t.id)
+                          ? prev.wish_list.filter(x=>x!==t.id)
+                          : [...(prev.wish_list||[]), t.id],
+                      }))}
+                      title={on ? "Remove from "+t.id+" wish list" : "Add to "+t.id+" wish list"}
+                      style={{padding:"4px 10px",borderRadius:10,fontSize:11,fontWeight:700,cursor:"pointer",border:on?"1px solid #f59e0b":"1px dashed "+C.border,background:on?"rgba(245,158,11,0.18)":"transparent",color:on?"#f59e0b":C.mut,userSelect:"none"}}>
+                      {on ? "★ " : ""}{t.id}
+                    </span>
+                  );
+                })}
+                {teamsList.filter(t => t.active).length === 0 && (
+                  <span style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>No active teams. Add teams in the Teams tab first.</span>
+                )}
+              </div>
+            </div>
             <div style={{gridColumn:"1 / -1"}}><span style={lbl}>Notes</span><textarea style={{...editInp,minHeight:60,resize:"vertical"}} value={newTournament.notes} onChange={e=>setF("notes", e.target.value)} /></div>
           </div>
-          <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end",alignItems:"center"}}>
+            {editingTournament && (
+              <button onClick={()=>{ deleteTournament(editingTournament.id, editingTournament.name); close(); }}
+                style={{padding:"10px 14px",borderRadius:8,border:"1px solid "+C.red,background:"transparent",color:C.red,fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit",marginRight:"auto"}}>
+                Delete tournament
+              </button>
+            )}
             <button onClick={close} style={{padding:"10px 18px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Cancel</button>
             <button onClick={saveTournament} style={{padding:"10px 18px",borderRadius:8,border:"none",background:C.gold,color:"#000",fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>{editingTournament ? "Save changes" : "Save"}</button>
           </div>
