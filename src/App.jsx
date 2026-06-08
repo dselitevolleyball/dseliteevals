@@ -582,6 +582,12 @@ export default function App() {
   const [tnSelectedTeams, setTnSelectedTeams]               = useState(new Set()); // empty = all shown
   const [tnCalFrom, setTnCalFrom]                           = useState("2026-08-01");
   const [tnCalTo, setTnCalTo]                               = useState("2027-06-30");
+  // Month being shown in the Month View calendar; YYYY-MM-01 string.
+  // Default to today's month so it lands on something relevant on open.
+  const [tnMonthCursor, setTnMonthCursor]                   = useState(() => {
+    const d = new Date();
+    return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-01";
+  });
   const [addingTournament, setAddingTournament]             = useState(false);
   const [editingTournament, setEditingTournament]           = useState(null);
   const [newTournament, setNewTournament]                   = useState({ name: "", start_date: "", end_date: "", location: "", venue: "", age_low: "", age_high: "", gender: "Female", is_qualifier: false, source: "manual", status: "", notes: "", divisions: [] });
@@ -3042,6 +3048,7 @@ export default function App() {
               style={{...inpStyle,padding:"6px 12px",fontSize:12,fontWeight:700,color:C.gold,minWidth:140}}>
               <option value="list">Listings</option>
               <option value="browse">Browse by Weekend</option>
+              <option value="month">Month View</option>
               <option value="calendar">Team Calendar</option>
             </select>
             <div style={{fontSize:11,color:C.mut}}>
@@ -3068,6 +3075,7 @@ export default function App() {
         </div>
         {tnView === "calendar" ? renderTournamentCalendar(filtered)
          : tnView === "browse" ? renderTournamentBrowser(filtered)
+         : tnView === "month" ? renderTournamentMonthView(filtered)
          : (<>
         {/* Filter row 1 — primary filters */}
         <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center",marginBottom:6,padding:"8px 10px",background:C.card,borderRadius:10,border:"1px solid "+C.border}}>
@@ -3396,6 +3404,144 @@ export default function App() {
               </tbody>
             </table>
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── TOURNAMENT MONTH VIEW (Google-Calendar-style grid) ──────────────
+  // Traditional 7-column month grid. Each day cell shows the tournaments
+  // happening that day (overlap, so multi-day events appear in each day
+  // they span) filtered by the Listings filter. Holiday days tint amber,
+  // 3-day-weekend Fridays/Mondays tint cyan, today is outlined gold,
+  // out-of-month days dimmed. Forward/back arrows step a month at a time.
+  function renderTournamentMonthView(filteredTournaments) {
+    const cursor = new Date(tnMonthCursor + "T00:00");
+    const year = cursor.getFullYear();
+    const month = cursor.getMonth();
+    const monthLabel = cursor.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+    // Build a 6-row Sunday-anchored grid that fully covers the month
+    // (includes leading days from the previous month and trailing days
+    // from the next so each row has exactly 7 cells).
+    const firstOfMonth = new Date(year, month, 1);
+    const gridStart = new Date(firstOfMonth);
+    gridStart.setDate(gridStart.getDate() - gridStart.getDay()); // back to Sunday
+    const days = [];
+    {
+      let d = new Date(gridStart);
+      // 6 rows × 7 cols = 42 cells. Always enough to cover any month.
+      for (let i = 0; i < 42; i++) {
+        days.push({
+          date: new Date(d),
+          iso: d.toISOString().slice(0, 10),
+          inMonth: d.getMonth() === month,
+          dow: d.getDay(),
+        });
+        d.setDate(d.getDate() + 1);
+      }
+    }
+    const todayISO = new Date().toISOString().slice(0, 10);
+    // Index tournaments by day for quick lookup. A tournament covers
+    // [start_date, end_date]; an event that spans Fri-Sun shows up in
+    // Fri, Sat, and Sun cells.
+    const tnByDay = new Map();
+    for (const t of (filteredTournaments || [])) {
+      const start = new Date(t.start_date + "T00:00");
+      const end = new Date(t.end_date + "T00:00");
+      let cur = new Date(start);
+      while (cur <= end) {
+        const iso = cur.toISOString().slice(0, 10);
+        if (!tnByDay.has(iso)) tnByDay.set(iso, []);
+        tnByDay.get(iso).push(t);
+        cur.setDate(cur.getDate() + 1);
+      }
+    }
+    const blackoutForDay = (iso) => blackoutDates.filter(b => b.date_start <= iso && b.date_end >= iso);
+    const isLongWeekendDay = (date, iso) => {
+      // Mark cyan only on the Fri or Mon of a 3-day weekend (the day that
+      // makes it long). Easier visual scan than tinting the whole weekend.
+      const dow = date.getDay();
+      if (dow !== 1 && dow !== 5) return false; // Mon or Fri only
+      // It's a 3-day weekend if a school-out day lands on this day.
+      return blackoutDates.some(b => b.date_start <= iso && b.date_end >= iso);
+    };
+    const shiftMonth = (delta) => {
+      const d = new Date(year, month + delta, 1);
+      setTnMonthCursor(d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-01");
+    };
+    const goToday = () => {
+      const d = new Date();
+      setTnMonthCursor(d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-01");
+    };
+    const abbreviate = (name, n = 26) => name.length > n ? name.slice(0, n-1) + "…" : name;
+    const totalThisMonth = days
+      .filter(d => d.inMonth)
+      .reduce((sum, d) => sum + (tnByDay.get(d.iso)?.length || 0), 0);
+
+    return (
+      <div>
+        {/* Month nav + counter */}
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,background:C.card,borderRadius:10,border:"1px solid "+C.border,padding:"8px 12px",flexWrap:"wrap"}}>
+          <button onClick={()=>shiftMonth(-1)}
+            style={{padding:"6px 14px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.text,fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>‹ Prev</button>
+          <h2 style={{margin:0,fontSize:16,fontWeight:800,color:C.gold,minWidth:180,textAlign:"center"}}>{monthLabel}</h2>
+          <button onClick={()=>shiftMonth(1)}
+            style={{padding:"6px 14px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.text,fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Next ›</button>
+          <button onClick={goToday}
+            style={{padding:"6px 12px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",marginLeft:6}}>Today</button>
+          <span style={{fontSize:11,color:C.mut,marginLeft:"auto"}}>{totalThisMonth} tournament-day{totalThisMonth===1?"":"s"} this month (filtered)</span>
+        </div>
+        {/* Weekday header */}
+        <div style={{display:"grid",gridTemplateColumns:"repeat(7,minmax(0,1fr))",gap:1,marginBottom:1}}>
+          {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(d => (
+            <div key={d} style={{padding:"6px 8px",fontSize:10,fontWeight:700,color:C.mut,textTransform:"uppercase",letterSpacing:0.5,textAlign:"center",background:C.card,borderRadius:4}}>{d}</div>
+          ))}
+        </div>
+        {/* Day grid */}
+        <div style={{display:"grid",gridTemplateColumns:"repeat(7,minmax(0,1fr))",gap:1,background:C.border,border:"1px solid "+C.border,borderRadius:8,overflow:"hidden"}}>
+          {days.map(day => {
+            const dayTn = tnByDay.get(day.iso) || [];
+            const bo = blackoutForDay(day.iso);
+            const isLong = isLongWeekendDay(day.date, day.iso);
+            const isToday = day.iso === todayISO;
+            const isWknd = day.dow === 0 || day.dow === 6;
+            let cellBg = C.card;
+            if (!day.inMonth) cellBg = C.bg;
+            else if (bo.length) cellBg = "rgba(245,158,11,0.08)";
+            else if (isLong) cellBg = "rgba(6,182,212,0.08)";
+            else if (isWknd) cellBg = "rgba(255,255,255,0.02)";
+            const cellBorder = isToday ? "2px solid "+C.gold : "none";
+            return (
+              <div key={day.iso} style={{background:cellBg,minHeight:96,padding:4,outline:cellBorder,outlineOffset:-2,position:"relative",overflow:"hidden"}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:2}}>
+                  <span style={{fontSize:11,fontWeight:isToday?800:700,color:day.inMonth?(isToday?C.gold:C.text):C.mut}}>{day.date.getDate()}</span>
+                  {isLong && day.inMonth && <span title="3-day weekend (DSISD)" style={{fontSize:8,fontWeight:800,padding:"0 4px",borderRadius:6,background:"rgba(6,182,212,0.22)",color:"#06b6d4"}}>3D</span>}
+                </div>
+                {bo.length > 0 && day.inMonth && (
+                  <div title={bo.map(b => b.name).join(", ")} style={{fontSize:8,fontWeight:600,color:"#f59e0b",lineHeight:1.2,marginBottom:2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{bo.map(b => b.name).join(" / ")}</div>
+                )}
+                {dayTn.slice(0, 4).map((t, idx) => (
+                  <div key={t.id + "-" + idx}
+                    onClick={()=>openEditTournament(t)}
+                    title={t.name + (t.location ? " · " + t.location : "")}
+                    style={{fontSize:9,fontWeight:600,padding:"1px 4px",marginBottom:1,borderRadius:3,cursor:"pointer",background:t.is_qualifier?"rgba(168,85,247,0.18)":"rgba(34,197,94,0.14)",color:t.is_qualifier?"#a855f7":C.grn,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",lineHeight:1.3}}>
+                    {abbreviate(t.name)}
+                  </div>
+                ))}
+                {dayTn.length > 4 && (
+                  <div style={{fontSize:9,color:C.mut,fontWeight:700,paddingLeft:4}}>+{dayTn.length - 4} more</div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        {/* Legend */}
+        <div style={{display:"flex",gap:10,flexWrap:"wrap",marginTop:10,fontSize:10,color:C.mut}}>
+          <span><span style={{display:"inline-block",width:10,height:10,background:"rgba(168,85,247,0.5)",borderRadius:2,marginRight:4,verticalAlign:"middle"}} />Qualifier</span>
+          <span><span style={{display:"inline-block",width:10,height:10,background:"rgba(34,197,94,0.5)",borderRadius:2,marginRight:4,verticalAlign:"middle"}} />Other</span>
+          <span><span style={{display:"inline-block",width:10,height:10,background:"rgba(245,158,11,0.4)",borderRadius:2,marginRight:4,verticalAlign:"middle"}} />Holiday / break</span>
+          <span><span style={{display:"inline-block",width:10,height:10,background:"rgba(6,182,212,0.4)",borderRadius:2,marginRight:4,verticalAlign:"middle"}} />3-day weekend (DSISD)</span>
+          <span style={{marginLeft:"auto",fontStyle:"italic"}}>Click any tournament to edit · Listings filter narrows what shows here</span>
         </div>
       </div>
     );
