@@ -3041,7 +3041,8 @@ export default function App() {
             <select value={tnView} onChange={e=>setTnView(e.target.value)}
               style={{...inpStyle,padding:"6px 12px",fontSize:12,fontWeight:700,color:C.gold,minWidth:140}}>
               <option value="list">Listings</option>
-              <option value="calendar">Calendar</option>
+              <option value="browse">Browse by Weekend</option>
+              <option value="calendar">Team Calendar</option>
             </select>
             <div style={{fontSize:11,color:C.mut}}>
               {tnView === "list"
@@ -3065,7 +3066,9 @@ export default function App() {
             </button>
           </div>
         </div>
-        {tnView === "calendar" ? renderTournamentCalendar(filtered) : (<>
+        {tnView === "calendar" ? renderTournamentCalendar(filtered)
+         : tnView === "browse" ? renderTournamentBrowser(filtered)
+         : (<>
         {/* Filter row 1 — primary filters */}
         <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center",marginBottom:6,padding:"8px 10px",background:C.card,borderRadius:10,border:"1px solid "+C.border}}>
           <DebouncedField placeholder="Search name / city / venue"
@@ -3394,6 +3397,133 @@ export default function App() {
             </table>
           </div>
         </div>
+      </div>
+    );
+  }
+
+  // ─── TOURNAMENT BROWSER (research mode) ──────────────────────────────
+  // Per-weekend digest of every tournament matching the Listings filter.
+  // No team columns — this view is for shopping the calendar, not tracking
+  // assignments. Each weekend is a small card with the date, any blackout
+  // labels, a 3-day-weekend badge if school is out adjacent, and a stack
+  // of tournaments showing the key research-mode fields (location, age
+  // range, gender, divisions, qualifier flag). Click any tournament name
+  // to open the edit modal.
+  function renderTournamentBrowser(filteredTournaments) {
+    // Generate Saturdays between tnCalFrom and tnCalTo (same logic as the
+    // team calendar — duplicated here to keep this fn self-contained).
+    const weeks = [];
+    {
+      const start = new Date(tnCalFrom + "T00:00");
+      const end = new Date(tnCalTo + "T00:00");
+      let d = new Date(start);
+      while (d.getDay() !== 6) d.setDate(d.getDate() + 1);
+      while (d <= end) {
+        const sat = new Date(d);
+        const fri = new Date(sat); fri.setDate(fri.getDate() - 1);
+        const sun = new Date(sat); sun.setDate(sun.getDate() + 1);
+        weeks.push({
+          fri: fri.toISOString().slice(0,10),
+          sat: sat.toISOString().slice(0,10),
+          sun: sun.toISOString().slice(0,10),
+        });
+        d.setDate(d.getDate() + 7);
+      }
+    }
+    const blackoutFor = (wk) => blackoutDates.filter(b => b.date_start <= wk.sun && b.date_end >= wk.fri);
+    const isThreeDayWeekend = (wk) => {
+      const monDate = new Date(wk.sun + "T00:00");
+      monDate.setDate(monDate.getDate() + 1);
+      const monISO = monDate.toISOString().slice(0,10);
+      return blackoutDates.some(b =>
+        (b.date_start <= wk.fri  && b.date_end >= wk.fri) ||
+        (b.date_start <= monISO && b.date_end >= monISO)
+      );
+    };
+    const fmtMD = (iso) => { const d = new Date(iso + "T00:00"); return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }); };
+    const ageLabel = (t) => {
+      if (t.age_low == null && t.age_high == null) return "";
+      if (t.age_low === t.age_high) return "U" + t.age_low;
+      return "U" + t.age_low + "–U" + t.age_high;
+    };
+
+    // Pair each weekend with its matching tournaments. Keep only weekends
+    // that actually have something — empty weekends crowd the view in
+    // research mode. (Holiday-only weekends still surface via the team
+    // calendar.)
+    const weekendData = weeks.map(wk => ({
+      wk,
+      bo: blackoutFor(wk),
+      isLong: isThreeDayWeekend(wk),
+      tournaments: (filteredTournaments || []).filter(t => t.start_date <= wk.sun && t.end_date >= wk.fri),
+    })).filter(w => w.tournaments.length > 0);
+
+    if (!weekendData.length) {
+      return (
+        <div style={{padding:30,textAlign:"center",color:C.mut,fontSize:12,background:C.card,borderRadius:10,border:"1px solid "+C.border}}>
+          No tournaments match the current filter in this date range. Adjust the Listings filters or the date range above.
+        </div>
+      );
+    }
+
+    return (
+      <div>
+        {/* Date range picker — same widget as the team calendar. Team
+            selection is intentionally absent here; this view is tournament
+            focused. */}
+        <div style={{background:C.card,borderRadius:10,border:"1px solid "+C.border,padding:"10px 12px",marginBottom:10}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+            <span style={{fontSize:11,fontWeight:700,color:C.mut,textTransform:"uppercase",letterSpacing:0.5}}>Research mode — {weekendData.length} weekend{weekendData.length===1?"":"s"} with tournaments matching the Listings filter</span>
+            <span style={{fontSize:11,color:C.mut,marginLeft:"auto"}}>Season range:</span>
+            <input type="date" value={tnCalFrom} onChange={e=>setTnCalFrom(e.target.value)}
+              style={{...inpStyle,padding:"5px 8px",fontSize:11,colorScheme:"dark",color:C.gold}} />
+            <span style={{fontSize:11,color:C.mut}}>to</span>
+            <input type="date" value={tnCalTo} onChange={e=>setTnCalTo(e.target.value)}
+              style={{...inpStyle,padding:"5px 8px",fontSize:11,colorScheme:"dark",color:C.gold}} />
+          </div>
+        </div>
+
+        {weekendData.map(({ wk, bo, isLong, tournaments: tn }) => {
+          const cardBorder = bo.length ? "rgba(245,158,11,0.45)" : isLong ? "rgba(6,182,212,0.45)" : C.border;
+          return (
+            <div key={wk.sat} style={{background:C.card,borderRadius:10,border:"1px solid "+cardBorder,padding:"10px 14px",marginBottom:10}}>
+              <div style={{display:"flex",alignItems:"baseline",gap:8,flexWrap:"wrap",marginBottom:8,paddingBottom:6,borderBottom:"1px solid "+C.border}}>
+                <span style={{fontSize:14,fontWeight:800,color:C.gold}}>{fmtMD(wk.fri)} – {fmtMD(wk.sun)}</span>
+                {bo.length > 0 && bo.map(b => (
+                  <span key={b.id} style={{fontSize:10,fontWeight:700,padding:"2px 7px",borderRadius:8,background:"rgba(245,158,11,0.22)",color:"#f59e0b"}}>{b.name}</span>
+                ))}
+                {isLong && (
+                  <span style={{fontSize:10,fontWeight:800,padding:"2px 7px",borderRadius:8,background:"rgba(6,182,212,0.22)",color:"#06b6d4",letterSpacing:0.5}}>3-DAY (DSISD)</span>
+                )}
+                <span style={{fontSize:11,color:C.mut,marginLeft:"auto"}}>{tn.length} tournament{tn.length===1?"":"s"}</span>
+              </div>
+              <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                {tn.map(t => (
+                  <div key={t.id}
+                    onClick={()=>openEditTournament(t)}
+                    title="Click to view / edit"
+                    style={{display:"flex",alignItems:"center",gap:8,padding:"6px 8px",background:C.bg,borderRadius:6,border:"1px solid "+C.border,cursor:"pointer",fontSize:11,flexWrap:"wrap"}}>
+                    {t.is_qualifier && <span style={{fontSize:9,fontWeight:800,padding:"1px 6px",borderRadius:8,background:"rgba(168,85,247,0.22)",color:"#a855f7",letterSpacing:0.5,whiteSpace:"nowrap"}}>QUALIFIER</span>}
+                    <span style={{fontWeight:700,color:C.text,flex:"1 1 220px",minWidth:0}}>{t.name}</span>
+                    {ageLabel(t) && <span style={{fontSize:10,color:C.mut,whiteSpace:"nowrap"}}>{ageLabel(t)}</span>}
+                    {t.gender && <span style={{fontSize:10,color:C.mut,whiteSpace:"nowrap"}}>{t.gender}</span>}
+                    {t.location && <span style={{fontSize:10,color:C.mut,whiteSpace:"nowrap"}}>{t.location}</span>}
+                    {Array.isArray(t.divisions) && t.divisions.length > 0 && (
+                      <span style={{display:"inline-flex",gap:3,flexWrap:"wrap"}}>
+                        {t.divisions.slice(0,6).map(d => (
+                          <span key={d} style={{fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:8,background:"rgba(233,30,140,0.18)",color:C.gold,whiteSpace:"nowrap"}}>{d}</span>
+                        ))}
+                        {t.divisions.length > 6 && <span style={{fontSize:9,color:C.mut}}>+{t.divisions.length-6}</span>}
+                      </span>
+                    )}
+                    {t.source && <span style={{fontSize:9,color:C.mut,whiteSpace:"nowrap"}}>· {t.source}</span>}
+                    {t.status && <span style={{fontSize:9,color:t.status.toLowerCase().includes("open")?C.grn:C.mut,whiteSpace:"nowrap"}}>· {t.status}</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
       </div>
     );
   }
