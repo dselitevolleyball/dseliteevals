@@ -961,23 +961,87 @@ export default function App() {
     setSaving(false);
   }, []);
 
-  // CSV Upload handler
+  // CSV Upload handler.
+  //
+  // Two formats supported:
+  //   (1) The original "intake" CSV with strengths/goals/ideal coach prompts.
+  //   (2) The Upper Hand tryout export ("Event Title: DS Elite Tryout - 15s"
+  //       in row 2) that carries player email/phone, address, dominant hand,
+  //       school team, primary/secondary positions, etc.
+  //
+  // Matching: lowercase + trim + collapse whitespace + strip punctuation,
+  //           then Levenshtein-fuzzy on (firstName, lastName) — last name
+  //           must be within 1 edit, first name within 2. Catches typos
+  //           and trailing-space inconsistencies but not unrelated names.
+  //
+  // Merge policy for matched players:
+  //   - Empty existing field → fill from CSV.
+  //   - "Comment" / intake fields (other_sports, school_team, dominant_hand,
+  //     reg_position, etc.) that exist on both sides → leave existing value;
+  //     CSV value is appended into the Coach Notes as a timestamped line so
+  //     no data is lost.
+  //   - positions[] is union'd (CSV adds; never removes).
+  //   - usav_div is filled only if missing.
+  //   - Coach notes and scores are never overwritten.
   const handleCSVUpload = useCallback(async (file) => {
     setUploading(true); setUploadMsg("Parsing CSV...");
+
+    // Cheap Levenshtein — bounded by max len for these short strings.
+    const lev = (a, b) => {
+      a = a||""; b = b||"";
+      if (a === b) return 0;
+      if (!a.length) return b.length;
+      if (!b.length) return a.length;
+      const prev = new Array(b.length+1);
+      for (let j=0;j<=b.length;j++) prev[j]=j;
+      for (let i=1;i<=a.length;i++) {
+        let cur = [i];
+        for (let j=1;j<=b.length;j++) {
+          const cost = a[i-1]===b[j-1] ? 0 : 1;
+          cur.push(Math.min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost));
+        }
+        for (let j=0;j<=b.length;j++) prev[j]=cur[j];
+      }
+      return prev[b.length];
+    };
+    const norm = s => (s||"").toLowerCase().replace(/[^a-z0-9 ]/g,"").replace(/\s+/g," ").trim();
+
     Papa.parse(file, {
       header: false,
       skipEmptyLines: true,
       complete: async (results) => {
         const rows = results.data;
-        // Find the header row (starts with "First Name")
+
+        // Find the header row (starts with "First Name") within the first
+        // ~12 rows — Upper Hand prepends 5 metadata rows, intake CSVs are tighter.
         let headerIdx = -1;
-        for (let i = 0; i < Math.min(rows.length, 10); i++) {
+        for (let i = 0; i < Math.min(rows.length, 12); i++) {
           if (rows[i][0] === "First Name") { headerIdx = i; break; }
         }
         if (headerIdx === -1) { setUploadMsg("Could not find header row. Make sure CSV has 'First Name' column."); setUploading(false); return; }
-
         const headers = rows[headerIdx];
-        const newPlayers = [];
+
+        // Hunt for a division across the metadata rows + headers.
+        // Upper Hand format: "Event Title,DS Elite Tryout - 15s" → U15.
+        let parsedDiv = "";
+        let parsedRegGroup = "";
+        const meta = rows.slice(0, headerIdx).map(r => r.join(" ")).join(" ").toLowerCase();
+        const ageMatch = meta.match(/\b(\d{2})s?\b/);
+        if (ageMatch) {
+          const n = parseInt(ageMatch[1]);
+          if (n>=10 && n<=18) parsedDiv = "U" + n;
+        }
+        // Also catch explicit "u15" patterns and reg_group buckets.
+        if (!parsedDiv) {
+          const m = meta.match(/u(\d{2})/);
+          if (m) parsedDiv = "U" + m[1];
+        }
+        if (parsedDiv === "U11" || parsedDiv === "U12") parsedRegGroup = "U11/U12";
+        else if (parsedDiv === "U13" || parsedDiv === "U14") parsedRegGroup = "U13/U14";
+        else if (parsedDiv === "U15" || parsedDiv === "U16") parsedRegGroup = "U15/U16";
+        else if (parsedDiv === "U17" || parsedDiv === "U18") parsedRegGroup = "U17/U18";
+
+        const parsedRows = [];
 
         for (let i = headerIdx + 1; i < rows.length; i++) {
           const row = rows[i];
@@ -990,38 +1054,59 @@ export default function App() {
 
           const fn = get("first name");
           const ln = get("last name");
+          if (!fn && !ln) continue;
           const dob = get("dob");
-          const usav = calcUSAV(dob);
+          const usavFromDob = dob ? "U" + calcUSAV(dob) : "";
 
-          // Determine reg group from the CSV metadata or filename
-          let regGroup = "";
-          for (let j = 0; j < headerIdx; j++) {
-            const line = rows[j].join(" ").toLowerCase();
-            if (line.includes("u11") || line.includes("u12")) { regGroup = "U11/U12"; break; }
-            if (line.includes("u13") || line.includes("u14")) { regGroup = "U13/U14"; break; }
-            if (line.includes("u15") || line.includes("u16")) { regGroup = "U15/U16"; break; }
-            if (line.includes("u17") || line.includes("u18")) { regGroup = "U17/U18"; break; }
-          }
+          // Primary + Secondary position columns from Upper Hand. Map free-text
+          // entries to our internal position codes when we recognize them, and
+          // also stash the raw response into reg_position for the card.
+          const posMap = {"setter":"S","pin":"OH","middle":"MB","ds":"DS","libero":"DS","opposite":"OPP"};
+          const primaryRaw = get("primary position");
+          const secondaryRaw = get("secondary position");
+          const csvPositions = [];
+          [primaryRaw, secondaryRaw].forEach(raw => {
+            const k = (raw||"").toLowerCase().trim();
+            if (k && posMap[k] && !csvPositions.includes(posMap[k])) csvPositions.push(posMap[k]);
+          });
 
+          // Intake-style fields — only present in the older registration CSV.
           const minLevel = get("minimum level");
           const cleanMin = ["no","n/a","na",""].includes(minLevel.toLowerCase()) ? "" : minLevel;
           const leaving = get("leaving another");
           const cleanLeaving = ["n/a","na","not leaving",""].includes(leaving.toLowerCase()) ? "" : leaving;
           const supp = get("supplemental").toLowerCase() === "yes" ? 1 : 0;
 
-          newPlayers.push({
+          // "Other sports" prompt is phrased a few ways across exports.
+          const otherSports = get("other sports") || get("any other sport");
+
+          parsedRows.push({
             first_name: fn,
             last_name: ln,
             age: get("age"),
             dob: dob,
-            reg_group: regGroup,
-            usav_div: "U" + usav,
-            reg_position: get("how long have you been playing"),
-            min_level: cleanMin,
+            gender: get("gender"),
+            reg_group: parsedRegGroup,
+            usav_div: parsedDiv || usavFromDob,
+            // Upper Hand registration fields
+            player_email: get("email"),
+            player_phone: get("phone").replace(/^\s*managed.*$/i,"").split(",")[0] || "",
             parent_name: get("managed by"),
             parent_email: get("mgr email"),
             parent_phone: get("mgr phone"),
+            address_line1: get("street address line 1") || get("address line 1") || get("address"),
+            address_line2: get("street address line 2") || get("address line 2"),
             city: get("city"),
+            state: get("state"),
+            zip: get("zip"),
+            other_sports: otherSports,
+            dominant_hand: get("dominant hand"),
+            school_team: get("school and school team") || get("school team"),
+            current_team: get("club and team were you on") || get("club and team you were on") || get("what club") || "",
+            positions: csvPositions,
+            reg_position: get("how long have you been playing") || (primaryRaw && secondaryRaw ? primaryRaw + "/" + secondaryRaw : primaryRaw || secondaryRaw || ""),
+            // Old intake fields — preserved when present
+            min_level: cleanMin,
             strength_weakness: get("biggest strength"),
             goal: get("volleyball goals"),
             starter_pref: get("starter on a lower"),
@@ -1031,38 +1116,133 @@ export default function App() {
           });
         }
 
-        if (newPlayers.length === 0) {
+        if (parsedRows.length === 0) {
           setUploadMsg("No players found in CSV."); setUploading(false); return;
         }
 
-        // Dedup against existing players by first+last name (case-insensitive, trimmed)
-        // — same key as the manual Add Player flow. Re-uploading the UpperHand export
-        // is expected; skip rows that already exist so we don't duplicate everyone.
-        const existingKeys = new Set(
-          players.map(p => ((p.first_name||"").trim().toLowerCase() + "|" + (p.last_name||"").trim().toLowerCase()))
-        );
+        // Build a fuzzy lookup. Existing players keyed by normalized last name
+        // for fast bucketing, then we compare first names within the bucket.
+        const buckets = new Map();
+        for (const p of players) {
+          const ln = norm(p.last_name);
+          if (!buckets.has(ln)) buckets.set(ln, []);
+          buckets.get(ln).push(p);
+        }
+        const findMatch = (fn, ln) => {
+          const nfn = norm(fn), nln = norm(ln);
+          if (!nln) return null;
+          // exact last-name bucket first
+          let candidates = buckets.get(nln) || [];
+          // also try near-miss last names (Levenshtein ≤ 1)
+          if (candidates.length === 0) {
+            for (const [k, arr] of buckets) {
+              if (lev(k, nln) <= 1) candidates = candidates.concat(arr);
+            }
+          }
+          for (const c of candidates) {
+            const cfn = norm(c.first_name);
+            if (lev(cfn, nfn) <= 2) return c;
+          }
+          return null;
+        };
+
+        // Fields that are safe to "fill blanks" without prompting.
+        const FILL_FIELDS = [
+          "dob","age","gender","player_email","player_phone","parent_name",
+          "parent_email","parent_phone","address_line1","address_line2","city",
+          "state","zip","other_sports","dominant_hand","school_team",
+          "current_team","reg_position","usav_div","reg_group",
+          "min_level","strength_weakness","goal","starter_pref","ideal_coach","leaving_reason",
+        ];
+        // Fields where, if both sides have a value AND they differ, we append
+        // the new value to coach notes (so nothing is silently lost).
+        const COMMENT_FIELDS = [
+          ["other_sports","Other sports"],
+          ["dominant_hand","Dominant hand"],
+          ["school_team","School team"],
+          ["current_team","Previous club/team"],
+          ["reg_position","Position info"],
+        ];
+
         const toInsert = [];
-        const skipped = [];
-        for (const np of newPlayers) {
-          const key = (np.first_name||"").trim().toLowerCase() + "|" + (np.last_name||"").trim().toLowerCase();
-          if (existingKeys.has(key)) { skipped.push(np); continue; }
-          existingKeys.add(key); // also dedup within the CSV itself
-          toInsert.push(np);
+        const toUpdate = []; // [{id, patch}]
+        const seenInCsv = new Set();
+        for (const np of parsedRows) {
+          // De-dup within the CSV itself
+          const selfKey = norm(np.first_name) + "|" + norm(np.last_name);
+          if (seenInCsv.has(selfKey)) continue;
+          seenInCsv.add(selfKey);
+
+          const existing = findMatch(np.first_name, np.last_name);
+          if (!existing) {
+            // Brand-new player. Strip empty strings so we don't clobber column defaults.
+            const insert = {};
+            for (const k of Object.keys(np)) {
+              const v = np[k];
+              if (v === "" || v == null) continue;
+              insert[k] = v;
+            }
+            insert.first_name = np.first_name;
+            insert.last_name = np.last_name;
+            toInsert.push(insert);
+            continue;
+          }
+
+          // Build a patch. Only fill empties; for comment fields where both
+          // sides differ, queue a note-append.
+          const patch = {};
+          const noteAppendLines = [];
+          for (const k of FILL_FIELDS) {
+            const cur = existing[k];
+            const nxt = np[k];
+            if (nxt && (cur == null || String(cur).trim() === "")) {
+              patch[k] = nxt;
+            } else if (nxt && cur && String(cur).trim() !== String(nxt).trim()) {
+              const cf = COMMENT_FIELDS.find(c => c[0] === k);
+              if (cf) noteAppendLines.push("• " + cf[1] + ": " + nxt);
+            }
+          }
+          // Positions: union (never removes)
+          const curPos = existing.positions || [];
+          const addPos = (np.positions || []).filter(p => !curPos.includes(p));
+          if (addPos.length) patch.positions = [...curPos, ...addPos];
+          // supplemental: don't clobber an existing 1 with a 0
+          if (np.supplemental === 1 && existing.supplemental !== 1) patch.supplemental = 1;
+
+          if (noteAppendLines.length) {
+            const stamp = new Date().toISOString().slice(0,10);
+            const block = "\n\n[" + stamp + " CSV import — new values on file]\n" + noteAppendLines.join("\n");
+            patch.notes = (existing.notes || "") + block;
+          }
+
+          if (Object.keys(patch).length > 0) toUpdate.push({ id: existing.id, patch });
         }
 
-        if (toInsert.length === 0) {
-          setUploadMsg("Nothing new — all " + newPlayers.length + " rows already in DB.");
-          setUploading(false);
-          return;
+        const summary = "Found " + parsedRows.length + " row" + (parsedRows.length===1?"":"s") + " in CSV."
+          + "\n• " + toInsert.length + " new player" + (toInsert.length===1?"":"s") + " to create"
+          + "\n• " + toUpdate.length + " existing player" + (toUpdate.length===1?"":"s") + " to update (fill blanks + log conflicts to notes)"
+          + "\n• " + (parsedRows.length - toInsert.length - toUpdate.length) + " already fully matched — no change"
+          + (parsedDiv ? "\n\nDivision parsed from event title: " + parsedDiv : "")
+          + "\n\nProceed?";
+        if (!window.confirm(summary)) {
+          setUploadMsg("Import cancelled."); setUploading(false); return;
         }
 
-        setUploadMsg("Uploading " + toInsert.length + " new players...");
-        const { error } = await supabase.from("players").insert(toInsert);
-        if (error) {
-          setUploadMsg("Error: " + error.message); setUploading(false); return;
+        setUploadMsg("Importing...");
+        // Inserts in one batch
+        if (toInsert.length) {
+          const { error } = await supabase.from("players").insert(toInsert);
+          if (error) { setUploadMsg("Insert error: " + error.message); setUploading(false); return; }
         }
-        const msg = "Added " + toInsert.length + " new player" + (toInsert.length===1?"":"s")
-          + (skipped.length ? ", skipped " + skipped.length + " already in DB." : ".");
+        // Updates one-by-one (Supabase doesn't support multi-row UPDATE with different patches in one call)
+        let updErrors = 0;
+        for (const u of toUpdate) {
+          const { error } = await supabase.from("players").update(u.patch).eq("id", u.id);
+          if (error) updErrors++;
+        }
+        const msg = "Created " + toInsert.length + " · Updated " + (toUpdate.length - updErrors)
+          + (updErrors ? " · " + updErrors + " update error" + (updErrors===1?"":"s") : "")
+          + ". Reloading...";
         setUploadMsg(msg);
         await loadPlayers();
         setUploading(false);
@@ -2326,6 +2506,28 @@ export default function App() {
               <div><span style={lbl}>Parent Name</span><DebouncedField style={editInp} placeholder="Parent name" value={p.parent_name||""} onCommit={v=>upd(p.id,{parent_name:v})} /></div>
               <div><span style={lbl}>Parent Email</span><DebouncedField type="email" style={editInp} placeholder="email@example.com" value={p.parent_email||""} onCommit={v=>upd(p.id,{parent_email:v})} /></div>
               <div><span style={lbl}>Parent Phone</span><DebouncedField style={editInp} placeholder="555-555-5555" value={p.parent_phone||""} onCommit={v=>upd(p.id,{parent_phone:v})} /></div>
+              <div><span style={lbl}>Player Email</span><DebouncedField type="email" style={editInp} placeholder="player@example.com" value={p.player_email||""} onCommit={v=>upd(p.id,{player_email:v})} /></div>
+              <div><span style={lbl}>Player Phone</span><DebouncedField style={editInp} placeholder="555-555-5555" value={p.player_phone||""} onCommit={v=>upd(p.id,{player_phone:v})} /></div>
+              <div><span style={lbl}>DOB</span><DebouncedField type="date" style={editInp} value={p.dob||""} onCommit={v=>upd(p.id,{dob:v})} /></div>
+            </div>
+            {/* Address + intake answers from the Upper Hand tryout export. */}
+            <div style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr 1fr",gap:10,marginBottom:10}}>
+              <div><span style={lbl}>Address</span><DebouncedField style={editInp} placeholder="123 Main St" value={p.address_line1||""} onCommit={v=>upd(p.id,{address_line1:v})} /></div>
+              <div><span style={lbl}>City</span><DebouncedField style={editInp} placeholder="City" value={p.city||""} onCommit={v=>upd(p.id,{city:v})} /></div>
+              <div><span style={lbl}>State</span><DebouncedField style={editInp} placeholder="TX" value={p.state||""} onCommit={v=>upd(p.id,{state:v})} /></div>
+              <div><span style={lbl}>Zip</span><DebouncedField style={editInp} placeholder="78620" value={p.zip||""} onCommit={v=>upd(p.id,{zip:v})} /></div>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:10}}>
+              <div><span style={lbl}>Dominant Hand</span>
+                <select style={editInp} value={p.dominant_hand||""} onChange={e=>upd(p.id,{dominant_hand:e.target.value})}>
+                  <option value="">--</option>
+                  <option value="Right">Right</option>
+                  <option value="Left">Left</option>
+                  <option value="Ambidextrous">Ambidextrous</option>
+                </select>
+              </div>
+              <div><span style={lbl}>School Team</span><DebouncedField style={editInp} placeholder="School + team" value={p.school_team||""} onCommit={v=>upd(p.id,{school_team:v})} /></div>
+              <div><span style={lbl}>Other Sports</span><DebouncedField style={editInp} placeholder="e.g. Soccer (fall)" value={p.other_sports||""} onCommit={v=>upd(p.id,{other_sports:v})} /></div>
             </div>
             {[["Position / Experience",p.reg_position],["Strengths / Improvement",p.strength_weakness],["Ideal Coach",p.ideal_coach],["Goals",p.goal],["Starter Preference",p.starter_pref]].map(([label,val])=>
               val && val!=="na" && <div key={label} style={{marginBottom:10,borderTop:"1px solid "+C.border,paddingTop:8}}><span style={lbl}>{label}</span><div style={{fontSize:13,lineHeight:1.5}}>{val}</div></div>
