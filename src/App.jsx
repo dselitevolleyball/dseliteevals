@@ -1691,12 +1691,18 @@ export default function App() {
                           {roster
                             .slice()
                             .sort((a,b) => (a.last_name||"").localeCompare(b.last_name||""))
-                            .map(p => (
-                              <tr key={p.id} style={{borderBottom:"1px solid "+C.border}}>
+                            .map(p => {
+                              // Supplemental players are using the evaluation
+                              // *as* their tryout — color the row so the staff
+                              // can see at a glance who that is.
+                              const tryoutOnly = p.supplemental === 1;
+                              return (
+                              <tr key={p.id} style={{borderBottom:"1px solid "+C.border,background:tryoutOnly?"rgba(233,30,140,0.08)":"transparent"}}>
                                 <td style={{padding:"8px 12px"}}>
-                                  <span onClick={()=>setProfileId(p.id)} style={{cursor:"pointer",fontWeight:700,color:C.text}}>
+                                  <span onClick={()=>setProfileId(p.id)} style={{cursor:"pointer",fontWeight:700,color:tryoutOnly?C.acc:C.text}}>
                                     {p.first_name} {p.last_name}
                                   </span>
+                                  {tryoutOnly && <span title="Using evaluation as tryout" style={{fontSize:9,fontWeight:800,color:C.acc,marginLeft:6,padding:"2px 6px",borderRadius:6,border:"1px solid "+C.acc,letterSpacing:0.5}}>TRYOUT</span>}
                                   {p.roster_pos && <span style={{fontSize:10,color:C.mut,marginLeft:6}}>#{p.roster_pos}</span>}
                                 </td>
                                 <td style={{padding:"8px 8px",color:C.mut,fontSize:11}}>{(p.positions||[]).join("/") || "—"}</td>
@@ -1713,7 +1719,8 @@ export default function App() {
                                   );
                                 })}
                               </tr>
-                            ))}
+                              );
+                            })}
                         </tbody>
                       </table>
                     </div>
