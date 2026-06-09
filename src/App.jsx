@@ -639,6 +639,10 @@ export default function App() {
   // Selected age-group tabs. Multi-select: clicking a tab toggles membership.
   // Always at least one division is selected. Drives Evaluate filter, Teams sections, and Rankings.
   const [selectedDivs, setSelectedDivs] = useState(["U14"]);
+  // Toggle for the pink "TRYOUT" highlighting on supplemental players in
+  // Teams + Tracker views. On by default; coaches can hide once they're
+  // past the tryout-evaluation distinction.
+  const [highlightTryouts, setHighlightTryouts] = useState(true);
   const [search, setSearch] = useState("");
   const [filterPos, setFilterPos] = useState("");
   const [filterProj, setFilterProj] = useState("");
@@ -1636,8 +1640,14 @@ export default function App() {
     const accepted = players.filter(p => selectedDivs.includes(p.usavDiv || p.usav_div) && p.offer_status === "accepted");
     return (
       <>
-        <div style={{fontSize:11,color:C.mut,marginBottom:10,fontStyle:"italic"}}>
-          Accepted players for the selected division(s). Click a cell to toggle. Same four flags are editable on the player card.
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,marginBottom:8,flexWrap:"wrap"}}>
+          <div style={{fontSize:11,color:C.mut,fontStyle:"italic",flex:1,minWidth:240}}>
+            Accepted players for the selected division(s). Click a cell to toggle. Same four flags are editable on the player card.
+          </div>
+          <label style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderRadius:8,background:highlightTryouts?"rgba(233,30,140,0.10)":"transparent",border:"1px solid "+(highlightTryouts?C.acc:C.border),cursor:"pointer",fontSize:11,fontWeight:700,color:highlightTryouts?C.acc:C.mut,userSelect:"none",whiteSpace:"nowrap"}}>
+            <input type="checkbox" checked={highlightTryouts} onChange={e=>setHighlightTryouts(e.target.checked)} style={{accentColor:C.acc,cursor:"pointer"}} />
+            Highlight tryout-only players
+          </label>
         </div>
         {selectedDivs.map(div => {
           const teams = TM[div] || [];
@@ -1695,7 +1705,7 @@ export default function App() {
                               // Supplemental players are using the evaluation
                               // *as* their tryout — color the row so the staff
                               // can see at a glance who that is.
-                              const tryoutOnly = p.supplemental === 1;
+                              const tryoutOnly = highlightTryouts && p.supplemental === 1;
                               return (
                               <tr key={p.id} style={{borderBottom:"1px solid "+C.border,background:tryoutOnly?"rgba(233,30,140,0.08)":"transparent"}}>
                                 <td style={{padding:"8px 12px"}}>
@@ -1738,10 +1748,16 @@ export default function App() {
     if (!selectedDivs.length) return null;
     return (
       <>
-        <div style={{fontSize:11,color:C.mut,marginBottom:10,fontStyle:"italic"}}>
-          Drag a player onto a team card to assign (clears their roster slot). Drag onto Unassigned, Declined, or Not Invited to change status.
-          Click the "+ offer" chip on a team player to cycle ★ locked (signed + deposit) → offer → ✓ accepted → waiting (for tryouts) → ✗ declined → none.
-          Type a rank number to reorder within a position — rank persists across team changes.
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,marginBottom:8,flexWrap:"wrap"}}>
+          <div style={{fontSize:11,color:C.mut,fontStyle:"italic",flex:1,minWidth:240}}>
+            Drag a player onto a team card to assign (clears their roster slot). Drag onto Unassigned, Declined, or Not Invited to change status.
+            Click the "+ offer" chip on a team player to cycle ★ locked (signed + deposit) → offer → ✓ accepted → waiting (for tryouts) → ✗ declined → none.
+            Type a rank number to reorder within a position — rank persists across team changes.
+          </div>
+          <label style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderRadius:8,background:highlightTryouts?"rgba(233,30,140,0.10)":"transparent",border:"1px solid "+(highlightTryouts?C.acc:C.border),cursor:"pointer",fontSize:11,fontWeight:700,color:highlightTryouts?C.acc:C.mut,userSelect:"none",whiteSpace:"nowrap"}}>
+            <input type="checkbox" checked={highlightTryouts} onChange={e=>setHighlightTryouts(e.target.checked)} style={{accentColor:C.acc,cursor:"pointer"}} />
+            Highlight tryout-only players
+          </label>
         </div>
         {selectedDivs.map(div => (
           <div key={div} style={{marginBottom:24}}>
@@ -1921,7 +1937,7 @@ export default function App() {
                     <div style={{fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut,marginBottom:4}}>{grp.label}</div>
                     {grp.pos.map(rp => {
                       const player = rosterMap[rp];
-                      const tryoutOnly = player && player.supplemental === 1;
+                      const tryoutOnly = highlightTryouts && player && player.supplemental === 1;
                       const inner = (
                         <div style={{display:"flex",alignItems:"center",gap:6,padding:"5px 8px",marginBottom:2,background:tryoutOnly?"rgba(233,30,140,0.12)":C.bg,borderRadius:6,border:player?(tryoutOnly?"1px solid "+C.acc:"1px solid "+C.border):"1px dashed "+C.border}}>
                           <span style={{fontSize:11,fontWeight:700,color:player?(tryoutOnly?C.acc:C.gold):C.mut,minWidth:36}}>{rp}</span>
@@ -1943,7 +1959,7 @@ export default function App() {
                 {unslotted.length>0 && <div style={{marginTop:6}}>
                   <div style={{fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.acc,marginBottom:4}}>No Roster Position</div>
                   {unslotted.map(p => {
-                    const tryoutOnly = p.supplemental === 1;
+                    const tryoutOnly = highlightTryouts && p.supplemental === 1;
                     return (
                     <DraggablePlayer key={p.id} player={p}>
                       <div style={{display:"flex",alignItems:"center",gap:6,padding:"5px 8px",marginBottom:2,background:tryoutOnly?"rgba(233,30,140,0.12)":C.bg,borderRadius:6,border:"1px solid "+(tryoutOnly?C.acc:"rgba(233,30,140,0.3)")}}>
@@ -2000,7 +2016,7 @@ export default function App() {
                         </div>
                         {ordered.map(p => {
                           const rank = posRankOf(p.id, pos);
-                          const tryoutOnly = p.supplemental === 1;
+                          const tryoutOnly = highlightTryouts && p.supplemental === 1;
                           return (
                             <DraggablePlayer key={p.id} player={p}>
                               <div style={{display:"flex",alignItems:"center",gap:6,padding:"5px 6px",background:tryoutOnly?"rgba(233,30,140,0.12)":C.bg,borderRadius:5,fontSize:11,marginBottom:2,border:tryoutOnly?"1px solid "+C.acc:"1px solid transparent"}}>
