@@ -1617,8 +1617,11 @@ export default function App() {
         <div style={{background:C.card,borderRadius:12,padding:"18px 20px",border:"1px solid "+C.border,marginBottom:18}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
             <div>
-              <div style={{fontSize:14,fontWeight:700,color:C.gold,marginBottom:4}}>Upload New Registrations</div>
-              <div style={{fontSize:12,color:C.mut}}>Upload a CSV export from UpperHand to add new players</div>
+              <div style={{fontSize:14,fontWeight:700,color:C.gold,marginBottom:4}}>Upload Registration Spreadsheet</div>
+              <div style={{fontSize:12,color:C.mut,maxWidth:520,lineHeight:1.4}}>
+                Drop any CSV with a <b>First Name / Last Name</b> column — Upper Hand exports, intake forms, anything.
+                Re-upload as often as you like; existing players are matched by name (fuzzy, handles typos) and only blank fields get filled in. Conflicting comments get appended to Coach Notes so nothing is lost.
+              </div>
             </div>
             <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
               <button onClick={openAddPlayer} style={{padding:"8px 16px",borderRadius:8,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>
