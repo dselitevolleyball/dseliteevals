@@ -1921,13 +1921,15 @@ export default function App() {
                     <div style={{fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut,marginBottom:4}}>{grp.label}</div>
                     {grp.pos.map(rp => {
                       const player = rosterMap[rp];
+                      const tryoutOnly = player && player.supplemental === 1;
                       const inner = (
-                        <div style={{display:"flex",alignItems:"center",gap:6,padding:"5px 8px",marginBottom:2,background:C.bg,borderRadius:6,border:player?"1px solid "+C.border:"1px dashed "+C.border}}>
-                          <span style={{fontSize:11,fontWeight:700,color:player?C.gold:C.mut,minWidth:36}}>{rp}</span>
+                        <div style={{display:"flex",alignItems:"center",gap:6,padding:"5px 8px",marginBottom:2,background:tryoutOnly?"rgba(233,30,140,0.12)":C.bg,borderRadius:6,border:player?(tryoutOnly?"1px solid "+C.acc:"1px solid "+C.border):"1px dashed "+C.border}}>
+                          <span style={{fontSize:11,fontWeight:700,color:player?(tryoutOnly?C.acc:C.gold):C.mut,minWidth:36}}>{rp}</span>
                           {player ? (<>
-                            <span style={{display:"flex",alignItems:"center",gap:4,fontSize:12,fontWeight:600,flex:1,cursor:"pointer"}} onClick={()=>setProfileId(player.id)}>
+                            <span style={{display:"flex",alignItems:"center",gap:4,fontSize:12,fontWeight:600,flex:1,cursor:"pointer",color:tryoutOnly?C.acc:C.text}} onClick={()=>setProfileId(player.id)}>
                               {isReturningDSE(player) && <span title="DS Elite returning athlete" style={{color:C.gold,fontSize:14,fontWeight:800,lineHeight:1}}>◆</span>}
                               {player.first_name} {player.last_name}
+                              {tryoutOnly && <span title="Using evaluation as tryout" style={{fontSize:8,fontWeight:800,color:C.acc,padding:"1px 5px",borderRadius:5,border:"1px solid "+C.acc,letterSpacing:0.5,marginLeft:2}}>TRYOUT</span>}
                             </span>
                             <div style={{display:"flex",gap:3,alignItems:"center",flexWrap:"wrap",justifyContent:"flex-end"}}>{offerChip(player)}{pinnyChip(player)}{posRankTags(player)}</div>
                             <span style={{fontWeight:800,fontSize:13,color:C.gold,minWidth:22,textAlign:"right"}}>{tot(player)||"—"}</span>
@@ -1940,18 +1942,22 @@ export default function App() {
                 ))}
                 {unslotted.length>0 && <div style={{marginTop:6}}>
                   <div style={{fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.acc,marginBottom:4}}>No Roster Position</div>
-                  {unslotted.map(p => (
+                  {unslotted.map(p => {
+                    const tryoutOnly = p.supplemental === 1;
+                    return (
                     <DraggablePlayer key={p.id} player={p}>
-                      <div style={{display:"flex",alignItems:"center",gap:6,padding:"5px 8px",marginBottom:2,background:C.bg,borderRadius:6,border:"1px solid rgba(233,30,140,0.3)"}}>
-                        <span style={{display:"flex",alignItems:"center",gap:4,fontSize:12,fontWeight:600,flex:1,cursor:"pointer"}} onClick={()=>setProfileId(p.id)}>
+                      <div style={{display:"flex",alignItems:"center",gap:6,padding:"5px 8px",marginBottom:2,background:tryoutOnly?"rgba(233,30,140,0.12)":C.bg,borderRadius:6,border:"1px solid "+(tryoutOnly?C.acc:"rgba(233,30,140,0.3)")}}>
+                        <span style={{display:"flex",alignItems:"center",gap:4,fontSize:12,fontWeight:600,flex:1,cursor:"pointer",color:tryoutOnly?C.acc:C.text}} onClick={()=>setProfileId(p.id)}>
                           {isReturningDSE(p) && <span title="DS Elite returning athlete" style={{color:C.gold,fontSize:14,fontWeight:800,lineHeight:1}}>◆</span>}
                           {p.first_name} {p.last_name}
+                          {tryoutOnly && <span title="Using evaluation as tryout" style={{fontSize:8,fontWeight:800,color:C.acc,padding:"1px 5px",borderRadius:5,border:"1px solid "+C.acc,letterSpacing:0.5,marginLeft:2}}>TRYOUT</span>}
                         </span>
                         <div style={{display:"flex",gap:3,alignItems:"center",flexWrap:"wrap",justifyContent:"flex-end"}}>{offerChip(p)}{pinnyChip(p)}{posRankTags(p)}</div>
                         <span style={{fontWeight:800,fontSize:13,color:C.gold,minWidth:22,textAlign:"right"}}>{tot(p)||"—"}</span>
                       </div>
                     </DraggablePlayer>
-                  ))}
+                    );
+                  })}
                 </div>}
                 {tp.length === 0 && <div style={{textAlign:"center",padding:10,color:C.mut,fontSize:11,fontStyle:"italic"}}>Drop players here to add to {team}</div>}
               </DropZone>
@@ -1994,15 +2000,17 @@ export default function App() {
                         </div>
                         {ordered.map(p => {
                           const rank = posRankOf(p.id, pos);
+                          const tryoutOnly = p.supplemental === 1;
                           return (
                             <DraggablePlayer key={p.id} player={p}>
-                              <div style={{display:"flex",alignItems:"center",gap:6,padding:"5px 6px",background:C.bg,borderRadius:5,fontSize:11,marginBottom:2}}>
+                              <div style={{display:"flex",alignItems:"center",gap:6,padding:"5px 6px",background:tryoutOnly?"rgba(233,30,140,0.12)":C.bg,borderRadius:5,fontSize:11,marginBottom:2,border:tryoutOnly?"1px solid "+C.acc:"1px solid transparent"}}>
                                 {pos !== ""
                                   ? <RankInput value={rank} max={totalInPos} onCommit={(n)=>setPosRank(p.id, pos, n)} />
                                   : <span style={{minWidth:40}} />}
-                                <span style={{display:"flex",alignItems:"center",gap:4,flex:1,fontWeight:600,cursor:"pointer"}} onClick={()=>setProfileId(p.id)}>
+                                <span style={{display:"flex",alignItems:"center",gap:4,flex:1,fontWeight:600,cursor:"pointer",color:tryoutOnly?C.acc:C.text}} onClick={()=>setProfileId(p.id)}>
                                   {isReturningDSE(p) && <span title="DS Elite returning athlete" style={{color:C.gold,fontSize:14,fontWeight:800,lineHeight:1}}>◆</span>}
                                   {p.first_name} {p.last_name}
+                                  {tryoutOnly && <span title="Using evaluation as tryout" style={{fontSize:8,fontWeight:800,color:C.acc,padding:"1px 5px",borderRadius:5,border:"1px solid "+C.acc,letterSpacing:0.5,marginLeft:2}}>TRYOUT</span>}
                                 </span>
                                 {pinnyChip(p)}
                                 {p.projected_team && <Tag c={C.gold}>{p.projected_team}</Tag>}
