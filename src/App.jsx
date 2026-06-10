@@ -643,6 +643,10 @@ export default function App() {
   // Teams + Tracker views. On by default; coaches can hide once they're
   // past the tryout-evaluation distinction.
   const [highlightTryouts, setHighlightTryouts] = useState(true);
+  // Toggle for amber "NOT SIGNED UP" highlight — players whose
+  // tryout_registered flag is still false. Off by default to avoid
+  // visual clutter until coaches actively chase the gap.
+  const [highlightNoTryout, setHighlightNoTryout] = useState(false);
   const [search, setSearch] = useState("");
   const [filterPos, setFilterPos] = useState("");
   const [filterProj, setFilterProj] = useState("");
@@ -1026,6 +1030,11 @@ export default function App() {
         let parsedDiv = "";
         let parsedRegGroup = "";
         const meta = rows.slice(0, headerIdx).map(r => r.join(" ")).join(" ").toLowerCase();
+        // Same metadata buffer also tells us whether this is a TRYOUT
+        // signup roster (vs an evaluation roster). When true, every row
+        // imported from this file gets tryout_registered=true so the
+        // Teams/Tracker views can highlight who hasn't signed up.
+        const isTryoutCsv = /\btryout\b/.test(meta) || (rows[1] && /\btryout\b/i.test(String(rows[1][1]||"")));
         const ageMatch = meta.match(/\b(\d{2})s?\b/);
         if (ageMatch) {
           const n = parseInt(ageMatch[1]);
@@ -1104,6 +1113,8 @@ export default function App() {
             school_team: get("school and school team") || get("school team"),
             current_team: get("club and team were you on") || get("club and team you were on") || get("what club") || "",
             positions: csvPositions,
+            primary_position: primaryRaw,
+            secondary_position: secondaryRaw,
             reg_position: get("how long have you been playing") || (primaryRaw && secondaryRaw ? primaryRaw + "/" + secondaryRaw : primaryRaw || secondaryRaw || ""),
             // Old intake fields — preserved when present
             min_level: cleanMin,
@@ -1113,6 +1124,9 @@ export default function App() {
             ideal_coach: get("ideal coach"),
             leaving_reason: cleanLeaving,
             supplemental: supp,
+            // Tryout signup flag — only set true when the CSV is a tryout file.
+            // Evaluation CSVs leave it undefined (importer will skip the field).
+            tryout_registered: isTryoutCsv ? true : undefined,
           });
         }
 
@@ -1151,6 +1165,7 @@ export default function App() {
           "dob","age","gender","player_email","player_phone","parent_name",
           "parent_email","parent_phone","address_line1","address_line2","city",
           "state","zip","other_sports","dominant_hand","school_team",
+          "primary_position","secondary_position",
           "current_team","reg_position","usav_div","reg_group",
           "min_level","strength_weakness","goal","starter_pref","ideal_coach","leaving_reason",
         ];
@@ -1208,6 +1223,8 @@ export default function App() {
           if (addPos.length) patch.positions = [...curPos, ...addPos];
           // supplemental: don't clobber an existing 1 with a 0
           if (np.supplemental === 1 && existing.supplemental !== 1) patch.supplemental = 1;
+          // tryout_registered: only flip false→true. Tryout CSVs always promote.
+          if (np.tryout_registered === true && !existing.tryout_registered) patch.tryout_registered = true;
 
           if (noteAppendLines.length) {
             const stamp = new Date().toISOString().slice(0,10);
@@ -1827,10 +1844,16 @@ export default function App() {
           <div style={{fontSize:11,color:C.mut,fontStyle:"italic",flex:1,minWidth:240}}>
             Accepted players for the selected division(s). Click a cell to toggle. Same four flags are editable on the player card.
           </div>
-          <label style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderRadius:8,background:highlightTryouts?"rgba(233,30,140,0.10)":"transparent",border:"1px solid "+(highlightTryouts?C.acc:C.border),cursor:"pointer",fontSize:11,fontWeight:700,color:highlightTryouts?C.acc:C.mut,userSelect:"none",whiteSpace:"nowrap"}}>
-            <input type="checkbox" checked={highlightTryouts} onChange={e=>setHighlightTryouts(e.target.checked)} style={{accentColor:C.acc,cursor:"pointer"}} />
-            Highlight tryout-only players
-          </label>
+          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+            <label style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderRadius:8,background:highlightTryouts?"rgba(233,30,140,0.10)":"transparent",border:"1px solid "+(highlightTryouts?C.acc:C.border),cursor:"pointer",fontSize:11,fontWeight:700,color:highlightTryouts?C.acc:C.mut,userSelect:"none",whiteSpace:"nowrap"}}>
+              <input type="checkbox" checked={highlightTryouts} onChange={e=>setHighlightTryouts(e.target.checked)} style={{accentColor:C.acc,cursor:"pointer"}} />
+              Highlight tryout-only players
+            </label>
+            <label style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderRadius:8,background:highlightNoTryout?"rgba(245,158,11,0.14)":"transparent",border:"1px solid "+(highlightNoTryout?"#f59e0b":C.border),cursor:"pointer",fontSize:11,fontWeight:700,color:highlightNoTryout?"#f59e0b":C.mut,userSelect:"none",whiteSpace:"nowrap"}}>
+              <input type="checkbox" checked={highlightNoTryout} onChange={e=>setHighlightNoTryout(e.target.checked)} style={{accentColor:"#f59e0b",cursor:"pointer"}} />
+              Highlight players who haven't signed up for tryout
+            </label>
+          </div>
         </div>
         {selectedDivs.map(div => {
           const teams = TM[div] || [];
@@ -1889,13 +1912,17 @@ export default function App() {
                               // *as* their tryout — color the row so the staff
                               // can see at a glance who that is.
                               const tryoutOnly = highlightTryouts && p.supplemental === 1;
+                              const noTryout = highlightNoTryout && !p.tryout_registered && p.supplemental !== 1;
+                              const rowBg = tryoutOnly ? "rgba(233,30,140,0.08)" : noTryout ? "rgba(245,158,11,0.10)" : "transparent";
+                              const nameColor = tryoutOnly ? C.acc : noTryout ? "#f59e0b" : C.text;
                               return (
-                              <tr key={p.id} style={{borderBottom:"1px solid "+C.border,background:tryoutOnly?"rgba(233,30,140,0.08)":"transparent"}}>
+                              <tr key={p.id} style={{borderBottom:"1px solid "+C.border,background:rowBg}}>
                                 <td style={{padding:"8px 12px"}}>
-                                  <span onClick={()=>setProfileId(p.id)} style={{cursor:"pointer",fontWeight:700,color:tryoutOnly?C.acc:C.text}}>
+                                  <span onClick={()=>setProfileId(p.id)} style={{cursor:"pointer",fontWeight:700,color:nameColor}}>
                                     {p.first_name} {p.last_name}
                                   </span>
                                   {tryoutOnly && <span title="Using evaluation as tryout" style={{fontSize:9,fontWeight:800,color:C.acc,marginLeft:6,padding:"2px 6px",borderRadius:6,border:"1px solid "+C.acc,letterSpacing:0.5}}>TRYOUT</span>}
+                                  {noTryout && <span title="Not on the tryout signup roster" style={{fontSize:9,fontWeight:800,color:"#f59e0b",marginLeft:6,padding:"2px 6px",borderRadius:6,border:"1px solid #f59e0b",letterSpacing:0.5}}>NO SIGNUP</span>}
                                   {p.roster_pos && <span style={{fontSize:10,color:C.mut,marginLeft:6}}>#{p.roster_pos}</span>}
                                 </td>
                                 <td style={{padding:"8px 8px",color:C.mut,fontSize:11}}>{(p.positions||[]).join("/") || "—"}</td>
@@ -1937,10 +1964,16 @@ export default function App() {
             Click the "+ offer" chip on a team player to cycle ★ locked (signed + deposit) → offer → ✓ accepted → waiting (for tryouts) → ✗ declined → none.
             Type a rank number to reorder within a position — rank persists across team changes.
           </div>
-          <label style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderRadius:8,background:highlightTryouts?"rgba(233,30,140,0.10)":"transparent",border:"1px solid "+(highlightTryouts?C.acc:C.border),cursor:"pointer",fontSize:11,fontWeight:700,color:highlightTryouts?C.acc:C.mut,userSelect:"none",whiteSpace:"nowrap"}}>
-            <input type="checkbox" checked={highlightTryouts} onChange={e=>setHighlightTryouts(e.target.checked)} style={{accentColor:C.acc,cursor:"pointer"}} />
-            Highlight tryout-only players
-          </label>
+          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+            <label style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderRadius:8,background:highlightTryouts?"rgba(233,30,140,0.10)":"transparent",border:"1px solid "+(highlightTryouts?C.acc:C.border),cursor:"pointer",fontSize:11,fontWeight:700,color:highlightTryouts?C.acc:C.mut,userSelect:"none",whiteSpace:"nowrap"}}>
+              <input type="checkbox" checked={highlightTryouts} onChange={e=>setHighlightTryouts(e.target.checked)} style={{accentColor:C.acc,cursor:"pointer"}} />
+              Highlight tryout-only players
+            </label>
+            <label style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderRadius:8,background:highlightNoTryout?"rgba(245,158,11,0.14)":"transparent",border:"1px solid "+(highlightNoTryout?"#f59e0b":C.border),cursor:"pointer",fontSize:11,fontWeight:700,color:highlightNoTryout?"#f59e0b":C.mut,userSelect:"none",whiteSpace:"nowrap"}}>
+              <input type="checkbox" checked={highlightNoTryout} onChange={e=>setHighlightNoTryout(e.target.checked)} style={{accentColor:"#f59e0b",cursor:"pointer"}} />
+              Highlight players who haven't signed up for tryout
+            </label>
+          </div>
         </div>
         {selectedDivs.map(div => (
           <div key={div} style={{marginBottom:24}}>
@@ -2121,14 +2154,20 @@ export default function App() {
                     {grp.pos.map(rp => {
                       const player = rosterMap[rp];
                       const tryoutOnly = highlightTryouts && player && player.supplemental === 1;
+                      const noTryout = highlightNoTryout && player && !player.tryout_registered && player.supplemental !== 1;
+                      const rowBg = tryoutOnly ? "rgba(233,30,140,0.12)" : noTryout ? "rgba(245,158,11,0.14)" : C.bg;
+                      const rowBorder = player ? (tryoutOnly ? "1px solid "+C.acc : noTryout ? "1px solid #f59e0b" : "1px solid "+C.border) : "1px dashed "+C.border;
+                      const labelColor = player ? (tryoutOnly ? C.acc : noTryout ? "#f59e0b" : C.gold) : C.mut;
+                      const nameColor = tryoutOnly ? C.acc : noTryout ? "#f59e0b" : C.text;
                       const inner = (
-                        <div style={{display:"flex",alignItems:"center",gap:6,padding:"5px 8px",marginBottom:2,background:tryoutOnly?"rgba(233,30,140,0.12)":C.bg,borderRadius:6,border:player?(tryoutOnly?"1px solid "+C.acc:"1px solid "+C.border):"1px dashed "+C.border}}>
-                          <span style={{fontSize:11,fontWeight:700,color:player?(tryoutOnly?C.acc:C.gold):C.mut,minWidth:36}}>{rp}</span>
+                        <div style={{display:"flex",alignItems:"center",gap:6,padding:"5px 8px",marginBottom:2,background:rowBg,borderRadius:6,border:rowBorder}}>
+                          <span style={{fontSize:11,fontWeight:700,color:labelColor,minWidth:36}}>{rp}</span>
                           {player ? (<>
-                            <span style={{display:"flex",alignItems:"center",gap:4,fontSize:12,fontWeight:600,flex:1,cursor:"pointer",color:tryoutOnly?C.acc:C.text}} onClick={()=>setProfileId(player.id)}>
+                            <span style={{display:"flex",alignItems:"center",gap:4,fontSize:12,fontWeight:600,flex:1,cursor:"pointer",color:nameColor}} onClick={()=>setProfileId(player.id)}>
                               {isReturningDSE(player) && <span title="DS Elite returning athlete" style={{color:C.gold,fontSize:14,fontWeight:800,lineHeight:1}}>◆</span>}
                               {player.first_name} {player.last_name}
                               {tryoutOnly && <span title="Using evaluation as tryout" style={{fontSize:8,fontWeight:800,color:C.acc,padding:"1px 5px",borderRadius:5,border:"1px solid "+C.acc,letterSpacing:0.5,marginLeft:2}}>TRYOUT</span>}
+                              {noTryout && <span title="Not on the tryout signup roster" style={{fontSize:8,fontWeight:800,color:"#f59e0b",padding:"1px 5px",borderRadius:5,border:"1px solid #f59e0b",letterSpacing:0.5,marginLeft:2}}>NO SIGNUP</span>}
                             </span>
                             <div style={{display:"flex",gap:3,alignItems:"center",flexWrap:"wrap",justifyContent:"flex-end"}}>{offerChip(player)}{pinnyChip(player)}{posRankTags(player)}</div>
                             <span style={{fontWeight:800,fontSize:13,color:C.gold,minWidth:22,textAlign:"right"}}>{tot(player)||"—"}</span>
@@ -2143,13 +2182,18 @@ export default function App() {
                   <div style={{fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.acc,marginBottom:4}}>No Roster Position</div>
                   {unslotted.map(p => {
                     const tryoutOnly = highlightTryouts && p.supplemental === 1;
+                    const noTryout = highlightNoTryout && !p.tryout_registered && p.supplemental !== 1;
+                    const rowBg = tryoutOnly ? "rgba(233,30,140,0.12)" : noTryout ? "rgba(245,158,11,0.14)" : C.bg;
+                    const rowBorder = "1px solid " + (tryoutOnly ? C.acc : noTryout ? "#f59e0b" : "rgba(233,30,140,0.3)");
+                    const nameColor = tryoutOnly ? C.acc : noTryout ? "#f59e0b" : C.text;
                     return (
                     <DraggablePlayer key={p.id} player={p}>
-                      <div style={{display:"flex",alignItems:"center",gap:6,padding:"5px 8px",marginBottom:2,background:tryoutOnly?"rgba(233,30,140,0.12)":C.bg,borderRadius:6,border:"1px solid "+(tryoutOnly?C.acc:"rgba(233,30,140,0.3)")}}>
-                        <span style={{display:"flex",alignItems:"center",gap:4,fontSize:12,fontWeight:600,flex:1,cursor:"pointer",color:tryoutOnly?C.acc:C.text}} onClick={()=>setProfileId(p.id)}>
+                      <div style={{display:"flex",alignItems:"center",gap:6,padding:"5px 8px",marginBottom:2,background:rowBg,borderRadius:6,border:rowBorder}}>
+                        <span style={{display:"flex",alignItems:"center",gap:4,fontSize:12,fontWeight:600,flex:1,cursor:"pointer",color:nameColor}} onClick={()=>setProfileId(p.id)}>
                           {isReturningDSE(p) && <span title="DS Elite returning athlete" style={{color:C.gold,fontSize:14,fontWeight:800,lineHeight:1}}>◆</span>}
                           {p.first_name} {p.last_name}
                           {tryoutOnly && <span title="Using evaluation as tryout" style={{fontSize:8,fontWeight:800,color:C.acc,padding:"1px 5px",borderRadius:5,border:"1px solid "+C.acc,letterSpacing:0.5,marginLeft:2}}>TRYOUT</span>}
+                          {noTryout && <span title="Not on the tryout signup roster" style={{fontSize:8,fontWeight:800,color:"#f59e0b",padding:"1px 5px",borderRadius:5,border:"1px solid #f59e0b",letterSpacing:0.5,marginLeft:2}}>NO SIGNUP</span>}
                         </span>
                         <div style={{display:"flex",gap:3,alignItems:"center",flexWrap:"wrap",justifyContent:"flex-end"}}>{offerChip(p)}{pinnyChip(p)}{posRankTags(p)}</div>
                         <span style={{fontWeight:800,fontSize:13,color:C.gold,minWidth:22,textAlign:"right"}}>{tot(p)||"—"}</span>
@@ -2200,16 +2244,21 @@ export default function App() {
                         {ordered.map(p => {
                           const rank = posRankOf(p.id, pos);
                           const tryoutOnly = highlightTryouts && p.supplemental === 1;
+                          const noTryout = highlightNoTryout && !p.tryout_registered && p.supplemental !== 1;
+                          const rowBg = tryoutOnly ? "rgba(233,30,140,0.12)" : noTryout ? "rgba(245,158,11,0.14)" : C.bg;
+                          const rowBorder = tryoutOnly ? "1px solid "+C.acc : noTryout ? "1px solid #f59e0b" : "1px solid transparent";
+                          const nameColor = tryoutOnly ? C.acc : noTryout ? "#f59e0b" : C.text;
                           return (
                             <DraggablePlayer key={p.id} player={p}>
-                              <div style={{display:"flex",alignItems:"center",gap:6,padding:"5px 6px",background:tryoutOnly?"rgba(233,30,140,0.12)":C.bg,borderRadius:5,fontSize:11,marginBottom:2,border:tryoutOnly?"1px solid "+C.acc:"1px solid transparent"}}>
+                              <div style={{display:"flex",alignItems:"center",gap:6,padding:"5px 6px",background:rowBg,borderRadius:5,fontSize:11,marginBottom:2,border:rowBorder}}>
                                 {pos !== ""
                                   ? <RankInput value={rank} max={totalInPos} onCommit={(n)=>setPosRank(p.id, pos, n)} />
                                   : <span style={{minWidth:40}} />}
-                                <span style={{display:"flex",alignItems:"center",gap:4,flex:1,fontWeight:600,cursor:"pointer",color:tryoutOnly?C.acc:C.text}} onClick={()=>setProfileId(p.id)}>
+                                <span style={{display:"flex",alignItems:"center",gap:4,flex:1,fontWeight:600,cursor:"pointer",color:nameColor}} onClick={()=>setProfileId(p.id)}>
                                   {isReturningDSE(p) && <span title="DS Elite returning athlete" style={{color:C.gold,fontSize:14,fontWeight:800,lineHeight:1}}>◆</span>}
                                   {p.first_name} {p.last_name}
                                   {tryoutOnly && <span title="Using evaluation as tryout" style={{fontSize:8,fontWeight:800,color:C.acc,padding:"1px 5px",borderRadius:5,border:"1px solid "+C.acc,letterSpacing:0.5,marginLeft:2}}>TRYOUT</span>}
+                                  {noTryout && <span title="Not on the tryout signup roster" style={{fontSize:8,fontWeight:800,color:"#f59e0b",padding:"1px 5px",borderRadius:5,border:"1px solid #f59e0b",letterSpacing:0.5,marginLeft:2}}>NO SIGNUP</span>}
                                 </span>
                                 {pinnyChip(p)}
                                 {p.projected_team && <Tag c={C.gold}>{p.projected_team}</Tag>}
@@ -2520,17 +2569,44 @@ export default function App() {
               <div><span style={lbl}>State</span><DebouncedField style={editInp} placeholder="TX" value={p.state||""} onCommit={v=>upd(p.id,{state:v})} /></div>
               <div><span style={lbl}>Zip</span><DebouncedField style={editInp} placeholder="78620" value={p.zip||""} onCommit={v=>upd(p.id,{zip:v})} /></div>
             </div>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:10}}>
-              <div><span style={lbl}>Dominant Hand</span>
-                <select style={editInp} value={p.dominant_hand||""} onChange={e=>upd(p.id,{dominant_hand:e.target.value})}>
-                  <option value="">--</option>
-                  <option value="Right">Right</option>
-                  <option value="Left">Left</option>
-                  <option value="Ambidextrous">Ambidextrous</option>
-                </select>
+            {/* Tryout Intake answers — full question phrasing so the card
+                reads the same as the Upper Hand registration form. All
+                editable inline; CSV imports merge into these. */}
+            <div style={{borderTop:"1px solid "+C.border,paddingTop:10,marginBottom:10}}>
+              <div style={{fontSize:10,fontWeight:700,color:C.gold,letterSpacing:0.5,marginBottom:8}}>TRYOUT INTAKE</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+                <div>
+                  <span style={lbl}>Primary Position</span>
+                  <DebouncedField style={editInp} placeholder="e.g. Setter" value={p.primary_position||""} onCommit={v=>upd(p.id,{primary_position:v})} />
+                </div>
+                <div>
+                  <span style={lbl}>Secondary Position</span>
+                  <DebouncedField style={editInp} placeholder="e.g. Pin" value={p.secondary_position||""} onCommit={v=>upd(p.id,{secondary_position:v})} />
+                </div>
               </div>
-              <div><span style={lbl}>School Team</span><DebouncedField style={editInp} placeholder="School + team" value={p.school_team||""} onCommit={v=>upd(p.id,{school_team:v})} /></div>
-              <div><span style={lbl}>Other Sports</span><DebouncedField style={editInp} placeholder="e.g. Soccer (fall)" value={p.other_sports||""} onCommit={v=>upd(p.id,{other_sports:v})} /></div>
+              <div style={{marginBottom:10}}>
+                <span style={lbl}>What club and team were you on for the 2025–2026 season?</span>
+                <DebouncedField style={editInp} placeholder="e.g. DS Elite 14 Diamond" value={p.current_team||""} onCommit={v=>upd(p.id,{current_team:v})} />
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+                <div>
+                  <span style={lbl}>What is your dominant hand?</span>
+                  <select style={editInp} value={p.dominant_hand||""} onChange={e=>upd(p.id,{dominant_hand:e.target.value})}>
+                    <option value="">--</option>
+                    <option value="Right">Right</option>
+                    <option value="Left">Left</option>
+                    <option value="Ambidextrous">Ambidextrous</option>
+                  </select>
+                </div>
+                <div>
+                  <span style={lbl}>What School and School Team were you on for the 2025 season?</span>
+                  <DebouncedField style={editInp} placeholder="e.g. Dripping Springs MS, B team" value={p.school_team||""} onCommit={v=>upd(p.id,{school_team:v})} />
+                </div>
+              </div>
+              <div style={{marginBottom:4}}>
+                <span style={lbl}>Do you play any other sports? Which, and what season?</span>
+                <DebouncedField multiline style={{...editInp,minHeight:42,resize:"vertical"}} placeholder="e.g. Soccer (fall), Track (spring)" value={p.other_sports||""} onCommit={v=>upd(p.id,{other_sports:v})} />
+              </div>
             </div>
             {[["Position / Experience",p.reg_position],["Strengths / Improvement",p.strength_weakness],["Ideal Coach",p.ideal_coach],["Goals",p.goal],["Starter Preference",p.starter_pref]].map(([label,val])=>
               val && val!=="na" && <div key={label} style={{marginBottom:10,borderTop:"1px solid "+C.border,paddingTop:8}}><span style={lbl}>{label}</span><div style={{fontSize:13,lineHeight:1.5}}>{val}</div></div>
@@ -2547,6 +2623,12 @@ export default function App() {
           <div style={{display:"flex",alignItems:"center",gap:10,marginTop:8,padding:"12px 16px",background:p.feedback_session_complete?"rgba(34,197,94,0.1)":C.bg,borderRadius:10,border:"1px solid "+(p.feedback_session_complete?C.grn:C.border),cursor:"pointer"}} onClick={()=>upd(p.id,{feedback_session_complete:!p.feedback_session_complete})}>
             <input type="checkbox" checked={!!p.feedback_session_complete} readOnly style={{width:20,height:20,accentColor:C.gold,cursor:"pointer"}} />
             <span style={{fontSize:14,fontWeight:700,color:p.feedback_session_complete?C.grn:C.mut}}>{p.feedback_session_complete?"Feedback Session Completed ✓":"Mark Feedback Session Completed"}</span>
+          </div>
+          {/* Tryout signup — flipped automatically when a tryout CSV imports
+              this player, editable here for manual cases. */}
+          <div style={{display:"flex",alignItems:"center",gap:10,marginTop:8,padding:"12px 16px",background:p.tryout_registered?"rgba(34,197,94,0.1)":"rgba(245,158,11,0.10)",borderRadius:10,border:"1px solid "+(p.tryout_registered?C.grn:"#f59e0b"),cursor:"pointer"}} onClick={()=>upd(p.id,{tryout_registered:!p.tryout_registered})}>
+            <input type="checkbox" checked={!!p.tryout_registered} readOnly style={{width:20,height:20,accentColor:C.gold,cursor:"pointer"}} />
+            <span style={{fontSize:14,fontWeight:700,color:p.tryout_registered?C.grn:"#f59e0b"}}>{p.tryout_registered?"Signed up for tryout ✓":"NOT signed up for tryout"}</span>
           </div>
           {/* Team Onboarding Tracker — same four flags shown on the Tracker tab.
               Visible here so a coach can flip them straight from the profile too. */}
