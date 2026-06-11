@@ -2505,7 +2505,15 @@ export default function App() {
                     const active=cur===v;
                     return <button key={v} style={{width:36,height:34,borderRadius:8,cursor:"pointer",fontFamily:"inherit",fontSize:14,fontWeight:700,border:active?"2px solid "+C.gold:"1px solid "+C.border,
                       background:active?(v>=4?"rgba(34,197,94,0.2)":v>=3?"rgba(233,30,140,0.2)":"rgba(239,68,68,0.15)"):"transparent",
-                      color:active?(v>=4?C.grn:v>=3?C.gold:C.red):C.mut}} onClick={()=>{const ns={...(p.scores||{})}; ns[sk]=cur===v?0:v; upd(p.id,{scores:ns});}}>{v}</button>;
+                      color:active?(v>=4?C.grn:v>=3?C.gold:C.red):C.mut}} onClick={()=>{
+                        const ns={...(p.scores||{})}; ns[sk]=cur===v?0:v;
+                        // Entering any score implies the player attended an
+                        // eval session. Auto-flag eval_registered on first
+                        // score so the Eval-signups bucket stays accurate.
+                        const patch = {scores:ns};
+                        if (!p.eval_registered) patch.eval_registered = true;
+                        upd(p.id, patch);
+                      }}>{v}</button>;
                   })}</div>
                 </div>;
               })}
@@ -2551,7 +2559,13 @@ export default function App() {
             <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>{EVAL_DATES.map(d => {
               const active = (p.eval_dates||[]).includes(d);
               return <button key={d} style={{padding:"6px 12px",borderRadius:6,fontSize:12,fontWeight:600,cursor:"pointer",border:active?"2px solid "+C.gold:"1px solid "+C.border,background:active?"rgba(233,30,140,0.2)":"transparent",color:active?C.gold:C.mut}}
-                onClick={()=>{const next=active?(p.eval_dates||[]).filter(x=>x!==d):[...(p.eval_dates||[]),d]; upd(p.id,{eval_dates:next});}}>{d}</button>;
+                onClick={()=>{
+                  const next=active?(p.eval_dates||[]).filter(x=>x!==d):[...(p.eval_dates||[]),d];
+                  // Picking ANY eval date implies the player attended an eval.
+                  const patch = {eval_dates:next};
+                  if (next.length > 0 && !p.eval_registered) patch.eval_registered = true;
+                  upd(p.id, patch);
+                }}>{d}</button>;
             })}</div>
           </div>
           {/* National Team ID Clinic (U13–U17 only) */}
