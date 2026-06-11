@@ -1834,7 +1834,11 @@ export default function App() {
                   {label:"✓",full:"Evaluation complete"}
                 ].map((h,i) => {
                   const isActive = h.sortKey && sortBy === h.sortKey;
-                  const arrow = isActive ? " ▼" : "";
+                  // Show a faded ↕ on every sortable header so it's clear they're
+                  // clickable, and a gold ▼ on the currently active one.
+                  const arrow = h.sortKey ? (isActive
+                    ? <span style={{color:C.gold,marginLeft:3}}>▼</span>
+                    : <span style={{color:C.border,marginLeft:3,opacity:0.6}}>↕</span>) : null;
                   return <th key={i}
                     onClick={()=>{ if (h.sortKey) setSortBy(h.sortKey); }}
                     title={h.sortKey ? "Sort by "+(h.full||h.label) : (h.full||"")}
