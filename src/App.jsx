@@ -1068,10 +1068,13 @@ export default function App() {
         // flag every eval-CSV import as tryout. The Event Title is the
         // human-edited field that tracks the current event purpose.
         const eventTitle = (rows[1] && rows[1][1] != null) ? String(rows[1][1]).toLowerCase() : "";
-        // Accept singular OR plural — Upper Hand sometimes pluralizes
-        // ("DS Elite Tryouts - 14s") and we want both forms detected.
-        const isTryoutCsv = /\btryouts?\b/.test(eventTitle);
-        const isEvalCsv = !isTryoutCsv && /\beval(?:uations?)?\b/.test(eventTitle);
+        // IMPORTANT — eval check runs FIRST. Upper Hand titles like
+        // "DS Elite Pre-Tryout Evaluations - U11 and U12" contain BOTH
+        // "tryout" and "evaluations". When both match, the file is an
+        // eval roster (who's coming to the eval session), not a tryout
+        // roster. So eval wins.
+        const isEvalCsv = /\beval(?:uations?)?\b/.test(eventTitle);
+        const isTryoutCsv = !isEvalCsv && /\btryouts?\b/.test(eventTitle);
         const ageMatch = meta.match(/\b(\d{2})s?\b/);
         if (ageMatch) {
           const n = parseInt(ageMatch[1]);
