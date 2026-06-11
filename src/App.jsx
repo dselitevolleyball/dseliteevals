@@ -1063,8 +1063,10 @@ export default function App() {
         // flag every eval-CSV import as tryout. The Event Title is the
         // human-edited field that tracks the current event purpose.
         const eventTitle = (rows[1] && rows[1][1] != null) ? String(rows[1][1]).toLowerCase() : "";
-        const isTryoutCsv = /\btryout\b/.test(eventTitle);
-        const isEvalCsv = !isTryoutCsv && /\beval(uation)?\b/.test(eventTitle);
+        // Accept singular OR plural — Upper Hand sometimes pluralizes
+        // ("DS Elite Tryouts - 14s") and we want both forms detected.
+        const isTryoutCsv = /\btryouts?\b/.test(eventTitle);
+        const isEvalCsv = !isTryoutCsv && /\beval(?:uations?)?\b/.test(eventTitle);
         const ageMatch = meta.match(/\b(\d{2})s?\b/);
         if (ageMatch) {
           const n = parseInt(ageMatch[1]);
@@ -1270,11 +1272,15 @@ export default function App() {
           if (Object.keys(patch).length > 0) toUpdate.push({ id: existing.id, patch });
         }
 
+        const detected = isTryoutCsv ? "TRYOUT roster (will flag tryout_registered=true)"
+                       : isEvalCsv  ? "EVAL roster (will flag eval_registered=true)"
+                       : "Generic CSV (no registration flag will be set)";
         const summary = "Found " + parsedRows.length + " row" + (parsedRows.length===1?"":"s") + " in CSV."
           + "\n• " + toInsert.length + " new player" + (toInsert.length===1?"":"s") + " to create"
           + "\n• " + toUpdate.length + " existing player" + (toUpdate.length===1?"":"s") + " to update (fill blanks + log conflicts to notes)"
           + "\n• " + (parsedRows.length - toInsert.length - toUpdate.length) + " already fully matched — no change"
           + (parsedDiv ? "\n\nDivision parsed from event title: " + parsedDiv : "")
+          + "\nDetected as: " + detected
           + "\n\nProceed?";
         if (!window.confirm(summary)) {
           setUploadMsg("Import cancelled."); setUploading(false); return;
