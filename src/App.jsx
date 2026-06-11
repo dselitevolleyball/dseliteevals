@@ -1827,12 +1827,21 @@ export default function App() {
             <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0}}>
               <thead><tr>
                 {[
-                  {label:"Pinny",full:"Pinny / tryout number"},{label:"Player"},{label:"Pos"},{label:"Proj"},
+                  {label:"Pinny",full:"Pinny / tryout number",sortKey:"pinny"},
+                  {label:"Player",sortKey:"name"},{label:"Pos"},{label:"Proj",sortKey:"proj"},
                   ...SKILLS.map(s => ({label: SKILL_ABBR[s] || s, full: s})),
-                  {label:"Tot"},{label:"Avg"},{label:"Team"},{label:"Notes"},{label:"✓",full:"Evaluation complete"}
-                ].map((h,i) =>
-                  <th key={i} title={h.full||""} style={{padding:"6px 4px",textAlign:"left",fontSize:9,fontWeight:700,textTransform:"uppercase",color:C.mut,borderBottom:"1px solid "+C.border,background:C.card,position:"sticky",top:0,zIndex:2,whiteSpace:"nowrap",boxShadow:"0 1px 0 "+C.border}}>{h.label}</th>
-                )}
+                  {label:"Tot",sortKey:"score"},{label:"Avg"},{label:"Team"},{label:"Notes"},
+                  {label:"✓",full:"Evaluation complete"}
+                ].map((h,i) => {
+                  const isActive = h.sortKey && sortBy === h.sortKey;
+                  const arrow = isActive ? " ▼" : "";
+                  return <th key={i}
+                    onClick={()=>{ if (h.sortKey) setSortBy(h.sortKey); }}
+                    title={h.sortKey ? "Sort by "+(h.full||h.label) : (h.full||"")}
+                    style={{padding:"6px 4px",textAlign:"left",fontSize:9,fontWeight:700,textTransform:"uppercase",color:isActive?C.gold:C.mut,borderBottom:"1px solid "+C.border,background:C.card,position:"sticky",top:0,zIndex:2,whiteSpace:"nowrap",boxShadow:"0 1px 0 "+C.border,cursor:h.sortKey?"pointer":"default",userSelect:"none"}}>
+                    {h.label}{arrow}
+                  </th>;
+                })}
               </tr></thead>
               <tbody>
                 {filtered.map(p => (
