@@ -2518,12 +2518,11 @@ export default function App() {
                       background:active?(v>=4?"rgba(34,197,94,0.2)":v>=3?"rgba(233,30,140,0.2)":"rgba(239,68,68,0.15)"):"transparent",
                       color:active?(v>=4?C.grn:v>=3?C.gold:C.red):C.mut}} onClick={()=>{
                         const ns={...(p.scores||{})}; ns[sk]=cur===v?0:v;
-                        // Entering any score implies the player attended an
-                        // eval session. Auto-flag eval_registered on first
-                        // score so the Eval-signups bucket stays accurate.
-                        const patch = {scores:ns};
-                        if (!p.eval_registered) patch.eval_registered = true;
-                        upd(p.id, patch);
+                        // (Score entry NO LONGER auto-flips eval_registered —
+                        // tryout warm-ups are scored too, so scoring isn't a
+                        // reliable signal of eval-roster membership. Use the
+                        // profile-card toggle or upload an eval CSV instead.)
+                        upd(p.id, {scores:ns});
                       }}>{v}</button>;
                   })}</div>
                 </div>;
@@ -2572,10 +2571,9 @@ export default function App() {
               return <button key={d} style={{padding:"6px 12px",borderRadius:6,fontSize:12,fontWeight:600,cursor:"pointer",border:active?"2px solid "+C.gold:"1px solid "+C.border,background:active?"rgba(233,30,140,0.2)":"transparent",color:active?C.gold:C.mut}}
                 onClick={()=>{
                   const next=active?(p.eval_dates||[]).filter(x=>x!==d):[...(p.eval_dates||[]),d];
-                  // Picking ANY eval date implies the player attended an eval.
-                  const patch = {eval_dates:next};
-                  if (next.length > 0 && !p.eval_registered) patch.eval_registered = true;
-                  upd(p.id, patch);
+                  // (No auto-flag of eval_registered here either — see the
+                  // scores onClick above for the same reasoning.)
+                  upd(p.id, {eval_dates:next});
                 }}>{d}</button>;
             })}</div>
           </div>
