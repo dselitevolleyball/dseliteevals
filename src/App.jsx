@@ -1411,6 +1411,14 @@ export default function App() {
     else if (sortBy === "score") l.sort((a,b) => tot(b) - tot(a));
     else if (sortBy === "age") l.sort((a,b) => parseInt(b.age||0) - parseInt(a.age||0));
     else if (sortBy === "proj") { const o = {"1":0,"1/2":1,"2":2,"2/3":3,"3":4,"":5}; l.sort((a,b) => (o[a.projected_team]||5) - (o[b.projected_team]||5)); }
+    // Pinny sort — numeric pinnies ascending, blanks/non-numeric last so the
+    // assigned numbers cluster at the top of the list.
+    else if (sortBy === "pinny") l.sort((a,b) => {
+      const na = parseInt(a.tryout_number); const nb = parseInt(b.tryout_number);
+      const va = isNaN(na) ? Number.POSITIVE_INFINITY : na;
+      const vb = isNaN(nb) ? Number.POSITIVE_INFINITY : nb;
+      return va - vb;
+    });
     return l;
   }, [divP, search, filterPos, filterProj, filterEval, filterDate, filterClinic, filterClinicDate, regSince, sortBy]);
 
@@ -1785,7 +1793,7 @@ export default function App() {
             <option value="">All Dates</option>{EVAL_DATES.map(d=><option key={d} value={d}>{d}</option>)}
           </select>
           <select style={{...inpStyle,padding:"7px 10px",fontSize:12}} value={sortBy} onChange={e=>setSortBy(e.target.value)}>
-            <option value="name">Name</option><option value="score">Score</option><option value="proj">Projected</option>
+            <option value="name">Name</option><option value="pinny">Pinny #</option><option value="score">Score</option><option value="proj">Projected</option>
           </select>
           {selectedDivs.some(d => CLINIC_DIVS.includes(d)) && (
             <select style={{...inpStyle,padding:"7px 10px",fontSize:12,color:filterClinic!=="all"?C.gold:C.text}} value={filterClinic} onChange={e=>setFilterClinic(e.target.value)} title="National Team ID Clinic filter">
