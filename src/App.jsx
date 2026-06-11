@@ -653,24 +653,22 @@ export default function App() {
   const [showTryoutOnly, setShowTryoutOnly] = useState(false);
   const [showEvalOnly, setShowEvalOnly] = useState(false);
   const [showEvalAsTryout, setShowEvalAsTryout] = useState(false);
-  // Resolve a player to one of three highlight states for Teams/Tracker
-  // rows. Returns null when no toggle wants this player highlighted.
-  // Priority: supplemental (pink) > any tryout signup (cyan) > eval-only (amber).
-  //
-  // Note: "Tryout signups" intentionally includes players who are also on
-  // the eval roster — coaches want to see who's on the tryout list, not
-  // who's on tryout AND nothing else (which is almost nobody once scores
-  // start landing).
+  // Three actionable buckets:
+  //   pink   — supplemental (eval-as-tryout, locked in)
+  //   cyan   — signed up for tryout but NOT on eval roster (needs evaluating)
+  //   amber  — signed up for eval but NOT for tryout (needs to sign up)
+  // Players signed up for both eval AND tryout (and not supplemental) are
+  // the green-zone — no highlight, no action needed.
   const playerHighlight = (p) => {
     if (!p) return null;
     if (p.supplemental === 1 && showEvalAsTryout) {
       return { color: C.acc, bg: "rgba(233,30,140,0.12)", label: "EVAL→TRYOUT" };
     }
-    if (p.tryout_registered && showTryoutOnly) {
-      return { color: "#06b6d4", bg: "rgba(6,182,212,0.14)", label: "TRYOUT" };
+    if (p.tryout_registered && !p.eval_registered && showTryoutOnly) {
+      return { color: "#06b6d4", bg: "rgba(6,182,212,0.14)", label: "NEEDS EVAL" };
     }
     if (p.eval_registered && !p.tryout_registered && p.supplemental !== 1 && showEvalOnly) {
-      return { color: "#f59e0b", bg: "rgba(245,158,11,0.14)", label: "EVAL" };
+      return { color: "#f59e0b", bg: "rgba(245,158,11,0.14)", label: "NEEDS TRYOUT" };
     }
     return null;
   };
@@ -1894,13 +1892,13 @@ export default function App() {
             Accepted players for the selected division(s). Click a cell to toggle. Same four flags are editable on the player card.
           </div>
           <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-            <label title="Anyone signed up for the tryout (may also be on eval roster)" style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderRadius:8,background:showTryoutOnly?"rgba(6,182,212,0.14)":"transparent",border:"1px solid "+(showTryoutOnly?"#06b6d4":C.border),cursor:"pointer",fontSize:11,fontWeight:700,color:showTryoutOnly?"#06b6d4":C.mut,userSelect:"none",whiteSpace:"nowrap"}}>
+            <label title="Signed up for tryout but NOT on the eval roster — they need to be evaluated before tryout day" style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderRadius:8,background:showTryoutOnly?"rgba(6,182,212,0.14)":"transparent",border:"1px solid "+(showTryoutOnly?"#06b6d4":C.border),cursor:"pointer",fontSize:11,fontWeight:700,color:showTryoutOnly?"#06b6d4":C.mut,userSelect:"none",whiteSpace:"nowrap"}}>
               <input type="checkbox" checked={showTryoutOnly} onChange={e=>setShowTryoutOnly(e.target.checked)} style={{accentColor:"#06b6d4",cursor:"pointer"}} />
-              Tryout signups
+              Tryout — not yet evaluated
             </label>
-            <label title="On the eval roster but NOT signed up for tryout (chase these)" style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderRadius:8,background:showEvalOnly?"rgba(245,158,11,0.14)":"transparent",border:"1px solid "+(showEvalOnly?"#f59e0b":C.border),cursor:"pointer",fontSize:11,fontWeight:700,color:showEvalOnly?"#f59e0b":C.mut,userSelect:"none",whiteSpace:"nowrap"}}>
+            <label title="On the eval roster but NOT signed up for tryout — chase them to register" style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderRadius:8,background:showEvalOnly?"rgba(245,158,11,0.14)":"transparent",border:"1px solid "+(showEvalOnly?"#f59e0b":C.border),cursor:"pointer",fontSize:11,fontWeight:700,color:showEvalOnly?"#f59e0b":C.mut,userSelect:"none",whiteSpace:"nowrap"}}>
               <input type="checkbox" checked={showEvalOnly} onChange={e=>setShowEvalOnly(e.target.checked)} style={{accentColor:"#f59e0b",cursor:"pointer"}} />
-              Eval only (no tryout yet)
+              Eval — not signed up for tryout
             </label>
             <label title="Signed up for eval and indicated they can't attend tryout (using eval as tryout)" style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderRadius:8,background:showEvalAsTryout?"rgba(233,30,140,0.10)":"transparent",border:"1px solid "+(showEvalAsTryout?C.acc:C.border),cursor:"pointer",fontSize:11,fontWeight:700,color:showEvalAsTryout?C.acc:C.mut,userSelect:"none",whiteSpace:"nowrap"}}>
               <input type="checkbox" checked={showEvalAsTryout} onChange={e=>setShowEvalAsTryout(e.target.checked)} style={{accentColor:C.acc,cursor:"pointer"}} />
@@ -2014,13 +2012,13 @@ export default function App() {
             Type a rank number to reorder within a position — rank persists across team changes.
           </div>
           <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-            <label title="Anyone signed up for the tryout (may also be on eval roster)" style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderRadius:8,background:showTryoutOnly?"rgba(6,182,212,0.14)":"transparent",border:"1px solid "+(showTryoutOnly?"#06b6d4":C.border),cursor:"pointer",fontSize:11,fontWeight:700,color:showTryoutOnly?"#06b6d4":C.mut,userSelect:"none",whiteSpace:"nowrap"}}>
+            <label title="Signed up for tryout but NOT on the eval roster — they need to be evaluated before tryout day" style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderRadius:8,background:showTryoutOnly?"rgba(6,182,212,0.14)":"transparent",border:"1px solid "+(showTryoutOnly?"#06b6d4":C.border),cursor:"pointer",fontSize:11,fontWeight:700,color:showTryoutOnly?"#06b6d4":C.mut,userSelect:"none",whiteSpace:"nowrap"}}>
               <input type="checkbox" checked={showTryoutOnly} onChange={e=>setShowTryoutOnly(e.target.checked)} style={{accentColor:"#06b6d4",cursor:"pointer"}} />
-              Tryout signups
+              Tryout — not yet evaluated
             </label>
-            <label title="On the eval roster but NOT signed up for tryout (chase these)" style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderRadius:8,background:showEvalOnly?"rgba(245,158,11,0.14)":"transparent",border:"1px solid "+(showEvalOnly?"#f59e0b":C.border),cursor:"pointer",fontSize:11,fontWeight:700,color:showEvalOnly?"#f59e0b":C.mut,userSelect:"none",whiteSpace:"nowrap"}}>
+            <label title="On the eval roster but NOT signed up for tryout — chase them to register" style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderRadius:8,background:showEvalOnly?"rgba(245,158,11,0.14)":"transparent",border:"1px solid "+(showEvalOnly?"#f59e0b":C.border),cursor:"pointer",fontSize:11,fontWeight:700,color:showEvalOnly?"#f59e0b":C.mut,userSelect:"none",whiteSpace:"nowrap"}}>
               <input type="checkbox" checked={showEvalOnly} onChange={e=>setShowEvalOnly(e.target.checked)} style={{accentColor:"#f59e0b",cursor:"pointer"}} />
-              Eval only (no tryout yet)
+              Eval — not signed up for tryout
             </label>
             <label title="Signed up for eval and indicated they can't attend tryout (using eval as tryout)" style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderRadius:8,background:showEvalAsTryout?"rgba(233,30,140,0.10)":"transparent",border:"1px solid "+(showEvalAsTryout?C.acc:C.border),cursor:"pointer",fontSize:11,fontWeight:700,color:showEvalAsTryout?C.acc:C.mut,userSelect:"none",whiteSpace:"nowrap"}}>
               <input type="checkbox" checked={showEvalAsTryout} onChange={e=>setShowEvalAsTryout(e.target.checked)} style={{accentColor:C.acc,cursor:"pointer"}} />
