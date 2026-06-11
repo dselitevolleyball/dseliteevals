@@ -1034,7 +1034,14 @@ export default function App() {
         // signup roster (vs an evaluation roster). When true, every row
         // imported from this file gets tryout_registered=true so the
         // Teams/Tracker views can highlight who hasn't signed up.
-        const isTryoutCsv = /\btryout\b/.test(meta) || (rows[1] && /\btryout\b/i.test(String(rows[1][1]||"")));
+        //
+        // IMPORTANT: only inspect the Event Title cell — NOT the URL row.
+        // Upper Hand auto-generates URL slugs from older event names, so
+        // an eval-event URL can still contain "tryout" and would otherwise
+        // flag every eval-CSV import as tryout. The Event Title is the
+        // human-edited field that tracks the current event purpose.
+        const eventTitle = (rows[1] && rows[1][1] != null) ? String(rows[1][1]).toLowerCase() : "";
+        const isTryoutCsv = /\btryout\b/.test(eventTitle);
         const ageMatch = meta.match(/\b(\d{2})s?\b/);
         if (ageMatch) {
           const n = parseInt(ageMatch[1]);
