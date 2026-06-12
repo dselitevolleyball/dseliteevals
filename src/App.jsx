@@ -653,23 +653,21 @@ export default function App() {
   const [showTryoutOnly, setShowTryoutOnly] = useState(false);
   const [showEvalOnly, setShowEvalOnly] = useState(false);
   const [showEvalAsTryout, setShowEvalAsTryout] = useState(false);
-  // Three actionable buckets. Source of truth for "evaluated" is the
-  // eval_complete flag (the "Mark Evaluation Complete" toggle on the
-  // player card) — that's coach-controlled so it overrides whatever
-  // the CSV imports inferred.
+  // Three actionable buckets. eval_registered (the eval CSV roster) is
+  // the source of truth for "did/will be evaluated" — coaches manage
+  // this via the eval CSV upload + the toggle on the player card.
   //   pink   — supplemental (eval-as-tryout, locked in)
-  //   cyan   — signed up for tryout, eval_complete still false
-  //   amber  — was evaluated (or on eval roster) but NOT signed up for
-  //            tryout
+  //   cyan   — signed up for tryout, NOT on eval roster (needs evaluating)
+  //   amber  — on eval roster, NOT signed up for tryout (needs to register)
   const playerHighlight = (p) => {
     if (!p) return null;
     if (p.supplemental === 1 && showEvalAsTryout) {
       return { color: C.acc, bg: "rgba(233,30,140,0.12)", label: "EVAL→TRYOUT" };
     }
-    if (p.tryout_registered && !p.eval_complete && showTryoutOnly) {
+    if (p.tryout_registered && !p.eval_registered && showTryoutOnly) {
       return { color: "#06b6d4", bg: "rgba(6,182,212,0.14)", label: "NEEDS EVAL" };
     }
-    if ((p.eval_registered || p.eval_complete) && !p.tryout_registered && p.supplemental !== 1 && showEvalOnly) {
+    if (p.eval_registered && !p.tryout_registered && p.supplemental !== 1 && showEvalOnly) {
       return { color: "#f59e0b", bg: "rgba(245,158,11,0.14)", label: "NEEDS TRYOUT" };
     }
     return null;
@@ -1915,7 +1913,7 @@ export default function App() {
             Accepted players for the selected division(s). Click a cell to toggle. Same four flags are editable on the player card.
           </div>
           <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-            <label title="Signed up for tryout but 'Mark Evaluation Complete' is OFF on their card — they still need evaluating" style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderRadius:8,background:showTryoutOnly?"rgba(6,182,212,0.14)":"transparent",border:"1px solid "+(showTryoutOnly?"#06b6d4":C.border),cursor:"pointer",fontSize:11,fontWeight:700,color:showTryoutOnly?"#06b6d4":C.mut,userSelect:"none",whiteSpace:"nowrap"}}>
+            <label title="Signed up for tryout but NOT on the eval roster — they still need evaluating" style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderRadius:8,background:showTryoutOnly?"rgba(6,182,212,0.14)":"transparent",border:"1px solid "+(showTryoutOnly?"#06b6d4":C.border),cursor:"pointer",fontSize:11,fontWeight:700,color:showTryoutOnly?"#06b6d4":C.mut,userSelect:"none",whiteSpace:"nowrap"}}>
               <input type="checkbox" checked={showTryoutOnly} onChange={e=>setShowTryoutOnly(e.target.checked)} style={{accentColor:"#06b6d4",cursor:"pointer"}} />
               Tryout — not yet evaluated
             </label>
@@ -2035,7 +2033,7 @@ export default function App() {
             Type a rank number to reorder within a position — rank persists across team changes.
           </div>
           <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-            <label title="Signed up for tryout but 'Mark Evaluation Complete' is OFF on their card — they still need evaluating" style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderRadius:8,background:showTryoutOnly?"rgba(6,182,212,0.14)":"transparent",border:"1px solid "+(showTryoutOnly?"#06b6d4":C.border),cursor:"pointer",fontSize:11,fontWeight:700,color:showTryoutOnly?"#06b6d4":C.mut,userSelect:"none",whiteSpace:"nowrap"}}>
+            <label title="Signed up for tryout but NOT on the eval roster — they still need evaluating" style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderRadius:8,background:showTryoutOnly?"rgba(6,182,212,0.14)":"transparent",border:"1px solid "+(showTryoutOnly?"#06b6d4":C.border),cursor:"pointer",fontSize:11,fontWeight:700,color:showTryoutOnly?"#06b6d4":C.mut,userSelect:"none",whiteSpace:"nowrap"}}>
               <input type="checkbox" checked={showTryoutOnly} onChange={e=>setShowTryoutOnly(e.target.checked)} style={{accentColor:"#06b6d4",cursor:"pointer"}} />
               Tryout — not yet evaluated
             </label>
