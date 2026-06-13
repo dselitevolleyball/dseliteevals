@@ -2253,7 +2253,7 @@ export default function App() {
                               {hi && <span title={hi.label} style={{fontSize:8,fontWeight:800,color:hi.color,padding:"1px 5px",borderRadius:5,border:"1px solid "+hi.color,letterSpacing:0.5,marginLeft:2}}>{hi.label}</span>}
                             </span>
                             <div style={{display:"flex",gap:3,alignItems:"center",flexWrap:"wrap",justifyContent:"flex-end"}}>{offerChip(player)}{pinnyChip(player)}{posRankTags(player)}</div>
-                            <span style={{fontWeight:800,fontSize:13,color:C.gold,minWidth:22,textAlign:"right"}}>{tot(player)||"—"}</span>
+                            <span title="Average score" style={{fontWeight:800,fontSize:13,color:C.gold,minWidth:28,textAlign:"right"}}>{tot(player) ? avg(player) : "—"}</span>
                           </>) : <span style={{fontSize:11,color:C.mut,fontStyle:"italic",flex:1}}>open</span>}
                         </div>
                       );
@@ -2277,7 +2277,7 @@ export default function App() {
                           {hi && <span title={hi.label} style={{fontSize:8,fontWeight:800,color:hi.color,padding:"1px 5px",borderRadius:5,border:"1px solid "+hi.color,letterSpacing:0.5,marginLeft:2}}>{hi.label}</span>}
                         </span>
                         <div style={{display:"flex",gap:3,alignItems:"center",flexWrap:"wrap",justifyContent:"flex-end"}}>{offerChip(p)}{pinnyChip(p)}{posRankTags(p)}</div>
-                        <span style={{fontWeight:800,fontSize:13,color:C.gold,minWidth:22,textAlign:"right"}}>{tot(p)||"—"}</span>
+                        <span title="Average score" style={{fontWeight:800,fontSize:13,color:C.gold,minWidth:28,textAlign:"right"}}>{tot(p) ? avg(p) : "—"}</span>
                       </div>
                     </DraggablePlayer>
                     );
@@ -2341,8 +2341,7 @@ export default function App() {
                                 </span>
                                 {pinnyChip(p)}
                                 {p.projected_team && <Tag c={C.gold}>{p.projected_team}</Tag>}
-                                <span title="Total points" style={{fontWeight:700,color:C.gold,minWidth:22,textAlign:"right"}}>{tot(p)||"—"}</span>
-                                <span title="Average score" style={{fontWeight:600,color:C.mut,minWidth:26,textAlign:"right",fontSize:10}}>{avg(p)}</span>
+                                <span title="Average score" style={{fontWeight:700,color:C.gold,minWidth:28,textAlign:"right"}}>{tot(p) ? avg(p) : "—"}</span>
                               </div>
                             </DraggablePlayer>
                           );
