@@ -575,6 +575,9 @@ export default function App() {
   const [tournaments, setTournaments]                       = useState([]);
   const [tournamentAssignments, setTournamentAssignments]   = useState([]);
   const [tournamentsLoading, setTournamentsLoading]         = useState(false);
+  // Practice schedule tab state
+  const [practiceTeams, setPracticeTeams]             = useState([]);
+  const [practiceAssignments, setPracticeAssignments] = useState([]);
   const [teamsList, setTeamsList]                           = useState([]);
   const [blackoutDates, setBlackoutDates]                   = useState([]);
   const [tnFilters, setTnFilters]                           = useState({ search: "", ageFor: "", qualifierOnly: false, dateFrom: "", dateTo: "", hideClosed: false, hideCancelled: true, startsOn: [], state: "", numDays: "", divisions: [] });
@@ -897,6 +900,19 @@ export default function App() {
     setTournamentsLoading(false);
   }, []);
   useEffect(() => { if (isApproved && view === "tournaments") loadTournaments(); }, [isApproved, view, loadTournaments]);
+
+  // Practice tab loader
+  const loadPractice = useCallback(async () => {
+    const [tRes, aRes] = await Promise.all([
+      supabase.from("practice_teams").select("*").order("team_name"),
+      supabase.from("practice_assignments").select("*"),
+    ]);
+    if (tRes.error) console.error("Load practice_teams error:", tRes.error);
+    if (aRes.error) console.error("Load practice_assignments error:", aRes.error);
+    setPracticeTeams(tRes.data || []);
+    setPracticeAssignments(aRes.data || []);
+  }, []);
+  useEffect(() => { if (isApproved && view === "practice") loadPractice(); }, [isApproved, view, loadPractice]);
 
   // Realtime sync for tournament planning (separate channel — only when on
   // that tab so we don't burn a websocket connection elsewhere).
@@ -3081,6 +3097,250 @@ export default function App() {
     );
   }
 
+  // ─── PRACTICE SCHEDULE ────────────────────────────────────────────────
+  // Grid view of the practice schedule. Rows = teams, columns = the 10
+  // weekly time slots. Click a cell to toggle a team in/out of a slot.
+  // Inline conflict detection flags court overflow, coach double-booking,
+  // wrong practice count for level, and the U11/U12 timing rules.
+  function renderPractice() {
+    const DAYS = ["Sun","Mon","Wed","Thu"];
+    // Slots per day with court capacity for that slot.
+    const SLOTS = {
+      Sun: [
+        { label:"12-2pm", capacity:4 },
+        { label:"2-4pm",  capacity:4 },
+        { label:"4-6pm",  capacity:6 },
+        { label:"6-8pm",  capacity:6 },
+      ],
+      Mon: [
+        { label:"5-7pm",  capacity:4 },
+        { label:"7-9pm",  capacity:4 },
+      ],
+      Wed: [
+        { label:"5-7pm",  capacity:4 },
+        { label:"7-9pm",  capacity:4 },
+      ],
+      Thu: [
+        { label:"5-7pm",  capacity:4 },
+        { label:"7-9pm",  capacity:6 },
+      ],
+    };
+    const YOUNG_DIVS = new Set(["U11","U12"]);
+    const WEEKDAYS = new Set(["Mon","Wed","Thu"]);
+
+    // Index assignments by team and by slot for O(1) lookup.
+    const byTeamSlot = new Map();
+    const bySlot = new Map();
+    for (const a of practiceAssignments) {
+      byTeamSlot.set(a.team_name + "|" + a.day + "|" + a.slot, a);
+      const sk = a.day + "|" + a.slot;
+      if (!bySlot.has(sk)) bySlot.set(sk, []);
+      bySlot.get(sk).push(a);
+    }
+    const teamByName = new Map(practiceTeams.map(t => [t.team_name, t]));
+
+    // Coach load per slot — head_coach AND assistant_coach both count, so
+    // an assistant covering two simultaneous teams is also flagged.
+    const coachInSlot = new Map(); // "day|slot" -> Map<coach, [team,...]>
+    for (const a of practiceAssignments) {
+      const t = teamByName.get(a.team_name);
+      if (!t) continue;
+      const sk = a.day + "|" + a.slot;
+      if (!coachInSlot.has(sk)) coachInSlot.set(sk, new Map());
+      const m = coachInSlot.get(sk);
+      for (const c of [t.head_coach, t.assistant_coach]) {
+        if (!c) continue;
+        if (!m.has(c)) m.set(c, []);
+        m.get(c).push(a.team_name);
+      }
+    }
+
+    const toggleAssignment = async (teamName, day, slot) => {
+      const key = teamName + "|" + day + "|" + slot;
+      const existing = byTeamSlot.get(key);
+      if (existing) {
+        const { error } = await supabase.from("practice_assignments").delete().eq("id", existing.id);
+        if (error) { window.alert("Remove failed: " + error.message); return; }
+      } else {
+        const { error } = await supabase.from("practice_assignments").insert({ team_name: teamName, day, slot });
+        if (error) { window.alert("Add failed: " + error.message); return; }
+      }
+      await loadPractice();
+    };
+
+    // Compute per-team and per-slot warnings up front.
+    const warnings = [];
+    for (const t of practiceTeams) {
+      const tAssigns = practiceAssignments.filter(a => a.team_name === t.team_name);
+      if (tAssigns.length !== t.practices_per_week) {
+        warnings.push({
+          kind: "count",
+          team: t.team_name,
+          text: t.team_name + " has " + tAssigns.length + " practices, expected " + t.practices_per_week + " (" + (t.level||"?") + ")",
+        });
+      }
+      if (YOUNG_DIVS.has(t.age_div)) {
+        const has7to9 = tAssigns.some(a => a.slot === "7-9pm");
+        if (has7to9) warnings.push({ kind:"young_late", team:t.team_name, text: t.team_name + " is U11/U12 but practices in a 7-9pm slot" });
+        const has57Weekday = tAssigns.some(a => WEEKDAYS.has(a.day) && a.slot === "5-7pm");
+        const anyWeekday = tAssigns.some(a => WEEKDAYS.has(a.day));
+        if (anyWeekday && !has57Weekday) warnings.push({ kind:"young_weekday", team:t.team_name, text: t.team_name + " (U11/U12) practices on a weekday but not in the 5-7pm slot" });
+      }
+    }
+    for (const day of DAYS) {
+      for (const s of SLOTS[day]) {
+        const sk = day + "|" + s.label;
+        const count = (bySlot.get(sk) || []).length;
+        if (count > s.capacity) {
+          warnings.push({ kind:"overflow", slot:sk, text:"Court overflow at " + day + " " + s.label + " — " + count + " teams in " + s.capacity + " courts" });
+        }
+        const cMap = coachInSlot.get(sk);
+        if (cMap) {
+          for (const [coach, teams] of cMap) {
+            if (teams.length > 1) {
+              warnings.push({ kind:"coach_clash", slot:sk, text:"Coach " + coach + " double-booked at " + day + " " + s.label + " (" + teams.join(", ") + ")" });
+            }
+          }
+        }
+      }
+    }
+
+    // Group warnings by kind for the summary banner.
+    const grouped = warnings.reduce((acc, w) => { (acc[w.kind] ||= []).push(w); return acc; }, {});
+    const warnColor = (k) =>
+      k === "overflow"      ? C.red :
+      k === "coach_clash"   ? C.red :
+      k === "count"         ? "#f59e0b" :
+      k === "young_late"    ? "#f59e0b" :
+      k === "young_weekday" ? "#f59e0b" : C.mut;
+    const warnLabel = (k) => ({
+      overflow:      "Court overflow",
+      coach_clash:   "Coach double-booked",
+      count:         "Wrong practice count",
+      young_late:    "U11/U12 in 7-9pm",
+      young_weekday: "U11/U12 weekday wrong slot",
+    })[k] || k;
+
+    const thS = { padding:"6px 6px", fontSize:10, fontWeight:700, textTransform:"uppercase", color:C.mut, borderBottom:"1px solid "+C.border, background:C.card, position:"sticky", top:0, zIndex:2, whiteSpace:"nowrap" };
+    const tdS = { padding:"6px 4px", fontSize:11, borderBottom:"1px solid "+C.border, textAlign:"center", verticalAlign:"middle" };
+
+    return (
+      <div>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,flexWrap:"wrap",marginBottom:10}}>
+          <h2 style={{margin:0,fontSize:18,fontWeight:800,color:C.gold}}>Practice Schedule</h2>
+          <div style={{fontSize:11,color:C.mut}}>
+            {practiceTeams.length} teams · {practiceAssignments.length} assignments
+            {warnings.length > 0 && <> · <b style={{color:C.red}}>{warnings.length} warning{warnings.length===1?"":"s"}</b></>}
+          </div>
+        </div>
+        {/* Warnings banner */}
+        {warnings.length > 0 && (
+          <details open style={{marginBottom:14,background:"rgba(239,68,68,0.06)",border:"1px solid "+C.border,borderRadius:10,padding:"10px 14px"}}>
+            <summary style={{cursor:"pointer",fontSize:12,fontWeight:800,color:C.red}}>
+              {warnings.length} conflict{warnings.length===1?"":"s"} & warning{warnings.length===1?"":"s"} detected
+            </summary>
+            <div style={{marginTop:10,display:"flex",flexDirection:"column",gap:8}}>
+              {Object.keys(grouped).map(k => (
+                <div key={k}>
+                  <div style={{fontSize:10,fontWeight:800,letterSpacing:0.5,textTransform:"uppercase",color:warnColor(k),marginBottom:4}}>
+                    {warnLabel(k)} ({grouped[k].length})
+                  </div>
+                  {grouped[k].map((w,i) => (
+                    <div key={i} style={{fontSize:11,color:C.text,paddingLeft:10,lineHeight:1.5}}>• {w.text}</div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </details>
+        )}
+        {/* Grid */}
+        <div style={{background:C.card,borderRadius:12,border:"1px solid "+C.border,overflow:"hidden"}}>
+          <div style={{overflow:"auto",maxHeight:"calc(100vh - 280px)"}}>
+            <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0,minWidth:1000}}>
+              <thead>
+                <tr>
+                  <th style={{...thS,textAlign:"left",minWidth:220}}>Team</th>
+                  {DAYS.map(day => SLOTS[day].map(s => {
+                    const sk = day + "|" + s.label;
+                    const count = (bySlot.get(sk) || []).length;
+                    const over = count > s.capacity;
+                    return (
+                      <th key={sk} style={{...thS,color:over?C.red:C.mut}}>
+                        <div>{day}</div>
+                        <div style={{fontSize:9,fontWeight:600}}>{s.label}</div>
+                        <div style={{fontSize:9,fontWeight:800,color:over?C.red:(count===s.capacity?C.grn:C.mut)}}>{count}/{s.capacity}</div>
+                      </th>
+                    );
+                  }))}
+                  <th style={{...thS,textAlign:"center",minWidth:60}}>Count</th>
+                </tr>
+              </thead>
+              <tbody>
+                {practiceTeams.map(t => {
+                  const tAssigns = practiceAssignments.filter(a => a.team_name === t.team_name);
+                  const actual = tAssigns.length;
+                  const expected = t.practices_per_week;
+                  const countOff = actual !== expected;
+                  const levelColor =
+                    t.level === "National"      ? C.gold :
+                    t.level === "Regional"      ? C.acc  :
+                    t.level === "Developmental" ? "#06b6d4" : C.mut;
+                  return (
+                    <tr key={t.team_name}>
+                      <td style={{...tdS,textAlign:"left",padding:"6px 10px"}}>
+                        <div style={{fontWeight:700,fontSize:13,color:levelColor}}>{t.team_name}</div>
+                        <div style={{fontSize:9,color:C.mut,fontWeight:600,letterSpacing:0.5,textTransform:"uppercase"}}>{t.level || "—"} · {t.age_div || "—"}</div>
+                        <div style={{fontSize:10,color:C.text,marginTop:2}}>
+                          {t.head_coach || <i style={{color:C.mut}}>no head coach</i>}
+                          {t.assistant_coach && " · " + t.assistant_coach}
+                        </div>
+                      </td>
+                      {DAYS.map(day => SLOTS[day].map(s => {
+                        const key = t.team_name + "|" + day + "|" + s.label;
+                        const isOn = byTeamSlot.has(key);
+                        const sk = day + "|" + s.label;
+                        const over = (bySlot.get(sk) || []).length > s.capacity;
+                        const young = YOUNG_DIVS.has(t.age_div);
+                        const youngLate = young && s.label === "7-9pm" && isOn;
+                        const cMap = coachInSlot.get(sk);
+                        const coachClash = isOn && cMap && (
+                          (t.head_coach && cMap.get(t.head_coach)?.length > 1) ||
+                          (t.assistant_coach && cMap.get(t.assistant_coach)?.length > 1)
+                        );
+                        const bg = !isOn ? "transparent"
+                                 : coachClash ? "rgba(239,68,68,0.18)"
+                                 : over ? "rgba(239,68,68,0.12)"
+                                 : youngLate ? "rgba(245,158,11,0.18)"
+                                 : "rgba(34,197,94,0.18)";
+                        const fg = !isOn ? C.mut
+                                 : coachClash || over ? C.red
+                                 : youngLate ? "#f59e0b"
+                                 : C.grn;
+                        return (
+                          <td key={sk} onClick={()=>toggleAssignment(t.team_name, day, s.label)}
+                            title={isOn ? "Click to remove" : "Click to add"}
+                            style={{...tdS,cursor:"pointer",userSelect:"none",background:bg,color:fg,fontWeight:800,fontSize:14}}>
+                            {isOn ? "✓" : ""}
+                          </td>
+                        );
+                      }))}
+                      <td style={{...tdS,fontWeight:700,color:countOff?"#f59e0b":C.grn,minWidth:40}}>
+                        {actual}/{expected}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div style={{marginTop:10,fontSize:11,color:C.mut,lineHeight:1.5}}>
+          Click any cell to toggle a team in/out of that slot. <b style={{color:C.grn}}>Green ✓</b> = assigned; <b style={{color:C.red}}>red</b> = court overflow or coach double-booked; <b style={{color:"#f59e0b"}}>amber</b> = U11/U12 in 7-9pm. Per-team count column flips amber when it doesn't match the team's required practices per week (National = 3, Regional/Developmental = 2).
+        </div>
+      </div>
+    );
+  }
+
   // ─── ACTIVITY (AUDIT LOG) ─────────────────────────────────────────────
   // Global feed of every change to a player row, attributed to the coach who
   // made it. Populated server-side by the players_audit trigger.
@@ -4485,6 +4745,7 @@ export default function App() {
               ["tracker","Tracker"],
               ["rankings","Rankings"],
               ["tournaments","Tournaments"],
+              ["practice","Practice"],
               ["activity","Activity"],
               ...(isAdmin ? [["coaches","Coaches"]] : []),
             ].map(([v,l]) =>
@@ -4555,6 +4816,7 @@ export default function App() {
         {view==="activity" && renderActivity()}
         {view==="coaches"  && renderCoaches()}
         {view==="tournaments" && renderTournaments()}
+        {view==="practice" && renderPractice()}
       </div>
       {profileId !== null && renderProfile()}
       {addingPlayer && renderAddPlayer()}
