@@ -2207,11 +2207,24 @@ export default function App() {
             const offerAccepted = tp.filter(p => p.offer_status === "accepted").length;
             const offerLocked   = tp.filter(p => p.offer_status === "locked").length;
             const offerWaiting  = tp.filter(p => p.offer_status === "waiting").length;
+            // Average per-player avg score across players who have a roster
+            // position on this team (i.e. real positional assignments, not
+            // unslotted overflow). Skip players whose avg is "—" / not scored.
+            const slotted = tp.filter(p => p.roster_pos);
+            const scoredAvgs = slotted
+              .map(p => parseFloat(avg(p)))
+              .filter(v => !isNaN(v) && v > 0);
+            const teamAvg = scoredAvgs.length
+              ? (scoredAvgs.reduce((s,v) => s+v, 0) / scoredAvgs.length).toFixed(2)
+              : null;
             return (
               <DropZone key={team} id={"team-"+team}
                 style={{background:C.card,borderRadius:12,padding:"16px 18px",border:"1px solid "+C.border}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,gap:6,flexWrap:"wrap"}}>
-                  <h3 style={{margin:0,fontSize:17,fontWeight:800,color:C.gold}}>{team}</h3>
+                  <h3 style={{margin:0,fontSize:17,fontWeight:800,color:C.gold,display:"flex",alignItems:"baseline",gap:8}}>
+                    {team}
+                    {teamAvg && <span title="Average of per-player avg scores across players in roster positions" style={{fontSize:12,fontWeight:600,color:C.grn}}>avg {teamAvg}</span>}
+                  </h3>
                   <div style={{display:"flex",gap:4,alignItems:"center",flexWrap:"wrap",justifyContent:"flex-end"}}>
                     <Tag c={C.acc}>{tp.length} players</Tag>
                     {offerLocked   > 0 && <Tag c="#a855f7">{offerLocked} locked</Tag>}
