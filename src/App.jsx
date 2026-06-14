@@ -3113,12 +3113,15 @@ export default function App() {
         { label:"6-8pm",  capacity:6 },
       ],
       Mon: [
-        { label:"5-7pm",  capacity:4 },
-        { label:"7-9pm",  capacity:4 },
+        { label:"5-7pm",       capacity:4 },
+        { label:"7-9pm",       capacity:4 },
+        // Courts 5 & 6 only — added because other programming clears 7:30+.
+        { label:"7:30-9:30pm", capacity:2 },
       ],
       Wed: [
-        { label:"5-7pm",  capacity:4 },
-        { label:"7-9pm",  capacity:4 },
+        { label:"5-7pm",       capacity:4 },
+        { label:"7-9pm",       capacity:4 },
+        { label:"7:30-9:30pm", capacity:2 },
       ],
       Thu: [
         { label:"5-7pm",  capacity:4 },
@@ -3127,6 +3130,8 @@ export default function App() {
     };
     const YOUNG_DIVS = new Set(["U11","U12"]);
     const WEEKDAYS = new Set(["Mon","Wed","Thu"]);
+    // Slots that are "late" for U11/U12 purposes.
+    const LATE_SLOTS = new Set(["7-9pm","7:30-9:30pm"]);
 
     // Index assignments by team and by slot for O(1) lookup.
     const byTeamSlot = new Map();
@@ -3180,8 +3185,8 @@ export default function App() {
         });
       }
       if (YOUNG_DIVS.has(t.age_div)) {
-        const has7to9 = tAssigns.some(a => a.slot === "7-9pm");
-        if (has7to9) warnings.push({ kind:"young_late", team:t.team_name, text: t.team_name + " is U11/U12 but practices in a 7-9pm slot" });
+        const hasLate = tAssigns.some(a => LATE_SLOTS.has(a.slot));
+        if (hasLate) warnings.push({ kind:"young_late", team:t.team_name, text: t.team_name + " is U11/U12 but practices in a late (7pm+) slot" });
         const has57Weekday = tAssigns.some(a => WEEKDAYS.has(a.day) && a.slot === "5-7pm");
         const anyWeekday = tAssigns.some(a => WEEKDAYS.has(a.day));
         if (anyWeekday && !has57Weekday) warnings.push({ kind:"young_weekday", team:t.team_name, text: t.team_name + " (U11/U12) practices on a weekday but not in the 5-7pm slot" });
@@ -3301,7 +3306,7 @@ export default function App() {
                         const sk = day + "|" + s.label;
                         const over = (bySlot.get(sk) || []).length > s.capacity;
                         const young = YOUNG_DIVS.has(t.age_div);
-                        const youngLate = young && s.label === "7-9pm" && isOn;
+                        const youngLate = young && LATE_SLOTS.has(s.label) && isOn;
                         const cMap = coachInSlot.get(sk);
                         const coachClash = isOn && cMap && (
                           (t.head_coach && cMap.get(t.head_coach)?.length > 1) ||
