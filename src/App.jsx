@@ -3115,13 +3115,10 @@ export default function App() {
       Mon: [
         { label:"5-7pm",       capacity:4 },
         { label:"7-9pm",       capacity:4 },
-        // Courts 5 & 6 only — added because other programming clears 7:30+.
-        { label:"7:30-9:30pm", capacity:2 },
       ],
       Wed: [
         { label:"5-7pm",       capacity:4 },
         { label:"7-9pm",       capacity:4 },
-        { label:"7:30-9:30pm", capacity:2 },
       ],
       Thu: [
         { label:"5-7pm",  capacity:6 },
@@ -3131,7 +3128,7 @@ export default function App() {
     const YOUNG_DIVS = new Set(["U11","U12"]);
     const WEEKDAYS = new Set(["Mon","Wed","Thu"]);
     // Slots that are "late" for U11/U12 purposes.
-    const LATE_SLOTS = new Set(["7-9pm","7:30-9:30pm"]);
+    const LATE_SLOTS = new Set(["7-9pm"]);
 
     // Index assignments by team and by slot for O(1) lookup.
     const byTeamSlot = new Map();
