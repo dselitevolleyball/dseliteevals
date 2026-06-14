@@ -578,6 +578,7 @@ export default function App() {
   // Practice schedule tab state
   const [practiceTeams, setPracticeTeams]             = useState([]);
   const [practiceAssignments, setPracticeAssignments] = useState([]);
+  const [practiceCoachFilter, setPracticeCoachFilter] = useState("");
   const [teamsList, setTeamsList]                           = useState([]);
   const [blackoutDates, setBlackoutDates]                   = useState([]);
   const [tnFilters, setTnFilters]                           = useState({ search: "", ageFor: "", qualifierOnly: false, dateFrom: "", dateTo: "", hideClosed: false, hideCancelled: true, startsOn: [], state: "", numDays: "", divisions: [] });
@@ -3227,11 +3228,39 @@ export default function App() {
     const tdS = { padding:"6px 4px", fontSize:11, borderBottom:"1px solid "+C.border, textAlign:"center", verticalAlign:"middle" };
 
     return (
+      {(() => {
+        // Distinct coach names across head + assistant. Sorted alphabetically
+        // so the dropdown reads predictably.
+        const allCoaches = new Set();
+        for (const t of practiceTeams) {
+          if (t.head_coach) allCoaches.add(t.head_coach);
+          if (t.assistant_coach) allCoaches.add(t.assistant_coach);
+        }
+        const coachOptions = Array.from(allCoaches).sort((a,b) => a.localeCompare(b));
+        const visibleTeams = practiceCoachFilter
+          ? practiceTeams.filter(t => t.head_coach === practiceCoachFilter || t.assistant_coach === practiceCoachFilter)
+          : practiceTeams;
+        return (
       <div>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,flexWrap:"wrap",marginBottom:10}}>
-          <h2 style={{margin:0,fontSize:18,fontWeight:800,color:C.gold}}>Practice Schedule</h2>
+          <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+            <h2 style={{margin:0,fontSize:18,fontWeight:800,color:C.gold}}>Practice Schedule</h2>
+            <span style={{fontSize:11,color:C.mut,fontWeight:600,letterSpacing:0.5,textTransform:"uppercase"}}>Coach:</span>
+            <select value={practiceCoachFilter} onChange={e=>setPracticeCoachFilter(e.target.value)}
+              title="Show only teams where this coach is head or assistant"
+              style={{...inpStyle,padding:"6px 10px",fontSize:12,minWidth:160,color:practiceCoachFilter?C.gold:C.text,fontWeight:practiceCoachFilter?700:400}}>
+              <option value="">All coaches</option>
+              {coachOptions.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+            {practiceCoachFilter && (
+              <button onClick={()=>setPracticeCoachFilter("")} title="Clear coach filter"
+                style={{padding:"4px 10px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+                Clear
+              </button>
+            )}
+          </div>
           <div style={{fontSize:11,color:C.mut}}>
-            {practiceTeams.length} teams · {practiceAssignments.length} assignments
+            {visibleTeams.length} of {practiceTeams.length} teams · {practiceAssignments.length} assignments
             {warnings.length > 0 && <> · <b style={{color:C.red}}>{warnings.length} warning{warnings.length===1?"":"s"}</b></>}
           </div>
         </div>
@@ -3278,7 +3307,7 @@ export default function App() {
                 </tr>
               </thead>
               <tbody>
-                {practiceTeams.map(t => {
+                {visibleTeams.map(t => {
                   const tAssigns = practiceAssignments.filter(a => a.team_name === t.team_name);
                   const actual = tAssigns.length;
                   const expected = t.practices_per_week;
@@ -3340,8 +3369,8 @@ export default function App() {
           Click any cell to toggle a team in/out of that slot. <b style={{color:C.grn}}>Green ✓</b> = assigned; <b style={{color:C.red}}>red</b> = court overflow or coach double-booked; <b style={{color:"#f59e0b"}}>amber</b> = U11/U12 in 7-9pm. Per-team count column flips amber when it doesn't match the team's required practices per week (National = 3, Regional/Developmental = 2).
         </div>
       </div>
-    );
-  }
+        );
+      })()}
 
   // ─── ACTIVITY (AUDIT LOG) ─────────────────────────────────────────────
   // Global feed of every change to a player row, attributed to the coach who
