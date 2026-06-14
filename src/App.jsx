@@ -3227,20 +3227,19 @@ export default function App() {
     const thS = { padding:"6px 6px", fontSize:10, fontWeight:700, textTransform:"uppercase", color:C.mut, borderBottom:"1px solid "+C.border, background:C.card, position:"sticky", top:0, zIndex:2, whiteSpace:"nowrap" };
     const tdS = { padding:"6px 4px", fontSize:11, borderBottom:"1px solid "+C.border, textAlign:"center", verticalAlign:"middle" };
 
+    // Distinct coach names across head + assistant. Sorted alphabetically
+    // so the dropdown reads predictably.
+    const allCoaches = new Set();
+    for (const t of practiceTeams) {
+      if (t.head_coach) allCoaches.add(t.head_coach);
+      if (t.assistant_coach) allCoaches.add(t.assistant_coach);
+    }
+    const coachOptions = Array.from(allCoaches).sort((a,b) => a.localeCompare(b));
+    const visibleTeams = practiceCoachFilter
+      ? practiceTeams.filter(t => t.head_coach === practiceCoachFilter || t.assistant_coach === practiceCoachFilter)
+      : practiceTeams;
+
     return (
-      {(() => {
-        // Distinct coach names across head + assistant. Sorted alphabetically
-        // so the dropdown reads predictably.
-        const allCoaches = new Set();
-        for (const t of practiceTeams) {
-          if (t.head_coach) allCoaches.add(t.head_coach);
-          if (t.assistant_coach) allCoaches.add(t.assistant_coach);
-        }
-        const coachOptions = Array.from(allCoaches).sort((a,b) => a.localeCompare(b));
-        const visibleTeams = practiceCoachFilter
-          ? practiceTeams.filter(t => t.head_coach === practiceCoachFilter || t.assistant_coach === practiceCoachFilter)
-          : practiceTeams;
-        return (
       <div>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,flexWrap:"wrap",marginBottom:10}}>
           <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
@@ -3369,8 +3368,8 @@ export default function App() {
           Click any cell to toggle a team in/out of that slot. <b style={{color:C.grn}}>Green ✓</b> = assigned; <b style={{color:C.red}}>red</b> = court overflow or coach double-booked; <b style={{color:"#f59e0b"}}>amber</b> = U11/U12 in 7-9pm. Per-team count column flips amber when it doesn't match the team's required practices per week (National = 3, Regional/Developmental = 2).
         </div>
       </div>
-        );
-      })()}
+    );
+  }
 
   // ─── ACTIVITY (AUDIT LOG) ─────────────────────────────────────────────
   // Global feed of every change to a player row, attributed to the coach who
