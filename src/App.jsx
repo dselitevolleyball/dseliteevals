@@ -3107,8 +3107,8 @@ export default function App() {
     // Slots per day with court capacity for that slot.
     const SLOTS = {
       Sun: [
-        { label:"12-2pm", capacity:4 },
-        { label:"2-4pm",  capacity:4 },
+        { label:"12-2pm", capacity:6 },
+        { label:"2-4pm",  capacity:6 },
         { label:"4-6pm",  capacity:6 },
         { label:"6-8pm",  capacity:6 },
       ],
