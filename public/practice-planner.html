@@ -64,6 +64,16 @@ button.act.primary:hover{filter:brightness(1.08)}
 button.act.warn:hover{border-color:#ef4444;color:#ef4444}
 .actbar{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0}
 
+/* AI Coach box */
+.aibox{background:linear-gradient(135deg,rgba(233,30,140,0.10),rgba(255,105,180,0.04));border:1px solid var(--accent);border-radius:12px;padding:14px 16px;margin-bottom:18px}
+.aihead{font-family:var(--disp);font-weight:700;font-size:15px;color:var(--accent);margin-bottom:8px}
+.aihead span{font-family:var(--body);font-weight:400;font-size:12px;color:var(--muted);margin-left:6px}
+.aibox textarea{width:100%;font-family:var(--body);font-size:14px;color:var(--text);border:1px solid var(--line);background:var(--input);border-radius:8px;padding:10px 11px;min-height:62px;resize:vertical;color-scheme:dark}
+.aibox textarea:focus{outline:2px solid var(--accent);border-color:transparent}
+.aifoot{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:10px}
+.aihint{font-size:11px;color:var(--muted)}
+.aierr{margin-top:10px;font-size:12.5px;color:#ffb4b4;background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.4);border-radius:8px;padding:8px 10px}
+
 /* Plan output */
 .planhead{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:12px}
 .planhead .ttl{font-family:var(--disp);font-weight:800;font-size:20px}
@@ -411,6 +421,7 @@ const IMPORTED_DRILLS=[
 ];
 /* ============================ STATE ============================ */
 let STATE=null, TAB='generate';
+let aiBusy=false, aiErr='';
 function uid(){return 'd'+Math.abs((Date.now()^(performance.now()*1000|0))).toString(36)+(STATE&&STATE.seq?(STATE.seq++):0);}
 function freshState(){
   return {
@@ -508,6 +519,35 @@ function generatePlan(g){
 function blk(d,minutes){return {id:uid(),name:d.name,skill:d.skill,phase:d.phase,desc:d.desc,minutes};}
 function custom(name,phase,skill,minutes){return {id:uid(),name,skill,phase,desc:'',minutes};}
 
+/* ============================ AI COACH ============================ */
+async function runAI(){
+  const p=(STATE.gen.aiPrompt||'').trim();
+  if(!p){alert("Tell the AI what you want from practice first.");return;}
+  aiErr=''; aiBusy=true; render();
+  try{
+    const g=STATE.gen;
+    const res=await fetch('/api/plan-practice',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({prompt:p,minutes:+g.minutes||90,players:+g.players||12,level:g.level||'All levels',
+        library:STATE.drills.map(d=>({name:d.name,skill:d.skill,phase:d.phase,minutes:d.minutes,level:d.level}))})});
+    let data={}; try{ data=await res.json(); }catch(e){}
+    if(!res.ok) throw new Error(data.error||('Request failed ('+res.status+')'));
+    const plan=data.plan;
+    if(!plan||!Array.isArray(plan.blocks)||!plan.blocks.length) throw new Error('No plan came back — try rephrasing.');
+    const byName=new Map(STATE.drills.map(d=>[d.name.toLowerCase().trim(),d]));
+    const blocks=plan.blocks.map(b=>{
+      const lib=byName.get(String(b.name||'').toLowerCase().trim());
+      return {id:uid(),name:(b.name||'Block').trim(),skill:b.skill||(lib&&lib.skill)||'',
+        phase:b.phase||'skill',minutes:Math.max(0,Math.round(+b.minutes||0)),
+        desc:(b.desc&&b.desc.trim())?b.desc.trim():(lib?lib.desc:'')};
+    });
+    const total=blocks.reduce((a,b)=>a+b.minutes,0);
+    STATE.draft={name:plan.name||p.slice(0,48),date:g.date||'',coaches:g.coaches||'',
+      minutes:+g.minutes||total,players:+g.players||12,level:g.level||'All levels',focus:[],blocks};
+    aiBusy=false; save(); render();
+    const ph=document.querySelector('.planhead'); if(ph)ph.scrollIntoView({behavior:'smooth',block:'start'});
+  }catch(e){ aiErr=(e&&e.message)||'Something went wrong.'; aiBusy=false; render(); }
+}
+
 /* ============================ RENDER ============================ */
 function renderTabs(){
   const defs=[['generate','Generate','Build a plan'],['plans','Plans','Saved'],['library','Library','Drills & skills'],['ideas','Ideas','Get unstuck']];
@@ -537,6 +577,15 @@ function viewGenerate(){
   let form=`
    <h2 class="sec">Build a practice</h2>
    <div class="sub">Set the time and group, pick your focus skills, and generate a plan. Tweak any block, then save it.</div>
+   <div class="aibox">
+     <div class="aihead">🤖 AI Coach<span>Tell me what you want — I'll build the plan</span></div>
+     <textarea id="ai-prompt" placeholder="e.g. 90 min tournament prep — heavy serve receive and out-of-system reps, keep it competitive, save 15 min for 6v6">${esc(g.aiPrompt||'')}</textarea>
+     <div class="aifoot">
+       <button class="act primary" id="aiBtn"${aiBusy?' disabled':''}>${aiBusy?'✦ Thinking…':'✨ Build with AI'}</button>
+       <span class="aihint">Uses the time / players / level below and pulls from your ${STATE.drills.length} library drills.</span>
+     </div>
+     ${aiErr?`<div class="aierr">⚠ ${esc(aiErr)}</div>`:''}
+   </div>
    <div class="formgrid">
      <label class="fld">Practice name<input id="g-name" value="${esc(g.name)}" placeholder="e.g. Tuesday — Serve & Pass"></label>
      <label class="fld">Date<input id="g-date" value="${esc(g.date)}" placeholder="—"></label>
@@ -680,6 +729,8 @@ function wire(){
   byId('g-pl')&&on('g-pl','input',e=>STATE.gen.players=+e.target.value);
   byId('g-lvl')&&on('g-lvl','change',e=>STATE.gen.level=e.target.value);
   byId('g-co')&&on('g-co','input',e=>STATE.gen.coaches=e.target.value);
+  byId('ai-prompt')&&on('ai-prompt','input',e=>{STATE.gen.aiPrompt=e.target.value;save();});
+  byId('aiBtn')&&(byId('aiBtn').onclick=runAI);
   document.querySelectorAll('[data-focus]').forEach(el=>el.onclick=()=>{
     const s=el.dataset.focus, f=STATE.gen.focus;
     const i=f.indexOf(s); if(i>=0)f.splice(i,1); else f.push(s);
