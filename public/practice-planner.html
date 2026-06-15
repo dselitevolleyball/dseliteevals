@@ -73,6 +73,7 @@ button.act.warn:hover{border-color:#ef4444;color:#ef4444}
 .aifoot{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:10px}
 .aihint{font-size:11px;color:var(--muted)}
 .aierr{margin-top:10px;font-size:12.5px;color:#ffb4b4;background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.4);border-radius:8px;padding:8px 10px}
+.refinebox{margin-top:16px}
 
 /* Plan output */
 .planhead{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:12px}
@@ -421,7 +422,7 @@ const IMPORTED_DRILLS=[
 ];
 /* ============================ STATE ============================ */
 let STATE=null, TAB='generate';
-let aiBusy=false, aiErr='';
+let aiBusy=false, aiErr='', refineText='', refineErr='';
 function uid(){return 'd'+Math.abs((Date.now()^(performance.now()*1000|0))).toString(36)+(STATE&&STATE.seq?(STATE.seq++):0);}
 function freshState(){
   return {
@@ -547,6 +548,33 @@ async function runAI(){
     const ph=document.querySelector('.planhead'); if(ph)ph.scrollIntoView({behavior:'smooth',block:'start'});
   }catch(e){ aiErr=(e&&e.message)||'Something went wrong.'; aiBusy=false; render(); }
 }
+async function runRefine(){
+  const ins=(refineText||'').trim();
+  if(!ins){alert("Type what you want to change first.");return;}
+  if(!STATE.draft||!STATE.draft.blocks.length){alert("Build or generate a plan first.");return;}
+  refineErr=''; aiBusy=true; render();
+  try{
+    const g=STATE.gen, d=STATE.draft;
+    const res=await fetch('/api/plan-practice',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({instruction:ins,minutes:d.minutes||+g.minutes||90,players:d.players||+g.players||12,
+        level:d.level||g.level||'All levels',
+        current_plan:{name:d.name,blocks:d.blocks.map(b=>({name:b.name,skill:b.skill,phase:b.phase,minutes:b.minutes,desc:b.desc}))},
+        library:STATE.drills.map(x=>({name:x.name,skill:x.skill,phase:x.phase,minutes:x.minutes,level:x.level}))})});
+    let data={}; try{ data=await res.json(); }catch(e){}
+    if(!res.ok) throw new Error(data.error||('Request failed ('+res.status+')'));
+    const plan=data.plan;
+    if(!plan||!Array.isArray(plan.blocks)||!plan.blocks.length) throw new Error('No revised plan came back — try rephrasing.');
+    const byName=new Map(STATE.drills.map(x=>[x.name.toLowerCase().trim(),x]));
+    const blocks=plan.blocks.map(b=>{
+      const lib=byName.get(String(b.name||'').toLowerCase().trim());
+      return {id:uid(),name:(b.name||'Block').trim(),skill:b.skill||(lib&&lib.skill)||'',
+        phase:b.phase||'skill',minutes:Math.max(0,Math.round(+b.minutes||0)),
+        desc:(b.desc&&b.desc.trim())?b.desc.trim():(lib?lib.desc:'')};
+    });
+    STATE.draft={...d,name:plan.name||d.name,blocks};
+    refineText=''; aiBusy=false; save(); render();
+  }catch(e){ refineErr=(e&&e.message)||'Something went wrong.'; aiBusy=false; render(); }
+}
 
 /* ============================ RENDER ============================ */
 function renderTabs(){
@@ -632,6 +660,15 @@ function renderPlan(p,editable){
       <button class="act" id="addCustom">＋ Add custom block</button>
       <button class="act" id="regen">↻ Regenerate</button>
       <button class="act" onclick="window.print()">🖨 Print</button>
+    </div>
+    <div class="aibox refinebox">
+      <div class="aihead">🤖 Refine<span>Tell me what to change about this plan</span></div>
+      <textarea id="refine-prompt" placeholder="e.g. make the second half all defense · cut the warm-up to 8 min · add more serving · swap the last block for a 6v6">${esc(refineText)}</textarea>
+      <div class="aifoot">
+        <button class="act primary" id="refineBtn"${aiBusy?' disabled':''}>${aiBusy?'✦ Thinking…':'✨ Refine plan'}</button>
+        <span class="aihint">Adjusts the plan above — keeps everything you didn't mention.</span>
+      </div>
+      ${refineErr?`<div class="aierr">⚠ ${esc(refineErr)}</div>`:''}
     </div>` : '';
   return head + rows + tools;
 }
@@ -758,6 +795,8 @@ function wire(){
   byId('regen')&&(byId('regen').onclick=()=>{STATE.draft=generatePlan(STATE.gen);save();render();});
   byId('addBlk')&&(byId('addBlk').onclick=openLibraryPicker);
   byId('addCustom')&&(byId('addCustom').onclick=()=>editBlock(-1));
+  byId('refine-prompt')&&on('refine-prompt','input',e=>{refineText=e.target.value;});
+  byId('refineBtn')&&(byId('refineBtn').onclick=runRefine);
 
   // PLANS
   document.querySelectorAll('[data-openplan]').forEach(el=>el.onclick=e=>{

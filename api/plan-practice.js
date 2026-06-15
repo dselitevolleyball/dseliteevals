@@ -62,10 +62,8 @@ const PLAN_TOOL = {
 };
 
 function buildUserPrompt(body) {
-  const { prompt, minutes, players, level, library } = body;
+  const { prompt, minutes, players, level, library, current_plan, instruction } = body;
   const lines = [];
-  lines.push(`Coach's request: ${String(prompt).trim()}`);
-  lines.push("");
   lines.push(`Total practice time: ${minutes} minutes`);
   lines.push(`Players: ${players}`);
   lines.push(`Team level: ${level || "All levels"}`);
@@ -75,11 +73,25 @@ function buildUserPrompt(body) {
     for (const d of library) {
       lines.push(`- ${d.name} | ${d.skill} | ${d.phase} | ${d.minutes}m | ${d.level || "All levels"}`);
     }
-  } else {
-    lines.push("LIBRARY: (none provided — build the plan from scratch with sensible drills.)");
+    lines.push("");
   }
-  lines.push("");
-  lines.push("Build the plan now by calling build_plan.");
+
+  if (current_plan && instruction) {
+    // Refinement: revise an existing plan per the coach's change request.
+    lines.push("CURRENT PLAN to revise:");
+    lines.push(`Title: ${current_plan.name || "(untitled)"}`);
+    (current_plan.blocks || []).forEach((b, i) => {
+      lines.push(`${i + 1}. [${b.phase}] ${b.name} — ${b.minutes}m — ${b.skill || ""}${b.desc ? ` — ${b.desc}` : ""}`);
+    });
+    lines.push("");
+    lines.push(`The coach wants this change: ${String(instruction).trim()}`);
+    lines.push("");
+    lines.push("Return the FULL revised plan via build_plan. Keep everything the coach did NOT ask to change — same blocks, names, order, minutes, and descriptions. Apply only the requested change, still prefer LIBRARY drills where they fit, and keep the total time about the same length unless the coach asked to change it.");
+  } else {
+    lines.push(`Coach's request: ${String(prompt).trim()}`);
+    lines.push("");
+    lines.push("Build the plan now by calling build_plan.");
+  }
   return lines.join("\n");
 }
 
@@ -95,7 +107,8 @@ export default async function handler(req, res) {
   } catch {
     return res.status(400).json({ error: "Invalid JSON body" });
   }
-  if (!body || !body.prompt || !String(body.prompt).trim()) {
+  const isRefine = body && body.current_plan && body.instruction && String(body.instruction).trim();
+  if (!isRefine && (!body || !body.prompt || !String(body.prompt).trim())) {
     return res.status(400).json({ error: "Tell me what you want from the practice first." });
   }
   body.minutes = Math.max(20, Math.min(+body.minutes || 90, 240));
