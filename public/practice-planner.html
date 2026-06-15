@@ -1,0 +1,680 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Practice Planner — DS Elite</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#16243A; --paper:#F4EFE3; --card:#FFFFFF; --line:#E4DDCC;
+  --muted:#6B7280; --accent:#E0612D; --accent-soft:#FBE7DA;
+  --warm:#E2EFDA; --skill:#DCEBF8; --water:#EFEFEA; --comp:#FBE3D2; --cool:#EAEAEA;
+  --disp:'Oswald',system-ui,sans-serif; --body:'Inter',system-ui,sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--body);-webkit-font-smoothing:antialiased}
+.wrap{max-width:1100px;margin:0 auto;padding:0 16px 80px}
+
+/* App bar */
+.bar{position:sticky;top:0;z-index:20;background:var(--ink);color:#fff;margin:0 -16px 0;padding:14px 16px 0;box-shadow:0 2px 0 rgba(0,0,0,.06)}
+.bar .top{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.brand{font-family:var(--disp);font-weight:700;letter-spacing:.04em;font-size:19px;text-transform:uppercase}
+.brand span{color:var(--accent)}
+.savechip{font-size:12px;color:#cdd6e3;font-weight:500;min-height:16px}
+.tabs{display:flex;gap:6px;margin-top:12px;overflow-x:auto}
+.tab{flex:1;min-width:96px;border:none;background:rgba(255,255,255,.08);color:#cdd6e3;font-family:var(--disp);font-weight:600;
+  text-transform:uppercase;letter-spacing:.05em;font-size:14px;padding:11px 8px 13px;border-radius:10px 10px 0 0;cursor:pointer;line-height:1.1;transition:.15s}
+.tab small{display:block;font-family:var(--body);font-weight:500;letter-spacing:0;text-transform:none;font-size:11px;color:#9fb0c4;margin-top:2px}
+.tab.active{background:var(--paper);color:var(--ink)}
+.tab.active small{color:var(--muted)}
+.tab:hover:not(.active){background:rgba(255,255,255,.16)}
+
+h2.sec{font-family:var(--disp);font-weight:700;font-size:24px;margin:22px 0 4px;letter-spacing:.01em}
+.sub{color:var(--muted);font-size:13px;margin-bottom:16px;line-height:1.5}
+
+/* Forms */
+.formgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px}
+label.fld{display:flex;flex-direction:column;font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em;gap:4px}
+label.fld input,label.fld select,label.fld textarea{font-family:var(--body);font-size:14px;color:var(--ink);border:1px solid var(--line);background:var(--card);border-radius:8px;padding:8px 9px}
+label.fld input:focus,label.fld select:focus,label.fld textarea:focus{outline:2px solid var(--accent);border-color:transparent}
+textarea{resize:vertical;min-height:64px}
+
+/* Skill chips */
+.chips{display:flex;flex-wrap:wrap;gap:7px;margin:4px 0 14px}
+.chip{font-family:var(--body);font-weight:600;font-size:13px;border:1px solid var(--line);background:#fff;color:var(--ink);border-radius:999px;padding:7px 13px;cursor:pointer;transition:.12s;user-select:none}
+.chip:hover{border-color:var(--accent)}
+.chip.on{background:var(--accent);border-color:var(--accent);color:#fff}
+
+/* Buttons */
+button.act{font-family:var(--body);font-weight:600;font-size:13px;border-radius:9px;padding:10px 16px;cursor:pointer;border:1px solid var(--line);background:#fff;color:var(--ink)}
+button.act:hover{border-color:var(--ink)}
+button.act.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button.act.primary:hover{filter:brightness(.95)}
+button.act.warn:hover{border-color:#c0392b;color:#c0392b}
+.actbar{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0}
+
+/* Plan output */
+.planhead{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:12px}
+.planhead .ttl{font-family:var(--disp);font-weight:700;font-size:20px}
+.planhead .meta2{font-size:12px;color:var(--muted);margin-top:2px}
+.planhead .tot{font-family:var(--disp);font-weight:700;font-size:22px;color:var(--accent)}
+.planhead .tot small{display:block;font-family:var(--body);font-weight:500;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+
+.block{display:grid;grid-template-columns:96px 1fr auto;gap:10px;align-items:stretch;background:#fff;border:1px solid var(--line);border-radius:10px;padding:0;margin-bottom:8px;overflow:hidden}
+.block .tp{font-family:var(--disp);font-weight:600;font-size:13px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:10px 4px;line-height:1.2}
+.block .tp .ph{font-family:var(--body);font-weight:500;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin-top:3px}
+.ph-warmup{background:var(--warm)} .ph-skill{background:var(--skill)} .ph-competitive{background:var(--comp)} .ph-cooldown{background:var(--cool)} .ph-water{background:var(--water)}
+.block .body{padding:11px 4px 11px 6px;align-self:center}
+.block .body b{font-weight:600;font-size:14.5px;display:block}
+.block .body span{display:block;font-size:12.5px;color:var(--muted);margin-top:2px;line-height:1.4}
+.block .ctr{display:flex;align-items:center;gap:4px;padding:0 10px}
+.iconbtn{border:1px solid var(--line);background:#fff;border-radius:7px;width:30px;height:30px;cursor:pointer;font-size:14px;color:var(--ink);display:flex;align-items:center;justify-content:center;padding:0}
+.iconbtn:hover{border-color:var(--accent);color:var(--accent)}
+.minbox{width:54px;text-align:center;font-family:var(--disp);font-weight:600;font-size:15px;border:1px solid var(--line);border-radius:7px;padding:5px 2px;color:var(--ink)}
+.minbox:focus{outline:2px solid var(--accent);border-color:transparent}
+
+.empty{color:#9aa0a8;font-style:italic;text-align:center;padding:30px 10px;background:#fff;border:1px dashed var(--line);border-radius:12px}
+
+/* Library cards */
+.libtools{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
+.libtools input.search{flex:1;min-width:180px;font-family:var(--body);font-size:14px;border:1px solid var(--line);background:#fff;border-radius:8px;padding:9px 11px}
+.libtools input.search:focus{outline:2px solid var(--accent);border-color:transparent}
+.drillcard{background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:8px;display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
+.drillcard .dc-main b{font-weight:600;font-size:15px}
+.drillcard .dc-main .tagrow{margin-top:5px;display:flex;flex-wrap:wrap;gap:5px}
+.tagbadge{font-size:11px;font-weight:600;border-radius:6px;padding:2px 8px;background:var(--skill);color:var(--ink);text-transform:capitalize}
+.tagbadge.lvl{background:var(--warm)} .tagbadge.min{background:var(--accent-soft);color:var(--accent)} .tagbadge.phase{background:var(--cool)}
+.drillcard .dc-main .desc{font-size:13px;color:var(--muted);margin-top:6px;line-height:1.45}
+.drillcard .dc-ctr{display:flex;gap:6px;flex-shrink:0}
+
+/* Ideas */
+.ideacard{background:#fff;border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:10px;padding:14px 16px;margin-bottom:10px}
+.ideacard b{font-size:15px}
+.ideacard .meta3{font-size:12px;color:var(--muted);margin:3px 0 7px;text-transform:capitalize}
+.ideacard .desc{font-size:13.5px;line-height:1.5}
+
+/* Saved plans */
+.planrow{background:#fff;border:1px solid var(--line);border-radius:10px;padding:13px 15px;margin-bottom:8px;display:flex;justify-content:space-between;gap:12px;align-items:center;cursor:pointer}
+.planrow:hover{border-color:var(--accent)}
+.planrow .pr-main b{font-weight:600;font-size:15px}
+.planrow .pr-main span{display:block;font-size:12.5px;color:var(--muted);margin-top:2px}
+.planrow .pr-ctr{display:flex;gap:6px;flex-shrink:0}
+
+/* Modal */
+.scrim{position:fixed;inset:0;background:rgba(22,36,58,.55);z-index:50;display:none;align-items:flex-end;justify-content:center}
+.scrim.show{display:flex}
+.sheet{background:var(--paper);width:100%;max-width:620px;max-height:90vh;border-radius:18px 18px 0 0;overflow:auto;box-shadow:0 -8px 40px rgba(0,0,0,.3)}
+@media(min-width:620px){.scrim{align-items:center}.sheet{border-radius:16px;max-height:86vh}}
+.sheet header{position:sticky;top:0;background:var(--ink);color:#fff;padding:14px 18px;display:flex;justify-content:space-between;align-items:center;z-index:2}
+.sheet header .ctx{font-family:var(--disp);font-weight:600;letter-spacing:.03em;font-size:15px}
+.xbtn{background:none;border:none;color:#fff;font-size:22px;cursor:pointer;line-height:1;padding:2px 4px}
+.sheet .pad{padding:16px 18px 22px}
+.sheetbtns{display:flex;gap:8px;margin-top:18px}
+.sheetbtns button{flex:1;font-family:var(--body);font-weight:600;font-size:14px;border-radius:10px;padding:11px;cursor:pointer;border:1px solid var(--line);background:#fff;color:var(--ink)}
+.sheetbtns .save{background:var(--accent);border-color:var(--accent);color:#fff}
+.sheetbtns .save:hover{filter:brightness(.95)}
+
+/* Add-from-library picker inside plan */
+.pickbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:12px 0}
+.note{font-size:12px;color:var(--muted);margin-top:18px;line-height:1.55}
+
+@media print{
+  .bar,.actbar,.note,.libtools,.pickbar,.planhead .tot small,.iconbtn,.block .ctr .iconbtn{display:none!important}
+  body{background:#fff}.block{break-inside:avoid}.scrim{display:none!important}
+  .minbox{border:none;background:none}
+}
+@media(max-width:680px){
+  .block{grid-template-columns:80px 1fr}
+  .block .ctr{grid-column:1/3;justify-content:flex-end;padding:0 10px 10px}
+}
+</style>
+</head>
+<body>
+<div class="bar">
+  <div class="top">
+    <div class="brand">Practice Planner <span>·</span> DS Elite</div>
+    <div class="savechip" id="savechip"></div>
+  </div>
+  <div class="tabs" id="tabs"></div>
+</div>
+
+<div class="wrap" id="view"></div>
+
+<!-- Drill editor modal -->
+<div class="scrim" id="scrim">
+  <div class="sheet">
+    <header><div class="ctx" id="ed-ctx">Drill</div><button class="xbtn" id="ed-x">×</button></header>
+    <div class="pad" id="ed-pad"></div>
+  </div>
+</div>
+
+<script>
+/* ============================ STORAGE ============================ */
+const KEY='practicePlanner:v1';
+function storeGet(){
+  return (async()=>{
+    try{ if(window.storage){const r=await window.storage.get(KEY); if(r&&r.value) return JSON.parse(r.value);} }catch(e){}
+    try{ const v=localStorage.getItem(KEY); if(v) return JSON.parse(v); }catch(e){}
+    return null;
+  })();
+}
+let saveT=null;
+function chip(t){document.getElementById('savechip').textContent=t;}
+function save(){
+  chip('Saving…'); clearTimeout(saveT);
+  saveT=setTimeout(async()=>{
+    const s=JSON.stringify(STATE);
+    try{ localStorage.setItem(KEY,s); }catch(e){}
+    try{ if(window.storage){ await window.storage.set(KEY,s); chip('Saved ✓'); } else chip('Saved ✓'); }
+    catch(e){ chip('Saved locally'); }
+  },250);
+}
+
+/* ============================ SEED DATA ============================ */
+const SKILLS=['Serving','Passing','Setting','Hitting','Blocking','Defense','Ball control','Team play','Conditioning'];
+const PHASES=['warmup','skill','competitive','cooldown'];
+const LEVELS=['All levels','Beginner','Intermediate','Advanced'];
+
+// Each drill: id,name,skill,phase,minutes,minPlayers,maxPlayers,level,desc
+const SEED_DRILLS=[
+ {name:'Dynamic warm-up',skill:'Conditioning',phase:'warmup',minutes:8,minPlayers:1,maxPlayers:40,level:'All levels',desc:'Jog, high-knees, butt-kicks, lunges, arm circles, shoulder activation.'},
+ {name:'Wall passing',skill:'Passing',phase:'warmup',minutes:6,minPlayers:1,maxPlayers:40,level:'All levels',desc:'Continuous self-pass against the wall to wake up platform and footwork.'},
+ {name:'Partner pepper',skill:'Ball control',phase:'warmup',minutes:8,minPlayers:2,maxPlayers:40,level:'All levels',desc:'Pass–set–hit continuous control reps with a partner.'},
+ {name:'Movement & reaction prep',skill:'Conditioning',phase:'warmup',minutes:6,minPlayers:1,maxPlayers:40,level:'All levels',desc:'Shuffle, drop-step, sprint-to-base reaction footwork.'},
+
+ {name:'Serve to target zones',skill:'Serving',phase:'skill',minutes:12,minPlayers:2,maxPlayers:24,level:'All levels',desc:'Serve into deep corners and seams; track individual make-count by zone.'},
+ {name:'Make-5 ladder',skill:'Serving',phase:'skill',minutes:10,minPlayers:1,maxPlayers:24,level:'Intermediate',desc:'Make 5 serves in a row to a target; a miss resets the count.'},
+ {name:'Jump-serve reads',skill:'Serving',phase:'skill',minutes:12,minPlayers:4,maxPlayers:18,level:'Advanced',desc:'Toss consistency + contact height; servers chart depth and pace.'},
+ {name:'Consequence serving',skill:'Serving',phase:'skill',minutes:8,minPlayers:2,maxPlayers:24,level:'All levels',desc:'Miss = one quick reset rep; keeps focus under mild pressure.'},
+
+ {name:'Platform to target box',skill:'Passing',phase:'skill',minutes:12,minPlayers:3,maxPlayers:18,level:'All levels',desc:'Pass a coach toss into a target box; grade accuracy 0–3.'},
+ {name:'Live serve, graded 0–3',skill:'Passing',phase:'skill',minutes:14,minPlayers:6,maxPlayers:18,level:'Intermediate',desc:'Receive a real serve, grade the pass, no rally. Rotate servers.'},
+ {name:'Passing on the move',skill:'Passing',phase:'skill',minutes:10,minPlayers:3,maxPlayers:18,level:'All levels',desc:'Shuffle or drop-step then pass to target — angle and posture focus.'},
+
+ {name:'Setting footwork & hands',skill:'Setting',phase:'skill',minutes:12,minPlayers:2,maxPlayers:16,level:'All levels',desc:'Square to target, set to antenna and middle; clean release reps.'},
+ {name:'Set off a pass',skill:'Setting',phase:'skill',minutes:12,minPlayers:4,maxPlayers:16,level:'Intermediate',desc:'Setter reads an imperfect pass and delivers a hittable ball.'},
+
+ {name:'Approach + box hit',skill:'Hitting',phase:'skill',minutes:14,minPlayers:3,maxPlayers:18,level:'All levels',desc:'Footwork into a box-ball hit to zones; mechanics and contact point.'},
+ {name:'Hitting lines off coach',skill:'Hitting',phase:'skill',minutes:14,minPlayers:4,maxPlayers:18,level:'Intermediate',desc:'Coach tosses a consistent ball; hitters swing to called zones.'},
+ {name:'Tip & tool control',skill:'Hitting',phase:'skill',minutes:10,minPlayers:3,maxPlayers:18,level:'Advanced',desc:'Soft touches and tooling the block to spots — shot selection.'},
+
+ {name:'Footwork & seal block',skill:'Blocking',phase:'skill',minutes:12,minPlayers:2,maxPlayers:16,level:'Intermediate',desc:'Shuffle/crossover to position, penetrate and seal the net.'},
+ {name:'Read & dig down-balls',skill:'Defense',phase:'skill',minutes:12,minPlayers:3,maxPlayers:18,level:'All levels',desc:'Coach hits/tips to a target; read, dig, and reset to base.'},
+ {name:'Coach-on-player defense',skill:'Defense',phase:'skill',minutes:12,minPlayers:2,maxPlayers:16,level:'Intermediate',desc:'Coach attacks repeatedly; player digs and recovers under volume.'},
+ {name:'Pursuit & emergency',skill:'Defense',phase:'skill',minutes:8,minPlayers:2,maxPlayers:18,level:'Advanced',desc:'Rolls, run-throughs and extension digs — chase every ball.'},
+
+ {name:'Serving-accuracy ladder',skill:'Serving',phase:'competitive',minutes:10,minPlayers:2,maxPlayers:24,level:'All levels',desc:'Individual: climb zones by making serves; track personal best.'},
+ {name:'Pass-to-target challenge',skill:'Passing',phase:'competitive',minutes:10,minPlayers:3,maxPlayers:18,level:'All levels',desc:'Individual: best accuracy over 10 balls into the target.'},
+ {name:'Hitting-at-targets points',skill:'Hitting',phase:'competitive',minutes:10,minPlayers:3,maxPlayers:18,level:'Intermediate',desc:'Individual: score points by hitting called zones.'},
+ {name:'Defense survivor',skill:'Defense',phase:'competitive',minutes:10,minPlayers:2,maxPlayers:16,level:'All levels',desc:'Individual: dig X clean balls in a row to survive.'},
+ {name:'Court Royale (doubles)',skill:'Team play',phase:'competitive',minutes:18,minPlayers:6,maxPlayers:24,level:'All levels',desc:'Teams of 2, serve and rotate every point; miss = point other side. Individual scores.'},
+ {name:'King-of-court doubles',skill:'Team play',phase:'competitive',minutes:16,minPlayers:6,maxPlayers:24,level:'Intermediate',desc:'Winners hold a side; challengers rotate in. Fast and competitive.'},
+ {name:'Wash drill 6v6',skill:'Team play',phase:'competitive',minutes:18,minPlayers:10,maxPlayers:14,level:'Advanced',desc:'Score a "wash" by winning two rallies (serve + free-ball) in a row.'},
+ {name:'Mini-game brackets',skill:'Team play',phase:'competitive',minutes:16,minPlayers:8,maxPlayers:24,level:'All levels',desc:'Top finishers per court → Gold, rest → Silver. Bracket play.'},
+
+ {name:'Cool-down + stretch',skill:'Conditioning',phase:'cooldown',minutes:6,minPlayers:1,maxPlayers:40,level:'All levels',desc:'Light movement, static stretch, breathing.'},
+ {name:'Cool-down + coach notes',skill:'Team play',phase:'cooldown',minutes:8,minPlayers:1,maxPlayers:40,level:'All levels',desc:'Stretch while coaches give takeaways and tomorrow\'s focus.'}
+];
+
+/* ============================ STATE ============================ */
+let STATE=null, TAB='generate';
+function uid(){return 'd'+Math.abs((Date.now()^(performance.now()*1000|0))).toString(36)+(STATE&&STATE.seq?(STATE.seq++):0);}
+function freshState(){
+  return {
+    seq:1,
+    drills:SEED_DRILLS.map((d,i)=>({id:'seed'+i,...d})),
+    plans:[],            // saved plans
+    draft:null,          // working plan {name,date,minutes,players,level,focus:[],coaches,blocks:[]}
+    gen:{minutes:120,players:18,level:'All levels',focus:['Serving','Passing'],name:'',date:'',coaches:''}
+  };
+}
+
+/* ============================ GENERATOR ============================ */
+function fits(d,players,level){
+  const lvlOk = level==='All levels' || d.level==='All levels' || d.level===level;
+  const pOk = players>=d.minPlayers && players<=d.maxPlayers;
+  return lvlOk && pOk;
+}
+function pick(pool,used){
+  const fresh=pool.filter(d=>!used.has(d.id));
+  const arr=fresh.length?fresh:pool;
+  if(!arr.length) return null;
+  return arr[Math.floor(Math.random()*arr.length)];
+}
+function generatePlan(g){
+  const T=Math.max(30,+g.minutes||90);
+  const players=+g.players||12, level=g.level||'All levels';
+  const focus=(g.focus&&g.focus.length)?g.focus:SKILLS.slice(0,3);
+  const D=STATE.drills;
+  const used=new Set();
+  const blocks=[];
+
+  // budgets
+  const warmT=Math.min(15,Math.max(8,Math.round(T*0.12)));
+  const coolT=Math.min(10,Math.max(5,Math.round(T*0.06)));
+  const compT=Math.round(T*0.22);
+  let skillT=T-warmT-coolT-compT;
+
+  // warmup (1-2)
+  const warmPool=D.filter(d=>d.phase==='warmup'&&fits(d,players,level));
+  let w=pick(warmPool,used); if(w){used.add(w.id);blocks.push(blk(w,Math.min(w.minutes,warmT)));}
+  let warmLeft=warmT-(w?Math.min(w.minutes,warmT):0);
+  if(warmLeft>=5){let w2=pick(warmPool,used); if(w2){used.add(w2.id);blocks.push(blk(w2,warmLeft));}}
+  else if(!w){blocks.push(custom('Dynamic warm-up','warmup','Conditioning',warmT));}
+
+  // skill blocks — distribute across focus skills
+  const perSkill=Math.max(8,Math.floor(skillT/focus.length));
+  let spent=0;
+  focus.forEach((sk,idx)=>{
+    let target = idx===focus.length-1 ? (skillT-spent) : perSkill;
+    let remaining=target;
+    let guard=0;
+    while(remaining>=8 && guard<6){
+      guard++;
+      const pool=D.filter(d=>d.phase==='skill'&&d.skill===sk&&fits(d,players,level));
+      const d=pick(pool,used);
+      if(!d){blocks.push(custom(sk+' skill work','skill',sk,remaining));remaining=0;break;}
+      used.add(d.id);
+      const m=Math.min(d.minutes,remaining);
+      blocks.push(blk(d,m));
+      remaining-=m;
+      spent+=m;
+      // add a short water break between big skill blocks
+    }
+    if(remaining>0 && remaining<8 && blocks.length){
+      blocks[blocks.length-1].minutes+=remaining; spent+=remaining;
+    }
+  });
+  // water break before competition
+  blocks.push(custom('Water break','water','Conditioning',3));
+
+  // competitive — prefer a team-play or focus-matched competitive drill
+  let compPool=D.filter(d=>d.phase==='competitive'&&fits(d,players,level)&&(focus.includes(d.skill)||d.skill==='Team play'));
+  if(!compPool.length) compPool=D.filter(d=>d.phase==='competitive'&&fits(d,players,level));
+  let cLeft=compT, cGuard=0;
+  while(cLeft>=8 && cGuard<3){
+    cGuard++;
+    const d=pick(compPool,used); if(!d){blocks.push(custom('Compete: best-of points','competitive',focus[0],cLeft));cLeft=0;break;}
+    used.add(d.id);
+    const m=Math.min(d.minutes,cLeft); blocks.push(blk(d,m)); cLeft-=m;
+  }
+  if(cLeft>0&&blocks.length){blocks[blocks.length-1].minutes+=cLeft;}
+
+  // cooldown
+  const coolPool=D.filter(d=>d.phase==='cooldown'&&fits(d,players,level));
+  let c=pick(coolPool,used);
+  if(c){blocks.push(blk(c,coolT));} else blocks.push(custom('Cool-down + coach notes','cooldown','Team play',coolT));
+
+  return {
+    name:g.name||(focus.join(' + ')+' practice'),
+    date:g.date||'', coaches:g.coaches||'',
+    minutes:T, players, level, focus:focus.slice(),
+    blocks
+  };
+}
+function blk(d,minutes){return {id:uid(),name:d.name,skill:d.skill,phase:d.phase,desc:d.desc,minutes};}
+function custom(name,phase,skill,minutes){return {id:uid(),name,skill,phase,desc:'',minutes};}
+
+/* ============================ RENDER ============================ */
+function renderTabs(){
+  const defs=[['generate','Generate','Build a plan'],['plans','Plans','Saved'],['library','Library','Drills & skills'],['ideas','Ideas','Get unstuck']];
+  const t=document.getElementById('tabs'); t.innerHTML='';
+  defs.forEach(([k,a,b])=>{
+    const el=document.createElement('button');
+    el.className='tab'+(k===TAB?' active':'');
+    el.innerHTML=a+'<small>'+b+'</small>';
+    el.onclick=()=>{TAB=k;render();};
+    t.appendChild(el);
+  });
+}
+function render(){
+  renderTabs();
+  const v=document.getElementById('view');
+  if(TAB==='generate') v.innerHTML=viewGenerate();
+  else if(TAB==='plans') v.innerHTML=viewPlans();
+  else if(TAB==='library') v.innerHTML=viewLibrary();
+  else if(TAB==='ideas') v.innerHTML=viewIdeas();
+  wire();
+}
+
+/* ---- GENERATE ---- */
+function viewGenerate(){
+  const g=STATE.gen;
+  const chips=SKILLS.map(s=>`<span class="chip${g.focus.includes(s)?' on':''}" data-focus="${s}">${s}</span>`).join('');
+  let form=`
+   <h2 class="sec">Build a practice</h2>
+   <div class="sub">Set the time and group, pick your focus skills, and generate a plan. Tweak any block, then save it.</div>
+   <div class="formgrid">
+     <label class="fld">Practice name<input id="g-name" value="${esc(g.name)}" placeholder="e.g. Tuesday — Serve & Pass"></label>
+     <label class="fld">Date<input id="g-date" value="${esc(g.date)}" placeholder="—"></label>
+     <label class="fld">Total minutes<input id="g-min" type="number" min="30" step="5" value="${g.minutes}"></label>
+     <label class="fld"># Players<input id="g-pl" type="number" min="2" value="${g.players}"></label>
+     <label class="fld">Level
+       <select id="g-lvl">${LEVELS.map(l=>`<option${l===g.level?' selected':''}>${l}</option>`).join('')}</select></label>
+     <label class="fld">Coaches / courts<input id="g-co" value="${esc(g.coaches)}" placeholder="—"></label>
+   </div>
+   <label class="fld" style="margin-bottom:2px">Focus skills</label>
+   <div class="chips" id="focusChips">${chips}</div>
+   <div class="actbar">
+     <button class="act primary" id="genBtn">⚡ Generate plan</button>
+     <button class="act" id="blankBtn">Start blank</button>
+   </div>`;
+  return form + (STATE.draft? renderPlan(STATE.draft,true) : '<div class="empty">No plan yet — set your inputs and hit <b>Generate</b>.</div>');
+}
+
+function renderPlan(p,editable){
+  const total=p.blocks.reduce((a,b)=>a+(+b.minutes||0),0);
+  let rows=p.blocks.map((b,i)=>{
+    const ctr = editable? `<div class="ctr">
+        <button class="iconbtn" data-mv="${i}" data-dir="-1" title="Move up">▲</button>
+        <button class="iconbtn" data-mv="${i}" data-dir="1" title="Move down">▼</button>
+        <input class="minbox" data-min="${i}" type="number" min="0" value="${b.minutes}">
+        <button class="iconbtn" data-edblk="${i}" title="Edit">✎</button>
+        <button class="iconbtn" data-del="${i}" title="Remove">✕</button>
+      </div>` : `<div class="ctr"><span class="minbox" style="border:none">${b.minutes}m</span></div>`;
+    return `<div class="block">
+      <div class="tp ph-${b.phase}">${b.minutes}m<span class="ph">${b.phase}</span></div>
+      <div class="body"><b>${esc(b.name)}</b>${b.desc?`<span>${esc(b.desc)}</span>`:''}${b.skill?`<span style="color:var(--accent);font-weight:600">${esc(b.skill)}</span>`:''}</div>
+      ${ctr}</div>`;
+  }).join('');
+  const diff=total-(p.minutes||total);
+  const diffTxt = diff===0?'on target':(diff>0?`+${diff}m over`:`${-diff}m under`);
+  let head=`<div class="planhead">
+     <div><div class="ttl">${esc(p.name||'Practice plan')}</div>
+       <div class="meta2">${[p.date,p.players+' players',p.level,p.coaches].filter(Boolean).join(' · ')}</div></div>
+     <div class="tot">${total}m<small>${editable?'target '+(p.minutes||total)+'m · '+diffTxt:'total'}</small></div>
+   </div>`;
+  let tools = editable? `<div class="pickbar">
+      <button class="act primary" id="saveDraft">💾 Save plan</button>
+      <button class="act" id="addBlk">＋ Add drill from library</button>
+      <button class="act" id="addCustom">＋ Add custom block</button>
+      <button class="act" id="regen">↻ Regenerate</button>
+      <button class="act" onclick="window.print()">🖨 Print</button>
+    </div>` : '';
+  return head + rows + tools;
+}
+
+/* ---- PLANS ---- */
+function viewPlans(){
+  let body;
+  if(!STATE.plans.length) body='<div class="empty">No saved plans yet. Generate one on the <b>Generate</b> tab and save it.</div>';
+  else body=STATE.plans.map((p,i)=>{
+    const total=p.blocks.reduce((a,b)=>a+(+b.minutes||0),0);
+    return `<div class="planrow" data-openplan="${i}">
+      <div class="pr-main"><b>${esc(p.name||'Practice plan')}</b>
+        <span>${[p.date,total+' min',p.players+' players',(p.focus||[]).join(' + ')].filter(Boolean).join(' · ')}</span></div>
+      <div class="pr-ctr">
+        <button class="iconbtn" data-dupplan="${i}" title="Duplicate">⧉</button>
+        <button class="iconbtn" data-delplan="${i}" title="Delete">✕</button>
+      </div></div>`;
+  }).join('');
+  return `<h2 class="sec">Saved plans</h2>
+    <div class="sub">Tap a plan to open it in the editor. Duplicate to reuse as a starting point.</div>
+    ${body}
+    <div class="actbar"><button class="act" id="exportBtn">⬇ Export all data (JSON)</button>
+    <button class="act" id="importBtn">⬆ Import data</button>
+    <input type="file" id="importFile" accept="application/json" style="display:none"></div>
+    <div class="note">Everything (drills, plans, your last inputs) is saved automatically to this device and will be here next time. Use Export to back up or move to another device.</div>`;
+}
+
+/* ---- LIBRARY ---- */
+let libFilter={skill:'',q:''};
+function viewLibrary(){
+  const skillOpts=['<option value="">All skills</option>'].concat(SKILLS.map(s=>`<option${libFilter.skill===s?' selected':''}>${s}</option>`)).join('');
+  let list=STATE.drills.filter(d=>{
+    if(libFilter.skill && d.skill!==libFilter.skill) return false;
+    if(libFilter.q){const q=libFilter.q.toLowerCase(); if(!(d.name.toLowerCase().includes(q)||d.desc.toLowerCase().includes(q)||d.skill.toLowerCase().includes(q))) return false;}
+    return true;
+  });
+  const cards = list.length? list.map(d=>`
+    <div class="drillcard">
+      <div class="dc-main"><b>${esc(d.name)}</b>
+        <div class="tagrow">
+          <span class="tagbadge">${esc(d.skill)}</span>
+          <span class="tagbadge phase">${esc(d.phase)}</span>
+          <span class="tagbadge min">${d.minutes}m</span>
+          <span class="tagbadge lvl">${esc(d.level)}</span>
+          <span class="tagbadge">${d.minPlayers}–${d.maxPlayers} players</span>
+        </div>
+        ${d.desc?`<div class="desc">${esc(d.desc)}</div>`:''}
+      </div>
+      <div class="dc-ctr">
+        <button class="iconbtn" data-editdrill="${d.id}" title="Edit">✎</button>
+        <button class="iconbtn" data-deldrill="${d.id}" title="Delete">✕</button>
+      </div>
+    </div>`).join('') : '<div class="empty">No drills match. Adjust the filter or add one.</div>';
+  return `<h2 class="sec">Drill & skill library</h2>
+    <div class="sub">Your reusable database of drills. The generator pulls from here, filtered by skill, level and player count.</div>
+    <div class="libtools">
+      <select id="libSkill" class="search" style="flex:0 0 160px">${skillOpts}</select>
+      <input class="search" id="libQ" placeholder="Search drills…" value="${esc(libFilter.q)}">
+      <button class="act primary" id="addDrill">＋ Add drill</button>
+    </div>
+    ${cards}`;
+}
+
+/* ---- IDEAS ---- */
+let ideaPool=[];
+function viewIdeas(){
+  const chips=SKILLS.map(s=>`<span class="chip" data-ideaskill="${s}">${s}</span>`).join('');
+  const cards = ideaPool.length? ideaPool.map(d=>`
+    <div class="ideacard"><b>${esc(d.name)}</b>
+      <div class="meta3">${esc(d.skill)} · ${esc(d.phase)} · ${d.minutes}m · ${esc(d.level)}</div>
+      <div class="desc">${esc(d.desc||'(no description)')}</div>
+      <div class="actbar"><button class="act" data-ideaadd="${d.id}">＋ Add to current plan</button></div>
+    </div>`).join('') : '<div class="empty">Pick a skill above (or hit Surprise me) to get drill ideas.</div>';
+  return `<h2 class="sec">Idea generator</h2>
+    <div class="sub">Stuck on what to run? Tap a skill to pull random drills from your library, or get a surprise mix.</div>
+    <div class="chips">${chips}</div>
+    <div class="actbar"><button class="act primary" id="surprise">🎲 Surprise me (mixed)</button>
+      <button class="act" id="clearIdeas">Clear</button></div>
+    ${cards}`;
+}
+function ideasFor(skill){
+  let pool=STATE.drills.filter(d=>!skill||d.skill===skill);
+  pool=pool.slice().sort(()=>Math.random()-0.5).slice(0,4);
+  ideaPool=pool; render();
+}
+
+/* ============================ WIRING ============================ */
+function wire(){
+  // GENERATE
+  byId('g-name')&&on('g-name','input',e=>STATE.gen.name=e.target.value);
+  byId('g-date')&&on('g-date','input',e=>STATE.gen.date=e.target.value);
+  byId('g-min')&&on('g-min','input',e=>STATE.gen.minutes=+e.target.value);
+  byId('g-pl')&&on('g-pl','input',e=>STATE.gen.players=+e.target.value);
+  byId('g-lvl')&&on('g-lvl','change',e=>STATE.gen.level=e.target.value);
+  byId('g-co')&&on('g-co','input',e=>STATE.gen.coaches=e.target.value);
+  document.querySelectorAll('[data-focus]').forEach(el=>el.onclick=()=>{
+    const s=el.dataset.focus, f=STATE.gen.focus;
+    const i=f.indexOf(s); if(i>=0)f.splice(i,1); else f.push(s);
+    save(); render();
+  });
+  byId('genBtn')&&(byId('genBtn').onclick=()=>{
+    if(!STATE.gen.focus.length){alert('Pick at least one focus skill.');return;}
+    STATE.draft=generatePlan(STATE.gen); save(); render();
+  });
+  byId('blankBtn')&&(byId('blankBtn').onclick=()=>{
+    const g=STATE.gen;
+    STATE.draft={name:g.name||'New practice',date:g.date,coaches:g.coaches,minutes:+g.minutes||90,players:+g.players||12,level:g.level,focus:g.focus.slice(),blocks:[]};
+    save(); render();
+  });
+
+  // PLAN editor controls (draft)
+  document.querySelectorAll('[data-min]').forEach(el=>el.oninput=()=>{STATE.draft.blocks[+el.dataset.min].minutes=Math.max(0,+el.value||0);save();updateTotals();});
+  document.querySelectorAll('[data-mv]').forEach(el=>el.onclick=()=>{
+    const i=+el.dataset.mv, dir=+el.dataset.dir, b=STATE.draft.blocks, j=i+dir;
+    if(j<0||j>=b.length)return; [b[i],b[j]]=[b[j],b[i]]; save(); render();
+  });
+  document.querySelectorAll('[data-del]').forEach(el=>el.onclick=()=>{STATE.draft.blocks.splice(+el.dataset.del,1);save();render();});
+  document.querySelectorAll('[data-edblk]').forEach(el=>el.onclick=()=>editBlock(+el.dataset.edblk));
+  byId('saveDraft')&&(byId('saveDraft').onclick=saveDraft);
+  byId('regen')&&(byId('regen').onclick=()=>{STATE.draft=generatePlan(STATE.gen);save();render();});
+  byId('addBlk')&&(byId('addBlk').onclick=openLibraryPicker);
+  byId('addCustom')&&(byId('addCustom').onclick=()=>editBlock(-1));
+
+  // PLANS
+  document.querySelectorAll('[data-openplan]').forEach(el=>el.onclick=e=>{
+    if(e.target.closest('[data-delplan],[data-dupplan]'))return;
+    STATE.draft=JSON.parse(JSON.stringify(STATE.plans[+el.dataset.openplan])); TAB='generate'; save(); render();
+  });
+  document.querySelectorAll('[data-delplan]').forEach(el=>el.onclick=e=>{e.stopPropagation();
+    if(confirm('Delete this saved plan?')){STATE.plans.splice(+el.dataset.delplan,1);save();render();}});
+  document.querySelectorAll('[data-dupplan]').forEach(el=>el.onclick=e=>{e.stopPropagation();
+    const p=JSON.parse(JSON.stringify(STATE.plans[+el.dataset.dupplan]));p.name=(p.name||'Plan')+' (copy)';STATE.plans.unshift(p);save();render();});
+  byId('exportBtn')&&(byId('exportBtn').onclick=exportData);
+  byId('importBtn')&&(byId('importBtn').onclick=()=>byId('importFile').click());
+  byId('importFile')&&(byId('importFile').onchange=importData);
+
+  // LIBRARY
+  byId('libSkill')&&on('libSkill','change',e=>{libFilter.skill=e.target.value;render();});
+  byId('libQ')&&on('libQ','input',e=>{libFilter.q=e.target.value;render();});
+  byId('addDrill')&&(byId('addDrill').onclick=()=>editDrill(null));
+  document.querySelectorAll('[data-editdrill]').forEach(el=>el.onclick=()=>editDrill(el.dataset.editdrill));
+  document.querySelectorAll('[data-deldrill]').forEach(el=>el.onclick=()=>{
+    if(confirm('Delete this drill from the library?')){STATE.drills=STATE.drills.filter(d=>d.id!==el.dataset.deldrill);save();render();}});
+
+  // IDEAS
+  document.querySelectorAll('[data-ideaskill]').forEach(el=>el.onclick=()=>ideasFor(el.dataset.ideaskill));
+  byId('surprise')&&(byId('surprise').onclick=()=>ideasFor(''));
+  byId('clearIdeas')&&(byId('clearIdeas').onclick=()=>{ideaPool=[];render();});
+  document.querySelectorAll('[data-ideaadd]').forEach(el=>el.onclick=()=>{
+    const d=STATE.drills.find(x=>x.id===el.dataset.ideaadd); if(!d)return;
+    if(!STATE.draft)STATE.draft={name:'New practice',date:'',coaches:'',minutes:90,players:12,level:'All levels',focus:[],blocks:[]};
+    STATE.draft.blocks.push(blk(d,d.minutes)); save();
+    chip('Added to plan ✓');
+    if(confirm('Added to your current plan. Go to it now?')){TAB='generate';render();}
+  });
+}
+function updateTotals(){ // light refresh of total without full re-render
+  const p=STATE.draft; if(!p)return;
+  const total=p.blocks.reduce((a,b)=>a+(+b.minutes||0),0);
+  const tot=document.querySelector('.planhead .tot');
+  if(tot){const diff=total-(p.minutes||total);const dt=diff===0?'on target':(diff>0?`+${diff}m over`:`${-diff}m under`);
+    tot.innerHTML=total+'m<small>target '+(p.minutes||total)+'m · '+dt+'</small>';}
+  document.querySelectorAll('.block .tp').forEach((tp,i)=>{if(p.blocks[i])tp.firstChild.textContent=p.blocks[i].minutes+'m';});
+}
+function saveDraft(){
+  const p=STATE.draft; if(!p||!p.blocks.length){alert('Nothing to save yet.');return;}
+  p.name=p.name||'Practice plan';
+  // replace if a plan with same name+date exists, else add
+  const idx=STATE.plans.findIndex(x=>x.name===p.name && x.date===p.date);
+  const copy=JSON.parse(JSON.stringify(p));
+  if(idx>=0){if(confirm('A plan named "'+p.name+'" on this date exists. Overwrite it?'))STATE.plans[idx]=copy;else STATE.plans.unshift(copy);}
+  else STATE.plans.unshift(copy);
+  save(); chip('Plan saved ✓'); TAB='plans'; render();
+}
+
+/* ============================ MODALS ============================ */
+function openModal(html){byId('ed-pad').innerHTML=html;byId('scrim').classList.add('show');}
+function closeModal(){byId('scrim').classList.remove('show');}
+byId('ed-x').onclick=closeModal;
+byId('scrim').addEventListener('click',e=>{if(e.target.id==='scrim')closeModal();});
+
+// Edit a plan block (idx -1 = new custom)
+function editBlock(idx){
+  const isNew=idx<0;
+  const b=isNew?{name:'',skill:'',phase:'skill',desc:'',minutes:10}:STATE.draft.blocks[idx];
+  byId('ed-ctx').textContent=isNew?'Add block':'Edit block';
+  openModal(`
+    <div class="formgrid">
+      <label class="fld" style="grid-column:1/-1">Name<input id="b-name" value="${esc(b.name)}"></label>
+      <label class="fld">Skill<select id="b-skill"><option value="">—</option>${SKILLS.map(s=>`<option${b.skill===s?' selected':''}>${s}</option>`).join('')}</select></label>
+      <label class="fld">Phase<select id="b-phase">${['warmup','skill','competitive','cooldown','water'].map(p=>`<option${b.phase===p?' selected':''}>${p}</option>`).join('')}</select></label>
+      <label class="fld">Minutes<input id="b-min" type="number" min="0" value="${b.minutes}"></label>
+    </div>
+    <label class="fld">Notes / description<textarea id="b-desc">${esc(b.desc||'')}</textarea></label>
+    <div class="sheetbtns"><button id="b-cancel">Cancel</button><button class="save" id="b-save">Save block</button></div>`);
+  byId('b-cancel').onclick=closeModal;
+  byId('b-save').onclick=()=>{
+    const nb={id:isNew?uid():b.id,name:byId('b-name').value.trim()||'Untitled',skill:byId('b-skill').value,
+      phase:byId('b-phase').value,desc:byId('b-desc').value.trim(),minutes:Math.max(0,+byId('b-min').value||0)};
+    if(isNew)STATE.draft.blocks.push(nb); else STATE.draft.blocks[idx]=nb;
+    save();closeModal();render();
+  };
+}
+// Library picker to add an existing drill into the draft
+function openLibraryPicker(){
+  byId('ed-ctx').textContent='Add drill from library';
+  const groups=SKILLS.map(s=>{
+    const items=STATE.drills.filter(d=>d.skill===s);
+    if(!items.length)return '';
+    return `<details class="skillgroup" style="margin-bottom:6px;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#fff">
+      <summary style="cursor:pointer;list-style:none;padding:10px 12px;font-family:var(--disp);font-weight:600;font-size:13.5px;text-transform:uppercase;letter-spacing:.04em">${s} <span style="color:var(--muted);font-weight:400">(${items.length})</span></summary>
+      ${items.map(d=>`<div class="drill" data-pick="${d.id}" style="padding:9px 12px;border-top:1px solid var(--line);cursor:pointer">
+        <b style="font-size:13.5px">${esc(d.name)}</b> <span style="color:var(--accent);font-size:12px">${d.minutes}m · ${d.phase}</span>
+        ${d.desc?`<div style="font-size:12px;color:var(--muted);margin-top:1px">${esc(d.desc)}</div>`:''}</div>`).join('')}
+    </details>`;
+  }).join('');
+  openModal(`<div class="sub" style="margin-top:0">Tap a drill to drop it into your plan.</div>${groups}
+    <div class="sheetbtns"><button id="p-cancel">Done</button></div>`);
+  byId('p-cancel').onclick=closeModal;
+  byId('ed-pad').querySelectorAll('[data-pick]').forEach(el=>el.onclick=()=>{
+    const d=STATE.drills.find(x=>x.id===el.dataset.pick);
+    STATE.draft.blocks.push(blk(d,d.minutes)); save(); chip('Added ✓');
+    el.style.background='var(--accent-soft)';
+  });
+}
+// Edit / add a library drill
+function editDrill(id){
+  const isNew=!id;
+  const d=isNew?{name:'',skill:'Serving',phase:'skill',minutes:10,minPlayers:2,maxPlayers:18,level:'All levels',desc:''}:STATE.drills.find(x=>x.id===id);
+  byId('ed-ctx').textContent=isNew?'Add drill':'Edit drill';
+  openModal(`
+    <div class="formgrid">
+      <label class="fld" style="grid-column:1/-1">Name<input id="d-name" value="${esc(d.name)}"></label>
+      <label class="fld">Skill<select id="d-skill">${SKILLS.map(s=>`<option${d.skill===s?' selected':''}>${s}</option>`).join('')}</select></label>
+      <label class="fld">Phase<select id="d-phase">${PHASES.map(p=>`<option${d.phase===p?' selected':''}>${p}</option>`).join('')}</select></label>
+      <label class="fld">Default minutes<input id="d-min" type="number" min="1" value="${d.minutes}"></label>
+      <label class="fld">Level<select id="d-lvl">${LEVELS.map(l=>`<option${d.level===l?' selected':''}>${l}</option>`).join('')}</select></label>
+      <label class="fld">Min players<input id="d-minp" type="number" min="1" value="${d.minPlayers}"></label>
+      <label class="fld">Max players<input id="d-maxp" type="number" min="1" value="${d.maxPlayers}"></label>
+    </div>
+    <label class="fld">Description<textarea id="d-desc">${esc(d.desc||'')}</textarea></label>
+    <div class="sheetbtns"><button id="d-cancel">Cancel</button><button class="save" id="d-save">Save drill</button></div>`);
+  byId('d-cancel').onclick=closeModal;
+  byId('d-save').onclick=()=>{
+    const nd={id:isNew?uid():d.id,name:byId('d-name').value.trim()||'Untitled drill',skill:byId('d-skill').value,
+      phase:byId('d-phase').value,minutes:Math.max(1,+byId('d-min').value||10),level:byId('d-lvl').value,
+      minPlayers:Math.max(1,+byId('d-minp').value||1),maxPlayers:Math.max(1,+byId('d-maxp').value||40),desc:byId('d-desc').value.trim()};
+    if(isNew)STATE.drills.unshift(nd); else STATE.drills=STATE.drills.map(x=>x.id===d.id?nd:x);
+    save();closeModal();render();
+  };
+}
+
+/* ============================ IMPORT / EXPORT ============================ */
+function exportData(){
+  const blob=new Blob([JSON.stringify(STATE,null,2)],{type:'application/json'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+  a.download='practice-planner-backup.json';a.click();URL.revokeObjectURL(a.href);
+}
+function importData(e){
+  const f=e.target.files[0]; if(!f)return;
+  const r=new FileReader();
+  r.onload=()=>{try{const data=JSON.parse(r.result);
+    if(!data.drills||!data.plans){alert('That file does not look like a Practice Planner backup.');return;}
+    if(confirm('Import will replace your current drills and plans. Continue?')){STATE=data;save();TAB='plans';render();}
+  }catch(err){alert('Could not read that file.');}};
+  r.readAsText(f);
+}
+
+/* ============================ HELPERS ============================ */
+function esc(s){return (s==null?'':''+s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function byId(id){return document.getElementById(id);}
+function on(id,ev,fn){byId(id).addEventListener(ev,fn);}
+
+/* ============================ BOOT ============================ */
+(async()=>{
+  const loaded=await storeGet();
+  STATE=loaded||freshState();
+  // make sure required keys exist if loading an older save
+  STATE.seq=STATE.seq||1; STATE.drills=STATE.drills||[]; STATE.plans=STATE.plans||[];
+  STATE.gen=STATE.gen||freshState().gen;
+  render(); chip('Saved ✓');
+})();
+</script>
+</body>
+</html>
