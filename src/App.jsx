@@ -640,6 +640,8 @@ export default function App() {
   const [players, setPlayers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState("dashboard");
+  // Which nav dropdown ("Tryouts" / "Operations") is open, or null. Click-to-toggle.
+  const [openMenu, setOpenMenu] = useState(null);
   // Selected age-group tabs. Multi-select: clicking a tab toggles membership.
   // Always at least one division is selected. Drives Evaluate filter, Teams sections, and Rankings.
   const [selectedDivs, setSelectedDivs] = useState(["U14"]);
@@ -4767,21 +4769,42 @@ export default function App() {
           <span style={{fontSize:11,fontWeight:400,color:C.mut,marginLeft:6}}>2026-27 Tryouts</span>
         </div>
         <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-          <nav style={{display:"flex",gap:3,flexWrap:"wrap"}}>
-            {[
-              ["dashboard","Dashboard"],
-              ["evaluate","Evaluate"],
-              ["teams","Teams"],
-              ["tracker","Tracker"],
-              ["rankings","Rankings"],
-              ["tournaments","Tournaments"],
-              ["practice","Practice"],
-              ["activity","Activity"],
-              ...(isAdmin ? [["coaches","Coaches"]] : []),
-            ].map(([v,l]) =>
-              <button key={v} style={{padding:"6px 14px",borderRadius:8,border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600,background:view===v?C.gold:"transparent",color:view===v?"#000":C.mut}} onClick={()=>setView(v)}>{l}</button>
-            )}
+          <nav style={{display:"flex",gap:3,flexWrap:"wrap",position:"relative",zIndex:50}}>
+            {(() => {
+              const btn = (active) => ({padding:"6px 14px",borderRadius:8,border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600,background:active?C.gold:"transparent",color:active?"#000":C.mut});
+              const item = (v,l) =>
+                <button key={v} style={btn(view===v)} onClick={()=>{ setView(v); setOpenMenu(null); }}>{l}</button>;
+              const groups = [
+                { title:"Tryouts", items:[["evaluate","Evaluate"],["teams","Teams"],["rankings","Rankings"]] },
+                { title:"Operations", items:[["tracker","Tracker"], ...(isAdmin ? [["coaches","Coaches"]] : []), ["practice","Practice"]] },
+              ];
+              return <>
+                {item("dashboard","Dashboard")}
+                {groups.map(g => {
+                  const activeInGroup = g.items.some(([v]) => v === view);
+                  const open = openMenu === g.title;
+                  return (
+                    <div key={g.title} style={{position:"relative"}}>
+                      <button style={btn(activeInGroup)} onClick={()=>setOpenMenu(open ? null : g.title)}>
+                        {g.title} <span style={{fontSize:9,opacity:.8}}>▾</span>
+                      </button>
+                      {open && (
+                        <div style={{position:"absolute",top:"100%",left:0,marginTop:4,background:C.card,border:"1px solid "+C.border,borderRadius:8,padding:4,minWidth:150,boxShadow:"0 10px 28px rgba(0,0,0,0.45)"}}>
+                          {g.items.map(([v,l]) =>
+                            <button key={v} style={{display:"block",width:"100%",textAlign:"left",padding:"8px 12px",borderRadius:6,border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600,background:view===v?C.gold:"transparent",color:view===v?"#000":C.text}} onClick={()=>{ setView(v); setOpenMenu(null); }}>{l}</button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                {item("tournaments","Tournaments")}
+                {item("activity","Activity")}
+                <button style={btn(false)} onClick={()=>{ window.location.href = "/practice"; }} title="Open the practice planner">Practice Planning</button>
+              </>;
+            })()}
           </nav>
+          {openMenu && <div onClick={()=>setOpenMenu(null)} style={{position:"fixed",inset:0,zIndex:40}} />}
           <button onClick={openAddPlayer} title="Add a player from any view"
             style={{padding:"6px 12px",borderRadius:8,border:"1px solid "+C.gold,background:"transparent",color:C.gold,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700}}>
             + Add Player
