@@ -27,6 +27,10 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:var(--body);-we
 .brand{font-family:var(--disp);font-weight:800;font-size:19px;color:var(--accent);display:flex;align-items:center;gap:8px}
 .brand .dia{font-size:22px}
 .brand .tag{font-weight:400;font-size:11px;color:var(--muted);margin-left:4px}
+.topright{display:flex;align-items:center;gap:12px}
+.backlink{font-family:var(--disp);font-weight:600;font-size:12px;color:var(--muted);text-decoration:none;border:1px solid var(--line);border-radius:8px;padding:6px 11px;transition:.15s;white-space:nowrap}
+.backlink:hover{border-color:var(--accent);color:#fff}
+.backlink .dia{color:var(--accent);margin-right:5px;font-size:13px}
 .savechip{font-size:12px;color:var(--muted);font-weight:500;min-height:16px}
 .tabs{display:flex;gap:4px;margin-top:12px;overflow-x:auto}
 .tab{flex:1;min-width:96px;border:none;background:rgba(255,255,255,.05);color:var(--muted);font-family:var(--disp);font-weight:700;
@@ -144,7 +148,10 @@ button.act.warn:hover{border-color:#ef4444;color:#ef4444}
 <div class="bar">
   <div class="top">
     <div class="brand"><span class="dia">◆</span> DS ELITE <span class="tag">Practice Planner</span></div>
-    <div class="savechip" id="savechip"></div>
+    <div class="topright">
+      <a class="backlink" href="/"><span class="dia">◆</span>Back to DS Elite</a>
+      <div class="savechip" id="savechip"></div>
+    </div>
   </div>
   <div class="tabs" id="tabs"></div>
 </div>
