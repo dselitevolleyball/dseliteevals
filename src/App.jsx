@@ -39,8 +39,8 @@ const EVAL_DATES = ["5/13","5/14","5/20","5/21","5/27","5/28","6/3","6/4","6/9",
 const STATUS_OPTS = ["In Progress","Offered","Accepted","Declined","No Offer"];
 const STATUS_COLORS = {"In Progress":"#999999","Offered":"#e91e8c","Accepted":"#22c55e","Declined":"#ef4444","No Offer":"#666666"};
 const C = {bg:"#0a0a0a",card:"#141414",border:"#2a2a2a",gold:"#e91e8c",text:"#ffffff",mut:"#999999",acc:"#ff69b4",red:"#ef4444",grn:"#22c55e"};
-// Only this coach may open the Coaches management screen. UI-level gate.
-const OWNER_EMAIL = "drew@drippingsportsclub.com";
+// Only these owner emails may open the Coaches management screen. UI-level gate.
+const OWNER_EMAILS = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"];
 
 // ─── Bulk tournament import (USAV format) ───────────────────────────────
 // Parses the format used by USAV / TournamentCentral listings:
@@ -647,7 +647,7 @@ export default function App() {
   const isAdmin    = !!coach?.is_admin;
   // Only the owner (Drew) can reach the Coaches screen. Team-list access is a
   // per-coach flag managed there; the owner always has access.
-  const isOwner      = (coach?.email || "").trim().toLowerCase() === OWNER_EMAIL;
+  const isOwner      = OWNER_EMAILS.includes((coach?.email || "").trim().toLowerCase());
   const canViewTeams = isOwner || !!coach?.can_view_teams;
 
   const [players, setPlayers] = useState([]);
