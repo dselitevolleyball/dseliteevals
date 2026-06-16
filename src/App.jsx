@@ -3106,7 +3106,7 @@ export default function App() {
   // Inline conflict detection flags court overflow, coach double-booking,
   // wrong practice count for level, and the U11/U12 timing rules.
   function renderPractice() {
-    const DAYS = ["Sun","Mon","Wed","Thu"];
+    const DAYS = ["Sun","Mon","Tue","Wed","Thu"];
     // Slots per day with court capacity for that slot.
     const SLOTS = {
       Sun: [
@@ -3119,6 +3119,10 @@ export default function App() {
         { label:"5-7pm",       capacity:4 },
         { label:"7-9pm",       capacity:4 },
       ],
+      Tue: [
+        { label:"5-7pm",       capacity:1 },
+        { label:"7-9pm",       capacity:1 },
+      ],
       Wed: [
         { label:"5-7pm",       capacity:4 },
         { label:"7-9pm",       capacity:4 },
@@ -3129,7 +3133,7 @@ export default function App() {
       ],
     };
     const YOUNG_DIVS = new Set(["U11","U12"]);
-    const WEEKDAYS = new Set(["Mon","Wed","Thu"]);
+    const WEEKDAYS = new Set(["Mon","Tue","Wed","Thu"]);
     // Slots that are "late" for U11/U12 purposes.
     const LATE_SLOTS = new Set(["7-9pm"]);
 
