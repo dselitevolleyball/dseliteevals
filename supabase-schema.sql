@@ -84,6 +84,7 @@ CREATE TABLE coaches (
   display_name  TEXT         NOT NULL DEFAULT '',
   is_admin      BOOLEAN      NOT NULL DEFAULT FALSE,
   is_approved   BOOLEAN      NOT NULL DEFAULT FALSE,
+  can_view_teams BOOLEAN     NOT NULL DEFAULT FALSE,  -- gates the Teams tab; managed in the Coaches screen (see migrations/20260616)
   created_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
   last_seen_at  TIMESTAMPTZ
 );

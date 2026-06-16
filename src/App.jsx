@@ -39,6 +39,8 @@ const EVAL_DATES = ["5/13","5/14","5/20","5/21","5/27","5/28","6/3","6/4","6/9",
 const STATUS_OPTS = ["In Progress","Offered","Accepted","Declined","No Offer"];
 const STATUS_COLORS = {"In Progress":"#999999","Offered":"#e91e8c","Accepted":"#22c55e","Declined":"#ef4444","No Offer":"#666666"};
 const C = {bg:"#0a0a0a",card:"#141414",border:"#2a2a2a",gold:"#e91e8c",text:"#ffffff",mut:"#999999",acc:"#ff69b4",red:"#ef4444",grn:"#22c55e"};
+// Only this coach may open the Coaches management screen. UI-level gate.
+const OWNER_EMAIL = "drew@drippingsportsclub.com";
 
 // ─── Bulk tournament import (USAV format) ───────────────────────────────
 // Parses the format used by USAV / TournamentCentral listings:
@@ -643,6 +645,10 @@ export default function App() {
 
   const isApproved = !!coach?.is_approved;
   const isAdmin    = !!coach?.is_admin;
+  // Only the owner (Drew) can reach the Coaches screen. Team-list access is a
+  // per-coach flag managed there; the owner always has access.
+  const isOwner      = (coach?.email || "").trim().toLowerCase() === OWNER_EMAIL;
+  const canViewTeams = isOwner || !!coach?.can_view_teams;
 
   const [players, setPlayers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -2972,8 +2978,8 @@ export default function App() {
   };
 
   function renderCoaches() {
-    if (!isAdmin) {
-      return <div style={{padding:24,color:C.mut,textAlign:"center"}}>Coach management is admin-only.</div>;
+    if (!isOwner) {
+      return <div style={{padding:24,color:C.mut,textAlign:"center"}}>The Coaches screen is restricted to the club administrator.</div>;
     }
     const th = {padding:"8px 10px",textAlign:"left",fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut,borderBottom:"1px solid "+C.border,background:C.card,whiteSpace:"nowrap"};
     const td = {padding:"8px 10px",fontSize:12,borderBottom:"1px solid "+C.border,verticalAlign:"middle"};
@@ -3047,6 +3053,7 @@ export default function App() {
                 <th style={th}>Email</th>
                 <th style={th}>Approved</th>
                 <th style={th}>Admin</th>
+                <th style={th}>Team Lists</th>
                 <th style={th}>Last seen</th>
                 <th style={th}>Joined</th>
                 <th style={th}></th>
@@ -3077,6 +3084,14 @@ export default function App() {
                             onChange={e => updateCoach(c.id, { is_admin: e.target.checked })}
                             style={{width:16,height:16,accentColor:C.gold,cursor:isSelf?"default":"pointer"}} />
                           <span style={{fontSize:11,color:c.is_admin?C.gold:C.mut,fontWeight:600}}>{c.is_admin?"Yes":"No"}</span>
+                        </label>
+                      </td>
+                      <td style={td}>
+                        <label style={{display:"inline-flex",alignItems:"center",gap:6,cursor:"pointer"}}>
+                          <input type="checkbox" checked={!!c.can_view_teams}
+                            onChange={e => updateCoach(c.id, { can_view_teams: e.target.checked })}
+                            style={{width:16,height:16,accentColor:C.acc,cursor:"pointer"}} />
+                          <span style={{fontSize:11,color:c.can_view_teams?C.acc:C.mut,fontWeight:600}}>{c.can_view_teams?"Yes":"No"}</span>
                         </label>
                       </td>
                       <td style={{...td,color:C.mut,whiteSpace:"nowrap"}}>{c.last_seen_at ? new Date(c.last_seen_at).toLocaleString() : "—"}</td>
@@ -4785,8 +4800,8 @@ export default function App() {
               const item = (v,l) =>
                 <button key={v} style={btn(view===v)} onClick={()=>{ setView(v); setOpenMenu(null); }}>{l}</button>;
               const groups = [
-                { title:"Tryouts", items:[["evaluate","Evaluate"],["teams","Teams"],["rankings","Rankings"]] },
-                { title:"Operations", items:[["tracker","Tracker"], ...(isAdmin ? [["coaches","Coaches"]] : []), ["practice","Practice"]] },
+                { title:"Tryouts", items:[["evaluate","Evaluate"], ...(canViewTeams ? [["teams","Teams"]] : []), ["rankings","Rankings"]] },
+                { title:"Operations", items:[["tracker","Tracker"], ...(isOwner ? [["coaches","Coaches"]] : []), ["practice","Practice"]] },
               ];
               return <>
                 {item("dashboard","Dashboard")}
@@ -4834,7 +4849,7 @@ export default function App() {
       {/* Admin notification: a coach has signed up and is waiting for
           approval. Loaded eagerly via the always-on loadCoaches effect so
           this banner shows on every tab, not just the Coaches one. */}
-      {isAdmin && (() => {
+      {isOwner && (() => {
         const pending = coachesList.filter(c => !c.is_approved);
         if (pending.length === 0 || view === "coaches") return null;
         return (
@@ -4873,7 +4888,7 @@ export default function App() {
       <div style={{padding:"14px 18px",maxWidth:1500,margin:"0 auto"}}>
         {view==="dashboard" && renderDashboard()}
         {view==="evaluate" && renderEval()}
-        {view==="teams" && renderTeams()}
+        {view==="teams" && (canViewTeams ? renderTeams() : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Team lists are restricted. Ask the club administrator (Drew) for access.</div>)}
         {view==="tracker" && renderTracker()}
         {view==="rankings" && renderRankings()}
         {view==="activity" && renderActivity()}
