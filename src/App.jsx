@@ -443,12 +443,19 @@ function isReturningDSE(p) {
   const t = (p.current_team || "").toUpperCase();
   return t.includes("DSE") || t.includes("DS ELITE");
 }
-// Highlights players added to the DB in the last 3 days — surfaces fresh CSV uploads.
-const NEW_PLAYER_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
+// Highlights players added to the DB in the last 5 days — surfaces fresh CSV uploads.
+const NEW_PLAYER_WINDOW_MS = 5 * 24 * 60 * 60 * 1000;
 function isNewPlayer(p) {
   if (!p.created_at) return false;
   const t = new Date(p.created_at).getTime();
   return Number.isFinite(t) && (Date.now() - t) < NEW_PLAYER_WINDOW_MS;
+}
+// Small green "NEW" badge for players added within the window above. Shown next
+// to the player's name everywhere the returning-athlete ◆ marker appears.
+function newIcon(p) {
+  return isNewPlayer(p)
+    ? <span title="New — added in the last 5 days" style={{display:"inline-block",padding:"1px 6px",borderRadius:9,fontSize:9,fontWeight:800,letterSpacing:0.3,background:C.grn+"22",color:C.grn,lineHeight:1.5,verticalAlign:"middle"}}>NEW</span>
+    : null;
 }
 
 const inpStyle = {background:"#1a1a1a",border:"1px solid "+C.border,borderRadius:6,color:C.text,fontFamily:"inherit",outline:"none"};
@@ -1871,11 +1878,10 @@ export default function App() {
                     <td style={tdS}>
                       <div style={{cursor:"pointer"}} onClick={()=>setProfileId(p.id)}>
                         <div style={{display:"flex",alignItems:"center",gap:5}}>
-                          {isReturningDSE(p) && <span title="DS Elite returning athlete" style={{color:C.gold,fontSize:14,fontWeight:800,lineHeight:1}}>◆</span>}
+                          {isReturningDSE(p) && <span title="DS Elite returning athlete" style={{color:C.gold,fontSize:14,fontWeight:800,lineHeight:1}}>◆</span>}{newIcon(p)}
                           <span style={{fontWeight:700,fontSize:12,color:C.gold}}>{p.first_name} {p.last_name}</span>
                         </div>
                         <div style={{fontSize:10,color:C.mut}}>Age {p.age} • {p.usavDiv||p.usav_div}</div>
-                        {isNewPlayer(p) && <Tag c={C.grn}>NEW</Tag>}
                         {p.min_level && <Tag c={C.gold}>Min: {p.min_level}</Tag>}
                         {p.supplemental===1 && <Tag c={C.acc}>SUPP</Tag>}
                         {p.status && p.status !== "In Progress" && <Tag c={STATUS_COLORS[p.status]}>{p.status}</Tag>}
@@ -2267,7 +2273,7 @@ export default function App() {
                           <span style={{fontSize:11,fontWeight:700,color:labelColor,minWidth:36}}>{rp}</span>
                           {player ? (<>
                             <span style={{display:"flex",alignItems:"center",gap:4,fontSize:12,fontWeight:600,flex:1,cursor:"pointer",color:nameColor}} onClick={()=>setProfileId(player.id)}>
-                              {isReturningDSE(player) && <span title="DS Elite returning athlete" style={{color:C.gold,fontSize:14,fontWeight:800,lineHeight:1}}>◆</span>}
+                              {isReturningDSE(player) && <span title="DS Elite returning athlete" style={{color:C.gold,fontSize:14,fontWeight:800,lineHeight:1}}>◆</span>}{newIcon(player)}
                               {player.first_name} {player.last_name}
                               {hi && <span title={hi.label} style={{fontSize:8,fontWeight:800,color:hi.color,padding:"1px 5px",borderRadius:5,border:"1px solid "+hi.color,letterSpacing:0.5,marginLeft:2}}>{hi.label}</span>}
                             </span>
@@ -2291,7 +2297,7 @@ export default function App() {
                     <DraggablePlayer key={p.id} player={p}>
                       <div style={{display:"flex",alignItems:"center",gap:6,padding:"5px 8px",marginBottom:2,background:rowBg,borderRadius:6,border:rowBorder}}>
                         <span style={{display:"flex",alignItems:"center",gap:4,fontSize:12,fontWeight:600,flex:1,cursor:"pointer",color:nameColor}} onClick={()=>setProfileId(p.id)}>
-                          {isReturningDSE(p) && <span title="DS Elite returning athlete" style={{color:C.gold,fontSize:14,fontWeight:800,lineHeight:1}}>◆</span>}
+                          {isReturningDSE(p) && <span title="DS Elite returning athlete" style={{color:C.gold,fontSize:14,fontWeight:800,lineHeight:1}}>◆</span>}{newIcon(p)}
                           {p.first_name} {p.last_name}
                           {hi && <span title={hi.label} style={{fontSize:8,fontWeight:800,color:hi.color,padding:"1px 5px",borderRadius:5,border:"1px solid "+hi.color,letterSpacing:0.5,marginLeft:2}}>{hi.label}</span>}
                         </span>
@@ -2354,7 +2360,7 @@ export default function App() {
                                   ? <RankInput value={rank} max={totalInPos} onCommit={(n)=>setPosRank(p.id, pos, n)} />
                                   : <span style={{minWidth:40}} />}
                                 <span style={{display:"flex",alignItems:"center",gap:4,flex:1,fontWeight:600,cursor:"pointer",color:nameColor}} onClick={()=>setProfileId(p.id)}>
-                                  {isReturningDSE(p) && <span title="DS Elite returning athlete" style={{color:C.gold,fontSize:14,fontWeight:800,lineHeight:1}}>◆</span>}
+                                  {isReturningDSE(p) && <span title="DS Elite returning athlete" style={{color:C.gold,fontSize:14,fontWeight:800,lineHeight:1}}>◆</span>}{newIcon(p)}
                                   {p.first_name} {p.last_name}
                                   {hi && <span title={hi.label} style={{fontSize:8,fontWeight:800,color:hi.color,padding:"1px 5px",borderRadius:5,border:"1px solid "+hi.color,letterSpacing:0.5,marginLeft:2}}>{hi.label}</span>}
                                 </span>
@@ -2388,7 +2394,7 @@ export default function App() {
                     <DraggablePlayer key={p.id} player={p}>
                       <div style={{display:"flex",alignItems:"center",gap:6,padding:"5px 8px",background:C.bg,borderRadius:5,fontSize:11}}>
                         <span style={{display:"flex",alignItems:"center",gap:4,flex:1,fontWeight:600,cursor:"pointer"}} onClick={()=>setProfileId(p.id)}>
-                          {isReturningDSE(p) && <span title="DS Elite returning athlete" style={{color:C.gold,fontSize:14,fontWeight:800,lineHeight:1}}>◆</span>}
+                          {isReturningDSE(p) && <span title="DS Elite returning athlete" style={{color:C.gold,fontSize:14,fontWeight:800,lineHeight:1}}>◆</span>}{newIcon(p)}
                           {p.first_name} {p.last_name}
                         </span>
                         {offerChip(p)}
@@ -2418,7 +2424,7 @@ export default function App() {
                     <DraggablePlayer key={p.id} player={p}>
                       <div style={{display:"flex",alignItems:"center",gap:6,padding:"5px 8px",background:C.bg,borderRadius:5,fontSize:11,opacity:0.85}}>
                         <span style={{display:"flex",alignItems:"center",gap:4,flex:1,fontWeight:600,cursor:"pointer"}} onClick={()=>setProfileId(p.id)}>
-                          {isReturningDSE(p) && <span title="DS Elite returning athlete" style={{color:C.gold,fontSize:14,fontWeight:800,lineHeight:1}}>◆</span>}
+                          {isReturningDSE(p) && <span title="DS Elite returning athlete" style={{color:C.gold,fontSize:14,fontWeight:800,lineHeight:1}}>◆</span>}{newIcon(p)}
                           {p.first_name} {p.last_name}
                         </span>
                         {pinnyChip(p)}
@@ -2505,7 +2511,7 @@ export default function App() {
               <tbody>{shown.map((p,i) => (
                 <tr key={p.id}>
                   <td style={tdS}><span style={{fontWeight:800,fontSize:15,color:i<3?C.gold:C.mut}}>#{i+1}</span></td>
-                  <td style={tdS}><span style={{display:"inline-flex",alignItems:"center",gap:5,fontWeight:700,fontSize:12,color:C.gold,cursor:"pointer"}} onClick={()=>setProfileId(p.id)}>{isReturningDSE(p) && <span title="DS Elite returning athlete" style={{color:C.gold,fontSize:14,fontWeight:800,lineHeight:1}}>◆</span>}{p.first_name} {p.last_name}</span></td>
+                  <td style={tdS}><span style={{display:"inline-flex",alignItems:"center",gap:5,fontWeight:700,fontSize:12,color:C.gold,cursor:"pointer"}} onClick={()=>setProfileId(p.id)}>{isReturningDSE(p) && <span title="DS Elite returning athlete" style={{color:C.gold,fontSize:14,fontWeight:800,lineHeight:1}}>◆</span>}{newIcon(p)}{p.first_name} {p.last_name}</span></td>
                   <td style={tdS}><span style={{fontWeight:700,color:p.tryout_number?C.gold:C.mut}}>{p.tryout_number ? "#"+p.tryout_number : "—"}</span></td>
                   <td style={tdS}>{p.age}</td>
                   <td style={tdS}><div style={{display:"flex",gap:2,flexWrap:"wrap"}}>{(p.positions||[]).map(pos=><Tag key={pos} c={C.grn}>{pos}</Tag>)}</div></td>
@@ -2538,7 +2544,7 @@ export default function App() {
           <div style={{display:"flex",justifyContent:"space-between",marginBottom:16}}>
             <div>
               <h2 style={{margin:0,fontSize:22,fontWeight:800,color:C.gold,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                {isReturningDSE(p) && <span title="DS Elite returning athlete" style={{color:C.gold,fontSize:14,fontWeight:800,lineHeight:1}}>◆</span>}
+                {isReturningDSE(p) && <span title="DS Elite returning athlete" style={{color:C.gold,fontSize:14,fontWeight:800,lineHeight:1}}>◆</span>}{newIcon(p)}
                 {p.first_name} {p.last_name}
               </h2>
               <div style={{display:"flex",gap:5,marginTop:6,flexWrap:"wrap"}}>
