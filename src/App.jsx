@@ -22,7 +22,7 @@ const CLINIC_DIVS = ["U13","U14","U15","U16","U17"];
 // Mirrors the EVAL_DATES pattern — short M/D strings. Edit here when the
 // club adds more clinic dates.
 const CLINIC_DATES = ["6/2"];
-const TM = {U10:["11-1","11-2","11-3"],U11:["11-1","11-2","11-3"],U12:["12-1","12-2","12-3"],U13:["13-1","13-2","13-3","13-4"],U14:["14-1","14-2","14-3","14-4","14-5"],U15:["15-1","15-2","15-3"],U16:["16 Diamond","16-1","16-2"],U17:["17-1"]};
+const TM = {U10:["11-1","11-2","11-3"],U11:["11-1","11-2","11-3"],U12:["12-1","12-2","12-3"],U13:["13-1","13-2","13-3","13-4"],U14:["14-1","14-2","14-3","14-4","14-5"],U15:["15-1","15-2","15-3","15-4"],U16:["16 Diamond","16-1","16-2"],U17:["17-1"]};
 // 2026-27 season club plan: how many teams at each competitive tier per age group.
 // Sent to the AI summary so parents see the broader landscape their daughter is
 // being evaluated against. Edit here when the plan changes.
