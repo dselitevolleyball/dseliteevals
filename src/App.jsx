@@ -659,6 +659,11 @@ export default function App() {
   const [players, setPlayers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState("dashboard");
+  // Owner-only "Ask AI" tab — natural-language questions over the player data.
+  const [askQ, setAskQ]           = useState("");
+  const [askAnswer, setAskAnswer] = useState("");
+  const [askBusy, setAskBusy]     = useState(false);
+  const [askErr, setAskErr]       = useState("");
   // Which nav dropdown ("Tryouts" / "Operations") is open, or null. Click-to-toggle.
   const [openMenu, setOpenMenu] = useState(null);
   // Selected age-group tabs. Multi-select: clicking a tab toggles membership.
@@ -2995,6 +3000,60 @@ export default function App() {
     loadCoaches();
   };
 
+  function renderAskAI() {
+    if (!isOwner) return <div style={{padding:24,color:C.mut,textAlign:"center"}}>This tool is restricted to the club administrator.</div>;
+    const examples = [
+      "Find all players requesting scholarships or help with payments.",
+      "Which players look undervalued — strong scores or notes but projected to a lower team?",
+      "List players with no scores yet who still need evaluating.",
+      "Who are the strongest setters, with the notes that back it up?",
+    ];
+    const runAsk = async () => {
+      const q = askQ.trim();
+      if (!q) return;
+      setAskBusy(true); setAskErr(""); setAskAnswer("");
+      try {
+        const payload = players.map(p => ({
+          name: ((p.first_name||"")+" "+(p.last_name||"")).trim(),
+          div: p.usavDiv||p.usav_div||"",
+          pos: (p.positions||[]).join("/"),
+          scores: p.scores||{},
+          avg: avg(p), tot: tot(p),
+          proj: p.projected_team||"", team: p.team_assignment||"", status: p.status||"",
+          minLvl: p.min_level||"",
+          notes: p.notes||"", parentFeedback: p.parent_feedback_notes||"",
+          strengths: p.strength_weakness||"", goal: p.goal||"", leaving: p.leaving_reason||"",
+          currentTeam: p.current_team||"", school: p.school_team||"",
+        }));
+        const res = await fetch("/api/ask-players", { method:"POST", headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({ question: q, players: payload }) });
+        let data = {}; try { data = await res.json(); } catch {}
+        if (!res.ok) throw new Error(data.error || ("Request failed ("+res.status+")"));
+        setAskAnswer(data.answer || "(no answer returned)");
+      } catch (e) { setAskErr((e && e.message) || "Something went wrong."); }
+      setAskBusy(false);
+    };
+    return (
+      <div style={{maxWidth:860}}>
+        <h2 style={{margin:0,fontSize:18,fontWeight:800,color:C.gold}}>Ask AI</h2>
+        <div style={{fontSize:12,color:C.mut,marginTop:3,lineHeight:1.5}}>Ask questions about your players in plain language. The AI reads names, scores, projected teams, status, and every free-text note/feedback field across all {players.length} players, and answers with evidence.</div>
+        <textarea value={askQ} onChange={e=>setAskQ(e.target.value)} placeholder="e.g. Find players who mentioned needing a scholarship or payment help"
+          style={{...inpStyle,width:"100%",minHeight:70,padding:"10px 12px",fontSize:14,fontFamily:"inherit",resize:"vertical",marginTop:12}} />
+        <div style={{display:"flex",gap:6,flexWrap:"wrap",margin:"8px 0"}}>
+          {examples.map(ex => <button key={ex} onClick={()=>setAskQ(ex)} style={{padding:"5px 10px",borderRadius:14,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>{ex}</button>)}
+        </div>
+        <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+          <button onClick={runAsk} disabled={askBusy||!askQ.trim()} style={{padding:"9px 18px",borderRadius:8,border:"none",background:(askBusy||!askQ.trim())?C.border:C.gold,color:(askBusy||!askQ.trim())?C.mut:"#000",fontFamily:"inherit",fontSize:13,fontWeight:700,cursor:(askBusy||!askQ.trim())?"default":"pointer"}}>{askBusy?"Thinking…":"Ask"}</button>
+          {askAnswer && !askBusy && <button onClick={()=>{navigator.clipboard.writeText(askAnswer);}} style={{padding:"9px 14px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontFamily:"inherit",fontSize:12,fontWeight:700,cursor:"pointer"}}>Copy</button>}
+        </div>
+        {askErr && <div style={{marginTop:12,fontSize:13,color:"#ffb4b4",background:"rgba(239,68,68,0.12)",border:"1px solid rgba(239,68,68,0.4)",borderRadius:8,padding:"10px 12px"}}>⚠ {askErr}</div>}
+        {askBusy && <div style={{marginTop:14,fontSize:13,color:C.mut}}>Reading {players.length} players and thinking… this can take several seconds.</div>}
+        {askAnswer && !askBusy && <div style={{marginTop:14,background:C.card,border:"1px solid "+C.border,borderRadius:10,padding:"14px 16px",fontSize:13.5,lineHeight:1.6,whiteSpace:"pre-wrap",color:C.text}}>{askAnswer}</div>}
+        <div style={{marginTop:14,fontSize:11,color:C.mut,lineHeight:1.5}}>Answers are AI-generated from your player data — double-check anything important before acting on it. Player notes/feedback are sent to the AI provider (Anthropic) to answer your question.</div>
+      </div>
+    );
+  }
+
   function renderCoaches() {
     if (!isOwner) {
       return <div style={{padding:24,color:C.mut,textAlign:"center"}}>The Coaches screen is restricted to the club administrator.</div>;
@@ -4863,6 +4922,7 @@ export default function App() {
                 })}
                 {item("tournaments","Tournaments")}
                 {item("activity","Activity")}
+                {isOwner && item("askai","Ask AI")}
                 <button style={btn(false)} onClick={()=>{ window.location.href = "/practice"; }} title="Open the practice planner">Practice Planning</button>
               </>;
             })()}
@@ -4933,6 +4993,7 @@ export default function App() {
         {view==="coaches"  && renderCoaches()}
         {view==="tournaments" && renderTournaments()}
         {view==="practice" && renderPractice()}
+        {view==="askai" && renderAskAI()}
       </div>
       {profileId !== null && renderProfile()}
       {addingPlayer && renderAddPlayer()}
