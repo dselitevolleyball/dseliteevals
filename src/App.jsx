@@ -3590,10 +3590,22 @@ export default function App() {
           {coachList.map(c => <option key={c} value={c} />)}
         </datalist>
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(320px,1fr))",gap:14}}>
-          {tryouts.map(tr => (
+          {tryouts.map(tr => {
+            // Count players whose USAV division matches and who are flagged
+            // tryout_registered=true. Drives the per-card signup badge.
+            const signedUp = players.filter(p =>
+              (p.usavDiv || p.usav_div) === tr.division && p.tryout_registered
+            ).length;
+            return (
             <div key={tr.id} style={{background:C.card,borderRadius:12,border:"1px solid "+C.border,padding:"16px 18px"}}>
               <div style={{borderBottom:"1px solid "+C.border,paddingBottom:10,marginBottom:12}}>
-                <div style={{fontSize:18,fontWeight:800,color:C.gold}}>{tr.division}</div>
+                <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",gap:8,flexWrap:"wrap"}}>
+                  <div style={{fontSize:18,fontWeight:800,color:C.gold}}>{tr.division}</div>
+                  <span title="Players signed up for this tryout (tryout_registered=true)"
+                    style={{fontSize:11,fontWeight:800,padding:"3px 9px",borderRadius:10,background:signedUp>0?"rgba(34,197,94,0.18)":"rgba(255,255,255,0.04)",color:signedUp>0?C.grn:C.mut,border:"1px solid "+(signedUp>0?C.grn:C.border),letterSpacing:0.3}}>
+                    {signedUp} signed up
+                  </span>
+                </div>
                 <div style={{fontSize:11,color:C.mut,marginTop:2}}>{fmtDateTime(tr.start_at, tr.end_at)}</div>
               </div>
               {ROLES.map(role => {
@@ -3634,7 +3646,8 @@ export default function App() {
                 );
               })}
             </div>
-          ))}
+            );
+          })}
         </div>
         {tryouts.length === 0 && (
           <div style={{padding:30,textAlign:"center",color:C.mut,fontSize:12,background:C.card,borderRadius:10,border:"1px solid "+C.border}}>
