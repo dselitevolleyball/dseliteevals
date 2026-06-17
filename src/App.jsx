@@ -594,6 +594,7 @@ export default function App() {
   const [practiceAssignments, setPracticeAssignments] = useState([]);
   const [practiceCoachFilter, setPracticeCoachFilter] = useState("");
   const [tryouts, setTryouts]                         = useState([]);
+  const [coachRoster, setCoachRoster]                 = useState([]);
   const [teamsList, setTeamsList]                           = useState([]);
   const [blackoutDates, setBlackoutDates]                   = useState([]);
   const [tnFilters, setTnFilters]                           = useState({ search: "", ageFor: "", qualifierOnly: false, dateFrom: "", dateTo: "", hideClosed: false, hideCancelled: true, startsOn: [], state: "", numDays: "", divisions: [] });
@@ -965,6 +966,14 @@ export default function App() {
     setTryouts(data || []);
   }, []);
   useEffect(() => { if (isApproved && view === "tryouts") loadTryouts(); }, [isApproved, view, loadTryouts]);
+
+  // Coach roster loader (admin Coaches tab section).
+  const loadCoachRoster = useCallback(async () => {
+    const { data, error } = await supabase.from("coach_roster").select("*").order("first_name");
+    if (error) console.error("Load coach_roster error:", error);
+    setCoachRoster(data || []);
+  }, []);
+  useEffect(() => { if (isApproved && view === "coaches") loadCoachRoster(); }, [isApproved, view, loadCoachRoster]);
 
   // Realtime sync for tournament planning (separate channel — only when on
   // that tab so we don't burn a websocket connection elsewhere).
@@ -3251,6 +3260,87 @@ export default function App() {
           Coaches sign up at the login screen and appear here awaiting your approval.
           Display names show up in the Activity log so coaches see who made each change.
           You can't toggle your own admin / approved flags (use the Supabase Dashboard if you ever need to).
+        </div>
+
+        {/* Coach Roster — admin-only directory of all club coaches with
+            contact info + apparel sizes. Separate from the login-account
+            "Coaches" list above so non-app users can be tracked too. */}
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginTop:28,marginBottom:12,flexWrap:"wrap",gap:8}}>
+          <div>
+            <h2 style={{margin:0,fontSize:18,fontWeight:800,color:C.gold}}>Coach Roster</h2>
+            <div style={{fontSize:11,color:C.mut,marginTop:2}}>{coachRoster.length} coaches · Contact info + apparel sizes for ordering.</div>
+          </div>
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={async () => {
+              const { error } = await supabase.from("coach_roster").insert({ first_name: "New", last_name: "Coach" });
+              if (error) { window.alert("Add failed: " + error.message); return; }
+              await loadCoachRoster();
+            }} style={{padding:"6px 14px",borderRadius:8,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>
+              + Add Coach
+            </button>
+            <button onClick={loadCoachRoster} style={{padding:"6px 12px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+              Refresh
+            </button>
+          </div>
+        </div>
+        <div style={{background:C.card,borderRadius:12,border:"1px solid "+C.border,overflow:"hidden"}}>
+          <div style={{overflowX:"auto"}}>
+            <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0,minWidth:1100}}>
+              <thead><tr>
+                <th style={th}>First</th>
+                <th style={th}>Last</th>
+                <th style={th}>Phone</th>
+                <th style={th}>Email</th>
+                <th style={th}>T-shirt</th>
+                <th style={th}>Shoe</th>
+                <th style={th}>Sweatshirt</th>
+                <th style={th}>Notes</th>
+                <th style={th}></th>
+              </tr></thead>
+              <tbody>
+                {coachRoster.map(cr => {
+                  const updRoster = async (patch) => {
+                    const { error } = await supabase.from("coach_roster").update({ ...patch, updated_at: new Date().toISOString() }).eq("id", cr.id);
+                    if (error) { window.alert("Save failed: " + error.message); return; }
+                    await loadCoachRoster();
+                  };
+                  const cell = (key, placeholder, width) => (
+                    <td style={td}>
+                      <DebouncedField style={{...inpStyle,padding:"5px 8px",fontSize:12,width:width||"100%",minWidth:width||80}}
+                        value={cr[key]||""}
+                        placeholder={placeholder}
+                        onCommit={v => updRoster({ [key]: v })} />
+                    </td>
+                  );
+                  return (
+                    <tr key={cr.id}>
+                      {cell("first_name","First",90)}
+                      {cell("last_name","Last",110)}
+                      {cell("phone","555-555-5555",130)}
+                      {cell("email","name@example.com",200)}
+                      {cell("tshirt_size","e.g. M",70)}
+                      {cell("shoe_size","e.g. 9.5 W",80)}
+                      {cell("sweatshirt_size","e.g. L",70)}
+                      {cell("notes","",150)}
+                      <td style={{...td,textAlign:"right",whiteSpace:"nowrap"}}>
+                        <button onClick={async () => {
+                          const name = (cr.first_name||"") + " " + (cr.last_name||"");
+                          if (!window.confirm("Delete " + name.trim() + " from the coach roster?")) return;
+                          const { error } = await supabase.from("coach_roster").delete().eq("id", cr.id);
+                          if (error) { window.alert("Delete failed: " + error.message); return; }
+                          await loadCoachRoster();
+                        }} title="Remove from roster"
+                          style={{padding:"3px 9px",borderRadius:5,border:"1px solid "+C.red,background:"transparent",color:C.red,fontFamily:"inherit",fontSize:10,fontWeight:700,cursor:"pointer"}}>
+                          Remove
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            {!coachRoster.length && <div style={{padding:24,textAlign:"center",color:C.mut,fontSize:12}}>No coaches in the roster yet — run the seed SQL or click "+ Add Coach".</div>}
+          </div>
         </div>
       </div>
     );
