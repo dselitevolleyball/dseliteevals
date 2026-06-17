@@ -593,6 +593,7 @@ export default function App() {
   const [practiceTeams, setPracticeTeams]             = useState([]);
   const [practiceAssignments, setPracticeAssignments] = useState([]);
   const [practiceCoachFilter, setPracticeCoachFilter] = useState("");
+  const [tryouts, setTryouts]                         = useState([]);
   const [teamsList, setTeamsList]                           = useState([]);
   const [blackoutDates, setBlackoutDates]                   = useState([]);
   const [tnFilters, setTnFilters]                           = useState({ search: "", ageFor: "", qualifierOnly: false, dateFrom: "", dateTo: "", hideClosed: false, hideCancelled: true, startsOn: [], state: "", numDays: "", divisions: [] });
@@ -956,6 +957,14 @@ export default function App() {
     setPracticeAssignments(aRes.data || []);
   }, []);
   useEffect(() => { if (isApproved && view === "practice") loadPractice(); }, [isApproved, view, loadPractice]);
+
+  // Tryouts tab loader
+  const loadTryouts = useCallback(async () => {
+    const { data, error } = await supabase.from("tryouts").select("*").order("start_at");
+    if (error) console.error("Load tryouts error:", error);
+    setTryouts(data || []);
+  }, []);
+  useEffect(() => { if (isApproved && view === "tryouts") loadTryouts(); }, [isApproved, view, loadTryouts]);
 
   // Realtime sync for tournament planning (separate channel — only when on
   // that tab so we don't burn a websocket connection elsewhere).
@@ -3524,6 +3533,118 @@ export default function App() {
     );
   }
 
+  // ─── TRYOUT COACHING ASSIGNMENTS ──────────────────────────────────────
+  // One card per division tryout. Each card has three role groups
+  // (Lead, Court, Evaluating) with chips for assigned coaches and a
+  // text input to add more. Coach names are free-text so you can put
+  // anyone (not just registered Practice coaches).
+  function renderTryouts() {
+    const ROLES = [
+      { key:"lead_coaches",       label:"Lead Coach",       color:C.gold },
+      { key:"court_coaches",      label:"Court Coach",      color:"#06b6d4" },
+      { key:"evaluating_coaches", label:"Evaluating Coach", color:C.acc },
+    ];
+    // Distinct coaches across practice_teams (head + assistant) — used to
+    // populate the autocomplete datalist so adding common names is a click.
+    const knownCoaches = new Set();
+    for (const t of practiceTeams) {
+      if (t.head_coach) knownCoaches.add(t.head_coach);
+      if (t.assistant_coach) knownCoaches.add(t.assistant_coach);
+    }
+    for (const tr of tryouts) {
+      for (const r of ROLES) (tr[r.key] || []).forEach(c => knownCoaches.add(c));
+    }
+    const coachList = Array.from(knownCoaches).sort((a,b) => a.localeCompare(b));
+
+    const addCoach = async (tryout, roleKey, name) => {
+      const n = (name||"").trim();
+      if (!n) return;
+      const current = tryout[roleKey] || [];
+      if (current.includes(n)) return;
+      const next = [...current, n];
+      const { error } = await supabase.from("tryouts").update({ [roleKey]: next }).eq("id", tryout.id);
+      if (error) { window.alert("Add failed: " + error.message); return; }
+      await loadTryouts();
+    };
+    const removeCoach = async (tryout, roleKey, name) => {
+      const next = (tryout[roleKey] || []).filter(c => c !== name);
+      const { error } = await supabase.from("tryouts").update({ [roleKey]: next }).eq("id", tryout.id);
+      if (error) { window.alert("Remove failed: " + error.message); return; }
+      await loadTryouts();
+    };
+
+    const fmtDateTime = (start, end) => {
+      const s = new Date(start), e = new Date(end);
+      const day = s.toLocaleDateString(undefined, { weekday:"long", month:"long", day:"numeric" });
+      const t = (d) => d.toLocaleTimeString(undefined, { hour:"numeric", minute: d.getMinutes() ? "2-digit" : undefined });
+      return day + " · " + t(s) + " – " + t(e);
+    };
+
+    return (
+      <div>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,flexWrap:"wrap",marginBottom:12}}>
+          <h2 style={{margin:0,fontSize:18,fontWeight:800,color:C.gold}}>Tryout Coach Assignments</h2>
+          <div style={{fontSize:11,color:C.mut}}>{tryouts.length} tryout{tryouts.length===1?"":"s"} · Add coach names below each role</div>
+        </div>
+        <datalist id="tryout-coach-suggestions">
+          {coachList.map(c => <option key={c} value={c} />)}
+        </datalist>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(320px,1fr))",gap:14}}>
+          {tryouts.map(tr => (
+            <div key={tr.id} style={{background:C.card,borderRadius:12,border:"1px solid "+C.border,padding:"16px 18px"}}>
+              <div style={{borderBottom:"1px solid "+C.border,paddingBottom:10,marginBottom:12}}>
+                <div style={{fontSize:18,fontWeight:800,color:C.gold}}>{tr.division}</div>
+                <div style={{fontSize:11,color:C.mut,marginTop:2}}>{fmtDateTime(tr.start_at, tr.end_at)}</div>
+              </div>
+              {ROLES.map(role => {
+                const list = tr[role.key] || [];
+                return (
+                  <div key={role.key} style={{marginBottom:12}}>
+                    <div style={{fontSize:10,fontWeight:800,textTransform:"uppercase",letterSpacing:0.5,color:role.color,marginBottom:6}}>
+                      {role.label}{list.length > 0 && <span style={{color:C.mut,marginLeft:6,fontWeight:600}}>· {list.length}</span>}
+                    </div>
+                    <div style={{display:"flex",gap:5,flexWrap:"wrap",marginBottom:6}}>
+                      {list.length === 0 && <span style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>none assigned</span>}
+                      {list.map(name => (
+                        <span key={name} onClick={()=>removeCoach(tr, role.key, name)}
+                          title="Click to remove"
+                          style={{fontSize:11,fontWeight:700,padding:"4px 10px",borderRadius:14,border:"1px solid "+role.color,color:role.color,background:"rgba(255,255,255,0.02)",cursor:"pointer",userSelect:"none"}}>
+                          {name} <span style={{opacity:0.6,marginLeft:4}}>×</span>
+                        </span>
+                      ))}
+                    </div>
+                    <input
+                      list="tryout-coach-suggestions"
+                      placeholder={"Add " + role.label.toLowerCase() + "…"}
+                      onKeyDown={e => {
+                        if (e.key === "Enter") {
+                          addCoach(tr, role.key, e.target.value);
+                          e.target.value = "";
+                        }
+                      }}
+                      onBlur={e => {
+                        if (e.target.value.trim()) {
+                          addCoach(tr, role.key, e.target.value);
+                          e.target.value = "";
+                        }
+                      }}
+                      style={{...inpStyle,width:"100%",padding:"6px 10px",fontSize:12}}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+        {tryouts.length === 0 && (
+          <div style={{padding:30,textAlign:"center",color:C.mut,fontSize:12,background:C.card,borderRadius:10,border:"1px solid "+C.border}}>
+            No tryouts loaded yet. Run the seed SQL in Supabase.
+          </div>
+        )}
+      </div>
+    );
+  }
+
   // ─── ACTIVITY (AUDIT LOG) ─────────────────────────────────────────────
   // Global feed of every change to a player row, attributed to the coach who
   // made it. Populated server-side by the players_audit trigger.
@@ -4926,7 +5047,7 @@ export default function App() {
               const item = (v,l) =>
                 <button key={v} style={btn(view===v)} onClick={()=>{ setView(v); setOpenMenu(null); }}>{l}</button>;
               const groups = [
-                { title:"Tryouts", items:[["evaluate","Evaluate"], ...(canViewTeams ? [["teams","Teams"]] : []), ["rankings","Rankings"]] },
+                { title:"Tryouts", items:[["evaluate","Evaluate"], ...(canViewTeams ? [["teams","Teams"]] : []), ["rankings","Rankings"], ["tryouts","Coach Assignments"]] },
                 { title:"Operations", items:[["tracker","Tracker"], ...(isOwner ? [["coaches","Coaches"]] : []), ["practice","Practice"]] },
               ];
               return <>
@@ -5022,6 +5143,7 @@ export default function App() {
         {view==="coaches"  && renderCoaches()}
         {view==="tournaments" && renderTournaments()}
         {view==="practice" && renderPractice()}
+        {view==="tryouts" && renderTryouts()}
         {view==="askai" && renderAskAI()}
       </div>
       {profileId !== null && renderProfile()}
