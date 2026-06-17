@@ -85,6 +85,7 @@ CREATE TABLE coaches (
   is_admin      BOOLEAN      NOT NULL DEFAULT FALSE,
   is_approved   BOOLEAN      NOT NULL DEFAULT FALSE,
   can_view_teams BOOLEAN     NOT NULL DEFAULT FALSE,  -- gates the Teams tab; managed in the Coaches screen (see migrations/20260616)
+  team_divs     TEXT[]       NOT NULL DEFAULT '{}',   -- allowed age groups (empty = all); scopes Evaluate/Teams/Rankings (see migrations/20260616)
   created_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
   last_seen_at  TIMESTAMPTZ
 );

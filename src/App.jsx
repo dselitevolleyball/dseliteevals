@@ -649,6 +649,12 @@ export default function App() {
   // per-coach flag managed there; the owner always has access.
   const isOwner      = OWNER_EMAILS.includes((coach?.email || "").trim().toLowerCase());
   const canViewTeams = isOwner || !!coach?.can_view_teams;
+  // Age groups this coach may see across Evaluate/Teams/Rankings. Owner sees
+  // all; an empty team_divs also means all (default) — a non-empty list restricts.
+  const allowedDivs   = isOwner
+    ? DIVS
+    : ((Array.isArray(coach?.team_divs) && coach.team_divs.length) ? DIVS.filter(d => coach.team_divs.includes(d)) : DIVS);
+  const allowedDivSet = new Set(allowedDivs);
 
   const [players, setPlayers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -658,6 +664,16 @@ export default function App() {
   // Selected age-group tabs. Multi-select: clicking a tab toggles membership.
   // Always at least one division is selected. Drives Evaluate filter, Teams sections, and Rankings.
   const [selectedDivs, setSelectedDivs] = useState(["U14"]);
+  // Keep a restricted coach's selected age tabs within their allowed groups, so
+  // Evaluate/Teams/Rankings (all driven by selectedDivs) never show other groups.
+  useEffect(() => {
+    if (isOwner) return;
+    setSelectedDivs(prev => {
+      const f = prev.filter(d => allowedDivSet.has(d));
+      if (f.length === prev.length) return prev;
+      return f.length ? f : (allowedDivs[0] ? [allowedDivs[0]] : []);
+    });
+  }, [coach]); // eslint-disable-line react-hooks/exhaustive-deps
   // Three independent highlight toggles for the Teams + Tracker views.
   // Off by default; coaches can flip any combination to spotlight that
   // bucket.
@@ -1669,7 +1685,7 @@ export default function App() {
 
   if (loading) return <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",background:C.bg,color:C.text}}>Loading DS Elite...</div>;
 
-  const divsWithPlayers = DIVS.filter(d => players.some(p => (p.usavDiv||p.usav_div) === d));
+  const divsWithPlayers = DIVS.filter(d => allowedDivSet.has(d) && players.some(p => (p.usavDiv||p.usav_div) === d));
 
   function ScoreB({player, skill}) {
     const cur = (player.scores && player.scores[skill]) || 0;
@@ -3054,6 +3070,7 @@ export default function App() {
                 <th style={th}>Approved</th>
                 <th style={th}>Admin</th>
                 <th style={th}>Team Lists</th>
+                <th style={th}>Age Groups</th>
                 <th style={th}>Last seen</th>
                 <th style={th}>Joined</th>
                 <th style={th}></th>
@@ -3093,6 +3110,25 @@ export default function App() {
                             style={{width:16,height:16,accentColor:C.acc,cursor:"pointer"}} />
                           <span style={{fontSize:11,color:c.can_view_teams?C.acc:C.mut,fontWeight:600}}>{c.can_view_teams?"Yes":"No"}</span>
                         </label>
+                      </td>
+                      <td style={td}>
+                        <div style={{display:"flex",flexWrap:"wrap",gap:3,maxWidth:220}}>
+                          {DIVS.map(dv => {
+                            const on = (c.team_divs||[]).includes(dv);
+                            return (
+                              <button key={dv} title={dv}
+                                onClick={() => {
+                                  const cur = c.team_divs || [];
+                                  const next = on ? cur.filter(x => x !== dv) : [...cur, dv];
+                                  updateCoach(c.id, { team_divs: next });
+                                }}
+                                style={{padding:"2px 6px",borderRadius:6,border:"1px solid "+(on?C.gold:C.border),background:on?C.gold+"22":"transparent",color:on?C.gold:C.mut,fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+                                {dv.replace("U","")}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <div style={{fontSize:9,color:C.mut,marginTop:3}}>{(c.team_divs && c.team_divs.length) ? (c.team_divs.length + " group" + (c.team_divs.length===1?"":"s")) : "All age groups"}</div>
                       </td>
                       <td style={{...td,color:C.mut,whiteSpace:"nowrap"}}>{c.last_seen_at ? new Date(c.last_seen_at).toLocaleString() : "—"}</td>
                       <td style={{...td,color:C.mut,whiteSpace:"nowrap"}}>{new Date(c.created_at).toLocaleDateString()}</td>
