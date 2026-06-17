@@ -726,6 +726,7 @@ export default function App() {
   const [filterClinicDate, setFilterClinicDate] = useState(""); // "" = any; "6/2" = only players who attended that clinic date
   // "Registered since" date filter (YYYY-MM-DD) — drives the email-the-new-batch workflow.
   const [regSince, setRegSince] = useState("");
+  const [filterAttend, setFilterAttend] = useState("all"); // all | attended | not — tryout attendance
   const [copiedEmails, setCopiedEmails] = useState(false);
   const [sortBy, setSortBy] = useState("name");
   // Rankings view column sort: key matches a column id in renderRankings' COLS table.
@@ -1463,6 +1464,8 @@ export default function App() {
     else if (filterClinic === "invited_no_show") l = l.filter(p => p.id_clinic_invited && !p.id_clinic_attended);
     if (filterClinicDate) l = l.filter(p => (p.clinic_dates||[]).includes(filterClinicDate));
     if (regSince) l = l.filter(p => p.created_at && p.created_at >= regSince);
+    if (filterAttend === "attended") l = l.filter(p => p.tryout_attended);
+    else if (filterAttend === "not") l = l.filter(p => !p.tryout_attended);
     if (sortBy === "name") l.sort((a,b) => (a.last_name||"").localeCompare(b.last_name||""));
     else if (sortBy === "score") l.sort((a,b) => tot(b) - tot(a));
     else if (sortBy === "age") l.sort((a,b) => parseInt(b.age||0) - parseInt(a.age||0));
@@ -1476,7 +1479,7 @@ export default function App() {
       return va - vb;
     });
     return l;
-  }, [divP, search, filterPos, filterProj, filterEval, filterDate, filterClinic, filterClinicDate, regSince, sortBy]);
+  }, [divP, search, filterPos, filterProj, filterEval, filterDate, filterClinic, filterClinicDate, regSince, filterAttend, sortBy]);
 
   // ─── AUTH GATES ──────────────────────────────────────────────────────
   // 1. While bootstrapping the session, render a quiet loading screen so we
@@ -1847,6 +1850,11 @@ export default function App() {
           </select>
           <select style={{...inpStyle,padding:"7px 10px",fontSize:12,color:filterDate?C.gold:C.text}} value={filterDate} onChange={e=>setFilterDate(e.target.value)} title="Show only players attending this eval date">
             <option value="">All Dates</option>{EVAL_DATES.map(d=><option key={d} value={d}>{d}</option>)}
+          </select>
+          <select style={{...inpStyle,padding:"7px 10px",fontSize:12,color:filterAttend!=="all"?C.gold:C.text}} value={filterAttend} onChange={e=>setFilterAttend(e.target.value)} title="Filter by tryout attendance">
+            <option value="all">All Attendance</option>
+            <option value="attended">Attended tryout</option>
+            <option value="not">Not attended</option>
           </select>
           <select style={{...inpStyle,padding:"7px 10px",fontSize:12}} value={sortBy} onChange={e=>setSortBy(e.target.value)}>
             <option value="name">Name</option><option value="pinny">Pinny #</option><option value="score">Score</option><option value="proj">Projected</option>
