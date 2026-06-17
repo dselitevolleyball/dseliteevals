@@ -3154,121 +3154,30 @@ export default function App() {
           </div>
         </div>
 
+        {/* Merged coach directory — every club coach (roster + login
+            account) in one editable table. Joined by lowercased email. */}
+        {(() => {
+        const byEmail = new Map();
+        for (const r of coachRoster) {
+          const k = (r.email||"").toLowerCase().trim() || ("roster-" + r.id);
+          byEmail.set(k, { roster: r, account: null });
+        }
+        for (const c of coachesList) {
+          const k = (c.email||"").toLowerCase().trim();
+          if (k && byEmail.has(k)) byEmail.get(k).account = c;
+          else byEmail.set(k || ("acct-" + c.id), { roster: null, account: c });
+        }
+        const merged = Array.from(byEmail.values()).sort((a, b) => {
+          const an = (a.roster?.first_name || a.account?.display_name || "").toLowerCase();
+          const bn = (b.roster?.first_name || b.account?.display_name || "").toLowerCase();
+          return an.localeCompare(bn);
+        });
+        return (
+          <>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12,flexWrap:"wrap",gap:8}}>
           <div>
             <h2 style={{margin:0,fontSize:18,fontWeight:800,color:C.gold}}>Coaches</h2>
-            <div style={{fontSize:11,color:C.mut,marginTop:2}}>{coachesList.length} total · {pending.length} awaiting approval</div>
-          </div>
-          <button onClick={loadCoaches} disabled={coachesLoading}
-            style={{padding:"6px 12px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
-            {coachesLoading ? "Loading…" : "Refresh"}
-          </button>
-        </div>
-        {pending.length > 0 && (
-          <div style={{background:"rgba(245,158,11,0.08)",border:"1px solid rgba(245,158,11,0.35)",borderRadius:10,padding:"10px 14px",marginBottom:12,fontSize:12,color:"#f59e0b"}}>
-            {pending.length} coach{pending.length===1?" is":"es are"} waiting to be approved.
-          </div>
-        )}
-        <div style={{background:C.card,borderRadius:12,border:"1px solid "+C.border,overflow:"hidden"}}>
-          <div style={{overflowX:"auto"}}>
-            <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0}}>
-              <thead><tr>
-                <th style={th}>Display Name</th>
-                <th style={th}>Email</th>
-                <th style={th}>Approved</th>
-                <th style={th}>Admin</th>
-                <th style={th}>Team Lists</th>
-                <th style={th}>Age Groups</th>
-                <th style={th}>Last seen</th>
-                <th style={th}>Joined</th>
-                <th style={th}></th>
-              </tr></thead>
-              <tbody>
-                {coachesList.map(c => {
-                  const isSelf = c.id === coach.id;
-                  return (
-                    <tr key={c.id} style={{background: c.is_approved ? "transparent" : "rgba(245,158,11,0.05)"}}>
-                      <td style={td}>
-                        <DebouncedField style={{...inpStyle,padding:"5px 8px",fontSize:12,width:"100%",minWidth:120}}
-                          value={c.display_name||""}
-                          onCommit={v => updateCoach(c.id, { display_name: v })}
-                          placeholder="(no name)" />
-                      </td>
-                      <td style={{...td,color:C.mut}}>{c.email}{isSelf && <span style={{color:C.gold,marginLeft:6,fontSize:10}}>(you)</span>}</td>
-                      <td style={td}>
-                        <label style={{display:"inline-flex",alignItems:"center",gap:6,cursor:isSelf?"default":"pointer"}}>
-                          <input type="checkbox" checked={!!c.is_approved} disabled={isSelf}
-                            onChange={e => updateCoach(c.id, { is_approved: e.target.checked })}
-                            style={{width:16,height:16,accentColor:C.grn,cursor:isSelf?"default":"pointer"}} />
-                          <span style={{fontSize:11,color:c.is_approved?C.grn:C.mut,fontWeight:600}}>{c.is_approved?"Yes":"No"}</span>
-                        </label>
-                      </td>
-                      <td style={td}>
-                        <label style={{display:"inline-flex",alignItems:"center",gap:6,cursor:isSelf?"default":"pointer"}}>
-                          <input type="checkbox" checked={!!c.is_admin} disabled={isSelf}
-                            onChange={e => updateCoach(c.id, { is_admin: e.target.checked })}
-                            style={{width:16,height:16,accentColor:C.gold,cursor:isSelf?"default":"pointer"}} />
-                          <span style={{fontSize:11,color:c.is_admin?C.gold:C.mut,fontWeight:600}}>{c.is_admin?"Yes":"No"}</span>
-                        </label>
-                      </td>
-                      <td style={td}>
-                        <label style={{display:"inline-flex",alignItems:"center",gap:6,cursor:"pointer"}}>
-                          <input type="checkbox" checked={!!c.can_view_teams}
-                            onChange={e => updateCoach(c.id, { can_view_teams: e.target.checked })}
-                            style={{width:16,height:16,accentColor:C.acc,cursor:"pointer"}} />
-                          <span style={{fontSize:11,color:c.can_view_teams?C.acc:C.mut,fontWeight:600}}>{c.can_view_teams?"Yes":"No"}</span>
-                        </label>
-                      </td>
-                      <td style={td}>
-                        <div style={{display:"flex",flexWrap:"wrap",gap:3,maxWidth:220}}>
-                          {DIVS.map(dv => {
-                            const on = (c.team_divs||[]).includes(dv);
-                            return (
-                              <button key={dv} title={dv}
-                                onClick={() => {
-                                  const cur = c.team_divs || [];
-                                  const next = on ? cur.filter(x => x !== dv) : [...cur, dv];
-                                  updateCoach(c.id, { team_divs: next });
-                                }}
-                                style={{padding:"2px 6px",borderRadius:6,border:"1px solid "+(on?C.gold:C.border),background:on?C.gold+"22":"transparent",color:on?C.gold:C.mut,fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
-                                {dv.replace("U","")}
-                              </button>
-                            );
-                          })}
-                        </div>
-                        <div style={{fontSize:9,color:C.mut,marginTop:3}}>{(c.team_divs && c.team_divs.length) ? (c.team_divs.length + " group" + (c.team_divs.length===1?"":"s")) : "All age groups"}</div>
-                      </td>
-                      <td style={{...td,color:C.mut,whiteSpace:"nowrap"}}>{c.last_seen_at ? new Date(c.last_seen_at).toLocaleString() : "—"}</td>
-                      <td style={{...td,color:C.mut,whiteSpace:"nowrap"}}>{new Date(c.created_at).toLocaleDateString()}</td>
-                      <td style={td}>
-                        {!isSelf && (
-                          <button onClick={()=>removeCoach(c)}
-                            style={{padding:"4px 10px",borderRadius:6,border:"1px solid "+C.red,background:"transparent",color:C.red,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
-                            Remove
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-            {!coachesList.length && <div style={{padding:24,textAlign:"center",color:C.mut,fontSize:12}}>{coachesLoading ? "Loading…" : "No coaches yet."}</div>}
-          </div>
-        </div>
-        <div style={{fontSize:11,color:C.mut,marginTop:10,lineHeight:1.6}}>
-          Coaches sign up at the login screen and appear here awaiting your approval.
-          Display names show up in the Activity log so coaches see who made each change.
-          You can't toggle your own admin / approved flags (use the Supabase Dashboard if you ever need to).
-        </div>
-
-        {/* Coach Roster — admin-only directory of all club coaches with
-            contact info + apparel sizes. Separate from the login-account
-            "Coaches" list above so non-app users can be tracked too. */}
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginTop:28,marginBottom:12,flexWrap:"wrap",gap:8}}>
-          <div>
-            <h2 style={{margin:0,fontSize:18,fontWeight:800,color:C.gold}}>Coach Roster</h2>
-            <div style={{fontSize:11,color:C.mut,marginTop:2}}>{coachRoster.length} coaches · Contact info + apparel sizes for ordering.</div>
+            <div style={{fontSize:11,color:C.mut,marginTop:2}}>{merged.length} total · {coachesList.length} with login · {pending.length} awaiting approval</div>
           </div>
           <div style={{display:"flex",gap:8}}>
             <button onClick={async () => {
@@ -3278,70 +3187,175 @@ export default function App() {
             }} style={{padding:"6px 14px",borderRadius:8,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>
               + Add Coach
             </button>
-            <button onClick={loadCoachRoster} style={{padding:"6px 12px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
-              Refresh
+            <button onClick={() => { loadCoaches(); loadCoachRoster(); }} disabled={coachesLoading}
+              style={{padding:"6px 12px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+              {coachesLoading ? "Loading…" : "Refresh"}
             </button>
           </div>
         </div>
+        {pending.length > 0 && (
+          <div style={{background:"rgba(245,158,11,0.08)",border:"1px solid rgba(245,158,11,0.35)",borderRadius:10,padding:"10px 14px",marginBottom:12,fontSize:12,color:"#f59e0b"}}>
+            {pending.length} coach{pending.length===1?" is":"es are"} waiting to be approved.
+          </div>
+        )}
         <div style={{background:C.card,borderRadius:12,border:"1px solid "+C.border,overflow:"hidden"}}>
           <div style={{overflowX:"auto"}}>
-            <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0,minWidth:1100}}>
+            <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0,minWidth:1500}}>
               <thead><tr>
                 <th style={th}>First</th>
                 <th style={th}>Last</th>
-                <th style={th}>Phone</th>
                 <th style={th}>Email</th>
+                <th style={th}>Phone</th>
+                <th style={th}>Approved</th>
+                <th style={th}>Admin</th>
+                <th style={th}>Teams</th>
+                <th style={th}>Age Groups</th>
                 <th style={th}>T-shirt</th>
                 <th style={th}>Shoe</th>
                 <th style={th}>Sweatshirt</th>
+                <th style={th}>Last seen</th>
                 <th style={th}>Notes</th>
                 <th style={th}></th>
               </tr></thead>
               <tbody>
-                {coachRoster.map(cr => {
-                  const updRoster = async (patch) => {
-                    const { error } = await supabase.from("coach_roster").update({ ...patch, updated_at: new Date().toISOString() }).eq("id", cr.id);
-                    if (error) { window.alert("Save failed: " + error.message); return; }
+                {merged.map(({roster: r, account: c}) => {
+                  const rowKey = (r && "ros-"+r.id) || (c && "acc-"+c.id);
+                  const isSelf = c && c.id === coach.id;
+                  const hasAccount = !!c;
+                  const hasRoster = !!r;
+                  const firstName = r?.first_name || ((c?.display_name||"").split(/\s+/)[0]) || "";
+                  const lastName  = r?.last_name  || ((c?.display_name||"").split(/\s+/).slice(1).join(" ")) || "";
+                  // Roster upsert — create the row if it doesn't exist yet.
+                  const upsertRoster = async (patch) => {
+                    if (r) {
+                      const { error } = await supabase.from("coach_roster")
+                        .update({ ...patch, updated_at: new Date().toISOString() })
+                        .eq("id", r.id);
+                      if (error) { window.alert("Save failed: " + error.message); return; }
+                    } else {
+                      const insert = {
+                        first_name: firstName || "?",
+                        last_name:  lastName  || "?",
+                        email:      c?.email  || "",
+                        ...patch,
+                      };
+                      const { error } = await supabase.from("coach_roster").insert(insert);
+                      if (error) { window.alert("Save failed: " + error.message); return; }
+                    }
                     await loadCoachRoster();
                   };
-                  const cell = (key, placeholder, width) => (
+                  const rcell = (key, placeholder, width) => (
                     <td style={td}>
-                      <DebouncedField style={{...inpStyle,padding:"5px 8px",fontSize:12,width:width||"100%",minWidth:width||80}}
-                        value={cr[key]||""}
+                      <DebouncedField style={{...inpStyle,padding:"5px 8px",fontSize:12,width:width||"100%",minWidth:width||70}}
+                        value={(r && r[key])||""}
                         placeholder={placeholder}
-                        onCommit={v => updRoster({ [key]: v })} />
+                        onCommit={v => upsertRoster({ [key]: v })} />
                     </td>
                   );
                   return (
-                    <tr key={cr.id}>
-                      {cell("first_name","First",90)}
-                      {cell("last_name","Last",110)}
-                      {cell("phone","555-555-5555",130)}
-                      {cell("email","name@example.com",200)}
-                      {cell("tshirt_size","e.g. M",70)}
-                      {cell("shoe_size","e.g. 9.5 W",80)}
-                      {cell("sweatshirt_size","e.g. L",70)}
-                      {cell("notes","",150)}
+                    <tr key={rowKey} style={{background: (hasAccount && !c.is_approved) ? "rgba(245,158,11,0.05)" : "transparent"}}>
+                      {rcell("first_name","First",90)}
+                      {rcell("last_name","Last",110)}
+                      <td style={td}>
+                        {hasAccount ? (
+                          <span style={{fontSize:12,color:C.text}}>{c.email}{isSelf && <span style={{color:C.gold,marginLeft:6,fontSize:10}}>(you)</span>}</span>
+                        ) : (
+                          <DebouncedField style={{...inpStyle,padding:"5px 8px",fontSize:12,minWidth:180}}
+                            value={(r && r.email)||""}
+                            placeholder="name@example.com"
+                            onCommit={v => upsertRoster({ email: v })} />
+                        )}
+                      </td>
+                      {rcell("phone","555-555-5555",130)}
+                      {/* Approved */}
+                      <td style={td}>
+                        {hasAccount ? (
+                          <label style={{display:"inline-flex",alignItems:"center",gap:6,cursor:isSelf?"default":"pointer"}}>
+                            <input type="checkbox" checked={!!c.is_approved} disabled={isSelf}
+                              onChange={e => updateCoach(c.id, { is_approved: e.target.checked })}
+                              style={{width:16,height:16,accentColor:C.grn,cursor:isSelf?"default":"pointer"}} />
+                            <span style={{fontSize:11,color:c.is_approved?C.grn:C.mut,fontWeight:600}}>{c.is_approved?"Yes":"No"}</span>
+                          </label>
+                        ) : <span style={{fontSize:10,color:C.mut,fontStyle:"italic"}}>no login</span>}
+                      </td>
+                      {/* Admin */}
+                      <td style={td}>
+                        {hasAccount ? (
+                          <label style={{display:"inline-flex",alignItems:"center",gap:6,cursor:isSelf?"default":"pointer"}}>
+                            <input type="checkbox" checked={!!c.is_admin} disabled={isSelf}
+                              onChange={e => updateCoach(c.id, { is_admin: e.target.checked })}
+                              style={{width:16,height:16,accentColor:C.gold,cursor:isSelf?"default":"pointer"}} />
+                            <span style={{fontSize:11,color:c.is_admin?C.gold:C.mut,fontWeight:600}}>{c.is_admin?"Yes":"No"}</span>
+                          </label>
+                        ) : <span style={{color:C.mut}}>—</span>}
+                      </td>
+                      {/* Teams */}
+                      <td style={td}>
+                        {hasAccount ? (
+                          <label style={{display:"inline-flex",alignItems:"center",gap:6,cursor:"pointer"}}>
+                            <input type="checkbox" checked={!!c.can_view_teams}
+                              onChange={e => updateCoach(c.id, { can_view_teams: e.target.checked })}
+                              style={{width:16,height:16,accentColor:C.acc,cursor:"pointer"}} />
+                            <span style={{fontSize:11,color:c.can_view_teams?C.acc:C.mut,fontWeight:600}}>{c.can_view_teams?"Yes":"No"}</span>
+                          </label>
+                        ) : <span style={{color:C.mut}}>—</span>}
+                      </td>
+                      {/* Age groups */}
+                      <td style={td}>
+                        {hasAccount ? (
+                          <div style={{display:"flex",flexWrap:"wrap",gap:3,maxWidth:220}}>
+                            {DIVS.map(dv => {
+                              const on = (c.team_divs||[]).includes(dv);
+                              return (
+                                <button key={dv} title={dv}
+                                  onClick={() => {
+                                    const cur = c.team_divs || [];
+                                    const next = on ? cur.filter(x => x !== dv) : [...cur, dv];
+                                    updateCoach(c.id, { team_divs: next });
+                                  }}
+                                  style={{padding:"2px 6px",borderRadius:6,border:"1px solid "+(on?C.gold:C.border),background:on?C.gold+"22":"transparent",color:on?C.gold:C.mut,fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+                                  {dv.replace("U","")}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        ) : <span style={{color:C.mut}}>—</span>}
+                      </td>
+                      {rcell("tshirt_size","M",60)}
+                      {rcell("shoe_size","9.5 W",80)}
+                      {rcell("sweatshirt_size","L",60)}
+                      {/* Last seen */}
+                      <td style={{...td,color:C.mut,whiteSpace:"nowrap",fontSize:11}}>{c?.last_seen_at ? new Date(c.last_seen_at).toLocaleDateString() : "—"}</td>
+                      {rcell("notes","",140)}
+                      {/* Actions */}
                       <td style={{...td,textAlign:"right",whiteSpace:"nowrap"}}>
-                        <button onClick={async () => {
-                          const name = (cr.first_name||"") + " " + (cr.last_name||"");
-                          if (!window.confirm("Delete " + name.trim() + " from the coach roster?")) return;
-                          const { error } = await supabase.from("coach_roster").delete().eq("id", cr.id);
-                          if (error) { window.alert("Delete failed: " + error.message); return; }
-                          await loadCoachRoster();
-                        }} title="Remove from roster"
-                          style={{padding:"3px 9px",borderRadius:5,border:"1px solid "+C.red,background:"transparent",color:C.red,fontFamily:"inherit",fontSize:10,fontWeight:700,cursor:"pointer"}}>
-                          Remove
-                        </button>
+                        {hasRoster && (
+                          <button onClick={async () => {
+                            const name = (firstName + " " + lastName).trim();
+                            if (!window.confirm("Remove " + name + " from the coach roster? Their login account (if any) is not affected.")) return;
+                            const { error } = await supabase.from("coach_roster").delete().eq("id", r.id);
+                            if (error) { window.alert("Delete failed: " + error.message); return; }
+                            await loadCoachRoster();
+                          }} title="Remove from roster"
+                            style={{padding:"3px 9px",borderRadius:5,border:"1px solid "+C.red,background:"transparent",color:C.red,fontFamily:"inherit",fontSize:10,fontWeight:700,cursor:"pointer"}}>
+                            Remove
+                          </button>
+                        )}
                       </td>
                     </tr>
                   );
                 })}
               </tbody>
             </table>
-            {!coachRoster.length && <div style={{padding:24,textAlign:"center",color:C.mut,fontSize:12}}>No coaches in the roster yet — run the seed SQL or click "+ Add Coach".</div>}
+            {!merged.length && <div style={{padding:24,textAlign:"center",color:C.mut,fontSize:12}}>{coachesLoading ? "Loading…" : "No coaches yet — click '+ Add Coach' or run the seed SQL."}</div>}
           </div>
         </div>
+        <div style={{fontSize:11,color:C.mut,marginTop:10,lineHeight:1.6}}>
+          Single merged directory. Roster fields (name, phone, sizes, notes) live in coach_roster; the Approved / Admin / Teams / Age Groups toggles only apply to coaches who've created a login account. Edit a roster field for a login-only coach and a roster row is created automatically.
+        </div>
+          </>
+        );
+        })()}
       </div>
     );
   }
