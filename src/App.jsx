@@ -438,6 +438,11 @@ function avg(p) {
   if (!vals.length) return "—";
   return (vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1);
 }
+// Vertical jump (inches) = jump touch − standing reach. Null if either is blank.
+function vertical(p) {
+  const j = parseFloat(p.jump_touch), s = parseFloat(p.stand_reach);
+  return (Number.isFinite(j) && Number.isFinite(s)) ? (j - s) : null;
+}
 // A player counts as a returning DS Elite athlete if her Prev Season Team field
 // names DSE / DS Elite. Coaches can correct false positives/negatives by editing
 // the "Prev Season Team" value in the profile modal.
@@ -2487,6 +2492,8 @@ export default function App() {
       ...SKILLS.map(sk => ({ key:"sk_"+sk, label:sk, sortable:true, defDir:"desc", get:p=>(p.scores||{})[sk]||0 })),
       { key:"total",  label:"Total",  sortable:true,  defDir:"desc", get:p=>tot(p) },
       { key:"avg",    label:"Avg",    sortable:true,  defDir:"desc", get:p=>parseFloat(avg(p))||0 },
+      { key:"jump",   label:"Jump",   sortable:true,  defDir:"desc", get:p=>{ const v=parseFloat(p.jump_touch); return Number.isFinite(v)?v:-1; } },
+      { key:"vert",   label:"Vert",   sortable:true,  defDir:"desc", get:p=>{ const v=vertical(p); return v==null?-1:v; } },
       { key:"team",   label:"Team",   sortable:true,  defDir:"asc",  get:p=>p.team_assignment||"" },
     ];
     const activeCol = COLS.find(c => c.key === rankSort.key) || COLS.find(c => c.key === "total");
@@ -2548,6 +2555,8 @@ export default function App() {
                   {SKILLS.map(sk=><td key={sk} style={tdS}><span style={{fontWeight:600,color:(p.scores||{})[sk]>=4?C.grn:(p.scores||{})[sk]>=3?C.gold:(p.scores||{})[sk]?C.red:C.mut}}>{(p.scores||{})[sk]||"—"}</span></td>)}
                   <td style={tdS}><span style={{fontWeight:800,fontSize:15,color:C.gold}}>{tot(p)}</span></td>
                   <td style={tdS}><span style={{fontWeight:600}}>{avg(p)}</span></td>
+                  <td style={tdS}><span style={{fontWeight:600,color:(p.jump_touch!=null&&p.jump_touch!=="")?C.text:C.mut}}>{(p.jump_touch!=null&&p.jump_touch!=="")?p.jump_touch+'"':"—"}</span></td>
+                  <td style={tdS}><span style={{fontWeight:700,color:vertical(p)!=null?C.grn:C.mut}}>{vertical(p)!=null?vertical(p).toFixed(1)+'"':"—"}</span></td>
                   <td style={tdS}><Tag c={p.team_assignment?C.grn:C.mut}>{p.team_assignment||"—"}</Tag></td>
                 </tr>
               ))}</tbody>
@@ -2567,6 +2576,7 @@ export default function App() {
     const editInp = {...inpStyle,width:"100%",padding:"8px 10px",fontSize:13};
     const totalScore = tot(p);
     const scoredCount = Object.values(p.scores||{}).filter(v=>v>0).length;
+    const verticalVal = vertical(p);
     return (
       <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:1000,display:"flex",justifyContent:"center",padding:"30px 16px",overflowY:"auto"}} onClick={()=>setProfileId(null)}>
         <div style={{background:C.card,borderRadius:16,border:"1px solid "+C.border,maxWidth:700,width:"100%",maxHeight:"90vh",overflowY:"auto",padding:24}} onClick={e=>e.stopPropagation()}>
@@ -2590,6 +2600,16 @@ export default function App() {
               <div><div style={{fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut}} title="Sum of stat-skill scores (Blocking excluded)">Total</div><div style={{fontSize:36,fontWeight:800,color:totalScore>0?C.gold:C.mut}}>{totalScore||0}<span style={{fontSize:16,fontWeight:400,color:C.mut}}>/40</span></div></div>
               <div style={{textAlign:"center"}}><div style={{fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut}}>Avg</div><div style={{fontSize:28,fontWeight:800,color:totalScore>0?C.grn:C.mut}}>{avg(p)}</div></div>
               <div style={{textAlign:"right"}}><div style={{fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut}}>Scored</div><div style={{fontSize:28,fontWeight:800,color:scoredCount===9?C.grn:C.gold}}>{scoredCount}<span style={{fontSize:16,fontWeight:400,color:C.mut}}>/9</span></div></div>
+            </div>
+          </div>
+          {/* Tryout — Physical Testing */}
+          <div style={{marginBottom:16}}>
+            <span style={lbl}>Tryout — Physical Testing (inches)</span>
+            <div style={{background:C.bg,borderRadius:10,padding:14,display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:12,alignItems:"start"}}>
+              <div><span style={lbl}>Stand &amp; Reach</span><DebouncedField style={editInp} placeholder='e.g. 84' value={p.stand_reach==null?"":String(p.stand_reach)} onCommit={v=>{const n=parseFloat(v); upd(p.id,{stand_reach:(v.trim()===""||isNaN(n))?null:n});}} /></div>
+              <div><span style={lbl}>Jump Touch</span><DebouncedField style={editInp} placeholder='e.g. 102' value={p.jump_touch==null?"":String(p.jump_touch)} onCommit={v=>{const n=parseFloat(v); upd(p.id,{jump_touch:(v.trim()===""||isNaN(n))?null:n});}} /></div>
+              <div><span style={lbl}>Vertical (auto)</span><div style={{...editInp,display:"flex",alignItems:"center",minHeight:36,fontWeight:800,color:verticalVal!=null?C.grn:C.mut,background:C.card}} title="Jump Touch − Stand &amp; Reach">{verticalVal!=null?verticalVal.toFixed(1)+'"':"—"}</div></div>
+              <div><span style={lbl}>Tryout Attended</span><label style={{display:"flex",alignItems:"center",gap:8,padding:"9px 4px",cursor:"pointer"}}><input type="checkbox" checked={!!p.tryout_attended} onChange={e=>upd(p.id,{tryout_attended:e.target.checked})} style={{width:18,height:18,accentColor:C.gold,cursor:"pointer"}} /><span style={{fontSize:13,fontWeight:600,color:p.tryout_attended?C.grn:C.mut}}>{p.tryout_attended?"Present":"Not marked"}</span></label></div>
             </div>
           </div>
           {/* Scores */}
