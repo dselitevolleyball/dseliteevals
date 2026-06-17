@@ -2035,7 +2035,7 @@ export default function App() {
                               <tr key={p.id} style={{borderBottom:"1px solid "+C.border,background:hi?hi.bg:"transparent"}}>
                                 <td style={{padding:"8px 12px"}}>
                                   <span onClick={()=>setProfileId(p.id)} style={{cursor:"pointer",fontWeight:700,color:hi?hi.color:C.text}}>
-                                    {p.first_name} {p.last_name}
+                                    {newIcon(p)}{p.first_name} {p.last_name}
                                   </span>
                                   {hi && <span title={hi.label} style={{fontSize:9,fontWeight:800,color:hi.color,marginLeft:6,padding:"2px 6px",borderRadius:6,border:"1px solid "+hi.color,letterSpacing:0.5}}>{hi.label}</span>}
                                   {p.roster_pos && <span style={{fontSize:10,color:C.mut,marginLeft:6}}>#{p.roster_pos}</span>}
@@ -2492,7 +2492,9 @@ export default function App() {
       return an < bn ? -1 : an > bn ? 1 : 0;
     };
     const ranked = [...divP]
-      .filter(p => tot(p) > 0)
+      // Scored players, plus brand-new (last 5 days) players even if not yet
+      // evaluated — so the NEW tag is visible here too. Unscored sort to the bottom.
+      .filter(p => tot(p) > 0 || isNewPlayer(p))
       .filter(p => !rankDate || (p.eval_dates||[]).includes(rankDate))
       .sort((a,b) => {
         const av = activeCol.get(a), bv = activeCol.get(b);
