@@ -1887,6 +1887,7 @@ export default function App() {
                   {label:"Player",sortKey:"name"},{label:"Pos"},{label:"Proj",sortKey:"proj"},
                   ...SKILLS.map(s => ({label: SKILL_ABBR[s] || s, full: s})),
                   {label:"Tot",sortKey:"score"},{label:"Avg"},{label:"Team"},{label:"Notes"},
+                  {label:"Att",full:"Tryout attendance"},
                   {label:"✓",full:"Evaluation complete"}
                 ].map((h,i) => {
                   const isActive = h.sortKey && sortBy === h.sortKey;
@@ -1936,6 +1937,7 @@ export default function App() {
                       </select>}
                     </td>
                     <td style={tdS}><DebouncedField style={{...inpStyle,width:90,fontSize:11,padding:"4px 6px"}} placeholder="Notes..." value={p.notes||""} onCommit={v=>upd(p.id,{notes:v})} /></td>
+                    <td style={tdS}><input type="checkbox" checked={!!p.tryout_attended} onChange={e=>upd(p.id,{tryout_attended:e.target.checked})} title="Tryout attended" style={{width:16,height:16,cursor:"pointer",accentColor:C.grn}} /></td>
                     <td style={tdS}><input type="checkbox" checked={!!p.eval_complete} onChange={e=>upd(p.id,{eval_complete:e.target.checked})} style={{width:16,height:16,cursor:"pointer",accentColor:C.gold}} /></td>
                   </tr>
                 ))}
@@ -2504,9 +2506,8 @@ export default function App() {
       return an < bn ? -1 : an > bn ? 1 : 0;
     };
     const ranked = [...divP]
-      // Scored players, plus brand-new (last 5 days) players even if not yet
-      // evaluated — so the NEW tag is visible here too. Unscored sort to the bottom.
-      .filter(p => tot(p) > 0 || isNewPlayer(p))
+      // All players in the selected age groups, including those not yet
+      // evaluated (unscored players sort to the bottom on score-based columns).
       .filter(p => !rankDate || (p.eval_dates||[]).includes(rankDate))
       .sort((a,b) => {
         const av = activeCol.get(a), bv = activeCol.get(b);
@@ -2532,7 +2533,7 @@ export default function App() {
           <select style={{...inpStyle,padding:"7px 10px",fontSize:12,color:rankDate?C.gold:C.text}} value={rankDate} onChange={e=>setRankDate(e.target.value)} title="Limit rankings to players evaluated on this date">
             <option value="">All Dates</option>{EVAL_DATES.map(d=><option key={d} value={d}>{d}</option>)}
           </select>
-          <span style={{fontSize:11,color:C.mut,marginLeft:"auto"}}>{shown.length} ranked</span>
+          <span style={{fontSize:11,color:C.mut,marginLeft:"auto"}}>{shown.length} players</span>
         </div>
         <div style={{background:C.card,borderRadius:12,border:"1px solid "+C.border,overflow:"hidden"}}>
           <div style={{overflowX:"auto"}}>
@@ -2562,7 +2563,7 @@ export default function App() {
               ))}</tbody>
             </table>
           </div>
-          {!shown.length && <div style={{textAlign:"center",padding:28,color:C.mut}}>No scored players{filterPos?" at "+filterPos:""}</div>}
+          {!shown.length && <div style={{textAlign:"center",padding:28,color:C.mut}}>No players{filterPos?" at "+filterPos:""}</div>}
         </div>
       </div>
     );
