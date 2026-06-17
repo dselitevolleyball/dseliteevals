@@ -3596,15 +3596,23 @@ export default function App() {
             const signedUp = players.filter(p =>
               (p.usavDiv || p.usav_div) === tr.division && p.tryout_registered
             ).length;
+            // 1 court per 12 players, capped at 4. 0 signups → 0 courts.
+            const courtsNeeded = signedUp === 0 ? 0 : Math.min(4, Math.ceil(signedUp / 12));
             return (
             <div key={tr.id} style={{background:C.card,borderRadius:12,border:"1px solid "+C.border,padding:"16px 18px"}}>
               <div style={{borderBottom:"1px solid "+C.border,paddingBottom:10,marginBottom:12}}>
                 <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",gap:8,flexWrap:"wrap"}}>
                   <div style={{fontSize:18,fontWeight:800,color:C.gold}}>{tr.division}</div>
-                  <span title="Players signed up for this tryout (tryout_registered=true)"
-                    style={{fontSize:11,fontWeight:800,padding:"3px 9px",borderRadius:10,background:signedUp>0?"rgba(34,197,94,0.18)":"rgba(255,255,255,0.04)",color:signedUp>0?C.grn:C.mut,border:"1px solid "+(signedUp>0?C.grn:C.border),letterSpacing:0.3}}>
-                    {signedUp} signed up
-                  </span>
+                  <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                    <span title="Players signed up for this tryout (tryout_registered=true)"
+                      style={{fontSize:11,fontWeight:800,padding:"3px 9px",borderRadius:10,background:signedUp>0?"rgba(34,197,94,0.18)":"rgba(255,255,255,0.04)",color:signedUp>0?C.grn:C.mut,border:"1px solid "+(signedUp>0?C.grn:C.border),letterSpacing:0.3}}>
+                      {signedUp} signed up
+                    </span>
+                    <span title={"1 court per 12 players, max 4. " + signedUp + " players → " + courtsNeeded + " court" + (courtsNeeded===1?"":"s")}
+                      style={{fontSize:11,fontWeight:800,padding:"3px 9px",borderRadius:10,background:courtsNeeded>0?"rgba(6,182,212,0.18)":"rgba(255,255,255,0.04)",color:courtsNeeded>0?"#06b6d4":C.mut,border:"1px solid "+(courtsNeeded>0?"#06b6d4":C.border),letterSpacing:0.3}}>
+                      {courtsNeeded} court{courtsNeeded===1?"":"s"}
+                    </span>
+                  </div>
                 </div>
                 <div style={{fontSize:11,color:C.mut,marginTop:2}}>{fmtDateTime(tr.start_at, tr.end_at)}</div>
               </div>
