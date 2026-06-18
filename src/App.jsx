@@ -3335,8 +3335,8 @@ export default function App() {
   }
 
   function renderCoaches() {
-    if (!isOwner) {
-      return <div style={{padding:24,color:C.mut,textAlign:"center"}}>The Coaches screen is restricted to the club administrator.</div>;
+    if (!isAdmin) {
+      return <div style={{padding:24,color:C.mut,textAlign:"center"}}>The Coaches screen is restricted to admins.</div>;
     }
     const th = {padding:"8px 10px",textAlign:"left",fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut,borderBottom:"1px solid "+C.border,background:C.card,whiteSpace:"nowrap"};
     const td = {padding:"8px 10px",fontSize:12,borderBottom:"1px solid "+C.border,verticalAlign:"middle"};
@@ -5652,7 +5652,7 @@ export default function App() {
                 <button key={v} style={btn(view===v)} onClick={()=>{ setView(v); setOpenMenu(null); }}>{l}</button>;
               const groups = [
                 { title:"Tryouts", items:[["evaluate","Evaluate"], ...(canViewTeams ? [["teams","Teams"]] : []), ["rankings","Rankings"], ["tryouts","Coach Assignments"]] },
-                { title:"Operations", items:[["tracker","Tracker"], ...(isOwner ? [["coaches","Coaches"]] : []), ["practice","Practice"], ["messages", "Messages" + (totalUnread > 0 ? " (" + totalUnread + ")" : "")]] },
+                { title:"Operations", items:[["tracker","Tracker"], ...(isAdmin ? [["coaches","Coaches"]] : []), ["practice","Practice"], ["messages", "Messages" + (totalUnread > 0 ? " (" + totalUnread + ")" : "")]] },
               ];
               return <>
                 {item("dashboard","Dashboard")}
