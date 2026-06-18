@@ -973,7 +973,11 @@ export default function App() {
     if (error) console.error("Load coach_roster error:", error);
     setCoachRoster(data || []);
   }, []);
-  useEffect(() => { if (isApproved && view === "coaches") loadCoachRoster(); }, [isApproved, view, loadCoachRoster]);
+  useEffect(() => {
+    // Roster also drives the Tryout coach picker / Text Coaches lookup,
+    // so make sure it's loaded whenever either tab opens.
+    if (isApproved && (view === "coaches" || view === "tryouts")) loadCoachRoster();
+  }, [isApproved, view, loadCoachRoster]);
 
   // Realtime sync for tournament planning (separate channel — only when on
   // that tab so we don't burn a websocket connection elsewhere).
