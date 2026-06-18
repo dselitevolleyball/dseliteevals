@@ -3787,6 +3787,10 @@ export default function App() {
             No coaches in the coach roster yet. Add coaches under <b>Coaches</b> → Coach Roster first, then come back to assign them to tryouts.
           </div>
         )}
+        {/* Shared datalist powers the autocomplete on every role's input. */}
+        <datalist id="tryout-roster-suggestions">
+          {rosterNames.map(n => <option key={n} value={n} />)}
+        </datalist>
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(320px,1fr))",gap:14}}>
           {tryouts.map(tr => {
             // Count players whose USAV division matches and who are flagged
@@ -3831,22 +3835,42 @@ export default function App() {
                         </span>
                       ))}
                     </div>
-                    {/* Roster-only picker. Selecting a coach immediately
-                        assigns them; resets the dropdown to the placeholder. */}
-                    <select
-                      value=""
+                    {/* Typeahead input — backed by the shared roster datalist
+                        so the browser shows live suggestions as you type.
+                        Only commits when the entered text matches a roster
+                        coach (case-insensitive). Free text that doesn't
+                        match a roster entry is rejected with an inline hint. */}
+                    <input
+                      list="tryout-roster-suggestions"
                       disabled={rosterNames.length === 0}
-                      onChange={e => {
-                        const v = e.target.value;
-                        if (v) addCoach(tr, role.key, v);
+                      placeholder={rosterNames.length === 0 ? "No coaches in roster" : ("Start typing " + role.label.toLowerCase() + "…")}
+                      autoComplete="off"
+                      onKeyDown={e => {
+                        if (e.key !== "Enter") return;
+                        e.preventDefault();
+                        const v = (e.target.value||"").trim();
+                        if (!v) return;
+                        const match = rosterNames.find(n => n.toLowerCase() === v.toLowerCase());
+                        if (!match) {
+                          window.alert("\"" + v + "\" isn't in the coach roster. Add them under Coaches → Coach Roster first.");
+                          return;
+                        }
+                        if (list.includes(match)) {
+                          e.target.value = "";
+                          return;
+                        }
+                        addCoach(tr, role.key, match);
                         e.target.value = "";
                       }}
-                      style={{...inpStyle,width:"100%",padding:"6px 10px",fontSize:12,cursor:rosterNames.length===0?"not-allowed":"pointer"}}>
-                      <option value="">{rosterNames.length === 0 ? "No coaches in roster" : ("Add " + role.label.toLowerCase() + "…")}</option>
-                      {rosterNames
-                        .filter(n => !list.includes(n))
-                        .map(n => <option key={n} value={n}>{n}</option>)}
-                    </select>
+                      onBlur={e => {
+                        const v = (e.target.value||"").trim();
+                        if (!v) return;
+                        const match = rosterNames.find(n => n.toLowerCase() === v.toLowerCase());
+                        if (match && !list.includes(match)) addCoach(tr, role.key, match);
+                        e.target.value = "";
+                      }}
+                      style={{...inpStyle,width:"100%",padding:"6px 10px",fontSize:12,cursor:rosterNames.length===0?"not-allowed":"text"}}
+                    />
                   </div>
                 );
               })}
