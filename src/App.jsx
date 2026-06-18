@@ -3844,6 +3844,58 @@ export default function App() {
                   </div>
                 );
               })}
+              {/* SMS export button — opens the device messaging app with
+                  the assigned coaches' phone numbers prefilled and a fully
+                  composed message body. */}
+              <div style={{borderTop:"1px solid "+C.border,paddingTop:10,marginTop:4}}>
+                <button onClick={() => {
+                  const start = new Date(tr.start_at);
+                  const end = new Date(tr.end_at);
+                  const showtime = new Date(start.getTime() - 45*60000);
+                  const endStay  = new Date(end.getTime()   + 60*60000);
+                  const fmtT = d => d.toLocaleTimeString(undefined,{hour:"numeric",minute:"2-digit"});
+                  const fmtD = d => d.toLocaleDateString(undefined,{weekday:"long",month:"long",day:"numeric"});
+                  const join = (arr) => (arr && arr.length ? arr.join(", ") : "TBD");
+                  const message =
+                    "DS Elite " + tr.division + " Tryout\n" +
+                    fmtD(start) + "\n" +
+                    "Tryout: " + fmtT(start) + " – " + fmtT(end) + "\n" +
+                    "Showtime: " + fmtT(showtime) + " (please arrive 45 min before)\n" +
+                    "Plan to stay until: " + fmtT(endStay) + " (1 hr after end)\n\n" +
+                    "Players signed up: " + signedUp + "\n\n" +
+                    "Lead Coach: " + join(tr.lead_coaches) + "\n" +
+                    "Court Coach: " + join(tr.court_coaches) + "\n" +
+                    "Evaluating Coach: " + join(tr.evaluating_coaches);
+                  // Look phone numbers up from coach_roster by first-name or full-name match.
+                  const findPhone = (name) => {
+                    const n = (name||"").toLowerCase().trim();
+                    if (!n) return null;
+                    for (const c of coachRoster) {
+                      const full  = ((c.first_name||"") + " " + (c.last_name||"")).toLowerCase().trim();
+                      const first = (c.first_name||"").toLowerCase().trim();
+                      if (full === n || first === n) return (c.phone||"").replace(/[^\d+]/g,"");
+                    }
+                    return null;
+                  };
+                  const allNames = [...(tr.lead_coaches||[]), ...(tr.court_coaches||[]), ...(tr.evaluating_coaches||[])];
+                  const phones  = [...new Set(allNames.map(findPhone).filter(Boolean))];
+                  const missing = [...new Set(allNames.filter(n => n && !findPhone(n)))];
+                  // Copy to clipboard as a fallback for users on desktop where sms: is a no-op.
+                  if (navigator.clipboard) navigator.clipboard.writeText(message).catch(()=>{});
+                  if (phones.length === 0) {
+                    window.alert("No phone numbers found on file for the assigned coaches. The message has been copied to your clipboard — paste it into your messaging app." + (missing.length ? "\n\nMissing phones for: " + missing.join(", ") : ""));
+                    return;
+                  }
+                  if (missing.length && !window.confirm("Missing phone numbers for: " + missing.join(", ") + "\n\nContinue anyway with the " + phones.length + " coach" + (phones.length===1?"":"es") + " we do have?")) return;
+                  // Standard SMS URI: works on iOS and Android.
+                  const url = "sms:" + phones.join(",") + "?body=" + encodeURIComponent(message);
+                  window.location.href = url;
+                }}
+                  title="Open your messaging app with this tryout's coaches and pre-filled message"
+                  style={{width:"100%",padding:"8px 14px",borderRadius:8,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>
+                  ✉ Text Coaches
+                </button>
+              </div>
             </div>
             );
           })}
