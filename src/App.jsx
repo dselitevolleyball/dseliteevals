@@ -3920,15 +3920,14 @@ export default function App() {
                   const allNames = [...(tr.lead_coaches||[]), ...(tr.court_coaches||[]), ...(tr.evaluating_coaches||[])];
                   const phones  = [...new Set(allNames.map(findPhone).filter(Boolean))];
                   const missing = [...new Set(allNames.filter(n => n && !findPhone(n)))];
-                  // Build a copyable display: phone numbers up top, then the
-                  // composed body. Auto-copies to clipboard AND shows a
-                  // prompt() so you can select/copy manually from the popup.
+                  // Silent copy to clipboard — no popup. Composed body has
+                  // a "To: <phones>" line up top so the user can paste
+                  // straight into a group thread.
                   const phoneBlock = phones.length
                     ? "To: " + phones.join(", ") + (missing.length ? "\n(No phone on file: " + missing.join(", ") + ")" : "") + "\n\n"
                     : (missing.length ? "(No phone numbers on file for: " + missing.join(", ") + ")\n\n" : "");
                   const composed = phoneBlock + message;
                   if (navigator.clipboard) navigator.clipboard.writeText(composed).catch(()=>{});
-                  window.prompt("Message copied to clipboard. Select & copy below if needed:", composed);
                 }}
                   title="Open your messaging app with this tryout's coaches and pre-filled message"
                   style={{width:"100%",padding:"8px 14px",borderRadius:8,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>
