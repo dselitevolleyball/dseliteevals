@@ -3920,16 +3920,15 @@ export default function App() {
                   const allNames = [...(tr.lead_coaches||[]), ...(tr.court_coaches||[]), ...(tr.evaluating_coaches||[])];
                   const phones  = [...new Set(allNames.map(findPhone).filter(Boolean))];
                   const missing = [...new Set(allNames.filter(n => n && !findPhone(n)))];
-                  // Copy to clipboard as a fallback for users on desktop where sms: is a no-op.
-                  if (navigator.clipboard) navigator.clipboard.writeText(message).catch(()=>{});
-                  if (phones.length === 0) {
-                    window.alert("No phone numbers found on file for the assigned coaches. The message has been copied to your clipboard — paste it into your messaging app." + (missing.length ? "\n\nMissing phones for: " + missing.join(", ") : ""));
-                    return;
-                  }
-                  if (missing.length && !window.confirm("Missing phone numbers for: " + missing.join(", ") + "\n\nContinue anyway with the " + phones.length + " coach" + (phones.length===1?"":"es") + " we do have?")) return;
-                  // Standard SMS URI: works on iOS and Android.
-                  const url = "sms:" + phones.join(",") + "?body=" + encodeURIComponent(message);
-                  window.location.href = url;
+                  // Build a copyable display: phone numbers up top, then the
+                  // composed body. Auto-copies to clipboard AND shows a
+                  // prompt() so you can select/copy manually from the popup.
+                  const phoneBlock = phones.length
+                    ? "To: " + phones.join(", ") + (missing.length ? "\n(No phone on file: " + missing.join(", ") + ")" : "") + "\n\n"
+                    : (missing.length ? "(No phone numbers on file for: " + missing.join(", ") + ")\n\n" : "");
+                  const composed = phoneBlock + message;
+                  if (navigator.clipboard) navigator.clipboard.writeText(composed).catch(()=>{});
+                  window.prompt("Message copied to clipboard. Select & copy below if needed:", composed);
                 }}
                   title="Open your messaging app with this tryout's coaches and pre-filled message"
                   style={{width:"100%",padding:"8px 14px",borderRadius:8,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>
