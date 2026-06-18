@@ -730,6 +730,7 @@ export default function App() {
   const [regSince, setRegSince] = useState("");
   const [filterAttend, setFilterAttend] = useState("all"); // all | attended | not — tryout attendance
   const [copiedEmails, setCopiedEmails] = useState(false);
+  const [copiedPhones, setCopiedPhones] = useState(false);
   const [sortBy, setSortBy] = useState("name");
   // Rankings view column sort: key matches a column id in renderRankings' COLS table.
   const [rankSort, setRankSort] = useState({ key: "total", dir: "desc" });
@@ -1988,6 +1989,17 @@ export default function App() {
           }} title="Copy parent emails of currently visible players to clipboard, comma-separated" style={{padding:"6px 10px",borderRadius:6,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
             {copiedEmails ? "Copied ✓" : "Copy emails"}
           </button>
+          <button onClick={() => {
+            // Strip everything but digits and a leading + so the resulting
+            // string drops cleanly into the recipient field of any messaging app.
+            const phones = filtered.map(p => (p.parent_phone||"").trim()).filter(Boolean)
+              .map(s => s.replace(/[^\d+]/g,""));
+            const uniq = [...new Set(phones)].filter(Boolean);
+            if (!uniq.length) { window.alert("No parent phone numbers found for the current filter."); return; }
+            navigator.clipboard.writeText(uniq.join(", ")).then(()=>{ setCopiedPhones(true); setTimeout(()=>setCopiedPhones(false), 2000); });
+          }} title="Copy parent phone numbers of currently visible players to clipboard, comma-separated" style={{padding:"6px 10px",borderRadius:6,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+            {copiedPhones ? "Copied ✓" : "Copy phones"}
+          </button>
           <span style={{fontSize:11,color:C.mut,marginLeft:"auto"}}>{saving?"Saving...":filtered.length+" players"}</span>
         </div>
         <div style={{background:C.card,borderRadius:12,border:"1px solid "+C.border,overflow:"hidden"}}>
@@ -2834,7 +2846,24 @@ export default function App() {
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:10}}>
               <div><span style={lbl}>Parent Name</span><DebouncedField style={editInp} placeholder="Parent name" value={p.parent_name||""} onCommit={v=>upd(p.id,{parent_name:v})} /></div>
               <div><span style={lbl}>Parent Email</span><DebouncedField type="email" style={editInp} placeholder="email@example.com" value={p.parent_email||""} onCommit={v=>upd(p.id,{parent_email:v})} /></div>
-              <div><span style={lbl}>Parent Phone</span><DebouncedField style={editInp} placeholder="555-555-5555" value={p.parent_phone||""} onCommit={v=>upd(p.id,{parent_phone:v})} /></div>
+              <div>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:6}}>
+                  <span style={lbl}>Parent Phone</span>
+                  {p.parent_phone && (
+                    <button
+                      title="Copy parent phone to clipboard (paste into Messages)"
+                      onClick={() => {
+                        const num = (p.parent_phone||"").replace(/[^\d+]/g,"");
+                        if (!num) return;
+                        if (navigator.clipboard) navigator.clipboard.writeText(num).catch(()=>{});
+                      }}
+                      style={{padding:"1px 8px",borderRadius:6,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontSize:9,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>
+                      ✉ Copy
+                    </button>
+                  )}
+                </div>
+                <DebouncedField style={editInp} placeholder="555-555-5555" value={p.parent_phone||""} onCommit={v=>upd(p.id,{parent_phone:v})} />
+              </div>
               <div><span style={lbl}>Player Email</span><DebouncedField type="email" style={editInp} placeholder="player@example.com" value={p.player_email||""} onCommit={v=>upd(p.id,{player_email:v})} /></div>
               <div><span style={lbl}>Player Phone</span><DebouncedField style={editInp} placeholder="555-555-5555" value={p.player_phone||""} onCommit={v=>upd(p.id,{player_phone:v})} /></div>
               <div><span style={lbl}>DOB</span><DebouncedField type="date" style={editInp} value={p.dob||""} onCommit={v=>upd(p.id,{dob:v})} /></div>
@@ -3933,9 +3962,43 @@ export default function App() {
                   const composed = phoneBlock + message;
                   if (navigator.clipboard) navigator.clipboard.writeText(composed).catch(()=>{});
                 }}
-                  title="Open your messaging app with this tryout's coaches and pre-filled message"
+                  title="Copy a composed message + this tryout's coach phone numbers to clipboard"
                   style={{width:"100%",padding:"8px 14px",borderRadius:8,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>
                   ✉ Text Coaches
+                </button>
+                <button onClick={() => {
+                  // Bulk player text — every player tryout_registered=true for this
+                  // tryout's division. Composes a short reminder and prepends the
+                  // unique parent phone numbers. Silently copies to clipboard.
+                  const signups = players.filter(p =>
+                    (p.usavDiv || p.usav_div) === tr.division && p.tryout_registered
+                  );
+                  const phones = [...new Set(
+                    signups
+                      .map(p => (p.parent_phone||"").replace(/[^\d+]/g,""))
+                      .filter(Boolean)
+                  )];
+                  if (!phones.length) {
+                    window.alert("No parent phone numbers found for " + tr.division + " tryout signups.");
+                    return;
+                  }
+                  const start = new Date(tr.start_at);
+                  const end = new Date(tr.end_at);
+                  const showtime = new Date(start.getTime() - 45*60000);
+                  const fmtT = d => d.toLocaleTimeString(undefined,{hour:"numeric",minute:"2-digit"});
+                  const fmtD = d => d.toLocaleDateString(undefined,{weekday:"long",month:"long",day:"numeric"});
+                  const message =
+                    "Hi! Reminder about the DS Elite " + tr.division + " tryout:\n" +
+                    fmtD(start) + "\n" +
+                    "Tryout: " + fmtT(start) + " – " + fmtT(end) + "\n" +
+                    "Please arrive by " + fmtT(showtime) + " (45 min before start).\n\n" +
+                    "Reply with any questions. Looking forward to seeing your athlete!";
+                  const composed = "To: " + phones.join(", ") + "\n\n" + message;
+                  if (navigator.clipboard) navigator.clipboard.writeText(composed).catch(()=>{});
+                }}
+                  title={"Copy a composed message + parent phones for every " + tr.division + " tryout signup"}
+                  style={{width:"100%",padding:"8px 14px",borderRadius:8,border:"1px solid #06b6d4",background:"transparent",color:"#06b6d4",fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit",marginTop:6}}>
+                  ✉ Text Players ({signedUp})
                 </button>
               </div>
             </div>
