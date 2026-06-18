@@ -3735,17 +3735,22 @@ export default function App() {
       { key:"court_coaches",      label:"Court Coach",      color:"#06b6d4" },
       { key:"evaluating_coaches", label:"Evaluating Coach", color:C.acc },
     ];
-    // Distinct coaches across practice_teams (head + assistant) — used to
-    // populate the autocomplete datalist so adding common names is a click.
-    const knownCoaches = new Set();
-    for (const t of practiceTeams) {
-      if (t.head_coach) knownCoaches.add(t.head_coach);
-      if (t.assistant_coach) knownCoaches.add(t.assistant_coach);
-    }
-    for (const tr of tryouts) {
-      for (const r of ROLES) (tr[r.key] || []).forEach(c => knownCoaches.add(c));
-    }
-    const coachList = Array.from(knownCoaches).sort((a,b) => a.localeCompare(b));
+    // Coach roster is the single source of truth for who can be assigned.
+    // Names formatted "First Last" — sorted alphabetically — and de-duped
+    // (case-insensitive) so the dropdown reads predictably.
+    const rosterNames = (() => {
+      const seen = new Set();
+      const out = [];
+      for (const c of coachRoster) {
+        const full = ((c.first_name||"").trim() + " " + (c.last_name||"").trim()).trim();
+        if (!full) continue;
+        const k = full.toLowerCase();
+        if (seen.has(k)) continue;
+        seen.add(k);
+        out.push(full);
+      }
+      return out.sort((a,b) => a.localeCompare(b));
+    })();
 
     const addCoach = async (tryout, roleKey, name) => {
       const n = (name||"").trim();
@@ -3777,9 +3782,11 @@ export default function App() {
           <h2 style={{margin:0,fontSize:18,fontWeight:800,color:C.gold}}>Tryout Coach Assignments</h2>
           <div style={{fontSize:11,color:C.mut}}>{tryouts.length} tryout{tryouts.length===1?"":"s"} · Add coach names below each role</div>
         </div>
-        <datalist id="tryout-coach-suggestions">
-          {coachList.map(c => <option key={c} value={c} />)}
-        </datalist>
+        {rosterNames.length === 0 && (
+          <div style={{background:"rgba(245,158,11,0.08)",border:"1px solid rgba(245,158,11,0.35)",borderRadius:10,padding:"10px 14px",marginBottom:12,fontSize:12,color:"#f59e0b"}}>
+            No coaches in the coach roster yet. Add coaches under <b>Coaches</b> → Coach Roster first, then come back to assign them to tryouts.
+          </div>
+        )}
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(320px,1fr))",gap:14}}>
           {tryouts.map(tr => {
             // Count players whose USAV division matches and who are flagged
@@ -3824,23 +3831,22 @@ export default function App() {
                         </span>
                       ))}
                     </div>
-                    <input
-                      list="tryout-coach-suggestions"
-                      placeholder={"Add " + role.label.toLowerCase() + "…"}
-                      onKeyDown={e => {
-                        if (e.key === "Enter") {
-                          addCoach(tr, role.key, e.target.value);
-                          e.target.value = "";
-                        }
+                    {/* Roster-only picker. Selecting a coach immediately
+                        assigns them; resets the dropdown to the placeholder. */}
+                    <select
+                      value=""
+                      disabled={rosterNames.length === 0}
+                      onChange={e => {
+                        const v = e.target.value;
+                        if (v) addCoach(tr, role.key, v);
+                        e.target.value = "";
                       }}
-                      onBlur={e => {
-                        if (e.target.value.trim()) {
-                          addCoach(tr, role.key, e.target.value);
-                          e.target.value = "";
-                        }
-                      }}
-                      style={{...inpStyle,width:"100%",padding:"6px 10px",fontSize:12}}
-                    />
+                      style={{...inpStyle,width:"100%",padding:"6px 10px",fontSize:12,cursor:rosterNames.length===0?"not-allowed":"pointer"}}>
+                      <option value="">{rosterNames.length === 0 ? "No coaches in roster" : ("Add " + role.label.toLowerCase() + "…")}</option>
+                      {rosterNames
+                        .filter(n => !list.includes(n))
+                        .map(n => <option key={n} value={n}>{n}</option>)}
+                    </select>
                   </div>
                 );
               })}
