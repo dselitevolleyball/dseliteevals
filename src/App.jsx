@@ -595,6 +595,12 @@ export default function App() {
   const [practiceCoachFilter, setPracticeCoachFilter] = useState("");
   const [tryouts, setTryouts]                         = useState([]);
   const [coachRoster, setCoachRoster]                 = useState([]);
+  // SMS state
+  const [smsThreads, setSmsThreads]                   = useState([]);
+  const [smsMessages, setSmsMessages]                 = useState([]);
+  const [selectedThreadId, setSelectedThreadId]       = useState(null);
+  const [smsCompose, setSmsCompose]                   = useState("");
+  const [smsSending, setSmsSending]                   = useState(false);
   const [teamsList, setTeamsList]                           = useState([]);
   const [blackoutDates, setBlackoutDates]                   = useState([]);
   const [tnFilters, setTnFilters]                           = useState({ search: "", ageFor: "", qualifierOnly: false, dateFrom: "", dateTo: "", hideClosed: false, hideCancelled: true, startsOn: [], state: "", numDays: "", divisions: [] });
@@ -967,6 +973,90 @@ export default function App() {
     setTryouts(data || []);
   }, []);
   useEffect(() => { if (isApproved && view === "tryouts") loadTryouts(); }, [isApproved, view, loadTryouts]);
+
+  // SMS loaders
+  const loadSmsThreads = useCallback(async () => {
+    const { data, error } = await supabase
+      .from("sms_threads")
+      .select("*")
+      .order("last_message_at", { ascending: false, nullsFirst: false });
+    if (error) console.error("Load sms_threads error:", error);
+    setSmsThreads(data || []);
+  }, []);
+  const loadSmsMessages = useCallback(async (threadId) => {
+    if (!threadId) { setSmsMessages([]); return; }
+    const { data, error } = await supabase
+      .from("sms_messages")
+      .select("*")
+      .eq("thread_id", threadId)
+      .order("id", { ascending: true });
+    if (error) console.error("Load sms_messages error:", error);
+    setSmsMessages(data || []);
+  }, []);
+  useEffect(() => {
+    if (isApproved && (view === "messages" || view === "evaluate")) loadSmsThreads();
+  }, [isApproved, view, loadSmsThreads]);
+  useEffect(() => { loadSmsMessages(selectedThreadId); }, [selectedThreadId, loadSmsMessages]);
+  // Realtime: refresh threads + messages on any sms_messages / sms_threads change.
+  useEffect(() => {
+    if (!isApproved) return;
+    const ch = supabase
+      .channel("realtime-sms")
+      .on("postgres_changes", { event: "*", schema: "public", table: "sms_messages" }, (payload) => {
+        loadSmsThreads();
+        const tid = payload.new?.thread_id || payload.old?.thread_id;
+        if (selectedThreadId && tid === selectedThreadId) loadSmsMessages(selectedThreadId);
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "sms_threads" }, () => loadSmsThreads())
+      .subscribe();
+    return () => supabase.removeChannel(ch);
+  }, [isApproved, selectedThreadId, loadSmsThreads, loadSmsMessages]);
+
+  // Send an SMS via the Vercel serverless /api/send-sms endpoint.
+  const sendSms = useCallback(async ({ to, body, player_id }) => {
+    if (!to || !body) return false;
+    setSmsSending(true);
+    try {
+      const res = await fetch("/api/send-sms", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          to, body, player_id: player_id || null,
+          sent_by_coach_id: coach?.id || null,
+          sent_by_label: coach?.display_name || null,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        window.alert("Send failed: " + (data.error || res.statusText));
+        return false;
+      }
+      // Switch the inbox over to the affected thread so we can see delivery.
+      if (data.thread_id) {
+        setSelectedThreadId(data.thread_id);
+        await loadSmsThreads();
+        await loadSmsMessages(data.thread_id);
+      }
+      return true;
+    } catch (err) {
+      window.alert("Send error: " + err.message);
+      return false;
+    } finally {
+      setSmsSending(false);
+    }
+  }, [coach, loadSmsThreads, loadSmsMessages]);
+
+  const markThreadRead = useCallback(async (threadId) => {
+    if (!threadId) return;
+    await supabase.from("sms_threads").update({ unread_count: 0 }).eq("id", threadId);
+    loadSmsThreads();
+  }, [loadSmsThreads]);
+
+  // Total unread for nav badge.
+  const totalUnread = useMemo(
+    () => smsThreads.reduce((s, t) => s + (t.unread_count || 0), 0),
+    [smsThreads]
+  );
 
   // Coach roster loader (admin Coaches tab section).
   const loadCoachRoster = useCallback(async () => {
@@ -2850,16 +2940,44 @@ export default function App() {
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:6}}>
                   <span style={lbl}>Parent Phone</span>
                   {p.parent_phone && (
-                    <button
-                      title="Copy parent phone to clipboard (paste into Messages)"
-                      onClick={() => {
-                        const num = (p.parent_phone||"").replace(/[^\d+]/g,"");
-                        if (!num) return;
-                        if (navigator.clipboard) navigator.clipboard.writeText(num).catch(()=>{});
-                      }}
-                      style={{padding:"1px 8px",borderRadius:6,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontSize:9,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>
-                      ✉ Copy
-                    </button>
+                    <div style={{display:"flex",gap:4}}>
+                      <button
+                        title="Open SMS conversation with this parent"
+                        onClick={async () => {
+                          // Normalize to E.164 to find/create thread.
+                          let phone = (p.parent_phone||"").replace(/[^\d+]/g,"");
+                          if (!phone) return;
+                          if (!phone.startsWith("+")) {
+                            if (phone.length === 10) phone = "+1" + phone;
+                            else if (phone.length === 11 && phone.startsWith("1")) phone = "+" + phone;
+                          }
+                          // Look up or create the thread, then switch to the Messages tab.
+                          let { data: t } = await supabase.from("sms_threads").select("*").eq("phone", phone).maybeSingle();
+                          if (!t) {
+                            const ins = await supabase.from("sms_threads").insert({ phone, player_id: p.id }).select().single();
+                            if (ins.error) { window.alert("Open chat failed: " + ins.error.message); return; }
+                            t = ins.data;
+                          } else if (!t.player_id) {
+                            await supabase.from("sms_threads").update({ player_id: p.id }).eq("id", t.id);
+                          }
+                          setProfileId(null);
+                          setSelectedThreadId(t.id);
+                          setView("messages");
+                        }}
+                        style={{padding:"1px 8px",borderRadius:6,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontSize:9,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>
+                        ✉ Text
+                      </button>
+                      <button
+                        title="Copy parent phone to clipboard"
+                        onClick={() => {
+                          const num = (p.parent_phone||"").replace(/[^\d+]/g,"");
+                          if (!num) return;
+                          if (navigator.clipboard) navigator.clipboard.writeText(num).catch(()=>{});
+                        }}
+                        style={{padding:"1px 8px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:9,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>
+                        Copy
+                      </button>
+                    </div>
                   )}
                 </div>
                 <DebouncedField style={editInp} placeholder="555-555-5555" value={p.parent_phone||""} onCommit={v=>upd(p.id,{parent_phone:v})} />
@@ -4010,6 +4128,123 @@ export default function App() {
             No tryouts loaded yet. Run the seed SQL in Supabase.
           </div>
         )}
+      </div>
+    );
+  }
+
+  // ─── MESSAGES (SMS INBOX) ────────────────────────────────────────────
+  // Two-column view: thread list on the left, selected conversation on
+  // the right. Realtime push (in the parent component) keeps both up
+  // to date as Twilio delivers inbound + status updates.
+  function renderMessages() {
+    const fmtPhone = (p) => {
+      if (!p) return "";
+      const s = String(p).replace(/[^\d]/g, "");
+      if (s.length === 11 && s.startsWith("1")) return "(" + s.slice(1,4) + ") " + s.slice(4,7) + "-" + s.slice(7);
+      if (s.length === 10) return "(" + s.slice(0,3) + ") " + s.slice(3,6) + "-" + s.slice(6);
+      return p;
+    };
+    const fmtWhen = (iso) => {
+      if (!iso) return "";
+      const d = new Date(iso);
+      const now = new Date();
+      const sameDay = d.toDateString() === now.toDateString();
+      return sameDay
+        ? d.toLocaleTimeString(undefined, { hour:"numeric", minute:"2-digit" })
+        : d.toLocaleDateString(undefined, { month:"short", day:"numeric" });
+    };
+    const playerById = new Map(players.map(p => [p.id, p]));
+    const selected = smsThreads.find(t => t.id === selectedThreadId);
+    const send = async () => {
+      if (!selected || !smsCompose.trim()) return;
+      const ok = await sendSms({ to: selected.phone, body: smsCompose.trim(), player_id: selected.player_id });
+      if (ok) setSmsCompose("");
+    };
+    return (
+      <div style={{display:"grid",gridTemplateColumns:"320px 1fr",gap:14,height:"calc(100vh - 160px)"}}>
+        {/* Thread list */}
+        <div style={{background:C.card,borderRadius:12,border:"1px solid "+C.border,overflowY:"auto"}}>
+          <div style={{padding:"10px 14px",borderBottom:"1px solid "+C.border,position:"sticky",top:0,background:C.card,zIndex:2}}>
+            <div style={{fontSize:12,fontWeight:800,color:C.gold,letterSpacing:0.5}}>INBOX</div>
+            <div style={{fontSize:10,color:C.mut,marginTop:2}}>{smsThreads.length} thread{smsThreads.length===1?"":"s"}{totalUnread>0 ? " · " + totalUnread + " unread" : ""}</div>
+          </div>
+          {smsThreads.length === 0 && <div style={{padding:24,textAlign:"center",color:C.mut,fontSize:11}}>No conversations yet.</div>}
+          {smsThreads.map(t => {
+            const player = t.player_id ? playerById.get(t.player_id) : null;
+            const label = t.display_name
+              || (player ? player.first_name + " " + player.last_name : null)
+              || fmtPhone(t.phone);
+            const isSel = t.id === selectedThreadId;
+            return (
+              <div key={t.id}
+                onClick={() => { setSelectedThreadId(t.id); if (t.unread_count) markThreadRead(t.id); }}
+                style={{padding:"10px 14px",borderBottom:"1px solid "+C.border,cursor:"pointer",background:isSel?"rgba(233,30,140,0.10)":(t.unread_count?"rgba(34,197,94,0.06)":"transparent")}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:6}}>
+                  <span style={{fontSize:13,fontWeight:700,color:t.unread_count?C.grn:C.text,maxWidth:200,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{label}</span>
+                  <span style={{fontSize:9,color:C.mut,whiteSpace:"nowrap"}}>{fmtWhen(t.last_message_at)}</span>
+                </div>
+                <div style={{fontSize:11,color:C.mut,marginTop:3,maxWidth:280,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                  {t.last_message_direction === "outbound" && <span style={{color:C.gold,marginRight:4}}>→</span>}
+                  {t.last_message_preview || <i>(no messages yet)</i>}
+                </div>
+                {t.unread_count > 0 && <span style={{fontSize:9,fontWeight:800,padding:"1px 6px",borderRadius:8,background:C.grn,color:"#000",marginTop:4,display:"inline-block"}}>{t.unread_count} new</span>}
+              </div>
+            );
+          })}
+        </div>
+        {/* Right pane */}
+        <div style={{background:C.card,borderRadius:12,border:"1px solid "+C.border,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+          {!selected && (
+            <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:C.mut,fontSize:12,padding:20,textAlign:"center"}}>
+              {smsThreads.length === 0
+                ? "Send a player's parent their first message from any player profile card."
+                : "Pick a thread on the left to read or reply."}
+            </div>
+          )}
+          {selected && (() => {
+            const player = selected.player_id ? playerById.get(selected.player_id) : null;
+            const title = selected.display_name
+              || (player ? player.first_name + " " + player.last_name + (player.usavDiv ? " · " + player.usavDiv : "") : null)
+              || fmtPhone(selected.phone);
+            return (
+              <>
+                <div style={{padding:"12px 16px",borderBottom:"1px solid "+C.border}}>
+                  <div style={{fontSize:14,fontWeight:800,color:C.gold}}>{title}</div>
+                  <div style={{fontSize:11,color:C.mut,marginTop:2}}>{fmtPhone(selected.phone)}{player && <button onClick={()=>setProfileId(player.id)} style={{marginLeft:8,padding:"2px 8px",borderRadius:5,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Open player card</button>}</div>
+                </div>
+                <div style={{flex:1,overflowY:"auto",padding:"14px 16px",display:"flex",flexDirection:"column",gap:8}}>
+                  {smsMessages.map(m => {
+                    const out = m.direction === "outbound";
+                    return (
+                      <div key={m.id} style={{display:"flex",justifyContent:out?"flex-end":"flex-start"}}>
+                        <div style={{maxWidth:"75%",padding:"8px 12px",borderRadius:14,background:out?"rgba(233,30,140,0.18)":"rgba(255,255,255,0.06)",color:C.text,fontSize:13,lineHeight:1.4,border:"1px solid "+(out?C.acc:C.border)}}>
+                          <div style={{whiteSpace:"pre-wrap",wordBreak:"break-word"}}>{m.body}</div>
+                          <div style={{fontSize:9,color:C.mut,marginTop:4,textAlign:out?"right":"left"}}>
+                            {fmtWhen(m.sent_at || m.created_at)}
+                            {out && m.status && <span style={{marginLeft:6,fontWeight:700,color:m.status==="delivered"?C.grn:m.status==="failed"?C.red:C.mut}}>· {m.status}</span>}
+                            {out && m.sent_by_label && <span style={{marginLeft:6}}>· {m.sent_by_label}</span>}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {smsMessages.length === 0 && <div style={{textAlign:"center",color:C.mut,fontSize:11,padding:20}}>No messages in this thread yet.</div>}
+                </div>
+                <div style={{borderTop:"1px solid "+C.border,padding:"10px 14px",display:"flex",gap:8,alignItems:"flex-end"}}>
+                  <textarea value={smsCompose} onChange={e=>setSmsCompose(e.target.value)}
+                    placeholder="Type a message…"
+                    rows={2}
+                    onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); } }}
+                    style={{...inpStyle,flex:1,padding:"8px 10px",fontSize:13,resize:"vertical",minHeight:40,maxHeight:140,fontFamily:"inherit"}} />
+                  <button onClick={send} disabled={smsSending || !smsCompose.trim()}
+                    style={{padding:"10px 16px",borderRadius:8,border:"none",background:smsCompose.trim()?C.gold:C.border,color:smsCompose.trim()?"#000":C.mut,fontFamily:"inherit",fontSize:13,fontWeight:700,cursor:smsCompose.trim()?"pointer":"default"}}>
+                    {smsSending ? "Sending…" : "Send"}
+                  </button>
+                </div>
+              </>
+            );
+          })()}
+        </div>
       </div>
     );
   }
@@ -5417,7 +5652,7 @@ export default function App() {
                 <button key={v} style={btn(view===v)} onClick={()=>{ setView(v); setOpenMenu(null); }}>{l}</button>;
               const groups = [
                 { title:"Tryouts", items:[["evaluate","Evaluate"], ...(canViewTeams ? [["teams","Teams"]] : []), ["rankings","Rankings"], ["tryouts","Coach Assignments"]] },
-                { title:"Operations", items:[["tracker","Tracker"], ...(isOwner ? [["coaches","Coaches"]] : []), ["practice","Practice"]] },
+                { title:"Operations", items:[["tracker","Tracker"], ...(isOwner ? [["coaches","Coaches"]] : []), ["practice","Practice"], ["messages", "Messages" + (totalUnread > 0 ? " (" + totalUnread + ")" : "")]] },
               ];
               return <>
                 {item("dashboard","Dashboard")}
@@ -5513,6 +5748,7 @@ export default function App() {
         {view==="tournaments" && renderTournaments()}
         {view==="practice" && renderPractice()}
         {view==="tryouts" && renderTryouts()}
+        {view==="messages" && renderMessages()}
         {view==="askai" && renderAskAI()}
       </div>
       {profileId !== null && renderProfile()}
