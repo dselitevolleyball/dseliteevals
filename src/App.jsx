@@ -1435,27 +1435,109 @@ export default function App() {
   }, [newPlayer, players, loadPlayers]);
 
   // Export to CSV
+  // Quote any string that contains a comma, quote, or newline (and escape
+  // embedded quotes). Numbers / booleans pass through as-is.
+  const csvEscape = (v) => {
+    if (v == null) return "";
+    const s = String(v);
+    if (/[",\n\r]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+    return s;
+  };
+  const downloadCSV = (filename, rows) => {
+    const csv = rows.map(r => r.map(csvEscape).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = filename; a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const exportCSV = useCallback(() => {
-    const headers = ["Name","Age","DOB","USAV Div","Reg Group","Positions","Projected","Team","Roster Pos","Current Team","Eval Complete",...SKILLS,"Total","Avg","Notes"];
-    const csvRows = [headers.join(",")];
+    // Comprehensive player export — every column we track. Order grouped by
+    // identity / division / contact / address / positions / scores / flags.
+    const headers = [
+      "First Name","Last Name","DOB","Age","Gender",
+      "USAV Div","Reg Group","Projected","Team","Roster Pos",
+      "Pinny #","Eval Complete","Feedback Session Complete",
+      "Supplemental (Eval as Tryout)","Tryout Registered","Eval Registered",
+      "SportsEngine","SportsYou","Lone Star","Jersey Tryout",
+      "Player Email","Player Phone","Parent Name","Parent Email","Parent Phone",
+      "Address Line 1","Address Line 2","City","State","Zip",
+      "Primary Position","Secondary Position","Positions",
+      "Dominant Hand","School Team","Other Sports","Previous Club/Team",
+      "Eval Dates","Clinic Invited","Clinic Attended","Clinic Dates",
+      ...SKILLS,"Total","Avg",
+      "Reg Position","Strengths/Weakness","Ideal Coach","Goal","Starter Pref","Leaving Reason","Min Level",
+      "Coach Notes","Parent Feedback Notes","Created At",
+    ];
+    const rows = [headers];
     players.forEach(p => {
-      const row = [
-        '"' + p.first_name + " " + p.last_name + '"',
-        p.age, p.dob, p.usavDiv, p.reg_group,
-        '"' + (p.positions||[]).join("/") + '"',
-        p.projected_team, p.team_assignment, p.roster_pos, '"' + (p.current_team||"") + '"',
-        p.eval_complete ? "Yes" : "No",
+      rows.push([
+        p.first_name, p.last_name, p.dob, p.age, p.gender,
+        p.usavDiv || p.usav_div, p.reg_group, p.projected_team, p.team_assignment, p.roster_pos,
+        p.tryout_number, p.eval_complete ? "Yes":"No", p.feedback_session_complete ? "Yes":"No",
+        p.supplemental === 1 ? "Yes":"No", p.tryout_registered ? "Yes":"No", p.eval_registered ? "Yes":"No",
+        p.sportsengine_registered ? "Yes":"No", p.sportsyou_registered ? "Yes":"No",
+        p.lonestar_member ? "Yes":"No", p.jersey_tryout_complete ? "Yes":"No",
+        p.player_email, p.player_phone, p.parent_name, p.parent_email, p.parent_phone,
+        p.address_line1, p.address_line2, p.city, p.state, p.zip,
+        p.primary_position, p.secondary_position, (p.positions||[]).join("/"),
+        p.dominant_hand, p.school_team, p.other_sports, p.current_team,
+        (p.eval_dates||[]).join(", "),
+        p.id_clinic_invited ? "Yes":"No", p.id_clinic_attended ? "Yes":"No", (p.clinic_dates||[]).join(", "),
         ...SKILLS.map(s => (p.scores||{})[s] || ""),
         tot(p) || "", avg(p),
-        '"' + (p.notes||"").replace(/"/g, '""') + '"'
-      ];
-      csvRows.push(row.join(","));
+        p.reg_position, p.strength_weakness, p.ideal_coach, p.goal, p.starter_pref, p.leaving_reason, p.min_level,
+        p.notes, p.parent_feedback_notes,
+        p.created_at,
+      ]);
     });
-    const blob = new Blob([csvRows.join("\n")], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a"); a.href = url; a.download = "dselite-evals-export.csv"; a.click();
-    URL.revokeObjectURL(url);
+    downloadCSV("dselite-players-export.csv", rows);
   }, [players]);
+
+  // Merged coaches export (roster + login account, joined by email).
+  const exportCoachesCSV = useCallback(() => {
+    const byEmail = new Map();
+    for (const r of coachRoster) {
+      const k = (r.email||"").toLowerCase().trim() || ("roster-" + r.id);
+      byEmail.set(k, { roster: r, account: null });
+    }
+    for (const c of coachesList) {
+      const k = (c.email||"").toLowerCase().trim();
+      if (k && byEmail.has(k)) byEmail.get(k).account = c;
+      else byEmail.set(k || ("acct-" + c.id), { roster: null, account: c });
+    }
+    const headers = [
+      "First Name","Last Name","Email","Phone",
+      "T-shirt Size","Shoe Size","Sweatshirt Size",
+      "Has Login","Approved","Admin","Can View Teams","Age Groups",
+      "Display Name","Last Seen","Joined","Notes",
+    ];
+    const rows = [headers];
+    Array.from(byEmail.values())
+      .sort((a,b) => {
+        const an = (a.roster?.first_name || a.account?.display_name || "").toLowerCase();
+        const bn = (b.roster?.first_name || b.account?.display_name || "").toLowerCase();
+        return an.localeCompare(bn);
+      })
+      .forEach(({roster: r, account: c}) => {
+        const first = r?.first_name || (c?.display_name || "").split(/\s+/)[0] || "";
+        const last  = r?.last_name  || (c?.display_name || "").split(/\s+/).slice(1).join(" ") || "";
+        rows.push([
+          first, last, (r?.email || c?.email || ""), r?.phone,
+          r?.tshirt_size, r?.shoe_size, r?.sweatshirt_size,
+          c ? "Yes" : "No",
+          c ? (c.is_approved ? "Yes":"No") : "",
+          c ? (c.is_admin ? "Yes":"No") : "",
+          c ? (c.can_view_teams ? "Yes":"No") : "",
+          c ? ((c.team_divs||[]).join(", ") || "(all)") : "",
+          c?.display_name,
+          c?.last_seen_at ? new Date(c.last_seen_at).toISOString() : "",
+          c?.created_at ? new Date(c.created_at).toISOString() : "",
+          r?.notes,
+        ]);
+      });
+    downloadCSV("dselite-coaches-export.csv", rows);
+  }, [coachRoster, coachesList]);
 
   // Players across all currently-selected age groups (drives Evaluate filter + Rankings combined view).
   const divP = useMemo(() => {
@@ -3186,6 +3268,11 @@ export default function App() {
               await loadCoachRoster();
             }} style={{padding:"6px 14px",borderRadius:8,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>
               + Add Coach
+            </button>
+            <button onClick={exportCoachesCSV}
+              title="Download every coach (roster + login) as a single CSV with all columns"
+              style={{padding:"6px 12px",borderRadius:6,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+              Export CSV
             </button>
             <button onClick={() => { loadCoaches(); loadCoachRoster(); }} disabled={coachesLoading}
               style={{padding:"6px 12px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
