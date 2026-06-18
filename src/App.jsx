@@ -3850,9 +3850,15 @@ export default function App() {
                         e.preventDefault();
                         const v = (e.target.value||"").trim();
                         if (!v) return;
-                        const match = rosterNames.find(n => n.toLowerCase() === v.toLowerCase());
+                        // Exact > prefix > substring. Picks the first roster
+                        // name that satisfies the strongest rule available.
+                        const lo = v.toLowerCase();
+                        const match =
+                          rosterNames.find(n => n.toLowerCase() === lo) ||
+                          rosterNames.find(n => n.toLowerCase().startsWith(lo)) ||
+                          rosterNames.find(n => n.toLowerCase().includes(lo));
                         if (!match) {
-                          window.alert("\"" + v + "\" isn't in the coach roster. Add them under Coaches → Coach Roster first.");
+                          window.alert("No coach in the roster matches \"" + v + "\". Add them under Coaches → Coach Roster first.");
                           return;
                         }
                         if (list.includes(match)) {
@@ -3865,7 +3871,11 @@ export default function App() {
                       onBlur={e => {
                         const v = (e.target.value||"").trim();
                         if (!v) return;
-                        const match = rosterNames.find(n => n.toLowerCase() === v.toLowerCase());
+                        const lo = v.toLowerCase();
+                        const match =
+                          rosterNames.find(n => n.toLowerCase() === lo) ||
+                          rosterNames.find(n => n.toLowerCase().startsWith(lo)) ||
+                          rosterNames.find(n => n.toLowerCase().includes(lo));
                         if (match && !list.includes(match)) addCoach(tr, role.key, match);
                         e.target.value = "";
                       }}
