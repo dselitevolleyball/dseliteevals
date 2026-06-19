@@ -592,6 +592,13 @@ export default function App() {
   // Practice schedule tab state
   const [practiceTeams, setPracticeTeams]             = useState([]);
   const [practiceAssignments, setPracticeAssignments] = useState([]);
+  const [saSessions, setSaSessions]                   = useState([]);
+  const [saBlock, setSaBlock]                         = useState(
+    () => (typeof localStorage !== "undefined" && localStorage.getItem("dse_sa_block")) || "fall_b1"
+  );
+  useEffect(() => {
+    if (typeof localStorage !== "undefined") localStorage.setItem("dse_sa_block", saBlock);
+  }, [saBlock]);
   const [practiceCoachFilter, setPracticeCoachFilter] = useState("");
   const [teamCardName, setTeamCardName]               = useState(null); // unified team-detail modal
   const [coachCardName, setCoachCardName]             = useState(null); // unified coach-detail modal
@@ -965,14 +972,17 @@ export default function App() {
 
   // Practice tab loader
   const loadPractice = useCallback(async () => {
-    const [tRes, aRes] = await Promise.all([
+    const [tRes, aRes, sRes] = await Promise.all([
       supabase.from("practice_teams").select("*").order("team_name"),
       supabase.from("practice_assignments").select("*"),
+      supabase.from("sa_sessions").select("*").order("session_date").order("slot"),
     ]);
     if (tRes.error) console.error("Load practice_teams error:", tRes.error);
     if (aRes.error) console.error("Load practice_assignments error:", aRes.error);
+    if (sRes.error) console.error("Load sa_sessions error:", sRes.error);
     setPracticeTeams(tRes.data || []);
     setPracticeAssignments(aRes.data || []);
+    setSaSessions(sRes.data || []);
   }, []);
   useEffect(() => { if (isApproved && view === "practice") loadPractice(); }, [isApproved, view, loadPractice]);
 
@@ -4273,6 +4283,123 @@ export default function App() {
         </div>
         <div style={{marginTop:10,fontSize:11,color:C.mut,lineHeight:1.5}}>
           Click any cell to toggle a team in/out of that slot. <b style={{color:C.grn}}>Green ✓</b> = assigned; <b style={{color:C.red}}>red</b> = court overflow or coach double-booked; <b style={{color:"#f59e0b"}}>amber</b> = U11/U12 in 7-9pm. Per-team count column flips amber when it doesn't match the team's required practices per week (National = 3, Regional/Developmental = 2).
+        </div>
+
+        {/* ─── S&A SCHEDULE ─────────────────────────────────────────────
+            Sunday Speed & Agility schedule for the active block. One team
+            at a time in the S&A space. Rows = time slot, columns = each
+            Sunday in the block. Cells show which team is in that slot. */}
+        {renderSASchedule()}
+      </div>
+    );
+  }
+
+  // S&A grid for the active block. Read-only for now — drag-to-reassign
+  // is a follow-up. Reads sa_sessions; click team name → team card.
+  function renderSASchedule() {
+    const BLOCKS = {
+      fall_b1: {
+        label: "Fall Block 1",
+        sub: "Sep 13 – Oct 11 · 8 Nationals · 12-8pm",
+        dates: ["2026-09-13","2026-09-20","2026-09-27","2026-10-04","2026-10-11"],
+        slots: ["12-1pm","1-2pm","2-3pm","3-4pm","4-5pm","5-6pm","6-7pm","7-8pm"],
+      },
+      fall_b2: {
+        label: "Fall Block 2",
+        sub: "Oct 18 – Nov 15 · 9 Regionals · 12-9pm",
+        dates: ["2026-10-18","2026-10-25","2026-11-01","2026-11-08","2026-11-15"],
+        slots: ["12-1pm","1-2pm","2-3pm","3-4pm","4-5pm","5-6pm","6-7pm","7-8pm","8-9pm"],
+      },
+    };
+    const block = BLOCKS[saBlock] || BLOCKS.fall_b1;
+    // Index assignments by (date|slot) for O(1) lookup.
+    const byKey = new Map();
+    for (const s of saSessions) {
+      if (s.block !== saBlock) continue;
+      // session_date can come back as 'YYYY-MM-DD' or ISO with a T — normalize.
+      const d = (s.session_date||"").slice(0,10);
+      byKey.set(d + "|" + s.slot, s);
+    }
+    const fmtDate = (iso) => {
+      const [, m, d] = (iso||"").split("-").map(n => parseInt(n,10));
+      const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+      return months[m-1] + " " + d;
+    };
+    // Distinct teams in this block (for the summary line).
+    const teamsInBlock = Array.from(new Set(
+      saSessions.filter(s => s.block === saBlock).map(s => s.team_name)
+    )).sort((a,b) => a.localeCompare(b));
+
+    const th  = {padding:"6px 8px",fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut,borderBottom:"1px solid "+C.border,background:C.card,position:"sticky",top:0,zIndex:1,whiteSpace:"nowrap",textAlign:"left"};
+    const td  = {padding:"6px 8px",fontSize:12,borderBottom:"1px solid "+C.border,verticalAlign:"middle"};
+    const slotCell = {...td, fontWeight:700, color:C.mut, background:C.card, position:"sticky", left:0, zIndex:1};
+
+    return (
+      <div style={{marginTop:24,paddingTop:24,borderTop:"2px solid "+C.border}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,flexWrap:"wrap",marginBottom:12}}>
+          <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+            <h2 style={{margin:0,fontSize:18,fontWeight:800,color:C.gold}}>Speed &amp; Agility</h2>
+            <div role="tablist" aria-label="S&A block"
+              style={{display:"inline-flex",border:"1px solid "+C.border,borderRadius:8,overflow:"hidden"}}>
+              {["fall_b1","fall_b2"].map(b => {
+                const on = saBlock === b;
+                return (
+                  <button key={b} role="tab" aria-selected={on}
+                    onClick={()=>setSaBlock(b)}
+                    style={{padding:"6px 14px",border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:800,letterSpacing:0.5,textTransform:"uppercase",
+                      background:on ? C.gold : "transparent",
+                      color:on ? "#000" : C.mut}}>
+                    {BLOCKS[b].label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div style={{fontSize:11,color:C.mut}}>
+            {block.sub} · {teamsInBlock.length} teams · {byKey.size} sessions
+          </div>
+        </div>
+
+        <div style={{background:C.card,borderRadius:12,border:"1px solid "+C.border,overflow:"hidden"}}>
+          <div style={{overflow:"auto",maxHeight:"60vh"}}>
+            <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0,minWidth:720}}>
+              <thead>
+                <tr>
+                  <th style={th}>Slot</th>
+                  {block.dates.map(d => (
+                    <th key={d} style={{...th,textAlign:"center"}}>{fmtDate(d)}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {block.slots.map(slot => (
+                  <tr key={slot}>
+                    <td style={slotCell}>{slot}</td>
+                    {block.dates.map(d => {
+                      const cell = byKey.get(d + "|" + slot);
+                      const name = cell?.team_name;
+                      return (
+                        <td key={d} style={{...td,textAlign:"center"}}>
+                          {name
+                            ? <span onClick={()=>setTeamCardName(name)}
+                                title="Open team card"
+                                style={{fontWeight:700,color:C.text,cursor:"pointer",textDecoration:"underline",textDecorationColor:"transparent",textUnderlineOffset:2}}
+                                onMouseEnter={e=>e.currentTarget.style.textDecorationColor=C.gold}
+                                onMouseLeave={e=>e.currentTarget.style.textDecorationColor="transparent"}>
+                                {name}
+                              </span>
+                            : <span style={{color:C.mut,fontStyle:"italic"}}>—</span>}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div style={{marginTop:10,fontSize:11,color:C.mut,lineHeight:1.5}}>
+          One team at a time in the S&amp;A space. <b>Fall B1</b> serves the 8 Nationals; <b>Fall B2</b> serves 9 Regionals (excludes 11 Diamond). Each team gets the same slot every week for 5 Sundays. Click a team name to open the team card.
         </div>
       </div>
     );
