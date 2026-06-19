@@ -3985,10 +3985,10 @@ export default function App() {
     };
     const PRESEASON_SLOTS = {
       Sun: [
-        { label:"12-2pm", capacity:4 },
-        { label:"2-4pm",  capacity:4 },
-        { label:"4-6pm",  capacity:4 },
-        { label:"6-8pm",  capacity:4 },
+        { label:"12-2pm", capacity:5 },
+        { label:"2-4pm",  capacity:5 },
+        { label:"4-6pm",  capacity:5 },
+        { label:"6-8pm",  capacity:5 },
       ],
       Mon: [], Tue: [], Wed: [], Thu: [],
     };
@@ -4195,7 +4195,7 @@ export default function App() {
             <div role="tablist" aria-label="Practice phase"
               style={{display:"inline-flex",border:"1px solid "+C.border,borderRadius:8,overflow:"hidden"}}>
               {[
-                { id:"summer", label:"Summer", tip:"Jul 12 – Sep 12 · Sundays · 4 courts · no S&A" },
+                { id:"summer", label:"Summer", tip:"Jul 12 – Sep 12 · Sundays · 5 courts · no S&A" },
                 { id:"fall1",  label:"Fall 1", tip:"Sep 13 – Oct 11 · 6 courts · S&A Block 1 (8 Nationals)" },
                 { id:"fall2",  label:"Fall 2", tip:"Oct 18 – Nov 15 · 6 courts · S&A Block 2 (9 Regionals)" },
               ].map(({id,label,tip}) => {
