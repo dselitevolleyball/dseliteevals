@@ -2496,7 +2496,9 @@ export default function App() {
                 style={{background:C.card,borderRadius:12,padding:"16px 18px",border:"1px solid "+C.border}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,gap:6,flexWrap:"wrap"}}>
                   <h3 style={{margin:0,fontSize:17,fontWeight:800,color:C.gold,display:"flex",alignItems:"baseline",gap:8}}>
-                    {team}
+                    <span onClick={()=>setTeamCardName(team)} title="Open team card" style={{cursor:"pointer",textDecoration:"underline",textDecorationColor:"transparent",textUnderlineOffset:3}}
+                      onMouseEnter={e=>e.currentTarget.style.textDecorationColor=C.gold}
+                      onMouseLeave={e=>e.currentTarget.style.textDecorationColor="transparent"}>{team}</span>
                     {teamAvg && <span title="Average of per-player avg scores across players in roster positions" style={{fontSize:12,fontWeight:600,color:C.grn}}>avg {teamAvg}</span>}
                   </h3>
                   <div style={{display:"flex",gap:4,alignItems:"center",flexWrap:"wrap",justifyContent:"flex-end"}}>
@@ -2773,7 +2775,9 @@ export default function App() {
                   <td style={tdS}><span style={{fontWeight:600}}>{avg(p)}</span></td>
                   <td style={tdS}><span style={{fontWeight:600,color:(p.jump_touch!=null&&p.jump_touch!=="")?C.text:C.mut}}>{(p.jump_touch!=null&&p.jump_touch!=="")?p.jump_touch+'"':"—"}</span></td>
                   <td style={tdS}><span style={{fontWeight:700,color:vertical(p)!=null?C.grn:C.mut}}>{vertical(p)!=null?vertical(p).toFixed(1)+'"':"—"}</span></td>
-                  <td style={tdS}><Tag c={p.team_assignment?C.grn:C.mut}>{p.team_assignment||"—"}</Tag></td>
+                  <td style={tdS}>{p.team_assignment
+                    ? <span onClick={e=>{e.stopPropagation();setTeamCardName(p.team_assignment);}} style={{cursor:"pointer"}} title="Open team card"><Tag c={C.grn}>{p.team_assignment}</Tag></span>
+                    : <Tag c={C.mut}>—</Tag>}</td>
                 </tr>
               ))}</tbody>
             </table>
@@ -4833,7 +4837,9 @@ export default function App() {
               return (
                 <span key={a.id}
                   style={{display:"inline-flex",alignItems:"center",gap:4,padding:"4px 8px",borderRadius:8,background:bg,border:"1px solid "+(conflict?C.red:C.border),fontSize:11,color:fg}}>
-                  <span style={{fontWeight:700}}>{a.team_id}</span>
+                  <span onClick={()=>setTeamCardName(a.team_id)} title="Open team card" style={{fontWeight:700,cursor:"pointer",textDecoration:"underline",textDecorationColor:"transparent",textUnderlineOffset:2}}
+                    onMouseEnter={e=>e.currentTarget.style.textDecorationColor=fg}
+                    onMouseLeave={e=>e.currentTarget.style.textDecorationColor="transparent"}>{a.team_id}</span>
                   {tm && tm.level && <span style={{fontSize:9,color:C.mut}}>· {tm.level}</span>}
                   <select value={a.division||""} onChange={e=>updateAssignmentDivision(a.id, e.target.value)}
                     title="Playing division"
@@ -5034,7 +5040,7 @@ export default function App() {
             <div style={{marginTop:8,display:"flex",flexDirection:"column",gap:5}}>
               {tournamentConflicts.map((c, i) => (
                 <div key={i} style={{fontSize:11,color:C.text,lineHeight:1.5}}>
-                  <b style={{color:C.red}}>{c.coach}</b> would be at <b>{c.a.team_id}</b> (<i>{c.a.tournament.name}</i>) AND <b>{c.b.team_id}</b> (<i>{c.b.tournament.name}</i>) on {new Date(c.a.tournament.start_date+"T00:00").toLocaleDateString()}.
+                  <b style={{color:C.red}}>{c.coach}</b> would be at <b onClick={()=>setTeamCardName(c.a.team_id)} style={{cursor:"pointer",textDecoration:"underline"}} title="Open team card">{c.a.team_id}</b> (<i>{c.a.tournament.name}</i>) AND <b onClick={()=>setTeamCardName(c.b.team_id)} style={{cursor:"pointer",textDecoration:"underline"}} title="Open team card">{c.b.team_id}</b> (<i>{c.b.tournament.name}</i>) on {new Date(c.a.tournament.start_date+"T00:00").toLocaleDateString()}.
                 </div>
               ))}
             </div>
@@ -5211,7 +5217,9 @@ export default function App() {
                   <th style={{padding:"7px 10px",position:"sticky",top:0,left:0,zIndex:3,background:C.card,borderBottom:"1px solid "+C.border,borderRight:"1px solid "+C.border,textAlign:"left",fontSize:10,fontWeight:700,color:C.mut,textTransform:"uppercase",whiteSpace:"nowrap"}}>Weekend</th>
                   {teamsToShow.map(team => (
                     <th key={team.id} style={{padding:"7px 8px",position:"sticky",top:0,zIndex:2,background:C.card,borderBottom:"1px solid "+C.border,fontSize:9,fontWeight:700,color:C.gold,textTransform:"uppercase",whiteSpace:"nowrap",minWidth:90,textAlign:"left"}}>
-                      {team.id}
+                      <span onClick={()=>setTeamCardName(team.id)} title="Open team card" style={{cursor:"pointer",textDecoration:"underline",textDecorationColor:"transparent",textUnderlineOffset:2}}
+                        onMouseEnter={e=>e.currentTarget.style.textDecorationColor=C.gold}
+                        onMouseLeave={e=>e.currentTarget.style.textDecorationColor="transparent"}>{team.id}</span>
                       <div style={{fontSize:8,fontWeight:600,color:C.mut,textTransform:"none"}}>{team.head_coach || ""}{team.assistant_coach ? "/" + team.assistant_coach : ""}</div>
                     </th>
                   ))}
