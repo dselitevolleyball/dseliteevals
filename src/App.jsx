@@ -593,6 +593,7 @@ export default function App() {
   const [practiceTeams, setPracticeTeams]             = useState([]);
   const [practiceAssignments, setPracticeAssignments] = useState([]);
   const [practiceCoachFilter, setPracticeCoachFilter] = useState("");
+  const [teamCardName, setTeamCardName]               = useState(null); // unified team-detail modal
   const [tryouts, setTryouts]                         = useState([]);
   const [coachRoster, setCoachRoster]                 = useState([]);
   // SMS state
@@ -3598,6 +3599,138 @@ export default function App() {
     );
   }
 
+  // ─── TEAM CARD (unified detail modal) ────────────────────────────────
+  // One stop view: coaches, players, practice slots, and tournament
+  // assignments for the selected team. Opened by clicking any team name
+  // in the Practice grid.
+  function renderTeamCard() {
+    const team = practiceTeams.find(t => t.team_name === teamCardName);
+    const close = () => setTeamCardName(null);
+    const divFromName = teamCardName ? teamCardName.match(/^\d+/)?.[0] : null;
+    const teamDiv = divFromName ? "U" + divFromName : null;
+    const teamPlayers = players
+      .filter(p => p.team_assignment === teamCardName)
+      .sort((a, b) => {
+        const ra = (a.roster_pos||"").localeCompare(b.roster_pos||"");
+        if (ra !== 0) return ra;
+        return (a.last_name||"").localeCompare(b.last_name||"");
+      });
+    const teamPractices = practiceAssignments
+      .filter(a => a.team_name === teamCardName)
+      .sort((a, b) => {
+        const dayOrder = { Sun:0, Mon:1, Tue:2, Wed:3, Thu:4 };
+        const da = dayOrder[a.day] ?? 99;
+        const db = dayOrder[b.day] ?? 99;
+        if (da !== db) return da - db;
+        return (a.slot||"").localeCompare(b.slot||"");
+      });
+    // Tournament assignments — match this team_name across the assignments table.
+    const teamTournamentAssignments = tournamentAssignments.filter(ta => ta.team_id === teamCardName || ta.team_name === teamCardName);
+    const tournamentById = new Map(tournaments.map(t => [t.id, t]));
+    const teamTournaments = teamTournamentAssignments
+      .map(ta => ({ ...ta, tournament: tournamentById.get(ta.tournament_id) }))
+      .filter(x => x.tournament)
+      .sort((a, b) => (a.tournament.start_date || "").localeCompare(b.tournament.start_date || ""));
+
+    const lbl = {fontSize:10,fontWeight:800,letterSpacing:0.5,textTransform:"uppercase",color:C.mut,marginBottom:6};
+    const sectionBox = {background:C.bg,borderRadius:10,padding:14,marginBottom:14};
+    const levelColor = !team ? C.gold :
+      team.level === "National"      ? C.gold :
+      team.level === "Regional"      ? C.acc  :
+      team.level === "Developmental" ? "#06b6d4" : C.mut;
+
+    return (
+      <div onClick={close} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:1000,display:"flex",justifyContent:"center",padding:"30px 16px",overflowY:"auto"}}>
+        <div onClick={e=>e.stopPropagation()} style={{background:C.card,borderRadius:16,border:"1px solid "+C.border,maxWidth:780,width:"100%",maxHeight:"90vh",overflowY:"auto",padding:24}}>
+          <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",gap:10,marginBottom:16}}>
+            <div>
+              <h2 style={{margin:0,fontSize:22,fontWeight:800,color:levelColor}}>{teamCardName}</h2>
+              {team && <div style={{fontSize:11,color:C.mut,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase",marginTop:2}}>{team.level||"—"} · {team.age_div||"—"} · {team.practices_per_week} practice{team.practices_per_week===1?"":"s"}/wk</div>}
+            </div>
+            <button onClick={close} style={{background:"none",border:"none",color:C.mut,fontSize:22,cursor:"pointer",lineHeight:1}}>✕</button>
+          </div>
+
+          {/* Coaches */}
+          <div style={sectionBox}>
+            <div style={lbl}>Coaches</div>
+            {!team && <div style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>No practice_teams record for this team.</div>}
+            {team && (
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+                <div>
+                  <div style={{fontSize:9,fontWeight:700,color:C.mut,textTransform:"uppercase",letterSpacing:0.5,marginBottom:4}}>Head</div>
+                  <div style={{fontSize:14,fontWeight:700,color:C.text}}>{team.head_coach || <i style={{color:C.mut,fontWeight:400}}>not assigned</i>}</div>
+                </div>
+                <div>
+                  <div style={{fontSize:9,fontWeight:700,color:C.mut,textTransform:"uppercase",letterSpacing:0.5,marginBottom:4}}>Assistant</div>
+                  <div style={{fontSize:14,fontWeight:700,color:C.text}}>{team.assistant_coach || <i style={{color:C.mut,fontWeight:400}}>not assigned</i>}</div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Players */}
+          <div style={sectionBox}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+              <div style={lbl}>Players · {teamPlayers.length}</div>
+            </div>
+            {teamPlayers.length === 0 && <div style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>No players assigned to this team yet.</div>}
+            {teamPlayers.length > 0 && (
+              <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                {teamPlayers.map(p => (
+                  <div key={p.id} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 8px",background:C.card,borderRadius:6,border:"1px solid "+C.border,fontSize:12}}>
+                    <span style={{fontWeight:700,fontSize:11,color:p.roster_pos?C.gold:C.mut,minWidth:36}}>{p.roster_pos || "—"}</span>
+                    <span onClick={()=>{ setTeamCardName(null); setProfileId(p.id); }}
+                      style={{fontWeight:600,cursor:"pointer",flex:1,color:C.text}}>
+                      {p.first_name} {p.last_name}
+                    </span>
+                    {(p.positions||[]).map(pos => <Tag key={pos} c={C.grn}>{pos}</Tag>)}
+                    {p.tryout_number && <span style={{fontSize:10,color:C.mut}}>#{p.tryout_number}</span>}
+                    <span style={{fontWeight:800,fontSize:13,color:C.gold,minWidth:30,textAlign:"right"}}>{tot(p)||"—"}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Practice schedule */}
+          <div style={sectionBox}>
+            <div style={lbl}>Practice Schedule · {teamPractices.length} slot{teamPractices.length===1?"":"s"}</div>
+            {teamPractices.length === 0 && <div style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>No practice slots assigned. Open the Practice tab to schedule.</div>}
+            {teamPractices.length > 0 && (
+              <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                {teamPractices.map((a, i) => (
+                  <span key={i} style={{fontSize:11,fontWeight:700,padding:"4px 10px",borderRadius:8,background:C.card,color:C.text,border:"1px solid "+C.border}}>
+                    {a.day} · {a.slot}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Tournament schedule */}
+          <div style={sectionBox}>
+            <div style={lbl}>Tournament Schedule · {teamTournaments.length}</div>
+            {teamTournaments.length === 0 && <div style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>No tournament assignments. Open the Tournaments tab to assign.</div>}
+            {teamTournaments.length > 0 && (
+              <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                {teamTournaments.map(({tournament:tn, ...a}, i) => (
+                  <div key={i} style={{padding:"6px 10px",background:C.card,borderRadius:6,border:"1px solid "+C.border,fontSize:12}}>
+                    <div style={{fontWeight:700,color:C.text}}>{tn.name}</div>
+                    <div style={{fontSize:10,color:C.mut,marginTop:2}}>
+                      {tn.start_date}{tn.end_date && tn.end_date !== tn.start_date ? " – " + tn.end_date : ""}
+                      {tn.location && " · " + tn.location}
+                      {tn.is_qualifier && <span style={{color:"#a855f7",marginLeft:8,fontWeight:700}}>QUALIFIER</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // ─── PRACTICE SCHEDULE ────────────────────────────────────────────────
   // Grid view of the practice schedule. Rows = teams, columns = the 10
   // weekly time slots. Click a cell to toggle a team in/out of a slot.
@@ -3839,7 +3972,13 @@ export default function App() {
                             style={{padding:"1px 5px",borderRadius:5,border:"1px solid "+(t.locked?"#f59e0b":C.border),background:t.locked?"rgba(245,158,11,0.18)":"transparent",color:t.locked?"#f59e0b":C.mut,fontSize:11,cursor:"pointer",fontFamily:"inherit",lineHeight:1}}>
                             {t.locked ? "🔒" : "🔓"}
                           </button>
-                          <span style={{fontWeight:700,fontSize:13,color:levelColor}}>{t.team_name}</span>
+                          <span onClick={() => setTeamCardName(t.team_name)}
+                            title="Open team card — coaches, players, practices, tournaments"
+                            style={{fontWeight:700,fontSize:13,color:levelColor,cursor:"pointer",textDecoration:"underline",textDecorationColor:"transparent",textUnderlineOffset:2}}
+                            onMouseEnter={e=>e.currentTarget.style.textDecorationColor=levelColor}
+                            onMouseLeave={e=>e.currentTarget.style.textDecorationColor="transparent"}>
+                            {t.team_name}
+                          </span>
                         </div>
                         <div style={{fontSize:9,color:C.mut,fontWeight:600,letterSpacing:0.5,textTransform:"uppercase"}}>{t.level || "—"} · {t.age_div || "—"}{t.locked && <span style={{color:"#f59e0b",marginLeft:6,fontWeight:800}}>· LOCKED</span>}</div>
                         <div style={{fontSize:10,color:C.text,marginTop:2}}>
@@ -5770,6 +5909,7 @@ export default function App() {
         {view==="askai" && renderAskAI()}
       </div>
       {profileId !== null && renderProfile()}
+      {teamCardName && renderTeamCard()}
       {addingPlayer && renderAddPlayer()}
       {addingTournament && renderAddTournament()}
       {bulkImportOpen && renderBulkImport()}
