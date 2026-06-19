@@ -595,6 +595,14 @@ export default function App() {
   const [practiceCoachFilter, setPracticeCoachFilter] = useState("");
   const [teamCardName, setTeamCardName]               = useState(null); // unified team-detail modal
   const [coachCardName, setCoachCardName]             = useState(null); // unified coach-detail modal
+  // 'season' (Jan-May main schedule) or 'preseason' (warm-up / fall block).
+  // Persisted to localStorage so tabbing away keeps the user's selection.
+  const [schedulePhase, setSchedulePhase]             = useState(
+    () => (typeof localStorage !== "undefined" && localStorage.getItem("dse_practice_phase")) || "season"
+  );
+  useEffect(() => {
+    if (typeof localStorage !== "undefined") localStorage.setItem("dse_practice_phase", schedulePhase);
+  }, [schedulePhase]);
   const [tryouts, setTryouts]                         = useState([]);
   const [coachRoster, setCoachRoster]                 = useState([]);
   // SMS state
@@ -3637,7 +3645,7 @@ export default function App() {
         return (a.last_name||"").localeCompare(b.last_name||"");
       });
     const teamPractices = practiceAssignments
-      .filter(a => a.team_name === teamCardName)
+      .filter(a => a.team_name === teamCardName && (a.phase || "season") === schedulePhase)
       .sort((a, b) => {
         const dayOrder = { Sun:0, Mon:1, Tue:2, Wed:3, Thu:4 };
         const da = dayOrder[a.day] ?? 99;
@@ -3723,7 +3731,7 @@ export default function App() {
 
           {/* Practice schedule */}
           <div style={sectionBox}>
-            <div style={lbl}>Practice Schedule · {teamPractices.length} slot{teamPractices.length===1?"":"s"}</div>
+            <div style={lbl}>Practice Schedule ({schedulePhase}) · {teamPractices.length} slot{teamPractices.length===1?"":"s"}</div>
             {teamPractices.length === 0 && <div style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>No practice slots assigned. Open the Practice tab to schedule.</div>}
             {teamPractices.length > 0 && (
               <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
@@ -3788,7 +3796,7 @@ export default function App() {
     // Practice slots across all their teams.
     const dayOrder = { Sun:0, Mon:1, Tue:2, Wed:3, Thu:4 };
     const coachPractices = practiceAssignments
-      .filter(a => allTeamNames.includes(a.team_name))
+      .filter(a => allTeamNames.includes(a.team_name) && (a.phase || "season") === schedulePhase)
       .sort((a, b) => {
         const da = dayOrder[a.day] ?? 99, db = dayOrder[b.day] ?? 99;
         if (da !== db) return da - db;
@@ -3880,7 +3888,7 @@ export default function App() {
 
           {/* Practice schedule */}
           <div style={sectionBox}>
-            <div style={lbl}>Practice Schedule · {coachPractices.length} slot{coachPractices.length===1?"":"s"}</div>
+            <div style={lbl}>Practice Schedule ({schedulePhase}) · {coachPractices.length} slot{coachPractices.length===1?"":"s"}</div>
             {coachPractices.length === 0 && <div style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>No practices scheduled.</div>}
             {coachPractices.length > 0 && (
               <div style={{display:"flex",flexDirection:"column",gap:4}}>
@@ -3933,8 +3941,10 @@ export default function App() {
   // wrong practice count for level, and the U11/U12 timing rules.
   function renderPractice() {
     const DAYS = ["Sun","Mon","Tue","Wed","Thu"];
-    // Slots per day with court capacity for that slot.
-    const SLOTS = {
+    // Per-phase slot capacity. Preseason runs Sunday-only and the gym
+    // has 4 courts that day. Season uses the full week with the regular
+    // weekday capacities.
+    const SEASON_SLOTS = {
       Sun: [
         { label:"12-2pm", capacity:6 },
         { label:"2-4pm",  capacity:6 },
@@ -3958,15 +3968,31 @@ export default function App() {
         { label:"7-9pm",  capacity:6 },
       ],
     };
+    const PRESEASON_SLOTS = {
+      Sun: [
+        { label:"12-2pm", capacity:4 },
+        { label:"2-4pm",  capacity:4 },
+        { label:"4-6pm",  capacity:4 },
+        { label:"6-8pm",  capacity:4 },
+      ],
+      Mon: [], Tue: [], Wed: [], Thu: [],
+    };
+    const SLOTS = schedulePhase === "preseason" ? PRESEASON_SLOTS : SEASON_SLOTS;
+    // Hide weekday columns entirely in preseason since they have no slots.
+    const VISIBLE_DAYS = DAYS.filter(d => SLOTS[d].length > 0);
     const YOUNG_DIVS = new Set(["U11","U12"]);
     const WEEKDAYS = new Set(["Mon","Tue","Wed","Thu"]);
     // Slots that are "late" for U11/U12 purposes.
     const LATE_SLOTS = new Set(["7-9pm"]);
 
+    // Only consider assignments belonging to the active phase. Rows from
+    // the seed migration that pre-date the phase column default to 'season'.
+    const phaseAssignments = practiceAssignments.filter(a => (a.phase || "season") === schedulePhase);
+
     // Index assignments by team and by slot for O(1) lookup.
     const byTeamSlot = new Map();
     const bySlot = new Map();
-    for (const a of practiceAssignments) {
+    for (const a of phaseAssignments) {
       byTeamSlot.set(a.team_name + "|" + a.day + "|" + a.slot, a);
       const sk = a.day + "|" + a.slot;
       if (!bySlot.has(sk)) bySlot.set(sk, []);
@@ -3977,7 +4003,7 @@ export default function App() {
     // Coach load per slot — head_coach AND assistant_coach both count, so
     // an assistant covering two simultaneous teams is also flagged.
     const coachInSlot = new Map(); // "day|slot" -> Map<coach, [team,...]>
-    for (const a of practiceAssignments) {
+    for (const a of phaseAssignments) {
       const t = teamByName.get(a.team_name);
       if (!t) continue;
       const sk = a.day + "|" + a.slot;
@@ -4000,7 +4026,7 @@ export default function App() {
         const { error } = await supabase.from("practice_assignments").delete().eq("id", existing.id);
         if (error) { window.alert("Remove failed: " + error.message); return; }
       } else {
-        const { error } = await supabase.from("practice_assignments").insert({ team_name: teamName, day, slot });
+        const { error } = await supabase.from("practice_assignments").insert({ team_name: teamName, day, slot, phase: schedulePhase });
         if (error) { window.alert("Add failed: " + error.message); return; }
       }
       await loadPractice();
@@ -4017,8 +4043,9 @@ export default function App() {
     // Compute per-team and per-slot warnings up front.
     const warnings = [];
     for (const t of practiceTeams) {
-      const tAssigns = practiceAssignments.filter(a => a.team_name === t.team_name);
-      if (tAssigns.length !== t.practices_per_week) {
+      const tAssigns = phaseAssignments.filter(a => a.team_name === t.team_name);
+      // Preseason doesn't have a per-week practice target — coaches choose.
+      if (schedulePhase === "season" && tAssigns.length !== t.practices_per_week) {
         warnings.push({
           kind: "count",
           team: t.team_name,
@@ -4033,7 +4060,7 @@ export default function App() {
         if (anyWeekday && !has57Weekday) warnings.push({ kind:"young_weekday", team:t.team_name, text: t.team_name + " (U11/U12) practices on a weekday but not in the 5-7pm slot" });
       }
     }
-    for (const day of DAYS) {
+    for (const day of VISIBLE_DAYS) {
       for (const s of SLOTS[day]) {
         const sk = day + "|" + s.label;
         const count = (bySlot.get(sk) || []).length;
@@ -4087,6 +4114,23 @@ export default function App() {
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,flexWrap:"wrap",marginBottom:10}}>
           <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
             <h2 style={{margin:0,fontSize:18,fontWeight:800,color:C.gold}}>Practice Schedule</h2>
+            {/* Phase toggle — Season (full week) vs Preseason (Sun, 4 courts). */}
+            <div role="tablist" aria-label="Practice phase"
+              style={{display:"inline-flex",border:"1px solid "+C.border,borderRadius:8,overflow:"hidden"}}>
+              {["season","preseason"].map(ph => {
+                const on = schedulePhase === ph;
+                return (
+                  <button key={ph} role="tab" aria-selected={on}
+                    onClick={()=>setSchedulePhase(ph)}
+                    title={ph==="preseason" ? "Sunday-only · 4 courts" : "Full-week season schedule"}
+                    style={{padding:"6px 14px",border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:800,letterSpacing:0.5,textTransform:"uppercase",
+                      background:on ? C.gold : "transparent",
+                      color:on ? "#000" : C.mut}}>
+                    {ph}
+                  </button>
+                );
+              })}
+            </div>
             <span style={{fontSize:11,color:C.mut,fontWeight:600,letterSpacing:0.5,textTransform:"uppercase"}}>Coach:</span>
             <select value={practiceCoachFilter} onChange={e=>setPracticeCoachFilter(e.target.value)}
               title="Show only teams where this coach is head or assistant"
@@ -4102,7 +4146,7 @@ export default function App() {
             )}
           </div>
           <div style={{fontSize:11,color:C.mut}}>
-            {visibleTeams.length} of {practiceTeams.length} teams · {practiceAssignments.length} assignments
+            {visibleTeams.length} of {practiceTeams.length} teams · {phaseAssignments.length} {schedulePhase} assignments
             {warnings.length > 0 && <> · <b style={{color:C.red}}>{warnings.length} warning{warnings.length===1?"":"s"}</b></>}
           </div>
         </div>
@@ -4133,7 +4177,7 @@ export default function App() {
               <thead>
                 <tr>
                   <th style={{...thS,textAlign:"left",minWidth:220}}>Team</th>
-                  {DAYS.map(day => SLOTS[day].map(s => {
+                  {VISIBLE_DAYS.map(day => SLOTS[day].map(s => {
                     const sk = day + "|" + s.label;
                     const count = (bySlot.get(sk) || []).length;
                     const over = count > s.capacity;
@@ -4150,10 +4194,11 @@ export default function App() {
               </thead>
               <tbody>
                 {visibleTeams.map(t => {
-                  const tAssigns = practiceAssignments.filter(a => a.team_name === t.team_name);
+                  const tAssigns = phaseAssignments.filter(a => a.team_name === t.team_name);
                   const actual = tAssigns.length;
                   const expected = t.practices_per_week;
-                  const countOff = actual !== expected;
+                  // Only flag count mismatch during season — preseason is freeform.
+                  const countOff = schedulePhase === "season" && actual !== expected;
                   const levelColor =
                     t.level === "National"      ? C.gold :
                     t.level === "Regional"      ? C.acc  :
@@ -4187,7 +4232,7 @@ export default function App() {
                             onMouseLeave={e=>e.currentTarget.style.textDecorationColor="transparent"}>{t.assistant_coach}</span></>}
                         </div>
                       </td>
-                      {DAYS.map(day => SLOTS[day].map(s => {
+                      {VISIBLE_DAYS.map(day => SLOTS[day].map(s => {
                         const key = t.team_name + "|" + day + "|" + s.label;
                         const isOn = byTeamSlot.has(key);
                         const sk = day + "|" + s.label;
@@ -4217,7 +4262,7 @@ export default function App() {
                         );
                       }))}
                       <td style={{...tdS,fontWeight:700,color:countOff?"#f59e0b":C.grn,minWidth:40}}>
-                        {actual}/{expected}
+                        {schedulePhase === "season" ? actual + "/" + expected : actual}
                       </td>
                     </tr>
                   );
