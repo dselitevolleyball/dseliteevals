@@ -602,11 +602,16 @@ export default function App() {
   const [practiceCoachFilter, setPracticeCoachFilter] = useState("");
   const [teamCardName, setTeamCardName]               = useState(null); // unified team-detail modal
   const [coachCardName, setCoachCardName]             = useState(null); // unified coach-detail modal
-  // 'season' (Jan-May main schedule) or 'preseason' (warm-up / fall block).
-  // Persisted to localStorage so tabbing away keeps the user's selection.
-  const [schedulePhase, setSchedulePhase]             = useState(
-    () => (typeof localStorage !== "undefined" && localStorage.getItem("dse_practice_phase")) || "season"
-  );
+  // 'summer' (Jul-Sep, 4 courts), 'fall1' (Sep 13-Oct 11, 6 courts + S&A Block 1),
+  // or 'fall2' (Oct 18-Nov 15, 6 courts + S&A Block 2). Migrate old values
+  // from when phases were named 'season' / 'preseason'.
+  const [schedulePhase, setSchedulePhase]             = useState(() => {
+    if (typeof localStorage === "undefined") return "fall1";
+    const v = localStorage.getItem("dse_practice_phase");
+    if (v === "preseason") return "summer";
+    if (v === "season")    return "fall1";
+    return v || "fall1";
+  });
   useEffect(() => {
     if (typeof localStorage !== "undefined") localStorage.setItem("dse_practice_phase", schedulePhase);
   }, [schedulePhase]);
@@ -3655,7 +3660,7 @@ export default function App() {
         return (a.last_name||"").localeCompare(b.last_name||"");
       });
     const teamPractices = practiceAssignments
-      .filter(a => a.team_name === teamCardName && (a.phase || "season") === schedulePhase)
+      .filter(a => a.team_name === teamCardName && (a.phase || "fall1") === schedulePhase)
       .sort((a, b) => {
         const dayOrder = { Sun:0, Mon:1, Tue:2, Wed:3, Thu:4 };
         const da = dayOrder[a.day] ?? 99;
@@ -3806,7 +3811,7 @@ export default function App() {
     // Practice slots across all their teams.
     const dayOrder = { Sun:0, Mon:1, Tue:2, Wed:3, Thu:4 };
     const coachPractices = practiceAssignments
-      .filter(a => allTeamNames.includes(a.team_name) && (a.phase || "season") === schedulePhase)
+      .filter(a => allTeamNames.includes(a.team_name) && (a.phase || "fall1") === schedulePhase)
       .sort((a, b) => {
         const da = dayOrder[a.day] ?? 99, db = dayOrder[b.day] ?? 99;
         if (da !== db) return da - db;
@@ -3987,7 +3992,8 @@ export default function App() {
       ],
       Mon: [], Tue: [], Wed: [], Thu: [],
     };
-    const SLOTS = schedulePhase === "preseason" ? PRESEASON_SLOTS : SEASON_SLOTS;
+    // Summer = Sunday-only 4-court grid; Fall1/Fall2 = full-week season grid.
+    const SLOTS = schedulePhase === "summer" ? PRESEASON_SLOTS : SEASON_SLOTS;
     // Hide weekday columns entirely in preseason since they have no slots.
     const VISIBLE_DAYS = DAYS.filter(d => SLOTS[d].length > 0);
     const YOUNG_DIVS = new Set(["U11","U12"]);
@@ -3997,7 +4003,7 @@ export default function App() {
 
     // Only consider assignments belonging to the active phase. Rows from
     // the seed migration that pre-date the phase column default to 'season'.
-    const phaseAssignments = practiceAssignments.filter(a => (a.phase || "season") === schedulePhase);
+    const phaseAssignments = practiceAssignments.filter(a => (a.phase || "fall1") === schedulePhase);
 
     // Index assignments by team and by slot for O(1) lookup.
     const byTeamSlot = new Map();
@@ -4041,6 +4047,66 @@ export default function App() {
       }
       await loadPractice();
     };
+
+    // ─── S&A overlay ─────────────────────────────────────────────────
+    // Fall 1 and Fall 2 layer a Speed & Agility schedule on top of the
+    // court grid. Each phase covers 5 specific Sundays and a list of
+    // 1-hour S&A slots. One team at a time per slot.
+    const SA_BLOCKS = {
+      fall1: {
+        slots: ["12-1pm","1-2pm","2-3pm","3-4pm","4-5pm","5-6pm","6-7pm","7-8pm"],
+        dates: ["2026-09-13","2026-09-20","2026-09-27","2026-10-04","2026-10-11"],
+      },
+      fall2: {
+        slots: ["12-1pm","1-2pm","2-3pm","3-4pm","4-5pm","5-6pm","6-7pm","7-8pm","8-9pm"],
+        dates: ["2026-10-18","2026-10-25","2026-11-01","2026-11-08","2026-11-15"],
+      },
+    };
+    const sa = SA_BLOCKS[schedulePhase];           // undefined for summer
+    const SA_SLOTS = sa ? sa.slots : [];
+    const SA_DATES = sa ? sa.dates : [];
+
+    // (team_name|slot) -> array of session rows (one per Sunday).
+    // (slot) -> Set of team_name occupants — for the "1-at-a-time" check.
+    const saByTeamSlot = new Map();
+    const saBySlot = new Map();
+    if (sa) {
+      for (const s of saSessions) {
+        if (s.block !== schedulePhase) continue;
+        const k = s.team_name + "|" + s.slot;
+        if (!saByTeamSlot.has(k)) saByTeamSlot.set(k, []);
+        saByTeamSlot.get(k).push(s);
+        if (!saBySlot.has(s.slot)) saBySlot.set(s.slot, new Set());
+        saBySlot.get(s.slot).add(s.team_name);
+      }
+    }
+
+    // Toggle a team into / out of every Sunday of the current S&A block
+    // at the given slot. Locked teams (or non-S&A phases) are no-ops.
+    const toggleSA = async (teamName, slot) => {
+      if (!sa) return;
+      const team = teamByName.get(teamName);
+      if (team?.locked) return;
+      const existing = saByTeamSlot.get(teamName + "|" + slot) || [];
+      if (existing.length) {
+        const ids = existing.map(r => r.id);
+        const { error } = await supabase.from("sa_sessions").delete().in("id", ids);
+        if (error) { window.alert("Remove S&A failed: " + error.message); return; }
+      } else {
+        // Refuse if someone else already owns that slot — single-occupancy rule.
+        const occupants = saBySlot.get(slot);
+        if (occupants && occupants.size > 0) {
+          window.alert("S&A " + slot + " is already taken by " + Array.from(occupants).join(", ") + ".");
+          return;
+        }
+        const rows = SA_DATES.map(d => ({
+          block: schedulePhase, session_date: d, slot, team_name: teamName,
+        }));
+        const { error } = await supabase.from("sa_sessions").insert(rows);
+        if (error) { window.alert("Add S&A failed: " + error.message); return; }
+      }
+      await loadPractice();
+    };
     // Flip the lock flag on a team row. Used by the lock icon in the team-label cell.
     const toggleTeamLock = async (teamName, currentLocked) => {
       const { error } = await supabase.from("practice_teams")
@@ -4055,7 +4121,7 @@ export default function App() {
     for (const t of practiceTeams) {
       const tAssigns = phaseAssignments.filter(a => a.team_name === t.team_name);
       // Preseason doesn't have a per-week practice target — coaches choose.
-      if (schedulePhase === "season" && tAssigns.length !== t.practices_per_week) {
+      if (schedulePhase !== "summer" && tAssigns.length !== t.practices_per_week) {
         warnings.push({
           kind: "count",
           team: t.team_name,
@@ -4124,19 +4190,24 @@ export default function App() {
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,flexWrap:"wrap",marginBottom:10}}>
           <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
             <h2 style={{margin:0,fontSize:18,fontWeight:800,color:C.gold}}>Practice Schedule</h2>
-            {/* Phase toggle — Season (full week) vs Preseason (Sun, 4 courts). */}
+            {/* Phase toggle — Summer (Jul-Sep, 4 courts) / Fall1 (Sep 13-Oct 11
+                + S&A Block 1) / Fall2 (Oct 18-Nov 15 + S&A Block 2). */}
             <div role="tablist" aria-label="Practice phase"
               style={{display:"inline-flex",border:"1px solid "+C.border,borderRadius:8,overflow:"hidden"}}>
-              {["season","preseason"].map(ph => {
-                const on = schedulePhase === ph;
+              {[
+                { id:"summer", label:"Summer", tip:"Jul 12 – Sep 12 · Sundays · 4 courts · no S&A" },
+                { id:"fall1",  label:"Fall 1", tip:"Sep 13 – Oct 11 · 6 courts · S&A Block 1 (8 Nationals)" },
+                { id:"fall2",  label:"Fall 2", tip:"Oct 18 – Nov 15 · 6 courts · S&A Block 2 (9 Regionals)" },
+              ].map(({id,label,tip}) => {
+                const on = schedulePhase === id;
                 return (
-                  <button key={ph} role="tab" aria-selected={on}
-                    onClick={()=>setSchedulePhase(ph)}
-                    title={ph==="preseason" ? "Sunday-only · 4 courts" : "Full-week season schedule"}
+                  <button key={id} role="tab" aria-selected={on}
+                    onClick={()=>setSchedulePhase(id)}
+                    title={tip}
                     style={{padding:"6px 14px",border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:800,letterSpacing:0.5,textTransform:"uppercase",
                       background:on ? C.gold : "transparent",
                       color:on ? "#000" : C.mut}}>
-                    {ph}
+                    {label}
                   </button>
                 );
               })}
@@ -4199,6 +4270,16 @@ export default function App() {
                       </th>
                     );
                   }))}
+                  {SA_SLOTS.map(slot => {
+                    const taken = (saBySlot.get(slot)?.size || 0);
+                    return (
+                      <th key={"sa-"+slot} style={{...thS,color:C.gold,background:"rgba(233,30,140,0.08)",borderLeft:"2px solid "+C.gold}}>
+                        <div>S&amp;A</div>
+                        <div style={{fontSize:9,fontWeight:600}}>{slot}</div>
+                        <div style={{fontSize:9,fontWeight:800,color:taken?C.grn:C.mut}}>{taken}/1</div>
+                      </th>
+                    );
+                  })}
                   <th style={{...thS,textAlign:"center",minWidth:60}}>Count</th>
                 </tr>
               </thead>
@@ -4208,7 +4289,7 @@ export default function App() {
                   const actual = tAssigns.length;
                   const expected = t.practices_per_week;
                   // Only flag count mismatch during season — preseason is freeform.
-                  const countOff = schedulePhase === "season" && actual !== expected;
+                  const countOff = schedulePhase !== "summer" && actual !== expected;
                   const levelColor =
                     t.level === "National"      ? C.gold :
                     t.level === "Regional"      ? C.acc  :
@@ -4271,8 +4352,24 @@ export default function App() {
                           </td>
                         );
                       }))}
+                      {SA_SLOTS.map(slot => {
+                        const isOn = (saByTeamSlot.get(t.team_name + "|" + slot) || []).length > 0;
+                        const occupants = saBySlot.get(slot);
+                        const otherTeam = isOn ? false : (occupants && occupants.size > 0);
+                        const bg = isOn ? "rgba(233,30,140,0.22)"
+                                 : otherTeam ? "rgba(255,255,255,0.02)"
+                                 : "transparent";
+                        const fg = isOn ? C.gold : C.mut;
+                        return (
+                          <td key={"sa-"+slot} onClick={()=>toggleSA(t.team_name, slot)}
+                            title={t.locked ? "Team is locked" : (isOn ? "Click to remove from S&A " + slot : otherTeam ? "Slot taken by " + Array.from(occupants).join(", ") : "Click to add to S&A " + slot)}
+                            style={{...tdS,cursor:t.locked?"not-allowed":"pointer",userSelect:"none",background:bg,color:fg,fontWeight:800,fontSize:14,borderLeft:slot===SA_SLOTS[0]?"2px solid "+C.gold:undefined}}>
+                            {isOn ? "✓" : ""}
+                          </td>
+                        );
+                      })}
                       <td style={{...tdS,fontWeight:700,color:countOff?"#f59e0b":C.grn,minWidth:40}}>
-                        {schedulePhase === "season" ? actual + "/" + expected : actual}
+                        {schedulePhase === "summer" ? actual : actual + "/" + expected}
                       </td>
                     </tr>
                   );
@@ -4282,20 +4379,15 @@ export default function App() {
           </div>
         </div>
         <div style={{marginTop:10,fontSize:11,color:C.mut,lineHeight:1.5}}>
-          Click any cell to toggle a team in/out of that slot. <b style={{color:C.grn}}>Green ✓</b> = assigned; <b style={{color:C.red}}>red</b> = court overflow or coach double-booked; <b style={{color:"#f59e0b"}}>amber</b> = U11/U12 in 7-9pm. Per-team count column flips amber when it doesn't match the team's required practices per week (National = 3, Regional/Developmental = 2).
+          Click any cell to toggle a team in/out of that slot. <b style={{color:C.grn}}>Green ✓</b> = assigned; <b style={{color:C.red}}>red</b> = court overflow or coach double-booked; <b style={{color:"#f59e0b"}}>amber</b> = U11/U12 in 7-9pm. The <b style={{color:C.gold}}>pink S&amp;A columns</b> appear on Fall 1 and Fall 2 — clicking a cell toggles that team into the S&amp;A slot for every Sunday in the block (one team at a time per slot).
         </div>
-
-        {/* ─── S&A SCHEDULE ─────────────────────────────────────────────
-            Sunday Speed & Agility schedule for the active block. One team
-            at a time in the S&A space. Rows = time slot, columns = each
-            Sunday in the block. Cells show which team is in that slot. */}
-        {renderSASchedule()}
       </div>
     );
   }
 
-  // S&A grid for the active block. Read-only for now — drag-to-reassign
-  // is a follow-up. Reads sa_sessions; click team name → team card.
+  // S&A per-Sunday detail grid. Kept for reference but no longer used —
+  // the S&A schedule now lives inside the practice grid as pink columns.
+  // eslint-disable-next-line no-unused-vars
   function renderSASchedule() {
     const BLOCKS = {
       fall_b1: {
