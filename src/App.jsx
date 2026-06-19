@@ -3663,6 +3663,9 @@ export default function App() {
     }
 
     const toggleAssignment = async (teamName, day, slot) => {
+      // Locked teams' rows are read-only — bail before any DB write.
+      const team = teamByName.get(teamName);
+      if (team?.locked) return;
       const key = teamName + "|" + day + "|" + slot;
       const existing = byTeamSlot.get(key);
       if (existing) {
@@ -3672,6 +3675,14 @@ export default function App() {
         const { error } = await supabase.from("practice_assignments").insert({ team_name: teamName, day, slot });
         if (error) { window.alert("Add failed: " + error.message); return; }
       }
+      await loadPractice();
+    };
+    // Flip the lock flag on a team row. Used by the lock icon in the team-label cell.
+    const toggleTeamLock = async (teamName, currentLocked) => {
+      const { error } = await supabase.from("practice_teams")
+        .update({ locked: !currentLocked, updated_at: new Date().toISOString() })
+        .eq("team_name", teamName);
+      if (error) { window.alert("Lock toggle failed: " + error.message); return; }
       await loadPractice();
     };
 
@@ -3820,10 +3831,17 @@ export default function App() {
                     t.level === "Regional"      ? C.acc  :
                     t.level === "Developmental" ? "#06b6d4" : C.mut;
                   return (
-                    <tr key={t.team_name}>
+                    <tr key={t.team_name} style={{opacity: t.locked ? 0.85 : 1}}>
                       <td style={{...tdS,textAlign:"left",padding:"6px 10px"}}>
-                        <div style={{fontWeight:700,fontSize:13,color:levelColor}}>{t.team_name}</div>
-                        <div style={{fontSize:9,color:C.mut,fontWeight:600,letterSpacing:0.5,textTransform:"uppercase"}}>{t.level || "—"} · {t.age_div || "—"}</div>
+                        <div style={{display:"flex",alignItems:"center",gap:6}}>
+                          <button onClick={() => toggleTeamLock(t.team_name, t.locked)}
+                            title={t.locked ? "Unlock team — cells become editable again" : "Lock team — prevents changes to this team's slots"}
+                            style={{padding:"1px 5px",borderRadius:5,border:"1px solid "+(t.locked?"#f59e0b":C.border),background:t.locked?"rgba(245,158,11,0.18)":"transparent",color:t.locked?"#f59e0b":C.mut,fontSize:11,cursor:"pointer",fontFamily:"inherit",lineHeight:1}}>
+                            {t.locked ? "🔒" : "🔓"}
+                          </button>
+                          <span style={{fontWeight:700,fontSize:13,color:levelColor}}>{t.team_name}</span>
+                        </div>
+                        <div style={{fontSize:9,color:C.mut,fontWeight:600,letterSpacing:0.5,textTransform:"uppercase"}}>{t.level || "—"} · {t.age_div || "—"}{t.locked && <span style={{color:"#f59e0b",marginLeft:6,fontWeight:800}}>· LOCKED</span>}</div>
                         <div style={{fontSize:10,color:C.text,marginTop:2}}>
                           {t.head_coach || <i style={{color:C.mut}}>no head coach</i>}
                           {t.assistant_coach && " · " + t.assistant_coach}
@@ -3852,8 +3870,8 @@ export default function App() {
                                  : C.grn;
                         return (
                           <td key={sk} onClick={()=>toggleAssignment(t.team_name, day, s.label)}
-                            title={isOn ? "Click to remove" : "Click to add"}
-                            style={{...tdS,cursor:"pointer",userSelect:"none",background:bg,color:fg,fontWeight:800,fontSize:14}}>
+                            title={t.locked ? "Team is locked — unlock to edit" : (isOn ? "Click to remove" : "Click to add")}
+                            style={{...tdS,cursor:t.locked?"not-allowed":"pointer",userSelect:"none",background:bg,color:fg,fontWeight:800,fontSize:14}}>
                             {isOn ? "✓" : ""}
                           </td>
                         );
