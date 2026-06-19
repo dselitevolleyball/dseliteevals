@@ -594,6 +594,7 @@ export default function App() {
   const [practiceAssignments, setPracticeAssignments] = useState([]);
   const [practiceCoachFilter, setPracticeCoachFilter] = useState("");
   const [teamCardName, setTeamCardName]               = useState(null); // unified team-detail modal
+  const [coachCardName, setCoachCardName]             = useState(null); // unified coach-detail modal
   const [tryouts, setTryouts]                         = useState([]);
   const [coachRoster, setCoachRoster]                 = useState([]);
   // SMS state
@@ -3572,6 +3573,11 @@ export default function App() {
                       {rcell("notes","",140)}
                       {/* Actions */}
                       <td style={{...td,textAlign:"right",whiteSpace:"nowrap"}}>
+                        <button onClick={() => setCoachCardName((firstName + " " + lastName).trim() || firstName)}
+                          title="Open coach card — teams, practices, tournaments"
+                          style={{padding:"3px 9px",borderRadius:5,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontFamily:"inherit",fontSize:10,fontWeight:700,cursor:"pointer",marginRight:4}}>
+                          Card
+                        </button>
                         {hasRoster && (
                           <button onClick={async () => {
                             const name = (firstName + " " + lastName).trim();
@@ -3662,11 +3668,19 @@ export default function App() {
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
                 <div>
                   <div style={{fontSize:9,fontWeight:700,color:C.mut,textTransform:"uppercase",letterSpacing:0.5,marginBottom:4}}>Head</div>
-                  <div style={{fontSize:14,fontWeight:700,color:C.text}}>{team.head_coach || <i style={{color:C.mut,fontWeight:400}}>not assigned</i>}</div>
+                  {team.head_coach
+                    ? <span onClick={()=>{ setTeamCardName(null); setCoachCardName(team.head_coach); }} title="Open coach card" style={{fontSize:14,fontWeight:700,color:C.text,cursor:"pointer",textDecoration:"underline",textDecorationColor:"transparent"}}
+                        onMouseEnter={e=>e.currentTarget.style.textDecorationColor=C.gold}
+                        onMouseLeave={e=>e.currentTarget.style.textDecorationColor="transparent"}>{team.head_coach}</span>
+                    : <i style={{color:C.mut,fontWeight:400}}>not assigned</i>}
                 </div>
                 <div>
                   <div style={{fontSize:9,fontWeight:700,color:C.mut,textTransform:"uppercase",letterSpacing:0.5,marginBottom:4}}>Assistant</div>
-                  <div style={{fontSize:14,fontWeight:700,color:C.text}}>{team.assistant_coach || <i style={{color:C.mut,fontWeight:400}}>not assigned</i>}</div>
+                  {team.assistant_coach
+                    ? <span onClick={()=>{ setTeamCardName(null); setCoachCardName(team.assistant_coach); }} title="Open coach card" style={{fontSize:14,fontWeight:700,color:C.text,cursor:"pointer",textDecoration:"underline",textDecorationColor:"transparent"}}
+                        onMouseEnter={e=>e.currentTarget.style.textDecorationColor=C.gold}
+                        onMouseLeave={e=>e.currentTarget.style.textDecorationColor="transparent"}>{team.assistant_coach}</span>
+                    : <i style={{color:C.mut,fontWeight:400}}>not assigned</i>}
                 </div>
               </div>
             )}
@@ -3720,6 +3734,172 @@ export default function App() {
                 {teamTournaments.map(({tournament:tn, ...a}, i) => (
                   <div key={i} style={{padding:"6px 10px",background:C.card,borderRadius:6,border:"1px solid "+C.border,fontSize:12}}>
                     <div style={{fontWeight:700,color:C.text}}>{tn.name}</div>
+                    <div style={{fontSize:10,color:C.mut,marginTop:2}}>
+                      {tn.start_date}{tn.end_date && tn.end_date !== tn.start_date ? " – " + tn.end_date : ""}
+                      {tn.location && " · " + tn.location}
+                      {tn.is_qualifier && <span style={{color:"#a855f7",marginLeft:8,fontWeight:700}}>QUALIFIER</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── COACH CARD (unified detail modal) ───────────────────────────────
+  // One-stop view for a coach: contact info, teams they lead or assist,
+  // weekly practice load, and tournament assignments. Opened from any
+  // coach name display.
+  function renderCoachCard() {
+    const name = coachCardName;
+    const close = () => setCoachCardName(null);
+    // Match against coach_roster. Coach name strings in practice_teams are
+    // freeform (e.g. "Sam R.", "Jayden", "David Stanley"), so try a few
+    // shapes — exact "first last", first-name only, "first lastInitial".
+    const norm = (s) => (s||"").toString().trim().toLowerCase();
+    const target = norm(name);
+    const roster = coachRoster.find(r => {
+      const first = norm(r.first_name);
+      const last  = norm(r.last_name);
+      const li    = last ? last[0] : "";
+      const full  = (first + " " + last).trim();
+      const fli   = (first + " " + li + ".").trim();
+      return target === full || target === first || target === fli || target === (first + " " + li);
+    });
+    // Find teams this coach leads or assists.
+    const matchesCoach = (coachField) => norm(coachField) === target;
+    const headOf = practiceTeams.filter(t => matchesCoach(t.head_coach)).map(t => t.team_name);
+    const assistOf = practiceTeams.filter(t => matchesCoach(t.assistant_coach)).map(t => t.team_name);
+    const allTeamNames = Array.from(new Set([...headOf, ...assistOf]));
+    // Practice slots across all their teams.
+    const dayOrder = { Sun:0, Mon:1, Tue:2, Wed:3, Thu:4 };
+    const coachPractices = practiceAssignments
+      .filter(a => allTeamNames.includes(a.team_name))
+      .sort((a, b) => {
+        const da = dayOrder[a.day] ?? 99, db = dayOrder[b.day] ?? 99;
+        if (da !== db) return da - db;
+        const sa = a.slot||"", sb = b.slot||"";
+        if (sa !== sb) return sa.localeCompare(sb);
+        return (a.team_name||"").localeCompare(b.team_name||"");
+      });
+    // Tournament assignments via the teams they coach.
+    const teamSet = new Set(allTeamNames);
+    const tournamentById = new Map(tournaments.map(t => [t.id, t]));
+    const coachTournaments = tournamentAssignments
+      .filter(ta => teamSet.has(ta.team_id) || teamSet.has(ta.team_name))
+      .map(ta => ({ ...ta, tournament: tournamentById.get(ta.tournament_id), team: ta.team_id || ta.team_name }))
+      .filter(x => x.tournament)
+      .sort((a, b) => (a.tournament.start_date||"").localeCompare(b.tournament.start_date||""));
+
+    const lbl = {fontSize:10,fontWeight:800,letterSpacing:0.5,textTransform:"uppercase",color:C.mut,marginBottom:6};
+    const sectionBox = {background:C.bg,borderRadius:10,padding:14,marginBottom:14};
+    const displayName = roster ? ((roster.first_name||"") + " " + (roster.last_name||"")).trim() : name;
+
+    return (
+      <div onClick={close} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:1000,display:"flex",justifyContent:"center",padding:"30px 16px",overflowY:"auto"}}>
+        <div onClick={e=>e.stopPropagation()} style={{background:C.card,borderRadius:16,border:"1px solid "+C.border,maxWidth:780,width:"100%",maxHeight:"90vh",overflowY:"auto",padding:24}}>
+          <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",gap:10,marginBottom:16}}>
+            <div>
+              <h2 style={{margin:0,fontSize:22,fontWeight:800,color:C.gold}}>{displayName}</h2>
+              {!roster && <div style={{fontSize:11,color:"#f59e0b",fontWeight:700,marginTop:2}}>No roster record found for "{name}" — add them in the Coaches tab to track contact info.</div>}
+              {roster && (
+                <div style={{fontSize:11,color:C.mut,fontWeight:600,marginTop:2}}>
+                  {headOf.length} head · {assistOf.length} assistant · {coachPractices.length} practice slot{coachPractices.length===1?"":"s"}/wk
+                </div>
+              )}
+            </div>
+            <button onClick={close} style={{background:"none",border:"none",color:C.mut,fontSize:22,cursor:"pointer",lineHeight:1}}>✕</button>
+          </div>
+
+          {/* Contact info */}
+          {roster && (
+            <div style={sectionBox}>
+              <div style={lbl}>Contact</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,fontSize:12}}>
+                <div>
+                  <div style={{fontSize:9,fontWeight:700,color:C.mut,textTransform:"uppercase",letterSpacing:0.5}}>Email</div>
+                  <div style={{color:C.text,fontWeight:600}}>{roster.email || <i style={{color:C.mut,fontWeight:400}}>—</i>}</div>
+                </div>
+                <div>
+                  <div style={{fontSize:9,fontWeight:700,color:C.mut,textTransform:"uppercase",letterSpacing:0.5}}>Phone</div>
+                  <div style={{color:C.text,fontWeight:600}}>{roster.phone || <i style={{color:C.mut,fontWeight:400}}>—</i>}</div>
+                </div>
+                <div>
+                  <div style={{fontSize:9,fontWeight:700,color:C.mut,textTransform:"uppercase",letterSpacing:0.5}}>T-shirt / Shoe / Sweatshirt</div>
+                  <div style={{color:C.text,fontWeight:600}}>{[roster.tshirt_size, roster.shoe_size, roster.sweatshirt_size].map(v => v||"—").join(" · ")}</div>
+                </div>
+                {roster.notes && (
+                  <div style={{gridColumn:"1 / -1"}}>
+                    <div style={{fontSize:9,fontWeight:700,color:C.mut,textTransform:"uppercase",letterSpacing:0.5}}>Notes</div>
+                    <div style={{color:C.text,whiteSpace:"pre-wrap"}}>{roster.notes}</div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Teams coached */}
+          <div style={sectionBox}>
+            <div style={lbl}>Teams · {allTeamNames.length}</div>
+            {allTeamNames.length === 0 && <div style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>Not currently assigned to any team in the Practice tab.</div>}
+            {allTeamNames.length > 0 && (
+              <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                {headOf.map(tn => (
+                  <div key={"h-"+tn} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 8px",background:C.card,borderRadius:6,border:"1px solid "+C.border,fontSize:12}}>
+                    <span onClick={()=>{ setCoachCardName(null); setTeamCardName(tn); }} style={{fontWeight:700,cursor:"pointer",flex:1,color:C.text,textDecoration:"underline",textDecorationColor:"transparent"}}
+                      onMouseEnter={e=>e.currentTarget.style.textDecorationColor=C.gold}
+                      onMouseLeave={e=>e.currentTarget.style.textDecorationColor="transparent"}>{tn}</span>
+                    <span style={{fontSize:9,fontWeight:800,color:C.gold,padding:"1px 6px",borderRadius:5,border:"1px solid "+C.gold,letterSpacing:0.5}}>HEAD</span>
+                  </div>
+                ))}
+                {assistOf.map(tn => (
+                  <div key={"a-"+tn} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 8px",background:C.card,borderRadius:6,border:"1px solid "+C.border,fontSize:12}}>
+                    <span onClick={()=>{ setCoachCardName(null); setTeamCardName(tn); }} style={{fontWeight:700,cursor:"pointer",flex:1,color:C.text,textDecoration:"underline",textDecorationColor:"transparent"}}
+                      onMouseEnter={e=>e.currentTarget.style.textDecorationColor=C.acc}
+                      onMouseLeave={e=>e.currentTarget.style.textDecorationColor="transparent"}>{tn}</span>
+                    <span style={{fontSize:9,fontWeight:800,color:C.acc,padding:"1px 6px",borderRadius:5,border:"1px solid "+C.acc,letterSpacing:0.5}}>ASSISTANT</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Practice schedule */}
+          <div style={sectionBox}>
+            <div style={lbl}>Practice Schedule · {coachPractices.length} slot{coachPractices.length===1?"":"s"}</div>
+            {coachPractices.length === 0 && <div style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>No practices scheduled.</div>}
+            {coachPractices.length > 0 && (
+              <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                {coachPractices.map((a, i) => (
+                  <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"4px 8px",background:C.card,borderRadius:6,border:"1px solid "+C.border,fontSize:12}}>
+                    <span style={{fontWeight:700,minWidth:60,color:C.text}}>{a.day}</span>
+                    <span style={{minWidth:70,color:C.text}}>{a.slot}</span>
+                    <span onClick={()=>{ setCoachCardName(null); setTeamCardName(a.team_name); }} style={{fontWeight:600,cursor:"pointer",flex:1,color:C.gold,textDecoration:"underline",textDecorationColor:"transparent"}}
+                      onMouseEnter={e=>e.currentTarget.style.textDecorationColor=C.gold}
+                      onMouseLeave={e=>e.currentTarget.style.textDecorationColor="transparent"}>{a.team_name}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Tournament schedule */}
+          <div style={sectionBox}>
+            <div style={lbl}>Tournament Schedule · {coachTournaments.length}</div>
+            {coachTournaments.length === 0 && <div style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>No tournament assignments.</div>}
+            {coachTournaments.length > 0 && (
+              <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                {coachTournaments.map(({tournament:tn, team}, i) => (
+                  <div key={i} style={{padding:"6px 10px",background:C.card,borderRadius:6,border:"1px solid "+C.border,fontSize:12}}>
+                    <div style={{display:"flex",alignItems:"center",gap:8}}>
+                      <span style={{fontWeight:700,color:C.text,flex:1}}>{tn.name}</span>
+                      <span onClick={()=>{ setCoachCardName(null); setTeamCardName(team); }} style={{fontSize:11,fontWeight:700,color:C.gold,cursor:"pointer",textDecoration:"underline",textDecorationColor:"transparent"}}
+                        onMouseEnter={e=>e.currentTarget.style.textDecorationColor=C.gold}
+                        onMouseLeave={e=>e.currentTarget.style.textDecorationColor="transparent"}>{team}</span>
+                    </div>
                     <div style={{fontSize:10,color:C.mut,marginTop:2}}>
                       {tn.start_date}{tn.end_date && tn.end_date !== tn.start_date ? " – " + tn.end_date : ""}
                       {tn.location && " · " + tn.location}
@@ -3986,8 +4166,14 @@ export default function App() {
                         </div>
                         <div style={{fontSize:9,color:C.mut,fontWeight:600,letterSpacing:0.5,textTransform:"uppercase"}}>{t.level || "—"} · {t.age_div || "—"}{t.locked && <span style={{color:"#f59e0b",marginLeft:6,fontWeight:800}}>· LOCKED</span>}</div>
                         <div style={{fontSize:10,color:C.text,marginTop:2}}>
-                          {t.head_coach || <i style={{color:C.mut}}>no head coach</i>}
-                          {t.assistant_coach && " · " + t.assistant_coach}
+                          {t.head_coach
+                            ? <span onClick={()=>setCoachCardName(t.head_coach)} title="Open coach card" style={{cursor:"pointer",textDecoration:"underline",textDecorationColor:"transparent"}}
+                                onMouseEnter={e=>e.currentTarget.style.textDecorationColor=C.text}
+                                onMouseLeave={e=>e.currentTarget.style.textDecorationColor="transparent"}>{t.head_coach}</span>
+                            : <i style={{color:C.mut}}>no head coach</i>}
+                          {t.assistant_coach && <> · <span onClick={()=>setCoachCardName(t.assistant_coach)} title="Open coach card" style={{cursor:"pointer",textDecoration:"underline",textDecorationColor:"transparent"}}
+                            onMouseEnter={e=>e.currentTarget.style.textDecorationColor=C.text}
+                            onMouseLeave={e=>e.currentTarget.style.textDecorationColor="transparent"}>{t.assistant_coach}</span></>}
                         </div>
                       </td>
                       {DAYS.map(day => SLOTS[day].map(s => {
@@ -5040,7 +5226,7 @@ export default function App() {
             <div style={{marginTop:8,display:"flex",flexDirection:"column",gap:5}}>
               {tournamentConflicts.map((c, i) => (
                 <div key={i} style={{fontSize:11,color:C.text,lineHeight:1.5}}>
-                  <b style={{color:C.red}}>{c.coach}</b> would be at <b onClick={()=>setTeamCardName(c.a.team_id)} style={{cursor:"pointer",textDecoration:"underline"}} title="Open team card">{c.a.team_id}</b> (<i>{c.a.tournament.name}</i>) AND <b onClick={()=>setTeamCardName(c.b.team_id)} style={{cursor:"pointer",textDecoration:"underline"}} title="Open team card">{c.b.team_id}</b> (<i>{c.b.tournament.name}</i>) on {new Date(c.a.tournament.start_date+"T00:00").toLocaleDateString()}.
+                  <b onClick={()=>setCoachCardName(c.coach)} style={{color:C.red,cursor:"pointer",textDecoration:"underline"}} title="Open coach card">{c.coach}</b> would be at <b onClick={()=>setTeamCardName(c.a.team_id)} style={{cursor:"pointer",textDecoration:"underline"}} title="Open team card">{c.a.team_id}</b> (<i>{c.a.tournament.name}</i>) AND <b onClick={()=>setTeamCardName(c.b.team_id)} style={{cursor:"pointer",textDecoration:"underline"}} title="Open team card">{c.b.team_id}</b> (<i>{c.b.tournament.name}</i>) on {new Date(c.a.tournament.start_date+"T00:00").toLocaleDateString()}.
                 </div>
               ))}
             </div>
@@ -5220,7 +5406,14 @@ export default function App() {
                       <span onClick={()=>setTeamCardName(team.id)} title="Open team card" style={{cursor:"pointer",textDecoration:"underline",textDecorationColor:"transparent",textUnderlineOffset:2}}
                         onMouseEnter={e=>e.currentTarget.style.textDecorationColor=C.gold}
                         onMouseLeave={e=>e.currentTarget.style.textDecorationColor="transparent"}>{team.id}</span>
-                      <div style={{fontSize:8,fontWeight:600,color:C.mut,textTransform:"none"}}>{team.head_coach || ""}{team.assistant_coach ? "/" + team.assistant_coach : ""}</div>
+                      <div style={{fontSize:8,fontWeight:600,color:C.mut,textTransform:"none"}}>
+                        {team.head_coach && <span onClick={e=>{e.stopPropagation();setCoachCardName(team.head_coach);}} title="Open coach card" style={{cursor:"pointer",textDecoration:"underline",textDecorationColor:"transparent"}}
+                          onMouseEnter={e=>e.currentTarget.style.textDecorationColor=C.mut}
+                          onMouseLeave={e=>e.currentTarget.style.textDecorationColor="transparent"}>{team.head_coach}</span>}
+                        {team.assistant_coach && <>/<span onClick={e=>{e.stopPropagation();setCoachCardName(team.assistant_coach);}} title="Open coach card" style={{cursor:"pointer",textDecoration:"underline",textDecorationColor:"transparent"}}
+                          onMouseEnter={e=>e.currentTarget.style.textDecorationColor=C.mut}
+                          onMouseLeave={e=>e.currentTarget.style.textDecorationColor="transparent"}>{team.assistant_coach}</span></>}
+                      </div>
                     </th>
                   ))}
                 </tr>
@@ -5918,6 +6111,7 @@ export default function App() {
       </div>
       {profileId !== null && renderProfile()}
       {teamCardName && renderTeamCard()}
+      {coachCardName && renderCoachCard()}
       {addingPlayer && renderAddPlayer()}
       {addingTournament && renderAddTournament()}
       {bulkImportOpen && renderBulkImport()}
