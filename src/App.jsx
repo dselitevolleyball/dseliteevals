@@ -3498,8 +3498,24 @@ export default function App() {
                   );
                   return (
                     <tr key={rowKey} style={{background: (hasAccount && !c.is_approved) ? "rgba(245,158,11,0.05)" : "transparent"}}>
-                      {rcell("first_name","First",90)}
-                      {rcell("last_name","Last",110)}
+                      <td style={td}>
+                        <span onClick={() => setCoachCardName((firstName + " " + lastName).trim() || firstName)}
+                          title="Open coach card — teams, practices, tournaments"
+                          style={{fontSize:12,fontWeight:700,color:C.text,cursor:"pointer",textDecoration:"underline",textDecorationColor:"transparent",textUnderlineOffset:2}}
+                          onMouseEnter={e=>e.currentTarget.style.textDecorationColor=C.gold}
+                          onMouseLeave={e=>e.currentTarget.style.textDecorationColor="transparent"}>
+                          {firstName || <i style={{color:C.mut,fontWeight:400}}>—</i>}
+                        </span>
+                      </td>
+                      <td style={td}>
+                        <span onClick={() => setCoachCardName((firstName + " " + lastName).trim() || firstName)}
+                          title="Open coach card — teams, practices, tournaments"
+                          style={{fontSize:12,fontWeight:700,color:C.text,cursor:"pointer",textDecoration:"underline",textDecorationColor:"transparent",textUnderlineOffset:2}}
+                          onMouseEnter={e=>e.currentTarget.style.textDecorationColor=C.gold}
+                          onMouseLeave={e=>e.currentTarget.style.textDecorationColor="transparent"}>
+                          {lastName || <i style={{color:C.mut,fontWeight:400}}>—</i>}
+                        </span>
+                      </td>
                       <td style={td}>
                         {hasAccount ? (
                           <span style={{fontSize:12,color:C.text}}>{c.email}{isSelf && <span style={{color:C.gold,marginLeft:6,fontSize:10}}>(you)</span>}</span>
@@ -3573,11 +3589,6 @@ export default function App() {
                       {rcell("notes","",140)}
                       {/* Actions */}
                       <td style={{...td,textAlign:"right",whiteSpace:"nowrap"}}>
-                        <button onClick={() => setCoachCardName((firstName + " " + lastName).trim() || firstName)}
-                          title="Open coach card — teams, practices, tournaments"
-                          style={{padding:"3px 9px",borderRadius:5,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontFamily:"inherit",fontSize:10,fontWeight:700,cursor:"pointer",marginRight:4}}>
-                          Card
-                        </button>
                         {hasRoster && (
                           <button onClick={async () => {
                             const name = (firstName + " " + lastName).trim();
