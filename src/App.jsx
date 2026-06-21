@@ -708,6 +708,12 @@ export default function App() {
   const [askAnswer, setAskAnswer] = useState("");
   const [askBusy, setAskBusy]     = useState(false);
   const [askErr, setAskErr]       = useState("");
+  // Tournament-page Q&A — natural-language questions over the schedule.
+  const [tnAskQ, setTnAskQ]           = useState("");
+  const [tnAskAnswer, setTnAskAnswer] = useState("");
+  const [tnAskBusy, setTnAskBusy]     = useState(false);
+  const [tnAskErr, setTnAskErr]       = useState("");
+  const [tnAskOpen, setTnAskOpen]     = useState(false);
   // Which nav dropdown ("Tryouts" / "Operations") is open, or null. Click-to-toggle.
   const [openMenu, setOpenMenu] = useState(null);
   // Selected age-group tabs. Multi-select: clicking a tab toggles membership.
@@ -5229,6 +5235,48 @@ export default function App() {
     );
   };
 
+  // Tournament-schedule Q&A. Builds a compact, pre-computed snapshot of every
+  // tournament (dates, entries, holiday/Easter/3-day flags, committed teams)
+  // and sends it with the question to /api/ask-tournaments.
+  const runTnAsk = async () => {
+    const q = tnAskQ.trim();
+    if (!q) return;
+    setTnAskBusy(true); setTnAskErr(""); setTnAskAnswer("");
+    try {
+      const payload = tournaments.map(t => ({
+        name: t.name,
+        start: t.start_date,
+        end: t.end_date,
+        location: t.location || "",
+        venue: t.venue || "",
+        ageLow: t.age_low,
+        ageHigh: t.age_high,
+        entries: Array.isArray(t.entries) ? t.entries : [],
+        qualifier: !!t.is_qualifier,
+        status: t.status || "",
+        cancelled: !!t.cancelled,
+        easter: isEasterRange(t.start_date, t.end_date),
+        threeDay: isThreeDayWeekendRange(t.start_date, t.end_date),
+        holidays: blackoutsForRange(t.start_date, t.end_date).map(b => b.name),
+        committed: tournamentAssignments
+          .filter(a => a.tournament_id === t.id)
+          .map(a => ({ team: a.team_id || a.team_name || "", division: a.division || "" })),
+      }));
+      const res = await fetch("/api/ask-tournaments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question: q, tournaments: payload }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Request failed");
+      setTnAskAnswer(data.answer || "");
+    } catch (e) {
+      setTnAskErr(e.message || "Something went wrong.");
+    } finally {
+      setTnAskBusy(false);
+    }
+  };
+
   // Assignment mutations.
   const assignTeamToTournament = async (tournamentId, teamId, division) => {
     if (!tournamentId || !teamId) return;
@@ -5597,6 +5645,36 @@ export default function App() {
             </button>
           </div>
         </div>
+        {/* AI schedule Q&A (owner-only) */}
+        {isOwner && (
+          <div style={{marginBottom:8,background:C.card,borderRadius:10,border:"1px solid "+(tnAskOpen?C.gold:C.border),overflow:"hidden"}}>
+            <div onClick={()=>setTnAskOpen(o=>!o)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"9px 12px",cursor:"pointer"}}>
+              <span style={{fontSize:12,fontWeight:800,color:C.gold}}>✨ Ask AI about the schedule</span>
+              <span style={{fontSize:11,color:C.mut}}>{tnAskOpen?"▴":"▾"}</span>
+            </div>
+            {tnAskOpen && (
+              <div style={{padding:"0 12px 12px"}}>
+                <div style={{fontSize:11,color:C.mut,marginBottom:8,lineHeight:1.5}}>
+                  Plain English — e.g. “What tournaments are available for 14 Diamond that are Liberty or USA, not on Easter or spring break, and don’t conflict with 14 Diamond’s other commitments?”
+                </div>
+                <div style={{display:"flex",gap:8,alignItems:"flex-start",flexWrap:"wrap"}}>
+                  <textarea value={tnAskQ} onChange={e=>setTnAskQ(e.target.value)}
+                    onKeyDown={e=>{ if (e.key==="Enter" && (e.metaKey||e.ctrlKey)) runTnAsk(); }}
+                    placeholder="Ask about the tournament schedule…  (⌘/Ctrl+Enter to send)"
+                    style={{...inpStyle,flex:"1 1 320px",minHeight:54,padding:"8px 10px",fontSize:13,resize:"vertical",fontFamily:"inherit"}} />
+                  <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                    <button onClick={runTnAsk} disabled={tnAskBusy||!tnAskQ.trim()}
+                      style={{padding:"9px 18px",borderRadius:8,border:"none",background:(tnAskBusy||!tnAskQ.trim())?C.border:C.gold,color:(tnAskBusy||!tnAskQ.trim())?C.mut:"#000",fontFamily:"inherit",fontSize:13,fontWeight:700,cursor:(tnAskBusy||!tnAskQ.trim())?"default":"pointer"}}>{tnAskBusy?"Thinking…":"Ask"}</button>
+                    {tnAskAnswer && !tnAskBusy && <button onClick={()=>{navigator.clipboard.writeText(tnAskAnswer);}} style={{padding:"7px 14px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontFamily:"inherit",fontSize:11,fontWeight:700,cursor:"pointer"}}>Copy</button>}
+                  </div>
+                </div>
+                {tnAskBusy && <div style={{marginTop:10,fontSize:12,color:C.mut}}>Reading {tournaments.length} tournaments and thinking… this can take several seconds.</div>}
+                {tnAskErr && !tnAskBusy && <div style={{marginTop:10,fontSize:12,color:C.red}}>{tnAskErr}</div>}
+                {tnAskAnswer && !tnAskBusy && <div style={{marginTop:10,background:C.bg,border:"1px solid "+C.border,borderRadius:8,padding:"12px 14px",fontSize:13,lineHeight:1.6,whiteSpace:"pre-wrap",color:C.text}}>{tnAskAnswer}</div>}
+              </div>
+            )}
+          </div>
+        )}
         {/* Filter row 1 — primary filters */}
         <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center",marginBottom:6,padding:"8px 10px",background:C.card,borderRadius:10,border:"1px solid "+C.border}}>
           <DebouncedField placeholder="Search name / city / venue"
