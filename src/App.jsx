@@ -602,6 +602,7 @@ export default function App() {
   const [practiceCoachFilter, setPracticeCoachFilter] = useState("");
   const [teamCardName, setTeamCardName]               = useState(null); // unified team-detail modal
   const [coachCardName, setCoachCardName]             = useState(null); // unified coach-detail modal
+  const [teamDirSearch, setTeamDirSearch]             = useState("");   // All Teams directory search
   // 'summer' (Jul-Sep, 4 courts), 'fall1' (Sep 13-Oct 11, 6 courts + S&A Block 1),
   // or 'fall2' (Oct 18-Nov 15, 6 courts + S&A Block 2). Migrate old values
   // from when phases were named 'season' / 'preseason'.
@@ -981,7 +982,7 @@ export default function App() {
     setTournamentAssignments(aRes.data || []);
     setTournamentsLoading(false);
   }, []);
-  useEffect(() => { if (isApproved && view === "tournaments") loadTournaments(); }, [isApproved, view, loadTournaments]);
+  useEffect(() => { if (isApproved && (view === "tournaments" || view === "teamdir")) loadTournaments(); }, [isApproved, view, loadTournaments]);
 
   // Practice tab loader
   const loadPractice = useCallback(async () => {
@@ -997,7 +998,7 @@ export default function App() {
     setPracticeAssignments(aRes.data || []);
     setSaSessions(sRes.data || []);
   }, []);
-  useEffect(() => { if (isApproved && view === "practice") loadPractice(); }, [isApproved, view, loadPractice]);
+  useEffect(() => { if (isApproved && (view === "practice" || view === "teamdir")) loadPractice(); }, [isApproved, view, loadPractice]);
 
   // Tryouts tab loader
   const loadTryouts = useCallback(async () => {
@@ -3656,6 +3657,83 @@ export default function App() {
   // One stop view: coaches, players, practice slots, and tournament
   // assignments for the selected team. Opened by clicking any team name
   // in the Practice grid.
+  // ─── ALL TEAMS DIRECTORY ─────────────────────────────────────────────
+  // Browse every team across all age groups; click any card to open the
+  // unified team card (coaches, roster, practice, tournaments). Pulls from
+  // practice_teams (the canonical team list).
+  function renderTeamDirectory() {
+    if (!canViewTeams) return <div style={{padding:24,color:C.mut,textAlign:"center"}}>Team lists are restricted. Ask the club administrator (Drew) for access.</div>;
+    const q = teamDirSearch.trim().toLowerCase();
+    const ageOf = (t) => parseInt((t.age_div || t.team_name || "").replace(/[^0-9]/g, "")) || 0;
+    const levelColor = lv =>
+      lv === "National" ? C.gold : lv === "Regional" ? C.acc : lv === "Developmental" ? "#06b6d4" : C.mut;
+    const teams = practiceTeams
+      .filter(t => !q
+        || (t.team_name||"").toLowerCase().includes(q)
+        || (t.head_coach||"").toLowerCase().includes(q)
+        || (t.assistant_coach||"").toLowerCase().includes(q)
+        || (t.level||"").toLowerCase().includes(q))
+      .slice()
+      .sort((a, b) => ageOf(a) - ageOf(b) || (a.team_name||"").localeCompare(b.team_name||""));
+    const groups = {};
+    teams.forEach(t => { const g = t.age_div || ("U" + ageOf(t)); (groups[g] = groups[g] || []).push(t); });
+    const groupKeys = Object.keys(groups).sort((a, b) =>
+      (parseInt(a.replace(/\D/g, "")) || 0) - (parseInt(b.replace(/\D/g, "")) || 0));
+    const counts = (t) => ({
+      players: players.filter(p => p.team_assignment === t.team_name).length,
+      practices: practiceAssignments.filter(a => a.team_name === t.team_name && (a.phase || "fall1") === schedulePhase).length,
+      tournaments: tournamentAssignments.filter(ta => ta.team_id === t.team_name || ta.team_name === t.team_name).length,
+    });
+    return (
+      <div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end",flexWrap:"wrap",gap:10,marginBottom:14}}>
+          <div>
+            <h2 style={{margin:0,fontSize:20,fontWeight:800,color:C.gold}}>All Teams</h2>
+            <div style={{fontSize:12,color:C.mut,marginTop:4}}>{practiceTeams.length} team{practiceTeams.length===1?"":"s"}. Click a team for its coaches, roster, practice, and tournaments.</div>
+          </div>
+          <input value={teamDirSearch} onChange={e=>setTeamDirSearch(e.target.value)} placeholder="Search team or coach…"
+            style={{...inpStyle,padding:"8px 12px",fontSize:13,minWidth:220}} />
+        </div>
+        {practiceTeams.length === 0 ? (
+          <div style={{padding:30,textAlign:"center",color:C.mut,fontSize:13,background:C.card,borderRadius:12,border:"1px solid "+C.border}}>
+            No teams found. Add teams in the Practice tab.
+          </div>
+        ) : teams.length === 0 ? (
+          <div style={{padding:24,textAlign:"center",color:C.mut,fontSize:13}}>No teams match “{teamDirSearch}”.</div>
+        ) : groupKeys.map(g => (
+          <div key={g} style={{marginBottom:18}}>
+            <h3 style={{margin:"0 0 8px 0",fontSize:13,fontWeight:800,color:C.gold,textTransform:"uppercase",letterSpacing:1,borderBottom:"1px solid "+C.border,paddingBottom:6}}>{g} <span style={{color:C.mut,fontWeight:600}}>· {groups[g].length}</span></h3>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(248px,1fr))",gap:10}}>
+              {groups[g].map(t => {
+                const c = counts(t);
+                return (
+                  <div key={t.id || t.team_name} onClick={()=>setTeamCardName(t.team_name)} title="Open team card"
+                    style={{background:C.card,borderRadius:12,border:"1px solid "+C.border,padding:"12px 14px",cursor:"pointer"}}
+                    onMouseEnter={e=>e.currentTarget.style.borderColor=C.gold}
+                    onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}>
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
+                      <span style={{fontSize:16,fontWeight:800,color:levelColor(t.level)}}>{t.team_name}</span>
+                      {t.level && <span style={{fontSize:9,fontWeight:800,textTransform:"uppercase",letterSpacing:0.5,color:levelColor(t.level)}}>{t.level}</span>}
+                    </div>
+                    <div style={{fontSize:11,color:C.mut,marginTop:6,lineHeight:1.5}}>
+                      <div><span style={{color:C.mut}}>HC:</span> <span style={{color:t.head_coach?C.text:C.mut}}>{t.head_coach||"—"}</span></div>
+                      <div><span style={{color:C.mut}}>AC:</span> <span style={{color:t.assistant_coach?C.text:C.mut}}>{t.assistant_coach||"—"}</span></div>
+                    </div>
+                    <div style={{display:"flex",gap:6,marginTop:10,flexWrap:"wrap"}}>
+                      <span style={{fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:8,background:C.bg,border:"1px solid "+C.border,color:c.players?C.text:C.mut}}>{c.players} player{c.players===1?"":"s"}</span>
+                      <span style={{fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:8,background:C.bg,border:"1px solid "+C.border,color:c.practices?C.text:C.mut}}>{c.practices} practice{c.practices===1?"":"s"}</span>
+                      <span style={{fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:8,background:C.bg,border:"1px solid "+C.border,color:c.tournaments?C.text:C.mut}}>{c.tournaments} tourney{c.tournaments===1?"":"s"}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
   function renderTeamCard() {
     const team = practiceTeams.find(t => t.team_name === teamCardName);
     const close = () => setTeamCardName(null);
@@ -6528,7 +6606,7 @@ export default function App() {
               const item = (v,l) =>
                 <button key={v} style={btn(view===v)} onClick={()=>{ setView(v); setOpenMenu(null); }}>{l}</button>;
               const groups = [
-                { title:"Tryouts", items:[["evaluate","Evaluate"], ...(canViewTeams ? [["teams","Teams"]] : []), ["rankings","Rankings"], ["physical","Physical Testing"], ["tryouts","Coach Assignments"]] },
+                { title:"Tryouts", items:[["evaluate","Evaluate"], ...(canViewTeams ? [["teams","Teams"],["teamdir","All Teams"]] : []), ["rankings","Rankings"], ["physical","Physical Testing"], ["tryouts","Coach Assignments"]] },
                 { title:"Operations", items:[["tracker","Tracker"], ...(isAdmin ? [["coaches","Coaches"]] : []), ["practice","Practice"], ["messages", "Messages" + (totalUnread > 0 ? " (" + totalUnread + ")" : "")]] },
               ];
               return <>
@@ -6593,7 +6671,7 @@ export default function App() {
           </div>
         );
       })()}
-      {view !== "dashboard" && view !== "activity" && view !== "coaches" && view !== "tournaments" && (
+      {view !== "dashboard" && view !== "activity" && view !== "coaches" && view !== "tournaments" && view !== "teamdir" && (
         <div style={{display:"flex",gap:4,padding:"10px 18px",borderBottom:"1px solid "+C.border,flexWrap:"wrap"}}>
           {divsWithPlayers.map(d => {
             const isSelected = selectedDivs.includes(d);
@@ -6618,6 +6696,7 @@ export default function App() {
         {view==="dashboard" && renderDashboard()}
         {view==="evaluate" && renderEval()}
         {view==="teams" && (canViewTeams ? renderTeams() : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Team lists are restricted. Ask the club administrator (Drew) for access.</div>)}
+        {view==="teamdir" && renderTeamDirectory()}
         {view==="tracker" && renderTracker()}
         {view==="rankings" && renderRankings()}
         {view==="activity" && renderActivity()}
