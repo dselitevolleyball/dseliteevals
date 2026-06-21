@@ -5096,6 +5096,7 @@ export default function App() {
   // An "entry" token is "<age> <tier>", e.g. "17 American".
   const entryToken = (age, tier) => age + " " + tier;
   const entryTier = (token) => token.slice(token.indexOf(" ") + 1);
+  const entryAge  = (token) => parseInt(token);
   const TN_DOW_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const tnDaysBetween = (start, end) => {
     const a = new Date(start + "T00:00").getTime();
@@ -5449,10 +5450,27 @@ export default function App() {
         const hay = (t.name + " " + (t.location||"") + " " + (t.venue||"")).toLowerCase();
         if (!hay.includes(s)) return false;
       }
-      if (tnFilters.ageFor) {
-        const n = parseInt(tnFilters.ageFor);
-        if (t.age_low != null && n < t.age_low) return false;
-        if (t.age_high != null && n > t.age_high) return false;
+      // Age and division both match against the tournament's age×division
+      // entries (e.g. "17 American") — a single entry must satisfy both when
+      // both are set. When the tournament has no entries, the age filter falls
+      // back to its age_low/age_high range (a tier filter can't match).
+      if (tnFilters.ageFor || tnFilters.divisions.length > 0) {
+        const ageSel = tnFilters.ageFor ? parseInt(tnFilters.ageFor) : null;
+        const divs = tnFilters.divisions;
+        const entries = t.entries || [];
+        if (entries.length > 0) {
+          const match = entries.some(tok =>
+            (ageSel == null || entryAge(tok) === ageSel) &&
+            (divs.length === 0 || divs.includes(entryTier(tok)))
+          );
+          if (!match) return false;
+        } else {
+          if (divs.length > 0) return false;
+          if (ageSel != null) {
+            if (t.age_low != null && ageSel < t.age_low) return false;
+            if (t.age_high != null && ageSel > t.age_high) return false;
+          }
+        }
       }
       if (tnFilters.dateFrom && t.end_date < tnFilters.dateFrom) return false;
       if (tnFilters.dateTo && t.start_date > tnFilters.dateTo) return false;
@@ -5462,10 +5480,6 @@ export default function App() {
         const d = tnDaysBetween(t.start_date, t.end_date);
         if (tnFilters.numDays === "4+") { if (d < 4) return false; }
         else if (d !== parseInt(tnFilters.numDays)) return false;
-      }
-      if (tnFilters.divisions.length > 0) {
-        const tiers = (t.entries || []).map(entryTier);
-        if (!tnFilters.divisions.some(d => tiers.includes(d))) return false;
       }
       return true;
     });
