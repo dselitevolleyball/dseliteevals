@@ -638,7 +638,7 @@ export default function App() {
   });
   const [addingTournament, setAddingTournament]             = useState(false);
   const [editingTournament, setEditingTournament]           = useState(null);
-  const [newTournament, setNewTournament]                   = useState({ name: "", start_date: "", end_date: "", location: "", venue: "", age_low: "", age_high: "", gender: "Female", is_qualifier: false, source: "manual", status: "", notes: "", divisions: [] });
+  const [newTournament, setNewTournament]                   = useState({ name: "", start_date: "", end_date: "", location: "", venue: "", age_low: "", age_high: "", gender: "Female", is_qualifier: false, source: "manual", status: "", notes: "", divisions: [], entries: [] });
   const [bulkImportOpen, setBulkImportOpen]                 = useState(false);
   const [bulkImportText, setBulkImportText]                 = useState("");
   const [bulkImportSource, setBulkImportSource]             = useState("USAV");
@@ -5091,6 +5091,11 @@ export default function App() {
 
   // Tournament-related constants used by the cards, filters, and forms.
   const TN_DIVISIONS = ["Open", "USA", "American", "Liberty", "National", "Elite", "Patriot", "Freedom", "Premier", "Select", "Club"];
+  // Age rows for the per-tournament division×age grid (oldest first).
+  const TN_AGES = [18, 17, 16, 15, 14, 13, 12, 11];
+  // An "entry" token is "<age> <tier>", e.g. "17 American".
+  const entryToken = (age, tier) => age + " " + tier;
+  const entryTier = (token) => token.slice(token.indexOf(" ") + 1);
   const TN_DOW_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const tnDaysBetween = (start, end) => {
     const a = new Date(start + "T00:00").getTime();
@@ -5148,6 +5153,7 @@ export default function App() {
       status: t.status.trim() || null,
       notes: t.notes.trim() || null,
       divisions: Array.isArray(t.divisions) ? t.divisions : [],
+      entries: Array.isArray(t.entries) ? t.entries : [],
       wish_list: Array.isArray(t.wish_list) ? t.wish_list : [],
       format: "Three Day Format",
     };
@@ -5160,7 +5166,7 @@ export default function App() {
     if (error) { window.alert("Save failed: " + error.message); return; }
     setAddingTournament(false);
     setEditingTournament(null);
-    setNewTournament({ name: "", start_date: "", end_date: "", location: "", venue: "", age_low: "", age_high: "", gender: "Female", is_qualifier: false, source: "manual", status: "", notes: "", divisions: [], wish_list: [] });
+    setNewTournament({ name: "", start_date: "", end_date: "", location: "", venue: "", age_low: "", age_high: "", gender: "Female", is_qualifier: false, source: "manual", status: "", notes: "", divisions: [], wish_list: [], entries: [] });
     loadTournaments();
   };
   const openEditTournament = (tn) => {
@@ -5179,6 +5185,7 @@ export default function App() {
       status: tn.status || "",
       notes: tn.notes || "",
       divisions: Array.isArray(tn.divisions) ? [...tn.divisions] : [],
+      entries: Array.isArray(tn.entries) ? [...tn.entries] : [],
       wish_list: Array.isArray(tn.wish_list) ? [...tn.wish_list] : [],
     });
     setAddingTournament(true);
@@ -5195,12 +5202,49 @@ export default function App() {
     loadTournaments();
     window.alert("Imported " + newOnes.length + " new tournament" + (newOnes.length===1?"":"s") + (dupes.length ? " (skipped " + dupes.length + " duplicate" + (dupes.length===1?"":"s") + ")" : "") + ".");
   };
-  const toggleTournamentDivision = async (tn, division) => {
-    const cur = Array.isArray(tn.divisions) ? tn.divisions : [];
-    const next = cur.includes(division) ? cur.filter(d => d !== division) : [...cur, division];
-    const { error } = await supabase.from("tournaments").update({ divisions: next }).eq("id", tn.id);
+  // Toggle an "<age> <tier>" entry for a tournament (persists immediately).
+  const toggleTournamentEntry = async (tn, token) => {
+    const cur = Array.isArray(tn.entries) ? tn.entries : [];
+    const next = cur.includes(token) ? cur.filter(x => x !== token) : [...cur, token];
+    const { error } = await supabase.from("tournaments").update({ entries: next }).eq("id", tn.id);
     if (error) { window.alert("Update failed: " + error.message); return; }
     loadTournaments();
+  };
+  // Selectable age×tier grid. `entries` is the current selection; onToggle(token)
+  // flips a cell. Reused by tournament cards and the add/edit modal.
+  const renderEntryGrid = (entries, onToggle) => {
+    const sel = Array.isArray(entries) ? entries : [];
+    const cell = (on) => ({ width: 24, height: 18, borderRadius: 4, cursor: "pointer", margin: "0 auto", border: "1px solid " + (on ? C.gold : C.border), background: on ? "rgba(233,30,140,0.30)" : "transparent" });
+    return (
+      <div style={{ overflowX: "auto", marginTop: 6 }}>
+        <table style={{ borderCollapse: "collapse", fontSize: 10 }}>
+          <thead>
+            <tr>
+              <th style={{ padding: "2px 6px" }} />
+              {TN_DIVISIONS.map(tier => (
+                <th key={tier} style={{ padding: "2px 4px", color: C.mut, fontWeight: 700, fontSize: 9, whiteSpace: "nowrap", textAlign: "center" }}>{tier}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {TN_AGES.map(age => (
+              <tr key={age}>
+                <td style={{ padding: "1px 6px", color: C.text, fontWeight: 700, fontSize: 10, whiteSpace: "nowrap", textAlign: "right" }}>{age}</td>
+                {TN_DIVISIONS.map(tier => {
+                  const token = entryToken(age, tier);
+                  const on = sel.includes(token);
+                  return (
+                    <td key={tier} style={{ padding: 1 }}>
+                      <div onClick={() => onToggle(token)} title={token} style={cell(on)} />
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
   };
   const deleteTournament = async (id, name) => {
     if (!window.confirm("Delete tournament \"" + name + "\"? Any team assignments to it will also be removed.")) return;
@@ -5286,20 +5330,22 @@ export default function App() {
           </div>
         </div>
 
-        {/* Divisions chips — click to toggle. Empty = nothing tagged for
-            this tournament; the Divisions filter on the list shows only
-            tournaments that match the user's selected divisions. */}
-        <div style={{marginTop:8,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-          <span style={{fontSize:9,fontWeight:700,color:C.mut,textTransform:"uppercase",letterSpacing:0.5}}>Divisions:</span>
-          {TN_DIVISIONS.map(div => {
-            const on = (tn.divisions || []).includes(div);
-            return (
-              <span key={div} onClick={()=>toggleTournamentDivision(tn, div)}
-                style={{padding:"2px 8px",borderRadius:10,fontSize:10,fontWeight:700,cursor:"pointer",border:on?"1px solid "+C.gold:"1px dashed "+C.border,background:on?"rgba(233,30,140,0.18)":"transparent",color:on?C.gold:C.mut,userSelect:"none"}}>
-                {div}
-              </span>
-            );
-          })}
+        {/* Division × age entries — click a cell to add/remove an entry like
+            "17 American". The Divisions filter on the list matches the tier of
+            any selected entry. */}
+        <div style={{marginTop:8}}>
+          <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+            <span style={{fontSize:9,fontWeight:700,color:C.mut,textTransform:"uppercase",letterSpacing:0.5}}>Entries:</span>
+            {(tn.entries || []).length === 0
+              ? <span style={{fontSize:10,color:C.mut,fontStyle:"italic"}}>none yet — tap cells below</span>
+              : (tn.entries || []).map(token => (
+                  <span key={token} onClick={()=>toggleTournamentEntry(tn, token)} title="Click to remove"
+                    style={{padding:"2px 8px",borderRadius:10,fontSize:10,fontWeight:700,cursor:"pointer",border:"1px solid "+C.gold,background:"rgba(233,30,140,0.18)",color:C.gold,userSelect:"none"}}>
+                    {token} ×
+                  </span>
+                ))}
+          </div>
+          {renderEntryGrid(tn.entries, (token)=>toggleTournamentEntry(tn, token))}
         </div>
 
         {/* Assignments */}
@@ -5391,8 +5437,8 @@ export default function App() {
         else if (d !== parseInt(tnFilters.numDays)) return false;
       }
       if (tnFilters.divisions.length > 0) {
-        const dvs = t.divisions || [];
-        if (!tnFilters.divisions.some(d => dvs.includes(d))) return false;
+        const tiers = (t.entries || []).map(entryTier);
+        if (!tnFilters.divisions.some(d => tiers.includes(d))) return false;
       }
       return true;
     });
@@ -5420,7 +5466,7 @@ export default function App() {
               style={{padding:"6px 14px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.text,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
               Bulk import
             </button>
-            <button onClick={()=>{ setEditingTournament(null); setNewTournament({ name: "", start_date: "", end_date: "", location: "", venue: "", age_low: "", age_high: "", gender: "Female", is_qualifier: false, source: "manual", status: "", notes: "", divisions: [], wish_list: [] }); setAddingTournament(true); }}
+            <button onClick={()=>{ setEditingTournament(null); setNewTournament({ name: "", start_date: "", end_date: "", location: "", venue: "", age_low: "", age_high: "", gender: "Female", is_qualifier: false, source: "manual", status: "", notes: "", divisions: [], wish_list: [], entries: [] }); setAddingTournament(true); }}
               style={{padding:"6px 14px",borderRadius:6,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
               + Add tournament
             </button>
@@ -6020,12 +6066,12 @@ export default function App() {
                     {ageLabel(t) && <span style={{fontSize:10,color:C.mut,whiteSpace:"nowrap"}}>{ageLabel(t)}</span>}
                     {t.gender && <span style={{fontSize:10,color:C.mut,whiteSpace:"nowrap"}}>{t.gender}</span>}
                     {t.location && <span style={{fontSize:10,color:C.mut,whiteSpace:"nowrap"}}>{t.location}</span>}
-                    {Array.isArray(t.divisions) && t.divisions.length > 0 && (
+                    {Array.isArray(t.entries) && t.entries.length > 0 && (
                       <span style={{display:"inline-flex",gap:3,flexWrap:"wrap"}}>
-                        {t.divisions.slice(0,6).map(d => (
+                        {t.entries.slice(0,6).map(d => (
                           <span key={d} style={{fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:8,background:"rgba(233,30,140,0.18)",color:C.gold,whiteSpace:"nowrap"}}>{d}</span>
                         ))}
-                        {t.divisions.length > 6 && <span style={{fontSize:9,color:C.mut}}>+{t.divisions.length-6}</span>}
+                        {t.entries.length > 6 && <span style={{fontSize:9,color:C.mut}}>+{t.entries.length-6}</span>}
                       </span>
                     )}
                     {t.source && <span style={{fontSize:9,color:C.mut,whiteSpace:"nowrap"}}>· {t.source}</span>}
@@ -6047,10 +6093,6 @@ export default function App() {
     const editInp = {...inpStyle,width:"100%",padding:"8px 10px",fontSize:13};
     const setF = (k, v) => setNewTournament(prev => ({ ...prev, [k]: v }));
     const close = () => { setAddingTournament(false); setEditingTournament(null); };
-    const toggleDiv = (d) => setNewTournament(prev => ({
-      ...prev,
-      divisions: (prev.divisions||[]).includes(d) ? prev.divisions.filter(x=>x!==d) : [...(prev.divisions||[]), d],
-    }));
     return (
       <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:1000,display:"flex",justifyContent:"center",padding:"30px 16px",overflowY:"auto"}} onClick={close}>
         <div style={{background:C.card,borderRadius:16,border:"1px solid "+C.border,maxWidth:640,width:"100%",maxHeight:"90vh",overflowY:"auto",padding:24}} onClick={e=>e.stopPropagation()}>
@@ -6082,18 +6124,18 @@ export default function App() {
               <label htmlFor="newt-q" style={{fontSize:12,color:C.text,cursor:"pointer"}}>Is qualifier</label>
             </div>
             <div style={{gridColumn:"1 / -1"}}>
-              <span style={lbl}>Divisions</span>
-              <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
-                {TN_DIVISIONS.map(d => {
-                  const on = (newTournament.divisions||[]).includes(d);
-                  return (
-                    <span key={d} onClick={()=>toggleDiv(d)}
-                      style={{padding:"4px 10px",borderRadius:10,fontSize:11,fontWeight:700,cursor:"pointer",border:on?"1px solid "+C.gold:"1px dashed "+C.border,background:on?"rgba(233,30,140,0.18)":"transparent",color:on?C.gold:C.mut,userSelect:"none"}}>
-                      {d}
-                    </span>
-                  );
-                })}
-              </div>
+              <span style={lbl}>Divisions &amp; Ages (tap cells, e.g. 17 × American)</span>
+              {(newTournament.entries||[]).length > 0 && (
+                <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:4}}>
+                  {(newTournament.entries||[]).map(token => (
+                    <span key={token} style={{padding:"3px 9px",borderRadius:10,fontSize:11,fontWeight:700,border:"1px solid "+C.gold,background:"rgba(233,30,140,0.18)",color:C.gold}}>{token}</span>
+                  ))}
+                </div>
+              )}
+              {renderEntryGrid(newTournament.entries, (token)=>setNewTournament(prev => {
+                const cur = prev.entries||[];
+                return {...prev, entries: cur.includes(token) ? cur.filter(x=>x!==token) : [...cur, token]};
+              }))}
             </div>
             <div style={{gridColumn:"1 / -1"}}>
               <span style={lbl}>Wish list (teams that want to go)</span>
