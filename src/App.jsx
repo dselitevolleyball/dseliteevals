@@ -631,6 +631,8 @@ export default function App() {
   const [tnSelectedTeams, setTnSelectedTeams]               = useState(new Set()); // empty = all shown
   const [tnCalFrom, setTnCalFrom]                           = useState("2026-12-01");
   const [tnCalTo, setTnCalTo]                               = useState("2027-06-30");
+  const [qpQualOnly, setQpQualOnly]                         = useState(true);  // Qualifier Planner: qualifiers only
+  const [qpSeasonOnly, setQpSeasonOnly]                     = useState(true);  // Qualifier Planner: Dec–June only
   // Month being shown in the Month View calendar; YYYY-MM-01 string.
   // Default to today's month so it lands on something relevant on open.
   const [tnMonthCursor, setTnMonthCursor]                   = useState(() => {
@@ -5909,7 +5911,12 @@ export default function App() {
     const springBreakOf = t => blackoutsForRange(t.start_date,t.end_date).some(b=>/spring break/i.test(b.name||""));
 
     const committed = tournaments.filter(t => !t.cancelled && isCommitted(t)).sort(byDate);
-    const candidates = tournaments.filter(t => !t.cancelled && t.is_qualifier && !isCommitted(t) && inSeason(t)).sort(byDate);
+    let pool = tournaments.filter(t => !t.cancelled && !isCommitted(t));
+    const uncommittedTotal = pool.length;
+    const qualCount = pool.filter(t => t.is_qualifier).length;
+    if (qpSeasonOnly) pool = pool.filter(inSeason);
+    if (qpQualOnly)   pool = pool.filter(t => t.is_qualifier);
+    const candidates = pool.sort(byDate);
 
     const scored = candidates.map(t => {
       const conflictWith = committed.find(c => overlaps(c,t));
@@ -5954,7 +5961,17 @@ export default function App() {
         <div style={{marginBottom:12}}>
           <h3 style={{margin:0,fontSize:16,fontWeight:800,color:C.gold}}>Qualifier Planner</h3>
           <div style={{fontSize:12,color:C.mut,marginTop:4,lineHeight:1.5}}>
-            Candidates are qualifier events ({candidates.length}) ranked to avoid Easter / spring break and to spread out from your committed weekends. Tag your locked events <b style={{color:C.text}}>“Committed”</b> (here or on their cards) so the spacing is computed against them.
+            {candidates.length} candidate{candidates.length===1?"":"s"} ranked to avoid Easter / spring break and to spread out from your committed weekends. Tag your locked events <b style={{color:C.text}}>“Committed”</b> (here or on their cards) so the spacing is computed against them.
+          </div>
+          <div style={{display:"flex",gap:14,marginTop:8,flexWrap:"wrap"}}>
+            <label style={{display:"flex",alignItems:"center",gap:6,fontSize:11,fontWeight:700,color:qpQualOnly?C.gold:C.mut,cursor:"pointer"}}>
+              <input type="checkbox" checked={qpQualOnly} onChange={e=>setQpQualOnly(e.target.checked)} style={{accentColor:C.gold,cursor:"pointer"}} />
+              Qualifiers only <span style={{color:C.mut,fontWeight:400}}>({qualCount})</span>
+            </label>
+            <label style={{display:"flex",alignItems:"center",gap:6,fontSize:11,fontWeight:700,color:qpSeasonOnly?C.gold:C.mut,cursor:"pointer"}}>
+              <input type="checkbox" checked={qpSeasonOnly} onChange={e=>setQpSeasonOnly(e.target.checked)} style={{accentColor:C.gold,cursor:"pointer"}} />
+              Dec–June only
+            </label>
           </div>
         </div>
 
@@ -6011,8 +6028,11 @@ export default function App() {
 
         {/* Ranked candidate table */}
         {scored.length === 0 ? (
-          <div style={{padding:24,textAlign:"center",color:C.mut,fontSize:12,background:C.card,borderRadius:10,border:"1px solid "+C.border}}>
-            No qualifier events in the Dec–June season to choose from. Mark tournaments as qualifiers (the “Is qualifier” box on a card’s Edit form) to see them here.
+          <div style={{padding:24,textAlign:"center",color:C.mut,fontSize:12,background:C.card,borderRadius:10,border:"1px solid "+C.border,lineHeight:1.6}}>
+            No candidates with the current filters.
+            {qpQualOnly && qualCount === 0 && <> None of your tournaments are flagged <b style={{color:C.text}}>“Is qualifier”</b> — either check that box on a card’s Edit form, or uncheck <b style={{color:C.text}}>“Qualifiers only”</b> above.</>}
+            {qpQualOnly && qualCount > 0 && qpSeasonOnly && <> There are {qualCount} qualifier{qualCount===1?"":"s"}, but none fall in Dec–June — uncheck <b style={{color:C.text}}>“Dec–June only”</b> to see them.</>}
+            {!qpQualOnly && <> {uncommittedTotal} uncommitted tournament{uncommittedTotal===1?"":"s"} total{qpSeasonOnly && <> — try unchecking <b style={{color:C.text}}>“Dec–June only”</b></>}.</>}
           </div>
         ) : (
           <div style={{overflowX:"auto"}}>
