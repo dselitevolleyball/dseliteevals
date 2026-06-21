@@ -5688,6 +5688,7 @@ export default function App() {
               <option value="browse">Browse by Weekend</option>
               <option value="month">Month View</option>
               <option value="calendar">Team Calendar</option>
+              <option value="qualifiers">Qualifier Planner</option>
             </select>
             <div style={{fontSize:11,color:C.mut}}>
               {tournaments.length} total · {filtered.length} match filters · {tournamentAssignments.length} assignments · {tournamentConflicts.length} conflict{tournamentConflicts.length===1?"":"s"}
@@ -5859,6 +5860,7 @@ export default function App() {
         {tnView === "calendar" ? renderTournamentCalendar(filtered)
          : tnView === "browse" ? renderTournamentBrowser(filtered)
          : tnView === "month" ? renderTournamentMonthView(filtered)
+         : tnView === "qualifiers" ? renderQualifierPlanner()
          : (<>
         {/* Tournament cards, grouped by month so the wall-of-cards is scannable */}
         {filtered.length === 0 ? (
@@ -5888,6 +5890,166 @@ export default function App() {
           })()
         )}
         </>)}
+      </div>
+    );
+  }
+
+  // ─── QUALIFIER PLANNER ───────────────────────────────────────────────
+  // Helps choose 1–2 more qualifiers around the events tagged "Committed".
+  // Candidates are ranked to AVOID Easter / spring break and to SPREAD across
+  // the season (sit far from already-committed weekends). A timeline chart
+  // plots committed (locked) vs candidate qualifiers.
+  function renderQualifierPlanner() {
+    const SEASON = new Set([12,1,2,3,4,5,6]);
+    const inSeason = t => SEASON.has(parseInt((t.start_date||"").slice(5,7)));
+    const byDate = (a,b) => (a.start_date||"").localeCompare(b.start_date||"");
+    const isCommitted = t => tnEffectiveTags(t).includes("Committed");
+    const days = (d1,d2) => Math.round((new Date(d2+"T00:00") - new Date(d1+"T00:00"))/86400000);
+    const overlaps = (a,b) => a.start_date <= b.end_date && a.end_date >= b.start_date;
+    const springBreakOf = t => blackoutsForRange(t.start_date,t.end_date).some(b=>/spring break/i.test(b.name||""));
+
+    const committed = tournaments.filter(t => !t.cancelled && isCommitted(t)).sort(byDate);
+    const candidates = tournaments.filter(t => !t.cancelled && t.is_qualifier && !isCommitted(t) && inSeason(t)).sort(byDate);
+
+    const scored = candidates.map(t => {
+      const conflictWith = committed.find(c => overlaps(c,t));
+      const easter = isEasterRange(t.start_date,t.end_date);
+      const spring = springBreakOf(t);
+      const holiday = easter || spring;
+      const gap = committed.length ? Math.min(...committed.map(c => Math.abs(days(c.start_date,t.start_date)))) : null;
+      let score = gap==null ? 0 : gap;
+      if (holiday) score -= 1000;
+      if (conflictWith) score -= 100000;
+      const tier = conflictWith ? "conflict" : holiday ? "holiday" : "ok";
+      return { t, conflictWith, easter, spring, holiday, gap, score, tier };
+    }).sort((a,b)=> b.score - a.score);
+    let bestCount = 0;
+    scored.forEach(s => { if (s.tier==="ok" && bestCount<2) { s.best = true; bestCount++; } });
+
+    // Timeline bounds across everything shown.
+    const dated = [...committed, ...candidates];
+    const lo = dated.length ? dated.map(t=>t.start_date).sort()[0] : "2026-12-01";
+    const hiRaw = dated.length ? dated.map(t=>t.end_date).sort().slice(-1)[0] : "2027-06-30";
+    const total = Math.max(1, days(lo, hiRaw));
+    const pad = Math.max(3, Math.round(total*0.04));
+    const loP = (() => { const d=new Date(lo+"T00:00"); d.setDate(d.getDate()-pad); return d.toISOString().slice(0,10); })();
+    const hiP = (() => { const d=new Date(hiRaw+"T00:00"); d.setDate(d.getDate()+pad); return d.toISOString().slice(0,10); })();
+    const span = Math.max(1, days(loP, hiP));
+    const xPct = iso => Math.max(0, Math.min(100, (days(loP, iso)/span)*100));
+    const tierColor = tier => tier==="conflict" ? C.red : tier==="holiday" ? "#f59e0b" : C.grn;
+
+    // Holiday bands: Easter weekend + spring-break blackout(s) within range.
+    const bands = [];
+    const yearsInRange = new Set([loP, hiP].map(d=>parseInt(d.slice(0,4))));
+    for (const y of yearsInRange) {
+      const es = easterSunday(y); const gf = new Date(es+"T00:00"); gf.setDate(gf.getDate()-2);
+      bands.push({ start: gf.toISOString().slice(0,10), end: es, label:"Easter", color:"#a78bfa" });
+    }
+    blackoutDates.filter(b=>/spring break/i.test(b.name||"")).forEach(b => bands.push({ start:b.date_start, end:b.date_end, label:"Spring Break", color:"#f59e0b" }));
+
+    const PLOT_H = 96;
+    const td = {padding:"7px 8px",fontSize:12,borderBottom:"1px solid "+C.border,verticalAlign:"middle"};
+    return (
+      <div>
+        <div style={{marginBottom:12}}>
+          <h3 style={{margin:0,fontSize:16,fontWeight:800,color:C.gold}}>Qualifier Planner</h3>
+          <div style={{fontSize:12,color:C.mut,marginTop:4,lineHeight:1.5}}>
+            Candidates are qualifier events ({candidates.length}) ranked to avoid Easter / spring break and to spread out from your committed weekends. Tag your locked events <b style={{color:C.text}}>“Committed”</b> (here or on their cards) so the spacing is computed against them.
+          </div>
+        </div>
+
+        {/* Committed events */}
+        <div style={{background:C.card,borderRadius:10,border:"1px solid "+C.border,padding:"10px 14px",marginBottom:12}}>
+          <div style={{fontSize:10,fontWeight:800,textTransform:"uppercase",letterSpacing:0.5,color:C.mut,marginBottom:8}}>Committed ({committed.length})</div>
+          {committed.length === 0 ? (
+            <div style={{fontSize:11,color:"#f59e0b",fontStyle:"italic"}}>None tagged yet. Tag your 4 locked events “Committed” (use the + Tag chip on each card, or the Commit button below) so the planner can space picks around them.</div>
+          ) : (
+            <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+              {committed.map(c => (
+                <span key={c.id} style={{display:"inline-flex",alignItems:"center",gap:6,padding:"4px 8px",borderRadius:8,background:C.bg,border:"1px solid "+C.gold,fontSize:11}}>
+                  <span onClick={()=>openEditTournament(c)} style={{fontWeight:700,color:C.gold,cursor:"pointer"}}>{c.name}</span>
+                  <span style={{color:C.mut,fontSize:10}}>{c.start_date}</span>
+                  <span onClick={()=>removeTournamentTag(c,"Committed")} title="Unmark committed" style={{cursor:"pointer",color:C.mut,fontWeight:700}}>×</span>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Season timeline chart */}
+        {dated.length > 0 && (
+          <div style={{background:C.card,borderRadius:10,border:"1px solid "+C.border,padding:"14px 16px 8px",marginBottom:12}}>
+            <div style={{fontSize:10,fontWeight:800,textTransform:"uppercase",letterSpacing:0.5,color:C.mut,marginBottom:10}}>Season timeline</div>
+            <div style={{position:"relative",height:PLOT_H,marginBottom:6}}>
+              {/* holiday bands */}
+              {bands.map((b,i)=>{ const l=xPct(b.start), r=xPct(b.end); return <div key={"b"+i} title={b.label} style={{position:"absolute",top:0,bottom:18,left:l+"%",width:Math.max(0.6,r-l)+"%",background:b.color+"22",borderLeft:"1px dashed "+b.color,borderRight:"1px dashed "+b.color}} />; })}
+              {/* baseline */}
+              <div style={{position:"absolute",left:0,right:0,bottom:18,height:2,background:C.border}} />
+              {/* committed markers */}
+              {committed.map(c => { const x=xPct(c.start_date); return (
+                <div key={"c"+c.id} title={c.name+" — "+c.start_date+" (committed)"} style={{position:"absolute",bottom:18,left:x+"%",transform:"translateX(-50%)",display:"flex",flexDirection:"column",alignItems:"center"}}>
+                  <span style={{fontSize:13}}>🔒</span>
+                  <div style={{width:2,height:PLOT_H-40,background:C.gold,opacity:0.5}} />
+                </div>
+              ); })}
+              {/* candidate dots */}
+              {scored.map(s => { const x=xPct(s.t.start_date); return (
+                <div key={"q"+s.t.id} onClick={()=>openEditTournament(s.t)} title={s.t.name+" — "+s.t.start_date+(s.conflictWith?" · conflicts "+s.conflictWith.name:s.holiday?" · "+(s.easter?"Easter":"Spring break"):"")}
+                  style={{position:"absolute",bottom:18,left:x+"%",transform:"translate(-50%,50%)",width:s.best?15:12,height:s.best?15:12,borderRadius:"50%",background:tierColor(s.tier),border:(s.best?"2px solid "+C.text:"2px solid "+C.card),boxShadow:"0 0 0 1px rgba(0,0,0,0.45)",cursor:"pointer"}} />
+              ); })}
+              {/* month ticks */}
+              {(() => { const ticks=[]; const d=new Date(loP+"T00:00"); d.setDate(1); while (d.toISOString().slice(0,10) <= hiP) { const iso=d.toISOString().slice(0,10); ticks.push(<span key={iso} style={{position:"absolute",bottom:0,left:xPct(iso)+"%",transform:"translateX(-50%)",fontSize:9,color:C.mut}}>{d.toLocaleString(undefined,{month:"short"})}</span>); d.setMonth(d.getMonth()+1); } return ticks; })()}
+            </div>
+            <div style={{display:"flex",gap:14,flexWrap:"wrap",fontSize:10,color:C.mut}}>
+              <span><span style={{display:"inline-block",width:9,height:9,borderRadius:"50%",background:C.grn,marginRight:4,verticalAlign:"middle"}} />open / recommended</span>
+              <span><span style={{display:"inline-block",width:9,height:9,borderRadius:"50%",background:"#f59e0b",marginRight:4,verticalAlign:"middle"}} />Easter / spring break</span>
+              <span><span style={{display:"inline-block",width:9,height:9,borderRadius:"50%",background:C.red,marginRight:4,verticalAlign:"middle"}} />conflicts a committed weekend</span>
+              <span>🔒 committed · ringed dot = top pick</span>
+            </div>
+          </div>
+        )}
+
+        {/* Ranked candidate table */}
+        {scored.length === 0 ? (
+          <div style={{padding:24,textAlign:"center",color:C.mut,fontSize:12,background:C.card,borderRadius:10,border:"1px solid "+C.border}}>
+            No qualifier events in the Dec–June season to choose from. Mark tournaments as qualifiers (the “Is qualifier” box on a card’s Edit form) to see them here.
+          </div>
+        ) : (
+          <div style={{overflowX:"auto"}}>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+              <thead><tr style={{textAlign:"left",color:C.mut}}>
+                <th style={{...td,fontSize:10,textTransform:"uppercase"}}>#</th>
+                <th style={{...td,fontSize:10,textTransform:"uppercase"}}>Qualifier</th>
+                <th style={{...td,fontSize:10,textTransform:"uppercase"}}>Dates</th>
+                <th style={{...td,fontSize:10,textTransform:"uppercase"}}>Location</th>
+                <th style={{...td,fontSize:10,textTransform:"uppercase"}}>Spacing</th>
+                <th style={{...td,fontSize:10,textTransform:"uppercase"}}>Verdict</th>
+                <th style={{...td,fontSize:10,textTransform:"uppercase"}}></th>
+              </tr></thead>
+              <tbody>
+                {scored.map((s,i) => (
+                  <tr key={s.t.id} style={{background: s.best?"rgba(34,197,94,0.07)":"transparent"}}>
+                    <td style={{...td,color:C.mut,fontWeight:700}}>{i+1}</td>
+                    <td style={td}><span onClick={()=>openEditTournament(s.t)} style={{fontWeight:700,color:C.text,cursor:"pointer"}}>{s.t.name}</span>{s.t.is_qualifier && <span style={{color:"#a855f7",fontSize:9,fontWeight:800,marginLeft:6}}>QUAL</span>}</td>
+                    <td style={{...td,color:C.mut,whiteSpace:"nowrap"}}>{s.t.start_date}{s.t.end_date&&s.t.end_date!==s.t.start_date?"–"+s.t.end_date.slice(5):""}</td>
+                    <td style={{...td,color:C.mut}}>{s.t.location||"—"}</td>
+                    <td style={{...td,color:C.mut,whiteSpace:"nowrap"}}>{s.gap==null?"—":s.gap+"d from nearest"}</td>
+                    <td style={td}>
+                      {s.tier==="conflict" ? <span style={{color:C.red,fontWeight:700}}>✕ same weekend as {s.conflictWith.name}</span>
+                       : s.tier==="holiday" ? <span style={{color:"#f59e0b",fontWeight:700}}>⚠ {s.easter?"Easter":"Spring break"}</span>
+                       : s.best ? <span style={{color:C.grn,fontWeight:800}}>★ Best pick</span>
+                       : <span style={{color:C.grn,fontWeight:700}}>✓ Open</span>}
+                    </td>
+                    <td style={td}>
+                      <button onClick={()=>addTournamentTag(s.t,"Committed")} title="Mark this committed"
+                        style={{padding:"3px 9px",borderRadius:6,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>+ Commit</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     );
   }
