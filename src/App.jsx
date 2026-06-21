@@ -697,9 +697,11 @@ export default function App() {
   // Physical Testing tab — dot-plot of a physical metric per player. Age group
   // comes from the global selectedDivs chips; these add team/position filters
   // and pick which metric drives the horizontal axis.
-  const [ptMetric, setPtMetric] = useState("sprint_10y"); // sprint_10y | vertical | jump_touch
-  const [ptTeam, setPtTeam]     = useState("");            // "" = all teams
-  const [ptPos, setPtPos]       = useState("");            // "" = all positions
+  // Which metrics to overlay. When 2+ are on, each is normalized to 0–100%
+  // within the filtered group (100% = best) so different units share one axis.
+  const [ptMetrics, setPtMetrics] = useState(["sprint_10y","vertical"]); // subset of sprint_10y | vertical | jump_touch
+  const [ptTeam, setPtTeam]       = useState("");                        // "" = all teams
+  const [ptPos, setPtPos]         = useState("");                        // "" = all positions
   // Owner-only "Ask AI" tab — natural-language questions over the player data.
   const [askQ, setAskQ]           = useState("");
   const [askAnswer, setAskAnswer] = useState("");
@@ -6292,11 +6294,13 @@ export default function App() {
   // global chips above; team/position filter locally.
   function renderPhysicalTesting() {
     const METRICS = {
-      sprint_10y: { label:"10-yd Sprint", unit:"s",  get:p=>{const v=parseFloat(p.sprint_10y); return Number.isFinite(v)?v:null;}, lowerBetter:true,  fmt:v=>v.toFixed(2) },
-      vertical:   { label:"Vertical",     unit:'"',  get:p=>vertical(p),                                                          lowerBetter:false, fmt:v=>v.toFixed(1) },
-      jump_touch: { label:"Jump Touch",   unit:'"',  get:p=>{const v=parseFloat(p.jump_touch); return Number.isFinite(v)?v:null;}, lowerBetter:false, fmt:v=>v.toFixed(1) },
+      sprint_10y: { label:"10-yd Sprint", short:"Sprint", unit:"s",  shape:"diamond", get:p=>{const v=parseFloat(p.sprint_10y); return Number.isFinite(v)?v:null;}, lowerBetter:true,  fmt:v=>v.toFixed(2) },
+      vertical:   { label:"Vertical",     short:"Vert",   unit:'"',  shape:"circle",  get:p=>vertical(p),                                                          lowerBetter:false, fmt:v=>v.toFixed(1) },
+      jump_touch: { label:"Jump Touch",   short:"Jump",   unit:'"',  shape:"square",  get:p=>{const v=parseFloat(p.jump_touch); return Number.isFinite(v)?v:null;}, lowerBetter:false, fmt:v=>v.toFixed(1) },
     };
-    const m = METRICS[ptMetric];
+    const ORDER = ["sprint_10y","vertical","jump_touch"];
+    const selected = ORDER.filter(k => ptMetrics.includes(k));
+    const multi = selected.length > 1;
     const divSet = new Set(selectedDivs);
     // Continuous red→yellow→green by average eval score (1–5).
     const avgColor = a => a==null ? C.mut : "hsl(" + Math.max(0, Math.min(120, ((a-1)/4)*120)) + ",72%,48%)";
@@ -6307,31 +6311,67 @@ export default function App() {
     let pool = players.filter(p => divSet.has(p.usavDiv||p.usav_div));
     if (ptTeam) pool = pool.filter(p => p.team_assignment === ptTeam);
     if (ptPos)  pool = pool.filter(p => (p.positions||[]).includes(ptPos));
-    const rows = pool.map(p => ({ p, val:m.get(p), a:avgNum(p) })).filter(r => r.val != null);
-    rows.sort((x,y) => m.lowerBetter ? x.val - y.val : y.val - x.val);
+    // Each row carries every selected metric the player has a value for.
+    const rows = pool.map(p => {
+      const vals = {};
+      selected.forEach(k => { const v = METRICS[k].get(p); if (v != null) vals[k] = v; });
+      return { p, vals, a:avgNum(p) };
+    }).filter(r => Object.keys(r.vals).length > 0);
 
-    const vals = rows.map(r => r.val);
-    const min = vals.length ? Math.min(...vals) : 0;
-    const max = vals.length ? Math.max(...vals) : 1;
-    const groupAvg = vals.length ? vals.reduce((a,b)=>a+b,0)/vals.length : null;
-    const pad = (max - min) * 0.08 || (max * 0.05) || 1;
-    const lo = min - pad, hi = max + pad;
-    const pct = v => hi === lo ? 50 : ((v - lo) / (hi - lo)) * 100;
+    // Per-metric min/max across the filtered group, used to normalize to 0–100%.
+    const range = {};
+    selected.forEach(k => {
+      const vs = rows.map(r => r.vals[k]).filter(v => v != null);
+      range[k] = { min: vs.length ? Math.min(...vs) : 0, max: vs.length ? Math.max(...vs) : 1 };
+    });
+    // Normalized 0–100 where 100 = best in group (handles lower-is-better).
+    const norm = (k, v) => {
+      const { min, max } = range[k];
+      if (max === min) return 50;
+      const t = (v - min) / (max - min);
+      return (METRICS[k].lowerBetter ? 1 - t : t) * 100;
+    };
+    // Position along the track. Multi: normalized (best→right). Single: raw axis.
+    const single = selected[0];
+    let lo, hi;
+    if (!multi && single) {
+      const vs = rows.map(r => r.vals[single]).filter(v => v != null);
+      const mn = vs.length ? Math.min(...vs) : 0, mx = vs.length ? Math.max(...vs) : 1;
+      const pad = (mx - mn) * 0.08 || (mx * 0.05) || 1;
+      lo = mn - pad; hi = mx + pad;
+    }
+    const posPct = (k, v) => multi ? norm(k, v) : (hi === lo ? 50 : ((v - lo) / (hi - lo)) * 100);
+    // Sort: multi → by mean normalized score (most athletic first); single → raw best first.
+    const sortScore = r => multi
+      ? selected.reduce((s,k) => r.vals[k] != null ? s + norm(k, r.vals[k]) : s, 0) / Object.keys(r.vals).length
+      : (r.vals[single] != null ? (METRICS[single].lowerBetter ? -r.vals[single] : r.vals[single]) : -Infinity);
+    rows.sort((x,y) => sortScore(y) - sortScore(x));
 
+    const rowH = multi ? 34 : 24;
+    const shapeBox = (shape, color, extra) => {
+      const base = { width:13, height:13, background:color, border:"2px solid "+C.card, boxShadow:"0 0 0 1px rgba(0,0,0,0.45)" };
+      if (shape === "circle") base.borderRadius = "50%";
+      else if (shape === "square") base.borderRadius = 2;
+      else base.borderRadius = 1; // diamond (rotated below)
+      return { ...base, ...extra };
+    };
     const ctrlBtn = active => ({padding:"6px 12px",borderRadius:8,border:"1px solid "+(active?C.gold:C.border),background:active?"rgba(233,30,140,0.12)":"transparent",color:active?C.gold:C.mut,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700});
     const sel = {...inpStyle,padding:"7px 10px",fontSize:12,cursor:"pointer"};
+    const toggleMetric = k => setPtMetrics(prev => prev.includes(k)
+      ? (prev.length > 1 ? prev.filter(x => x !== k) : prev)   // keep at least one
+      : [...prev, k]);
 
     return (
       <div>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end",flexWrap:"wrap",gap:10,marginBottom:14}}>
           <div>
             <h2 style={{margin:0,fontSize:20,fontWeight:800,color:C.gold}}>Physical Testing</h2>
-            <div style={{fontSize:12,color:C.mut,marginTop:4}}>One dot per player. Dot color = average eval score. Age groups follow the chips above.</div>
+            <div style={{fontSize:12,color:C.mut,marginTop:4}}>One row per player. Dot color = average eval score.{multi ? " Multiple metrics shown — each normalized so 100% = best in group." : ""} Age groups follow the chips above.</div>
           </div>
           <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-            <div style={{display:"flex",gap:4}}>
-              {Object.entries(METRICS).map(([k,cfg]) =>
-                <button key={k} style={ctrlBtn(ptMetric===k)} onClick={()=>setPtMetric(k)}>{cfg.label}</button>
+            <div style={{display:"flex",gap:4}} title="Toggle metrics — turn on two or more to compare them on one chart">
+              {ORDER.map(k =>
+                <button key={k} style={ctrlBtn(ptMetrics.includes(k))} onClick={()=>toggleMetric(k)}>{METRICS[k].label}</button>
               )}
             </div>
             <select style={sel} value={ptTeam} onChange={e=>setPtTeam(e.target.value)}>
@@ -6345,58 +6385,73 @@ export default function App() {
           </div>
         </div>
 
-        {/* Avg-score color legend */}
-        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14,fontSize:11,color:C.mut}}>
-          <span style={{fontWeight:700,textTransform:"uppercase",fontSize:10}}>Avg eval</span>
+        {/* Legends: avg-score color + (multi) metric-shape key */}
+        <div style={{display:"flex",alignItems:"center",gap:18,marginBottom:14,fontSize:11,color:C.mut,flexWrap:"wrap"}}>
           <span style={{display:"flex",alignItems:"center",gap:6}}>
+            <span style={{fontWeight:700,textTransform:"uppercase",fontSize:10}}>Avg eval</span>
             1
-            <span style={{width:120,height:10,borderRadius:5,background:"linear-gradient(90deg,"+avgColor(1)+","+avgColor(3)+","+avgColor(5)+")"}} />
+            <span style={{width:110,height:10,borderRadius:5,background:"linear-gradient(90deg,"+avgColor(1)+","+avgColor(3)+","+avgColor(5)+")"}} />
             5
           </span>
-          <span style={{marginLeft:8}}>{m.lowerBetter ? "← faster" : "higher →"}</span>
+          {multi ? (
+            <span style={{display:"flex",alignItems:"center",gap:14}}>
+              {selected.map(k =>
+                <span key={k} style={{display:"flex",alignItems:"center",gap:6}}>
+                  <span style={shapeBox(METRICS[k].shape, C.mut, METRICS[k].shape==="diamond"?{transform:"rotate(45deg)"}:{})} />
+                  {METRICS[k].label} <span style={{opacity:.7}}>({METRICS[k].unit})</span>
+                </span>
+              )}
+              <span>best →</span>
+            </span>
+          ) : (
+            <span>{selected[0] && METRICS[selected[0]].lowerBetter ? "← faster" : "higher →"}</span>
+          )}
         </div>
 
         {rows.length === 0 ? (
           <div style={{padding:30,textAlign:"center",color:C.mut,fontSize:13,background:C.card,borderRadius:12,border:"1px solid "+C.border}}>
-            No {m.label.toLowerCase()} data for the selected filters. Enter values on each player's card (Physical Testing section).
+            No data for the selected metric{multi?"s":""} and filters. Enter values on each player's card (Physical Testing section).
           </div>
         ) : (
           <div style={{background:C.card,borderRadius:12,border:"1px solid "+C.border,padding:"14px 16px"}}>
             <div style={{fontSize:11,color:C.mut,marginBottom:10}}>
               {rows.length} player{rows.length===1?"":"s"} with data
-              {groupAvg!=null && <> · group avg <strong style={{color:C.text}}>{m.fmt(groupAvg)}{m.unit}</strong></>}
             </div>
-            {rows.map(({p,val,a}) => {
-              const left = pct(val);
-              return (
-                <div key={p.id} style={{display:"flex",alignItems:"center",gap:10,padding:"3px 0"}}>
-                  <div onClick={()=>setProfileId(p.id)} title="Open player card" style={{width:170,minWidth:170,fontSize:12,color:C.text,cursor:"pointer",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
-                    <span style={{fontWeight:600}}>{p.first_name} {p.last_name}</span>
-                    <span style={{color:C.mut,marginLeft:6,fontSize:10}}>{(p.positions||[]).join("/")||"—"}{p.team_assignment?" · "+p.team_assignment:""}</span>
-                  </div>
-                  <div style={{position:"relative",flex:1,height:24}}>
-                    {/* baseline */}
-                    <div style={{position:"absolute",top:"50%",left:0,right:0,height:1,background:C.border}} />
-                    {/* group-average reference */}
-                    {groupAvg!=null && <div style={{position:"absolute",top:0,bottom:0,left:pct(groupAvg)+"%",width:1,background:"rgba(255,255,255,0.18)"}} title={"Group avg "+m.fmt(groupAvg)+m.unit} />}
-                    {/* the player's mark */}
-                    <div style={{position:"absolute",top:"50%",left:left+"%",transform:"translate(-50%,-50%)",width:14,height:14,borderRadius:"50%",background:avgColor(a),border:"2px solid "+C.card,boxShadow:"0 0 0 1px rgba(0,0,0,0.4)"}}
-                      title={p.first_name+" "+p.last_name+" — "+m.fmt(val)+m.unit+(a!=null?" · avg "+a.toFixed(1):"")} />
-                    {/* value label */}
-                    <span style={{position:"absolute",top:"50%",left:left+"%",transform:"translateY(-50%)",marginLeft:left>85?-10:12,...(left>85?{textAlign:"right",transform:"translate(-100%,-50%)"}:{}),fontSize:11,fontWeight:700,color:C.text,whiteSpace:"nowrap"}}>
-                      {m.fmt(val)}{m.unit}
-                    </span>
-                  </div>
+            {rows.map(({p,vals,a}) => (
+              <div key={p.id} style={{display:"flex",alignItems:"center",gap:10,padding:"3px 0"}}>
+                <div onClick={()=>setProfileId(p.id)} title="Open player card" style={{width:170,minWidth:170,fontSize:12,color:C.text,cursor:"pointer",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
+                  <span style={{fontWeight:600}}>{p.first_name} {p.last_name}</span>
+                  <span style={{color:C.mut,marginLeft:6,fontSize:10}}>{(p.positions||[]).join("/")||"—"}{p.team_assignment?" · "+p.team_assignment:""}</span>
                 </div>
-              );
-            })}
+                <div style={{position:"relative",flex:1,height:rowH}}>
+                  {/* baseline */}
+                  <div style={{position:"absolute",top:"50%",left:0,right:0,height:1,background:C.border}} />
+                  {selected.filter(k => vals[k] != null).map((k,i,arr) => {
+                    const v = vals[k];
+                    const left = posPct(k, v);
+                    const cfg = METRICS[k];
+                    // In multi mode, stagger labels vertically by metric slot so they don't collide.
+                    const slot = multi ? (i - (arr.length - 1) / 2) * 13 : 0;
+                    return (
+                      <Fragment key={k}>
+                        <div style={{position:"absolute",top:"50%",left:left+"%",...shapeBox(cfg.shape, avgColor(a), {transform:"translate(-50%,-50%)"+(cfg.shape==="diamond"?" rotate(45deg)":"")})}}
+                          title={p.first_name+" "+p.last_name+" — "+cfg.label+" "+cfg.fmt(v)+cfg.unit+(a!=null?" · avg "+a.toFixed(1):"")} />
+                        <span style={{position:"absolute",top:slot===0?"50%":"calc(50% "+(slot<0?"- "+Math.abs(slot):"+ "+slot)+"px)",left:left+"%",transform:"translateY(-50%)",marginLeft:left>85?-12:11,...(left>85?{transform:"translate(-100%,-50%)"}:{}),fontSize:10,fontWeight:700,color:C.text,whiteSpace:"nowrap"}}>
+                          {cfg.fmt(v)}{cfg.unit}
+                        </span>
+                      </Fragment>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
             {/* X axis ticks */}
             <div style={{display:"flex",marginTop:8,paddingTop:8,borderTop:"1px solid "+C.border}}>
               <div style={{width:170,minWidth:170}} />
               <div style={{position:"relative",flex:1,height:16,fontSize:10,color:C.mut}}>
                 {[0,25,50,75,100].map(t => {
-                  const v = lo + (t/100)*(hi-lo);
-                  return <span key={t} style={{position:"absolute",left:t+"%",transform:t===0?"none":t===100?"translateX(-100%)":"translateX(-50%)"}}>{m.fmt(v)}{m.unit}</span>;
+                  const label = multi ? t+"%" : (single ? METRICS[single].fmt(lo + (t/100)*(hi-lo))+METRICS[single].unit : "");
+                  return <span key={t} style={{position:"absolute",left:t+"%",transform:t===0?"none":t===100?"translateX(-100%)":"translateX(-50%)"}}>{label}</span>;
                 })}
               </div>
             </div>
