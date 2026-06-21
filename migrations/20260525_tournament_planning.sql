@@ -220,7 +220,7 @@ INSERT INTO public.blackout_dates (date_start, date_end, name, type) VALUES
   ('2026-12-21', '2027-01-05', 'Winter Break (DSISD)',       'school'),
   ('2027-01-18', '2027-01-18', 'Martin Luther King Jr. Day', 'federal'),
   ('2027-02-15', '2027-02-15', 'Presidents Day',             'federal'),
-  ('2027-03-15', '2027-03-19', 'Spring Break (DSISD)',       'spring_break'),
+  ('2027-03-12', '2027-03-21', 'Spring Break (DSISD)',       'spring_break'),
   ('2027-04-02', '2027-04-02', 'Good Friday (DSISD)',        'school'),
   ('2027-05-31', '2027-05-31', 'Memorial Day',               'federal'),
   ('2027-07-04', '2027-07-04', 'Independence Day',           'federal')
