@@ -5115,6 +5115,41 @@ export default function App() {
   const blackoutsForRange = (startDate, endDate) =>
     blackoutDates.filter(b => b.date_start <= endDate && b.date_end >= startDate);
 
+  // Easter Sunday (Gregorian computus / Anonymous algorithm) → ISO date string.
+  const easterSunday = (year) => {
+    const a = year % 19, b = Math.floor(year/100), c = year % 100;
+    const d = Math.floor(b/4), e = b % 4, f = Math.floor((b+8)/25);
+    const g = Math.floor((b - f + 1)/3), h = (19*a + b - d - g + 15) % 30;
+    const i = Math.floor(c/4), k = c % 4;
+    const l = (32 + 2*e + 2*i - h - k) % 7;
+    const m = Math.floor((a + 11*h + 22*l)/451);
+    const month = Math.floor((h + l - 7*m + 114)/31); // 3=Mar, 4=Apr
+    const day = ((h + l - 7*m + 114) % 31) + 1;
+    return year + "-" + String(month).padStart(2,"0") + "-" + String(day).padStart(2,"0");
+  };
+  // Does a date range overlap Easter weekend (Good Friday → Easter Sunday)?
+  const isEasterRange = (startDate, endDate) => {
+    const years = new Set([startDate, endDate].map(d => parseInt(d.slice(0,4))));
+    for (const y of years) {
+      const es = easterSunday(y);
+      const gf = new Date(es + "T00:00"); gf.setDate(gf.getDate() - 2); // Good Friday
+      const gfISO = gf.toISOString().slice(0,10);
+      if (startDate <= es && endDate >= gfISO) return true;
+    }
+    return false;
+  };
+  // Is a tournament on a 3-day weekend? True when a school-out (blackout) day
+  // lands on the day before start, the day after end, or within the range.
+  const isThreeDayWeekendRange = (startDate, endDate) => {
+    const shift = (iso, days) => { const x = new Date(iso + "T00:00"); x.setDate(x.getDate() + days); return x.toISOString().slice(0,10); };
+    const dayBefore = shift(startDate, -1), dayAfter = shift(endDate, 1);
+    return blackoutDates.some(b =>
+      (b.date_start <= dayBefore && b.date_end >= dayBefore) ||
+      (b.date_start <= dayAfter  && b.date_end >= dayAfter)  ||
+      (b.date_start <= endDate   && b.date_end >= startDate)
+    );
+  };
+
   // Assignment mutations.
   const assignTeamToTournament = async (tournamentId, teamId, division) => {
     if (!tournamentId || !teamId) return;
@@ -5258,6 +5293,8 @@ export default function App() {
     const conflictTeamIds = new Set();
     conflictsHere.forEach(c => { conflictTeamIds.add(c.a.team_id); conflictTeamIds.add(c.b.team_id); });
     const blackouts = blackoutsForRange(tn.start_date, tn.end_date);
+    const isEaster = isEasterRange(tn.start_date, tn.end_date);
+    const isThreeDay = isThreeDayWeekendRange(tn.start_date, tn.end_date);
     const isCancelled = tn.cancelled;
     const [assignTeam, setAssignTeam] = [null, null]; // placeholder so eslint quiets; we use local state via DOM
     const cardStyle = {
@@ -5291,6 +5328,8 @@ export default function App() {
               {tn.is_qualifier && <Tag c="#a855f7">QUALIFIER</Tag>}
               {conflictsHere.length > 0 && <Tag c={C.red}>{conflictsHere.length} CONFLICT{conflictsHere.length===1?"":"S"}</Tag>}
               {blackouts.length > 0 && <Tag c="#f59e0b">{blackouts.map(b => b.name).join(" / ")}</Tag>}
+              {isEaster && <Tag c="#a78bfa">✝ EASTER</Tag>}
+              {isThreeDay && <Tag c="#06b6d4">3-DAY WEEKEND</Tag>}
               {Array.isArray(tn.wish_list) && tn.wish_list.length > 0 && (
                 <Tag c="#f59e0b">★ {tn.wish_list.join(" · ")}</Tag>
               )}
