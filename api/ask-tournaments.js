@@ -20,6 +20,7 @@ Each tournament record may include:
 - qualifier: true if it is a national-qualifier event
 - status: registration/availability note
 - cancelled: true if the event is cancelled (exclude unless asked)
+- tags: labels on the tournament (auto ones like "Easter", "3-Day Weekend", holiday names, plus the director's own custom tags). When asked to filter or group "by tag", match against this list.
 - holidays: names of school/holiday blackouts overlapping the dates (e.g. "Spring Break (DSISD)", "Thanksgiving Break (DSISD)")
 - easter: true if the dates fall on Easter weekend
 - threeDay: true if it lands on a 3-day (long) weekend
@@ -47,6 +48,7 @@ function fmtTournament(t, i) {
   if (t.qualifier) parts.push("QUALIFIER");
   if (t.status) parts.push(`status:${cut(t.status, 40)}`);
   if (t.cancelled) parts.push("CANCELLED");
+  if (Array.isArray(t.tags) && t.tags.length) parts.push(`tags:[${t.tags.join(", ")}]`);
   if (Array.isArray(t.holidays) && t.holidays.length) parts.push(`holidays:[${t.holidays.join(", ")}]`);
   if (t.easter) parts.push("easter:yes");
   if (t.threeDay) parts.push("3dayWeekend:yes");

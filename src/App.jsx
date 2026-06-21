@@ -626,7 +626,7 @@ export default function App() {
   const [smsSending, setSmsSending]                   = useState(false);
   const [teamsList, setTeamsList]                           = useState([]);
   const [blackoutDates, setBlackoutDates]                   = useState([]);
-  const [tnFilters, setTnFilters]                           = useState({ search: "", ageFor: "", qualifierOnly: false, dateFrom: "", dateTo: "", hideClosed: false, hideCancelled: true, startsOn: [], state: "", numDays: "", divisions: [] });
+  const [tnFilters, setTnFilters]                           = useState({ search: "", ageFor: "", qualifierOnly: false, dateFrom: "", dateTo: "", hideClosed: false, hideCancelled: true, startsOn: [], state: "", numDays: "", divisions: [], tags: [] });
   const [tnView, setTnView]                                 = useState("list"); // "list" | "calendar"
   const [tnSelectedTeams, setTnSelectedTeams]               = useState(new Set()); // empty = all shown
   const [tnCalFrom, setTnCalFrom]                           = useState("2026-12-01");
@@ -5235,6 +5235,65 @@ export default function App() {
     );
   };
 
+  // ─── TOURNAMENT TAGS ─────────────────────────────────────────────────
+  // Tags are a mix of auto-computed badges (Easter, 3-Day Weekend, holiday
+  // names) and user-created custom tags. Auto tags can be removed per
+  // tournament (stored in hidden_tags); custom tags live in tags.
+  const tnAutoTags = (tn) => {
+    const tags = [];
+    if (isEasterRange(tn.start_date, tn.end_date)) tags.push("Easter");
+    if (isThreeDayWeekendRange(tn.start_date, tn.end_date)) tags.push("3-Day Weekend");
+    blackoutsForRange(tn.start_date, tn.end_date)
+      .filter(b => !/good\s*friday/i.test(b.name || ""))
+      .forEach(b => { if (b.name) tags.push(b.name); });
+    return [...new Set(tags)];
+  };
+  // The full set of tags shown on a tournament: auto tags not hidden, plus custom.
+  const tnEffectiveTags = (tn) => {
+    const hidden = new Set(Array.isArray(tn.hidden_tags) ? tn.hidden_tags : []);
+    const custom = Array.isArray(tn.tags) ? tn.tags : [];
+    return [...new Set([...tnAutoTags(tn).filter(t => !hidden.has(t)), ...custom])];
+  };
+  const isAutoTag = (tn, tag) => tnAutoTags(tn).includes(tag);
+  // Remove a tag from a tournament: custom → drop from tags; auto → hide it.
+  const removeTournamentTag = async (tn, tag) => {
+    const custom = Array.isArray(tn.tags) ? tn.tags : [];
+    let patch;
+    if (custom.includes(tag)) {
+      patch = { tags: custom.filter(t => t !== tag) };
+    } else {
+      const hidden = Array.isArray(tn.hidden_tags) ? tn.hidden_tags : [];
+      if (hidden.includes(tag)) return;
+      patch = { hidden_tags: [...hidden, tag] };
+    }
+    const { error } = await supabase.from("tournaments").update(patch).eq("id", tn.id);
+    if (error) { window.alert("Update failed: " + error.message); return; }
+    loadTournaments();
+  };
+  // Add a tag: re-show a hidden auto tag, else append a custom tag.
+  const addTournamentTag = async (tn, raw) => {
+    const tag = (raw || "").trim();
+    if (!tag) return;
+    const hidden = Array.isArray(tn.hidden_tags) ? tn.hidden_tags : [];
+    let patch;
+    if (hidden.includes(tag)) {
+      patch = { hidden_tags: hidden.filter(t => t !== tag) };
+    } else {
+      const custom = Array.isArray(tn.tags) ? tn.tags : [];
+      if (custom.includes(tag) || tnAutoTags(tn).includes(tag)) return; // already shown
+      patch = { tags: [...custom, tag] };
+    }
+    const { error } = await supabase.from("tournaments").update(patch).eq("id", tn.id);
+    if (error) { window.alert("Update failed: " + error.message); return; }
+    loadTournaments();
+  };
+  // Color a tag chip by kind.
+  const tagColor = (tag) =>
+    tag === "Easter" ? "#a78bfa" :
+    tag === "3-Day Weekend" ? "#06b6d4" :
+    /break|dsisd|holiday|day\b|christmas|thanksgiving|spring|winter/i.test(tag) ? "#f59e0b" :
+    C.gold;
+
   // Tournament-schedule Q&A. Builds a compact, pre-computed snapshot of every
   // tournament (dates, entries, holiday/Easter/3-day flags, committed teams)
   // and sends it with the question to /api/ask-tournaments.
@@ -5257,6 +5316,7 @@ export default function App() {
         cancelled: !!t.cancelled,
         easter: isEasterRange(t.start_date, t.end_date),
         threeDay: isThreeDayWeekendRange(t.start_date, t.end_date),
+        tags: tnEffectiveTags(t),
         holidays: blackoutsForRange(t.start_date, t.end_date).map(b => b.name),
         committed: tournamentAssignments
           .filter(a => a.tournament_id === t.id)
@@ -5419,11 +5479,6 @@ export default function App() {
     const conflictsHere = tournamentConflicts.filter(c => c.a.tournament.id === tn.id || c.b.tournament.id === tn.id);
     const conflictTeamIds = new Set();
     conflictsHere.forEach(c => { conflictTeamIds.add(c.a.team_id); conflictTeamIds.add(c.b.team_id); });
-    // Good Friday is folded into the Easter tag, so don't show it as its own
-    // blackout label (it still counts toward the 3-day-weekend badge).
-    const blackouts = blackoutsForRange(tn.start_date, tn.end_date).filter(b => !/good\s*friday/i.test(b.name || ""));
-    const isEaster = isEasterRange(tn.start_date, tn.end_date);
-    const isThreeDay = isThreeDayWeekendRange(tn.start_date, tn.end_date);
     const isCancelled = tn.cancelled;
     const [assignTeam, setAssignTeam] = [null, null]; // placeholder so eslint quiets; we use local state via DOM
     const cardStyle = {
@@ -5456,9 +5511,14 @@ export default function App() {
               <h3 style={{margin:0,fontSize:15,fontWeight:800,color:isCancelled?C.mut:C.gold,textDecoration:isCancelled?"line-through":"none"}}>{tn.name}</h3>
               {tn.is_qualifier && <Tag c="#a855f7">QUALIFIER</Tag>}
               {conflictsHere.length > 0 && <Tag c={C.red}>{conflictsHere.length} CONFLICT{conflictsHere.length===1?"":"S"}</Tag>}
-              {blackouts.length > 0 && <Tag c="#f59e0b">{blackouts.map(b => b.name).join(" / ")}</Tag>}
-              {isEaster && <Tag c="#a78bfa">✝ EASTER</Tag>}
-              {isThreeDay && <Tag c="#06b6d4">3-DAY WEEKEND</Tag>}
+              {tnEffectiveTags(tn).map(tag => (
+                <span key={tag} style={{display:"inline-flex",alignItems:"center",gap:4,padding:"2px 5px 2px 8px",borderRadius:10,fontSize:9,fontWeight:800,letterSpacing:0.3,textTransform:"uppercase",border:"1px solid "+tagColor(tag),background:tagColor(tag)+"22",color:tagColor(tag)}}>
+                  {tag}
+                  <span onClick={e=>{ e.stopPropagation(); removeTournamentTag(tn, tag); }} title={"Remove “"+tag+"” tag"} style={{cursor:"pointer",fontSize:12,lineHeight:1,fontWeight:700,opacity:0.8}}>×</span>
+                </span>
+              ))}
+              <span onClick={e=>{ e.stopPropagation(); const v = window.prompt("Add a tag to “"+tn.name+"”:"); if (v) addTournamentTag(tn, v); }}
+                title="Add a custom tag" style={{cursor:"pointer",fontSize:9,fontWeight:800,letterSpacing:0.3,textTransform:"uppercase",padding:"2px 8px",borderRadius:10,border:"1px dashed "+C.border,color:C.mut,userSelect:"none"}}>+ Tag</span>
               {Array.isArray(tn.wish_list) && tn.wish_list.length > 0 && (
                 <Tag c="#f59e0b">★ {tn.wish_list.join(" · ")}</Tag>
               )}
@@ -5609,9 +5669,13 @@ export default function App() {
         if (tnFilters.numDays === "4+") { if (d < 4) return false; }
         else if (d !== parseInt(tnFilters.numDays)) return false;
       }
+      if (tnFilters.tags.length > 0) {
+        const eff = tnEffectiveTags(t);
+        if (!tnFilters.tags.some(tag => eff.includes(tag))) return false;
+      }
       return true;
     });
-    const hasActiveFilters = tnFilters.search || tnFilters.ageFor || tnFilters.qualifierOnly || tnFilters.hideClosed || tnFilters.dateFrom || tnFilters.dateTo || tnFilters.startsOn.length || tnFilters.state || tnFilters.numDays || tnFilters.divisions.length;
+    const hasActiveFilters = tnFilters.search || tnFilters.ageFor || tnFilters.qualifierOnly || tnFilters.hideClosed || tnFilters.dateFrom || tnFilters.dateTo || tnFilters.startsOn.length || tnFilters.state || tnFilters.numDays || tnFilters.divisions.length || tnFilters.tags.length;
     return (
       <div>
         {/* Header + view dropdown */}
@@ -5755,6 +5819,28 @@ export default function App() {
             <span style={{fontSize:10,color:C.mut,marginLeft:6,fontStyle:"italic"}}>matches tournaments that include ANY selected division</span>
           )}
         </div>
+        {/* Filter row 4 — tags */}
+        {(() => {
+          const allTags = [...new Set(tournaments.flatMap(t => tnEffectiveTags(t)))].sort((a,b)=>a.localeCompare(b));
+          if (allTags.length === 0) return null;
+          return (
+            <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center",marginBottom:12,padding:"6px 10px",background:C.card,borderRadius:10,border:"1px solid "+C.border}}>
+              <span style={{fontSize:11,color:C.mut,fontWeight:600}}>Tags:</span>
+              {allTags.map(tag => {
+                const on = tnFilters.tags.includes(tag);
+                return (
+                  <span key={tag} onClick={()=>setTnFilters(prev=>({...prev,tags: on ? prev.tags.filter(x=>x!==tag) : [...prev.tags, tag]}))}
+                    style={{padding:"3px 9px",borderRadius:10,fontSize:11,fontWeight:700,cursor:"pointer",border:"1px solid "+(on?tagColor(tag):C.border),background:on?tagColor(tag)+"22":"transparent",color:on?tagColor(tag):C.mut,userSelect:"none"}}>
+                    {tag}
+                  </span>
+                );
+              })}
+              {tnFilters.tags.length > 0 && (
+                <span onClick={()=>setTnFilters(prev=>({...prev,tags:[]}))} style={{fontSize:10,color:C.mut,marginLeft:6,cursor:"pointer",fontStyle:"italic",textDecoration:"underline"}}>clear</span>
+              )}
+            </div>
+          );
+        })()}
         {/* Conflict alert */}
         {tournamentConflicts.length > 0 && (
           <details open style={{marginBottom:14,background:"rgba(239,68,68,0.08)",border:"1px solid "+C.red,borderRadius:10,padding:"10px 14px"}}>
