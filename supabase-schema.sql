@@ -32,6 +32,7 @@ CREATE TABLE players (
   stand_reach NUMERIC,                 -- standing reach (inches); see migrations/20260617
   jump_touch NUMERIC,                  -- jump touch (inches)
   tryout_attended BOOLEAN NOT NULL DEFAULT FALSE,  -- tryout attendance checkbox
+  sprint_10y NUMERIC,                  -- 10-yard sprint (seconds); see migrations/20260621
   positions TEXT[] DEFAULT '{}',
   projected_team TEXT DEFAULT '',
   current_team TEXT DEFAULT '',

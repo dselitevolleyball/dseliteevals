@@ -694,6 +694,12 @@ export default function App() {
   const [players, setPlayers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState("dashboard");
+  // Physical Testing tab — dot-plot of a physical metric per player. Age group
+  // comes from the global selectedDivs chips; these add team/position filters
+  // and pick which metric drives the horizontal axis.
+  const [ptMetric, setPtMetric] = useState("sprint_10y"); // sprint_10y | vertical | jump_touch
+  const [ptTeam, setPtTeam]     = useState("");            // "" = all teams
+  const [ptPos, setPtPos]       = useState("");            // "" = all positions
   // Owner-only "Ask AI" tab — natural-language questions over the player data.
   const [askQ, setAskQ]           = useState("");
   const [askAnswer, setAskAnswer] = useState("");
@@ -2848,11 +2854,12 @@ export default function App() {
           </div>
           {/* Tryout — Physical Testing */}
           <div style={{marginBottom:16}}>
-            <span style={lbl}>Tryout — Physical Testing (inches)</span>
+            <span style={lbl}>Tryout — Physical Testing</span>
             <div style={{background:C.bg,borderRadius:10,padding:14,display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:12,alignItems:"start"}}>
-              <div><span style={lbl}>Stand &amp; Reach</span><DebouncedField style={editInp} placeholder='e.g. 84' value={p.stand_reach==null?"":String(p.stand_reach)} onCommit={v=>{const n=parseFloat(v); upd(p.id,{stand_reach:(v.trim()===""||isNaN(n))?null:n});}} /></div>
-              <div><span style={lbl}>Jump Touch</span><DebouncedField style={editInp} placeholder='e.g. 102' value={p.jump_touch==null?"":String(p.jump_touch)} onCommit={v=>{const n=parseFloat(v); upd(p.id,{jump_touch:(v.trim()===""||isNaN(n))?null:n});}} /></div>
-              <div><span style={lbl}>Vertical (auto)</span><div style={{...editInp,display:"flex",alignItems:"center",minHeight:36,fontWeight:800,color:verticalVal!=null?C.grn:C.mut,background:C.card}} title="Jump Touch − Stand &amp; Reach">{verticalVal!=null?verticalVal.toFixed(1)+'"':"—"}</div></div>
+              <div><span style={lbl}>Stand &amp; Reach (in)</span><DebouncedField style={editInp} placeholder='e.g. 84' value={p.stand_reach==null?"":String(p.stand_reach)} onCommit={v=>{const n=parseFloat(v); upd(p.id,{stand_reach:(v.trim()===""||isNaN(n))?null:n});}} /></div>
+              <div><span style={lbl}>Jump Touch (in)</span><DebouncedField style={editInp} placeholder='e.g. 102' value={p.jump_touch==null?"":String(p.jump_touch)} onCommit={v=>{const n=parseFloat(v); upd(p.id,{jump_touch:(v.trim()===""||isNaN(n))?null:n});}} /></div>
+              <div><span style={lbl}>Vertical (auto, in)</span><div style={{...editInp,display:"flex",alignItems:"center",minHeight:36,fontWeight:800,color:verticalVal!=null?C.grn:C.mut,background:C.card}} title="Jump Touch − Stand &amp; Reach">{verticalVal!=null?verticalVal.toFixed(1)+'"':"—"}</div></div>
+              <div><span style={lbl}>10-yd Sprint (sec)</span><DebouncedField style={editInp} placeholder='e.g. 1.85' value={p.sprint_10y==null?"":String(p.sprint_10y)} onCommit={v=>{const n=parseFloat(v); upd(p.id,{sprint_10y:(v.trim()===""||isNaN(n))?null:n});}} /></div>
               <div><span style={lbl}>Tryout Attended</span><label style={{display:"flex",alignItems:"center",gap:8,padding:"9px 4px",cursor:"pointer"}}><input type="checkbox" checked={!!p.tryout_attended} onChange={e=>upd(p.id,{tryout_attended:e.target.checked})} style={{width:18,height:18,accentColor:C.gold,cursor:"pointer"}} /><span style={{fontSize:13,fontWeight:600,color:p.tryout_attended?C.grn:C.mut}}>{p.tryout_attended?"Present":"Not marked"}</span></label></div>
             </div>
           </div>
@@ -6279,6 +6286,126 @@ export default function App() {
     );
   }
 
+  // Physical Testing — horizontal dot plot. One row per player (vertical axis),
+  // the selected physical metric along the horizontal axis. Each dot is colored
+  // by the player's average eval score (red→green). Age group filters via the
+  // global chips above; team/position filter locally.
+  function renderPhysicalTesting() {
+    const METRICS = {
+      sprint_10y: { label:"10-yd Sprint", unit:"s",  get:p=>{const v=parseFloat(p.sprint_10y); return Number.isFinite(v)?v:null;}, lowerBetter:true,  fmt:v=>v.toFixed(2) },
+      vertical:   { label:"Vertical",     unit:'"',  get:p=>vertical(p),                                                          lowerBetter:false, fmt:v=>v.toFixed(1) },
+      jump_touch: { label:"Jump Touch",   unit:'"',  get:p=>{const v=parseFloat(p.jump_touch); return Number.isFinite(v)?v:null;}, lowerBetter:false, fmt:v=>v.toFixed(1) },
+    };
+    const m = METRICS[ptMetric];
+    const divSet = new Set(selectedDivs);
+    // Continuous red→yellow→green by average eval score (1–5).
+    const avgColor = a => a==null ? C.mut : "hsl(" + Math.max(0, Math.min(120, ((a-1)/4)*120)) + ",72%,48%)";
+    const avgNum = p => { const x = avg(p); return x === "—" ? null : parseFloat(x); };
+
+    const teamOptions = [...new Set(players.filter(p=>divSet.has(p.usavDiv||p.usav_div)).map(p=>p.team_assignment).filter(Boolean))].sort();
+
+    let pool = players.filter(p => divSet.has(p.usavDiv||p.usav_div));
+    if (ptTeam) pool = pool.filter(p => p.team_assignment === ptTeam);
+    if (ptPos)  pool = pool.filter(p => (p.positions||[]).includes(ptPos));
+    const rows = pool.map(p => ({ p, val:m.get(p), a:avgNum(p) })).filter(r => r.val != null);
+    rows.sort((x,y) => m.lowerBetter ? x.val - y.val : y.val - x.val);
+
+    const vals = rows.map(r => r.val);
+    const min = vals.length ? Math.min(...vals) : 0;
+    const max = vals.length ? Math.max(...vals) : 1;
+    const groupAvg = vals.length ? vals.reduce((a,b)=>a+b,0)/vals.length : null;
+    const pad = (max - min) * 0.08 || (max * 0.05) || 1;
+    const lo = min - pad, hi = max + pad;
+    const pct = v => hi === lo ? 50 : ((v - lo) / (hi - lo)) * 100;
+
+    const ctrlBtn = active => ({padding:"6px 12px",borderRadius:8,border:"1px solid "+(active?C.gold:C.border),background:active?"rgba(233,30,140,0.12)":"transparent",color:active?C.gold:C.mut,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700});
+    const sel = {...inpStyle,padding:"7px 10px",fontSize:12,cursor:"pointer"};
+
+    return (
+      <div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end",flexWrap:"wrap",gap:10,marginBottom:14}}>
+          <div>
+            <h2 style={{margin:0,fontSize:20,fontWeight:800,color:C.gold}}>Physical Testing</h2>
+            <div style={{fontSize:12,color:C.mut,marginTop:4}}>One dot per player. Dot color = average eval score. Age groups follow the chips above.</div>
+          </div>
+          <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+            <div style={{display:"flex",gap:4}}>
+              {Object.entries(METRICS).map(([k,cfg]) =>
+                <button key={k} style={ctrlBtn(ptMetric===k)} onClick={()=>setPtMetric(k)}>{cfg.label}</button>
+              )}
+            </div>
+            <select style={sel} value={ptTeam} onChange={e=>setPtTeam(e.target.value)}>
+              <option value="">All Teams</option>
+              {teamOptions.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+            <select style={sel} value={ptPos} onChange={e=>setPtPos(e.target.value)}>
+              <option value="">All Positions</option>
+              {POSITIONS.map(pos => <option key={pos} value={pos}>{POS_LABELS[pos]||pos}</option>)}
+            </select>
+          </div>
+        </div>
+
+        {/* Avg-score color legend */}
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14,fontSize:11,color:C.mut}}>
+          <span style={{fontWeight:700,textTransform:"uppercase",fontSize:10}}>Avg eval</span>
+          <span style={{display:"flex",alignItems:"center",gap:6}}>
+            1
+            <span style={{width:120,height:10,borderRadius:5,background:"linear-gradient(90deg,"+avgColor(1)+","+avgColor(3)+","+avgColor(5)+")"}} />
+            5
+          </span>
+          <span style={{marginLeft:8}}>{m.lowerBetter ? "← faster" : "higher →"}</span>
+        </div>
+
+        {rows.length === 0 ? (
+          <div style={{padding:30,textAlign:"center",color:C.mut,fontSize:13,background:C.card,borderRadius:12,border:"1px solid "+C.border}}>
+            No {m.label.toLowerCase()} data for the selected filters. Enter values on each player's card (Physical Testing section).
+          </div>
+        ) : (
+          <div style={{background:C.card,borderRadius:12,border:"1px solid "+C.border,padding:"14px 16px"}}>
+            <div style={{fontSize:11,color:C.mut,marginBottom:10}}>
+              {rows.length} player{rows.length===1?"":"s"} with data
+              {groupAvg!=null && <> · group avg <strong style={{color:C.text}}>{m.fmt(groupAvg)}{m.unit}</strong></>}
+            </div>
+            {rows.map(({p,val,a}) => {
+              const left = pct(val);
+              return (
+                <div key={p.id} style={{display:"flex",alignItems:"center",gap:10,padding:"3px 0"}}>
+                  <div onClick={()=>setProfileId(p.id)} title="Open player card" style={{width:170,minWidth:170,fontSize:12,color:C.text,cursor:"pointer",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
+                    <span style={{fontWeight:600}}>{p.first_name} {p.last_name}</span>
+                    <span style={{color:C.mut,marginLeft:6,fontSize:10}}>{(p.positions||[]).join("/")||"—"}{p.team_assignment?" · "+p.team_assignment:""}</span>
+                  </div>
+                  <div style={{position:"relative",flex:1,height:24}}>
+                    {/* baseline */}
+                    <div style={{position:"absolute",top:"50%",left:0,right:0,height:1,background:C.border}} />
+                    {/* group-average reference */}
+                    {groupAvg!=null && <div style={{position:"absolute",top:0,bottom:0,left:pct(groupAvg)+"%",width:1,background:"rgba(255,255,255,0.18)"}} title={"Group avg "+m.fmt(groupAvg)+m.unit} />}
+                    {/* the player's mark */}
+                    <div style={{position:"absolute",top:"50%",left:left+"%",transform:"translate(-50%,-50%)",width:14,height:14,borderRadius:"50%",background:avgColor(a),border:"2px solid "+C.card,boxShadow:"0 0 0 1px rgba(0,0,0,0.4)"}}
+                      title={p.first_name+" "+p.last_name+" — "+m.fmt(val)+m.unit+(a!=null?" · avg "+a.toFixed(1):"")} />
+                    {/* value label */}
+                    <span style={{position:"absolute",top:"50%",left:left+"%",transform:"translateY(-50%)",marginLeft:left>85?-10:12,...(left>85?{textAlign:"right",transform:"translate(-100%,-50%)"}:{}),fontSize:11,fontWeight:700,color:C.text,whiteSpace:"nowrap"}}>
+                      {m.fmt(val)}{m.unit}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+            {/* X axis ticks */}
+            <div style={{display:"flex",marginTop:8,paddingTop:8,borderTop:"1px solid "+C.border}}>
+              <div style={{width:170,minWidth:170}} />
+              <div style={{position:"relative",flex:1,height:16,fontSize:10,color:C.mut}}>
+                {[0,25,50,75,100].map(t => {
+                  const v = lo + (t/100)*(hi-lo);
+                  return <span key={t} style={{position:"absolute",left:t+"%",transform:t===0?"none":t===100?"translateX(-100%)":"translateX(-50%)"}}>{m.fmt(v)}{m.unit}</span>;
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div style={{fontFamily:"Outfit,sans-serif",background:C.bg,color:C.text,minHeight:"100vh"}}>
       <header style={{background:"linear-gradient(135deg,#0f0f0f,#1a1a1a)",borderBottom:"1px solid "+C.border,padding:"12px 18px",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
@@ -6293,7 +6420,7 @@ export default function App() {
               const item = (v,l) =>
                 <button key={v} style={btn(view===v)} onClick={()=>{ setView(v); setOpenMenu(null); }}>{l}</button>;
               const groups = [
-                { title:"Tryouts", items:[["evaluate","Evaluate"], ...(canViewTeams ? [["teams","Teams"]] : []), ["rankings","Rankings"], ["tryouts","Coach Assignments"]] },
+                { title:"Tryouts", items:[["evaluate","Evaluate"], ...(canViewTeams ? [["teams","Teams"]] : []), ["rankings","Rankings"], ["physical","Physical Testing"], ["tryouts","Coach Assignments"]] },
                 { title:"Operations", items:[["tracker","Tracker"], ...(isAdmin ? [["coaches","Coaches"]] : []), ["practice","Practice"], ["messages", "Messages" + (totalUnread > 0 ? " (" + totalUnread + ")" : "")]] },
               ];
               return <>
@@ -6389,6 +6516,7 @@ export default function App() {
         {view==="coaches"  && renderCoaches()}
         {view==="tournaments" && renderTournaments()}
         {view==="practice" && renderPractice()}
+        {view==="physical" && renderPhysicalTesting()}
         {view==="tryouts" && renderTryouts()}
         {view==="messages" && renderMessages()}
         {view==="askai" && renderAskAI()}
