@@ -5371,7 +5371,9 @@ export default function App() {
     const conflictsHere = tournamentConflicts.filter(c => c.a.tournament.id === tn.id || c.b.tournament.id === tn.id);
     const conflictTeamIds = new Set();
     conflictsHere.forEach(c => { conflictTeamIds.add(c.a.team_id); conflictTeamIds.add(c.b.team_id); });
-    const blackouts = blackoutsForRange(tn.start_date, tn.end_date);
+    // Good Friday is folded into the Easter tag, so don't show it as its own
+    // blackout label (it still counts toward the 3-day-weekend badge).
+    const blackouts = blackoutsForRange(tn.start_date, tn.end_date).filter(b => !/good\s*friday/i.test(b.name || ""));
     const isEaster = isEasterRange(tn.start_date, tn.end_date);
     const isThreeDay = isThreeDayWeekendRange(tn.start_date, tn.end_date);
     const isCancelled = tn.cancelled;
