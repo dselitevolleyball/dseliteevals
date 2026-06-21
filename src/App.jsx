@@ -5202,14 +5202,6 @@ export default function App() {
     loadTournaments();
     window.alert("Imported " + newOnes.length + " new tournament" + (newOnes.length===1?"":"s") + (dupes.length ? " (skipped " + dupes.length + " duplicate" + (dupes.length===1?"":"s") + ")" : "") + ".");
   };
-  // Toggle an "<age> <tier>" entry for a tournament (persists immediately).
-  const toggleTournamentEntry = async (tn, token) => {
-    const cur = Array.isArray(tn.entries) ? tn.entries : [];
-    const next = cur.includes(token) ? cur.filter(x => x !== token) : [...cur, token];
-    const { error } = await supabase.from("tournaments").update({ entries: next }).eq("id", tn.id);
-    if (error) { window.alert("Update failed: " + error.message); return; }
-    loadTournaments();
-  };
   // Selectable age×tier grid. `entries` is the current selection; onToggle(token)
   // flips a cell. Reused by tournament cards and the add/edit modal.
   const renderEntryGrid = (entries, onToggle) => {
@@ -5330,23 +5322,19 @@ export default function App() {
           </div>
         </div>
 
-        {/* Division × age entries — click a cell to add/remove an entry like
-            "17 American". The Divisions filter on the list matches the tier of
-            any selected entry. */}
-        <div style={{marginTop:8}}>
-          <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+        {/* Selected division×age entries (read-only). Edit them via the
+            grid in the tournament's Edit form. Hidden entirely when none. */}
+        {(tn.entries || []).length > 0 && (
+          <div style={{marginTop:8,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
             <span style={{fontSize:9,fontWeight:700,color:C.mut,textTransform:"uppercase",letterSpacing:0.5}}>Entries:</span>
-            {(tn.entries || []).length === 0
-              ? <span style={{fontSize:10,color:C.mut,fontStyle:"italic"}}>none yet — tap cells below</span>
-              : (tn.entries || []).map(token => (
-                  <span key={token} onClick={()=>toggleTournamentEntry(tn, token)} title="Click to remove"
-                    style={{padding:"2px 8px",borderRadius:10,fontSize:10,fontWeight:700,cursor:"pointer",border:"1px solid "+C.gold,background:"rgba(233,30,140,0.18)",color:C.gold,userSelect:"none"}}>
-                    {token} ×
-                  </span>
-                ))}
+            {(tn.entries || []).map(token => (
+              <span key={token}
+                style={{padding:"2px 8px",borderRadius:10,fontSize:10,fontWeight:700,border:"1px solid "+C.gold,background:"rgba(233,30,140,0.18)",color:C.gold}}>
+                {token}
+              </span>
+            ))}
           </div>
-          {renderEntryGrid(tn.entries, (token)=>toggleTournamentEntry(tn, token))}
-        </div>
+        )}
 
         {/* Assignments */}
         <div style={{marginTop:10,paddingTop:10,borderTop:"1px solid "+C.border}}>
