@@ -6608,8 +6608,8 @@ export default function App() {
               const item = (v,l) =>
                 <button key={v} style={btn(view===v)} onClick={()=>{ setView(v); setOpenMenu(null); }}>{l}</button>;
               const groups = [
-                { title:"Tryouts", items:[["evaluate","Evaluate"], ...(canViewTeams ? [["teams","Teams"],["teamdir","All Teams"]] : []), ["rankings","Rankings"], ["physical","Physical Testing"], ["tryouts","Coach Assignments"]] },
-                { title:"Operations", items:[["tracker","Tracker"], ...(isAdmin ? [["coaches","Coaches"]] : []), ["practice","Practice"], ["messages", "Messages" + (totalUnread > 0 ? " (" + totalUnread + ")" : "")]] },
+                { title:"Tryouts", items:[["evaluate","Evaluate"], ...(canViewTeams ? [["teams","Teams"]] : []), ["rankings","Rankings"], ["physical","Physical Testing"], ["tryouts","Coach Assignments"]] },
+                { title:"Operations", items:[["tracker","Tracker"], ...(canViewTeams ? [["teamdir","All Teams"]] : []), ...(isAdmin ? [["coaches","Coaches"]] : []), ["practice","Practice"], ["messages", "Messages" + (totalUnread > 0 ? " (" + totalUnread + ")" : "")]] },
               ];
               return <>
                 {item("dashboard","Dashboard")}
