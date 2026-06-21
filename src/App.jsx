@@ -629,7 +629,7 @@ export default function App() {
   const [tnFilters, setTnFilters]                           = useState({ search: "", ageFor: "", qualifierOnly: false, dateFrom: "", dateTo: "", hideClosed: false, hideCancelled: true, startsOn: [], state: "", numDays: "", divisions: [] });
   const [tnView, setTnView]                                 = useState("list"); // "list" | "calendar"
   const [tnSelectedTeams, setTnSelectedTeams]               = useState(new Set()); // empty = all shown
-  const [tnCalFrom, setTnCalFrom]                           = useState("2026-08-01");
+  const [tnCalFrom, setTnCalFrom]                           = useState("2026-12-01");
   const [tnCalTo, setTnCalTo]                               = useState("2027-06-30");
   // Month being shown in the Month View calendar; YYYY-MM-01 string.
   // Default to today's month so it lands on something relevant on open.
@@ -5813,7 +5813,9 @@ export default function App() {
   function renderTournamentCalendar(filteredTournaments) {
     const activeTeams = teamsList.filter(t => t.active);
     const teamsToShow = activeTeams.filter(t => tnSelectedTeams.size === 0 || tnSelectedTeams.has(t.id));
-    // Generate Saturdays between tnCalFrom and tnCalTo
+    // Generate Saturdays between tnCalFrom and tnCalTo. The tournament season
+    // runs December–June, so off-season weekends (Jul–Nov) are never shown.
+    const SEASON_MONTHS = new Set([12, 1, 2, 3, 4, 5, 6]);
     const weeks = [];
     {
       const start = new Date(tnCalFrom + "T00:00");
@@ -5823,13 +5825,16 @@ export default function App() {
       while (d.getDay() !== 6) d.setDate(d.getDate() + 1);
       while (d <= end) {
         const sat = new Date(d);
-        const fri = new Date(sat); fri.setDate(fri.getDate() - 1);
-        const sun = new Date(sat); sun.setDate(sun.getDate() + 1);
-        weeks.push({
-          fri: fri.toISOString().slice(0,10),
-          sat: sat.toISOString().slice(0,10),
-          sun: sun.toISOString().slice(0,10),
-        });
+        const satISO = sat.toISOString().slice(0,10);
+        if (SEASON_MONTHS.has(parseInt(satISO.slice(5,7)))) {
+          const fri = new Date(sat); fri.setDate(fri.getDate() - 1);
+          const sun = new Date(sat); sun.setDate(sun.getDate() + 1);
+          weeks.push({
+            fri: fri.toISOString().slice(0,10),
+            sat: satISO,
+            sun: sun.toISOString().slice(0,10),
+          });
+        }
         d.setDate(d.getDate() + 7);
       }
     }
