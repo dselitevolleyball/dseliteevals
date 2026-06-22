@@ -603,15 +603,15 @@ export default function App() {
   const [teamCardName, setTeamCardName]               = useState(null); // unified team-detail modal
   const [coachCardName, setCoachCardName]             = useState(null); // unified coach-detail modal
   const [teamDirSearch, setTeamDirSearch]             = useState("");   // All Teams directory search
-  // 'summer' (Jul-Sep, 4 courts), 'fall1' (Sep 13-Oct 11, 6 courts + S&A Block 1),
-  // or 'fall2' (Oct 18-Nov 15, 6 courts + S&A Block 2). Migrate old values
-  // from when phases were named 'season' / 'preseason'.
+  // 'season' (regular full-week 2–3×/week practices), 'summer' (Jul–Sep, Sunday
+  // preseason), 'fall1' (Sep 13–Oct 11), or 'fall2' (Oct 18–Nov 15). The old
+  // 'preseason' name maps to 'summer'; 'season' is kept (it holds the regular
+  // schedule and must stay visible).
   const [schedulePhase, setSchedulePhase]             = useState(() => {
-    if (typeof localStorage === "undefined") return "fall1";
+    if (typeof localStorage === "undefined") return "season";
     const v = localStorage.getItem("dse_practice_phase");
     if (v === "preseason") return "summer";
-    if (v === "season")    return "fall1";
-    return v || "fall1";
+    return v || "season";
   });
   useEffect(() => {
     if (typeof localStorage !== "undefined") localStorage.setItem("dse_practice_phase", schedulePhase);
@@ -4289,6 +4289,7 @@ export default function App() {
             <div role="tablist" aria-label="Practice phase"
               style={{display:"inline-flex",border:"1px solid "+C.border,borderRadius:8,overflow:"hidden"}}>
               {[
+                { id:"season", label:"Regular Season", tip:"Full week · the regular 2–3×/week team practice schedule" },
                 { id:"summer", label:"Summer", tip:"Jul 12 – Sep 12 · Sundays · 5 courts · no S&A" },
                 { id:"fall1",  label:"Fall 1", tip:"Sep 13 – Oct 11 · 6 courts · S&A Block 1 (8 Nationals)" },
                 { id:"fall2",  label:"Fall 2", tip:"Oct 18 – Nov 15 · 6 courts · S&A Block 2 (9 Regionals)" },
