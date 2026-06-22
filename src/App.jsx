@@ -1202,6 +1202,28 @@ export default function App() {
     setSaving(false);
   }, []);
 
+  // Team dropdown handler that also moves a player to a terminal status.
+  // Special values "__declined" / "__not_invited" mirror the drag-to-bucket
+  // behavior (clear team + roster, set offer_status). Picking a real team
+  // clears a terminal status so the player is back in play.
+  const assignTeamOrStatus = useCallback((p, value) => {
+    const now = new Date().toISOString();
+    if (value === "__declined") {
+      upd(p.id, { team_assignment: "", roster_pos: "", offer_status: "declined", offer_decision_at: now });
+    } else if (value === "__not_invited") {
+      upd(p.id, { team_assignment: "", roster_pos: "", offer_status: "not_invited", offer_made_at: null, offer_decision_at: null });
+    } else {
+      const patch = { team_assignment: value, roster_pos: "" };
+      if (value && (p.offer_status === "declined" || p.offer_status === "not_invited")) patch.offer_status = "";
+      upd(p.id, patch);
+    }
+  }, [upd]);
+  // Current select value for a team dropdown — reflects terminal status.
+  const teamSelectValue = (p) =>
+    p.offer_status === "declined" ? "__declined"
+    : p.offer_status === "not_invited" ? "__not_invited"
+    : (p.team_assignment || "");
+
   // CSV Upload handler.
   //
   // Two formats supported:
@@ -1629,6 +1651,38 @@ export default function App() {
     downloadCSV("dselite-players-export.csv", rows);
   }, [players]);
 
+  // Focused signup export — just the columns needed for a tryout/eval roster:
+  // player + parent name, parent email, age group, and the three signup flags.
+  // "Using evaluations for tryouts" is the supplemental (eval-as-tryout) flag.
+  const exportSignupCSV = useCallback(() => {
+    const splitName = (name) => {
+      const s = (name || "").trim();
+      if (!s) return ["", ""];
+      const parts = s.split(/\s+/);
+      return [parts[0], parts.slice(1).join(" ")];
+    };
+    const headers = [
+      "Player First Name","Player Last Name",
+      "Parent First Name","Parent Last Name","Parent Email",
+      "Age Group","Signed Up For Tryouts","Signed Up For Evaluations","Using Evaluations For Tryouts",
+    ];
+    const rows = [headers];
+    [...players]
+      .sort((a,b) => (a.last_name||"").localeCompare(b.last_name||"") || (a.first_name||"").localeCompare(b.first_name||""))
+      .forEach(p => {
+        const [pf, pl] = splitName(p.parent_name);
+        rows.push([
+          p.first_name, p.last_name,
+          pf, pl, p.parent_email,
+          p.usavDiv || p.usav_div,
+          p.tryout_registered ? "Yes" : "No",
+          p.eval_registered ? "Yes" : "No",
+          p.supplemental === 1 ? "Yes" : "No",
+        ]);
+      });
+    downloadCSV("dselite-player-signups.csv", rows);
+  }, [players]);
+
   // Merged coaches export (roster + login account, joined by email).
   const exportCoachesCSV = useCallback(() => {
     const byEmail = new Map();
@@ -2002,6 +2056,9 @@ export default function App() {
               <button onClick={exportCSV} style={{padding:"8px 16px",borderRadius:8,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>
                 Export CSV
               </button>
+              <button onClick={exportSignupCSV} title="Player + parent + age group + tryout/eval signup flags" style={{padding:"8px 16px",borderRadius:8,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>
+                Export Signups
+              </button>
             </div>
           </div>
           {uploadMsg && <div style={{marginTop:8,fontSize:12,color:uploadMsg.includes("Error")? C.red : C.grn}}>{uploadMsg}</div>}
@@ -2182,8 +2239,11 @@ export default function App() {
                     <td style={tdS}><span style={{fontWeight:800,fontSize:14,color:tot(p)?C.gold:C.mut}}>{tot(p)||"—"}</span></td>
                     <td style={tdS}><span style={{fontWeight:600,fontSize:12}}>{avg(p)}</span></td>
                     <td style={tdS}>
-                      <select style={{...inpStyle,fontSize:10,padding:"3px",width:74}} value={p.team_assignment||""} onChange={e=>upd(p.id,{team_assignment:e.target.value,roster_pos:""})}>
+                      <select style={{...inpStyle,fontSize:10,padding:"3px",width:74}} value={teamSelectValue(p)} onChange={e=>assignTeamOrStatus(p,e.target.value)}>
                         <option value="">{"—"}</option>{(TM[p.usavDiv||p.usav_div]||[]).map(t=><option key={t} value={t}>{t}</option>)}
+                        <option disabled>──────</option>
+                        <option value="__not_invited">Not invited</option>
+                        <option value="__declined">Decline offer</option>
                       </select>
                       {p.team_assignment && <select style={{...inpStyle,fontSize:9,padding:"2px",width:54,marginTop:2,display:"block"}} value={p.roster_pos||""} onChange={e=>upd(p.id,{roster_pos:e.target.value})}>
                         <option value="">Roster</option>
@@ -2923,7 +2983,7 @@ export default function App() {
               </select>
             </div>
             <div><span style={lbl}>Projected</span><select style={editInp} value={p.projected_team||""} onChange={e=>upd(p.id,{projected_team:e.target.value})}>{PROJ_OPTS.map(o=><option key={o} value={o}>{o||"--"}</option>)}</select></div>
-            <div><span style={lbl}>Team</span><select style={editInp} value={p.team_assignment||""} onChange={e=>upd(p.id,{team_assignment:e.target.value,roster_pos:""})}><option value="">--</option>{(TM[p.usavDiv||p.usav_div]||[]).map(t=><option key={t} value={t}>{t}</option>)}</select></div>
+            <div><span style={lbl}>Team</span><select style={editInp} value={teamSelectValue(p)} onChange={e=>assignTeamOrStatus(p,e.target.value)}><option value="">--</option>{(TM[p.usavDiv||p.usav_div]||[]).map(t=><option key={t} value={t}>{t}</option>)}<option disabled>──────</option><option value="__not_invited">Not invited</option><option value="__declined">Decline offer</option></select></div>
             <div><span style={lbl}>Roster Pos</span><select style={editInp} value={p.roster_pos||""} onChange={e=>upd(p.id,{roster_pos:e.target.value})}><option value="">--</option>{ROSTER_POS.map(rp=>{const taken=players.some(o=>o.id!==p.id&&o.team_assignment===p.team_assignment&&o.roster_pos===rp);return <option key={rp} value={rp} disabled={taken}>{rp}{taken?" (taken)":""}</option>;})}</select></div>
             <div><span style={lbl}>Status</span><select style={{...editInp,color:STATUS_COLORS[p.status||"In Progress"]}} value={p.status||"In Progress"} onChange={e=>upd(p.id,{status:e.target.value})}>{STATUS_OPTS.map(s=><option key={s} value={s}>{s}</option>)}</select></div>
             <div><span style={lbl}>Prev Season Team</span><DebouncedField style={editInp} placeholder="e.g. DSE 13 Diamond" value={p.current_team||""} onCommit={v=>upd(p.id,{current_team:v})} /></div>
