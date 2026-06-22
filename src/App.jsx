@@ -36,8 +36,8 @@ const TEAM_PLAN_2026 = {
   U16: { national: 1, regional: 1, rise: 0 },
 };
 const EVAL_DATES = ["5/13","5/14","5/20","5/21","5/27","5/28","6/3","6/4","6/9","6/10"];
-const STATUS_OPTS = ["In Progress","Offered","Accepted","Declined","No Offer"];
-const STATUS_COLORS = {"In Progress":"#999999","Offered":"#e91e8c","Accepted":"#22c55e","Declined":"#ef4444","No Offer":"#666666"};
+const STATUS_OPTS = ["In Progress","Offered","Accepted","Open Team","Declined","Not Invited"];
+const STATUS_COLORS = {"In Progress":"#999999","Offered":"#e91e8c","Accepted":"#22c55e","Open Team":"#06b6d4","Declined":"#ef4444","Not Invited":"#666666","No Offer":"#666666"};
 const C = {bg:"#0a0a0a",card:"#141414",border:"#2a2a2a",gold:"#e91e8c",text:"#ffffff",mut:"#999999",acc:"#ff69b4",red:"#ef4444",grn:"#22c55e"};
 // Only these owner emails may open the Coaches management screen. UI-level gate.
 const OWNER_EMAILS = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"];
@@ -1223,6 +1223,22 @@ export default function App() {
     p.offer_status === "declined" ? "__declined"
     : p.offer_status === "not_invited" ? "__not_invited"
     : (p.team_assignment || "");
+
+  // Status dropdown handler. Three of the statuses also move the player on the
+  // Teams board: "Open Team" → open/unassigned pool, "Declined" → Declined
+  // column, "Not Invited" → Not Invited column. The rest are labels only.
+  const setPlayerStatus = useCallback((p, value) => {
+    const now = new Date().toISOString();
+    const patch = { status: value };
+    if (value === "Declined") {
+      patch.offer_status = "declined"; patch.team_assignment = ""; patch.roster_pos = ""; patch.offer_decision_at = now;
+    } else if (value === "Not Invited") {
+      patch.offer_status = "not_invited"; patch.team_assignment = ""; patch.roster_pos = ""; patch.offer_made_at = null; patch.offer_decision_at = null;
+    } else if (value === "Open Team") {
+      patch.team_assignment = ""; patch.roster_pos = ""; patch.offer_status = "";
+    }
+    upd(p.id, patch);
+  }, [upd]);
 
   // CSV Upload handler.
   //
@@ -2983,9 +2999,9 @@ export default function App() {
               </select>
             </div>
             <div><span style={lbl}>Projected</span><select style={editInp} value={p.projected_team||""} onChange={e=>upd(p.id,{projected_team:e.target.value})}>{PROJ_OPTS.map(o=><option key={o} value={o}>{o||"--"}</option>)}</select></div>
-            <div><span style={lbl}>Team</span><select style={editInp} value={teamSelectValue(p)} onChange={e=>assignTeamOrStatus(p,e.target.value)}><option value="">--</option>{(TM[p.usavDiv||p.usav_div]||[]).map(t=><option key={t} value={t}>{t}</option>)}<option disabled>──────</option><option value="__not_invited">Not invited</option><option value="__declined">Decline offer</option></select></div>
+            <div><span style={lbl}>Team</span><select style={editInp} value={p.team_assignment||""} onChange={e=>assignTeamOrStatus(p,e.target.value)}><option value="">--</option>{(TM[p.usavDiv||p.usav_div]||[]).map(t=><option key={t} value={t}>{t}</option>)}</select></div>
             <div><span style={lbl}>Roster Pos</span><select style={editInp} value={p.roster_pos||""} onChange={e=>upd(p.id,{roster_pos:e.target.value})}><option value="">--</option>{ROSTER_POS.map(rp=>{const taken=players.some(o=>o.id!==p.id&&o.team_assignment===p.team_assignment&&o.roster_pos===rp);return <option key={rp} value={rp} disabled={taken}>{rp}{taken?" (taken)":""}</option>;})}</select></div>
-            <div><span style={lbl}>Status</span><select style={{...editInp,color:STATUS_COLORS[p.status||"In Progress"]}} value={p.status||"In Progress"} onChange={e=>upd(p.id,{status:e.target.value})}>{STATUS_OPTS.map(s=><option key={s} value={s}>{s}</option>)}</select></div>
+            <div><span style={lbl}>Status</span><select style={{...editInp,color:STATUS_COLORS[p.status||"In Progress"]}} value={p.status||"In Progress"} onChange={e=>setPlayerStatus(p,e.target.value)}>{STATUS_OPTS.map(s=><option key={s} value={s}>{s}</option>)}</select></div>
             <div><span style={lbl}>Prev Season Team</span><DebouncedField style={editInp} placeholder="e.g. DSE 13 Diamond" value={p.current_team||""} onCommit={v=>upd(p.id,{current_team:v})} /></div>
           </div>
           {/* Notes */}
