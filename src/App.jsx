@@ -624,6 +624,14 @@ export default function App() {
   const [selectedThreadId, setSelectedThreadId]       = useState(null);
   const [smsCompose, setSmsCompose]                   = useState("");
   const [smsSending, setSmsSending]                   = useState(false);
+  // Bulk email (send-only) state
+  const [emailScope, setEmailScope]                   = useState("all"); // all | tryout | eval | accepted
+  const [emailSubject, setEmailSubject]               = useState("");
+  const [emailBody, setEmailBody]                     = useState("");
+  const [emailSending, setEmailSending]               = useState(false);
+  const [emailResult, setEmailResult]                 = useState(null);
+  const [emailErr, setEmailErr]                       = useState("");
+  const [emailShowList, setEmailShowList]             = useState(false);
   const [teamsList, setTeamsList]                           = useState([]);
   const [blackoutDates, setBlackoutDates]                   = useState([]);
   const [tnFilters, setTnFilters]                           = useState({ search: "", ageFor: "", qualifierOnly: false, dateFrom: "", dateTo: "", hideClosed: false, hideCancelled: true, startsOn: [], state: "", numDays: "", divisions: [], tags: [] });
@@ -4934,6 +4942,95 @@ export default function App() {
   }
 
   // ─── MESSAGES (SMS INBOX) ────────────────────────────────────────────
+  // ─── EMAIL (bulk, send-only) ─────────────────────────────────────────
+  // Compose one message and send it to every parent in scope as an
+  // individual email from the DS Elite address; replies go to the coach's
+  // inbox. Scope = players in the selected age groups, optionally narrowed.
+  function renderEmailBlast() {
+    const divSet = new Set(selectedDivs);
+    const SCOPES = [
+      { id:"all",      label:"All in selected ages" },
+      { id:"tryout",   label:"Tryout signups" },
+      { id:"eval",     label:"Eval signups" },
+      { id:"accepted", label:"Accepted players" },
+    ];
+    let pool = players.filter(p => divSet.has(p.usavDiv || p.usav_div));
+    if (emailScope === "tryout")        pool = pool.filter(p => p.tryout_registered);
+    else if (emailScope === "eval")     pool = pool.filter(p => p.eval_registered);
+    else if (emailScope === "accepted") pool = pool.filter(p => p.offer_status === "accepted");
+    const recipients = [...new Set(pool.map(p => (p.parent_email || "").trim().toLowerCase()).filter(Boolean))].sort();
+    const missing = pool.filter(p => !(p.parent_email || "").trim()).length;
+
+    const send = async () => {
+      if (!emailSubject.trim() || !emailBody.trim() || !recipients.length) return;
+      if (!window.confirm("Send this email to " + recipients.length + " parent" + (recipients.length === 1 ? "" : "s") + "?")) return;
+      setEmailSending(true); setEmailErr(""); setEmailResult(null);
+      try {
+        const res = await fetch("/api/send-email", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ subject: emailSubject.trim(), body: emailBody.trim(), recipients }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Send failed");
+        setEmailResult(data);
+      } catch (e) { setEmailErr(e.message || "Something went wrong."); }
+      finally { setEmailSending(false); }
+    };
+
+    const chip = active => ({padding:"5px 12px",borderRadius:16,border:"1px solid "+(active?C.gold:C.border),background:active?"rgba(233,30,140,0.12)":"transparent",color:active?C.gold:C.mut,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700});
+
+    return (
+      <div style={{maxWidth:760}}>
+        <div style={{marginBottom:12}}>
+          <h2 style={{margin:0,fontSize:18,fontWeight:800,color:C.gold}}>Email parents</h2>
+          <div style={{fontSize:12,color:C.mut,marginTop:4}}>Sends an individual email to each parent (they never see each other) from the DS Elite address. Replies come to your inbox. Scope follows the age-group chips above.</div>
+        </div>
+
+        {/* Scope */}
+        <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
+          {SCOPES.map(s => <button key={s.id} style={chip(emailScope===s.id)} onClick={()=>setEmailScope(s.id)}>{s.label}</button>)}
+        </div>
+
+        {/* Recipient count */}
+        <div style={{fontSize:12,color:C.mut,marginBottom:12,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+          <span><strong style={{color:recipients.length?C.grn:C.red}}>{recipients.length}</strong> recipient{recipients.length===1?"":"s"}</span>
+          {missing > 0 && <span style={{color:"#f59e0b"}}>· {missing} player{missing===1?"":"s"} in scope have no parent email</span>}
+          {recipients.length > 0 && <button onClick={()=>setEmailShowList(v=>!v)} style={{background:"none",border:"none",color:C.gold,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700,textDecoration:"underline"}}>{emailShowList?"hide":"show"} list</button>}
+        </div>
+        {emailShowList && recipients.length > 0 && (
+          <div style={{maxHeight:140,overflowY:"auto",background:C.bg,border:"1px solid "+C.border,borderRadius:8,padding:"8px 12px",marginBottom:12,fontSize:11,color:C.mut,lineHeight:1.7}}>
+            {recipients.join(", ")}
+          </div>
+        )}
+
+        {/* Compose */}
+        <input value={emailSubject} onChange={e=>setEmailSubject(e.target.value)} placeholder="Subject"
+          style={{...inpStyle,width:"100%",padding:"10px 12px",fontSize:14,marginBottom:8}} />
+        <textarea value={emailBody} onChange={e=>setEmailBody(e.target.value)} placeholder="Write your message…"
+          style={{...inpStyle,width:"100%",minHeight:200,padding:"10px 12px",fontSize:14,fontFamily:"inherit",resize:"vertical",lineHeight:1.5}} />
+
+        <div style={{display:"flex",alignItems:"center",gap:12,marginTop:12,flexWrap:"wrap"}}>
+          <button onClick={send} disabled={emailSending || !emailSubject.trim() || !emailBody.trim() || !recipients.length}
+            style={{padding:"10px 20px",borderRadius:8,border:"none",background:(emailSending||!emailSubject.trim()||!emailBody.trim()||!recipients.length)?C.border:C.gold,color:(emailSending||!emailSubject.trim()||!emailBody.trim()||!recipients.length)?C.mut:"#000",fontFamily:"inherit",fontSize:14,fontWeight:800,cursor:(emailSending||!emailSubject.trim()||!emailBody.trim()||!recipients.length)?"default":"pointer"}}>
+            {emailSending ? "Sending…" : "Send to " + recipients.length}
+          </button>
+          {emailErr && <span style={{color:C.red,fontSize:12,fontWeight:600}}>{emailErr}</span>}
+          {emailResult && (
+            <span style={{fontSize:12,fontWeight:600,color:emailResult.failed?.length?"#f59e0b":C.grn}}>
+              Sent {emailResult.sent}{emailResult.failed?.length ? " · " + emailResult.failed.length + " failed" : " · all delivered to Resend"}
+            </span>
+          )}
+        </div>
+        {emailResult?.failed?.length > 0 && (
+          <div style={{marginTop:10,fontSize:11,color:"#f59e0b",background:"rgba(245,158,11,0.08)",border:"1px solid rgba(245,158,11,0.4)",borderRadius:8,padding:"8px 12px"}}>
+            Failed: {emailResult.failed.map(f => f.email + " (" + f.error + ")").join("; ")}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   // Two-column view: thread list on the left, selected conversation on
   // the right. Realtime push (in the parent component) keeps both up
   // to date as Twilio delivers inbound + status updates.
@@ -6855,7 +6952,7 @@ export default function App() {
                 <button key={v} style={btn(view===v)} onClick={()=>{ setView(v); setOpenMenu(null); }}>{l}</button>;
               const groups = [
                 { title:"Tryouts", items:[["evaluate","Evaluate"], ...(canViewTeams ? [["teams","Teams"]] : []), ["rankings","Rankings"], ["physical","Physical Testing"], ["tryouts","Coach Assignments"]] },
-                { title:"Operations", items:[["tracker","Tracker"], ...(canViewTeams ? [["teamdir","All Teams"]] : []), ...(isAdmin ? [["coaches","Coaches"]] : []), ["practice","Practice"], ["messages", "Messages" + (totalUnread > 0 ? " (" + totalUnread + ")" : "")]] },
+                { title:"Operations", items:[["tracker","Tracker"], ...(canViewTeams ? [["teamdir","All Teams"]] : []), ...(isAdmin ? [["coaches","Coaches"]] : []), ["practice","Practice"], ["email","Email"], ["messages", "Messages (SMS)" + (totalUnread > 0 ? " (" + totalUnread + ")" : "")]] },
               ];
               return <>
                 {item("dashboard","Dashboard")}
@@ -6953,6 +7050,7 @@ export default function App() {
         {view==="practice" && renderPractice()}
         {view==="physical" && renderPhysicalTesting()}
         {view==="tryouts" && renderTryouts()}
+        {view==="email" && renderEmailBlast()}
         {view==="messages" && renderMessages()}
         {view==="askai" && renderAskAI()}
       </div>
