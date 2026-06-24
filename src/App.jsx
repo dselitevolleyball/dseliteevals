@@ -639,6 +639,11 @@ export default function App() {
   const [emailResult, setEmailResult]                 = useState(null);
   const [emailErr, setEmailErr]                       = useState("");
   const [emailShowList, setEmailShowList]             = useState(false);
+  const [emailTemplates, setEmailTemplates]           = useState(() => {
+    try { return JSON.parse((typeof localStorage !== "undefined" && localStorage.getItem("dse_email_templates")) || "[]"); }
+    catch { return []; }
+  });
+  const [emailTemplateSel, setEmailTemplateSel]       = useState("");
   const [teamsList, setTeamsList]                           = useState([]);
   const [blackoutDates, setBlackoutDates]                   = useState([]);
   const [tnFilters, setTnFilters]                           = useState({ search: "", ageFor: "", qualifierOnly: false, dateFrom: "", dateTo: "", hideClosed: false, hideCancelled: true, startsOn: [], state: "", numDays: "", divisions: [], tags: [] });
@@ -4981,21 +4986,52 @@ export default function App() {
     const recipients = [...new Set(pool.map(p => (p.parent_email || "").trim().toLowerCase()).filter(Boolean))].sort();
     const missing = pool.filter(p => !(p.parent_email || "").trim()).length;
 
-    const send = async () => {
-      if (!emailSubject.trim() || !emailBody.trim() || !recipients.length) return;
-      if (!window.confirm("Send this email to " + recipients.length + " parent" + (recipients.length === 1 ? "" : "s") + "?")) return;
+    const TEST_EMAIL = "drew@dselitevolleyball.com";
+    const postEmail = async (to, isTest) => {
+      if (!emailSubject.trim() || !emailBody.trim() || !to.length) return;
       setEmailSending(true); setEmailErr(""); setEmailResult(null);
       try {
         const res = await fetch("/api/send-email", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ subject: emailSubject.trim(), body: emailBody.trim(), recipients }),
+          body: JSON.stringify({ subject: emailSubject.trim(), body: emailBody.trim(), recipients: to }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Send failed");
-        setEmailResult(data);
+        setEmailResult({ ...data, test: !!isTest });
       } catch (e) { setEmailErr(e.message || "Something went wrong."); }
       finally { setEmailSending(false); }
+    };
+    const send = () => {
+      if (!recipients.length) return;
+      if (!window.confirm("Send this email to " + recipients.length + " parent" + (recipients.length === 1 ? "" : "s") + "?")) return;
+      postEmail(recipients, false);
+    };
+    const sendTest = () => postEmail([TEST_EMAIL], true);
+
+    // Templates (saved in this browser).
+    const persistTemplates = (list) => {
+      setEmailTemplates(list);
+      try { localStorage.setItem("dse_email_templates", JSON.stringify(list)); } catch {}
+    };
+    const loadTemplate = (name) => {
+      setEmailTemplateSel(name);
+      const t = emailTemplates.find(x => x.name === name);
+      if (t) { setEmailSubject(t.subject || ""); setEmailBody(t.body || ""); }
+    };
+    const saveTemplate = () => {
+      const name = (window.prompt("Save this email as a template named:", emailTemplateSel || emailSubject.trim()) || "").trim();
+      if (!name) return;
+      const next = [...emailTemplates.filter(x => x.name !== name), { name, subject: emailSubject, body: emailBody }]
+        .sort((a, b) => a.name.localeCompare(b.name));
+      persistTemplates(next);
+      setEmailTemplateSel(name);
+    };
+    const deleteTemplate = () => {
+      if (!emailTemplateSel) return;
+      if (!window.confirm("Delete template “" + emailTemplateSel + "”?")) return;
+      persistTemplates(emailTemplates.filter(x => x.name !== emailTemplateSel));
+      setEmailTemplateSel("");
     };
 
     const chip = active => ({padding:"5px 12px",borderRadius:16,border:"1px solid "+(active?C.gold:C.border),background:active?"rgba(233,30,140,0.12)":"transparent",color:active?C.gold:C.mut,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700});
@@ -5044,6 +5080,22 @@ export default function App() {
           </div>
         )}
 
+        {/* Templates */}
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,flexWrap:"wrap"}}>
+          <span style={{fontSize:11,fontWeight:700,color:C.mut}}>Template</span>
+          <select value={emailTemplateSel} onChange={e=>loadTemplate(e.target.value)}
+            style={{...inpStyle,padding:"6px 10px",fontSize:12,cursor:"pointer",minWidth:160,color:emailTemplateSel?C.gold:C.text}}>
+            <option value="">— Load a template —</option>
+            {emailTemplates.map(t => <option key={t.name} value={t.name}>{t.name}</option>)}
+          </select>
+          <button onClick={saveTemplate} title="Save the current subject + message as a reusable template"
+            style={{padding:"6px 12px",borderRadius:6,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>+ Save as template</button>
+          {emailTemplateSel && (
+            <button onClick={deleteTemplate} title="Delete this template"
+              style={{padding:"6px 10px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Delete</button>
+          )}
+        </div>
+
         {/* Compose */}
         <input value={emailSubject} onChange={e=>setEmailSubject(e.target.value)} placeholder="Subject"
           style={{...inpStyle,width:"100%",padding:"10px 12px",fontSize:14,marginBottom:8}} />
@@ -5055,10 +5107,15 @@ export default function App() {
             style={{padding:"10px 20px",borderRadius:8,border:"none",background:(emailSending||!emailSubject.trim()||!emailBody.trim()||!recipients.length)?C.border:C.gold,color:(emailSending||!emailSubject.trim()||!emailBody.trim()||!recipients.length)?C.mut:"#000",fontFamily:"inherit",fontSize:14,fontWeight:800,cursor:(emailSending||!emailSubject.trim()||!emailBody.trim()||!recipients.length)?"default":"pointer"}}>
             {emailSending ? "Sending…" : "Send to " + recipients.length}
           </button>
+          <button onClick={sendTest} disabled={emailSending || !emailSubject.trim() || !emailBody.trim()}
+            title={"Send only to " + TEST_EMAIL + " so you can preview it"}
+            style={{padding:"10px 16px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:(emailSending||!emailSubject.trim()||!emailBody.trim())?C.mut:C.text,fontFamily:"inherit",fontSize:13,fontWeight:700,cursor:(emailSending||!emailSubject.trim()||!emailBody.trim())?"default":"pointer"}}>
+            Send test to me
+          </button>
           {emailErr && <span style={{color:C.red,fontSize:12,fontWeight:600}}>{emailErr}</span>}
           {emailResult && (
             <span style={{fontSize:12,fontWeight:600,color:emailResult.failed?.length?"#f59e0b":C.grn}}>
-              Sent {emailResult.sent}{emailResult.failed?.length ? " · " + emailResult.failed.length + " failed" : " · all delivered to Resend"}
+              {emailResult.test ? "Test sent to " + TEST_EMAIL : "Sent " + emailResult.sent}{emailResult.failed?.length ? " · " + emailResult.failed.length + " failed" : (emailResult.test ? "" : " · all delivered to Resend")}
             </span>
           )}
         </div>
