@@ -639,6 +639,7 @@ export default function App() {
   const [emailResult, setEmailResult]                 = useState(null);
   const [emailErr, setEmailErr]                       = useState("");
   const [emailShowList, setEmailShowList]             = useState(false);
+  const [emailShowMissing, setEmailShowMissing]       = useState(false);
   const [emailTemplates, setEmailTemplates]           = useState(() => {
     try { return JSON.parse((typeof localStorage !== "undefined" && localStorage.getItem("dse_email_templates")) || "[]"); }
     catch { return []; }
@@ -4988,7 +4989,10 @@ export default function App() {
     // Teams available for the team dropdown (within the selected ages).
     const teamOptions = [...new Set(players.filter(p => divSet.has(p.usavDiv || p.usav_div)).map(p => p.team_assignment).filter(Boolean))].sort();
     const recipients = [...new Set(pool.map(p => (p.parent_email || "").trim().toLowerCase()).filter(Boolean))].sort();
-    const missing = pool.filter(p => !(p.parent_email || "").trim()).length;
+    const missingPlayers = pool
+      .filter(p => !(p.parent_email || "").trim())
+      .sort((a,b) => (a.last_name||"").localeCompare(b.last_name||"") || (a.first_name||"").localeCompare(b.first_name||""));
+    const missing = missingPlayers.length;
 
     const TEST_EMAIL = "drew@dselitevolleyball.com";
     const postEmail = async (to, isTest) => {
@@ -5091,9 +5095,23 @@ export default function App() {
         {/* Recipient count */}
         <div style={{fontSize:12,color:C.mut,marginBottom:12,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
           <span><strong style={{color:recipients.length?C.grn:C.red}}>{recipients.length}</strong> recipient{recipients.length===1?"":"s"}</span>
-          {missing > 0 && <span style={{color:"#f59e0b"}}>· {missing} player{missing===1?"":"s"} in scope have no parent email</span>}
+          {missing > 0 && <button onClick={()=>setEmailShowMissing(v=>!v)} title="Show these players so you can add their parent email"
+            style={{background:"none",border:"none",color:"#f59e0b",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700,textDecoration:"underline",padding:0}}>· {missing} player{missing===1?"":"s"} in scope have no parent email</button>}
           {recipients.length > 0 && <button onClick={()=>setEmailShowList(v=>!v)} style={{background:"none",border:"none",color:C.gold,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700,textDecoration:"underline"}}>{emailShowList?"hide":"show"} list</button>}
         </div>
+        {emailShowMissing && missing > 0 && (
+          <div style={{maxHeight:180,overflowY:"auto",background:C.bg,border:"1px solid rgba(245,158,11,0.4)",borderRadius:8,padding:"8px 10px",marginBottom:12}}>
+            <div style={{fontSize:10,color:"#f59e0b",fontWeight:700,marginBottom:6}}>Click a player to open their card and add a parent email:</div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+              {missingPlayers.map(p => (
+                <button key={p.id} onClick={()=>setProfileId(p.id)}
+                  style={{padding:"4px 10px",borderRadius:8,border:"1px solid "+C.border,background:C.card,color:C.text,fontFamily:"inherit",fontSize:12,fontWeight:600,cursor:"pointer"}}>
+                  {p.first_name} {p.last_name} <span style={{color:C.mut,fontSize:10}}>{p.usavDiv||p.usav_div}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         {emailShowList && recipients.length > 0 && (
           <div style={{maxHeight:140,overflowY:"auto",background:C.bg,border:"1px solid "+C.border,borderRadius:8,padding:"8px 12px",marginBottom:12,fontSize:11,color:C.mut,lineHeight:1.7}}>
             {recipients.join(", ")}
