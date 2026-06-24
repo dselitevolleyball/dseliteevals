@@ -35,7 +35,9 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const { RESEND_API_KEY, DSE_FROM_EMAIL, DSE_REPLY_TO } = process.env;
+  // Env var names are case-sensitive; accept either casing for the key.
+  const RESEND_API_KEY = process.env.RESEND_API_KEY || process.env.resend_api_key;
+  const { DSE_FROM_EMAIL, DSE_REPLY_TO } = process.env;
   if (!RESEND_API_KEY) return res.status(500).json({ error: "RESEND_API_KEY is not set. Add it in Vercel after verifying your domain in Resend." });
   if (!DSE_FROM_EMAIL) return res.status(500).json({ error: "DSE_FROM_EMAIL is not set (e.g. \"DS Elite <drew@dselitevolleyball.com>\")." });
 

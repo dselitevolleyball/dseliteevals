@@ -4,7 +4,7 @@
 
 export default function handler(req, res) {
   const from = process.env.DSE_FROM_EMAIL || null;
-  const raw = process.env.RESEND_API_KEY;
+  const raw = process.env.RESEND_API_KEY || process.env.resend_api_key;
   // Names only (never values) of env vars that look email/key related — to
   // catch a misnamed key (e.g. RESEND_KEY) or a stray trailing space.
   const relatedVarNames = Object.keys(process.env)
