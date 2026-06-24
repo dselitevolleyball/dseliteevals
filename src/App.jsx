@@ -36,8 +36,13 @@ const TEAM_PLAN_2026 = {
   U16: { national: 1, regional: 1, rise: 0 },
 };
 const EVAL_DATES = ["5/13","5/14","5/20","5/21","5/27","5/28","6/3","6/4","6/9","6/10"];
-const STATUS_OPTS = ["In Progress","Offered","Accepted","Open Team","Declined","Not Invited"];
-const STATUS_COLORS = {"In Progress":"#999999","Offered":"#e91e8c","Accepted":"#22c55e","Open Team":"#06b6d4","Declined":"#ef4444","Not Invited":"#666666","No Offer":"#666666"};
+// Player status — kept in sync with the team-card "+offer" chip (offer_status).
+// The first six mirror the chip's cycle; the last two are board placements.
+const STATUS_OPTS = ["In Progress","Locked","Offered","Accepted","Waiting","Declined","Open Team","Not Invited"];
+const STATUS_COLORS = {"In Progress":"#999999","Locked":"#a855f7","Offered":"#f59e0b","Accepted":"#22c55e","Waiting":"#06b6d4","Declined":"#ef4444","Open Team":"#3b82f6","Not Invited":"#666666","No Offer":"#666666"};
+// Map between the offer chip (offer_status) and the Status dropdown (status).
+const OFFER_TO_STATUS = { "":"In Progress", locked:"Locked", made:"Offered", accepted:"Accepted", waiting:"Waiting", declined:"Declined", not_invited:"Not Invited" };
+const STATUS_TO_OFFER = { "In Progress":"", "Open Team":"", Locked:"locked", Offered:"made", Accepted:"accepted", Waiting:"waiting", Declined:"declined", "Not Invited":"not_invited" };
 const C = {bg:"#0a0a0a",card:"#141414",border:"#2a2a2a",gold:"#e91e8c",text:"#ffffff",mut:"#999999",acc:"#ff69b4",red:"#ef4444",grn:"#22c55e"};
 // Only these owner emails may open the Coaches management screen. UI-level gate.
 const OWNER_EMAILS = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"];
@@ -1239,13 +1244,17 @@ export default function App() {
   // column, "Not Invited" → Not Invited column. The rest are labels only.
   const setPlayerStatus = useCallback((p, value) => {
     const now = new Date().toISOString();
-    const patch = { status: value };
+    const patch = { status: value, offer_status: STATUS_TO_OFFER[value] ?? "" };
     if (value === "Declined") {
-      patch.offer_status = "declined"; patch.team_assignment = ""; patch.roster_pos = ""; patch.offer_decision_at = now;
+      patch.team_assignment = ""; patch.roster_pos = ""; patch.offer_decision_at = now;
     } else if (value === "Not Invited") {
-      patch.offer_status = "not_invited"; patch.team_assignment = ""; patch.roster_pos = ""; patch.offer_made_at = null; patch.offer_decision_at = null;
+      patch.team_assignment = ""; patch.roster_pos = ""; patch.offer_made_at = null; patch.offer_decision_at = null;
     } else if (value === "Open Team") {
-      patch.team_assignment = ""; patch.roster_pos = ""; patch.offer_status = "";
+      patch.team_assignment = ""; patch.roster_pos = "";
+    } else if (value === "Offered") {
+      patch.offer_made_at = now; patch.offer_decision_at = null;
+    } else if (value === "Locked" || value === "Accepted") {
+      patch.offer_decision_at = now;
     }
     upd(p.id, patch);
   }, [upd]);
@@ -2498,12 +2507,12 @@ export default function App() {
       // Terminal-status buckets — clear team assignment and stamp the status.
       if (overId === "bucket-declined") {
         if (player.offer_status === "declined" && !player.team_assignment) return;
-        upd(playerId, { team_assignment: "", roster_pos: "", offer_status: "declined", offer_decision_at: now });
+        upd(playerId, { team_assignment: "", roster_pos: "", offer_status: "declined", offer_decision_at: now, status: "Declined" });
         return;
       }
       if (overId === "bucket-not_invited") {
         if (player.offer_status === "not_invited" && !player.team_assignment) return;
-        upd(playerId, { team_assignment: "", roster_pos: "", offer_status: "not_invited", offer_made_at: null, offer_decision_at: null });
+        upd(playerId, { team_assignment: "", roster_pos: "", offer_status: "not_invited", offer_made_at: null, offer_decision_at: null, status: "Not Invited" });
         return;
       }
       // Team drops (including unassigned via team-""). If the player was declined
@@ -2518,6 +2527,7 @@ export default function App() {
           updates.offer_status = "";
           updates.offer_made_at = null;
           updates.offer_decision_at = null;
+          updates.status = "In Progress";
         }
         upd(playerId, updates);
       }
@@ -2567,6 +2577,8 @@ export default function App() {
         updates.offer_made_at = null;
         updates.offer_decision_at = null;
       }
+      // Keep the player-card Status tag in sync with the chip.
+      updates.status = OFFER_TO_STATUS[updates.offer_status] || "In Progress";
       upd(player.id, updates);
     };
     const offerChip = (player) => {
