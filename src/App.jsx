@@ -4989,10 +4989,10 @@ export default function App() {
     // Teams available for the team dropdown (within the selected ages).
     const teamOptions = [...new Set(players.filter(p => divSet.has(p.usavDiv || p.usav_div)).map(p => p.team_assignment).filter(Boolean))].sort();
     const recipients = [...new Set(pool.map(p => (p.parent_email || "").trim().toLowerCase()).filter(Boolean))].sort();
-    const missingPlayers = pool
-      .filter(p => !(p.parent_email || "").trim())
-      .sort((a,b) => (a.last_name||"").localeCompare(b.last_name||"") || (a.first_name||"").localeCompare(b.first_name||""));
+    const byName = (a,b) => (a.last_name||"").localeCompare(b.last_name||"") || (a.first_name||"").localeCompare(b.first_name||"");
+    const missingPlayers = pool.filter(p => !(p.parent_email || "").trim()).sort(byName);
     const missing = missingPlayers.length;
+    const recipientPlayers = pool.filter(p => (p.parent_email || "").trim()).sort(byName);
 
     const TEST_EMAIL = "drew@dselitevolleyball.com";
     const postEmail = async (to, isTest) => {
@@ -5113,8 +5113,15 @@ export default function App() {
           </div>
         )}
         {emailShowList && recipients.length > 0 && (
-          <div style={{maxHeight:140,overflowY:"auto",background:C.bg,border:"1px solid "+C.border,borderRadius:8,padding:"8px 12px",marginBottom:12,fontSize:11,color:C.mut,lineHeight:1.7}}>
-            {recipients.join(", ")}
+          <div style={{maxHeight:180,overflowY:"auto",background:C.bg,border:"1px solid "+C.border,borderRadius:8,padding:"8px 10px",marginBottom:12}}>
+            <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+              {recipientPlayers.map(p => (
+                <button key={p.id} onClick={()=>setProfileId(p.id)} title={p.parent_email}
+                  style={{padding:"4px 10px",borderRadius:8,border:"1px solid "+C.border,background:C.card,color:C.text,fontFamily:"inherit",fontSize:12,fontWeight:600,cursor:"pointer"}}>
+                  {p.first_name} {p.last_name} <span style={{color:C.mut,fontSize:10}}>{p.usavDiv||p.usav_div}</span>
+                </button>
+              ))}
+            </div>
           </div>
         )}
 
