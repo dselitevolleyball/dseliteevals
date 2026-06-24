@@ -625,7 +625,9 @@ export default function App() {
   const [smsCompose, setSmsCompose]                   = useState("");
   const [smsSending, setSmsSending]                   = useState(false);
   // Bulk email (send-only) state
-  const [emailScope, setEmailScope]                   = useState("all"); // all | tryout | eval | accepted
+  const [emailScope, setEmailScope]                   = useState("all"); // all | tryout | eval
+  const [emailTeam, setEmailTeam]                     = useState("");    // "" any | "__has" | "__none" | team name
+  const [emailStatus, setEmailStatus]                 = useState("");    // "" any | a STATUS_OPTS value
   const [emailSubject, setEmailSubject]               = useState("");
   const [emailBody, setEmailBody]                     = useState("");
   const [emailSending, setEmailSending]               = useState(false);
@@ -4949,15 +4951,21 @@ export default function App() {
   function renderEmailBlast() {
     const divSet = new Set(selectedDivs);
     const SCOPES = [
-      { id:"all",      label:"All in selected ages" },
+      { id:"all",      label:"Everyone" },
       { id:"tryout",   label:"Tryout signups" },
       { id:"eval",     label:"Eval signups" },
-      { id:"accepted", label:"Accepted players" },
     ];
     let pool = players.filter(p => divSet.has(p.usavDiv || p.usav_div));
-    if (emailScope === "tryout")        pool = pool.filter(p => p.tryout_registered);
-    else if (emailScope === "eval")     pool = pool.filter(p => p.eval_registered);
-    else if (emailScope === "accepted") pool = pool.filter(p => p.offer_status === "accepted");
+    if (emailScope === "tryout")     pool = pool.filter(p => p.tryout_registered);
+    else if (emailScope === "eval")  pool = pool.filter(p => p.eval_registered);
+    // Team filter
+    if (emailTeam === "__has")       pool = pool.filter(p => p.team_assignment);
+    else if (emailTeam === "__none") pool = pool.filter(p => !p.team_assignment);
+    else if (emailTeam)              pool = pool.filter(p => p.team_assignment === emailTeam);
+    // Status (tag) filter
+    if (emailStatus)                 pool = pool.filter(p => (p.status || "In Progress") === emailStatus);
+    // Teams available for the team dropdown (within the selected ages).
+    const teamOptions = [...new Set(players.filter(p => divSet.has(p.usavDiv || p.usav_div)).map(p => p.team_assignment).filter(Boolean))].sort();
     const recipients = [...new Set(pool.map(p => (p.parent_email || "").trim().toLowerCase()).filter(Boolean))].sort();
     const missing = pool.filter(p => !(p.parent_email || "").trim()).length;
 
@@ -4987,9 +4995,29 @@ export default function App() {
           <div style={{fontSize:12,color:C.mut,marginTop:4}}>Sends an individual email to each parent (they never see each other) from the DS Elite address. Replies come to your inbox. Scope follows the age-group chips above.</div>
         </div>
 
-        {/* Scope */}
-        <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
+        {/* Scope + filters */}
+        <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:8}}>
           {SCOPES.map(s => <button key={s.id} style={chip(emailScope===s.id)} onClick={()=>setEmailScope(s.id)}>{s.label}</button>)}
+        </div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",marginBottom:10}}>
+          <label style={{display:"flex",alignItems:"center",gap:5,fontSize:11,fontWeight:700,color:C.mut}}>Team
+            <select value={emailTeam} onChange={e=>setEmailTeam(e.target.value)} style={{...inpStyle,padding:"6px 10px",fontSize:12,cursor:"pointer",color:emailTeam?C.gold:C.text}}>
+              <option value="">Any</option>
+              <option value="__has">Has a team</option>
+              <option value="__none">No team yet</option>
+              {teamOptions.length > 0 && <option disabled>──────</option>}
+              {teamOptions.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </label>
+          <label style={{display:"flex",alignItems:"center",gap:5,fontSize:11,fontWeight:700,color:C.mut}}>Status
+            <select value={emailStatus} onChange={e=>setEmailStatus(e.target.value)} style={{...inpStyle,padding:"6px 10px",fontSize:12,cursor:"pointer",color:emailStatus?C.gold:C.text}}>
+              <option value="">Any</option>
+              {STATUS_OPTS.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </label>
+          {(emailTeam || emailStatus || emailScope!=="all") && (
+            <button onClick={()=>{ setEmailScope("all"); setEmailTeam(""); setEmailStatus(""); }} style={{padding:"5px 10px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Clear filters</button>
+          )}
         </div>
 
         {/* Recipient count */}
