@@ -630,7 +630,7 @@ export default function App() {
   const [smsCompose, setSmsCompose]                   = useState("");
   const [smsSending, setSmsSending]                   = useState(false);
   // Bulk email (send-only) state
-  const [emailScope, setEmailScope]                   = useState("all"); // all | tryout | eval
+  const [emailGroupScope, setEmailGroupScope]         = useState({});     // { [div]: "all"|"tryout"|"eval"|"none" } — default "all"
   const [emailTeam, setEmailTeam]                     = useState("");    // "" any | "__has" | "__none" | team name
   const [emailStatus, setEmailStatus]                 = useState("");    // "" any | a STATUS_OPTS value
   const [emailSubject, setEmailSubject]               = useState("");
@@ -4967,19 +4967,23 @@ export default function App() {
   // inbox. Scope = players in the selected age groups, optionally narrowed.
   function renderEmailBlast() {
     const divSet = new Set(selectedDivs);
-    const SCOPES = [
-      { id:"all",      label:"Everyone" },
-      { id:"tryout",   label:"Tryout signups" },
-      { id:"eval",     label:"Eval signups" },
-    ];
-    let pool = players.filter(p => divSet.has(p.usavDiv || p.usav_div));
-    if (emailScope === "tryout")     pool = pool.filter(p => p.tryout_registered);
-    else if (emailScope === "eval")  pool = pool.filter(p => p.eval_registered);
-    // Team filter
+    const scopeOf = (div) => emailGroupScope[div] || "all";
+    const divPlayersOf = (div) => players.filter(p => (p.usavDiv || p.usav_div) === div);
+    const applySubset = (list, scope) =>
+      scope === "tryout" ? list.filter(p => p.tryout_registered)
+      : scope === "eval" ? list.filter(p => p.eval_registered)
+      : list; // "all"
+    // Build the pool per age group from each group's chosen subset.
+    let pool = [];
+    selectedDivs.forEach(div => {
+      const scope = scopeOf(div);
+      if (scope === "none") return;
+      pool.push(...applySubset(divPlayersOf(div), scope));
+    });
+    // Cross-cutting filters.
     if (emailTeam === "__has")       pool = pool.filter(p => p.team_assignment);
     else if (emailTeam === "__none") pool = pool.filter(p => !p.team_assignment);
     else if (emailTeam)              pool = pool.filter(p => p.team_assignment === emailTeam);
-    // Status (tag) filter
     if (emailStatus)                 pool = pool.filter(p => (p.status || "In Progress") === emailStatus);
     // Teams available for the team dropdown (within the selected ages).
     const teamOptions = [...new Set(players.filter(p => divSet.has(p.usavDiv || p.usav_div)).map(p => p.team_assignment).filter(Boolean))].sort();
@@ -5034,7 +5038,6 @@ export default function App() {
       setEmailTemplateSel("");
     };
 
-    const chip = active => ({padding:"5px 12px",borderRadius:16,border:"1px solid "+(active?C.gold:C.border),background:active?"rgba(233,30,140,0.12)":"transparent",color:active?C.gold:C.mut,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700});
 
     return (
       <div style={{maxWidth:760}}>
@@ -5043,9 +5046,26 @@ export default function App() {
           <div style={{fontSize:12,color:C.mut,marginTop:4}}>Sends an individual email to each parent (they never see each other) from the DS Elite address. Replies come to your inbox. Scope follows the age-group chips above.</div>
         </div>
 
-        {/* Scope + filters */}
-        <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:8}}>
-          {SCOPES.map(s => <button key={s.id} style={chip(emailScope===s.id)} onClick={()=>setEmailScope(s.id)}>{s.label}</button>)}
+        {/* Per-age-group subset selectors */}
+        <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:10}}>
+          {selectedDivs.length === 0 && <div style={{fontSize:12,color:C.mut,fontStyle:"italic"}}>Pick age groups with the chips above.</div>}
+          {selectedDivs.slice().sort().map(div => {
+            const dp = divPlayersOf(div);
+            const cnt = (scope) => new Set(applySubset(dp, scope).map(p => (p.parent_email||"").trim().toLowerCase()).filter(Boolean)).size;
+            const scope = scopeOf(div);
+            return (
+              <div key={div} style={{display:"flex",alignItems:"center",gap:10}}>
+                <span style={{fontSize:12,fontWeight:800,color:C.gold,minWidth:42}}>{div}</span>
+                <select value={scope} onChange={e=>setEmailGroupScope(prev=>({...prev,[div]:e.target.value}))}
+                  style={{...inpStyle,padding:"6px 10px",fontSize:12,cursor:"pointer",minWidth:190,color:scope==="none"?C.mut:C.text}}>
+                  <option value="none">None</option>
+                  <option value="all">All ({cnt("all")})</option>
+                  <option value="tryout">Tryout signups ({cnt("tryout")})</option>
+                  <option value="eval">Eval signups ({cnt("eval")})</option>
+                </select>
+              </div>
+            );
+          })}
         </div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",marginBottom:10}}>
           <label style={{display:"flex",alignItems:"center",gap:5,fontSize:11,fontWeight:700,color:C.mut}}>Team
@@ -5063,8 +5083,8 @@ export default function App() {
               {STATUS_OPTS.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
           </label>
-          {(emailTeam || emailStatus || emailScope!=="all") && (
-            <button onClick={()=>{ setEmailScope("all"); setEmailTeam(""); setEmailStatus(""); }} style={{padding:"5px 10px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Clear filters</button>
+          {(emailTeam || emailStatus || Object.keys(emailGroupScope).length > 0) && (
+            <button onClick={()=>{ setEmailGroupScope({}); setEmailTeam(""); setEmailStatus(""); }} style={{padding:"5px 10px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Clear filters</button>
           )}
         </div>
 
