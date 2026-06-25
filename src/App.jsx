@@ -659,6 +659,8 @@ export default function App() {
     return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-01";
   });
   const [addingTournament, setAddingTournament]             = useState(false);
+  const [addingCoach, setAddingCoach]                       = useState(false);
+  const [newCoach, setNewCoach]                             = useState({ first_name:"", last_name:"", email:"", phone:"", tshirt_size:"", shoe_size:"", sweatshirt_size:"", notes:"" });
   const [editingTournament, setEditingTournament]           = useState(null);
   const [newTournament, setNewTournament]                   = useState({ name: "", start_date: "", end_date: "", location: "", venue: "", age_low: "", age_high: "", gender: "Female", is_qualifier: false, source: "manual", status: "", notes: "", divisions: [], entries: [] });
   const [bulkImportOpen, setBulkImportOpen]                 = useState(false);
@@ -3484,6 +3486,58 @@ export default function App() {
     );
   }
 
+  // Add-Coach modal — fill in the new coach's details, then insert on Save
+  // (no roster row is created until Save).
+  function renderAddCoach() {
+    const lbl = {fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut,marginBottom:4,display:"block"};
+    const editInp = {...inpStyle,width:"100%",padding:"8px 10px",fontSize:13};
+    const setF = (k,v) => setNewCoach(prev => ({...prev,[k]:v}));
+    const close = () => setAddingCoach(false);
+    const save = async () => {
+      const c = newCoach;
+      if (!c.first_name.trim() && !c.last_name.trim()) { window.alert("Enter at least a first or last name."); return; }
+      const row = {
+        first_name: c.first_name.trim() || "?",
+        last_name:  c.last_name.trim()  || "",
+        email:      c.email.trim() || null,
+        phone:      c.phone.trim() || null,
+        tshirt_size: c.tshirt_size.trim() || null,
+        shoe_size:   c.shoe_size.trim() || null,
+        sweatshirt_size: c.sweatshirt_size.trim() || null,
+        notes:      c.notes.trim() || null,
+      };
+      const { error } = await supabase.from("coach_roster").insert(row);
+      if (error) { window.alert("Add failed: " + error.message); return; }
+      setAddingCoach(false);
+      await loadCoachRoster();
+    };
+    return (
+      <div onClick={close} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:1000,display:"flex",justifyContent:"center",padding:"30px 16px",overflowY:"auto"}}>
+        <div onClick={e=>e.stopPropagation()} style={{background:C.card,borderRadius:16,border:"1px solid "+C.border,maxWidth:520,width:"100%",maxHeight:"90vh",overflowY:"auto",padding:24}}>
+          <div style={{display:"flex",justifyContent:"space-between",marginBottom:14}}>
+            <h2 style={{margin:0,fontSize:18,fontWeight:800,color:C.gold}}>Add Coach</h2>
+            <button onClick={close} style={{background:"none",border:"none",color:C.mut,fontSize:22,cursor:"pointer"}}>×</button>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
+            <div><span style={lbl}>First Name *</span><input autoFocus style={editInp} value={newCoach.first_name} onChange={e=>setF("first_name",e.target.value)} placeholder="First" /></div>
+            <div><span style={lbl}>Last Name</span><input style={editInp} value={newCoach.last_name} onChange={e=>setF("last_name",e.target.value)} placeholder="Last" /></div>
+            <div><span style={lbl}>Email</span><input type="email" style={editInp} value={newCoach.email} onChange={e=>setF("email",e.target.value)} placeholder="name@example.com" /></div>
+            <div><span style={lbl}>Phone</span><input style={editInp} value={newCoach.phone} onChange={e=>setF("phone",e.target.value)} placeholder="555-555-5555" /></div>
+            <div><span style={lbl}>T-shirt</span><input style={editInp} value={newCoach.tshirt_size} onChange={e=>setF("tshirt_size",e.target.value)} placeholder="M" /></div>
+            <div><span style={lbl}>Shoe</span><input style={editInp} value={newCoach.shoe_size} onChange={e=>setF("shoe_size",e.target.value)} placeholder="9.5 W" /></div>
+            <div><span style={lbl}>Sweatshirt</span><input style={editInp} value={newCoach.sweatshirt_size} onChange={e=>setF("sweatshirt_size",e.target.value)} placeholder="L" /></div>
+            <div style={{gridColumn:"1 / -1"}}><span style={lbl}>Notes</span><textarea style={{...editInp,minHeight:60,resize:"vertical"}} value={newCoach.notes} onChange={e=>setF("notes",e.target.value)} /></div>
+          </div>
+          <div style={{fontSize:11,color:C.mut,marginBottom:12}}>Account-only settings (Approved, Admin, Teams access, Age groups) appear once the coach signs up with this email, or you can set them in the table after saving.</div>
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+            <button onClick={close} style={{padding:"10px 18px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Cancel</button>
+            <button onClick={save} style={{padding:"10px 18px",borderRadius:8,border:"none",background:C.gold,color:"#000",fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Save coach</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   function renderCoaches() {
     if (!isAdmin) {
       return <div style={{padding:24,color:C.mut,textAlign:"center"}}>The Coaches screen is restricted to admins.</div>;
@@ -3563,11 +3617,8 @@ export default function App() {
             <div style={{fontSize:11,color:C.mut,marginTop:2}}>{merged.length} total · {coachesList.length} with login · {pending.length} awaiting approval</div>
           </div>
           <div style={{display:"flex",gap:8}}>
-            <button onClick={async () => {
-              const { error } = await supabase.from("coach_roster").insert({ first_name: "New", last_name: "Coach" });
-              if (error) { window.alert("Add failed: " + error.message); return; }
-              await loadCoachRoster();
-            }} style={{padding:"6px 14px",borderRadius:8,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>
+            <button onClick={() => { setNewCoach({ first_name:"", last_name:"", email:"", phone:"", tshirt_size:"", shoe_size:"", sweatshirt_size:"", notes:"" }); setAddingCoach(true); }}
+              style={{padding:"6px 14px",borderRadius:8,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>
               + Add Coach
             </button>
             <button onClick={exportCoachesCSV}
@@ -7208,6 +7259,7 @@ export default function App() {
       {coachCardName && renderCoachCard()}
       {addingPlayer && renderAddPlayer()}
       {addingTournament && renderAddTournament()}
+      {addingCoach && renderAddCoach()}
       {bulkImportOpen && renderBulkImport()}
     </div>
   );
