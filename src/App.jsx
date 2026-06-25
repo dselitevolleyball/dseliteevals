@@ -3015,12 +3015,12 @@ export default function App() {
               <DebouncedField key={key + "-" + phUnit} style={editInp} placeholder={isCm ? phCm : phIn}
                 value={toDisp(p[key])} onCommit={v => upd(p.id, { [key]: fromInput(v) })} />
             );
-            const vDisp = verticalVal == null ? "—" : (isCm ? (verticalVal * CM).toFixed(1) + " cm" : verticalVal.toFixed(1) + '"');
             return (
             <div style={{marginBottom:16}}>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6,gap:8,flexWrap:"wrap"}}>
                 <span style={{...lbl,marginBottom:0}}>Tryout — Physical Testing</span>
-                <div style={{display:"inline-flex",border:"1px solid "+C.border,borderRadius:8,overflow:"hidden"}} title="Height fields are stored in inches; pick how you want to type them">
+                <div style={{display:"inline-flex",border:"1px solid "+C.border,borderRadius:8,overflow:"hidden"}} title="Jump Touch & Approach Touch — type in inches or cm (stored as inches). Stand & Reach is always inches.">
+                  <span style={{fontSize:9,fontWeight:700,color:C.mut,alignSelf:"center",padding:"0 6px",textTransform:"uppercase"}}>Touch</span>
                   {["in","cm"].map(opt => (
                     <button key={opt} type="button" onClick={()=>setPhUnit(opt)}
                       style={{padding:"3px 12px",border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:800,textTransform:"uppercase",background:phUnit===opt?C.gold:"transparent",color:phUnit===opt?"#000":C.mut}}>{opt}</button>
@@ -3028,14 +3028,14 @@ export default function App() {
                 </div>
               </div>
               <div style={{background:C.bg,borderRadius:10,padding:14,display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:12,alignItems:"start"}}>
-                <div><span style={lbl}>Stand &amp; Reach ({u})</span>{heightField("stand_reach","e.g. 84","e.g. 213")}</div>
+                <div><span style={lbl}>Stand &amp; Reach (in)</span><DebouncedField style={editInp} placeholder='e.g. 84' value={p.stand_reach==null?"":String(p.stand_reach)} onCommit={v=>{const n=parseFloat(v); upd(p.id,{stand_reach:(v.trim()===""||isNaN(n))?null:n});}} /></div>
                 <div><span style={lbl}>Jump Touch ({u})</span>{heightField("jump_touch","e.g. 102","e.g. 259")}</div>
                 <div><span style={lbl}>Approach Touch ({u})</span>{heightField("approach_touch","e.g. 108","e.g. 274")}</div>
-                <div><span style={lbl}>Vertical (auto, {u})</span><div style={{...editInp,display:"flex",alignItems:"center",minHeight:36,fontWeight:800,color:verticalVal!=null?C.grn:C.mut,background:C.card}} title="Jump Touch − Stand &amp; Reach">{vDisp}</div></div>
+                <div><span style={lbl}>Vertical (auto, in)</span><div style={{...editInp,display:"flex",alignItems:"center",minHeight:36,fontWeight:800,color:verticalVal!=null?C.grn:C.mut,background:C.card}} title="Jump Touch − Stand &amp; Reach">{verticalVal!=null?verticalVal.toFixed(1)+'"':"—"}</div></div>
                 <div><span style={lbl}>10 Yard Run (sec)</span><DebouncedField style={editInp} placeholder='e.g. 1.85' value={p.sprint_10y==null?"":String(p.sprint_10y)} onCommit={v=>{const n=parseFloat(v); upd(p.id,{sprint_10y:(v.trim()===""||isNaN(n))?null:n});}} /></div>
                 <div><span style={lbl}>Tryout Attended</span><label style={{display:"flex",alignItems:"center",gap:8,padding:"9px 4px",cursor:"pointer"}}><input type="checkbox" checked={!!p.tryout_attended} onChange={e=>upd(p.id,{tryout_attended:e.target.checked})} style={{width:18,height:18,accentColor:C.gold,cursor:"pointer"}} /><span style={{fontSize:13,fontWeight:600,color:p.tryout_attended?C.grn:C.mut}}>{p.tryout_attended?"Present":"Not marked"}</span></label></div>
               </div>
-              {isCm && <div style={{fontSize:10,color:C.mut,marginTop:6}}>Entering in cm — values are converted to and stored in inches (÷ 2.54), so the chart and exports stay in inches.</div>}
+              {isCm && <div style={{fontSize:10,color:C.mut,marginTop:6}}>Jump Touch &amp; Approach Touch entered in cm are converted to inches (÷ 2.54) for storage. Stand &amp; Reach and Vertical stay in inches.</div>}
             </div>
             );
           })()}
