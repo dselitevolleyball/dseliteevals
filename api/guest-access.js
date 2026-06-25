@@ -43,6 +43,14 @@ export default async function handler(req, res) {
   const ageGroups = Array.isArray(body && body.ageGroups) ? body.ageGroups.filter(x => typeof x === "string") : [];
   if (password.length < 6) return res.status(400).json({ error: "Password must be at least 6 characters." });
 
+  // 2b. Allowlist the guest email — the handle_new_user trigger blocks signups
+  //     whose email isn't allowlisted, which otherwise fails user creation.
+  const { error: allowErr } = await admin.from("allowed_signup_emails").upsert(
+    { email: GUEST_EMAIL, added_by_name: "Guest login", note: "Shared-device guest login" },
+    { onConflict: "email" }
+  );
+  if (allowErr) return res.status(500).json({ error: "Allowlist update failed: " + allowErr.message });
+
   // 3. Create the guest auth user (or update its password if it exists).
   let guestId;
   const { data: created, error: createErr } = await admin.auth.admin.createUser({
