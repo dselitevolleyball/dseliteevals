@@ -36,6 +36,9 @@ const TEAM_PLAN_2026 = {
   U16: { national: 1, regional: 1, rise: 0 },
 };
 const EVAL_DATES = ["5/13","5/14","5/20","5/21","5/27","5/28","6/3","6/4","6/9","6/10"];
+// Internal identifier for the single shared "guest" login. The shared-device
+// user only ever types a password; this email is filled in automatically.
+const GUEST_EMAIL = "guest@dselitevolleyball.com";
 // Player status — kept in sync with the team-card "+offer" chip (offer_status).
 // The first six mirror the chip's cycle; the last two are board placements.
 const STATUS_OPTS = ["In Progress","Locked","Offered","Accepted","Waiting","Declined","Open Team","Not Invited"];
@@ -661,6 +664,10 @@ export default function App() {
   const [addingTournament, setAddingTournament]             = useState(false);
   const [addingCoach, setAddingCoach]                       = useState(false);
   const [newCoach, setNewCoach]                             = useState({ first_name:"", last_name:"", email:"", phone:"", tshirt_size:"", shoe_size:"", sweatshirt_size:"", notes:"" });
+  const [guestPassword, setGuestPassword]                   = useState("");
+  const [guestAgeGroups, setGuestAgeGroups]                 = useState([]);
+  const [guestBusy, setGuestBusy]                           = useState(false);
+  const [guestMsg, setGuestMsg]                             = useState("");
   const [editingTournament, setEditingTournament]           = useState(null);
   const [newTournament, setNewTournament]                   = useState({ name: "", start_date: "", end_date: "", location: "", venue: "", age_low: "", age_high: "", gender: "Female", is_qualifier: false, source: "manual", status: "", notes: "", divisions: [], entries: [] });
   const [bulkImportOpen, setBulkImportOpen]                 = useState(false);
@@ -1867,6 +1874,19 @@ export default function App() {
   if (!session) {
     const submitAuth = async (e) => {
       if (e && e.preventDefault) e.preventDefault();
+      // Guest / shared-device login — password only, fixed internal email.
+      if (loginMode === "guest") {
+        const pw = loginPassword;
+        if (!pw) { setLoginError("Enter the guest password."); return; }
+        setLoginBusy(true); setLoginError(""); setLoginInfo("");
+        try {
+          const { error } = await supabase.auth.signInWithPassword({ email: GUEST_EMAIL, password: pw });
+          if (error) throw error;
+        } catch (err) {
+          setLoginError((err && err.message) || "Guest sign-in failed. Check the password, or ask the admin to set up the guest login.");
+        } finally { setLoginBusy(false); }
+        return;
+      }
       const email    = loginEmail.trim();
       const password = loginPassword;
       if (!email || !password) { setLoginError("Email and password are required."); return; }
@@ -1945,14 +1965,18 @@ export default function App() {
             <div style={{fontSize:28,fontWeight:800,color:C.gold,marginBottom:4}}>◆ DS ELITE</div>
             <div style={{fontSize:13,color:C.mut}}>Tryout Evaluations 2026-27</div>
           </div>
-          <div style={{display:"flex",gap:4,marginBottom:18,background:C.bg,borderRadius:8,padding:3}}>
-            {["login","signup"].map(m => (
-              <button key={m} type="button" onClick={()=>{setLoginMode(m);setLoginError("");setLoginInfo("");}}
-                style={{flex:1,padding:"8px 0",borderRadius:6,border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700,background:loginMode===m?C.gold:"transparent",color:loginMode===m?"#000":C.mut}}>
-                {m === "login" ? "Sign In" : "Sign Up"}
-              </button>
-            ))}
-          </div>
+          {loginMode === "guest" ? (
+            <div style={{textAlign:"center",marginBottom:16,fontSize:12,color:C.mut}}>Shared-device guest login — enter the guest password.</div>
+          ) : (
+            <div style={{display:"flex",gap:4,marginBottom:18,background:C.bg,borderRadius:8,padding:3}}>
+              {["login","signup"].map(m => (
+                <button key={m} type="button" onClick={()=>{setLoginMode(m);setLoginError("");setLoginInfo("");}}
+                  style={{flex:1,padding:"8px 0",borderRadius:6,border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700,background:loginMode===m?C.gold:"transparent",color:loginMode===m?"#000":C.mut}}>
+                  {m === "login" ? "Sign In" : "Sign Up"}
+                </button>
+              ))}
+            </div>
+          )}
           {loginMode === "signup" && (
             <label style={{display:"block",marginBottom:10}}>
               <span style={{fontSize:11,fontWeight:700,color:C.mut,textTransform:"uppercase"}}>Display Name</span>
@@ -1960,11 +1984,13 @@ export default function App() {
                 style={{...inpStyle,width:"100%",padding:"10px 14px",fontSize:14,marginTop:3}} />
             </label>
           )}
-          <label style={{display:"block",marginBottom:10}}>
-            <span style={{fontSize:11,fontWeight:700,color:C.mut,textTransform:"uppercase"}}>Email</span>
-            <input type="email" value={loginEmail} onChange={e=>setLoginEmail(e.target.value)} autoComplete="email" autoFocus
-              style={{...inpStyle,width:"100%",padding:"10px 14px",fontSize:14,marginTop:3}} />
-          </label>
+          {loginMode !== "guest" && (
+            <label style={{display:"block",marginBottom:10}}>
+              <span style={{fontSize:11,fontWeight:700,color:C.mut,textTransform:"uppercase"}}>Email</span>
+              <input type="email" value={loginEmail} onChange={e=>setLoginEmail(e.target.value)} autoComplete="email" autoFocus
+                style={{...inpStyle,width:"100%",padding:"10px 14px",fontSize:14,marginTop:3}} />
+            </label>
+          )}
           <label style={{display:"block",marginBottom:14}}>
             <span style={{fontSize:11,fontWeight:700,color:C.mut,textTransform:"uppercase"}}>Password</span>
             <input type="password" value={loginPassword} onChange={e=>setLoginPassword(e.target.value)} autoComplete={loginMode==="signup"?"new-password":"current-password"} minLength={6}
@@ -1974,8 +2000,13 @@ export default function App() {
           {loginInfo  && <div style={{fontSize:12,color:C.grn,marginBottom:10,whiteSpace:"pre-wrap"}}>{loginInfo}</div>}
           <button type="submit" disabled={loginBusy}
             style={{width:"100%",padding:"12px",borderRadius:8,border:"none",background:loginBusy?C.border:C.gold,color:loginBusy?C.mut:"#000",fontFamily:"inherit",fontSize:14,fontWeight:700,cursor:loginBusy?"default":"pointer"}}>
-            {loginBusy ? "Please wait…" : (loginMode==="signup" ? "Create Account" : "Sign In")}
+            {loginBusy ? "Please wait…" : (loginMode==="signup" ? "Create Account" : loginMode==="guest" ? "Sign in as guest" : "Sign In")}
           </button>
+          <div style={{textAlign:"center",marginTop:12}}>
+            {loginMode === "guest"
+              ? <button type="button" onClick={()=>{setLoginMode("login");setLoginError("");setLoginInfo("");setLoginPassword("");}} style={{background:"none",border:"none",color:C.mut,fontFamily:"inherit",fontSize:11,cursor:"pointer",textDecoration:"underline"}}>← Back to coach sign in</button>
+              : <button type="button" onClick={()=>{setLoginMode("guest");setLoginError("");setLoginInfo("");setLoginPassword("");}} style={{background:"none",border:"none",color:C.mut,fontFamily:"inherit",fontSize:11,cursor:"pointer",textDecoration:"underline"}}>Guest / shared-device login →</button>}
+          </div>
           {loginMode === "login" && (
             <div style={{textAlign:"center",marginTop:12}}>
               <button type="button"
@@ -3545,6 +3576,26 @@ export default function App() {
     const th = {padding:"8px 10px",textAlign:"left",fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut,borderBottom:"1px solid "+C.border,background:C.card,whiteSpace:"nowrap"};
     const td = {padding:"8px 10px",fontSize:12,borderBottom:"1px solid "+C.border,verticalAlign:"middle"};
     const pending = coachesList.filter(c => !c.is_approved);
+    const guestCoach = coachesList.find(c => (c.email||"").toLowerCase() === GUEST_EMAIL);
+    const toggleGuestDiv = (dv) => setGuestAgeGroups(prev => prev.includes(dv) ? prev.filter(x=>x!==dv) : [...prev, dv]);
+    const saveGuestLogin = async () => {
+      if (guestPassword.trim().length < 6) { setGuestMsg("Password must be at least 6 characters."); return; }
+      setGuestBusy(true); setGuestMsg("");
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        const res = await fetch("/api/guest-access", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: "Bearer " + (session?.access_token || "") },
+          body: JSON.stringify({ password: guestPassword.trim(), ageGroups: guestAgeGroups }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Failed");
+        setGuestMsg("✓ Guest login saved — age groups: " + (guestAgeGroups.join(", ") || "(all)") + ". Share the password for shared devices; replies come to you.");
+        setGuestPassword("");
+        loadCoaches();
+      } catch (e) { setGuestMsg("Error: " + ((e && e.message) || "request failed")); }
+      finally { setGuestBusy(false); }
+    };
     return (
       <div>
         {/* Signup allowlist — only emails in this list are permitted to create
@@ -3589,6 +3640,41 @@ export default function App() {
           <div style={{fontSize:10,color:C.mut,marginTop:8,lineHeight:1.5}}>
             Green chips have already signed up and appear in the Coaches list below. Removing an email here does not delete an existing account — use the Coaches list for that.
           </div>
+        </div>
+
+        {/* Guest / shared-device login — one password-only login scoped to
+            chosen age groups, for tablets at tryouts etc. */}
+        <div style={{background:C.card,borderRadius:12,border:"1px solid "+C.border,padding:"16px 18px",marginBottom:18}}>
+          <div style={{marginBottom:8}}>
+            <h3 style={{margin:0,fontSize:14,fontWeight:800,color:C.gold,letterSpacing:0.5}}>GUEST / SHARED-DEVICE LOGIN</h3>
+            <div style={{fontSize:11,color:C.mut,marginTop:2,lineHeight:1.5}}>
+              One password-only login for shared devices. It has full access to the age groups you pick (no email needed — coaches just enter the password via the "Guest / shared-device login" link on the sign-in screen).
+              {guestCoach
+                ? <> Currently scoped to: <b style={{color:C.text}}>{(guestCoach.team_divs||[]).join(", ") || "all age groups"}</b>.</>
+                : <> Not set up yet.</>}
+            </div>
+          </div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:10}}>
+            {DIVS.map(dv => {
+              const on = guestAgeGroups.includes(dv);
+              return (
+                <button key={dv} onClick={()=>toggleGuestDiv(dv)}
+                  style={{padding:"4px 10px",borderRadius:8,border:"1px solid "+(on?C.gold:C.border),background:on?C.gold+"22":"transparent",color:on?C.gold:C.mut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+                  {dv}
+                </button>
+              );
+            })}
+            <span style={{fontSize:10,color:C.mut,alignSelf:"center",marginLeft:4}}>{guestAgeGroups.length===0?"none selected = all age groups":guestAgeGroups.length+" selected"}</span>
+          </div>
+          <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+            <input type="text" value={guestPassword} onChange={e=>setGuestPassword(e.target.value)} placeholder="Set guest password (min 6 chars)"
+              style={{...inpStyle,flex:"1 1 240px",padding:"9px 12px",fontSize:13}} />
+            <button onClick={saveGuestLogin} disabled={guestBusy || guestPassword.trim().length<6}
+              style={{padding:"9px 18px",borderRadius:8,border:"none",background:(guestBusy||guestPassword.trim().length<6)?C.border:C.gold,color:(guestBusy||guestPassword.trim().length<6)?C.mut:"#000",fontFamily:"inherit",fontSize:13,fontWeight:700,cursor:(guestBusy||guestPassword.trim().length<6)?"default":"pointer"}}>
+              {guestBusy ? "Saving…" : (guestCoach ? "Update guest login" : "Create guest login")}
+            </button>
+          </div>
+          {guestMsg && <div style={{marginTop:8,fontSize:12,fontWeight:600,color:guestMsg.startsWith("Error")?C.red:C.grn}}>{guestMsg}</div>}
         </div>
 
         {/* Merged coach directory — every club coach (roster + login
