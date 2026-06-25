@@ -2895,6 +2895,8 @@ export default function App() {
       { key:"total",  label:"Total",  sortable:true,  defDir:"desc", get:p=>tot(p) },
       { key:"avg",    label:"Avg",    sortable:true,  defDir:"desc", get:p=>parseFloat(avg(p))||0 },
       { key:"dash",   label:"10yd Dash", sortable:true, defDir:"asc", get:p=>{ const v=parseFloat(p.sprint_10y); return Number.isFinite(v)?v:Infinity; } },
+      { key:"jumpt",  label:"Jump Tch",  sortable:true, defDir:"desc", get:p=>{ const v=parseFloat(p.jump_touch);     return Number.isFinite(v)?v:-1; } },
+      { key:"appt",   label:"Appr Tch",  sortable:true, defDir:"desc", get:p=>{ const v=parseFloat(p.approach_touch); return Number.isFinite(v)?v:-1; } },
       { key:"vert",   label:"Vert",   sortable:true,  defDir:"desc", get:p=>{ const v=vertical(p); return v==null?-1:v; } },
       { key:"team",   label:"Team",   sortable:true,  defDir:"asc",  get:p=>p.team_assignment||"" },
     ];
@@ -2962,6 +2964,8 @@ export default function App() {
                   <td style={tdS}><span style={{fontWeight:800,fontSize:15,color:C.gold}}>{tot(p)}</span></td>
                   <td style={tdS}><span style={{fontWeight:600}}>{avg(p)}</span></td>
                   <td style={tdS}><span style={{fontWeight:600,color:(p.sprint_10y!=null&&p.sprint_10y!=="")?C.text:C.mut}}>{(p.sprint_10y!=null&&p.sprint_10y!=="")?p.sprint_10y+"s":"—"}</span></td>
+                  <td style={tdS}><span style={{fontWeight:600,color:(p.jump_touch!=null&&p.jump_touch!=="")?C.text:C.mut}}>{(p.jump_touch!=null&&p.jump_touch!=="")?p.jump_touch+'"':"—"}</span></td>
+                  <td style={tdS}><span style={{fontWeight:600,color:(p.approach_touch!=null&&p.approach_touch!=="")?C.text:C.mut}}>{(p.approach_touch!=null&&p.approach_touch!=="")?p.approach_touch+'"':"—"}</span></td>
                   <td style={tdS}><span style={{fontWeight:700,color:vertical(p)!=null?C.grn:C.mut}}>{vertical(p)!=null?vertical(p).toFixed(1)+'"':"—"}</span></td>
                   <td style={tdS}>{p.team_assignment
                     ? <span onClick={e=>{e.stopPropagation();setTeamCardName(p.team_assignment);}} style={{cursor:"pointer"}} title="Open team card"><Tag c={C.grn}>{p.team_assignment}</Tag></span>
