@@ -4714,6 +4714,10 @@ export default function App() {
       { key:"lead_coaches",       label:"Lead Coach",       color:C.gold },
       { key:"court_coaches",      label:"Court Coach",      color:"#06b6d4" },
       { key:"evaluating_coaches", label:"Evaluating Coach", color:C.acc },
+      { key:"checkin_coaches",     label:"Check In",              color:"#22c55e" },
+      { key:"stand_reach_coaches", label:"Stand & Reach",        color:"#f59e0b" },
+      { key:"jump_touch_coaches",  label:"Approach & Jump Touch", color:"#a855f7" },
+      { key:"shuttle_coaches",     label:"Shuttle Run",          color:"#3b82f6" },
     ];
     // Coach roster is the single source of truth for who can be assigned.
     // Names formatted "First Last" — sorted alphabetically — and de-duped
