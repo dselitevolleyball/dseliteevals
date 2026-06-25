@@ -7140,8 +7140,15 @@ export default function App() {
       return { lo: mn - pad, hi: mx + pad };
     };
     const xR = axisRange(rows.map(r => r.x)), yR = axisRange(rows.map(r => r.y));
-    const xPct = v => xR.hi === xR.lo ? 50 : ((v - xR.lo) / (xR.hi - xR.lo)) * 100;
-    const yPct = v => yR.hi === yR.lo ? 50 : ((v - yR.lo) / (yR.hi - yR.lo)) * 100;
+    // For lower-is-better metrics (e.g. 10 Yard Run) invert the axis so the
+    // better (lower) value sits at the "good" end — right on X, top on Y.
+    const xFrac = v => xR.hi === xR.lo ? 0.5 : (v - xR.lo) / (xR.hi - xR.lo);
+    const yFrac = v => yR.hi === yR.lo ? 0.5 : (v - yR.lo) / (yR.hi - yR.lo);
+    const xPct = v => 100 * (xCfg.lowerBetter ? 1 - xFrac(v) : xFrac(v));
+    const yPct = v => 100 * (yCfg.lowerBetter ? 1 - yFrac(v) : yFrac(v));
+    // Tick value at a given left→right (X) / bottom→top (Y) percent, honoring inversion.
+    const xTickVal = t => xCfg.lowerBetter ? xR.hi - (t/100)*(xR.hi-xR.lo) : xR.lo + (t/100)*(xR.hi-xR.lo);
+    const yTickVal = t => yCfg.lowerBetter ? yR.hi - (t/100)*(yR.hi-yR.lo) : yR.lo + (t/100)*(yR.hi-yR.lo);
 
     const sel = {...inpStyle,padding:"7px 10px",fontSize:12,cursor:"pointer"};
     const metricOpts = (exclude) => Object.entries(METRICS).map(([k,cfg]) =>
@@ -7197,7 +7204,7 @@ export default function App() {
             <div style={{display:"flex"}}>
               <div style={{display:"flex",alignItems:"center",justifyContent:"center",width:20}}>
                 <span style={{transform:"rotate(-90deg)",whiteSpace:"nowrap",fontSize:11,fontWeight:700,color:C.text}}>
-                  {yCfg.label} ({yCfg.unit}){yCfg.lowerBetter?" · lower better":""}
+                  {yCfg.label} ({yCfg.unit}){yCfg.lowerBetter?" · better ↑":""}
                 </span>
               </div>
               <div style={{flex:1}}>
@@ -7206,7 +7213,7 @@ export default function App() {
                   <div style={{position:"relative",width:GUTTER,height:PLOT_H}}>
                     {[0,25,50,75,100].map(t => (
                       <span key={t} style={{position:"absolute",right:6,bottom:"calc("+t+"% - 6px)",fontSize:10,color:C.mut}}>
-                        {yCfg.fmt(yR.lo + (t/100)*(yR.hi-yR.lo))}
+                        {yCfg.fmt(yTickVal(t))}
                       </span>
                     ))}
                   </div>
@@ -7235,14 +7242,14 @@ export default function App() {
                   <div style={{position:"relative",flex:1,height:16,fontSize:10,color:C.mut,marginTop:2}}>
                     {[0,25,50,75,100].map(t => (
                       <span key={t} style={{position:"absolute",left:t+"%",transform:t===0?"none":t===100?"translateX(-100%)":"translateX(-50%)"}}>
-                        {xCfg.fmt(xR.lo + (t/100)*(xR.hi-xR.lo))}
+                        {xCfg.fmt(xTickVal(t))}
                       </span>
                     ))}
                   </div>
                 </div>
                 {/* X axis label */}
                 <div style={{textAlign:"center",marginLeft:GUTTER,marginTop:6,fontSize:11,fontWeight:700,color:C.text}}>
-                  {xCfg.label} ({xCfg.unit}){xCfg.lowerBetter?" · lower (left) = faster":""}
+                  {xCfg.label} ({xCfg.unit}){xCfg.lowerBetter?" · faster → (right)":""}
                 </div>
               </div>
             </div>
