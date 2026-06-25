@@ -2971,8 +2971,9 @@ export default function App() {
             <div style={{background:C.bg,borderRadius:10,padding:14,display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:12,alignItems:"start"}}>
               <div><span style={lbl}>Stand &amp; Reach (in)</span><DebouncedField style={editInp} placeholder='e.g. 84' value={p.stand_reach==null?"":String(p.stand_reach)} onCommit={v=>{const n=parseFloat(v); upd(p.id,{stand_reach:(v.trim()===""||isNaN(n))?null:n});}} /></div>
               <div><span style={lbl}>Jump Touch (in)</span><DebouncedField style={editInp} placeholder='e.g. 102' value={p.jump_touch==null?"":String(p.jump_touch)} onCommit={v=>{const n=parseFloat(v); upd(p.id,{jump_touch:(v.trim()===""||isNaN(n))?null:n});}} /></div>
+              <div><span style={lbl}>Approach Touch (in)</span><DebouncedField style={editInp} placeholder='e.g. 108' value={p.approach_touch==null?"":String(p.approach_touch)} onCommit={v=>{const n=parseFloat(v); upd(p.id,{approach_touch:(v.trim()===""||isNaN(n))?null:n});}} /></div>
               <div><span style={lbl}>Vertical (auto, in)</span><div style={{...editInp,display:"flex",alignItems:"center",minHeight:36,fontWeight:800,color:verticalVal!=null?C.grn:C.mut,background:C.card}} title="Jump Touch − Stand &amp; Reach">{verticalVal!=null?verticalVal.toFixed(1)+'"':"—"}</div></div>
-              <div><span style={lbl}>10-yd Sprint (sec)</span><DebouncedField style={editInp} placeholder='e.g. 1.85' value={p.sprint_10y==null?"":String(p.sprint_10y)} onCommit={v=>{const n=parseFloat(v); upd(p.id,{sprint_10y:(v.trim()===""||isNaN(n))?null:n});}} /></div>
+              <div><span style={lbl}>10 Yard Run (sec)</span><DebouncedField style={editInp} placeholder='e.g. 1.85' value={p.sprint_10y==null?"":String(p.sprint_10y)} onCommit={v=>{const n=parseFloat(v); upd(p.id,{sprint_10y:(v.trim()===""||isNaN(n))?null:n});}} /></div>
               <div><span style={lbl}>Tryout Attended</span><label style={{display:"flex",alignItems:"center",gap:8,padding:"9px 4px",cursor:"pointer"}}><input type="checkbox" checked={!!p.tryout_attended} onChange={e=>upd(p.id,{tryout_attended:e.target.checked})} style={{width:18,height:18,accentColor:C.gold,cursor:"pointer"}} /><span style={{fontSize:13,fontWeight:600,color:p.tryout_attended?C.grn:C.mut}}>{p.tryout_attended?"Present":"Not marked"}</span></label></div>
             </div>
           </div>
@@ -6946,9 +6947,11 @@ export default function App() {
   // above; team/position filter locally.
   function renderPhysicalTesting() {
     const METRICS = {
-      sprint_10y: { label:"10-yd Sprint", unit:"s",  get:p=>{const v=parseFloat(p.sprint_10y); return Number.isFinite(v)?v:null;}, lowerBetter:true,  fmt:v=>v.toFixed(2) },
-      vertical:   { label:"Vertical",     unit:'"',  get:p=>vertical(p),                                                          lowerBetter:false, fmt:v=>v.toFixed(1) },
-      jump_touch: { label:"Jump Touch",   unit:'"',  get:p=>{const v=parseFloat(p.jump_touch); return Number.isFinite(v)?v:null;}, lowerBetter:false, fmt:v=>v.toFixed(1) },
+      jump_touch:     { label:"Jump Touch",     unit:'"', get:p=>{const v=parseFloat(p.jump_touch);     return Number.isFinite(v)?v:null;}, lowerBetter:false, fmt:v=>v.toFixed(1) },
+      approach_touch: { label:"Approach Touch", unit:'"', get:p=>{const v=parseFloat(p.approach_touch); return Number.isFinite(v)?v:null;}, lowerBetter:false, fmt:v=>v.toFixed(1) },
+      vertical:       { label:"Vertical",       unit:'"', get:p=>vertical(p),                                                            lowerBetter:false, fmt:v=>v.toFixed(1) },
+      sprint_10y:     { label:"10 Yard Run",    unit:"s", get:p=>{const v=parseFloat(p.sprint_10y);     return Number.isFinite(v)?v:null;}, lowerBetter:true,  fmt:v=>v.toFixed(2) },
+      stand_reach:    { label:"Stand & Reach",  unit:'"', get:p=>{const v=parseFloat(p.stand_reach);    return Number.isFinite(v)?v:null;}, lowerBetter:false, fmt:v=>v.toFixed(1) },
     };
     const xCfg = METRICS[ptX], yCfg = METRICS[ptY];
     const divSet = new Set(selectedDivs);
