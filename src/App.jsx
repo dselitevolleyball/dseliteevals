@@ -668,6 +668,12 @@ export default function App() {
   const [guestAgeGroups, setGuestAgeGroups]                 = useState([]);
   const [guestBusy, setGuestBusy]                           = useState(false);
   const [guestMsg, setGuestMsg]                             = useState("");
+  // Physical-testing height input unit. Values are always STORED in inches;
+  // this only controls how the form's height fields are typed/shown.
+  const [phUnit, setPhUnit] = useState(() => {
+    try { return (typeof localStorage !== "undefined" && localStorage.getItem("dse_ph_unit")) || "in"; } catch { return "in"; }
+  });
+  useEffect(() => { try { localStorage.setItem("dse_ph_unit", phUnit); } catch {} }, [phUnit]);
   const [editingTournament, setEditingTournament]           = useState(null);
   const [newTournament, setNewTournament]                   = useState({ name: "", start_date: "", end_date: "", location: "", venue: "", age_low: "", age_high: "", gender: "Female", is_qualifier: false, source: "manual", status: "", notes: "", divisions: [], entries: [] });
   const [bulkImportOpen, setBulkImportOpen]                 = useState(false);
@@ -2999,17 +3005,40 @@ export default function App() {
             </div>
           </div>
           {/* Tryout — Physical Testing */}
-          <div style={{marginBottom:16}}>
-            <span style={lbl}>Tryout — Physical Testing</span>
-            <div style={{background:C.bg,borderRadius:10,padding:14,display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:12,alignItems:"start"}}>
-              <div><span style={lbl}>Stand &amp; Reach (in)</span><DebouncedField style={editInp} placeholder='e.g. 84' value={p.stand_reach==null?"":String(p.stand_reach)} onCommit={v=>{const n=parseFloat(v); upd(p.id,{stand_reach:(v.trim()===""||isNaN(n))?null:n});}} /></div>
-              <div><span style={lbl}>Jump Touch (in)</span><DebouncedField style={editInp} placeholder='e.g. 102' value={p.jump_touch==null?"":String(p.jump_touch)} onCommit={v=>{const n=parseFloat(v); upd(p.id,{jump_touch:(v.trim()===""||isNaN(n))?null:n});}} /></div>
-              <div><span style={lbl}>Approach Touch (in)</span><DebouncedField style={editInp} placeholder='e.g. 108' value={p.approach_touch==null?"":String(p.approach_touch)} onCommit={v=>{const n=parseFloat(v); upd(p.id,{approach_touch:(v.trim()===""||isNaN(n))?null:n});}} /></div>
-              <div><span style={lbl}>Vertical (auto, in)</span><div style={{...editInp,display:"flex",alignItems:"center",minHeight:36,fontWeight:800,color:verticalVal!=null?C.grn:C.mut,background:C.card}} title="Jump Touch − Stand &amp; Reach">{verticalVal!=null?verticalVal.toFixed(1)+'"':"—"}</div></div>
-              <div><span style={lbl}>10 Yard Run (sec)</span><DebouncedField style={editInp} placeholder='e.g. 1.85' value={p.sprint_10y==null?"":String(p.sprint_10y)} onCommit={v=>{const n=parseFloat(v); upd(p.id,{sprint_10y:(v.trim()===""||isNaN(n))?null:n});}} /></div>
-              <div><span style={lbl}>Tryout Attended</span><label style={{display:"flex",alignItems:"center",gap:8,padding:"9px 4px",cursor:"pointer"}}><input type="checkbox" checked={!!p.tryout_attended} onChange={e=>upd(p.id,{tryout_attended:e.target.checked})} style={{width:18,height:18,accentColor:C.gold,cursor:"pointer"}} /><span style={{fontSize:13,fontWeight:600,color:p.tryout_attended?C.grn:C.mut}}>{p.tryout_attended?"Present":"Not marked"}</span></label></div>
+          {(() => {
+            const CM = 2.54;
+            const isCm = phUnit === "cm";
+            const u = isCm ? "cm" : "in";
+            const toDisp = (inches) => inches == null ? "" : String(isCm ? +(inches * CM).toFixed(1) : inches);
+            const fromInput = (v) => { const n = parseFloat(v); if (v.trim() === "" || isNaN(n)) return null; return isCm ? +(n / CM).toFixed(3) : n; };
+            const heightField = (key, phIn, phCm) => (
+              <DebouncedField key={key + "-" + phUnit} style={editInp} placeholder={isCm ? phCm : phIn}
+                value={toDisp(p[key])} onCommit={v => upd(p.id, { [key]: fromInput(v) })} />
+            );
+            const vDisp = verticalVal == null ? "—" : (isCm ? (verticalVal * CM).toFixed(1) + " cm" : verticalVal.toFixed(1) + '"');
+            return (
+            <div style={{marginBottom:16}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6,gap:8,flexWrap:"wrap"}}>
+                <span style={{...lbl,marginBottom:0}}>Tryout — Physical Testing</span>
+                <div style={{display:"inline-flex",border:"1px solid "+C.border,borderRadius:8,overflow:"hidden"}} title="Height fields are stored in inches; pick how you want to type them">
+                  {["in","cm"].map(opt => (
+                    <button key={opt} type="button" onClick={()=>setPhUnit(opt)}
+                      style={{padding:"3px 12px",border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:800,textTransform:"uppercase",background:phUnit===opt?C.gold:"transparent",color:phUnit===opt?"#000":C.mut}}>{opt}</button>
+                  ))}
+                </div>
+              </div>
+              <div style={{background:C.bg,borderRadius:10,padding:14,display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))",gap:12,alignItems:"start"}}>
+                <div><span style={lbl}>Stand &amp; Reach ({u})</span>{heightField("stand_reach","e.g. 84","e.g. 213")}</div>
+                <div><span style={lbl}>Jump Touch ({u})</span>{heightField("jump_touch","e.g. 102","e.g. 259")}</div>
+                <div><span style={lbl}>Approach Touch ({u})</span>{heightField("approach_touch","e.g. 108","e.g. 274")}</div>
+                <div><span style={lbl}>Vertical (auto, {u})</span><div style={{...editInp,display:"flex",alignItems:"center",minHeight:36,fontWeight:800,color:verticalVal!=null?C.grn:C.mut,background:C.card}} title="Jump Touch − Stand &amp; Reach">{vDisp}</div></div>
+                <div><span style={lbl}>10 Yard Run (sec)</span><DebouncedField style={editInp} placeholder='e.g. 1.85' value={p.sprint_10y==null?"":String(p.sprint_10y)} onCommit={v=>{const n=parseFloat(v); upd(p.id,{sprint_10y:(v.trim()===""||isNaN(n))?null:n});}} /></div>
+                <div><span style={lbl}>Tryout Attended</span><label style={{display:"flex",alignItems:"center",gap:8,padding:"9px 4px",cursor:"pointer"}}><input type="checkbox" checked={!!p.tryout_attended} onChange={e=>upd(p.id,{tryout_attended:e.target.checked})} style={{width:18,height:18,accentColor:C.gold,cursor:"pointer"}} /><span style={{fontSize:13,fontWeight:600,color:p.tryout_attended?C.grn:C.mut}}>{p.tryout_attended?"Present":"Not marked"}</span></label></div>
+              </div>
+              {isCm && <div style={{fontSize:10,color:C.mut,marginTop:6}}>Entering in cm — values are converted to and stored in inches (÷ 2.54), so the chart and exports stay in inches.</div>}
             </div>
-          </div>
+            );
+          })()}
           {/* Scores */}
           <div style={{marginBottom:14}}>
             <span style={lbl}>Evaluation Scores (tap 1-5)</span>
