@@ -813,6 +813,7 @@ export default function App() {
   const [sortBy, setSortBy] = useState("name");
   // Rankings view column sort: key matches a column id in renderRankings' COLS table.
   const [rankSort, setRankSort] = useState({ key: "total", dir: "desc" });
+  const [rankAttended, setRankAttended] = useState(false); // Rankings: show only tryout attendees
   // Rankings view date filter — independent from the Evaluate-tab date filter so
   // switching views doesn't carry the selection over.
   const [rankDate, setRankDate] = useState("");
@@ -2914,7 +2915,8 @@ export default function App() {
         if (av > bv) return  1 * dirMul;
         return cmpName(a,b);
       });
-    const shown = filterPos ? ranked.filter(p=>(p.positions||[]).includes(filterPos)) : ranked;
+    let shown = filterPos ? ranked.filter(p=>(p.positions||[]).includes(filterPos)) : ranked;
+    if (rankAttended) shown = shown.filter(p => p.tryout_attended);
     const onSort = (col) => {
       if (!col.sortable) return;
       setRankSort(prev => prev.key === col.key
@@ -2932,6 +2934,10 @@ export default function App() {
           <select style={{...inpStyle,padding:"7px 10px",fontSize:12,color:rankDate?C.gold:C.text}} value={rankDate} onChange={e=>setRankDate(e.target.value)} title="Limit rankings to players evaluated on this date">
             <option value="">All Dates</option>{EVAL_DATES.map(d=><option key={d} value={d}>{d}</option>)}
           </select>
+          <label title="Show only players marked as having attended tryouts" style={{display:"flex",alignItems:"center",gap:6,marginLeft:6,padding:"6px 10px",borderRadius:8,background:rankAttended?"rgba(34,197,94,0.14)":"transparent",border:"1px solid "+(rankAttended?C.grn:C.border),cursor:"pointer",fontSize:11,fontWeight:700,color:rankAttended?C.grn:C.mut,userSelect:"none",whiteSpace:"nowrap"}}>
+            <input type="checkbox" checked={rankAttended} onChange={e=>setRankAttended(e.target.checked)} style={{width:14,height:14,cursor:"pointer",accentColor:C.grn}} />
+            Attended tryouts
+          </label>
           <span style={{fontSize:11,color:C.mut,marginLeft:"auto"}}>{shown.length} players</span>
         </div>
         <div style={{background:C.card,borderRadius:12,border:"1px solid "+C.border,overflow:"hidden"}}>
