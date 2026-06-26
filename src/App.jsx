@@ -651,6 +651,7 @@ export default function App() {
   const [practiceTeams, setPracticeTeams]             = useState([]);
   const [practiceAssignments, setPracticeAssignments] = useState([]);
   const [saSessions, setSaSessions]                   = useState([]);
+  const [floatingCoaches, setFloatingCoaches]         = useState([]);
   const [saBlock, setSaBlock]                         = useState(
     () => (typeof localStorage !== "undefined" && localStorage.getItem("dse_sa_block")) || "fall_b1"
   );
@@ -1079,17 +1080,20 @@ export default function App() {
 
   // Practice tab loader
   const loadPractice = useCallback(async () => {
-    const [tRes, aRes, sRes] = await Promise.all([
+    const [tRes, aRes, sRes, fRes] = await Promise.all([
       supabase.from("practice_teams").select("*").order("team_name"),
       supabase.from("practice_assignments").select("*"),
       supabase.from("sa_sessions").select("*").order("session_date").order("slot"),
+      supabase.from("floating_coaches").select("name"),
     ]);
     if (tRes.error) console.error("Load practice_teams error:", tRes.error);
     if (aRes.error) console.error("Load practice_assignments error:", aRes.error);
     if (sRes.error) console.error("Load sa_sessions error:", sRes.error);
+    if (fRes.error) console.error("Load floating_coaches error:", fRes.error);
     setPracticeTeams(tRes.data || []);
     setPracticeAssignments(aRes.data || []);
     setSaSessions(sRes.data || []);
+    setFloatingCoaches((fRes.data || []).map(r => r.name));
   }, []);
   useEffect(() => { if (isApproved && (view === "practice" || view === "teamdir" || view === "home")) loadPractice(); }, [isApproved, view, loadPractice]);
   // Coach/team cards (openable from any view) need practice_teams loaded.
@@ -4720,6 +4724,17 @@ export default function App() {
       }
       await loadPractice();
     };
+    // Mark / unmark a coach as "floating" — they absorb a short (<=2h) Sunday gap.
+    const toggleFloating = async (coach) => {
+      if (floatingSet.has(coach)) {
+        const { error } = await supabase.from("floating_coaches").delete().eq("name", coach);
+        if (error) { window.alert("Remove floating failed: " + error.message); return; }
+      } else {
+        const { error } = await supabase.from("floating_coaches").insert({ name: coach });
+        if (error) { window.alert("Mark floating failed: " + error.message); return; }
+      }
+      await loadPractice();
+    };
     // Flip the lock flag on a team row. Used by the lock icon in the team-label cell.
     const toggleTeamLock = async (teamName, currentLocked) => {
       const { error } = await supabase.from("practice_teams")
@@ -4812,6 +4827,9 @@ export default function App() {
     //   coach_gap   — idle time between a coach's sessions on the same day.
     //   coach_split — a coach's teams sit on different weekdays that could be
     //                 combined onto one day, back-to-back.
+    // A coach marked "floating" absorbs a SHORT gap (<= 2h) — that becomes an
+    // info note (coach_float), not a warning. Gaps over 2h are never floatable.
+    const floatingSet = new Set(floatingCoaches);
     const slotRange = (label) => {
       const m = /^(\d+)-(\d+)pm$/.exec(label);
       if (!m) return null;
@@ -4843,8 +4861,15 @@ export default function App() {
           else merged.push({ ...it });
         }
         for (let i = 1; i < merged.length; i++) {
-          warnings.push({ kind: "coach_gap", coach,
-            text: coach + " has a " + (merged[i].start - merged[i - 1].end) + "h gap on " + day + " — idle " + fmtHr(merged[i - 1].end) + "–" + fmtHr(merged[i].start) });
+          const gapH = merged[i].start - merged[i - 1].end;
+          const base = coach + " has a " + gapH + "h gap on " + day + " — idle " + fmtHr(merged[i - 1].end) + "–" + fmtHr(merged[i].start);
+          if (gapH <= 2 && floatingSet.has(coach)) {
+            warnings.push({ kind: "coach_float", coach, text: base + " · floating coach (covered)" });
+          } else if (gapH <= 2) {
+            warnings.push({ kind: "coach_gap", coach, floatable: true, text: base });
+          } else {
+            warnings.push({ kind: "coach_gap", coach, floatable: false, text: base + " — over 2h, too long to float" });
+          }
         }
       }
       // Two teams split across separate weekdays (could pair on one day).
@@ -4857,8 +4882,10 @@ export default function App() {
       }
     }
 
-    // Group warnings by kind for the summary banner.
+    // Group warnings by kind for the summary banner. Floating-coach notes are
+    // info, not problems — they don't count toward the red warning tally.
     const grouped = warnings.reduce((acc, w) => { (acc[w.kind] ||= []).push(w); return acc; }, {});
+    const problemCount = warnings.filter(w => w.kind !== "coach_float").length;
     const warnColor = (k) =>
       k === "overflow"      ? C.red :
       k === "coach_clash"   ? C.red :
@@ -4866,7 +4893,8 @@ export default function App() {
       k === "young_late"    ? "#f59e0b" :
       k === "young_weekday" ? "#f59e0b" :
       k === "coach_gap"     ? "#f59e0b" :
-      k === "coach_split"   ? "#f59e0b" : C.mut;
+      k === "coach_split"   ? "#f59e0b" :
+      k === "coach_float"   ? "#06b6d4" : C.mut;
     const warnLabel = (k) => ({
       overflow:      "Court overflow",
       coach_clash:   "Coach double-booked",
@@ -4875,6 +4903,7 @@ export default function App() {
       young_weekday: "U11/U12 weekday wrong slot",
       coach_gap:     "Coach idle gap (same day)",
       coach_split:   "Coach split across weekdays",
+      coach_float:   "Floating coaches (gap covered)",
     })[k] || k;
 
     const thS = { padding:"6px 6px", fontSize:10, fontWeight:700, textTransform:"uppercase", color:C.mut, borderBottom:"1px solid "+C.border, background:C.card, position:"sticky", top:0, zIndex:2, whiteSpace:"nowrap" };
@@ -4891,6 +4920,24 @@ export default function App() {
     const visibleTeams = practiceCoachFilter
       ? practiceTeams.filter(t => t.head_coach === practiceCoachFilter || t.assistant_coach === practiceCoachFilter)
       : practiceTeams;
+
+    // Specific Sundays each preseason block runs. Fall dates reuse the S&A
+    // block dates; summer is every Sunday Jul 12 – Sep 6, 2026.
+    const PHASE_DATES = {
+      summer: ["2026-07-12","2026-07-19","2026-07-26","2026-08-02","2026-08-09","2026-08-16","2026-08-23","2026-08-30","2026-09-06"],
+      fall1: SA_BLOCKS.fall1.dates,
+      fall2: SA_BLOCKS.fall2.dates,
+    };
+    const fmtDates = (iso) => {
+      const MON = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+      const byMonth = new Map();
+      for (const d of iso) {
+        const [, m, day] = d.split("-").map(Number);
+        if (!byMonth.has(m)) byMonth.set(m, []);
+        byMonth.get(m).push(day);
+      }
+      return Array.from(byMonth.entries()).map(([m, days]) => MON[m - 1] + " " + days.join(", ")).join(" · ");
+    };
 
     return (
       <div>
@@ -4936,14 +4983,26 @@ export default function App() {
           </div>
           <div style={{fontSize:11,color:C.mut}}>
             {visibleTeams.length} of {practiceTeams.length} teams · {phaseAssignments.length} {schedulePhase} assignments
-            {warnings.length > 0 && <> · <b style={{color:C.red}}>{warnings.length} warning{warnings.length===1?"":"s"}</b></>}
+            {problemCount > 0 && <> · <b style={{color:C.red}}>{problemCount} warning{problemCount===1?"":"s"}</b></>}
           </div>
         </div>
+        {/* Block dates — which specific Sundays this preseason phase runs. */}
+        {PHASE_DATES[schedulePhase] && (
+          <div style={{marginBottom:12,fontSize:11,color:C.mut,background:C.card,border:"1px solid "+C.border,borderRadius:8,padding:"7px 12px"}}>
+            <b style={{color:C.gold,letterSpacing:0.5,textTransform:"uppercase",fontSize:10}}>
+              {schedulePhase==="summer"?"Summer":schedulePhase==="fall1"?"Fall 1":"Fall 2"} Sundays
+            </b>
+            <span style={{marginLeft:8,color:C.text}}>{fmtDates(PHASE_DATES[schedulePhase])}</span>
+            <span style={{marginLeft:8,color:C.mut}}>({PHASE_DATES[schedulePhase].length} weeks)</span>
+          </div>
+        )}
         {/* Warnings banner */}
         {warnings.length > 0 && (
           <details open style={{marginBottom:14,background:"rgba(239,68,68,0.06)",border:"1px solid "+C.border,borderRadius:10,padding:"10px 14px"}}>
-            <summary style={{cursor:"pointer",fontSize:12,fontWeight:800,color:C.red}}>
-              {warnings.length} conflict{warnings.length===1?"":"s"} & warning{warnings.length===1?"":"s"} detected
+            <summary style={{cursor:"pointer",fontSize:12,fontWeight:800,color:problemCount>0?C.red:"#06b6d4"}}>
+              {problemCount > 0
+                ? problemCount + " conflict" + (problemCount===1?"":"s") + " & warning" + (problemCount===1?"":"s") + " detected"
+                : "All clear — floating-coach notes below"}
             </summary>
             <div style={{marginTop:10,display:"flex",flexDirection:"column",gap:8}}>
               {Object.keys(grouped).map(k => (
@@ -4952,7 +5011,21 @@ export default function App() {
                     {warnLabel(k)} ({grouped[k].length})
                   </div>
                   {grouped[k].map((w,i) => (
-                    <div key={i} style={{fontSize:11,color:C.text,paddingLeft:10,lineHeight:1.5}}>• {w.text}</div>
+                    <div key={i} style={{fontSize:11,color:C.text,paddingLeft:10,lineHeight:1.5,display:"flex",alignItems:"center",gap:8}}>
+                      <span>• {w.text}</span>
+                      {k === "coach_gap" && w.coach && w.floatable && (
+                        <button onClick={()=>toggleFloating(w.coach)} title={"Mark " + w.coach + " as a floating coach — covers gaps up to 2h"}
+                          style={{padding:"1px 8px",borderRadius:6,border:"1px solid #06b6d4",background:"transparent",color:"#06b6d4",fontSize:10,fontWeight:800,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
+                          Make floating
+                        </button>
+                      )}
+                      {k === "coach_float" && w.coach && (
+                        <button onClick={()=>toggleFloating(w.coach)} title={"Remove floating status from " + w.coach}
+                          style={{padding:"1px 8px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:10,fontWeight:800,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
+                          Undo float
+                        </button>
+                      )}
+                    </div>
                   ))}
                 </div>
               ))}

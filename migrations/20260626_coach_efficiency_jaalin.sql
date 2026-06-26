@@ -5,9 +5,12 @@
 -- 12-2pm), so each fix is a SWAP of two teams, chosen so the displaced team's
 -- coaches don't pick up a gap.
 --
--- Swap 1 (Sunday): 12 Ruby <-> 14 Diamond  (both other coaches are single-team)
---   12 Ruby   Sun 12-2  ->  Sun 4-6   (sits right before 15 Emerald's 6-8)
---   14 Diamond Sun 4-6  ->  Sun 12-2
+-- Swap 1 (Sunday): 12 Ruby <-> 14 Ruby
+--   12 Ruby  Sun 12-2  ->  Sun 4-6   (sits right before 15 Emerald's 6-8)
+--   14 Ruby  Sun 4-6   ->  Sun 12-2
+--   14 Ruby's coaches (Jayden Wright, Rene Sandoval) each have a 2nd team at
+--   Sun 2-4, so moving 14 Ruby to 12-2 leaves both of them contiguous 12-4 —
+--   no new gap. (Per Drew: do NOT involve 14 Diamond.)
 -- Swap 2 (weekday): 12 Ruby <-> 11 Diamond (keeps 15 Emerald on Wed so Sam
 --   Robinson's Wed 5-9 stays intact; only touches already-split Ella Hinkle)
 --   12 Ruby    Mon 5-7  ->  Wed 5-7   (U12 stays in the 5-7 young slot)
@@ -19,10 +22,10 @@
 BEGIN;
 
 -- Swap 1 — Sunday blocks (team_name in WHERE prevents the two teams colliding).
-UPDATE public.practice_assignments SET slot='4-5pm' WHERE phase='season' AND team_name='12 Ruby'    AND day='Sun' AND slot='12-1pm';
-UPDATE public.practice_assignments SET slot='5-6pm' WHERE phase='season' AND team_name='12 Ruby'    AND day='Sun' AND slot='1-2pm';
-UPDATE public.practice_assignments SET slot='12-1pm' WHERE phase='season' AND team_name='14 Diamond' AND day='Sun' AND slot='4-5pm';
-UPDATE public.practice_assignments SET slot='1-2pm'  WHERE phase='season' AND team_name='14 Diamond' AND day='Sun' AND slot='5-6pm';
+UPDATE public.practice_assignments SET slot='4-5pm'  WHERE phase='season' AND team_name='12 Ruby' AND day='Sun' AND slot='12-1pm';
+UPDATE public.practice_assignments SET slot='5-6pm'  WHERE phase='season' AND team_name='12 Ruby' AND day='Sun' AND slot='1-2pm';
+UPDATE public.practice_assignments SET slot='12-1pm' WHERE phase='season' AND team_name='14 Ruby' AND day='Sun' AND slot='4-5pm';
+UPDATE public.practice_assignments SET slot='1-2pm'  WHERE phase='season' AND team_name='14 Ruby' AND day='Sun' AND slot='5-6pm';
 
 -- Swap 2 — weeknight (5-7pm slot label is identical on both days; only day moves).
 UPDATE public.practice_assignments SET day='Wed' WHERE phase='season' AND team_name='12 Ruby'    AND day='Mon' AND slot='5-7pm';
