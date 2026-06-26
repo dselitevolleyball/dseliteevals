@@ -780,7 +780,7 @@ export default function App() {
 
   const [players, setPlayers] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState("dashboard");
+  const [view, setView] = useState("home");
   // Physical Testing tab — dot-plot of a physical metric per player. Age group
   // comes from the global selectedDivs chips; these add team/position filters
   // and pick which metric drives the horizontal axis.
@@ -1075,7 +1075,7 @@ export default function App() {
     setTournamentAssignments(aRes.data || []);
     setTournamentsLoading(false);
   }, []);
-  useEffect(() => { if (isApproved && (view === "tournaments" || view === "teamdir")) loadTournaments(); }, [isApproved, view, loadTournaments]);
+  useEffect(() => { if (isApproved && (view === "tournaments" || view === "teamdir" || view === "home")) loadTournaments(); }, [isApproved, view, loadTournaments]);
 
   // Practice tab loader
   const loadPractice = useCallback(async () => {
@@ -1091,7 +1091,7 @@ export default function App() {
     setPracticeAssignments(aRes.data || []);
     setSaSessions(sRes.data || []);
   }, []);
-  useEffect(() => { if (isApproved && (view === "practice" || view === "teamdir")) loadPractice(); }, [isApproved, view, loadPractice]);
+  useEffect(() => { if (isApproved && (view === "practice" || view === "teamdir" || view === "home")) loadPractice(); }, [isApproved, view, loadPractice]);
   // Coach/team cards (openable from any view) need practice_teams loaded.
   useEffect(() => { if (isApproved && (coachCardName || teamCardName)) loadPractice(); }, [isApproved, coachCardName, teamCardName, loadPractice]);
 
@@ -1196,7 +1196,7 @@ export default function App() {
   useEffect(() => {
     // Roster also drives the Tryout coach picker / Text Coaches lookup,
     // so make sure it's loaded whenever either tab opens.
-    if (isApproved && (view === "coaches" || view === "tryouts")) loadCoachRoster();
+    if (isApproved && (view === "coaches" || view === "tryouts" || view === "home")) loadCoachRoster();
   }, [isApproved, view, loadCoachRoster]);
   // The coach card edits coach_roster, so make sure it's loaded when one opens.
   useEffect(() => { if (isApproved && coachCardName) loadCoachRoster(); }, [isApproved, coachCardName, loadCoachRoster]);
@@ -2141,6 +2141,109 @@ export default function App() {
         border:active?"1.5px solid "+C.gold:"1px solid "+C.border,background:active?"rgba(233,30,140,0.15)":"transparent",color:active?C.gold:C.mut}}
         onClick={() => { const next = active ? (player.positions||[]).filter(p=>p!==pos) : [...(player.positions||[]),pos]; upd(player.id, {positions:next}); }}>{pos}</button>;
     })}</div>;
+  }
+
+  // ─── HOME (coach landing) ───
+  // Highlights the logged-in coach's teams: practice days/times (all phases,
+  // merged), tournaments, and roster. Matches the coach to teams by name.
+  function renderHome() {
+    const norm = s => (s || "").toString().trim().toLowerCase();
+    const myRoster = coachRoster.find(r => coach?.email && norm(r.email) === norm(coach.email));
+    const cand = new Set();
+    if (coach?.display_name) cand.add(norm(coach.display_name));
+    if (myRoster) {
+      const f = norm(myRoster.first_name), l = norm(myRoster.last_name);
+      if (f) { cand.add((f + " " + l).trim()); cand.add(f); if (l) cand.add((f + " " + l[0] + ".").trim()); }
+    }
+    const isMine = field => !!field && cand.has(norm(field));
+    const myTeams = practiceTeams
+      .filter(t => isMine(t.head_coach) || isMine(t.assistant_coach))
+      .map(t => ({ ...t, role: isMine(t.head_coach) ? "Head Coach" : "Assistant Coach" }))
+      .sort((a, b) => (a.team_name || "").localeCompare(b.team_name || ""));
+    const tournamentById = new Map(tournaments.map(t => [t.id, t]));
+    const firstName = (myRoster ? (myRoster.first_name || "") : (coach?.display_name || "")).split(/\s+/)[0] || "Coach";
+
+    const lbl = {fontSize:9,fontWeight:800,letterSpacing:0.5,textTransform:"uppercase",color:C.mut,marginBottom:5};
+    const box = {background:C.bg,borderRadius:10,padding:"10px 12px",marginBottom:8};
+    const fmtDate = d => d ? new Date(d + "T00:00").toLocaleDateString(undefined,{month:"short",day:"numeric"}) : "";
+
+    return (
+      <div>
+        <div style={{marginBottom:14}}>
+          <h2 style={{margin:0,fontSize:22,fontWeight:800,color:C.gold}}>Welcome, {firstName}</h2>
+          <div style={{fontSize:12,color:C.mut,marginTop:3}}>Your teams — practices, tournaments, and rosters at a glance.{myTeams.length ? "" : ""}</div>
+        </div>
+        {myTeams.length === 0 ? (
+          <div style={{padding:24,textAlign:"center",color:C.mut,fontSize:13,background:C.card,borderRadius:12,border:"1px solid "+C.border,lineHeight:1.6}}>
+            You're not listed as a coach on any team yet — coaches are matched by name on each team.
+            <div style={{marginTop:10,display:"flex",gap:8,justifyContent:"center",flexWrap:"wrap"}}>
+              {canViewTeams && <button onClick={()=>setView("teamdir")} style={{padding:"6px 14px",borderRadius:8,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>Browse all teams</button>}
+              <button onClick={()=>setView("dashboard")} style={{padding:"6px 14px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>Open dashboard</button>
+            </div>
+          </div>
+        ) : (
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(340px,1fr))",gap:14}}>
+            {myTeams.map(t => {
+              const phases = summarizePractices(practiceAssignments.filter(a => a.team_name === t.team_name));
+              const teamTns = tournamentAssignments
+                .filter(ta => ta.team_id === t.team_name || ta.team_name === t.team_name)
+                .map(ta => tournamentById.get(ta.tournament_id)).filter(Boolean)
+                .sort((a, b) => (a.start_date || "").localeCompare(b.start_date || ""));
+              const roster = players.filter(p => p.team_assignment === t.team_name)
+                .sort((a, b) => (a.roster_pos || "").localeCompare(b.roster_pos || "") || (a.last_name || "").localeCompare(b.last_name || ""));
+              const coLine = [t.head_coach && "HC: " + t.head_coach, t.assistant_coach && "AC: " + t.assistant_coach].filter(Boolean).join(" · ");
+              return (
+                <div key={t.team_name} style={{background:C.card,borderRadius:12,border:"1px solid "+C.border,padding:"14px 16px"}}>
+                  <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",gap:8,marginBottom:2}}>
+                    <span onClick={()=>setTeamCardName(t.team_name)} title="Open team card" style={{fontSize:17,fontWeight:800,color:C.gold,cursor:"pointer"}}>{t.team_name}</span>
+                    <span style={{fontSize:9,fontWeight:800,letterSpacing:0.5,color:t.role==="Head Coach"?C.gold:C.acc}}>{t.role.toUpperCase()}</span>
+                  </div>
+                  <div style={{fontSize:10,color:C.mut,marginBottom:10}}>{coLine}</div>
+
+                  <div style={box}>
+                    <div style={lbl}>Practices</div>
+                    {phases.length === 0 && <div style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>None scheduled.</div>}
+                    {phases.map(ph => (
+                      <div key={ph.id} style={{fontSize:11,marginBottom:3}}>
+                        <span style={{color:C.gold,fontWeight:700}}>{ph.label}:</span>{" "}
+                        <span style={{color:C.text}}>{ph.entries.map(e => e.day + " " + e.slot).join(", ")}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div style={box}>
+                    <div style={lbl}>Tournaments · {teamTns.length}</div>
+                    {teamTns.length === 0 && <div style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>None assigned.</div>}
+                    {teamTns.map(tn => (
+                      <div key={tn.id} style={{fontSize:11,marginBottom:2}}>
+                        <span style={{color:C.text,fontWeight:600}}>{tn.name}</span>
+                        <span style={{color:C.mut}}> · {fmtDate(tn.start_date)}{tn.end_date && tn.end_date!==tn.start_date ? "–"+fmtDate(tn.end_date) : ""}</span>
+                        {tn.is_qualifier && <span style={{color:"#a855f7",fontWeight:700,marginLeft:5,fontSize:9}}>QUAL</span>}
+                      </div>
+                    ))}
+                  </div>
+
+                  <div style={{...box,marginBottom:0}}>
+                    <div style={lbl}>Players · {roster.length}</div>
+                    {roster.length === 0 && <div style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>No players assigned.</div>}
+                    {roster.length > 0 && (
+                      <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
+                        {roster.map(p => (
+                          <button key={p.id} onClick={()=>setProfileId(p.id)} title="Open player card"
+                            style={{padding:"3px 8px",borderRadius:8,border:"1px solid "+C.border,background:C.bg,color:C.text,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+                            {p.roster_pos ? p.roster_pos+" " : ""}{p.first_name} {p.last_name}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
   }
 
   // ─── DASHBOARD ───
@@ -7391,11 +7494,11 @@ export default function App() {
               const item = (v,l) =>
                 <button key={v} style={btn(view===v)} onClick={()=>{ setView(v); setOpenMenu(null); }}>{l}</button>;
               const groups = [
-                { title:"Tryouts", items:[["evaluate","Evaluate"], ...(canViewTeams ? [["teams","Teams"]] : []), ["rankings","Rankings"], ["physical","Physical Testing"], ["tryouts","Coach Assignments"]] },
+                { title:"Tryouts", items:[["dashboard","Dashboard"], ["evaluate","Evaluate"], ...(canViewTeams ? [["teams","Teams"]] : []), ["rankings","Rankings"], ["physical","Physical Testing"], ["tryouts","Coach Assignments"]] },
                 { title:"Operations", items:[["tracker","Tracker"], ...(canViewTeams ? [["teamdir","All Teams"]] : []), ...(isAdmin ? [["coaches","Coaches"]] : []), ["practice","Practice"], ["email","Email"], ["messages", "Messages (SMS)" + (totalUnread > 0 ? " (" + totalUnread + ")" : "")]] },
               ];
               return <>
-                {item("dashboard","Dashboard")}
+                {item("home","Home")}
                 {groups.map(g => {
                   const activeInGroup = g.items.some(([v]) => v === view);
                   const open = openMenu === g.title;
@@ -7456,7 +7559,7 @@ export default function App() {
           </div>
         );
       })()}
-      {view !== "dashboard" && view !== "activity" && view !== "coaches" && view !== "tournaments" && view !== "teamdir" && (
+      {view !== "home" && view !== "dashboard" && view !== "activity" && view !== "coaches" && view !== "tournaments" && view !== "teamdir" && (
         <div style={{display:"flex",gap:4,padding:"10px 18px",borderBottom:"1px solid "+C.border,flexWrap:"wrap"}}>
           {divsWithPlayers.map(d => {
             const isSelected = selectedDivs.includes(d);
@@ -7478,6 +7581,7 @@ export default function App() {
         </div>
       )}
       <div style={{padding:"14px 18px",maxWidth:1500,margin:"0 auto"}}>
+        {view==="home" && renderHome()}
         {view==="dashboard" && renderDashboard()}
         {view==="evaluate" && renderEval()}
         {view==="teams" && (canViewTeams ? renderTeams() : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Team lists are restricted. Ask the club administrator (Drew) for access.</div>)}
