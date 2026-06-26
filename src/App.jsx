@@ -1042,6 +1042,8 @@ export default function App() {
     setSaSessions(sRes.data || []);
   }, []);
   useEffect(() => { if (isApproved && (view === "practice" || view === "teamdir")) loadPractice(); }, [isApproved, view, loadPractice]);
+  // Coach/team cards (openable from any view) need practice_teams loaded.
+  useEffect(() => { if (isApproved && (coachCardName || teamCardName)) loadPractice(); }, [isApproved, coachCardName, teamCardName, loadPractice]);
 
   // Tryouts tab loader
   const loadTryouts = useCallback(async () => {
@@ -4205,6 +4207,20 @@ export default function App() {
     const lbl = {fontSize:10,fontWeight:800,letterSpacing:0.5,textTransform:"uppercase",color:C.mut,marginBottom:6};
     const sectionBox = {background:C.bg,borderRadius:10,padding:14,marginBottom:14};
     const displayName = roster ? ((roster.first_name||"") + " " + (roster.last_name||"")).trim() : name;
+    // Assign/unassign this coach to a team's head/assistant slot (practice_teams).
+    // Uses the same name string this card matches on, so it shows up immediately.
+    const assignCoachTeam = async (teamName, role) => {
+      const field = role === "assistant" ? "assistant_coach" : "head_coach";
+      const { error } = await supabase.from("practice_teams").update({ [field]: name, updated_at: new Date().toISOString() }).eq("team_name", teamName);
+      if (error) { window.alert("Assign failed: " + error.message); return; }
+      await loadPractice();
+    };
+    const unassignCoachTeam = async (teamName, role) => {
+      const field = role === "assistant" ? "assistant_coach" : "head_coach";
+      const { error } = await supabase.from("practice_teams").update({ [field]: null, updated_at: new Date().toISOString() }).eq("team_name", teamName);
+      if (error) { window.alert("Remove failed: " + error.message); return; }
+      await loadPractice();
+    };
 
     return (
       <div onClick={close} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:1000,display:"flex",justifyContent:"center",padding:"30px 16px",overflowY:"auto"}}>
@@ -4249,18 +4265,20 @@ export default function App() {
             </div>
           )}
 
-          {/* Teams coached */}
+          {/* Teams coached — editable: assign this coach as head/assistant to
+              any team, straight from their card. */}
           <div style={sectionBox}>
             <div style={lbl}>Teams · {allTeamNames.length}</div>
-            {allTeamNames.length === 0 && <div style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>Not currently assigned to any team in the Practice tab.</div>}
+            {allTeamNames.length === 0 && <div style={{fontSize:11,color:C.mut,fontStyle:"italic",marginBottom:8}}>Not assigned to any team yet — add one below.</div>}
             {allTeamNames.length > 0 && (
-              <div style={{display:"flex",flexDirection:"column",gap:4}}>
+              <div style={{display:"flex",flexDirection:"column",gap:4,marginBottom:10}}>
                 {headOf.map(tn => (
                   <div key={"h-"+tn} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 8px",background:C.card,borderRadius:6,border:"1px solid "+C.border,fontSize:12}}>
                     <span onClick={()=>{ setCoachCardName(null); setTeamCardName(tn); }} style={{fontWeight:700,cursor:"pointer",flex:1,color:C.text,textDecoration:"underline",textDecorationColor:"transparent"}}
                       onMouseEnter={e=>e.currentTarget.style.textDecorationColor=C.gold}
                       onMouseLeave={e=>e.currentTarget.style.textDecorationColor="transparent"}>{tn}</span>
                     <span style={{fontSize:9,fontWeight:800,color:C.gold,padding:"1px 6px",borderRadius:5,border:"1px solid "+C.gold,letterSpacing:0.5}}>HEAD</span>
+                    <button onClick={()=>unassignCoachTeam(tn,"head")} title="Remove from this team" style={{width:18,height:18,borderRadius:9,border:"none",background:"transparent",color:C.mut,cursor:"pointer",fontFamily:"inherit",fontSize:14,lineHeight:1,padding:0}}>×</button>
                   </div>
                 ))}
                 {assistOf.map(tn => (
@@ -4269,10 +4287,41 @@ export default function App() {
                       onMouseEnter={e=>e.currentTarget.style.textDecorationColor=C.acc}
                       onMouseLeave={e=>e.currentTarget.style.textDecorationColor="transparent"}>{tn}</span>
                     <span style={{fontSize:9,fontWeight:800,color:C.acc,padding:"1px 6px",borderRadius:5,border:"1px solid "+C.acc,letterSpacing:0.5}}>ASSISTANT</span>
+                    <button onClick={()=>unassignCoachTeam(tn,"assistant")} title="Remove from this team" style={{width:18,height:18,borderRadius:9,border:"none",background:"transparent",color:C.mut,cursor:"pointer",fontFamily:"inherit",fontSize:14,lineHeight:1,padding:0}}>×</button>
                   </div>
                 ))}
               </div>
             )}
+            {/* Assign to a team */}
+            <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+              <select id="coach-assign-team" defaultValue="" style={{...inpStyle,fontSize:12,padding:"6px 8px",flex:"1 1 160px"}}>
+                <option value="">+ Assign to team…</option>
+                {[...practiceTeams].sort((a,b)=>(a.team_name||"").localeCompare(b.team_name||"")).map(t => (
+                  <option key={t.team_name} value={t.team_name}>
+                    {t.team_name}{t.head_coach?" · HC "+t.head_coach:""}{t.assistant_coach?" · AC "+t.assistant_coach:""}
+                  </option>
+                ))}
+              </select>
+              <select id="coach-assign-role" defaultValue="head" style={{...inpStyle,fontSize:12,padding:"6px 8px"}}>
+                <option value="head">Head</option>
+                <option value="assistant">Assistant</option>
+              </select>
+              <button onClick={()=>{
+                  const ts = document.getElementById("coach-assign-team");
+                  const rs = document.getElementById("coach-assign-role");
+                  if (!ts || !ts.value) return;
+                  const teamName = ts.value, role = (rs && rs.value) || "head";
+                  const existing = practiceTeams.find(t => t.team_name === teamName);
+                  const cur = role === "assistant" ? existing?.assistant_coach : existing?.head_coach;
+                  if (cur && norm(cur) !== target && !window.confirm(teamName + " already has " + (role==="assistant"?"assistant":"head") + " coach \"" + cur + "\". Replace with " + displayName + "?")) return;
+                  assignCoachTeam(teamName, role);
+                  ts.value = "";
+                }}
+                style={{padding:"6px 14px",borderRadius:6,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+                Add
+              </button>
+            </div>
+            {practiceTeams.length === 0 && <div style={{fontSize:10,color:C.mut,marginTop:6,fontStyle:"italic"}}>No teams exist yet — add teams in the Practice tab first.</div>}
           </div>
 
           {/* Practice schedule */}
