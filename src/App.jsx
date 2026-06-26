@@ -4571,9 +4571,13 @@ export default function App() {
       Sun: SUN_HOURS.map(label => ({ label, capacity: 5 })),
       Mon: [], Tue: [], Wed: [], Thu: [],
     };
-    // Summer = Sunday-only 4-court grid; Fall1/Fall2 = full-week season grid.
-    const SLOTS = schedulePhase === "summer" ? PRESEASON_SLOTS : SEASON_SLOTS;
-    // Hide weekday columns entirely in preseason since they have no slots.
+    // Summer + Fall 1/Fall 2 are Sunday-only (preseason). Only the Regular
+    // Season uses the full week. Fall keeps 6 Sunday courts; summer has 5.
+    const FALL_SLOTS = { Sun: SUN_HOURS.map(label => ({ label, capacity: 6 })), Mon: [], Tue: [], Wed: [], Thu: [] };
+    const SLOTS = schedulePhase === "season" ? SEASON_SLOTS
+                : schedulePhase === "summer" ? PRESEASON_SLOTS
+                : FALL_SLOTS;
+    // Hide weekday columns entirely when a phase has no weekday slots.
     const VISIBLE_DAYS = DAYS.filter(d => SLOTS[d].length > 0);
     const YOUNG_DIVS = new Set(["U11","U12"]);
     const WEEKDAYS = new Set(["Mon","Tue","Wed","Thu"]);
@@ -4701,18 +4705,38 @@ export default function App() {
     // compare against the team's expected weekly load.
     const hoursOf = (a) => a.day === "Sun" ? 1 : 2;
 
+    // Each distinct (team, S&A slot) in this block = 1 hour/week of strength & conditioning.
+    const isFallPhase = schedulePhase === "fall1" || schedulePhase === "fall2";
+    const saHoursByTeam = new Map();
+    if (sa) {
+      const seenTS = new Set();
+      for (const s of saSessions) {
+        if (s.block !== schedulePhase) continue;
+        const k = s.team_name + "|" + s.slot;
+        if (seenTS.has(k)) continue;
+        seenTS.add(k);
+        saHoursByTeam.set(s.team_name, (saHoursByTeam.get(s.team_name) || 0) + 1);
+      }
+    }
+    // Fall 1/Fall 2 expect 2h/week of ANY combination of practice + S&A.
+    // Regular season uses (practices_per_week × 2); summer is freeform.
+    const teamLoad = (t, assigns) => {
+      const practiceH = assigns.reduce((s, a) => s + hoursOf(a), 0);
+      const saH = saHoursByTeam.get(t.team_name) || 0;
+      return isFallPhase ? { actual: practiceH + saH, expected: 2 } : { actual: practiceH, expected: (t.practices_per_week || 0) * 2 };
+    };
+
     // Compute per-team and per-slot warnings up front.
     const warnings = [];
     for (const t of practiceTeams) {
       const tAssigns = phaseAssignments.filter(a => a.team_name === t.team_name);
-      const actualHours = tAssigns.reduce((s, a) => s + hoursOf(a), 0);
-      const expectedHours = (t.practices_per_week || 0) * 2;
-      // Summer is freeform — coaches choose. Fall expects (practices_per_week × 2) hours.
+      const { actual: actualHours, expected: expectedHours } = teamLoad(t, tAssigns);
+      // Summer is freeform — coaches choose.
       if (schedulePhase !== "summer" && actualHours !== expectedHours) {
         warnings.push({
           kind: "count",
           team: t.team_name,
-          text: t.team_name + " has " + actualHours + "h of practice, expected " + expectedHours + "h (" + (t.level||"?") + ")",
+          text: t.team_name + " has " + actualHours + "h, expected " + expectedHours + "h" + (isFallPhase ? " (practice + S&A)" : " of practice (" + (t.level||"?") + ")"),
         });
       }
       if (YOUNG_DIVS.has(t.age_div)) {
@@ -4879,9 +4903,8 @@ export default function App() {
               <tbody>
                 {visibleTeams.map(t => {
                   const tAssigns = phaseAssignments.filter(a => a.team_name === t.team_name);
-                  const actualHours = tAssigns.reduce((sum, a) => sum + (a.day === "Sun" ? 1 : 2), 0);
-                  const expectedHours = (t.practices_per_week || 0) * 2;
-                  // Summer is freeform — fall phases compare hours against the team's target.
+                  const { actual: actualHours, expected: expectedHours } = teamLoad(t, tAssigns);
+                  // Summer is freeform — other phases compare hours against the team's target.
                   const countOff = schedulePhase !== "summer" && actualHours !== expectedHours;
                   const levelColor =
                     t.level === "National"      ? C.gold :
