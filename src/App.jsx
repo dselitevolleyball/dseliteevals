@@ -453,10 +453,10 @@ function vertical(p) {
 }
 // ── Practice schedule display helpers ──
 const PRACTICE_PHASES = [
-  { id:"season", label:"Regular Season" },
   { id:"summer", label:"Summer" },
   { id:"fall1",  label:"Fall 1" },
   { id:"fall2",  label:"Fall 2" },
+  { id:"season", label:"Regular Season" },
 ];
 const PRACTICE_DAY_ORDER = { Sun:0, Mon:1, Tue:2, Wed:3, Thu:4, Fri:5, Sat:6 };
 // Slots look like "12-1pm", "5-7pm" — all afternoon/evening. Parse to 24h ordinals
@@ -4676,10 +4676,10 @@ export default function App() {
             <div role="tablist" aria-label="Practice phase"
               style={{display:"inline-flex",border:"1px solid "+C.border,borderRadius:8,overflow:"hidden"}}>
               {[
-                { id:"season", label:"Regular Season", tip:"Full week · the regular 2–3×/week team practice schedule" },
                 { id:"summer", label:"Summer", tip:"Jul 12 – Sep 12 · Sundays · 5 courts · no S&A" },
                 { id:"fall1",  label:"Fall 1", tip:"Sep 13 – Oct 11 · 6 courts · S&A Block 1 (8 Nationals)" },
                 { id:"fall2",  label:"Fall 2", tip:"Oct 18 – Nov 15 · 6 courts · S&A Block 2 (9 Regionals)" },
+                { id:"season", label:"Regular Season", tip:"Full week · the regular 2–3×/week team practice schedule" },
               ].map(({id,label,tip}) => {
                 const on = schedulePhase === id;
                 return (
