@@ -2189,7 +2189,8 @@ export default function App() {
                 .filter(ta => ta.team_id === t.team_name || ta.team_name === t.team_name)
                 .map(ta => tournamentById.get(ta.tournament_id)).filter(Boolean)
                 .sort((a, b) => (a.start_date || "").localeCompare(b.start_date || ""));
-              const roster = players.filter(p => p.team_assignment === t.team_name)
+              // "On the team" = assigned AND accepted/committed (accepted or locked).
+              const roster = players.filter(p => p.team_assignment === t.team_name && (p.offer_status === "accepted" || p.offer_status === "locked"))
                 .sort((a, b) => (a.roster_pos || "").localeCompare(b.roster_pos || "") || (a.last_name || "").localeCompare(b.last_name || ""));
               const coLine = [t.head_coach && "HC: " + t.head_coach, t.assistant_coach && "AC: " + t.assistant_coach].filter(Boolean).join(" · ");
               return (
@@ -2224,8 +2225,8 @@ export default function App() {
                   </div>
 
                   <div style={{...box,marginBottom:0}}>
-                    <div style={lbl}>Players · {roster.length}</div>
-                    {roster.length === 0 && <div style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>No players assigned.</div>}
+                    <div style={lbl} title="Players assigned to this team who have accepted their offer">Players · {roster.length}</div>
+                    {roster.length === 0 && <div style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>No accepted players yet.</div>}
                     {roster.length > 0 && (
                       <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
                         {roster.map(p => (
