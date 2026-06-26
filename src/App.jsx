@@ -1094,6 +1094,8 @@ export default function App() {
   useEffect(() => { if (isApproved && (view === "practice" || view === "teamdir")) loadPractice(); }, [isApproved, view, loadPractice]);
   // Coach/team cards (openable from any view) need practice_teams loaded.
   useEffect(() => { if (isApproved && (coachCardName || teamCardName)) loadPractice(); }, [isApproved, coachCardName, teamCardName, loadPractice]);
+  // The coach card edits coach_roster, so make sure it's loaded when one opens.
+  useEffect(() => { if (isApproved && coachCardName) loadCoachRoster(); }, [isApproved, coachCardName, loadCoachRoster]);
 
   // Tryouts tab loader
   const loadTryouts = useCallback(async () => {
@@ -4270,6 +4272,15 @@ export default function App() {
       if (error) { window.alert("Remove failed: " + error.message); return; }
       await loadPractice();
     };
+    // Edit the coach's roster attributes (contact, sizes, notes) from the card.
+    const updateRoster = async (patch) => {
+      if (!roster) return;
+      const { error } = await supabase.from("coach_roster").update({ ...patch, updated_at: new Date().toISOString() }).eq("id", roster.id);
+      if (error) { window.alert("Save failed: " + error.message); return; }
+      await loadCoachRoster();
+    };
+    const cFieldLbl = {fontSize:9,fontWeight:700,color:C.mut,textTransform:"uppercase",letterSpacing:0.5,marginBottom:3};
+    const cInp = {...inpStyle,width:"100%",padding:"7px 9px",fontSize:12};
 
     return (
       <div onClick={close} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:1000,display:"flex",justifyContent:"center",padding:"30px 16px",overflowY:"auto"}}>
@@ -4287,30 +4298,21 @@ export default function App() {
             <button onClick={close} style={{background:"none",border:"none",color:C.mut,fontSize:22,cursor:"pointer",lineHeight:1}}>✕</button>
           </div>
 
-          {/* Contact info */}
+          {/* Contact info — editable */}
           {roster && (
             <div style={sectionBox}>
-              <div style={lbl}>Contact</div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,fontSize:12}}>
-                <div>
-                  <div style={{fontSize:9,fontWeight:700,color:C.mut,textTransform:"uppercase",letterSpacing:0.5}}>Email</div>
-                  <div style={{color:C.text,fontWeight:600}}>{roster.email || <i style={{color:C.mut,fontWeight:400}}>—</i>}</div>
-                </div>
-                <div>
-                  <div style={{fontSize:9,fontWeight:700,color:C.mut,textTransform:"uppercase",letterSpacing:0.5}}>Phone</div>
-                  <div style={{color:C.text,fontWeight:600}}>{roster.phone || <i style={{color:C.mut,fontWeight:400}}>—</i>}</div>
-                </div>
-                <div>
-                  <div style={{fontSize:9,fontWeight:700,color:C.mut,textTransform:"uppercase",letterSpacing:0.5}}>T-shirt / Shoe / Sweatshirt</div>
-                  <div style={{color:C.text,fontWeight:600}}>{[roster.tshirt_size, roster.shoe_size, roster.sweatshirt_size].map(v => v||"—").join(" · ")}</div>
-                </div>
-                {roster.notes && (
-                  <div style={{gridColumn:"1 / -1"}}>
-                    <div style={{fontSize:9,fontWeight:700,color:C.mut,textTransform:"uppercase",letterSpacing:0.5}}>Notes</div>
-                    <div style={{color:C.text,whiteSpace:"pre-wrap"}}>{roster.notes}</div>
-                  </div>
-                )}
+              <div style={lbl}>Contact <span style={{color:C.mut,fontWeight:600,textTransform:"none",letterSpacing:0}}>· edit any field</span></div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                <div><div style={cFieldLbl}>First Name</div><DebouncedField style={cInp} placeholder="First" value={roster.first_name||""} onCommit={v=>updateRoster({first_name:v})} /></div>
+                <div><div style={cFieldLbl}>Last Name</div><DebouncedField style={cInp} placeholder="Last" value={roster.last_name||""} onCommit={v=>updateRoster({last_name:v})} /></div>
+                <div><div style={cFieldLbl}>Email</div><DebouncedField type="email" style={cInp} placeholder="email@example.com" value={roster.email||""} onCommit={v=>updateRoster({email:v})} /></div>
+                <div><div style={cFieldLbl}>Phone</div><DebouncedField style={cInp} placeholder="555-555-5555" value={roster.phone||""} onCommit={v=>updateRoster({phone:v})} /></div>
+                <div><div style={cFieldLbl}>T-shirt</div><DebouncedField style={cInp} placeholder="M" value={roster.tshirt_size||""} onCommit={v=>updateRoster({tshirt_size:v})} /></div>
+                <div><div style={cFieldLbl}>Shoe</div><DebouncedField style={cInp} placeholder="9.5 W" value={roster.shoe_size||""} onCommit={v=>updateRoster({shoe_size:v})} /></div>
+                <div><div style={cFieldLbl}>Sweatshirt</div><DebouncedField style={cInp} placeholder="L" value={roster.sweatshirt_size||""} onCommit={v=>updateRoster({sweatshirt_size:v})} /></div>
+                <div style={{gridColumn:"1 / -1"}}><div style={cFieldLbl}>Notes</div><DebouncedField multiline style={{...cInp,minHeight:54,resize:"vertical"}} placeholder="Notes…" value={roster.notes||""} onCommit={v=>updateRoster({notes:v})} /></div>
               </div>
+              <div style={{fontSize:10,color:C.mut,marginTop:6,fontStyle:"italic"}}>Changing the name here won't rename their team assignments — if you rename a coach, re-pick their teams below (or update the team's HC/AC).</div>
             </div>
           )}
 
