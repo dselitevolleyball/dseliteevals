@@ -783,6 +783,7 @@ export default function App() {
   const allowedDivSet = new Set(allowedDivs);
 
   const [players, setPlayers] = useState([]);
+  const [favorites, setFavorites] = useState([]); // player_ids the current coach favorited
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState("home");
   // Physical Testing tab — dot-plot of a physical metric per player. Age group
@@ -954,6 +955,24 @@ export default function App() {
   }, []);
 
   useEffect(() => { if (isApproved) { loadPlayers(); loadRankings(); } }, [isApproved, loadPlayers, loadRankings]);
+
+  // Per-coach favorites. RLS scopes rows to the signed-in coach, so a plain
+  // select returns only this coach's shortlist.
+  const loadFavorites = useCallback(async () => {
+    const { data, error } = await supabase.from("player_favorites").select("player_id");
+    if (error) { console.error("Load favorites error:", error); return; }
+    setFavorites((data || []).map(r => r.player_id));
+  }, []);
+  useEffect(() => { if (isApproved) loadFavorites(); }, [isApproved, loadFavorites]);
+  const toggleFavorite = async (playerId) => {
+    if (!coach?.id) return;
+    const isFav = favorites.includes(playerId);
+    setFavorites(prev => isFav ? prev.filter(id => id !== playerId) : [...prev, playerId]); // optimistic
+    const { error } = isFav
+      ? await supabase.from("player_favorites").delete().eq("coach_id", coach.id).eq("player_id", playerId)
+      : await supabase.from("player_favorites").insert({ coach_id: coach.id, player_id: playerId });
+    if (error) { window.alert("Favorite update failed: " + error.message); loadFavorites(); } // resync on error
+  };
 
   // Coaches list loader (used by the admin Coaches tab). Lives up here, NOT
   // next to renderCoaches, so the hook call order stays stable across the
@@ -2473,7 +2492,12 @@ export default function App() {
                   <tr key={p.id}>
                     <td style={tdS}><DebouncedField style={{...inpStyle,width:44,padding:"4px",textAlign:"center",fontSize:12,fontWeight:700,color:p.tryout_number?C.gold:C.text}} value={p.tryout_number||""} placeholder="—" onCommit={v=>upd(p.id,{tryout_number:v})} /></td>
                     <td style={tdS}>
-                      <div style={{cursor:"pointer"}} onClick={()=>setProfileId(p.id)}>
+                      <div style={{display:"flex",alignItems:"flex-start",gap:4}}>
+                      <span onClick={()=>toggleFavorite(p.id)} title={favorites.includes(p.id)?"Remove from your favorites":"Add to your favorites"}
+                        style={{cursor:"pointer",fontSize:14,lineHeight:1.1,color:favorites.includes(p.id)?C.gold:C.border,userSelect:"none"}}>
+                        {favorites.includes(p.id)?"★":"☆"}
+                      </span>
+                      <div style={{cursor:"pointer",flex:1}} onClick={()=>setProfileId(p.id)}>
                         <div style={{display:"flex",alignItems:"center",gap:5}}>
                           {isReturningDSE(p) && <span title="DS Elite returning athlete" style={{color:C.gold,fontSize:14,fontWeight:800,lineHeight:1}}>◆</span>}{newIcon(p)}
                           <span style={{fontWeight:700,fontSize:12,color:C.gold}}>{p.first_name} {p.last_name}</span>
@@ -2484,6 +2508,7 @@ export default function App() {
                         {p.status && p.status !== "In Progress" && <Tag c={STATUS_COLORS[p.status]}>{p.status}</Tag>}
                         {p.id_clinic_invited && <Tag c={C.gold}>INV</Tag>}
                         {p.id_clinic_attended && <Tag c={C.grn}>ATT</Tag>}
+                      </div>
                       </div>
                     </td>
                     <td style={tdS}><PosChips player={p} /></td>
@@ -3049,6 +3074,57 @@ export default function App() {
   }
 
   // ─── RANKINGS ───
+  function renderFavorites() {
+    // Coach-private shortlist. favorites holds player_ids; show them best-first.
+    const favPlayers = players.filter(p => favorites.includes(p.id))
+      .sort((a, b) => (tot(b) || 0) - (tot(a) || 0) || (a.last_name || "").localeCompare(b.last_name || ""));
+    return (
+      <div>
+        <div style={{display:"flex",alignItems:"baseline",gap:10,flexWrap:"wrap",marginBottom:4}}>
+          <h2 style={{margin:0,fontSize:18,fontWeight:800,color:C.gold}}>My Favorites</h2>
+          <span style={{fontSize:12,color:C.mut}}>{favPlayers.length} player{favPlayers.length===1?"":"s"}</span>
+        </div>
+        <div style={{fontSize:11,color:C.mut,marginBottom:14}}>
+          Private to you — no other coach sees this list. Tap the ☆ star next to any player in Evaluate (or in their profile) to add them. Great for keeping a short list of ~10 to watch.
+        </div>
+        {favPlayers.length === 0
+          ? <div style={{textAlign:"center",padding:40,color:C.mut,background:C.card,borderRadius:12,border:"1px dashed "+C.border}}>
+              No favorites yet. Open <b style={{color:C.text}}>Evaluate</b> and tap the ☆ next to a player.
+            </div>
+          : <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:12}}>
+              {favPlayers.map(p => {
+                const score = tot(p);
+                return (
+                  <div key={p.id} style={{background:C.card,borderRadius:12,border:"1px solid "+C.border,padding:14,position:"relative"}}>
+                    <button onClick={()=>toggleFavorite(p.id)} title="Remove from your favorites"
+                      style={{position:"absolute",top:10,right:10,background:"none",border:"none",fontSize:18,cursor:"pointer",color:C.gold,lineHeight:1}}>★</button>
+                    <div onClick={()=>setProfileId(p.id)} style={{cursor:"pointer"}}>
+                      <div style={{display:"flex",alignItems:"center",gap:5,paddingRight:20}}>
+                        {isReturningDSE(p) && <span title="DS Elite returning athlete" style={{color:C.gold,fontSize:13,fontWeight:800,lineHeight:1}}>◆</span>}
+                        <span style={{fontWeight:800,fontSize:14,color:C.gold}}>{p.first_name} {p.last_name}</span>
+                      </div>
+                      <div style={{fontSize:11,color:C.mut,marginTop:3}}>Age {p.age} • {p.usavDiv||p.usav_div}{p.tryout_number?" • #"+p.tryout_number:""}</div>
+                      <div style={{display:"flex",gap:4,flexWrap:"wrap",marginTop:6}}>
+                        {(p.positions||[]).map(pos => <Tag key={pos} c={C.grn}>{pos}</Tag>)}
+                      </div>
+                      <div style={{display:"flex",gap:14,marginTop:10,alignItems:"baseline"}}>
+                        <div><span style={{fontSize:9,color:C.mut,textTransform:"uppercase",fontWeight:700}}>Total </span><span style={{fontWeight:800,fontSize:16,color:score?C.gold:C.mut}}>{score||"—"}</span></div>
+                        <div><span style={{fontSize:9,color:C.mut,textTransform:"uppercase",fontWeight:700}}>Avg </span><span style={{fontWeight:700,fontSize:13}}>{avg(p)}</span></div>
+                      </div>
+                      <div style={{display:"flex",gap:4,flexWrap:"wrap",marginTop:8}}>
+                        {p.team_assignment && <Tag c={C.acc}>{p.team_assignment}</Tag>}
+                        {p.status && p.status !== "In Progress" && <Tag c={STATUS_COLORS[p.status]}>{p.status}</Tag>}
+                        {p.projected_team && <Tag c={C.gold}>Proj {p.projected_team}</Tag>}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>}
+      </div>
+    );
+  }
+
   function renderRankings() {
     const tdS = {padding:"7px 7px",fontSize:12,borderBottom:"1px solid "+C.border,verticalAlign:"middle"};
     const PROJ_ORDER = {"1":0,"1/2":1,"2":2,"2/3":3,"3":4,"":5};
@@ -3176,7 +3252,13 @@ export default function App() {
                 {p.supplemental===1 && <Tag c={C.acc}>SUPPLEMENTAL</Tag>}
               </div>
             </div>
-            <button style={{background:"none",border:"none",color:C.mut,fontSize:24,cursor:"pointer"}} onClick={()=>setProfileId(null)}>✕</button>
+            <div style={{display:"flex",alignItems:"flex-start",gap:12}}>
+              <button onClick={()=>toggleFavorite(p.id)} title={favorites.includes(p.id)?"Remove from your favorites":"Add to your favorites"}
+                style={{background:"none",border:"none",fontSize:26,cursor:"pointer",color:favorites.includes(p.id)?C.gold:C.border,lineHeight:1}}>
+                {favorites.includes(p.id)?"★":"☆"}
+              </button>
+              <button style={{background:"none",border:"none",color:C.mut,fontSize:24,cursor:"pointer"}} onClick={()=>setProfileId(null)}>✕</button>
+            </div>
           </div>
           {/* Score Summary */}
           <div style={{background:totalScore>0?"linear-gradient(135deg,rgba(233,30,140,0.15),rgba(34,197,94,0.1))":C.bg,borderRadius:12,padding:"14px 18px",marginBottom:16,border:"1px solid "+(totalScore>0?C.gold:C.border)}}>
@@ -7785,7 +7867,7 @@ export default function App() {
               const item = (v,l) =>
                 <button key={v} style={btn(view===v)} onClick={()=>{ setView(v); setOpenMenu(null); }}>{l}</button>;
               const groups = [
-                { title:"Tryouts", items:[["dashboard","Dashboard"], ["evaluate","Evaluate"], ...(canViewTeams ? [["teams","Teams"]] : []), ["rankings","Rankings"], ["physical","Physical Testing"], ["tryouts","Coach Assignments"]] },
+                { title:"Tryouts", items:[["dashboard","Dashboard"], ["evaluate","Evaluate"], ["favorites","My Favorites" + (favorites.length ? " (" + favorites.length + ")" : "")], ...(canViewTeams ? [["teams","Teams"]] : []), ["rankings","Rankings"], ["physical","Physical Testing"], ["tryouts","Coach Assignments"]] },
                 { title:"Operations", items:[["tracker","Tracker"], ...(canViewTeams ? [["teamdir","All Teams"]] : []), ...(isAdmin ? [["coaches","Coaches"]] : []), ["practice","Practice"], ["email","Email"], ["messages", "Messages (SMS)" + (totalUnread > 0 ? " (" + totalUnread + ")" : "")]] },
               ];
               return <>
@@ -7875,6 +7957,7 @@ export default function App() {
         {view==="home" && renderHome()}
         {view==="dashboard" && renderDashboard()}
         {view==="evaluate" && renderEval()}
+        {view==="favorites" && renderFavorites()}
         {view==="teams" && (canViewTeams ? renderTeams() : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Team lists are restricted. Ask the club administrator (Drew) for access.</div>)}
         {view==="teamdir" && renderTeamDirectory()}
         {view==="tracker" && renderTracker()}
