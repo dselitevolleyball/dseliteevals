@@ -652,6 +652,7 @@ export default function App() {
   const [practiceAssignments, setPracticeAssignments] = useState([]);
   const [saSessions, setSaSessions]                   = useState([]);
   const [floatingCoaches, setFloatingCoaches]         = useState([]);
+  const [snapshots, setSnapshots]                     = useState([]);
   const [saBlock, setSaBlock]                         = useState(
     () => (typeof localStorage !== "undefined" && localStorage.getItem("dse_sa_block")) || "fall_b1"
   );
@@ -1095,7 +1096,14 @@ export default function App() {
     setSaSessions(sRes.data || []);
     setFloatingCoaches((fRes.data || []).map(r => r.name));
   }, []);
+  const loadSnapshots = useCallback(async () => {
+    const { data, error } = await supabase.from("practice_snapshots")
+      .select("id, label, created_by, created_at").order("created_at", { ascending: false });
+    if (error) { console.error("Load practice_snapshots error:", error); return; }
+    setSnapshots(data || []);
+  }, []);
   useEffect(() => { if (isApproved && (view === "practice" || view === "teamdir" || view === "home")) loadPractice(); }, [isApproved, view, loadPractice]);
+  useEffect(() => { if (isApproved && view === "practice") loadSnapshots(); }, [isApproved, view, loadSnapshots]);
   // Coach/team cards (openable from any view) need practice_teams loaded.
   useEffect(() => { if (isApproved && (coachCardName || teamCardName)) loadPractice(); }, [isApproved, coachCardName, teamCardName, loadPractice]);
 
@@ -4735,6 +4743,50 @@ export default function App() {
       }
       await loadPractice();
     };
+    // ─── Snapshots: save / revert the whole practice schedule ─────────
+    const saveSnapshot = async () => {
+      const label = window.prompt("Name this restore point (e.g. \"before coach swaps\"):", "");
+      if (label === null) return; // cancelled
+      const assignments = practiceAssignments.map(a => ({ team_name: a.team_name, day: a.day, slot: a.slot, phase: a.phase || "fall1" }));
+      const sa = saSessions.map(s => ({ block: s.block, session_date: s.session_date, slot: s.slot, team_name: s.team_name }));
+      const { error } = await supabase.from("practice_snapshots").insert({
+        label: label.trim() || "Snapshot",
+        created_by: coach?.display_name || coach?.email || "",
+        assignments, sa_sessions: sa,
+      });
+      if (error) { window.alert("Save snapshot failed: " + error.message); return; }
+      await loadSnapshots();
+      window.alert("Saved restore point: \"" + (label.trim() || "Snapshot") + "\" (" + assignments.length + " assignments).");
+    };
+    const revertSnapshot = async (snap) => {
+      if (!window.confirm(
+        "Revert the ENTIRE practice schedule to:\n\n\"" + snap.label + "\"  ·  " + new Date(snap.created_at).toLocaleString() +
+        "\n\nThis replaces all current practice assignments and S&A sessions across every phase. " +
+        "Tip: Save a snapshot first so you can undo this too.")) return;
+      // Fetch the full snapshot (the list only holds metadata).
+      const { data: full, error: fErr } = await supabase.from("practice_snapshots").select("*").eq("id", snap.id).single();
+      if (fErr || !full) { window.alert("Couldn't load that snapshot: " + (fErr?.message || "not found")); return; }
+      const d1 = await supabase.from("practice_assignments").delete().gte("id", 0);
+      if (d1.error) { window.alert("Revert failed clearing assignments: " + d1.error.message); return; }
+      if (Array.isArray(full.assignments) && full.assignments.length) {
+        const i1 = await supabase.from("practice_assignments").insert(full.assignments);
+        if (i1.error) { window.alert("Revert failed restoring assignments: " + i1.error.message + "\n\nThe schedule may be incomplete — re-run revert."); return; }
+      }
+      const d2 = await supabase.from("sa_sessions").delete().gte("id", 0);
+      if (d2.error) { window.alert("Revert failed clearing S&A: " + d2.error.message); return; }
+      if (Array.isArray(full.sa_sessions) && full.sa_sessions.length) {
+        const i2 = await supabase.from("sa_sessions").insert(full.sa_sessions);
+        if (i2.error) { window.alert("Revert failed restoring S&A: " + i2.error.message); return; }
+      }
+      await loadPractice();
+      window.alert("Reverted to \"" + snap.label + "\".");
+    };
+    const deleteSnapshot = async (snap) => {
+      if (!window.confirm("Delete the saved snapshot \"" + snap.label + "\"? This does NOT change the schedule — it just removes the restore point.")) return;
+      const { error } = await supabase.from("practice_snapshots").delete().eq("id", snap.id);
+      if (error) { window.alert("Delete snapshot failed: " + error.message); return; }
+      await loadSnapshots();
+    };
     // Flip the lock flag on a team row. Used by the lock icon in the team-label cell.
     const toggleTeamLock = async (teamName, currentLocked) => {
       const { error } = await supabase.from("practice_teams")
@@ -4986,6 +5038,43 @@ export default function App() {
             {problemCount > 0 && <> · <b style={{color:C.red}}>{problemCount} warning{problemCount===1?"":"s"}</b></>}
           </div>
         </div>
+        {/* Save / Revert restore points (admin only). */}
+        {isAdmin && (
+          <details style={{marginBottom:12,background:C.card,border:"1px solid "+C.border,borderRadius:8,padding:"8px 12px"}}>
+            <summary style={{cursor:"pointer",fontSize:12,fontWeight:800,color:C.gold,letterSpacing:0.3}}>
+              Save / Revert schedule ({snapshots.length} restore point{snapshots.length===1?"":"s"})
+            </summary>
+            <div style={{marginTop:10,display:"flex",flexDirection:"column",gap:10}}>
+              <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+                <button onClick={saveSnapshot} title="Capture the whole schedule (all phases + S&A) as a restore point"
+                  style={{padding:"6px 14px",borderRadius:6,border:"none",background:C.gold,color:"#000",fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>
+                  + Save current schedule
+                </button>
+                <span style={{fontSize:10,color:C.mut}}>Snapshots every phase + S&amp;A. Save before big edits so you can revert.</span>
+              </div>
+              {snapshots.length === 0
+                ? <div style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>No restore points yet.</div>
+                : <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                    {snapshots.map(s => (
+                      <div key={s.id} style={{display:"flex",alignItems:"center",gap:10,fontSize:11,padding:"6px 8px",borderRadius:6,background:"rgba(255,255,255,0.02)",border:"1px solid "+C.border}}>
+                        <span style={{flex:1,minWidth:0}}>
+                          <b style={{color:C.text}}>{s.label}</b>
+                          <span style={{color:C.mut}}> · {new Date(s.created_at).toLocaleString()}{s.created_by ? " · " + s.created_by : ""}</span>
+                        </span>
+                        <button onClick={()=>revertSnapshot(s)} title="Replace the live schedule with this restore point"
+                          style={{padding:"3px 12px",borderRadius:6,border:"1px solid #f59e0b",background:"transparent",color:"#f59e0b",fontSize:11,fontWeight:800,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
+                          Revert
+                        </button>
+                        <button onClick={()=>deleteSnapshot(s)} title="Delete this restore point (does not change the schedule)"
+                          style={{padding:"3px 10px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+                          Delete
+                        </button>
+                      </div>
+                    ))}
+                  </div>}
+            </div>
+          </details>
+        )}
         {/* Block dates — which specific Sundays this preseason phase runs. */}
         {PHASE_DATES[schedulePhase] && (
           <div style={{marginBottom:12,fontSize:11,color:C.mut,background:C.card,border:"1px solid "+C.border,borderRadius:8,padding:"7px 12px"}}>
