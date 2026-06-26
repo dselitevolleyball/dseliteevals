@@ -1094,8 +1094,6 @@ export default function App() {
   useEffect(() => { if (isApproved && (view === "practice" || view === "teamdir")) loadPractice(); }, [isApproved, view, loadPractice]);
   // Coach/team cards (openable from any view) need practice_teams loaded.
   useEffect(() => { if (isApproved && (coachCardName || teamCardName)) loadPractice(); }, [isApproved, coachCardName, teamCardName, loadPractice]);
-  // The coach card edits coach_roster, so make sure it's loaded when one opens.
-  useEffect(() => { if (isApproved && coachCardName) loadCoachRoster(); }, [isApproved, coachCardName, loadCoachRoster]);
 
   // Tryouts tab loader
   const loadTryouts = useCallback(async () => {
@@ -1200,6 +1198,8 @@ export default function App() {
     // so make sure it's loaded whenever either tab opens.
     if (isApproved && (view === "coaches" || view === "tryouts")) loadCoachRoster();
   }, [isApproved, view, loadCoachRoster]);
+  // The coach card edits coach_roster, so make sure it's loaded when one opens.
+  useEffect(() => { if (isApproved && coachCardName) loadCoachRoster(); }, [isApproved, coachCardName, loadCoachRoster]);
 
   // Realtime sync for tournament planning (separate channel — only when on
   // that tab so we don't burn a websocket connection elsewhere).
