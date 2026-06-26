@@ -4691,6 +4691,35 @@ export default function App() {
       }
       await loadPractice();
     };
+
+    // Fall Sundays: one cell that cycles a team's hour through three states —
+    //   empty → Practice (green ✓) → Speed & Agility (orange dumbbell) → empty.
+    // Practice is a practice_assignments row; S&A is a set of sa_sessions rows
+    // (one per Sunday in the block). A team's hour is one or the other, never both.
+    const cycleSunCell = async (teamName, slot) => {
+      if (!sa) return;
+      const team = teamByName.get(teamName);
+      if (team?.locked) return;
+      const practiceRow = byTeamSlot.get(teamName + "|Sun|" + slot);
+      const saRows = saByTeamSlot.get(teamName + "|" + slot) || [];
+      if (saRows.length) {
+        // S&A → empty.
+        const { error } = await supabase.from("sa_sessions").delete().in("id", saRows.map(r => r.id));
+        if (error) { window.alert("Clear S&A failed: " + error.message); return; }
+      } else if (practiceRow) {
+        // Practice → S&A: drop the court, add the S&A sessions.
+        const { error: delErr } = await supabase.from("practice_assignments").delete().eq("id", practiceRow.id);
+        if (delErr) { window.alert("Remove practice failed: " + delErr.message); return; }
+        const rows = SA_DATES.map(d => ({ block: schedulePhase, session_date: d, slot, team_name: teamName }));
+        const { error: insErr } = await supabase.from("sa_sessions").insert(rows);
+        if (insErr) { window.alert("Add S&A failed: " + insErr.message); return; }
+      } else {
+        // empty → Practice.
+        const { error } = await supabase.from("practice_assignments").insert({ team_name: teamName, day: "Sun", slot, phase: schedulePhase });
+        if (error) { window.alert("Add practice failed: " + error.message); return; }
+      }
+      await loadPractice();
+    };
     // Flip the lock flag on a team row. Used by the lock icon in the team-label cell.
     const toggleTeamLock = async (teamName, currentLocked) => {
       const { error } = await supabase.from("practice_teams")
@@ -4874,27 +4903,14 @@ export default function App() {
                     const sk = day + "|" + s.label;
                     const count = (bySlot.get(sk) || []).length;
                     const over = count > s.capacity;
-                    const isSunHour = day === "Sun" && sa;
-                    const taken = isSunHour ? (saBySlot.get(s.label)?.size || 0) : 0;
-                    // Sunday in a Fall phase = two sub-cells (Court | S&A).
-                    // Everything else = single court cell.
+                    // Fall Sundays use a single cycling cell (Practice / S&A);
+                    // everything else is a single court cell. One <th> either way.
                     return (
-                      <Fragment key={sk}>
-                        <th style={{...thS,color:over?C.red:C.mut,borderRight: isSunHour ? "1px dashed "+C.border : undefined}}>
-                          <div>{day}</div>
-                          <div style={{fontSize:9,fontWeight:600}}>{s.label}</div>
-                          {isSunHour && <div style={{fontSize:8,fontWeight:800,color:C.grn,letterSpacing:0.5}}>COURT</div>}
-                          <div style={{fontSize:9,fontWeight:800,color:over?C.red:(count===s.capacity?C.grn:C.mut)}}>{count}/{s.capacity}</div>
-                        </th>
-                        {isSunHour && (
-                          <th style={{...thS,color:"#06b6d4",background:"rgba(6,182,212,0.06)",borderRight:"2px solid "+C.border}}>
-                            <div>{day}</div>
-                            <div style={{fontSize:9,fontWeight:600}}>{s.label}</div>
-                            <div style={{fontSize:8,fontWeight:800,color:"#06b6d4",letterSpacing:0.5}}>S&amp;A</div>
-                            <div style={{fontSize:9,fontWeight:800,color:taken?C.grn:C.mut}}>{taken}/1</div>
-                          </th>
-                        )}
-                      </Fragment>
+                      <th key={sk} style={{...thS,color:over?C.red:C.mut}}>
+                        <div>{day}</div>
+                        <div style={{fontSize:9,fontWeight:600}}>{s.label}</div>
+                        <div style={{fontSize:9,fontWeight:800,color:over?C.red:(count===s.capacity?C.grn:C.mut)}}>{count}/{s.capacity}</div>
+                      </th>
                     );
                   }))}
                   <th style={{...thS,textAlign:"center",minWidth:60}}>Count</th>
@@ -4961,30 +4977,37 @@ export default function App() {
                                  : youngLate ? "#f59e0b"
                                  : C.grn;
                         const isSunHour = day === "Sun" && sa;
-                        // S&A sub-cell vars (only used when isSunHour).
+                        // Fall Sundays: one cell cycling empty → Practice → S&A.
                         const saOn = isSunHour && (saByTeamSlot.get(t.team_name + "|" + s.label) || []).length > 0;
-                        const saOccupants = isSunHour ? saBySlot.get(s.label) : null;
-                        const saOtherTeam = isSunHour && !saOn && saOccupants && saOccupants.size > 0;
-                        return (
-                          <Fragment key={sk}>
-                            <td onClick={()=>toggleAssignment(t.team_name, day, s.label)}
-                              title={t.locked ? "Team is locked — unlock to edit" : (isOn ? "Click to remove court" : "Click to add court")}
-                              style={{...tdS,cursor:t.locked?"not-allowed":"pointer",userSelect:"none",background:bg,color:fg,fontWeight:800,fontSize:14,borderRight:isSunHour?"1px dashed "+C.border:undefined}}>
-                              {isOn ? "✓" : ""}
+                        if (isSunHour) {
+                          const state = saOn ? "sa" : isOn ? "practice" : "empty";
+                          const cbg = state === "sa" ? "rgba(245,158,11,0.20)" : state === "practice" ? bg : "transparent";
+                          const title = t.locked ? "Team is locked — unlock to edit"
+                            : state === "empty" ? "Click: set Practice"
+                            : state === "practice" ? "Click: switch to Speed & Agility"
+                            : "Click: clear";
+                          return (
+                            <td key={sk} onClick={()=>cycleSunCell(t.team_name, s.label)} title={title}
+                              style={{...tdS,cursor:t.locked?"not-allowed":"pointer",userSelect:"none",background:cbg,fontWeight:800,fontSize:14}}>
+                              {state === "practice" && <span style={{color:fg}}>✓</span>}
+                              {state === "sa" && (
+                                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2.2" strokeLinecap="round" style={{display:"block",margin:"0 auto"}}>
+                                  <line x1="6.5" y1="12" x2="17.5" y2="12"/>
+                                  <line x1="4" y1="9" x2="4" y2="15"/>
+                                  <line x1="6.5" y1="7.5" x2="6.5" y2="16.5"/>
+                                  <line x1="17.5" y1="7.5" x2="17.5" y2="16.5"/>
+                                  <line x1="20" y1="9" x2="20" y2="15"/>
+                                </svg>
+                              )}
                             </td>
-                            {isSunHour && (
-                              <td onClick={()=>toggleSA(t.team_name, s.label)}
-                                title={t.locked ? "Team is locked" : (saOn ? "Click to remove from S&A " + s.label : saOtherTeam ? "S&A slot taken by " + Array.from(saOccupants).join(", ") : "Click to add to S&A " + s.label)}
-                                style={{...tdS,
-                                  cursor:t.locked?"not-allowed":"pointer",userSelect:"none",
-                                  background: saOn ? "rgba(6,182,212,0.22)" : saOtherTeam ? "rgba(255,255,255,0.02)" : "transparent",
-                                  color: saOn ? "#06b6d4" : C.mut,
-                                  fontWeight:800,fontSize:14,
-                                  borderRight:"2px solid "+C.border}}>
-                                {saOn ? "✓" : ""}
-                              </td>
-                            )}
-                          </Fragment>
+                          );
+                        }
+                        return (
+                          <td key={sk} onClick={()=>toggleAssignment(t.team_name, day, s.label)}
+                            title={t.locked ? "Team is locked — unlock to edit" : (isOn ? "Click to remove court" : "Click to add court")}
+                            style={{...tdS,cursor:t.locked?"not-allowed":"pointer",userSelect:"none",background:bg,color:fg,fontWeight:800,fontSize:14}}>
+                            {isOn ? "✓" : ""}
+                          </td>
                         );
                       }))}
                       <td style={{...tdS,fontWeight:700,color:countOff?"#f59e0b":C.grn,minWidth:40}}>
@@ -4998,7 +5021,9 @@ export default function App() {
           </div>
         </div>
         <div style={{marginTop:10,fontSize:11,color:C.mut,lineHeight:1.5}}>
-          Sundays show two cells per hour: <b style={{color:C.grn}}>green ✓</b> = court (up to {schedulePhase==="summer"?5:6} teams per hour), <b style={{color:"#06b6d4"}}>blue ✓</b> = S&amp;A (one team at a time, Fall 1 & Fall 2 only). Click to toggle. <b style={{color:C.red}}>Red</b> means court overflow or coach double-booked; <b style={{color:"#f59e0b"}}>amber</b> means U11/U12 in 7-9pm. Weekday slots stay 2-hour for now.
+          {sa
+            ? <>Click a Sunday cell to cycle it: empty → <b style={{color:C.grn}}>green ✓ Practice</b> → <b style={{color:"#f59e0b"}}>orange dumbbell = Speed &amp; Agility</b> → empty. Each team's hour is one or the other. <b style={{color:C.red}}>Red</b> = court overflow or coach double-booked; <b style={{color:"#f59e0b"}}>amber ✓</b> = U11/U12 practicing 7-9pm.</>
+            : <><b style={{color:C.grn}}>Green ✓</b> = court (up to {schedulePhase==="summer"?5:6} teams per hour). Click to toggle. <b style={{color:C.red}}>Red</b> means court overflow or coach double-booked; <b style={{color:"#f59e0b"}}>amber</b> means U11/U12 in 7-9pm.</>}
         </div>
       </div>
     );
