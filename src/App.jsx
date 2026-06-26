@@ -4748,11 +4748,22 @@ export default function App() {
       }
     }
     // Fall 1/Fall 2 expect 2h/week of ANY combination of practice + S&A.
-    // Regular season uses (practices_per_week × 2); summer is freeform.
+    // Count exactly what the Sunday grid shows: 1h per hour where the team is
+    // Practice or S&A (one or the other — never both, and weekday rows are
+    // hidden and don't count). Regular season uses practices_per_week × 2;
+    // summer is freeform.
     const teamLoad = (t, assigns) => {
+      if (isFallPhase) {
+        let actual = 0;
+        for (const label of SUN_HOURS) {
+          const onPractice = byTeamSlot.has(t.team_name + "|Sun|" + label);
+          const onSA = (saByTeamSlot.get(t.team_name + "|" + label) || []).length > 0;
+          if (onPractice || onSA) actual += 1;
+        }
+        return { actual, expected: 2 };
+      }
       const practiceH = assigns.reduce((s, a) => s + hoursOf(a), 0);
-      const saH = saHoursByTeam.get(t.team_name) || 0;
-      return isFallPhase ? { actual: practiceH + saH, expected: 2 } : { actual: practiceH, expected: (t.practices_per_week || 0) * 2 };
+      return { actual: practiceH, expected: (t.practices_per_week || 0) * 2 };
     };
 
     // Compute per-team and per-slot warnings up front.
