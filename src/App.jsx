@@ -653,6 +653,8 @@ export default function App() {
   const [saSessions, setSaSessions]                   = useState([]);
   const [floatingCoaches, setFloatingCoaches]         = useState([]);
   const [snapshots, setSnapshots]                     = useState([]);
+  // Fires the "save a restore point first" nudge at most once per practice session.
+  const practiceEditReminded = useRef(false);
   const [saBlock, setSaBlock]                         = useState(
     () => (typeof localStorage !== "undefined" && localStorage.getItem("dse_sa_block")) || "fall_b1"
   );
@@ -4631,6 +4633,7 @@ export default function App() {
       // Locked teams' rows are read-only — bail before any DB write.
       const team = teamByName.get(teamName);
       if (team?.locked) return;
+      await remindSaveOnce();
       const key = teamName + "|" + day + "|" + slot;
       const existing = byTeamSlot.get(key);
       if (existing) {
@@ -4712,6 +4715,7 @@ export default function App() {
       if (!sa) return;
       const team = teamByName.get(teamName);
       if (team?.locked) return;
+      await remindSaveOnce();
       const practiceRow = byTeamSlot.get(teamName + "|Sun|" + slot);
       const saRows = saByTeamSlot.get(teamName + "|" + slot) || [];
       if (saRows.length) {
@@ -4755,8 +4759,17 @@ export default function App() {
         assignments, sa_sessions: sa,
       });
       if (error) { window.alert("Save snapshot failed: " + error.message); return; }
+      practiceEditReminded.current = true; // they've now saved — don't nag this session
       await loadSnapshots();
       window.alert("Saved restore point: \"" + (label.trim() || "Snapshot") + "\" (" + assignments.length + " assignments).");
+    };
+    // Nudge (once per session) to save a restore point before the first edit.
+    const remindSaveOnce = async () => {
+      if (!isAdmin || practiceEditReminded.current) return;
+      practiceEditReminded.current = true;
+      if (window.confirm("Save a restore point before changing the schedule?\n\nRecommended — it lets you revert if these edits go wrong. Click OK to save one now, or Cancel to edit without saving.")) {
+        await saveSnapshot();
+      }
     };
     const revertSnapshot = async (snap) => {
       if (!window.confirm(
