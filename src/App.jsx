@@ -4805,6 +4805,58 @@ export default function App() {
       }
     }
 
+    // ─── Coach efficiency ────────────────────────────────────────────
+    // Goal: a coach with two teams should work contiguous blocks — back-to-
+    // back, no idle gap the same day, and ideally pair both teams on one day
+    // rather than two separate trips. Flag the two inefficiencies:
+    //   coach_gap   — idle time between a coach's sessions on the same day.
+    //   coach_split — a coach's teams sit on different weekdays that could be
+    //                 combined onto one day, back-to-back.
+    const slotRange = (label) => {
+      const m = /^(\d+)-(\d+)pm$/.exec(label);
+      if (!m) return null;
+      const to24 = (h) => (h === 12 ? 12 : h + 12);
+      return [to24(+m[1]), to24(+m[2])];
+    };
+    const fmtHr = (h) => (h === 12 ? "12pm" : h > 12 ? (h - 12) + "pm" : h + "am");
+    const coachSessions = new Map(); // coach -> [{day, slot, team}]
+    for (const a of phaseAssignments) {
+      const t = teamByName.get(a.team_name);
+      if (!t) continue;
+      for (const c of [t.head_coach, t.assistant_coach]) {
+        if (!c) continue;
+        if (!coachSessions.has(c)) coachSessions.set(c, []);
+        coachSessions.get(c).push({ day: a.day, slot: a.slot, team: a.team_name });
+      }
+    }
+    for (const [coach, sessions] of coachSessions) {
+      // Same-day idle gaps (merge a team's consecutive Sunday cells first).
+      for (const day of DAYS) {
+        const items = sessions.filter(s => s.day === day).map(s => {
+          const r = slotRange(s.slot); return r ? { start: r[0], end: r[1] } : null;
+        }).filter(Boolean).sort((a, b) => a.start - b.start);
+        if (items.length < 2) continue;
+        const merged = [];
+        for (const it of items) {
+          const last = merged[merged.length - 1];
+          if (last && it.start <= last.end) last.end = Math.max(last.end, it.end);
+          else merged.push({ ...it });
+        }
+        for (let i = 1; i < merged.length; i++) {
+          warnings.push({ kind: "coach_gap", coach,
+            text: coach + " has a " + (merged[i].start - merged[i - 1].end) + "h gap on " + day + " — idle " + fmtHr(merged[i - 1].end) + "–" + fmtHr(merged[i].start) });
+        }
+      }
+      // Two teams split across separate weekdays (could pair on one day).
+      const wd = sessions.filter(s => WEEKDAYS.has(s.day));
+      const wdDays = new Set(wd.map(s => s.day));
+      const wdTeams = new Set(wd.map(s => s.team));
+      if (wdTeams.size >= 2 && wd.length <= 2 && wdDays.size >= 2) {
+        warnings.push({ kind: "coach_split", coach,
+          text: coach + " coaches on separate weekdays (" + wd.map(s => s.day + " " + s.slot + " " + s.team).join(", ") + ") — pair both on one day, back-to-back" });
+      }
+    }
+
     // Group warnings by kind for the summary banner.
     const grouped = warnings.reduce((acc, w) => { (acc[w.kind] ||= []).push(w); return acc; }, {});
     const warnColor = (k) =>
@@ -4812,13 +4864,17 @@ export default function App() {
       k === "coach_clash"   ? C.red :
       k === "count"         ? "#f59e0b" :
       k === "young_late"    ? "#f59e0b" :
-      k === "young_weekday" ? "#f59e0b" : C.mut;
+      k === "young_weekday" ? "#f59e0b" :
+      k === "coach_gap"     ? "#f59e0b" :
+      k === "coach_split"   ? "#f59e0b" : C.mut;
     const warnLabel = (k) => ({
       overflow:      "Court overflow",
       coach_clash:   "Coach double-booked",
       count:         "Wrong practice count",
       young_late:    "U11/U12 in 7-9pm",
       young_weekday: "U11/U12 weekday wrong slot",
+      coach_gap:     "Coach idle gap (same day)",
+      coach_split:   "Coach split across weekdays",
     })[k] || k;
 
     const thS = { padding:"6px 6px", fontSize:10, fontWeight:700, textTransform:"uppercase", color:C.mut, borderBottom:"1px solid "+C.border, background:C.card, position:"sticky", top:0, zIndex:2, whiteSpace:"nowrap" };
