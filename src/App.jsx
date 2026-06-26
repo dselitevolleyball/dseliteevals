@@ -451,6 +451,56 @@ function vertical(p) {
   const j = parseFloat(p.jump_touch), s = parseFloat(p.stand_reach);
   return (Number.isFinite(j) && Number.isFinite(s)) ? (j - s) : null;
 }
+// ── Practice schedule display helpers ──
+const PRACTICE_PHASES = [
+  { id:"season", label:"Regular Season" },
+  { id:"summer", label:"Summer" },
+  { id:"fall1",  label:"Fall 1" },
+  { id:"fall2",  label:"Fall 2" },
+];
+const PRACTICE_DAY_ORDER = { Sun:0, Mon:1, Tue:2, Wed:3, Thu:4, Fri:5, Sat:6 };
+// Slots look like "12-1pm", "5-7pm" — all afternoon/evening. Parse to 24h ordinals
+// (12=noon, 1pm=13 … 9pm=21) so we can detect + merge adjacent ranges.
+function parsePracticeSlot(slot) {
+  const m = (slot || "").match(/^\s*(\d{1,2})\s*-\s*(\d{1,2})\s*pm\s*$/i);
+  if (!m) return null;
+  const to24 = h => (h === 12 ? 12 : h + 12);
+  return { start: to24(parseInt(m[1], 10)), end: to24(parseInt(m[2], 10)) };
+}
+function fmtPracticeRange(start, end) {
+  const to12 = h => (h === 12 ? 12 : h - 12);
+  return to12(start) + "-" + to12(end) + "pm";
+}
+// Merge adjacent/overlapping hour slots into single ranges (12-1pm + 1-2pm → 12-2pm).
+function mergeAdjacentSlots(slots) {
+  const parsed = slots.map(parsePracticeSlot).filter(Boolean).sort((a, b) => a.start - b.start);
+  if (!parsed.length) return [...new Set(slots)];
+  const out = [];
+  let cur = { ...parsed[0] };
+  for (let i = 1; i < parsed.length; i++) {
+    if (parsed[i].start <= cur.end) cur.end = Math.max(cur.end, parsed[i].end);
+    else { out.push(cur); cur = { ...parsed[i] }; }
+  }
+  out.push(cur);
+  return out.map(r => fmtPracticeRange(r.start, r.end));
+}
+// Summarize practice assignments across every phase, merging adjacent slots per
+// (phase, team, day). Returns one section per phase that has any practices.
+function summarizePractices(assignments) {
+  return PRACTICE_PHASES.map(ph => {
+    const inPhase = assignments.filter(a => (a.phase || "fall1") === ph.id);
+    if (!inPhase.length) return null;
+    const groups = {};
+    inPhase.forEach(a => {
+      const k = (a.team_name || "") + "|" + a.day;
+      (groups[k] = groups[k] || { team: a.team_name, day: a.day, slots: [] }).slots.push(a.slot);
+    });
+    const entries = Object.values(groups)
+      .sort((a, b) => (PRACTICE_DAY_ORDER[a.day] ?? 99) - (PRACTICE_DAY_ORDER[b.day] ?? 99) || (a.team || "").localeCompare(b.team || ""))
+      .flatMap(g => mergeAdjacentSlots(g.slots).map(slot => ({ team: g.team, day: g.day, slot })));
+    return { id: ph.id, label: ph.label, entries };
+  }).filter(Boolean);
+}
 // A player counts as a returning DS Elite athlete if her Prev Season Team field
 // names DSE / DS Elite. Coaches can correct false positives/negatives by editing
 // the "Prev Season Team" value in the profile modal.
@@ -4035,15 +4085,6 @@ export default function App() {
         if (ra !== 0) return ra;
         return (a.last_name||"").localeCompare(b.last_name||"");
       });
-    const teamPractices = practiceAssignments
-      .filter(a => a.team_name === teamCardName && (a.phase || "fall1") === schedulePhase)
-      .sort((a, b) => {
-        const dayOrder = { Sun:0, Mon:1, Tue:2, Wed:3, Thu:4 };
-        const da = dayOrder[a.day] ?? 99;
-        const db = dayOrder[b.day] ?? 99;
-        if (da !== db) return da - db;
-        return (a.slot||"").localeCompare(b.slot||"");
-      });
     // Tournament assignments — match this team_name across the assignments table.
     const teamTournamentAssignments = tournamentAssignments.filter(ta => ta.team_id === teamCardName || ta.team_name === teamCardName);
     const tournamentById = new Map(tournaments.map(t => [t.id, t]));
@@ -4120,20 +4161,28 @@ export default function App() {
             )}
           </div>
 
-          {/* Practice schedule */}
-          <div style={sectionBox}>
-            <div style={lbl}>Practice Schedule ({schedulePhase}) · {teamPractices.length} slot{teamPractices.length===1?"":"s"}</div>
-            {teamPractices.length === 0 && <div style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>No practice slots assigned. Open the Practice tab to schedule.</div>}
-            {teamPractices.length > 0 && (
-              <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
-                {teamPractices.map((a, i) => (
-                  <span key={i} style={{fontSize:11,fontWeight:700,padding:"4px 10px",borderRadius:8,background:C.card,color:C.text,border:"1px solid "+C.border}}>
-                    {a.day} · {a.slot}
-                  </span>
+          {/* Practice schedule — all phases, adjacent slots merged */}
+          {(() => {
+            const summary = summarizePractices(practiceAssignments.filter(a => a.team_name === teamCardName));
+            return (
+              <div style={sectionBox}>
+                <div style={lbl}>Practice Schedule · all phases</div>
+                {summary.length === 0 && <div style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>No practice slots assigned. Open the Practice tab to schedule.</div>}
+                {summary.map(ph => (
+                  <div key={ph.id} style={{marginBottom:8}}>
+                    <div style={{fontSize:9,fontWeight:800,color:C.gold,textTransform:"uppercase",letterSpacing:0.5,marginBottom:4}}>{ph.label}</div>
+                    <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                      {ph.entries.map((e, i) => (
+                        <span key={i} style={{fontSize:11,fontWeight:700,padding:"4px 10px",borderRadius:8,background:C.card,color:C.text,border:"1px solid "+C.border}}>
+                          {e.day} · {e.slot}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
                 ))}
               </div>
-            )}
-          </div>
+            );
+          })()}
 
           {/* Tournament schedule */}
           <div style={sectionBox}>
@@ -4324,24 +4373,32 @@ export default function App() {
             {practiceTeams.length === 0 && <div style={{fontSize:10,color:C.mut,marginTop:6,fontStyle:"italic"}}>No teams exist yet — add teams in the Practice tab first.</div>}
           </div>
 
-          {/* Practice schedule */}
-          <div style={sectionBox}>
-            <div style={lbl}>Practice Schedule ({schedulePhase}) · {coachPractices.length} slot{coachPractices.length===1?"":"s"}</div>
-            {coachPractices.length === 0 && <div style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>No practices scheduled.</div>}
-            {coachPractices.length > 0 && (
-              <div style={{display:"flex",flexDirection:"column",gap:4}}>
-                {coachPractices.map((a, i) => (
-                  <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"4px 8px",background:C.card,borderRadius:6,border:"1px solid "+C.border,fontSize:12}}>
-                    <span style={{fontWeight:700,minWidth:60,color:C.text}}>{a.day}</span>
-                    <span style={{minWidth:70,color:C.text}}>{a.slot}</span>
-                    <span onClick={()=>{ setCoachCardName(null); setTeamCardName(a.team_name); }} style={{fontWeight:600,cursor:"pointer",flex:1,color:C.gold,textDecoration:"underline",textDecorationColor:"transparent"}}
-                      onMouseEnter={e=>e.currentTarget.style.textDecorationColor=C.gold}
-                      onMouseLeave={e=>e.currentTarget.style.textDecorationColor="transparent"}>{a.team_name}</span>
+          {/* Practice schedule — all phases, adjacent slots merged */}
+          {(() => {
+            const summary = summarizePractices(practiceAssignments.filter(a => allTeamNames.includes(a.team_name)));
+            return (
+              <div style={sectionBox}>
+                <div style={lbl}>Practice Schedule · all phases</div>
+                {summary.length === 0 && <div style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>No practices scheduled.</div>}
+                {summary.map(ph => (
+                  <div key={ph.id} style={{marginBottom:8}}>
+                    <div style={{fontSize:9,fontWeight:800,color:C.gold,textTransform:"uppercase",letterSpacing:0.5,marginBottom:4}}>{ph.label}</div>
+                    <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                      {ph.entries.map((e, i) => (
+                        <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"4px 8px",background:C.card,borderRadius:6,border:"1px solid "+C.border,fontSize:12}}>
+                          <span style={{fontWeight:700,minWidth:60,color:C.text}}>{e.day}</span>
+                          <span style={{minWidth:80,color:C.text}}>{e.slot}</span>
+                          <span onClick={()=>{ setCoachCardName(null); setTeamCardName(e.team); }} style={{fontWeight:600,cursor:"pointer",flex:1,color:C.gold,textDecoration:"underline",textDecorationColor:"transparent"}}
+                            onMouseEnter={ev=>ev.currentTarget.style.textDecorationColor=C.gold}
+                            onMouseLeave={ev=>ev.currentTarget.style.textDecorationColor="transparent"}>{e.team}</span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 ))}
               </div>
-            )}
-          </div>
+            );
+          })()}
 
           {/* Tournament schedule */}
           <div style={sectionBox}>
