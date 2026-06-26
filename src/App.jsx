@@ -973,6 +973,19 @@ export default function App() {
       : await supabase.from("player_favorites").insert({ coach_id: coach.id, player_id: playerId });
     if (error) { window.alert("Favorite update failed: " + error.message); loadFavorites(); } // resync on error
   };
+  // Reusable favorite star — drop next to a player's name anywhere. Stops click
+  // and pointer events from bubbling so it won't open a card or start a drag.
+  const favStar = (playerId, size = 14) => {
+    const on = favorites.includes(playerId);
+    return (
+      <span onClick={(e) => { e.stopPropagation(); toggleFavorite(playerId); }}
+        onPointerDown={(e) => e.stopPropagation()}
+        title={on ? "Remove from your favorites" : "Add to your favorites"}
+        style={{ cursor: "pointer", fontSize: size, lineHeight: 1, color: on ? C.gold : C.border, userSelect: "none", flexShrink: 0 }}>
+        {on ? "★" : "☆"}
+      </span>
+    );
+  };
 
   // Coaches list loader (used by the admin Coaches tab). Lives up here, NOT
   // next to renderCoaches, so the hook call order stays stable across the
@@ -2265,7 +2278,7 @@ export default function App() {
                         {roster.map(p => (
                           <button key={p.id} onClick={()=>setProfileId(p.id)} title="Open player card"
                             style={{padding:"3px 8px",borderRadius:8,border:"1px solid "+C.border,background:C.bg,color:C.text,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
-                            {p.roster_pos ? p.roster_pos+" " : ""}{p.first_name} {p.last_name}
+                            {favStar(p.id,11)}{" "}{p.roster_pos ? p.roster_pos+" " : ""}{p.first_name} {p.last_name}
                           </button>
                         ))}
                       </div>
@@ -2638,6 +2651,7 @@ export default function App() {
                               return (
                               <tr key={p.id} style={{borderBottom:"1px solid "+C.border,background:hi?hi.bg:"transparent"}}>
                                 <td style={{padding:"8px 12px"}}>
+                                  {favStar(p.id)}{" "}
                                   <span onClick={()=>setProfileId(p.id)} style={{cursor:"pointer",fontWeight:700,color:hi?hi.color:C.text}}>
                                     {newIcon(p)}{p.first_name} {p.last_name}
                                   </span>
@@ -2903,6 +2917,7 @@ export default function App() {
                         <div style={{display:"flex",alignItems:"center",gap:6,padding:"5px 8px",marginBottom:2,background:rowBg,borderRadius:6,border:rowBorder}}>
                           <span style={{fontSize:11,fontWeight:700,color:labelColor,minWidth:36}}>{rp}</span>
                           {player ? (<>
+                            {favStar(player.id,13)}
                             <span style={{display:"flex",alignItems:"center",gap:4,fontSize:12,fontWeight:600,flex:1,cursor:"pointer",color:nameColor}} onClick={()=>setProfileId(player.id)}>
                               {isReturningDSE(player) && <span title="DS Elite returning athlete" style={{color:C.gold,fontSize:14,fontWeight:800,lineHeight:1}}>◆</span>}{newIcon(player)}
                               {player.first_name} {player.last_name}
@@ -2927,6 +2942,7 @@ export default function App() {
                     return (
                     <DraggablePlayer key={p.id} player={p}>
                       <div style={{display:"flex",alignItems:"center",gap:6,padding:"5px 8px",marginBottom:2,background:rowBg,borderRadius:6,border:rowBorder}}>
+                        {favStar(p.id,13)}
                         <span style={{display:"flex",alignItems:"center",gap:4,fontSize:12,fontWeight:600,flex:1,cursor:"pointer",color:nameColor}} onClick={()=>setProfileId(p.id)}>
                           {isReturningDSE(p) && <span title="DS Elite returning athlete" style={{color:C.gold,fontSize:14,fontWeight:800,lineHeight:1}}>◆</span>}{newIcon(p)}
                           {p.first_name} {p.last_name}
@@ -2990,6 +3006,7 @@ export default function App() {
                                 {pos !== ""
                                   ? <RankInput value={rank} max={totalInPos} onCommit={(n)=>setPosRank(p.id, pos, n)} />
                                   : <span style={{minWidth:40}} />}
+                                {favStar(p.id,13)}
                                 <span style={{display:"flex",alignItems:"center",gap:4,flex:1,fontWeight:600,cursor:"pointer",color:nameColor}} onClick={()=>setProfileId(p.id)}>
                                   {isReturningDSE(p) && <span title="DS Elite returning athlete" style={{color:C.gold,fontSize:14,fontWeight:800,lineHeight:1}}>◆</span>}{newIcon(p)}
                                   {p.first_name} {p.last_name}
@@ -3024,6 +3041,7 @@ export default function App() {
                   {declined.map(p => (
                     <DraggablePlayer key={p.id} player={p}>
                       <div style={{display:"flex",alignItems:"center",gap:6,padding:"5px 8px",background:C.bg,borderRadius:5,fontSize:11}}>
+                        {favStar(p.id,13)}
                         <span style={{display:"flex",alignItems:"center",gap:4,flex:1,fontWeight:600,cursor:"pointer"}} onClick={()=>setProfileId(p.id)}>
                           {isReturningDSE(p) && <span title="DS Elite returning athlete" style={{color:C.gold,fontSize:14,fontWeight:800,lineHeight:1}}>◆</span>}{newIcon(p)}
                           {p.first_name} {p.last_name}
@@ -3203,7 +3221,7 @@ export default function App() {
               <tbody>{shown.map((p,i) => (
                 <tr key={p.id}>
                   <td style={tdS}><span style={{fontWeight:800,fontSize:15,color:i<3?C.gold:C.mut}}>#{i+1}</span></td>
-                  <td style={tdS}><span style={{display:"inline-flex",alignItems:"center",gap:5,fontWeight:700,fontSize:12,color:C.gold,cursor:"pointer"}} onClick={()=>setProfileId(p.id)}>{isReturningDSE(p) && <span title="DS Elite returning athlete" style={{color:C.gold,fontSize:14,fontWeight:800,lineHeight:1}}>◆</span>}{newIcon(p)}{p.first_name} {p.last_name}</span></td>
+                  <td style={tdS}><span style={{display:"inline-flex",alignItems:"center",gap:5}}>{favStar(p.id)}<span style={{display:"inline-flex",alignItems:"center",gap:5,fontWeight:700,fontSize:12,color:C.gold,cursor:"pointer"}} onClick={()=>setProfileId(p.id)}>{isReturningDSE(p) && <span title="DS Elite returning athlete" style={{color:C.gold,fontSize:14,fontWeight:800,lineHeight:1}}>◆</span>}{newIcon(p)}{p.first_name} {p.last_name}</span></span></td>
                   <td style={tdS}><span style={{fontWeight:700,color:p.tryout_number?C.gold:C.mut}}>{p.tryout_number ? "#"+p.tryout_number : "—"}</span></td>
                   <td style={tdS}>{p.age}</td>
                   <td style={tdS}><div style={{display:"flex",gap:2,flexWrap:"wrap"}}>{(p.positions||[]).map(pos=><Tag key={pos} c={C.grn}>{pos}</Tag>)}</div></td>
@@ -4350,6 +4368,7 @@ export default function App() {
                 {teamPlayers.map(p => (
                   <div key={p.id} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 8px",background:C.card,borderRadius:6,border:"1px solid "+C.border,fontSize:12}}>
                     <span style={{fontWeight:700,fontSize:11,color:p.roster_pos?C.gold:C.mut,minWidth:36}}>{p.roster_pos || "—"}</span>
+                    {favStar(p.id,13)}
                     <span onClick={()=>{ setTeamCardName(null); setProfileId(p.id); }}
                       style={{fontWeight:600,cursor:"pointer",flex:1,color:C.text}}>
                       {p.first_name} {p.last_name}
