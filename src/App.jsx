@@ -895,7 +895,7 @@ export default function App() {
   const [uploadMsg, setUploadMsg] = useState("");
   const [saving, setSaving] = useState(false);
   const [addingPlayer, setAddingPlayer] = useState(false);
-  const [newPlayer, setNewPlayer] = useState({ first_name:"", last_name:"", dob:"", age:"", usav_div:"", positions:[], parent_name:"", parent_email:"", parent_phone:"" });
+  const [newPlayer, setNewPlayer] = useState({ first_name:"", last_name:"", dob:"", age:"", usav_div:"", positions:[], parent_name:"", parent_email:"", parent_email2:"", parent_phone:"" });
   const [addMsg, setAddMsg] = useState("");
   // DnD sensors at App level (hook order must be stable across renders, can't live in renderTeams).
   const dndSensors = useSensors(
@@ -1533,6 +1533,7 @@ export default function App() {
             player_phone: get("phone").replace(/^\s*managed.*$/i,"").split(",")[0] || "",
             parent_name: get("managed by"),
             parent_email: get("mgr email"),
+            parent_email2: get("mgr email 2") || get("mgr email2") || get("second mgr email") || get("mgr 2 email"),
             parent_phone: get("mgr phone"),
             address_line1: get("street address line 1") || get("address line 1") || get("address"),
             address_line2: get("street address line 2") || get("address line 2"),
@@ -1597,7 +1598,7 @@ export default function App() {
         // Fields that are safe to "fill blanks" without prompting.
         const FILL_FIELDS = [
           "dob","age","gender","player_email","player_phone","parent_name",
-          "parent_email","parent_phone","address_line1","address_line2","city",
+          "parent_email","parent_email2","parent_phone","address_line1","address_line2","city",
           "state","zip","other_sports","dominant_hand","school_team",
           "primary_position","secondary_position",
           "current_team","reg_position","usav_div","reg_group",
@@ -1710,7 +1711,7 @@ export default function App() {
 
   // Opens the Add Player modal, pre-filling division to the first selected age tab.
   const openAddPlayer = useCallback(() => {
-    setNewPlayer({ first_name:"", last_name:"", dob:"", age:"", usav_div: selectedDivs[0] || "U14", positions:[], parent_name:"", parent_email:"", parent_phone:"" });
+    setNewPlayer({ first_name:"", last_name:"", dob:"", age:"", usav_div: selectedDivs[0] || "U14", positions:[], parent_name:"", parent_email:"", parent_email2:"", parent_phone:"" });
     setAddMsg("");
     setAddingPlayer(true);
   }, [selectedDivs]);
@@ -1740,13 +1741,14 @@ export default function App() {
       positions: newPlayer.positions || [],
       parent_name: newPlayer.parent_name || "",
       parent_email: newPlayer.parent_email || "",
+      parent_email2: newPlayer.parent_email2 || "",
       parent_phone: newPlayer.parent_phone || "",
     };
     const { error } = await supabase.from("players").insert(insert);
     if (error) { setAddMsg("Error: " + error.message); return; }
     await loadPlayers();
     setAddingPlayer(false);
-    setNewPlayer({ first_name:"", last_name:"", dob:"", age:"", usav_div:"", positions:[], parent_name:"", parent_email:"", parent_phone:"" });
+    setNewPlayer({ first_name:"", last_name:"", dob:"", age:"", usav_div:"", positions:[], parent_name:"", parent_email:"", parent_email2:"", parent_phone:"" });
     setAddMsg("");
   }, [newPlayer, players, loadPlayers]);
 
@@ -1794,7 +1796,7 @@ export default function App() {
         p.supplemental === 1 ? "Yes":"No", p.tryout_registered ? "Yes":"No", p.eval_registered ? "Yes":"No",
         p.sportsengine_registered ? "Yes":"No", p.sportsyou_registered ? "Yes":"No",
         p.lonestar_member ? "Yes":"No", p.jersey_tryout_complete ? "Yes":"No",
-        p.player_email, p.player_phone, p.parent_name, p.parent_email, p.parent_phone,
+        p.player_email, p.player_phone, p.parent_name, p.parent_email, p.parent_email2, p.parent_phone,
         p.address_line1, p.address_line2, p.city, p.state, p.zip,
         p.primary_position, p.secondary_position, (p.positions||[]).join("/"),
         p.dominant_hand, p.school_team, p.other_sports, p.current_team,
@@ -2362,7 +2364,7 @@ export default function App() {
             <div style={{display:"flex",flexDirection:"column",gap:6}}>
               {uploadDays.map(day => {
                 const group = byUploadDate[day];
-                const emails = [...new Set(group.map(p => (p.parent_email||"").trim()).filter(Boolean))];
+                const emails = [...new Set(group.flatMap(p => [p.parent_email, p.parent_email2].map(e => (e||"").trim()).filter(Boolean)))];
                 const pretty = new Date(day + "T00:00:00").toLocaleDateString(undefined, {weekday:"short", month:"short", day:"numeric"});
                 return (
                   <div key={day} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"8px 12px",background:C.bg,borderRadius:8,border:"1px solid "+C.border,flexWrap:"wrap"}}>
@@ -2456,7 +2458,7 @@ export default function App() {
           <input type="date" style={{...inpStyle,padding:"6px 10px",fontSize:12,color:regSince?C.gold:C.text,colorScheme:"dark"}} value={regSince} onChange={e=>setRegSince(e.target.value)} title="Show only players whose created_at is on or after this date" />
           {regSince && <button onClick={()=>setRegSince("")} title="Clear date filter" style={{padding:"6px 8px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>×</button>}
           <button onClick={() => {
-            const emails = filtered.map(p => (p.parent_email||"").trim()).filter(Boolean);
+            const emails = filtered.flatMap(p => [p.parent_email, p.parent_email2].map(e => (e||"").trim()).filter(Boolean));
             const uniq = [...new Set(emails)];
             if (!uniq.length) { window.alert("No parent emails found for the current filter."); return; }
             navigator.clipboard.writeText(uniq.join(", ")).then(()=>{ setCopiedEmails(true); setTimeout(()=>setCopiedEmails(false), 2000); });
@@ -3432,6 +3434,7 @@ export default function App() {
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:10}}>
               <div><span style={lbl}>Parent Name</span><DebouncedField style={editInp} placeholder="Parent name" value={p.parent_name||""} onCommit={v=>upd(p.id,{parent_name:v})} /></div>
               <div><span style={lbl}>Parent Email</span><DebouncedField type="email" style={editInp} placeholder="email@example.com" value={p.parent_email||""} onCommit={v=>upd(p.id,{parent_email:v})} /></div>
+              <div><span style={lbl}>Parent Email 2</span><DebouncedField type="email" style={editInp} placeholder="email@example.com" value={p.parent_email2||""} onCommit={v=>upd(p.id,{parent_email2:v})} /></div>
               <div>
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:6}}>
                   <span style={lbl}>Parent Phone</span>
@@ -5774,11 +5777,13 @@ export default function App() {
     if (emailStatus)                 pool = pool.filter(p => (p.status || "In Progress") === emailStatus);
     // Teams available for the team dropdown (within the selected ages).
     const teamOptions = [...new Set(players.filter(p => divSet.has(p.usavDiv || p.usav_div)).map(p => p.team_assignment).filter(Boolean))].sort();
-    const recipients = [...new Set(pool.map(p => (p.parent_email || "").trim().toLowerCase()).filter(Boolean))].sort();
+    // A player may have up to two parent/guardian emails; both receive messages.
+    const emailsOf = p => [p.parent_email, p.parent_email2].map(e => (e || "").trim()).filter(Boolean);
+    const recipients = [...new Set(pool.flatMap(emailsOf).map(e => e.toLowerCase()))].sort();
     const byName = (a,b) => (a.last_name||"").localeCompare(b.last_name||"") || (a.first_name||"").localeCompare(b.first_name||"");
-    const missingPlayers = pool.filter(p => !(p.parent_email || "").trim()).sort(byName);
+    const missingPlayers = pool.filter(p => emailsOf(p).length === 0).sort(byName);
     const missing = missingPlayers.length;
-    const recipientPlayers = pool.filter(p => (p.parent_email || "").trim()).sort(byName);
+    const recipientPlayers = pool.filter(p => emailsOf(p).length > 0).sort(byName);
 
     const TEST_EMAIL = "drew@dselitevolleyball.com";
     const postEmail = async (to, isTest) => {
@@ -5841,7 +5846,7 @@ export default function App() {
           {selectedDivs.length === 0 && <div style={{fontSize:12,color:C.mut,fontStyle:"italic"}}>Pick age groups with the chips above.</div>}
           {selectedDivs.slice().sort().map(div => {
             const dp = divPlayersOf(div);
-            const cnt = (scope) => new Set(applySubset(dp, scope).map(p => (p.parent_email||"").trim().toLowerCase()).filter(Boolean)).size;
+            const cnt = (scope) => new Set(applySubset(dp, scope).flatMap(p => [p.parent_email, p.parent_email2].map(e => (e||"").trim().toLowerCase()).filter(Boolean))).size;
             const scope = scopeOf(div);
             return (
               <div key={div} style={{display:"flex",alignItems:"center",gap:10}}>
@@ -7709,7 +7714,8 @@ export default function App() {
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
               <div style={{gridColumn:"1 / -1"}}><span style={lbl}>Name</span><input style={editInp} value={newPlayer.parent_name} onChange={e=>setF("parent_name", e.target.value)} /></div>
               <div><span style={lbl}>Email</span><input type="email" style={editInp} value={newPlayer.parent_email} onChange={e=>setF("parent_email", e.target.value)} /></div>
-              <div><span style={lbl}>Phone</span><input style={editInp} value={newPlayer.parent_phone} onChange={e=>setF("parent_phone", e.target.value)} placeholder="e.g. 512-555-1234" /></div>
+              <div><span style={lbl}>Email 2</span><input type="email" style={editInp} value={newPlayer.parent_email2} onChange={e=>setF("parent_email2", e.target.value)} /></div>
+              <div style={{gridColumn:"1 / -1"}}><span style={lbl}>Phone</span><input style={editInp} value={newPlayer.parent_phone} onChange={e=>setF("parent_phone", e.target.value)} placeholder="e.g. 512-555-1234" /></div>
             </div>
           </div>
           {addMsg && <div style={{fontSize:12,marginBottom:10,color:addMsg.startsWith("Error")?C.red:addMsg==="Saving..."?C.mut:C.grn}}>{addMsg}</div>}

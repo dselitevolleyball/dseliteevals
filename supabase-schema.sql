@@ -14,6 +14,7 @@ CREATE TABLE players (
   min_level TEXT,
   parent_name TEXT,
   parent_email TEXT,
+  parent_email2 TEXT,                  -- optional second parent/guardian email; see migrations/20260627
   parent_phone TEXT,
   city TEXT,
   strength_weakness TEXT,
