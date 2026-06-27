@@ -5801,9 +5801,18 @@ export default function App() {
       } catch (e) { setEmailErr(e.message || "Something went wrong."); }
       finally { setEmailSending(false); }
     };
+    const twoEmailCount = recipientPlayers.filter(p => emailsOf(p).length >= 2).length;
     const send = () => {
       if (!recipients.length) return;
-      if (!window.confirm("Send this email to " + recipients.length + " parent" + (recipients.length === 1 ? "" : "s") + "?")) return;
+      const lines = [
+        "Send this email to " + recipients.length + " email address" + (recipients.length === 1 ? "" : "es") + "?",
+        "",
+        "Covers " + recipientPlayers.length + " player" + (recipientPlayers.length === 1 ? "" : "s") + " in scope.",
+      ];
+      if (twoEmailCount > 0) {
+        lines.push(twoEmailCount + " of them have two parent emails — both addresses will be emailed.");
+      }
+      if (!window.confirm(lines.join("\n"))) return;
       postEmail(recipients, false);
     };
     const sendTest = () => postEmail([TEST_EMAIL], true);
@@ -5885,7 +5894,7 @@ export default function App() {
 
         {/* Recipient count */}
         <div style={{fontSize:12,color:C.mut,marginBottom:12,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
-          <span><strong style={{color:recipients.length?C.grn:C.red}}>{recipients.length}</strong> recipient{recipients.length===1?"":"s"}</span>
+          <span><strong style={{color:recipients.length?C.grn:C.red}}>{recipients.length}</strong> email address{recipients.length===1?"":"es"} · {recipientPlayers.length} player{recipientPlayers.length===1?"":"s"}{twoEmailCount>0?" ("+twoEmailCount+" with 2 parent emails — both sent)":""}</span>
           {missing > 0 && <button onClick={()=>setEmailShowMissing(v=>!v)} title="Show these players so you can add their parent email"
             style={{background:"none",border:"none",color:"#f59e0b",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700,textDecoration:"underline",padding:0}}>· {missing} player{missing===1?"":"s"} in scope have no parent email</button>}
           {recipients.length > 0 && <button onClick={()=>setEmailShowList(v=>!v)} style={{background:"none",border:"none",color:C.gold,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700,textDecoration:"underline"}}>{emailShowList?"hide":"show"} list</button>}
@@ -5907,7 +5916,7 @@ export default function App() {
           <div style={{maxHeight:180,overflowY:"auto",background:C.bg,border:"1px solid "+C.border,borderRadius:8,padding:"8px 10px",marginBottom:12}}>
             <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
               {recipientPlayers.map(p => (
-                <button key={p.id} onClick={()=>setProfileId(p.id)} title={p.parent_email}
+                <button key={p.id} onClick={()=>setProfileId(p.id)} title={emailsOf(p).join(", ")}
                   style={{padding:"4px 10px",borderRadius:8,border:"1px solid "+C.border,background:C.card,color:C.text,fontFamily:"inherit",fontSize:12,fontWeight:600,cursor:"pointer"}}>
                   {p.first_name} {p.last_name} <span style={{color:C.mut,fontSize:10}}>{p.usavDiv||p.usav_div}</span>
                 </button>
