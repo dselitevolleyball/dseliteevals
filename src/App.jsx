@@ -959,10 +959,12 @@ export default function App() {
   // Per-coach favorites. RLS scopes rows to the signed-in coach, so a plain
   // select returns only this coach's shortlist.
   const loadFavorites = useCallback(async () => {
-    const { data, error } = await supabase.from("player_favorites").select("player_id");
+    if (!coach?.id) { setFavorites([]); return; }
+    // Filter to THIS coach explicitly — don't rely on RLS alone for isolation.
+    const { data, error } = await supabase.from("player_favorites").select("player_id").eq("coach_id", coach.id);
     if (error) { console.error("Load favorites error:", error); return; }
     setFavorites((data || []).map(r => r.player_id));
-  }, []);
+  }, [coach?.id]);
   useEffect(() => { if (isApproved) loadFavorites(); }, [isApproved, loadFavorites]);
   const toggleFavorite = async (playerId) => {
     if (!coach?.id) return;
