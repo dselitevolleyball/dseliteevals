@@ -5774,7 +5774,16 @@ export default function App() {
     if (emailTeam === "__has")       pool = pool.filter(p => p.team_assignment);
     else if (emailTeam === "__none") pool = pool.filter(p => !p.team_assignment);
     else if (emailTeam)              pool = pool.filter(p => p.team_assignment === emailTeam);
-    if (emailStatus)                 pool = pool.filter(p => (p.status || "In Progress") === emailStatus);
+    // Match the *effective* status: when a player has an offer_status (the
+    // Teams-board buckets — declined, not_invited, offered, etc.), derive the
+    // status from it so the filter still works when the plain `status` column
+    // is stale. The "Decline offer" dropdown sets offer_status only, so without
+    // this a "Declined" filter would miss those players.
+    const effStatus = (p) => {
+      const o = p.offer_status || "";
+      return (o && OFFER_TO_STATUS[o]) ? OFFER_TO_STATUS[o] : (p.status || "In Progress");
+    };
+    if (emailStatus)                 pool = pool.filter(p => effStatus(p) === emailStatus);
     // Teams available for the team dropdown (within the selected ages).
     const teamOptions = [...new Set(players.filter(p => divSet.has(p.usavDiv || p.usav_div)).map(p => p.team_assignment).filter(Boolean))].sort();
     // A player may have up to two parent/guardian emails; both receive messages.
