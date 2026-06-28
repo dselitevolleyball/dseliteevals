@@ -777,6 +777,12 @@ export default function App() {
   // per-coach flag managed there; the owner always has access.
   const isOwner      = OWNER_EMAILS.includes((coach?.email || "").trim().toLowerCase());
   const canViewTeams = isOwner || !!coach?.can_view_teams;
+  // Operations are admin-only: the whole "Operations" nav group and the views
+  // behind it are hidden and blocked for non-admin coaches. The owner (Drew)
+  // always counts here so a bad DB flag can't lock him out.
+  const OPS_VIEWS = new Set(["tracker","teamdir","coaches","practice","email","messages"]);
+  const canOps    = isAdmin || isOwner;
+  const opsDenied = <div style={{padding:24,color:C.mut,textAlign:"center"}}>This section is restricted to administrators. Ask the club administrator (Drew) for access.</div>;
   // Age groups this coach may see across Evaluate/Teams/Rankings. Owner sees
   // all; an empty team_divs also means all (default) — a non-empty list restricts.
   const allowedDivs   = isOwner
@@ -2229,7 +2235,7 @@ export default function App() {
           <div style={{padding:24,textAlign:"center",color:C.mut,fontSize:13,background:C.card,borderRadius:12,border:"1px solid "+C.border,lineHeight:1.6}}>
             You're not listed as a coach on any team yet — coaches are matched by name on each team.
             <div style={{marginTop:10,display:"flex",gap:8,justifyContent:"center",flexWrap:"wrap"}}>
-              {canViewTeams && <button onClick={()=>setView("teamdir")} style={{padding:"6px 14px",borderRadius:8,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>Browse all teams</button>}
+              {canOps && <button onClick={()=>setView("teamdir")} style={{padding:"6px 14px",borderRadius:8,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>Browse all teams</button>}
               <button onClick={()=>setView("dashboard")} style={{padding:"6px 14px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>Open dashboard</button>
             </div>
           </div>
@@ -3442,7 +3448,7 @@ export default function App() {
                   <span style={lbl}>Parent Phone</span>
                   {p.parent_phone && (
                     <div style={{display:"flex",gap:4}}>
-                      <button
+                      {canOps && <button
                         title="Open SMS conversation with this parent"
                         onClick={async () => {
                           // Normalize to E.164 to find/create thread.
@@ -3467,7 +3473,7 @@ export default function App() {
                         }}
                         style={{padding:"1px 8px",borderRadius:6,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontSize:9,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>
                         ✉ Text
-                      </button>
+                      </button>}
                       <button
                         title="Copy parent phone to clipboard"
                         onClick={() => {
@@ -7945,7 +7951,7 @@ export default function App() {
                 <button key={v} style={btn(view===v)} onClick={()=>{ setView(v); setOpenMenu(null); }}>{l}</button>;
               const groups = [
                 { title:"Tryouts", items:[["dashboard","Dashboard"], ["evaluate","Evaluate"], ["favorites","My Favorites" + (favorites.length ? " (" + favorites.length + ")" : "")], ...(canViewTeams ? [["teams","Teams"]] : []), ["rankings","Rankings"], ["physical","Physical Testing"], ["tryouts","Coach Assignments"]] },
-                { title:"Operations", items:[["tracker","Tracker"], ...(canViewTeams ? [["teamdir","All Teams"]] : []), ...(isAdmin ? [["coaches","Coaches"]] : []), ["practice","Practice"], ["email","Email"], ["messages", "Messages (SMS)" + (totalUnread > 0 ? " (" + totalUnread + ")" : "")]] },
+                ...(canOps ? [{ title:"Operations", items:[["tracker","Tracker"], ["teamdir","All Teams"], ["coaches","Coaches"], ["practice","Practice"], ["email","Email"], ["messages", "Messages (SMS)" + (totalUnread > 0 ? " (" + totalUnread + ")" : "")]] }] : []),
               ];
               return <>
                 {item("home","Home")}
@@ -8031,6 +8037,7 @@ export default function App() {
         </div>
       )}
       <div style={{padding:"14px 18px",maxWidth:1500,margin:"0 auto"}}>
+        {OPS_VIEWS.has(view) && !canOps ? opsDenied : <>
         {view==="home" && renderHome()}
         {view==="dashboard" && renderDashboard()}
         {view==="evaluate" && renderEval()}
@@ -8048,6 +8055,7 @@ export default function App() {
         {view==="email" && renderEmailBlast()}
         {view==="messages" && renderMessages()}
         {view==="askai" && renderAskAI()}
+        </>}
       </div>
       {profileId !== null && renderProfile()}
       {teamCardName && renderTeamCard()}
