@@ -697,6 +697,8 @@ export default function App() {
   const [emailErr, setEmailErr]                       = useState("");
   const [emailShowList, setEmailShowList]             = useState(false);
   const [emailShowMissing, setEmailShowMissing]       = useState(false);
+  const [emailShowExcluded, setEmailShowExcluded]     = useState(false);
+  const [emailExcluded, setEmailExcluded]             = useState(() => new Set()); // player ids opted out of the current send
   const [emailTemplates, setEmailTemplates]           = useState(() => {
     try { return JSON.parse((typeof localStorage !== "undefined" && localStorage.getItem("dse_email_templates")) || "[]"); }
     catch { return []; }
@@ -5788,11 +5790,18 @@ export default function App() {
     const teamOptions = [...new Set(players.filter(p => divSet.has(p.usavDiv || p.usav_div)).map(p => p.team_assignment).filter(Boolean))].sort();
     // A player may have up to two parent/guardian emails; both receive messages.
     const emailsOf = p => [p.parent_email, p.parent_email2].map(e => (e || "").trim()).filter(Boolean);
-    const recipients = [...new Set(pool.flatMap(emailsOf).map(e => e.toLowerCase()))].sort();
     const byName = (a,b) => (a.last_name||"").localeCompare(b.last_name||"") || (a.first_name||"").localeCompare(b.first_name||"");
-    const missingPlayers = pool.filter(p => emailsOf(p).length === 0).sort(byName);
+    // Manual opt-out: players the coach X'd out of THIS send (e.g. a parent who
+    // is also on a distro list). They stay out of recipients but can be added back.
+    const toggleExcluded = (id) => setEmailExcluded(prev => {
+      const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next;
+    });
+    const excludedPlayers = pool.filter(p => emailExcluded.has(p.id) && emailsOf(p).length > 0).sort(byName);
+    const sendPool = pool.filter(p => !emailExcluded.has(p.id));
+    const recipients = [...new Set(sendPool.flatMap(emailsOf).map(e => e.toLowerCase()))].sort();
+    const missingPlayers = sendPool.filter(p => emailsOf(p).length === 0).sort(byName);
     const missing = missingPlayers.length;
-    const recipientPlayers = pool.filter(p => emailsOf(p).length > 0).sort(byName);
+    const recipientPlayers = sendPool.filter(p => emailsOf(p).length > 0).sort(byName);
 
     const TEST_EMAIL = "drew@dselitevolleyball.com";
     const postEmail = async (to, isTest) => {
@@ -5820,6 +5829,9 @@ export default function App() {
       ];
       if (twoEmailCount > 0) {
         lines.push(twoEmailCount + " of them have two parent emails — both addresses will be emailed.");
+      }
+      if (excludedPlayers.length > 0) {
+        lines.push(excludedPlayers.length + " player" + (excludedPlayers.length === 1 ? "" : "s") + " you removed will NOT be emailed.");
       }
       if (!window.confirm(lines.join("\n"))) return;
       postEmail(recipients, false);
@@ -5896,8 +5908,8 @@ export default function App() {
               {STATUS_OPTS.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
           </label>
-          {(emailTeam || emailStatus || Object.keys(emailGroupScope).length > 0) && (
-            <button onClick={()=>{ setEmailGroupScope({}); setEmailTeam(""); setEmailStatus(""); }} style={{padding:"5px 10px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Clear filters</button>
+          {(emailTeam || emailStatus || Object.keys(emailGroupScope).length > 0 || emailExcluded.size > 0) && (
+            <button onClick={()=>{ setEmailGroupScope({}); setEmailTeam(""); setEmailStatus(""); setEmailExcluded(new Set()); }} style={{padding:"5px 10px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Clear filters</button>
           )}
         </div>
 
@@ -5907,6 +5919,8 @@ export default function App() {
           {missing > 0 && <button onClick={()=>setEmailShowMissing(v=>!v)} title="Show these players so you can add their parent email"
             style={{background:"none",border:"none",color:"#f59e0b",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700,textDecoration:"underline",padding:0}}>· {missing} player{missing===1?"":"s"} in scope have no parent email</button>}
           {recipients.length > 0 && <button onClick={()=>setEmailShowList(v=>!v)} style={{background:"none",border:"none",color:C.gold,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700,textDecoration:"underline"}}>{emailShowList?"hide":"show"} list</button>}
+          {excludedPlayers.length > 0 && <button onClick={()=>setEmailShowExcluded(v=>!v)} title="Players you removed from this send"
+            style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700,textDecoration:"underline",padding:0}}>· {excludedPlayers.length} excluded</button>}
         </div>
         {emailShowMissing && missing > 0 && (
           <div style={{maxHeight:180,overflowY:"auto",background:C.bg,border:"1px solid rgba(245,158,11,0.4)",borderRadius:8,padding:"8px 10px",marginBottom:12}}>
@@ -5923,11 +5937,29 @@ export default function App() {
         )}
         {emailShowList && recipients.length > 0 && (
           <div style={{maxHeight:180,overflowY:"auto",background:C.bg,border:"1px solid "+C.border,borderRadius:8,padding:"8px 10px",marginBottom:12}}>
+            <div style={{fontSize:10,color:C.mut,marginBottom:6}}>Click a name to open the card · click <strong style={{color:C.red}}>×</strong> to remove from this send</div>
             <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
               {recipientPlayers.map(p => (
-                <button key={p.id} onClick={()=>setProfileId(p.id)} title={emailsOf(p).join(", ")}
-                  style={{padding:"4px 10px",borderRadius:8,border:"1px solid "+C.border,background:C.card,color:C.text,fontFamily:"inherit",fontSize:12,fontWeight:600,cursor:"pointer"}}>
-                  {p.first_name} {p.last_name} <span style={{color:C.mut,fontSize:10}}>{p.usavDiv||p.usav_div}</span>
+                <span key={p.id} title={emailsOf(p).join(", ")}
+                  style={{display:"inline-flex",alignItems:"center",gap:6,padding:"4px 6px 4px 10px",borderRadius:8,border:"1px solid "+C.border,background:C.card,fontSize:12,fontWeight:600}}>
+                  <button onClick={()=>setProfileId(p.id)} style={{background:"none",border:"none",color:C.text,fontFamily:"inherit",fontSize:12,fontWeight:600,cursor:"pointer",padding:0}}>
+                    {p.first_name} {p.last_name} <span style={{color:C.mut,fontSize:10}}>{p.usavDiv||p.usav_div}</span>
+                  </button>
+                  <button onClick={()=>toggleExcluded(p.id)} title="Remove from this send"
+                    style={{background:"none",border:"none",color:C.red,fontFamily:"inherit",fontSize:14,fontWeight:800,cursor:"pointer",lineHeight:1,padding:"0 2px"}}>×</button>
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+        {emailShowExcluded && excludedPlayers.length > 0 && (
+          <div style={{maxHeight:180,overflowY:"auto",background:C.bg,border:"1px solid rgba(239,68,68,0.4)",borderRadius:8,padding:"8px 10px",marginBottom:12}}>
+            <div style={{fontSize:10,color:C.red,fontWeight:700,marginBottom:6}}>Removed from this send — click a name to add them back:</div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+              {excludedPlayers.map(p => (
+                <button key={p.id} onClick={()=>toggleExcluded(p.id)} title={"Add back: " + emailsOf(p).join(", ")}
+                  style={{display:"inline-flex",alignItems:"center",gap:6,padding:"4px 10px",borderRadius:8,border:"1px solid rgba(239,68,68,0.4)",background:C.card,color:C.mut,fontFamily:"inherit",fontSize:12,fontWeight:600,cursor:"pointer",textDecoration:"line-through"}}>
+                  {p.first_name} {p.last_name} <span style={{fontSize:10}}>{p.usavDiv||p.usav_div}</span> <span style={{color:C.grn,fontWeight:800,textDecoration:"none"}}>＋</span>
                 </button>
               ))}
             </div>
