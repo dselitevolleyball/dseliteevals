@@ -1062,6 +1062,17 @@ export default function App() {
   // Collapse the per-player history whenever the open profile card changes.
   useEffect(() => { setHistoryOpen(false); }, [profileId]);
 
+  // Per-team build status (Teams board). Keyed by team_name. Defined above the
+  // realtime effect below because that effect lists it in its dependency array
+  // (the deps array is evaluated during render, so the const must exist first).
+  const loadTeamStatus = useCallback(async () => {
+    const { data, error } = await supabase.from("team_status").select("*");
+    if (error) { console.error("Load team_status error:", error); return; }
+    const map = {};
+    (data || []).forEach(r => { map[r.team_name] = { status: r.status || "in_progress", looking_positions: r.looking_positions || [] }; });
+    setTeamStatus(map);
+  }, []);
+
   // ─── Realtime sync ──────────────────────────────────────────────────
   // Subscribe to Postgres change events on the tables the eval site cares
   // about so each coach's screen updates without manual refresh. Players are
@@ -1190,14 +1201,6 @@ export default function App() {
   }, []);
   useEffect(() => { if (isApproved && view === "tryouts") loadTryouts(); }, [isApproved, view, loadTryouts]);
 
-  // Per-team build status (Teams board). Keyed by team_name.
-  const loadTeamStatus = useCallback(async () => {
-    const { data, error } = await supabase.from("team_status").select("*");
-    if (error) { console.error("Load team_status error:", error); return; }
-    const map = {};
-    (data || []).forEach(r => { map[r.team_name] = { status: r.status || "in_progress", looking_positions: r.looking_positions || [] }; });
-    setTeamStatus(map);
-  }, []);
   useEffect(() => { if (isApproved && (view === "teams" || view === "teamdir" || view === "home")) loadTeamStatus(); }, [isApproved, view, loadTeamStatus]);
   // Optimistically patch local state, then upsert the merged row.
   const updateTeamStatus = useCallback(async (team, patch) => {
