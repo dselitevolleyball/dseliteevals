@@ -162,3 +162,38 @@ CREATE POLICY team_status_all_approved ON team_status
   FOR ALL
   USING      (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved))
   WITH CHECK (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved));
+
+-- ───── Team operational checklist (added 20260629) ───────────────────
+-- Per-team Coach To-Do / Operations To-Do status + notes, plus coach→director
+-- questions. See migrations/20260629_team_operations_checklist.sql
+CREATE TABLE team_tasks (
+  team_name   TEXT         NOT NULL,
+  item_key    TEXT         NOT NULL,
+  status      TEXT         NOT NULL DEFAULT 'not_started',  -- not_started | in_progress | done
+  notes       TEXT         NOT NULL DEFAULT '',
+  updated_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (team_name, item_key)
+);
+ALTER TABLE team_tasks ENABLE ROW LEVEL SECURITY;
+CREATE POLICY team_tasks_all_approved ON team_tasks
+  FOR ALL
+  USING      (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved))
+  WITH CHECK (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved));
+
+CREATE TABLE team_questions (
+  id               BIGSERIAL    PRIMARY KEY,
+  team_name        TEXT         NOT NULL,
+  item_key         TEXT         NOT NULL,
+  question         TEXT         NOT NULL,
+  asked_by_name    TEXT,
+  asked_by_email   TEXT,
+  created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+  answer           TEXT,
+  answered_by_name TEXT,
+  answered_at      TIMESTAMPTZ
+);
+ALTER TABLE team_questions ENABLE ROW LEVEL SECURITY;
+CREATE POLICY team_questions_all_approved ON team_questions
+  FOR ALL
+  USING      (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved))
+  WITH CHECK (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved));

@@ -17,6 +17,30 @@ const PROJ_OPTS = ["","1","1/2","2","2/3","3"];
 const ROSTER_POS = ["S1","S2","Pin1","Pin2","Pin3","Pin4","M1","M2","M3","L","DS1","DS2","U1","U2"];
 const ROSTER_GROUPS = [{label:"Setters",pos:["S1","S2"]},{label:"Pins",pos:["Pin1","Pin2","Pin3","Pin4"]},{label:"Middles",pos:["M1","M2","M3"]},{label:"Libero/DS",pos:["L","DS1","DS2"]},{label:"Utility",pos:["U1","U2"]}];
 const DIVS = ["U10","U11","U12","U13","U14","U15","U16","U17"];
+// ── Per-team operational checklist (see migrations/20260629_team_operations_checklist) ──
+// COACH_TASKS: things each coach does for their team (status + notes + questions).
+// OPS_TASKS: things the directors do per team (status set from the All Teams list).
+const COACH_TASKS = [
+  { key:"welcome_email",    label:"Welcome Email to Players", detail:"Inform them of summer practice times, coaches' backgrounds, that the tournament schedule will be published end of summer, ask for team moms, etc." },
+  { key:"diamond_training", label:"Sign Up for Diamond Training Program", detail:"In SportsYou" },
+  { key:"coaches_meeting",  label:"Sign Up for Coaches Meeting & Party", detail:"In SportsYou" },
+  { key:"background_check",  label:"Complete Background Check" },
+  { key:"impact_safesport", label:"Complete Impact & SafeSport Training" },
+];
+const OPS_TASKS = [
+  { key:"team_finalized",       label:"Team Finalized" },
+  { key:"sportsyou_setup",      label:"SportsYou Set Up" },
+  { key:"practices_scheduled",  label:"Practices Scheduled" },
+  { key:"tournaments_scheduled",label:"Tournaments Scheduled" },
+  { key:"team_building_event",  label:"Team Building Event Scheduled" },
+];
+const TASK_NEXT = { not_started:"in_progress", in_progress:"done", done:"not_started" };
+const TASK_LABELS = Object.fromEntries([...COACH_TASKS, ...OPS_TASKS].map(i => [i.key, i.label]));
+const taskStatusMeta = (st) => ({
+  not_started: { label:"Not Started", fg:C.mut,    bg:"transparent",            border:"1px solid "+C.border },
+  in_progress: { label:"In Progress", fg:"#f59e0b", bg:"rgba(245,158,11,0.18)", border:"1px solid #f59e0b" },
+  done:        { label:"✓ Done",      fg:C.grn,    bg:"rgba(34,197,94,0.22)",   border:"1px solid "+C.grn },
+}[st] || { label:"Not Started", fg:C.mut, bg:"transparent", border:"1px solid "+C.border });
 const CLINIC_DIVS = ["U13","U14","U15","U16","U17"];
 // Specific National Team ID Clinic dates a player attended (multi-select).
 // Mirrors the EVAL_DATES pattern — short M/D strings. Edit here when the
@@ -706,6 +730,10 @@ export default function App() {
   const [emailTemplateSel, setEmailTemplateSel]       = useState("");
   const [teamsList, setTeamsList]                           = useState([]);
   const [teamStatus, setTeamStatus]                         = useState({}); // { [team_name]: { status, looking_positions } }
+  const [teamTasks, setTeamTasks]                           = useState({}); // { `${team}|${item}`: { status, notes } }
+  const [teamQuestions, setTeamQuestions]                   = useState([]); // coach→director questions
+  const [qDraft, setQDraft]                                 = useState({}); // { `${team}|${item}`: text } ask-a-question drafts
+  const [aDraft, setADraft]                                 = useState({}); // { [questionId]: text } answer drafts
   const [blackoutDates, setBlackoutDates]                   = useState([]);
   const [tnFilters, setTnFilters]                           = useState({ search: "", ageFor: "", qualifierOnly: false, dateFrom: "", dateTo: "", hideClosed: false, hideCancelled: true, startsOn: [], state: "", numDays: "", divisions: [], tags: [] });
   const [tnView, setTnView]                                 = useState("list"); // "list" | "calendar"
@@ -1072,6 +1100,20 @@ export default function App() {
     (data || []).forEach(r => { map[r.team_name] = { status: r.status || "in_progress", looking_positions: r.looking_positions || [] }; });
     setTeamStatus(map);
   }, []);
+  // Per-team operational checklist (Coach + Ops To-Do) and the coach→director
+  // questions. Defined above the realtime effect that lists them in its deps.
+  const loadTeamTasks = useCallback(async () => {
+    const { data, error } = await supabase.from("team_tasks").select("*");
+    if (error) { console.error("Load team_tasks error:", error); return; }
+    const map = {};
+    (data || []).forEach(r => { map[r.team_name + "|" + r.item_key] = { status: r.status || "not_started", notes: r.notes || "" }; });
+    setTeamTasks(map);
+  }, []);
+  const loadTeamQuestions = useCallback(async () => {
+    const { data, error } = await supabase.from("team_questions").select("*").order("created_at", { ascending: false });
+    if (error) { console.error("Load team_questions error:", error); return; }
+    setTeamQuestions(data || []);
+  }, []);
 
   // ─── Realtime sync ──────────────────────────────────────────────────
   // Subscribe to Postgres change events on the tables the eval site cares
@@ -1110,13 +1152,23 @@ export default function App() {
       .channel("realtime-team_status")
       .on("postgres_changes", { event: "*", schema: "public", table: "team_status" }, () => { loadTeamStatus(); })
       .subscribe();
+    const teamTasksChannel = supabase
+      .channel("realtime-team_tasks")
+      .on("postgres_changes", { event: "*", schema: "public", table: "team_tasks" }, () => { loadTeamTasks(); })
+      .subscribe();
+    const teamQuestionsChannel = supabase
+      .channel("realtime-team_questions")
+      .on("postgres_changes", { event: "*", schema: "public", table: "team_questions" }, () => { loadTeamQuestions(); })
+      .subscribe();
     return () => {
       supabase.removeChannel(playerChannel);
       supabase.removeChannel(coachChannel);
       supabase.removeChannel(rankingsChannel);
       supabase.removeChannel(teamStatusChannel);
+      supabase.removeChannel(teamTasksChannel);
+      supabase.removeChannel(teamQuestionsChannel);
     };
-  }, [isApproved, loadCoaches, loadRankings, loadTeamStatus]);
+  }, [isApproved, loadCoaches, loadRankings, loadTeamStatus, loadTeamTasks, loadTeamQuestions]);
 
   // Activity feed live updates — only subscribe while that tab is open, since
   // change_log INSERTs fire on every player write and the feed is otherwise
@@ -1202,6 +1254,8 @@ export default function App() {
   useEffect(() => { if (isApproved && view === "tryouts") loadTryouts(); }, [isApproved, view, loadTryouts]);
 
   useEffect(() => { if (isApproved && (view === "teams" || view === "teamdir" || view === "home" || view === "dashboard")) loadTeamStatus(); }, [isApproved, view, loadTeamStatus]);
+  // Operational checklist + questions load on the Home (coaches) and All Teams (admins) views.
+  useEffect(() => { if (isApproved && (view === "home" || view === "teamdir")) { loadTeamTasks(); loadTeamQuestions(); } }, [isApproved, view, loadTeamTasks, loadTeamQuestions]);
   // Optimistically patch local state, then upsert the merged row. `merged` is
   // computed from current state synchronously (NOT inside the setState updater,
   // which React may run later) so the upsert payload is always complete.
@@ -1215,6 +1269,42 @@ export default function App() {
     );
     if (error) console.error("Save team_status error:", error);
   }, [teamStatus]);
+
+  // Checklist item status/notes. merged computed synchronously from state.
+  const updateTeamTask = useCallback(async (team, itemKey, patch) => {
+    const k = team + "|" + itemKey;
+    const cur = teamTasks[k] || { status: "not_started", notes: "" };
+    const merged = { status: cur.status || "not_started", notes: cur.notes || "", ...patch };
+    setTeamTasks(prev => ({ ...prev, [k]: { ...(prev[k] || { status: "not_started", notes: "" }), ...patch } }));
+    const { error } = await supabase.from("team_tasks").upsert(
+      { team_name: team, item_key: itemKey, status: merged.status, notes: merged.notes, updated_at: new Date().toISOString() },
+      { onConflict: "team_name,item_key" }
+    );
+    if (error) console.error("Save team_tasks error:", error);
+  }, [teamTasks]);
+  // A coach posts a question against a checklist item (notifies directors).
+  const askTeamQuestion = useCallback(async (team, itemKey, question) => {
+    const q = (question || "").trim();
+    if (!q) return;
+    const { error } = await supabase.from("team_questions").insert({
+      team_name: team, item_key: itemKey, question: q,
+      asked_by_name: coach?.display_name || coach?.email || "", asked_by_email: coach?.email || "",
+    });
+    if (error) { window.alert("Post question failed: " + error.message); return; }
+    setQDraft(prev => ({ ...prev, [team + "|" + itemKey]: "" }));
+    await loadTeamQuestions();
+  }, [coach, loadTeamQuestions]);
+  // A director answers a pending question.
+  const answerTeamQuestion = useCallback(async (id, answer) => {
+    const a = (answer || "").trim();
+    if (!a) return;
+    const { error } = await supabase.from("team_questions").update({
+      answer: a, answered_by_name: coach?.display_name || coach?.email || "", answered_at: new Date().toISOString(),
+    }).eq("id", id);
+    if (error) { window.alert("Answer failed: " + error.message); return; }
+    setADraft(prev => { const n = { ...prev }; delete n[id]; return n; });
+    await loadTeamQuestions();
+  }, [coach, loadTeamQuestions]);
 
   // SMS loaders
   const loadSmsThreads = useCallback(async () => {
@@ -2261,6 +2351,118 @@ export default function App() {
   // ─── HOME (coach landing) ───
   // Highlights the logged-in coach's teams: practice days/times (all phases,
   // merged), tournaments, and roster. Matches the coach to teams by name.
+  // ── Operational checklist render helpers (used on Home + All Teams) ──
+  // Status badge for a checklist item; cycles Not Started → In Progress → Done.
+  const taskStatusBtn = (team, itemKey, canEdit = true) => {
+    const st = (teamTasks[team + "|" + itemKey] && teamTasks[team + "|" + itemKey].status) || "not_started";
+    const m = taskStatusMeta(st);
+    return (
+      <button disabled={!canEdit}
+        onClick={canEdit ? (e) => { e.stopPropagation(); updateTeamTask(team, itemKey, { status: TASK_NEXT[st] }); } : undefined}
+        title={canEdit ? "Click to change: Not Started → In Progress → Done" : "Status set by the directors"}
+        style={{fontSize:10,fontWeight:800,padding:"2px 8px",borderRadius:8,cursor:canEdit?"pointer":"default",fontFamily:"inherit",color:m.fg,background:m.bg,border:m.border,whiteSpace:"nowrap",opacity:canEdit?1:0.9}}>
+        {m.label}
+      </button>
+    );
+  };
+  // Coach To-Do list for a team: status + notes + ask-a-question per item.
+  const renderCoachChecklist = (team) => {
+    const sectionBox = {background:C.bg,borderRadius:10,padding:12,marginTop:10};
+    const head = {fontSize:10,fontWeight:800,letterSpacing:0.5,textTransform:"uppercase",color:C.gold,marginBottom:8};
+    return (
+      <div style={sectionBox}>
+        <div style={head}>Coach To-Do</div>
+        <div style={{display:"flex",flexDirection:"column",gap:4}}>
+          {COACH_TASKS.map((item, idx) => {
+            const k = team + "|" + item.key;
+            const notes = (teamTasks[k] && teamTasks[k].notes) || "";
+            const qs = teamQuestions.filter(q => q.team_name === team && q.item_key === item.key)
+              .slice().sort((a,b) => (a.created_at||"").localeCompare(b.created_at||""));
+            const draft = qDraft[k] || "";
+            return (
+              <div key={item.key} style={{paddingTop:8,borderTop:idx?"1px solid "+C.border:"none"}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,flexWrap:"wrap"}}>
+                  <span style={{fontSize:12,fontWeight:700,color:C.text}}>{item.label}</span>
+                  {taskStatusBtn(team, item.key, true)}
+                </div>
+                {item.detail && <div style={{fontSize:10,color:C.mut,marginTop:3,lineHeight:1.4}}>{item.detail}</div>}
+                <DebouncedField multiline placeholder="Notes…" value={notes}
+                  onCommit={v => updateTeamTask(team, item.key, { notes: v })}
+                  style={{...inpStyle, width:"100%", minHeight:30, padding:"6px 8px", fontSize:11, marginTop:6, resize:"vertical"}} />
+                {qs.length > 0 && (
+                  <div style={{marginTop:6,display:"flex",flexDirection:"column",gap:5}}>
+                    {qs.map(q => (
+                      <div key={q.id} style={{fontSize:11,background:C.card,border:"1px solid "+C.border,borderRadius:6,padding:"6px 8px"}}>
+                        <div><span style={{color:C.acc,fontWeight:700}}>Q:</span> {q.question}{q.asked_by_name ? <span style={{color:C.mut,fontSize:9}}> — {q.asked_by_name}</span> : null}</div>
+                        {q.answer
+                          ? <div style={{marginTop:3,color:C.grn}}><span style={{fontWeight:700}}>A:</span> {q.answer}{q.answered_by_name ? <span style={{color:C.mut,fontSize:9}}> — {q.answered_by_name}</span> : null}</div>
+                          : <div style={{marginTop:3,color:"#f59e0b",fontSize:10,fontStyle:"italic"}}>Awaiting director response…</div>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div style={{display:"flex",gap:6,marginTop:6}}>
+                  <input value={draft} onChange={e=>setQDraft(prev=>({...prev,[k]:e.target.value}))} placeholder="Ask the directors a question…"
+                    style={{...inpStyle, flex:1, padding:"5px 8px", fontSize:11}} />
+                  <button onClick={()=>askTeamQuestion(team, item.key, draft)} disabled={!draft.trim()}
+                    style={{padding:"5px 10px",borderRadius:6,border:"none",background:draft.trim()?C.gold:C.border,color:draft.trim()?"#000":C.mut,fontWeight:700,fontSize:11,cursor:draft.trim()?"pointer":"default",fontFamily:"inherit"}}>Ask</button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+  // Operations To-Do for a team. canEdit (admins) → statuses are clickable.
+  const renderOpsChecklist = (team, canEdit) => {
+    const sectionBox = {background:C.bg,borderRadius:10,padding:12,marginTop:10};
+    const head = {fontSize:10,fontWeight:800,letterSpacing:0.5,textTransform:"uppercase",color:C.gold,marginBottom:8};
+    return (
+      <div style={sectionBox}>
+        <div style={head}>Operations To-Do{!canEdit && <span style={{color:C.mut,fontWeight:600,textTransform:"none",letterSpacing:0}}> · set by directors</span>}</div>
+        <div style={{display:"flex",flexDirection:"column",gap:6}}>
+          {OPS_TASKS.map(item => (
+            <div key={item.key} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
+              <span style={{fontSize:12,color:C.text}}>{item.label}</span>
+              {taskStatusBtn(team, item.key, canEdit)}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+  // Admin notification panel: coach questions awaiting a director answer.
+  const renderQuestionsPanel = () => {
+    if (!canOps) return null;
+    const sorted = teamQuestions.slice().sort((a,b) => (a.answer?1:0)-(b.answer?1:0) || (b.created_at||"").localeCompare(a.created_at||""));
+    const pending = teamQuestions.filter(q => !q.answer).length;
+    if (teamQuestions.length === 0) return null;
+    return (
+      <div style={{background:C.card,border:"1px solid "+(pending?"#f59e0b":C.border),borderRadius:12,padding:"14px 16px",marginBottom:18}}>
+        <div style={{fontSize:13,fontWeight:800,color:pending?"#f59e0b":C.gold,marginBottom:8}}>Coach Questions{pending>0?" · "+pending+" pending":""}</div>
+        <div style={{display:"flex",flexDirection:"column",gap:8,maxHeight:320,overflowY:"auto"}}>
+          {sorted.map(q => (
+            <div key={q.id} style={{background:C.bg,border:"1px solid "+C.border,borderRadius:8,padding:"8px 10px"}}>
+              <div style={{fontSize:10,color:C.mut,marginBottom:3}}>{q.team_name} · {TASK_LABELS[q.item_key] || q.item_key}{q.asked_by_name?" · "+q.asked_by_name:""}</div>
+              <div style={{fontSize:12,color:C.text}}><span style={{color:C.acc,fontWeight:700}}>Q:</span> {q.question}</div>
+              {q.answer ? (
+                <div style={{fontSize:12,color:C.grn,marginTop:4}}><span style={{fontWeight:700}}>A:</span> {q.answer}{q.answered_by_name?<span style={{color:C.mut,fontSize:9}}> — {q.answered_by_name}</span>:null}</div>
+              ) : (
+                <div style={{display:"flex",gap:6,marginTop:6}}>
+                  <input value={aDraft[q.id]||""} onChange={e=>setADraft(prev=>({...prev,[q.id]:e.target.value}))} placeholder="Type an answer…"
+                    style={{...inpStyle, flex:1, padding:"5px 8px", fontSize:11}} />
+                  <button onClick={()=>answerTeamQuestion(q.id, aDraft[q.id]||"")} disabled={!(aDraft[q.id]||"").trim()}
+                    style={{padding:"5px 10px",borderRadius:6,border:"none",background:(aDraft[q.id]||"").trim()?C.gold:C.border,color:(aDraft[q.id]||"").trim()?"#000":C.mut,fontWeight:700,fontSize:11,cursor:(aDraft[q.id]||"").trim()?"pointer":"default",fontFamily:"inherit"}}>Answer</button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
   function renderHome() {
     const norm = s => (s || "").toString().trim().toLowerCase();
     const myRoster = coachRoster.find(r => coach?.email && norm(r.email) === norm(coach.email));
@@ -2288,6 +2490,7 @@ export default function App() {
           <h2 style={{margin:0,fontSize:22,fontWeight:800,color:C.gold}}>Welcome, {firstName}</h2>
           <div style={{fontSize:12,color:C.mut,marginTop:3}}>Your teams — practices, tournaments, and rosters at a glance.{myTeams.length ? "" : ""}</div>
         </div>
+        {renderQuestionsPanel()}
         {myTeams.length === 0 ? (
           <div style={{padding:24,textAlign:"center",color:C.mut,fontSize:13,background:C.card,borderRadius:12,border:"1px solid "+C.border,lineHeight:1.6}}>
             You're not listed as a coach on any team yet — coaches are matched by name on each team.
@@ -2355,7 +2558,7 @@ export default function App() {
                     ))}
                   </div>
 
-                  <div style={{...box,marginBottom:0}}>
+                  <div style={box}>
                     <div style={lbl} title="Players assigned to this team who have accepted their offer">Players · {roster.length}</div>
                     {roster.length === 0 && <div style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>No accepted players yet.</div>}
                     {roster.length > 0 && (
@@ -2369,6 +2572,9 @@ export default function App() {
                       </div>
                     )}
                   </div>
+
+                  {renderCoachChecklist(t.team_name)}
+                  {renderOpsChecklist(t.team_name, canOps)}
                 </div>
               );
             })}
@@ -4512,6 +4718,7 @@ export default function App() {
                     {tStatus === "looking" && lookingPos.length > 0 && (
                       <div style={{fontSize:10,fontWeight:700,color:"#f59e0b",marginTop:8}}>Looking for: {lookingPos.join(", ")}</div>
                     )}
+                    <div onClick={(e)=>e.stopPropagation()}>{renderOpsChecklist(t.team_name, canOps)}</div>
                   </div>
                 );
               })}
