@@ -43,3 +43,11 @@ ReactDOM.createRoot(document.getElementById('root')).render(
     <App />
   </ErrorBoundary>
 )
+
+// Register the PWA service worker so the app is installable on phones
+// ("Add to Home Screen"). Network-first, so deploys are picked up immediately.
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {})
+  })
+}
