@@ -2410,14 +2410,14 @@ export default function App() {
   // merged), tournaments, and roster. Matches the coach to teams by name.
   // ── Operational checklist render helpers (used on Home + All Teams) ──
   // Status badge for a checklist item; cycles Not Started → In Progress → Done.
-  const taskStatusBtn = (team, itemKey, canEdit = true) => {
+  const taskStatusBtn = (team, itemKey, canEdit = true, big = false) => {
     const st = (teamTasks[team + "|" + itemKey] && teamTasks[team + "|" + itemKey].status) || "not_started";
     const m = taskStatusMeta(st);
     return (
       <button disabled={!canEdit}
         onClick={canEdit ? (e) => { e.stopPropagation(); updateTeamTask(team, itemKey, { status: TASK_NEXT[st] }); } : undefined}
         title={canEdit ? "Click to change: Not Started → In Progress → Done" : "Status set by the directors"}
-        style={{fontSize:10,fontWeight:800,padding:"2px 8px",borderRadius:8,cursor:canEdit?"pointer":"default",fontFamily:"inherit",color:m.fg,background:m.bg,border:m.border,whiteSpace:"nowrap",opacity:canEdit?1:0.9}}>
+        style={{fontSize:big?13:10,fontWeight:800,padding:big?"5px 12px":"2px 8px",borderRadius:8,cursor:canEdit?"pointer":"default",fontFamily:"inherit",color:m.fg,background:m.bg,border:m.border,whiteSpace:"nowrap",opacity:canEdit?1:0.9}}>
         {m.label}
       </button>
     );
@@ -2472,26 +2472,44 @@ export default function App() {
     );
   };
   // Operations To-Do for a team. canEdit (admins) → statuses are clickable.
-  const renderOpsChecklist = (team, canEdit) => {
-    const sectionBox = {background:C.bg,borderRadius:10,padding:12,marginTop:10};
-    const head = {fontSize:10,fontWeight:800,letterSpacing:0.5,textTransform:"uppercase",color:C.gold,marginBottom:8};
+  // prominent → bigger, with items laid out across a row (used on Home).
+  const renderOpsChecklist = (team, canEdit, prominent = false) => {
+    const sectionBox = prominent
+      ? {background:C.bg,borderRadius:12,padding:16,marginTop:12,border:"2px solid rgba(233,30,140,0.35)"}
+      : {background:C.bg,borderRadius:10,padding:12,marginTop:10};
+    const head = {fontSize:prominent?14:10,fontWeight:800,letterSpacing:0.5,textTransform:"uppercase",color:C.gold,marginBottom:prominent?12:8};
     return (
       <div style={sectionBox}>
-        <div style={head}>Operations To-Do{!canEdit && <span style={{color:C.mut,fontWeight:600,textTransform:"none",letterSpacing:0}}> · set by directors</span>}</div>
-        <div style={{display:"flex",flexDirection:"column",gap:6}}>
-          {OPS_TASKS.map(item => {
-            const desc = taskMeta[item.key] || item.detail || "";
-            return (
-              <div key={item.key}>
-                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
-                  <span style={{fontSize:12,color:C.text}}>{item.label}</span>
-                  {taskStatusBtn(team, item.key, canEdit)}
+        <div style={head}>Operations To-Do{!canEdit && <span style={{color:C.mut,fontWeight:600,textTransform:"none",letterSpacing:0,fontSize:prominent?11:9}}> · set by directors</span>}</div>
+        {prominent ? (
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(190px,1fr))",gap:10}}>
+            {OPS_TASKS.map(item => {
+              const desc = taskMeta[item.key] || item.detail || "";
+              return (
+                <div key={item.key} style={{background:C.card,border:"1px solid "+C.border,borderRadius:10,padding:"12px 14px",display:"flex",flexDirection:"column",gap:8}}>
+                  <span style={{fontSize:13,fontWeight:700,color:C.text,lineHeight:1.3}}>{item.label}</span>
+                  <div>{taskStatusBtn(team, item.key, canEdit, true)}</div>
+                  {desc && <div style={{fontSize:10,color:C.mut,lineHeight:1.4,whiteSpace:"pre-wrap"}}>{desc}</div>}
                 </div>
-                {desc && <div style={{fontSize:10,color:C.mut,marginTop:2,lineHeight:1.4,whiteSpace:"pre-wrap"}}>{desc}</div>}
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+            {OPS_TASKS.map(item => {
+              const desc = taskMeta[item.key] || item.detail || "";
+              return (
+                <div key={item.key}>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
+                    <span style={{fontSize:12,color:C.text}}>{item.label}</span>
+                    {taskStatusBtn(team, item.key, canEdit)}
+                  </div>
+                  {desc && <div style={{fontSize:10,color:C.mut,marginTop:2,lineHeight:1.4,whiteSpace:"pre-wrap"}}>{desc}</div>}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     );
   };
@@ -2650,7 +2668,7 @@ export default function App() {
             </div>
           </div>
         ) : (
-          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(340px,1fr))",gap:14}}>
+          <div style={{display:"flex",flexDirection:"column",gap:18}}>
             {myTeams.map(t => {
               const phases = summarizePractices(practiceAssignments.filter(a => a.team_name === t.team_name));
               // Speed & Agility sessions for this team, grouped by phase (block).
@@ -2684,47 +2702,51 @@ export default function App() {
                   </div>
                   <div style={{fontSize:10,color:C.mut,marginBottom:10}}>{coLine}</div>
 
-                  <div style={box}>
-                    <div style={lbl}>Practice &amp; S&amp;A</div>
-                    {phaseRows.length === 0 && <div style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>None scheduled.</div>}
-                    {phaseRows.map(ph => (
-                      <div key={ph.id} style={{fontSize:11,marginBottom:3}}>
-                        <span style={{color:C.gold,fontWeight:700}}>{ph.label}:</span>{" "}
-                        {ph.entries.length > 0 && <span style={{color:C.text}}>{ph.entries.map(e => e.day + " " + e.slot).join(", ")}</span>}
-                        {ph.sa.length > 0 && <span style={{color:C.acc}}>{ph.entries.length ? " · " : ""}S&amp;A {ph.sa.map(slot => "Sun " + slot).join(", ")}</span>}
-                      </div>
-                    ))}
+                  {/* Team info across one row (wraps on narrow screens). */}
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(240px,1fr))",gap:12}}>
+                    <div style={{...box,marginBottom:0}}>
+                      <div style={lbl}>Practice &amp; S&amp;A</div>
+                      {phaseRows.length === 0 && <div style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>None scheduled.</div>}
+                      {phaseRows.map(ph => (
+                        <div key={ph.id} style={{fontSize:11,marginBottom:3}}>
+                          <span style={{color:C.gold,fontWeight:700}}>{ph.label}:</span>{" "}
+                          {ph.entries.length > 0 && <span style={{color:C.text}}>{ph.entries.map(e => e.day + " " + e.slot).join(", ")}</span>}
+                          {ph.sa.length > 0 && <span style={{color:C.acc}}>{ph.entries.length ? " · " : ""}S&amp;A {ph.sa.map(slot => "Sun " + slot).join(", ")}</span>}
+                        </div>
+                      ))}
+                    </div>
+
+                    <div style={{...box,marginBottom:0}}>
+                      <div style={lbl}>Tournaments · {teamTns.length}</div>
+                      {teamTns.length === 0 && <div style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>None assigned.</div>}
+                      {teamTns.map(tn => (
+                        <div key={tn.id} style={{fontSize:11,marginBottom:2}}>
+                          <span style={{color:C.text,fontWeight:600}}>{tn.name}</span>
+                          <span style={{color:C.mut}}> · {fmtDate(tn.start_date)}{tn.end_date && tn.end_date!==tn.start_date ? "–"+fmtDate(tn.end_date) : ""}</span>
+                          {tn.is_qualifier && <span style={{color:"#a855f7",fontWeight:700,marginLeft:5,fontSize:9}}>QUAL</span>}
+                        </div>
+                      ))}
+                    </div>
+
+                    <div style={{...box,marginBottom:0}}>
+                      <div style={lbl} title="Players assigned to this team who have accepted their offer">Players · {roster.length}</div>
+                      {roster.length === 0 && <div style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>No accepted players yet.</div>}
+                      {roster.length > 0 && (
+                        <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
+                          {roster.map(p => (
+                            <button key={p.id} onClick={()=>setProfileId(p.id)} title="Open player card"
+                              style={{padding:"3px 8px",borderRadius:8,border:"1px solid "+C.border,background:C.bg,color:C.text,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+                              {p.first_name} {p.last_name}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
 
-                  <div style={box}>
-                    <div style={lbl}>Tournaments · {teamTns.length}</div>
-                    {teamTns.length === 0 && <div style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>None assigned.</div>}
-                    {teamTns.map(tn => (
-                      <div key={tn.id} style={{fontSize:11,marginBottom:2}}>
-                        <span style={{color:C.text,fontWeight:600}}>{tn.name}</span>
-                        <span style={{color:C.mut}}> · {fmtDate(tn.start_date)}{tn.end_date && tn.end_date!==tn.start_date ? "–"+fmtDate(tn.end_date) : ""}</span>
-                        {tn.is_qualifier && <span style={{color:"#a855f7",fontWeight:700,marginLeft:5,fontSize:9}}>QUAL</span>}
-                      </div>
-                    ))}
-                  </div>
-
-                  <div style={box}>
-                    <div style={lbl} title="Players assigned to this team who have accepted their offer">Players · {roster.length}</div>
-                    {roster.length === 0 && <div style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>No accepted players yet.</div>}
-                    {roster.length > 0 && (
-                      <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
-                        {roster.map(p => (
-                          <button key={p.id} onClick={()=>setProfileId(p.id)} title="Open player card"
-                            style={{padding:"3px 8px",borderRadius:8,border:"1px solid "+C.border,background:C.bg,color:C.text,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
-                            {p.first_name} {p.last_name}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
+                  {/* Operations status — enlarged and prominent. */}
+                  {renderOpsChecklist(t.team_name, canOps, true)}
                   {renderCoachChecklist(t.team_name)}
-                  {renderOpsChecklist(t.team_name, canOps)}
                 </div>
               );
             })}
