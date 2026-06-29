@@ -780,9 +780,24 @@ export default function App() {
   // Operations are admin-only: the whole "Operations" nav group and the views
   // behind it are hidden and blocked for non-admin coaches. The owner (Drew)
   // always counts here so a bad DB flag can't lock him out.
-  const OPS_VIEWS = new Set(["tracker","teamdir","coaches","practice","email","messages"]);
+  const OPS_VIEWS = new Set(["tracker","teamdir","coaches","practice","email","messages","scholarships"]);
   const canOps    = isAdmin || isOwner;
   const opsDenied = <div style={{padding:24,color:C.mut,textAlign:"center"}}>This section is restricted to administrators. Ask the club administrator (Drew) for access.</div>;
+  // Scholarship amounts are admin-only. Strip scholarship_amount from change_log
+  // entries so non-admins can't see them via the Activity feed or a player's
+  // Change History. Returns a cleaned list with now-empty update rows dropped.
+  const scrubScholarship = (entries) => {
+    if (canOps) return entries;
+    return (entries || [])
+      .map(e => {
+        if (e.action === "update" && e.field_changes && "scholarship_amount" in e.field_changes) {
+          const fc = { ...e.field_changes }; delete fc.scholarship_amount;
+          return { ...e, field_changes: fc };
+        }
+        return e;
+      })
+      .filter(e => !(e.action === "update" && e.field_changes && Object.keys(e.field_changes).length === 0));
+  };
   // Age groups this coach may see across Evaluate/Teams/Rankings. Owner sees
   // all; an empty team_divs also means all (default) — a non-empty list restricts.
   const allowedDivs   = isOwner
@@ -887,6 +902,8 @@ export default function App() {
   const [historyRows, setHistoryRows]         = useState([]);
   const [historyLoading, setHistoryLoading]   = useState(false);
   const [historyPlayerId, setHistoryPlayerId] = useState(null);
+  // Scholarships (admin-only Operations page) — search box for adding offers.
+  const [scholarSearch, setScholarSearch] = useState("");
   // AI parent-summary state for the profile modal. Reset whenever the profile changes.
   const [aiBusy, setAiBusy] = useState(false);
   const [aiResult, setAiResult] = useState("");
@@ -3740,7 +3757,7 @@ export default function App() {
               setHistoryOpen(next);
               if (next && (historyPlayerId !== p.id || historyRows.length === 0)) loadHistory();
             };
-            const rows = historyPlayerId === p.id ? historyRows : [];
+            const rows = scrubScholarship(historyPlayerId === p.id ? historyRows : []);
             return (
               <div style={{marginTop:24,paddingTop:16,borderTop:"1px solid "+C.border}}>
                 <button onClick={toggleHistory}
@@ -5837,6 +5854,91 @@ export default function App() {
     );
   }
 
+  // ─── SCHOLARSHIPS (admin-only Operations page) ───────────────────────
+  // Track a scholarship offer ($ or %) per player. Admin gating is handled by
+  // the OPS_VIEWS/canOps wrapper around the view switch.
+  function renderScholarships() {
+    const norm = (s) => (s || "").trim();
+    const byName = (a,b) => (a.last_name||"").localeCompare(b.last_name||"") || (a.first_name||"").localeCompare(b.first_name||"");
+    const offers = players.filter(p => norm(p.scholarship_amount)).sort(byName);
+    // Best-effort dollar total: sum entries that look like dollars (ignore %).
+    const parseDollar = (s) => {
+      if (/%/.test(s || "")) return null;
+      const n = parseFloat(norm(s).replace(/[$,\s]/g, ""));
+      return isNaN(n) ? null : n;
+    };
+    const dollarTotal = offers.reduce((sum, p) => sum + (parseDollar(p.scholarship_amount) || 0), 0);
+    const amtInp = {...inpStyle, width:120, padding:"6px 10px", fontSize:13, textAlign:"right"};
+    const q = scholarSearch.trim().toLowerCase();
+    const matches = q
+      ? players.filter(p => ((p.first_name||"") + " " + (p.last_name||"")).toLowerCase().includes(q)).sort(byName).slice(0, 25)
+      : [];
+    const ageOf = (p) => p.usavDiv || p.usav_div || "—";
+
+    const amountField = (p) => (
+      <DebouncedField style={amtInp} placeholder="$ or %" value={p.scholarship_amount || ""}
+        onCommit={v => upd(p.id, { scholarship_amount: v })} />
+    );
+
+    return (
+      <div style={{maxWidth:860}}>
+        <div style={{marginBottom:14}}>
+          <h2 style={{margin:0,fontSize:18,fontWeight:800,color:C.gold}}>Scholarship Offers</h2>
+          <div style={{fontSize:12,color:C.mut,marginTop:4}}>Admin-only. Record a scholarship offer per player as a dollar amount ($2,000) or a percentage (50%). Clearing the field removes the offer. Changes are logged in each player's Change History.</div>
+        </div>
+
+        {/* Summary */}
+        <div style={{display:"flex",gap:18,flexWrap:"wrap",marginBottom:16,background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:"12px 16px"}}>
+          <div><div style={{fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut}}>Players with offers</div><div style={{fontSize:24,fontWeight:800,color:C.gold}}>{offers.length}</div></div>
+          <div><div style={{fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut}} title="Sum of offers entered as dollar amounts; percentage offers are not included.">Est. dollar total</div><div style={{fontSize:24,fontWeight:800,color:C.grn}}>${dollarTotal.toLocaleString()}</div></div>
+        </div>
+
+        {/* Add / find a player */}
+        <div style={{marginBottom:16}}>
+          <span style={{fontSize:11,fontWeight:700,color:C.mut}}>Add or update an offer — search a player</span>
+          <input value={scholarSearch} onChange={e=>setScholarSearch(e.target.value)} placeholder="Type a player name…"
+            style={{...inpStyle,display:"block",width:"100%",maxWidth:360,padding:"8px 12px",fontSize:13,marginTop:6}} />
+          {q && (
+            <div style={{marginTop:8,background:C.bg,border:"1px solid "+C.border,borderRadius:8,padding:"6px 8px",maxHeight:240,overflowY:"auto"}}>
+              {matches.length === 0 && <div style={{fontSize:12,color:C.mut,padding:6}}>No players match “{scholarSearch}”.</div>}
+              {matches.map(p => (
+                <div key={p.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"6px 8px",borderRadius:6}}>
+                  <button onClick={()=>setProfileId(p.id)} style={{background:"none",border:"none",color:C.text,fontFamily:"inherit",fontSize:13,fontWeight:600,cursor:"pointer",textAlign:"left",padding:0}}>
+                    {p.first_name} {p.last_name} <span style={{color:C.mut,fontSize:11}}>· {ageOf(p)}</span>
+                  </button>
+                  {amountField(p)}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Current offers */}
+        <div style={{fontSize:11,fontWeight:700,color:C.gold,textTransform:"uppercase",letterSpacing:0.5,marginBottom:8}}>Current Offers ({offers.length})</div>
+        {offers.length === 0 ? (
+          <div style={{padding:24,textAlign:"center",color:C.mut,fontSize:13,background:C.card,borderRadius:12,border:"1px solid "+C.border}}>
+            No scholarship offers yet. Search for a player above and enter an amount.
+          </div>
+        ) : (
+          <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,overflow:"hidden"}}>
+            {offers.map((p, i) => (
+              <div key={p.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 14px",borderTop:i?"1px solid "+C.border:"none"}}>
+                <button onClick={()=>setProfileId(p.id)} style={{background:"none",border:"none",color:C.text,fontFamily:"inherit",fontSize:13,fontWeight:600,cursor:"pointer",textAlign:"left",padding:0}}>
+                  {p.first_name} {p.last_name} <span style={{color:C.mut,fontSize:11}}>· {ageOf(p)}{p.team_assignment?" · "+p.team_assignment:""}</span>
+                </button>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  {amountField(p)}
+                  <button onClick={()=>upd(p.id, { scholarship_amount: "" })} title="Remove this offer"
+                    style={{background:"none",border:"none",color:C.red,fontFamily:"inherit",fontSize:16,fontWeight:800,cursor:"pointer",lineHeight:1,padding:"0 2px"}}>×</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   // ─── MESSAGES (SMS INBOX) ────────────────────────────────────────────
   // ─── EMAIL (bulk, send-only) ─────────────────────────────────────────
   // Compose one message and send it to every parent in scope as an
@@ -6226,10 +6328,12 @@ export default function App() {
   // above the auth gates, to keep React's hook-call order stable.)
 
   function renderActivity() {
+    // Scholarship amounts are admin-only — scrub them from the feed for non-admins.
+    const activityFeed = scrubScholarship(activityLog);
     // Distinct actors / actions for the filter dropdowns. We compute from the
     // currently-loaded log so a freshly-loaded feed has the right options.
     const distinctActors = Array.from(new Map(
-      activityLog.filter(e => e.actor_id).map(e => [e.actor_id, e.actor_name || e.actor_email || "Unknown"])
+      activityFeed.filter(e => e.actor_id).map(e => [e.actor_id, e.actor_name || e.actor_email || "Unknown"])
     ).entries()); // [[id, name], ...]
 
     const formatChange = (entry) => {
@@ -6261,7 +6365,7 @@ export default function App() {
     // score taps. Walk ascending so groups extend forward in time, then
     // reverse for display (newest session first).
     const GAP_MS = 10 * 60 * 1000;
-    const ascending = [...activityLog].reverse();
+    const ascending = [...activityFeed].reverse();
     const groups = [];
     for (const e of ascending) {
       const last = groups[groups.length - 1];
@@ -8034,7 +8138,7 @@ export default function App() {
                 <button key={v} style={btn(view===v)} onClick={()=>{ setView(v); setOpenMenu(null); }}>{l}</button>;
               const groups = [
                 { title:"Tryouts", items:[["dashboard","Dashboard"], ["evaluate","Evaluate"], ["favorites","My Favorites" + (favorites.length ? " (" + favorites.length + ")" : "")], ...(canViewTeams ? [["teams","Teams"]] : []), ["rankings","Rankings"], ["physical","Physical Testing"], ["tryouts","Coach Assignments"]] },
-                ...(canOps ? [{ title:"Operations", items:[["tracker","Tracker"], ["teamdir","All Teams"], ["coaches","Coaches"], ["practice","Practice"], ["email","Email"], ["messages", "Messages (SMS)" + (totalUnread > 0 ? " (" + totalUnread + ")" : "")]] }] : []),
+                ...(canOps ? [{ title:"Operations", items:[["tracker","Tracker"], ["teamdir","All Teams"], ["coaches","Coaches"], ["scholarships","Scholarships"], ["practice","Practice"], ["email","Email"], ["messages", "Messages (SMS)" + (totalUnread > 0 ? " (" + totalUnread + ")" : "")]] }] : []),
               ];
               return <>
                 {item("home","Home")}
@@ -8131,6 +8235,7 @@ export default function App() {
         {view==="rankings" && renderRankings()}
         {view==="activity" && renderActivity()}
         {view==="coaches"  && renderCoaches()}
+        {view==="scholarships" && renderScholarships()}
         {view==="tournaments" && renderTournaments()}
         {view==="practice" && renderPractice()}
         {view==="physical" && renderPhysicalTesting()}

@@ -16,6 +16,7 @@ CREATE TABLE players (
   parent_email TEXT,
   parent_email2 TEXT,                  -- optional second parent/guardian email; see migrations/20260627
   parent_phone TEXT,
+  scholarship_amount TEXT,             -- scholarship offer ($ or %), admin-only; see migrations/20260629
   city TEXT,
   strength_weakness TEXT,
   goal TEXT,
