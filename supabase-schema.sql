@@ -214,6 +214,7 @@ CREATE POLICY task_meta_all_approved ON task_meta
 CREATE TABLE updates (
   id              BIGSERIAL    PRIMARY KEY,
   body            TEXT         NOT NULL,
+  team_name       TEXT,                              -- NULL = club-wide; set = that team only (see migrations/20260629_updates_team_name)
   created_by_name TEXT,
   created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );

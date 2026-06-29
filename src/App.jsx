@@ -737,6 +737,7 @@ export default function App() {
   const [taskMeta, setTaskMeta]                             = useState({}); // { [item_key]: description } admin-editable
   const [updates, setUpdates]                               = useState([]); // club-wide announcements
   const [updateDraft, setUpdateDraft]                       = useState(""); // new-update composer
+  const [updateTeamTarget, setUpdateTeamTarget]             = useState(""); // "" = club-wide; else a team name
   const [showChecklistSetup, setShowChecklistSetup]         = useState(false);
   const [blackoutDates, setBlackoutDates]                   = useState([]);
   const [tnFilters, setTnFilters]                           = useState({ search: "", ageFor: "", qualifierOnly: false, dateFrom: "", dateTo: "", hideClosed: false, hideCancelled: true, startsOn: [], state: "", numDays: "", divisions: [], tags: [] });
@@ -1345,10 +1346,12 @@ export default function App() {
     if (error) console.error("Save task_meta error:", error);
   }, []);
   // Admin: post / delete a club-wide update.
-  const postUpdate = useCallback(async (body) => {
+  const postUpdate = useCallback(async (body, teamName) => {
     const b = (body || "").trim();
     if (!b) return;
-    const { error } = await supabase.from("updates").insert({ body: b, created_by_name: coach?.display_name || coach?.email || "" });
+    const { error } = await supabase.from("updates").insert({
+      body: b, team_name: (teamName || "").trim() || null, created_by_name: coach?.display_name || coach?.email || "",
+    });
     if (error) { window.alert("Post update failed: " + error.message); return; }
     setUpdateDraft("");
     await loadUpdates();
@@ -2523,21 +2526,29 @@ export default function App() {
     );
   };
 
-  // Club-wide updates feed — shown to everyone on Home (i.e. on login).
-  const renderUpdatesPanel = () => {
-    if (updates.length === 0) return null;
+  // Updates feed — shown to everyone on Home (i.e. on login). Club-wide updates
+  // go to all; team-specific updates only to that team's coaches (admins see all).
+  const renderUpdatesPanel = (myTeamNames = []) => {
+    const myTeamSet = new Set(myTeamNames);
+    const visible = updates.filter(u => !u.team_name || canOps || myTeamSet.has(u.team_name));
+    if (visible.length === 0) return null;
     const recentMs = Date.now() - 3 * 24 * 60 * 60 * 1000;
     const fmt = (iso) => new Date(iso).toLocaleDateString(undefined, { month:"short", day:"numeric" });
     return (
       <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:"14px 16px",marginBottom:18}}>
         <div style={{fontSize:13,fontWeight:800,color:C.gold,marginBottom:8}}>Updates</div>
         <div style={{display:"flex",flexDirection:"column",gap:8,maxHeight:280,overflowY:"auto"}}>
-          {updates.map(u => {
+          {visible.map(u => {
             const isNew = new Date(u.created_at).getTime() > recentMs;
             return (
               <div key={u.id} style={{background:C.bg,border:"1px solid "+C.border,borderRadius:8,padding:"8px 10px"}}>
                 <div style={{display:"flex",justifyContent:"space-between",gap:8,marginBottom:3,alignItems:"center"}}>
-                  <span style={{fontSize:10,color:C.mut}}>{fmt(u.created_at)}{u.created_by_name?" · "+u.created_by_name:""}</span>
+                  <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                    <span style={{fontSize:10,color:C.mut}}>{fmt(u.created_at)}{u.created_by_name?" · "+u.created_by_name:""}</span>
+                    {u.team_name
+                      ? <span style={{fontSize:8,fontWeight:800,color:C.acc,border:"1px solid "+C.acc,borderRadius:5,padding:"1px 5px"}}>{u.team_name}</span>
+                      : <span style={{fontSize:8,fontWeight:800,color:C.mut,border:"1px solid "+C.border,borderRadius:5,padding:"1px 5px"}}>ALL</span>}
+                  </div>
                   <div style={{display:"flex",gap:6,alignItems:"center"}}>
                     {isNew && <span style={{fontSize:8,fontWeight:800,color:C.grn,border:"1px solid "+C.grn,borderRadius:5,padding:"1px 5px"}}>NEW</span>}
                     {canOps && <button onClick={()=>deleteUpdate(u.id)} title="Delete update" style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:13,fontWeight:800,lineHeight:1,padding:0}}>×</button>}
@@ -2554,6 +2565,11 @@ export default function App() {
   // Admin: bulk-edit checklist item descriptions + post an update.
   const renderChecklistSetup = () => {
     if (!canOps) return null;
+    // Team options for targeting an update: every board team + any practice team.
+    const allTeamNames = Array.from(new Set([
+      ...Object.values(TM).flat(),
+      ...practiceTeams.map(t => t.team_name).filter(Boolean),
+    ])).sort((a, b) => a.localeCompare(b));
     const itemRow = (item) => (
       <div key={item.key} style={{marginBottom:8}}>
         <div style={{fontSize:11,fontWeight:700,color:C.text,marginBottom:3}}>{item.label}</div>
@@ -2571,10 +2587,17 @@ export default function App() {
         {showChecklistSetup && (
           <div style={{marginTop:12}}>
             <div style={{fontSize:10,fontWeight:800,textTransform:"uppercase",color:C.gold,marginBottom:6}}>Post an Update</div>
-            <textarea value={updateDraft} onChange={e=>setUpdateDraft(e.target.value)} placeholder="Share an update with all coaches…"
+            <textarea value={updateDraft} onChange={e=>setUpdateDraft(e.target.value)} placeholder={updateTeamTarget ? "Share an update with " + updateTeamTarget + "…" : "Share an update with all coaches…"}
               style={{...inpStyle,width:"100%",minHeight:50,padding:"8px 10px",fontSize:12,resize:"vertical",boxSizing:"border-box"}} />
-            <div style={{marginTop:6,textAlign:"right"}}>
-              <button onClick={()=>postUpdate(updateDraft)} disabled={!updateDraft.trim()}
+            <div style={{marginTop:6,display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,flexWrap:"wrap"}}>
+              <label style={{display:"flex",alignItems:"center",gap:5,fontSize:11,fontWeight:700,color:C.mut}}>Audience
+                <select value={updateTeamTarget} onChange={e=>setUpdateTeamTarget(e.target.value)}
+                  style={{...inpStyle,padding:"5px 8px",fontSize:12,cursor:"pointer",color:updateTeamTarget?C.gold:C.text}}>
+                  <option value="">Club-wide (all coaches)</option>
+                  {allTeamNames.map(tn => <option key={tn} value={tn}>{tn}</option>)}
+                </select>
+              </label>
+              <button onClick={()=>postUpdate(updateDraft, updateTeamTarget)} disabled={!updateDraft.trim()}
                 style={{padding:"6px 14px",borderRadius:8,border:"none",background:updateDraft.trim()?C.gold:C.border,color:updateDraft.trim()?"#000":C.mut,fontWeight:700,fontSize:12,cursor:updateDraft.trim()?"pointer":"default",fontFamily:"inherit"}}>Post Update</button>
             </div>
             <div style={{fontSize:10,fontWeight:800,textTransform:"uppercase",color:C.gold,margin:"14px 0 6px",borderTop:"1px solid "+C.border,paddingTop:12}}>Coach To-Do descriptions</div>
@@ -2615,7 +2638,7 @@ export default function App() {
           <h2 style={{margin:0,fontSize:22,fontWeight:800,color:C.gold}}>Welcome, {firstName}</h2>
           <div style={{fontSize:12,color:C.mut,marginTop:3}}>Your teams — practices, tournaments, and rosters at a glance.{myTeams.length ? "" : ""}</div>
         </div>
-        {renderUpdatesPanel()}
+        {renderUpdatesPanel(myTeams.map(t => t.team_name))}
         {renderChecklistSetup()}
         {renderQuestionsPanel()}
         {myTeams.length === 0 ? (

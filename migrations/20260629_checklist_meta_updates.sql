@@ -24,6 +24,7 @@ CREATE POLICY task_meta_all_approved ON public.task_meta
 CREATE TABLE IF NOT EXISTS public.updates (
   id              BIGSERIAL    PRIMARY KEY,
   body            TEXT         NOT NULL,
+  team_name       TEXT,                              -- NULL = club-wide; set = that team only
   created_by_name TEXT,
   created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
