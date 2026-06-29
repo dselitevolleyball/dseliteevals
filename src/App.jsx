@@ -5511,8 +5511,8 @@ export default function App() {
         { label:"7-9pm",       capacity:4 },
       ],
       Tue: [
-        { label:"5-7pm",       capacity:1 },
-        { label:"7-9pm",       capacity:1 },
+        { label:"5-7pm",       capacity:2 },
+        { label:"7-9pm",       capacity:2 },
       ],
       Wed: [
         { label:"5-7pm",       capacity:4 },
