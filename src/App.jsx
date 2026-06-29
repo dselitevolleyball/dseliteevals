@@ -745,6 +745,8 @@ export default function App() {
   const [schedChangeOpen, setSchedChangeOpen]               = useState({}); // { [team]: bool } request-a-change composer open
   const [schedChangeDraft, setSchedChangeDraft]             = useState({}); // { [team]: text }
   const [schedChangeSending, setSchedChangeSending]         = useState(""); // team currently emailing
+  const [notifOpen, setNotifOpen]                           = useState(false); // notification bell dropdown
+  const [notifSeenAt, setNotifSeenAt]                       = useState("1970-01-01T00:00:00.000Z"); // last time notifications were viewed
   const [blackoutDates, setBlackoutDates]                   = useState([]);
   const [tnFilters, setTnFilters]                           = useState({ search: "", ageFor: "", qualifierOnly: false, dateFrom: "", dateTo: "", hideClosed: false, hideCancelled: true, startsOn: [], state: "", numDays: "", divisions: [], tags: [] });
   const [tnView, setTnView]                                 = useState("list"); // "list" | "calendar"
@@ -1306,6 +1308,8 @@ export default function App() {
   // Item descriptions are needed wherever the checklists render; updates show on Home.
   useEffect(() => { if (isApproved && (view === "home" || view === "teamdir")) loadTaskMeta(); }, [isApproved, view, loadTaskMeta]);
   useEffect(() => { if (isApproved && view === "home") loadUpdates(); }, [isApproved, view, loadUpdates]);
+  // Notifications need updates + questions loaded on every view (the bell is in the header).
+  useEffect(() => { if (isApproved) { loadUpdates(); loadTeamQuestions(); } }, [isApproved, loadUpdates, loadTeamQuestions]);
   useEffect(() => { if (isApproved && (view === "home" || view === "teamdir")) loadPracticeApprovals(); }, [isApproved, view, loadPracticeApprovals]);
   // Optimistically patch local state, then upsert the merged row. `merged` is
   // computed from current state synchronously (NOT inside the setState updater,
@@ -1431,6 +1435,53 @@ export default function App() {
       setSchedChangeSending("");
     }
   }, [coach]);
+
+  // ── In-app notifications ────────────────────────────────────────────
+  // Coach's team names (for filtering team-targeted updates/notifications).
+  const myTeamNames = useMemo(() => {
+    const norm = s => (s || "").toString().trim().toLowerCase();
+    const myRoster = coachRoster.find(r => coach?.email && norm(r.email) === norm(coach.email));
+    const cand = new Set();
+    if (coach?.display_name) cand.add(norm(coach.display_name));
+    if (myRoster) {
+      const f = norm(myRoster.first_name), l = norm(myRoster.last_name);
+      if (f) { cand.add((f + " " + l).trim()); cand.add(f); if (l) cand.add((f + " " + l[0] + ".").trim()); }
+    }
+    const isMine = field => !!field && cand.has(norm(field));
+    return practiceTeams.filter(t => isMine(t.head_coach) || isMine(t.assistant_coach)).map(t => t.team_name);
+  }, [coach, coachRoster, practiceTeams]);
+
+  // Build the per-user notification list from existing data (updates + Q&A).
+  const notifications = useMemo(() => {
+    const out = [];
+    const mine = new Set(myTeamNames);
+    const myEmail = (coach?.email || "").toLowerCase();
+    updates.forEach(u => {
+      if (!(!u.team_name || canOps || mine.has(u.team_name))) return;
+      out.push({ id: "u" + u.id, ts: u.created_at, label: "Update", text: (u.team_name ? "[" + u.team_name + "] " : "") + (u.body || ""), view: "home" });
+    });
+    teamQuestions.forEach(q => {
+      if (canOps && !q.answer) {
+        out.push({ id: "q" + q.id, ts: q.created_at, label: "Question", text: (q.asked_by_name || "A coach") + " asked about " + (TASK_LABELS[q.item_key] || q.item_key) + " (" + q.team_name + ")", view: "home" });
+      }
+      if (q.answer && myEmail && (q.asked_by_email || "").toLowerCase() === myEmail) {
+        out.push({ id: "qa" + q.id, ts: q.answered_at || q.created_at, label: "Answered", text: "Your question on " + (TASK_LABELS[q.item_key] || q.item_key) + " (" + q.team_name + ") was answered", view: "home" });
+      }
+    });
+    return out.sort((a, b) => (b.ts || "").localeCompare(a.ts || ""));
+  }, [updates, teamQuestions, myTeamNames, canOps, coach]);
+
+  // Persisted (per device) "last viewed" marker drives the unread badge.
+  const notifKey = coach?.id ? "dse_notif_seen_" + coach.id : "dse_notif_seen";
+  useEffect(() => {
+    try { setNotifSeenAt(localStorage.getItem(notifKey) || "1970-01-01T00:00:00.000Z"); } catch {}
+  }, [notifKey]);
+  const markNotifsRead = () => {
+    const now = new Date().toISOString();
+    setNotifSeenAt(now);
+    try { localStorage.setItem(notifKey, now); } catch {}
+  };
+  const unreadCount = notifications.filter(n => (n.ts || "") > notifSeenAt).length;
 
   // SMS loaders
   const loadSmsThreads = useCallback(async () => {
@@ -8793,6 +8844,32 @@ export default function App() {
             style={{padding:"6px 12px",borderRadius:8,border:"1px solid "+C.gold,background:"transparent",color:C.gold,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700}}>
             + Add Player
           </button>
+          <div style={{position:"relative",marginLeft:6}}>
+            <button onClick={()=>{ const opening = !notifOpen; setNotifOpen(opening); if (opening) markNotifsRead(); }} title="Notifications"
+              style={{position:"relative",background:"none",border:"none",cursor:"pointer",fontSize:18,lineHeight:1,color:unreadCount>0?C.gold:C.mut,padding:"2px 4px"}}>
+              🔔
+              {unreadCount>0 && <span style={{position:"absolute",top:-3,right:-3,minWidth:15,height:15,padding:"0 3px",borderRadius:8,background:C.gold,color:"#000",fontSize:9,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",lineHeight:1}}>{unreadCount>9?"9+":unreadCount}</span>}
+            </button>
+            {notifOpen && (<>
+              <div onClick={()=>setNotifOpen(false)} style={{position:"fixed",inset:0,zIndex:60}} />
+              <div style={{position:"absolute",top:"100%",right:0,marginTop:8,width:330,maxHeight:420,overflowY:"auto",background:C.card,border:"1px solid "+C.border,borderRadius:10,boxShadow:"0 12px 32px rgba(0,0,0,0.55)",zIndex:61,padding:6}}>
+                <div style={{fontSize:12,fontWeight:800,color:C.gold,padding:"6px 8px"}}>Notifications</div>
+                {notifications.length===0 && <div style={{fontSize:12,color:C.mut,padding:"10px 8px"}}>You're all caught up.</div>}
+                {notifications.slice(0,40).map(n => {
+                  const d = n.ts ? new Date(n.ts) : null;
+                  const when = d ? d.toLocaleDateString(undefined,{month:"short",day:"numeric"}) + " " + d.toLocaleTimeString(undefined,{hour:"numeric",minute:"2-digit"}) : "";
+                  const text = (n.text||"").length>110 ? (n.text||"").slice(0,110)+"…" : (n.text||"");
+                  return (
+                    <button key={n.id} onClick={()=>{ setView(n.view||"home"); setOpenMenu(null); setNotifOpen(false); }}
+                      style={{display:"block",width:"100%",textAlign:"left",background:"transparent",border:"none",borderTop:"1px solid "+C.border,padding:"8px",cursor:"pointer",fontFamily:"inherit"}}>
+                      <div style={{fontSize:9,fontWeight:800,letterSpacing:0.4,textTransform:"uppercase",color:n.label==="Question"?"#f59e0b":n.label==="Answered"?C.grn:C.acc}}>{n.label} · {when}</div>
+                      <div style={{fontSize:12,color:C.text,marginTop:2,lineHeight:1.4,whiteSpace:"pre-wrap"}}>{text}</div>
+                    </button>
+                  );
+                })}
+              </div>
+            </>)}
+          </div>
           <div style={{display:"flex",alignItems:"center",gap:6,marginLeft:6,paddingLeft:10,borderLeft:"1px solid "+C.border}}>
             <span style={{fontSize:11,color:C.mut}} title={coach.email}>
               {coach.display_name || coach.email}{isAdmin && <span style={{color:C.gold,marginLeft:4,fontSize:9}}>ADMIN</span>}
