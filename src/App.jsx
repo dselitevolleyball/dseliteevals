@@ -73,6 +73,15 @@ const STATUS_TO_OFFER = { "In Progress":"", "Open Team":"", Locked:"locked", Off
 const C = {bg:"#0a0a0a",card:"#141414",border:"#2a2a2a",gold:"#e91e8c",text:"#ffffff",mut:"#999999",acc:"#ff69b4",red:"#ef4444",grn:"#22c55e"};
 // Only these owner emails may open the Coaches management screen. UI-level gate.
 const OWNER_EMAILS = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"];
+// Convert a base64url VAPID key to the Uint8Array the Push API expects.
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64);
+  const arr = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+  return arr;
+}
 // Where coach "request a schedule change" emails are sent.
 const DIRECTOR_EMAIL = "drew@dselitevolleyball.com";
 
@@ -747,6 +756,7 @@ export default function App() {
   const [schedChangeSending, setSchedChangeSending]         = useState(""); // team currently emailing
   const [notifOpen, setNotifOpen]                           = useState(false); // notification bell dropdown
   const [notifSeenAt, setNotifSeenAt]                       = useState("1970-01-01T00:00:00.000Z"); // last time notifications were viewed
+  const [pushState, setPushState]                          = useState("loading"); // unsupported | off | on | denied
   const [blackoutDates, setBlackoutDates]                   = useState([]);
   const [tnFilters, setTnFilters]                           = useState({ search: "", ageFor: "", qualifierOnly: false, dateFrom: "", dateTo: "", hideClosed: false, hideCancelled: true, startsOn: [], state: "", numDays: "", divisions: [], tags: [] });
   const [tnView, setTnView]                                 = useState("list"); // "list" | "calendar"
@@ -1348,6 +1358,8 @@ export default function App() {
     if (error) { window.alert("Post question failed: " + error.message); return; }
     setQDraft(prev => ({ ...prev, [team + "|" + itemKey]: "" }));
     await loadTeamQuestions();
+    fetch("/api/send-push", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: "New coach question", body: (coach?.display_name || coach?.email || "A coach") + " — " + (TASK_LABELS[itemKey] || itemKey) + " (" + team + ")", url: "/", audience: { type: "admins" } }) }).catch(() => {});
   }, [coach, loadTeamQuestions]);
   // A director answers a pending question.
   const answerTeamQuestion = useCallback(async (id, answer) => {
@@ -1359,7 +1371,12 @@ export default function App() {
     if (error) { window.alert("Answer failed: " + error.message); return; }
     setADraft(prev => { const n = { ...prev }; delete n[id]; return n; });
     await loadTeamQuestions();
-  }, [coach, loadTeamQuestions]);
+    const q = teamQuestions.find(x => x.id === id);
+    if (q && q.asked_by_email) {
+      fetch("/api/send-push", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: "Your question was answered", body: (TASK_LABELS[q.item_key] || q.item_key) + " (" + q.team_name + ")", url: "/", audience: { type: "email", email: q.asked_by_email } }) }).catch(() => {});
+    }
+  }, [coach, loadTeamQuestions, teamQuestions]);
   // Admin: save a global description for a checklist item.
   const saveTaskMeta = useCallback(async (itemKey, description) => {
     setTaskMeta(prev => ({ ...prev, [itemKey]: description }));
@@ -1379,6 +1396,9 @@ export default function App() {
     if (error) { window.alert("Post update failed: " + error.message); return; }
     setUpdateDraft("");
     await loadUpdates();
+    const tn = (teamName || "").trim();
+    fetch("/api/send-push", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: tn ? "DS Elite · " + tn : "DS Elite Update", body: b, url: "/", audience: tn ? { type: "team", team: tn } : { type: "all" } }) }).catch(() => {});
   }, [coach, loadUpdates]);
   const deleteUpdate = useCallback(async (id) => {
     if (!window.confirm("Delete this update?")) return;
@@ -1482,6 +1502,46 @@ export default function App() {
     try { localStorage.setItem(notifKey, now); } catch {}
   };
   const unreadCount = notifications.filter(n => (n.ts || "") > notifSeenAt).length;
+
+  // ── Device push (Web Push) ──────────────────────────────────────────
+  useEffect(() => {
+    (async () => {
+      try {
+        if (!("serviceWorker" in navigator) || !("PushManager" in window) || !import.meta.env.VITE_VAPID_PUBLIC_KEY) { setPushState("unsupported"); return; }
+        if (typeof Notification !== "undefined" && Notification.permission === "denied") { setPushState("denied"); return; }
+        const reg = await navigator.serviceWorker.ready;
+        const sub = await reg.pushManager.getSubscription();
+        setPushState(sub ? "on" : "off");
+      } catch { setPushState("off"); }
+    })();
+  }, [isApproved]);
+  const enablePush = useCallback(async () => {
+    try {
+      const VAPID = import.meta.env.VITE_VAPID_PUBLIC_KEY;
+      if (!VAPID) { window.alert("Push notifications aren't set up yet."); return; }
+      if (!("serviceWorker" in navigator) || !("PushManager" in window)) { window.alert("Push isn't supported on this device/browser."); return; }
+      const perm = await Notification.requestPermission();
+      if (perm !== "granted") { setPushState(perm === "denied" ? "denied" : "off"); return; }
+      const reg = await navigator.serviceWorker.ready;
+      let sub = await reg.pushManager.getSubscription();
+      if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(VAPID) });
+      const j = sub.toJSON();
+      const { error } = await supabase.from("push_subscriptions").upsert({
+        endpoint: sub.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth,
+        email: coach?.email || "", is_admin: !!canOps, teams: myTeamNames,
+      }, { onConflict: "endpoint" });
+      if (error) { console.error("save push sub", error); window.alert("Could not save subscription: " + error.message); return; }
+      setPushState("on");
+    } catch (e) { console.error("enablePush", e); window.alert("Could not enable push: " + (e.message || "error")); }
+  }, [coach, canOps, myTeamNames]);
+  const disablePush = useCallback(async () => {
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      if (sub) { await supabase.from("push_subscriptions").delete().eq("endpoint", sub.endpoint); await sub.unsubscribe(); }
+      setPushState("off");
+    } catch (e) { console.error("disablePush", e); setPushState("off"); }
+  }, []);
 
   // SMS loaders
   const loadSmsThreads = useCallback(async () => {
@@ -8853,7 +8913,12 @@ export default function App() {
             {notifOpen && (<>
               <div onClick={()=>setNotifOpen(false)} style={{position:"fixed",inset:0,zIndex:60}} />
               <div style={{position:"absolute",top:"100%",right:0,marginTop:8,width:330,maxHeight:420,overflowY:"auto",background:C.card,border:"1px solid "+C.border,borderRadius:10,boxShadow:"0 12px 32px rgba(0,0,0,0.55)",zIndex:61,padding:6}}>
-                <div style={{fontSize:12,fontWeight:800,color:C.gold,padding:"6px 8px"}}>Notifications</div>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,padding:"6px 8px"}}>
+                  <span style={{fontSize:12,fontWeight:800,color:C.gold}}>Notifications</span>
+                  {pushState==="on" && <button onClick={disablePush} title="Turn off push on this device" style={{fontSize:9,fontWeight:800,padding:"2px 8px",borderRadius:8,border:"1px solid "+C.grn,background:"rgba(34,197,94,0.18)",color:C.grn,cursor:"pointer",fontFamily:"inherit"}}>Push on ✓</button>}
+                  {(pushState==="off") && <button onClick={enablePush} title="Get alerts on this device even when the app is closed" style={{fontSize:9,fontWeight:800,padding:"2px 8px",borderRadius:8,border:"none",background:C.gold,color:"#000",cursor:"pointer",fontFamily:"inherit"}}>Enable push</button>}
+                  {pushState==="denied" && <span style={{fontSize:9,color:C.red,fontWeight:700}} title="Notifications are blocked for this site in your browser settings">Push blocked</span>}
+                </div>
                 {notifications.length===0 && <div style={{fontSize:12,color:C.mut,padding:"10px 8px"}}>You're all caught up.</div>}
                 {notifications.slice(0,40).map(n => {
                   const d = n.ts ? new Date(n.ts) : null;

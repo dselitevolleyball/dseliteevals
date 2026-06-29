@@ -238,3 +238,21 @@ CREATE POLICY practice_approvals_all_approved ON practice_approvals
   FOR ALL
   USING      (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved))
   WITH CHECK (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved));
+
+-- ───── Web Push subscriptions (added 20260629) ───────────────────────
+-- See migrations/20260629_push_subscriptions.sql
+CREATE TABLE push_subscriptions (
+  id         BIGSERIAL    PRIMARY KEY,
+  endpoint   TEXT         UNIQUE NOT NULL,
+  p256dh     TEXT         NOT NULL,
+  auth       TEXT         NOT NULL,
+  email      TEXT,
+  is_admin   BOOLEAN      NOT NULL DEFAULT FALSE,
+  teams      TEXT[]       NOT NULL DEFAULT '{}',
+  created_at TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+ALTER TABLE push_subscriptions ENABLE ROW LEVEL SECURITY;
+CREATE POLICY push_subscriptions_all_approved ON push_subscriptions
+  FOR ALL
+  USING      (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved))
+  WITH CHECK (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved));
