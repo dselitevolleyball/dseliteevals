@@ -494,6 +494,9 @@ const PRACTICE_PHASES = [
   { id:"season", label:"Regular Season" },
 ];
 const PRACTICE_DAY_ORDER = { Sun:0, Mon:1, Tue:2, Wed:3, Thu:4, Fri:5, Sat:6 };
+// Teams that skip the summer/fall preseason blocks (regular-season only), so
+// they aren't flagged as under-hours during Fall 1 / Fall 2. Edit as needed.
+const NO_FALL_TEAMS = ["11 Rise 1", "12 Rise 1", "12 Rise 2", "16 Ruby"];
 // Slots look like "12-1pm", "5-7pm" — all afternoon/evening. Parse to 24h ordinals
 // (12=noon, 1pm=13 … 9pm=21) so we can detect + merge adjacent ranges.
 function parsePracticeSlot(slot) {
@@ -5803,7 +5806,8 @@ export default function App() {
       const tAssigns = phaseAssignments.filter(a => a.team_name === t.team_name);
       const { actual: actualHours, expected: expectedHours } = teamLoad(t, tAssigns);
       // Summer is freeform — coaches choose.
-      if (schedulePhase !== "summer" && actualHours !== expectedHours) {
+      if (schedulePhase !== "summer" && actualHours !== expectedHours
+          && !(isFallPhase && NO_FALL_TEAMS.includes(t.team_name))) {
         warnings.push({
           kind: "count",
           team: t.team_name,
@@ -6114,7 +6118,9 @@ export default function App() {
                   const tAssigns = phaseAssignments.filter(a => a.team_name === t.team_name);
                   const { actual: actualHours, expected: expectedHours } = teamLoad(t, tAssigns);
                   // Summer is freeform — other phases compare hours against the team's target.
-                  const countOff = schedulePhase !== "summer" && actualHours !== expectedHours;
+                  // Teams that skip the fall blocks aren't flagged during Fall 1/2.
+                  const countOff = schedulePhase !== "summer" && actualHours !== expectedHours
+                    && !(isFallPhase && NO_FALL_TEAMS.includes(t.team_name));
                   const levelColor =
                     t.level === "National"      ? C.gold :
                     t.level === "Regional"      ? C.acc  :
