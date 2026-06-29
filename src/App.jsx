@@ -73,6 +73,8 @@ const STATUS_TO_OFFER = { "In Progress":"", "Open Team":"", Locked:"locked", Off
 const C = {bg:"#0a0a0a",card:"#141414",border:"#2a2a2a",gold:"#e91e8c",text:"#ffffff",mut:"#999999",acc:"#ff69b4",red:"#ef4444",grn:"#22c55e"};
 // Only these owner emails may open the Coaches management screen. UI-level gate.
 const OWNER_EMAILS = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"];
+// Where coach "request a schedule change" emails are sent.
+const DIRECTOR_EMAIL = "drew@dselitevolleyball.com";
 
 // ─── Bulk tournament import (USAV format) ───────────────────────────────
 // Parses the format used by USAV / TournamentCentral listings:
@@ -740,6 +742,9 @@ export default function App() {
   const [updateTeamTarget, setUpdateTeamTarget]             = useState(""); // "" = club-wide; else a team name
   const [showChecklistSetup, setShowChecklistSetup]         = useState(false);
   const [practiceApprovals, setPracticeApprovals]           = useState({}); // { [team_name]: { approved, approved_by_name, approved_at } }
+  const [schedChangeOpen, setSchedChangeOpen]               = useState({}); // { [team]: bool } request-a-change composer open
+  const [schedChangeDraft, setSchedChangeDraft]             = useState({}); // { [team]: text }
+  const [schedChangeSending, setSchedChangeSending]         = useState(""); // team currently emailing
   const [blackoutDates, setBlackoutDates]                   = useState([]);
   const [tnFilters, setTnFilters]                           = useState({ search: "", ageFor: "", qualifierOnly: false, dateFrom: "", dateTo: "", hideClosed: false, hideCancelled: true, startsOn: [], state: "", numDays: "", divisions: [], tags: [] });
   const [tnView, setTnView]                                 = useState("list"); // "list" | "calendar"
@@ -1394,6 +1399,38 @@ export default function App() {
     await postUpdate("📋 Please review and approve your team's practice schedule on your Home page, and confirm there are no conflicts.", "");
     window.alert("Coaches notified — the request is posted in Updates.");
   }, [postUpdate]);
+  // Coach emails the director a potential practice-schedule change request.
+  const requestScheduleChange = useCallback(async (team, message) => {
+    const msg = (message || "").trim();
+    if (!msg) return;
+    setSchedChangeSending(team);
+    try {
+      const who = coach?.display_name || coach?.email || "A coach";
+      const subject = "Practice schedule change request — " + team;
+      const lines = [
+        who + (coach?.email ? " (" + coach.email + ")" : "") + " is requesting a change to the " + team + " practice schedule.",
+        "",
+        "Requested change:",
+        msg,
+        "",
+        "Note: this may be hard to accommodate — many coaches are on two teams, so a change to one team's schedule can create conflicts with another. Please review before adjusting.",
+      ];
+      const res = await fetch("/api/send-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ subject, body: lines.join("\n"), recipients: [DIRECTOR_EMAIL], replyTo: coach?.email || "" }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Send failed");
+      setSchedChangeDraft(prev => ({ ...prev, [team]: "" }));
+      setSchedChangeOpen(prev => ({ ...prev, [team]: false }));
+      window.alert("Your schedule-change request was emailed to the director.");
+    } catch (e) {
+      window.alert("Could not send request: " + (e.message || "error"));
+    } finally {
+      setSchedChangeSending("");
+    }
+  }, [coach]);
 
   // SMS loaders
   const loadSmsThreads = useCallback(async () => {
@@ -2764,6 +2801,32 @@ export default function App() {
                             style={{marginTop:8,width:"100%",padding:"8px 12px",borderRadius:8,border:"1px solid #f59e0b",background:"rgba(245,158,11,0.12)",color:"#f59e0b",fontWeight:800,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>
                             ⚠ Approve practice schedule — confirm no conflicts
                           </button>
+                        );
+                      })()}
+                      {(() => {
+                        const open = !!schedChangeOpen[t.team_name];
+                        const draft = schedChangeDraft[t.team_name] || "";
+                        const sending = schedChangeSending === t.team_name;
+                        return (
+                          <div style={{marginTop:6}}>
+                            {!open ? (
+                              <button onClick={()=>setSchedChangeOpen(prev=>({...prev,[t.team_name]:true}))}
+                                style={{background:"none",border:"none",color:C.acc,cursor:"pointer",fontFamily:"inherit",fontSize:10,fontWeight:700,textDecoration:"underline",padding:0}}>Request a schedule change</button>
+                            ) : (
+                              <div>
+                                <textarea value={draft} onChange={e=>setSchedChangeDraft(prev=>({...prev,[t.team_name]:e.target.value}))}
+                                  placeholder="Describe the change you'd like (day/time) and why…"
+                                  style={{...inpStyle,width:"100%",minHeight:44,padding:"6px 8px",fontSize:11,resize:"vertical",boxSizing:"border-box"}} />
+                                <div style={{fontSize:9,color:C.mut,marginTop:3,fontStyle:"italic",lineHeight:1.4}}>Heads up: changes can be hard to accommodate — many coaches are on two teams, so this may create conflicts elsewhere.</div>
+                                <div style={{display:"flex",gap:6,marginTop:6,justifyContent:"flex-end"}}>
+                                  <button onClick={()=>setSchedChangeOpen(prev=>({...prev,[t.team_name]:false}))} disabled={sending}
+                                    style={{padding:"5px 10px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontWeight:700,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>Cancel</button>
+                                  <button onClick={()=>requestScheduleChange(t.team_name, draft)} disabled={!draft.trim()||sending}
+                                    style={{padding:"5px 10px",borderRadius:6,border:"none",background:(draft.trim()&&!sending)?C.gold:C.border,color:(draft.trim()&&!sending)?"#000":C.mut,fontWeight:700,fontSize:11,cursor:(draft.trim()&&!sending)?"pointer":"default",fontFamily:"inherit"}}>{sending?"Sending…":"Email director"}</button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
                         );
                       })()}
                     </div>

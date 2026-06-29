@@ -67,7 +67,10 @@ export default async function handler(req, res) {
   }
   if (!valid.length) return res.status(400).json({ error: "No valid recipient email addresses.", failed });
 
-  const replyTo = (DSE_REPLY_TO || extractAddress(DSE_FROM_EMAIL)).trim();
+  // Optional per-request reply-to (e.g. a coach's address for a schedule-change
+  // request) so replies reach them directly; falls back to the club default.
+  const reqReplyTo = (body && typeof body.replyTo === "string" ? body.replyTo : "").trim();
+  const replyTo = (reqReplyTo && EMAIL_RE.test(reqReplyTo)) ? reqReplyTo : (DSE_REPLY_TO || extractAddress(DSE_FROM_EMAIL)).trim();
   const htmlBody = asHtml ? text : "<div style=\"white-space:pre-wrap;font-family:sans-serif;font-size:15px;line-height:1.5\">" + escapeHtml(text) + "</div>";
 
   let sent = 0;
