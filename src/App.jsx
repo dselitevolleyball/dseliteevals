@@ -8912,7 +8912,7 @@ export default function App() {
             </button>
             {notifOpen && (<>
               <div onClick={()=>setNotifOpen(false)} style={{position:"fixed",inset:0,zIndex:60}} />
-              <div style={{position:"absolute",top:"100%",right:0,marginTop:8,width:330,maxHeight:420,overflowY:"auto",background:C.card,border:"1px solid "+C.border,borderRadius:10,boxShadow:"0 12px 32px rgba(0,0,0,0.55)",zIndex:61,padding:6}}>
+              <div style={{position:"fixed",top:56,right:8,left:"auto",width:"min(360px, calc(100vw - 16px))",maxHeight:"72vh",overflowY:"auto",background:C.card,border:"1px solid "+C.border,borderRadius:10,boxShadow:"0 12px 32px rgba(0,0,0,0.55)",zIndex:61,padding:6}}>
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,padding:"6px 8px"}}>
                   <span style={{fontSize:12,fontWeight:800,color:C.gold}}>Notifications</span>
                   {pushState==="on" && <button onClick={disablePush} title="Turn off push on this device" style={{fontSize:9,fontWeight:800,padding:"2px 8px",borderRadius:8,border:"1px solid "+C.grn,background:"rgba(34,197,94,0.18)",color:C.grn,cursor:"pointer",fontFamily:"inherit"}}>Push on ✓</button>}
