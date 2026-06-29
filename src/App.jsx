@@ -5510,12 +5510,12 @@ export default function App() {
     const SEASON_SLOTS = {
       Sun: SUN_HOURS.map(label => ({ label, capacity: 6 })),
       Mon: [
-        { label:"5-7pm",       capacity:4 },
-        { label:"7-9pm",       capacity:4 },
-      ],
-      Tue: [
         { label:"5-7pm",       capacity:2 },
         { label:"7-9pm",       capacity:2 },
+      ],
+      Tue: [
+        { label:"5-7pm",       capacity:4 },
+        { label:"7-9pm",       capacity:4 },
       ],
       Wed: [
         { label:"5-7pm",       capacity:4 },
