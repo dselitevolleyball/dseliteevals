@@ -5503,7 +5503,7 @@ export default function App() {
     // weekday capacities.
     // Sundays run on 1-hour granularity in every phase. A team practicing
     // a 2-hour block just occupies two consecutive cells.
-    const SUN_HOURS = ["12-1pm","1-2pm","2-3pm","3-4pm","4-5pm","5-6pm","6-7pm","7-8pm","8-9pm"];
+    const SUN_HOURS = ["1-2pm","2-3pm","3-4pm","4-5pm","5-6pm","6-7pm","7-8pm","8-9pm"];
     const SEASON_SLOTS = {
       Sun: SUN_HOURS.map(label => ({ label, capacity: 6 })),
       Mon: [
