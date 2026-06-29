@@ -147,3 +147,18 @@ CREATE POLICY allowed_emails_insert_admin ON allowed_signup_emails
   FOR INSERT WITH CHECK (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_admin));
 CREATE POLICY allowed_emails_delete_admin ON allowed_signup_emails
   FOR DELETE USING (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_admin));
+
+-- ───── Team status (added 20260629) ──────────────────────────────────
+-- Per-team build status for the Teams board, keyed by team_name (board
+-- teams come from the hardcoded TM map, not a table). See migrations/20260629_team_status.sql
+CREATE TABLE team_status (
+  team_name          TEXT         PRIMARY KEY,
+  status             TEXT         NOT NULL DEFAULT 'in_progress',  -- in_progress | looking | completed
+  looking_positions  TEXT[]       NOT NULL DEFAULT '{}',
+  updated_at         TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+ALTER TABLE team_status ENABLE ROW LEVEL SECURITY;
+CREATE POLICY team_status_all_approved ON team_status
+  FOR ALL
+  USING      (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved))
+  WITH CHECK (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved));

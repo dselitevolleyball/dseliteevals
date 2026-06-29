@@ -705,6 +705,7 @@ export default function App() {
   });
   const [emailTemplateSel, setEmailTemplateSel]       = useState("");
   const [teamsList, setTeamsList]                           = useState([]);
+  const [teamStatus, setTeamStatus]                         = useState({}); // { [team_name]: { status, looking_positions } }
   const [blackoutDates, setBlackoutDates]                   = useState([]);
   const [tnFilters, setTnFilters]                           = useState({ search: "", ageFor: "", qualifierOnly: false, dateFrom: "", dateTo: "", hideClosed: false, hideCancelled: true, startsOn: [], state: "", numDays: "", divisions: [], tags: [] });
   const [tnView, setTnView]                                 = useState("list"); // "list" | "calendar"
@@ -1094,12 +1095,17 @@ export default function App() {
       .channel("realtime-rankings")
       .on("postgres_changes", { event: "*", schema: "public", table: "unassigned_rankings" }, () => { loadRankings(); })
       .subscribe();
+    const teamStatusChannel = supabase
+      .channel("realtime-team_status")
+      .on("postgres_changes", { event: "*", schema: "public", table: "team_status" }, () => { loadTeamStatus(); })
+      .subscribe();
     return () => {
       supabase.removeChannel(playerChannel);
       supabase.removeChannel(coachChannel);
       supabase.removeChannel(rankingsChannel);
+      supabase.removeChannel(teamStatusChannel);
     };
-  }, [isApproved, loadCoaches, loadRankings]);
+  }, [isApproved, loadCoaches, loadRankings, loadTeamStatus]);
 
   // Activity feed live updates — only subscribe while that tab is open, since
   // change_log INSERTs fire on every player write and the feed is otherwise
@@ -1183,6 +1189,30 @@ export default function App() {
     setTryouts(data || []);
   }, []);
   useEffect(() => { if (isApproved && view === "tryouts") loadTryouts(); }, [isApproved, view, loadTryouts]);
+
+  // Per-team build status (Teams board). Keyed by team_name.
+  const loadTeamStatus = useCallback(async () => {
+    const { data, error } = await supabase.from("team_status").select("*");
+    if (error) { console.error("Load team_status error:", error); return; }
+    const map = {};
+    (data || []).forEach(r => { map[r.team_name] = { status: r.status || "in_progress", looking_positions: r.looking_positions || [] }; });
+    setTeamStatus(map);
+  }, []);
+  useEffect(() => { if (isApproved && (view === "teams" || view === "teamdir" || view === "home")) loadTeamStatus(); }, [isApproved, view, loadTeamStatus]);
+  // Optimistically patch local state, then upsert the merged row.
+  const updateTeamStatus = useCallback(async (team, patch) => {
+    let merged;
+    setTeamStatus(prev => {
+      const cur = prev[team] || { status: "in_progress", looking_positions: [] };
+      merged = { ...cur, ...patch };
+      return { ...prev, [team]: merged };
+    });
+    const { error } = await supabase.from("team_status").upsert(
+      { team_name: team, status: merged.status, looking_positions: merged.looking_positions, updated_at: new Date().toISOString() },
+      { onConflict: "team_name" }
+    );
+    if (error) console.error("Save team_status error:", error);
+  }, []);
 
   // SMS loaders
   const loadSmsThreads = useCallback(async () => {
@@ -2922,9 +2952,27 @@ export default function App() {
             const teamAvg = scoredAvgs.length
               ? (scoredAvgs.reduce((s,v) => s+v, 0) / scoredAvgs.length).toFixed(2)
               : null;
+            // Per-team build status: in_progress (default) → looking → completed.
+            const ts = teamStatus[team] || { status: "in_progress", looking_positions: [] };
+            const tStatus = ts.status || "in_progress";
+            const lookingPos = ts.looking_positions || [];
+            const STATUS_NEXT = { in_progress: "looking", looking: "completed", completed: "in_progress" };
+            const statusMeta = {
+              in_progress: { label: "In Progress", fg: C.mut,    bg: "transparent",            border: "1px solid "+C.border },
+              looking:     { label: "Looking For", fg: "#f59e0b", bg: "rgba(245,158,11,0.18)", border: "1px solid #f59e0b" },
+              completed:   { label: "✓ Completed", fg: C.grn,    bg: "rgba(34,197,94,0.22)",   border: "1px solid "+C.grn },
+            }[tStatus];
+            const cardStyle = tStatus === "completed"
+              ? { background:"rgba(34,197,94,0.08)", borderRadius:12, padding:"16px 18px", border:"2px solid "+C.grn }
+              : tStatus === "looking"
+              ? { background:C.card, borderRadius:12, padding:"16px 18px", border:"2px solid rgba(245,158,11,0.7)" }
+              : { background:C.card, borderRadius:12, padding:"16px 18px", border:"1px solid "+C.border };
+            const toggleLookingPos = (pos) => {
+              const next = lookingPos.includes(pos) ? lookingPos.filter(x => x !== pos) : [...lookingPos, pos];
+              updateTeamStatus(team, { looking_positions: next });
+            };
             return (
-              <DropZone key={team} id={"team-"+team}
-                style={{background:C.card,borderRadius:12,padding:"16px 18px",border:"1px solid "+C.border}}>
+              <DropZone key={team} id={"team-"+team} style={cardStyle}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12,gap:6,flexWrap:"wrap"}}>
                   <h3 style={{margin:0,fontSize:17,fontWeight:800,color:C.gold,display:"flex",alignItems:"baseline",gap:8}}>
                     <span onClick={()=>setTeamCardName(team)} title="Open team card" style={{cursor:"pointer",textDecoration:"underline",textDecorationColor:"transparent",textUnderlineOffset:3}}
@@ -2933,6 +2981,11 @@ export default function App() {
                     {teamAvg && <span title="Average of per-player avg scores across players in roster positions" style={{fontSize:12,fontWeight:600,color:C.grn}}>avg {teamAvg}</span>}
                   </h3>
                   <div style={{display:"flex",gap:4,alignItems:"center",flexWrap:"wrap",justifyContent:"flex-end"}}>
+                    <button onClick={() => updateTeamStatus(team, { status: STATUS_NEXT[tStatus] })}
+                      title="Click to change team status: In Progress → Looking For → Completed"
+                      style={{fontSize:10,fontWeight:800,padding:"2px 8px",borderRadius:8,cursor:"pointer",fontFamily:"inherit",color:statusMeta.fg,background:statusMeta.bg,border:statusMeta.border,whiteSpace:"nowrap"}}>
+                      {statusMeta.label}
+                    </button>
                     <Tag c={C.acc}>{tp.length} players</Tag>
                     {offerLocked   > 0 && <Tag c="#a855f7">{offerLocked} locked</Tag>}
                     {offerAccepted > 0 && <Tag c={C.grn}>{offerAccepted} accepted</Tag>}
@@ -2940,6 +2993,17 @@ export default function App() {
                     {offerWaiting  > 0 && <Tag c="#06b6d4">{offerWaiting} waiting</Tag>}
                   </div>
                 </div>
+                {tStatus === "looking" && (
+                  <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:10,padding:"6px 8px",background:"rgba(245,158,11,0.08)",borderRadius:8,border:"1px solid rgba(245,158,11,0.35)"}}>
+                    <span style={{fontSize:10,fontWeight:800,color:"#f59e0b",textTransform:"uppercase"}}>Looking for:</span>
+                    {POSITIONS.map(pos => {
+                      const on = lookingPos.includes(pos);
+                      return <button key={pos} onClick={()=>toggleLookingPos(pos)} title={POS_LABELS[pos]}
+                        style={{fontSize:10,fontWeight:700,padding:"2px 7px",borderRadius:8,cursor:"pointer",fontFamily:"inherit",border:on?"1px solid #f59e0b":"1px solid "+C.border,background:on?"rgba(245,158,11,0.25)":"transparent",color:on?"#f59e0b":C.mut}}>{pos}</button>;
+                    })}
+                    {lookingPos.length === 0 && <span style={{fontSize:10,color:C.mut,fontStyle:"italic"}}>pick position(s)</span>}
+                  </div>
+                )}
                 {ROSTER_GROUPS.map(grp => (
                   <div key={grp.label} style={{marginBottom:10}}>
                     <div style={{fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut,marginBottom:4}}>{grp.label}</div>
