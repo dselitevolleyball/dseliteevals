@@ -1201,7 +1201,7 @@ export default function App() {
   }, []);
   useEffect(() => { if (isApproved && view === "tryouts") loadTryouts(); }, [isApproved, view, loadTryouts]);
 
-  useEffect(() => { if (isApproved && (view === "teams" || view === "teamdir" || view === "home")) loadTeamStatus(); }, [isApproved, view, loadTeamStatus]);
+  useEffect(() => { if (isApproved && (view === "teams" || view === "teamdir" || view === "home" || view === "dashboard")) loadTeamStatus(); }, [isApproved, view, loadTeamStatus]);
   // Optimistically patch local state, then upsert the merged row.
   const updateTeamStatus = useCallback(async (team, patch) => {
     let merged;
@@ -2686,11 +2686,28 @@ export default function App() {
               {selectedDivs.length > 1 && <h2 style={{margin:"0 0 10px 0",fontSize:15,fontWeight:800,color:C.gold,textTransform:"uppercase",letterSpacing:1,borderBottom:"1px solid "+C.border,paddingBottom:6}}>{div}</h2>}
               {groups.map(([team, roster]) => {
                 const totals = COLS.map(([k]) => roster.filter(p => p[k]).length);
+                // Mirror the Teams-board build status (same team_status row).
+                // Skip the synthetic "(no team yet)" bucket.
+                const isRealTeam = team !== "(no team yet)";
+                const ts = teamStatus[team] || { status:"in_progress", looking_positions:[] };
+                const tStatus = ts.status || "in_progress";
+                const lookingPos = ts.looking_positions || [];
+                const sMeta = {
+                  in_progress: { label:"In Progress", fg:C.mut,    bg:"transparent",            border:"1px solid "+C.border },
+                  looking:     { label:"Looking For", fg:"#f59e0b", bg:"rgba(245,158,11,0.18)", border:"1px solid #f59e0b" },
+                  completed:   { label:"✓ Completed", fg:C.grn,    bg:"rgba(34,197,94,0.22)",   border:"1px solid "+C.grn },
+                }[tStatus];
+                const completed = isRealTeam && tStatus === "completed";
                 return (
-                  <div key={team} style={{marginBottom:16,background:C.card,borderRadius:12,border:"1px solid "+C.border,overflow:"hidden"}}>
+                  <div key={team} style={{marginBottom:16,background:completed?"rgba(34,197,94,0.06)":C.card,borderRadius:12,border:(completed?"2px solid "+C.grn:"1px solid "+C.border),overflow:"hidden"}}>
                     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 14px",background:C.bg,borderBottom:"1px solid "+C.border,flexWrap:"wrap",gap:8}}>
                       <div style={{fontSize:13,fontWeight:800,color:C.gold}}>{team} <span style={{color:C.mut,fontWeight:600,fontSize:11,marginLeft:6}}>· {roster.length} accepted</span></div>
-                      <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                      <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+                        {isRealTeam && (
+                          <button onClick={() => updateTeamStatus(team, { status: { in_progress:"looking", looking:"completed", completed:"in_progress" }[tStatus] })}
+                            title="Click to change status: In Progress → Looking For → Completed"
+                            style={{fontSize:10,fontWeight:800,padding:"3px 8px",borderRadius:8,cursor:"pointer",fontFamily:"inherit",color:sMeta.fg,background:sMeta.bg,border:sMeta.border,whiteSpace:"nowrap"}}>{sMeta.label}</button>
+                        )}
                         {COLS.map(([k,label],i) => (
                           <span key={k} style={{fontSize:10,fontWeight:700,padding:"3px 8px",borderRadius:8,background:totals[i]===roster.length?"rgba(34,197,94,0.18)":"rgba(255,255,255,0.04)",color:totals[i]===roster.length?C.grn:C.mut,border:"1px solid "+C.border}}>
                             {label}: {totals[i]}/{roster.length}
@@ -2698,6 +2715,9 @@ export default function App() {
                         ))}
                       </div>
                     </div>
+                    {isRealTeam && tStatus === "looking" && lookingPos.length > 0 && (
+                      <div style={{fontSize:10,fontWeight:700,color:"#f59e0b",padding:"6px 14px",background:"rgba(245,158,11,0.06)",borderBottom:"1px solid "+C.border}}>Looking for: {lookingPos.join(", ")}</div>
+                    )}
                     <div style={{overflowX:"auto"}}>
                       <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
                         <thead>
