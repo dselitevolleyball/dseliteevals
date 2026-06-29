@@ -197,3 +197,28 @@ CREATE POLICY team_questions_all_approved ON team_questions
   FOR ALL
   USING      (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved))
   WITH CHECK (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved));
+
+-- ───── Checklist item descriptions + Updates feed (added 20260629) ────
+-- See migrations/20260629_checklist_meta_updates.sql
+CREATE TABLE task_meta (
+  item_key    TEXT         PRIMARY KEY,
+  description TEXT         NOT NULL DEFAULT '',
+  updated_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+ALTER TABLE task_meta ENABLE ROW LEVEL SECURITY;
+CREATE POLICY task_meta_all_approved ON task_meta
+  FOR ALL
+  USING      (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved))
+  WITH CHECK (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved));
+
+CREATE TABLE updates (
+  id              BIGSERIAL    PRIMARY KEY,
+  body            TEXT         NOT NULL,
+  created_by_name TEXT,
+  created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+ALTER TABLE updates ENABLE ROW LEVEL SECURITY;
+CREATE POLICY updates_all_approved ON updates
+  FOR ALL
+  USING      (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved))
+  WITH CHECK (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved));

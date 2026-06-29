@@ -734,6 +734,10 @@ export default function App() {
   const [teamQuestions, setTeamQuestions]                   = useState([]); // coach→director questions
   const [qDraft, setQDraft]                                 = useState({}); // { `${team}|${item}`: text } ask-a-question drafts
   const [aDraft, setADraft]                                 = useState({}); // { [questionId]: text } answer drafts
+  const [taskMeta, setTaskMeta]                             = useState({}); // { [item_key]: description } admin-editable
+  const [updates, setUpdates]                               = useState([]); // club-wide announcements
+  const [updateDraft, setUpdateDraft]                       = useState(""); // new-update composer
+  const [showChecklistSetup, setShowChecklistSetup]         = useState(false);
   const [blackoutDates, setBlackoutDates]                   = useState([]);
   const [tnFilters, setTnFilters]                           = useState({ search: "", ageFor: "", qualifierOnly: false, dateFrom: "", dateTo: "", hideClosed: false, hideCancelled: true, startsOn: [], state: "", numDays: "", divisions: [], tags: [] });
   const [tnView, setTnView]                                 = useState("list"); // "list" | "calendar"
@@ -1114,6 +1118,19 @@ export default function App() {
     if (error) { console.error("Load team_questions error:", error); return; }
     setTeamQuestions(data || []);
   }, []);
+  // Admin-editable item descriptions + club Updates feed.
+  const loadTaskMeta = useCallback(async () => {
+    const { data, error } = await supabase.from("task_meta").select("*");
+    if (error) { console.error("Load task_meta error:", error); return; }
+    const map = {};
+    (data || []).forEach(r => { map[r.item_key] = r.description || ""; });
+    setTaskMeta(map);
+  }, []);
+  const loadUpdates = useCallback(async () => {
+    const { data, error } = await supabase.from("updates").select("*").order("created_at", { ascending: false }).limit(50);
+    if (error) { console.error("Load updates error:", error); return; }
+    setUpdates(data || []);
+  }, []);
 
   // ─── Realtime sync ──────────────────────────────────────────────────
   // Subscribe to Postgres change events on the tables the eval site cares
@@ -1160,6 +1177,14 @@ export default function App() {
       .channel("realtime-team_questions")
       .on("postgres_changes", { event: "*", schema: "public", table: "team_questions" }, () => { loadTeamQuestions(); })
       .subscribe();
+    const taskMetaChannel = supabase
+      .channel("realtime-task_meta")
+      .on("postgres_changes", { event: "*", schema: "public", table: "task_meta" }, () => { loadTaskMeta(); })
+      .subscribe();
+    const updatesChannel = supabase
+      .channel("realtime-updates")
+      .on("postgres_changes", { event: "*", schema: "public", table: "updates" }, () => { loadUpdates(); })
+      .subscribe();
     return () => {
       supabase.removeChannel(playerChannel);
       supabase.removeChannel(coachChannel);
@@ -1167,8 +1192,10 @@ export default function App() {
       supabase.removeChannel(teamStatusChannel);
       supabase.removeChannel(teamTasksChannel);
       supabase.removeChannel(teamQuestionsChannel);
+      supabase.removeChannel(taskMetaChannel);
+      supabase.removeChannel(updatesChannel);
     };
-  }, [isApproved, loadCoaches, loadRankings, loadTeamStatus, loadTeamTasks, loadTeamQuestions]);
+  }, [isApproved, loadCoaches, loadRankings, loadTeamStatus, loadTeamTasks, loadTeamQuestions, loadTaskMeta, loadUpdates]);
 
   // Activity feed live updates — only subscribe while that tab is open, since
   // change_log INSERTs fire on every player write and the feed is otherwise
@@ -1256,6 +1283,9 @@ export default function App() {
   useEffect(() => { if (isApproved && (view === "teams" || view === "teamdir" || view === "home" || view === "dashboard")) loadTeamStatus(); }, [isApproved, view, loadTeamStatus]);
   // Operational checklist + questions load on the Home (coaches) and All Teams (admins) views.
   useEffect(() => { if (isApproved && (view === "home" || view === "teamdir")) { loadTeamTasks(); loadTeamQuestions(); } }, [isApproved, view, loadTeamTasks, loadTeamQuestions]);
+  // Item descriptions are needed wherever the checklists render; updates show on Home.
+  useEffect(() => { if (isApproved && (view === "home" || view === "teamdir")) loadTaskMeta(); }, [isApproved, view, loadTaskMeta]);
+  useEffect(() => { if (isApproved && view === "home") loadUpdates(); }, [isApproved, view, loadUpdates]);
   // Optimistically patch local state, then upsert the merged row. `merged` is
   // computed from current state synchronously (NOT inside the setState updater,
   // which React may run later) so the upsert payload is always complete.
@@ -1305,6 +1335,30 @@ export default function App() {
     setADraft(prev => { const n = { ...prev }; delete n[id]; return n; });
     await loadTeamQuestions();
   }, [coach, loadTeamQuestions]);
+  // Admin: save a global description for a checklist item.
+  const saveTaskMeta = useCallback(async (itemKey, description) => {
+    setTaskMeta(prev => ({ ...prev, [itemKey]: description }));
+    const { error } = await supabase.from("task_meta").upsert(
+      { item_key: itemKey, description: description || "", updated_at: new Date().toISOString() },
+      { onConflict: "item_key" }
+    );
+    if (error) console.error("Save task_meta error:", error);
+  }, []);
+  // Admin: post / delete a club-wide update.
+  const postUpdate = useCallback(async (body) => {
+    const b = (body || "").trim();
+    if (!b) return;
+    const { error } = await supabase.from("updates").insert({ body: b, created_by_name: coach?.display_name || coach?.email || "" });
+    if (error) { window.alert("Post update failed: " + error.message); return; }
+    setUpdateDraft("");
+    await loadUpdates();
+  }, [coach, loadUpdates]);
+  const deleteUpdate = useCallback(async (id) => {
+    if (!window.confirm("Delete this update?")) return;
+    const { error } = await supabase.from("updates").delete().eq("id", id);
+    if (error) { window.alert("Delete failed: " + error.message); return; }
+    await loadUpdates();
+  }, [loadUpdates]);
 
   // SMS loaders
   const loadSmsThreads = useCallback(async () => {
@@ -2385,7 +2439,7 @@ export default function App() {
                   <span style={{fontSize:12,fontWeight:700,color:C.text}}>{item.label}</span>
                   {taskStatusBtn(team, item.key, true)}
                 </div>
-                {item.detail && <div style={{fontSize:10,color:C.mut,marginTop:3,lineHeight:1.4}}>{item.detail}</div>}
+                {(taskMeta[item.key] || item.detail) && <div style={{fontSize:10,color:C.mut,marginTop:3,lineHeight:1.4,whiteSpace:"pre-wrap"}}>{taskMeta[item.key] || item.detail}</div>}
                 <DebouncedField multiline placeholder="Notes…" value={notes}
                   onCommit={v => updateTeamTask(team, item.key, { notes: v })}
                   style={{...inpStyle, width:"100%", minHeight:30, padding:"6px 8px", fontSize:11, marginTop:6, resize:"vertical"}} />
@@ -2422,12 +2476,18 @@ export default function App() {
       <div style={sectionBox}>
         <div style={head}>Operations To-Do{!canEdit && <span style={{color:C.mut,fontWeight:600,textTransform:"none",letterSpacing:0}}> · set by directors</span>}</div>
         <div style={{display:"flex",flexDirection:"column",gap:6}}>
-          {OPS_TASKS.map(item => (
-            <div key={item.key} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
-              <span style={{fontSize:12,color:C.text}}>{item.label}</span>
-              {taskStatusBtn(team, item.key, canEdit)}
-            </div>
-          ))}
+          {OPS_TASKS.map(item => {
+            const desc = taskMeta[item.key] || item.detail || "";
+            return (
+              <div key={item.key}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
+                  <span style={{fontSize:12,color:C.text}}>{item.label}</span>
+                  {taskStatusBtn(team, item.key, canEdit)}
+                </div>
+                {desc && <div style={{fontSize:10,color:C.mut,marginTop:2,lineHeight:1.4,whiteSpace:"pre-wrap"}}>{desc}</div>}
+              </div>
+            );
+          })}
         </div>
       </div>
     );
@@ -2463,6 +2523,71 @@ export default function App() {
     );
   };
 
+  // Club-wide updates feed — shown to everyone on Home (i.e. on login).
+  const renderUpdatesPanel = () => {
+    if (updates.length === 0) return null;
+    const recentMs = Date.now() - 3 * 24 * 60 * 60 * 1000;
+    const fmt = (iso) => new Date(iso).toLocaleDateString(undefined, { month:"short", day:"numeric" });
+    return (
+      <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:"14px 16px",marginBottom:18}}>
+        <div style={{fontSize:13,fontWeight:800,color:C.gold,marginBottom:8}}>Updates</div>
+        <div style={{display:"flex",flexDirection:"column",gap:8,maxHeight:280,overflowY:"auto"}}>
+          {updates.map(u => {
+            const isNew = new Date(u.created_at).getTime() > recentMs;
+            return (
+              <div key={u.id} style={{background:C.bg,border:"1px solid "+C.border,borderRadius:8,padding:"8px 10px"}}>
+                <div style={{display:"flex",justifyContent:"space-between",gap:8,marginBottom:3,alignItems:"center"}}>
+                  <span style={{fontSize:10,color:C.mut}}>{fmt(u.created_at)}{u.created_by_name?" · "+u.created_by_name:""}</span>
+                  <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                    {isNew && <span style={{fontSize:8,fontWeight:800,color:C.grn,border:"1px solid "+C.grn,borderRadius:5,padding:"1px 5px"}}>NEW</span>}
+                    {canOps && <button onClick={()=>deleteUpdate(u.id)} title="Delete update" style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:13,fontWeight:800,lineHeight:1,padding:0}}>×</button>}
+                  </div>
+                </div>
+                <div style={{fontSize:12,color:C.text,whiteSpace:"pre-wrap",lineHeight:1.4}}>{u.body}</div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+  // Admin: bulk-edit checklist item descriptions + post an update.
+  const renderChecklistSetup = () => {
+    if (!canOps) return null;
+    const itemRow = (item) => (
+      <div key={item.key} style={{marginBottom:8}}>
+        <div style={{fontSize:11,fontWeight:700,color:C.text,marginBottom:3}}>{item.label}</div>
+        <DebouncedField multiline placeholder="Description / instructions shown on every team's card for this item…"
+          value={taskMeta[item.key] || ""} onCommit={v=>saveTaskMeta(item.key, v)}
+          style={{...inpStyle,width:"100%",minHeight:34,padding:"6px 8px",fontSize:11,resize:"vertical"}} />
+      </div>
+    );
+    return (
+      <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:"14px 16px",marginBottom:18}}>
+        <button onClick={()=>setShowChecklistSetup(v=>!v)}
+          style={{display:"flex",alignItems:"center",gap:8,background:"none",border:"none",cursor:"pointer",fontFamily:"inherit",padding:0,color:C.gold,fontSize:13,fontWeight:800}}>
+          <span style={{fontSize:9,transform:showChecklistSetup?"rotate(90deg)":"none"}}>▶</span> Manage Checklist &amp; Post Update
+        </button>
+        {showChecklistSetup && (
+          <div style={{marginTop:12}}>
+            <div style={{fontSize:10,fontWeight:800,textTransform:"uppercase",color:C.gold,marginBottom:6}}>Post an Update</div>
+            <textarea value={updateDraft} onChange={e=>setUpdateDraft(e.target.value)} placeholder="Share an update with all coaches…"
+              style={{...inpStyle,width:"100%",minHeight:50,padding:"8px 10px",fontSize:12,resize:"vertical",boxSizing:"border-box"}} />
+            <div style={{marginTop:6,textAlign:"right"}}>
+              <button onClick={()=>postUpdate(updateDraft)} disabled={!updateDraft.trim()}
+                style={{padding:"6px 14px",borderRadius:8,border:"none",background:updateDraft.trim()?C.gold:C.border,color:updateDraft.trim()?"#000":C.mut,fontWeight:700,fontSize:12,cursor:updateDraft.trim()?"pointer":"default",fontFamily:"inherit"}}>Post Update</button>
+            </div>
+            <div style={{fontSize:10,fontWeight:800,textTransform:"uppercase",color:C.gold,margin:"14px 0 6px",borderTop:"1px solid "+C.border,paddingTop:12}}>Coach To-Do descriptions</div>
+            {COACH_TASKS.map(itemRow)}
+            <div style={{fontSize:10,fontWeight:800,textTransform:"uppercase",color:C.gold,margin:"12px 0 6px"}}>Operations To-Do descriptions</div>
+            {OPS_TASKS.map(itemRow)}
+            <div style={{fontSize:10,color:C.mut,marginTop:8}}>Descriptions are shared across every team's card and save automatically.</div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   function renderHome() {
     const norm = s => (s || "").toString().trim().toLowerCase();
     const myRoster = coachRoster.find(r => coach?.email && norm(r.email) === norm(coach.email));
@@ -2490,6 +2615,8 @@ export default function App() {
           <h2 style={{margin:0,fontSize:22,fontWeight:800,color:C.gold}}>Welcome, {firstName}</h2>
           <div style={{fontSize:12,color:C.mut,marginTop:3}}>Your teams — practices, tournaments, and rosters at a glance.{myTeams.length ? "" : ""}</div>
         </div>
+        {renderUpdatesPanel()}
+        {renderChecklistSetup()}
         {renderQuestionsPanel()}
         {myTeams.length === 0 ? (
           <div style={{padding:24,textAlign:"center",color:C.mut,fontSize:13,background:C.card,borderRadius:12,border:"1px solid "+C.border,lineHeight:1.6}}>
