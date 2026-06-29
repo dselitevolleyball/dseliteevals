@@ -223,3 +223,18 @@ CREATE POLICY updates_all_approved ON updates
   FOR ALL
   USING      (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved))
   WITH CHECK (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved));
+
+-- ───── Practice-schedule approvals (added 20260629) ──────────────────
+-- See migrations/20260629_practice_approvals.sql
+CREATE TABLE practice_approvals (
+  team_name        TEXT         PRIMARY KEY,
+  approved         BOOLEAN      NOT NULL DEFAULT FALSE,
+  approved_by_name TEXT,
+  approved_at      TIMESTAMPTZ,
+  updated_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+ALTER TABLE practice_approvals ENABLE ROW LEVEL SECURITY;
+CREATE POLICY practice_approvals_all_approved ON practice_approvals
+  FOR ALL
+  USING      (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved))
+  WITH CHECK (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved));

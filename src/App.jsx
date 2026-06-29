@@ -739,6 +739,7 @@ export default function App() {
   const [updateDraft, setUpdateDraft]                       = useState(""); // new-update composer
   const [updateTeamTarget, setUpdateTeamTarget]             = useState(""); // "" = club-wide; else a team name
   const [showChecklistSetup, setShowChecklistSetup]         = useState(false);
+  const [practiceApprovals, setPracticeApprovals]           = useState({}); // { [team_name]: { approved, approved_by_name, approved_at } }
   const [blackoutDates, setBlackoutDates]                   = useState([]);
   const [tnFilters, setTnFilters]                           = useState({ search: "", ageFor: "", qualifierOnly: false, dateFrom: "", dateTo: "", hideClosed: false, hideCancelled: true, startsOn: [], state: "", numDays: "", divisions: [], tags: [] });
   const [tnView, setTnView]                                 = useState("list"); // "list" | "calendar"
@@ -1132,6 +1133,14 @@ export default function App() {
     if (error) { console.error("Load updates error:", error); return; }
     setUpdates(data || []);
   }, []);
+  // Per-team practice-schedule approvals.
+  const loadPracticeApprovals = useCallback(async () => {
+    const { data, error } = await supabase.from("practice_approvals").select("*");
+    if (error) { console.error("Load practice_approvals error:", error); return; }
+    const map = {};
+    (data || []).forEach(r => { map[r.team_name] = { approved: !!r.approved, approved_by_name: r.approved_by_name || "", approved_at: r.approved_at || null }; });
+    setPracticeApprovals(map);
+  }, []);
 
   // ─── Realtime sync ──────────────────────────────────────────────────
   // Subscribe to Postgres change events on the tables the eval site cares
@@ -1186,6 +1195,10 @@ export default function App() {
       .channel("realtime-updates")
       .on("postgres_changes", { event: "*", schema: "public", table: "updates" }, () => { loadUpdates(); })
       .subscribe();
+    const practiceApprovalsChannel = supabase
+      .channel("realtime-practice_approvals")
+      .on("postgres_changes", { event: "*", schema: "public", table: "practice_approvals" }, () => { loadPracticeApprovals(); })
+      .subscribe();
     return () => {
       supabase.removeChannel(playerChannel);
       supabase.removeChannel(coachChannel);
@@ -1195,8 +1208,9 @@ export default function App() {
       supabase.removeChannel(teamQuestionsChannel);
       supabase.removeChannel(taskMetaChannel);
       supabase.removeChannel(updatesChannel);
+      supabase.removeChannel(practiceApprovalsChannel);
     };
-  }, [isApproved, loadCoaches, loadRankings, loadTeamStatus, loadTeamTasks, loadTeamQuestions, loadTaskMeta, loadUpdates]);
+  }, [isApproved, loadCoaches, loadRankings, loadTeamStatus, loadTeamTasks, loadTeamQuestions, loadTaskMeta, loadUpdates, loadPracticeApprovals]);
 
   // Activity feed live updates — only subscribe while that tab is open, since
   // change_log INSERTs fire on every player write and the feed is otherwise
@@ -1287,6 +1301,7 @@ export default function App() {
   // Item descriptions are needed wherever the checklists render; updates show on Home.
   useEffect(() => { if (isApproved && (view === "home" || view === "teamdir")) loadTaskMeta(); }, [isApproved, view, loadTaskMeta]);
   useEffect(() => { if (isApproved && view === "home") loadUpdates(); }, [isApproved, view, loadUpdates]);
+  useEffect(() => { if (isApproved && (view === "home" || view === "teamdir")) loadPracticeApprovals(); }, [isApproved, view, loadPracticeApprovals]);
   // Optimistically patch local state, then upsert the merged row. `merged` is
   // computed from current state synchronously (NOT inside the setState updater,
   // which React may run later) so the upsert payload is always complete.
@@ -1362,6 +1377,23 @@ export default function App() {
     if (error) { window.alert("Delete failed: " + error.message); return; }
     await loadUpdates();
   }, [loadUpdates]);
+  // Coach approves (or un-approves) their team's practice schedule.
+  const approvePractice = useCallback(async (team, approved) => {
+    const now = approved ? new Date().toISOString() : null;
+    const name = approved ? (coach?.display_name || coach?.email || "") : "";
+    setPracticeApprovals(prev => ({ ...prev, [team]: { approved, approved_by_name: name, approved_at: now } }));
+    const { error } = await supabase.from("practice_approvals").upsert(
+      { team_name: team, approved, approved_by_name: name || null, approved_at: now, updated_at: new Date().toISOString() },
+      { onConflict: "team_name" }
+    );
+    if (error) console.error("Save practice_approvals error:", error);
+  }, [coach]);
+  // Director: notify all coaches to approve their practice schedule (posts an update).
+  const requestPracticeApproval = useCallback(async () => {
+    if (!window.confirm("Notify all coaches to review and approve their practice schedule?")) return;
+    await postUpdate("📋 Please review and approve your team's practice schedule on your Home page, and confirm there are no conflicts.", "");
+    window.alert("Coaches notified — the request is posted in Updates.");
+  }, [postUpdate]);
 
   // SMS loaders
   const loadSmsThreads = useCallback(async () => {
@@ -2618,6 +2650,11 @@ export default function App() {
               <button onClick={()=>postUpdate(updateDraft, updateTeamTarget)} disabled={!updateDraft.trim()}
                 style={{padding:"6px 14px",borderRadius:8,border:"none",background:updateDraft.trim()?C.gold:C.border,color:updateDraft.trim()?"#000":C.mut,fontWeight:700,fontSize:12,cursor:updateDraft.trim()?"pointer":"default",fontFamily:"inherit"}}>Post Update</button>
             </div>
+            <div style={{marginTop:8,paddingTop:10,borderTop:"1px solid "+C.border,display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,flexWrap:"wrap"}}>
+              <span style={{fontSize:11,color:C.mut}}>Ask every coach to approve their team's practice schedule (no conflicts).</span>
+              <button onClick={requestPracticeApproval}
+                style={{padding:"6px 14px",borderRadius:8,border:"1px solid #f59e0b",background:"rgba(245,158,11,0.12)",color:"#f59e0b",fontWeight:800,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>Request Practice Approval</button>
+            </div>
             <div style={{fontSize:10,fontWeight:800,textTransform:"uppercase",color:C.gold,margin:"14px 0 6px",borderTop:"1px solid "+C.border,paddingTop:12}}>Coach To-Do descriptions</div>
             {COACH_TASKS.map(itemRow)}
             <div style={{fontSize:10,fontWeight:800,textTransform:"uppercase",color:C.gold,margin:"12px 0 6px"}}>Operations To-Do descriptions</div>
@@ -2713,6 +2750,22 @@ export default function App() {
                           {ph.sa.length > 0 && <span style={{color:C.acc}}>{ph.entries.length ? " · " : ""}S&amp;A {ph.sa.map(slot => "Sun " + slot).join(", ")}</span>}
                         </div>
                       ))}
+                      {(() => {
+                        const appr = practiceApprovals[t.team_name];
+                        const fmtA = appr && appr.approved_at ? new Date(appr.approved_at).toLocaleDateString(undefined,{month:"short",day:"numeric"}) : "";
+                        return appr && appr.approved ? (
+                          <div style={{marginTop:8,display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,flexWrap:"wrap"}}>
+                            <span style={{fontSize:11,fontWeight:700,color:C.grn}}>✓ Schedule approved{appr.approved_by_name?" by "+appr.approved_by_name:""}{fmtA?" · "+fmtA:""}</span>
+                            <button onClick={()=>approvePractice(t.team_name,false)} title="Undo approval"
+                              style={{fontSize:9,fontWeight:700,padding:"2px 8px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,cursor:"pointer",fontFamily:"inherit"}}>Undo</button>
+                          </div>
+                        ) : (
+                          <button onClick={()=>{ if (window.confirm("Approve this practice schedule and confirm there are no conflicts?")) approvePractice(t.team_name,true); }}
+                            style={{marginTop:8,width:"100%",padding:"8px 12px",borderRadius:8,border:"1px solid #f59e0b",background:"rgba(245,158,11,0.12)",color:"#f59e0b",fontWeight:800,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>
+                            ⚠ Approve practice schedule — confirm no conflicts
+                          </button>
+                        );
+                      })()}
                     </div>
 
                     <div style={{...box,marginBottom:0}}>
@@ -4886,6 +4939,12 @@ export default function App() {
                       <span style={{fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:8,background:C.bg,border:"1px solid "+C.border,color:c.players?C.text:C.mut}}>{c.players} player{c.players===1?"":"s"}</span>
                       <span style={{fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:8,background:C.bg,border:"1px solid "+C.border,color:c.practices?C.text:C.mut}}>{c.practices} practice{c.practices===1?"":"s"}</span>
                       <span style={{fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:8,background:C.bg,border:"1px solid "+C.border,color:c.tournaments?C.text:C.mut}}>{c.tournaments} tourney{c.tournaments===1?"":"s"}</span>
+                      {(() => {
+                        const appr = practiceApprovals[t.team_name];
+                        const ok = appr && appr.approved;
+                        return <span title={ok ? "Practice schedule approved"+(appr.approved_by_name?" by "+appr.approved_by_name:"") : "Practice schedule not yet approved by the coach"}
+                          style={{fontSize:10,fontWeight:800,padding:"2px 8px",borderRadius:8,background:ok?"rgba(34,197,94,0.18)":"rgba(245,158,11,0.15)",border:"1px solid "+(ok?C.grn:"#f59e0b"),color:ok?C.grn:"#f59e0b",whiteSpace:"nowrap"}}>{ok?"✓ Practice OK":"⚠ Practice pending"}</span>;
+                      })()}
                     </div>
                     {tStatus === "looking" && lookingPos.length > 0 && (
                       <div style={{fontSize:10,fontWeight:700,color:"#f59e0b",marginTop:8}}>Looking for: {lookingPos.join(", ")}</div>
