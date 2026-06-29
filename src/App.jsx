@@ -1202,20 +1202,19 @@ export default function App() {
   useEffect(() => { if (isApproved && view === "tryouts") loadTryouts(); }, [isApproved, view, loadTryouts]);
 
   useEffect(() => { if (isApproved && (view === "teams" || view === "teamdir" || view === "home" || view === "dashboard")) loadTeamStatus(); }, [isApproved, view, loadTeamStatus]);
-  // Optimistically patch local state, then upsert the merged row.
+  // Optimistically patch local state, then upsert the merged row. `merged` is
+  // computed from current state synchronously (NOT inside the setState updater,
+  // which React may run later) so the upsert payload is always complete.
   const updateTeamStatus = useCallback(async (team, patch) => {
-    let merged;
-    setTeamStatus(prev => {
-      const cur = prev[team] || { status: "in_progress", looking_positions: [] };
-      merged = { ...cur, ...patch };
-      return { ...prev, [team]: merged };
-    });
+    const cur = teamStatus[team] || { status: "in_progress", looking_positions: [] };
+    const merged = { status: cur.status || "in_progress", looking_positions: cur.looking_positions || [], ...patch };
+    setTeamStatus(prev => ({ ...prev, [team]: { ...(prev[team] || { status: "in_progress", looking_positions: [] }), ...patch } }));
     const { error } = await supabase.from("team_status").upsert(
       { team_name: team, status: merged.status, looking_positions: merged.looking_positions, updated_at: new Date().toISOString() },
       { onConflict: "team_name" }
     );
     if (error) console.error("Save team_status error:", error);
-  }, []);
+  }, [teamStatus]);
 
   // SMS loaders
   const loadSmsThreads = useCallback(async () => {
