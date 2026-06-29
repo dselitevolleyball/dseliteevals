@@ -5849,6 +5849,9 @@ export default function App() {
     const applySubset = (list, scope) =>
       scope === "tryout" ? list.filter(p => p.tryout_registered)
       : scope === "eval" ? list.filter(p => p.eval_registered)
+      // "evaltryout" mirrors the Teams "Using eval as tryout" filter: players
+      // who signed up for the eval and can't attend tryout (supplemental).
+      : scope === "evaltryout" ? list.filter(p => p.supplemental === 1)
       : list; // "all"
     // Build the pool per age group from each group's chosen subset.
     let pool = [];
@@ -5972,6 +5975,7 @@ export default function App() {
                   <option value="all">All ({cnt("all")})</option>
                   <option value="tryout">Tryout signups ({cnt("tryout")})</option>
                   <option value="eval">Eval signups ({cnt("eval")})</option>
+                  <option value="evaltryout">Using eval as tryout ({cnt("evaltryout")})</option>
                 </select>
               </div>
             );
