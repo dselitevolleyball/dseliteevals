@@ -2657,7 +2657,6 @@ export default function App() {
           <div style={{fontSize:12,color:C.mut,marginTop:3}}>Your teams — practices, tournaments, and rosters at a glance.{myTeams.length ? "" : ""}</div>
         </div>
         {renderUpdatesPanel(myTeams.map(t => t.team_name))}
-        {renderChecklistSetup()}
         {renderQuestionsPanel()}
         {myTeams.length === 0 ? (
           <div style={{padding:24,textAlign:"center",color:C.mut,fontSize:13,background:C.card,borderRadius:12,border:"1px solid "+C.border,lineHeight:1.6}}>
@@ -4842,6 +4841,7 @@ export default function App() {
           <input value={teamDirSearch} onChange={e=>setTeamDirSearch(e.target.value)} placeholder="Search team or coach…"
             style={{...inpStyle,padding:"8px 12px",fontSize:13,minWidth:220}} />
         </div>
+        {renderChecklistSetup()}
         {practiceTeams.length === 0 ? (
           <div style={{padding:30,textAlign:"center",color:C.mut,fontSize:13,background:C.card,borderRadius:12,border:"1px solid "+C.border}}>
             No teams found. Add teams in the Practice tab.
