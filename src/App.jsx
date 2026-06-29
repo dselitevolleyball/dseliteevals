@@ -4438,11 +4438,23 @@ export default function App() {
             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(248px,1fr))",gap:10}}>
               {groups[g].map(t => {
                 const c = counts(t);
+                // Mirror the Teams-board status here (same team_status row).
+                const ts = teamStatus[t.team_name] || { status:"in_progress", looking_positions:[] };
+                const tStatus = ts.status || "in_progress";
+                const lookingPos = ts.looking_positions || [];
+                const sMeta = {
+                  in_progress: { label:"In Progress", fg:C.mut,    bg:"transparent",            border:"1px solid "+C.border },
+                  looking:     { label:"Looking For", fg:"#f59e0b", bg:"rgba(245,158,11,0.18)", border:"1px solid #f59e0b" },
+                  completed:   { label:"✓ Completed", fg:C.grn,    bg:"rgba(34,197,94,0.22)",   border:"1px solid "+C.grn },
+                }[tStatus];
+                const completed = tStatus === "completed";
+                const cardBg = completed ? "rgba(34,197,94,0.08)" : C.card;
+                const baseBorder = completed ? C.grn : C.border;
                 return (
                   <div key={t.id || t.team_name} onClick={()=>setTeamCardName(t.team_name)} title="Open team card"
-                    style={{background:C.card,borderRadius:12,border:"1px solid "+C.border,padding:"12px 14px",cursor:"pointer"}}
+                    style={{background:cardBg,borderRadius:12,border:(completed?"2px solid ":"1px solid ")+baseBorder,padding:"12px 14px",cursor:"pointer"}}
                     onMouseEnter={e=>e.currentTarget.style.borderColor=C.gold}
-                    onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}>
+                    onMouseLeave={e=>e.currentTarget.style.borderColor=baseBorder}>
                     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
                       <span style={{fontSize:16,fontWeight:800,color:levelColor(t.level)}}>{t.team_name}</span>
                       {t.level && <span style={{fontSize:9,fontWeight:800,textTransform:"uppercase",letterSpacing:0.5,color:levelColor(t.level)}}>{t.level}</span>}
@@ -4451,11 +4463,17 @@ export default function App() {
                       <div><span style={{color:C.mut}}>HC:</span> <span style={{color:t.head_coach?C.text:C.mut}}>{t.head_coach||"—"}</span></div>
                       <div><span style={{color:C.mut}}>AC:</span> <span style={{color:t.assistant_coach?C.text:C.mut}}>{t.assistant_coach||"—"}</span></div>
                     </div>
-                    <div style={{display:"flex",gap:6,marginTop:10,flexWrap:"wrap"}}>
+                    <div style={{display:"flex",gap:6,marginTop:10,flexWrap:"wrap",alignItems:"center"}}>
+                      <button onClick={(e)=>{ e.stopPropagation(); updateTeamStatus(t.team_name, { status: { in_progress:"looking", looking:"completed", completed:"in_progress" }[tStatus] }); }}
+                        title="Click to change status: In Progress → Looking For → Completed"
+                        style={{fontSize:10,fontWeight:800,padding:"2px 8px",borderRadius:8,cursor:"pointer",fontFamily:"inherit",color:sMeta.fg,background:sMeta.bg,border:sMeta.border,whiteSpace:"nowrap"}}>{sMeta.label}</button>
                       <span style={{fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:8,background:C.bg,border:"1px solid "+C.border,color:c.players?C.text:C.mut}}>{c.players} player{c.players===1?"":"s"}</span>
                       <span style={{fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:8,background:C.bg,border:"1px solid "+C.border,color:c.practices?C.text:C.mut}}>{c.practices} practice{c.practices===1?"":"s"}</span>
                       <span style={{fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:8,background:C.bg,border:"1px solid "+C.border,color:c.tournaments?C.text:C.mut}}>{c.tournaments} tourney{c.tournaments===1?"":"s"}</span>
                     </div>
+                    {tStatus === "looking" && lookingPos.length > 0 && (
+                      <div style={{fontSize:10,fontWeight:700,color:"#f59e0b",marginTop:8}}>Looking for: {lookingPos.join(", ")}</div>
+                    )}
                   </div>
                 );
               })}
