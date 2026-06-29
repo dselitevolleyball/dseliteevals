@@ -2301,6 +2301,21 @@ export default function App() {
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(340px,1fr))",gap:14}}>
             {myTeams.map(t => {
               const phases = summarizePractices(practiceAssignments.filter(a => a.team_name === t.team_name));
+              // Speed & Agility sessions for this team, grouped by phase (block).
+              // All S&A sessions fall on Sundays, so the day label is "Sun".
+              const saByPhase = {};
+              saSessions.forEach(s => {
+                if (s.team_name !== t.team_name) return;
+                const ph = s.block || "fall1";
+                (saByPhase[ph] = saByPhase[ph] || new Set()).add(s.slot);
+              });
+              // Ordered rows combining practices + S&A; a phase shows if it has either.
+              const phaseRows = PRACTICE_PHASES.map(P => {
+                const pr = phases.find(x => x.id === P.id);
+                const saSlots = saByPhase[P.id] ? Array.from(saByPhase[P.id]) : [];
+                if (!pr && !saSlots.length) return null;
+                return { id: P.id, label: P.label, entries: pr ? pr.entries : [], sa: mergeAdjacentSlots(saSlots) };
+              }).filter(Boolean);
               const teamTns = tournamentAssignments
                 .filter(ta => ta.team_id === t.team_name || ta.team_name === t.team_name)
                 .map(ta => tournamentById.get(ta.tournament_id)).filter(Boolean)
@@ -2318,12 +2333,13 @@ export default function App() {
                   <div style={{fontSize:10,color:C.mut,marginBottom:10}}>{coLine}</div>
 
                   <div style={box}>
-                    <div style={lbl}>Practices</div>
-                    {phases.length === 0 && <div style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>None scheduled.</div>}
-                    {phases.map(ph => (
+                    <div style={lbl}>Practice &amp; S&amp;A</div>
+                    {phaseRows.length === 0 && <div style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>None scheduled.</div>}
+                    {phaseRows.map(ph => (
                       <div key={ph.id} style={{fontSize:11,marginBottom:3}}>
                         <span style={{color:C.gold,fontWeight:700}}>{ph.label}:</span>{" "}
-                        <span style={{color:C.text}}>{ph.entries.map(e => e.day + " " + e.slot).join(", ")}</span>
+                        {ph.entries.length > 0 && <span style={{color:C.text}}>{ph.entries.map(e => e.day + " " + e.slot).join(", ")}</span>}
+                        {ph.sa.length > 0 && <span style={{color:C.acc}}>{ph.entries.length ? " · " : ""}S&amp;A {ph.sa.map(slot => "Sun " + slot).join(", ")}</span>}
                       </div>
                     ))}
                   </div>
