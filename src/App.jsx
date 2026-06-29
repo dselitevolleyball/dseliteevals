@@ -881,6 +881,12 @@ export default function App() {
   // switching views doesn't carry the selection over.
   const [rankDate, setRankDate] = useState("");
   const [profileId, setProfileId] = useState(null);
+  // Per-player change history (loaded on demand from change_log when the
+  // "Change History" dropdown on the profile card is opened).
+  const [historyOpen, setHistoryOpen]         = useState(false);
+  const [historyRows, setHistoryRows]         = useState([]);
+  const [historyLoading, setHistoryLoading]   = useState(false);
+  const [historyPlayerId, setHistoryPlayerId] = useState(null);
   // AI parent-summary state for the profile modal. Reset whenever the profile changes.
   const [aiBusy, setAiBusy] = useState(false);
   const [aiResult, setAiResult] = useState("");
@@ -1035,6 +1041,8 @@ export default function App() {
     setActivityLoading(false);
   }, [activityActor, activityAction]);
   useEffect(() => { if (isApproved && view === "activity") loadActivity(); }, [isApproved, view, loadActivity]);
+  // Collapse the per-player history whenever the open profile card changes.
+  useEffect(() => { setHistoryOpen(false); }, [profileId]);
 
   // ─── Realtime sync ──────────────────────────────────────────────────
   // Subscribe to Postgres change events on the tables the eval site cares
@@ -3710,6 +3718,77 @@ export default function App() {
               </div>
             )}
           </div>
+          {/* Change History — on-demand audit trail for this player from change_log. */}
+          {(() => {
+            const fmtVal = (v) => {
+              if (v === null || v === undefined || v === "") return "(empty)";
+              let s = typeof v === "object" ? (() => { try { return JSON.stringify(v); } catch { return String(v); } })() : String(v);
+              return s.length > 80 ? s.slice(0, 80) + "…" : s;
+            };
+            const loadHistory = async () => {
+              setHistoryLoading(true);
+              const { data, error } = await supabase.from("change_log")
+                .select("*").eq("player_id", p.id)
+                .order("created_at", { ascending: false }).limit(100);
+              if (error) console.error("Load player history error:", error);
+              setHistoryRows(data || []);
+              setHistoryPlayerId(p.id);
+              setHistoryLoading(false);
+            };
+            const toggleHistory = () => {
+              const next = !historyOpen;
+              setHistoryOpen(next);
+              if (next && (historyPlayerId !== p.id || historyRows.length === 0)) loadHistory();
+            };
+            const rows = historyPlayerId === p.id ? historyRows : [];
+            return (
+              <div style={{marginTop:24,paddingTop:16,borderTop:"1px solid "+C.border}}>
+                <button onClick={toggleHistory}
+                  style={{display:"flex",alignItems:"center",gap:8,background:"none",border:"none",cursor:"pointer",fontFamily:"inherit",padding:0,color:C.gold,fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5}}>
+                  <span style={{fontSize:9,transform:historyOpen?"rotate(90deg)":"none",transition:"transform .15s"}}>▶</span>
+                  Change History
+                  {historyOpen && historyPlayerId === p.id && !historyLoading && <span style={{color:C.mut,fontWeight:600,textTransform:"none"}}>({rows.length})</span>}
+                </button>
+                {historyOpen && (
+                  <div style={{marginTop:10}}>
+                    {historyLoading && <div style={{fontSize:12,color:C.mut}}>Loading…</div>}
+                    {!historyLoading && rows.length === 0 && <div style={{fontSize:12,color:C.mut}}>No recorded changes yet.</div>}
+                    {!historyLoading && rows.length > 0 && (
+                      <div style={{display:"flex",flexDirection:"column",gap:8,maxHeight:320,overflowY:"auto"}}>
+                        {rows.map(e => {
+                          const when = new Date(e.created_at).toLocaleString(undefined,{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"});
+                          const who = e.actor_name || e.actor_email || "Unknown";
+                          const fc = e.field_changes || {};
+                          return (
+                            <div key={e.id} style={{background:C.bg,border:"1px solid "+C.border,borderRadius:8,padding:"8px 10px"}}>
+                              <div style={{display:"flex",justifyContent:"space-between",gap:8,flexWrap:"wrap",marginBottom:4}}>
+                                <span style={{fontSize:11,fontWeight:700,color:e.action==="delete"?C.red:e.action==="insert"?C.grn:C.text}}>
+                                  {e.action==="insert"?"Player added":e.action==="delete"?"Player deleted":"Edited"}
+                                </span>
+                                <span style={{fontSize:10,color:C.mut}}>{who} · {when}</span>
+                              </div>
+                              {e.action==="update" && (
+                                <div style={{display:"flex",flexDirection:"column",gap:2}}>
+                                  {Object.entries(fc).map(([field, val]) => (
+                                    <div key={field} style={{fontSize:11,color:C.text,lineHeight:1.4}}>
+                                      <span style={{color:C.gold,fontWeight:600}}>{field}</span>:{" "}
+                                      <span style={{color:C.mut}}>{fmtVal(val && typeof val==="object" && "old" in val ? val.old : undefined)}</span>
+                                      {" → "}
+                                      <span>{fmtVal(val && typeof val==="object" && "new" in val ? val.new : val)}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
           {/* Danger zone — delete player. Two-step confirmation guards against mis-clicks. */}
           <div style={{marginTop:24,paddingTop:16,borderTop:"1px solid "+C.border}}>
             <div style={{fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.red,marginBottom:8,letterSpacing:0.5}}>Danger Zone</div>
