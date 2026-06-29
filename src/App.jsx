@@ -2348,7 +2348,7 @@ export default function App() {
                         {roster.map(p => (
                           <button key={p.id} onClick={()=>setProfileId(p.id)} title="Open player card"
                             style={{padding:"3px 8px",borderRadius:8,border:"1px solid "+C.border,background:C.bg,color:C.text,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
-                            {favStar(p.id,11)}{" "}{p.roster_pos ? p.roster_pos+" " : ""}{p.first_name} {p.last_name}
+                            {p.first_name} {p.last_name}
                           </button>
                         ))}
                       </div>
