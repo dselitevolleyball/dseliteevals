@@ -5519,8 +5519,8 @@ export default function App() {
         { label:"7-9pm",       capacity:4 },
       ],
       Thu: [
-        { label:"5-7pm",  capacity:6 },
-        { label:"7-9pm",  capacity:6 },
+        { label:"5-7pm",  capacity:4 },
+        { label:"7-9pm",  capacity:4 },
       ],
     };
     const PRESEASON_SLOTS = {
