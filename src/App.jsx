@@ -5665,12 +5665,21 @@ export default function App() {
         const { error } = await supabase.from("sa_sessions").delete().in("id", saRows.map(r => r.id));
         if (error) { window.alert("Clear S&A failed: " + error.message); return; }
       } else if (practiceRow) {
-        // Practice → S&A: drop the court, add the S&A sessions.
+        // Practice → S&A. S&A slots are single-occupancy (one team per slot),
+        // so if another team already owns this S&A slot, skip S&A and just
+        // cycle Practice → empty — lets you click past it instead of hitting a
+        // duplicate-key error and getting stuck.
+        const occupants = saBySlot.get(slot);
+        const takenByOther = occupants && occupants.size > 0 && !occupants.has(teamName);
         const { error: delErr } = await supabase.from("practice_assignments").delete().eq("id", practiceRow.id);
         if (delErr) { window.alert("Remove practice failed: " + delErr.message); return; }
-        const rows = SA_DATES.map(d => ({ block: schedulePhase, session_date: d, slot, team_name: teamName }));
-        const { error: insErr } = await supabase.from("sa_sessions").insert(rows);
-        if (insErr) { window.alert("Add S&A failed: " + insErr.message); return; }
+        if (!takenByOther) {
+          const rows = SA_DATES.map(d => ({ block: schedulePhase, session_date: d, slot, team_name: teamName }));
+          const { error: insErr } = await supabase.from("sa_sessions").insert(rows);
+          // If we still collide (e.g. stale local state), just leave it empty
+          // rather than erroring — the cell has cycled past S&A to empty.
+          if (insErr && !/duplicate key/i.test(insErr.message || "")) { window.alert("Add S&A failed: " + insErr.message); return; }
+        }
       } else {
         // empty → Practice.
         const { error } = await supabase.from("practice_assignments").insert({ team_name: teamName, day: "Sun", slot, phase: schedulePhase });
