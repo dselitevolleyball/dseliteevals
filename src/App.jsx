@@ -831,10 +831,14 @@ export default function App() {
   }, [session]);
 
   const isApproved = !!coach?.is_approved;
-  const isAdmin    = !!coach?.is_admin;
-  // Only the owner (Drew) can reach the Coaches screen. Team-list access is a
-  // per-coach flag managed there; the owner always has access.
-  const isOwner      = OWNER_EMAILS.includes((coach?.email || "").trim().toLowerCase());
+  // "Coach view" lets an admin preview the regular-coach experience. The REAL
+  // flags drive the mode toggle; the effective flags (with !coachPreview) drive
+  // the whole UI, so flipping preview makes everything render as a coach.
+  const [coachPreview, setCoachPreview] = useState(false);
+  const isRealAdmin = !!coach?.is_admin;
+  const isRealOwner = OWNER_EMAILS.includes((coach?.email || "").trim().toLowerCase());
+  const isAdmin    = isRealAdmin && !coachPreview;
+  const isOwner    = isRealOwner && !coachPreview;
   const canViewTeams = isOwner || !!coach?.can_view_teams;
   // Operations are admin-only: the whole "Operations" nav group and the views
   // behind it are hidden and blocked for non-admin coaches. The owner (Drew)
@@ -1306,7 +1310,7 @@ export default function App() {
     if (error) { console.error("Load practice_snapshots error:", error); return; }
     setSnapshots(data || []);
   }, []);
-  useEffect(() => { if (isApproved && (view === "practice" || view === "teamdir" || view === "home")) loadPractice(); }, [isApproved, view, loadPractice]);
+  useEffect(() => { if (isApproved && (view === "practice" || view === "teamdir" || view === "home" || view === "coaches")) loadPractice(); }, [isApproved, view, loadPractice]);
   useEffect(() => { if (isApproved && view === "practice") loadSnapshots(); }, [isApproved, view, loadSnapshots]);
   // Coach/team cards (openable from any view) need practice_teams loaded.
   useEffect(() => { if (isApproved && (coachCardName || teamCardName)) loadPractice(); }, [isApproved, coachCardName, teamCardName, loadPractice]);
@@ -1327,7 +1331,7 @@ export default function App() {
   useEffect(() => { if (isApproved && (view === "home" || view === "notifications")) loadUpdates(); }, [isApproved, view, loadUpdates]);
   // Notifications need updates + questions loaded on every view (the bell is in the header).
   useEffect(() => { if (isApproved) { loadUpdates(); loadTeamQuestions(); } }, [isApproved, loadUpdates, loadTeamQuestions]);
-  useEffect(() => { if (isApproved && (view === "home" || view === "teamdir")) loadPracticeApprovals(); }, [isApproved, view, loadPracticeApprovals]);
+  useEffect(() => { if (isApproved && (view === "home" || view === "teamdir" || view === "coaches")) loadPracticeApprovals(); }, [isApproved, view, loadPracticeApprovals]);
   // Optimistically patch local state, then upsert the merged row. `merged` is
   // computed from current state synchronously (NOT inside the setState updater,
   // which React may run later) so the upsert payload is always complete.
@@ -4809,6 +4813,22 @@ export default function App() {
     }
     const th = {padding:"8px 10px",textAlign:"left",fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut,borderBottom:"1px solid "+C.border,background:C.card,whiteSpace:"nowrap"};
     const td = {padding:"8px 10px",fontSize:12,borderBottom:"1px solid "+C.border,verticalAlign:"middle"};
+    // Whether a coach has approved the practice schedule for the team(s) they coach.
+    const schedApprovalFor = (fullName) => {
+      const norm = s => (s || "").trim().toLowerCase();
+      const dn = norm(fullName);
+      if (!dn) return null;
+      const fn = dn.split(" ")[0];
+      const matches = (field) => { const f = norm(field); return !!f && (f === dn || f.split(" ")[0] === fn); };
+      const myTeams = practiceTeams.filter(t => matches(t.head_coach) || matches(t.assistant_coach));
+      if (!myTeams.length) return null;
+      let approved = 0;
+      for (const t of myTeams) {
+        const list = ((practiceApprovals[t.team_name] && practiceApprovals[t.team_name].approved_by) || []).map(norm);
+        if (list.includes(dn) || list.some(n => n.split(" ")[0] === fn)) approved++;
+      }
+      return { total: myTeams.length, approved, all: approved === myTeams.length };
+    };
     const pending = coachesList.filter(c => !c.is_approved);
     const guestCoach = coachesList.find(c => (c.email||"").toLowerCase() === GUEST_EMAIL);
     const toggleGuestDiv = (dv) => setGuestAgeGroups(prev => prev.includes(dv) ? prev.filter(x=>x!==dv) : [...prev, dv]);
@@ -4966,6 +4986,7 @@ export default function App() {
                 <th style={th}>Email</th>
                 <th style={th}>Phone</th>
                 <th style={th}>Approved</th>
+                <th style={th} title="Has the coach approved their team's practice schedule?">Sched ✓</th>
                 <th style={th}>Admin</th>
                 <th style={th}>Teams</th>
                 <th style={th}>Age Groups</th>
@@ -5052,6 +5073,18 @@ export default function App() {
                             <span style={{fontSize:11,color:c.is_approved?C.grn:C.mut,fontWeight:600}}>{c.is_approved?"Yes":"No"}</span>
                           </label>
                         ) : <span style={{fontSize:10,color:C.mut,fontStyle:"italic"}}>no login</span>}
+                      </td>
+                      {/* Schedule approved */}
+                      <td style={td}>
+                        {(() => {
+                          const s = schedApprovalFor((firstName + " " + lastName).trim());
+                          if (!s) return <span style={{fontSize:11,color:C.mut}}>—</span>;
+                          const sym = s.all ? "☑" : (s.approved > 0 ? "◐" : "☐");
+                          const col = s.all ? C.grn : "#f59e0b";
+                          return <span title={s.approved + " of " + s.total + " team schedule" + (s.total===1?"":"s") + " approved"} style={{display:"inline-flex",alignItems:"center",gap:4,color:col,fontWeight:700}}>
+                            <span style={{fontSize:16,lineHeight:1}}>{sym}</span><span style={{fontSize:10,color:C.mut}}>{s.approved}/{s.total}</span>
+                          </span>;
+                        })()}
                       </td>
                       {/* Admin */}
                       <td style={td}>
@@ -9062,8 +9095,17 @@ export default function App() {
           </div>
           <div style={{display:"flex",alignItems:"center",gap:6,marginLeft:6,paddingLeft:10,borderLeft:"1px solid "+C.border}}>
             <span style={{fontSize:11,color:C.mut}} title={coach.email}>
-              {coach.display_name || coach.email}{isAdmin && <span style={{color:C.gold,marginLeft:4,fontSize:9}}>ADMIN</span>}
+              {coach.display_name || coach.email}
+              {isAdmin && <span style={{color:C.gold,marginLeft:4,fontSize:9}}>ADMIN</span>}
+              {coachPreview && <span style={{color:C.acc,marginLeft:4,fontSize:9,fontWeight:800}}>COACH VIEW</span>}
             </span>
+            {(isRealAdmin || isRealOwner) && (
+              <button onClick={()=>{ setCoachPreview(v=>!v); setView("home"); setOpenMenu(null); }}
+                title={coachPreview ? "Back to full admin view" : "Preview the app as a regular coach sees it"}
+                style={{padding:"4px 10px",borderRadius:6,border:"1px solid "+(coachPreview?C.acc:C.border),background:coachPreview?"rgba(255,105,180,0.12)":"transparent",color:coachPreview?C.acc:C.mut,cursor:"pointer",fontFamily:"inherit",fontSize:10,fontWeight:700}}>
+                {coachPreview ? "Exit coach view" : "Coach view"}
+              </button>
+            )}
             <button onClick={async ()=>{ await supabase.auth.signOut(); }}
               title="Sign out"
               style={{padding:"4px 10px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,cursor:"pointer",fontFamily:"inherit",fontSize:10,fontWeight:700}}>
