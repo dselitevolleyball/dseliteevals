@@ -1560,6 +1560,21 @@ export default function App() {
     if (error) { window.alert("Update failed: " + error.message); return; }
     await loadCoachRequests();
   }, [coach, loadCoachRequests]);
+  // Toggle a coach's "floating" flag (a cloud ☁) — available to cover gaps.
+  const toggleFloatingCoach = useCallback(async (name) => {
+    const n = (name || "").trim();
+    if (!n) return;
+    const stored = (floatingCoaches || []).find(x => (x || "").trim().toLowerCase() === n.toLowerCase());
+    if (stored) {
+      setFloatingCoaches(prev => prev.filter(x => x !== stored));
+      const { error } = await supabase.from("floating_coaches").delete().eq("name", stored);
+      if (error) console.error("Remove floating error:", error);
+    } else {
+      setFloatingCoaches(prev => [...prev, n]);
+      const { error } = await supabase.from("floating_coaches").insert({ name: n });
+      if (error) console.error("Add floating error:", error);
+    }
+  }, [floatingCoaches]);
   // Coach emails the director a potential practice-schedule change request.
   const requestScheduleChange = useCallback(async (team, message) => {
     const msg = (message || "").trim();
@@ -5187,6 +5202,7 @@ export default function App() {
                 <th style={th}>Phone</th>
                 <th style={th}>Approved</th>
                 <th style={th} title="Has the coach approved their team's practice schedule?">Sched ✓</th>
+                <th style={th} title="Floating coach — available to cover practice gaps in the regular season">☁ Float</th>
                 <th style={th}>Admin</th>
                 <th style={th}>Teams</th>
                 <th style={th}>Age Groups</th>
@@ -5284,6 +5300,21 @@ export default function App() {
                           return <span title={s.approved + " of " + s.total + " team schedule" + (s.total===1?"":"s") + " approved"} style={{display:"inline-flex",alignItems:"center",gap:4,color:col,fontWeight:700}}>
                             <span style={{fontSize:16,lineHeight:1}}>{sym}</span><span style={{fontSize:10,color:C.mut}}>{s.approved}/{s.total}</span>
                           </span>;
+                        })()}
+                      </td>
+                      {/* Floating coach */}
+                      <td style={td}>
+                        {(() => {
+                          const fullName = (firstName + " " + lastName).trim();
+                          if (!fullName) return <span style={{fontSize:11,color:C.mut}}>—</span>;
+                          const isFloat = (floatingCoaches || []).some(x => (x || "").trim().toLowerCase() === fullName.toLowerCase());
+                          return (
+                            <label title={isFloat ? "Floating — covers gaps" : "Mark as floating"} style={{display:"inline-flex",alignItems:"center",gap:6,cursor:"pointer"}}>
+                              <input type="checkbox" checked={isFloat} onChange={()=>toggleFloatingCoach(fullName)}
+                                style={{width:16,height:16,accentColor:"#06b6d4",cursor:"pointer"}} />
+                              <span style={{fontSize:15,lineHeight:1,color:isFloat?"#06b6d4":C.border}}>☁</span>
+                            </label>
+                          );
                         })()}
                       </td>
                       {/* Admin */}
