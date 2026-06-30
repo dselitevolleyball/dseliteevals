@@ -1473,6 +1473,47 @@ export default function App() {
     await postUpdate("📋 Please review and approve your team's practice schedule on your Home page, and confirm there are no conflicts.", "");
     window.alert("Coaches notified — the request is posted in Updates.");
   }, [postUpdate]);
+  // Director: email each team's coaches their schedule with no-login Approve /
+  // Request-change links (for coaches who haven't logged in yet).
+  const emailPracticeAssignments = useCallback(async () => {
+    const norm = s => (s || "").trim().toLowerCase();
+    const emailFor = (coachName) => {
+      const nn = norm(coachName); if (!nn) return "";
+      const fn = nn.split(" ")[0];
+      const m = (dn) => { dn = norm(dn); return !!dn && (dn === nn || dn.split(" ")[0] === fn); };
+      const acct = (coachesList || []).find(c => m(c.display_name));
+      if (acct && acct.email) return acct.email;
+      const ros = (coachRoster || []).find(r => m((r.first_name || "") + " " + (r.last_name || "")));
+      return (ros && ros.email) || "";
+    };
+    const scheduleTextFor = (teamName) => {
+      const rows = practiceAssignments.filter(a => a.team_name === teamName && (a.phase || "season") === "season");
+      const byDay = {};
+      rows.forEach(a => { (byDay[a.day] = byDay[a.day] || []).push(a.slot); });
+      const lines = [];
+      ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].forEach(d => { if (byDay[d]) lines.push(d + " " + mergeAdjacentSlots(byDay[d]).join(", ")); });
+      const sa = [...new Set(saSessions.filter(s => s.team_name === teamName).map(s => s.slot))];
+      if (sa.length) lines.push("S&A: Sun " + mergeAdjacentSlots(sa).join(", "));
+      return lines.length ? lines.join("\n") : "No regular-season practices scheduled yet.";
+    };
+    const recipients = [];
+    practiceTeams.forEach(t => {
+      const sched = scheduleTextFor(t.team_name);
+      [t.head_coach, t.assistant_coach].filter(Boolean).forEach(cn => {
+        const email = emailFor(cn);
+        if (email) recipients.push({ email, coach: cn, team: t.team_name, scheduleText: sched });
+      });
+    });
+    if (!recipients.length) { window.alert("No coach emails found (add coach emails in the Coaches roster first)."); return; }
+    if (!window.confirm("Email practice schedules with Approve / Request-change links to " + recipients.length + " coach email(s)?")) return;
+    try {
+      const res = await fetch("/api/send-practice-emails", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ recipients }) });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.error || "Send failed");
+      window.alert("Sent " + (d.sent || 0) + " email(s)." + (d.failed && d.failed.length ? " Some failed — check the console." : ""));
+      if (d.failed && d.failed.length) console.error("send-practice-emails failures:", d.failed);
+    } catch (e) { window.alert("Could not send: " + (e.message || "error")); }
+  }, [practiceTeams, practiceAssignments, saSessions, coachesList, coachRoster]);
   // Coach emails the director a potential practice-schedule change request.
   const requestScheduleChange = useCallback(async (team, message) => {
     const msg = (message || "").trim();
@@ -1686,7 +1727,7 @@ export default function App() {
   useEffect(() => {
     // Roster also drives the Tryout coach picker / Text Coaches lookup,
     // so make sure it's loaded whenever either tab opens.
-    if (isApproved && (view === "coaches" || view === "tryouts" || view === "home")) loadCoachRoster();
+    if (isApproved && (view === "coaches" || view === "tryouts" || view === "home" || view === "teamdir")) loadCoachRoster();
   }, [isApproved, view, loadCoachRoster]);
   // The coach card edits coach_roster, so make sure it's loaded when one opens.
   useEffect(() => { if (isApproved && coachCardName) loadCoachRoster(); }, [isApproved, coachCardName, loadCoachRoster]);
@@ -2850,8 +2891,12 @@ export default function App() {
             </div>
             <div style={{marginTop:8,paddingTop:10,borderTop:"1px solid "+C.border,display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,flexWrap:"wrap"}}>
               <span style={{fontSize:11,color:C.mut}}>Ask every coach to approve their team's practice schedule (no conflicts).</span>
-              <button onClick={requestPracticeApproval}
-                style={{padding:"6px 14px",borderRadius:8,border:"1px solid #f59e0b",background:"rgba(245,158,11,0.12)",color:"#f59e0b",fontWeight:800,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>Request Practice Approval</button>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                <button onClick={emailPracticeAssignments} title="Email each team's coaches their schedule with no-login Approve / Request-change buttons"
+                  style={{padding:"6px 14px",borderRadius:8,border:"1px solid "+C.acc,background:"rgba(255,105,180,0.12)",color:C.acc,fontWeight:800,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>Email Schedules + Links</button>
+                <button onClick={requestPracticeApproval}
+                  style={{padding:"6px 14px",borderRadius:8,border:"1px solid #f59e0b",background:"rgba(245,158,11,0.12)",color:"#f59e0b",fontWeight:800,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>Request Practice Approval</button>
+              </div>
             </div>
             <div style={{fontSize:10,fontWeight:800,textTransform:"uppercase",color:C.gold,margin:"14px 0 6px",borderTop:"1px solid "+C.border,paddingTop:12}}>Coach To-Do descriptions</div>
             {COACH_TASKS.map(itemRow)}
