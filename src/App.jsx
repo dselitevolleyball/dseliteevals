@@ -6254,7 +6254,15 @@ export default function App() {
     // Each assignment row represents 1 hour on Sunday (after the 2026-06-21
     // migration) or 2 hours on a weekday. Convert to total hours so we can
     // compare against the team's expected weekly load.
-    const hoursOf = (a) => a.day === "Sun" ? 1 : 2;
+    // Duration of a slot from its label ("5-7pm" → 2h, "5-6pm" → 1h, "12-1pm" → 1h),
+    // so it's correct whether Sunday uses 1-hour cells (preseason) or 2-hour blocks (season).
+    const hoursOf = (a) => {
+      const m = (a.slot || "").match(/^(\d+)\s*-\s*(\d+)/);
+      if (!m) return a.day === "Sun" ? 1 : 2;
+      const s = parseInt(m[1], 10), e = parseInt(m[2], 10);
+      const dur = e > s ? e - s : (e + 12) - s; // handle the 12→1 wrap
+      return dur > 0 ? dur : (a.day === "Sun" ? 1 : 2);
+    };
 
     // Each distinct (team, S&A slot) in this block = 1 hour/week of strength & conditioning.
     const isFallPhase = schedulePhase === "fall1" || schedulePhase === "fall2";
