@@ -1104,6 +1104,11 @@ export default function App() {
     const { data, error } = await supabase.from("coaches").select("*").order("created_at", { ascending: true });
     if (error) console.error("Load coaches error:", error);
     setCoachesList(data || []);
+    // Keep the logged-in user's OWN record fresh too, so permission changes an
+    // admin makes (Teams access, age groups, admin) take effect on their screen
+    // without a full re-login. The coaches realtime channel calls this on any
+    // change, so the grant lands live.
+    if (data) setCoach(prev => { if (!prev) return prev; const me = data.find(c => c.id === prev.id); return me ? { ...prev, ...me } : prev; });
     setCoachesLoading(false);
   }, []);
   // Load coaches as soon as we're approved (not only when the Coaches tab
