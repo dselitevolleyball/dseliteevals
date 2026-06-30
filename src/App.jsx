@@ -499,6 +499,8 @@ const PRACTICE_DAY_ORDER = { Sun:0, Mon:1, Tue:2, Wed:3, Thu:4, Fri:5, Sat:6 };
 // Teams that skip the summer/fall preseason blocks (regular-season only), so
 // they aren't flagged as under-hours during Fall 1 / Fall 2. Edit as needed.
 const NO_FALL_TEAMS = ["11 Rise 1", "12 Rise 1"];
+// Teams that don't practice over the summer — hidden from the Summer calendar.
+const NO_SUMMER_TEAMS = ["11 Rise 1", "12 Rise 1"];
 // Teams being phased out — never flag them for practice-count, in any phase.
 // (12 Rise 2 and 16 Ruby were fully removed from the platform.)
 const INACTIVE_TEAMS = [];
@@ -6478,9 +6480,13 @@ export default function App() {
       if (t.assistant_coach) allCoaches.add(t.assistant_coach);
     }
     const coachOptions = Array.from(allCoaches).sort((a,b) => a.localeCompare(b));
-    const visibleTeams = practiceCoachFilter
-      ? practiceTeams.filter(t => t.head_coach === practiceCoachFilter || t.assistant_coach === practiceCoachFilter)
+    // Summer hides the regular-season-only teams that don't practice over summer.
+    const phaseTeams = schedulePhase === "summer"
+      ? practiceTeams.filter(t => !NO_SUMMER_TEAMS.includes(t.team_name))
       : practiceTeams;
+    const visibleTeams = practiceCoachFilter
+      ? phaseTeams.filter(t => t.head_coach === practiceCoachFilter || t.assistant_coach === practiceCoachFilter)
+      : phaseTeams;
 
     // Specific Sundays each preseason block runs. Fall dates reuse the S&A
     // block dates; summer is every Sunday Jul 12 – Sep 6, 2026.
