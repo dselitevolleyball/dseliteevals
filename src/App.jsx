@@ -839,7 +839,7 @@ export default function App() {
   // Operations are admin-only: the whole "Operations" nav group and the views
   // behind it are hidden and blocked for non-admin coaches. The owner (Drew)
   // always counts here so a bad DB flag can't lock him out.
-  const OPS_VIEWS = new Set(["tracker","teamdir","coaches","practice","email","messages","scholarships"]);
+  const OPS_VIEWS = new Set(["tracker","teamdir","coaches","practice","email","messages","scholarships","notifications"]);
   const canOps    = isAdmin || isOwner;
   const opsDenied = <div style={{padding:24,color:C.mut,textAlign:"center"}}>This section is restricted to administrators. Ask the club administrator (Drew) for access.</div>;
   // Scholarship amounts are admin-only. Strip scholarship_amount from change_log
@@ -1324,7 +1324,7 @@ export default function App() {
   useEffect(() => { if (isApproved && (view === "home" || view === "teamdir")) { loadTeamTasks(); loadTeamQuestions(); } }, [isApproved, view, loadTeamTasks, loadTeamQuestions]);
   // Item descriptions are needed wherever the checklists render; updates show on Home.
   useEffect(() => { if (isApproved && (view === "home" || view === "teamdir")) loadTaskMeta(); }, [isApproved, view, loadTaskMeta]);
-  useEffect(() => { if (isApproved && view === "home") loadUpdates(); }, [isApproved, view, loadUpdates]);
+  useEffect(() => { if (isApproved && (view === "home" || view === "notifications")) loadUpdates(); }, [isApproved, view, loadUpdates]);
   // Notifications need updates + questions loaded on every view (the bell is in the header).
   useEffect(() => { if (isApproved) { loadUpdates(); loadTeamQuestions(); } }, [isApproved, loadUpdates, loadTeamQuestions]);
   useEffect(() => { if (isApproved && (view === "home" || view === "teamdir")) loadPracticeApprovals(); }, [isApproved, view, loadPracticeApprovals]);
@@ -2845,6 +2845,55 @@ export default function App() {
       </div>
     );
   };
+
+  // Admin-only sent-notification log: every update, its audience, and when.
+  function renderNotifications() {
+    const approvedCoaches = (coachesList || []).filter(c => c.is_approved && c.email);
+    const recipientInfo = (u) => {
+      if (!u.team_name) return { label: "Club-wide", count: approvedCoaches.length };
+      const team = practiceTeams.find(t => t.team_name === u.team_name);
+      if (!team) return { label: u.team_name, count: null };
+      const names = [team.head_coach, team.assistant_coach].filter(Boolean).map(n => (n || "").trim().toLowerCase());
+      const matched = approvedCoaches.filter(c => {
+        const dn = (c.display_name || "").trim().toLowerCase();
+        return names.some(n => n === dn || (dn && n.split(" ")[0] === dn.split(" ")[0]));
+      });
+      return { label: u.team_name, count: matched.length || null };
+    };
+    return (
+      <div style={{maxWidth:820}}>
+        <div style={{marginBottom:14}}>
+          <h2 style={{margin:0,fontSize:18,fontWeight:800,color:C.gold}}>Notification History</h2>
+          <div style={{fontSize:12,color:C.mut,marginTop:4}}>Every update you've posted — what was sent, to whom, and when. Each goes out in-app, via push, and by email. Post new ones from the All Teams page.</div>
+        </div>
+        {updates.length === 0 ? (
+          <div style={{padding:24,textAlign:"center",color:C.mut,fontSize:13,background:C.card,borderRadius:12,border:"1px solid "+C.border}}>No notifications sent yet.</div>
+        ) : (
+          <div style={{display:"flex",flexDirection:"column",gap:10}}>
+            {updates.map(u => {
+              const r = recipientInfo(u);
+              const when = new Date(u.created_at).toLocaleString(undefined,{weekday:"short",month:"short",day:"numeric",hour:"numeric",minute:"2-digit"});
+              const audColor = u.team_name ? C.acc : C.gold;
+              return (
+                <div key={u.id} style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:"12px 14px"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",gap:10,flexWrap:"wrap",marginBottom:6,alignItems:"center"}}>
+                    <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+                      <span style={{fontSize:10,fontWeight:800,color:audColor,border:"1px solid "+audColor,borderRadius:6,padding:"2px 7px"}}>{r.label}{r.count!=null?" · "+r.count+" coach"+(r.count===1?"":"es"):""}</span>
+                      <span style={{fontSize:11,color:C.mut}}>{u.created_by_name || "—"} · {when}</span>
+                    </div>
+                    <button onClick={()=>deleteUpdate(u.id)} title="Delete this notification"
+                      style={{fontSize:10,fontWeight:700,padding:"3px 9px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.red,cursor:"pointer",fontFamily:"inherit"}}>Delete</button>
+                  </div>
+                  <div style={{fontSize:13,color:C.text,whiteSpace:"pre-wrap",lineHeight:1.45}}>{u.body}</div>
+                  <div style={{fontSize:9,color:C.mut,marginTop:8,textTransform:"uppercase",letterSpacing:0.5}}>Sent via in-app · push · email</div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   function renderHome() {
     const norm = s => (s || "").toString().trim().toLowerCase();
@@ -8946,7 +8995,7 @@ export default function App() {
                 <button key={v} style={btn(view===v)} onClick={()=>{ setView(v); setOpenMenu(null); }}>{l}</button>;
               const groups = [
                 { title:"Tryouts", items:[["dashboard","Dashboard"], ["evaluate","Evaluate"], ["favorites","My Favorites" + (favorites.length ? " (" + favorites.length + ")" : "")], ...(canViewTeams ? [["teams","Teams"]] : []), ["rankings","Rankings"], ["physical","Physical Testing"], ["tryouts","Coach Assignments"]] },
-                ...(canOps ? [{ title:"Operations", items:[["tracker","Tracker"], ["teamdir","All Teams"], ["coaches","Coaches"], ["scholarships","Scholarships"], ["practice","Practice"], ["email","Email"], ["messages", "Messages (SMS)" + (totalUnread > 0 ? " (" + totalUnread + ")" : "")]] }] : []),
+                ...(canOps ? [{ title:"Operations", items:[["tracker","Tracker"], ["teamdir","All Teams"], ["coaches","Coaches"], ["scholarships","Scholarships"], ["practice","Practice"], ["email","Email"], ["notifications","Notifications"], ["messages", "Messages (SMS)" + (totalUnread > 0 ? " (" + totalUnread + ")" : "")]] }] : []),
               ];
               return <>
                 {item("home","Home")}
@@ -9075,6 +9124,7 @@ export default function App() {
         {view==="activity" && renderActivity()}
         {view==="coaches"  && renderCoaches()}
         {view==="scholarships" && renderScholarships()}
+        {view==="notifications" && renderNotifications()}
         {view==="tournaments" && renderTournaments()}
         {view==="practice" && renderPractice()}
         {view==="physical" && renderPhysicalTesting()}
