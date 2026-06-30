@@ -4487,6 +4487,11 @@ export default function App() {
                 onClick={()=>{const next=active?(p.positions||[]).filter(x=>x!==pos):[...(p.positions||[]),pos]; upd(p.id,{positions:next});}}>{pos} - {POS_LABELS[pos]}</button>;
             })}</div>
           </div>
+          {/* Name (editable) */}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
+            <div><span style={lbl}>First Name</span><DebouncedField style={editInp} placeholder="First" value={p.first_name||""} onCommit={v=>upd(p.id,{first_name:v.trim()})} /></div>
+            <div><span style={lbl}>Last Name</span><DebouncedField style={editInp} placeholder="Last" value={p.last_name||""} onCommit={v=>upd(p.id,{last_name:v.trim()})} /></div>
+          </div>
           {/* Division/Team/Roster/Prev/Status */}
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(110px,1fr))",gap:12,marginBottom:14}}>
             <div><span style={lbl}>Pinny #</span><DebouncedField style={editInp} placeholder="e.g. 12" value={p.tryout_number||""} onCommit={v=>upd(p.id,{tryout_number:v})} /></div>
