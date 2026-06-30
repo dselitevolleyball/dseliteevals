@@ -84,6 +84,8 @@ function urlBase64ToUint8Array(base64String) {
 }
 // Where coach "request a schedule change" emails are sent.
 const DIRECTOR_EMAIL = "drew@dselitevolleyball.com";
+// Public app URL — included in notification emails as an invite/login link.
+const APP_URL = "https://dseliteevals.vercel.app";
 
 // ─── Bulk tournament import (USAV format) ───────────────────────────────
 // Parses the format used by USAV / TournamentCentral listings:
@@ -1404,7 +1406,27 @@ export default function App() {
     const tn = (teamName || "").trim();
     fetch("/api/send-push", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ title: tn ? "DS Elite · " + tn : "DS Elite Update", body: b, url: "/", audience: tn ? { type: "team", team: tn } : { type: "all" } }) }).catch(() => {});
-  }, [coach, loadUpdates]);
+    // Also email the update — and invite people into the app with a login link.
+    const approvedCoaches = (coachesList || []).filter(c => c.is_approved && c.email);
+    let recipients = approvedCoaches.map(c => c.email);
+    if (tn) {
+      const team = practiceTeams.find(t => t.team_name === tn);
+      if (team) {
+        const names = [team.head_coach, team.assistant_coach].filter(Boolean).map(n => (n || "").trim().toLowerCase());
+        const matched = approvedCoaches.filter(c => {
+          const dn = (c.display_name || "").trim().toLowerCase();
+          return names.some(n => n === dn || (dn && n.split(" ")[0] === dn.split(" ")[0]));
+        });
+        if (matched.length) recipients = matched.map(c => c.email);
+      }
+    }
+    recipients = [...new Set(recipients.map(e => (e || "").trim().toLowerCase()).filter(Boolean))];
+    if (recipients.length) {
+      const emailBody = b + "\n\n—\nOpen DS Elite HQ to see practices, schedules, tournaments, and your to-do list:\n" + APP_URL + "\n\nLog in with your coach email. Need access? Contact Drew.";
+      fetch("/api/send-email", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ subject: "DS Elite HQ" + (tn ? " · " + tn : "") + " — New Update", body: emailBody, recipients }) }).catch(() => {});
+    }
+  }, [coach, loadUpdates, coachesList, practiceTeams]);
   const deleteUpdate = useCallback(async (id) => {
     if (!window.confirm("Delete this update?")) return;
     const { error } = await supabase.from("updates").delete().eq("id", id);
