@@ -9538,7 +9538,7 @@ export default function App() {
           </div>
         );
       })()}
-      {view !== "home" && view !== "dashboard" && view !== "activity" && view !== "coaches" && view !== "tournaments" && view !== "teamdir" && (
+      {!new Set(["home","dashboard","activity","coaches","tournaments","teamdir","requests","notifications","practice","scholarships","messages"]).has(view) && (
         <div style={{display:"flex",gap:4,padding:"10px 18px",borderBottom:"1px solid "+C.border,flexWrap:"wrap"}}>
           {divsWithPlayers.map(d => {
             const isSelected = selectedDivs.includes(d);
