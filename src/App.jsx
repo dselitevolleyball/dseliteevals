@@ -1525,13 +1525,34 @@ export default function App() {
       if (sa.length) lines.push("S&A: Sun " + mergeAdjacentSlots(sa).join(", "));
       return lines.length ? lines.join("\n") : "No regular-season practices scheduled yet.";
     };
+    // A coach's ☁ floating sessions (help run drills / first line of coverage).
+    const floatTextFor = (coachName) => {
+      const nn = norm(coachName); if (!nn) return "";
+      const fn = nn.split(" ")[0];
+      const m = (dn) => { dn = norm(dn); return !!dn && (dn === nn || dn.split(" ")[0] === fn); };
+      const fr = (coachFloats || []).filter(f => (f.phase || "season") === "season" && m(f.coach_name));
+      if (!fr.length) return "";
+      const byDay = {};
+      fr.forEach(f => { (byDay[f.day] = byDay[f.day] || []).push(f.slot); });
+      const lines = [];
+      ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].forEach(d => { if (byDay[d]) lines.push(d + " " + mergeAdjacentSlots(byDay[d]).join(", ")); });
+      return lines.join("\n");
+    };
     const recipients = [];
+    const emailedNorm = new Set();
     practiceTeams.forEach(t => {
       const sched = scheduleTextFor(t.team_name);
       [t.head_coach, t.assistant_coach].filter(Boolean).forEach(cn => {
         const email = emailFor(cn);
-        if (email) recipients.push({ email, coach: cn, team: t.team_name, scheduleText: sched });
+        if (email) { recipients.push({ email, coach: cn, team: t.team_name, scheduleText: sched, floatText: floatTextFor(cn) }); emailedNorm.add(norm(cn)); }
       });
+    });
+    // Float-only coaches (no team of their own) still get an email about their ☁ sessions.
+    const floatCoachNames = [...new Set((coachFloats || []).filter(f => (f.phase || "season") === "season").map(f => f.coach_name).filter(Boolean))];
+    floatCoachNames.forEach(cn => {
+      if (emailedNorm.has(norm(cn))) return;
+      const email = emailFor(cn);
+      if (email) { recipients.push({ email, coach: cn, team: "Floating coverage", scheduleText: "", floatText: floatTextFor(cn) }); emailedNorm.add(norm(cn)); }
     });
     if (!recipients.length) { window.alert("No coach emails found (add coach emails in the Coaches roster first)."); return; }
     if (!window.confirm("Email practice schedules with Approve / Request-change links to " + recipients.length + " coach email(s)?")) return;
@@ -1542,7 +1563,7 @@ export default function App() {
       window.alert("Sent " + (d.sent || 0) + " email(s)." + (d.failed && d.failed.length ? " Some failed — check the console." : ""));
       if (d.failed && d.failed.length) console.error("send-practice-emails failures:", d.failed);
     } catch (e) { window.alert("Could not send: " + (e.message || "error")); }
-  }, [practiceTeams, practiceAssignments, saSessions, coachesList, coachRoster]);
+  }, [practiceTeams, practiceAssignments, saSessions, coachesList, coachRoster, coachFloats]);
   // Coach submits a time-off request (weekend blackout or practice-off).
   const submitCoachRequest = useCallback(async () => {
     const f = reqForm;

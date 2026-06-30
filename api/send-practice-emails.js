@@ -39,20 +39,35 @@ export default async function handler(req, res) {
     const approveUrl = base + "/api/practice-approval?token=" + encodeURIComponent(token);
     const changeMail = "mailto:" + REPLY + "?subject=" + encodeURIComponent("Practice change request — " + (r.team || "")) +
       "&body=" + encodeURIComponent("Team: " + (r.team || "") + "\nCoach: " + (r.coach || "") + "\n\nRequested change:\n");
-    const sched = esc(r.scheduleText || "(no practices listed)");
+    const hasSched = !!(r.scheduleText && r.scheduleText.trim());
+    const floatTxt = (r.floatText && r.floatText.trim()) ? r.floatText.trim() : "";
+    const sched = esc(hasSched ? r.scheduleText : "(no practices listed)");
+    const FLOAT_NOTE = "As a floating (☁) coach you help run drills for other teams' practices and are the first line of coverage when a coach has to miss.";
+    const schedBlock = hasSched
+      ? `<p>Here is the practice schedule for <b>${esc(r.team)}</b>:</p>
+      <pre style="white-space:pre-wrap;background:#f6f6f6;border:1px solid #ddd;border-radius:8px;padding:12px;font-family:inherit">${sched}</pre>`
+      : "";
+    const floatBlock = floatTxt
+      ? `<p style="margin-top:16px"><b>&#9729; Floating sessions</b></p>
+      <p style="color:#555;font-size:14px;margin:4px 0 8px">${esc(FLOAT_NOTE)}</p>
+      <p style="margin:0 0 4px">You're scheduled to float:</p>
+      <pre style="white-space:pre-wrap;background:#ecfeff;border:1px solid #a5f3fc;border-radius:8px;padding:12px;font-family:inherit">${esc(floatTxt)}</pre>`
+      : "";
     const html = `<div style="font-family:system-ui,sans-serif;font-size:15px;color:#222;line-height:1.5">
       <p>Hi ${esc(r.coach || "Coach")},</p>
-      <p>Here is the practice schedule for <b>${esc(r.team)}</b>:</p>
-      <pre style="white-space:pre-wrap;background:#f6f6f6;border:1px solid #ddd;border-radius:8px;padding:12px;font-family:inherit">${sched}</pre>
-      <p>Please review it &mdash; no login needed, just tap a button:</p>
+      ${schedBlock}
+      ${floatBlock}
+      <p>Please review ${hasSched && floatTxt ? "your schedule and float sessions" : hasSched ? "it" : "your float sessions"} &mdash; no login needed, just tap a button:</p>
       <p>
-        <a href="${approveUrl}" style="display:inline-block;background:#22c55e;color:#06210f;font-weight:700;text-decoration:none;padding:12px 22px;border-radius:8px">&#10003; Approve schedule</a>
+        <a href="${approveUrl}" style="display:inline-block;background:#22c55e;color:#06210f;font-weight:700;text-decoration:none;padding:12px 22px;border-radius:8px">&#10003; Approve</a>
         &nbsp;&nbsp;
         <a href="${changeMail}" style="display:inline-block;background:#f59e0b;color:#3a2400;font-weight:700;text-decoration:none;padding:12px 22px;border-radius:8px">Request a change</a>
       </p>
       <p style="color:#777;font-size:13px">"Approve" confirms there are no conflicts. "Request a change" opens an email to Drew. You can also log in any time at ${base}.</p>
     </div>`;
-    const text = "Practice schedule for " + (r.team || "") + ":\n\n" + (r.scheduleText || "") + "\n\nApprove (no login): " + approveUrl + "\nRequest a change: email " + REPLY;
+    const text = (hasSched ? "Practice schedule for " + (r.team || "") + ":\n\n" + r.scheduleText + "\n\n" : "") +
+      (floatTxt ? "Floating (cloud) sessions:\n" + FLOAT_NOTE + "\n\nYou're scheduled to float:\n" + floatTxt + "\n\n" : "") +
+      "Approve (no login): " + approveUrl + "\nRequest a change: email " + REPLY;
     messages.push({ from: FROM, to: [email], reply_to: REPLY, subject: "Approve your practice schedule — " + (r.team || "DS Elite"), html, text });
   }
   if (!messages.length) return res.status(400).json({ error: "No valid recipient emails." });
