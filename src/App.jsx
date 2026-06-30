@@ -1860,6 +1860,51 @@ export default function App() {
   // The coach card edits coach_roster, so make sure it's loaded when one opens.
   useEffect(() => { if (isApproved && coachCardName) loadCoachRoster(); }, [isApproved, coachCardName, loadCoachRoster]);
 
+  // ─── Pull-everything refresh ──────────────────────────────────────────
+  // Realtime keeps screens live while the app is open and connected, but a
+  // backgrounded PWA / sleeping tab drops the socket and misses events. So we
+  // refetch the whole working set whenever the app comes back to the
+  // foreground (focus / visibility / back-online) and via a manual button.
+  const [refreshing, setRefreshing] = useState(false);
+  const refreshAll = useCallback(async () => {
+    if (!isApproved) return;
+    setRefreshing(true);
+    try {
+      await Promise.all([
+        loadPlayers(), loadCoaches(), loadRankings(), loadFavorites(),
+        loadTeamStatus(), loadTeamTasks(), loadTeamQuestions(), loadTaskMeta(),
+        loadUpdates(), loadPracticeApprovals(), loadCoachRequests(), loadCoachFloats(),
+        loadTeamsList(), loadBlackouts(), loadCoachRoster(), loadPractice(),
+        view === "activity" ? loadActivity() : null,
+        (view === "tournaments" || view === "teamdir" || view === "home") ? loadTournaments() : null,
+        view === "practice" ? loadSnapshots() : null,
+        view === "tryouts" ? loadTryouts() : null,
+        view === "messages" ? loadSmsThreads() : null,
+      ].filter(Boolean));
+    } finally {
+      setRefreshing(false);
+    }
+  }, [isApproved, view, loadPlayers, loadCoaches, loadRankings, loadFavorites, loadTeamStatus, loadTeamTasks, loadTeamQuestions, loadTaskMeta, loadUpdates, loadPracticeApprovals, loadCoachRequests, loadCoachFloats, loadTeamsList, loadBlackouts, loadCoachRoster, loadPractice, loadActivity, loadTournaments, loadSnapshots, loadTryouts, loadSmsThreads]);
+  useEffect(() => {
+    if (!isApproved) return;
+    let t = null;
+    const trigger = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      clearTimeout(t);
+      t = setTimeout(() => { refreshAll(); }, 300);
+    };
+    const onVis = () => { if (document.visibilityState === "visible") trigger(); };
+    window.addEventListener("focus", trigger);
+    window.addEventListener("online", trigger);
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener("focus", trigger);
+      window.removeEventListener("online", trigger);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [isApproved, refreshAll]);
+
   // Realtime sync for tournament planning (separate channel — only when on
   // that tab so we don't burn a websocket connection elsewhere).
   useEffect(() => {
@@ -9545,6 +9590,10 @@ export default function App() {
           <button onClick={openAddPlayer} title="Add a player from any view"
             style={{padding:"6px 12px",borderRadius:8,border:"1px solid "+C.gold,background:"transparent",color:C.gold,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700}}>
             + Add Player
+          </button>
+          <button onClick={refreshAll} disabled={refreshing} title="Refresh — pull the latest changes from everyone"
+            style={{marginLeft:6,background:"none",border:"none",cursor:refreshing?"default":"pointer",fontSize:17,lineHeight:1,color:refreshing?C.gold:C.mut,padding:"2px 4px",animation:refreshing?"dse-spin 0.8s linear infinite":"none"}}>
+            ⟳
           </button>
           <div style={{position:"relative",marginLeft:6}}>
             <button onClick={()=>{ const opening = !notifOpen; setNotifOpen(opening); if (opening) markNotifsRead(); }} title="Notifications"
