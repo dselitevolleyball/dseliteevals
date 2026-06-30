@@ -854,6 +854,11 @@ export default function App() {
   const OPS_VIEWS = new Set(["tracker","teamdir","coaches","practice","email","messages","scholarships","notifications","requests"]);
   const canOps    = isAdmin || isOwner;
   const opsDenied = <div style={{padding:24,color:C.mut,textAlign:"center"}}>This section is restricted to administrators. Ask the club administrator (Drew) for access.</div>;
+  // Once a player has accepted (or is locked/signed) onto a team, they're
+  // locked to that team — only the owner (Drew) can change their offer status,
+  // move them to another team, or drop them. Everyone else is read-only on them.
+  const isRosterLocked = (p) => !isOwner && (p?.offer_status === "accepted" || p?.offer_status === "locked");
+  const lockedMsg = (p) => "“" + ((p?.first_name||"") + " " + (p?.last_name||"")).trim() + "” is locked to " + (p?.team_assignment || "their team") + ". Only the club director (Drew) can change or move an accepted player.";
   // Scholarship amounts are admin-only. Strip scholarship_amount from change_log
   // entries so non-admins can't see them via the Activity feed or a player's
   // Change History. Returns a cleaned list with now-empty update rows dropped.
@@ -3858,6 +3863,8 @@ export default function App() {
       const overId = String(over.id);
       const player = players.find(p => p.id === playerId);
       if (!player) return;
+      // Accepted/locked players are pinned to their team — only the owner can move them.
+      if (isRosterLocked(player)) { window.alert(lockedMsg(player)); return; }
       const now = new Date().toISOString();
       // Terminal-status buckets — clear team assignment and stamp the status.
       if (overId === "bucket-declined") {
@@ -3905,6 +3912,7 @@ export default function App() {
     //   player moves off the team card automatically — matches the
     //   drag-to-Declined-bucket behaviour. not_invited is still bucket-only.
     const cycleOffer = (player) => {
+      if (isRosterLocked(player)) { window.alert(lockedMsg(player)); return; }
       const cur = player.offer_status || "";
       const now = new Date().toISOString();
       const updates = {};
@@ -3949,9 +3957,10 @@ export default function App() {
       else if (s === "waiting")  { label = "WAITING";    bg = "rgba(6,182,212,0.22)";   fg = "#06b6d4"; }
       else if (s === "declined") { label = "✗ DECLINED"; bg = "rgba(239,68,68,0.22)";   fg = C.red; }
       else                       { label = "+ offer";    bg = "transparent";            fg = C.mut; border = "1px dashed "+C.border; }
-      return <span title="Click to cycle: none → ★ locked → offer → ✓ accepted → waiting (tryouts) → ✗ declined → none"
+      const locked = isRosterLocked(player);
+      return <span title={locked ? lockedMsg(player) : "Click to cycle: none → ★ locked → offer → ✓ accepted → waiting (tryouts) → ✗ declined → none"}
         onClick={(e) => { e.stopPropagation(); cycleOffer(player); }}
-        style={{fontSize:9,fontWeight:800,padding:"1px 6px",borderRadius:8,background:bg,color:fg,whiteSpace:"nowrap",cursor:"pointer",border,userSelect:"none"}}>{label}</span>;
+        style={{fontSize:9,fontWeight:800,padding:"1px 6px",borderRadius:8,background:bg,color:fg,whiteSpace:"nowrap",cursor:locked?"not-allowed":"pointer",border,userSelect:"none",opacity:locked?0.85:1}}>{locked?"🔒 ":""}{label}</span>;
     };
 
     // Compact rank chips next to a player's name on team cards (one per position).
@@ -4497,7 +4506,7 @@ export default function App() {
             <div><span style={lbl}>Pinny #</span><DebouncedField style={editInp} placeholder="e.g. 12" value={p.tryout_number||""} onCommit={v=>upd(p.id,{tryout_number:v})} /></div>
             <div>
               <span style={lbl}>USAV Div</span>
-              <select style={editInp} value={p.usavDiv||p.usav_div||""}
+              <select style={editInp} disabled={isRosterLocked(p)} title={isRosterLocked(p)?lockedMsg(p):undefined} value={p.usavDiv||p.usav_div||""}
                 onChange={e=>{
                   const v = e.target.value;
                   if (v !== (p.usavDiv||p.usav_div) && (p.team_assignment || p.roster_pos)) {
@@ -4509,9 +4518,9 @@ export default function App() {
               </select>
             </div>
             <div><span style={lbl}>Projected</span><select style={editInp} value={p.projected_team||""} onChange={e=>upd(p.id,{projected_team:e.target.value})}>{PROJ_OPTS.map(o=><option key={o} value={o}>{o||"--"}</option>)}</select></div>
-            <div><span style={lbl}>Team</span><select style={editInp} value={p.team_assignment||""} onChange={e=>assignTeamOrStatus(p,e.target.value)}><option value="">--</option>{(TM[p.usavDiv||p.usav_div]||[]).map(t=><option key={t} value={t}>{t}</option>)}</select></div>
+            <div><span style={lbl}>Team</span><select style={editInp} disabled={isRosterLocked(p)} title={isRosterLocked(p)?lockedMsg(p):undefined} value={p.team_assignment||""} onChange={e=>assignTeamOrStatus(p,e.target.value)}><option value="">--</option>{(TM[p.usavDiv||p.usav_div]||[]).map(t=><option key={t} value={t}>{t}</option>)}</select></div>
             <div><span style={lbl}>Roster Pos</span><select style={editInp} value={p.roster_pos||""} onChange={e=>upd(p.id,{roster_pos:e.target.value})}><option value="">--</option>{ROSTER_POS.map(rp=>{const taken=players.some(o=>o.id!==p.id&&o.team_assignment===p.team_assignment&&o.roster_pos===rp);return <option key={rp} value={rp} disabled={taken}>{rp}{taken?" (taken)":""}</option>;})}</select></div>
-            <div><span style={lbl}>Status</span><select style={{...editInp,color:STATUS_COLORS[p.status||"In Progress"]}} value={p.status||"In Progress"} onChange={e=>setPlayerStatus(p,e.target.value)}>{STATUS_OPTS.map(s=><option key={s} value={s}>{s}</option>)}</select></div>
+            <div><span style={lbl}>Status</span><select style={{...editInp,color:STATUS_COLORS[p.status||"In Progress"]}} disabled={isRosterLocked(p)} title={isRosterLocked(p)?lockedMsg(p):undefined} value={p.status||"In Progress"} onChange={e=>setPlayerStatus(p,e.target.value)}>{STATUS_OPTS.map(s=><option key={s} value={s}>{s}</option>)}</select></div>
             <div><span style={lbl}>Prev Season Team</span><DebouncedField style={editInp} placeholder="e.g. DSE 13 Diamond" value={p.current_team||""} onCommit={v=>upd(p.id,{current_team:v})} /></div>
           </div>
           {/* Notes */}
@@ -7363,6 +7372,47 @@ export default function App() {
       setEmailTemplateSel("");
     };
 
+    // ── Quick-insert helpers: drop player names / coaches / practice times
+    //    into the message body. They follow the current scope (age-group chips
+    //    + the Team filter), so e.g. picking a team narrows all three.
+    const appendBody = (text) => setEmailBody(prev => (prev && !prev.endsWith("\n") ? prev + "\n" : prev) + text);
+    const scopeTeams = () => (emailTeam && !emailTeam.startsWith("__"))
+      ? [emailTeam]
+      : [...new Set(pool.map(p => p.team_assignment).filter(Boolean))].sort();
+    const insertPlayerNames = () => {
+      const names = [...new Set(pool.map(p => ((p.first_name||"") + " " + (p.last_name||"")).trim()).filter(Boolean))]
+        .sort((a,b) => a.localeCompare(b));
+      if (!names.length) { window.alert("No players in the current scope."); return; }
+      appendBody(names.join("\n"));
+    };
+    const insertCoachNames = () => {
+      const teams = scopeTeams();
+      const rel = teams.length ? practiceTeams.filter(t => teams.includes(t.team_name)) : practiceTeams;
+      const names = [...new Set(rel.flatMap(t => [t.head_coach, t.assistant_coach]).map(c => (c||"").trim()).filter(Boolean))]
+        .sort((a,b) => a.localeCompare(b));
+      if (!names.length) { window.alert("No coaches found for the current scope. Pick a team, or assign coaches in the Practice tab."); return; }
+      appendBody(names.join("\n"));
+    };
+    const schedLinesForTeam = (teamName) => {
+      const byDay = {};
+      practiceAssignments
+        .filter(a => a.team_name === teamName && (a.phase || "season") === "season")
+        .forEach(a => { (byDay[a.day] = byDay[a.day] || []).push(a.slot); });
+      const lines = [];
+      ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].forEach(d => { if (byDay[d]) lines.push(d + " " + mergeAdjacentSlots(byDay[d]).join(", ")); });
+      const sa = [...new Set(saSessions.filter(s => s.team_name === teamName).map(s => s.slot))];
+      if (sa.length) lines.push("S&A: Sun " + mergeAdjacentSlots(sa).join(", "));
+      return lines;
+    };
+    const insertPracticeTimes = () => {
+      const teams = scopeTeams();
+      if (!teams.length) { window.alert("Pick a team in the Team filter (or email players who have a team) to add practice dates & times."); return; }
+      const blocks = teams.map(tn => {
+        const lines = schedLinesForTeam(tn);
+        return tn + ":\n" + (lines.length ? lines.join("\n") : "  (no practices scheduled yet)");
+      });
+      appendBody(blocks.join("\n\n"));
+    };
 
     return (
       <div style={{maxWidth:760}}>
@@ -7486,6 +7536,20 @@ export default function App() {
         {/* Compose */}
         <input value={emailSubject} onChange={e=>setEmailSubject(e.target.value)} placeholder="Subject"
           style={{...inpStyle,width:"100%",padding:"10px 12px",fontSize:14,marginBottom:8}} />
+        {/* Quick-insert buttons — append scoped content to the message body. */}
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,flexWrap:"wrap"}}>
+          <span style={{fontSize:11,fontWeight:700,color:C.mut}}>Insert:</span>
+          {[
+            ["Add player names", insertPlayerNames, "Adds the names of every player in the current scope"],
+            ["Add coaches' names", insertCoachNames, "Adds the head & assistant coaches for the team(s) in scope"],
+            ["Practice dates & times", insertPracticeTimes, "Adds the regular-season practice schedule for the team(s) in scope"],
+          ].map(([label, fn, tip]) => (
+            <button key={label} onClick={fn} title={tip}
+              style={{padding:"6px 12px",borderRadius:6,border:"1px solid "+C.acc,background:"transparent",color:C.acc,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+              + {label}
+            </button>
+          ))}
+        </div>
         <textarea value={emailBody} onChange={e=>setEmailBody(e.target.value)} placeholder="Write your message…"
           style={{...inpStyle,width:"100%",minHeight:200,padding:"10px 12px",fontSize:14,fontFamily:"inherit",resize:"vertical",lineHeight:1.5}} />
 
