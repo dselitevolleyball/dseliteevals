@@ -3084,6 +3084,48 @@ export default function App() {
 
   // Admin-only sent-notification log: every update, its audience, and when.
   function renderNotifications() {
+    // Coaches see their own received-notification history (the same feed that
+    // drives the 🔔 bell, shown in full). Admins see the sent-log below.
+    if (!canOps) {
+      const list = notifications;
+      const labelColor = (l) => l === "Question" ? "#f59e0b" : l === "Answered" ? C.grn : C.acc;
+      return (
+        <div style={{maxWidth:760}}>
+          <div style={{marginBottom:14,display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,flexWrap:"wrap"}}>
+            <div>
+              <h2 style={{margin:0,fontSize:18,fontWeight:800,color:C.gold}}>Notifications</h2>
+              <div style={{fontSize:12,color:C.mut,marginTop:4}}>Every update and answer sent to you and your teams — newest first.</div>
+            </div>
+            {list.length > 0 && unreadCount > 0 && (
+              <button onClick={markNotifsRead} title="Mark everything as read"
+                style={{padding:"6px 12px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Mark all read</button>
+            )}
+          </div>
+          {list.length === 0 ? (
+            <div style={{padding:24,textAlign:"center",color:C.mut,fontSize:13,background:C.card,borderRadius:12,border:"1px solid "+C.border}}>You're all caught up — no notifications yet.</div>
+          ) : (
+            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+              {list.map(n => {
+                const d = n.ts ? new Date(n.ts) : null;
+                const when = d ? d.toLocaleString(undefined,{weekday:"short",month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}) : "";
+                const unread = (n.ts || "") > notifSeenAt;
+                return (
+                  <button key={n.id} onClick={()=>{ setView(n.view||"home"); }}
+                    style={{display:"block",width:"100%",textAlign:"left",background:C.card,border:"1px solid "+(unread?C.gold:C.border),borderRadius:12,padding:"12px 14px",cursor:"pointer",fontFamily:"inherit"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:5,flexWrap:"wrap"}}>
+                      <span style={{fontSize:10,fontWeight:800,letterSpacing:0.4,textTransform:"uppercase",color:labelColor(n.label),border:"1px solid "+labelColor(n.label),borderRadius:6,padding:"1px 7px"}}>{n.label}</span>
+                      {unread && <span style={{fontSize:8,fontWeight:800,color:"#000",background:C.gold,borderRadius:6,padding:"1px 6px"}}>NEW</span>}
+                      <span style={{fontSize:11,color:C.mut}}>{when}</span>
+                    </div>
+                    <div style={{fontSize:13,color:C.text,lineHeight:1.45,whiteSpace:"pre-wrap"}}>{n.text}</div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      );
+    }
     const approvedCoaches = (coachesList || []).filter(c => c.is_approved && c.email);
     const recipientInfo = (u) => {
       if (!u.team_name) return { label: "Club-wide", count: approvedCoaches.length };
@@ -9561,6 +9603,7 @@ export default function App() {
               ];
               return <>
                 {item("home","Home")}
+                {!canOps && item("notifications","Notifications" + (unreadCount>0?" ("+unreadCount+")":""))}
                 {groups.map(g => {
                   const activeInGroup = g.items.some(([v]) => v === view);
                   const open = openMenu === g.title;
@@ -9611,6 +9654,10 @@ export default function App() {
                   {pushState==="denied" && <span style={{fontSize:9,color:C.red,fontWeight:700}} title="Notifications are blocked for this site in your browser settings">Push blocked</span>}
                 </div>
                 {notifications.length===0 && <div style={{fontSize:12,color:C.mut,padding:"10px 8px"}}>You're all caught up.</div>}
+                <button onClick={()=>{ setView("notifications"); setOpenMenu(null); setNotifOpen(false); }}
+                  style={{display:"block",width:"100%",textAlign:"center",background:"transparent",border:"none",padding:"6px 8px",cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:800,color:C.acc}}>
+                  See all notifications →
+                </button>
                 {notifications.slice(0,40).map(n => {
                   const d = n.ts ? new Date(n.ts) : null;
                   const when = d ? d.toLocaleDateString(undefined,{month:"short",day:"numeric"}) + " " + d.toLocaleTimeString(undefined,{hour:"numeric",minute:"2-digit"}) : "";
@@ -9687,7 +9734,7 @@ export default function App() {
         </div>
       )}
       <div style={{padding:"14px 18px",maxWidth:1500,margin:"0 auto"}}>
-        {OPS_VIEWS.has(view) && !canOps ? opsDenied : <>
+        {OPS_VIEWS.has(view) && view !== "notifications" && !canOps ? opsDenied : <>
         {view==="home" && renderHome()}
         {view==="dashboard" && renderDashboard()}
         {view==="evaluate" && renderEval()}
