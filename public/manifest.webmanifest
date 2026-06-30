@@ -1,7 +1,7 @@
 {
-  "name": "DS Elite Volleyball",
-  "short_name": "DS Elite",
-  "description": "DS Elite Volleyball — tryout evaluations & team operations",
+  "name": "DS Elite HQ",
+  "short_name": "DS Elite HQ",
+  "description": "DS Elite HQ — practice planning, schedules, tournaments, team operations & evaluations",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

@@ -2470,8 +2470,8 @@ export default function App() {
       <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",background:C.bg,padding:16}}>
         <form onSubmit={submitAuth} style={{background:C.card,padding:32,borderRadius:16,border:"1px solid "+C.border,maxWidth:400,width:"100%"}}>
           <div style={{textAlign:"center",marginBottom:20}}>
-            <div style={{fontSize:28,fontWeight:800,color:C.gold,marginBottom:4}}>◆ DS ELITE</div>
-            <div style={{fontSize:13,color:C.mut}}>Tryout Evaluations 2026-27</div>
+            <div style={{fontSize:28,fontWeight:800,color:C.gold,marginBottom:4}}>◆ DS ELITE HQ</div>
+            <div style={{fontSize:13,color:C.mut}}>Operations Hub · 2026-27</div>
           </div>
           {loginMode === "guest" ? (
             <div style={{textAlign:"center",marginBottom:16,fontSize:12,color:C.mut}}>Shared-device guest login — enter the guest password.</div>
