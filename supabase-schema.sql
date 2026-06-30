@@ -228,8 +228,9 @@ CREATE POLICY updates_all_approved ON updates
 -- See migrations/20260629_practice_approvals.sql
 CREATE TABLE practice_approvals (
   team_name        TEXT         PRIMARY KEY,
-  approved         BOOLEAN      NOT NULL DEFAULT FALSE,
-  approved_by_name TEXT,
+  approved         BOOLEAN      NOT NULL DEFAULT FALSE,  -- derived: true only when ALL coaches approved
+  approved_by      TEXT[]       NOT NULL DEFAULT '{}',   -- canonical coach names who approved
+  approved_by_name TEXT,                                 -- legacy (single-coach), unused
   approved_at      TIMESTAMPTZ,
   updated_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );

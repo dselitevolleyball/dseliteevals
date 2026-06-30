@@ -1160,7 +1160,7 @@ export default function App() {
     const { data, error } = await supabase.from("practice_approvals").select("*");
     if (error) { console.error("Load practice_approvals error:", error); return; }
     const map = {};
-    (data || []).forEach(r => { map[r.team_name] = { approved: !!r.approved, approved_by_name: r.approved_by_name || "", approved_at: r.approved_at || null }; });
+    (data || []).forEach(r => { map[r.team_name] = { approved: !!r.approved, approved_by: r.approved_by || [], approved_at: r.approved_at || null }; });
     setPracticeApprovals(map);
   }, []);
 
@@ -1412,16 +1412,21 @@ export default function App() {
     await loadUpdates();
   }, [loadUpdates]);
   // Coach approves (or un-approves) their team's practice schedule.
-  const approvePractice = useCallback(async (team, approved) => {
-    const now = approved ? new Date().toISOString() : null;
-    const name = approved ? (coach?.display_name || coach?.email || "") : "";
-    setPracticeApprovals(prev => ({ ...prev, [team]: { approved, approved_by_name: name, approved_at: now } }));
+  // One coach approves (or undoes) their part. The schedule is only "approved"
+  // once EVERY listed coach (head + assistant) is in approved_by.
+  const approvePractice = useCallback(async (team, coachName, approving, requiredCoaches) => {
+    const cur = (practiceApprovals[team] && practiceApprovals[team].approved_by) || [];
+    const next = approving ? Array.from(new Set([...cur, coachName])) : cur.filter(n => n !== coachName);
+    const req = (requiredCoaches || []).filter(Boolean);
+    const fully = req.length > 0 && req.every(rc => next.includes(rc));
+    const now = fully ? new Date().toISOString() : null;
+    setPracticeApprovals(prev => ({ ...prev, [team]: { approved: fully, approved_by: next, approved_at: now } }));
     const { error } = await supabase.from("practice_approvals").upsert(
-      { team_name: team, approved, approved_by_name: name || null, approved_at: now, updated_at: new Date().toISOString() },
+      { team_name: team, approved: fully, approved_by: next, approved_at: now, updated_at: new Date().toISOString() },
       { onConflict: "team_name" }
     );
     if (error) console.error("Save practice_approvals error:", error);
-  }, [coach]);
+  }, [practiceApprovals]);
   // Director: notify all coaches to approve their practice schedule (posts an update).
   const requestPracticeApproval = useCallback(async () => {
     if (!window.confirm("Notify all coaches to review and approve their practice schedule?")) return;
@@ -2905,18 +2910,45 @@ export default function App() {
                       ))}
                       {(() => {
                         const appr = practiceApprovals[t.team_name];
+                        const approvedBy = (appr && appr.approved_by) || [];
+                        const required = [t.head_coach, t.assistant_coach].filter(Boolean);
+                        const myName = t.role === "Head Coach" ? t.head_coach : t.assistant_coach;
+                        const iApproved = myName && approvedBy.includes(myName);
+                        const fully = required.length > 0 && required.every(rc => approvedBy.includes(rc));
                         const fmtA = appr && appr.approved_at ? new Date(appr.approved_at).toLocaleDateString(undefined,{month:"short",day:"numeric"}) : "";
-                        return appr && appr.approved ? (
-                          <div style={{marginTop:8,display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,flexWrap:"wrap"}}>
-                            <span style={{fontSize:11,fontWeight:700,color:C.grn}}>✓ Schedule approved{appr.approved_by_name?" by "+appr.approved_by_name:""}{fmtA?" · "+fmtA:""}</span>
-                            <button onClick={()=>approvePractice(t.team_name,false)} title="Undo approval"
-                              style={{fontSize:9,fontWeight:700,padding:"2px 8px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,cursor:"pointer",fontFamily:"inherit"}}>Undo</button>
+                        const statusLine = required.length > 1 && (
+                          <div style={{fontSize:10,color:C.mut,marginTop:5,display:"flex",gap:10,flexWrap:"wrap"}}>
+                            {required.map(rc => <span key={rc} style={{color:approvedBy.includes(rc)?C.grn:C.mut}}>{approvedBy.includes(rc)?"✓":"○"} {rc}</span>)}
                           </div>
-                        ) : (
-                          <button onClick={()=>{ if (window.confirm("Approve this practice schedule and confirm there are no conflicts?")) approvePractice(t.team_name,true); }}
-                            style={{marginTop:8,width:"100%",padding:"8px 12px",borderRadius:8,border:"1px solid #f59e0b",background:"rgba(245,158,11,0.12)",color:"#f59e0b",fontWeight:800,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>
-                            ⚠ Approve practice schedule — confirm no conflicts
-                          </button>
+                        );
+                        if (fully) {
+                          return (
+                            <div style={{marginTop:8}}>
+                              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,flexWrap:"wrap"}}>
+                                <span style={{fontSize:11,fontWeight:700,color:C.grn}}>✓ Schedule approved by {required.length>1?"both coaches":"the coach"}{fmtA?" · "+fmtA:""}</span>
+                                {myName && <button onClick={()=>approvePractice(t.team_name, myName, false, required)} title="Undo your approval"
+                                  style={{fontSize:9,fontWeight:700,padding:"2px 8px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,cursor:"pointer",fontFamily:"inherit"}}>Undo</button>}
+                              </div>
+                              {statusLine}
+                            </div>
+                          );
+                        }
+                        return (
+                          <div style={{marginTop:8}}>
+                            {iApproved ? (
+                              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,flexWrap:"wrap"}}>
+                                <span style={{fontSize:11,fontWeight:700,color:"#f59e0b"}}>✓ You approved — waiting on {required.find(rc => rc !== myName) || "the other coach"}</span>
+                                <button onClick={()=>approvePractice(t.team_name, myName, false, required)} title="Undo your approval"
+                                  style={{fontSize:9,fontWeight:700,padding:"2px 8px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,cursor:"pointer",fontFamily:"inherit"}}>Undo</button>
+                              </div>
+                            ) : (
+                              <button onClick={()=>{ if (myName && window.confirm("Approve this practice schedule and confirm there are no conflicts?")) approvePractice(t.team_name, myName, true, required); }}
+                                style={{width:"100%",padding:"8px 12px",borderRadius:8,border:"1px solid #f59e0b",background:"rgba(245,158,11,0.12)",color:"#f59e0b",fontWeight:800,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>
+                                ⚠ Approve practice schedule — confirm no conflicts
+                              </button>
+                            )}
+                            {statusLine}
+                          </div>
                         );
                       })()}
                       {(() => {
@@ -5120,9 +5152,12 @@ export default function App() {
                       <span style={{fontSize:10,fontWeight:700,padding:"2px 8px",borderRadius:8,background:C.bg,border:"1px solid "+C.border,color:c.tournaments?C.text:C.mut}}>{c.tournaments} tourney{c.tournaments===1?"":"s"}</span>
                       {(() => {
                         const appr = practiceApprovals[t.team_name];
-                        const ok = appr && appr.approved;
-                        return <span title={ok ? "Practice schedule approved"+(appr.approved_by_name?" by "+appr.approved_by_name:"") : "Practice schedule not yet approved by the coach"}
-                          style={{fontSize:10,fontWeight:800,padding:"2px 8px",borderRadius:8,background:ok?"rgba(34,197,94,0.18)":"rgba(245,158,11,0.15)",border:"1px solid "+(ok?C.grn:"#f59e0b"),color:ok?C.grn:"#f59e0b",whiteSpace:"nowrap"}}>{ok?"✓ Practice OK":"⚠ Practice pending"}</span>;
+                        const approvedBy = (appr && appr.approved_by) || [];
+                        const required = [t.head_coach, t.assistant_coach].filter(Boolean);
+                        const got = required.filter(rc => approvedBy.includes(rc)).length;
+                        const ok = required.length > 0 && got === required.length;
+                        return <span title={ok ? "Both coaches approved the practice schedule" : "Practice approval: " + got + " of " + (required.length||"?") + " coaches"}
+                          style={{fontSize:10,fontWeight:800,padding:"2px 8px",borderRadius:8,background:ok?"rgba(34,197,94,0.18)":"rgba(245,158,11,0.15)",border:"1px solid "+(ok?C.grn:"#f59e0b"),color:ok?C.grn:"#f59e0b",whiteSpace:"nowrap"}}>{ok?"✓ Practice OK":"⚠ Practice "+got+"/"+(required.length||"?")}</span>;
                       })()}
                     </div>
                     {tStatus === "looking" && lookingPos.length > 0 && (
