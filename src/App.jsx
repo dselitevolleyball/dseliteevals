@@ -1604,6 +1604,15 @@ export default function App() {
       if (error) console.error("Add coach_float error:", error);
     }
   }, [coachFloats]);
+  // Add a coach to the chart (coach roster) — e.g. a floater not on any team.
+  const addCoachToChart = useCallback(async (name) => {
+    const n = (name || "").trim();
+    if (!n) return;
+    const parts = n.split(/\s+/);
+    const { error } = await supabase.from("coach_roster").insert({ first_name: parts[0], last_name: parts.slice(1).join(" ") });
+    if (error) { window.alert("Add coach failed: " + error.message); return; }
+    await loadCoachRoster();
+  }, [loadCoachRoster]);
   // Coach emails the director a potential practice-schedule change request.
   const requestScheduleChange = useCallback(async (team, message) => {
     const msg = (message || "").trim();
@@ -1817,7 +1826,7 @@ export default function App() {
   useEffect(() => {
     // Roster also drives the Tryout coach picker / Text Coaches lookup,
     // so make sure it's loaded whenever either tab opens.
-    if (isApproved && (view === "coaches" || view === "tryouts" || view === "home" || view === "teamdir")) loadCoachRoster();
+    if (isApproved && (view === "coaches" || view === "tryouts" || view === "home" || view === "teamdir" || view === "practice")) loadCoachRoster();
   }, [isApproved, view, loadCoachRoster]);
   // The coach card edits coach_roster, so make sure it's loaded when one opens.
   useEffect(() => { if (isApproved && coachCardName) loadCoachRoster(); }, [isApproved, coachCardName, loadCoachRoster]);
@@ -5970,11 +5979,22 @@ export default function App() {
       });
       const floatLow = new Set((floatingCoaches || []).map(x => (x || "").trim().toLowerCase()));
       const floatSet = new Set(coachFloats.filter(f => (f.phase || "season") === schedulePhase).map(f => f.coach_name + "|" + f.day + "|" + f.slot));
-      const coaches = Object.keys(coachMap).sort((a,b) => a.localeCompare(b))
+      // Show team coaches PLUS roster / floating / per-block-float coaches, so
+      // floaters who aren't on a team (e.g. Valerie) still appear with empty,
+      // clickable cells.
+      const rosterNames = (coachRoster || []).map(r => ((r.first_name || "") + " " + (r.last_name || "")).trim()).filter(Boolean);
+      const floatNames = (floatingCoaches || []).map(x => (x || "").trim()).filter(Boolean);
+      const blockFloatNames = coachFloats.map(f => f.coach_name).filter(Boolean);
+      const coaches = Array.from(new Set([...Object.keys(coachMap), ...rosterNames, ...floatNames, ...blockFloatNames]))
+        .sort((a,b) => a.localeCompare(b))
         .filter(cn => !practiceCoachFilter || cn === practiceCoachFilter);
       return (
         <div style={{background:C.card,borderRadius:12,border:"1px solid "+C.border,overflow:"hidden"}}>
-          <div style={{overflow:"auto",maxHeight:"calc(100vh - 280px)"}}>
+          <div style={{display:"flex",justifyContent:"flex-end",padding:"8px 10px",borderBottom:"1px solid "+C.border}}>
+            <button onClick={()=>{ const n = window.prompt("Add a coach to the chart (e.g. for floating coverage):"); if (n && n.trim()) addCoachToChart(n.trim()); }}
+              style={{padding:"5px 12px",borderRadius:6,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontWeight:700,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>+ Add coach</button>
+          </div>
+          <div style={{overflow:"auto",maxHeight:"calc(100vh - 320px)"}}>
             <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0,minWidth:1000}}>
               <thead>
                 <tr>
@@ -5987,7 +6007,7 @@ export default function App() {
               </thead>
               <tbody>
                 {coaches.map(cn => {
-                  const m = coachMap[cn];
+                  const m = coachMap[cn] || {};
                   const total = Object.values(m).reduce((sum, arr) => sum + arr.length, 0);
                   const isFloat = floatLow.has(cn.trim().toLowerCase());
                   return (
