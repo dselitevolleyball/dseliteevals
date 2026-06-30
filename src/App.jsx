@@ -8879,7 +8879,7 @@ export default function App() {
       <header style={{background:"linear-gradient(135deg,#0f0f0f,#1a1a1a)",borderBottom:"1px solid "+C.border,padding:"12px 18px",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
         <div style={{fontSize:19,fontWeight:800,color:C.gold,display:"flex",alignItems:"center",gap:8}}>
           <span style={{fontSize:22}}>◆</span> DS ELITE
-          <span style={{fontSize:11,fontWeight:400,color:C.mut,marginLeft:6}}>2026-27 Tryouts</span>
+          <span style={{fontSize:11,fontWeight:400,color:C.mut,marginLeft:6}}>HQ</span>
         </div>
         <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
           <nav style={{display:"flex",gap:3,flexWrap:"wrap",position:"relative",zIndex:50}}>
