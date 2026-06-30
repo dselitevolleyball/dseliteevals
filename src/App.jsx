@@ -46,7 +46,7 @@ const CLINIC_DIVS = ["U13","U14","U15","U16","U17"];
 // Mirrors the EVAL_DATES pattern — short M/D strings. Edit here when the
 // club adds more clinic dates.
 const CLINIC_DATES = ["6/2"];
-const TM = {U10:[],U11:["11 Diamond","11 Rise 1"],U12:["12 Diamond","12 Ruby","12 Rise 1","12 Rise 2"],U13:["13 Diamond","13 Ruby","13 Sapphire","13 Emerald"],U14:["14 Diamond","14 Ruby","14 Sapphire","14 Emerald","14 Topaz"],U15:["15 Diamond","15 Ruby","15 Sapphire","15 Emerald"],U16:["16 Diamond","16 Ruby"],U17:["17 Diamond"]};
+const TM = {U10:[],U11:["11 Diamond","11 Rise 1"],U12:["12 Diamond","12 Ruby","12 Rise 1"],U13:["13 Diamond","13 Ruby","13 Sapphire","13 Emerald"],U14:["14 Diamond","14 Ruby","14 Sapphire","14 Emerald","14 Topaz"],U15:["15 Diamond","15 Ruby","15 Sapphire","15 Emerald"],U16:["16 Diamond"],U17:["17 Diamond"]};
 // 2026-27 season club plan: how many teams at each competitive tier per age group.
 // Sent to the AI summary so parents see the broader landscape their daughter is
 // being evaluated against. Edit here when the plan changes.
@@ -500,7 +500,8 @@ const PRACTICE_DAY_ORDER = { Sun:0, Mon:1, Tue:2, Wed:3, Thu:4, Fri:5, Sat:6 };
 // they aren't flagged as under-hours during Fall 1 / Fall 2. Edit as needed.
 const NO_FALL_TEAMS = ["11 Rise 1", "12 Rise 1"];
 // Teams being phased out — never flag them for practice-count, in any phase.
-const INACTIVE_TEAMS = ["12 Rise 2", "16 Ruby"];
+// (12 Rise 2 and 16 Ruby were fully removed from the platform.)
+const INACTIVE_TEAMS = [];
 // Slots look like "12-1pm", "5-7pm" — all afternoon/evening. Parse to 24h ordinals
 // (12=noon, 1pm=13 … 9pm=21) so we can detect + merge adjacent ranges.
 function parsePracticeSlot(slot) {
