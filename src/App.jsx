@@ -5964,8 +5964,10 @@ export default function App() {
         { label:"7-9pm",  capacity:4 },
       ],
     };
+    // Summer now uses the same 2-hour Sunday blocks as the regular season
+    // (5 courts). Fall 1/Fall 2 keep 1-hour Sunday granularity.
     const PRESEASON_SLOTS = {
-      Sun: SUN_HOURS.map(label => ({ label, capacity: 5 })),
+      Sun: SEASON_SUN.map(label => ({ label, capacity: 5 })),
       Mon: [], Tue: [], Wed: [], Thu: [],
     };
     // Summer + Fall 1/Fall 2 are Sunday-only (preseason). Only the Regular
