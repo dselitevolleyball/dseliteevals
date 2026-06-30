@@ -5924,53 +5924,69 @@ export default function App() {
     // the seed migration that pre-date the phase column default to 'season'.
     const phaseAssignments = practiceAssignments.filter(a => (a.phase || "fall1") === schedulePhase);
 
-    // Coach-centric view of this phase: each coach with their practices + ☁ floating toggle.
+    // Coach view: same grid as the team view (time slots across the top), but
+    // each row is a coach and each cell shows the team(s) they coach that slot.
     const renderCoachScheduleView = () => {
       const teamByName = {}; practiceTeams.forEach(t => { teamByName[t.team_name] = t; });
-      const coachMap = {};
+      const coachMap = {}; // coach -> { "day|slot": [team, ...] }
       phaseAssignments.forEach(a => {
         const t = teamByName[a.team_name]; if (!t) return;
         [t.head_coach, t.assistant_coach].filter(Boolean).forEach(cn => {
-          (coachMap[cn] = coachMap[cn] || []).push({ team: a.team_name, day: a.day, slot: a.slot });
+          const m = coachMap[cn] = coachMap[cn] || {};
+          const k = a.day + "|" + a.slot;
+          (m[k] = m[k] || []).push(a.team_name);
         });
       });
-      const dayOrd = { Sun:0, Mon:1, Tue:2, Wed:3, Thu:4, Fri:5, Sat:6 };
       const floatLow = new Set((floatingCoaches || []).map(x => (x || "").trim().toLowerCase()));
       const coaches = Object.keys(coachMap).sort((a,b) => a.localeCompare(b))
         .filter(cn => !practiceCoachFilter || cn === practiceCoachFilter);
-      const cth = {padding:"8px 10px",textAlign:"left",fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut,borderBottom:"1px solid "+C.border,background:C.card,position:"sticky",top:0,whiteSpace:"nowrap"};
       return (
         <div style={{background:C.card,borderRadius:12,border:"1px solid "+C.border,overflow:"hidden"}}>
           <div style={{overflow:"auto",maxHeight:"calc(100vh - 280px)"}}>
-            <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
-              <thead><tr><th style={cth}>Coach</th><th style={{...cth,textAlign:"center"}} title="Floating coach — covers gaps">☁ Float</th><th style={cth}>Practices this phase</th><th style={{...cth,textAlign:"center"}}>#</th></tr></thead>
+            <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0,minWidth:1000}}>
+              <thead>
+                <tr>
+                  <th style={{...thS,textAlign:"left",minWidth:200}}>Coach</th>
+                  {VISIBLE_DAYS.map(day => SLOTS[day].map(s => (
+                    <th key={day+"|"+s.label} style={thS}><div>{day}</div><div style={{fontSize:9,fontWeight:600}}>{s.label}</div></th>
+                  )))}
+                  <th style={{...thS,textAlign:"center",minWidth:50}}>#</th>
+                </tr>
+              </thead>
               <tbody>
                 {coaches.map(cn => {
-                  const list = coachMap[cn].slice().sort((a,b) => (dayOrd[a.day]??9)-(dayOrd[b.day]??9) || (a.slot||"").localeCompare(b.slot||""));
-                  const slotCount = {}; list.forEach(p => { const k=p.day+"|"+p.slot; slotCount[k]=(slotCount[k]||0)+1; });
+                  const m = coachMap[cn];
+                  const total = Object.values(m).reduce((sum, arr) => sum + arr.length, 0);
                   const isFloat = floatLow.has(cn.trim().toLowerCase());
                   return (
-                    <tr key={cn} style={{borderBottom:"1px solid "+C.border}}>
-                      <td style={{padding:"8px 10px",fontWeight:700,color:C.text,whiteSpace:"nowrap"}}>{cn}</td>
-                      <td style={{padding:"8px 10px",textAlign:"center"}}>
-                        <label title={isFloat?"Floating — covers gaps":"Mark as floating"} style={{cursor:"pointer",display:"inline-flex",alignItems:"center"}}>
-                          <input type="checkbox" checked={isFloat} onChange={()=>toggleFloatingCoach(cn)} style={{width:15,height:15,accentColor:"#06b6d4",cursor:"pointer"}} />
-                          <span style={{fontSize:16,marginLeft:5,color:isFloat?"#06b6d4":C.border}}>☁</span>
-                        </label>
-                      </td>
-                      <td style={{padding:"8px 10px"}}>
-                        <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
-                          {list.length === 0 && <span style={{color:C.mut,fontStyle:"italic"}}>—</span>}
-                          {list.map((p,i) => { const dbl = slotCount[p.day+"|"+p.slot] > 1;
-                            return <span key={i} title={dbl?"Double-booked at this time":""} style={{fontSize:11,padding:"3px 8px",borderRadius:8,background:C.bg,border:"1px solid "+(dbl?C.red:C.border),color:dbl?C.red:C.text}}>{p.day} {p.slot} · {p.team}</span>;
-                          })}
+                    <tr key={cn}>
+                      <td style={{...tdS,textAlign:"left",padding:"6px 10px"}}>
+                        <div style={{display:"flex",alignItems:"center",gap:6}}>
+                          <label title={isFloat?"Floating — covers gaps":"Mark as floating"} style={{cursor:"pointer",display:"inline-flex",alignItems:"center"}}>
+                            <input type="checkbox" checked={isFloat} onChange={()=>toggleFloatingCoach(cn)} style={{width:14,height:14,accentColor:"#06b6d4",cursor:"pointer"}} />
+                            <span style={{fontSize:14,marginLeft:3,color:isFloat?"#06b6d4":C.border}}>☁</span>
+                          </label>
+                          <span onClick={()=>setCoachCardName(cn)} title="Open coach card" style={{fontWeight:700,fontSize:13,color:C.text,cursor:"pointer"}}>{cn}</span>
                         </div>
                       </td>
-                      <td style={{padding:"8px 10px",textAlign:"center",color:C.mut}}>{list.length}</td>
+                      {VISIBLE_DAYS.map(day => SLOTS[day].map(s => {
+                        const teams = m[day+"|"+s.label] || [];
+                        const dbl = teams.length > 1;
+                        return (
+                          <td key={day+"|"+s.label} style={{...tdS,padding:"4px"}}>
+                            {teams.length === 0 ? <span style={{color:C.border}}>·</span> : (
+                              <div style={{display:"flex",flexDirection:"column",gap:2,alignItems:"center"}}>
+                                {teams.map((tn,i) => <span key={i} title={dbl?"Double-booked at this time":tn} style={{fontSize:9,fontWeight:700,padding:"2px 5px",borderRadius:5,background:dbl?"rgba(239,68,68,0.18)":"rgba(34,197,94,0.15)",color:dbl?C.red:C.grn,whiteSpace:"nowrap",maxWidth:90,overflow:"hidden",textOverflow:"ellipsis"}}>{tn}</span>)}
+                              </div>
+                            )}
+                          </td>
+                        );
+                      }))}
+                      <td style={{...tdS,textAlign:"center",color:C.mut}}>{total}</td>
                     </tr>
                   );
                 })}
-                {coaches.length === 0 && <tr><td colSpan={4} style={{padding:20,textAlign:"center",color:C.mut}}>No coach practices in this phase.</td></tr>}
+                {coaches.length === 0 && <tr><td colSpan={99} style={{padding:20,textAlign:"center",color:C.mut}}>No coach practices in this phase.</td></tr>}
               </tbody>
             </table>
           </div>
