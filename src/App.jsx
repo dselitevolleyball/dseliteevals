@@ -761,6 +761,9 @@ export default function App() {
   const [schedChangeOpen, setSchedChangeOpen]               = useState({}); // { [team]: bool } request-a-change composer open
   const [schedChangeDraft, setSchedChangeDraft]             = useState({}); // { [team]: text }
   const [schedChangeSending, setSchedChangeSending]         = useState(""); // team currently emailing
+  const [coachRequests, setCoachRequests]                   = useState([]); // coach time-off / availability requests
+  const [requestOffOpen, setRequestOffOpen]                 = useState(false); // request-off modal
+  const [reqForm, setReqForm]                               = useState({ type:"weekend", date:"", team:"", details:"" });
   const [notifOpen, setNotifOpen]                           = useState(false); // notification bell dropdown
   const [notifSeenAt, setNotifSeenAt]                       = useState("1970-01-01T00:00:00.000Z"); // last time notifications were viewed
   const [pushState, setPushState]                          = useState("loading"); // unsupported | off | on | denied
@@ -843,7 +846,7 @@ export default function App() {
   // Operations are admin-only: the whole "Operations" nav group and the views
   // behind it are hidden and blocked for non-admin coaches. The owner (Drew)
   // always counts here so a bad DB flag can't lock him out.
-  const OPS_VIEWS = new Set(["tracker","teamdir","coaches","practice","email","messages","scholarships","notifications"]);
+  const OPS_VIEWS = new Set(["tracker","teamdir","coaches","practice","email","messages","scholarships","notifications","requests"]);
   const canOps    = isAdmin || isOwner;
   const opsDenied = <div style={{padding:24,color:C.mut,textAlign:"center"}}>This section is restricted to administrators. Ask the club administrator (Drew) for access.</div>;
   // Scholarship amounts are admin-only. Strip scholarship_amount from change_log
@@ -1169,6 +1172,12 @@ export default function App() {
     (data || []).forEach(r => { map[r.team_name] = { approved: !!r.approved, approved_by: r.approved_by || [], approved_at: r.approved_at || null }; });
     setPracticeApprovals(map);
   }, []);
+  // Coach time-off / availability requests.
+  const loadCoachRequests = useCallback(async () => {
+    const { data, error } = await supabase.from("coach_requests").select("*").order("created_at", { ascending: false }).limit(200);
+    if (error) { console.error("Load coach_requests error:", error); return; }
+    setCoachRequests(data || []);
+  }, []);
 
   // ─── Realtime sync ──────────────────────────────────────────────────
   // Subscribe to Postgres change events on the tables the eval site cares
@@ -1227,6 +1236,10 @@ export default function App() {
       .channel("realtime-practice_approvals")
       .on("postgres_changes", { event: "*", schema: "public", table: "practice_approvals" }, () => { loadPracticeApprovals(); })
       .subscribe();
+    const coachRequestsChannel = supabase
+      .channel("realtime-coach_requests")
+      .on("postgres_changes", { event: "*", schema: "public", table: "coach_requests" }, () => { loadCoachRequests(); })
+      .subscribe();
     return () => {
       supabase.removeChannel(playerChannel);
       supabase.removeChannel(coachChannel);
@@ -1237,8 +1250,9 @@ export default function App() {
       supabase.removeChannel(taskMetaChannel);
       supabase.removeChannel(updatesChannel);
       supabase.removeChannel(practiceApprovalsChannel);
+      supabase.removeChannel(coachRequestsChannel);
     };
-  }, [isApproved, loadCoaches, loadRankings, loadTeamStatus, loadTeamTasks, loadTeamQuestions, loadTaskMeta, loadUpdates, loadPracticeApprovals]);
+  }, [isApproved, loadCoaches, loadRankings, loadTeamStatus, loadTeamTasks, loadTeamQuestions, loadTaskMeta, loadUpdates, loadPracticeApprovals, loadCoachRequests]);
 
   // Activity feed live updates — only subscribe while that tab is open, since
   // change_log INSERTs fire on every player write and the feed is otherwise
@@ -1332,6 +1346,7 @@ export default function App() {
   // Notifications need updates + questions loaded on every view (the bell is in the header).
   useEffect(() => { if (isApproved) { loadUpdates(); loadTeamQuestions(); } }, [isApproved, loadUpdates, loadTeamQuestions]);
   useEffect(() => { if (isApproved && (view === "home" || view === "teamdir" || view === "coaches")) loadPracticeApprovals(); }, [isApproved, view, loadPracticeApprovals]);
+  useEffect(() => { if (isApproved && (view === "home" || view === "requests")) loadCoachRequests(); }, [isApproved, view, loadCoachRequests]);
   // Optimistically patch local state, then upsert the merged row. `merged` is
   // computed from current state synchronously (NOT inside the setState updater,
   // which React may run later) so the upsert payload is always complete.
@@ -1514,6 +1529,37 @@ export default function App() {
       if (d.failed && d.failed.length) console.error("send-practice-emails failures:", d.failed);
     } catch (e) { window.alert("Could not send: " + (e.message || "error")); }
   }, [practiceTeams, practiceAssignments, saSessions, coachesList, coachRoster]);
+  // Coach submits a time-off request (weekend blackout or practice-off).
+  const submitCoachRequest = useCallback(async () => {
+    const f = reqForm;
+    if (!f.date) { window.alert("Please pick a date."); return; }
+    if (f.type === "practice" && !f.team) { window.alert("Please pick which team's practice."); return; }
+    const { error } = await supabase.from("coach_requests").insert({
+      coach_name: coach?.display_name || coach?.email || "",
+      coach_email: coach?.email || "",
+      type: f.type,
+      request_date: f.date,
+      team_name: f.type === "practice" ? f.team : null,
+      details: (f.details || "").trim(),
+    });
+    if (error) { window.alert("Submit failed: " + error.message); return; }
+    setRequestOffOpen(false);
+    setReqForm({ type: "weekend", date: "", team: "", details: "" });
+    await loadCoachRequests();
+    const who = coach?.display_name || coach?.email || "A coach";
+    const what = f.type === "weekend" ? "a weekend off (" + f.date + ") for tournaments" : "a practice off — " + f.team + " on " + f.date + " (needs coverage)";
+    fetch("/api/send-push", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: "Coach time-off request", body: who + " requested " + what, url: "/", audience: { type: "admins" } }) }).catch(() => {});
+    window.alert("Request submitted — the directors have been notified.");
+  }, [reqForm, coach, loadCoachRequests]);
+  // Director resolves a request (approved / denied / back to pending).
+  const resolveCoachRequest = useCallback(async (id, status) => {
+    const { error } = await supabase.from("coach_requests").update({
+      status, resolved_by: coach?.display_name || coach?.email || "", resolved_at: status === "pending" ? null : new Date().toISOString(),
+    }).eq("id", id);
+    if (error) { window.alert("Update failed: " + error.message); return; }
+    await loadCoachRequests();
+  }, [coach, loadCoachRequests]);
   // Coach emails the director a potential practice-schedule change request.
   const requestScheduleChange = useCallback(async (team, message) => {
     const msg = (message || "").trim();
@@ -2958,6 +3004,94 @@ export default function App() {
     );
   }
 
+  // Admin-only list of coach time-off requests (approve / deny).
+  function renderRequests() {
+    const fmtD = (d) => d ? new Date(d + "T00:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric",year:"numeric"}) : "—";
+    const sorted = coachRequests.slice().sort((a,b) => (a.status==="pending"?0:1)-(b.status==="pending"?0:1) || (b.created_at||"").localeCompare(a.created_at||""));
+    const pending = coachRequests.filter(r => r.status==="pending").length;
+    const actBtn = (label, color, onClick) => <button onClick={onClick} style={{padding:"5px 12px",borderRadius:6,border:"1px solid "+color,background:"transparent",color,fontWeight:700,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>{label}</button>;
+    return (
+      <div style={{maxWidth:860}}>
+        <div style={{marginBottom:14}}>
+          <h2 style={{margin:0,fontSize:18,fontWeight:800,color:C.gold}}>Coach Requests{pending?" · "+pending+" pending":""}</h2>
+          <div style={{fontSize:12,color:C.mut,marginTop:4}}>Weekend blackouts (for tournament scheduling) and practice-off requests (which need coverage from another coach).</div>
+        </div>
+        {coachRequests.length===0 ? (
+          <div style={{padding:24,textAlign:"center",color:C.mut,fontSize:13,background:C.card,borderRadius:12,border:"1px solid "+C.border}}>No requests yet.</div>
+        ) : (
+          <div style={{display:"flex",flexDirection:"column",gap:10}}>
+            {sorted.map(r => {
+              const isWknd = r.type==="weekend";
+              const stColor = r.status==="approved"?C.grn : r.status==="denied"?C.red : "#f59e0b";
+              return (
+                <div key={r.id} style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:"12px 14px"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",gap:10,flexWrap:"wrap",alignItems:"center",marginBottom:r.details?6:0}}>
+                    <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+                      <span style={{fontSize:9,fontWeight:800,color:isWknd?C.gold:C.acc,border:"1px solid "+(isWknd?C.gold:C.acc),borderRadius:5,padding:"1px 6px"}}>{isWknd?"WEEKEND":"PRACTICE"}</span>
+                      <span style={{fontSize:13,fontWeight:700,color:C.text}}>{r.coach_name||"—"}</span>
+                      <span style={{fontSize:11,color:C.mut}}>{fmtD(r.request_date)}{r.team_name?" · "+r.team_name:""}</span>
+                      {!isWknd && <span style={{fontSize:8,fontWeight:800,color:"#f59e0b",border:"1px solid #f59e0b",borderRadius:5,padding:"1px 5px"}}>NEEDS COVERAGE</span>}
+                    </div>
+                    <span style={{fontSize:10,fontWeight:800,color:stColor}}>{(r.status||"pending").toUpperCase()}</span>
+                  </div>
+                  {r.details && <div style={{fontSize:12,color:C.text,whiteSpace:"pre-wrap",lineHeight:1.4,marginBottom:8}}>{r.details}</div>}
+                  <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                    {r.status!=="approved" && actBtn("Approve", C.grn, ()=>resolveCoachRequest(r.id,"approved"))}
+                    {r.status!=="denied" && actBtn("Deny", C.red, ()=>resolveCoachRequest(r.id,"denied"))}
+                    {r.status!=="pending" && actBtn("Reset", C.mut, ()=>resolveCoachRequest(r.id,"pending"))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Coach-facing modal: request a weekend off (tournaments) or a practice off.
+  function renderRequestOffModal() {
+    if (!requestOffOpen) return null;
+    const f = reqForm;
+    const set = (patch) => setReqForm(prev => ({ ...prev, ...patch }));
+    const tab = (t, label) => (
+      <button onClick={()=>set({type:t})}
+        style={{flex:1,padding:"8px 10px",borderRadius:8,border:"1px solid "+(f.type===t?C.gold:C.border),background:f.type===t?"rgba(233,30,140,0.15)":"transparent",color:f.type===t?C.gold:C.mut,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>{label}</button>
+    );
+    const lbl = {fontSize:10,fontWeight:800,letterSpacing:0.5,textTransform:"uppercase",color:C.mut,marginBottom:5,display:"block"};
+    return (
+      <div onClick={()=>setRequestOffOpen(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:1000,display:"flex",justifyContent:"center",alignItems:"flex-start",padding:"40px 16px",overflowY:"auto"}}>
+        <div onClick={e=>e.stopPropagation()} style={{background:C.card,borderRadius:16,border:"1px solid "+C.border,maxWidth:440,width:"100%",padding:24}}>
+          <h2 style={{margin:"0 0 14px",fontSize:18,fontWeight:800,color:C.gold}}>Request Time Off</h2>
+          <div style={{display:"flex",gap:8,marginBottom:10}}>{tab("weekend","Weekend (tournaments)")}{tab("practice","Practice (coverage)")}</div>
+          <div style={{fontSize:11,color:C.mut,marginBottom:14,lineHeight:1.4}}>{f.type==="weekend" ? "Black out a weekend so you're not scheduled for tournaments that weekend." : "Request off a practice — it'll be flagged as needing coverage from another coach."}</div>
+          <div style={{marginBottom:12}}>
+            <span style={lbl}>{f.type==="weekend" ? "Weekend date" : "Practice date"}</span>
+            <input type="date" value={f.date} onChange={e=>set({date:e.target.value})} style={{...inpStyle,width:"100%",padding:"8px 10px",fontSize:13,colorScheme:"dark"}} />
+          </div>
+          {f.type==="practice" && (
+            <div style={{marginBottom:12}}>
+              <span style={lbl}>Team</span>
+              <select value={f.team} onChange={e=>set({team:e.target.value})} style={{...inpStyle,width:"100%",padding:"8px 10px",fontSize:13,cursor:"pointer"}}>
+                <option value="">Pick a team…</option>
+                {myTeamNames.map(tn => <option key={tn} value={tn}>{tn}</option>)}
+              </select>
+            </div>
+          )}
+          <div style={{marginBottom:16}}>
+            <span style={lbl}>Notes (optional)</span>
+            <textarea value={f.details} onChange={e=>set({details:e.target.value})} placeholder="Reason or any details…"
+              style={{...inpStyle,width:"100%",minHeight:60,padding:"8px 10px",fontSize:13,resize:"vertical",boxSizing:"border-box"}} />
+          </div>
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+            <button onClick={()=>setRequestOffOpen(false)} style={{padding:"9px 16px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Cancel</button>
+            <button onClick={submitCoachRequest} style={{padding:"9px 16px",borderRadius:8,border:"none",background:C.gold,color:"#000",fontWeight:800,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Submit request</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   function renderHome() {
     const norm = s => (s || "").toString().trim().toLowerCase();
     const myRoster = coachRoster.find(r => coach?.email && norm(r.email) === norm(coach.email));
@@ -2981,9 +3115,16 @@ export default function App() {
 
     return (
       <div>
-        <div style={{marginBottom:14}}>
-          <h2 style={{margin:0,fontSize:22,fontWeight:800,color:C.gold}}>Welcome, {firstName}</h2>
-          <div style={{fontSize:12,color:C.mut,marginTop:3}}>Your teams — practices, tournaments, and rosters at a glance.{myTeams.length ? "" : ""}</div>
+        <div style={{marginBottom:14,display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,flexWrap:"wrap"}}>
+          <div>
+            <h2 style={{margin:0,fontSize:22,fontWeight:800,color:C.gold}}>Welcome, {firstName}</h2>
+            <div style={{fontSize:12,color:C.mut,marginTop:3}}>Your teams — practices, tournaments, and rosters at a glance.</div>
+          </div>
+          <button onClick={()=>{ setReqForm({ type:"weekend", date:"", team:"", details:"" }); setRequestOffOpen(true); }}
+            title="Request a weekend off (tournaments) or a practice off (needs coverage)"
+            style={{padding:"8px 14px",borderRadius:8,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
+            🗓 Request time off
+          </button>
         </div>
         {renderUpdatesPanel(myTeams.map(t => t.team_name))}
         {renderQuestionsPanel()}
@@ -9091,7 +9232,7 @@ export default function App() {
                 <button key={v} style={btn(view===v)} onClick={()=>{ setView(v); setOpenMenu(null); }}>{l}</button>;
               const groups = [
                 { title:"Tryouts", items:[["dashboard","Dashboard"], ["evaluate","Evaluate"], ["favorites","My Favorites" + (favorites.length ? " (" + favorites.length + ")" : "")], ...(canViewTeams ? [["teams","Teams"]] : []), ["rankings","Rankings"], ["physical","Physical Testing"], ["tryouts","Coach Assignments"]] },
-                ...(canOps ? [{ title:"Operations", items:[["tracker","Tracker"], ["teamdir","All Teams"], ["coaches","Coaches"], ["scholarships","Scholarships"], ["practice","Practice"], ["email","Email"], ["notifications","Notifications"], ["messages", "Messages (SMS)" + (totalUnread > 0 ? " (" + totalUnread + ")" : "")]] }] : []),
+                ...(canOps ? [{ title:"Operations", items:[["tracker","Tracker"], ["teamdir","All Teams"], ["coaches","Coaches"], ["scholarships","Scholarships"], ["practice","Practice"], ["email","Email"], ["notifications","Notifications"], ["requests","Requests" + (coachRequests.filter(r=>r.status==="pending").length ? " (" + coachRequests.filter(r=>r.status==="pending").length + ")" : "")], ["messages", "Messages (SMS)" + (totalUnread > 0 ? " (" + totalUnread + ")" : "")]] }] : []),
               ];
               return <>
                 {item("home","Home")}
@@ -9230,6 +9371,7 @@ export default function App() {
         {view==="coaches"  && renderCoaches()}
         {view==="scholarships" && renderScholarships()}
         {view==="notifications" && renderNotifications()}
+        {view==="requests" && renderRequests()}
         {view==="tournaments" && renderTournaments()}
         {view==="practice" && renderPractice()}
         {view==="physical" && renderPhysicalTesting()}
@@ -9239,6 +9381,7 @@ export default function App() {
         {view==="askai" && renderAskAI()}
         </>}
       </div>
+      {renderRequestOffModal()}
       {profileId !== null && renderProfile()}
       {teamCardName && renderTeamCard()}
       {coachCardName && renderCoachCard()}

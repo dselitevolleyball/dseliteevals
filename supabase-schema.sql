@@ -240,6 +240,27 @@ CREATE POLICY practice_approvals_all_approved ON practice_approvals
   USING      (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved))
   WITH CHECK (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved));
 
+-- ───── Coach time-off requests (added 20260629) ─────────────────────
+-- See migrations/20260629_coach_requests.sql
+CREATE TABLE coach_requests (
+  id           BIGSERIAL    PRIMARY KEY,
+  coach_name   TEXT,
+  coach_email  TEXT,
+  type         TEXT         NOT NULL,                 -- 'weekend' | 'practice'
+  request_date DATE,
+  team_name    TEXT,
+  details      TEXT         NOT NULL DEFAULT '',
+  status       TEXT         NOT NULL DEFAULT 'pending',
+  created_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+  resolved_by  TEXT,
+  resolved_at  TIMESTAMPTZ
+);
+ALTER TABLE coach_requests ENABLE ROW LEVEL SECURITY;
+CREATE POLICY coach_requests_all_approved ON coach_requests
+  FOR ALL
+  USING      (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved))
+  WITH CHECK (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved));
+
 -- ───── Web Push subscriptions (added 20260629) ───────────────────────
 -- See migrations/20260629_push_subscriptions.sql
 CREATE TABLE push_subscriptions (
