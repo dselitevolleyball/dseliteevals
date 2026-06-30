@@ -1453,6 +1453,20 @@ export default function App() {
     );
     if (error) console.error("Save practice_approvals error:", error);
   }, [practiceApprovals]);
+  // Admin override: approve (or clear) a whole team's practice schedule at once
+  // from the team admin screen, on the coaches' behalf.
+  const setTeamFullApproval = useCallback(async (team, requiredCoaches, approve) => {
+    const req = (requiredCoaches || []).filter(Boolean);
+    const next = approve ? req : [];
+    const fully = approve && req.length > 0;
+    const now = fully ? new Date().toISOString() : null;
+    setPracticeApprovals(prev => ({ ...prev, [team]: { approved: fully, approved_by: next, approved_at: now } }));
+    const { error } = await supabase.from("practice_approvals").upsert(
+      { team_name: team, approved: fully, approved_by: next, approved_at: now, updated_at: new Date().toISOString() },
+      { onConflict: "team_name" }
+    );
+    if (error) console.error("Save practice_approvals error:", error);
+  }, []);
   // Director: notify all coaches to approve their practice schedule (posts an update).
   const requestPracticeApproval = useCallback(async () => {
     if (!window.confirm("Notify all coaches to review and approve their practice schedule?")) return;
@@ -5260,8 +5274,12 @@ export default function App() {
                         const required = [t.head_coach, t.assistant_coach].filter(Boolean);
                         const got = required.filter(rc => approvedBy.includes(rc)).length;
                         const ok = required.length > 0 && got === required.length;
-                        return <span title={ok ? "Both coaches approved the practice schedule" : "Practice approval: " + got + " of " + (required.length||"?") + " coaches"}
-                          style={{fontSize:10,fontWeight:800,padding:"2px 8px",borderRadius:8,background:ok?"rgba(34,197,94,0.18)":"rgba(245,158,11,0.15)",border:"1px solid "+(ok?C.grn:"#f59e0b"),color:ok?C.grn:"#f59e0b",whiteSpace:"nowrap"}}>{ok?"✓ Practice OK":"⚠ Practice "+got+"/"+(required.length||"?")}</span>;
+                        return <button onClick={(e)=>{ e.stopPropagation();
+                            const msg = ok ? "Clear the practice-schedule approval for " + t.team_name + "?"
+                              : "Approve the practice schedule for " + t.team_name + " on behalf of " + (required.join(" & ") || "the coaches") + "?";
+                            if (window.confirm(msg)) setTeamFullApproval(t.team_name, required, !ok); }}
+                          title={ok ? "Approved — click to clear" : "Click to approve this team's practice schedule (admin override)"}
+                          style={{fontSize:10,fontWeight:800,padding:"2px 8px",borderRadius:8,cursor:"pointer",fontFamily:"inherit",background:ok?"rgba(34,197,94,0.18)":"rgba(245,158,11,0.15)",border:"1px solid "+(ok?C.grn:"#f59e0b"),color:ok?C.grn:"#f59e0b",whiteSpace:"nowrap"}}>{ok?"✓ Practice OK":"⚠ Practice "+got+"/"+(required.length||"?")}</button>;
                       })()}
                     </div>
                     {tStatus === "looking" && lookingPos.length > 0 && (
