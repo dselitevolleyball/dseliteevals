@@ -694,6 +694,7 @@ export default function App() {
   const [practiceAssignments, setPracticeAssignments] = useState([]);
   const [saSessions, setSaSessions]                   = useState([]);
   const [floatingCoaches, setFloatingCoaches]         = useState([]);
+  const [coachFloats, setCoachFloats]                 = useState([]); // per (coach,day,slot,phase) floater availability
   const [snapshots, setSnapshots]                     = useState([]);
   // Fires the "save a restore point first" nudge at most once per practice session.
   const practiceEditReminded = useRef(false);
@@ -1179,6 +1180,12 @@ export default function App() {
     if (error) { console.error("Load coach_requests error:", error); return; }
     setCoachRequests(data || []);
   }, []);
+  // Per-block coach floater availability.
+  const loadCoachFloats = useCallback(async () => {
+    const { data, error } = await supabase.from("coach_floats").select("*");
+    if (error) { console.error("Load coach_floats error:", error); return; }
+    setCoachFloats(data || []);
+  }, []);
 
   // ─── Realtime sync ──────────────────────────────────────────────────
   // Subscribe to Postgres change events on the tables the eval site cares
@@ -1241,6 +1248,10 @@ export default function App() {
       .channel("realtime-coach_requests")
       .on("postgres_changes", { event: "*", schema: "public", table: "coach_requests" }, () => { loadCoachRequests(); })
       .subscribe();
+    const coachFloatsChannel = supabase
+      .channel("realtime-coach_floats")
+      .on("postgres_changes", { event: "*", schema: "public", table: "coach_floats" }, () => { loadCoachFloats(); })
+      .subscribe();
     return () => {
       supabase.removeChannel(playerChannel);
       supabase.removeChannel(coachChannel);
@@ -1252,8 +1263,9 @@ export default function App() {
       supabase.removeChannel(updatesChannel);
       supabase.removeChannel(practiceApprovalsChannel);
       supabase.removeChannel(coachRequestsChannel);
+      supabase.removeChannel(coachFloatsChannel);
     };
-  }, [isApproved, loadCoaches, loadRankings, loadTeamStatus, loadTeamTasks, loadTeamQuestions, loadTaskMeta, loadUpdates, loadPracticeApprovals, loadCoachRequests]);
+  }, [isApproved, loadCoaches, loadRankings, loadTeamStatus, loadTeamTasks, loadTeamQuestions, loadTaskMeta, loadUpdates, loadPracticeApprovals, loadCoachRequests, loadCoachFloats]);
 
   // Activity feed live updates — only subscribe while that tab is open, since
   // change_log INSERTs fire on every player write and the feed is otherwise
@@ -1348,6 +1360,7 @@ export default function App() {
   useEffect(() => { if (isApproved) { loadUpdates(); loadTeamQuestions(); } }, [isApproved, loadUpdates, loadTeamQuestions]);
   useEffect(() => { if (isApproved && (view === "home" || view === "teamdir" || view === "coaches")) loadPracticeApprovals(); }, [isApproved, view, loadPracticeApprovals]);
   useEffect(() => { if (isApproved && (view === "home" || view === "requests")) loadCoachRequests(); }, [isApproved, view, loadCoachRequests]);
+  useEffect(() => { if (isApproved && view === "practice") loadCoachFloats(); }, [isApproved, view, loadCoachFloats]);
   // Optimistically patch local state, then upsert the merged row. `merged` is
   // computed from current state synchronously (NOT inside the setState updater,
   // which React may run later) so the upsert payload is always complete.
@@ -1576,6 +1589,21 @@ export default function App() {
       if (error) console.error("Add floating error:", error);
     }
   }, [floatingCoaches]);
+  // Toggle a coach as a floater for one specific time block (day/slot/phase).
+  const toggleCoachFloat = useCallback(async (coach, day, slot, phase) => {
+    const c = (coach || "").trim();
+    if (!c) return;
+    const ex = coachFloats.find(f => f.coach_name === c && f.day === day && f.slot === slot && (f.phase || "season") === phase);
+    if (ex) {
+      setCoachFloats(prev => prev.filter(f => f !== ex));
+      const { error } = await supabase.from("coach_floats").delete().match({ coach_name: c, day, slot, phase });
+      if (error) console.error("Remove coach_float error:", error);
+    } else {
+      setCoachFloats(prev => [...prev, { coach_name: c, day, slot, phase }]);
+      const { error } = await supabase.from("coach_floats").insert({ coach_name: c, day, slot, phase });
+      if (error) console.error("Add coach_float error:", error);
+    }
+  }, [coachFloats]);
   // Coach emails the director a potential practice-schedule change request.
   const requestScheduleChange = useCallback(async (team, message) => {
     const msg = (message || "").trim();
@@ -5938,6 +5966,7 @@ export default function App() {
         });
       });
       const floatLow = new Set((floatingCoaches || []).map(x => (x || "").trim().toLowerCase()));
+      const floatSet = new Set(coachFloats.filter(f => (f.phase || "season") === schedulePhase).map(f => f.coach_name + "|" + f.day + "|" + f.slot));
       const coaches = Object.keys(coachMap).sort((a,b) => a.localeCompare(b))
         .filter(cn => !practiceCoachFilter || cn === practiceCoachFilter);
       return (
@@ -5972,12 +6001,21 @@ export default function App() {
                       {VISIBLE_DAYS.map(day => SLOTS[day].map(s => {
                         const teams = m[day+"|"+s.label] || [];
                         const dbl = teams.length > 1;
+                        const isFloat = floatSet.has(cn + "|" + day + "|" + s.label);
+                        const empty = teams.length === 0;
                         return (
-                          <td key={day+"|"+s.label} style={{...tdS,padding:"4px"}}>
-                            {teams.length === 0 ? <span style={{color:C.border}}>·</span> : (
+                          <td key={day+"|"+s.label}
+                            onClick={empty ? () => toggleCoachFloat(cn, day, s.label, schedulePhase) : undefined}
+                            title={empty ? (isFloat ? "Floating this block — click to remove" : "Click to make " + cn + " a floater for " + day + " " + s.label) : ""}
+                            style={{...tdS,padding:"4px",cursor: empty ? "pointer" : "default", background: (isFloat && empty) ? "rgba(6,182,212,0.14)" : undefined}}>
+                            {!empty ? (
                               <div style={{display:"flex",flexDirection:"column",gap:2,alignItems:"center"}}>
                                 {teams.map((tn,i) => <span key={i} title={dbl?"Double-booked at this time":tn} style={{fontSize:9,fontWeight:700,padding:"2px 5px",borderRadius:5,background:dbl?"rgba(239,68,68,0.18)":"rgba(34,197,94,0.15)",color:dbl?C.red:C.grn,whiteSpace:"nowrap",maxWidth:90,overflow:"hidden",textOverflow:"ellipsis"}}>{tn}</span>)}
                               </div>
+                            ) : isFloat ? (
+                              <span title="Floating this block" style={{fontSize:15,color:"#06b6d4"}}>☁</span>
+                            ) : (
+                              <span style={{color:C.border}}>·</span>
                             )}
                           </td>
                         );

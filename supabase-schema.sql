@@ -240,6 +240,23 @@ CREATE POLICY practice_approvals_all_approved ON practice_approvals
   USING      (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved))
   WITH CHECK (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved));
 
+-- ───── Per-block coach floater availability (added 20260629) ─────────
+-- See migrations/20260629_coach_floats.sql
+CREATE TABLE coach_floats (
+  id          BIGSERIAL    PRIMARY KEY,
+  coach_name  TEXT         NOT NULL,
+  day         TEXT         NOT NULL,
+  slot        TEXT         NOT NULL,
+  phase       TEXT         NOT NULL DEFAULT 'season',
+  created_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+  UNIQUE (coach_name, day, slot, phase)
+);
+ALTER TABLE coach_floats ENABLE ROW LEVEL SECURITY;
+CREATE POLICY coach_floats_all_approved ON coach_floats
+  FOR ALL
+  USING      (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved))
+  WITH CHECK (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved));
+
 -- ───── Coach time-off requests (added 20260629) ─────────────────────
 -- See migrations/20260629_coach_requests.sql
 CREATE TABLE coach_requests (
