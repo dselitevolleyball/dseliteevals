@@ -720,6 +720,7 @@ export default function App() {
   useEffect(() => {
     if (typeof localStorage !== "undefined") localStorage.setItem("dse_practice_phase", schedulePhase);
   }, [schedulePhase]);
+  const [practiceViewMode, setPracticeViewMode]       = useState("team"); // "team" | "coach"
   const [tryouts, setTryouts]                         = useState([]);
   const [coachRoster, setCoachRoster]                 = useState([]);
   // SMS state
@@ -5923,6 +5924,60 @@ export default function App() {
     // the seed migration that pre-date the phase column default to 'season'.
     const phaseAssignments = practiceAssignments.filter(a => (a.phase || "fall1") === schedulePhase);
 
+    // Coach-centric view of this phase: each coach with their practices + ☁ floating toggle.
+    const renderCoachScheduleView = () => {
+      const teamByName = {}; practiceTeams.forEach(t => { teamByName[t.team_name] = t; });
+      const coachMap = {};
+      phaseAssignments.forEach(a => {
+        const t = teamByName[a.team_name]; if (!t) return;
+        [t.head_coach, t.assistant_coach].filter(Boolean).forEach(cn => {
+          (coachMap[cn] = coachMap[cn] || []).push({ team: a.team_name, day: a.day, slot: a.slot });
+        });
+      });
+      const dayOrd = { Sun:0, Mon:1, Tue:2, Wed:3, Thu:4, Fri:5, Sat:6 };
+      const floatLow = new Set((floatingCoaches || []).map(x => (x || "").trim().toLowerCase()));
+      const coaches = Object.keys(coachMap).sort((a,b) => a.localeCompare(b))
+        .filter(cn => !practiceCoachFilter || cn === practiceCoachFilter);
+      const cth = {padding:"8px 10px",textAlign:"left",fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut,borderBottom:"1px solid "+C.border,background:C.card,position:"sticky",top:0,whiteSpace:"nowrap"};
+      return (
+        <div style={{background:C.card,borderRadius:12,border:"1px solid "+C.border,overflow:"hidden"}}>
+          <div style={{overflow:"auto",maxHeight:"calc(100vh - 280px)"}}>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+              <thead><tr><th style={cth}>Coach</th><th style={{...cth,textAlign:"center"}} title="Floating coach — covers gaps">☁ Float</th><th style={cth}>Practices this phase</th><th style={{...cth,textAlign:"center"}}>#</th></tr></thead>
+              <tbody>
+                {coaches.map(cn => {
+                  const list = coachMap[cn].slice().sort((a,b) => (dayOrd[a.day]??9)-(dayOrd[b.day]??9) || (a.slot||"").localeCompare(b.slot||""));
+                  const slotCount = {}; list.forEach(p => { const k=p.day+"|"+p.slot; slotCount[k]=(slotCount[k]||0)+1; });
+                  const isFloat = floatLow.has(cn.trim().toLowerCase());
+                  return (
+                    <tr key={cn} style={{borderBottom:"1px solid "+C.border}}>
+                      <td style={{padding:"8px 10px",fontWeight:700,color:C.text,whiteSpace:"nowrap"}}>{cn}</td>
+                      <td style={{padding:"8px 10px",textAlign:"center"}}>
+                        <label title={isFloat?"Floating — covers gaps":"Mark as floating"} style={{cursor:"pointer",display:"inline-flex",alignItems:"center"}}>
+                          <input type="checkbox" checked={isFloat} onChange={()=>toggleFloatingCoach(cn)} style={{width:15,height:15,accentColor:"#06b6d4",cursor:"pointer"}} />
+                          <span style={{fontSize:16,marginLeft:5,color:isFloat?"#06b6d4":C.border}}>☁</span>
+                        </label>
+                      </td>
+                      <td style={{padding:"8px 10px"}}>
+                        <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                          {list.length === 0 && <span style={{color:C.mut,fontStyle:"italic"}}>—</span>}
+                          {list.map((p,i) => { const dbl = slotCount[p.day+"|"+p.slot] > 1;
+                            return <span key={i} title={dbl?"Double-booked at this time":""} style={{fontSize:11,padding:"3px 8px",borderRadius:8,background:C.bg,border:"1px solid "+(dbl?C.red:C.border),color:dbl?C.red:C.text}}>{p.day} {p.slot} · {p.team}</span>;
+                          })}
+                        </div>
+                      </td>
+                      <td style={{padding:"8px 10px",textAlign:"center",color:C.mut}}>{list.length}</td>
+                    </tr>
+                  );
+                })}
+                {coaches.length === 0 && <tr><td colSpan={4} style={{padding:20,textAlign:"center",color:C.mut}}>No coach practices in this phase.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    };
+
     // Index assignments by team and by slot for O(1) lookup.
     const byTeamSlot = new Map();
     const bySlot = new Map();
@@ -6364,6 +6419,13 @@ export default function App() {
                 );
               })}
             </div>
+            <div role="tablist" aria-label="Schedule view" style={{display:"inline-flex",border:"1px solid "+C.border,borderRadius:8,overflow:"hidden"}}>
+              {[["team","By Team"],["coach","By Coach"]].map(([m,label]) => {
+                const on = practiceViewMode === m;
+                return <button key={m} onClick={()=>setPracticeViewMode(m)}
+                  style={{padding:"6px 14px",border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:800,letterSpacing:0.5,textTransform:"uppercase",background:on?C.acc:"transparent",color:on?"#000":C.mut}}>{label}</button>;
+              })}
+            </div>
             <span style={{fontSize:11,color:C.mut,fontWeight:600,letterSpacing:0.5,textTransform:"uppercase"}}>Coach:</span>
             <select value={practiceCoachFilter} onChange={e=>setPracticeCoachFilter(e.target.value)}
               title="Show only teams where this coach is head or assistant"
@@ -6466,6 +6528,8 @@ export default function App() {
             </div>
           </details>
         )}
+        {practiceViewMode === "coach" && renderCoachScheduleView()}
+        {practiceViewMode === "team" && (<>
         {/* Grid */}
         <div style={{background:C.card,borderRadius:12,border:"1px solid "+C.border,overflow:"hidden"}}>
           <div style={{overflow:"auto",maxHeight:"calc(100vh - 280px)"}}>
@@ -6602,6 +6666,7 @@ export default function App() {
             ? <>Click a Sunday cell to cycle it: empty → <b style={{color:C.grn}}>green ✓ Practice</b> → <b style={{color:"#f59e0b"}}>orange dumbbell = Speed &amp; Agility</b> → empty. Each team's hour is one or the other. <b style={{color:C.red}}>Red</b> = court overflow or coach double-booked; <b style={{color:"#f59e0b"}}>amber ✓</b> = U11/U12 practicing 7-9pm.</>
             : <><b style={{color:C.grn}}>Green ✓</b> = court (up to {schedulePhase==="summer"?5:6} teams per hour). Click to toggle. <b style={{color:C.red}}>Red</b> means court overflow or coach double-booked; <b style={{color:"#f59e0b"}}>amber</b> means U11/U12 in 7-9pm.</>}
         </div>
+        </>)}
       </div>
     );
   }
