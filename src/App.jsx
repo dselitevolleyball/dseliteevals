@@ -1604,15 +1604,6 @@ export default function App() {
       if (error) console.error("Add coach_float error:", error);
     }
   }, [coachFloats]);
-  // Add a coach to the chart (coach roster) — e.g. a floater not on any team.
-  const addCoachToChart = useCallback(async (name) => {
-    const n = (name || "").trim();
-    if (!n) return;
-    const parts = n.split(/\s+/);
-    const { error } = await supabase.from("coach_roster").insert({ first_name: parts[0], last_name: parts.slice(1).join(" ") });
-    if (error) { window.alert("Add coach failed: " + error.message); return; }
-    await loadCoachRoster();
-  }, [loadCoachRoster]);
   // Coach emails the director a potential practice-schedule change request.
   const requestScheduleChange = useCallback(async (team, message) => {
     const msg = (message || "").trim();
@@ -1823,6 +1814,15 @@ export default function App() {
     if (error) console.error("Load coach_roster error:", error);
     setCoachRoster(data || []);
   }, []);
+  // Add a coach to the chart (coach roster) — e.g. a floater not on any team.
+  const addCoachToChart = useCallback(async (name) => {
+    const n = (name || "").trim();
+    if (!n) return;
+    const parts = n.split(/\s+/);
+    const { error } = await supabase.from("coach_roster").insert({ first_name: parts[0], last_name: parts.slice(1).join(" ") });
+    if (error) { window.alert("Add coach failed: " + error.message); return; }
+    await loadCoachRoster();
+  }, [loadCoachRoster]);
   useEffect(() => {
     // Roster also drives the Tryout coach picker / Text Coaches lookup,
     // so make sure it's loaded whenever either tab opens.
