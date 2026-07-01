@@ -6475,8 +6475,8 @@ export default function App() {
         const floaters = floatersFor(label);
         if (!cov) {
           return (
-            <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-              <span style={{fontSize:9,fontWeight:800,color:C.mut,textTransform:"uppercase",width:34}}>{role}</span>
+            <div style={{display:"flex",alignItems:"center",gap:5,flexWrap:"wrap"}}>
+              <span style={{fontSize:9,fontWeight:800,color:C.mut,textTransform:"uppercase",width:30}}>{role}</span>
               <span style={{fontSize:12,fontWeight:600,color:C.text}}>{coachName}</span>
               <button onClick={()=>setCoverage(dailyDate, team, label, schedulePhase, coachName, null)}
                 title="Mark this coach out for this date and assign a sub"
@@ -6485,10 +6485,9 @@ export default function App() {
           );
         }
         return (
-          <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-            <span style={{fontSize:9,fontWeight:800,color:C.mut,textTransform:"uppercase",width:34}}>{role}</span>
+          <div style={{display:"flex",alignItems:"center",gap:5,flexWrap:"wrap"}}>
+            <span style={{fontSize:9,fontWeight:800,color:C.mut,textTransform:"uppercase",width:30}}>{role}</span>
             <span style={{fontSize:12,fontWeight:600,color:C.red,textDecoration:"line-through"}}>{coachName}</span>
-            <span style={{fontSize:11,color:C.mut}}>→ sub:</span>
             <select value={cov.sub_name || ""} onChange={e=>{
                 const v = e.target.value;
                 if (v === "__other") { const n = window.prompt("Sub's name:", cov.sub_name || ""); if (n != null) setCoverage(dailyDate, team, label, schedulePhase, coachName, n.trim()); }
@@ -6522,42 +6521,39 @@ export default function App() {
               No practices scheduled on {weekday || "this day"} in the {schedulePhase} phase. Pick another date or switch phase above.
             </div>
           ) : (
-            <div style={{display:"flex",flexDirection:"column",gap:16}}>
+            <div style={{display:"flex",gap:12,overflowX:"auto",paddingBottom:8,alignItems:"flex-start"}}>
               {daySlots.map(s => {
                 const teams = teamsFor(s.label);
                 const floaters = floatersFor(s.label);
                 return (
-                  <div key={s.label} style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,overflow:"hidden"}}>
-                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,flexWrap:"wrap",padding:"10px 14px",borderBottom:"1px solid "+C.border,background:C.bg}}>
-                      <span style={{fontSize:14,fontWeight:800,color:C.text}}>{weekday} {s.label} <span style={{fontSize:11,color:C.mut,fontWeight:600}}>· {teams.length} team{teams.length===1?"":"s"}</span></span>
-                      <span style={{fontSize:11,color:floaters.length?"#06b6d4":C.mut,fontWeight:700}}>
-                        {floaters.length ? "☁ Floating: " + floaters.join(", ") : "☁ No floater set for this block"}
-                      </span>
+                  <div key={s.label} style={{flex:"0 0 280px",width:280,background:C.card,border:"1px solid "+C.border,borderRadius:12,overflow:"hidden"}}>
+                    <div style={{padding:"8px 12px",borderBottom:"1px solid "+C.border,background:C.bg}}>
+                      <div style={{fontSize:13,fontWeight:800,color:C.text}}>{weekday} {s.label} <span style={{fontSize:10,color:C.mut,fontWeight:600}}>· {teams.length}</span></div>
+                      <div style={{fontSize:10,color:floaters.length?"#06b6d4":C.mut,fontWeight:700,marginTop:2}}>
+                        {floaters.length ? "☁ " + floaters.join(", ") : "☁ no floater"}
+                      </div>
                     </div>
                     {teams.length === 0 ? (
-                      <div style={{padding:16,color:C.mut,fontSize:12}}>No teams this block.</div>
+                      <div style={{padding:14,color:C.mut,fontSize:11}}>No teams this block.</div>
                     ) : (
                       <div style={{display:"flex",flexDirection:"column"}}>
                         {teams.map(a => {
                           const t = teamByName2.get(a.team_name) || {};
                           const coaches = [["Head",t.head_coach],["Asst",t.assistant_coach]].filter(([,c]) => c);
                           return (
-                            <div key={a.team_name} style={{display:"flex",gap:12,alignItems:"flex-start",padding:"10px 14px",borderBottom:"1px solid "+C.border,flexWrap:"wrap"}}>
-                              <div style={{display:"flex",alignItems:"center",gap:6}}>
-                                <span style={{fontSize:9,fontWeight:800,color:C.mut,textTransform:"uppercase"}}>Court</span>
+                            <div key={a.team_name} style={{padding:"8px 12px",borderBottom:"1px solid "+C.border}}>
+                              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:5}}>
                                 <select value={a.court ?? ""} onChange={e=>setTeamCourt(a.team_name, weekday, s.label, schedulePhase, e.target.value)}
-                                  style={{...inpStyle,padding:"4px 6px",fontSize:13,fontWeight:800,color:a.court?C.gold:C.mut,minWidth:52}}>
-                                  <option value="">—</option>
-                                  {[1,2,3,4,5,6].map(n => <option key={n} value={n}>{n}</option>)}
+                                  title="Court" style={{...inpStyle,padding:"2px 4px",fontSize:12,fontWeight:800,color:a.court?C.gold:C.mut,width:46}}>
+                                  <option value="">C—</option>
+                                  {[1,2,3,4,5,6].map(n => <option key={n} value={n}>{"C"+n}</option>)}
                                 </select>
+                                <span onClick={()=>setTeamCardName(a.team_name)} style={{fontSize:13,fontWeight:800,color:C.gold,cursor:"pointer"}}>{a.team_name}</span>
                               </div>
-                              <div style={{flex:1,minWidth:220}}>
-                                <div onClick={()=>setTeamCardName(a.team_name)} style={{fontSize:14,fontWeight:800,color:C.gold,cursor:"pointer",marginBottom:4}}>{a.team_name}</div>
-                                <div style={{display:"flex",flexDirection:"column",gap:4}}>
-                                  {coaches.length === 0
-                                    ? <span style={{fontSize:12,color:C.mut}}>No coaches assigned</span>
-                                    : coaches.map(([role,c]) => <div key={role}>{coachCell(a.team_name, s.label, c, role)}</div>)}
-                                </div>
+                              <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                                {coaches.length === 0
+                                  ? <span style={{fontSize:11,color:C.mut}}>No coaches assigned</span>
+                                  : coaches.map(([role,c]) => <div key={role}>{coachCell(a.team_name, s.label, c, role)}</div>)}
                               </div>
                             </div>
                           );
