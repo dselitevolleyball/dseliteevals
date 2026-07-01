@@ -739,6 +739,7 @@ export default function App() {
   const [emailGroupScope, setEmailGroupScope]         = useState({});     // { [div]: "all"|"tryout"|"eval"|"none" } — default "all"
   const [emailTeam, setEmailTeam]                     = useState("");    // "" any | "__has" | "__none"
   const [emailTeams, setEmailTeams]                   = useState(() => new Set()); // specific teams (multi-select); overrides emailTeam when non-empty
+  const [emailBuckets, setEmailBuckets]               = useState(() => new Set()); // status buckets: unassigned | declined | not_invited | opted_out
   const [emailStatus, setEmailStatus]                 = useState("");    // "" any | a STATUS_OPTS value
   const [emailSubject, setEmailSubject]               = useState("");
   const [emailBody, setEmailBody]                     = useState("");
@@ -7632,9 +7633,24 @@ export default function App() {
       pool.push(...applySubset(divPlayersOf(div), scope));
     });
     // Cross-cutting filters.
-    if (emailTeams.size > 0)         pool = pool.filter(p => emailTeams.has(p.team_assignment));
-    else if (emailTeam === "__has")  pool = pool.filter(p => p.team_assignment);
-    else if (emailTeam === "__none") pool = pool.filter(p => !p.team_assignment);
+    // Status buckets mirror the Tracker's Unassigned / Declined / Not Invited /
+    // Opted Out columns. Teams + buckets combine as a UNION: a player is in scope
+    // if they're on a selected team OR in a selected status group.
+    const TERMINAL = ["declined","not_invited","opted_out"];
+    const bucketPred = {
+      unassigned:  p => !p.team_assignment && !TERMINAL.includes(p.offer_status || ""),
+      declined:    p => (p.offer_status || "") === "declined",
+      not_invited: p => (p.offer_status || "") === "not_invited",
+      opted_out:   p => (p.offer_status || "") === "opted_out",
+    };
+    const teamSel = emailTeams.size > 0, bucketSel = emailBuckets.size > 0;
+    if (teamSel || bucketSel) {
+      pool = pool.filter(p =>
+        (teamSel && emailTeams.has(p.team_assignment)) ||
+        (bucketSel && [...emailBuckets].some(b => bucketPred[b] && bucketPred[b](p)))
+      );
+    } else if (emailTeam === "__has")  pool = pool.filter(p => p.team_assignment);
+    else if (emailTeam === "__none")   pool = pool.filter(p => !p.team_assignment);
     // Match the *effective* status: when a player has an offer_status (the
     // Teams-board buckets — declined, not_invited, offered, etc.), derive the
     // status from it so the filter still works when the plain `status` column
@@ -7846,8 +7862,8 @@ export default function App() {
         </div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",marginBottom:10}}>
           <label style={{display:"flex",alignItems:"center",gap:5,fontSize:11,fontWeight:700,color:C.mut}}>Team
-            <select value={emailTeam} disabled={emailTeams.size>0} title={emailTeams.size>0?"Clear the selected teams below to use this":undefined}
-              onChange={e=>setEmailTeam(e.target.value)} style={{...inpStyle,padding:"6px 10px",fontSize:12,cursor:emailTeams.size>0?"not-allowed":"pointer",opacity:emailTeams.size>0?0.5:1,color:emailTeam?C.gold:C.text}}>
+            <select value={emailTeam} disabled={emailTeams.size>0||emailBuckets.size>0} title={(emailTeams.size>0||emailBuckets.size>0)?"Clear the selected teams / status groups below to use this":undefined}
+              onChange={e=>setEmailTeam(e.target.value)} style={{...inpStyle,padding:"6px 10px",fontSize:12,cursor:(emailTeams.size>0||emailBuckets.size>0)?"not-allowed":"pointer",opacity:(emailTeams.size>0||emailBuckets.size>0)?0.5:1,color:emailTeam?C.gold:C.text}}>
               <option value="">Any</option>
               <option value="__has">Has a team</option>
               <option value="__none">No team yet</option>
@@ -7859,8 +7875,28 @@ export default function App() {
               {STATUS_OPTS.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
           </label>
-          {(emailTeam || emailTeams.size > 0 || emailStatus || Object.keys(emailGroupScope).length > 0 || emailExcluded.size > 0) && (
-            <button onClick={()=>{ setEmailGroupScope({}); setEmailTeam(""); setEmailTeams(new Set()); setEmailStatus(""); setEmailExcluded(new Set()); }} style={{padding:"5px 10px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Clear filters</button>
+          {(emailTeam || emailTeams.size > 0 || emailBuckets.size > 0 || emailStatus || Object.keys(emailGroupScope).length > 0 || emailExcluded.size > 0) && (
+            <button onClick={()=>{ setEmailGroupScope({}); setEmailTeam(""); setEmailTeams(new Set()); setEmailBuckets(new Set()); setEmailStatus(""); setEmailExcluded(new Set()); }} style={{padding:"5px 10px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Clear filters</button>
+          )}
+        </div>
+        {/* Status buckets — email everyone in Unassigned / Declined / Not Invited / Opted Out. */}
+        <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center",marginBottom:12}}>
+          <span style={{fontSize:11,fontWeight:700,color:C.mut}}>Status group:</span>
+          {[["unassigned","Unassigned"],["declined","Declined Offer"],["not_invited","Not Invited"],["opted_out","Opted Out"]].map(([key,label]) => {
+            const on = emailBuckets.has(key);
+            return (
+              <button key={key} onClick={()=>setEmailBuckets(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n; })}
+                title={on ? "Emailing "+label+" — click to remove" : "Add "+label+" to this send"}
+                style={{padding:"4px 12px",borderRadius:16,border:"1px solid "+(on?C.acc:C.border),background:on?"rgba(255,105,180,0.12)":"transparent",color:on?C.acc:C.mut,cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:700}}>
+                {label}
+              </button>
+            );
+          })}
+          {emailBuckets.size > 0 && (
+            <button onClick={()=>setEmailBuckets(new Set())} title="Clear selected status groups"
+              style={{padding:"4px 10px",borderRadius:16,border:"1px solid "+C.border,background:"transparent",color:C.mut,cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:700}}>
+              Clear ({emailBuckets.size})
+            </button>
           )}
         </div>
         {/* Multi-select specific teams — email one or several teams at once. */}
