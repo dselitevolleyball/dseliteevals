@@ -746,11 +746,10 @@ export default function App() {
   const [emailShowMissing, setEmailShowMissing]       = useState(false);
   const [emailShowExcluded, setEmailShowExcluded]     = useState(false);
   const [emailExcluded, setEmailExcluded]             = useState(() => new Set()); // player ids opted out of the current send
-  const [emailTemplates, setEmailTemplates]           = useState(() => {
-    try { return JSON.parse((typeof localStorage !== "undefined" && localStorage.getItem("dse_email_templates")) || "[]"); }
-    catch { return []; }
-  });
+  const [emailTemplates, setEmailTemplates]           = useState([]); // shared across devices (email_templates table)
   const [emailTemplateSel, setEmailTemplateSel]       = useState("");
+  const [emailLog, setEmailLog]                       = useState([]); // history of sends (email_log table)
+  const [emailHistoryOpen, setEmailHistoryOpen]       = useState(false);
   const [teamsList, setTeamsList]                           = useState([]);
   const [teamStatus, setTeamStatus]                         = useState({}); // { [team_name]: { status, looking_positions } }
   const [teamTasks, setTeamTasks]                           = useState({}); // { `${team}|${item}`: { status, notes } }
@@ -1865,6 +1864,28 @@ export default function App() {
   // The coach card edits coach_roster, so make sure it's loaded when one opens.
   useEffect(() => { if (isApproved && coachCardName) loadCoachRoster(); }, [isApproved, coachCardName, loadCoachRoster]);
 
+  // Email templates + sent history live in Supabase so they sync across devices.
+  const loadEmailTemplates = useCallback(async () => {
+    const { data, error } = await supabase.from("email_templates").select("*").order("name");
+    if (error) { console.error("Load email_templates error:", error); return; }
+    setEmailTemplates(data || []);
+  }, []);
+  const loadEmailLog = useCallback(async () => {
+    const { data, error } = await supabase.from("email_log").select("*").order("created_at", { ascending: false }).limit(200);
+    if (error) { console.error("Load email_log error:", error); return; }
+    setEmailLog(data || []);
+  }, []);
+  useEffect(() => { if (isApproved && view === "email") { loadEmailTemplates(); loadEmailLog(); } }, [isApproved, view, loadEmailTemplates, loadEmailLog]);
+  useEffect(() => {
+    if (!isApproved) return;
+    const ch = supabase
+      .channel("realtime-email")
+      .on("postgres_changes", { event: "*", schema: "public", table: "email_templates" }, () => { loadEmailTemplates(); })
+      .on("postgres_changes", { event: "*", schema: "public", table: "email_log" }, () => { loadEmailLog(); })
+      .subscribe();
+    return () => supabase.removeChannel(ch);
+  }, [isApproved, loadEmailTemplates, loadEmailLog]);
+
   // ─── Pull-everything refresh ──────────────────────────────────────────
   // Realtime keeps screens live while the app is open and connected, but a
   // backgrounded PWA / sleeping tab drops the socket and misses events. So we
@@ -1885,11 +1906,13 @@ export default function App() {
         view === "practice" ? loadSnapshots() : null,
         view === "tryouts" ? loadTryouts() : null,
         view === "messages" ? loadSmsThreads() : null,
+        view === "email" ? loadEmailTemplates() : null,
+        view === "email" ? loadEmailLog() : null,
       ].filter(Boolean));
     } finally {
       setRefreshing(false);
     }
-  }, [isApproved, view, loadPlayers, loadCoaches, loadRankings, loadFavorites, loadTeamStatus, loadTeamTasks, loadTeamQuestions, loadTaskMeta, loadUpdates, loadPracticeApprovals, loadCoachRequests, loadCoachFloats, loadTeamsList, loadBlackouts, loadCoachRoster, loadPractice, loadActivity, loadTournaments, loadSnapshots, loadTryouts, loadSmsThreads]);
+  }, [isApproved, view, loadPlayers, loadCoaches, loadRankings, loadFavorites, loadTeamStatus, loadTeamTasks, loadTeamQuestions, loadTaskMeta, loadUpdates, loadPracticeApprovals, loadCoachRequests, loadCoachFloats, loadTeamsList, loadBlackouts, loadCoachRoster, loadPractice, loadActivity, loadTournaments, loadSnapshots, loadTryouts, loadSmsThreads, loadEmailTemplates, loadEmailLog]);
   useEffect(() => {
     if (!isApproved) return;
     let t = null;
@@ -7417,6 +7440,21 @@ export default function App() {
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Send failed");
         setEmailResult({ ...data, test: !!isTest });
+        // Log real sends to the shared history (test sends are not recorded).
+        if (!isTest) {
+          const { error: logErr } = await supabase.from("email_log").insert({
+            subject: emailSubject.trim(),
+            body: emailBody.trim(),
+            recipient_count: to.length,
+            recipients: to,
+            sent_count: (data && typeof data.sent === "number") ? data.sent : to.length,
+            failed_count: (data && Array.isArray(data.failed)) ? data.failed.length : 0,
+            sent_by: coach?.display_name || "",
+            sent_by_email: coach?.email || "",
+          });
+          if (logErr) console.error("email_log insert error:", logErr);
+          else loadEmailLog();
+        }
       } catch (e) { setEmailErr(e.message || "Something went wrong."); }
       finally { setEmailSending(false); }
     };
@@ -7439,29 +7477,28 @@ export default function App() {
     };
     const sendTest = () => postEmail([TEST_EMAIL], true);
 
-    // Templates (saved in this browser).
-    const persistTemplates = (list) => {
-      setEmailTemplates(list);
-      try { localStorage.setItem("dse_email_templates", JSON.stringify(list)); } catch {}
-    };
+    // Templates live in Supabase (email_templates) so they sync across devices.
     const loadTemplate = (name) => {
       setEmailTemplateSel(name);
       const t = emailTemplates.find(x => x.name === name);
       if (t) { setEmailSubject(t.subject || ""); setEmailBody(t.body || ""); }
     };
-    const saveTemplate = () => {
+    const saveTemplate = async () => {
       const name = (window.prompt("Save this email as a template named:", emailTemplateSel || emailSubject.trim()) || "").trim();
       if (!name) return;
-      const next = [...emailTemplates.filter(x => x.name !== name), { name, subject: emailSubject, body: emailBody }]
-        .sort((a, b) => a.name.localeCompare(b.name));
-      persistTemplates(next);
+      const { error } = await supabase.from("email_templates")
+        .upsert({ name, subject: emailSubject, body: emailBody, updated_at: new Date().toISOString() });
+      if (error) { window.alert("Save failed: " + error.message); return; }
       setEmailTemplateSel(name);
+      loadEmailTemplates();
     };
-    const deleteTemplate = () => {
+    const deleteTemplate = async () => {
       if (!emailTemplateSel) return;
       if (!window.confirm("Delete template “" + emailTemplateSel + "”?")) return;
-      persistTemplates(emailTemplates.filter(x => x.name !== emailTemplateSel));
+      const { error } = await supabase.from("email_templates").delete().eq("name", emailTemplateSel);
+      if (error) { window.alert("Delete failed: " + error.message); return; }
       setEmailTemplateSel("");
+      loadEmailTemplates();
     };
 
     // ── Quick-insert helpers: drop player names / coaches / practice times
@@ -7512,6 +7549,43 @@ export default function App() {
           <h2 style={{margin:0,fontSize:18,fontWeight:800,color:C.gold}}>Email parents</h2>
           <div style={{fontSize:12,color:C.mut,marginTop:4}}>Sends an individual email to each parent (they never see each other) from the DS Elite address. Replies come to your inbox. Scope follows the age-group chips above.</div>
         </div>
+
+        {/* Sent history — every real send is logged (shared across devices). */}
+        <details open={emailHistoryOpen} onToggle={e=>setEmailHistoryOpen(e.target.open)}
+          style={{marginBottom:12,background:C.card,border:"1px solid "+C.border,borderRadius:10,padding:"8px 12px"}}>
+          <summary style={{cursor:"pointer",fontSize:12,fontWeight:800,color:C.gold,letterSpacing:0.3}}>
+            Sent history{emailLog.length ? " (" + emailLog.length + ")" : ""}
+          </summary>
+          <div style={{marginTop:10}}>
+            {emailLog.length === 0 ? (
+              <div style={{fontSize:12,color:C.mut,padding:"4px 2px"}}>No emails sent yet. Sends will be logged here for everyone.</div>
+            ) : (
+              <div style={{display:"flex",flexDirection:"column",gap:8,maxHeight:320,overflowY:"auto"}}>
+                {emailLog.map(e => {
+                  const when = e.created_at ? new Date(e.created_at).toLocaleString(undefined,{weekday:"short",month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}) : "";
+                  const failed = e.failed_count || 0;
+                  const preview = (e.body || "").length > 140 ? (e.body||"").slice(0,140) + "…" : (e.body || "");
+                  return (
+                    <button key={e.id} onClick={()=>{ setEmailSubject(e.subject||""); setEmailBody(e.body||""); }}
+                      title="Click to load this subject + message back into the composer"
+                      style={{textAlign:"left",background:C.bg,border:"1px solid "+C.border,borderRadius:8,padding:"8px 10px",cursor:"pointer",fontFamily:"inherit"}}>
+                      <div style={{display:"flex",justifyContent:"space-between",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+                        <span style={{fontSize:13,fontWeight:700,color:C.text}}>{e.subject || "(no subject)"}</span>
+                        <span style={{fontSize:10,color:C.mut}}>{when}</span>
+                      </div>
+                      <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center",margin:"3px 0"}}>
+                        <span style={{fontSize:9,fontWeight:800,color:C.grn,border:"1px solid "+C.grn,borderRadius:5,padding:"1px 6px"}}>{(e.sent_count ?? e.recipient_count) || 0} sent</span>
+                        {failed > 0 && <span style={{fontSize:9,fontWeight:800,color:C.red,border:"1px solid "+C.red,borderRadius:5,padding:"1px 6px"}}>{failed} failed</span>}
+                        {e.sent_by && <span style={{fontSize:10,color:C.mut}}>by {e.sent_by}</span>}
+                      </div>
+                      {preview && <div style={{fontSize:11,color:C.mut,whiteSpace:"pre-wrap",lineHeight:1.4}}>{preview}</div>}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </details>
 
         {/* Per-age-group subset selectors */}
         <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:10}}>

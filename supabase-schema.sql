@@ -278,6 +278,40 @@ CREATE POLICY coach_requests_all_approved ON coach_requests
   USING      (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved))
   WITH CHECK (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved));
 
+-- ───── Email templates + sent history (added 20260701) ───────────────
+-- See migrations/20260701_email_templates_log.sql. Templates moved off
+-- localStorage into the DB so they sync across devices; email_log records
+-- every real send for a shared history in the Email dashboard.
+CREATE TABLE email_templates (
+  name       TEXT         PRIMARY KEY,
+  subject    TEXT         NOT NULL DEFAULT '',
+  body       TEXT         NOT NULL DEFAULT '',
+  updated_at TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+ALTER TABLE email_templates ENABLE ROW LEVEL SECURITY;
+CREATE POLICY email_templates_all_approved ON email_templates
+  FOR ALL
+  USING      (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved))
+  WITH CHECK (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved));
+
+CREATE TABLE email_log (
+  id              BIGSERIAL    PRIMARY KEY,
+  subject         TEXT         NOT NULL DEFAULT '',
+  body            TEXT         NOT NULL DEFAULT '',
+  recipient_count INTEGER      NOT NULL DEFAULT 0,
+  recipients      TEXT[]       NOT NULL DEFAULT '{}',
+  sent_count      INTEGER,
+  failed_count    INTEGER      NOT NULL DEFAULT 0,
+  sent_by         TEXT,
+  sent_by_email   TEXT,
+  created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+ALTER TABLE email_log ENABLE ROW LEVEL SECURITY;
+CREATE POLICY email_log_all_approved ON email_log
+  FOR ALL
+  USING      (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved))
+  WITH CHECK (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved));
+
 -- ───── Web Push subscriptions (added 20260629) ───────────────────────
 -- See migrations/20260629_push_subscriptions.sql
 CREATE TABLE push_subscriptions (
