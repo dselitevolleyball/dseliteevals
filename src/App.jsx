@@ -979,6 +979,12 @@ export default function App() {
   const [historyRows, setHistoryRows]         = useState([]);
   const [historyLoading, setHistoryLoading]   = useState(false);
   const [historyPlayerId, setHistoryPlayerId] = useState(null);
+  // Per-player message history (emails sent to this player's parents), loaded on
+  // demand from email_log when the "Messages" dropdown on the card is opened.
+  const [msgOpen, setMsgOpen]                 = useState(false);
+  const [msgRows, setMsgRows]                 = useState([]);
+  const [msgLoading, setMsgLoading]           = useState(false);
+  const [msgPlayerId, setMsgPlayerId]         = useState(null);
   // Scholarships (admin-only Operations page) — search box for adding offers.
   const [scholarSearch, setScholarSearch] = useState("");
   // AI parent-summary state for the profile modal. Reset whenever the profile changes.
@@ -1140,8 +1146,8 @@ export default function App() {
     setActivityLoading(false);
   }, [activityActor, activityAction]);
   useEffect(() => { if (isApproved && view === "activity") loadActivity(); }, [isApproved, view, loadActivity]);
-  // Collapse the per-player history whenever the open profile card changes.
-  useEffect(() => { setHistoryOpen(false); }, [profileId]);
+  // Collapse the per-player history + messages whenever the open card changes.
+  useEffect(() => { setHistoryOpen(false); setMsgOpen(false); }, [profileId]);
 
   // Per-team build status (Teams board). Keyed by team_name. Defined above the
   // realtime effect below because that effect lists it in its dependency array
@@ -5117,6 +5123,65 @@ export default function App() {
                                   ))}
                                 </div>
                               )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+          {/* Messages — emails sent to this player's parents (from email_log). */}
+          {(() => {
+            const emails = [p.parent_email, p.parent_email2].map(e => (e||"").trim().toLowerCase()).filter(Boolean);
+            const loadMsgs = async () => {
+              setMsgLoading(true);
+              let rows = [];
+              if (emails.length) {
+                const { data, error } = await supabase.from("email_log")
+                  .select("*").overlaps("recipients", emails)
+                  .order("created_at", { ascending: false }).limit(100);
+                if (error) console.error("Load player messages error:", error);
+                rows = data || [];
+              }
+              setMsgRows(rows);
+              setMsgPlayerId(p.id);
+              setMsgLoading(false);
+            };
+            const toggle = () => {
+              const next = !msgOpen;
+              setMsgOpen(next);
+              if (next && msgPlayerId !== p.id) loadMsgs();
+            };
+            const rows = msgPlayerId === p.id ? msgRows : [];
+            return (
+              <div style={{marginTop:24,paddingTop:16,borderTop:"1px solid "+C.border}}>
+                <button onClick={toggle}
+                  style={{display:"flex",alignItems:"center",gap:8,background:"none",border:"none",cursor:"pointer",fontFamily:"inherit",padding:0,color:C.gold,fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5}}>
+                  <span style={{fontSize:9,transform:msgOpen?"rotate(90deg)":"none",transition:"transform .15s"}}>▶</span>
+                  Messages
+                  {msgOpen && msgPlayerId === p.id && !msgLoading && <span style={{color:C.mut,fontWeight:600,textTransform:"none"}}>({rows.length})</span>}
+                </button>
+                {msgOpen && (
+                  <div style={{marginTop:10}}>
+                    {emails.length === 0 && <div style={{fontSize:12,color:C.mut}}>No parent email on file — nothing to show.</div>}
+                    {msgLoading && <div style={{fontSize:12,color:C.mut}}>Loading…</div>}
+                    {!msgLoading && emails.length > 0 && rows.length === 0 && <div style={{fontSize:12,color:C.mut}}>No emails sent to this player's parents yet.</div>}
+                    {!msgLoading && rows.length > 0 && (
+                      <div style={{display:"flex",flexDirection:"column",gap:8,maxHeight:320,overflowY:"auto"}}>
+                        {rows.map(e => {
+                          const when = new Date(e.created_at).toLocaleString(undefined,{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"});
+                          const preview = (e.body || "").length > 180 ? (e.body||"").slice(0,180) + "…" : (e.body || "");
+                          return (
+                            <div key={e.id} style={{background:C.bg,border:"1px solid "+C.border,borderRadius:8,padding:"8px 10px"}}>
+                              <div style={{display:"flex",justifyContent:"space-between",gap:8,flexWrap:"wrap",marginBottom:3,alignItems:"center"}}>
+                                <span style={{fontSize:12,fontWeight:700,color:C.text}}>{e.subject || "(no subject)"}</span>
+                                <span style={{fontSize:10,color:C.mut}}>{when}</span>
+                              </div>
+                              <div style={{fontSize:9,color:C.mut,marginBottom:4}}>Sent by {e.sent_by || "—"}{e.failed_count ? " · " + e.failed_count + " failed" : ""}</div>
+                              {preview && <div style={{fontSize:11,color:C.mut,whiteSpace:"pre-wrap",lineHeight:1.4}}>{preview}</div>}
                             </div>
                           );
                         })}
