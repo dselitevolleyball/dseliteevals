@@ -737,7 +737,8 @@ export default function App() {
   const [smsSending, setSmsSending]                   = useState(false);
   // Bulk email (send-only) state
   const [emailGroupScope, setEmailGroupScope]         = useState({});     // { [div]: "all"|"tryout"|"eval"|"none" } — default "all"
-  const [emailTeam, setEmailTeam]                     = useState("");    // "" any | "__has" | "__none" | team name
+  const [emailTeam, setEmailTeam]                     = useState("");    // "" any | "__has" | "__none"
+  const [emailTeams, setEmailTeams]                   = useState(() => new Set()); // specific teams (multi-select); overrides emailTeam when non-empty
   const [emailStatus, setEmailStatus]                 = useState("");    // "" any | a STATUS_OPTS value
   const [emailSubject, setEmailSubject]               = useState("");
   const [emailBody, setEmailBody]                     = useState("");
@@ -7631,9 +7632,9 @@ export default function App() {
       pool.push(...applySubset(divPlayersOf(div), scope));
     });
     // Cross-cutting filters.
-    if (emailTeam === "__has")       pool = pool.filter(p => p.team_assignment);
+    if (emailTeams.size > 0)         pool = pool.filter(p => emailTeams.has(p.team_assignment));
+    else if (emailTeam === "__has")  pool = pool.filter(p => p.team_assignment);
     else if (emailTeam === "__none") pool = pool.filter(p => !p.team_assignment);
-    else if (emailTeam)              pool = pool.filter(p => p.team_assignment === emailTeam);
     // Match the *effective* status: when a player has an offer_status (the
     // Teams-board buckets — declined, not_invited, offered, etc.), derive the
     // status from it so the filter still works when the plain `status` column
@@ -7739,8 +7740,8 @@ export default function App() {
     //    into the message body. They follow the current scope (age-group chips
     //    + the Team filter), so e.g. picking a team narrows all three.
     const appendBody = (text) => setEmailBody(prev => (prev && !prev.endsWith("\n") ? prev + "\n" : prev) + text);
-    const scopeTeams = () => (emailTeam && !emailTeam.startsWith("__"))
-      ? [emailTeam]
+    const scopeTeams = () => emailTeams.size > 0
+      ? [...emailTeams].sort()
       : [...new Set(pool.map(p => p.team_assignment).filter(Boolean))].sort();
     const insertPlayerNames = () => {
       const names = [...new Set(pool.map(p => ((p.first_name||"") + " " + (p.last_name||"")).trim()).filter(Boolean))]
@@ -7845,12 +7846,11 @@ export default function App() {
         </div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",marginBottom:10}}>
           <label style={{display:"flex",alignItems:"center",gap:5,fontSize:11,fontWeight:700,color:C.mut}}>Team
-            <select value={emailTeam} onChange={e=>setEmailTeam(e.target.value)} style={{...inpStyle,padding:"6px 10px",fontSize:12,cursor:"pointer",color:emailTeam?C.gold:C.text}}>
+            <select value={emailTeam} disabled={emailTeams.size>0} title={emailTeams.size>0?"Clear the selected teams below to use this":undefined}
+              onChange={e=>setEmailTeam(e.target.value)} style={{...inpStyle,padding:"6px 10px",fontSize:12,cursor:emailTeams.size>0?"not-allowed":"pointer",opacity:emailTeams.size>0?0.5:1,color:emailTeam?C.gold:C.text}}>
               <option value="">Any</option>
               <option value="__has">Has a team</option>
               <option value="__none">No team yet</option>
-              {teamOptions.length > 0 && <option disabled>──────</option>}
-              {teamOptions.map(t => <option key={t} value={t}>{t}</option>)}
             </select>
           </label>
           <label style={{display:"flex",alignItems:"center",gap:5,fontSize:11,fontWeight:700,color:C.mut}}>Status
@@ -7859,10 +7859,32 @@ export default function App() {
               {STATUS_OPTS.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
           </label>
-          {(emailTeam || emailStatus || Object.keys(emailGroupScope).length > 0 || emailExcluded.size > 0) && (
-            <button onClick={()=>{ setEmailGroupScope({}); setEmailTeam(""); setEmailStatus(""); setEmailExcluded(new Set()); }} style={{padding:"5px 10px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Clear filters</button>
+          {(emailTeam || emailTeams.size > 0 || emailStatus || Object.keys(emailGroupScope).length > 0 || emailExcluded.size > 0) && (
+            <button onClick={()=>{ setEmailGroupScope({}); setEmailTeam(""); setEmailTeams(new Set()); setEmailStatus(""); setEmailExcluded(new Set()); }} style={{padding:"5px 10px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Clear filters</button>
           )}
         </div>
+        {/* Multi-select specific teams — email one or several teams at once. */}
+        {teamOptions.length > 0 && (
+          <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center",marginBottom:12}}>
+            <span style={{fontSize:11,fontWeight:700,color:C.mut}}>Teams:</span>
+            {teamOptions.map(t => {
+              const on = emailTeams.has(t);
+              return (
+                <button key={t} onClick={()=>setEmailTeams(prev => { const n = new Set(prev); n.has(t) ? n.delete(t) : n.add(t); return n; })}
+                  title={on ? "Emailing "+t+" — click to remove" : "Add "+t+" to this send"}
+                  style={{padding:"4px 12px",borderRadius:16,border:"1px solid "+(on?C.gold:C.border),background:on?"rgba(233,30,140,0.12)":"transparent",color:on?C.gold:C.mut,cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:700}}>
+                  {t}
+                </button>
+              );
+            })}
+            {emailTeams.size > 0 && (
+              <button onClick={()=>setEmailTeams(new Set())} title="Clear selected teams"
+                style={{padding:"4px 10px",borderRadius:16,border:"1px solid "+C.border,background:"transparent",color:C.mut,cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:700}}>
+                Clear ({emailTeams.size})
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Recipient count */}
         <div style={{fontSize:12,color:C.mut,marginBottom:12,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
