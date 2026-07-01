@@ -166,8 +166,11 @@ BEGIN
     VALUES (NEW.id, 'players', 'insert', to_jsonb(NEW), auth.uid(), v_actor_email, v_actor_name);
 
   ELSIF TG_OP = 'DELETE' THEN
+    -- player_id must be NULL: the row is already deleted (AFTER DELETE), so
+    -- referencing OLD.id would violate change_log_player_id_fkey. The deleted
+    -- player's full record is preserved in field_changes.
     INSERT INTO public.change_log (player_id, table_name, action, field_changes, actor_id, actor_email, actor_name)
-    VALUES (OLD.id, 'players', 'delete', to_jsonb(OLD), auth.uid(), v_actor_email, v_actor_name);
+    VALUES (NULL, 'players', 'delete', to_jsonb(OLD), auth.uid(), v_actor_email, v_actor_name);
   END IF;
 
   RETURN COALESCE(NEW, OLD);
