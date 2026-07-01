@@ -312,6 +312,23 @@ CREATE POLICY email_log_all_approved ON email_log
   USING      (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved))
   WITH CHECK (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved));
 
+-- ───── Ignored practice warnings (added 20260701) ───────────────────
+-- See migrations/20260701_ignored_warnings.sql. Shared dismiss list for
+-- practice-schedule conflicts/warnings, keyed by a signature that encodes
+-- the coaching assignment so a warning reappears if the assignment changes.
+CREATE TABLE ignored_warnings (
+  sig         TEXT         PRIMARY KEY,
+  phase       TEXT,
+  text        TEXT,
+  ignored_by  TEXT,
+  created_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+ALTER TABLE ignored_warnings ENABLE ROW LEVEL SECURITY;
+CREATE POLICY ignored_warnings_all_approved ON ignored_warnings
+  FOR ALL
+  USING      (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved))
+  WITH CHECK (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved));
+
 -- ───── Web Push subscriptions (added 20260629) ───────────────────────
 -- See migrations/20260629_push_subscriptions.sql
 CREATE TABLE push_subscriptions (

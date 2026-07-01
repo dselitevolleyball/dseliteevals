@@ -709,6 +709,7 @@ export default function App() {
   }, [saBlock]);
   const [practiceCoachFilter, setPracticeCoachFilter] = useState("");
   const [practiceFloatOnly, setPracticeFloatOnly]     = useState(false); // By Coach view: show only coaches with a floating assignment
+  const [ignoredWarnings, setIgnoredWarnings]         = useState(() => new Set()); // dismissed practice warning signatures (shared)
   const [teamCardName, setTeamCardName]               = useState(null); // unified team-detail modal
   const [coachCardName, setCoachCardName]             = useState(null); // unified coach-detail modal
   const [teamDirSearch, setTeamDirSearch]             = useState("");   // All Teams directory search
@@ -1907,6 +1908,39 @@ export default function App() {
     return () => supabase.removeChannel(ch);
   }, [isApproved, loadEmailTemplates, loadEmailLog]);
 
+  // Dismissed practice-schedule warnings (shared across everyone). Each warning
+  // has a signature that encodes the coaching assignment behind it, so ignoring
+  // one keeps it hidden for all — until that assignment changes and the
+  // signature no longer matches, which surfaces the warning again.
+  const loadIgnoredWarnings = useCallback(async () => {
+    const { data, error } = await supabase.from("ignored_warnings").select("sig");
+    if (error) { console.error("Load ignored_warnings error:", error); return; }
+    setIgnoredWarnings(new Set((data || []).map(r => r.sig)));
+  }, []);
+  const ignoreWarning = useCallback(async (w) => {
+    if (!w || !w.sig) return;
+    setIgnoredWarnings(prev => new Set(prev).add(w.sig)); // optimistic
+    const { error } = await supabase.from("ignored_warnings").upsert({
+      sig: w.sig, phase: schedulePhase, text: w.text || "", ignored_by: coach?.display_name || coach?.email || "",
+    });
+    if (error) { window.alert("Couldn't ignore: " + error.message); loadIgnoredWarnings(); }
+  }, [schedulePhase, coach, loadIgnoredWarnings]);
+  const unignoreWarning = useCallback(async (sig) => {
+    if (!sig) return;
+    setIgnoredWarnings(prev => { const n = new Set(prev); n.delete(sig); return n; }); // optimistic
+    const { error } = await supabase.from("ignored_warnings").delete().eq("sig", sig);
+    if (error) { window.alert("Couldn't restore: " + error.message); loadIgnoredWarnings(); }
+  }, [loadIgnoredWarnings]);
+  useEffect(() => { if (isApproved && view === "practice") loadIgnoredWarnings(); }, [isApproved, view, loadIgnoredWarnings]);
+  useEffect(() => {
+    if (!isApproved) return;
+    const ch = supabase
+      .channel("realtime-ignored_warnings")
+      .on("postgres_changes", { event: "*", schema: "public", table: "ignored_warnings" }, () => { loadIgnoredWarnings(); })
+      .subscribe();
+    return () => supabase.removeChannel(ch);
+  }, [isApproved, loadIgnoredWarnings]);
+
   // ─── Pull-everything refresh ──────────────────────────────────────────
   // Realtime keeps screens live while the app is open and connected, but a
   // backgrounded PWA / sleeping tab drops the socket and misses events. So we
@@ -1925,6 +1959,7 @@ export default function App() {
         view === "activity" ? loadActivity() : null,
         (view === "tournaments" || view === "teamdir" || view === "home") ? loadTournaments() : null,
         view === "practice" ? loadSnapshots() : null,
+        view === "practice" ? loadIgnoredWarnings() : null,
         view === "tryouts" ? loadTryouts() : null,
         view === "messages" ? loadSmsThreads() : null,
         view === "email" ? loadEmailTemplates() : null,
@@ -1933,7 +1968,7 @@ export default function App() {
     } finally {
       setRefreshing(false);
     }
-  }, [isApproved, view, loadPlayers, loadCoaches, loadRankings, loadFavorites, loadTeamStatus, loadTeamTasks, loadTeamQuestions, loadTaskMeta, loadUpdates, loadPracticeApprovals, loadCoachRequests, loadCoachFloats, loadTeamsList, loadBlackouts, loadCoachRoster, loadPractice, loadActivity, loadTournaments, loadSnapshots, loadTryouts, loadSmsThreads, loadEmailTemplates, loadEmailLog]);
+  }, [isApproved, view, loadPlayers, loadCoaches, loadRankings, loadFavorites, loadTeamStatus, loadTeamTasks, loadTeamQuestions, loadTaskMeta, loadUpdates, loadPracticeApprovals, loadCoachRequests, loadCoachFloats, loadTeamsList, loadBlackouts, loadCoachRoster, loadPractice, loadActivity, loadTournaments, loadSnapshots, loadTryouts, loadSmsThreads, loadEmailTemplates, loadEmailLog, loadIgnoredWarnings]);
   useEffect(() => {
     if (!isApproved) return;
     let t = null;
@@ -6504,6 +6539,9 @@ export default function App() {
 
     // Compute per-team and per-slot warnings up front.
     const warnings = [];
+    // Signature of a set of assignments — used so an ignored warning re-appears
+    // once the coaching assignment behind it changes (the sig no longer matches).
+    const asgSig = (list) => list.map(a => a.day + a.slot).sort().join(",");
     for (const t of practiceTeams) {
       const tAssigns = phaseAssignments.filter(a => a.team_name === t.team_name);
       const { actual: actualHours, expected: expectedHours } = teamLoad(t, tAssigns);
@@ -6514,29 +6552,31 @@ export default function App() {
         warnings.push({
           kind: "count",
           team: t.team_name,
+          sig: "count|" + schedulePhase + "|" + t.team_name + "|" + actualHours + "/" + expectedHours,
           text: t.team_name + " has " + actualHours + "h, expected " + expectedHours + "h" + (isFallPhase ? " (practice + S&A)" : " of practice (" + (t.level||"?") + ")"),
         });
       }
       if (YOUNG_DIVS.has(t.age_div)) {
         const hasLate = tAssigns.some(a => LATE_SLOTS.has(a.slot));
-        if (hasLate) warnings.push({ kind:"young_late", team:t.team_name, text: t.team_name + " is U11/U12 but practices in a late (7pm+) slot" });
+        if (hasLate) warnings.push({ kind:"young_late", team:t.team_name, sig:"young_late|" + schedulePhase + "|" + t.team_name + "|" + asgSig(tAssigns.filter(a => LATE_SLOTS.has(a.slot))), text: t.team_name + " is U11/U12 but practices in a late (7pm+) slot" });
         const has57Weekday = tAssigns.some(a => WEEKDAYS.has(a.day) && a.slot === "5-7pm");
         const anyWeekday = tAssigns.some(a => WEEKDAYS.has(a.day));
-        if (anyWeekday && !has57Weekday) warnings.push({ kind:"young_weekday", team:t.team_name, text: t.team_name + " (U11/U12) practices on a weekday but not in the 5-7pm slot" });
+        if (anyWeekday && !has57Weekday) warnings.push({ kind:"young_weekday", team:t.team_name, sig:"young_weekday|" + schedulePhase + "|" + t.team_name + "|" + asgSig(tAssigns.filter(a => WEEKDAYS.has(a.day))), text: t.team_name + " (U11/U12) practices on a weekday but not in the 5-7pm slot" });
       }
     }
     for (const day of VISIBLE_DAYS) {
       for (const s of SLOTS[day]) {
         const sk = day + "|" + s.label;
-        const count = (bySlot.get(sk) || []).length;
+        const slotTeams = (bySlot.get(sk) || []).map(a => a.team_name);
+        const count = slotTeams.length;
         if (count > s.capacity) {
-          warnings.push({ kind:"overflow", slot:sk, text:"Court overflow at " + day + " " + s.label + " — " + count + " teams in " + s.capacity + " courts" });
+          warnings.push({ kind:"overflow", slot:sk, sig:"overflow|" + schedulePhase + "|" + sk + "|" + slotTeams.slice().sort().join(","), text:"Court overflow at " + day + " " + s.label + " — " + count + " teams in " + s.capacity + " courts" });
         }
         const cMap = coachInSlot.get(sk);
         if (cMap) {
           for (const [coach, teams] of cMap) {
             if (teams.length > 1) {
-              warnings.push({ kind:"coach_clash", slot:sk, text:"Coach " + coach + " double-booked at " + day + " " + s.label + " (" + teams.join(", ") + ")" });
+              warnings.push({ kind:"coach_clash", slot:sk, sig:"coach_clash|" + schedulePhase + "|" + sk + "|" + coach + "|" + teams.slice().sort().join(","), text:"Coach " + coach + " double-booked at " + day + " " + s.label + " (" + teams.join(", ") + ")" });
             }
           }
         }
@@ -6586,12 +6626,13 @@ export default function App() {
         for (let i = 1; i < merged.length; i++) {
           const gapH = merged[i].start - merged[i - 1].end;
           const base = coach + " has a " + gapH + "h gap on " + day + " — idle " + fmtHr(merged[i - 1].end) + "–" + fmtHr(merged[i].start);
+          const gapSig = "coach_gap|" + schedulePhase + "|" + coach + "|" + day + "|" + merged[i - 1].end + "-" + merged[i].start;
           if (gapH <= 2 && floatingSet.has(coach)) {
             warnings.push({ kind: "coach_float", coach, text: base + " · floating coach (covered)" });
           } else if (gapH <= 2) {
-            warnings.push({ kind: "coach_gap", coach, floatable: true, text: base });
+            warnings.push({ kind: "coach_gap", coach, floatable: true, sig: gapSig, text: base });
           } else {
-            warnings.push({ kind: "coach_gap", coach, floatable: false, text: base + " — over 2h, too long to float" });
+            warnings.push({ kind: "coach_gap", coach, floatable: false, sig: gapSig, text: base + " — over 2h, too long to float" });
           }
         }
       }
@@ -6601,14 +6642,19 @@ export default function App() {
       const wdTeams = new Set(wd.map(s => s.team));
       if (wdTeams.size >= 2 && wd.length <= 2 && wdDays.size >= 2) {
         warnings.push({ kind: "coach_split", coach,
+          sig: "coach_split|" + schedulePhase + "|" + coach + "|" + wd.map(s => s.day + s.slot + s.team).sort().join(","),
           text: coach + " coaches on separate weekdays (" + wd.map(s => s.day + " " + s.slot + " " + s.team).join(", ") + ") — pair both on one day, back-to-back" });
       }
     }
 
-    // Group warnings by kind for the summary banner. Floating-coach notes are
-    // info, not problems — they don't count toward the red warning tally.
-    const grouped = warnings.reduce((acc, w) => { (acc[w.kind] ||= []).push(w); return acc; }, {});
-    const problemCount = warnings.filter(w => w.kind !== "coach_float").length;
+    // Split off warnings that have been ignored (by signature). Floating-coach
+    // notes are info and never ignorable. Ignored ones move to their own list.
+    const isIgnored = (w) => w.sig && ignoredWarnings.has(w.sig);
+    const ignoredList = warnings.filter(w => w.kind !== "coach_float" && isIgnored(w));
+    const activeWarnings = warnings.filter(w => !isIgnored(w));
+    // Group active warnings by kind for the summary banner.
+    const grouped = activeWarnings.reduce((acc, w) => { (acc[w.kind] ||= []).push(w); return acc; }, {});
+    const problemCount = activeWarnings.filter(w => w.kind !== "coach_float").length;
     const warnColor = (k) =>
       k === "overflow"      ? C.red :
       k === "coach_clash"   ? C.red :
@@ -6768,12 +6814,12 @@ export default function App() {
           </div>
         )}
         {/* Warnings banner */}
-        {warnings.length > 0 && (
+        {(activeWarnings.length > 0 || ignoredList.length > 0) && (
           <details open style={{marginBottom:14,background:"rgba(239,68,68,0.06)",border:"1px solid "+C.border,borderRadius:10,padding:"10px 14px"}}>
             <summary style={{cursor:"pointer",fontSize:12,fontWeight:800,color:problemCount>0?C.red:"#06b6d4"}}>
               {problemCount > 0
                 ? problemCount + " conflict" + (problemCount===1?"":"s") + " & warning" + (problemCount===1?"":"s") + " detected"
-                : "All clear — floating-coach notes below"}
+                : "All clear" + (ignoredList.length ? " — " + ignoredList.length + " ignored" : "") + " — floating-coach notes below"}
             </summary>
             <div style={{marginTop:10,display:"flex",flexDirection:"column",gap:8}}>
               {Object.keys(grouped).map(k => (
@@ -6796,10 +6842,34 @@ export default function App() {
                           Undo float
                         </button>
                       )}
+                      {w.sig && (
+                        <button onClick={()=>ignoreWarning(w)} title="Ignore this — stays hidden for everyone until the coaching assignment behind it changes"
+                          style={{marginLeft:"auto",padding:"1px 8px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:10,fontWeight:800,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
+                          Ignore
+                        </button>
+                      )}
                     </div>
                   ))}
                 </div>
               ))}
+              {ignoredList.length > 0 && (
+                <details style={{marginTop:6,borderTop:"1px solid "+C.border,paddingTop:8}}>
+                  <summary style={{cursor:"pointer",fontSize:10,fontWeight:800,letterSpacing:0.5,textTransform:"uppercase",color:C.mut}}>
+                    Ignored ({ignoredList.length})
+                  </summary>
+                  <div style={{marginTop:6,display:"flex",flexDirection:"column",gap:4}}>
+                    {ignoredList.map((w,i) => (
+                      <div key={i} style={{fontSize:11,color:C.mut,paddingLeft:10,lineHeight:1.5,display:"flex",alignItems:"center",gap:8}}>
+                        <span style={{textDecoration:"line-through",opacity:0.8}}>• {w.text}</span>
+                        <button onClick={()=>unignoreWarning(w.sig)} title="Un-ignore — show this warning again"
+                          style={{marginLeft:"auto",padding:"1px 8px",borderRadius:6,border:"1px solid "+C.acc,background:"transparent",color:C.acc,fontSize:10,fontWeight:800,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
+                          Restore
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              )}
             </div>
           </details>
         )}
