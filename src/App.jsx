@@ -1876,6 +1876,26 @@ export default function App() {
     setEmailLog(data || []);
   }, []);
   useEffect(() => { if (isApproved && view === "email") { loadEmailTemplates(); loadEmailLog(); } }, [isApproved, view, loadEmailTemplates, loadEmailLog]);
+  // One-time: import any templates a device previously saved to localStorage
+  // into the shared DB table, so existing templates aren't lost in the move.
+  useEffect(() => {
+    if (!isApproved || view !== "email") return;
+    (async () => {
+      try {
+        if (localStorage.getItem("dse_email_templates_migrated")) return;
+        const raw = localStorage.getItem("dse_email_templates");
+        const list = raw ? JSON.parse(raw) : [];
+        const rows = (Array.isArray(list) ? list : []).filter(t => t && t.name)
+          .map(t => ({ name: t.name, subject: t.subject || "", body: t.body || "", updated_at: new Date().toISOString() }));
+        if (rows.length) {
+          const { error } = await supabase.from("email_templates").upsert(rows, { onConflict: "name", ignoreDuplicates: true });
+          if (error) return; // table not created yet — retry on next email-tab open
+          loadEmailTemplates();
+        }
+        localStorage.setItem("dse_email_templates_migrated", "1");
+      } catch {}
+    })();
+  }, [isApproved, view, loadEmailTemplates]);
   useEffect(() => {
     if (!isApproved) return;
     const ch = supabase
