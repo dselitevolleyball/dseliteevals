@@ -708,6 +708,7 @@ export default function App() {
     if (typeof localStorage !== "undefined") localStorage.setItem("dse_sa_block", saBlock);
   }, [saBlock]);
   const [practiceCoachFilter, setPracticeCoachFilter] = useState("");
+  const [practiceFloatOnly, setPracticeFloatOnly]     = useState(false); // By Coach view: show only coaches with a floating assignment
   const [teamCardName, setTeamCardName]               = useState(null); // unified team-detail modal
   const [coachCardName, setCoachCardName]             = useState(null); // unified coach-detail modal
   const [teamDirSearch, setTeamDirSearch]             = useState("");   // All Teams directory search
@@ -6160,12 +6161,22 @@ export default function App() {
       const rosterNames = (coachRoster || []).map(r => ((r.first_name || "") + " " + (r.last_name || "")).trim()).filter(Boolean);
       const floatNames = (floatingCoaches || []).map(x => (x || "").trim()).filter(Boolean);
       const blockFloatNames = coachFloats.map(f => f.coach_name).filter(Boolean);
+      // A coach "has a floating assignment" if they're globally marked ☁ or
+      // have a per-block float in the current phase.
+      const phaseFloatCoaches = new Set(coachFloats.filter(f => (f.phase || "season") === schedulePhase).map(f => (f.coach_name || "").trim().toLowerCase()));
+      const hasFloat = (cn) => { const k = cn.trim().toLowerCase(); return floatLow.has(k) || phaseFloatCoaches.has(k); };
       const coaches = Array.from(new Set([...Object.keys(coachMap), ...rosterNames, ...floatNames, ...blockFloatNames]))
         .sort((a,b) => a.localeCompare(b))
-        .filter(cn => !practiceCoachFilter || cn === practiceCoachFilter);
+        .filter(cn => !practiceCoachFilter || cn === practiceCoachFilter)
+        .filter(cn => !practiceFloatOnly || hasFloat(cn));
       return (
         <div style={{background:C.card,borderRadius:12,border:"1px solid "+C.border,overflow:"hidden"}}>
-          <div style={{display:"flex",justifyContent:"flex-end",padding:"8px 10px",borderBottom:"1px solid "+C.border}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,padding:"8px 10px",borderBottom:"1px solid "+C.border}}>
+            <button onClick={()=>setPracticeFloatOnly(v=>!v)}
+              title={practiceFloatOnly ? "Showing only coaches with a floating assignment — click to show all" : "Show only coaches with a floating assignment (☁)"}
+              style={{padding:"5px 12px",borderRadius:6,border:"1px solid "+(practiceFloatOnly?"#06b6d4":C.border),background:practiceFloatOnly?"rgba(6,182,212,0.14)":"transparent",color:practiceFloatOnly?"#06b6d4":C.mut,fontWeight:700,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>
+              ☁ Floating only{practiceFloatOnly?" ✓":""}
+            </button>
             <button onClick={()=>{ const n = window.prompt("Add a coach to the chart (e.g. for floating coverage):"); if (n && n.trim()) addCoachToChart(n.trim()); }}
               style={{padding:"5px 12px",borderRadius:6,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontWeight:700,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>+ Add coach</button>
           </div>
