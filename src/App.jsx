@@ -699,6 +699,7 @@ export default function App() {
   const [floatingCoaches, setFloatingCoaches]         = useState([]);
   const [coachFloats, setCoachFloats]                 = useState([]); // per (coach,day,slot,phase) floater availability
   const [practiceCoverage, setPracticeCoverage]       = useState([]); // per-date coach absences + subs (Daily view)
+  const [practiceCancellations, setPracticeCancellations] = useState([]); // dates with practice cancelled (holidays)
   const [snapshots, setSnapshots]                     = useState([]);
   // Fires the "save a restore point first" nudge at most once per practice session.
   const practiceEditReminded = useRef(false);
@@ -729,6 +730,7 @@ export default function App() {
   }, [schedulePhase]);
   const [practiceViewMode, setPracticeViewMode]       = useState("team"); // "team" | "coach" | "daily"
   const [dailyDate, setDailyDate]                     = useState(() => { try { return new Date().toISOString().slice(0,10); } catch { return ""; } });
+  const [calMonth, setCalMonth]                       = useState(() => { try { return new Date().toISOString().slice(0,7); } catch { return "2026-11"; } }); // YYYY-MM shown in the Daily calendar
   const [tryouts, setTryouts]                         = useState([]);
   const [coachRoster, setCoachRoster]                 = useState([]);
   // SMS state
@@ -1217,6 +1219,11 @@ export default function App() {
     if (error) { console.error("Load practice_coverage error:", error); return; }
     setPracticeCoverage(data || []);
   }, []);
+  const loadPracticeCancellations = useCallback(async () => {
+    const { data, error } = await supabase.from("practice_cancellations").select("*");
+    if (error) { console.error("Load practice_cancellations error:", error); return; }
+    setPracticeCancellations(data || []);
+  }, []);
 
   // ─── Realtime sync ──────────────────────────────────────────────────
   // Subscribe to Postgres change events on the tables the eval site cares
@@ -1286,6 +1293,7 @@ export default function App() {
     const coverageChannel = supabase
       .channel("realtime-practice_coverage")
       .on("postgres_changes", { event: "*", schema: "public", table: "practice_coverage" }, () => { loadPracticeCoverage(); })
+      .on("postgres_changes", { event: "*", schema: "public", table: "practice_cancellations" }, () => { loadPracticeCancellations(); })
       .subscribe();
     return () => {
       supabase.removeChannel(playerChannel);
@@ -1301,7 +1309,7 @@ export default function App() {
       supabase.removeChannel(coachFloatsChannel);
       supabase.removeChannel(coverageChannel);
     };
-  }, [isApproved, loadCoaches, loadRankings, loadTeamStatus, loadTeamTasks, loadTeamQuestions, loadTaskMeta, loadUpdates, loadPracticeApprovals, loadCoachRequests, loadCoachFloats, loadPracticeCoverage]);
+  }, [isApproved, loadCoaches, loadRankings, loadTeamStatus, loadTeamTasks, loadTeamQuestions, loadTaskMeta, loadUpdates, loadPracticeApprovals, loadCoachRequests, loadCoachFloats, loadPracticeCoverage, loadPracticeCancellations]);
 
   // Activity feed live updates — only subscribe while that tab is open, since
   // change_log INSERTs fire on every player write and the feed is otherwise
@@ -1398,6 +1406,7 @@ export default function App() {
   useEffect(() => { if (isApproved && (view === "home" || view === "requests")) loadCoachRequests(); }, [isApproved, view, loadCoachRequests]);
   useEffect(() => { if (isApproved && view === "practice") loadCoachFloats(); }, [isApproved, view, loadCoachFloats]);
   useEffect(() => { if (isApproved && view === "practice") loadPracticeCoverage(); }, [isApproved, view, loadPracticeCoverage]);
+  useEffect(() => { if (isApproved && view === "practice") loadPracticeCancellations(); }, [isApproved, view, loadPracticeCancellations]);
   // Optimistically patch local state, then upsert the merged row. `merged` is
   // computed from current state synchronously (NOT inside the setState updater,
   // which React may run later) so the upsert payload is always complete.
@@ -1687,6 +1696,21 @@ export default function App() {
     const { error } = await supabase.from("practice_coverage").delete().match({ practice_date, team_name, slot, phase, coach_out });
     if (error) { window.alert("Couldn't clear coverage: " + error.message); loadPracticeCoverage(); }
   }, [loadPracticeCoverage]);
+  // Cancel (or un-cancel) all practice on a given date — e.g. a holiday.
+  const toggleCancelDate = useCallback(async (practice_date, reason) => {
+    if (!practice_date) return;
+    const existing = practiceCancellations.find(c => c.practice_date === practice_date);
+    if (existing) {
+      setPracticeCancellations(prev => prev.filter(c => c.practice_date !== practice_date));
+      const { error } = await supabase.from("practice_cancellations").delete().eq("practice_date", practice_date);
+      if (error) { window.alert("Couldn't un-cancel: " + error.message); loadPracticeCancellations(); }
+    } else {
+      const row = { practice_date, reason: (reason || "").trim() || null, cancelled_by: coach?.display_name || coach?.email || "" };
+      setPracticeCancellations(prev => [...prev, row]);
+      const { error } = await supabase.from("practice_cancellations").upsert(row, { onConflict: "practice_date" });
+      if (error) { window.alert("Couldn't cancel: " + error.message); loadPracticeCancellations(); }
+    }
+  }, [practiceCancellations, coach, loadPracticeCancellations]);
   // Coach emails the director a potential practice-schedule change request.
   const requestScheduleChange = useCallback(async (team, message) => {
     const msg = (message || "").trim();
@@ -2016,6 +2040,7 @@ export default function App() {
         view === "practice" ? loadSnapshots() : null,
         view === "practice" ? loadIgnoredWarnings() : null,
         view === "practice" ? loadPracticeCoverage() : null,
+        view === "practice" ? loadPracticeCancellations() : null,
         view === "tryouts" ? loadTryouts() : null,
         view === "messages" ? loadSmsThreads() : null,
         view === "email" ? loadEmailTemplates() : null,
@@ -2024,7 +2049,7 @@ export default function App() {
     } finally {
       setRefreshing(false);
     }
-  }, [isApproved, view, loadPlayers, loadCoaches, loadRankings, loadFavorites, loadTeamStatus, loadTeamTasks, loadTeamQuestions, loadTaskMeta, loadUpdates, loadPracticeApprovals, loadCoachRequests, loadCoachFloats, loadTeamsList, loadBlackouts, loadCoachRoster, loadPractice, loadActivity, loadTournaments, loadSnapshots, loadTryouts, loadSmsThreads, loadEmailTemplates, loadEmailLog, loadIgnoredWarnings, loadPracticeCoverage]);
+  }, [isApproved, view, loadPlayers, loadCoaches, loadRankings, loadFavorites, loadTeamStatus, loadTeamTasks, loadTeamQuestions, loadTaskMeta, loadUpdates, loadPracticeApprovals, loadCoachRequests, loadCoachFloats, loadTeamsList, loadBlackouts, loadCoachRoster, loadPractice, loadActivity, loadTournaments, loadSnapshots, loadTryouts, loadSmsThreads, loadEmailTemplates, loadEmailLog, loadIgnoredWarnings, loadPracticeCoverage, loadPracticeCancellations]);
   useEffect(() => {
     if (!isApproved) return;
     let t = null;
@@ -6491,8 +6516,36 @@ export default function App() {
       const covFor = (team, label, coachName) => practiceCoverage.find(c =>
         c.practice_date === dailyDate && c.team_name === team && c.slot === label &&
         (c.phase || "season") === dayPhase && c.coach_out === coachName);
-      const shiftDay = (n) => { if (!d) return; const nd = new Date(d); nd.setDate(nd.getDate()+n); setDailyDate(nd.toISOString().slice(0,10)); };
+      const shiftDay = (n) => { if (!d) return; const nd = new Date(d); nd.setDate(nd.getDate()+n); const iso = nd.toISOString().slice(0,10); setDailyDate(iso); setCalMonth(iso.slice(0,7)); };
       const teamByName2 = new Map(practiceTeams.map(t => [t.team_name, t]));
+      const navBtn = {padding:"5px 10px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:"inherit"};
+
+      // Does this date fall on a scheduled practice day? Summer/Fall practice on
+      // the specific listed Sundays; the regular season on any weekday that has
+      // slots, from Nov 29 onward.
+      const dayHasPractice = (iso) => {
+        const ph = phaseForDate(iso);
+        if (ph === "season") {
+          if (iso < "2026-11-29") return false;
+          const wd = WD[new Date(iso + "T00:00").getDay()];
+          return (SEASON_SLOTS[wd] || []).length > 0;
+        }
+        const arr = ph === "summer" ? (PHASE_DATES.summer || []) : ph === "fall1" ? (PHASE_DATES.fall1 || []) : (PHASE_DATES.fall2 || []);
+        return arr.includes(iso);
+      };
+      const cancelledSet = new Set(practiceCancellations.map(c => c.practice_date));
+      const cancelReasonFor = (iso) => { const c = practiceCancellations.find(x => x.practice_date === iso); return c ? (c.reason || "") : ""; };
+      const practiceToday = dayHasPractice(dailyDate) && daySlots.length > 0;
+      const todayCancelled = cancelledSet.has(dailyDate);
+      // Month-grid math for the persistent calendar.
+      const [cy, cmo] = calMonth.split("-").map(Number);
+      const firstDow = new Date(cy, cmo - 1, 1).getDay();
+      const daysInMonth = new Date(cy, cmo, 0).getDate();
+      const monthLabel = new Date(cy, cmo - 1, 1).toLocaleDateString(undefined, { month:"long", year:"numeric" });
+      const shiftMonth = (n) => { const nd = new Date(cy, cmo - 1 + n, 1); setCalMonth(nd.getFullYear() + "-" + String(nd.getMonth()+1).padStart(2,"0")); };
+      const isoFor = (dn) => calMonth + "-" + String(dn).padStart(2, "0");
+      const calCells = []; for (let i = 0; i < firstDow; i++) calCells.push(null);
+      for (let dn = 1; dn <= daysInMonth; dn++) calCells.push(dn);
 
       const coachCell = (team, label, coachName, role) => {
         const cov = covFor(team, label, coachName);
@@ -6532,17 +6585,56 @@ export default function App() {
 
       return (
         <div>
-          <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:12,background:C.card,border:"1px solid "+C.border,borderRadius:10,padding:"10px 14px"}}>
-            <button onClick={()=>shiftDay(-1)} style={{padding:"5px 10px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>←</button>
-            <input type="date" value={dailyDate} onChange={e=>setDailyDate(e.target.value)}
-              style={{...inpStyle,padding:"6px 10px",fontSize:13,colorScheme:"dark"}} />
-            <button onClick={()=>shiftDay(1)} style={{padding:"5px 10px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>→</button>
-            <span style={{fontSize:14,fontWeight:800,color:C.gold}}>{prettyDate}</span>
-            <span style={{fontSize:11,color:C.acc,fontWeight:800,textTransform:"uppercase"}}>· {phaseLabel}</span>
+          {/* Persistent month calendar — practice days highlighted, cancelled days red. */}
+          <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:"10px 12px",marginBottom:12,maxWidth:340}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+              <button onClick={()=>shiftMonth(-1)} style={navBtn}>←</button>
+              <span style={{fontSize:14,fontWeight:800,color:C.gold}}>{monthLabel}</span>
+              <button onClick={()=>shiftMonth(1)} style={navBtn}>→</button>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:4}}>
+              {["S","M","T","W","T","F","S"].map((lbl,i) => <div key={i} style={{textAlign:"center",fontSize:9,fontWeight:800,color:C.mut}}>{lbl}</div>)}
+              {calCells.map((dn,idx) => {
+                if (dn == null) return <div key={"b"+idx} />;
+                const iso = isoFor(dn);
+                const hasP = dayHasPractice(iso);
+                const cancelled = cancelledSet.has(iso);
+                const selected = iso === dailyDate;
+                const bg = cancelled ? "rgba(239,68,68,0.18)" : hasP ? "rgba(233,30,140,0.14)" : "transparent";
+                const fg = cancelled ? C.red : hasP ? C.gold : C.mut;
+                return (
+                  <button key={iso} onClick={()=>setDailyDate(iso)}
+                    title={cancelled ? ("Cancelled" + (cancelReasonFor(iso) ? ": " + cancelReasonFor(iso) : "")) : hasP ? "Practice day" : "No practice"}
+                    style={{padding:"6px 0",borderRadius:6,border:selected?"2px solid "+C.gold:"1px solid transparent",background:bg,color:fg,fontSize:12,fontWeight:selected?800:600,cursor:"pointer",fontFamily:"inherit",textDecoration:cancelled?"line-through":"none"}}>
+                    {dn}
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{display:"flex",gap:12,marginTop:8,flexWrap:"wrap",fontSize:10,color:C.mut}}>
+              <span><span style={{display:"inline-block",width:10,height:10,borderRadius:3,background:"rgba(233,30,140,0.35)",marginRight:4,verticalAlign:"middle"}} />Practice</span>
+              <span><span style={{display:"inline-block",width:10,height:10,borderRadius:3,background:"rgba(239,68,68,0.35)",marginRight:4,verticalAlign:"middle"}} />Cancelled</span>
+            </div>
           </div>
-          {daySlots.length === 0 ? (
+          {/* Selected date + cancel-this-day control. */}
+          <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:12}}>
+            <button onClick={()=>shiftDay(-1)} style={navBtn}>←</button>
+            <span style={{fontSize:14,fontWeight:800,color:C.gold}}>{prettyDate}</span>
+            <button onClick={()=>shiftDay(1)} style={navBtn}>→</button>
+            <span style={{fontSize:11,color:C.acc,fontWeight:800,textTransform:"uppercase"}}>· {phaseLabel}</span>
+            {practiceToday && !todayCancelled && (
+              <button onClick={()=>{ const r = window.prompt("Cancel all practice on " + prettyDate + "?\nOptional reason (e.g. holiday name):", ""); if (r !== null) toggleCancelDate(dailyDate, r); }}
+                style={{marginLeft:"auto",padding:"5px 12px",borderRadius:6,border:"1px solid "+C.red,background:"transparent",color:C.red,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>🚫 Cancel this day</button>
+            )}
+          </div>
+          {todayCancelled ? (
+            <div style={{padding:"14px 16px",background:"rgba(239,68,68,0.10)",border:"1px solid "+C.red,borderRadius:12,display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,flexWrap:"wrap"}}>
+              <span style={{fontSize:14,fontWeight:800,color:C.red}}>🚫 Practice cancelled{cancelReasonFor(dailyDate) ? " — " + cancelReasonFor(dailyDate) : ""}</span>
+              <button onClick={()=>toggleCancelDate(dailyDate)} style={{padding:"5px 12px",borderRadius:6,border:"1px solid "+C.grn,background:"transparent",color:C.grn,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Un-cancel</button>
+            </div>
+          ) : !practiceToday ? (
             <div style={{padding:24,textAlign:"center",color:C.mut,fontSize:13,background:C.card,borderRadius:12,border:"1px solid "+C.border}}>
-              No practices scheduled on {prettyDate || "this day"} ({phaseLabel}). Regular season starts Nov 29 — pick a date within a practice window.
+              No practice scheduled on {prettyDate || "this day"} ({phaseLabel}). Regular season starts Nov 29.
             </div>
           ) : (
             <div style={{display:"flex",gap:12,overflowX:"auto",paddingBottom:8,alignItems:"flex-start"}}>

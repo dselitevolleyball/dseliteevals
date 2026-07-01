@@ -352,6 +352,21 @@ CREATE POLICY practice_coverage_all_approved ON practice_coverage
   USING      (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved))
   WITH CHECK (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved));
 
+-- ───── Practice cancellations / holidays (added 20260701) ───────────
+-- See migrations/20260701_practice_cancellations.sql. One row per date with
+-- practice cancelled; surfaced in the Daily calendar.
+CREATE TABLE practice_cancellations (
+  practice_date DATE         PRIMARY KEY,
+  reason        TEXT,
+  cancelled_by  TEXT,
+  created_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+ALTER TABLE practice_cancellations ENABLE ROW LEVEL SECURITY;
+CREATE POLICY practice_cancellations_all_approved ON practice_cancellations
+  FOR ALL
+  USING      (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved))
+  WITH CHECK (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved));
+
 -- ───── Web Push subscriptions (added 20260629) ───────────────────────
 -- See migrations/20260629_push_subscriptions.sql
 CREATE TABLE push_subscriptions (
