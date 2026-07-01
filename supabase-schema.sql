@@ -329,6 +329,29 @@ CREATE POLICY ignored_warnings_all_approved ON ignored_warnings
   USING      (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved))
   WITH CHECK (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved));
 
+-- ───── Daily coaching board (added 20260701) ────────────────────────
+-- See migrations/20260701_practice_daily_board.sql. practice_assignments.court
+-- holds each team's court number; practice_coverage tracks per-date coach
+-- absences and their subs for the Practice planner's Daily view.
+ALTER TABLE practice_assignments ADD COLUMN IF NOT EXISTS court INTEGER;
+CREATE TABLE practice_coverage (
+  id            BIGSERIAL    PRIMARY KEY,
+  practice_date DATE         NOT NULL,
+  team_name     TEXT         NOT NULL,
+  slot          TEXT         NOT NULL,
+  phase         TEXT         NOT NULL DEFAULT 'season',
+  coach_out     TEXT         NOT NULL,
+  sub_name      TEXT,
+  note          TEXT,
+  created_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+  UNIQUE (practice_date, team_name, slot, phase, coach_out)
+);
+ALTER TABLE practice_coverage ENABLE ROW LEVEL SECURITY;
+CREATE POLICY practice_coverage_all_approved ON practice_coverage
+  FOR ALL
+  USING      (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved))
+  WITH CHECK (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved));
+
 -- ───── Web Push subscriptions (added 20260629) ───────────────────────
 -- See migrations/20260629_push_subscriptions.sql
 CREATE TABLE push_subscriptions (

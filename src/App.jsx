@@ -698,6 +698,7 @@ export default function App() {
   const [saSessions, setSaSessions]                   = useState([]);
   const [floatingCoaches, setFloatingCoaches]         = useState([]);
   const [coachFloats, setCoachFloats]                 = useState([]); // per (coach,day,slot,phase) floater availability
+  const [practiceCoverage, setPracticeCoverage]       = useState([]); // per-date coach absences + subs (Daily view)
   const [snapshots, setSnapshots]                     = useState([]);
   // Fires the "save a restore point first" nudge at most once per practice session.
   const practiceEditReminded = useRef(false);
@@ -726,7 +727,8 @@ export default function App() {
   useEffect(() => {
     if (typeof localStorage !== "undefined") localStorage.setItem("dse_practice_phase", schedulePhase);
   }, [schedulePhase]);
-  const [practiceViewMode, setPracticeViewMode]       = useState("team"); // "team" | "coach"
+  const [practiceViewMode, setPracticeViewMode]       = useState("team"); // "team" | "coach" | "daily"
+  const [dailyDate, setDailyDate]                     = useState(() => { try { return new Date().toISOString().slice(0,10); } catch { return ""; } });
   const [tryouts, setTryouts]                         = useState([]);
   const [coachRoster, setCoachRoster]                 = useState([]);
   // SMS state
@@ -1208,6 +1210,11 @@ export default function App() {
     if (error) { console.error("Load coach_floats error:", error); return; }
     setCoachFloats(data || []);
   }, []);
+  const loadPracticeCoverage = useCallback(async () => {
+    const { data, error } = await supabase.from("practice_coverage").select("*");
+    if (error) { console.error("Load practice_coverage error:", error); return; }
+    setPracticeCoverage(data || []);
+  }, []);
 
   // ─── Realtime sync ──────────────────────────────────────────────────
   // Subscribe to Postgres change events on the tables the eval site cares
@@ -1274,6 +1281,10 @@ export default function App() {
       .channel("realtime-coach_floats")
       .on("postgres_changes", { event: "*", schema: "public", table: "coach_floats" }, () => { loadCoachFloats(); })
       .subscribe();
+    const coverageChannel = supabase
+      .channel("realtime-practice_coverage")
+      .on("postgres_changes", { event: "*", schema: "public", table: "practice_coverage" }, () => { loadPracticeCoverage(); })
+      .subscribe();
     return () => {
       supabase.removeChannel(playerChannel);
       supabase.removeChannel(coachChannel);
@@ -1286,8 +1297,9 @@ export default function App() {
       supabase.removeChannel(practiceApprovalsChannel);
       supabase.removeChannel(coachRequestsChannel);
       supabase.removeChannel(coachFloatsChannel);
+      supabase.removeChannel(coverageChannel);
     };
-  }, [isApproved, loadCoaches, loadRankings, loadTeamStatus, loadTeamTasks, loadTeamQuestions, loadTaskMeta, loadUpdates, loadPracticeApprovals, loadCoachRequests, loadCoachFloats]);
+  }, [isApproved, loadCoaches, loadRankings, loadTeamStatus, loadTeamTasks, loadTeamQuestions, loadTaskMeta, loadUpdates, loadPracticeApprovals, loadCoachRequests, loadCoachFloats, loadPracticeCoverage]);
 
   // Activity feed live updates — only subscribe while that tab is open, since
   // change_log INSERTs fire on every player write and the feed is otherwise
@@ -1383,6 +1395,7 @@ export default function App() {
   useEffect(() => { if (isApproved && (view === "home" || view === "teamdir" || view === "coaches")) loadPracticeApprovals(); }, [isApproved, view, loadPracticeApprovals]);
   useEffect(() => { if (isApproved && (view === "home" || view === "requests")) loadCoachRequests(); }, [isApproved, view, loadCoachRequests]);
   useEffect(() => { if (isApproved && view === "practice") loadCoachFloats(); }, [isApproved, view, loadCoachFloats]);
+  useEffect(() => { if (isApproved && view === "practice") loadPracticeCoverage(); }, [isApproved, view, loadPracticeCoverage]);
   // Optimistically patch local state, then upsert the merged row. `merged` is
   // computed from current state synchronously (NOT inside the setState updater,
   // which React may run later) so the upsert payload is always complete.
@@ -1647,6 +1660,31 @@ export default function App() {
       if (error) console.error("Add coach_float error:", error);
     }
   }, [coachFloats]);
+  // Daily view: assign a team to a specific court number for a (day, slot, phase).
+  const setTeamCourt = useCallback(async (team_name, day, slot, phase, court) => {
+    const c = court === "" || court == null ? null : parseInt(court, 10);
+    setPracticeAssignments(prev => prev.map(a =>
+      (a.team_name === team_name && a.day === day && a.slot === slot && (a.phase || "season") === phase) ? { ...a, court: c } : a));
+    const { error } = await supabase.from("practice_assignments").update({ court: c })
+      .match({ team_name, day, slot, phase });
+    if (error) { window.alert("Couldn't set court: " + error.message); loadPractice(); }
+  }, [loadPractice]);
+  // Daily view: mark a coach out (and optionally who's subbing) for one date.
+  const setCoverage = useCallback(async (practice_date, team_name, slot, phase, coach_out, sub_name) => {
+    if (!practice_date || !coach_out) return;
+    const row = { practice_date, team_name, slot, phase, coach_out, sub_name: (sub_name || "").trim() || null };
+    setPracticeCoverage(prev => {
+      const rest = prev.filter(c => !(c.practice_date === practice_date && c.team_name === team_name && c.slot === slot && (c.phase||"season") === phase && c.coach_out === coach_out));
+      return [...rest, row];
+    });
+    const { error } = await supabase.from("practice_coverage").upsert(row, { onConflict: "practice_date,team_name,slot,phase,coach_out" });
+    if (error) { window.alert("Couldn't save coverage: " + error.message); loadPracticeCoverage(); }
+  }, [loadPracticeCoverage]);
+  const clearCoverage = useCallback(async (practice_date, team_name, slot, phase, coach_out) => {
+    setPracticeCoverage(prev => prev.filter(c => !(c.practice_date === practice_date && c.team_name === team_name && c.slot === slot && (c.phase||"season") === phase && c.coach_out === coach_out)));
+    const { error } = await supabase.from("practice_coverage").delete().match({ practice_date, team_name, slot, phase, coach_out });
+    if (error) { window.alert("Couldn't clear coverage: " + error.message); loadPracticeCoverage(); }
+  }, [loadPracticeCoverage]);
   // Coach emails the director a potential practice-schedule change request.
   const requestScheduleChange = useCallback(async (team, message) => {
     const msg = (message || "").trim();
@@ -1968,6 +2006,7 @@ export default function App() {
         (view === "tournaments" || view === "teamdir" || view === "home") ? loadTournaments() : null,
         view === "practice" ? loadSnapshots() : null,
         view === "practice" ? loadIgnoredWarnings() : null,
+        view === "practice" ? loadPracticeCoverage() : null,
         view === "tryouts" ? loadTryouts() : null,
         view === "messages" ? loadSmsThreads() : null,
         view === "email" ? loadEmailTemplates() : null,
@@ -1976,7 +2015,7 @@ export default function App() {
     } finally {
       setRefreshing(false);
     }
-  }, [isApproved, view, loadPlayers, loadCoaches, loadRankings, loadFavorites, loadTeamStatus, loadTeamTasks, loadTeamQuestions, loadTaskMeta, loadUpdates, loadPracticeApprovals, loadCoachRequests, loadCoachFloats, loadTeamsList, loadBlackouts, loadCoachRoster, loadPractice, loadActivity, loadTournaments, loadSnapshots, loadTryouts, loadSmsThreads, loadEmailTemplates, loadEmailLog, loadIgnoredWarnings]);
+  }, [isApproved, view, loadPlayers, loadCoaches, loadRankings, loadFavorites, loadTeamStatus, loadTeamTasks, loadTeamQuestions, loadTaskMeta, loadUpdates, loadPracticeApprovals, loadCoachRequests, loadCoachFloats, loadTeamsList, loadBlackouts, loadCoachRoster, loadPractice, loadActivity, loadTournaments, loadSnapshots, loadTryouts, loadSmsThreads, loadEmailTemplates, loadEmailLog, loadIgnoredWarnings, loadPracticeCoverage]);
   useEffect(() => {
     if (!isApproved) return;
     let t = null;
@@ -6411,6 +6450,129 @@ export default function App() {
       );
     };
 
+    // ─── Daily coaching board ────────────────────────────────────────────
+    // Pick a date → see that weekday's practices, each team on a court, its
+    // coaches, the floater for the block, and mark a coach out + assign a sub.
+    const renderDailyView = () => {
+      const WD = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+      const d = dailyDate ? new Date(dailyDate + "T00:00") : null;
+      const weekday = d ? WD[d.getDay()] : "";
+      const prettyDate = d ? d.toLocaleDateString(undefined,{weekday:"long",month:"long",day:"numeric",year:"numeric"}) : "";
+      const daySlots = (SLOTS[weekday] || []);
+      const teamsFor = (label) => phaseAssignments.filter(a => a.day === weekday && a.slot === label)
+        .slice().sort((a,b) => ((a.court ?? 99) - (b.court ?? 99)) || a.team_name.localeCompare(b.team_name));
+      const floatersFor = (label) => [...new Set(coachFloats
+        .filter(f => (f.phase || "season") === schedulePhase && f.day === weekday && f.slot === label)
+        .map(f => (f.coach_name || "").trim()).filter(Boolean))];
+      const covFor = (team, label, coachName) => practiceCoverage.find(c =>
+        c.practice_date === dailyDate && c.team_name === team && c.slot === label &&
+        (c.phase || "season") === schedulePhase && c.coach_out === coachName);
+      const shiftDay = (n) => { if (!d) return; const nd = new Date(d); nd.setDate(nd.getDate()+n); setDailyDate(nd.toISOString().slice(0,10)); };
+      const teamByName2 = new Map(practiceTeams.map(t => [t.team_name, t]));
+
+      const coachCell = (team, label, coachName, role) => {
+        const cov = covFor(team, label, coachName);
+        const floaters = floatersFor(label);
+        if (!cov) {
+          return (
+            <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+              <span style={{fontSize:9,fontWeight:800,color:C.mut,textTransform:"uppercase",width:34}}>{role}</span>
+              <span style={{fontSize:12,fontWeight:600,color:C.text}}>{coachName}</span>
+              <button onClick={()=>setCoverage(dailyDate, team, label, schedulePhase, coachName, null)}
+                title="Mark this coach out for this date and assign a sub"
+                style={{padding:"1px 8px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Mark out</button>
+            </div>
+          );
+        }
+        return (
+          <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+            <span style={{fontSize:9,fontWeight:800,color:C.mut,textTransform:"uppercase",width:34}}>{role}</span>
+            <span style={{fontSize:12,fontWeight:600,color:C.red,textDecoration:"line-through"}}>{coachName}</span>
+            <span style={{fontSize:11,color:C.mut}}>→ sub:</span>
+            <select value={cov.sub_name || ""} onChange={e=>{
+                const v = e.target.value;
+                if (v === "__other") { const n = window.prompt("Sub's name:", cov.sub_name || ""); if (n != null) setCoverage(dailyDate, team, label, schedulePhase, coachName, n.trim()); }
+                else setCoverage(dailyDate, team, label, schedulePhase, coachName, v);
+              }}
+              style={{...inpStyle,padding:"3px 6px",fontSize:11,color:cov.sub_name?"#06b6d4":"#f59e0b",fontWeight:700}}>
+              <option value="">⚠ needs sub</option>
+              {floaters.map(f => <option key={f} value={f}>{f} (floating)</option>)}
+              {cov.sub_name && !floaters.includes(cov.sub_name) && <option value={cov.sub_name}>{cov.sub_name}</option>}
+              <option value="__other">＋ Other…</option>
+            </select>
+            <button onClick={()=>clearCoverage(dailyDate, team, label, schedulePhase, coachName)}
+              title="Coach is here after all — clear this"
+              style={{padding:"1px 8px",borderRadius:6,border:"1px solid "+C.grn,background:"transparent",color:C.grn,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Present</button>
+          </div>
+        );
+      };
+
+      return (
+        <div>
+          <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:12,background:C.card,border:"1px solid "+C.border,borderRadius:10,padding:"10px 14px"}}>
+            <button onClick={()=>shiftDay(-1)} style={{padding:"5px 10px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>←</button>
+            <input type="date" value={dailyDate} onChange={e=>setDailyDate(e.target.value)}
+              style={{...inpStyle,padding:"6px 10px",fontSize:13,colorScheme:"dark"}} />
+            <button onClick={()=>shiftDay(1)} style={{padding:"5px 10px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>→</button>
+            <span style={{fontSize:14,fontWeight:800,color:C.gold}}>{prettyDate}</span>
+            <span style={{fontSize:11,color:C.mut,fontWeight:700,textTransform:"uppercase"}}>· {schedulePhase}</span>
+          </div>
+          {daySlots.length === 0 ? (
+            <div style={{padding:24,textAlign:"center",color:C.mut,fontSize:13,background:C.card,borderRadius:12,border:"1px solid "+C.border}}>
+              No practices scheduled on {weekday || "this day"} in the {schedulePhase} phase. Pick another date or switch phase above.
+            </div>
+          ) : (
+            <div style={{display:"flex",flexDirection:"column",gap:16}}>
+              {daySlots.map(s => {
+                const teams = teamsFor(s.label);
+                const floaters = floatersFor(s.label);
+                return (
+                  <div key={s.label} style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,overflow:"hidden"}}>
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,flexWrap:"wrap",padding:"10px 14px",borderBottom:"1px solid "+C.border,background:C.bg}}>
+                      <span style={{fontSize:14,fontWeight:800,color:C.text}}>{weekday} {s.label} <span style={{fontSize:11,color:C.mut,fontWeight:600}}>· {teams.length} team{teams.length===1?"":"s"}</span></span>
+                      <span style={{fontSize:11,color:floaters.length?"#06b6d4":C.mut,fontWeight:700}}>
+                        {floaters.length ? "☁ Floating: " + floaters.join(", ") : "☁ No floater set for this block"}
+                      </span>
+                    </div>
+                    {teams.length === 0 ? (
+                      <div style={{padding:16,color:C.mut,fontSize:12}}>No teams this block.</div>
+                    ) : (
+                      <div style={{display:"flex",flexDirection:"column"}}>
+                        {teams.map(a => {
+                          const t = teamByName2.get(a.team_name) || {};
+                          const coaches = [["Head",t.head_coach],["Asst",t.assistant_coach]].filter(([,c]) => c);
+                          return (
+                            <div key={a.team_name} style={{display:"flex",gap:12,alignItems:"flex-start",padding:"10px 14px",borderBottom:"1px solid "+C.border,flexWrap:"wrap"}}>
+                              <div style={{display:"flex",alignItems:"center",gap:6}}>
+                                <span style={{fontSize:9,fontWeight:800,color:C.mut,textTransform:"uppercase"}}>Court</span>
+                                <select value={a.court ?? ""} onChange={e=>setTeamCourt(a.team_name, weekday, s.label, schedulePhase, e.target.value)}
+                                  style={{...inpStyle,padding:"4px 6px",fontSize:13,fontWeight:800,color:a.court?C.gold:C.mut,minWidth:52}}>
+                                  <option value="">—</option>
+                                  {[1,2,3,4,5,6].map(n => <option key={n} value={n}>{n}</option>)}
+                                </select>
+                              </div>
+                              <div style={{flex:1,minWidth:220}}>
+                                <div onClick={()=>setTeamCardName(a.team_name)} style={{fontSize:14,fontWeight:800,color:C.gold,cursor:"pointer",marginBottom:4}}>{a.team_name}</div>
+                                <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                                  {coaches.length === 0
+                                    ? <span style={{fontSize:12,color:C.mut}}>No coaches assigned</span>
+                                    : coaches.map(([role,c]) => <div key={role}>{coachCell(a.team_name, s.label, c, role)}</div>)}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      );
+    };
+
     // Index assignments by team and by slot for O(1) lookup.
     const byTeamSlot = new Map();
     const bySlot = new Map();
@@ -6876,7 +7038,7 @@ export default function App() {
               })}
             </div>
             <div role="tablist" aria-label="Schedule view" style={{display:"inline-flex",border:"1px solid "+C.border,borderRadius:8,overflow:"hidden"}}>
-              {[["team","By Team"],["coach","By Coach"]].map(([m,label]) => {
+              {[["team","By Team"],["coach","By Coach"],["daily","Daily"]].map(([m,label]) => {
                 const on = practiceViewMode === m;
                 return <button key={m} onClick={()=>setPracticeViewMode(m)}
                   style={{padding:"6px 14px",border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:800,letterSpacing:0.5,textTransform:"uppercase",background:on?C.acc:"transparent",color:on?"#000":C.mut}}>{label}</button>;
@@ -7009,6 +7171,7 @@ export default function App() {
           </details>
         )}
         {practiceViewMode === "coach" && renderCoachScheduleView()}
+        {practiceViewMode === "daily" && renderDailyView()}
         {practiceViewMode === "team" && (<>
         {/* Grid */}
         <div style={{background:C.card,borderRadius:12,border:"1px solid "+C.border,overflow:"hidden"}}>
