@@ -6204,25 +6204,52 @@ export default function App() {
         .sort((a,b) => a.localeCompare(b))
         .filter(cn => !practiceCoachFilter || cn === practiceCoachFilter)
         .filter(cn => !practiceFloatOnly || hasFloat(cn));
+      // Floating coverage per time block: every hour that has a practice should
+      // have at least one floating coach (a per-block ☁). Flag the gaps.
+      const practicingSlots = new Set(phaseAssignments.map(a => a.day + "|" + a.slot));
+      const floatedSlots = new Set(coachFloats.filter(f => (f.phase || "season") === schedulePhase).map(f => f.day + "|" + f.slot));
+      const slotFloatState = (day, label) => {
+        const sk = day + "|" + label;
+        if (!practicingSlots.has(sk)) return "none";              // no practice this hour
+        return floatedSlots.has(sk) ? "covered" : "uncovered";   // practice with / without a floater
+      };
+      const uncoveredSlots = [];
+      VISIBLE_DAYS.forEach(day => SLOTS[day].forEach(s => { if (slotFloatState(day, s.label) === "uncovered") uncoveredSlots.push(day + " " + s.label); }));
       return (
         <div style={{background:C.card,borderRadius:12,border:"1px solid "+C.border,overflow:"hidden"}}>
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,padding:"8px 10px",borderBottom:"1px solid "+C.border}}>
-            <button onClick={()=>setPracticeFloatOnly(v=>!v)}
-              title={practiceFloatOnly ? "Showing only coaches with a floating assignment — click to show all" : "Show only coaches with a floating assignment (☁)"}
-              style={{padding:"5px 12px",borderRadius:6,border:"1px solid "+(practiceFloatOnly?"#06b6d4":C.border),background:practiceFloatOnly?"rgba(6,182,212,0.14)":"transparent",color:practiceFloatOnly?"#06b6d4":C.mut,fontWeight:700,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>
-              ☁ Floating only{practiceFloatOnly?" ✓":""}
-            </button>
-            <button onClick={()=>{ const n = window.prompt("Add a coach to the chart (e.g. for floating coverage):"); if (n && n.trim()) addCoachToChart(n.trim()); }}
-              style={{padding:"5px 12px",borderRadius:6,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontWeight:700,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>+ Add coach</button>
+          <div style={{padding:"8px 10px",borderBottom:"1px solid "+C.border}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
+              <button onClick={()=>setPracticeFloatOnly(v=>!v)}
+                title={practiceFloatOnly ? "Showing only coaches with a floating assignment — click to show all" : "Show only coaches with a floating assignment (☁)"}
+                style={{padding:"5px 12px",borderRadius:6,border:"1px solid "+(practiceFloatOnly?"#06b6d4":C.border),background:practiceFloatOnly?"rgba(6,182,212,0.14)":"transparent",color:practiceFloatOnly?"#06b6d4":C.mut,fontWeight:700,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>
+                ☁ Floating only{practiceFloatOnly?" ✓":""}
+              </button>
+              <button onClick={()=>{ const n = window.prompt("Add a coach to the chart (e.g. for floating coverage):"); if (n && n.trim()) addCoachToChart(n.trim()); }}
+                style={{padding:"5px 12px",borderRadius:6,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontWeight:700,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>+ Add coach</button>
+            </div>
+            <div style={{marginTop:8,fontSize:11,fontWeight:700,lineHeight:1.4}}>
+              {uncoveredSlots.length === 0
+                ? <span style={{color:C.grn}}>✓ Every practice hour has a floating coach</span>
+                : <span style={{color:"#f59e0b"}}>⚠ {uncoveredSlots.length} practice hour{uncoveredSlots.length===1?"":"s"} without a floating coach: <span style={{fontWeight:600}}>{uncoveredSlots.join(" · ")}</span> — click an empty cell in that column to add one.</span>}
+            </div>
           </div>
           <div style={{overflow:"auto",maxHeight:"calc(100vh - 320px)"}}>
             <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0,minWidth:1000}}>
               <thead>
                 <tr>
                   <th style={{...thS,textAlign:"left",minWidth:200}}>Coach</th>
-                  {VISIBLE_DAYS.map(day => SLOTS[day].map(s => (
-                    <th key={day+"|"+s.label} style={thS}><div>{day}</div><div style={{fontSize:9,fontWeight:600}}>{s.label}</div></th>
-                  )))}
+                  {VISIBLE_DAYS.map(day => SLOTS[day].map(s => {
+                    const st = slotFloatState(day, s.label);
+                    return (
+                      <th key={day+"|"+s.label}
+                        title={st==="uncovered" ? "No floating coach for this practice hour — click an empty cell below to add one" : st==="covered" ? "Floating coach assigned this hour" : undefined}
+                        style={{...thS, background: st==="uncovered" ? "rgba(245,158,11,0.18)" : thS.background, color: st==="uncovered" ? "#f59e0b" : thS.color}}>
+                        <div>{day}</div>
+                        <div style={{fontSize:9,fontWeight:600}}>{s.label}</div>
+                        <div style={{fontSize:10,lineHeight:1}}>{st==="uncovered" ? "☁✗" : st==="covered" ? <span style={{color:"#06b6d4"}}>☁✓</span> : ""}</div>
+                      </th>
+                    );
+                  }))}
                   <th style={{...thS,textAlign:"center",minWidth:50}}>#</th>
                 </tr>
               </thead>
