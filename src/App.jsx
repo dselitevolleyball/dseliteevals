@@ -752,7 +752,9 @@ export default function App() {
   const [emailShowMissing, setEmailShowMissing]       = useState(false);
   const [emailShowExcluded, setEmailShowExcluded]     = useState(false);
   const [emailExcluded, setEmailExcluded]             = useState(() => new Set()); // player ids opted out of the current send
-  const [emailTemplates, setEmailTemplates]           = useState([]); // shared across devices (email_templates table)
+  const [emailTemplates, setEmailTemplates]           = useState(() => { // DB-backed; localStorage mirror so they never vanish if the table is missing
+    try { return JSON.parse((typeof localStorage !== "undefined" && localStorage.getItem("dse_email_templates")) || "[]"); } catch { return []; }
+  });
   const [emailTemplateSel, setEmailTemplateSel]       = useState("");
   const [emailLog, setEmailLog]                       = useState([]); // history of sends (email_log table)
   const [emailHistoryOpen, setEmailHistoryOpen]       = useState(false);
@@ -1915,8 +1917,15 @@ export default function App() {
   // Email templates + sent history live in Supabase so they sync across devices.
   const loadEmailTemplates = useCallback(async () => {
     const { data, error } = await supabase.from("email_templates").select("*").order("name");
-    if (error) { console.error("Load email_templates error:", error); return; }
+    let ls = []; try { ls = JSON.parse(localStorage.getItem("dse_email_templates") || "[]"); } catch {}
+    ls = Array.isArray(ls) ? ls : [];
+    // Table missing / unreadable → keep whatever is in local storage so templates
+    // never disappear. Empty table but local has some → keep local (the auto-import
+    // will push them up). Otherwise use the DB rows and mirror them locally.
+    if (error) { if (ls.length) setEmailTemplates(ls); return; }
+    if ((data || []).length === 0 && ls.length > 0) { setEmailTemplates(ls); return; }
     setEmailTemplates(data || []);
+    try { localStorage.setItem("dse_email_templates", JSON.stringify(data || [])); } catch {}
   }, []);
   const loadEmailLog = useCallback(async () => {
     const { data, error } = await supabase.from("email_log").select("*").order("created_at", { ascending: false }).limit(200);
@@ -7908,22 +7917,31 @@ export default function App() {
       const t = emailTemplates.find(x => x.name === name);
       if (t) { setEmailSubject(t.subject || ""); setEmailBody(t.body || ""); }
     };
+    // Local-first: update state + localStorage immediately (always works), then
+    // best-effort sync to the cloud table. A missing table isn't treated as an
+    // error, so templates keep working before the migration is run.
+    const mirrorTemplates = (list) => {
+      setEmailTemplates(list);
+      try { localStorage.setItem("dse_email_templates", JSON.stringify(list)); } catch {}
+    };
+    const isMissingTable = (e) => /schema cache|does not exist|Could not find|PGRST205/i.test((e && e.message) || "");
     const saveTemplate = async () => {
       const name = (window.prompt("Save this email as a template named:", emailTemplateSel || emailSubject.trim()) || "").trim();
       if (!name) return;
-      const { error } = await supabase.from("email_templates")
-        .upsert({ name, subject: emailSubject, body: emailBody, updated_at: new Date().toISOString() });
-      if (error) { window.alert("Save failed: " + error.message); return; }
+      const row = { name, subject: emailSubject, body: emailBody };
+      mirrorTemplates([...emailTemplates.filter(x => x.name !== name), row].sort((a,b) => a.name.localeCompare(b.name)));
       setEmailTemplateSel(name);
-      loadEmailTemplates();
+      const { error } = await supabase.from("email_templates").upsert({ ...row, updated_at: new Date().toISOString() });
+      if (error && !isMissingTable(error)) window.alert("Saved on this device; cloud sync failed: " + error.message);
     };
     const deleteTemplate = async () => {
       if (!emailTemplateSel) return;
       if (!window.confirm("Delete template “" + emailTemplateSel + "”?")) return;
-      const { error } = await supabase.from("email_templates").delete().eq("name", emailTemplateSel);
-      if (error) { window.alert("Delete failed: " + error.message); return; }
+      const name = emailTemplateSel;
+      mirrorTemplates(emailTemplates.filter(x => x.name !== name));
       setEmailTemplateSel("");
-      loadEmailTemplates();
+      const { error } = await supabase.from("email_templates").delete().eq("name", name);
+      if (error && !isMissingTable(error)) window.alert("Deleted on this device; cloud sync failed: " + error.message);
     };
 
     // ── Quick-insert helpers: drop player names / coaches / practice times
