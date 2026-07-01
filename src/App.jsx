@@ -65,11 +65,11 @@ const EVAL_DATES = ["5/13","5/14","5/20","5/21","5/27","5/28","6/3","6/4","6/9",
 const GUEST_EMAIL = "guest@dselitevolleyball.com";
 // Player status — kept in sync with the team-card "+offer" chip (offer_status).
 // The first six mirror the chip's cycle; the last two are board placements.
-const STATUS_OPTS = ["In Progress","Locked","Offered","Accepted","Waiting","Declined","Open Team","Not Invited"];
-const STATUS_COLORS = {"In Progress":"#999999","Locked":"#a855f7","Offered":"#f59e0b","Accepted":"#22c55e","Waiting":"#06b6d4","Declined":"#ef4444","Open Team":"#3b82f6","Not Invited":"#666666","No Offer":"#666666"};
+const STATUS_OPTS = ["In Progress","Locked","Offered","Accepted","Waiting","Declined","Open Team","Not Invited","Opted Out"];
+const STATUS_COLORS = {"In Progress":"#999999","Locked":"#a855f7","Offered":"#f59e0b","Accepted":"#22c55e","Waiting":"#06b6d4","Declined":"#ef4444","Open Team":"#3b82f6","Not Invited":"#666666","No Offer":"#666666","Opted Out":"#a16207"};
 // Map between the offer chip (offer_status) and the Status dropdown (status).
-const OFFER_TO_STATUS = { "":"In Progress", locked:"Locked", made:"Offered", accepted:"Accepted", waiting:"Waiting", declined:"Declined", not_invited:"Not Invited" };
-const STATUS_TO_OFFER = { "In Progress":"", "Open Team":"", Locked:"locked", Offered:"made", Accepted:"accepted", Waiting:"waiting", Declined:"declined", "Not Invited":"not_invited" };
+const OFFER_TO_STATUS = { "":"In Progress", locked:"Locked", made:"Offered", accepted:"Accepted", waiting:"Waiting", declined:"Declined", not_invited:"Not Invited", opted_out:"Opted Out" };
+const STATUS_TO_OFFER = { "In Progress":"", "Open Team":"", Locked:"locked", Offered:"made", Accepted:"accepted", Waiting:"waiting", Declined:"declined", "Not Invited":"not_invited", "Opted Out":"opted_out" };
 const C = {bg:"#0a0a0a",card:"#141414",border:"#2a2a2a",gold:"#e91e8c",text:"#ffffff",mut:"#999999",acc:"#ff69b4",red:"#ef4444",grn:"#22c55e"};
 // Only these owner emails may open the Coaches management screen. UI-level gate.
 const OWNER_EMAILS = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"];
@@ -2091,9 +2091,11 @@ export default function App() {
       upd(p.id, { team_assignment: "", roster_pos: "", offer_status: "declined", offer_decision_at: now });
     } else if (value === "__not_invited") {
       upd(p.id, { team_assignment: "", roster_pos: "", offer_status: "not_invited", offer_made_at: null, offer_decision_at: null });
+    } else if (value === "__opted_out") {
+      upd(p.id, { team_assignment: "", roster_pos: "", offer_status: "opted_out", offer_made_at: null, offer_decision_at: now });
     } else {
       const patch = { team_assignment: value, roster_pos: "" };
-      if (value && (p.offer_status === "declined" || p.offer_status === "not_invited")) patch.offer_status = "";
+      if (value && (p.offer_status === "declined" || p.offer_status === "not_invited" || p.offer_status === "opted_out")) patch.offer_status = "";
       upd(p.id, patch);
     }
   }, [upd]);
@@ -2101,6 +2103,7 @@ export default function App() {
   const teamSelectValue = (p) =>
     p.offer_status === "declined" ? "__declined"
     : p.offer_status === "not_invited" ? "__not_invited"
+    : p.offer_status === "opted_out" ? "__opted_out"
     : (p.team_assignment || "");
 
   // Status dropdown handler. Three of the statuses also move the player on the
@@ -2113,6 +2116,8 @@ export default function App() {
       patch.team_assignment = ""; patch.roster_pos = ""; patch.offer_decision_at = now;
     } else if (value === "Not Invited") {
       patch.team_assignment = ""; patch.roster_pos = ""; patch.offer_made_at = null; patch.offer_decision_at = null;
+    } else if (value === "Opted Out") {
+      patch.team_assignment = ""; patch.roster_pos = ""; patch.offer_made_at = null; patch.offer_decision_at = now;
     } else if (value === "Open Team") {
       patch.team_assignment = ""; patch.roster_pos = "";
     } else if (value === "Offered") {
@@ -3789,6 +3794,7 @@ export default function App() {
                         <option disabled>──────</option>
                         <option value="__not_invited">Not invited</option>
                         <option value="__declined">Decline offer</option>
+                        <option value="__opted_out">Opted out</option>
                       </select>
                       {p.team_assignment && <select style={{...inpStyle,fontSize:9,padding:"2px",width:54,marginTop:2,display:"block"}} value={p.roster_pos||""} onChange={e=>upd(p.id,{roster_pos:e.target.value})}>
                         <option value="">Roster</option>
@@ -3967,7 +3973,7 @@ export default function App() {
       <>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,marginBottom:8,flexWrap:"wrap"}}>
           <div style={{fontSize:11,color:C.mut,fontStyle:"italic",flex:1,minWidth:240}}>
-            Drag a player onto a team card to assign (clears their roster slot). Drag onto Unassigned, Declined, or Not Invited to change status.
+            Drag a player onto a team card to assign (clears their roster slot). Drag onto Unassigned, Declined, Not Invited, or Opted Out to change status.
             Click the "+ offer" chip on a team player to cycle ★ locked (signed + deposit) → offer → ✓ accepted → waiting (for tryouts) → ✗ declined → none.
             Type a rank number to reorder within a position — rank persists across team changes.
           </div>
@@ -4048,12 +4054,17 @@ export default function App() {
         upd(playerId, { team_assignment: "", roster_pos: "", offer_status: "not_invited", offer_made_at: null, offer_decision_at: null, status: "Not Invited" });
         return;
       }
-      // Team drops (including unassigned via team-""). If the player was declined
-      // or not-invited, reset that status — they're back in the offer pipeline.
+      if (overId === "bucket-opted_out") {
+        if (player.offer_status === "opted_out" && !player.team_assignment) return;
+        upd(playerId, { team_assignment: "", roster_pos: "", offer_status: "opted_out", offer_made_at: null, offer_decision_at: now, status: "Opted Out" });
+        return;
+      }
+      // Team drops (including unassigned via team-""). If the player was declined,
+      // not-invited, or opted-out, reset that status — they're back in the pipeline.
       if (overId.startsWith("team-")) {
         const newTeam = overId.replace("team-", "");
         const currentTeam = player.team_assignment || "";
-        const isTerminal = player.offer_status === "declined" || player.offer_status === "not_invited";
+        const isTerminal = player.offer_status === "declined" || player.offer_status === "not_invited" || player.offer_status === "opted_out";
         if (currentTeam === newTeam && !isTerminal) return;
         const updates = { team_assignment: newTeam, roster_pos: "" };
         if (isTerminal) {
@@ -4087,7 +4098,7 @@ export default function App() {
       const cur = player.offer_status || "";
       const now = new Date().toISOString();
       const updates = {};
-      if (cur === "" || cur === "not_invited") {
+      if (cur === "" || cur === "not_invited" || cur === "opted_out") {
         updates.offer_status = "locked"; updates.offer_decision_at = now;
       } else if (cur === "locked") {
         updates.offer_status = "made"; updates.offer_made_at = now; updates.offer_decision_at = null;
@@ -4275,7 +4286,7 @@ export default function App() {
               Declined / not-invited players have their own buckets below, so we
               exclude them here to keep this column focused on players still in play. */}
           {(() => {
-            const unassigned = divPlayers.filter(p => !p.team_assignment && p.offer_status !== "declined" && p.offer_status !== "not_invited");
+            const unassigned = divPlayers.filter(p => !p.team_assignment && p.offer_status !== "declined" && p.offer_status !== "not_invited" && p.offer_status !== "opted_out");
             const groups = {}; POSITIONS.forEach(pos => { groups[pos] = []; }); groups[""] = [];
             unassigned.forEach(p => {
               const ps = p.positions || [];
@@ -4394,6 +4405,36 @@ export default function App() {
                     </DraggablePlayer>
                   ))}
                   {notInvited.length === 0 && <div style={{textAlign:"center",padding:14,color:C.mut,fontSize:11}}>No players marked not invited</div>}
+                </div>
+              </DropZone>
+            );
+          })()}
+          {/* Opted Out bucket — players/families who chose not to participate. */}
+          {(() => {
+            const OPT = STATUS_COLORS["Opted Out"];
+            const optedOut = divPlayers.filter(p => p.offer_status === "opted_out");
+            return (
+              <DropZone id="bucket-opted_out" style={{background:C.card,borderRadius:12,padding:"16px 18px",border:"1px solid "+OPT+"66"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                  <h3 style={{margin:0,fontSize:17,fontWeight:800,color:OPT}}>Opted Out</h3>
+                  <Tag c={OPT}>{optedOut.length}</Tag>
+                </div>
+                <div style={{fontSize:10,color:C.mut,marginBottom:8,fontStyle:"italic"}}>Drop players here whose family chose not to participate this season. Drag back to a team or Unassigned to reconsider.</div>
+                <div style={{display:"flex",flexDirection:"column",gap:3,maxHeight:640,overflowY:"auto"}}>
+                  {optedOut.map(p => (
+                    <DraggablePlayer key={p.id} player={p}>
+                      <div style={{display:"flex",alignItems:"center",gap:6,padding:"5px 8px",background:C.bg,borderRadius:5,fontSize:11,opacity:0.85}}>
+                        <span style={{display:"flex",alignItems:"center",gap:4,flex:1,fontWeight:600,cursor:"pointer"}} onClick={()=>setProfileId(p.id)}>
+                          {isReturningDSE(p) && <span title="DS Elite returning athlete" style={{color:C.gold,fontSize:14,fontWeight:800,lineHeight:1}}>◆</span>}{newIcon(p)}
+                          {p.first_name} {p.last_name}
+                        </span>
+                        {pinnyChip(p)}
+                        {p.offer_decision_at && <span title="When opted out" style={{fontSize:9,color:C.mut,whiteSpace:"nowrap"}}>{new Date(p.offer_decision_at).toLocaleDateString()}</span>}
+                        {(p.positions||[]).map(pos => <span key={pos} style={{fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:8,background:"rgba(34,197,94,0.18)",color:C.grn}}>{pos}</span>)}
+                      </div>
+                    </DraggablePlayer>
+                  ))}
+                  {optedOut.length === 0 && <div style={{textAlign:"center",padding:14,color:C.mut,fontSize:11}}>No players opted out</div>}
                 </div>
               </DropZone>
             );
