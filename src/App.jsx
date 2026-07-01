@@ -6458,15 +6458,30 @@ export default function App() {
       const d = dailyDate ? new Date(dailyDate + "T00:00") : null;
       const weekday = d ? WD[d.getDay()] : "";
       const prettyDate = d ? d.toLocaleDateString(undefined,{weekday:"long",month:"long",day:"numeric",year:"numeric"}) : "";
-      const daySlots = (SLOTS[weekday] || []);
-      const teamsFor = (label) => phaseAssignments.filter(a => a.day === weekday && a.slot === label)
+      // The Daily board is date-driven: the phase (and therefore which practices
+      // show) is derived from the picked date, not the phase tab. Summer runs
+      // Jul 12–Sep 12, Fall 1 Sep 13–Oct 17, Fall 2 Oct 18–Nov 28, and the
+      // regular season starts Nov 29, 2026.
+      const phaseForDate = (iso) => {
+        if (!iso) return schedulePhase;
+        if (iso >= "2026-11-29") return "season";
+        if (iso >= "2026-10-18") return "fall2";
+        if (iso >= "2026-09-13") return "fall1";
+        return "summer";
+      };
+      const dayPhase = phaseForDate(dailyDate);
+      const phaseLabel = { summer:"Summer", fall1:"Fall 1", fall2:"Fall 2", season:"Regular Season" }[dayPhase] || dayPhase;
+      const daySLOTS = dayPhase === "season" ? SEASON_SLOTS : dayPhase === "summer" ? PRESEASON_SLOTS : FALL_SLOTS;
+      const dayAssignments = practiceAssignments.filter(a => (a.phase || "fall1") === dayPhase);
+      const daySlots = (daySLOTS[weekday] || []);
+      const teamsFor = (label) => dayAssignments.filter(a => a.day === weekday && a.slot === label)
         .slice().sort((a,b) => ((a.court ?? 99) - (b.court ?? 99)) || a.team_name.localeCompare(b.team_name));
       const floatersFor = (label) => [...new Set(coachFloats
-        .filter(f => (f.phase || "season") === schedulePhase && f.day === weekday && f.slot === label)
+        .filter(f => (f.phase || "season") === dayPhase && f.day === weekday && f.slot === label)
         .map(f => (f.coach_name || "").trim()).filter(Boolean))];
       const covFor = (team, label, coachName) => practiceCoverage.find(c =>
         c.practice_date === dailyDate && c.team_name === team && c.slot === label &&
-        (c.phase || "season") === schedulePhase && c.coach_out === coachName);
+        (c.phase || "season") === dayPhase && c.coach_out === coachName);
       const shiftDay = (n) => { if (!d) return; const nd = new Date(d); nd.setDate(nd.getDate()+n); setDailyDate(nd.toISOString().slice(0,10)); };
       const teamByName2 = new Map(practiceTeams.map(t => [t.team_name, t]));
 
@@ -6478,7 +6493,7 @@ export default function App() {
             <div style={{display:"flex",alignItems:"center",gap:5,flexWrap:"wrap"}}>
               <span style={{fontSize:9,fontWeight:800,color:C.mut,textTransform:"uppercase",width:30}}>{role}</span>
               <span style={{fontSize:12,fontWeight:600,color:C.text}}>{coachName}</span>
-              <button onClick={()=>setCoverage(dailyDate, team, label, schedulePhase, coachName, null)}
+              <button onClick={()=>setCoverage(dailyDate, team, label, dayPhase, coachName, null)}
                 title="Mark this coach out for this date and assign a sub"
                 style={{padding:"1px 8px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Mark out</button>
             </div>
@@ -6490,8 +6505,8 @@ export default function App() {
             <span style={{fontSize:12,fontWeight:600,color:C.red,textDecoration:"line-through"}}>{coachName}</span>
             <select value={cov.sub_name || ""} onChange={e=>{
                 const v = e.target.value;
-                if (v === "__other") { const n = window.prompt("Sub's name:", cov.sub_name || ""); if (n != null) setCoverage(dailyDate, team, label, schedulePhase, coachName, n.trim()); }
-                else setCoverage(dailyDate, team, label, schedulePhase, coachName, v);
+                if (v === "__other") { const n = window.prompt("Sub's name:", cov.sub_name || ""); if (n != null) setCoverage(dailyDate, team, label, dayPhase, coachName, n.trim()); }
+                else setCoverage(dailyDate, team, label, dayPhase, coachName, v);
               }}
               style={{...inpStyle,padding:"3px 6px",fontSize:11,color:cov.sub_name?"#06b6d4":"#f59e0b",fontWeight:700}}>
               <option value="">⚠ needs sub</option>
@@ -6499,7 +6514,7 @@ export default function App() {
               {cov.sub_name && !floaters.includes(cov.sub_name) && <option value={cov.sub_name}>{cov.sub_name}</option>}
               <option value="__other">＋ Other…</option>
             </select>
-            <button onClick={()=>clearCoverage(dailyDate, team, label, schedulePhase, coachName)}
+            <button onClick={()=>clearCoverage(dailyDate, team, label, dayPhase, coachName)}
               title="Coach is here after all — clear this"
               style={{padding:"1px 8px",borderRadius:6,border:"1px solid "+C.grn,background:"transparent",color:C.grn,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Present</button>
           </div>
@@ -6514,11 +6529,11 @@ export default function App() {
               style={{...inpStyle,padding:"6px 10px",fontSize:13,colorScheme:"dark"}} />
             <button onClick={()=>shiftDay(1)} style={{padding:"5px 10px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>→</button>
             <span style={{fontSize:14,fontWeight:800,color:C.gold}}>{prettyDate}</span>
-            <span style={{fontSize:11,color:C.mut,fontWeight:700,textTransform:"uppercase"}}>· {schedulePhase}</span>
+            <span style={{fontSize:11,color:C.acc,fontWeight:800,textTransform:"uppercase"}}>· {phaseLabel}</span>
           </div>
           {daySlots.length === 0 ? (
             <div style={{padding:24,textAlign:"center",color:C.mut,fontSize:13,background:C.card,borderRadius:12,border:"1px solid "+C.border}}>
-              No practices scheduled on {weekday || "this day"} in the {schedulePhase} phase. Pick another date or switch phase above.
+              No practices scheduled on {prettyDate || "this day"} ({phaseLabel}). Regular season starts Nov 29 — pick a date within a practice window.
             </div>
           ) : (
             <div style={{display:"flex",gap:12,overflowX:"auto",paddingBottom:8,alignItems:"flex-start"}}>
@@ -6543,7 +6558,7 @@ export default function App() {
                           return (
                             <div key={a.team_name} style={{padding:"8px 12px",borderBottom:"1px solid "+C.border}}>
                               <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:5}}>
-                                <select value={a.court ?? ""} onChange={e=>setTeamCourt(a.team_name, weekday, s.label, schedulePhase, e.target.value)}
+                                <select value={a.court ?? ""} onChange={e=>setTeamCourt(a.team_name, weekday, s.label, dayPhase, e.target.value)}
                                   title="Court" style={{...inpStyle,padding:"2px 4px",fontSize:12,fontWeight:800,color:a.court?C.gold:C.mut,width:46}}>
                                   <option value="">C—</option>
                                   {[1,2,3,4,5,6].map(n => <option key={n} value={n}>{"C"+n}</option>)}
@@ -7018,7 +7033,7 @@ export default function App() {
                 { id:"summer", label:"Summer", tip:"Jul 12 – Sep 12 · Sundays · 5 courts · no S&A" },
                 { id:"fall1",  label:"Fall 1", tip:"Sep 13 – Oct 11 · 6 courts · S&A Block 1 (8 Nationals)" },
                 { id:"fall2",  label:"Fall 2", tip:"Oct 18 – Nov 15 · 6 courts · S&A Block 2 (9 Regionals)" },
-                { id:"season", label:"Regular Season", tip:"Full week · the regular 2–3×/week team practice schedule" },
+                { id:"season", label:"Regular Season", tip:"Starts Nov 29 · full week · the regular 2–3×/week team practice schedule" },
               ].map(({id,label,tip}) => {
                 const on = schedulePhase === id;
                 return (
