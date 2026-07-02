@@ -534,7 +534,12 @@ const normalizeUrl = (u) => {
   if (s && !/^https?:\/\//i.test(s)) s = "https://" + s;
   return s;
 };
+// A [label](url) whose label picked up a line-break (selection included the
+// newline) would never match the per-line renderer — collapse it first.
+const repairSplitLinks = (t) => String(t || "").replace(/\[([^\]]*)\]\(([^)\s]+)\)/g,
+  (_, label, url) => "[" + label.replace(/\s+/g, " ").trim() + "](" + url + ")");
 function emailMarkupToHtml(text) {
+  text = repairSplitLinks(text);
   const inline = (raw) => {
     let s = escEmailHtml(raw);
     // [label](url) — protocol optional; we normalize the href.
@@ -556,7 +561,7 @@ function emailMarkupToHtml(text) {
   return '<div style="font-family:sans-serif;font-size:15px;line-height:1.55;color:#111">' + lines.join("") + "</div>";
 }
 function emailMarkupToText(text) {
-  return String(text || "")
+  return repairSplitLinks(text)
     .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, label, url) => label + " (" + normalizeUrl(url) + ")")
     .replace(/\*\*([^*]+)\*\*/g, "$1")
     .replace(/(^|[^*\w])\*([^*\n]+)\*(?!\*)/g, "$1$2")
@@ -8515,7 +8520,12 @@ export default function App() {
             const end = ta ? ta.selectionEnd : emailBody.length;
             const sel = emailBody.slice(start, end);
             let next, selStart = start, selEnd = end;
-            const wrap = (b, a, ph) => { const inner = sel || ph; next = emailBody.slice(0, start) + b + inner + a + emailBody.slice(end); selStart = start + b.length; selEnd = selStart + inner.length; };
+            // Keep any leading/trailing whitespace (esp. newlines) OUTSIDE the
+            // markers — markup can't span line breaks.
+            const lead = (sel.match(/^\s*/) || [""])[0];
+            const trail = sel.slice(lead.length).match(/\s*$/)?.[0] || "";
+            const core = sel.slice(lead.length, sel.length - trail.length);
+            const wrap = (b, a, ph) => { const inner = core || ph; next = emailBody.slice(0, start) + lead + b + inner + a + trail + emailBody.slice(end); selStart = start + lead.length + b.length; selEnd = selStart + inner.length; };
             if (kind === "bold") wrap("**", "**", "bold text");
             else if (kind === "italic") wrap("*", "*", "italic text");
             else if (kind === "underline") wrap("__", "__", "underlined text");
@@ -8523,9 +8533,9 @@ export default function App() {
               const raw = window.prompt("Link URL (e.g. drippingsportsclub.com):", "");
               if (raw == null || !raw.trim()) return;
               const url = normalizeUrl(raw);
-              const label = sel || "link text";
-              next = emailBody.slice(0, start) + "[" + label + "](" + url + ")" + emailBody.slice(end);
-              selStart = start + 1; selEnd = selStart + label.length;
+              const label = (core || "link text").replace(/\s+/g, " ");
+              next = emailBody.slice(0, start) + lead + "[" + label + "](" + url + ")" + trail + emailBody.slice(end);
+              selStart = start + lead.length + 1; selEnd = selStart + label.length;
             } else { // line prefixes: h1 / h2 / bullet — toggle on every selected line
               const prefix = kind === "h1" ? "# " : kind === "h2" ? "## " : "- ";
               const ls = emailBody.lastIndexOf("\n", Math.max(0, start - 1)) + 1;
