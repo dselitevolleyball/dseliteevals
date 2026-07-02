@@ -522,6 +522,21 @@ const SPORTSYOU_CODES = {
   "17 Diamond":  "LSQ5-ZACW",
 };
 const sportsYouCodeFor = (team) => (team && team.sportsyou_code) || SPORTSYOU_CODES[(team && team.team_name) || team] || "";
+// DS Elite Orientation Night dates (September 2026), by age group. Used by the
+// {{ORIENTATION}} email merge variable — keyed by the team name's leading age.
+const ORIENTATION_DATES = {
+  11: "Friday, September 25",
+  12: "Friday, September 25",
+  13: "Friday, September 18",
+  14: "Friday, September 11",
+  15: "Saturday, September 12",
+  16: "Saturday, September 19",
+  17: "Saturday, September 19",
+};
+const orientationDateFor = (teamName) => {
+  const age = parseInt(String(teamName || "").match(/^\d+/)?.[0] || "", 10);
+  return ORIENTATION_DATES[age] || "";
+};
 // ── Email formatting ──────────────────────────────────────────────────
 // The composer supports lightweight markup: **bold**, *italic*, __underline__,
 // [label](url) links, bare URLs, "# " big / "## " medium headings, "- " bullets.
@@ -8254,9 +8269,10 @@ export default function App() {
         ? "Summer location note: " + tn + " practices at DSSC FLEX on Sundays this summer."
         : "";
       const code = sportsYouCodeFor(t.team_name ? t : tn) || "(code coming soon)";
-      return { TEAM: tn, PLAYERS: playersTxt, COACHES: coachesTxt, PRACTICES: practicesTxt, FLEX: flex, SPORTSYOU: code };
+      const orientation = orientationDateFor(tn) || "(date announced soon)";
+      return { TEAM: tn, PLAYERS: playersTxt, COACHES: coachesTxt, PRACTICES: practicesTxt, FLEX: flex, SPORTSYOU: code, ORIENTATION: orientation };
     };
-    const applyMerge = (text, f) => (text || "").replace(/\{\{(TEAM|PLAYERS|COACHES|PRACTICES|FLEX|SPORTSYOU)\}\}/g, (_, k) => f[k] ?? "");
+    const applyMerge = (text, f) => (text || "").replace(/\{\{(TEAM|PLAYERS|COACHES|PRACTICES|FLEX|SPORTSYOU|ORIENTATION)\}\}/g, (_, k) => f[k] ?? "");
     const sendPerTeam = async () => {
       const teams = [...emailTeams].sort();
       if (!teams.length || !emailSubject.trim() || !emailBody.trim()) return;
@@ -8585,7 +8601,7 @@ export default function App() {
         <div style={{display:"flex",alignItems:"center",gap:12,marginTop:12,flexWrap:"wrap"}}>
           {emailTeams.size > 0 && (
             <button onClick={sendPerTeam} disabled={emailSending || !emailSubject.trim() || !emailBody.trim()}
-              title="Sends a separate email to each checked team with {{TEAM}}, {{PLAYERS}}, {{COACHES}}, {{PRACTICES}}, {{FLEX}} and {{SPORTSYOU}} filled in with that team's data"
+              title="Sends a separate email to each checked team with {{TEAM}}, {{PLAYERS}}, {{COACHES}}, {{PRACTICES}}, {{FLEX}}, {{SPORTSYOU}} and {{ORIENTATION}} filled in with that team's data"
               style={{padding:"10px 20px",borderRadius:8,border:"none",background:(emailSending||!emailSubject.trim()||!emailBody.trim())?C.border:C.acc,color:(emailSending||!emailSubject.trim()||!emailBody.trim())?C.mut:"#000",fontFamily:"inherit",fontSize:14,fontWeight:800,cursor:(emailSending||!emailSubject.trim()||!emailBody.trim())?"default":"pointer"}}>
               {emailSending ? "Sending…" : "Send personalized to " + emailTeams.size + " team" + (emailTeams.size===1?"":"s")}
             </button>
