@@ -9952,8 +9952,11 @@ export default function App() {
                             </summary>
                             <div style={{marginTop:3,paddingLeft:6,borderLeft:"2px solid "+C.border}}>
                               {tnrsThis.map(t => (
-                                <div key={t.id} title={t.name + " · " + (t.location||"")}
-                                  style={{fontSize:9,color:C.text,lineHeight:1.4,marginBottom:2}}>
+                                <div key={t.id} title={t.name + " · " + (t.location||"") + " — click to open & edit"}
+                                  onClick={()=>openEditTournament(t)}
+                                  style={{fontSize:9,color:C.text,lineHeight:1.4,marginBottom:2,cursor:"pointer",textDecoration:"underline",textDecorationColor:"transparent",textUnderlineOffset:2}}
+                                  onMouseEnter={e=>e.currentTarget.style.textDecorationColor=C.gold}
+                                  onMouseLeave={e=>e.currentTarget.style.textDecorationColor="transparent"}>
                                   {t.is_qualifier && <span style={{color:"#a855f7",fontWeight:700,marginRight:3}}>Q</span>}
                                   {abbreviate(t.name, 34)}
                                 </div>
@@ -9972,8 +9975,11 @@ export default function App() {
                             {items.length === 0 ? (
                               <span style={{color:C.mut,fontSize:11}}>—</span>
                             ) : items.map(it => (
-                              <div key={it.assignment.id} title={it.tournament.name + (it.assignment.division ? " · " + it.assignment.division : "")}
-                                style={{fontSize:10,fontWeight:600,color:isConflict?C.red:C.text,lineHeight:1.3,marginBottom:2}}>
+                              <div key={it.assignment.id} title={it.tournament.name + (it.assignment.division ? " · " + it.assignment.division : "") + " — click to open & edit"}
+                                onClick={()=>openEditTournament(it.tournament)}
+                                style={{fontSize:10,fontWeight:600,color:isConflict?C.red:C.text,lineHeight:1.3,marginBottom:2,cursor:"pointer",textDecoration:"underline",textDecorationColor:"transparent",textUnderlineOffset:2}}
+                                onMouseEnter={e=>e.currentTarget.style.textDecorationColor=C.gold}
+                                onMouseLeave={e=>e.currentTarget.style.textDecorationColor="transparent"}>
                                 {abbreviate(it.tournament.name, 26)}
                                 {it.assignment.division && <span style={{color:C.mut,fontSize:9}}> · {it.assignment.division}</span>}
                               </div>
@@ -10336,6 +10342,62 @@ export default function App() {
               </div>
             </div>
             <div style={{gridColumn:"1 / -1"}}><span style={lbl}>Notes</span><textarea style={{...editInp,minHeight:60,resize:"vertical"}} value={newTournament.notes} onChange={e=>setF("notes", e.target.value)} /></div>
+            {/* Teams going — manage assignments right here (existing tournaments only).
+                Changes save immediately, independent of the Save button. */}
+            {editingTournament && (() => {
+              const myAsg = tournamentAssignments.filter(a => a.tournament_id === editingTournament.id);
+              const ageOf = (s) => parseInt(String(s || "").replace(/[^0-9]/g, "")) || 0;
+              const entries = Array.isArray(newTournament.entries) ? newTournament.entries : [];
+              const divOptionsFor = (teamId) => {
+                const teamAge = ageOf(teamId);
+                const ageTiers = [...new Set(entries.filter(tok => entryAge(tok) === teamAge).map(entryTier))].filter(Boolean);
+                const anyTiers = [...new Set(entries.map(entryTier))].filter(Boolean);
+                return ageTiers.length ? ageTiers : anyTiers.length ? anyTiers : TN_DIVISIONS;
+              };
+              const eligible = teamsList.filter(t => t.active && !myAsg.some(a => a.team_id === t.id));
+              return (
+                <div style={{gridColumn:"1 / -1",background:C.bg,borderRadius:10,padding:"10px 12px"}}>
+                  <span style={lbl}>Teams going ({myAsg.length}) — changes here save instantly</span>
+                  <div style={{display:"flex",flexDirection:"column",gap:6,marginTop:6}}>
+                    {myAsg.map(a => {
+                      const offered = divOptionsFor(a.team_id);
+                      const opts = (a.division && !offered.includes(a.division)) ? [...offered, a.division] : offered;
+                      return (
+                        <div key={a.id} style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                          <span style={{fontSize:13,fontWeight:700,color:C.text,minWidth:110}}>{a.team_id}</span>
+                          <select value={a.division||""} onChange={e=>updateAssignmentDivision(a.id, e.target.value)}
+                            title="Playing division (from this tournament's offered divisions)"
+                            style={{...inpStyle,fontSize:11,padding:"3px 6px"}}>
+                            <option value="">— division —</option>
+                            {opts.map(d => <option key={d} value={d}>{d}</option>)}
+                          </select>
+                          <button onClick={()=>removeAssignment(a.id)} title={"Remove " + a.team_id + " from this tournament"}
+                            style={{padding:"2px 9px",borderRadius:6,border:"1px solid "+C.red,background:"transparent",color:C.red,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Remove</button>
+                        </div>
+                      );
+                    })}
+                    {!myAsg.length && <span style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>No teams assigned yet.</span>}
+                    {eligible.length > 0 && (
+                      <div style={{display:"flex",gap:6,alignItems:"center",marginTop:4}}>
+                        <select id="edit-tn-assign" defaultValue="" style={{...inpStyle,fontSize:11,padding:"5px 8px"}}>
+                          <option value="">+ Add a team…</option>
+                          {eligible.map(t => <option key={t.id} value={t.id}>{t.id}{t.level ? " — " + t.level : ""}</option>)}
+                        </select>
+                        <button onClick={()=>{
+                            const sel = document.getElementById("edit-tn-assign");
+                            if (!sel || !sel.value) return;
+                            assignTeamToTournament(editingTournament.id, sel.value, "");
+                            sel.value = "";
+                          }}
+                          style={{padding:"5px 12px",borderRadius:6,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+                          Add
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
           <div style={{display:"flex",gap:8,justifyContent:"flex-end",alignItems:"center"}}>
             {editingTournament && (
