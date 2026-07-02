@@ -2141,6 +2141,20 @@ export default function App() {
   // backgrounded PWA / sleeping tab drops the socket and misses events. So we
   // refetch the whole working set whenever the app comes back to the
   // foreground (focus / visibility / back-online) and via a manual button.
+  // New-version detector: compares the deployed bundle name against the one
+  // this tab is running. A stale tab half-works (old code, fresh data), which
+  // has bitten email merges — so surface a "refresh" banner instead.
+  const [updateAvailable, setUpdateAvailable] = useState(false);
+  const checkForUpdate = useCallback(async () => {
+    try {
+      const html = await fetch("/", { cache: "no-store" }).then(r => r.text());
+      const deployed = html.match(/assets\/index-[^"]+\.js/)?.[0];
+      const running = Array.from(document.querySelectorAll("script"))
+        .map(s => s.getAttribute("src") || "").find(s => s.includes("assets/index-"));
+      if (deployed && running && !running.includes(deployed)) setUpdateAvailable(true);
+    } catch {}
+  }, []);
+  useEffect(() => { checkForUpdate(); }, [checkForUpdate]);
   const [refreshing, setRefreshing] = useState(false);
   const refreshAll = useCallback(async () => {
     if (!isApproved) return;
@@ -2172,7 +2186,7 @@ export default function App() {
     const trigger = () => {
       if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
       clearTimeout(t);
-      t = setTimeout(() => { refreshAll(); }, 300);
+      t = setTimeout(() => { refreshAll(); checkForUpdate(); }, 300);
     };
     const onVis = () => { if (document.visibilityState === "visible") trigger(); };
     window.addEventListener("focus", trigger);
@@ -2184,7 +2198,7 @@ export default function App() {
       window.removeEventListener("online", trigger);
       document.removeEventListener("visibilitychange", onVis);
     };
-  }, [isApproved, refreshAll]);
+  }, [isApproved, refreshAll, checkForUpdate]);
 
   // Realtime sync for tournament planning (separate channel — only when on
   // that tab so we don't burn a websocket connection elsewhere).
@@ -8272,7 +8286,9 @@ export default function App() {
       const orientation = orientationDateFor(tn) || "(date announced soon)";
       return { TEAM: tn, PLAYERS: playersTxt, COACHES: coachesTxt, PRACTICES: practicesTxt, FLEX: flex, SPORTSYOU: code, ORIENTATION: orientation };
     };
-    const applyMerge = (text, f) => (text || "").replace(/\{\{(TEAM|PLAYERS|COACHES|PRACTICES|FLEX|SPORTSYOU|ORIENTATION)\}\}/g, (_, k) => f[k] ?? "");
+    // Replace ANY {{KEY}} that exists in the fields object (unknown keys are
+    // left visible so a typo is obvious rather than silently deleted).
+    const applyMerge = (text, f) => (text || "").replace(/\{\{([A-Z_]+)\}\}/g, (m, k) => (k in f ? f[k] : m));
     const sendPerTeam = async () => {
       const teams = [...emailTeams].sort();
       if (!teams.length || !emailSubject.trim() || !emailBody.trim()) return;
@@ -10659,6 +10675,17 @@ export default function App() {
           </div>
         </div>
       </header>
+      {/* A newer build is deployed than this tab is running — prompt a reload
+          so stale code doesn't half-work (e.g. missing email merge fields). */}
+      {updateAvailable && (
+        <div style={{background:"rgba(6,182,212,0.10)",borderBottom:"1px solid rgba(6,182,212,0.5)",padding:"8px 18px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,flexWrap:"wrap"}}>
+          <span style={{fontSize:12,color:"#06b6d4",fontWeight:700}}>A new version of DS Elite HQ is available — refresh to get the latest features.</span>
+          <button onClick={()=>window.location.reload()}
+            style={{padding:"5px 14px",borderRadius:6,border:"none",background:"#06b6d4",color:"#00222a",fontFamily:"inherit",fontSize:11,fontWeight:800,cursor:"pointer"}}>
+            Refresh now
+          </button>
+        </div>
+      )}
       {/* Admin notification: a coach has signed up and is waiting for
           approval. Loaded eagerly via the always-on loadCoaches effect so
           this banner shows on every tab, not just the Coaches one. */}
