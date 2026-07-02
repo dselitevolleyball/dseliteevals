@@ -9013,7 +9013,8 @@ export default function App() {
   }
 
   // Tournament-related constants used by the cards, filters, and forms.
-  const TN_DIVISIONS = ["Open", "USA", "American", "Liberty", "National", "Elite", "Patriot", "Freedom", "Premier", "Select", "Club"];
+  // "Bid"/"Non-Bid" are the Lone Star Regionals-style divisions.
+  const TN_DIVISIONS = ["Open", "USA", "American", "Liberty", "National", "Elite", "Patriot", "Freedom", "Premier", "Select", "Club", "Bid", "Non-Bid"];
   // Age rows for the per-tournament division×age grid (oldest first).
   const TN_AGES = [18, 17, 16, 15, 14, 13, 12, 11];
   // An "entry" token is "<age> <tier>", e.g. "17 American".
