@@ -8649,17 +8649,29 @@ export default function App() {
         )}
 
         <div style={{display:"flex",alignItems:"center",gap:12,marginTop:12,flexWrap:"wrap"}}>
-          {emailTeams.size > 0 && (
-            <button onClick={sendPerTeam} disabled={emailSending || !emailSubject.trim() || !emailBody.trim()}
-              title="Sends a separate email to each checked team with {{TEAM}}, {{PLAYERS}}, {{COACHES}}, {{PRACTICES}}, {{FLEX}}, {{SPORTSYOU}} and {{ORIENTATION}} filled in with that team's data"
-              style={{padding:"10px 20px",borderRadius:8,border:"none",background:(emailSending||!emailSubject.trim()||!emailBody.trim())?C.border:C.acc,color:(emailSending||!emailSubject.trim()||!emailBody.trim())?C.mut:"#000",fontFamily:"inherit",fontSize:14,fontWeight:800,cursor:(emailSending||!emailSubject.trim()||!emailBody.trim())?"default":"pointer"}}>
-              {emailSending ? "Sending…" : "Send personalized to " + emailTeams.size + " team" + (emailTeams.size===1?"":"s")}
+          {emailTeams.size > 0 && (() => {
+            // Audience-aware address count so the button says exactly what will happen.
+            const audTotal = [...emailTeams].reduce((sum, tn) => {
+              const tp = players.filter(p => p.team_assignment === tn && !TERMINAL.includes(p.offer_status || "") && !emailExcluded.has(p.id));
+              const parentRecips = emailAudience === "coaches" ? [] : tp.flatMap(emailsOf).map(e => e.toLowerCase());
+              const coachRecips = emailAudience === "parents" ? [] : coachEmailsFor(tn);
+              return sum + new Set([...parentRecips, ...coachRecips]).size;
+            }, 0);
+            const audWord = emailAudience === "both" ? "parents + coaches" : emailAudience === "coaches" ? "coaches only" : "parents";
+            return (
+              <button onClick={sendPerTeam} disabled={emailSending || !emailSubject.trim() || !emailBody.trim() || audTotal === 0}
+                title="Sends a separate email to each checked team with {{TEAM}}, {{PLAYERS}}, {{COACHES}}, {{PRACTICES}}, {{FLEX}}, {{SPORTSYOU}} and {{ORIENTATION}} filled in with that team's data"
+                style={{padding:"10px 20px",borderRadius:8,border:"none",background:(emailSending||!emailSubject.trim()||!emailBody.trim()||audTotal===0)?C.border:C.acc,color:(emailSending||!emailSubject.trim()||!emailBody.trim()||audTotal===0)?C.mut:"#000",fontFamily:"inherit",fontSize:14,fontWeight:800,cursor:(emailSending||!emailSubject.trim()||!emailBody.trim()||audTotal===0)?"default":"pointer"}}>
+                {emailSending ? "Sending…" : "Send to " + emailTeams.size + " team" + (emailTeams.size===1?"":"s") + " — " + audTotal + " address" + (audTotal===1?"":"es") + " (" + audWord + ")"}
+              </button>
+            );
+          })()}
+          {emailTeams.size === 0 && (
+            <button onClick={send} disabled={emailSending || !emailSubject.trim() || !emailBody.trim() || !recipients.length}
+              style={{padding:"10px 20px",borderRadius:8,border:"none",background:(emailSending||!emailSubject.trim()||!emailBody.trim()||!recipients.length)?C.border:C.gold,color:(emailSending||!emailSubject.trim()||!emailBody.trim()||!recipients.length)?C.mut:"#000",fontFamily:"inherit",fontSize:14,fontWeight:800,cursor:(emailSending||!emailSubject.trim()||!emailBody.trim()||!recipients.length)?"default":"pointer"}}>
+              {emailSending ? "Sending…" : "Send to " + recipients.length}
             </button>
           )}
-          <button onClick={send} disabled={emailSending || !emailSubject.trim() || !emailBody.trim() || !recipients.length}
-            style={{padding:"10px 20px",borderRadius:8,border:"none",background:(emailSending||!emailSubject.trim()||!emailBody.trim()||!recipients.length)?C.border:C.gold,color:(emailSending||!emailSubject.trim()||!emailBody.trim()||!recipients.length)?C.mut:"#000",fontFamily:"inherit",fontSize:14,fontWeight:800,cursor:(emailSending||!emailSubject.trim()||!emailBody.trim()||!recipients.length)?"default":"pointer"}}>
-            {emailSending ? "Sending…" : "Send to " + recipients.length}
-          </button>
           <button onClick={sendTest} disabled={emailSending || !emailSubject.trim() || !emailBody.trim()}
             title={"Send only to " + TEST_EMAIL + " so you can preview it"}
             style={{padding:"10px 16px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:(emailSending||!emailSubject.trim()||!emailBody.trim())?C.mut:C.text,fontFamily:"inherit",fontSize:13,fontWeight:700,cursor:(emailSending||!emailSubject.trim()||!emailBody.trim())?"default":"pointer"}}>
