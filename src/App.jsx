@@ -527,14 +527,23 @@ const sportsYouCodeFor = (team) => (team && team.sportsyou_code) || SPORTSYOU_CO
 // [label](url) links, bare URLs, "# " big / "## " medium headings, "- " bullets.
 // Rendered to styled HTML at send time; the plain-text part strips the markers.
 const escEmailHtml = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+// Ensure a URL has a protocol (and collapse an accidental doubled one from
+// pasting after the prompt's "https://" preset).
+const normalizeUrl = (u) => {
+  let s = String(u || "").trim().replace(/^(https?:\/\/)+(https?:\/\/)/i, "$2");
+  if (s && !/^https?:\/\//i.test(s)) s = "https://" + s;
+  return s;
+};
 function emailMarkupToHtml(text) {
   const inline = (raw) => {
     let s = escEmailHtml(raw);
-    s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" style="color:#c2185b;font-weight:600">$1</a>');
+    // [label](url) — protocol optional; we normalize the href.
+    s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, label, url) => '<a href="' + normalizeUrl(url) + '" style="color:#c2185b;font-weight:600">' + label + "</a>");
     s = s.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
     s = s.replace(/__([^_]+)__/g, "<u>$1</u>");
     s = s.replace(/(^|[^*\w])\*([^*\n]+)\*(?!\*)/g, "$1<i>$2</i>");
-    s = s.replace(/(^|[\s>])(https?:\/\/[^\s<]+)/g, '$1<a href="$2" style="color:#c2185b">$2</a>');
+    // Bare URLs — with protocol, or starting with www.
+    s = s.replace(/(^|[\s>])((?:https?:\/\/|www\.)[^\s<]+)/g, (_, pre, url) => pre + '<a href="' + normalizeUrl(url) + '" style="color:#c2185b">' + url + "</a>");
     return s;
   };
   const lines = String(text || "").split("\n").map(line => {
@@ -548,7 +557,7 @@ function emailMarkupToHtml(text) {
 }
 function emailMarkupToText(text) {
   return String(text || "")
-    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, "$1 ($2)")
+    .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, label, url) => label + " (" + normalizeUrl(url) + ")")
     .replace(/\*\*([^*]+)\*\*/g, "$1")
     .replace(/(^|[^*\w])\*([^*\n]+)\*(?!\*)/g, "$1$2")
     .replace(/__([^_]+)__/g, "$1")
@@ -8511,10 +8520,11 @@ export default function App() {
             else if (kind === "italic") wrap("*", "*", "italic text");
             else if (kind === "underline") wrap("__", "__", "underlined text");
             else if (kind === "link") {
-              const url = window.prompt("Link URL:", "https://");
-              if (url == null || !url.trim() || url.trim() === "https://") return;
+              const raw = window.prompt("Link URL (e.g. drippingsportsclub.com):", "");
+              if (raw == null || !raw.trim()) return;
+              const url = normalizeUrl(raw);
               const label = sel || "link text";
-              next = emailBody.slice(0, start) + "[" + label + "](" + url.trim() + ")" + emailBody.slice(end);
+              next = emailBody.slice(0, start) + "[" + label + "](" + url + ")" + emailBody.slice(end);
               selStart = start + 1; selEnd = selStart + label.length;
             } else { // line prefixes: h1 / h2 / bullet — toggle on every selected line
               const prefix = kind === "h1" ? "# " : kind === "h2" ? "## " : "- ";
