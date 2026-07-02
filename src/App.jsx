@@ -497,6 +497,31 @@ const PRACTICE_PHASES = [
   { id:"postseason", label:"Post Season" },
 ];
 const PRACTICE_DAY_ORDER = { Sun:0, Mon:1, Tue:2, Wed:3, Thu:4, Fri:5, Sat:6 };
+// SportsYou join codes per team — referenced in team cards and parent emails.
+// practice_teams.sportsyou_code (if set in the DB) overrides this map.
+const SPORTSYOU_CODES = {
+  "11 Rise 1":   "NJ7E-CSBS",
+  "11 Diamond":  "BZVJ-FHLM",
+  "12 Diamond":  "TNCX-ZP4W",
+  "12 Ruby":     "XJAV-9C6Y",
+  "12 Rise 1":   "XP88-JSA6",
+  "13 Diamond":  "88KA-EFHZ",
+  "13 Ruby":     "QEZQ-T36X",
+  "13 Sapphire": "KEZ4-V9F9",
+  "13 Emerald":  "AQS2-MFTK",
+  "14 Diamond":  "RNDK-87KK",
+  "14 Ruby":     "B8P3-B5YY",
+  "14 Sapphire": "NN4H-3KPP",
+  "14 Emerald":  "2CUF-EANL",
+  "14 Topaz":    "UYVD-WHUF",
+  "15 Diamond":  "VGUK-USAL",
+  "15 Ruby":     "NVL3-ML7Z",
+  "15 Sapphire": "7NPR-Z9SC",
+  "15 Emerald":  "MX88-D7R9",
+  "16 Diamond":  "JJT2-MYX3",
+  "17 Diamond":  "LSQ5-ZACW",
+};
+const sportsYouCodeFor = (team) => (team && team.sportsyou_code) || SPORTSYOU_CODES[(team && team.team_name) || team] || "";
 // Teams that skip the summer/fall preseason blocks (regular-season only), so
 // they aren't flagged as under-hours during Fall 1 / Fall 2. Edit as needed.
 const NO_FALL_TEAMS = ["11 Rise 1", "12 Rise 1"];
@@ -5976,6 +6001,14 @@ export default function App() {
             <div>
               <h2 style={{margin:0,fontSize:22,fontWeight:800,color:levelColor}}>{teamCardName}</h2>
               {team && <div style={{fontSize:11,color:C.mut,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase",marginTop:2}}>{team.level||"—"} · {team.age_div||"—"} · {team.practices_per_week} practice{team.practices_per_week===1?"":"s"}/wk</div>}
+              {(() => { const code = sportsYouCodeFor(team || teamCardName); return code ? (
+                <div style={{display:"flex",alignItems:"center",gap:6,marginTop:4}}>
+                  <span style={{fontSize:10,fontWeight:800,letterSpacing:0.5,textTransform:"uppercase",color:C.mut}}>SportsYou</span>
+                  <span style={{fontSize:13,fontWeight:800,color:"#06b6d4",letterSpacing:1,fontFamily:"monospace"}}>{code}</span>
+                  <button onClick={()=>{ try { navigator.clipboard.writeText(code); } catch {} }} title="Copy code"
+                    style={{padding:"1px 8px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Copy</button>
+                </div>
+              ) : null; })()}
             </div>
             <button onClick={close} style={{background:"none",border:"none",color:C.mut,fontSize:22,cursor:"pointer",lineHeight:1}}>✕</button>
           </div>
@@ -8087,6 +8120,16 @@ export default function App() {
       });
       appendBody(blocks.join("\n\n"));
     };
+    const insertSportsYouCodes = () => {
+      const teams = scopeTeams();
+      if (!teams.length) { window.alert("Pick a team (or email players who have a team) to add SportsYou codes."); return; }
+      const tmap = new Map(practiceTeams.map(t => [t.team_name, t]));
+      const lines = teams.map(tn => {
+        const code = sportsYouCodeFor(tmap.get(tn) || tn);
+        return tn + " — SportsYou code: " + (code || "(no code on file)");
+      });
+      appendBody(lines.join("\n"));
+    };
 
     return (
       <div style={{maxWidth:760}}>
@@ -8295,6 +8338,7 @@ export default function App() {
             ["Add player names", insertPlayerNames, "Adds the names of every player in the current scope"],
             ["Add coaches' names", insertCoachNames, "Adds the head & assistant coaches for the team(s) in scope"],
             ["Practice dates & times", insertPracticeTimes, "Adds the regular-season practice schedule for the team(s) in scope"],
+            ["SportsYou codes", insertSportsYouCodes, "Adds each in-scope team's SportsYou join code"],
           ].map(([label, fn, tip]) => (
             <button key={label} onClick={fn} title={tip}
               style={{padding:"6px 12px",borderRadius:6,border:"1px solid "+C.acc,background:"transparent",color:C.acc,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
