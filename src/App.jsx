@@ -848,6 +848,7 @@ export default function App() {
   const [emailLog, setEmailLog]                       = useState([]); // history of sends (email_log table)
   const [emailHistoryOpen, setEmailHistoryOpen]       = useState(false);
   const [emailPreviewOpen, setEmailPreviewOpen]       = useState(false); // formatted-preview toggle
+  const [emailAudience, setEmailAudience]             = useState("parents"); // team sends: parents | both | coaches
   const emailBodyRef                                  = useRef(null);   // textarea ref for toolbar selection edits
   const [teamsList, setTeamsList]                           = useState([]);
   const [teamStatus, setTeamStatus]                         = useState({}); // { [team_name]: { status, looking_positions } }
@@ -8289,16 +8290,35 @@ export default function App() {
     // Replace ANY {{KEY}} that exists in the fields object (unknown keys are
     // left visible so a typo is obvious rather than silently deleted).
     const applyMerge = (text, f) => (text || "").replace(/\{\{([A-Z_]+)\}\}/g, (m, k) => (k in f ? f[k] : m));
+    // A team's coach emails (head + assistant), matched against coach accounts
+    // and the coach roster the same way the {{COACHES}} merge field does.
+    const coachEmailsFor = (tn) => {
+      const t = practiceTeams.find(x => x.team_name === tn) || {};
+      const nrm = s => (s || "").trim().toLowerCase();
+      const emailOf = (cn) => {
+        if (!cn) return "";
+        const fn = nrm(cn).split(" ")[0];
+        const match = dn => { dn = nrm(dn); return !!dn && (dn === nrm(cn) || dn.split(" ")[0] === fn); };
+        const acct = (coachesList || []).find(c => match(c.display_name));
+        if (acct && acct.email) return acct.email.toLowerCase();
+        const ros = (coachRoster || []).find(r => match((r.first_name || "") + " " + (r.last_name || "")));
+        return ((ros && ros.email) || "").toLowerCase();
+      };
+      return [...new Set([emailOf(t.head_coach), emailOf(t.assistant_coach)].filter(Boolean))];
+    };
     const sendPerTeam = async () => {
       const teams = [...emailTeams].sort();
       if (!teams.length || !emailSubject.trim() || !emailBody.trim()) return;
       const plan = teams.map(tn => {
         const tp = players.filter(p => p.team_assignment === tn && !TERMINAL.includes(p.offer_status || "") && !emailExcluded.has(p.id));
-        const recips = [...new Set(tp.flatMap(emailsOf).map(e => e.toLowerCase()))];
+        const parentRecips = emailAudience === "coaches" ? [] : tp.flatMap(emailsOf).map(e => e.toLowerCase());
+        const coachRecips = emailAudience === "parents" ? [] : coachEmailsFor(tn);
+        const recips = [...new Set([...parentRecips, ...coachRecips])];
         return { tn, recips };
       });
       const total = plan.reduce((s, x) => s + x.recips.length, 0);
-      if (!window.confirm("Send a PERSONALIZED email to each team (placeholders filled per team)?\n\n" +
+      const audLabel = emailAudience === "both" ? "parents + coaches" : emailAudience === "coaches" ? "COACHES ONLY" : "parents";
+      if (!window.confirm("Send a PERSONALIZED email to each team (" + audLabel + ")?\n\n" +
         plan.map(x => x.tn + " — " + x.recips.length + " address" + (x.recips.length === 1 ? "" : "es")).join("\n") +
         "\n\nTotal: " + total + " emails.")) return;
       setEmailSending(true); setEmailErr(""); setEmailResult(null);
@@ -8453,6 +8473,20 @@ export default function App() {
                 style={{padding:"4px 10px",borderRadius:16,border:"1px solid "+C.border,background:"transparent",color:C.mut,cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:700}}>
                 Clear ({emailTeams.size})
               </button>
+            )}
+            {emailTeams.size > 0 && (
+              <span style={{display:"inline-flex",alignItems:"center",gap:5,marginLeft:6}}>
+                <span style={{fontSize:11,fontWeight:700,color:C.mut}}>Send to:</span>
+                <span style={{display:"inline-flex",border:"1px solid "+C.border,borderRadius:8,overflow:"hidden"}}>
+                  {[["parents","Parents"],["both","Parents + Coaches"],["coaches","Coaches only"]].map(([v,label]) => (
+                    <button key={v} onClick={()=>setEmailAudience(v)}
+                      title={v==="coaches" ? "Personalized team sends go only to each team's head & assistant coach" : v==="both" ? "Each team's parents plus its coaches" : "Each team's parents only"}
+                      style={{padding:"4px 10px",border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:10,fontWeight:800,background:emailAudience===v?C.acc:"transparent",color:emailAudience===v?"#000":C.mut}}>
+                      {label}
+                    </button>
+                  ))}
+                </span>
+              </span>
             )}
           </div>
         )}
