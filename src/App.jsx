@@ -6423,10 +6423,15 @@ export default function App() {
       // have at least one floating coach (a per-block ☁). Flag the gaps.
       const practicingSlots = new Set(phaseAssignments.map(a => a.day + "|" + a.slot));
       const floatedSlots = new Set(coachFloats.filter(f => (f.phase || "season") === schedulePhase).map(f => f.day + "|" + f.slot));
+      // A globally-floating coach (☁ checkbox) automatically floats every
+      // practice hour they're not coaching a team — no per-block clicks needed.
+      const globalFloatAt = (cn, sk) => floatLow.has(cn.trim().toLowerCase()) && practicingSlots.has(sk) && !(coachMap[cn] && coachMap[cn][sk]);
+      const globalCover = new Set();
+      practicingSlots.forEach(sk => { if (floatNames.some(fn => globalFloatAt(fn, sk))) globalCover.add(sk); });
       const slotFloatState = (day, label) => {
         const sk = day + "|" + label;
         if (!practicingSlots.has(sk)) return "none";              // no practice this hour
-        return floatedSlots.has(sk) ? "covered" : "uncovered";   // practice with / without a floater
+        return (floatedSlots.has(sk) || globalCover.has(sk)) ? "covered" : "uncovered";
       };
       const uncoveredSlots = [];
       VISIBLE_DAYS.forEach(day => SLOTS[day].forEach(s => { if (slotFloatState(day, s.label) === "uncovered") uncoveredSlots.push(day + " " + s.label); }));
@@ -6489,17 +6494,22 @@ export default function App() {
                         const dbl = teams.length > 1;
                         const isFloat = floatSet.has(cn + "|" + day + "|" + s.label);
                         const empty = teams.length === 0;
+                        // Globally-floating coach, free during a practice hour →
+                        // shows an automatic (dimmer) ☁ without per-block clicks.
+                        const autoFloat = empty && !isFloat && globalFloatAt(cn, day + "|" + s.label);
                         return (
                           <td key={day+"|"+s.label}
                             onClick={empty ? () => toggleCoachFloat(cn, day, s.label, schedulePhase) : undefined}
-                            title={empty ? (isFloat ? "Floating this block — click to remove" : "Click to make " + cn + " a floater for " + day + " " + s.label) : ""}
-                            style={{...tdS,padding:"4px",cursor: empty ? "pointer" : "default", background: (isFloat && empty) ? "rgba(6,182,212,0.14)" : undefined}}>
+                            title={empty ? (isFloat ? "Floating this block — click to remove" : autoFloat ? cn + " is a floating coach (☁) and free this practice hour — click to pin the block" : "Click to make " + cn + " a floater for " + day + " " + s.label) : ""}
+                            style={{...tdS,padding:"4px",cursor: empty ? "pointer" : "default", background: (isFloat && empty) ? "rgba(6,182,212,0.14)" : autoFloat ? "rgba(6,182,212,0.07)" : undefined}}>
                             {!empty ? (
                               <div style={{display:"flex",flexDirection:"column",gap:2,alignItems:"center"}}>
                                 {teams.map((tn,i) => <span key={i} title={dbl?"Double-booked at this time":tn} style={{fontSize:9,fontWeight:700,padding:"2px 5px",borderRadius:5,background:dbl?"rgba(239,68,68,0.18)":"rgba(34,197,94,0.15)",color:dbl?C.red:C.grn,whiteSpace:"nowrap",maxWidth:90,overflow:"hidden",textOverflow:"ellipsis"}}>{tn}</span>)}
                               </div>
                             ) : isFloat ? (
                               <span title="Floating this block" style={{fontSize:15,color:"#06b6d4"}}>☁</span>
+                            ) : autoFloat ? (
+                              <span style={{fontSize:15,color:"#06b6d4",opacity:0.45}}>☁</span>
                             ) : (
                               <span style={{color:C.border}}>·</span>
                             )}
