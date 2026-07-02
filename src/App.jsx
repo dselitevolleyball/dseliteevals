@@ -497,6 +497,8 @@ const PRACTICE_PHASES = [
   { id:"postseason", label:"Post Season" },
 ];
 const PRACTICE_DAY_ORDER = { Sun:0, Mon:1, Tue:2, Wed:3, Thu:4, Fri:5, Sat:6 };
+// Truncate long names for tight UI spots (dropdown labels, grid cells).
+const truncName = (name, n = 22) => (name || "").length > n ? (name || "").slice(0, n - 1) + "…" : (name || "");
 // SportsYou join codes per team — referenced in team cards and parent emails.
 // practice_teams.sportsyou_code (if set in the DB) overrides this map.
 const SPORTSYOU_CODES = {
@@ -1472,7 +1474,7 @@ export default function App() {
     if (error) { console.error("Load practice_snapshots error:", error); return; }
     setSnapshots(data || []);
   }, []);
-  useEffect(() => { if (isApproved && (view === "practice" || view === "teamdir" || view === "home" || view === "coaches")) loadPractice(); }, [isApproved, view, loadPractice]);
+  useEffect(() => { if (isApproved && (view === "practice" || view === "teamdir" || view === "home" || view === "coaches" || view === "tournaments")) loadPractice(); }, [isApproved, view, loadPractice]);
   useEffect(() => { if (isApproved && view === "practice") loadSnapshots(); }, [isApproved, view, loadSnapshots]);
   // Coach/team cards (openable from any view) need practice_teams loaded.
   useEffect(() => { if (isApproved && (coachCardName || teamCardName)) loadPractice(); }, [isApproved, coachCardName, teamCardName, loadPractice]);
@@ -9178,7 +9180,42 @@ export default function App() {
   };
 
   // Assignment mutations.
+  // A team's coaches, from the canonical practice planner (falls back to the
+  // tournament teams table, which is kept synced from it).
+  const coachesOfTeam = (teamId) => {
+    const pt = practiceTeams.find(t => t.team_name === teamId);
+    if (pt) return [pt.head_coach, pt.assistant_coach].filter(Boolean);
+    const tm = teamsList.find(t => t.id === teamId);
+    return tm ? [tm.head_coach, tm.assistant_coach].filter(Boolean) : [];
+  };
+  // Coach clashes if teamId were sent to `tournament`: any other team sharing
+  // one of its coaches already assigned to a date-overlapping tournament.
+  const coachClashesFor = (teamId, tournament) => {
+    if (!tournament) return [];
+    const mine = new Set(coachesOfTeam(teamId).map(c => c.trim().toLowerCase()));
+    if (!mine.size) return [];
+    const tById = new Map(tournaments.map(t => [t.id, t]));
+    const out = [];
+    for (const a of tournamentAssignments) {
+      if (a.team_id === teamId) continue;
+      const tn = tById.get(a.tournament_id);
+      if (!tn || tn.id === tournament.id || tn.cancelled) continue;
+      if (!(tn.start_date <= tournament.end_date && tournament.start_date <= tn.end_date)) continue;
+      const shared = coachesOfTeam(a.team_id).filter(c => mine.has(c.trim().toLowerCase()));
+      for (const c of shared) out.push({ coach: c, otherTeam: a.team_id, otherTournament: tn });
+    }
+    return out;
+  };
   const assignTeamToTournament = async (tournamentId, teamId, division) => {
+    // Hard stop on coach conflicts: a shared coach can't be in two places.
+    const target = tournaments.find(t => t.id === tournamentId);
+    const clashes = coachClashesFor(teamId, target);
+    if (clashes.length) {
+      window.alert("Can't schedule " + teamId + " for this weekend — coach conflict:\n\n" +
+        clashes.map(c => "• " + c.coach + " also coaches " + c.otherTeam + ", already going to " + c.otherTournament.name).join("\n") +
+        "\n\nRemove the other team's assignment (or change the coaching assignment) first.");
+      return;
+    }
     if (!tournamentId || !teamId) return;
     const { error } = await supabase.from("tournament_assignments").upsert(
       { tournament_id: tournamentId, team_id: teamId, division: division || null },
@@ -9470,7 +9507,12 @@ export default function App() {
               <select id={"assign-team-"+tn.id} defaultValue=""
                 style={{...inpStyle,fontSize:11,padding:"5px 8px"}}>
                 <option value="">+ Assign team…</option>
-                {eligibleTeams.map(t => <option key={t.id} value={t.id}>{t.id}{t.level?" — "+t.level:""}</option>)}
+                {eligibleTeams.map(t => {
+                  const clash = coachClashesFor(t.id, tn);
+                  return <option key={t.id} value={t.id} disabled={clash.length > 0}>
+                    {t.id}{clash.length ? " — ⚠ " + clash[0].coach + " at " + truncName(clash[0].otherTournament.name, 18) : t.level ? " — " + t.level : ""}
+                  </option>;
+                })}
               </select>
               <button onClick={()=>{
                   const sel = document.getElementById("assign-team-"+tn.id);
@@ -10382,7 +10424,12 @@ export default function App() {
                       <div style={{display:"flex",gap:6,alignItems:"center",marginTop:4}}>
                         <select id="edit-tn-assign" defaultValue="" style={{...inpStyle,fontSize:11,padding:"5px 8px"}}>
                           <option value="">+ Add a team…</option>
-                          {eligible.map(t => <option key={t.id} value={t.id}>{t.id}{t.level ? " — " + t.level : ""}</option>)}
+                          {eligible.map(t => {
+                            const clash = coachClashesFor(t.id, editingTournament);
+                            return <option key={t.id} value={t.id} disabled={clash.length > 0}>
+                              {t.id}{clash.length ? " — ⚠ " + clash[0].coach + " at " + truncName(clash[0].otherTournament.name, 18) : t.level ? " — " + t.level : ""}
+                            </option>;
+                          })}
                         </select>
                         <button onClick={()=>{
                             const sel = document.getElementById("edit-tn-assign");
