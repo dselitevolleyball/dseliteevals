@@ -873,6 +873,7 @@ export default function App() {
   const [pushState, setPushState]                          = useState("loading"); // unsupported | off | on | denied
   const [blackoutDates, setBlackoutDates]                   = useState([]);
   const [tnFilters, setTnFilters]                           = useState({ search: "", ageFor: "", qualifierOnly: false, dateFrom: "", dateTo: "", hideClosed: false, hideCancelled: true, startsOn: [], state: "", numDays: "", divisions: [], tags: [] });
+  const [tnSelected, setTnSelected]                         = useState(() => new Set()); // tournament ids checked for bulk delete
   const [tnView, setTnView]                                 = useState("list"); // "list" | "calendar"
   const [tnSelectedTeams, setTnSelectedTeams]               = useState(new Set()); // empty = all shown
   const [tnCalFrom, setTnCalFrom]                           = useState("2026-12-01");
@@ -9298,6 +9299,17 @@ export default function App() {
       </div>
     );
   };
+  // Bulk delete — one confirm for all checked tournaments, one DB call.
+  const bulkDeleteTournaments = async () => {
+    const ids = [...tnSelected];
+    if (!ids.length) return;
+    const names = tournaments.filter(t => tnSelected.has(t.id)).map(t => "• " + t.name);
+    if (!window.confirm("Delete " + ids.length + " tournament" + (ids.length === 1 ? "" : "s") + "? Team assignments to them are removed too.\n\n" + names.slice(0, 15).join("\n") + (names.length > 15 ? "\n…and " + (names.length - 15) + " more" : ""))) return;
+    const { error } = await supabase.from("tournaments").delete().in("id", ids);
+    if (error) { window.alert("Bulk delete failed: " + error.message); return; }
+    setTnSelected(new Set());
+    loadTournaments();
+  };
   const deleteTournament = async (id, name) => {
     if (!window.confirm("Delete tournament \"" + name + "\"? Any team assignments to it will also be removed.")) return;
     const { error } = await supabase.from("tournaments").delete().eq("id", id);
@@ -9346,6 +9358,10 @@ export default function App() {
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,flexWrap:"wrap"}}>
           <div style={{flex:"1 1 320px",minWidth:0}}>
             <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+              <input type="checkbox" checked={tnSelected.has(tn.id)} title="Select for bulk delete"
+                onClick={e=>e.stopPropagation()}
+                onChange={()=>setTnSelected(prev=>{ const n = new Set(prev); n.has(tn.id) ? n.delete(tn.id) : n.add(tn.id); return n; })}
+                style={{width:15,height:15,accentColor:C.red,cursor:"pointer",flexShrink:0}} />
               <h3 style={{margin:0,fontSize:15,fontWeight:800,color:isCancelled?C.mut:C.gold,textDecoration:isCancelled?"line-through":"none"}}>{tn.name}</h3>
               {tn.is_qualifier && <Tag c="#a855f7">QUALIFIER</Tag>}
               {conflictsHere.length > 0 && <Tag c={C.red}>{conflictsHere.length} CONFLICT{conflictsHere.length===1?"":"S"}</Tag>}
@@ -9707,6 +9723,27 @@ export default function App() {
          : tnView === "browse" ? renderTournamentBrowser(filtered)
          : tnView === "month" ? renderTournamentMonthView(filtered)
          : (<>
+        {/* Bulk selection bar — check tournaments (or select all filtered) and delete in one shot. */}
+        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:10,padding:"8px 12px",background:tnSelected.size?"rgba(239,68,68,0.08)":C.card,border:"1px solid "+(tnSelected.size?C.red:C.border),borderRadius:8}}>
+          <span style={{fontSize:11,fontWeight:700,color:tnSelected.size?C.red:C.mut}}>
+            {tnSelected.size ? tnSelected.size + " selected" : "Tip: use the checkboxes to bulk-delete tournaments"}
+          </span>
+          <button onClick={()=>setTnSelected(new Set(filtered.map(t=>t.id)))}
+            title="Select every tournament matching the current filters"
+            style={{padding:"4px 10px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+            Select all filtered ({filtered.length})
+          </button>
+          {tnSelected.size > 0 && (<>
+            <button onClick={bulkDeleteTournaments}
+              style={{padding:"4px 12px",borderRadius:6,border:"none",background:C.red,color:"#fff",fontSize:10,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>
+              Delete {tnSelected.size} selected
+            </button>
+            <button onClick={()=>setTnSelected(new Set())}
+              style={{padding:"4px 10px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+              Clear selection
+            </button>
+          </>)}
+        </div>
         {/* Tournament cards, grouped by month so the wall-of-cards is scannable */}
         {filtered.length === 0 ? (
           <div style={{padding:30,textAlign:"center",color:C.mut,fontSize:12,background:C.card,borderRadius:10,border:"1px solid "+C.border}}>
