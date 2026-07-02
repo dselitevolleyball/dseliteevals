@@ -71,7 +71,12 @@ export default async function handler(req, res) {
   // request) so replies reach them directly; falls back to the club default.
   const reqReplyTo = (body && typeof body.replyTo === "string" ? body.replyTo : "").trim();
   const replyTo = (reqReplyTo && EMAIL_RE.test(reqReplyTo)) ? reqReplyTo : (DSE_REPLY_TO || extractAddress(DSE_FROM_EMAIL)).trim();
-  const htmlBody = asHtml ? text : "<div style=\"white-space:pre-wrap;font-family:sans-serif;font-size:15px;line-height:1.5\">" + escapeHtml(text) + "</div>";
+  // Pre-rendered HTML from the composer's formatting toolbar takes priority;
+  // otherwise fall back to the plain-text wrap (or raw html when html=true).
+  const preRendered = (body && typeof body.bodyHtml === "string" && body.bodyHtml.trim()) ? body.bodyHtml : null;
+  const htmlBody = preRendered ? preRendered
+    : asHtml ? text
+    : "<div style=\"white-space:pre-wrap;font-family:sans-serif;font-size:15px;line-height:1.5\">" + escapeHtml(text) + "</div>";
 
   let sent = 0;
   // Resend batch endpoint accepts up to 100 messages per request.

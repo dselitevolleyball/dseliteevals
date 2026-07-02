@@ -522,6 +522,38 @@ const SPORTSYOU_CODES = {
   "17 Diamond":  "LSQ5-ZACW",
 };
 const sportsYouCodeFor = (team) => (team && team.sportsyou_code) || SPORTSYOU_CODES[(team && team.team_name) || team] || "";
+// ── Email formatting ──────────────────────────────────────────────────
+// The composer supports lightweight markup: **bold**, *italic*, __underline__,
+// [label](url) links, bare URLs, "# " big / "## " medium headings, "- " bullets.
+// Rendered to styled HTML at send time; the plain-text part strips the markers.
+const escEmailHtml = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+function emailMarkupToHtml(text) {
+  const inline = (raw) => {
+    let s = escEmailHtml(raw);
+    s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" style="color:#c2185b;font-weight:600">$1</a>');
+    s = s.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
+    s = s.replace(/__([^_]+)__/g, "<u>$1</u>");
+    s = s.replace(/(^|[^*\w])\*([^*\n]+)\*(?!\*)/g, "$1<i>$2</i>");
+    s = s.replace(/(^|[\s>])(https?:\/\/[^\s<]+)/g, '$1<a href="$2" style="color:#c2185b">$2</a>');
+    return s;
+  };
+  const lines = String(text || "").split("\n").map(line => {
+    if (line.startsWith("# "))  return '<div style="font-size:22px;font-weight:800;margin:14px 0 6px">' + inline(line.slice(2)) + "</div>";
+    if (line.startsWith("## ")) return '<div style="font-size:17px;font-weight:800;margin:12px 0 4px">' + inline(line.slice(3)) + "</div>";
+    if (/^[-•] /.test(line))    return '<div style="margin-left:18px">• ' + inline(line.slice(2)) + "</div>";
+    if (line.trim() === "")     return '<div style="height:10px;line-height:10px">&nbsp;</div>';
+    return "<div>" + inline(line) + "</div>";
+  });
+  return '<div style="font-family:sans-serif;font-size:15px;line-height:1.55;color:#111">' + lines.join("") + "</div>";
+}
+function emailMarkupToText(text) {
+  return String(text || "")
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, "$1 ($2)")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/(^|[^*\w])\*([^*\n]+)\*(?!\*)/g, "$1$2")
+    .replace(/__([^_]+)__/g, "$1")
+    .replace(/^#{1,2} /gm, "");
+}
 // Teams that skip the summer/fall preseason blocks (regular-season only), so
 // they aren't flagged as under-hours during Fall 1 / Fall 2. Edit as needed.
 const NO_FALL_TEAMS = ["11 Rise 1", "12 Rise 1"];
@@ -786,6 +818,8 @@ export default function App() {
   const [emailTemplateSel, setEmailTemplateSel]       = useState("");
   const [emailLog, setEmailLog]                       = useState([]); // history of sends (email_log table)
   const [emailHistoryOpen, setEmailHistoryOpen]       = useState(false);
+  const [emailPreviewOpen, setEmailPreviewOpen]       = useState(false); // formatted-preview toggle
+  const emailBodyRef                                  = useRef(null);   // textarea ref for toolbar selection edits
   const [teamsList, setTeamsList]                           = useState([]);
   const [teamStatus, setTeamStatus]                         = useState({}); // { [team_name]: { status, looking_positions } }
   const [teamTasks, setTeamTasks]                           = useState({}); // { `${team}|${item}`: { status, notes } }
@@ -8025,7 +8059,7 @@ export default function App() {
         const res = await fetch("/api/send-email", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ subject: subj, body: bod, recipients: to }),
+          body: JSON.stringify({ subject: subj, body: emailMarkupToText(bod), bodyHtml: emailMarkupToHtml(bod), recipients: to }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Send failed");
@@ -8231,7 +8265,7 @@ export default function App() {
         try {
           const res = await fetch("/api/send-email", {
             method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ subject: subj, body: bod, recipients: recips }),
+            body: JSON.stringify({ subject: subj, body: emailMarkupToText(bod), bodyHtml: emailMarkupToHtml(bod), recipients: recips }),
           });
           const d = await res.json().catch(() => ({}));
           if (!res.ok) throw new Error(d.error || "Send failed");
@@ -8464,8 +8498,69 @@ export default function App() {
             </button>
           ))}
         </div>
-        <textarea value={emailBody} onChange={e=>setEmailBody(e.target.value)} placeholder="Write your message…"
+        {/* Formatting toolbar — wraps the textarea selection in lightweight markup. */}
+        {(() => {
+          const applyFormat = (kind) => {
+            const ta = emailBodyRef.current;
+            const start = ta ? ta.selectionStart : emailBody.length;
+            const end = ta ? ta.selectionEnd : emailBody.length;
+            const sel = emailBody.slice(start, end);
+            let next, selStart = start, selEnd = end;
+            const wrap = (b, a, ph) => { const inner = sel || ph; next = emailBody.slice(0, start) + b + inner + a + emailBody.slice(end); selStart = start + b.length; selEnd = selStart + inner.length; };
+            if (kind === "bold") wrap("**", "**", "bold text");
+            else if (kind === "italic") wrap("*", "*", "italic text");
+            else if (kind === "underline") wrap("__", "__", "underlined text");
+            else if (kind === "link") {
+              const url = window.prompt("Link URL:", "https://");
+              if (url == null || !url.trim() || url.trim() === "https://") return;
+              const label = sel || "link text";
+              next = emailBody.slice(0, start) + "[" + label + "](" + url.trim() + ")" + emailBody.slice(end);
+              selStart = start + 1; selEnd = selStart + label.length;
+            } else { // line prefixes: h1 / h2 / bullet — toggle on every selected line
+              const prefix = kind === "h1" ? "# " : kind === "h2" ? "## " : "- ";
+              const ls = emailBody.lastIndexOf("\n", Math.max(0, start - 1)) + 1;
+              const blockEnd = Math.max(end, start);
+              const block = emailBody.slice(ls, blockEnd);
+              const changed = block.split("\n").map(l => l.startsWith(prefix) ? l.slice(prefix.length) : prefix + l).join("\n");
+              next = emailBody.slice(0, ls) + changed + emailBody.slice(blockEnd);
+              selStart = ls; selEnd = ls + changed.length;
+            }
+            setEmailBody(next);
+            requestAnimationFrame(() => { if (ta) { ta.focus(); try { ta.setSelectionRange(selStart, selEnd); } catch {} } });
+          };
+          const fbtn = (label, kind, tip, style) => (
+            <button key={kind} onClick={() => applyFormat(kind)} title={tip}
+              style={{padding:"5px 10px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.text,fontSize:12,cursor:"pointer",fontFamily:"inherit",...style}}>
+              {label}
+            </button>
+          );
+          return (
+            <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6,flexWrap:"wrap"}}>
+              <span style={{fontSize:11,fontWeight:700,color:C.mut}}>Format:</span>
+              {fbtn("B", "bold", "Bold — **text**", {fontWeight:800})}
+              {fbtn("I", "italic", "Italic — *text*", {fontStyle:"italic"})}
+              {fbtn("U", "underline", "Underline — __text__", {textDecoration:"underline"})}
+              {fbtn("Big", "h1", "Big heading — # line", {fontWeight:800,fontSize:13})}
+              {fbtn("Med", "h2", "Medium heading — ## line", {fontWeight:700})}
+              {fbtn("• List", "bullet", "Bullet the selected lines — - line")}
+              {fbtn("🔗 Link", "link", "Turn the selection into a link — [text](url)")}
+              <button onClick={()=>setEmailPreviewOpen(v=>!v)} title="Preview how the formatted email will look to parents"
+                style={{marginLeft:"auto",padding:"5px 12px",borderRadius:6,border:"1px solid "+(emailPreviewOpen?C.gold:C.border),background:emailPreviewOpen?"rgba(233,30,140,0.12)":"transparent",color:emailPreviewOpen?C.gold:C.mut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+                👁 Preview{emailPreviewOpen?" ✓":""}
+              </button>
+            </div>
+          );
+        })()}
+        <textarea ref={emailBodyRef} value={emailBody} onChange={e=>setEmailBody(e.target.value)} placeholder="Write your message…"
           style={{...inpStyle,width:"100%",minHeight:200,padding:"10px 12px",fontSize:14,fontFamily:"inherit",resize:"vertical",lineHeight:1.5}} />
+        {emailPreviewOpen && (
+          <div style={{marginTop:8,background:"#fff",borderRadius:10,border:"1px solid "+C.border,padding:"14px 16px",maxHeight:400,overflowY:"auto"}}>
+            <div style={{fontSize:9,fontWeight:800,letterSpacing:0.5,textTransform:"uppercase",color:"#999",marginBottom:8}}>Preview — how parents will see it{emailTeams.size>0 && /\{\{/.test(emailBody) ? " (merged for " + [...emailTeams].sort()[0] + ")" : ""}</div>
+            <div dangerouslySetInnerHTML={{__html: emailMarkupToHtml(
+              emailTeams.size > 0 && /\{\{/.test(emailBody) ? applyMerge(emailBody, mergeFields([...emailTeams].sort()[0])) : emailBody
+            )}} />
+          </div>
+        )}
 
         <div style={{display:"flex",alignItems:"center",gap:12,marginTop:12,flexWrap:"wrap"}}>
           {emailTeams.size > 0 && (
