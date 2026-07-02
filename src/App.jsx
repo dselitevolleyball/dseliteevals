@@ -7398,11 +7398,14 @@ export default function App() {
                             </td>
                           );
                         }
+                        // Court 5 = DSSC Flex (courts 1-4 are the Warehouse) — badge it.
+                        const atFlex = isOn && (byTeamSlot.get(key)?.court === 5);
                         return (
                           <td key={sk} onClick={()=>toggleAssignment(t.team_name, day, s.label)}
-                            title={t.locked ? "Team is locked — unlock to edit" : (isOn ? "Click to remove court" : "Click to add court")}
-                            style={{...tdS,cursor:t.locked?"not-allowed":"pointer",userSelect:"none",background:bg,color:fg,fontWeight:800,fontSize:14}}>
+                            title={t.locked ? "Team is locked — unlock to edit" : (isOn ? (atFlex ? "Practices at DSSC Flex · click to remove" : "Click to remove court") : "Click to add court")}
+                            style={{...tdS,cursor:t.locked?"not-allowed":"pointer",userSelect:"none",background:atFlex?"rgba(6,182,212,0.16)":bg,color:fg,fontWeight:800,fontSize:14}}>
                             {isOn ? "✓" : ""}
+                            {atFlex && <div style={{fontSize:7,fontWeight:800,letterSpacing:0.5,color:"#06b6d4",lineHeight:1,marginTop:1}}>FLEX</div>}
                           </td>
                         );
                       }))}
@@ -7419,7 +7422,7 @@ export default function App() {
         <div style={{marginTop:10,fontSize:11,color:C.mut,lineHeight:1.5}}>
           {sa
             ? <>Click a Sunday cell to cycle it: empty → <b style={{color:C.grn}}>green ✓ Practice</b> → <b style={{color:"#f59e0b"}}>orange dumbbell = Speed &amp; Agility</b> → empty. Each team's hour is one or the other. <b style={{color:C.red}}>Red</b> = court overflow or coach double-booked; <b style={{color:"#f59e0b"}}>amber ✓</b> = U11/U12 practicing 7-9pm.</>
-            : <><b style={{color:C.grn}}>Green ✓</b> = court (up to {schedulePhase==="summer"?5:6} teams per hour). Click to toggle. <b style={{color:C.red}}>Red</b> means court overflow or coach double-booked; <b style={{color:"#f59e0b"}}>amber</b> means U11/U12 in 7-9pm.</>}
+            : <><b style={{color:C.grn}}>Green ✓</b> = court (up to {schedulePhase==="summer"?5:6} teams per hour). Click to toggle. <b style={{color:C.red}}>Red</b> means court overflow or coach double-booked; <b style={{color:"#f59e0b"}}>amber</b> means U11/U12 in 7-9pm; <b style={{color:"#06b6d4"}}>cyan FLEX</b> = practices at DSSC Flex (court 5, set in the Daily view).</>}
         </div>
         </>)}
       </div>
