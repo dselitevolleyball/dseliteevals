@@ -9420,18 +9420,27 @@ export default function App() {
                     onMouseEnter={e=>e.currentTarget.style.textDecorationColor=fg}
                     onMouseLeave={e=>e.currentTarget.style.textDecorationColor="transparent"}>{a.team_id}</span>
                   {tm && tm.level && <span style={{fontSize:9,color:C.mut}}>· {tm.level}</span>}
-                  <select value={a.division||""} onChange={e=>updateAssignmentDivision(a.id, e.target.value)}
-                    title="Playing division"
-                    style={{...inpStyle,fontSize:10,padding:"1px 4px",marginLeft:4}}>
-                    <option value="">— div —</option>
-                    <option value="Open">Open</option>
-                    <option value="USA">USA</option>
-                    <option value="American">American</option>
-                    <option value="Liberty">Liberty</option>
-                    <option value="National">National</option>
-                    <option value="Patriot">Patriot</option>
-                    <option value="Freedom">Freedom</option>
-                  </select>
+                  {(() => {
+                    // Offer the divisions THIS tournament runs for THIS team's age
+                    // (from its age×division entries). Fall back: any tier the
+                    // tournament offers → its plain divisions list → all tiers.
+                    const teamAge = parseInt(String(a.team_id || "").match(/^\d+/)?.[0] || "", 10);
+                    const entries = Array.isArray(tn.entries) ? tn.entries : [];
+                    const ageTiers = [...new Set(entries.filter(tok => entryAge(tok) === teamAge).map(entryTier))].filter(Boolean);
+                    const anyTiers = [...new Set(entries.map(entryTier))].filter(Boolean);
+                    const offered = ageTiers.length ? ageTiers
+                      : anyTiers.length ? anyTiers
+                      : (Array.isArray(tn.divisions) && tn.divisions.length ? tn.divisions : TN_DIVISIONS);
+                    const opts = (a.division && !offered.includes(a.division)) ? [...offered, a.division] : offered;
+                    return (
+                      <select value={a.division||""} onChange={e=>updateAssignmentDivision(a.id, e.target.value)}
+                        title={ageTiers.length ? "Divisions this tournament offers for " + teamAge + "s" : anyTiers.length ? "Divisions this tournament offers (no " + teamAge + "s-specific list)" : "This tournament has no division list yet — showing all standard divisions"}
+                        style={{...inpStyle,fontSize:10,padding:"1px 4px",marginLeft:4,color:ageTiers.length?C.grn:undefined}}>
+                        <option value="">— div —</option>
+                        {opts.map(d => <option key={d} value={d}>{d}</option>)}
+                      </select>
+                    );
+                  })()}
                   <button onClick={()=>removeAssignment(a.id)} title="Remove"
                     style={{width:16,height:16,borderRadius:8,border:"none",background:"transparent",color:C.mut,cursor:"pointer",fontFamily:"inherit",fontSize:13,lineHeight:1,padding:0}}>×</button>
                 </span>
