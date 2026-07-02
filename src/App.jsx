@@ -8016,14 +8016,16 @@ export default function App() {
     const recipientPlayers = sendPool.filter(p => emailsOf(p).length > 0).sort(byName);
 
     const TEST_EMAIL = "drew@dselitevolleyball.com";
-    const postEmail = async (to, isTest) => {
+    const postEmail = async (to, isTest, subjOverride, bodyOverride) => {
       if (!emailSubject.trim() || !emailBody.trim() || !to.length) return;
+      const subj = (subjOverride != null ? subjOverride : emailSubject).trim();
+      const bod = (bodyOverride != null ? bodyOverride : emailBody).trim();
       setEmailSending(true); setEmailErr(""); setEmailResult(null);
       try {
         const res = await fetch("/api/send-email", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ subject: emailSubject.trim(), body: emailBody.trim(), recipients: to }),
+          body: JSON.stringify({ subject: subj, body: bod, recipients: to }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Send failed");
@@ -8031,8 +8033,8 @@ export default function App() {
         // Log real sends to the shared history (test sends are not recorded).
         if (!isTest) {
           const { error: logErr } = await supabase.from("email_log").insert({
-            subject: emailSubject.trim(),
-            body: emailBody.trim(),
+            subject: subj,
+            body: bod,
             recipient_count: to.length,
             recipients: to,
             sent_count: (data && typeof data.sent === "number") ? data.sent : to.length,
@@ -8063,7 +8065,16 @@ export default function App() {
       if (!window.confirm(lines.join("\n"))) return;
       postEmail(recipients, false);
     };
-    const sendTest = () => postEmail([TEST_EMAIL], true);
+    const sendTest = () => {
+      // With teams selected and merge placeholders present, preview the FIRST
+      // selected team's personalized version.
+      if (emailTeams.size > 0 && /\{\{/.test(emailSubject + emailBody)) {
+        const tn = [...emailTeams].sort()[0];
+        const f = mergeFields(tn);
+        return postEmail([TEST_EMAIL], true, applyMerge(emailSubject, f), applyMerge(emailBody, f));
+      }
+      postEmail([TEST_EMAIL], true);
+    };
 
     // Templates live in Supabase (email_templates) so they sync across devices.
     const loadTemplate = (name) => {
@@ -8148,6 +8159,94 @@ export default function App() {
         return tn + " — SportsYou code: " + (code || "(no code on file)");
       });
       appendBody(lines.join("\n"));
+    };
+
+    // ── Per-team mail merge ────────────────────────────────────────────
+    // {{TEAM}} {{PLAYERS}} {{COACHES}} {{PRACTICES}} {{FLEX}} {{SPORTSYOU}}
+    // are substituted with each team's live data at send time, so one draft
+    // becomes a personalized email per selected team.
+    const mergeFields = (tn) => {
+      const t = practiceTeams.find(x => x.team_name === tn) || {};
+      const tp = players.filter(p => p.team_assignment === tn && !TERMINAL.includes(p.offer_status || "")).sort(byName);
+      const playersTxt = tp.map(p => "• " + p.first_name + " " + p.last_name).join("\n") || "(roster being finalized)";
+      const nrm = s => (s || "").trim().toLowerCase();
+      const contact = (cn) => {
+        const fn = nrm(cn).split(" ")[0];
+        const match = dn => { dn = nrm(dn); return !!dn && (dn === nrm(cn) || dn.split(" ")[0] === fn); };
+        const ros = (coachRoster || []).find(r => match((r.first_name || "") + " " + (r.last_name || "")));
+        const acct = (coachesList || []).find(c => match(c.display_name));
+        const email = (acct && acct.email) || (ros && ros.email) || "";
+        const phone = (ros && ros.phone) || "";
+        return cn + (email ? " — " + email : "") + (phone ? " — " + phone : "");
+      };
+      const coachLines = [];
+      if (t.head_coach) coachLines.push("Head Coach: " + contact(t.head_coach));
+      if (t.assistant_coach) coachLines.push("Assistant Coach: " + contact(t.assistant_coach));
+      const coachesTxt = coachLines.join("\n") || "(coaches to be announced)";
+      const phaseTxt = (phase, label) => {
+        const byDay = {};
+        practiceAssignments.filter(a => a.team_name === tn && (a.phase || "season") === phase)
+          .forEach(a => { (byDay[a.day] = byDay[a.day] || []).push(a.slot); });
+        const days = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].filter(d => byDay[d])
+          .map(d => d + " " + mergeAdjacentSlots(byDay[d]).join(", "));
+        let line = days.length ? label + ": " + days.join(" · ") : "";
+        if (phase === "fall1" || phase === "fall2") {
+          const sa = [...new Set(saSessions.filter(s => s.team_name === tn && s.block === phase).map(s => s.slot))];
+          if (sa.length) line += (line ? "\n" : "") + label + " Speed & Agility: Sun " + mergeAdjacentSlots(sa).join(", ");
+        }
+        return line;
+      };
+      const practicesTxt = [
+        phaseTxt("summer", "Summer (Sundays, Jul 12 – Sep 6)"),
+        phaseTxt("fall1",  "Fall 1 (Sep 13 – Oct 11)"),
+        phaseTxt("fall2",  "Fall 2 (Oct 18 – Nov 15)"),
+        phaseTxt("season", "Regular Season (starting Nov 29)"),
+      ].filter(Boolean).join("\n") || "(schedule coming soon)";
+      const flex = practiceAssignments.some(a => a.team_name === tn && (a.phase || "season") === "summer" && a.court === 5)
+        ? "Summer location note: " + tn + " practices at DSSC FLEX on Sundays this summer."
+        : "";
+      const code = sportsYouCodeFor(t.team_name ? t : tn) || "(code coming soon)";
+      return { TEAM: tn, PLAYERS: playersTxt, COACHES: coachesTxt, PRACTICES: practicesTxt, FLEX: flex, SPORTSYOU: code };
+    };
+    const applyMerge = (text, f) => (text || "").replace(/\{\{(TEAM|PLAYERS|COACHES|PRACTICES|FLEX|SPORTSYOU)\}\}/g, (_, k) => f[k] ?? "");
+    const sendPerTeam = async () => {
+      const teams = [...emailTeams].sort();
+      if (!teams.length || !emailSubject.trim() || !emailBody.trim()) return;
+      const plan = teams.map(tn => {
+        const tp = players.filter(p => p.team_assignment === tn && !TERMINAL.includes(p.offer_status || "") && !emailExcluded.has(p.id));
+        const recips = [...new Set(tp.flatMap(emailsOf).map(e => e.toLowerCase()))];
+        return { tn, recips };
+      });
+      const total = plan.reduce((s, x) => s + x.recips.length, 0);
+      if (!window.confirm("Send a PERSONALIZED email to each team (placeholders filled per team)?\n\n" +
+        plan.map(x => x.tn + " — " + x.recips.length + " address" + (x.recips.length === 1 ? "" : "es")).join("\n") +
+        "\n\nTotal: " + total + " emails.")) return;
+      setEmailSending(true); setEmailErr(""); setEmailResult(null);
+      let sent = 0; const failed = [];
+      for (const { tn, recips } of plan) {
+        if (!recips.length) { failed.push({ email: tn, error: "no parent emails" }); continue; }
+        const f = mergeFields(tn);
+        const subj = applyMerge(emailSubject, f).trim();
+        const bod = applyMerge(emailBody, f).trim();
+        try {
+          const res = await fetch("/api/send-email", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ subject: subj, body: bod, recipients: recips }),
+          });
+          const d = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(d.error || "Send failed");
+          sent += recips.length;
+          supabase.from("email_log").insert({
+            subject: subj, body: bod, recipient_count: recips.length, recipients: recips,
+            sent_count: (d && typeof d.sent === "number") ? d.sent : recips.length,
+            failed_count: (d && Array.isArray(d.failed)) ? d.failed.length : 0,
+            sent_by: coach?.display_name || "", sent_by_email: coach?.email || "",
+          }).then(({ error }) => { if (error) console.error("email_log insert error:", error); });
+        } catch (e) { failed.push({ email: tn, error: e.message || "error" }); }
+      }
+      loadEmailLog();
+      setEmailSending(false);
+      setEmailResult({ sent, failed });
     };
 
     return (
@@ -8369,6 +8468,13 @@ export default function App() {
           style={{...inpStyle,width:"100%",minHeight:200,padding:"10px 12px",fontSize:14,fontFamily:"inherit",resize:"vertical",lineHeight:1.5}} />
 
         <div style={{display:"flex",alignItems:"center",gap:12,marginTop:12,flexWrap:"wrap"}}>
+          {emailTeams.size > 0 && (
+            <button onClick={sendPerTeam} disabled={emailSending || !emailSubject.trim() || !emailBody.trim()}
+              title="Sends a separate email to each checked team with {{TEAM}}, {{PLAYERS}}, {{COACHES}}, {{PRACTICES}}, {{FLEX}} and {{SPORTSYOU}} filled in with that team's data"
+              style={{padding:"10px 20px",borderRadius:8,border:"none",background:(emailSending||!emailSubject.trim()||!emailBody.trim())?C.border:C.acc,color:(emailSending||!emailSubject.trim()||!emailBody.trim())?C.mut:"#000",fontFamily:"inherit",fontSize:14,fontWeight:800,cursor:(emailSending||!emailSubject.trim()||!emailBody.trim())?"default":"pointer"}}>
+              {emailSending ? "Sending…" : "Send personalized to " + emailTeams.size + " team" + (emailTeams.size===1?"":"s")}
+            </button>
+          )}
           <button onClick={send} disabled={emailSending || !emailSubject.trim() || !emailBody.trim() || !recipients.length}
             style={{padding:"10px 20px",borderRadius:8,border:"none",background:(emailSending||!emailSubject.trim()||!emailBody.trim()||!recipients.length)?C.border:C.gold,color:(emailSending||!emailSubject.trim()||!emailBody.trim()||!recipients.length)?C.mut:"#000",fontFamily:"inherit",fontSize:14,fontWeight:800,cursor:(emailSending||!emailSubject.trim()||!emailBody.trim()||!recipients.length)?"default":"pointer"}}>
             {emailSending ? "Sending…" : "Send to " + recipients.length}
