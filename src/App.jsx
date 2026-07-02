@@ -490,10 +490,11 @@ function vertical(p) {
 }
 // ── Practice schedule display helpers ──
 const PRACTICE_PHASES = [
-  { id:"summer", label:"Summer" },
-  { id:"fall1",  label:"Fall 1" },
-  { id:"fall2",  label:"Fall 2" },
-  { id:"season", label:"Regular Season" },
+  { id:"summer",     label:"Summer" },
+  { id:"fall1",      label:"Fall 1" },
+  { id:"fall2",      label:"Fall 2" },
+  { id:"season",     label:"Regular Season" },
+  { id:"postseason", label:"Post Season" },
 ];
 const PRACTICE_DAY_ORDER = { Sun:0, Mon:1, Tue:2, Wed:3, Thu:4, Fri:5, Sat:6 };
 // Teams that skip the summer/fall preseason blocks (regular-season only), so
@@ -6342,7 +6343,7 @@ export default function App() {
     // Summer + Fall 1/Fall 2 are Sunday-only (preseason). Only the Regular
     // Season uses the full week. Fall keeps 6 Sunday courts; summer has 5.
     const FALL_SLOTS = { Sun: SUN_HOURS.map(label => ({ label, capacity: 6 })), Mon: [], Tue: [], Wed: [], Thu: [] };
-    const SLOTS = schedulePhase === "season" ? SEASON_SLOTS
+    const SLOTS = (schedulePhase === "season" || schedulePhase === "postseason") ? SEASON_SLOTS
                 : schedulePhase === "summer" ? PRESEASON_SLOTS
                 : FALL_SLOTS;
     // Hide weekday columns entirely when a phase has no weekday slots.
@@ -6498,14 +6499,15 @@ export default function App() {
       // regular season starts Nov 29, 2026.
       const phaseForDate = (iso) => {
         if (!iso) return schedulePhase;
+        if (iso >= "2027-05-07") return "postseason"; // Regionals end May 6; Nationals through mid-June
         if (iso >= "2026-11-29") return "season";
         if (iso >= "2026-10-18") return "fall2";
         if (iso >= "2026-09-13") return "fall1";
         return "summer";
       };
       const dayPhase = phaseForDate(dailyDate);
-      const phaseLabel = { summer:"Summer", fall1:"Fall 1", fall2:"Fall 2", season:"Regular Season" }[dayPhase] || dayPhase;
-      const daySLOTS = dayPhase === "season" ? SEASON_SLOTS : dayPhase === "summer" ? PRESEASON_SLOTS : FALL_SLOTS;
+      const phaseLabel = { summer:"Summer", fall1:"Fall 1", fall2:"Fall 2", season:"Regular Season", postseason:"Post Season" }[dayPhase] || dayPhase;
+      const daySLOTS = (dayPhase === "season" || dayPhase === "postseason") ? SEASON_SLOTS : dayPhase === "summer" ? PRESEASON_SLOTS : FALL_SLOTS;
       const dayAssignments = practiceAssignments.filter(a => (a.phase || "fall1") === dayPhase);
       const daySlots = (daySLOTS[weekday] || []);
       const teamsFor = (label) => dayAssignments.filter(a => a.day === weekday && a.slot === label)
@@ -6525,8 +6527,9 @@ export default function App() {
       // slots, from Nov 29 onward.
       const dayHasPractice = (iso) => {
         const ph = phaseForDate(iso);
-        if (ph === "season") {
+        if (ph === "season" || ph === "postseason") {
           if (iso < "2026-11-29") return false;
+          if (iso > "2027-06-15") return false; // Nationals wrap up mid-June
           const wd = WD[new Date(iso + "T00:00").getDay()];
           return (SEASON_SLOTS[wd] || []).length > 0;
         }
@@ -6955,7 +6958,7 @@ export default function App() {
       const tAssigns = phaseAssignments.filter(a => a.team_name === t.team_name);
       const { actual: actualHours, expected: expectedHours } = teamLoad(t, tAssigns);
       // Summer is freeform — coaches choose.
-      if (schedulePhase !== "summer" && actualHours !== expectedHours
+      if (schedulePhase !== "summer" && schedulePhase !== "postseason" && actualHours !== expectedHours
           && !(isFallPhase && NO_FALL_TEAMS.includes(t.team_name))
           && !INACTIVE_TEAMS.includes(t.team_name)) {
         warnings.push({
@@ -7096,8 +7099,11 @@ export default function App() {
     }
     const coachOptions = Array.from(allCoaches).sort((a,b) => a.localeCompare(b));
     // Summer hides the regular-season-only teams that don't practice over summer.
+    // Post Season is National teams only — Regionals end May 6.
     const phaseTeams = schedulePhase === "summer"
       ? practiceTeams.filter(t => !NO_SUMMER_TEAMS.includes(t.team_name))
+      : schedulePhase === "postseason"
+      ? practiceTeams.filter(t => (t.level || "").toLowerCase() === "national")
       : practiceTeams;
     const visibleTeams = practiceCoachFilter
       ? phaseTeams.filter(t => t.head_coach === practiceCoachFilter || t.assistant_coach === practiceCoachFilter)
@@ -7134,7 +7140,8 @@ export default function App() {
                 { id:"summer", label:"Summer", tip:"Jul 12 – Sep 12 · Sundays · 5 courts · no S&A" },
                 { id:"fall1",  label:"Fall 1", tip:"Sep 13 – Oct 11 · 6 courts · S&A Block 1 (8 Nationals)" },
                 { id:"fall2",  label:"Fall 2", tip:"Oct 18 – Nov 15 · 6 courts · S&A Block 2 (9 Regionals)" },
-                { id:"season", label:"Regular Season", tip:"Starts Nov 29 · full week · the regular 2–3×/week team practice schedule" },
+                { id:"season", label:"Regular Season", tip:"Nov 29 – May 6 · full week · the regular 2–3×/week team practice schedule" },
+                { id:"postseason", label:"Post Season", tip:"May 7 – Jun 15 · National teams only (Regionals end May 6) · adjust courts here" },
               ].map(({id,label,tip}) => {
                 const on = schedulePhase === id;
                 return (
@@ -7315,7 +7322,7 @@ export default function App() {
                   const { actual: actualHours, expected: expectedHours } = teamLoad(t, tAssigns);
                   // Summer is freeform — other phases compare hours against the team's target.
                   // Teams that skip the fall blocks aren't flagged during Fall 1/2.
-                  const countOff = schedulePhase !== "summer" && actualHours !== expectedHours
+                  const countOff = schedulePhase !== "summer" && schedulePhase !== "postseason" && actualHours !== expectedHours
                     && !(isFallPhase && NO_FALL_TEAMS.includes(t.team_name))
                     && !INACTIVE_TEAMS.includes(t.team_name);
                   const levelColor =
@@ -7410,7 +7417,7 @@ export default function App() {
                         );
                       }))}
                       <td style={{...tdS,fontWeight:700,color:countOff?"#f59e0b":C.grn,minWidth:40}}>
-                        {schedulePhase === "summer" ? actualHours + "h" : actualHours + "/" + expectedHours + "h"}
+                        {(schedulePhase === "summer" || schedulePhase === "postseason") ? actualHours + "h" : actualHours + "/" + expectedHours + "h"}
                       </td>
                     </tr>
                   );
