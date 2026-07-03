@@ -7988,6 +7988,15 @@ export default function App() {
       <DebouncedField style={amtInp} placeholder="$ or %" value={p.scholarship_amount || ""}
         onCommit={v => upd(p.id, { scholarship_amount: v })} />
     );
+    // Scholarship-applied checkbox (mirrors the one on the player profile).
+    const appliedBox = (p) => (
+      <label title="Player has applied for a scholarship" onClick={e=>e.stopPropagation()}
+        style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:11,fontWeight:700,color:p.scholarship_applied?"#a855f7":C.mut,cursor:"pointer",whiteSpace:"nowrap",userSelect:"none"}}>
+        <input type="checkbox" checked={!!p.scholarship_applied} onChange={e=>upd(p.id,{scholarship_applied:e.target.checked})} style={{width:15,height:15,cursor:"pointer",accentColor:"#a855f7"}} />
+        Applied
+      </label>
+    );
+    const applied = players.filter(p => p.scholarship_applied).sort(byName);
 
     return (
       <div style={{maxWidth:860}}>
@@ -7999,6 +8008,7 @@ export default function App() {
         {/* Summary */}
         <div style={{display:"flex",gap:18,flexWrap:"wrap",marginBottom:16,background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:"12px 16px"}}>
           <div><div style={{fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut}}>Players with offers</div><div style={{fontSize:24,fontWeight:800,color:C.gold}}>{offers.length}</div></div>
+          <div><div style={{fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut}} title="Players marked as having applied for a scholarship.">Applied</div><div style={{fontSize:24,fontWeight:800,color:"#a855f7"}}>{applied.length}</div></div>
           <div><div style={{fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut}} title="Sum of offers entered as dollar amounts; percentage offers are not included.">Est. dollar total</div><div style={{fontSize:24,fontWeight:800,color:C.grn}}>${dollarTotal.toLocaleString()}</div></div>
         </div>
 
@@ -8015,7 +8025,7 @@ export default function App() {
                   <button onClick={()=>setProfileId(p.id)} style={{background:"none",border:"none",color:C.text,fontFamily:"inherit",fontSize:13,fontWeight:600,cursor:"pointer",textAlign:"left",padding:0}}>
                     {p.first_name} {p.last_name} <span style={{color:C.mut,fontSize:11}}>· {ageOf(p)}</span>
                   </button>
-                  {amountField(p)}
+                  <div style={{display:"flex",alignItems:"center",gap:10}}>{appliedBox(p)}{amountField(p)}</div>
                 </div>
               ))}
             </div>
@@ -8035,10 +8045,33 @@ export default function App() {
                 <button onClick={()=>setProfileId(p.id)} style={{background:"none",border:"none",color:C.text,fontFamily:"inherit",fontSize:13,fontWeight:600,cursor:"pointer",textAlign:"left",padding:0}}>
                   {p.first_name} {p.last_name} <span style={{color:C.mut,fontSize:11}}>· {ageOf(p)}{p.team_assignment?" · "+p.team_assignment:""}</span>
                 </button>
-                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <div style={{display:"flex",alignItems:"center",gap:10}}>
+                  {appliedBox(p)}
                   {amountField(p)}
                   <button onClick={()=>upd(p.id, { scholarship_amount: "" })} title="Remove this offer"
                     style={{background:"none",border:"none",color:C.red,fontFamily:"inherit",fontSize:16,fontWeight:800,cursor:"pointer",lineHeight:1,padding:"0 2px"}}>×</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Applied for scholarship — anyone marked applied, with or without an offer amount */}
+        <div style={{fontSize:11,fontWeight:700,color:"#a855f7",textTransform:"uppercase",letterSpacing:0.5,margin:"22px 0 8px"}}>Applied for Scholarship ({applied.length})</div>
+        {applied.length === 0 ? (
+          <div style={{padding:20,textAlign:"center",color:C.mut,fontSize:13,background:C.card,borderRadius:12,border:"1px solid "+C.border}}>
+            No one marked as applied yet. Check “Applied” on a player above, or on their profile card.
+          </div>
+        ) : (
+          <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,overflow:"hidden"}}>
+            {applied.map((p, i) => (
+              <div key={p.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,padding:"10px 14px",borderTop:i?"1px solid "+C.border:"none"}}>
+                <button onClick={()=>setProfileId(p.id)} style={{background:"none",border:"none",color:C.text,fontFamily:"inherit",fontSize:13,fontWeight:600,cursor:"pointer",textAlign:"left",padding:0}}>
+                  {p.first_name} {p.last_name} <span style={{color:C.mut,fontSize:11}}>· {ageOf(p)}{p.team_assignment?" · "+p.team_assignment:""}</span>
+                </button>
+                <div style={{display:"flex",alignItems:"center",gap:10}}>
+                  {appliedBox(p)}
+                  {amountField(p)}
                 </div>
               </div>
             ))}
