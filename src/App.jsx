@@ -1600,10 +1600,17 @@ export default function App() {
     }
   }, [coach, loadUpdates, coachesList, practiceTeams]);
   const deleteUpdate = useCallback(async (id) => {
-    if (!window.confirm("Delete this update?")) return;
+    if (!window.confirm("Permanently delete this notification? (To just clear it off the Home screen, use Hide — it stays findable in Notification History.)")) return;
     const { error } = await supabase.from("updates").delete().eq("id", id);
     if (error) { window.alert("Delete failed: " + error.message); return; }
     await loadUpdates();
+  }, [loadUpdates]);
+  // Hide/restore an update from the Home feed + bell WITHOUT deleting it —
+  // it stays in Notification History so you can always go back and find it.
+  const setUpdateHidden = useCallback(async (id, hidden) => {
+    setUpdates(prev => prev.map(u => u.id === id ? { ...u, hidden } : u)); // optimistic
+    const { error } = await supabase.from("updates").update({ hidden }).eq("id", id);
+    if (error) { window.alert((hidden ? "Hide" : "Restore") + " failed: " + error.message); loadUpdates(); }
   }, [loadUpdates]);
   // Coach approves (or un-approves) their team's practice schedule.
   // One coach approves (or undoes) their part. The schedule is only "approved"
@@ -1886,7 +1893,9 @@ export default function App() {
     const myEmail = (coach?.email || "").toLowerCase();
     updates.forEach(u => {
       if (!(!u.team_name || canOps || mine.has(u.team_name))) return;
-      out.push({ id: "u" + u.id, ts: u.created_at, label: "Update", text: (u.team_name ? "[" + u.team_name + "] " : "") + (u.body || ""), view: "home" });
+      // Hidden updates stay out of the bell/unread but remain on the full
+      // Notifications page as an archive.
+      out.push({ id: "u" + u.id, ts: u.created_at, label: "Update", hidden: !!u.hidden, text: (u.team_name ? "[" + u.team_name + "] " : "") + (u.body || ""), view: "home" });
     });
     teamQuestions.forEach(q => {
       if (canOps && !q.answer) {
@@ -1909,7 +1918,7 @@ export default function App() {
     setNotifSeenAt(now);
     try { localStorage.setItem(notifKey, now); } catch {}
   };
-  const unreadCount = notifications.filter(n => (n.ts || "") > notifSeenAt).length;
+  const unreadCount = notifications.filter(n => !n.hidden && (n.ts || "") > notifSeenAt).length;
 
   // ── Device push (Web Push) ──────────────────────────────────────────
   useEffect(() => {
@@ -3296,7 +3305,7 @@ export default function App() {
   // go to all; team-specific updates only to that team's coaches (admins see all).
   const renderUpdatesPanel = (myTeamNames = []) => {
     const myTeamSet = new Set(myTeamNames);
-    const visible = updates.filter(u => !u.team_name || canOps || myTeamSet.has(u.team_name));
+    const visible = updates.filter(u => !u.hidden && (!u.team_name || canOps || myTeamSet.has(u.team_name)));
     if (visible.length === 0) return null;
     const recentMs = Date.now() - 3 * 24 * 60 * 60 * 1000;
     const fmt = (iso) => new Date(iso).toLocaleDateString(undefined, { month:"short", day:"numeric" });
@@ -3317,7 +3326,7 @@ export default function App() {
                   </div>
                   <div style={{display:"flex",gap:6,alignItems:"center"}}>
                     {isNew && <span style={{fontSize:8,fontWeight:800,color:C.grn,border:"1px solid "+C.grn,borderRadius:5,padding:"1px 5px"}}>NEW</span>}
-                    {canOps && <button onClick={()=>deleteUpdate(u.id)} title="Delete update" style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:13,fontWeight:800,lineHeight:1,padding:0}}>×</button>}
+                    {canOps && <button onClick={()=>setUpdateHidden(u.id, true)} title="Hide from Home — stays in Notification History" style={{background:"none",border:"none",color:C.mut,cursor:"pointer",fontSize:13,fontWeight:800,lineHeight:1,padding:0}}>×</button>}
                   </div>
                 </div>
                 <div style={{fontSize:12,color:C.text,whiteSpace:"pre-wrap",lineHeight:1.4}}>{u.body}</div>
@@ -3412,12 +3421,13 @@ export default function App() {
               {list.map(n => {
                 const d = n.ts ? new Date(n.ts) : null;
                 const when = d ? d.toLocaleString(undefined,{weekday:"short",month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}) : "";
-                const unread = (n.ts || "") > notifSeenAt;
+                const unread = !n.hidden && (n.ts || "") > notifSeenAt;
                 return (
                   <button key={n.id} onClick={()=>{ setView(n.view||"home"); }}
-                    style={{display:"block",width:"100%",textAlign:"left",background:C.card,border:"1px solid "+(unread?C.gold:C.border),borderRadius:12,padding:"12px 14px",cursor:"pointer",fontFamily:"inherit"}}>
+                    style={{display:"block",width:"100%",textAlign:"left",background:C.card,border:"1px solid "+(unread?C.gold:C.border),borderRadius:12,padding:"12px 14px",cursor:"pointer",fontFamily:"inherit",opacity:n.hidden?0.65:1}}>
                     <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:5,flexWrap:"wrap"}}>
                       <span style={{fontSize:10,fontWeight:800,letterSpacing:0.4,textTransform:"uppercase",color:labelColor(n.label),border:"1px solid "+labelColor(n.label),borderRadius:6,padding:"1px 7px"}}>{n.label}</span>
+                      {n.hidden && <span style={{fontSize:8,fontWeight:800,color:C.mut,border:"1px dashed "+C.border,borderRadius:5,padding:"1px 6px",letterSpacing:0.5}}>ARCHIVED</span>}
                       {unread && <span style={{fontSize:8,fontWeight:800,color:"#000",background:C.gold,borderRadius:6,padding:"1px 6px"}}>NEW</span>}
                       <span style={{fontSize:11,color:C.mut}}>{when}</span>
                     </div>
@@ -3462,9 +3472,14 @@ export default function App() {
                     <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
                       <span style={{fontSize:10,fontWeight:800,color:audColor,border:"1px solid "+audColor,borderRadius:6,padding:"2px 7px"}}>{r.label}{r.count!=null?" · "+r.count+" coach"+(r.count===1?"":"es"):""}</span>
                       <span style={{fontSize:11,color:C.mut}}>{u.created_by_name || "—"} · {when}</span>
+                      {u.hidden && <span style={{fontSize:8,fontWeight:800,color:C.mut,border:"1px dashed "+C.border,borderRadius:5,padding:"1px 6px",letterSpacing:0.5}}>HIDDEN FROM HOME</span>}
                     </div>
-                    <button onClick={()=>deleteUpdate(u.id)} title="Delete this notification"
-                      style={{fontSize:10,fontWeight:700,padding:"3px 9px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.red,cursor:"pointer",fontFamily:"inherit"}}>Delete</button>
+                    <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                      <button onClick={()=>setUpdateHidden(u.id, !u.hidden)} title={u.hidden ? "Show on the Home screen again" : "Hide from the Home screen (stays here)"}
+                        style={{fontSize:10,fontWeight:700,padding:"3px 9px",borderRadius:6,border:"1px solid "+(u.hidden?C.grn:C.border),background:"transparent",color:u.hidden?C.grn:C.mut,cursor:"pointer",fontFamily:"inherit"}}>{u.hidden ? "Restore to Home" : "Hide from Home"}</button>
+                      <button onClick={()=>deleteUpdate(u.id)} title="Permanently delete this notification"
+                        style={{fontSize:10,fontWeight:700,padding:"3px 9px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.red,cursor:"pointer",fontFamily:"inherit"}}>Delete</button>
+                    </div>
                   </div>
                   <div style={{fontSize:13,color:C.text,whiteSpace:"pre-wrap",lineHeight:1.45}}>{u.body}</div>
                   <div style={{fontSize:9,color:C.mut,marginTop:8,textTransform:"uppercase",letterSpacing:0.5}}>Sent via in-app · push · email</div>
@@ -10836,12 +10851,12 @@ export default function App() {
                   {(pushState==="off") && <button onClick={enablePush} title="Get alerts on this device even when the app is closed" style={{fontSize:9,fontWeight:800,padding:"2px 8px",borderRadius:8,border:"none",background:C.gold,color:"#000",cursor:"pointer",fontFamily:"inherit"}}>Enable push</button>}
                   {pushState==="denied" && <span style={{fontSize:9,color:C.red,fontWeight:700}} title="Notifications are blocked for this site in your browser settings">Push blocked</span>}
                 </div>
-                {notifications.length===0 && <div style={{fontSize:12,color:C.mut,padding:"10px 8px"}}>You're all caught up.</div>}
+                {notifications.filter(n=>!n.hidden).length===0 && <div style={{fontSize:12,color:C.mut,padding:"10px 8px"}}>You're all caught up.</div>}
                 <button onClick={()=>{ setView("notifications"); setOpenMenu(null); setNotifOpen(false); }}
                   style={{display:"block",width:"100%",textAlign:"center",background:"transparent",border:"none",padding:"6px 8px",cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:800,color:C.acc}}>
                   See all notifications →
                 </button>
-                {notifications.slice(0,40).map(n => {
+                {notifications.filter(n=>!n.hidden).slice(0,40).map(n => {
                   const d = n.ts ? new Date(n.ts) : null;
                   const when = d ? d.toLocaleDateString(undefined,{month:"short",day:"numeric"}) + " " + d.toLocaleTimeString(undefined,{hour:"numeric",minute:"2-digit"}) : "";
                   const text = (n.text||"").length>110 ? (n.text||"").slice(0,110)+"…" : (n.text||"");
