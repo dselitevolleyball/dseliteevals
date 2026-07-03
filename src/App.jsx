@@ -4851,6 +4851,7 @@ export default function App() {
                 <Tag c={C.gold}>USAV: {p.usavDiv||p.usav_div}</Tag><Tag c={C.acc}>Reg: {p.reg_group}</Tag><Tag c={C.mut}>Age {p.age}</Tag>
                 {(p.positions||[]).map(pos=><Tag key={pos} c={C.grn}>{pos}</Tag>)}
                 {p.supplemental===1 && <Tag c={C.acc}>SUPPLEMENTAL</Tag>}
+                {p.scholarship_applied && <Tag c="#a855f7">SCHOLARSHIP</Tag>}
               </div>
             </div>
             <div style={{display:"flex",alignItems:"flex-start",gap:12}}>
@@ -4869,6 +4870,11 @@ export default function App() {
               <div style={{textAlign:"right"}}><div style={{fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut}}>Scored</div><div style={{fontSize:28,fontWeight:800,color:scoredCount===9?C.grn:C.gold}}>{scoredCount}<span style={{fontSize:16,fontWeight:400,color:C.mut}}>/9</span></div></div>
             </div>
           </div>
+          {/* Scholarship */}
+          <label style={{display:"flex",alignItems:"center",gap:10,background:p.scholarship_applied?"rgba(168,85,247,0.12)":C.bg,border:"1px solid "+(p.scholarship_applied?"#a855f7":C.border),borderRadius:10,padding:"10px 14px",marginBottom:16,cursor:"pointer"}}>
+            <input type="checkbox" checked={!!p.scholarship_applied} onChange={e=>upd(p.id,{scholarship_applied:e.target.checked})} style={{width:18,height:18,cursor:"pointer",accentColor:"#a855f7"}} />
+            <span style={{fontSize:13,fontWeight:700,color:p.scholarship_applied?"#a855f7":C.text}}>Scholarship applied</span>
+          </label>
           {/* Tryout — Physical Testing */}
           {(() => {
             const CM = 2.54;
