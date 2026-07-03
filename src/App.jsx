@@ -9930,6 +9930,42 @@ export default function App() {
         if (c.b.tournament.start_date <= wk.sun && c.b.tournament.end_date >= wk.fri) conflictCells.add(cellKey(c.b.team_id, wk.sat));
       }
     }
+    // Coach commitments per weekend: who is already at a tournament (via any
+    // team) on each weekend. Powers the "coach busy elsewhere" blackout on an
+    // otherwise-empty cell — you can't schedule a team when its head/assistant
+    // is already committed to a different team's tournament that weekend.
+    const teamById = new Map(teamsList.map(t => [t.id, t]));
+    const coachWknd = new Map(); // sat -> Map<coach, [{ teamId, tournament }]>
+    for (const a of tournamentAssignments) {
+      const tn = tnById.get(a.tournament_id);
+      const tm = teamById.get(a.team_id);
+      if (!tn || !tm) continue;
+      const coaches = [tm.head_coach, tm.assistant_coach].filter(Boolean);
+      for (const wk of weeks) {
+        if (tn.start_date <= wk.sun && tn.end_date >= wk.fri) {
+          if (!coachWknd.has(wk.sat)) coachWknd.set(wk.sat, new Map());
+          const m = coachWknd.get(wk.sat);
+          for (const coach of coaches) {
+            if (!m.has(coach)) m.set(coach, []);
+            m.get(coach).push({ teamId: a.team_id, tournament: tn });
+          }
+          break;
+        }
+      }
+    }
+    // For an UNASSIGNED cell: coaches of `team` committed to a different team
+    // that weekend (returns the conflicting commitments, or null if free).
+    const coachBusyFor = (team, wk) => {
+      const m = coachWknd.get(wk.sat);
+      if (!m) return null;
+      const out = [];
+      for (const coach of [team.head_coach, team.assistant_coach].filter(Boolean)) {
+        for (const c of (m.get(coach) || [])) {
+          if (c.teamId !== team.id) out.push({ coach, teamId: c.teamId, tournament: c.tournament });
+        }
+      }
+      return out.length ? out : null;
+    };
     const blackoutFor = (wk) => blackoutDates.filter(b => b.date_start <= wk.sun && b.date_end >= wk.fri);
     // A weekend counts as a "3-day" weekend if a school-out day lands on the
     // adjacent Friday or Monday — Memorial / Labor / MLK / Presidents Day
@@ -9954,6 +9990,11 @@ export default function App() {
 
     return (
       <div>
+        {/* Legend */}
+        <div style={{display:"flex",gap:14,flexWrap:"wrap",marginBottom:8,fontSize:10,color:C.mut,alignItems:"center"}}>
+          <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:12,height:12,borderRadius:3,background:"rgba(239,68,68,0.35)",display:"inline-block"}} /> Coach double-booked (two tournaments)</span>
+          <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:12,height:12,borderRadius:3,background:"repeating-linear-gradient(45deg, rgba(90,90,90,0.5) 0, rgba(90,90,90,0.5) 3px, rgba(20,20,20,0.8) 3px, rgba(20,20,20,0.8) 6px)",display:"inline-block"}} /> ⛔ Coach committed elsewhere — unavailable</span>
+        </div>
         {/* Team multi-select chips */}
         <div style={{background:C.card,borderRadius:10,border:"1px solid "+C.border,padding:"10px 12px",marginBottom:10}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6,gap:8,flexWrap:"wrap"}}>
@@ -10066,11 +10107,25 @@ export default function App() {
                         const k = cellKey(team.id, wk.sat);
                         const items = cellMap.get(k) || [];
                         const isConflict = conflictCells.has(k);
-                        const bg = isConflict ? "rgba(239,68,68,0.18)" : "transparent";
+                        // Empty cell whose coach is already committed elsewhere → black it out.
+                        const busy = items.length === 0 ? coachBusyFor(team, wk) : null;
+                        const bg = isConflict
+                          ? "rgba(239,68,68,0.18)"
+                          : busy
+                          ? "repeating-linear-gradient(45deg, rgba(90,90,90,0.30) 0, rgba(90,90,90,0.30) 5px, rgba(20,20,20,0.55) 5px, rgba(20,20,20,0.55) 10px)"
+                          : "transparent";
                         return (
                           <td key={team.id} style={{padding:"5px 6px",borderBottom:"1px solid "+C.border,background:bg,verticalAlign:"top",minWidth:90}}>
                             {items.length === 0 ? (
-                              <span style={{color:C.mut,fontSize:11}}>—</span>
+                              busy ? (
+                                <div title={"Coach unavailable — " + [...new Set(busy.map(b => b.coach))].join(", ") + " already at: " + [...new Set(busy.map(b => b.tournament.name + " (" + b.teamId + ")"))].join("; ")}
+                                  style={{fontSize:9,fontWeight:700,color:"#d1d5db",lineHeight:1.25,cursor:"help"}}>
+                                  <span style={{marginRight:2}}>⛔</span>{[...new Set(busy.map(b => b.coach.split(" ")[0]))].join(", ")}
+                                  <div style={{fontSize:8,fontWeight:600,color:"#9ca3af"}}>w/ {[...new Set(busy.map(b => b.teamId))].join(", ")}</div>
+                                </div>
+                              ) : (
+                                <span style={{color:C.mut,fontSize:11}}>—</span>
+                              )
                             ) : items.map(it => (
                               <div key={it.assignment.id} title={it.tournament.name + (it.assignment.division ? " · " + it.assignment.division : "") + " — click to open & edit"}
                                 onClick={()=>openEditTournament(it.tournament)}
