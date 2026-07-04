@@ -831,6 +831,12 @@ export default function App() {
   // SportsYou coach-comms inbox state
   const [sportsYouPosts, setSportsYouPosts]           = useState([]);
   const [coachCommsTeam, setCoachCommsTeam]           = useState("");   // "" = all teams; else filter to one team
+  // Coach communication assignments state
+  const [commAssignments, setCommAssignments]         = useState([]);
+  const [commStatuses, setCommStatuses]               = useState([]);
+  const [selectedAssignmentId, setSelectedAssignmentId] = useState(null);
+  const [creatingAssignment, setCreatingAssignment]   = useState(false);
+  const [newAssignment, setNewAssignment]             = useState({ title:"", instructions:"", due_date:"", cadence:2 });
   // Bulk email (send-only) state
   const [emailGroupScope, setEmailGroupScope]         = useState({});     // { [div]: "all"|"tryout"|"eval"|"none" } — default "all"
   const [emailTeam, setEmailTeam]                     = useState("");    // "" any | "__has" | "__none"
@@ -2091,6 +2097,86 @@ export default function App() {
   }, [isApproved, view, loadCoachRoster]);
   // The coach card edits coach_roster, so make sure it's loaded when one opens.
   useEffect(() => { if (isApproved && coachCardName) loadCoachRoster(); }, [isApproved, coachCardName, loadCoachRoster]);
+
+  // Coach communication assignments: load assignments + per-team status.
+  const loadCommAssignments = useCallback(async () => {
+    const [a, s] = await Promise.all([
+      supabase.from("comm_assignments").select("*").order("created_at", { ascending: false }),
+      supabase.from("comm_assignment_status").select("*"),
+    ]);
+    if (a.error) console.error("Load comm_assignments error:", a.error);
+    if (s.error) console.error("Load comm_assignment_status error:", s.error);
+    setCommAssignments(a.data || []);
+    setCommStatuses(s.data || []);
+  }, []);
+  useEffect(() => {
+    if (isApproved && view === "assignments") { loadCommAssignments(); loadPractice(); loadSportsYouPosts(); loadCoachRoster(); }
+  }, [isApproved, view, loadCommAssignments, loadPractice, loadSportsYouPosts, loadCoachRoster]);
+  useEffect(() => {
+    if (!isApproved) return;
+    const ch = supabase.channel("realtime-comm")
+      .on("postgres_changes", { event: "*", schema: "public", table: "comm_assignments" }, () => loadCommAssignments())
+      .on("postgres_changes", { event: "*", schema: "public", table: "comm_assignment_status" }, () => loadCommAssignments())
+      .subscribe();
+    return () => supabase.removeChannel(ch);
+  }, [isApproved, loadCommAssignments]);
+
+  // Create an assignment for all current teams (one status row per team).
+  const createCommAssignment = useCallback(async () => {
+    const title = (newAssignment.title || "").trim();
+    if (!title) { window.alert("Give the assignment a title."); return; }
+    const ins = await supabase.from("comm_assignments").insert({
+      title,
+      instructions: (newAssignment.instructions || "").trim() || null,
+      due_date: newAssignment.due_date || null,
+      reminder_cadence_days: Number(newAssignment.cadence) || 2,
+      team_names: [],
+      created_by: coach?.display_name || coach?.email || null,
+    }).select().single();
+    if (ins.error) { window.alert("Create failed: " + ins.error.message); return; }
+    const rows = practiceTeams.map(t => ({ assignment_id: ins.data.id, team_name: t.team_name }));
+    if (rows.length) {
+      const sIns = await supabase.from("comm_assignment_status").insert(rows);
+      if (sIns.error) console.error("status insert:", sIns.error);
+    }
+    setCreatingAssignment(false);
+    setNewAssignment({ title:"", instructions:"", due_date:"", cadence:2 });
+    setSelectedAssignmentId(ins.data.id);
+    loadCommAssignments();
+  }, [newAssignment, practiceTeams, coach, loadCommAssignments]);
+
+  const patchCommStatus = useCallback(async (id, patch) => {
+    const up = await supabase.from("comm_assignment_status").update({ ...patch, updated_at: new Date().toISOString() }).eq("id", id);
+    if (up.error) { window.alert("Update failed: " + up.error.message); return; }
+    loadCommAssignments();
+  }, [loadCommAssignments]);
+
+  const archiveCommAssignment = useCallback(async (id) => {
+    if (!window.confirm("Archive this assignment? It stops reminders and hides it from the list.")) return;
+    await supabase.from("comm_assignments").update({ status: "archived", updated_at: new Date().toISOString() }).eq("id", id);
+    if (selectedAssignmentId === id) setSelectedAssignmentId(null);
+    loadCommAssignments();
+  }, [loadCommAssignments, selectedAssignmentId]);
+
+  // Manual "remind now" for one team: app push (team audience) + email head/assistant coach.
+  const remindCommTeam = useCallback(async (assignment, statusRow) => {
+    const team = practiceTeams.find(t => t.team_name === statusRow.team_name);
+    const norm = (s) => String(s || "").trim().toLowerCase().replace(/\s+/g, " ");
+    const emailFor = (name) => {
+      const n = norm(name); if (!n) return null;
+      const c = coachRoster.find(c => norm((c.first_name || "") + " " + (c.last_name || "")) === n);
+      return c && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(c.email || "") ? c.email : null;
+    };
+    const emails = [...new Set([team?.head_coach, team?.assistant_coach].map(emailFor).filter(Boolean))];
+    const subject = `Reminder: post to your ${statusRow.team_name} team — "${assignment.title}"`;
+    const body = `Please post an update to your ${statusRow.team_name} team on SportsYou.\n\n${assignment.title}${assignment.instructions ? "\n" + assignment.instructions : ""}`;
+    try {
+      if (emails.length) await fetch("/api/send-email", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ subject, body, recipients: emails }) });
+      await fetch("/api/send-push", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: `Post to your ${statusRow.team_name} team`, body: assignment.title, url: "/", audience: { type: "team", team: statusRow.team_name } }) });
+    } catch (e) { console.error("remind failed", e); }
+    await patchCommStatus(statusRow.id, { last_reminded_at: new Date().toISOString(), reminder_count: (statusRow.reminder_count || 0) + 1 });
+    window.alert(`Reminder sent to ${statusRow.team_name}${emails.length ? " (" + emails.length + " email" + (emails.length > 1 ? "s" : "") + " + app push)" : " (app push only — no coach email on file)"}.`);
+  }, [practiceTeams, coachRoster, patchCommStatus]);
 
   // Email templates + sent history live in Supabase so they sync across devices.
   const loadEmailTemplates = useCallback(async () => {
@@ -8778,6 +8864,137 @@ export default function App() {
   // Two-column view: thread list on the left, selected conversation on
   // the right. Realtime push (in the parent component) keeps both up
   // to date as Twilio delivers inbound + status updates.
+  function renderAssignments() {
+    const now = Date.now();
+    const inputStyle = () => ({ width:"100%", marginTop:8, padding:"8px 10px", borderRadius:8, border:"1px solid "+C.border, background:C.bg, color:C.text, fontFamily:"inherit", fontSize:13, boxSizing:"border-box" });
+    const btnMini = (color, filled) => ({ marginLeft:6, padding:"4px 10px", borderRadius:6, border:"1px solid "+color, background: filled?color:"transparent", color: filled?"#000":C.mut, fontSize:11, fontWeight:700, cursor:"pointer", fontFamily:"inherit" });
+    const fmtDate = (d) => d ? new Date(d).toLocaleDateString(undefined,{month:"short",day:"numeric"}) : "";
+    const activeAssignments = commAssignments.filter(a => a.status !== "archived");
+    const statusesFor = (aid) => commStatuses.filter(s => s.assignment_id === aid);
+    // A "candidate" is the latest team post since the assignment went out — a
+    // likely completion awaiting your confirmation.
+    const candidateFor = (assignment, team) => {
+      const created = new Date(assignment.created_at).getTime();
+      let best = null;
+      for (const p of sportsYouPosts) {
+        if (p.team_name !== team) continue;
+        if (new Date(p.posted_at).getTime() < created) continue;
+        if (!best || new Date(p.posted_at) > new Date(best.posted_at)) best = p;
+      }
+      return best;
+    };
+    const isOverdue = (a) => a.due_date && new Date(a.due_date).getTime() < now;
+    const summarize = (a) => {
+      let sent=0, needsConfirm=0, pending=0;
+      for (const s of statusesFor(a.id)) {
+        if (s.status === "sent") sent++;
+        else if (s.status === "not_needed") { /* excluded */ }
+        else if (candidateFor(a, s.team_name)) needsConfirm++;
+        else pending++;
+      }
+      return { sent, needsConfirm, pending };
+    };
+
+    return (
+      <div style={{maxWidth:1100,margin:"0 auto"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:12}}>
+          <div>
+            <div style={{fontSize:18,fontWeight:800,color:C.gold}}>Message Assignments</div>
+            <div style={{fontSize:11,color:C.mut,marginTop:2}}>Assign a message for coaches to post, track who's done it, and auto-remind the rest (email + app, every couple days until sent).</div>
+          </div>
+          {canOps && <button onClick={()=>setCreatingAssignment(v=>!v)} style={{padding:"8px 14px",borderRadius:8,border:"1px solid "+C.gold,background:creatingAssignment?"transparent":C.gold,color:creatingAssignment?C.gold:"#000",fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>{creatingAssignment?"Cancel":"+ New assignment"}</button>}
+        </div>
+
+        {creatingAssignment && (
+          <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:16,marginBottom:16}}>
+            <input value={newAssignment.title} onChange={e=>setNewAssignment(v=>({...v,title:e.target.value}))} placeholder="Title — e.g. “Welcome message to your team”" style={inputStyle()} />
+            <textarea value={newAssignment.instructions} onChange={e=>setNewAssignment(v=>({...v,instructions:e.target.value}))} placeholder="What should the coach send? (optional details / talking points)" rows={3} style={{...inputStyle(),resize:"vertical"}} />
+            <div style={{display:"flex",gap:14,flexWrap:"wrap",alignItems:"center",marginTop:10}}>
+              <label style={{fontSize:12,color:C.mut}}>Due <input type="date" value={newAssignment.due_date} onChange={e=>setNewAssignment(v=>({...v,due_date:e.target.value}))} style={{...inputStyle(),width:"auto",display:"inline-block",marginTop:0}} /></label>
+              <label style={{fontSize:12,color:C.mut}}>Remind every <input type="number" min={1} value={newAssignment.cadence} onChange={e=>setNewAssignment(v=>({...v,cadence:e.target.value}))} style={{...inputStyle(),width:60,display:"inline-block",marginTop:0}} /> days</label>
+              <span style={{fontSize:11,color:C.mut}}>Applies to all {practiceTeams.length} teams</span>
+              <button onClick={createCommAssignment} style={{padding:"8px 16px",borderRadius:8,border:"none",background:C.gold,color:"#000",fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit",marginLeft:"auto"}}>Create assignment</button>
+            </div>
+          </div>
+        )}
+
+        {activeAssignments.length===0 && !creatingAssignment && (
+          <div style={{background:C.card,border:"1px dashed "+C.border,borderRadius:12,padding:"22px 20px",color:C.mut,fontSize:12}}>No assignments yet. Create one to start tracking which coaches have messaged their teams.</div>
+        )}
+
+        <div style={{display:"flex",flexDirection:"column",gap:10}}>
+          {activeAssignments.map(a => {
+            const sum = summarize(a);
+            const open = selectedAssignmentId === a.id;
+            return (
+              <div key={a.id} style={{background:C.card,border:"1px solid "+(open?C.gold:C.border),borderRadius:12,overflow:"hidden"}}>
+                <div onClick={()=>setSelectedAssignmentId(open?null:a.id)} style={{padding:"12px 16px",cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+                  <div>
+                    <div style={{fontSize:14,fontWeight:700,color:C.text}}>{a.title}{isOverdue(a)&&sum.pending>0 && <span style={{marginLeft:8,fontSize:9,fontWeight:800,padding:"1px 6px",borderRadius:8,background:"#b91c1c",color:"#fff"}}>OVERDUE</span>}</div>
+                    <div style={{fontSize:11,color:C.mut,marginTop:2}}>{a.due_date?`Due ${fmtDate(a.due_date)} · `:""}remind every {a.reminder_cadence_days}d · created {fmtDate(a.created_at)}</div>
+                  </div>
+                  <div style={{display:"flex",gap:12,alignItems:"center",fontSize:12}}>
+                    <span style={{color:C.grn,fontWeight:700}}>{sum.sent} sent</span>
+                    {sum.needsConfirm>0 && <span style={{color:C.gold,fontWeight:700}}>{sum.needsConfirm} to confirm</span>}
+                    <span style={{color:C.mut,fontWeight:700}}>{sum.pending} pending</span>
+                    <span style={{fontSize:9,opacity:.7}}>{open?"▲":"▼"}</span>
+                  </div>
+                </div>
+                {open && (
+                  <div style={{borderTop:"1px solid "+C.border}}>
+                    {a.instructions && <div style={{padding:"10px 16px",fontSize:12,color:C.mut,borderBottom:"1px solid "+C.border,whiteSpace:"pre-wrap"}}>{a.instructions}</div>}
+                    <div style={{overflowX:"auto"}}>
+                      <table style={{width:"100%",borderCollapse:"collapse",fontSize:12.5}}>
+                        <thead><tr style={{color:C.mut,fontSize:10,textTransform:"uppercase"}}>
+                          <th style={{textAlign:"left",padding:"8px 12px"}}>Team</th>
+                          <th style={{textAlign:"left",padding:"8px 12px"}}>Coach(es)</th>
+                          <th style={{textAlign:"left",padding:"8px 12px"}}>Status</th>
+                          <th style={{textAlign:"right",padding:"8px 12px"}}>Action</th>
+                        </tr></thead>
+                        <tbody>
+                          {statusesFor(a.id).slice().sort((x,y)=>x.team_name.localeCompare(y.team_name)).map(s => {
+                            const team = practiceTeams.find(t=>t.team_name===s.team_name);
+                            const coachNames = [team?.head_coach, team?.assistant_coach].filter(Boolean).join(", ") || "—";
+                            const cand = s.status==="pending" ? candidateFor(a, s.team_name) : null;
+                            return (
+                              <tr key={s.id} style={{borderTop:"1px solid "+C.border}}>
+                                <td style={{padding:"8px 12px",fontWeight:700}}>{s.team_name}</td>
+                                <td style={{padding:"8px 12px",color:C.mut}}>{coachNames}</td>
+                                <td style={{padding:"8px 12px"}}>
+                                  {s.status==="sent" && <span style={{color:C.grn,fontWeight:700}}>✅ Sent{s.sent_at?" · "+fmtDate(s.sent_at):""}</span>}
+                                  {s.status==="not_needed" && <span style={{color:C.mut}}>— Skipped</span>}
+                                  {s.status==="pending" && cand && <span style={{color:C.gold,fontWeight:700}} title={cand.subject||""}>🟡 Posted {fmtDate(cand.posted_at)}{cand.author?" by "+cand.author:""} — confirm?</span>}
+                                  {s.status==="pending" && !cand && <span style={{color:isOverdue(a)?"#f87171":C.mut,fontWeight:700}}>⏳ Needs to send{s.reminder_count?` · reminded ${s.reminder_count}×`:""}</span>}
+                                </td>
+                                <td style={{padding:"8px 12px",textAlign:"right",whiteSpace:"nowrap"}}>
+                                  {s.status==="pending" && cand && <>
+                                    <button onClick={()=>patchCommStatus(s.id,{status:"sent",confirmed_post_id:cand.id,sent_at:cand.posted_at,confirmed_by:coach?.display_name||null})} style={btnMini(C.grn,true)}>Confirm sent</button>
+                                    <button onClick={()=>patchCommStatus(s.id,{status:"not_needed"})} title="Not the right post" style={btnMini(C.border)}>Not it</button>
+                                  </>}
+                                  {s.status==="pending" && !cand && <>
+                                    <button onClick={()=>remindCommTeam(a,s)} style={btnMini(C.gold,true)}>Remind now</button>
+                                    <button onClick={()=>patchCommStatus(s.id,{status:"sent",sent_at:new Date().toISOString(),confirmed_by:coach?.display_name||null})} style={btnMini(C.border)}>Mark sent</button>
+                                    <button onClick={()=>patchCommStatus(s.id,{status:"not_needed"})} style={btnMini(C.border)}>Skip</button>
+                                  </>}
+                                  {s.status!=="pending" && <button onClick={()=>patchCommStatus(s.id,{status:"pending",confirmed_post_id:null,sent_at:null})} style={btnMini(C.border)}>Undo</button>}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                    {canOps && <div style={{padding:"8px 16px",borderTop:"1px solid "+C.border,textAlign:"right"}}><button onClick={()=>archiveCommAssignment(a.id)} style={{background:"none",border:"none",color:C.mut,fontSize:11,cursor:"pointer",fontFamily:"inherit",textDecoration:"underline"}}>Archive assignment</button></div>}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
   function renderCoachComms() {
     const DAY = 86400000;
     const SILENT_DAYS = 7;
@@ -11044,7 +11261,7 @@ export default function App() {
                 <button key={v} style={btn(view===v)} onClick={()=>{ setView(v); setOpenMenu(null); }}>{l}</button>;
               const groups = [
                 { title:"Tryouts", items:[["dashboard","Dashboard"], ["evaluate","Evaluate"], ["favorites","My Favorites" + (favorites.length ? " (" + favorites.length + ")" : "")], ...(canViewTeams ? [["teams","Teams"]] : []), ["rankings","Rankings"], ["physical","Physical Testing"], ["tryouts","Coach Assignments"]] },
-                ...(canOps ? [{ title:"Operations", items:[["tracker","Tracker"], ["teamdir","All Teams"], ["coaches","Coaches"], ["scholarships","Scholarships"], ["practice","Practice"], ["email","Email"], ["notifications","Notifications"], ["requests","Requests" + (coachRequests.filter(r=>r.status==="pending").length ? " (" + coachRequests.filter(r=>r.status==="pending").length + ")" : "")], ["messages", "Messages (SMS)" + (totalUnread > 0 ? " (" + totalUnread + ")" : "")], ["coachcomms", "Coach Comms"]] }] : []),
+                ...(canOps ? [{ title:"Operations", items:[["tracker","Tracker"], ["teamdir","All Teams"], ["coaches","Coaches"], ["scholarships","Scholarships"], ["practice","Practice"], ["email","Email"], ["notifications","Notifications"], ["requests","Requests" + (coachRequests.filter(r=>r.status==="pending").length ? " (" + coachRequests.filter(r=>r.status==="pending").length + ")" : "")], ["messages", "Messages (SMS)" + (totalUnread > 0 ? " (" + totalUnread + ")" : "")], ["coachcomms", "Coach Comms"], ["assignments", "Assignments"]] }] : []),
               ];
               return <>
                 {item("home","Home")}
@@ -11211,6 +11428,7 @@ export default function App() {
         {view==="email" && renderEmailBlast()}
         {view==="messages" && renderMessages()}
         {view==="coachcomms" && renderCoachComms()}
+        {view==="assignments" && renderAssignments()}
         {view==="askai" && renderAskAI()}
         </>}
       </div>
