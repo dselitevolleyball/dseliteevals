@@ -12,6 +12,8 @@
     "@anthropic-ai/sdk": "^0.32.1",
     "@dnd-kit/core": "^6.3.1",
     "@supabase/supabase-js": "^2.45.0",
+    "imapflow": "^1.4.3",
+    "mailparser": "^3.9.12",
     "papaparse": "^5.4.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

@@ -4,5 +4,9 @@
   "framework": "vite",
   "rewrites": [
     { "source": "/practice", "destination": "/practice-planner.html" }
+  ],
+  "crons": [
+    { "path": "/api/sportsyou-poll", "schedule": "*/15 * * * *" },
+    { "path": "/api/sportsyou-reminders", "schedule": "0 14 * * *" }
   ]
 }

@@ -828,6 +828,9 @@ export default function App() {
   const [selectedThreadId, setSelectedThreadId]       = useState(null);
   const [smsCompose, setSmsCompose]                   = useState("");
   const [smsSending, setSmsSending]                   = useState(false);
+  // SportsYou coach-comms inbox state
+  const [sportsYouPosts, setSportsYouPosts]           = useState([]);
+  const [coachCommsTeam, setCoachCommsTeam]           = useState("");   // "" = all teams; else filter to one team
   // Bulk email (send-only) state
   const [emailGroupScope, setEmailGroupScope]         = useState({});     // { [div]: "all"|"tryout"|"eval"|"none" } — default "all"
   const [emailTeam, setEmailTeam]                     = useState("");    // "" any | "__has" | "__none"
@@ -1997,6 +2000,28 @@ export default function App() {
       .subscribe();
     return () => supabase.removeChannel(ch);
   }, [isApproved, selectedThreadId, loadSmsThreads, loadSmsMessages]);
+
+  // SportsYou coach-comms inbox: load posts + live-refresh on new arrivals.
+  const loadSportsYouPosts = useCallback(async () => {
+    const { data, error } = await supabase
+      .from("sportsyou_posts")
+      .select("*")
+      .order("posted_at", { ascending: false })
+      .limit(500);
+    if (error) console.error("Load sportsyou_posts error:", error);
+    setSportsYouPosts(data || []);
+  }, []);
+  useEffect(() => {
+    if (isApproved && view === "coachcomms") { loadSportsYouPosts(); loadPractice(); }
+  }, [isApproved, view, loadSportsYouPosts, loadPractice]);
+  useEffect(() => {
+    if (!isApproved) return;
+    const ch = supabase
+      .channel("realtime-sportsyou")
+      .on("postgres_changes", { event: "*", schema: "public", table: "sportsyou_posts" }, () => loadSportsYouPosts())
+      .subscribe();
+    return () => supabase.removeChannel(ch);
+  }, [isApproved, loadSportsYouPosts]);
 
   // Send an SMS via the Vercel serverless /api/send-sms endpoint.
   const sendSms = useCallback(async ({ to, body, player_id }) => {
@@ -8753,6 +8778,132 @@ export default function App() {
   // Two-column view: thread list on the left, selected conversation on
   // the right. Realtime push (in the parent component) keeps both up
   // to date as Twilio delivers inbound + status updates.
+  function renderCoachComms() {
+    const DAY = 86400000;
+    const SILENT_DAYS = 7;
+    const now = Date.now();
+    const fmtWhen = (iso) => {
+      if (!iso) return "never";
+      const diff = now - new Date(iso).getTime();
+      const d = Math.floor(diff / DAY);
+      if (d <= 0) return "today";
+      if (d === 1) return "yesterday";
+      if (d < 30) return d + " days ago";
+      return new Date(iso).toLocaleDateString(undefined, { month:"short", day:"numeric" });
+    };
+    const fmtFull = (iso) => iso ? new Date(iso).toLocaleString(undefined, { month:"short", day:"numeric", hour:"numeric", minute:"2-digit" }) : "";
+
+    // Latest post + count per team (matched posts only).
+    const latestByTeam = new Map();
+    const countByTeam = new Map();
+    for (const p of sportsYouPosts) {
+      if (!p.team_name) continue;
+      countByTeam.set(p.team_name, (countByTeam.get(p.team_name) || 0) + 1);
+      const cur = latestByTeam.get(p.team_name);
+      if (!cur || new Date(p.posted_at) > new Date(cur)) latestByTeam.set(p.team_name, p.posted_at);
+    }
+    // One row per known team; longest-silent first (never-posted at the top).
+    const teamRows = practiceTeams.map(t => {
+      const last = latestByTeam.get(t.team_name) || null;
+      const days = last ? Math.floor((now - new Date(last).getTime()) / DAY) : null;
+      return { team: t.team_name, coach: t.head_coach || "—", last, days, count: countByTeam.get(t.team_name) || 0 };
+    }).sort((a, b) => (b.days == null ? 1e9 : b.days) - (a.days == null ? 1e9 : a.days));
+    const silentCount = teamRows.filter(r => r.days == null || r.days >= SILENT_DAYS).length;
+    const unmatched = sportsYouPosts.filter(p => !p.team_name);
+
+    // Chronological log, filtered by the selected team (or unmatched bucket).
+    const log = sportsYouPosts.filter(p =>
+      !coachCommsTeam ? true : (coachCommsTeam === "__unmatched" ? !p.team_name : p.team_name === coachCommsTeam)
+    );
+    const preview = (s, n=240) => { const t = String(s||"").replace(/\s+/g," ").trim(); return t.length>n ? t.slice(0,n)+"…" : t; };
+    const isSilent = (r) => r.days == null || r.days >= SILENT_DAYS;
+
+    return (
+      <div style={{maxWidth:1100,margin:"0 auto"}}>
+        <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",gap:10,flexWrap:"wrap",marginBottom:12}}>
+          <div>
+            <div style={{fontSize:18,fontWeight:800,color:C.gold}}>Coach Comms</div>
+            <div style={{fontSize:11,color:C.mut,marginTop:2}}>
+              What coaches are posting to their teams on SportsYou · {sportsYouPosts.length} post{sportsYouPosts.length===1?"":"s"} tracked
+              {silentCount>0 && <span style={{color:C.grn}}> · {silentCount} team{silentCount===1?"":"s"} quiet {SILENT_DAYS}+ days</span>}
+            </div>
+          </div>
+        </div>
+
+        {sportsYouPosts.length === 0 && (
+          <div style={{background:C.card,border:"1px dashed "+C.border,borderRadius:12,padding:"22px 20px",color:C.mut,fontSize:12,lineHeight:1.6}}>
+            No SportsYou posts have arrived yet. Once the house account is on each team and email forwarding is set up, posts show up here automatically.
+          </div>
+        )}
+
+        {/* Per-team activity */}
+        {teamRows.length > 0 && (
+          <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,overflow:"hidden",marginBottom:16}}>
+            <div style={{padding:"10px 14px",borderBottom:"1px solid "+C.border,fontSize:12,fontWeight:800,color:C.gold,letterSpacing:0.5}}>TEAM ACTIVITY · most silent first</div>
+            <div style={{overflowX:"auto"}}>
+              <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+                <thead>
+                  <tr style={{color:C.mut,fontSize:10,textTransform:"uppercase",letterSpacing:0.5}}>
+                    <th style={{textAlign:"left",padding:"8px 14px"}}>Team</th>
+                    <th style={{textAlign:"left",padding:"8px 14px"}}>Head coach</th>
+                    <th style={{textAlign:"left",padding:"8px 14px"}}>Last post</th>
+                    <th style={{textAlign:"right",padding:"8px 14px"}}>Posts</th>
+                    <th style={{padding:"8px 14px"}}></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {teamRows.map(r => (
+                    <tr key={r.team} style={{borderTop:"1px solid "+C.border,background:isSilent(r)?"rgba(34,197,94,0.06)":"transparent"}}>
+                      <td style={{padding:"8px 14px",fontWeight:700,color:C.text}}>{r.team}</td>
+                      <td style={{padding:"8px 14px",color:C.mut}}>{r.coach}</td>
+                      <td style={{padding:"8px 14px",color:isSilent(r)?C.grn:C.text,fontWeight:isSilent(r)?700:400}}>
+                        {fmtWhen(r.last)}{isSilent(r) && <span style={{fontSize:9,fontWeight:800,marginLeft:6,padding:"1px 6px",borderRadius:8,background:C.grn,color:"#000"}}>QUIET</span>}
+                      </td>
+                      <td style={{padding:"8px 14px",textAlign:"right",color:C.mut}}>{r.count}</td>
+                      <td style={{padding:"8px 14px",textAlign:"right"}}>
+                        {r.count>0 && <button onClick={()=>setCoachCommsTeam(r.team)} style={{padding:"3px 10px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.gold,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>View</button>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* Central log */}
+        <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,overflow:"hidden"}}>
+          <div style={{padding:"10px 14px",borderBottom:"1px solid "+C.border,display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,flexWrap:"wrap"}}>
+            <div style={{fontSize:12,fontWeight:800,color:C.gold,letterSpacing:0.5}}>MESSAGE LOG</div>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <select value={coachCommsTeam} onChange={e=>setCoachCommsTeam(e.target.value)}
+                style={{padding:"5px 10px",borderRadius:8,border:"1px solid "+C.border,background:C.bg,color:C.text,fontSize:12,fontFamily:"inherit"}}>
+                <option value="">All teams</option>
+                {practiceTeams.map(t => <option key={t.team_name} value={t.team_name}>{t.team_name}</option>)}
+                {unmatched.length>0 && <option value="__unmatched">Unmatched ({unmatched.length})</option>}
+              </select>
+              {coachCommsTeam && <button onClick={()=>setCoachCommsTeam("")} style={{padding:"5px 10px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>Clear</button>}
+            </div>
+          </div>
+          {log.length === 0 && <div style={{padding:24,textAlign:"center",color:C.mut,fontSize:11}}>No posts to show.</div>}
+          {log.map(p => (
+            <div key={p.id} style={{padding:"12px 14px",borderTop:"1px solid "+C.border}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:5}}>
+                {p.team_name
+                  ? <span style={{fontSize:10,fontWeight:800,padding:"2px 8px",borderRadius:8,background:"rgba(233,30,140,0.15)",color:C.gold}}>{p.team_name}</span>
+                  : <span style={{fontSize:10,fontWeight:800,padding:"2px 8px",borderRadius:8,background:C.border,color:C.mut}} title={p.raw_team_label||""}>UNMATCHED</span>}
+                {p.author && <span style={{fontSize:11,fontWeight:700,color:C.text}}>{p.author}</span>}
+                <span style={{fontSize:10,color:C.mut}}>{fmtFull(p.posted_at)}</span>
+              </div>
+              {p.subject && p.subject !== p.body && <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:2}}>{p.subject}</div>}
+              {p.body && <div style={{fontSize:12,color:C.mut,lineHeight:1.5,whiteSpace:"pre-wrap"}}>{preview(p.body)}</div>}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   function renderMessages() {
     const fmtPhone = (p) => {
       if (!p) return "";
@@ -10891,7 +11042,7 @@ export default function App() {
                 <button key={v} style={btn(view===v)} onClick={()=>{ setView(v); setOpenMenu(null); }}>{l}</button>;
               const groups = [
                 { title:"Tryouts", items:[["dashboard","Dashboard"], ["evaluate","Evaluate"], ["favorites","My Favorites" + (favorites.length ? " (" + favorites.length + ")" : "")], ...(canViewTeams ? [["teams","Teams"]] : []), ["rankings","Rankings"], ["physical","Physical Testing"], ["tryouts","Coach Assignments"]] },
-                ...(canOps ? [{ title:"Operations", items:[["tracker","Tracker"], ["teamdir","All Teams"], ["coaches","Coaches"], ["scholarships","Scholarships"], ["practice","Practice"], ["email","Email"], ["notifications","Notifications"], ["requests","Requests" + (coachRequests.filter(r=>r.status==="pending").length ? " (" + coachRequests.filter(r=>r.status==="pending").length + ")" : "")], ["messages", "Messages (SMS)" + (totalUnread > 0 ? " (" + totalUnread + ")" : "")]] }] : []),
+                ...(canOps ? [{ title:"Operations", items:[["tracker","Tracker"], ["teamdir","All Teams"], ["coaches","Coaches"], ["scholarships","Scholarships"], ["practice","Practice"], ["email","Email"], ["notifications","Notifications"], ["requests","Requests" + (coachRequests.filter(r=>r.status==="pending").length ? " (" + coachRequests.filter(r=>r.status==="pending").length + ")" : "")], ["messages", "Messages (SMS)" + (totalUnread > 0 ? " (" + totalUnread + ")" : "")], ["coachcomms", "Coach Comms"]] }] : []),
               ];
               return <>
                 {item("home","Home")}
@@ -11057,6 +11208,7 @@ export default function App() {
         {view==="tryouts" && renderTryouts()}
         {view==="email" && renderEmailBlast()}
         {view==="messages" && renderMessages()}
+        {view==="coachcomms" && renderCoachComms()}
         {view==="askai" && renderAskAI()}
         </>}
       </div>
