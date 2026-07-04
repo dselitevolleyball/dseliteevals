@@ -66,8 +66,19 @@ export default async function handler(req, res) {
   try {
     await client.connect();
   } catch (e) {
-    console.error("IMAP connect failed:", e.message);
-    return res.status(502).json({ error: "IMAP connect failed", detail: e.message });
+    // Surface the real reason so we can tell auth failure from a connection problem.
+    const detail = e.authenticationFailed
+      ? "authentication failed — check GMAIL_APP_PASSWORD (must be a Google App Password, no typos), that 2-Step Verification is ON, and that IMAP is enabled for the account"
+      : (e.responseText || e.response || e.message || "unknown");
+    console.error("IMAP connect failed:", e);
+    return res.status(502).json({
+      error: "IMAP connect failed",
+      detail,
+      authFailed: !!e.authenticationFailed,
+      code: e.code || null,
+      host,
+      user: GMAIL_USER,
+    });
   }
 
   try {
