@@ -66,11 +66,18 @@ export default async function handler(req, res) {
     headers: data.headers, date: data.date, messageId: data.messageId,
   }, teamNames);
 
+  // Team invitations / system notices aren't coach posts — acknowledge (so the
+  // sender marks the email done) but don't store them in the comms log.
+  if (parsed.isInvitation) {
+    return res.status(200).json({ ok: true, skipped: "invitation" });
+  }
+
   const row = {
     source: "sportsyou",
     team_name: parsed.team,
     raw_team_label: parsed.subject || null,
     author: parsed.author,
+    author_role: parsed.authorRole,
     subject: parsed.subject || null,
     body: parsed.body || null,
     from_email: parsed.fromEmail || null,

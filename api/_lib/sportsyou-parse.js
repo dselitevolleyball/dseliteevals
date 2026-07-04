@@ -62,16 +62,32 @@ export const unwrapForward = (text) => {
   return out;
 };
 
-// Best-effort poster name. Non-critical — returns null if nothing clean matches.
-export const parseAuthor = (haystack) => {
+// SportsYou subjects read "<Full Name> posted in DS Elite <Team>" — the most
+// reliable author signal. Fall back to body patterns otherwise.
+export const parseAuthor = (subject, body = "") => {
+  const subj = String(subject || "");
+  const m = subj.match(/^(.+?)\s+posted in\b/i);
+  if (m) return m[1].trim();
+  const hay = subj + "\n" + String(body || "");
   const NAME = "([A-Z][A-Za-z.'-]+(?:\\s+[A-Z][A-Za-z.'-]+){0,2})";
   const pats = [
     new RegExp("\\bposted by\\s+" + NAME),
-    new RegExp("\\bfrom\\s+" + NAME + "\\s+in\\b"),
     new RegExp("(?:^|\\n)\\s*(?:Coach\\s+)?" + NAME + "\\s+posted\\b", "m"),
   ];
-  for (const re of pats) { const m = haystack.match(re); if (m) return m[1].trim(); }
+  for (const re of pats) { const mm = hay.match(re); if (mm) return mm[1].trim(); }
   return null;
+};
+
+// DS Elite club admins sit on every team; anyone else posting is a team coach.
+export const DS_ELITE_ADMINS = ["drew rose", "tionne graves-brown", "kristen alexandrov"];
+const normPerson = (s) => String(s || "").trim().toLowerCase().replace(/\s+/g, " ");
+export const roleForAuthor = (author) =>
+  !author ? null : (DS_ELITE_ADMINS.includes(normPerson(author)) ? "admin" : "coach");
+
+// SportsYou also emails team invitations / system notices — not coach posts.
+export const isInvitationEmail = (subject, body) => {
+  const t = (String(subject || "") + " " + String(body || "")).toLowerCase();
+  return /has invited you to|team invitation|accept invitation/.test(t);
 };
 
 // Match the message against the club's real team names. Longest match wins
@@ -122,6 +138,7 @@ export function parseSportsYouEmail(input, teamNames) {
 
   const haystack = subj + "\n" + cleanBody;
   const team = matchTeam(haystack, teamNames);
+  const author = parseAuthor(subj, cleanBody);
 
   return {
     fromEmail,
@@ -130,6 +147,8 @@ export function parseSportsYouEmail(input, teamNames) {
     postedAt,                 // may be null — caller defaults to received time
     messageId: mid,
     team,                     // null if unmatched
-    author: parseAuthor(haystack),
+    author,
+    authorRole: roleForAuthor(author),        // 'admin' | 'coach' | null
+    isInvitation: isInvitationEmail(subj, cleanBody),
   };
 }

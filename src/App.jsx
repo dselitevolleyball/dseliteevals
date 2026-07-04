@@ -8893,6 +8893,8 @@ export default function App() {
                   ? <span style={{fontSize:10,fontWeight:800,padding:"2px 8px",borderRadius:8,background:"rgba(233,30,140,0.15)",color:C.gold}}>{p.team_name}</span>
                   : <span style={{fontSize:10,fontWeight:800,padding:"2px 8px",borderRadius:8,background:C.border,color:C.mut}} title={p.raw_team_label||""}>UNMATCHED</span>}
                 {p.author && <span style={{fontSize:11,fontWeight:700,color:C.text}}>{p.author}</span>}
+                {p.author_role === "admin" && <span style={{fontSize:9,fontWeight:800,padding:"1px 6px",borderRadius:8,background:"rgba(212,175,55,0.18)",color:C.gold}}>ADMIN</span>}
+                {p.author_role === "coach" && <span style={{fontSize:9,fontWeight:800,padding:"1px 6px",borderRadius:8,background:"rgba(56,132,255,0.18)",color:"#6aa8ff"}}>COACH</span>}
                 <span style={{fontSize:10,color:C.mut}}>{fmtFull(p.posted_at)}</span>
               </div>
               {p.subject && p.subject !== p.body && <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:2}}>{p.subject}</div>}

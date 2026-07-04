@@ -105,6 +105,13 @@ export default async function handler(req, res) {
             messageId: mail.messageId || "",
           }, teamNames);
 
+          // Team invitations / system notices aren't coach posts — skip, but
+          // still mark read so we don't re-fetch them every run.
+          if (parsed.isInvitation) {
+            await client.messageFlagsAdd(uid, ["\\Seen"], { uid: true });
+            continue;
+          }
+
           const raw = JSON.stringify({
             via: "imap", from: mail.from?.text || "", subject: mail.subject || "",
             date: mail.date || null, messageId: mail.messageId || "", text: mail.text || "",
@@ -115,6 +122,7 @@ export default async function handler(req, res) {
             team_name: parsed.team,
             raw_team_label: parsed.subject || null,
             author: parsed.author,
+            author_role: parsed.authorRole,
             subject: parsed.subject || null,
             body: parsed.body || null,
             from_email: parsed.fromEmail || null,
