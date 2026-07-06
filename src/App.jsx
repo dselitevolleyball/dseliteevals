@@ -1747,14 +1747,94 @@ export default function App() {
       body: JSON.stringify({ title: "Coach time-off request", body: who + " requested " + what, url: "/", audience: { type: "admins" } }) }).catch(() => {});
     window.alert("Request submitted — the directors have been notified.");
   }, [reqForm, coach, loadCoachRequests]);
+  // When a 'practice' time-off request is approved: mark the coach out on the
+  // Daily board for that team's practice(s) that date, auto-assign a floating
+  // coach if one is available for the slot, else leave it needing coverage and
+  // ask the coach to find their own sub. Queries fresh data so it works from any
+  // view. Returns a summary of what happened.
+  const autoCoverPracticeRequest = useCallback(async (req) => {
+    const WD = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+    // Same date→phase logic the Daily board uses.
+    const phaseFor = (iso) => {
+      if (!iso) return "season";
+      if (iso >= "2027-05-07") return "postseason";
+      if (iso >= "2026-11-29") return "season";
+      if (iso >= "2026-10-18") return "fall2";
+      if (iso >= "2026-09-13") return "fall1";
+      return "summer";
+    };
+    const date = req.request_date, team = req.team_name, coachOut = (req.coach_name || "").trim();
+    if (!date || !team || !coachOut) return null;
+    let weekday; try { weekday = WD[new Date(date + "T00:00").getDay()]; } catch { return null; }
+    const phase = phaseFor(date);
+
+    const [aRes, fRes, cRes] = await Promise.all([
+      supabase.from("practice_assignments").select("team_name, day, slot, phase").eq("team_name", team),
+      supabase.from("coach_floats").select("coach_name, day, slot, phase"),
+      supabase.from("practice_coverage").select("practice_date, slot, phase, sub_name").eq("practice_date", date),
+    ]);
+    const assigns = aRes.data || [], floats = fRes.data || [], cov = cRes.data || [];
+    const slots = [...new Set(assigns.filter(a => a.day === weekday && (a.phase || "fall1") === phase).map(a => a.slot))];
+    if (!slots.length) return { noPractice: true };
+
+    const usedInRun = new Set(); // floater|slot already assigned this run
+    const rows = [];
+    const coveredBy = [];
+    let anyNeedsCoverage = false;
+    for (const slot of slots) {
+      const alreadySubbed = new Set(cov.filter(c => c.slot === slot && (c.phase || "season") === phase && c.sub_name).map(c => (c.sub_name || "").trim().toLowerCase()));
+      const candidates = [...new Set(floats.filter(f => (f.phase || "season") === phase && f.day === weekday && f.slot === slot).map(f => (f.coach_name || "").trim()).filter(Boolean))]
+        .filter(n => n.toLowerCase() !== coachOut.toLowerCase());
+      const floater = candidates.find(n => !alreadySubbed.has(n.toLowerCase()) && !usedInRun.has(n.toLowerCase() + "|" + slot)) || null;
+      if (floater) { usedInRun.add(floater.toLowerCase() + "|" + slot); coveredBy.push(floater); }
+      else anyNeedsCoverage = true;
+      rows.push({ practice_date: date, team_name: team, slot, phase, coach_out: coachOut, sub_name: floater, combine_with_team: null });
+    }
+    const { error } = await supabase.from("practice_coverage").upsert(rows, { onConflict: "practice_date,team_name,slot,phase,coach_out" });
+    if (error) { window.alert("Coverage save failed: " + error.message); return { error: true }; }
+    await loadPracticeCoverage();
+
+    // Tell the coach the outcome.
+    const email = (req.coach_email || "").trim();
+    const firstName = coachOut.split(/\s+/)[0] || "Coach";
+    const covWho = [...new Set(coveredBy)].join(", ");
+    const subject = anyNeedsCoverage
+      ? `Time-off approved — please arrange a sub for ${team}`
+      : `Time-off approved for ${team} on ${date}`;
+    const body = anyNeedsCoverage
+      ? `Hi ${firstName},\n\nYour request to be off for ${team} on ${date} is approved.\n\nWe don't have a floating coach available for that practice, so please find a coach to cover for you and let the directors know who it will be.\n\nThanks!\nDS Elite`
+      : `Hi ${firstName},\n\nYour request to be off for ${team} on ${date} is approved${covWho ? ` — ${covWho} will cover the practice` : ""}. Nothing else you need to do.\n\nThanks!\nDS Elite`;
+    try {
+      if (email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        await fetch("/api/send-email", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ subject, body, recipients: [email] }) });
+      }
+      await fetch("/api/send-push", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: subject, body: anyNeedsCoverage ? "Please arrange your own sub." : "You're covered — nothing to do.", url: "/", audience: email ? { type: "email", email } : { type: "admins" } }) });
+    } catch (e) { console.error("notify coach failed", e); }
+
+    return { anyNeedsCoverage, coveredBy: [...new Set(coveredBy)], slots, emailed: !!email };
+  }, [loadPracticeCoverage]);
+
   // Director resolves a request (approved / denied / back to pending).
   const resolveCoachRequest = useCallback(async (id, status) => {
+    const req = coachRequests.find(r => r.id === id);
     const { error } = await supabase.from("coach_requests").update({
       status, resolved_by: coach?.display_name || coach?.email || "", resolved_at: status === "pending" ? null : new Date().toISOString(),
     }).eq("id", id);
     if (error) { window.alert("Update failed: " + error.message); return; }
     await loadCoachRequests();
-  }, [coach, loadCoachRequests]);
+    // Auto-coverage on approval of a practice request.
+    if (status === "approved" && req && req.type === "practice") {
+      const res = await autoCoverPracticeRequest(req);
+      if (res && res.noPractice) {
+        window.alert(`Approved. No scheduled ${req.team_name} practice was found for ${req.request_date}, so nothing was marked out — add it on the Daily board if needed.`);
+      } else if (res && !res.error) {
+        window.alert(res.anyNeedsCoverage
+          ? `Approved & ${req.coach_name} marked out. No floating coach was available — they've been emailed to find their own sub.`
+          : `Approved, ${req.coach_name} marked out, and auto-covered by ${res.coveredBy.join(", ") || "a floating coach"}.`);
+      }
+    }
+  }, [coach, loadCoachRequests, coachRequests, autoCoverPracticeRequest]);
   // Toggle a coach's "floating" flag (a cloud ☁) — available to cover gaps.
   // ONE unified float action. Turning a coach's ☁ ON sets the global flag AND
   // seeds a per-block ☁ into every practice hour they're free (current phase),
