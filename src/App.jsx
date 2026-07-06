@@ -837,6 +837,8 @@ export default function App() {
   const [selectedAssignmentId, setSelectedAssignmentId] = useState(null);
   const [creatingAssignment, setCreatingAssignment]   = useState(false);
   const [newAssignment, setNewAssignment]             = useState({ title:"", instructions:"", due_date:"", cadence:2 });
+  const [reminderModal, setReminderModal]             = useState(null);  // { assignmentId, teams:[{id,team_name,reminder_count}], subject, body }
+  const [reminderSending, setReminderSending]         = useState(false);
   // Bulk email (send-only) state
   const [emailGroupScope, setEmailGroupScope]         = useState({});     // { [div]: "all"|"tryout"|"eval"|"none" } — default "all"
   const [emailTeam, setEmailTeam]                     = useState("");    // "" any | "__has" | "__none"
@@ -2158,9 +2160,9 @@ export default function App() {
     loadCommAssignments();
   }, [loadCommAssignments, selectedAssignmentId]);
 
-  // Send a reminder for one team (email head/assistant + app push). Returns the
-  // number of coach emails it reached. No alert/patch — callers handle those.
-  const sendTeamReminder = useCallback(async (assignment, statusRow) => {
+  // Send a reminder for one team using subject/body templates (which may contain
+  // a {{team}} placeholder). Returns the number of coach emails it reached.
+  const sendTeamReminder = useCallback(async (assignment, statusRow, tmpl) => {
     const team = practiceTeams.find(t => t.team_name === statusRow.team_name);
     const norm = (s) => String(s || "").trim().toLowerCase().replace(/\s+/g, " ");
     const emailFor = (name) => {
@@ -2169,36 +2171,50 @@ export default function App() {
       return c && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(c.email || "") ? c.email : null;
     };
     const emails = [...new Set([team?.head_coach, team?.assistant_coach].map(emailFor).filter(Boolean))];
-    const subject = `Reminder: post to your ${statusRow.team_name} team — "${assignment.title}"`;
-    const body = `Please post an update to your ${statusRow.team_name} team on SportsYou.\n\n${assignment.title}${assignment.instructions ? "\n" + assignment.instructions : ""}`;
+    const fill = (s) => String(s || "").replace(/\{\{\s*team\s*\}\}/gi, statusRow.team_name);
+    const subject = fill(tmpl?.subject) || `Reminder: post to your ${statusRow.team_name} team`;
+    const body = fill(tmpl?.body) || `Please post an update to your ${statusRow.team_name} team on SportsYou.`;
     try {
       if (emails.length) await fetch("/api/send-email", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ subject, body, recipients: emails }) });
-      await fetch("/api/send-push", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: `Post to your ${statusRow.team_name} team`, body: assignment.title, url: "/", audience: { type: "team", team: statusRow.team_name } }) });
+      await fetch("/api/send-push", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: `Post to your ${statusRow.team_name} team`, body: body.slice(0, 120), url: "/", audience: { type: "team", team: statusRow.team_name } }) });
     } catch (e) { console.error("remind failed", e); }
     return emails.length;
   }, [practiceTeams, coachRoster]);
 
-  // Manual "remind now" for one team.
-  const remindCommTeam = useCallback(async (assignment, statusRow) => {
-    const n = await sendTeamReminder(assignment, statusRow);
-    await patchCommStatus(statusRow.id, { last_reminded_at: new Date().toISOString(), reminder_count: (statusRow.reminder_count || 0) + 1 });
-    window.alert(`Reminder sent to ${statusRow.team_name}${n ? " (" + n + " email" + (n > 1 ? "s" : "") + " + app push)" : " (app push only — no coach email on file)"}.`);
-  }, [sendTeamReminder, patchCommStatus]);
+  // Open the reminder composer for a set of teams (single team or all pending).
+  const openReminder = useCallback((assignment, targetRows) => {
+    if (!targetRows || !targetRows.length) { window.alert("No pending teams to remind."); return; }
+    setReminderModal({
+      assignmentId: assignment.id,
+      teams: targetRows.map(t => ({ id: t.id, team_name: t.team_name, reminder_count: t.reminder_count || 0 })),
+      subject: `Reminder: post to your {{team}} team`,
+      body: `Hi Coach,\n\nQuick reminder to post an update to your {{team}} team on SportsYou.\n\n${assignment.title}${assignment.instructions ? "\n" + assignment.instructions : ""}\n\nOnce you've posted, this reminder stops automatically. Thanks!\nDS Elite`,
+    });
+  }, []);
 
-  // Bulk action across a whole assignment: 'remind' pending, 'sent' all, 'skip' pending.
+  // Send the composed reminder to every team in the modal (email + app push).
+  const sendReminderModal = useCallback(async () => {
+    const m = reminderModal; if (!m) return;
+    const assignment = commAssignments.find(a => a.id === m.assignmentId);
+    if (!assignment) { setReminderModal(null); return; }
+    if (!m.subject.trim() || !m.body.trim()) { window.alert("Add a subject and message first."); return; }
+    setReminderSending(true);
+    const targets = commStatuses.filter(s => m.teams.some(t => t.id === s.id));
+    let totalEmails = 0;
+    for (const s of targets) totalEmails += await sendTeamReminder(assignment, s, { subject: m.subject, body: m.body });
+    const nowIso = new Date().toISOString();
+    await Promise.all(targets.map(s => supabase.from("comm_assignment_status").update({ last_reminded_at: nowIso, reminder_count: (s.reminder_count || 0) + 1, updated_at: nowIso }).eq("id", s.id)));
+    setReminderSending(false);
+    setReminderModal(null);
+    loadCommAssignments();
+    window.alert(`Reminded ${targets.length} team(s) — ${totalEmails} coach email(s) + app push.`);
+  }, [reminderModal, commAssignments, commStatuses, sendTeamReminder, loadCommAssignments]);
+
+  // Bulk mark-sent / skip across a whole assignment (remind uses the composer).
   const bulkAssignmentAction = useCallback(async (assignment, action) => {
     const rows = commStatuses.filter(s => s.assignment_id === assignment.id);
     const nowIso = new Date().toISOString();
-    if (action === "remind") {
-      const pending = rows.filter(s => s.status === "pending");
-      if (!pending.length) { window.alert("No teams need reminding — none are pending."); return; }
-      if (!window.confirm(`Send a reminder (email + app) to all ${pending.length} pending team(s) for “${assignment.title}”?`)) return;
-      let totalEmails = 0;
-      for (const s of pending) totalEmails += await sendTeamReminder(assignment, s);
-      await Promise.all(pending.map(s => supabase.from("comm_assignment_status").update({ last_reminded_at: nowIso, reminder_count: (s.reminder_count || 0) + 1, updated_at: nowIso }).eq("id", s.id)));
-      loadCommAssignments();
-      window.alert(`Reminded ${pending.length} team(s) — ${totalEmails} coach email(s) + app push.`);
-    } else if (action === "sent") {
+    if (action === "sent") {
       const targets = rows.filter(s => s.status !== "sent");
       if (!targets.length) { window.alert("Every team is already marked sent."); return; }
       if (!window.confirm(`Mark all ${targets.length} not-yet-sent team(s) as SENT?`)) return;
@@ -2213,7 +2229,7 @@ export default function App() {
       if (up.error) window.alert("Failed: " + up.error.message);
       loadCommAssignments();
     }
-  }, [commStatuses, sendTeamReminder, patchCommStatus, loadCommAssignments, coach]);
+  }, [commStatuses, loadCommAssignments, coach]);
 
   // Email templates + sent history live in Supabase so they sync across devices.
   const loadEmailTemplates = useCallback(async () => {
@@ -8901,6 +8917,43 @@ export default function App() {
   // Two-column view: thread list on the left, selected conversation on
   // the right. Realtime push (in the parent component) keeps both up
   // to date as Twilio delivers inbound + status updates.
+  function renderReminderModal() {
+    const m = reminderModal;
+    if (!m) return null;
+    const teamList = m.teams.map(t=>t.team_name).slice().sort();
+    const previewTeam = teamList[0] || "your";
+    const fillPreview = (s) => String(s||"").replace(/\{\{\s*team\s*\}\}/gi, previewTeam);
+    const fld = { width:"100%", padding:"8px 10px", borderRadius:8, border:"1px solid "+C.border, background:C.bg, color:C.text, fontFamily:"inherit", fontSize:13, boxSizing:"border-box" };
+    return (
+      <div onClick={()=>!reminderSending && setReminderModal(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+        <div onClick={e=>e.stopPropagation()} style={{background:C.card,border:"1px solid "+C.border,borderRadius:14,width:"min(560px,96vw)",maxHeight:"90vh",overflowY:"auto",boxShadow:"0 20px 60px rgba(0,0,0,0.5)"}}>
+          <div style={{padding:"14px 18px",borderBottom:"1px solid "+C.border,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div style={{fontSize:15,fontWeight:800,color:C.gold}}>Send reminder</div>
+            <button onClick={()=>setReminderModal(null)} style={{background:"none",border:"none",color:C.mut,fontSize:22,cursor:"pointer",lineHeight:1}}>×</button>
+          </div>
+          <div style={{padding:18}}>
+            <div style={{fontSize:12,color:C.mut,marginBottom:12}}>
+              Going to <b style={{color:C.text}}>{m.teams.length} team{m.teams.length===1?"":"s"}</b> — email (head + assistant coach) + app push. Type <code style={{background:C.bg,padding:"1px 5px",borderRadius:4}}>{"{{team}}"}</code> anywhere and it becomes each team's name.
+            </div>
+            <label style={{fontSize:11,fontWeight:700,color:C.mut}}>Subject</label>
+            <input value={m.subject} onChange={e=>setReminderModal(v=>({...v,subject:e.target.value}))} style={{...fld,margin:"4px 0 12px"}} />
+            <label style={{fontSize:11,fontWeight:700,color:C.mut}}>Message</label>
+            <textarea value={m.body} onChange={e=>setReminderModal(v=>({...v,body:e.target.value}))} rows={9} style={{...fld,margin:"4px 0 8px",resize:"vertical",lineHeight:1.5}} />
+            <div style={{fontSize:11,color:C.mut,marginBottom:12}}>Preview for <b style={{color:C.text}}>{previewTeam}</b>: “{fillPreview(m.subject)}”</div>
+            <details style={{fontSize:11,color:C.mut,marginBottom:14}}>
+              <summary style={{cursor:"pointer"}}>Recipients — {m.teams.length} team{m.teams.length===1?"":"s"}</summary>
+              <div style={{marginTop:6,lineHeight:1.6}}>{teamList.join(", ")}</div>
+            </details>
+            <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+              <button onClick={()=>setReminderModal(null)} disabled={reminderSending} style={{padding:"8px 14px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>Cancel</button>
+              <button onClick={sendReminderModal} disabled={reminderSending} style={{padding:"8px 16px",borderRadius:8,border:"none",background:C.gold,color:"#000",fontWeight:700,fontSize:12,cursor:reminderSending?"default":"pointer",fontFamily:"inherit",opacity:reminderSending?0.6:1}}>{reminderSending?"Sending…":`Send to ${m.teams.length} team${m.teams.length===1?"":"s"}`}</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   function renderAssignments() {
     const now = Date.now();
     const inputStyle = () => ({ width:"100%", marginTop:8, padding:"8px 10px", borderRadius:8, border:"1px solid "+C.border, background:C.bg, color:C.text, fontFamily:"inherit", fontSize:13, boxSizing:"border-box" });
@@ -8983,7 +9036,7 @@ export default function App() {
                     {canOps && (
                       <div style={{display:"flex",gap:8,padding:"8px 16px",borderBottom:"1px solid "+C.border,flexWrap:"wrap",alignItems:"center"}}>
                         <span style={{fontSize:10,color:C.mut,fontWeight:800,textTransform:"uppercase",letterSpacing:0.5}}>Bulk</span>
-                        <button onClick={()=>bulkAssignmentAction(a,"remind")} style={btnMini(C.gold,true)}>Remind all pending</button>
+                        <button onClick={()=>openReminder(a, commStatuses.filter(s=>s.assignment_id===a.id && s.status==="pending"))} style={btnMini(C.gold,true)}>Remind all pending…</button>
                         <button onClick={()=>bulkAssignmentAction(a,"sent")} style={btnMini(C.grn)}>Mark all sent</button>
                         <button onClick={()=>bulkAssignmentAction(a,"skip")} style={btnMini(C.border)}>Skip all pending</button>
                       </div>
@@ -9017,7 +9070,7 @@ export default function App() {
                                     <button onClick={()=>patchCommStatus(s.id,{status:"not_needed"})} title="Not the right post" style={btnMini(C.border)}>Not it</button>
                                   </>}
                                   {s.status==="pending" && !cand && <>
-                                    <button onClick={()=>remindCommTeam(a,s)} style={btnMini(C.gold,true)}>Remind now</button>
+                                    <button onClick={()=>openReminder(a,[s])} style={btnMini(C.gold,true)}>Remind…</button>
                                     <button onClick={()=>patchCommStatus(s.id,{status:"sent",sent_at:new Date().toISOString(),confirmed_by:coach?.display_name||null})} style={btnMini(C.border)}>Mark sent</button>
                                     <button onClick={()=>patchCommStatus(s.id,{status:"not_needed"})} style={btnMini(C.border)}>Skip</button>
                                   </>}
@@ -11485,6 +11538,7 @@ export default function App() {
       {addingTournament && renderAddTournament()}
       {addingCoach && renderAddCoach()}
       {bulkImportOpen && renderBulkImport()}
+      {reminderModal && renderReminderModal()}
     </div>
   );
 }
