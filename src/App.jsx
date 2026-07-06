@@ -869,6 +869,8 @@ export default function App() {
   const [teamStatus, setTeamStatus]                         = useState({}); // { [team_name]: { status, looking_positions } }
   const [teamTasks, setTeamTasks]                           = useState({}); // { `${team}|${item}`: { status, notes } }
   const [teamQuestions, setTeamQuestions]                   = useState([]); // coach→director questions
+  const [faq, setFaq]                                       = useState([]); // curated coach FAQ
+  const [faqSearch, setFaqSearch]                           = useState("");
   const [qDraft, setQDraft]                                 = useState({}); // { `${team}|${item}`: text } ask-a-question drafts
   const [aDraft, setADraft]                                 = useState({}); // { [questionId]: text } answer drafts
   const [taskMeta, setTaskMeta]                             = useState({}); // { [item_key]: description } admin-editable
@@ -1570,6 +1572,53 @@ export default function App() {
         body: JSON.stringify({ title: "Your question was answered", body: (TASK_LABELS[q.item_key] || q.item_key) + " (" + q.team_name + ")", url: "/", audience: { type: "email", email: q.asked_by_email } }) }).catch(() => {});
     }
   }, [coach, loadTeamQuestions, teamQuestions]);
+  // Archive ("Done") an answered question so it clears from the pending panel.
+  const archiveTeamQuestion = useCallback(async (id, archived = true) => {
+    setTeamQuestions(prev => prev.map(q => q.id === id ? { ...q, archived } : q));
+    const { error } = await supabase.from("team_questions").update({ archived }).eq("id", id);
+    if (error) { window.alert("Update failed: " + error.message); loadTeamQuestions(); }
+  }, [loadTeamQuestions]);
+
+  // Coach FAQ.
+  const loadFaq = useCallback(async () => {
+    const { data, error } = await supabase.from("faq").select("*")
+      .order("pinned", { ascending: false }).order("sort_order", { ascending: true }).order("created_at", { ascending: true });
+    if (error) { console.error("Load faq error:", error); return; }
+    setFaq(data || []);
+  }, []);
+  const addQuestionToFaq = useCallback(async (q) => {
+    if (!q || !q.answer) return;
+    const ins = await supabase.from("faq").insert({
+      question: q.question, answer: q.answer, category: q.item_key || null, team_name: q.team_name || null,
+      created_by: coach?.display_name || coach?.email || null, source_question_id: q.id,
+    });
+    if (ins.error) { window.alert("Add to FAQ failed: " + ins.error.message); return; }
+    await loadFaq();
+    window.alert("Added to the coach FAQ.");
+  }, [coach, loadFaq]);
+  const addFaqEntry = useCallback(async ({ question, answer, category }) => {
+    if (!question?.trim() || !answer?.trim()) { window.alert("Question and answer are both required."); return; }
+    const ins = await supabase.from("faq").insert({ question: question.trim(), answer: answer.trim(), category: (category || "").trim() || null, created_by: coach?.display_name || coach?.email || null });
+    if (ins.error) { window.alert("Add failed: " + ins.error.message); return; }
+    await loadFaq();
+  }, [coach, loadFaq]);
+  const updateFaqEntry = useCallback(async (id, patch) => {
+    const { error } = await supabase.from("faq").update({ ...patch, updated_at: new Date().toISOString() }).eq("id", id);
+    if (error) { window.alert("Update failed: " + error.message); return; }
+    await loadFaq();
+  }, [loadFaq]);
+  const deleteFaqEntry = useCallback(async (id) => {
+    if (!window.confirm("Remove this FAQ entry?")) return;
+    const { error } = await supabase.from("faq").delete().eq("id", id);
+    if (error) { window.alert("Delete failed: " + error.message); return; }
+    await loadFaq();
+  }, [loadFaq]);
+  useEffect(() => { if (isApproved && view === "faq") loadFaq(); }, [isApproved, view, loadFaq]);
+  useEffect(() => {
+    if (!isApproved) return;
+    const ch = supabase.channel("realtime-faq").on("postgres_changes", { event: "*", schema: "public", table: "faq" }, () => loadFaq()).subscribe();
+    return () => supabase.removeChannel(ch);
+  }, [isApproved, loadFaq]);
   // Admin: save a global description for a checklist item.
   const saveTaskMeta = useCallback(async (itemKey, description) => {
     setTaskMeta(prev => ({ ...prev, [itemKey]: description }));
@@ -3547,9 +3596,10 @@ export default function App() {
   // Admin notification panel: coach questions awaiting a director answer.
   const renderQuestionsPanel = () => {
     if (!canOps) return null;
-    const sorted = teamQuestions.slice().sort((a,b) => (a.answer?1:0)-(b.answer?1:0) || (b.created_at||"").localeCompare(a.created_at||""));
-    const pending = teamQuestions.filter(q => !q.answer).length;
-    if (teamQuestions.length === 0) return null;
+    const active = teamQuestions.filter(q => !q.archived);
+    const sorted = active.slice().sort((a,b) => (a.answer?1:0)-(b.answer?1:0) || (b.created_at||"").localeCompare(a.created_at||""));
+    const pending = active.filter(q => !q.answer).length;
+    if (active.length === 0) return null;
     return (
       <div style={{background:C.card,border:"1px solid "+(pending?"#f59e0b":C.border),borderRadius:12,padding:"14px 16px",marginBottom:18}}>
         <div style={{fontSize:13,fontWeight:800,color:pending?"#f59e0b":C.gold,marginBottom:8}}>Coach Questions{pending>0?" · "+pending+" pending":""}</div>
@@ -3559,7 +3609,13 @@ export default function App() {
               <div style={{fontSize:10,color:C.mut,marginBottom:3}}>{q.team_name} · {TASK_LABELS[q.item_key] || q.item_key}{q.asked_by_name?" · "+q.asked_by_name:""}</div>
               <div style={{fontSize:12,color:C.text}}><span style={{color:C.acc,fontWeight:700}}>Q:</span> {q.question}</div>
               {q.answer ? (
-                <div style={{fontSize:12,color:C.grn,marginTop:4}}><span style={{fontWeight:700}}>A:</span> {q.answer}{q.answered_by_name?<span style={{color:C.mut,fontSize:9}}> — {q.answered_by_name}</span>:null}</div>
+                <div style={{marginTop:4}}>
+                  <div style={{fontSize:12,color:C.grn}}><span style={{fontWeight:700}}>A:</span> {q.answer}{q.answered_by_name?<span style={{color:C.mut,fontSize:9}}> — {q.answered_by_name}</span>:null}</div>
+                  <div style={{display:"flex",gap:6,marginTop:5}}>
+                    <button onClick={()=>addQuestionToFaq(q)} style={{padding:"3px 9px",borderRadius:6,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>＋ Add to FAQ</button>
+                    <button onClick={()=>archiveTeamQuestion(q.id, true)} title="Clear from this list" style={{padding:"3px 9px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Done</button>
+                  </div>
+                </div>
               ) : (
                 <div style={{display:"flex",gap:6,marginTop:6}}>
                   <input value={aDraft[q.id]||""} onChange={e=>setADraft(prev=>({...prev,[q.id]:e.target.value}))} placeholder="Type an answer…"
@@ -9043,6 +9099,47 @@ export default function App() {
   // Two-column view: thread list on the left, selected conversation on
   // the right. Realtime push (in the parent component) keeps both up
   // to date as Twilio delivers inbound + status updates.
+  function renderFaq() {
+    const faqMiniBtn = { padding:"3px 9px", borderRadius:6, border:"1px solid "+C.border, background:"transparent", color:C.mut, fontSize:11, fontWeight:700, cursor:"pointer", fontFamily:"inherit" };
+    const qq = faqSearch.trim().toLowerCase();
+    const filtered = faq.filter(f => !qq || (f.question||"").toLowerCase().includes(qq) || (f.answer||"").toLowerCase().includes(qq) || (f.category||"").toLowerCase().includes(qq));
+    const groups = new Map();
+    for (const f of filtered) { const k = f.category ? (TASK_LABELS[f.category] || f.category) : "General"; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(f); }
+    return (
+      <div style={{maxWidth:820,margin:"0 auto"}}>
+        <div style={{marginBottom:12}}>
+          <div style={{fontSize:18,fontWeight:800,color:C.gold}}>Coach FAQ</div>
+          <div style={{fontSize:11,color:C.mut,marginTop:2}}>{canOps ? "Answers coaches can reference. Add entries here, or from an answered question on Home." : "Answers to common questions. Can't find it? Ask on your team's checklist and a director will reply."}</div>
+        </div>
+        <input value={faqSearch} onChange={e=>setFaqSearch(e.target.value)} placeholder="Search the FAQ…" style={{width:"100%",padding:"9px 12px",borderRadius:10,border:"1px solid "+C.border,background:C.card,color:C.text,fontFamily:"inherit",fontSize:14,marginBottom:14,boxSizing:"border-box"}} />
+        {canOps && <div style={{marginBottom:14}}><button onClick={()=>{ const question=window.prompt("Question:"); if(question==null||!question.trim())return; const answer=window.prompt("Answer:"); if(answer==null||!answer.trim())return; const category=window.prompt("Category / topic (optional):")||""; addFaqEntry({question,answer,category}); }} style={{padding:"7px 14px",borderRadius:8,border:"none",background:C.gold,color:"#000",fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>＋ Add FAQ entry</button></div>}
+        {filtered.length===0 && <div style={{background:C.card,border:"1px dashed "+C.border,borderRadius:12,padding:"22px 20px",color:C.mut,fontSize:12}}>{faq.length===0?"No FAQ entries yet.":"No matches for “"+faqSearch+"”."}</div>}
+        {[...groups.entries()].map(([cat, items]) => (
+          <div key={cat} style={{marginBottom:16}}>
+            <div style={{fontSize:12,fontWeight:800,color:C.mut,textTransform:"uppercase",letterSpacing:0.5,marginBottom:8}}>{cat}</div>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {items.map(f => (
+                <details key={f.id} style={{background:C.card,border:"1px solid "+C.border,borderRadius:10,padding:"10px 14px"}}>
+                  <summary style={{cursor:"pointer",fontSize:14,fontWeight:700,color:C.text,display:"flex",alignItems:"center",gap:8}}>
+                    {f.pinned && <span title="Pinned" style={{color:C.gold}}>★</span>}<span>{f.question}</span>
+                  </summary>
+                  <div style={{fontSize:13,color:C.mut,marginTop:8,whiteSpace:"pre-wrap",lineHeight:1.5}}>{f.answer}</div>
+                  {canOps && (
+                    <div style={{display:"flex",gap:8,marginTop:8}}>
+                      <button onClick={()=>updateFaqEntry(f.id,{pinned:!f.pinned})} style={faqMiniBtn}>{f.pinned?"Unpin":"Pin"}</button>
+                      <button onClick={()=>{ const a=window.prompt("Edit answer:", f.answer); if(a!=null&&a.trim()) updateFaqEntry(f.id,{answer:a.trim()}); }} style={faqMiniBtn}>Edit answer</button>
+                      <button onClick={()=>deleteFaqEntry(f.id)} style={{...faqMiniBtn,color:"#f87171",borderColor:"#f87171"}}>Delete</button>
+                    </div>
+                  )}
+                </details>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
   function renderCoachCoverage() {
     const WD = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
     const today = new Date().toISOString().slice(0,10);
@@ -11620,6 +11717,7 @@ export default function App() {
                 })}
                 {item("tournaments","Tournaments")}
                 {item("activity","Activity")}
+                {item("faq","FAQ")}
                 {isOwner && item("askai","Ask AI")}
                 <button style={btn(false)} onClick={()=>{ window.location.href = "/practice"; }} title="Open the practice planner">Practice Planning</button>
               </>;
@@ -11764,6 +11862,7 @@ export default function App() {
         {view==="coachcomms" && renderCoachComms()}
         {view==="assignments" && renderAssignments()}
         {view==="coverage" && renderCoachCoverage()}
+        {view==="faq" && renderFaq()}
         {view==="askai" && renderAskAI()}
         </>}
       </div>
