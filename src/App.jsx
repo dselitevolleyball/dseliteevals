@@ -2158,8 +2158,9 @@ export default function App() {
     loadCommAssignments();
   }, [loadCommAssignments, selectedAssignmentId]);
 
-  // Manual "remind now" for one team: app push (team audience) + email head/assistant coach.
-  const remindCommTeam = useCallback(async (assignment, statusRow) => {
+  // Send a reminder for one team (email head/assistant + app push). Returns the
+  // number of coach emails it reached. No alert/patch — callers handle those.
+  const sendTeamReminder = useCallback(async (assignment, statusRow) => {
     const team = practiceTeams.find(t => t.team_name === statusRow.team_name);
     const norm = (s) => String(s || "").trim().toLowerCase().replace(/\s+/g, " ");
     const emailFor = (name) => {
@@ -2174,9 +2175,45 @@ export default function App() {
       if (emails.length) await fetch("/api/send-email", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ subject, body, recipients: emails }) });
       await fetch("/api/send-push", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: `Post to your ${statusRow.team_name} team`, body: assignment.title, url: "/", audience: { type: "team", team: statusRow.team_name } }) });
     } catch (e) { console.error("remind failed", e); }
+    return emails.length;
+  }, [practiceTeams, coachRoster]);
+
+  // Manual "remind now" for one team.
+  const remindCommTeam = useCallback(async (assignment, statusRow) => {
+    const n = await sendTeamReminder(assignment, statusRow);
     await patchCommStatus(statusRow.id, { last_reminded_at: new Date().toISOString(), reminder_count: (statusRow.reminder_count || 0) + 1 });
-    window.alert(`Reminder sent to ${statusRow.team_name}${emails.length ? " (" + emails.length + " email" + (emails.length > 1 ? "s" : "") + " + app push)" : " (app push only — no coach email on file)"}.`);
-  }, [practiceTeams, coachRoster, patchCommStatus]);
+    window.alert(`Reminder sent to ${statusRow.team_name}${n ? " (" + n + " email" + (n > 1 ? "s" : "") + " + app push)" : " (app push only — no coach email on file)"}.`);
+  }, [sendTeamReminder, patchCommStatus]);
+
+  // Bulk action across a whole assignment: 'remind' pending, 'sent' all, 'skip' pending.
+  const bulkAssignmentAction = useCallback(async (assignment, action) => {
+    const rows = commStatuses.filter(s => s.assignment_id === assignment.id);
+    const nowIso = new Date().toISOString();
+    if (action === "remind") {
+      const pending = rows.filter(s => s.status === "pending");
+      if (!pending.length) { window.alert("No teams need reminding — none are pending."); return; }
+      if (!window.confirm(`Send a reminder (email + app) to all ${pending.length} pending team(s) for “${assignment.title}”?`)) return;
+      let totalEmails = 0;
+      for (const s of pending) totalEmails += await sendTeamReminder(assignment, s);
+      await Promise.all(pending.map(s => supabase.from("comm_assignment_status").update({ last_reminded_at: nowIso, reminder_count: (s.reminder_count || 0) + 1, updated_at: nowIso }).eq("id", s.id)));
+      loadCommAssignments();
+      window.alert(`Reminded ${pending.length} team(s) — ${totalEmails} coach email(s) + app push.`);
+    } else if (action === "sent") {
+      const targets = rows.filter(s => s.status !== "sent");
+      if (!targets.length) { window.alert("Every team is already marked sent."); return; }
+      if (!window.confirm(`Mark all ${targets.length} not-yet-sent team(s) as SENT?`)) return;
+      const up = await supabase.from("comm_assignment_status").update({ status: "sent", sent_at: nowIso, confirmed_by: coach?.display_name || null, updated_at: nowIso }).eq("assignment_id", assignment.id).neq("status", "sent");
+      if (up.error) window.alert("Failed: " + up.error.message);
+      loadCommAssignments();
+    } else if (action === "skip") {
+      const pending = rows.filter(s => s.status === "pending");
+      if (!pending.length) { window.alert("No pending teams to skip."); return; }
+      if (!window.confirm(`Skip all ${pending.length} pending team(s)? They'll be marked “Not needed” and won't be reminded.`)) return;
+      const up = await supabase.from("comm_assignment_status").update({ status: "not_needed", updated_at: nowIso }).eq("assignment_id", assignment.id).eq("status", "pending");
+      if (up.error) window.alert("Failed: " + up.error.message);
+      loadCommAssignments();
+    }
+  }, [commStatuses, sendTeamReminder, patchCommStatus, loadCommAssignments, coach]);
 
   // Email templates + sent history live in Supabase so they sync across devices.
   const loadEmailTemplates = useCallback(async () => {
@@ -8943,6 +8980,14 @@ export default function App() {
                 {open && (
                   <div style={{borderTop:"1px solid "+C.border}}>
                     {a.instructions && <div style={{padding:"10px 16px",fontSize:12,color:C.mut,borderBottom:"1px solid "+C.border,whiteSpace:"pre-wrap"}}>{a.instructions}</div>}
+                    {canOps && (
+                      <div style={{display:"flex",gap:8,padding:"8px 16px",borderBottom:"1px solid "+C.border,flexWrap:"wrap",alignItems:"center"}}>
+                        <span style={{fontSize:10,color:C.mut,fontWeight:800,textTransform:"uppercase",letterSpacing:0.5}}>Bulk</span>
+                        <button onClick={()=>bulkAssignmentAction(a,"remind")} style={btnMini(C.gold,true)}>Remind all pending</button>
+                        <button onClick={()=>bulkAssignmentAction(a,"sent")} style={btnMini(C.grn)}>Mark all sent</button>
+                        <button onClick={()=>bulkAssignmentAction(a,"skip")} style={btnMini(C.border)}>Skip all pending</button>
+                      </div>
+                    )}
                     <div style={{overflowX:"auto"}}>
                       <table style={{width:"100%",borderCollapse:"collapse",fontSize:12.5}}>
                         <thead><tr style={{color:C.mut,fontSize:10,textTransform:"uppercase"}}>
