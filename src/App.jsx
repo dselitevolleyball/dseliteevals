@@ -966,7 +966,7 @@ export default function App() {
   // Operations are admin-only: the whole "Operations" nav group and the views
   // behind it are hidden and blocked for non-admin coaches. The owner (Drew)
   // always counts here so a bad DB flag can't lock him out.
-  const OPS_VIEWS = new Set(["tracker","teamdir","coaches","practice","email","messages","scholarships","notifications","requests","coachcomms","assignments"]);
+  const OPS_VIEWS = new Set(["tracker","teamdir","coaches","practice","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage"]);
   const canOps    = isAdmin || isOwner;
   const opsDenied = <div style={{padding:24,color:C.mut,textAlign:"center"}}>This section is restricted to administrators. Ask the club administrator (Drew) for access.</div>;
   // Once a player has accepted (or is locked/signed) onto a team, they're
@@ -1512,6 +1512,7 @@ export default function App() {
   useEffect(() => { if (isApproved && (view === "home" || view === "requests")) loadCoachRequests(); }, [isApproved, view, loadCoachRequests]);
   useEffect(() => { if (isApproved && view === "practice") loadCoachFloats(); }, [isApproved, view, loadCoachFloats]);
   useEffect(() => { if (isApproved && view === "practice") loadPracticeCoverage(); }, [isApproved, view, loadPracticeCoverage]);
+  useEffect(() => { if (isApproved && view === "coverage") { loadPracticeCoverage(); loadPractice(); } }, [isApproved, view, loadPracticeCoverage, loadPractice]);
   useEffect(() => { if (isApproved && view === "practice") loadPracticeCancellations(); }, [isApproved, view, loadPracticeCancellations]);
   // Optimistically patch local state, then upsert the merged row. `merged` is
   // computed from current state synchronously (NOT inside the setState updater,
@@ -1821,9 +1822,13 @@ export default function App() {
     if (error) { window.alert("Couldn't set court: " + error.message); loadPractice(); }
   }, [loadPractice]);
   // Daily view: mark a coach out (and optionally who's subbing) for one date.
-  const setCoverage = useCallback(async (practice_date, team_name, slot, phase, coach_out, sub_name) => {
+  const setCoverage = useCallback(async (practice_date, team_name, slot, phase, coach_out, sub_name, combine_with_team = null) => {
     if (!practice_date || !coach_out) return;
-    const row = { practice_date, team_name, slot, phase, coach_out, sub_name: (sub_name || "").trim() || null };
+    const row = {
+      practice_date, team_name, slot, phase, coach_out,
+      sub_name: (sub_name || "").trim() || null,
+      combine_with_team: (combine_with_team || "").trim() || null,
+    };
     setPracticeCoverage(prev => {
       const rest = prev.filter(c => !(c.practice_date === practice_date && c.team_name === team_name && c.slot === slot && (c.phase||"season") === phase && c.coach_out === coach_out));
       return [...rest, row];
@@ -6915,21 +6920,37 @@ export default function App() {
             </div>
           );
         }
+        const sameSlotTeams = teamsFor(label).map(a=>a.team_name).filter(t => t !== team);
         return (
           <div style={{display:"flex",alignItems:"center",gap:5,flexWrap:"wrap"}}>
             <span style={{fontSize:9,fontWeight:800,color:C.mut,textTransform:"uppercase",width:30}}>{role}</span>
             <span style={{fontSize:12,fontWeight:600,color:C.red,textDecoration:"line-through"}}>{coachName}</span>
-            <select value={cov.sub_name || ""} onChange={e=>{
-                const v = e.target.value;
-                if (v === "__other") { const n = window.prompt("Sub's name:", cov.sub_name || ""); if (n != null) setCoverage(dailyDate, team, label, dayPhase, coachName, n.trim()); }
-                else setCoverage(dailyDate, team, label, dayPhase, coachName, v);
-              }}
-              style={{...inpStyle,padding:"3px 6px",fontSize:11,color:cov.sub_name?"#06b6d4":"#f59e0b",fontWeight:700}}>
-              <option value="">⚠ needs sub</option>
-              {floaters.map(f => <option key={f} value={f}>{f} (floating)</option>)}
-              {cov.sub_name && !floaters.includes(cov.sub_name) && <option value={cov.sub_name}>{cov.sub_name}</option>}
-              <option value="__other">＋ Other…</option>
-            </select>
+            {cov.combine_with_team ? (
+              <>
+                <span style={{fontSize:11,fontWeight:700,color:"#a78bfa"}} title="Combining this team's practice with another team">🔀 combine → {cov.combine_with_team}</span>
+                <button onClick={()=>setCoverage(dailyDate, team, label, dayPhase, coachName, null, null)}
+                  title="Pick different coverage"
+                  style={{padding:"1px 8px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Change</button>
+              </>
+            ) : (
+              <select value={cov.sub_name || ""} onChange={e=>{
+                  const v = e.target.value;
+                  if (v === "__other") { const n = window.prompt("Sub's name:", cov.sub_name || ""); if (n != null && n.trim()) setCoverage(dailyDate, team, label, dayPhase, coachName, n.trim()); }
+                  else if (v === "__combine") {
+                    const hint = sameSlotTeams.length ? ("\nTeams practicing this slot: " + sameSlotTeams.join(", ")) : "";
+                    const n = window.prompt("Combine " + team + " with which team?" + hint, sameSlotTeams[0] || "");
+                    if (n != null && n.trim()) setCoverage(dailyDate, team, label, dayPhase, coachName, null, n.trim());
+                  }
+                  else setCoverage(dailyDate, team, label, dayPhase, coachName, v);
+                }}
+                style={{...inpStyle,padding:"3px 6px",fontSize:11,color:cov.sub_name?"#06b6d4":"#f59e0b",fontWeight:700}}>
+                <option value="">⚠ needs coverage</option>
+                {floaters.map(f => <option key={f} value={f}>{f} (floating)</option>)}
+                {cov.sub_name && !floaters.includes(cov.sub_name) && <option value={cov.sub_name}>{cov.sub_name}</option>}
+                <option value="__other">＋ Other sub…</option>
+                <option value="__combine">🔀 Combine teams…</option>
+              </select>
+            )}
             <button onClick={()=>clearCoverage(dailyDate, team, label, dayPhase, coachName)}
               title="Coach is here after all — clear this"
               style={{padding:"1px 8px",borderRadius:6,border:"1px solid "+C.grn,background:"transparent",color:C.grn,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Present</button>
@@ -8942,6 +8963,81 @@ export default function App() {
   // Two-column view: thread list on the left, selected conversation on
   // the right. Realtime push (in the parent component) keeps both up
   // to date as Twilio delivers inbound + status updates.
+  function renderCoachCoverage() {
+    const WD = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+    const today = new Date().toISOString().slice(0,10);
+    const inp = { padding:"3px 6px", borderRadius:6, border:"1px solid "+C.border, background:C.bg, color:C.text, fontFamily:"inherit", fontSize:11 };
+    const upcoming = practiceCoverage.filter(c => (c.practice_date||"") >= today)
+      .slice().sort((a,b)=> (a.practice_date||"").localeCompare(b.practice_date||"") || (a.slot||"").localeCompare(b.slot||"") || (a.team_name||"").localeCompare(b.team_name||""));
+    const pastCount = practiceCoverage.filter(c => (c.practice_date||"") < today).length;
+    const statusOf = (c) => c.combine_with_team ? "combine" : (c.sub_name ? "covered" : "needs");
+    const needsCount = upcoming.filter(c => statusOf(c)==="needs").length;
+    const fmtDate = (iso) => { try { const d=new Date(iso+"T00:00"); return WD[d.getDay()]+" "+d.toLocaleDateString(undefined,{month:"short",day:"numeric"}); } catch { return iso; } };
+    const byDate = new Map();
+    for (const c of upcoming) { if (!byDate.has(c.practice_date)) byDate.set(c.practice_date, []); byDate.get(c.practice_date).push(c); }
+
+    const coverageSelect = (c) => (
+      <select value={c.sub_name || ""} onChange={e=>{
+          const v = e.target.value;
+          const ph = c.phase || "season";
+          if (v === "__other") { const n = window.prompt("Sub's name:", c.sub_name || ""); if (n != null && n.trim()) setCoverage(c.practice_date, c.team_name, c.slot, ph, c.coach_out, n.trim()); }
+          else if (v === "__combine") { const n = window.prompt("Combine " + c.team_name + " with which team?"); if (n != null && n.trim()) setCoverage(c.practice_date, c.team_name, c.slot, ph, c.coach_out, null, n.trim()); }
+          else setCoverage(c.practice_date, c.team_name, c.slot, ph, c.coach_out, v);
+        }} style={{...inp, color: c.sub_name?"#06b6d4":"#f59e0b", fontWeight:700}}>
+        <option value="">⚠ needs coverage</option>
+        {floatingCoaches.map(f => <option key={f} value={f}>{f} (floating)</option>)}
+        {c.sub_name && !floatingCoaches.includes(c.sub_name) && <option value={c.sub_name}>{c.sub_name}</option>}
+        <option value="__other">＋ Other sub…</option>
+        <option value="__combine">🔀 Combine teams…</option>
+      </select>
+    );
+
+    return (
+      <div style={{maxWidth:1000,margin:"0 auto"}}>
+        <div style={{marginBottom:12}}>
+          <div style={{fontSize:18,fontWeight:800,color:C.gold}}>Coach Coverage</div>
+          <div style={{fontSize:11,color:C.mut,marginTop:2}}>
+            Coaches out for a practice and how each is covered (floating coach, sub, or combined teams). Mark a coach out from Practice → Daily; manage coverage here or there.
+            {" "}<b style={{color: needsCount?C.red:C.grn}}>{needsCount} still need coverage</b>{upcoming.length? " · "+upcoming.length+" upcoming":""}.
+          </div>
+        </div>
+        {upcoming.length === 0 && (
+          <div style={{background:C.card,border:"1px dashed "+C.border,borderRadius:12,padding:"22px 20px",color:C.mut,fontSize:12}}>
+            No upcoming coach absences. Mark a coach out on the Practice → Daily board and it shows up here.{pastCount>0? " ("+pastCount+" past on record.)":""}
+          </div>
+        )}
+        {[...byDate.entries()].map(([date, rows]) => (
+          <div key={date} style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,overflow:"hidden",marginBottom:12}}>
+            <div style={{padding:"8px 14px",borderBottom:"1px solid "+C.border,fontSize:13,fontWeight:800,color:C.text,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <span>{fmtDate(date)}</span>
+              <span style={{fontSize:11,color:C.mut,fontWeight:600}}>{rows.length} out</span>
+            </div>
+            <div style={{overflowX:"auto"}}>
+              <table style={{width:"100%",borderCollapse:"collapse",fontSize:12.5}}>
+                <tbody>
+                  {rows.map(c => (
+                    <tr key={c.id ?? (c.team_name+c.slot+c.coach_out)} style={{borderTop:"1px solid "+C.border}}>
+                      <td style={{padding:"8px 12px",whiteSpace:"nowrap"}}><b>{c.team_name}</b> <span style={{color:C.mut,fontSize:11}}>· {c.slot}</span></td>
+                      <td style={{padding:"8px 12px",color:C.red,textDecoration:"line-through",whiteSpace:"nowrap"}}>{c.coach_out}</td>
+                      <td style={{padding:"8px 12px"}}>
+                        {c.combine_with_team
+                          ? <span style={{fontSize:12,fontWeight:700,color:"#a78bfa"}}>🔀 combined → {c.combine_with_team} <button onClick={()=>setCoverage(c.practice_date,c.team_name,c.slot,c.phase||"season",c.coach_out,null,null)} style={{...inp,marginLeft:6,cursor:"pointer"}}>change</button></span>
+                          : coverageSelect(c)}
+                      </td>
+                      <td style={{padding:"8px 12px",textAlign:"right"}}>
+                        <button onClick={()=>clearCoverage(c.practice_date,c.team_name,c.slot,c.phase||"season",c.coach_out)} style={{padding:"2px 10px",borderRadius:6,border:"1px solid "+C.grn,background:"transparent",color:C.grn,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Present</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
   function renderReminderHistoryModal() {
     const h = reminderHistory;
     if (!h) return null;
@@ -11419,7 +11515,7 @@ export default function App() {
                 <button key={v} style={btn(view===v)} onClick={()=>{ setView(v); setOpenMenu(null); }}>{l}</button>;
               const groups = [
                 { title:"Tryouts", items:[["dashboard","Dashboard"], ["evaluate","Evaluate"], ["favorites","My Favorites" + (favorites.length ? " (" + favorites.length + ")" : "")], ...(canViewTeams ? [["teams","Teams"]] : []), ["rankings","Rankings"], ["physical","Physical Testing"], ["tryouts","Coach Assignments"]] },
-                ...(canOps ? [{ title:"Operations", items:[["tracker","Tracker"], ["teamdir","All Teams"], ["coaches","Coaches"], ["scholarships","Scholarships"], ["practice","Practice"], ["email","Email"], ["notifications","Notifications"], ["requests","Requests" + (coachRequests.filter(r=>r.status==="pending").length ? " (" + coachRequests.filter(r=>r.status==="pending").length + ")" : "")], ["messages", "Messages (SMS)" + (totalUnread > 0 ? " (" + totalUnread + ")" : "")], ["coachcomms", "Coach Comms"], ["assignments", "Assignments"]] }] : []),
+                ...(canOps ? [{ title:"Operations", items:[["tracker","Tracker"], ["teamdir","All Teams"], ["coaches","Coaches"], ["scholarships","Scholarships"], ["practice","Practice"], ["email","Email"], ["notifications","Notifications"], ["requests","Requests" + (coachRequests.filter(r=>r.status==="pending").length ? " (" + coachRequests.filter(r=>r.status==="pending").length + ")" : "")], ["messages", "Messages (SMS)" + (totalUnread > 0 ? " (" + totalUnread + ")" : "")], ["coachcomms", "Coach Comms"], ["assignments", "Assignments"], ["coverage", "Coach Coverage"]] }] : []),
               ];
               return <>
                 {item("home","Home")}
@@ -11587,6 +11683,7 @@ export default function App() {
         {view==="messages" && renderMessages()}
         {view==="coachcomms" && renderCoachComms()}
         {view==="assignments" && renderAssignments()}
+        {view==="coverage" && renderCoachCoverage()}
         {view==="askai" && renderAskAI()}
         </>}
       </div>
