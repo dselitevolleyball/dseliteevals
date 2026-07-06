@@ -7076,15 +7076,22 @@ export default function App() {
           );
         }
         const sameSlotTeams = teamsFor(label).map(a=>a.team_name).filter(t => t !== team);
+        // Combining teams only makes sense when the team is left with NO coach —
+        // i.e. BOTH of its coaches are out. Gate the combine option on that, and
+        // apply/clear combine across both coaches so it's a team-level decision.
+        const teamRec = teamByName2.get(team) || {};
+        const teamCoaches = [teamRec.head_coach, teamRec.assistant_coach].filter(Boolean);
+        const bothOut = teamCoaches.length >= 2 && teamCoaches.every(c => !!covFor(team, label, c));
+        const applyCombine = (target) => { for (const c of teamCoaches) setCoverage(dailyDate, team, label, dayPhase, c, null, target); };
         return (
           <div style={{display:"flex",alignItems:"center",gap:5,flexWrap:"wrap"}}>
             <span style={{fontSize:9,fontWeight:800,color:C.mut,textTransform:"uppercase",width:30}}>{role}</span>
             <span style={{fontSize:12,fontWeight:600,color:C.red,textDecoration:"line-through"}}>{coachName}</span>
             {cov.combine_with_team ? (
               <>
-                <span style={{fontSize:11,fontWeight:700,color:"#a78bfa"}} title="Combining this team's practice with another team">🔀 combine → {cov.combine_with_team}</span>
-                <button onClick={()=>setCoverage(dailyDate, team, label, dayPhase, coachName, null, null)}
-                  title="Pick different coverage"
+                <span style={{fontSize:11,fontWeight:700,color:"#a78bfa"}} title="No coach — combining this team's practice with another team">🔀 combine → {cov.combine_with_team}</span>
+                <button onClick={()=>applyCombine(null)}
+                  title="Undo the combine for this team"
                   style={{padding:"1px 8px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Change</button>
               </>
             ) : (
@@ -7093,8 +7100,8 @@ export default function App() {
                   if (v === "__other") { const n = window.prompt("Sub's name:", cov.sub_name || ""); if (n != null && n.trim()) setCoverage(dailyDate, team, label, dayPhase, coachName, n.trim()); }
                   else if (v === "__combine") {
                     const hint = sameSlotTeams.length ? ("\nTeams practicing this slot: " + sameSlotTeams.join(", ")) : "";
-                    const n = window.prompt("Combine " + team + " with which team?" + hint, sameSlotTeams[0] || "");
-                    if (n != null && n.trim()) setCoverage(dailyDate, team, label, dayPhase, coachName, null, n.trim());
+                    const n = window.prompt("Both coaches are out — combine " + team + " with which team?" + hint, sameSlotTeams[0] || "");
+                    if (n != null && n.trim()) applyCombine(n.trim());
                   }
                   else setCoverage(dailyDate, team, label, dayPhase, coachName, v);
                 }}
@@ -7103,7 +7110,7 @@ export default function App() {
                 {floaters.map(f => <option key={f} value={f}>{f} (floating)</option>)}
                 {cov.sub_name && !floaters.includes(cov.sub_name) && <option value={cov.sub_name}>{cov.sub_name}</option>}
                 <option value="__other">＋ Other sub…</option>
-                <option value="__combine">🔀 Combine teams…</option>
+                {bothOut && <option value="__combine">🔀 Combine teams (no coach)…</option>}
               </select>
             )}
             <button onClick={()=>clearCoverage(dailyDate, team, label, dayPhase, coachName)}
@@ -9172,19 +9179,34 @@ export default function App() {
     const byDate = new Map();
     for (const c of upcoming) { if (!byDate.has(c.practice_date)) byDate.set(c.practice_date, []); byDate.get(c.practice_date).push(c); }
 
+    // Combine only when the team is left with NO coach — both coaches out.
+    const teamByName = new Map(practiceTeams.map(t => [t.team_name, t]));
+    const bothCoachesOut = (c) => {
+      const tr = teamByName.get(c.team_name) || {};
+      const cs = [tr.head_coach, tr.assistant_coach].filter(Boolean);
+      if (cs.length < 2) return false;
+      const ph = c.phase || "season";
+      return cs.every(name => practiceCoverage.some(x => x.practice_date === c.practice_date && x.team_name === c.team_name && x.slot === c.slot && (x.phase || "season") === ph && x.coach_out === name));
+    };
+    const applyCombineRow = (c, target) => {
+      const tr = teamByName.get(c.team_name) || {};
+      const cs = [tr.head_coach, tr.assistant_coach].filter(Boolean);
+      const ph = c.phase || "season";
+      for (const name of cs) setCoverage(c.practice_date, c.team_name, c.slot, ph, name, null, target);
+    };
     const coverageSelect = (c) => (
       <select value={c.sub_name || ""} onChange={e=>{
           const v = e.target.value;
           const ph = c.phase || "season";
           if (v === "__other") { const n = window.prompt("Sub's name:", c.sub_name || ""); if (n != null && n.trim()) setCoverage(c.practice_date, c.team_name, c.slot, ph, c.coach_out, n.trim()); }
-          else if (v === "__combine") { const n = window.prompt("Combine " + c.team_name + " with which team?"); if (n != null && n.trim()) setCoverage(c.practice_date, c.team_name, c.slot, ph, c.coach_out, null, n.trim()); }
+          else if (v === "__combine") { const n = window.prompt("Both coaches are out — combine " + c.team_name + " with which team?"); if (n != null && n.trim()) applyCombineRow(c, n.trim()); }
           else setCoverage(c.practice_date, c.team_name, c.slot, ph, c.coach_out, v);
         }} style={{...inp, color: c.sub_name?"#06b6d4":"#f59e0b", fontWeight:700}}>
         <option value="">⚠ needs coverage</option>
         {floatingCoaches.map(f => <option key={f} value={f}>{f} (floating)</option>)}
         {c.sub_name && !floatingCoaches.includes(c.sub_name) && <option value={c.sub_name}>{c.sub_name}</option>}
         <option value="__other">＋ Other sub…</option>
-        <option value="__combine">🔀 Combine teams…</option>
+        {bothCoachesOut(c) && <option value="__combine">🔀 Combine teams (no coach)…</option>}
       </select>
     );
 
@@ -9217,7 +9239,7 @@ export default function App() {
                       <td style={{padding:"8px 12px",color:C.red,textDecoration:"line-through",whiteSpace:"nowrap"}}>{c.coach_out}</td>
                       <td style={{padding:"8px 12px"}}>
                         {c.combine_with_team
-                          ? <span style={{fontSize:12,fontWeight:700,color:"#a78bfa"}}>🔀 combined → {c.combine_with_team} <button onClick={()=>setCoverage(c.practice_date,c.team_name,c.slot,c.phase||"season",c.coach_out,null,null)} style={{...inp,marginLeft:6,cursor:"pointer"}}>change</button></span>
+                          ? <span style={{fontSize:12,fontWeight:700,color:"#a78bfa"}}>🔀 combined → {c.combine_with_team} <button onClick={()=>applyCombineRow(c,null)} style={{...inp,marginLeft:6,cursor:"pointer"}}>change</button></span>
                           : coverageSelect(c)}
                       </td>
                       <td style={{padding:"8px 12px",textAlign:"right"}}>
