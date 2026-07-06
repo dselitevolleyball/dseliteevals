@@ -966,7 +966,7 @@ export default function App() {
   // Operations are admin-only: the whole "Operations" nav group and the views
   // behind it are hidden and blocked for non-admin coaches. The owner (Drew)
   // always counts here so a bad DB flag can't lock him out.
-  const OPS_VIEWS = new Set(["tracker","teamdir","coaches","practice","email","messages","scholarships","notifications","requests"]);
+  const OPS_VIEWS = new Set(["tracker","teamdir","coaches","practice","email","messages","scholarships","notifications","requests","coachcomms","assignments"]);
   const canOps    = isAdmin || isOwner;
   const opsDenied = <div style={{padding:24,color:C.mut,textAlign:"center"}}>This section is restricted to administrators. Ask the club administrator (Drew) for access.</div>;
   // Once a player has accepted (or is locked/signed) onto a team, they're
@@ -1921,7 +1921,8 @@ export default function App() {
     // Message-assignment reminders: coaches see their team's, admins see all.
     commReminderLog.forEach(r => {
       if (!(canOps || mine.has(r.team_name))) return;
-      out.push({ id: "rem" + r.id, ts: r.created_at, label: "Reminder", text: "[" + r.team_name + "] " + (r.subject || "Reminder sent"), view: "assignments" });
+      // Coaches have no assignments view, so route them home; admins to Assignments.
+      out.push({ id: "rem" + r.id, ts: r.created_at, label: "Reminder", text: "[" + r.team_name + "] " + (r.subject || "Reminder sent"), view: canOps ? "assignments" : "home" });
     });
     return out.sort((a, b) => (b.ts || "").localeCompare(a.ts || ""));
   }, [updates, teamQuestions, commReminderLog, myTeamNames, canOps, coach]);
