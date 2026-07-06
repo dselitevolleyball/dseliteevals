@@ -1812,17 +1812,27 @@ export default function App() {
       if (iso >= "2026-09-13") return "fall1";
       return "summer";
     };
-    const date = req.request_date, team = req.team_name, coachOut = (req.coach_name || "").trim();
+    const date = req.request_date, team = req.team_name;
+    let coachOut = (req.coach_name || "").trim();
     if (!date || !team || !coachOut) return null;
     let weekday; try { weekday = WD[new Date(date + "T00:00").getDay()]; } catch { return null; }
     const phase = phaseFor(date);
 
-    const [aRes, fRes, cRes] = await Promise.all([
+    const [aRes, fRes, cRes, tRes] = await Promise.all([
       supabase.from("practice_assignments").select("team_name, day, slot, phase").eq("team_name", team),
       supabase.from("coach_floats").select("coach_name, day, slot, phase"),
       supabase.from("practice_coverage").select("practice_date, slot, phase, sub_name").eq("practice_date", date),
+      supabase.from("practice_teams").select("head_coach, assistant_coach").eq("team_name", team).maybeSingle(),
     ]);
     const assigns = aRes.data || [], floats = fRes.data || [], cov = cRes.data || [];
+    // Canonicalize the absent coach to the exact name on the team. The request may
+    // store a login name ("Karissa") while the team shows "Karissa Lee"; the Daily
+    // board keys coverage off the team's coach string, so match it or the row hides.
+    const teamCoachNames = [tRes.data?.head_coach, tRes.data?.assistant_coach].filter(Boolean);
+    const nrm = s => (s || "").trim().toLowerCase();
+    const reqN = nrm(coachOut), reqFirst = reqN.split(/\s+/)[0];
+    const canonical = teamCoachNames.find(n => { const nn = nrm(n); return nn === reqN || nn.split(/\s+/)[0] === reqN || nn === reqFirst; });
+    if (canonical) coachOut = canonical;
     const slots = [...new Set(assigns.filter(a => a.day === weekday && (a.phase || "fall1") === phase).map(a => a.slot))];
     if (!slots.length) return { noPractice: true };
 
