@@ -52,7 +52,10 @@ export default async function handler(req, res) {
   if (audience.type === "admins") {
     targets = targets.filter(s => s.is_admin);
   } else if (audience.type === "team") {
-    targets = targets.filter(s => s.is_admin || (Array.isArray(s.teams) && s.teams.includes(audience.team)));
+    // Admins normally also receive team pushes (to see all activity); pass
+    // excludeAdmins:true to target only that team's coaches (e.g. reminders).
+    const adminsToo = !audience.excludeAdmins;
+    targets = targets.filter(s => (adminsToo && s.is_admin) || (Array.isArray(s.teams) && s.teams.includes(audience.team)));
   } else if (audience.type === "email") {
     const e = String(audience.email || "").toLowerCase();
     targets = targets.filter(s => (s.email || "").toLowerCase() === e);

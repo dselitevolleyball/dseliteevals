@@ -1918,8 +1918,13 @@ export default function App() {
         out.push({ id: "qa" + q.id, ts: q.answered_at || q.created_at, label: "Answered", text: "Your question on " + (TASK_LABELS[q.item_key] || q.item_key) + " (" + q.team_name + ") was answered", view: "home" });
       }
     });
+    // Message-assignment reminders: coaches see their team's, admins see all.
+    commReminderLog.forEach(r => {
+      if (!(canOps || mine.has(r.team_name))) return;
+      out.push({ id: "rem" + r.id, ts: r.created_at, label: "Reminder", text: "[" + r.team_name + "] " + (r.subject || "Reminder sent"), view: "assignments" });
+    });
     return out.sort((a, b) => (b.ts || "").localeCompare(a.ts || ""));
-  }, [updates, teamQuestions, myTeamNames, canOps, coach]);
+  }, [updates, teamQuestions, commReminderLog, myTeamNames, canOps, coach]);
 
   // Persisted (per device) "last viewed" marker drives the unread badge.
   const notifKey = coach?.id ? "dse_notif_seen_" + coach.id : "dse_notif_seen";
@@ -1931,6 +1936,13 @@ export default function App() {
     setNotifSeenAt(now);
     try { localStorage.setItem(notifKey, now); } catch {}
   };
+  // Load recent reminder log app-wide so reminders appear in the notifications
+  // bell (not only on the Assignments tab, which reloads it in full on send).
+  useEffect(() => {
+    if (!isApproved) return;
+    supabase.from("comm_reminder_log").select("*").order("created_at", { ascending: false }).limit(500)
+      .then(({ data }) => setCommReminderLog(data || []));
+  }, [isApproved]);
   const unreadCount = notifications.filter(n => !n.hidden && (n.ts || "") > notifSeenAt).length;
 
   // ── Device push (Web Push) ──────────────────────────────────────────
@@ -2182,7 +2194,7 @@ export default function App() {
     const body = fill(tmpl?.body) || `Please post an update to your ${statusRow.team_name} team on SportsYou.`;
     try {
       if (emails.length) await fetch("/api/send-email", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ subject, body, recipients: emails }) });
-      await fetch("/api/send-push", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: `Post to your ${statusRow.team_name} team`, body: body.slice(0, 120), url: "/", audience: { type: "team", team: statusRow.team_name } }) });
+      await fetch("/api/send-push", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: `Post to your ${statusRow.team_name} team`, body: body.slice(0, 120), url: "/", audience: { type: "team", team: statusRow.team_name, excludeAdmins: true } }) });
     } catch (e) { console.error("remind failed", e); }
     // Log what was sent so it can be read back later.
     await supabase.from("comm_reminder_log").insert({
