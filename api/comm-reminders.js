@@ -71,6 +71,7 @@ export default async function handler(req, res) {
   const emailMessages = [];
   const pushJobs = [];
   const bump = []; // status ids to mark reminded
+  const logRows = []; // reminder log rows to store (readable back in the app)
   const now = Date.now();
 
   for (const st of statuses) {
@@ -109,6 +110,7 @@ export default async function handler(req, res) {
       const payload = JSON.stringify({ title: `Post to your ${st.team_name} team`, body: a.title, url: "/" });
       for (const s of targets) pushJobs.push({ s, payload });
     }
+    logRows.push({ assignment_id: a.id, team_name: st.team_name, subject, body: text, recipients: emails, push_sent: pushOn, source: "auto", sent_by: "Automatic reminder" });
     bump.push(st);
   }
 
@@ -129,6 +131,12 @@ export default async function handler(req, res) {
     catch (e) { if (e && (e.statusCode === 404 || e.statusCode === 410)) stale.push(s.endpoint); }
   }));
   if (stale.length) await supabase.from("push_subscriptions").delete().in("endpoint", stale);
+
+  // Store the reminder log so admins can read exactly what went out.
+  if (logRows.length) {
+    const logIns = await supabase.from("comm_reminder_log").insert(logRows);
+    if (logIns.error) console.error("reminder log insert failed:", logIns.error.message);
+  }
 
   // Mark reminded.
   const nowIso = new Date().toISOString();

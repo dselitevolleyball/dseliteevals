@@ -839,6 +839,8 @@ export default function App() {
   const [newAssignment, setNewAssignment]             = useState({ title:"", instructions:"", due_date:"", cadence:2 });
   const [reminderModal, setReminderModal]             = useState(null);  // { assignmentId, teams:[{id,team_name,reminder_count}], subject, body }
   const [reminderSending, setReminderSending]         = useState(false);
+  const [commReminderLog, setCommReminderLog]         = useState([]);
+  const [reminderHistory, setReminderHistory]         = useState(null);  // { assignmentId, team_name }
   // Bulk email (send-only) state
   const [emailGroupScope, setEmailGroupScope]         = useState({});     // { [div]: "all"|"tryout"|"eval"|"none" } — default "all"
   const [emailTeam, setEmailTeam]                     = useState("");    // "" any | "__has" | "__none"
@@ -2102,14 +2104,17 @@ export default function App() {
 
   // Coach communication assignments: load assignments + per-team status.
   const loadCommAssignments = useCallback(async () => {
-    const [a, s] = await Promise.all([
+    const [a, s, r] = await Promise.all([
       supabase.from("comm_assignments").select("*").order("created_at", { ascending: false }),
       supabase.from("comm_assignment_status").select("*"),
+      supabase.from("comm_reminder_log").select("*").order("created_at", { ascending: false }).limit(1000),
     ]);
     if (a.error) console.error("Load comm_assignments error:", a.error);
     if (s.error) console.error("Load comm_assignment_status error:", s.error);
+    if (r.error) console.error("Load comm_reminder_log error:", r.error);
     setCommAssignments(a.data || []);
     setCommStatuses(s.data || []);
+    setCommReminderLog(r.data || []);
   }, []);
   useEffect(() => {
     if (isApproved && view === "assignments") { loadCommAssignments(); loadPractice(); loadSportsYouPosts(); loadCoachRoster(); }
@@ -2119,6 +2124,7 @@ export default function App() {
     const ch = supabase.channel("realtime-comm")
       .on("postgres_changes", { event: "*", schema: "public", table: "comm_assignments" }, () => loadCommAssignments())
       .on("postgres_changes", { event: "*", schema: "public", table: "comm_assignment_status" }, () => loadCommAssignments())
+      .on("postgres_changes", { event: "*", schema: "public", table: "comm_reminder_log" }, () => loadCommAssignments())
       .subscribe();
     return () => supabase.removeChannel(ch);
   }, [isApproved, loadCommAssignments]);
@@ -2162,7 +2168,7 @@ export default function App() {
 
   // Send a reminder for one team using subject/body templates (which may contain
   // a {{team}} placeholder). Returns the number of coach emails it reached.
-  const sendTeamReminder = useCallback(async (assignment, statusRow, tmpl) => {
+  const sendTeamReminder = useCallback(async (assignment, statusRow, tmpl, source = "manual") => {
     const team = practiceTeams.find(t => t.team_name === statusRow.team_name);
     const norm = (s) => String(s || "").trim().toLowerCase().replace(/\s+/g, " ");
     const emailFor = (name) => {
@@ -2178,8 +2184,14 @@ export default function App() {
       if (emails.length) await fetch("/api/send-email", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ subject, body, recipients: emails }) });
       await fetch("/api/send-push", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: `Post to your ${statusRow.team_name} team`, body: body.slice(0, 120), url: "/", audience: { type: "team", team: statusRow.team_name } }) });
     } catch (e) { console.error("remind failed", e); }
+    // Log what was sent so it can be read back later.
+    await supabase.from("comm_reminder_log").insert({
+      assignment_id: assignment.id, team_name: statusRow.team_name,
+      subject, body, recipients: emails, push_sent: true,
+      source, sent_by: coach?.display_name || null,
+    });
     return emails.length;
-  }, [practiceTeams, coachRoster]);
+  }, [practiceTeams, coachRoster, coach]);
 
   // Open the reminder composer for a set of teams (single team or all pending).
   const openReminder = useCallback((assignment, targetRows) => {
@@ -8917,6 +8929,39 @@ export default function App() {
   // Two-column view: thread list on the left, selected conversation on
   // the right. Realtime push (in the parent component) keeps both up
   // to date as Twilio delivers inbound + status updates.
+  function renderReminderHistoryModal() {
+    const h = reminderHistory;
+    if (!h) return null;
+    const entries = commReminderLog
+      .filter(r => r.assignment_id === h.assignmentId && r.team_name === h.team_name)
+      .slice().sort((a,b)=> new Date(b.created_at) - new Date(a.created_at));
+    const fmtDT = (iso) => iso ? new Date(iso).toLocaleString(undefined,{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}) : "";
+    return (
+      <div onClick={()=>setReminderHistory(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:210,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+        <div onClick={e=>e.stopPropagation()} style={{background:C.card,border:"1px solid "+C.border,borderRadius:14,width:"min(600px,96vw)",maxHeight:"90vh",overflowY:"auto",boxShadow:"0 20px 60px rgba(0,0,0,0.5)"}}>
+          <div style={{padding:"14px 18px",borderBottom:"1px solid "+C.border,display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,background:C.card}}>
+            <div><div style={{fontSize:15,fontWeight:800,color:C.gold}}>Reminders sent — {h.team_name}</div><div style={{fontSize:11,color:C.mut}}>{entries.length} sent</div></div>
+            <button onClick={()=>setReminderHistory(null)} style={{background:"none",border:"none",color:C.mut,fontSize:22,cursor:"pointer",lineHeight:1}}>×</button>
+          </div>
+          <div style={{padding:14}}>
+            {entries.length===0 && <div style={{color:C.mut,fontSize:12,textAlign:"center",padding:20}}>No reminders sent yet.</div>}
+            {entries.map(r => (
+              <div key={r.id} style={{border:"1px solid "+C.border,borderRadius:10,padding:12,marginBottom:10}}>
+                <div style={{display:"flex",justifyContent:"space-between",gap:8,flexWrap:"wrap",marginBottom:6}}>
+                  <span style={{fontSize:12,fontWeight:700,color:C.text}}>{fmtDT(r.created_at)}</span>
+                  <span style={{fontSize:10,color:C.mut}}>{r.source==="auto"?"Automatic":"Manual"}{r.sent_by?" · "+r.sent_by:""}</span>
+                </div>
+                <div style={{fontSize:11,color:C.mut,marginBottom:6}}>To: {r.recipients && r.recipients.length ? r.recipients.join(", ") : <i>no coach email on file</i>}{r.push_sent?" · + app push":""}</div>
+                <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:4}}>{r.subject}</div>
+                <div style={{fontSize:12,color:C.mut,whiteSpace:"pre-wrap",lineHeight:1.5}}>{r.body}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   function renderReminderModal() {
     const m = reminderModal;
     if (!m) return null;
@@ -9054,6 +9099,7 @@ export default function App() {
                             const team = practiceTeams.find(t=>t.team_name===s.team_name);
                             const coachNames = [team?.head_coach, team?.assistant_coach].filter(Boolean).join(", ") || "—";
                             const cand = s.status==="pending" ? candidateFor(a, s.team_name) : null;
+                            const logCount = commReminderLog.filter(r=>r.assignment_id===a.id && r.team_name===s.team_name).length;
                             return (
                               <tr key={s.id} style={{borderTop:"1px solid "+C.border}}>
                                 <td style={{padding:"8px 12px",fontWeight:700}}>{s.team_name}</td>
@@ -9062,7 +9108,8 @@ export default function App() {
                                   {s.status==="sent" && <span style={{color:C.grn,fontWeight:700}}>✅ Sent{s.sent_at?" · "+fmtDate(s.sent_at):""}</span>}
                                   {s.status==="not_needed" && <span style={{color:C.mut}}>— Skipped</span>}
                                   {s.status==="pending" && cand && <span style={{color:C.gold,fontWeight:700}} title={cand.subject||""}>🟡 Posted {fmtDate(cand.posted_at)}{cand.author?" by "+cand.author:""} — confirm?</span>}
-                                  {s.status==="pending" && !cand && <span style={{color:isOverdue(a)?"#f87171":C.mut,fontWeight:700}}>⏳ Needs to send{s.reminder_count?` · reminded ${s.reminder_count}×`:""}</span>}
+                                  {s.status==="pending" && !cand && <span style={{color:isOverdue(a)?"#f87171":C.mut,fontWeight:700}}>⏳ Needs to send</span>}
+                                  {logCount>0 && <button onClick={()=>setReminderHistory({assignmentId:a.id, team_name:s.team_name})} title="Read the reminders sent" style={{marginLeft:8,background:"none",border:"none",color:C.gold,fontSize:11,cursor:"pointer",textDecoration:"underline",fontFamily:"inherit",padding:0}}>✉ {logCount} sent</button>}
                                 </td>
                                 <td style={{padding:"8px 12px",textAlign:"right",whiteSpace:"nowrap"}}>
                                   {s.status==="pending" && cand && <>
@@ -11539,6 +11586,7 @@ export default function App() {
       {addingCoach && renderAddCoach()}
       {bulkImportOpen && renderBulkImport()}
       {reminderModal && renderReminderModal()}
+      {reminderHistory && renderReminderHistoryModal()}
     </div>
   );
 }
