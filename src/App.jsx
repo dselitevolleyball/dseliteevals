@@ -6735,6 +6735,25 @@ export default function App() {
             {practiceTeams.length === 0 && <div style={{fontSize:10,color:C.mut,marginTop:6,fontStyle:"italic"}}>No teams exist yet — add teams in the Practice tab first.</div>}
           </div>
 
+          {/* Season blocks — date range for each phase, for reference */}
+          <div style={sectionBox}>
+            <div style={lbl}>Season Blocks</div>
+            <div style={{display:"flex",flexDirection:"column",gap:3}}>
+              {[
+                ["Summer","Jul 12 – Sep 12"],
+                ["Fall 1","Sep 13 – Oct 11"],
+                ["Fall 2","Oct 18 – Nov 15"],
+                ["Regular Season","Nov 29 – May 6"],
+                ["Post Season","May 7 – Jun 15"],
+              ].map(([l,r]) => (
+                <div key={l} style={{display:"flex",justifyContent:"space-between",gap:10,fontSize:12}}>
+                  <span style={{fontWeight:700,color:C.text}}>{l}</span>
+                  <span style={{color:C.mut}}>{r}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
           {/* Practice schedule — all phases, adjacent slots merged */}
           {(() => {
             const summary = summarizePractices(practiceAssignments.filter(a => allTeamNames.includes(a.team_name)));
