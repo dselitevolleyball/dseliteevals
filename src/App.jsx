@@ -7040,6 +7040,16 @@ export default function App() {
         c.practice_date === dailyDate && c.team_name === team && c.slot === label &&
         (c.phase || "season") === dayPhase && c.coach_out === coachName);
       const shiftDay = (n) => { if (!d) return; const nd = new Date(d); nd.setDate(nd.getDate()+n); const iso = nd.toISOString().slice(0,10); setDailyDate(iso); setCalMonth(iso.slice(0,7)); };
+      // Jump to the next/previous date that actually has practice scheduled.
+      const jumpToPractice = (dir) => {
+        if (!d) return;
+        const nd = new Date(d);
+        for (let i = 0; i < 500; i++) {
+          nd.setDate(nd.getDate() + dir);
+          const iso = nd.toISOString().slice(0, 10);
+          if (dayHasPractice(iso)) { setDailyDate(iso); setCalMonth(iso.slice(0, 7)); return; }
+        }
+      };
       const teamByName2 = new Map(practiceTeams.map(t => [t.team_name, t]));
       const navBtn = {padding:"5px 10px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:"inherit"};
 
@@ -7168,6 +7178,8 @@ export default function App() {
             <button onClick={()=>shiftDay(-1)} style={navBtn}>←</button>
             <span style={{fontSize:14,fontWeight:800,color:C.gold}}>{prettyDate}</span>
             <button onClick={()=>shiftDay(1)} style={navBtn}>→</button>
+            <button onClick={()=>jumpToPractice(-1)} style={navBtn} title="Jump to the previous practice day">⏮ Prev practice</button>
+            <button onClick={()=>jumpToPractice(1)} style={{...navBtn,color:"#000",background:C.gold,borderColor:C.gold}} title="Jump to the next day that has practice">Next practice ⏭</button>
             <span style={{fontSize:11,color:C.acc,fontWeight:800,textTransform:"uppercase"}}>· {phaseLabel}</span>
             {practiceToday && !todayCancelled && (
               <button onClick={()=>{ const r = window.prompt("Cancel all practice on " + prettyDate + "?\nOptional reason (e.g. holiday name):", ""); if (r !== null) toggleCancelDate(dailyDate, r); }}
