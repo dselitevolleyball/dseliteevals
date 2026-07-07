@@ -1514,7 +1514,7 @@ export default function App() {
   useEffect(() => { if (isApproved && (view === "home" || view === "teamdir" || view === "coaches")) loadPracticeApprovals(); }, [isApproved, view, loadPracticeApprovals]);
   useEffect(() => { if (isApproved && (view === "home" || view === "requests")) loadCoachRequests(); }, [isApproved, view, loadCoachRequests]);
   useEffect(() => { if (isApproved && view === "practice") loadCoachFloats(); }, [isApproved, view, loadCoachFloats]);
-  useEffect(() => { if (isApproved && view === "practice") loadPracticeCoverage(); }, [isApproved, view, loadPracticeCoverage]);
+  useEffect(() => { if (isApproved && (view === "practice" || view === "home")) loadPracticeCoverage(); }, [isApproved, view, loadPracticeCoverage]);
   useEffect(() => { if (isApproved && view === "coverage") { loadPracticeCoverage(); loadPractice(); } }, [isApproved, view, loadPracticeCoverage, loadPractice]);
   useEffect(() => { if (isApproved && view === "practice") loadPracticeCancellations(); }, [isApproved, view, loadPracticeCancellations]);
   // Optimistically patch local state, then upsert the merged row. `merged` is
@@ -3619,6 +3619,38 @@ export default function App() {
       </div>
     );
   };
+  // Home panel: future practices that need a sub — any coach can pick one up.
+  const renderOpenShiftsPanel = (myName) => {
+    const today = new Date().toISOString().slice(0,10);
+    const open = practiceCoverage
+      .filter(c => !c.sub_name && !c.combine_with_team && (c.practice_date||"") >= today)
+      .slice()
+      .sort((a,b) => (a.practice_date||"").localeCompare(b.practice_date||"") || (a.slot||"").localeCompare(b.slot||""));
+    if (!open.length) return null;
+    const fmt = (iso) => { try { const d=new Date(iso+"T00:00"); return d.toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"}); } catch { return iso; } };
+    const pickUp = (c) => {
+      if (!myName) { window.alert("We couldn't match your coach name — ask an admin to add you to the coach roster."); return; }
+      if (!window.confirm(`Pick up ${c.team_name} on ${fmt(c.practice_date)} · ${c.slot}? You'll be listed as the sub.`)) return;
+      setCoverage(c.practice_date, c.team_name, c.slot, c.phase||"season", c.coach_out, myName);
+    };
+    return (
+      <div style={{background:C.card,border:"1px solid #a78bfa",borderRadius:12,padding:"14px 16px",marginBottom:18}}>
+        <div style={{fontSize:13,fontWeight:800,color:"#a78bfa",marginBottom:2}}>🙋 Open practice shifts · {open.length} need coverage</div>
+        <div style={{fontSize:11,color:C.mut,marginBottom:8}}>A coach is out and no sub is set. Pick one up and you'll be listed as the sub.</div>
+        <div style={{display:"flex",flexDirection:"column",gap:8,maxHeight:340,overflowY:"auto"}}>
+          {open.map(c => (
+            <div key={c.id ?? (c.practice_date+c.team_name+c.slot+c.coach_out)} style={{background:C.bg,border:"1px solid "+C.border,borderRadius:8,padding:"8px 10px",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+              <div>
+                <div style={{fontSize:13,fontWeight:700,color:C.text}}>{c.team_name} <span style={{color:C.mut,fontSize:11,fontWeight:600}}>· {c.slot}</span></div>
+                <div style={{fontSize:11,color:C.mut,marginTop:1}}>{fmt(c.practice_date)} · {c.coach_out} out</div>
+              </div>
+              <button onClick={()=>pickUp(c)} style={{padding:"6px 14px",borderRadius:8,border:"none",background:"#a78bfa",color:"#000",fontWeight:800,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>Pick up</button>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
   // Admin notification panel: coach questions awaiting a director answer.
   const renderQuestionsPanel = () => {
     if (!canOps) return null;
@@ -3971,6 +4003,7 @@ export default function App() {
           </button>
         </div>
         {renderUpdatesPanel(myTeams.map(t => t.team_name))}
+        {renderOpenShiftsPanel(myRoster ? ((myRoster.first_name||"")+" "+(myRoster.last_name||"")).trim() : (coach?.display_name||""))}
         {renderQuestionsPanel()}
         {myTeams.length === 0 ? (
           <div style={{padding:24,textAlign:"center",color:C.mut,fontSize:13,background:C.card,borderRadius:12,border:"1px solid "+C.border,lineHeight:1.6}}>
