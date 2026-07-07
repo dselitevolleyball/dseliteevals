@@ -7082,7 +7082,7 @@ export default function App() {
       const calCells = []; for (let i = 0; i < firstDow; i++) calCells.push(null);
       for (let dn = 1; dn <= daysInMonth; dn++) calCells.push(dn);
 
-      const coachCell = (team, label, coachName, role) => {
+      const coachCell = (team, label, coachName, role, combined) => {
         const cov = covFor(team, label, coachName);
         const floaters = floatersFor(label);
         if (!cov) {
@@ -7096,34 +7096,16 @@ export default function App() {
             </div>
           );
         }
-        const sameSlotTeams = teamsFor(label).map(a=>a.team_name).filter(t => t !== team);
-        // Combining teams only makes sense when the team is left with NO coach —
-        // i.e. BOTH of its coaches are out. Gate the combine option on that, and
-        // apply/clear combine across both coaches so it's a team-level decision.
-        const teamRec = teamByName2.get(team) || {};
-        const teamCoaches = [teamRec.head_coach, teamRec.assistant_coach].filter(Boolean);
-        const bothOut = teamCoaches.length >= 2 && teamCoaches.every(c => !!covFor(team, label, c));
-        const applyCombine = (target) => { for (const c of teamCoaches) setCoverage(dailyDate, team, label, dayPhase, c, null, target); };
         return (
           <div style={{display:"flex",alignItems:"center",gap:5,flexWrap:"wrap"}}>
             <span style={{fontSize:9,fontWeight:800,color:C.mut,textTransform:"uppercase",width:30}}>{role}</span>
             <span style={{fontSize:12,fontWeight:600,color:C.red,textDecoration:"line-through"}}>{coachName}</span>
-            {cov.combine_with_team ? (
-              <>
-                <span style={{fontSize:11,fontWeight:700,color:"#a78bfa"}} title="No coach — combining this team's practice with another team">🔀 combine → {cov.combine_with_team}</span>
-                <button onClick={()=>applyCombine(null)}
-                  title="Undo the combine for this team"
-                  style={{padding:"1px 8px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Change</button>
-              </>
+            {combined ? (
+              <span style={{fontSize:11,fontWeight:700,color:"#a78bfa"}}>out · combined</span>
             ) : (
               <select value={cov.sub_name || ""} onChange={e=>{
                   const v = e.target.value;
                   if (v === "__other") { const n = window.prompt("Sub's name:", cov.sub_name || ""); if (n != null && n.trim()) setCoverage(dailyDate, team, label, dayPhase, coachName, n.trim()); }
-                  else if (v === "__combine") {
-                    const hint = sameSlotTeams.length ? ("\nTeams practicing this slot: " + sameSlotTeams.join(", ")) : "";
-                    const n = window.prompt("Both coaches are out — combine " + team + " with which team?" + hint, sameSlotTeams[0] || "");
-                    if (n != null && n.trim()) applyCombine(n.trim());
-                  }
                   else setCoverage(dailyDate, team, label, dayPhase, coachName, v);
                 }}
                 style={{...inpStyle,padding:"3px 6px",fontSize:11,color:cov.sub_name?"#06b6d4":"#f59e0b",fontWeight:700}}>
@@ -7131,7 +7113,6 @@ export default function App() {
                 {floaters.map(f => <option key={f} value={f}>{f} (floating)</option>)}
                 {cov.sub_name && !floaters.includes(cov.sub_name) && <option value={cov.sub_name}>{cov.sub_name}</option>}
                 <option value="__other">＋ Other sub…</option>
-                {bothOut && <option value="__combine">🔀 Combine teams (no coach)…</option>}
               </select>
             )}
             <button onClick={()=>clearCoverage(dailyDate, team, label, dayPhase, coachName)}
@@ -7216,6 +7197,13 @@ export default function App() {
                         {teams.map(a => {
                           const t = teamByName2.get(a.team_name) || {};
                           const coaches = [["Head",t.head_coach],["Asst",t.assistant_coach]].filter(([,c]) => c);
+                          const coachNames = coaches.map(([,c]) => c);
+                          // Team is left with no coach when both are out → offer to combine.
+                          const bothOut = coachNames.length >= 2 && coachNames.every(c => !!covFor(a.team_name, s.label, c));
+                          const combinedRow = practiceCoverage.find(cv => cv.practice_date===dailyDate && cv.team_name===a.team_name && cv.slot===s.label && (cv.phase||"season")===dayPhase && cv.combine_with_team);
+                          const combinedWith = combinedRow?.combine_with_team || "";
+                          const setCombine = (target) => { for (const c of coachNames) setCoverage(dailyDate, a.team_name, s.label, dayPhase, c, null, target || null); };
+                          const otherTeams = teamsFor(s.label).map(x=>x.team_name).filter(tn => tn !== a.team_name);
                           return (
                             <div key={a.team_name} style={{padding:"8px 12px",borderBottom:"1px solid "+C.border}}>
                               <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:5}}>
@@ -7229,8 +7217,19 @@ export default function App() {
                               <div style={{display:"flex",flexDirection:"column",gap:3}}>
                                 {coaches.length === 0
                                   ? <span style={{fontSize:11,color:C.mut}}>No coaches assigned</span>
-                                  : coaches.map(([role,c]) => <div key={role}>{coachCell(a.team_name, s.label, c, role)}</div>)}
+                                  : coaches.map(([role,c]) => <div key={role}>{coachCell(a.team_name, s.label, c, role, !!combinedWith)}</div>)}
                               </div>
+                              {bothOut && (
+                                <div style={{marginTop:6,paddingTop:6,borderTop:"1px dashed "+C.border,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                                  <span style={{fontSize:10,fontWeight:800,color:"#a78bfa"}}>🔀 No coach — combine with</span>
+                                  <select value={combinedWith} onChange={e=>setCombine(e.target.value)}
+                                    style={{...inpStyle,padding:"3px 6px",fontSize:11,color:combinedWith?"#a78bfa":C.mut,fontWeight:700}}>
+                                    <option value="">— not combined —</option>
+                                    {otherTeams.map(tn => <option key={tn} value={tn}>{tn}</option>)}
+                                    {combinedWith && !otherTeams.includes(combinedWith) && <option value={combinedWith}>{combinedWith}</option>}
+                                  </select>
+                                </div>
+                              )}
                             </div>
                           );
                         })}
