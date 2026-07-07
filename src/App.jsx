@@ -841,6 +841,7 @@ export default function App() {
   const [reminderSending, setReminderSending]         = useState(false);
   const [commReminderLog, setCommReminderLog]         = useState([]);
   const [reminderHistory, setReminderHistory]         = useState(null);  // { assignmentId, team_name }
+  const [viewPost, setViewPost]                       = useState(null);  // a sportsyou_posts row to read in full
   // Bulk email (send-only) state
   const [emailGroupScope, setEmailGroupScope]         = useState({});     // { [div]: "all"|"tryout"|"eval"|"none" } — default "all"
   const [emailTeam, setEmailTeam]                     = useState("");    // "" any | "__has" | "__none"
@@ -9278,6 +9279,29 @@ export default function App() {
     );
   }
 
+  function renderPostViewModal() {
+    const p = viewPost;
+    if (!p) return null;
+    const when = p.posted_at ? new Date(p.posted_at).toLocaleString(undefined,{weekday:"short",month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}) : "";
+    return (
+      <div onClick={()=>setViewPost(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:210,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+        <div onClick={e=>e.stopPropagation()} style={{background:C.card,border:"1px solid "+C.border,borderRadius:14,width:"min(560px,96vw)",maxHeight:"90vh",overflowY:"auto",boxShadow:"0 20px 60px rgba(0,0,0,0.5)"}}>
+          <div style={{padding:"14px 18px",borderBottom:"1px solid "+C.border,display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,background:C.card}}>
+            <div>
+              <div style={{fontSize:15,fontWeight:800,color:C.gold}}>SportsYou post</div>
+              <div style={{fontSize:11,color:C.mut,marginTop:1}}>{p.team_name || p.raw_team_label || ""}{p.author?" · "+p.author:""}{when?" · "+when:""}</div>
+            </div>
+            <button onClick={()=>setViewPost(null)} style={{background:"none",border:"none",color:C.mut,fontSize:22,cursor:"pointer",lineHeight:1}}>×</button>
+          </div>
+          <div style={{padding:18}}>
+            {p.subject && p.subject !== p.body && <div style={{fontSize:14,fontWeight:700,color:C.text,marginBottom:8}}>{p.subject}</div>}
+            <div style={{fontSize:13,color:C.text,whiteSpace:"pre-wrap",lineHeight:1.55}}>{p.body || <i style={{color:C.mut}}>(no message body captured)</i>}</div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   function renderReminderHistoryModal() {
     const h = reminderHistory;
     if (!h) return null;
@@ -9449,14 +9473,16 @@ export default function App() {
                             const coachNames = [team?.head_coach, team?.assistant_coach].filter(Boolean).join(", ") || "—";
                             const cand = s.status==="pending" ? candidateFor(a, s.team_name) : null;
                             const logCount = commReminderLog.filter(r=>r.assignment_id===a.id && r.team_name===s.team_name).length;
+                            const sentPost = (s.status==="sent" && s.confirmed_post_id) ? sportsYouPosts.find(p=>p.id===s.confirmed_post_id) : null;
                             return (
                               <tr key={s.id} style={{borderTop:"1px solid "+C.border}}>
                                 <td style={{padding:"8px 12px",fontWeight:700}}>{s.team_name}</td>
                                 <td style={{padding:"8px 12px",color:C.mut}}>{coachNames}</td>
                                 <td style={{padding:"8px 12px"}}>
                                   {s.status==="sent" && <span style={{color:C.grn,fontWeight:700}}>✅ Sent{s.sent_at?" · "+fmtDate(s.sent_at):""}</span>}
+                                  {s.status==="sent" && sentPost && <button onClick={()=>setViewPost(sentPost)} title="Read the message that was sent" style={{marginLeft:8,background:"none",border:"none",color:C.gold,fontSize:11,cursor:"pointer",textDecoration:"underline",fontFamily:"inherit",padding:0}}>view message</button>}
                                   {s.status==="not_needed" && <span style={{color:C.mut}}>— Skipped</span>}
-                                  {s.status==="pending" && cand && <span style={{color:C.gold,fontWeight:700}} title={cand.subject||""}>🟡 Posted {fmtDate(cand.posted_at)}{cand.author?" by "+cand.author:""} — confirm?</span>}
+                                  {s.status==="pending" && cand && <><span style={{color:C.gold,fontWeight:700}}>🟡 Posted {fmtDate(cand.posted_at)}{cand.author?" by "+cand.author:""}</span> <button onClick={()=>setViewPost(cand)} title="Read what the coach posted, then confirm" style={{background:"none",border:"none",color:C.gold,fontSize:11,cursor:"pointer",textDecoration:"underline",fontFamily:"inherit",padding:0}}>view message</button></>}
                                   {s.status==="pending" && !cand && <span style={{color:isOverdue(a)?"#f87171":C.mut,fontWeight:700}}>⏳ Needs to send</span>}
                                   {logCount>0 && <button onClick={()=>setReminderHistory({assignmentId:a.id, team_name:s.team_name})} title="Read the reminders sent" style={{marginLeft:8,background:"none",border:"none",color:C.gold,fontSize:11,cursor:"pointer",textDecoration:"underline",fontFamily:"inherit",padding:0}}>✉ {logCount} sent</button>}
                                 </td>
@@ -11939,6 +11965,7 @@ export default function App() {
       {bulkImportOpen && renderBulkImport()}
       {reminderModal && renderReminderModal()}
       {reminderHistory && renderReminderHistoryModal()}
+      {viewPost && renderPostViewModal()}
     </div>
   );
 }
