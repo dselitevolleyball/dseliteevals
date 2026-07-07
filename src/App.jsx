@@ -1813,57 +1813,70 @@ export default function App() {
       if (iso >= "2026-09-13") return "fall1";
       return "summer";
     };
-    const date = req.request_date, team = req.team_name;
-    let coachOut = (req.coach_name || "").trim();
-    if (!date || !team || !coachOut) return null;
+    const date = req.request_date;
+    const coachRaw = (req.coach_name || "").trim();
+    if (!date || !coachRaw) return null;
     let weekday; try { weekday = WD[new Date(date + "T00:00").getDay()]; } catch { return null; }
     const phase = phaseFor(date);
+    const nrm = s => (s || "").trim().toLowerCase().replace(/\s+/g, " ");
+    const rN = nrm(coachRaw), rFirst = rN.split(" ")[0];
+    const coachMatches = (name) => { const nn = nrm(name); return nn === rN || nn.split(" ")[0] === rN || nn === rFirst || nn.split(" ")[0] === rFirst; };
 
-    const [aRes, fRes, cRes, tRes] = await Promise.all([
-      supabase.from("practice_assignments").select("team_name, day, slot, phase").eq("team_name", team),
+    const [fRes, cRes, ptRes] = await Promise.all([
       supabase.from("coach_floats").select("coach_name, day, slot, phase"),
-      supabase.from("practice_coverage").select("practice_date, slot, phase, sub_name").eq("practice_date", date),
-      supabase.from("practice_teams").select("head_coach, assistant_coach").eq("team_name", team).maybeSingle(),
+      supabase.from("practice_coverage").select("practice_date, team_name, slot, phase, sub_name").eq("practice_date", date),
+      supabase.from("practice_teams").select("team_name, head_coach, assistant_coach"),
     ]);
-    const assigns = aRes.data || [], floats = fRes.data || [], cov = cRes.data || [];
-    // Canonicalize the absent coach to the exact name on the team. The request may
-    // store a login name ("Karissa") while the team shows "Karissa Lee"; the Daily
-    // board keys coverage off the team's coach string, so match it or the row hides.
-    const teamCoachNames = [tRes.data?.head_coach, tRes.data?.assistant_coach].filter(Boolean);
-    const nrm = s => (s || "").trim().toLowerCase();
-    const reqN = nrm(coachOut), reqFirst = reqN.split(/\s+/)[0];
-    const canonical = teamCoachNames.find(n => { const nn = nrm(n); return nn === reqN || nn.split(/\s+/)[0] === reqN || nn === reqFirst; });
-    if (canonical) coachOut = canonical;
-    const slots = [...new Set(assigns.filter(a => a.day === weekday && (a.phase || "fall1") === phase).map(a => a.slot))];
-    if (!slots.length) return { noPractice: true };
+    const floats = fRes.data || [], cov = cRes.data || [], allTeams = ptRes.data || [];
+
+    // Which teams to cover: the one team (practice request) or EVERY team this
+    // coach coaches (a weekend request has no team → they're out of all of them).
+    const targetTeams = req.team_name
+      ? allTeams.filter(t => t.team_name === req.team_name)
+      : allTeams.filter(t => [t.head_coach, t.assistant_coach].some(coachMatches));
+    if (!targetTeams.length) return { noPractice: true };
+
+    const aRes = await supabase.from("practice_assignments").select("team_name, day, slot, phase").in("team_name", targetTeams.map(t => t.team_name));
+    const assigns = aRes.data || [];
 
     const usedInRun = new Set(); // floater|slot already assigned this run
     const rows = [];
     const coveredBy = [];
     let anyNeedsCoverage = false;
-    for (const slot of slots) {
-      const alreadySubbed = new Set(cov.filter(c => c.slot === slot && (c.phase || "season") === phase && c.sub_name).map(c => (c.sub_name || "").trim().toLowerCase()));
-      const candidates = [...new Set(floats.filter(f => (f.phase || "season") === phase && f.day === weekday && f.slot === slot).map(f => (f.coach_name || "").trim()).filter(Boolean))]
-        .filter(n => n.toLowerCase() !== coachOut.toLowerCase());
-      const floater = candidates.find(n => !alreadySubbed.has(n.toLowerCase()) && !usedInRun.has(n.toLowerCase() + "|" + slot)) || null;
-      if (floater) { usedInRun.add(floater.toLowerCase() + "|" + slot); coveredBy.push(floater); }
-      else anyNeedsCoverage = true;
-      rows.push({ practice_date: date, team_name: team, slot, phase, coach_out: coachOut, sub_name: floater, combine_with_team: null });
+    const teamsCovered = [];
+    for (const t of targetTeams) {
+      // Canonicalize the absent coach to the exact name on THIS team (request may
+      // store "Karissa" while the team shows "Karissa Lee"; the board keys off it).
+      const canonical = [t.head_coach, t.assistant_coach].filter(Boolean).find(coachMatches) || coachRaw;
+      const slots = [...new Set(assigns.filter(a => a.team_name === t.team_name && a.day === weekday && (a.phase || "fall1") === phase).map(a => a.slot))];
+      if (!slots.length) continue;
+      teamsCovered.push(t.team_name);
+      for (const slot of slots) {
+        const alreadySubbed = new Set(cov.filter(c => c.slot === slot && (c.phase || "season") === phase && c.sub_name).map(c => (c.sub_name || "").trim().toLowerCase()));
+        const candidates = [...new Set(floats.filter(f => (f.phase || "season") === phase && f.day === weekday && f.slot === slot).map(f => (f.coach_name || "").trim()).filter(Boolean))]
+          .filter(n => !coachMatches(n));
+        const floater = candidates.find(n => !alreadySubbed.has(n.toLowerCase()) && !usedInRun.has(n.toLowerCase() + "|" + slot)) || null;
+        if (floater) { usedInRun.add(floater.toLowerCase() + "|" + slot); coveredBy.push(floater); }
+        else anyNeedsCoverage = true;
+        rows.push({ practice_date: date, team_name: t.team_name, slot, phase, coach_out: canonical, sub_name: floater, combine_with_team: null });
+      }
     }
+    if (!teamsCovered.length) return { noPractice: true };
     const { error } = await supabase.from("practice_coverage").upsert(rows, { onConflict: "practice_date,team_name,slot,phase,coach_out" });
     if (error) { window.alert("Coverage save failed: " + error.message); return { error: true }; }
     await loadPracticeCoverage();
 
     // Tell the coach the outcome.
     const email = (req.coach_email || "").trim();
-    const firstName = coachOut.split(/\s+/)[0] || "Coach";
+    const firstName = coachRaw.split(/\s+/)[0] || "Coach";
     const covWho = [...new Set(coveredBy)].join(", ");
+    const teamList = teamsCovered.join(", ");
     const subject = anyNeedsCoverage
-      ? `Time-off approved — please arrange a sub for ${team}`
-      : `Time-off approved for ${team} on ${date}`;
+      ? `Time-off approved — please arrange a sub`
+      : `Time-off approved for ${date}`;
     const body = anyNeedsCoverage
-      ? `Hi ${firstName},\n\nYour request to be off for ${team} on ${date} is approved.\n\nWe don't have a floating coach available for that practice, so please find a coach to cover for you and let the directors know who it will be.\n\nThanks!\nDS Elite`
-      : `Hi ${firstName},\n\nYour request to be off for ${team} on ${date} is approved${covWho ? ` — ${covWho} will cover the practice` : ""}. Nothing else you need to do.\n\nThanks!\nDS Elite`;
+      ? `Hi ${firstName},\n\nYour request to be off on ${date} is approved (${teamList}).\n\nWe don't have a floating coach available for at least one of those practices, so please find a coach to cover and let the directors know who it will be.\n\nThanks!\nDS Elite`
+      : `Hi ${firstName},\n\nYour request to be off on ${date} is approved (${teamList})${covWho ? ` — ${covWho} will cover` : ""}. Nothing else you need to do.\n\nThanks!\nDS Elite`;
     try {
       if (email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
         await fetch("/api/send-email", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ subject, body, recipients: [email] }) });
@@ -1872,7 +1885,7 @@ export default function App() {
         body: JSON.stringify({ title: subject, body: anyNeedsCoverage ? "Please arrange your own sub." : "You're covered — nothing to do.", url: "/", audience: email ? { type: "email", email } : { type: "admins" } }) });
     } catch (e) { console.error("notify coach failed", e); }
 
-    return { anyNeedsCoverage, coveredBy: [...new Set(coveredBy)], slots, emailed: !!email };
+    return { anyNeedsCoverage, coveredBy: [...new Set(coveredBy)], teams: teamsCovered, emailed: !!email };
   }, [loadPracticeCoverage]);
 
   // Director resolves a request (approved / denied / back to pending).
@@ -1883,15 +1896,17 @@ export default function App() {
     }).eq("id", id);
     if (error) { window.alert("Update failed: " + error.message); return; }
     await loadCoachRequests();
-    // Auto-coverage on approval of a practice request.
-    if (status === "approved" && req && req.type === "practice") {
+    // Auto-coverage on approval — a practice request covers its team; a weekend
+    // request covers every team the coach coaches that practices that date.
+    if (status === "approved" && req && (req.type === "practice" || req.type === "weekend")) {
       const res = await autoCoverPracticeRequest(req);
       if (res && res.noPractice) {
-        window.alert(`Approved. No scheduled ${req.team_name} practice was found for ${req.request_date}, so nothing was marked out — add it on the Daily board if needed.`);
+        window.alert(`Approved. No scheduled practice was found for ${req.coach_name} on ${req.request_date}, so nothing was marked out.`);
       } else if (res && !res.error) {
+        const teamList = (res.teams || []).join(", ");
         window.alert(res.anyNeedsCoverage
-          ? `Approved & ${req.coach_name} marked out. No floating coach was available — they've been emailed to find their own sub.`
-          : `Approved, ${req.coach_name} marked out, and auto-covered by ${res.coveredBy.join(", ") || "a floating coach"}.`);
+          ? `Approved & ${req.coach_name} marked out (${teamList}). At least one practice has no floating coach — they've been emailed to find a sub.`
+          : `Approved, ${req.coach_name} marked out (${teamList}), and auto-covered by ${res.coveredBy.join(", ") || "a floating coach"}.`);
       }
     }
   }, [coach, loadCoachRequests, coachRequests, autoCoverPracticeRequest]);
