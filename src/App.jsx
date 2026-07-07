@@ -9397,6 +9397,7 @@ export default function App() {
       let best = null;
       for (const p of sportsYouPosts) {
         if (p.team_name !== team) continue;
+        if (p.author_role === "admin") continue;            // admins (Drew/Tionne/Kristen) never count, even if listed as a coach
         if (new Date(p.posted_at).getTime() < created) continue;
         if (!isTeamCoachAuthor(p.author, team)) continue;
         if (!best || new Date(p.posted_at) > new Date(best.posted_at)) best = p;

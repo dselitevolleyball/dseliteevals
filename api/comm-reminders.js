@@ -49,7 +49,7 @@ export default async function handler(req, res) {
     supabase.from("comm_assignment_status").select("*").eq("status", "pending"),
     supabase.from("practice_teams").select("team_name, head_coach, assistant_coach"),
     supabase.from("coach_roster").select("first_name, last_name, email"),
-    supabase.from("sportsyou_posts").select("team_name, posted_at, author").not("team_name", "is", null),
+    supabase.from("sportsyou_posts").select("team_name, posted_at, author, author_role").not("team_name", "is", null),
     supabase.from("push_subscriptions").select("endpoint, p256dh, auth, email, teams"),
   ]).then(rs => rs.map(r => r.data || []));
 
@@ -70,6 +70,7 @@ export default async function handler(req, res) {
     teamCoachSet.set(t.team_name, set);
   }
   const isCoachPost = (p) => {
+    if (p.author_role === "admin") return false;            // admins don't count as the coach posting
     const set = teamCoachSet.get(p.team_name); if (!set) return false;
     const a = normName(p.author); if (!a) return false;
     return set.has(a) || set.has(a.split(" ")[0]);
