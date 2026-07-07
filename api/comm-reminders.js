@@ -49,7 +49,7 @@ export default async function handler(req, res) {
     supabase.from("comm_assignment_status").select("*").eq("status", "pending"),
     supabase.from("practice_teams").select("team_name, head_coach, assistant_coach"),
     supabase.from("coach_roster").select("first_name, last_name, email"),
-    supabase.from("sportsyou_posts").select("team_name, posted_at").not("team_name", "is", null),
+    supabase.from("sportsyou_posts").select("team_name, posted_at, author").not("team_name", "is", null),
     supabase.from("push_subscriptions").select("endpoint, p256dh, auth, email, teams"),
   ]).then(rs => rs.map(r => r.data || []));
 
@@ -61,9 +61,23 @@ export default async function handler(req, res) {
     const full = normName((c.first_name || "") + " " + (c.last_name || ""));
     if (full && c.email && EMAIL_RE.test(c.email)) emailByName.set(full, c.email.trim());
   }
-  // Latest post timestamp per team → tells us if a coach already posted (candidate).
+  // A post only counts as "the coach did it" if it's from one of THAT team's
+  // coaches — not an admin posting club-wide. Build each team's coach-name set.
+  const teamCoachSet = new Map();
+  for (const t of teams) {
+    const set = new Set();
+    for (const c of [t.head_coach, t.assistant_coach].filter(Boolean)) { const n = normName(c); set.add(n); set.add(n.split(" ")[0]); }
+    teamCoachSet.set(t.team_name, set);
+  }
+  const isCoachPost = (p) => {
+    const set = teamCoachSet.get(p.team_name); if (!set) return false;
+    const a = normName(p.author); if (!a) return false;
+    return set.has(a) || set.has(a.split(" ")[0]);
+  };
+  // Latest COACH post timestamp per team → tells us if the coach already posted.
   const maxPostByTeam = new Map();
   for (const p of posts) {
+    if (!isCoachPost(p)) continue;
     const cur = maxPostByTeam.get(p.team_name);
     if (!cur || new Date(p.posted_at) > new Date(cur)) maxPostByTeam.set(p.team_name, p.posted_at);
   }

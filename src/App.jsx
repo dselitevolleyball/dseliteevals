@@ -9379,14 +9379,26 @@ export default function App() {
     const fmtDate = (d) => d ? new Date(d).toLocaleDateString(undefined,{month:"short",day:"numeric"}) : "";
     const activeAssignments = commAssignments.filter(a => a.status !== "archived");
     const statusesFor = (aid) => commStatuses.filter(s => s.assignment_id === aid);
-    // A "candidate" is the latest team post since the assignment went out — a
-    // likely completion awaiting your confirmation.
+    // A post only counts toward an assignment if it's from one of THAT team's
+    // coaches — not an admin (e.g. Drew) posting club-wide.
+    const norm = s => (s||"").trim().toLowerCase().replace(/\s+/g," ");
+    const isTeamCoachAuthor = (author, team) => {
+      const t = practiceTeams.find(x => x.team_name === team);
+      const coaches = [t?.head_coach, t?.assistant_coach].filter(Boolean).map(norm);
+      const a = norm(author);
+      if (!a || !coaches.length) return false;
+      const aFirst = a.split(" ")[0];
+      return coaches.some(c => c === a || c.split(" ")[0] === aFirst);
+    };
+    // A "candidate" is the latest coach post to the team since the assignment
+    // went out — a likely completion awaiting your confirmation.
     const candidateFor = (assignment, team) => {
       const created = new Date(assignment.created_at).getTime();
       let best = null;
       for (const p of sportsYouPosts) {
         if (p.team_name !== team) continue;
         if (new Date(p.posted_at).getTime() < created) continue;
+        if (!isTeamCoachAuthor(p.author, team)) continue;
         if (!best || new Date(p.posted_at) > new Date(best.posted_at)) best = p;
       }
       return best;
