@@ -1512,7 +1512,7 @@ export default function App() {
   // Notifications need updates + questions loaded on every view (the bell is in the header).
   useEffect(() => { if (isApproved) { loadUpdates(); loadTeamQuestions(); } }, [isApproved, loadUpdates, loadTeamQuestions]);
   useEffect(() => { if (isApproved && (view === "home" || view === "teamdir" || view === "coaches")) loadPracticeApprovals(); }, [isApproved, view, loadPracticeApprovals]);
-  useEffect(() => { if (isApproved && (view === "home" || view === "requests")) loadCoachRequests(); }, [isApproved, view, loadCoachRequests]);
+  useEffect(() => { if (isApproved && (view === "home" || view === "requests" || view === "practice" || view === "coverage")) loadCoachRequests(); }, [isApproved, view, loadCoachRequests]);
   useEffect(() => { if (isApproved && view === "practice") loadCoachFloats(); }, [isApproved, view, loadCoachFloats]);
   useEffect(() => { if (isApproved && (view === "practice" || view === "home")) loadPracticeCoverage(); }, [isApproved, view, loadPracticeCoverage]);
   useEffect(() => { if (isApproved && view === "coverage") { loadPracticeCoverage(); loadPractice(); } }, [isApproved, view, loadPracticeCoverage, loadPractice]);
@@ -1822,12 +1822,15 @@ export default function App() {
     const rN = nrm(coachRaw), rFirst = rN.split(" ")[0];
     const coachMatches = (name) => { const nn = nrm(name); return nn === rN || nn.split(" ")[0] === rN || nn === rFirst || nn.split(" ")[0] === rFirst; };
 
-    const [fRes, cRes, ptRes] = await Promise.all([
+    const [fRes, cRes, ptRes, rRes] = await Promise.all([
       supabase.from("coach_floats").select("coach_name, day, slot, phase"),
-      supabase.from("practice_coverage").select("practice_date, team_name, slot, phase, sub_name").eq("practice_date", date),
+      supabase.from("practice_coverage").select("practice_date, team_name, slot, phase, sub_name, coach_out").eq("practice_date", date),
       supabase.from("practice_teams").select("team_name, head_coach, assistant_coach"),
+      supabase.from("coach_requests").select("coach_name, request_date, status").eq("request_date", date).eq("status", "approved"),
     ]);
-    const floats = fRes.data || [], cov = cRes.data || [], allTeams = ptRes.data || [];
+    const floats = fRes.data || [], cov = cRes.data || [], allTeams = ptRes.data || [], reqsToday = rRes.data || [];
+    // Coaches who can't float this date (they also called out / are marked out).
+    const outSet = new Set([...reqsToday.map(r => nrm(r.coach_name)), ...cov.map(c => nrm(c.coach_out))].filter(Boolean));
 
     // Which teams to cover: the one team (practice request) or EVERY team this
     // coach coaches (a weekend request has no team → they're out of all of them).
@@ -1854,7 +1857,7 @@ export default function App() {
       for (const slot of slots) {
         const alreadySubbed = new Set(cov.filter(c => c.slot === slot && (c.phase || "season") === phase && c.sub_name).map(c => (c.sub_name || "").trim().toLowerCase()));
         const candidates = [...new Set(floats.filter(f => (f.phase || "season") === phase && f.day === weekday && f.slot === slot).map(f => (f.coach_name || "").trim()).filter(Boolean))]
-          .filter(n => !coachMatches(n));
+          .filter(n => !coachMatches(n) && !outSet.has(nrm(n)));
         const floater = candidates.find(n => !alreadySubbed.has(n.toLowerCase()) && !usedInRun.has(n.toLowerCase() + "|" + slot)) || null;
         if (floater) { usedInRun.add(floater.toLowerCase() + "|" + slot); coveredBy.push(floater); }
         else anyNeedsCoverage = true;
@@ -3939,8 +3942,8 @@ export default function App() {
       <div onClick={()=>setRequestOffOpen(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:1000,display:"flex",justifyContent:"center",alignItems:"flex-start",padding:"40px 16px",overflowY:"auto"}}>
         <div onClick={e=>e.stopPropagation()} style={{background:C.card,borderRadius:16,border:"1px solid "+C.border,maxWidth:440,width:"100%",padding:24}}>
           <h2 style={{margin:"0 0 14px",fontSize:18,fontWeight:800,color:C.gold}}>Request Time Off</h2>
-          <div style={{display:"flex",gap:8,marginBottom:10}}>{tab("weekend","Weekend (tournaments)")}{tab("practice","Practice (coverage)")}</div>
-          <div style={{fontSize:11,color:C.mut,marginBottom:14,lineHeight:1.4}}>{f.type==="weekend" ? "Black out a weekend so you're not scheduled for tournaments that weekend." : "Request off a practice — it'll be flagged as needing coverage from another coach."}</div>
+          <div style={{display:"flex",gap:8,marginBottom:10}}>{tab("weekend","Can't work a weekend")}{tab("practice","One practice off")}</div>
+          <div style={{fontSize:11,color:C.mut,marginBottom:14,lineHeight:1.5}}>{f.type==="weekend" ? "You'll be out for that whole weekend — no tournaments, no practices, and not available to float/cover for anyone. Any practice you'd normally coach gets flagged for a sub automatically." : "Request off a single practice for one of your teams — it'll be flagged as needing coverage, and a floating coach is auto-assigned if one's free."}</div>
           <div style={{marginBottom:12}}>
             <span style={lbl}>{f.type==="weekend" ? "Weekend date" : "Practice date"}</span>
             <input type="date" value={f.date} onChange={e=>set({date:e.target.value})} style={{...inpStyle,width:"100%",padding:"8px 10px",fontSize:13,colorScheme:"dark"}} />
@@ -7082,9 +7085,17 @@ export default function App() {
       const daySlots = (daySLOTS[weekday] || []);
       const teamsFor = (label) => dayAssignments.filter(a => a.day === weekday && a.slot === label)
         .slice().sort((a,b) => ((a.court ?? 99) - (b.court ?? 99)) || a.team_name.localeCompare(b.team_name));
+      const nrmName = s => (s || "").trim().toLowerCase();
+      // A coach who called out (approved request) or is already marked out this
+      // date can't be a floater today — drop them from the floater pool.
+      const outTodaySet = new Set([
+        ...coachRequests.filter(r => r.status === "approved" && r.request_date === dailyDate).map(r => nrmName(r.coach_name)),
+        ...practiceCoverage.filter(c => c.practice_date === dailyDate).map(c => nrmName(c.coach_out)),
+      ].filter(Boolean));
       const floatersFor = (label) => [...new Set(coachFloats
         .filter(f => (f.phase || "season") === dayPhase && f.day === weekday && f.slot === label)
-        .map(f => (f.coach_name || "").trim()).filter(Boolean))];
+        .map(f => (f.coach_name || "").trim()).filter(Boolean))]
+        .filter(name => !outTodaySet.has(nrmName(name)));
       const covFor = (team, label, coachName) => practiceCoverage.find(c =>
         c.practice_date === dailyDate && c.team_name === team && c.slot === label &&
         (c.phase || "season") === dayPhase && c.coach_out === coachName);
