@@ -98,7 +98,20 @@ export default async function handler(req, res) {
     ev.push(lines.join("\r\n"));
   };
 
-  const locFor = (a) => (a.court === 5 && (a.phase || "season") === "summer") ? "DSSC Flex" : "DSSC";
+  // Venue + court in the LOCATION so it lands on the SportsYou calendar map.
+  // Summer: courts 1-4 at the Warehouse, court 5 at the Flex building.
+  // Fall 1 / Fall 2 / Regular Season / Post Season: all at the Warehouse.
+  const WAREHOUSE = "Dripping Springs Sports Club — Warehouse";
+  const FLEX      = "Dripping Springs Sports Club — Flex";
+  const WAREHOUSE_ADDR = "15113 Fitzhugh Rd, Suite 1400, Dripping Springs, TX";
+  const FLEX_ADDR      = "13673 Fitzhugh Rd, Suite 200, Dripping Springs, TX";
+  const courtLabel = (c) => (c != null && c !== "") ? ("Court " + c) : "";
+  const locFor = (a) => {
+    const flex = (a.phase || "season") === "summer" && Number(a.court) === 5;
+    const cl = courtLabel(a.court);
+    return (flex ? FLEX : WAREHOUSE) + (cl ? ", " + cl : "") + ", " + (flex ? FLEX_ADDR : WAREHOUSE_ADDR);
+  };
+  const WAREHOUSE_LOC = WAREHOUSE + ", " + WAREHOUSE_ADDR; // S&A / orientation (no court)
   // Dated Sundays: summer / fall1 / fall2
   const datedPhases = [["summer", SUMMER_SUNDAYS], ["fall1", FALL1_SUNDAYS], ["fall2", FALL2_SUNDAYS]];
   for (const [phase, dates] of datedPhases) {
@@ -113,7 +126,7 @@ export default async function handler(req, res) {
   // Fall Speed & Agility (already dated rows)
   for (const s of (Array.isArray(saRows) ? saRows : [])) {
     const t = slotTimes(s.slot); if (!t || !s.session_date || cancelled.has(s.session_date)) continue;
-    push(`${team}-sa-${s.session_date}-${s.slot}`.replace(/\s+/g, "_"), team + " Speed & Agility", s.session_date, t[0], t[1], { location: "DSSC" });
+    push(`${team}-sa-${s.session_date}-${s.slot}`.replace(/\s+/g, "_"), team + " Speed & Agility", s.session_date, t[0], t[1], { location: WAREHOUSE_LOC });
   }
   // Weekly: regular season + post season
   const weekly = [["season", SEASON_START, SEASON_END], ["postseason", POST_START, POST_END]];
@@ -124,7 +137,7 @@ export default async function handler(req, res) {
       const first = firstOnOrAfter(start, dow);
       if (first > end) continue;
       const exdates = datesBetween(start, end, dow).filter(d => cancelled.has(d));
-      push(`${team}-${phase}-${a.day}-${a.slot}`.replace(/\s+/g, "_"), team + " Practice", first, t[0], t[1], { location: "DSSC", rruleUntil: end, exdates });
+      push(`${team}-${phase}-${a.day}-${a.slot}`.replace(/\s+/g, "_"), team + " Practice", first, t[0], t[1], { location: locFor(a), rruleUntil: end, exdates });
     }
   }
   // Orientation Night (all-day)
@@ -135,7 +148,7 @@ export default async function handler(req, res) {
       "DTSTART;VALUE=DATE:" + d.replace(/-/g, ""),
       "SUMMARY:" + icsEsc("DS Elite Orientation Night — " + team),
       "DESCRIPTION:" + icsEsc("Jersey tryout, parent orientation, player commitment, and team building. First hour with parents; remaining three hours are team-only."),
-      "LOCATION:DSSC", "END:VEVENT"].join("\r\n"));
+      "LOCATION:" + icsEsc(WAREHOUSE_LOC), "END:VEVENT"].join("\r\n"));
   }
 
   const ics = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//DS Elite HQ//Practice Calendar//EN",
