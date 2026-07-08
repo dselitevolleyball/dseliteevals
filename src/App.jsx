@@ -763,21 +763,26 @@ const VB_COURT = [
 const VB_GRID = [3, 2, 1, 4, 5, 0];
 
 // Apply planned subs to a base (rotation-1) player id for a given rotation.
-function vbEffective(baseId, rotation, subs){
+// A sub's phase ("serve" | "receive" | "both") gates whether it applies to the
+// serve grid, the serve-receive grid, or both — so a libero/defensive sub can
+// show up only when receiving. phase=null means "ignore phase" (apply all).
+function vbEffective(baseId, rotation, subs, phase){
   let id = baseId;
   for(const s of (subs||[])){
     const from = s.fromRotation==null ? 0 : s.fromRotation;
     const thru = s.thruRotation==null ? 5 : s.thruRotation;
-    if(s.outId===id && s.inId && rotation>=from && rotation<=thru) id = s.inId;
+    const ph = s.phase || "both";
+    const phaseOk = !phase || ph==="both" || ph===phase;
+    if(phaseOk && s.outId===id && s.inId && rotation>=from && rotation<=thru) id = s.inId;
   }
   return id;
 }
 
 // The 6 court slots for one rotation (0..5). → [{n,row,slot,label,i,baseId,id}]
-function vbRotation(lineup, rotation, subs){
+function vbRotation(lineup, rotation, subs, phase){
   return VB_COURT.map((m,i)=>{
     const baseId = (lineup||[])[(i+rotation)%6] || null;
-    return { ...m, i, baseId, id: vbEffective(baseId, rotation, subs) };
+    return { ...m, i, baseId, id: vbEffective(baseId, rotation, subs, phase) };
   });
 }
 
@@ -809,8 +814,12 @@ function vbPlayingTime(sets){
     for(let r=0;r<6;r++){
       totalRot++;
       const seen = new Set();
-      vbRotation(set.lineup, r, set.subs).forEach(s=>{
-        if(s.id && !seen.has(s.id)){ seen.add(s.id); tally[s.id]=(tally[s.id]||0)+1; }
+      // A player counts for the rotation if on court in either phase (serve or
+      // receive), so libero/defensive subs still register as playing time.
+      ["serve","receive"].forEach(ph => {
+        vbRotation(set.lineup, r, set.subs, ph).forEach(s=>{
+          if(s.id && !seen.has(s.id)){ seen.add(s.id); tally[s.id]=(tally[s.id]||0)+1; }
+        });
       });
     }
   });
@@ -9653,6 +9662,12 @@ export default function App() {
               const src = draft.sets.find(o=>o.name===name && o.id!==set.id);
               if(src) updateDraft(d => { const t=d.sets[setIdx]; t.lineup=[...src.lineup]; t.setters=[...src.setters]; t.liberoId=src.liberoId; t.passers=[...src.passers]; t.subs=JSON.parse(JSON.stringify(src.subs||[])); });
             }}>Copy from set…</button>
+            {draft.sets.length < 5 && <button style={S.gold} title="Create a new set that copies this set's lineup, roles and subs — then tweak it for the next set" onClick={() => {
+              const copy = { ...JSON.parse(JSON.stringify(set)), id: rid("s"), name: "Set " + (draft.sets.length+1) };
+              const newIdx = draft.sets.length;
+              updateDraft(d => { d.sets.push(copy); });
+              setLineupSetIdx(newIdx);
+            }}>Duplicate set →</button>}
           </div>
 
           {/* Starting lineup — 6 court positions */}
@@ -9709,66 +9724,61 @@ export default function App() {
                 <select value={sub.fromRotation??0} onChange={e => updateDraft(d => { d.sets[setIdx].subs[si].fromRotation = +e.target.value; })} style={S.sel}>{[0,1,2,3,4,5].map(r=><option key={r} value={r}>R{r+1}</option>)}</select>
                 <span>to</span>
                 <select value={sub.thruRotation??5} onChange={e => updateDraft(d => { d.sets[setIdx].subs[si].thruRotation = +e.target.value; })} style={S.sel}>{[0,1,2,3,4,5].map(r=><option key={r} value={r}>R{r+1}</option>)}</select>
+                <select value={sub.phase||"both"} onChange={e => updateDraft(d => { d.sets[setIdx].subs[si].phase = e.target.value; })} style={S.sel} title="Which grid this sub affects"><option value="both">both</option><option value="serve">serve</option><option value="receive">receive</option></select>
                 <button style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:14}} onClick={() => updateDraft(d => { d.sets[setIdx].subs.splice(si,1); })}>✕</button>
               </div>
             ))}
-            <button style={{...S.ghost,alignSelf:"flex-start"}} onClick={() => updateDraft(d => { d.sets[setIdx].subs.push({ inId:null, outId:null, fromRotation:0, thruRotation:5 }); })}>+ Sub</button>
+            <button style={{...S.ghost,alignSelf:"flex-start"}} onClick={() => updateDraft(d => { d.sets[setIdx].subs.push({ inId:null, outId:null, fromRotation:0, thruRotation:5, phase:"both" }); })}>+ Sub</button>
           </div>
         </div>
 
         {/* Rotations */}
         <div style={S.card}>
-          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10,flexWrap:"wrap"}}>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:6,flexWrap:"wrap"}}>
             <div style={S.lbl}>The 6 rotations — {set.name}</div>
             <div style={{flex:1}} />
-            <div style={{display:"flex",borderRadius:8,overflow:"hidden",border:"1px solid "+C.border}}>
-              {["serve","receive"].map(ph => (
-                <button key={ph} onClick={() => setLineupPhase(ph)} style={{padding:"5px 14px",border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700,background:lineupPhase===ph?C.gold:"transparent",color:lineupPhase===ph?"#000":C.mut}}>{ph==="serve"?"We serve":"We receive"}</button>
-              ))}
-            </div>
+            <span style={{fontSize:10,color:C.mut}}>Tap any player to sub · <span style={{color:C.grn,fontWeight:800}}>green</span> = subbed in</span>
           </div>
           {!lineupFilled ? (
             <div style={{fontSize:12,color:C.mut,padding:"6px 0"}}>Fill all 6 court positions above to see the rotations.</div>
           ) : (() => {
-            const rots = [0,1,2,3,4,5].map(r => {
-              const slots = vbRotation(set.lineup, r, set.subs);
-              const info = vbSetterInfo(slots, set.setters);
-              const byIndex = {}; slots.forEach(s => { byIndex[s.i] = s; });
-              return { r, slots, byIndex, setterBack: info.setterBack, setterFront: info.setterFront };
-            });
             const passers = new Set(set.passers||[]);
             const liberoId = set.liberoId;
             const frontIdx = [3,2,1], backIdx = [4,5,0]; // court indexes for front row (4·3·2) and back (5·6·1)
-            const cell = (slot, ro, edge) => {
-              const isServer = lineupPhase==="serve" && slot.n===1;
+            const hd = { border:"1px solid "+C.border, borderRight:"2px solid #3a3a3a", padding:"2px 3px", background:"rgba(255,255,255,0.03)", textAlign:"center" };
+            const rlbl = { border:"1px solid "+C.border, fontSize:8, fontWeight:800, color:C.mut, textTransform:"uppercase", letterSpacing:0.3, padding:"2px 4px", textAlign:"center", background:"rgba(255,255,255,0.02)", width:42 };
+            const cell = (slot, ro, edge, phase) => {
+              const isServer = phase==="serve" && slot.n===1;
               const isSetB = slot.id && slot.id===ro.setterBack;
               const isSetF = slot.id && slot.id===ro.setterFront;
-              const isPass = lineupPhase==="receive" && slot.id && passers.has(slot.id);
+              const isPass = phase==="receive" && slot.id && passers.has(slot.id);
               const isLib = slot.id && slot.id===liberoId;
-              const bg = isServer ? "rgba(245,158,11,0.30)"
-                       : isPass ? "rgba(34,197,94,0.22)"
+              const isSubbed = slot.id && slot.baseId && slot.id!==slot.baseId; // came in via a sub
+              const bg = isSubbed ? "rgba(34,197,94,0.34)"
+                       : isServer ? "rgba(245,158,11,0.30)"
                        : isSetB ? "rgba(6,182,212,0.18)"
                        : slot.row==="front" ? "rgba(233,30,140,0.07)" : "transparent";
-              const isSubbed = slot.id && slot.baseId && slot.id !== slot.baseId; // came in via a sub
-              const isSel = lineupSubSel && lineupSubSel.setId===set.id && lineupSubSel.r===ro.r && lineupSubSel.i===slot.i;
+              const isSel = lineupSubSel && lineupSubSel.setId===set.id && lineupSubSel.r===ro.r && lineupSubSel.i===slot.i && lineupSubSel.phase===phase;
               return (
-                <td key={slot.n} title={slot.id ? (pname(slot.id)+" · "+slot.label+" — click to sub") : ("empty · "+slot.label)}
-                  onClick={slot.id ? () => setLineupSubSel(sel => (sel && sel.setId===set.id && sel.r===ro.r && sel.i===slot.i) ? null : { setId:set.id, r:ro.r, i:slot.i, outId:slot.id, courtN:slot.n, label:slot.label, inId:"", scope:"rest" }) : undefined}
+                <td key={slot.n} title={slot.id ? (pname(slot.id)+(isSubbed?" (sub)":"")+" · "+slot.label+" — click to sub") : ("empty · "+slot.label)}
+                  onClick={slot.id ? () => setLineupSubSel(sel => (sel && sel.setId===set.id && sel.r===ro.r && sel.i===slot.i && sel.phase===phase) ? null : { setId:set.id, r:ro.r, i:slot.i, outId:slot.id, courtN:slot.n, label:slot.label, inId:"", scope:"rest", phase, applyPhase:"both" }) : undefined}
                   style={{border:"1px solid "+C.border,borderRight:edge?"2px solid #3a3a3a":"1px solid "+C.border,outline:isSel?"2px solid "+C.gold:"none",outlineOffset:-2,background:bg,padding:"3px 2px",textAlign:"center",height:32,verticalAlign:"middle",overflow:"hidden",cursor:slot.id?"pointer":"default"}}>
-                  <span style={{fontSize:11,lineHeight:1.1,color:isServer?"#fde68a":isLib?"#06b6d4":C.text,fontWeight:(isSetB||isServer)?800:600,textDecoration:isLib?"underline":"none",whiteSpace:"nowrap"}}>{slot.id?pfirst(slot.id):"—"}</span>
+                  <span style={{fontSize:11,lineHeight:1.1,color:isServer?"#fde68a":isSubbed?"#bbf7d0":isLib?"#06b6d4":C.text,fontWeight:(isSetB||isServer||isSubbed)?800:600,textDecoration:isLib?"underline":"none",whiteSpace:"nowrap"}}>{slot.id?pfirst(slot.id):"—"}</span>
                   {isSetB && <span style={{fontSize:7,color:"#06b6d4",fontWeight:800,marginLeft:2,verticalAlign:"super"}}>S</span>}
                   {isSetF && <span style={{fontSize:7,color:"#f59e0b",fontWeight:800,marginLeft:2,verticalAlign:"super"}}>rs</span>}
-                  {isSubbed && <span title="Substitute in this rotation" style={{fontSize:7,color:C.grn,fontWeight:800,marginLeft:2,verticalAlign:"super"}}>▲</span>}
+                  {isPass && <span title="Passer (serve-receive)" style={{fontSize:9,color:C.grn,fontWeight:800,marginLeft:2}}>•</span>}
+                  {isSubbed && <span title="Substitute" style={{fontSize:7,color:"#22c55e",fontWeight:800,marginLeft:2,verticalAlign:"super"}}>in</span>}
                 </td>
               );
             };
-            const hd = { border:"1px solid "+C.border, borderRight:"2px solid #3a3a3a", padding:"2px 3px", background:"rgba(255,255,255,0.03)", textAlign:"center" };
-            const rlbl = { border:"1px solid "+C.border, fontSize:8, fontWeight:800, color:C.mut, textTransform:"uppercase", letterSpacing:0.3, padding:"2px 4px", textAlign:"center", background:"rgba(255,255,255,0.02)", width:42 };
-            // Roster positions legend (starting six + libero), like the spreadsheet's side list.
-            const legendIds = [...(set.lineup||[]).filter(Boolean)];
-            if (liberoId && !legendIds.includes(liberoId)) legendIds.push(liberoId);
-            return (
-              <div>
+            const renderGrid = (phase) => {
+              const rots = [0,1,2,3,4,5].map(r => {
+                const slots = vbRotation(set.lineup, r, set.subs, phase);
+                const info = vbSetterInfo(slots, set.setters);
+                const byIndex = {}; slots.forEach(s => { byIndex[s.i] = s; });
+                return { r, slots, byIndex, setterBack: info.setterBack, setterFront: info.setterFront };
+              });
+              return (
                 <div style={{overflowX:"auto"}}>
                   <table style={{borderCollapse:"collapse",width:"100%",minWidth:720,tableLayout:"fixed"}}>
                     <colgroup><col style={{width:42}} />{rots.map(ro => <col key={ro.r} span={3} />)}</colgroup>
@@ -9786,22 +9796,35 @@ export default function App() {
                     <tbody>
                       <tr>
                         <td style={rlbl} title="Front row (net side)">Front<br/>▲net</td>
-                        {rots.map(ro => frontIdx.map((gi,ci) => cell(ro.byIndex[gi], ro, ci===2)))}
+                        {rots.map(ro => frontIdx.map((gi,ci) => cell(ro.byIndex[gi], ro, ci===2, phase)))}
                       </tr>
                       <tr>
                         <td style={rlbl} title="Back row">Back</td>
-                        {rots.map(ro => backIdx.map((gi,ci) => cell(ro.byIndex[gi], ro, ci===2)))}
+                        {rots.map(ro => backIdx.map((gi,ci) => cell(ro.byIndex[gi], ro, ci===2, phase)))}
                       </tr>
                     </tbody>
                   </table>
                 </div>
+              );
+            };
+            // Roster positions legend (starting six + libero), like the spreadsheet's side list.
+            const legendIds = [...(set.lineup||[]).filter(Boolean)];
+            if (liberoId && !legendIds.includes(liberoId)) legendIds.push(liberoId);
+            const phaseHead = (txt, sub) => <div style={{display:"flex",alignItems:"baseline",gap:8,margin:"4px 0 5px"}}><span style={{fontSize:12,fontWeight:800,color:C.text}}>{txt}</span><span style={{fontSize:10,color:C.mut}}>{sub}</span></div>;
+            return (
+              <div>
+                {phaseHead("When we serve","server in amber · who sets each rotation up top")}
+                {renderGrid("serve")}
+                {phaseHead("When we receive","passers marked • · libero / defensive subs show green")}
+                {renderGrid("receive")}
                 {/* Legend row: colors + roster positions */}
                 <div style={{display:"flex",gap:14,flexWrap:"wrap",alignItems:"center",marginTop:8,fontSize:10,color:C.mut}}>
                   <span><span style={{display:"inline-block",width:9,height:9,background:"rgba(245,158,11,0.5)",borderRadius:2,marginRight:3,verticalAlign:"middle"}} />server</span>
+                  <span><span style={{display:"inline-block",width:9,height:9,background:"rgba(34,197,94,0.6)",borderRadius:2,marginRight:3,verticalAlign:"middle"}} />subbed in</span>
                   <span><span style={{color:"#06b6d4",fontWeight:800}}>ˢ</span> back-row setter (sets)</span>
                   <span><span style={{color:"#f59e0b",fontWeight:800}}>rs</span> front setter → right side</span>
                   <span><span style={{color:"#06b6d4",textDecoration:"underline",fontWeight:700}}>libero</span></span>
-                  <span><span style={{display:"inline-block",width:9,height:9,background:"rgba(34,197,94,0.4)",borderRadius:2,marginRight:3,verticalAlign:"middle"}} />passer (receive)</span>
+                  <span><span style={{color:C.grn,fontWeight:800}}>•</span> passer (on receive)</span>
                 </div>
                 {legendIds.length>0 && (
                   <div style={{display:"flex",gap:10,flexWrap:"wrap",marginTop:6,fontSize:11}}>
@@ -9813,19 +9836,21 @@ export default function App() {
                 {/* Click-to-sub panel — appears when a grid cell is tapped */}
                 {lineupSubSel && lineupSubSel.setId===set.id && (() => {
                   const sel = lineupSubSel;
-                  const onCourt = new Set(vbRotation(set.lineup, sel.r, set.subs).map(s=>s.id).filter(Boolean));
+                  const aPhase = sel.applyPhase || "both";
+                  const onCourt = new Set(vbRotation(set.lineup, sel.r, set.subs, aPhase==="both"?null:aPhase).map(s=>s.id).filter(Boolean));
                   const bench = roster.filter(p => !onCourt.has(p.id));
                   const related = (set.subs||[]).map((s,idx)=>({s,idx})).filter(({s}) => s.outId===sel.outId || s.inId===sel.outId);
+                  const phaseWord = { both:"whole rotation", serve:"serve only", receive:"receive only" };
                   const applySub = () => {
                     if(!sel.inId){ window.alert("Choose a player to bring in."); return; }
-                    updateDraft(d => { d.sets[setIdx].subs.push({ inId: sel.inId, outId: sel.outId, fromRotation: sel.r, thruRotation: sel.scope==="one" ? sel.r : 5 }); });
+                    updateDraft(d => { d.sets[setIdx].subs.push({ inId: sel.inId, outId: sel.outId, fromRotation: sel.r, thruRotation: sel.scope==="one" ? sel.r : 5, phase: aPhase }); });
                     setLineupSubSel(null);
                   };
                   return (
                     <div style={{marginTop:12,border:"1px solid "+C.gold,borderRadius:10,padding:"10px 12px",background:"rgba(233,30,140,0.06)"}}>
                       <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,flexWrap:"wrap"}}>
                         <span style={{fontSize:12,fontWeight:800,color:C.gold}}>Sub at R{sel.r+1}</span>
-                        <span style={{fontSize:11,color:C.mut}}>{sel.label}</span>
+                        <span style={{fontSize:11,color:C.mut}}>{sel.label} · tapped {sel.phase==="receive"?"receive":"serve"} grid</span>
                         <span style={{fontSize:13,fontWeight:700,color:C.text}}>{plabel(sel.outId)} out</span>
                         <div style={{flex:1}} />
                         <button style={{background:"none",border:"none",color:C.mut,cursor:"pointer",fontSize:15}} title="Close" onClick={()=>setLineupSubSel(null)}>✕</button>
@@ -9840,6 +9865,11 @@ export default function App() {
                           <option value="rest">R{sel.r+1} → end of set</option>
                           <option value="one">R{sel.r+1} only</option>
                         </select>
+                        <select value={aPhase} onChange={e=>setLineupSubSel(s=>({...s,applyPhase:e.target.value}))} style={S.sel} title="Apply this sub to the serve grid, the receive grid, or both">
+                          <option value="both">whole rotation</option>
+                          <option value="serve">serve only</option>
+                          <option value="receive">receive only</option>
+                        </select>
                         <button style={S.gold} onClick={applySub}>Sub in</button>
                       </div>
                       {bench.length===0 && <div style={{fontSize:11,color:"#f59e0b",marginTop:6}}>Everyone on the roster is already on court this rotation — add more players to the roster to have subs available.</div>}
@@ -9849,7 +9879,7 @@ export default function App() {
                           {related.map(({s,idx}) => (
                             <div key={idx} style={{display:"flex",alignItems:"center",gap:6,fontSize:11,color:C.text,marginBottom:2}}>
                               <span style={{color:C.grn,fontWeight:700}}>{pfirst(s.inId)}</span><span style={{color:C.mut}}>in for</span><span style={{fontWeight:600}}>{pfirst(s.outId)}</span>
-                              <span style={{color:C.mut}}>· R{(s.fromRotation==null?0:s.fromRotation)+1}–R{(s.thruRotation==null?5:s.thruRotation)+1}</span>
+                              <span style={{color:C.mut}}>· R{(s.fromRotation==null?0:s.fromRotation)+1}–R{(s.thruRotation==null?5:s.thruRotation)+1} · {phaseWord[s.phase||"both"]}</span>
                               <button style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:12}} title="Remove this sub" onClick={()=>updateDraft(d=>{ d.sets[setIdx].subs.splice(idx,1); })}>✕</button>
                             </div>
                           ))}
