@@ -1592,7 +1592,7 @@ export default function App() {
     if (error) { console.error("Load lineup_plans error:", error); return; }
     setLineupPlans(data || []);
   }, []);
-  useEffect(() => { if (isApproved && view === "lineups") { loadLineupPlans(); loadPractice(); } }, [isApproved, view, loadLineupPlans, loadPractice]);
+  useEffect(() => { if (isApproved && view === "lineups") { loadLineupPlans(); loadPractice(); loadPlayers(); } }, [isApproved, view, loadLineupPlans, loadPractice, loadPlayers]);
   // Autosave the active lineup draft (debounced) → lineup_plans. lineupSkipSave
   // suppresses the write that would otherwise fire right after loading a plan.
   const lineupSkipSave = useRef(true);
@@ -9415,8 +9415,38 @@ export default function App() {
     const draft = lineupDraft;
 
     const defaultSet = (n=1) => ({ id: rid("s"), name: "Set " + n, lineup: [null,null,null,null,null,null], setters: [], liberoId: null, passers: [], subs: [] });
+    // Pull a team's existing roster (players.team_assignment) into lineup-roster
+    // entries. Maps the app's position codes (MB) to the planner's (M) and keeps
+    // a link back to the source player (pid) so we can re-sync later.
+    const POS_FROM_APP = { S:"S", OH:"OH", MB:"M", M:"M", RS:"RS", L:"L", DS:"DS", U:"" };
+    const teamRosterFor = (tn) => players
+      .filter(p => p.team_assignment === tn)
+      .slice()
+      .sort((a,b) => (a.last_name||"").localeCompare(b.last_name||"") || (a.first_name||"").localeCompare(b.first_name||""))
+      .map(p => ({
+        id: rid("p"),
+        pid: p.id,
+        num: (p.tryout_number == null ? "" : String(p.tryout_number)).replace(/\D/g,"").slice(0,2),
+        name: ((p.first_name||"") + " " + (p.last_name||"")).trim(),
+        pos: POS_FROM_APP[((p.positions||[])[0] || "").toUpperCase()] || "",
+      }));
+    // Merge team players into an existing roster: add anyone not already present
+    // (matched by source player id, else by name). Returns count added.
+    const mergeTeamRoster = (tn) => {
+      let added = 0;
+      updateDraft(d => {
+        const havePid = new Set(d.roster.map(r => r.pid).filter(Boolean));
+        const haveName = new Set(d.roster.map(r => (r.name||"").trim().toLowerCase()));
+        teamRosterFor(tn).forEach(r => {
+          if ((r.pid && havePid.has(r.pid)) || haveName.has((r.name||"").trim().toLowerCase())) return;
+          d.roster.push(r); added++;
+        });
+      });
+      return added;
+    };
     const openPlan = (plan) => {
       lineupSkipSave.current = true;
+      if (plan.team_name) setLineupTeam(plan.team_name);
       setLineupPlanId(plan.id);
       setLineupDraft({
         title: plan.title || "Untitled plan",
@@ -9430,7 +9460,7 @@ export default function App() {
     };
     const newPlan = async () => {
       if (!team) { window.alert("Pick a team first."); return; }
-      const row = { team_name: team, title: "New plan", data: { roster: [], sets: [defaultSet()] }, updated_by: coach?.display_name || coach?.email || null };
+      const row = { team_name: team, title: "New plan", data: { roster: teamRosterFor(team), sets: [defaultSet()] }, updated_by: coach?.display_name || coach?.email || null };
       const { data, error } = await supabase.from("lineup_plans").insert(row).select().single();
       if (error) { console.error(error); window.alert("Couldn't create plan: " + error.message); return; }
       setLineupPlans(prev => [data, ...prev]);
@@ -9510,6 +9540,7 @@ export default function App() {
 
     // ── Plan open: full editor ────────────────────────────────────────────
     const roster = draft.roster || [];
+    const teamPlayerCount = players.filter(p => p.team_assignment === team).length;
     const byId = Object.fromEntries(roster.map(p => [p.id, p]));
     const pnum = id => (byId[id] && byId[id].num) || "";
     const pname = id => { const p = byId[id]; return p ? (p.name || ("#" + (p.num || "?"))) : "—"; };
@@ -9596,12 +9627,13 @@ export default function App() {
 
         {/* Roster */}
         <div style={S.card}>
-          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8,flexWrap:"wrap"}}>
             <div style={S.lbl}>Roster ({roster.length})</div>
             <div style={{flex:1}} />
+            {teamPlayerCount > 0 && <button style={S.ghost} title={"Add " + team + "'s players (from the team roster) that aren't already here"} onClick={() => { const n = mergeTeamRoster(team); window.alert(n ? "Added " + n + " player" + (n===1?"":"s") + " from " + team + "." : "Everyone on " + team + "'s roster is already here."); }}>⬇ {team} roster ({teamPlayerCount})</button>}
             <button style={S.ghost} onClick={addPlayer}>+ Player</button>
           </div>
-          {roster.length === 0 && <div style={{fontSize:12,color:C.mut,marginBottom:8}}>Add players below, or paste a roster (one per line, e.g. <code>24 Hattie M</code>).</div>}
+          {roster.length === 0 && <div style={{fontSize:12,color:C.mut,marginBottom:8}}>{teamPlayerCount > 0 ? <>Pull <b>{team}</b>'s {teamPlayerCount} players with <b>⬇ {team} roster</b> above, add them one at a time, or paste a list.</> : <>Add players below, or paste a roster (one per line, e.g. <code>24 Hattie M</code>).</>}</div>}
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:8,marginBottom:10}}>
             {roster.map(p => (
               <div key={p.id} style={{display:"flex",alignItems:"center",gap:5,background:C.bg,border:"1px solid "+C.border,borderRadius:8,padding:"5px 7px"}}>
