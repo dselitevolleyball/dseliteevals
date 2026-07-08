@@ -7090,7 +7090,7 @@ export default function App() {
       Sun: SEASON_SUN.map(label => ({ label, capacity: 6 })),
       Mon: [
         { label:"5-7pm",       capacity:2 },
-        { label:"7-9pm",       capacity:2 },
+        { label:"7-9pm",       capacity:3 },
       ],
       Tue: [
         { label:"5-7pm",       capacity:4 },
