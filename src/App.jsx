@@ -778,12 +778,42 @@ function vbEffective(baseId, rotation, subs, phase){
   return id;
 }
 
+// Build the libero/middle-switch config for a set (or null if not set up).
+// In this system the libero covers whichever of the two middles is in the back
+// row; one middle serves for itself, and the libero serves in the OTHER
+// middle's serve rotation (servesFor). The non-serving-covered middle is the
+// "servingMiddle".
+function vbLiberoConf(set){
+  if(!set || !set.autoLibero || !set.liberoId) return null;
+  const mids = (set.middles||[]).filter(Boolean);
+  if(mids.length!==2) return null;
+  const servesFor = (set.liberoServesFor && mids.includes(set.liberoServesFor)) ? set.liberoServesFor : mids[1];
+  const servingMiddle = mids.find(m => m!==servesFor);
+  return { liberoId:set.liberoId, middleIds:new Set(mids), servesFor, servingMiddle };
+}
+
+// Swap the libero in for the back-row middle. The serving middle stays in on
+// serve at position 1 (they serve); everywhere else in the back row the libero
+// covers. Records libFor so the UI can show who the libero replaced.
+function vbApplyLibero(slots, phase, lib){
+  if(!lib) return slots;
+  let placed = false; // libero can only cover one middle per rotation
+  slots.forEach(s => {
+    if(!placed && s.id && lib.middleIds.has(s.id) && s.row==="back"){
+      const keepToServe = phase==="serve" && s.n===1 && s.id===lib.servingMiddle;
+      if(!keepToServe){ s.libFor = s.id; s.id = lib.liberoId; placed = true; }
+    }
+  });
+  return slots;
+}
+
 // The 6 court slots for one rotation (0..5). → [{n,row,slot,label,i,baseId,id}]
-function vbRotation(lineup, rotation, subs, phase){
-  return VB_COURT.map((m,i)=>{
+function vbRotation(lineup, rotation, subs, phase, lib){
+  const slots = VB_COURT.map((m,i)=>{
     const baseId = (lineup||[])[(i+rotation)%6] || null;
     return { ...m, i, baseId, id: vbEffective(baseId, rotation, subs, phase) };
   });
+  return lib ? vbApplyLibero(slots, phase, lib) : slots;
 }
 
 // 6-2: which setter is back-row (sets) vs front-row (plays RS) this rotation.
@@ -811,13 +841,14 @@ function vbPlayingTime(sets){
   const tally = {}; let totalRot = 0;
   (sets||[]).forEach(set=>{
     if((set.lineup||[]).filter(Boolean).length!==6) return;
+    const lib = vbLiberoConf(set);
     for(let r=0;r<6;r++){
       totalRot++;
       const seen = new Set();
       // A player counts for the rotation if on court in either phase (serve or
       // receive), so libero/defensive subs still register as playing time.
       ["serve","receive"].forEach(ph => {
-        vbRotation(set.lineup, r, set.subs, ph).forEach(s=>{
+        vbRotation(set.lineup, r, set.subs, ph, lib).forEach(s=>{
           if(s.id && !seen.has(s.id)){ seen.add(s.id); tally[s.id]=(tally[s.id]||0)+1; }
         });
       });
@@ -9692,15 +9723,18 @@ export default function App() {
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:6,marginBottom:8}}>
             {roster.map(p => {
               const isSetter = (set.setters||[]).includes(p.id);
+              const isMid = (set.middles||[]).includes(p.id);
               const isLib = set.liberoId === p.id;
               const isPass = (set.passers||[]).includes(p.id);
               const setterFull = (set.setters||[]).length >= 2 && !isSetter;
+              const midFull = (set.middles||[]).length >= 2 && !isMid;
               return (
                 <div key={p.id} style={{display:"flex",alignItems:"center",gap:6,background:C.bg,border:"1px solid "+C.border,borderRadius:8,padding:"4px 8px"}}>
                   <span style={{flex:1,fontSize:12,color:C.text,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{plabel(p.id)}</span>
-                  {[["S",isSetter,C.acc,setterFull],["L",isLib,"#06b6d4",false],["P",isPass,C.grn,false]].map(([lab,on,col,dis]) => (
-                    <button key={lab} disabled={dis} title={lab==="S"?"Setter":lab==="L"?"Libero":"Passer (serve-receive)"} onClick={() => updateDraft(d => {
+                  {[["M",isMid,"#a855f7",midFull],["S",isSetter,C.acc,setterFull],["L",isLib,"#06b6d4",false],["P",isPass,C.grn,false]].map(([lab,on,col,dis]) => (
+                    <button key={lab} disabled={dis} title={lab==="M"?"Middle (pick 2 for the libero switch)":lab==="S"?"Setter":lab==="L"?"Libero":"Passer (serve-receive)"} onClick={() => updateDraft(d => {
                       const t = d.sets[setIdx];
+                      if(lab==="M"){ t.middles = on ? (t.middles||[]).filter(x=>x!==p.id) : [...(t.middles||[]), p.id]; }
                       if(lab==="S"){ t.setters = on ? t.setters.filter(x=>x!==p.id) : [...t.setters, p.id]; }
                       if(lab==="L"){ t.liberoId = on ? null : p.id; }
                       if(lab==="P"){ t.passers = on ? t.passers.filter(x=>x!==p.id) : [...(t.passers||[]), p.id]; }
@@ -9710,7 +9744,32 @@ export default function App() {
               );
             })}
           </div>
-          <div style={{fontSize:10,color:C.mut,marginBottom:14}}><b style={{color:C.acc}}>S</b> setter (pick 2 for 6-2) · <b style={{color:"#06b6d4"}}>L</b> libero · <b style={{color:C.grn}}>P</b> passer (serve-receive)</div>
+          <div style={{fontSize:10,color:C.mut,marginBottom:10}}><b style={{color:"#a855f7"}}>M</b> middle (pick 2) · <b style={{color:C.acc}}>S</b> setter (pick 2 for 6-2) · <b style={{color:"#06b6d4"}}>L</b> libero · <b style={{color:C.grn}}>P</b> passer (serve-receive)</div>
+          {/* Libero / middle back-row switch */}
+          {(set.middles||[]).length===2 && set.liberoId && (() => {
+            const mids = set.middles;
+            const servesFor = (set.liberoServesFor && mids.includes(set.liberoServesFor)) ? set.liberoServesFor : mids[1];
+            const servingMid = mids.find(m => m!==servesFor);
+            return (
+              <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:14,padding:"8px 10px",borderRadius:8,border:"1px solid "+(set.autoLibero?"#a855f7":C.border),background:set.autoLibero?"rgba(168,85,247,0.08)":C.bg}}>
+                <label style={{display:"flex",alignItems:"center",gap:6,fontSize:12,fontWeight:700,color:C.text,cursor:"pointer"}}>
+                  <input type="checkbox" checked={!!set.autoLibero} onChange={e=>updateDraft(d=>{ const t=d.sets[setIdx]; t.autoLibero=e.target.checked; if(e.target.checked && !t.liberoServesFor) t.liberoServesFor=mids[1]; })} style={{width:15,height:15,accentColor:"#a855f7",cursor:"pointer"}} />
+                  Libero ⇄ middle switch
+                </label>
+                {set.autoLibero ? (
+                  <span style={{fontSize:12,color:C.mut,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                    {pfirst(set.liberoId)} covers the back-row middle · serves for
+                    <select value={servesFor} onChange={e=>updateDraft(d=>{ d.sets[setIdx].liberoServesFor=e.target.value; })} style={S.sel}>
+                      {mids.map(m => <option key={m} value={m}>{plabel(m)}</option>)}
+                    </select>
+                    <span style={{color:C.text}}>· {pfirst(servingMid)} serves</span>
+                  </span>
+                ) : (
+                  <span style={{fontSize:11,color:C.mut}}>Turn on to auto-sub {pfirst(set.liberoId)} in for whichever middle is in the back row.</span>
+                )}
+              </div>
+            );
+          })()}
 
           {/* Subs */}
           <div style={S.lbl}>Planned subs</div>
@@ -9744,6 +9803,7 @@ export default function App() {
           ) : (() => {
             const passers = new Set(set.passers||[]);
             const liberoId = set.liberoId;
+            const lib = vbLiberoConf(set); // libero/middle back-row switch, or null
             const frontIdx = [3,2,1], backIdx = [4,5,0]; // court indexes for front row (4·3·2) and back (5·6·1)
             const hd = { border:"1px solid "+C.border, borderRight:"2px solid #3a3a3a", padding:"2px 3px", background:"rgba(255,255,255,0.03)", textAlign:"center" };
             const rlbl = { border:"1px solid "+C.border, fontSize:8, fontWeight:800, color:C.mut, textTransform:"uppercase", letterSpacing:0.3, padding:"2px 4px", textAlign:"center", background:"rgba(255,255,255,0.02)", width:42 };
@@ -9753,27 +9813,33 @@ export default function App() {
               const isSetF = slot.id && slot.id===ro.setterFront;
               const isPass = phase==="receive" && slot.id && passers.has(slot.id);
               const isLib = slot.id && slot.id===liberoId;
+              const isMid = lib && slot.id && lib.middleIds.has(slot.id); // a middle, on as themselves
               const isSubbed = slot.id && slot.baseId && slot.id!==slot.baseId; // came in via a sub
-              const bg = isSubbed ? "rgba(34,197,94,0.34)"
+              const bg = isLib ? "rgba(6,182,212,0.22)"
+                       : isSubbed ? "rgba(34,197,94,0.34)"
                        : isServer ? "rgba(245,158,11,0.30)"
+                       : isMid ? "rgba(168,85,247,0.16)"
                        : isSetB ? "rgba(6,182,212,0.18)"
                        : slot.row==="front" ? "rgba(233,30,140,0.07)" : "transparent";
               const isSel = lineupSubSel && lineupSubSel.setId===set.id && lineupSubSel.r===ro.r && lineupSubSel.i===slot.i && lineupSubSel.phase===phase;
+              const tip = slot.id ? (pname(slot.id)+(slot.libFor?(" (libero for "+pname(slot.libFor)+")"):isSubbed?" (sub)":isMid?" (middle)":"")+" · "+slot.label+" — click to sub") : ("empty · "+slot.label);
               return (
-                <td key={slot.n} title={slot.id ? (pname(slot.id)+(isSubbed?" (sub)":"")+" · "+slot.label+" — click to sub") : ("empty · "+slot.label)}
+                <td key={slot.n} title={tip}
                   onClick={slot.id ? () => setLineupSubSel(sel => (sel && sel.setId===set.id && sel.r===ro.r && sel.i===slot.i && sel.phase===phase) ? null : { setId:set.id, r:ro.r, i:slot.i, outId:slot.id, courtN:slot.n, label:slot.label, inId:"", scope:"rest", phase, applyPhase:"both" }) : undefined}
                   style={{border:"1px solid "+C.border,borderRight:edge?"2px solid #3a3a3a":"1px solid "+C.border,outline:isSel?"2px solid "+C.gold:"none",outlineOffset:-2,background:bg,padding:"3px 2px",textAlign:"center",height:32,verticalAlign:"middle",overflow:"hidden",cursor:slot.id?"pointer":"default"}}>
-                  <span style={{fontSize:11,lineHeight:1.1,color:isServer?"#fde68a":isSubbed?"#bbf7d0":isLib?"#06b6d4":C.text,fontWeight:(isSetB||isServer||isSubbed)?800:600,textDecoration:isLib?"underline":"none",whiteSpace:"nowrap"}}>{slot.id?pfirst(slot.id):"—"}</span>
+                  <span style={{fontSize:11,lineHeight:1.1,color:isServer?"#fde68a":isLib?"#67e8f9":isMid?"#e9d5ff":C.text,fontWeight:(isSetB||isServer||isSubbed||isMid)?800:600,textDecoration:isLib?"underline":"none",whiteSpace:"nowrap"}}>{slot.id?pfirst(slot.id):"—"}</span>
                   {isSetB && <span style={{fontSize:7,color:"#06b6d4",fontWeight:800,marginLeft:2,verticalAlign:"super"}}>S</span>}
                   {isSetF && <span style={{fontSize:7,color:"#f59e0b",fontWeight:800,marginLeft:2,verticalAlign:"super"}}>rs</span>}
+                  {isMid && <span title="Middle" style={{fontSize:7,color:"#c084fc",fontWeight:800,marginLeft:2,verticalAlign:"super"}}>M</span>}
+                  {isLib && <span title={slot.libFor?("Libero (in for "+pname(slot.libFor)+")"):"Libero"} style={{fontSize:7,color:"#06b6d4",fontWeight:800,marginLeft:2,verticalAlign:"super"}}>L</span>}
                   {isPass && <span title="Passer (serve-receive)" style={{fontSize:9,color:C.grn,fontWeight:800,marginLeft:2}}>•</span>}
-                  {isSubbed && <span title="Substitute" style={{fontSize:7,color:"#22c55e",fontWeight:800,marginLeft:2,verticalAlign:"super"}}>in</span>}
+                  {isSubbed && !isLib && <span title="Substitute" style={{fontSize:7,color:"#22c55e",fontWeight:800,marginLeft:2,verticalAlign:"super"}}>in</span>}
                 </td>
               );
             };
             const renderGrid = (phase) => {
               const rots = [0,1,2,3,4,5].map(r => {
-                const slots = vbRotation(set.lineup, r, set.subs, phase);
+                const slots = vbRotation(set.lineup, r, set.subs, phase, lib);
                 const info = vbSetterInfo(slots, set.setters);
                 const byIndex = {}; slots.forEach(s => { byIndex[s.i] = s; });
                 return { r, slots, byIndex, setterBack: info.setterBack, setterFront: info.setterFront };
@@ -9823,7 +9889,8 @@ export default function App() {
                   <span><span style={{display:"inline-block",width:9,height:9,background:"rgba(34,197,94,0.6)",borderRadius:2,marginRight:3,verticalAlign:"middle"}} />subbed in</span>
                   <span><span style={{color:"#06b6d4",fontWeight:800}}>ˢ</span> back-row setter (sets)</span>
                   <span><span style={{color:"#f59e0b",fontWeight:800}}>rs</span> front setter → right side</span>
-                  <span><span style={{color:"#06b6d4",textDecoration:"underline",fontWeight:700}}>libero</span></span>
+                  <span><span style={{color:"#c084fc",fontWeight:800}}>M</span> middle</span>
+                  <span><span style={{color:"#67e8f9",textDecoration:"underline",fontWeight:700}}>L</span> libero (in for back-row middle)</span>
                   <span><span style={{color:C.grn,fontWeight:800}}>•</span> passer (on receive)</span>
                 </div>
                 {legendIds.length>0 && (
@@ -9837,7 +9904,7 @@ export default function App() {
                 {lineupSubSel && lineupSubSel.setId===set.id && (() => {
                   const sel = lineupSubSel;
                   const aPhase = sel.applyPhase || "both";
-                  const onCourt = new Set(vbRotation(set.lineup, sel.r, set.subs, aPhase==="both"?null:aPhase).map(s=>s.id).filter(Boolean));
+                  const onCourt = new Set(vbRotation(set.lineup, sel.r, set.subs, aPhase==="both"?null:aPhase, lib).map(s=>s.id).filter(Boolean));
                   const bench = roster.filter(p => !onCourt.has(p.id));
                   const related = (set.subs||[]).map((s,idx)=>({s,idx})).filter(({s}) => s.outId===sel.outId || s.inId===sel.outId);
                   const phaseWord = { both:"whole rotation", serve:"serve only", receive:"receive only" };
