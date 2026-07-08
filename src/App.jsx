@@ -11134,10 +11134,13 @@ export default function App() {
     const shownTeamIds = new Set(teamsToShow.map(t => t.id));
     const dayCount = (t) => { try { const s = new Date(t.start_date + "T00:00"), e = new Date(t.end_date + "T00:00"); return Math.max(1, Math.round((e - s) / 86400000) + 1); } catch { return 1; } };
     let asgCount = 0; const tnSet = new Set(); let tnDays = 0; const wkndSet = new Set();
+    const perTeam = new Map(); // teamId -> { tns:Set, days }
     for (const [k, items] of cellMap) {
       const teamId = k.slice(0, k.lastIndexOf(":"));
       if (!shownTeamIds.has(teamId)) continue;
-      for (const it of items) { asgCount++; tnSet.add(it.tournament.id); tnDays += dayCount(it.tournament); wkndSet.add(k.slice(k.lastIndexOf(":") + 1)); }
+      if (!perTeam.has(teamId)) perTeam.set(teamId, { tns: new Set(), days: 0 });
+      const pt = perTeam.get(teamId);
+      for (const it of items) { asgCount++; tnSet.add(it.tournament.id); tnDays += dayCount(it.tournament); wkndSet.add(k.slice(k.lastIndexOf(":") + 1)); pt.tns.add(it.tournament.id); pt.days += dayCount(it.tournament); }
     }
 
     return (
@@ -11226,6 +11229,9 @@ export default function App() {
                           onMouseEnter={e=>e.currentTarget.style.textDecorationColor=C.mut}
                           onMouseLeave={e=>e.currentTarget.style.textDecorationColor="transparent"}>{team.assistant_coach}</span></>}
                       </div>
+                      {(() => { const pt = perTeam.get(team.id); const c = pt ? pt.tns.size : 0; const dys = pt ? pt.days : 0; return (
+                        <div style={{fontSize:9,fontWeight:800,color:c?C.acc:C.mut,textTransform:"none",marginTop:2}}>{c} tourn · {dys}d</div>
+                      ); })()}
                     </th>
                   ))}
                 </tr>
