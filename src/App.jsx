@@ -740,6 +740,83 @@ function RankInput({ value, max, onCommit }) {
     style={{ ...inpStyle, width: 40, fontSize: 11, padding: "3px 4px", textAlign: "center", fontWeight: 700, color: C.gold }} />;
 }
 
+// ── Volleyball rotation engine (6-2 / 6-6 lineup planner) ───────────────────
+// A "lineup" is 6 roster-player ids in court positions 1..6 for Rotation 1.
+// Court numbering (facing the net):
+//          NET
+//     [4]  [3]  [2]     front row
+//     [5]  [6]  [1]     back row   (1 = server)
+// Winning serve rotates everyone clockwise: pos2→pos1, pos3→pos2, … pos1→pos6.
+// So for rotation r (0=R1 … 5=R6), court position i (0-idx) holds lineup[(i+r)%6].
+const VB_POSITIONS = ["S","OH","M","RS","L","DS"];
+const VB_POS_LABEL = { S:"Setter", OH:"Outside", M:"Middle", RS:"Right side", L:"Libero", DS:"Def. spec." };
+// index 0..5 => court positions 1..6
+const VB_COURT = [
+  { n:1, row:"back",  slot:"RB", label:"Back right (server)" },
+  { n:2, row:"front", slot:"RF", label:"Front right" },
+  { n:3, row:"front", slot:"MF", label:"Front middle" },
+  { n:4, row:"front", slot:"LF", label:"Front left" },
+  { n:5, row:"back",  slot:"LB", label:"Back left" },
+  { n:6, row:"back",  slot:"MB", label:"Back middle" },
+];
+// Court-index order for a 3-col × 2-row visual: front row (pos 4,3,2) then back (5,6,1).
+const VB_GRID = [3, 2, 1, 4, 5, 0];
+
+// Apply planned subs to a base (rotation-1) player id for a given rotation.
+function vbEffective(baseId, rotation, subs){
+  let id = baseId;
+  for(const s of (subs||[])){
+    const from = s.fromRotation==null ? 0 : s.fromRotation;
+    const thru = s.thruRotation==null ? 5 : s.thruRotation;
+    if(s.outId===id && s.inId && rotation>=from && rotation<=thru) id = s.inId;
+  }
+  return id;
+}
+
+// The 6 court slots for one rotation (0..5). → [{n,row,slot,label,i,baseId,id}]
+function vbRotation(lineup, rotation, subs){
+  return VB_COURT.map((m,i)=>{
+    const baseId = (lineup||[])[(i+rotation)%6] || null;
+    return { ...m, i, baseId, id: vbEffective(baseId, rotation, subs) };
+  });
+}
+
+// 6-2: which setter is back-row (sets) vs front-row (plays RS) this rotation.
+function vbSetterInfo(slots, setters){
+  const back  = new Set(slots.filter(s=>s.row==="back").map(s=>s.id));
+  const front = new Set(slots.filter(s=>s.row==="front").map(s=>s.id));
+  const list = (setters||[]).filter(Boolean);
+  return {
+    setterBack:  list.find(id=>back.has(id))  || null,
+    setterFront: list.find(id=>front.has(id)) || null,
+  };
+}
+
+// Are the two setters opposite (3 apart) in the rotation? (proper 6-2 alignment)
+function vbSettersOpposite(lineup, setters){
+  const ids = (setters||[]).filter(Boolean);
+  if(ids.length!==2) return false;
+  const a = (lineup||[]).indexOf(ids[0]), b = (lineup||[]).indexOf(ids[1]);
+  if(a<0||b<0) return false;
+  return Math.abs(a-b)===3;
+}
+
+// Playing-time tally across all sets → { tally:{[id]:rotationsOnCourt}, totalRot }.
+function vbPlayingTime(sets){
+  const tally = {}; let totalRot = 0;
+  (sets||[]).forEach(set=>{
+    if((set.lineup||[]).filter(Boolean).length!==6) return;
+    for(let r=0;r<6;r++){
+      totalRot++;
+      const seen = new Set();
+      vbRotation(set.lineup, r, set.subs).forEach(s=>{
+        if(s.id && !seen.has(s.id)){ seen.add(s.id); tally[s.id]=(tally[s.id]||0)+1; }
+      });
+    }
+  });
+  return { tally, totalRot };
+}
+
 export default function App() {
   // ─── Auth state ─────────────────────────────────────────────────────
   // We use Supabase Auth (email + password). Each coach has their own login.
@@ -790,6 +867,14 @@ export default function App() {
   const [practiceCoverage, setPracticeCoverage]       = useState([]); // per-date coach absences + subs (Daily view)
   const [practiceCancellations, setPracticeCancellations] = useState([]); // dates with practice cancelled (holidays)
   const [snapshots, setSnapshots]                     = useState([]);
+  // Lineups / rotation planner (cloud, per team) — see renderLineups.
+  const [lineupPlans, setLineupPlans]   = useState([]);      // list of plans (metadata + data)
+  const [lineupTeam, setLineupTeam]     = useState("");      // selected team filter
+  const [lineupPlanId, setLineupPlanId] = useState(null);    // active plan id
+  const [lineupDraft, setLineupDraft]   = useState(null);    // working copy of the active plan
+  const [lineupSetIdx, setLineupSetIdx] = useState(0);       // active set tab
+  const [lineupPhase, setLineupPhase]   = useState("serve"); // "serve" | "receive" rotation display
+  const [lineupSaved, setLineupSaved]   = useState("");      // "", "saving", "saved" indicator
   // Fires the "save a restore point first" nudge at most once per practice session.
   const practiceEditReminded = useRef(false);
   const [saBlock, setSaBlock]                         = useState(
@@ -1499,6 +1584,39 @@ export default function App() {
   useEffect(() => { if (isApproved && view === "practice") loadSnapshots(); }, [isApproved, view, loadSnapshots]);
   // Coach/team cards (openable from any view) need practice_teams loaded.
   useEffect(() => { if (isApproved && (coachCardName || teamCardName)) loadPractice(); }, [isApproved, coachCardName, teamCardName, loadPractice]);
+
+  // Lineups planner loader (cloud, per team). Needs practice_teams for the picker.
+  const loadLineupPlans = useCallback(async () => {
+    const { data, error } = await supabase.from("lineup_plans")
+      .select("*").order("updated_at", { ascending: false });
+    if (error) { console.error("Load lineup_plans error:", error); return; }
+    setLineupPlans(data || []);
+  }, []);
+  useEffect(() => { if (isApproved && view === "lineups") { loadLineupPlans(); loadPractice(); } }, [isApproved, view, loadLineupPlans, loadPractice]);
+  // Autosave the active lineup draft (debounced) → lineup_plans. lineupSkipSave
+  // suppresses the write that would otherwise fire right after loading a plan.
+  const lineupSkipSave = useRef(true);
+  const lineupDraftJson = lineupDraft ? JSON.stringify(lineupDraft) : "";
+  useEffect(() => {
+    if (!lineupDraft || !lineupPlanId) return;
+    if (lineupSkipSave.current) { lineupSkipSave.current = false; return; }
+    setLineupSaved("saving");
+    const t = setTimeout(async () => {
+      const patch = {
+        title: lineupDraft.title || "Untitled plan",
+        opponent: lineupDraft.opponent || null,
+        match_date: lineupDraft.match_date || null,
+        data: { roster: lineupDraft.roster || [], sets: lineupDraft.sets || [] },
+        updated_by: coach?.display_name || coach?.email || null,
+        updated_at: new Date().toISOString(),
+      };
+      const { error } = await supabase.from("lineup_plans").update(patch).eq("id", lineupPlanId);
+      if (error) { console.error("Save lineup_plan error:", error); setLineupSaved("err"); return; }
+      setLineupSaved("saved");
+      setLineupPlans(prev => prev.map(p => p.id === lineupPlanId ? { ...p, ...patch } : p));
+    }, 900);
+    return () => clearTimeout(t);
+  }, [lineupDraftJson, lineupPlanId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Tryouts tab loader
   const loadTryouts = useCallback(async () => {
@@ -9288,6 +9406,389 @@ export default function App() {
   // to date as Twilio delivers inbound + status updates.
   // Queen of the Court — 4v4 game runner with random matchups, even sit-outs,
   // per-win scoring and a live leaderboard. State persists to localStorage.
+  // ── Lineups & Rotations (6-2 planner) ──────────────────────────────────
+  function renderLineups() {
+    const rid = (p="r") => p + Math.random().toString(36).slice(2, 8);
+    const teams = (isAdmin || isOwner) ? practiceTeams.map(t => t.team_name) : myTeamNames;
+    const team = lineupTeam || teams[0] || "";
+    const plansForTeam = lineupPlans.filter(p => p.team_name === team);
+    const draft = lineupDraft;
+
+    const defaultSet = (n=1) => ({ id: rid("s"), name: "Set " + n, lineup: [null,null,null,null,null,null], setters: [], liberoId: null, passers: [], subs: [] });
+    const openPlan = (plan) => {
+      lineupSkipSave.current = true;
+      setLineupPlanId(plan.id);
+      setLineupDraft({
+        title: plan.title || "Untitled plan",
+        opponent: plan.opponent || "",
+        match_date: plan.match_date || "",
+        roster: (plan.data && plan.data.roster) || [],
+        sets: (plan.data && plan.data.sets && plan.data.sets.length) ? plan.data.sets : [defaultSet()],
+      });
+      setLineupSetIdx(0);
+      setLineupSaved("");
+    };
+    const newPlan = async () => {
+      if (!team) { window.alert("Pick a team first."); return; }
+      const row = { team_name: team, title: "New plan", data: { roster: [], sets: [defaultSet()] }, updated_by: coach?.display_name || coach?.email || null };
+      const { data, error } = await supabase.from("lineup_plans").insert(row).select().single();
+      if (error) { console.error(error); window.alert("Couldn't create plan: " + error.message); return; }
+      setLineupPlans(prev => [data, ...prev]);
+      openPlan(data);
+    };
+    const dupPlan = async (plan) => {
+      const row = { team_name: plan.team_name, title: (plan.title || "Plan") + " (copy)", opponent: plan.opponent || null, data: plan.data || { roster: [], sets: [defaultSet()] }, updated_by: coach?.display_name || coach?.email || null };
+      const { data, error } = await supabase.from("lineup_plans").insert(row).select().single();
+      if (error) { console.error(error); window.alert("Couldn't copy: " + error.message); return; }
+      setLineupPlans(prev => [data, ...prev]);
+      openPlan(data);
+    };
+    const deletePlan = async (id) => {
+      if (!window.confirm("Delete this plan? This can't be undone.")) return;
+      await supabase.from("lineup_plans").delete().eq("id", id);
+      setLineupPlans(prev => prev.filter(p => p.id !== id));
+      if (lineupPlanId === id) { setLineupPlanId(null); setLineupDraft(null); }
+    };
+    const updateDraft = (fn) => setLineupDraft(d => { if (!d) return d; const n = JSON.parse(JSON.stringify(d)); fn(n); return n; });
+
+    const S = {
+      card:   { background:C.card, border:"1px solid "+C.border, borderRadius:12, padding:14, marginBottom:14 },
+      lbl:    { fontSize:10, fontWeight:800, letterSpacing:0.4, textTransform:"uppercase", color:C.mut, marginBottom:6 },
+      sel:    { background:C.bg, border:"1px solid "+C.border, borderRadius:6, color:C.text, fontFamily:"inherit", fontSize:12, padding:"5px 7px" },
+      gold:   { padding:"6px 12px", borderRadius:8, border:"none", background:C.gold, color:"#000", fontWeight:700, fontSize:12, cursor:"pointer", fontFamily:"inherit" },
+      ghost:  { padding:"6px 12px", borderRadius:8, border:"1px solid "+C.border, background:"transparent", color:C.text, fontWeight:600, fontSize:12, cursor:"pointer", fontFamily:"inherit" },
+    };
+
+    // ── No plan open: team picker + plan list ─────────────────────────────
+    if (teams.length === 0) {
+      return <div style={{maxWidth:900,margin:"0 auto",padding:24,color:C.mut,textAlign:"center"}}>
+        No teams are assigned to you yet, so there's nothing to build a lineup for. Ask Drew to add you as a head or assistant coach on a team.
+      </div>;
+    }
+
+    const teamBar = (
+      <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:14}}>
+        <div style={{fontSize:20,fontWeight:800,color:C.gold}}>Lineups &amp; Rotations</div>
+        <select value={team} onChange={e => { setLineupTeam(e.target.value); setLineupPlanId(null); setLineupDraft(null); }} style={{...S.sel,fontSize:13,padding:"7px 9px"}}>
+          {teams.map(t => <option key={t} value={t}>{t}</option>)}
+        </select>
+        {draft && <span style={{fontSize:11,color:lineupSaved==="err"?C.red:C.mut}}>{lineupSaved==="saving"?"Saving…":lineupSaved==="saved"?"Saved ✓":lineupSaved==="err"?"Save failed":""}</span>}
+        <div style={{flex:1}} />
+        <button style={S.gold} onClick={newPlan}>+ New plan</button>
+      </div>
+    );
+
+    if (!draft) {
+      return (
+        <div style={{maxWidth:1000,margin:"0 auto"}}>
+          {teamBar}
+          <div style={S.card}>
+            <div style={S.lbl}>{team} — saved plans</div>
+            {plansForTeam.length === 0 ? (
+              <div style={{fontSize:13,color:C.mut,padding:"8px 0"}}>No plans yet. Click <b>+ New plan</b> to build your first lineup for {team}.</div>
+            ) : (
+              <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                {plansForTeam.map(p => (
+                  <div key={p.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderRadius:8,border:"1px solid "+C.border,background:C.bg}}>
+                    <button style={{...S.ghost,border:"none",padding:0,textAlign:"left",flex:1}} onClick={() => openPlan(p)}>
+                      <div style={{fontSize:14,fontWeight:700,color:C.text}}>{p.title || "Untitled plan"}</div>
+                      <div style={{fontSize:11,color:C.mut,marginTop:2}}>
+                        {p.opponent ? "vs " + p.opponent + " · " : ""}{p.match_date || "no date"} · {((p.data && p.data.sets) || []).length} set{((p.data && p.data.sets) || []).length===1?"":"s"} · {((p.data && p.data.roster) || []).length} players
+                      </div>
+                    </button>
+                    <button style={S.ghost} onClick={() => openPlan(p)}>Open</button>
+                    <button style={S.ghost} onClick={() => dupPlan(p)} title="Duplicate">⧉</button>
+                    <button style={{...S.ghost,color:C.red,borderColor:"rgba(239,68,68,0.4)"}} onClick={() => deletePlan(p.id)} title="Delete">✕</button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    // ── Plan open: full editor ────────────────────────────────────────────
+    const roster = draft.roster || [];
+    const byId = Object.fromEntries(roster.map(p => [p.id, p]));
+    const pnum = id => (byId[id] && byId[id].num) || "";
+    const pname = id => { const p = byId[id]; return p ? (p.name || ("#" + (p.num || "?"))) : "—"; };
+    const plabel = id => { const p = byId[id]; if (!p) return "—"; return (p.num ? "#" + p.num + " " : "") + (p.name || "?"); };
+    const rosterOptions = [<option key="" value="">—</option>, ...roster.map(p => <option key={p.id} value={p.id}>{plabel(p.id)}{p.pos ? " ("+p.pos+")" : ""}</option>)];
+
+    const setIdx = Math.min(lineupSetIdx, draft.sets.length - 1);
+    const set = draft.sets[setIdx];
+    const lineupFilled = (set.lineup || []).filter(Boolean).length === 6;
+    const settersOk = vbSettersOpposite(set.lineup, set.setters);
+    const { tally, totalRot } = vbPlayingTime(draft.sets);
+
+    // Roster editing
+    const addPlayer = () => updateDraft(d => { d.roster.push({ id: rid("p"), num: "", name: "", pos: "" }); });
+    const bulkAdd = (text) => updateDraft(d => {
+      text.split(/\n+/).map(l => l.trim()).filter(Boolean).forEach(line => {
+        const toks = line.split(/[\s,]+/).filter(Boolean);
+        let num = "", pos = "", nameToks = [];
+        toks.forEach(t => {
+          if (/^\d{1,2}$/.test(t) && !num) num = t;
+          else if (VB_POSITIONS.includes(t.toUpperCase()) && !pos) pos = t.toUpperCase();
+          else nameToks.push(t);
+        });
+        if (nameToks.length || num) d.roster.push({ id: rid("p"), num, name: nameToks.join(" "), pos });
+      });
+    });
+
+    // Court cell for a rotation slot
+    const courtCell = (slot, ctx) => {
+      const { setterBack, setterFront, passers, liberoId } = ctx;
+      const isServer = lineupPhase === "serve" && slot.n === 1;
+      const isSetB = slot.id && slot.id === setterBack;
+      const isSetF = slot.id && slot.id === setterFront;
+      const isPass = lineupPhase === "receive" && slot.id && passers.has(slot.id);
+      const isLib = slot.id && slot.id === liberoId;
+      const bg = slot.row === "front" ? "rgba(233,30,140,0.07)" : "rgba(255,255,255,0.02)";
+      const bc = isServer ? C.gold : isSetB ? C.acc : isPass ? C.grn : C.border;
+      const badges = [];
+      if (isServer) badges.push(["SRV", C.gold]);
+      if (isSetB) badges.push(["SET", C.acc]);
+      if (isSetF) badges.push(["RS", "#f59e0b"]);
+      if (isPass) badges.push(["PASS", C.grn]);
+      if (isLib) badges.push(["L", "#06b6d4"]);
+      return (
+        <div key={slot.n} title={slot.label} style={{position:"relative",minHeight:52,borderRadius:6,border:"1px solid "+bc,background:bg,padding:"4px 5px",display:"flex",flexDirection:"column",justifyContent:"center"}}>
+          <div style={{position:"absolute",top:2,left:4,fontSize:8,fontWeight:800,color:C.mut}}>{slot.n}</div>
+          <div style={{fontSize:11,fontWeight:700,color:slot.id?C.text:C.mut,lineHeight:1.15,textAlign:"center",marginTop:4}}>
+            {slot.id ? <>{pnum(slot.id) && <span style={{color:C.gold}}>#{pnum(slot.id)} </span>}{pname(slot.id)}</> : "—"}
+          </div>
+          {badges.length>0 && <div style={{display:"flex",gap:2,justifyContent:"center",flexWrap:"wrap",marginTop:2}}>
+            {badges.map(([t,c],bi) => <span key={bi} style={{fontSize:7,fontWeight:800,letterSpacing:0.3,color:c,border:"1px solid "+c,borderRadius:3,padding:"0 2px"}}>{t}</span>)}
+          </div>}
+        </div>
+      );
+    };
+
+    // Lineup-card text for copy
+    const cardText = () => {
+      const lines = [];
+      lines.push((draft.title || "Lineup") + (draft.opponent ? " — vs " + draft.opponent : "") + (draft.match_date ? " (" + draft.match_date + ")" : ""));
+      draft.sets.forEach(st => {
+        lines.push("");
+        lines.push(st.name + " — serve order:");
+        (st.lineup || []).forEach((id, i) => lines.push("  " + ["I","II","III","IV","V","VI"][i] + ": " + plabel(id) + (byId[id] && byId[id].pos ? " (" + byId[id].pos + ")" : "")));
+        if ((st.setters || []).length) lines.push("  Setters: " + st.setters.map(plabel).join(" / "));
+        if (st.liberoId) lines.push("  Libero: " + plabel(st.liberoId));
+        if ((st.passers || []).length) lines.push("  Passers: " + st.passers.map(plabel).join(", "));
+      });
+      return lines.join("\n");
+    };
+
+    return (
+      <div style={{maxWidth:1200,margin:"0 auto"}}>
+        {teamBar}
+
+        {/* Plan header */}
+        <div style={{...S.card,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+          <button style={S.ghost} onClick={() => { setLineupPlanId(null); setLineupDraft(null); }}>← Plans</button>
+          <DebouncedField value={draft.title} onCommit={v => updateDraft(d => { d.title = v; })} placeholder="Plan title" style={{...S.sel,fontSize:14,fontWeight:700,minWidth:200,flex:1}} />
+          <input value={draft.opponent} onChange={e => updateDraft(d => { d.opponent = e.target.value; })} placeholder="Opponent" style={{...S.sel,width:150}} />
+          <input type="date" value={draft.match_date || ""} onChange={e => updateDraft(d => { d.match_date = e.target.value; })} style={{...S.sel,width:150}} />
+          <button style={{...S.ghost,color:C.red,borderColor:"rgba(239,68,68,0.4)"}} onClick={() => deletePlan(lineupPlanId)}>Delete plan</button>
+        </div>
+
+        {/* Roster */}
+        <div style={S.card}>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+            <div style={S.lbl}>Roster ({roster.length})</div>
+            <div style={{flex:1}} />
+            <button style={S.ghost} onClick={addPlayer}>+ Player</button>
+          </div>
+          {roster.length === 0 && <div style={{fontSize:12,color:C.mut,marginBottom:8}}>Add players below, or paste a roster (one per line, e.g. <code>24 Hattie M</code>).</div>}
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:8,marginBottom:10}}>
+            {roster.map(p => (
+              <div key={p.id} style={{display:"flex",alignItems:"center",gap:5,background:C.bg,border:"1px solid "+C.border,borderRadius:8,padding:"5px 7px"}}>
+                <input value={p.num} onChange={e => updateDraft(d => { const r = d.roster.find(x=>x.id===p.id); if(r) r.num = e.target.value.replace(/\D/g,"").slice(0,2); })} placeholder="#" style={{...S.sel,width:34,textAlign:"center",color:C.gold,fontWeight:700}} />
+                <input value={p.name} onChange={e => updateDraft(d => { const r = d.roster.find(x=>x.id===p.id); if(r) r.name = e.target.value; })} placeholder="Name" style={{...S.sel,flex:1,minWidth:60}} />
+                <select value={p.pos} onChange={e => updateDraft(d => { const r = d.roster.find(x=>x.id===p.id); if(r) r.pos = e.target.value; })} style={{...S.sel,width:60}} title="Position">
+                  <option value="">pos</option>
+                  {VB_POSITIONS.map(x => <option key={x} value={x}>{x}</option>)}
+                </select>
+                <button style={{background:"none",border:"none",color:C.mut,cursor:"pointer",fontSize:14,padding:"0 2px"}} title="Remove" onClick={() => updateDraft(d => { d.roster = d.roster.filter(x=>x.id!==p.id); })}>✕</button>
+              </div>
+            ))}
+          </div>
+          <details>
+            <summary style={{fontSize:11,color:C.acc,cursor:"pointer",fontWeight:700}}>Paste a roster</summary>
+            <div style={{display:"flex",gap:8,marginTop:8,alignItems:"flex-start"}}>
+              <textarea id="dse-lineup-bulk" placeholder={"24 Hattie M\n13 Addison OH\n12 Juliet L"} style={{...S.sel,flex:1,minHeight:80,fontFamily:"monospace",resize:"vertical"}} />
+              <button style={S.gold} onClick={() => { const el=document.getElementById("dse-lineup-bulk"); if(el&&el.value.trim()){ bulkAdd(el.value); el.value=""; } }}>Add</button>
+            </div>
+            <div style={{fontSize:10,color:C.mut,marginTop:4}}>One player per line: number, name, and position (S/OH/M/RS/L/DS) in any order. Number and position optional.</div>
+          </details>
+        </div>
+
+        {/* Set tabs */}
+        <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:12}}>
+          {draft.sets.map((st, i) => (
+            <button key={st.id} onClick={() => setLineupSetIdx(i)} style={{...(i===setIdx?S.gold:S.ghost),display:"flex",alignItems:"center",gap:6}}>
+              {st.name}
+            </button>
+          ))}
+          {draft.sets.length < 5 && <button style={S.ghost} onClick={() => { updateDraft(d => { d.sets.push(defaultSet(d.sets.length+1)); }); setLineupSetIdx(draft.sets.length); }}>+ Set</button>}
+        </div>
+
+        {/* Active set editor */}
+        <div style={S.card}>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12,flexWrap:"wrap"}}>
+            <input value={set.name} onChange={e => updateDraft(d => { d.sets[setIdx].name = e.target.value; })} style={{...S.sel,fontWeight:700,width:120}} />
+            {draft.sets.length > 1 && <button style={{...S.ghost,color:C.red,borderColor:"rgba(239,68,68,0.35)"}} onClick={() => { if(window.confirm("Delete "+set.name+"?")){ updateDraft(d => { d.sets.splice(setIdx,1); }); setLineupSetIdx(0); } }}>Delete set</button>}
+            <button style={S.ghost} title="Copy this set's lineup from another set" onClick={() => {
+              const others = draft.sets.filter((_,i)=>i!==setIdx);
+              if(!others.length){ window.alert("No other set to copy from."); return; }
+              const name = window.prompt("Copy lineup from which set? " + others.map(o=>o.name).join(", "), others[0].name);
+              const src = draft.sets.find(o=>o.name===name && o.id!==set.id);
+              if(src) updateDraft(d => { const t=d.sets[setIdx]; t.lineup=[...src.lineup]; t.setters=[...src.setters]; t.liberoId=src.liberoId; t.passers=[...src.passers]; t.subs=JSON.parse(JSON.stringify(src.subs||[])); });
+            }}>Copy from set…</button>
+          </div>
+
+          {/* Starting lineup — 6 court positions */}
+          <div style={S.lbl}>Starting lineup — court positions (Rotation 1)</div>
+          <div style={{fontSize:10,color:C.mut,marginBottom:8}}>Position 1 serves first, then 2, 3… Front row is 2·3·4, back row is 1·5·6.</div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,maxWidth:520,marginBottom:6}}>
+            {/* front row 4,3,2 then back row 5,6,1 */}
+            {[3,2,1,4,5,0].map(i => (
+              <div key={i} style={{background:VB_COURT[i].row==="front"?"rgba(233,30,140,0.06)":C.bg,border:"1px solid "+C.border,borderRadius:8,padding:"6px 7px"}}>
+                <div style={{fontSize:9,fontWeight:800,color:C.mut,marginBottom:3}}>{VB_COURT[i].n} · {VB_COURT[i].slot}{VB_COURT[i].n===1?" (serve)":""}</div>
+                <select value={set.lineup[i] || ""} onChange={e => updateDraft(d => { d.sets[setIdx].lineup[i] = e.target.value || null; })} style={{...S.sel,width:"100%"}}>
+                  {rosterOptions}
+                </select>
+              </div>
+            ))}
+          </div>
+          <div style={{fontSize:10,color:C.mut,marginBottom:14,textAlign:"center",maxWidth:520}}>▲ net side ▲</div>
+
+          {/* Roles — setters / libero / passers per player */}
+          <div style={S.lbl}>Roles for {set.name}</div>
+          {!settersOk && (set.setters||[]).length>0 && <div style={{fontSize:11,color:"#f59e0b",marginBottom:6}}>⚠ For a true 6-2, your two setters should be opposite each other (3 positions apart) in the lineup so one is always in the back row to set.</div>}
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:6,marginBottom:8}}>
+            {roster.map(p => {
+              const isSetter = (set.setters||[]).includes(p.id);
+              const isLib = set.liberoId === p.id;
+              const isPass = (set.passers||[]).includes(p.id);
+              const setterFull = (set.setters||[]).length >= 2 && !isSetter;
+              return (
+                <div key={p.id} style={{display:"flex",alignItems:"center",gap:6,background:C.bg,border:"1px solid "+C.border,borderRadius:8,padding:"4px 8px"}}>
+                  <span style={{flex:1,fontSize:12,color:C.text,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{plabel(p.id)}</span>
+                  {[["S",isSetter,C.acc,setterFull],["L",isLib,"#06b6d4",false],["P",isPass,C.grn,false]].map(([lab,on,col,dis]) => (
+                    <button key={lab} disabled={dis} title={lab==="S"?"Setter":lab==="L"?"Libero":"Passer (serve-receive)"} onClick={() => updateDraft(d => {
+                      const t = d.sets[setIdx];
+                      if(lab==="S"){ t.setters = on ? t.setters.filter(x=>x!==p.id) : [...t.setters, p.id]; }
+                      if(lab==="L"){ t.liberoId = on ? null : p.id; }
+                      if(lab==="P"){ t.passers = on ? t.passers.filter(x=>x!==p.id) : [...(t.passers||[]), p.id]; }
+                    })} style={{width:22,height:22,borderRadius:5,fontSize:10,fontWeight:800,cursor:dis?"not-allowed":"pointer",fontFamily:"inherit",border:"1px solid "+(on?col:C.border),background:on?col:"transparent",color:on?"#000":dis?"#555":C.mut}}>{lab}</button>
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+          <div style={{fontSize:10,color:C.mut,marginBottom:14}}><b style={{color:C.acc}}>S</b> setter (pick 2 for 6-2) · <b style={{color:"#06b6d4"}}>L</b> libero · <b style={{color:C.grn}}>P</b> passer (serve-receive)</div>
+
+          {/* Subs */}
+          <div style={S.lbl}>Planned subs</div>
+          <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:8}}>
+            {(set.subs||[]).map((sub, si) => (
+              <div key={si} style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",fontSize:12,color:C.mut}}>
+                <select value={sub.inId||""} onChange={e => updateDraft(d => { d.sets[setIdx].subs[si].inId = e.target.value||null; })} style={S.sel}>{rosterOptions}</select>
+                <span>in for</span>
+                <select value={sub.outId||""} onChange={e => updateDraft(d => { d.sets[setIdx].subs[si].outId = e.target.value||null; })} style={S.sel}>{rosterOptions}</select>
+                <span>rotations</span>
+                <select value={sub.fromRotation??0} onChange={e => updateDraft(d => { d.sets[setIdx].subs[si].fromRotation = +e.target.value; })} style={S.sel}>{[0,1,2,3,4,5].map(r=><option key={r} value={r}>R{r+1}</option>)}</select>
+                <span>to</span>
+                <select value={sub.thruRotation??5} onChange={e => updateDraft(d => { d.sets[setIdx].subs[si].thruRotation = +e.target.value; })} style={S.sel}>{[0,1,2,3,4,5].map(r=><option key={r} value={r}>R{r+1}</option>)}</select>
+                <button style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:14}} onClick={() => updateDraft(d => { d.sets[setIdx].subs.splice(si,1); })}>✕</button>
+              </div>
+            ))}
+            <button style={{...S.ghost,alignSelf:"flex-start"}} onClick={() => updateDraft(d => { d.sets[setIdx].subs.push({ inId:null, outId:null, fromRotation:0, thruRotation:5 }); })}>+ Sub</button>
+          </div>
+        </div>
+
+        {/* Rotations */}
+        <div style={S.card}>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10,flexWrap:"wrap"}}>
+            <div style={S.lbl}>The 6 rotations — {set.name}</div>
+            <div style={{flex:1}} />
+            <div style={{display:"flex",borderRadius:8,overflow:"hidden",border:"1px solid "+C.border}}>
+              {["serve","receive"].map(ph => (
+                <button key={ph} onClick={() => setLineupPhase(ph)} style={{padding:"5px 14px",border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700,background:lineupPhase===ph?C.gold:"transparent",color:lineupPhase===ph?"#000":C.mut}}>{ph==="serve"?"We serve":"We receive"}</button>
+              ))}
+            </div>
+          </div>
+          {!lineupFilled ? (
+            <div style={{fontSize:12,color:C.mut,padding:"6px 0"}}>Fill all 6 court positions above to see the rotations.</div>
+          ) : (
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:10}}>
+              {[0,1,2,3,4,5].map(r => {
+                const slots = vbRotation(set.lineup, r, set.subs);
+                const { setterBack, setterFront } = vbSetterInfo(slots, set.setters);
+                const ctx = { setterBack, setterFront, passers: new Set(set.passers||[]), liberoId: set.liberoId };
+                const byIndex = {}; slots.forEach(s => { byIndex[s.i] = s; });
+                const server = slots.find(s => s.n === 1);
+                return (
+                  <div key={r} style={{border:"1px solid "+C.border,borderRadius:10,padding:8,background:C.bg}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                      <span style={{fontSize:12,fontWeight:800,color:C.gold}}>R{r+1}</span>
+                      <span style={{fontSize:9,color:C.mut}}>{lineupPhase==="serve" ? "serving: "+pname(server.id) : "receiving"}</span>
+                    </div>
+                    <div style={{fontSize:8,color:C.mut,textAlign:"center",marginBottom:3}}>▲ net</div>
+                    <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:3}}>
+                      {VB_GRID.map(gi => courtCell(byIndex[gi], ctx))}
+                    </div>
+                    <div style={{marginTop:6,fontSize:9,lineHeight:1.4,color:C.mut}}>
+                      {setterBack ? <div><span style={{color:C.acc,fontWeight:800}}>Sets:</span> {pname(setterBack)}</div> : <div style={{color:"#f59e0b"}}>No back-row setter</div>}
+                      <div><span style={{color:C.text}}>Front:</span> {slots.filter(s=>s.row==="front").map(s=>pname(s.id)).join(", ")}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Playing time */}
+        <div style={S.card}>
+          <div style={S.lbl}>Playing time — across {draft.sets.length} set{draft.sets.length===1?"":"s"} ({totalRot} rotations)</div>
+          {totalRot === 0 ? (
+            <div style={{fontSize:12,color:C.mut}}>Fill in a lineup to compute playing time.</div>
+          ) : (
+            <div style={{display:"flex",flexDirection:"column",gap:4}}>
+              {roster.slice().sort((a,b)=>(tally[b.id]||0)-(tally[a.id]||0)).map(p => {
+                const rot = tally[p.id] || 0;
+                const pct = Math.round((rot/totalRot)*100);
+                return (
+                  <div key={p.id} style={{display:"flex",alignItems:"center",gap:8}}>
+                    <span style={{width:150,fontSize:12,color:rot?C.text:C.mut,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{plabel(p.id)}{p.pos?" ("+p.pos+")":""}</span>
+                    <div style={{flex:1,height:14,background:C.bg,borderRadius:7,overflow:"hidden",border:"1px solid "+C.border}}>
+                      <div style={{width:pct+"%",height:"100%",background:pct>=80?C.grn:pct>=40?C.gold:pct>0?"#f59e0b":"transparent"}} />
+                    </div>
+                    <span style={{width:80,fontSize:11,color:C.mut,textAlign:"right"}}>{rot}/{totalRot} · {pct}%</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Lineup card */}
+        <div style={S.card}>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+            <div style={S.lbl}>Lineup card</div>
+            <div style={{flex:1}} />
+            <button style={S.ghost} onClick={() => { navigator.clipboard?.writeText(cardText()); setLineupSaved("saved"); window.alert("Lineup card copied to clipboard."); }}>Copy all sets</button>
+          </div>
+          <pre style={{margin:0,fontSize:12,color:C.text,fontFamily:"monospace",whiteSpace:"pre-wrap",lineHeight:1.5}}>{cardText()}</pre>
+        </div>
+      </div>
+    );
+  }
+
   function renderGames() {
     const shuffle = (arr) => { const a = arr.slice(); for (let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; };
     const TEAM_SIZE = 4; // 4v4 → 8 per court
@@ -12205,6 +12706,7 @@ export default function App() {
                 {item("tournaments","Tournaments")}
                 {item("activity","Activity")}
                 {item("faq","FAQ")}
+                {item("lineups","Lineups")}
                 {item("games","Games")}
                 {isOwner && item("askai","Ask AI")}
                 <button style={btn(false)} onClick={()=>{ window.location.href = "/practice"; }} title="Open the practice planner">Practice Planning</button>
@@ -12305,7 +12807,7 @@ export default function App() {
           </div>
         );
       })()}
-      {!new Set(["home","dashboard","activity","coaches","tournaments","teamdir","requests","notifications","practice","scholarships","messages"]).has(view) && (
+      {!new Set(["home","dashboard","activity","coaches","tournaments","teamdir","requests","notifications","practice","scholarships","messages","lineups"]).has(view) && (
         <div style={{display:"flex",gap:4,padding:"10px 18px",borderBottom:"1px solid "+C.border,flexWrap:"wrap"}}>
           {divsWithPlayers.map(d => {
             const isSelected = selectedDivs.includes(d);
@@ -12351,6 +12853,7 @@ export default function App() {
         {view==="assignments" && renderAssignments()}
         {view==="coverage" && renderCoachCoverage()}
         {view==="faq" && renderFaq()}
+        {view==="lineups" && renderLineups()}
         {view==="games" && renderGames()}
         {view==="askai" && renderAskAI()}
         </>}
