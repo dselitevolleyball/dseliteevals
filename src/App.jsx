@@ -4181,6 +4181,35 @@ export default function App() {
   }
 
   // ─── DASHBOARD ───
+  // Per-team tournament timing: days since the last tournament and days until
+  // the next. Shared by the Dashboard and the team card.
+  const tournamentGap = (teamId) => {
+    const today = new Date().toISOString().slice(0, 10);
+    const tById = new Map(tournaments.map(t => [t.id, t]));
+    const tns = tournamentAssignments
+      .filter(a => a.team_id === teamId || a.team_name === teamId)
+      .map(a => tById.get(a.tournament_id)).filter(t => t && !t.cancelled);
+    const days = (a, b) => Math.round((new Date(b + "T00:00") - new Date(a + "T00:00")) / 86400000);
+    let last = null, next = null, ongoing = null;
+    for (const t of tns) {
+      if (t.start_date <= today && t.end_date >= today) ongoing = t;
+      else if (t.end_date < today) { if (!last || t.end_date > last.end_date) last = t; }
+      else if (t.start_date > today) { if (!next || t.start_date < next.start_date) next = t; }
+    }
+    return { ongoing, last, next, count: tns.length,
+      sinceDays: last ? days(last.end_date, today) : null,
+      untilDays: next ? days(today, next.start_date) : null };
+  };
+  // Small inline "X days since · Y until" summary chip.
+  const tournamentTimingText = (teamId) => {
+    const g = tournamentGap(teamId);
+    if (g.ongoing) return "🏐 Tournament in progress";
+    const parts = [];
+    parts.push(g.sinceDays == null ? "no past tournament" : `${g.sinceDays}d since last`);
+    parts.push(g.untilDays == null ? "none upcoming" : `${g.untilDays}d until next`);
+    return parts.join(" · ");
+  };
+
   function renderDashboard() {
     const evald = players.filter(p => p.eval_complete).length;
     const assigned = players.filter(p => p.team_assignment).length;
@@ -4207,6 +4236,39 @@ export default function App() {
             </div>
           )}
         </div>
+        {/* Tournament timing per team — longest since-last-tournament first. */}
+        {(() => {
+          const rows = teamsList.filter(t => t.active).map(t => ({ team: t, g: tournamentGap(t.id) }))
+            .sort((a, b) => ((b.g.sinceDays == null ? 100000 : b.g.sinceDays) - (a.g.sinceDays == null ? 100000 : a.g.sinceDays)) || ((a.g.untilDays == null ? 100000 : a.g.untilDays) - (b.g.untilDays == null ? 100000 : b.g.untilDays)));
+          if (!rows.length) return null;
+          const clip = (s, n=28) => (s && s.length > n ? s.slice(0, n-1) + "…" : (s || "—"));
+          return (
+            <div style={{background:C.card,borderRadius:12,padding:"16px 18px",border:"1px solid "+C.border,marginBottom:18}}>
+              <div style={{fontSize:14,fontWeight:700,color:C.gold,marginBottom:4}}>Tournament Timing</div>
+              <div style={{fontSize:11,color:C.mut,marginBottom:10}}>Days since each team's last tournament and until their next — teams that have gone longest are up top.</div>
+              <div style={{overflowX:"auto"}}>
+                <table style={{width:"100%",borderCollapse:"collapse",fontSize:12.5}}>
+                  <thead><tr style={{color:C.mut,fontSize:10,textTransform:"uppercase"}}>
+                    <th style={{textAlign:"left",padding:"6px 10px"}}>Team</th>
+                    <th style={{textAlign:"right",padding:"6px 10px"}}>Days since last</th>
+                    <th style={{textAlign:"right",padding:"6px 10px"}}>Days until next</th>
+                    <th style={{textAlign:"left",padding:"6px 10px"}}>Next up</th>
+                  </tr></thead>
+                  <tbody>
+                    {rows.map(({team, g}) => (
+                      <tr key={team.id} style={{borderTop:"1px solid "+C.border}}>
+                        <td style={{padding:"6px 10px"}}><span onClick={()=>setTeamCardName(team.id)} style={{fontWeight:700,color:C.gold,cursor:"pointer"}}>{team.id}</span></td>
+                        <td style={{padding:"6px 10px",textAlign:"right",fontWeight:700,color:g.ongoing?C.grn:(g.sinceDays!=null&&g.sinceDays>28?"#f59e0b":C.text)}}>{g.ongoing?"in progress":g.sinceDays==null?"—":g.sinceDays}</td>
+                        <td style={{padding:"6px 10px",textAlign:"right",fontWeight:700,color:g.untilDays!=null?C.text:C.mut}}>{g.untilDays==null?"—":g.untilDays}</td>
+                        <td style={{padding:"6px 10px",color:C.mut,fontSize:11}}>{clip(g.next ? g.next.name : (g.ongoing ? g.ongoing.name : ""))}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          );
+        })()}
         {/* Upload Section */}
         <div style={{background:C.card,borderRadius:12,padding:"18px 20px",border:"1px solid "+C.border,marginBottom:18}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
@@ -6617,6 +6679,7 @@ export default function App() {
           {/* Tournament schedule */}
           <div style={sectionBox}>
             <div style={lbl}>Tournament Schedule · {teamTournaments.length}</div>
+            <div style={{fontSize:12,fontWeight:700,color:C.acc,marginBottom:8}}>{tournamentTimingText(teamCardName)}</div>
             {teamTournaments.length === 0 && <div style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>No tournament assignments. Open the Tournaments tab to assign.</div>}
             {teamTournaments.length > 0 && (
               <div style={{display:"flex",flexDirection:"column",gap:6}}>
