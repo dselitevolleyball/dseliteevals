@@ -9545,6 +9545,7 @@ export default function App() {
     const pnum = id => (byId[id] && byId[id].num) || "";
     const pname = id => { const p = byId[id]; return p ? (p.name || ("#" + (p.num || "?"))) : "—"; };
     const plabel = id => { const p = byId[id]; if (!p) return "—"; return (p.num ? "#" + p.num + " " : "") + (p.name || "?"); };
+    const pfirst = id => { const p = byId[id]; if (!p) return "—"; return ((p.name || "").trim().split(/\s+/)[0]) || ("#" + (p.num || "?")); };
     const rosterOptions = [<option key="" value="">—</option>, ...roster.map(p => <option key={p.id} value={p.id}>{plabel(p.id)}{p.pos ? " ("+p.pos+")" : ""}</option>)];
 
     const setIdx = Math.min(lineupSetIdx, draft.sets.length - 1);
@@ -9568,34 +9569,6 @@ export default function App() {
       });
     });
 
-    // Court cell for a rotation slot
-    const courtCell = (slot, ctx) => {
-      const { setterBack, setterFront, passers, liberoId } = ctx;
-      const isServer = lineupPhase === "serve" && slot.n === 1;
-      const isSetB = slot.id && slot.id === setterBack;
-      const isSetF = slot.id && slot.id === setterFront;
-      const isPass = lineupPhase === "receive" && slot.id && passers.has(slot.id);
-      const isLib = slot.id && slot.id === liberoId;
-      const bg = slot.row === "front" ? "rgba(233,30,140,0.07)" : "rgba(255,255,255,0.02)";
-      const bc = isServer ? C.gold : isSetB ? C.acc : isPass ? C.grn : C.border;
-      const badges = [];
-      if (isServer) badges.push(["SRV", C.gold]);
-      if (isSetB) badges.push(["SET", C.acc]);
-      if (isSetF) badges.push(["RS", "#f59e0b"]);
-      if (isPass) badges.push(["PASS", C.grn]);
-      if (isLib) badges.push(["L", "#06b6d4"]);
-      return (
-        <div key={slot.n} title={slot.label} style={{position:"relative",minHeight:52,borderRadius:6,border:"1px solid "+bc,background:bg,padding:"4px 5px",display:"flex",flexDirection:"column",justifyContent:"center"}}>
-          <div style={{position:"absolute",top:2,left:4,fontSize:8,fontWeight:800,color:C.mut}}>{slot.n}</div>
-          <div style={{fontSize:11,fontWeight:700,color:slot.id?C.text:C.mut,lineHeight:1.15,textAlign:"center",marginTop:4}}>
-            {slot.id ? <>{pnum(slot.id) && <span style={{color:C.gold}}>#{pnum(slot.id)} </span>}{pname(slot.id)}</> : "—"}
-          </div>
-          {badges.length>0 && <div style={{display:"flex",gap:2,justifyContent:"center",flexWrap:"wrap",marginTop:2}}>
-            {badges.map(([t,c],bi) => <span key={bi} style={{fontSize:7,fontWeight:800,letterSpacing:0.3,color:c,border:"1px solid "+c,borderRadius:3,padding:"0 2px"}}>{t}</span>)}
-          </div>}
-        </div>
-      );
-    };
 
     // Lineup-card text for copy
     const cardText = () => {
@@ -9755,33 +9728,85 @@ export default function App() {
           </div>
           {!lineupFilled ? (
             <div style={{fontSize:12,color:C.mut,padding:"6px 0"}}>Fill all 6 court positions above to see the rotations.</div>
-          ) : (
-            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:10}}>
-              {[0,1,2,3,4,5].map(r => {
-                const slots = vbRotation(set.lineup, r, set.subs);
-                const { setterBack, setterFront } = vbSetterInfo(slots, set.setters);
-                const ctx = { setterBack, setterFront, passers: new Set(set.passers||[]), liberoId: set.liberoId };
-                const byIndex = {}; slots.forEach(s => { byIndex[s.i] = s; });
-                const server = slots.find(s => s.n === 1);
-                return (
-                  <div key={r} style={{border:"1px solid "+C.border,borderRadius:10,padding:8,background:C.bg}}>
-                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-                      <span style={{fontSize:12,fontWeight:800,color:C.gold}}>R{r+1}</span>
-                      <span style={{fontSize:9,color:C.mut}}>{lineupPhase==="serve" ? "serving: "+pname(server.id) : "receiving"}</span>
-                    </div>
-                    <div style={{fontSize:8,color:C.mut,textAlign:"center",marginBottom:3}}>▲ net</div>
-                    <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:3}}>
-                      {VB_GRID.map(gi => courtCell(byIndex[gi], ctx))}
-                    </div>
-                    <div style={{marginTop:6,fontSize:9,lineHeight:1.4,color:C.mut}}>
-                      {setterBack ? <div><span style={{color:C.acc,fontWeight:800}}>Sets:</span> {pname(setterBack)}</div> : <div style={{color:"#f59e0b"}}>No back-row setter</div>}
-                      <div><span style={{color:C.text}}>Front:</span> {slots.filter(s=>s.row==="front").map(s=>pname(s.id)).join(", ")}</div>
-                    </div>
+          ) : (() => {
+            const rots = [0,1,2,3,4,5].map(r => {
+              const slots = vbRotation(set.lineup, r, set.subs);
+              const info = vbSetterInfo(slots, set.setters);
+              const byIndex = {}; slots.forEach(s => { byIndex[s.i] = s; });
+              return { r, slots, byIndex, setterBack: info.setterBack, setterFront: info.setterFront };
+            });
+            const passers = new Set(set.passers||[]);
+            const liberoId = set.liberoId;
+            const frontIdx = [3,2,1], backIdx = [4,5,0]; // court indexes for front row (4·3·2) and back (5·6·1)
+            const cell = (slot, ro, edge) => {
+              const isServer = lineupPhase==="serve" && slot.n===1;
+              const isSetB = slot.id && slot.id===ro.setterBack;
+              const isSetF = slot.id && slot.id===ro.setterFront;
+              const isPass = lineupPhase==="receive" && slot.id && passers.has(slot.id);
+              const isLib = slot.id && slot.id===liberoId;
+              const bg = isServer ? "rgba(245,158,11,0.30)"
+                       : isPass ? "rgba(34,197,94,0.22)"
+                       : isSetB ? "rgba(6,182,212,0.18)"
+                       : slot.row==="front" ? "rgba(233,30,140,0.07)" : "transparent";
+              return (
+                <td key={slot.n} title={(slot.id?pname(slot.id):"empty")+" · "+slot.label} style={{border:"1px solid "+C.border,borderRight:edge?"2px solid #3a3a3a":"1px solid "+C.border,background:bg,padding:"3px 2px",textAlign:"center",height:32,verticalAlign:"middle",overflow:"hidden"}}>
+                  <span style={{fontSize:11,lineHeight:1.1,color:isServer?"#fde68a":isLib?"#06b6d4":C.text,fontWeight:(isSetB||isServer)?800:600,textDecoration:isLib?"underline":"none",whiteSpace:"nowrap"}}>{slot.id?pfirst(slot.id):"—"}</span>
+                  {isSetB && <span style={{fontSize:7,color:"#06b6d4",fontWeight:800,marginLeft:2,verticalAlign:"super"}}>S</span>}
+                  {isSetF && <span style={{fontSize:7,color:"#f59e0b",fontWeight:800,marginLeft:2,verticalAlign:"super"}}>rs</span>}
+                </td>
+              );
+            };
+            const hd = { border:"1px solid "+C.border, borderRight:"2px solid #3a3a3a", padding:"2px 3px", background:"rgba(255,255,255,0.03)", textAlign:"center" };
+            const rlbl = { border:"1px solid "+C.border, fontSize:8, fontWeight:800, color:C.mut, textTransform:"uppercase", letterSpacing:0.3, padding:"2px 4px", textAlign:"center", background:"rgba(255,255,255,0.02)", width:42 };
+            // Roster positions legend (starting six + libero), like the spreadsheet's side list.
+            const legendIds = [...(set.lineup||[]).filter(Boolean)];
+            if (liberoId && !legendIds.includes(liberoId)) legendIds.push(liberoId);
+            return (
+              <div>
+                <div style={{overflowX:"auto"}}>
+                  <table style={{borderCollapse:"collapse",width:"100%",minWidth:720,tableLayout:"fixed"}}>
+                    <colgroup><col style={{width:42}} />{rots.map(ro => <col key={ro.r} span={3} />)}</colgroup>
+                    <thead>
+                      <tr>
+                        <th style={{...hd,width:42}}></th>
+                        {rots.map(ro => (
+                          <th key={ro.r} colSpan={3} style={hd}>
+                            <div style={{fontSize:11,fontWeight:800,color:C.gold}}>R{ro.r+1}</div>
+                            <div style={{fontSize:8,fontWeight:600,color:C.mut,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ro.setterBack?("sets "+pfirst(ro.setterBack)):"no setter"}</div>
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td style={rlbl} title="Front row (net side)">Front<br/>▲net</td>
+                        {rots.map(ro => frontIdx.map((gi,ci) => cell(ro.byIndex[gi], ro, ci===2)))}
+                      </tr>
+                      <tr>
+                        <td style={rlbl} title="Back row">Back</td>
+                        {rots.map(ro => backIdx.map((gi,ci) => cell(ro.byIndex[gi], ro, ci===2)))}
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                {/* Legend row: colors + roster positions */}
+                <div style={{display:"flex",gap:14,flexWrap:"wrap",alignItems:"center",marginTop:8,fontSize:10,color:C.mut}}>
+                  <span><span style={{display:"inline-block",width:9,height:9,background:"rgba(245,158,11,0.5)",borderRadius:2,marginRight:3,verticalAlign:"middle"}} />server</span>
+                  <span><span style={{color:"#06b6d4",fontWeight:800}}>ˢ</span> back-row setter (sets)</span>
+                  <span><span style={{color:"#f59e0b",fontWeight:800}}>rs</span> front setter → right side</span>
+                  <span><span style={{color:"#06b6d4",textDecoration:"underline",fontWeight:700}}>libero</span></span>
+                  <span><span style={{display:"inline-block",width:9,height:9,background:"rgba(34,197,94,0.4)",borderRadius:2,marginRight:3,verticalAlign:"middle"}} />passer (receive)</span>
+                </div>
+                {legendIds.length>0 && (
+                  <div style={{display:"flex",gap:10,flexWrap:"wrap",marginTop:6,fontSize:11}}>
+                    {legendIds.map(id => (
+                      <span key={id} style={{color:C.text}}>{pfirst(id)}<span style={{color:C.mut}}> — {byId[id]&&byId[id].pos ? VB_POS_LABEL[byId[id].pos]||byId[id].pos : (id===liberoId?"Libero":"?")}</span></span>
+                    ))}
                   </div>
-                );
-              })}
-            </div>
-          )}
+                )}
+              </div>
+            );
+          })()}
         </div>
 
         {/* Playing time */}
