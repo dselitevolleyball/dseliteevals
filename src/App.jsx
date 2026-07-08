@@ -872,6 +872,10 @@ export default function App() {
   const [teamQuestions, setTeamQuestions]                   = useState([]); // coach→director questions
   const [faq, setFaq]                                       = useState([]); // curated coach FAQ
   const [faqSearch, setFaqSearch]                           = useState("");
+  // Queen of the Court game runner (persisted per device).
+  const [gameState, setGameState]                           = useState(() => { try { return JSON.parse(localStorage.getItem("dse_qotc") || "null"); } catch { return null; } });
+  const [gameSetup, setGameSetup]                           = useState({ names:"", courts:2, expected:20, newName:"" });
+  useEffect(() => { try { if (gameState) localStorage.setItem("dse_qotc", JSON.stringify(gameState)); else localStorage.removeItem("dse_qotc"); } catch {} }, [gameState]);
   const [qDraft, setQDraft]                                 = useState({}); // { `${team}|${item}`: text } ask-a-question drafts
   const [aDraft, setADraft]                                 = useState({}); // { [questionId]: text } answer drafts
   const [taskMeta, setTaskMeta]                             = useState({}); // { [item_key]: description } admin-editable
@@ -9206,6 +9210,166 @@ export default function App() {
   // Two-column view: thread list on the left, selected conversation on
   // the right. Realtime push (in the parent component) keeps both up
   // to date as Twilio delivers inbound + status updates.
+  // Queen of the Court — 4v4 game runner with random matchups, even sit-outs,
+  // per-win scoring and a live leaderboard. State persists to localStorage.
+  function renderGames() {
+    const shuffle = (arr) => { const a = arr.slice(); for (let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; };
+    const TEAM_SIZE = 4; // 4v4 → 8 per court
+    // Build one round: pick sit-outs (fewest prior sit-outs first) then split the
+    // rest into random 4v4 courts.
+    const makeRound = (players, courts, sitCountBy) => {
+      const P = players.length;
+      const courtsUsed = Math.min(Math.max(1, courts), Math.floor(P / (TEAM_SIZE * 2)));
+      if (courtsUsed < 1) return null;
+      const capacity = courtsUsed * TEAM_SIZE * 2;
+      const sitN = P - capacity;
+      const ordered = shuffle(players).sort((a, b) => (sitCountBy[a.id] || 0) - (sitCountBy[b.id] || 0));
+      const sitOut = ordered.slice(0, sitN).map(p => p.id);
+      const playing = shuffle(ordered.slice(sitN));
+      const matches = [];
+      for (let c = 0; c < courtsUsed; c++) {
+        const g = playing.slice(c * 8, c * 8 + 8);
+        matches.push({ court: c + 1, teamA: g.slice(0, 4).map(p => p.id), teamB: g.slice(4, 8).map(p => p.id), winner: null });
+      }
+      return { id: Date.now() + "-" + Math.random().toString(36).slice(2, 6), matches, sitOut };
+    };
+    const sitCounts = (gs) => { const m = {}; gs.players.forEach(p => m[p.id] = 0); gs.rounds.forEach(r => r.sitOut.forEach(id => { if (m[id] != null) m[id]++; })); return m; };
+
+    // ── Setup screen ──────────────────────────────────────────────────────
+    if (!gameState) {
+      const inp = { width:"100%", padding:"9px 11px", borderRadius:8, border:"1px solid "+C.border, background:C.bg, color:C.text, fontFamily:"inherit", fontSize:14, boxSizing:"border-box" };
+      const start = () => {
+        const names = gameSetup.names.split(/[\n,]/).map(s => s.trim()).filter(Boolean);
+        if (names.length < 8) { window.alert("Enter at least 8 players (a 4v4 court needs 8)."); return; }
+        const players = names.map((n, i) => ({ id: "p" + i + "-" + Math.random().toString(36).slice(2, 5), name: n }));
+        const courts = Math.max(1, parseInt(gameSetup.courts, 10) || 1);
+        const expected = Math.max(0, parseInt(gameSetup.expected, 10) || 0);
+        const r1 = makeRound(players, courts, {});
+        if (!r1) { window.alert("Not enough players for the courts set."); return; }
+        setGameState({ players, courts, expected, rounds: [r1] });
+      };
+      const nCount = gameSetup.names.split(/[\n,]/).map(s => s.trim()).filter(Boolean).length;
+      return (
+        <div style={{maxWidth:640,margin:"0 auto"}}>
+          <div style={{marginBottom:14}}>
+            <div style={{fontSize:18,fontWeight:800,color:C.gold}}>Queen of the Court · 4v4</div>
+            <div style={{fontSize:12,color:C.mut,marginTop:2}}>Enter players, set courts, and run randomized 4v4 matches. Each player earns a point for every match their side wins; sit-outs rotate evenly.</div>
+          </div>
+          <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:16}}>
+            <label style={{fontSize:11,fontWeight:800,color:C.mut,textTransform:"uppercase",letterSpacing:0.5}}>Players — one per line ({nCount})</label>
+            <textarea value={gameSetup.names} onChange={e=>setGameSetup(v=>({...v,names:e.target.value}))} rows={8} placeholder={"Ava\nMaya\nBriar\n…"} style={{...inp,marginTop:6,resize:"vertical",lineHeight:1.5}} />
+            <div style={{display:"flex",gap:14,flexWrap:"wrap",marginTop:12}}>
+              <label style={{fontSize:12,color:C.mut}}>Courts <input type="number" min={1} value={gameSetup.courts} onChange={e=>setGameSetup(v=>({...v,courts:e.target.value}))} style={{...inp,width:70,display:"inline-block",marginLeft:6}} /></label>
+              <label style={{fontSize:12,color:C.mut}}>Expected games <input type="number" min={0} value={gameSetup.expected} onChange={e=>setGameSetup(v=>({...v,expected:e.target.value}))} style={{...inp,width:80,display:"inline-block",marginLeft:6}} /></label>
+            </div>
+            <div style={{fontSize:11,color:C.mut,marginTop:8}}>{nCount>=8 ? `≈ ${Math.min(parseInt(gameSetup.courts,10)||1, Math.floor(nCount/8))} court(s) in play, ${Math.max(0, nCount - Math.min(parseInt(gameSetup.courts,10)||1, Math.floor(nCount/8))*8)} sitting each round.` : "Need at least 8 players."}</div>
+            <button onClick={start} disabled={nCount<8} style={{marginTop:14,padding:"10px 18px",borderRadius:8,border:"none",background:nCount<8?C.border:C.gold,color:nCount<8?C.mut:"#000",fontWeight:800,fontSize:14,cursor:nCount<8?"default":"pointer",fontFamily:"inherit"}}>Start session ▶</button>
+          </div>
+        </div>
+      );
+    }
+
+    // ── Active session ────────────────────────────────────────────────────
+    const gs = gameState;
+    const nameById = new Map(gs.players.map(p => [p.id, p.name]));
+    const round = gs.rounds[gs.rounds.length - 1];
+    const stats = {}; gs.players.forEach(p => stats[p.id] = { points:0, played:0, sat:0 });
+    gs.rounds.forEach(r => {
+      r.matches.forEach(m => {
+        if (!m.winner) return;
+        const winners = m.winner === "A" ? m.teamA : m.teamB;
+        [...m.teamA, ...m.teamB].forEach(id => stats[id] && stats[id].played++);
+        winners.forEach(id => stats[id] && stats[id].points++);
+      });
+      r.sitOut.forEach(id => stats[id] && stats[id].sat++);
+    });
+    const matchesPlayed = gs.rounds.reduce((s, r) => s + r.matches.filter(m => m.winner).length, 0);
+    const roundReady = round.matches.every(m => m.winner);
+    const leaderboard = gs.players.slice().sort((a, b) => (stats[b.id].points - stats[a.id].points) || (stats[a.id].played - stats[b.id].played) || a.name.localeCompare(b.name));
+
+    const setWinner = (matchIdx, winner) => setGameState(g => {
+      const rounds = g.rounds.slice(); const last = { ...rounds[rounds.length - 1] };
+      last.matches = last.matches.map((m, i) => i === matchIdx ? { ...m, winner: m.winner === winner ? null : winner } : m);
+      rounds[rounds.length - 1] = last; return { ...g, rounds };
+    });
+    const nextRound = () => {
+      if (!round.matches.every(m => m.winner)) { window.alert("Pick a winner on every court first."); return; }
+      const nr = makeRound(gs.players, gs.courts, sitCounts(gs));
+      if (!nr) { window.alert("Not enough players."); return; }
+      setGameState(g => ({ ...g, rounds: [...g.rounds, nr] }));
+    };
+    const addPlayer = () => {
+      const n = (gameSetup.newName || "").trim(); if (!n) return;
+      setGameState(g => ({ ...g, players: [...g.players, { id: "p" + g.players.length + "-" + Math.random().toString(36).slice(2, 5), name: n }] }));
+      setGameSetup(v => ({ ...v, newName: "" }));
+    };
+    const teamCell = (ids, side, m, idx) => (
+      <button onClick={()=>setWinner(idx, side)} style={{flex:1,textAlign:"left",padding:"8px 10px",borderRadius:8,border:"2px solid "+(m.winner===side?C.grn:C.border),background:m.winner===side?"rgba(34,197,94,0.12)":"transparent",cursor:"pointer",fontFamily:"inherit"}}>
+        <div style={{fontSize:9,fontWeight:800,color:m.winner===side?C.grn:C.mut,textTransform:"uppercase",marginBottom:3}}>Team {side}{m.winner===side?" · WON ✓":""}</div>
+        {ids.map(id => <div key={id} style={{fontSize:13,fontWeight:600,color:C.text}}>{nameById.get(id)||"?"}</div>)}
+      </button>
+    );
+
+    return (
+      <div style={{maxWidth:1000,margin:"0 auto"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:10,flexWrap:"wrap",marginBottom:12}}>
+          <div>
+            <div style={{fontSize:18,fontWeight:800,color:C.gold}}>Queen of the Court · Round {gs.rounds.length}</div>
+            <div style={{fontSize:11,color:C.mut,marginTop:2}}>{matchesPlayed} game{matchesPlayed===1?"":"s"} played{gs.expected?` of ~${gs.expected} expected`:""} · {gs.players.length} players · {gs.courts} court{gs.courts===1?"":"s"}</div>
+          </div>
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={nextRound} disabled={!roundReady} style={{padding:"8px 16px",borderRadius:8,border:"none",background:roundReady?C.gold:C.border,color:roundReady?"#000":C.mut,fontWeight:800,fontSize:13,cursor:roundReady?"pointer":"default",fontFamily:"inherit"}}>Next round →</button>
+            <button onClick={()=>{ if(window.confirm("End this session and clear it?")) setGameState(null); }} style={{padding:"8px 12px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>End</button>
+          </div>
+        </div>
+
+        {gs.expected>0 && <div style={{height:6,background:C.bg,borderRadius:4,overflow:"hidden",marginBottom:14}}><div style={{height:"100%",width:Math.min(100,Math.round(matchesPlayed/gs.expected*100))+"%",background:C.gold}} /></div>}
+
+        <div style={{display:"grid",gridTemplateColumns:"1fr 300px",gap:16,alignItems:"start"}}>
+          {/* Courts */}
+          <div style={{display:"flex",flexDirection:"column",gap:12}}>
+            <div style={{fontSize:10,fontWeight:800,color:C.mut,textTransform:"uppercase",letterSpacing:0.5}}>This round — tap the winning side on each court</div>
+            {round.matches.map((m, idx) => (
+              <div key={idx} style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:12}}>
+                <div style={{fontSize:12,fontWeight:800,color:C.gold,marginBottom:8}}>Court {m.court}</div>
+                <div style={{display:"flex",gap:10,alignItems:"stretch"}}>
+                  {teamCell(m.teamA,"A",m,idx)}
+                  <div style={{alignSelf:"center",fontSize:11,fontWeight:800,color:C.mut}}>vs</div>
+                  {teamCell(m.teamB,"B",m,idx)}
+                </div>
+              </div>
+            ))}
+            {round.sitOut.length>0 && (
+              <div style={{background:C.card,border:"1px dashed "+C.border,borderRadius:12,padding:"10px 14px"}}>
+                <span style={{fontSize:11,fontWeight:800,color:C.mut,textTransform:"uppercase"}}>Sitting out ({round.sitOut.length}): </span>
+                <span style={{fontSize:12,color:C.text}}>{round.sitOut.map(id=>nameById.get(id)).join(", ")}</span>
+              </div>
+            )}
+            <div style={{display:"flex",gap:6,alignItems:"center",marginTop:2}}>
+              <input value={gameSetup.newName} onChange={e=>setGameSetup(v=>({...v,newName:e.target.value}))} onKeyDown={e=>{ if(e.key==="Enter") addPlayer(); }} placeholder="Add a late arrival…" style={{flex:1,padding:"6px 10px",borderRadius:8,border:"1px solid "+C.border,background:C.bg,color:C.text,fontFamily:"inherit",fontSize:12}} />
+              <button onClick={addPlayer} style={{padding:"6px 12px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.gold,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>Add</button>
+            </div>
+          </div>
+
+          {/* Leaderboard */}
+          <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,overflow:"hidden"}}>
+            <div style={{padding:"10px 14px",borderBottom:"1px solid "+C.border,fontSize:12,fontWeight:800,color:C.gold,letterSpacing:0.5}}>🏆 LEADERBOARD</div>
+            <div style={{maxHeight:520,overflowY:"auto"}}>
+              {leaderboard.map((p, i) => (
+                <div key={p.id} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 14px",borderTop:i?"1px solid "+C.border:"none"}}>
+                  <span style={{fontSize:12,fontWeight:800,color:i===0?C.gold:C.mut,width:20}}>{i+1}</span>
+                  <span style={{flex:1,fontSize:13,fontWeight:600,color:C.text}}>{p.name}</span>
+                  <span style={{fontSize:9,color:C.mut}}>{stats[p.id].played}g · {stats[p.id].sat} sat</span>
+                  <span style={{fontSize:15,fontWeight:800,color:C.gold,width:28,textAlign:"right"}}>{stats[p.id].points}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   function renderFaq() {
     const faqMiniBtn = { padding:"3px 9px", borderRadius:6, border:"1px solid "+C.border, background:"transparent", color:C.mut, fontSize:11, fontWeight:700, cursor:"pointer", fontFamily:"inherit" };
     const qq = faqSearch.trim().toLowerCase();
@@ -11878,6 +12042,7 @@ export default function App() {
                 {item("tournaments","Tournaments")}
                 {item("activity","Activity")}
                 {item("faq","FAQ")}
+                {item("games","Games")}
                 {isOwner && item("askai","Ask AI")}
                 <button style={btn(false)} onClick={()=>{ window.location.href = "/practice"; }} title="Open the practice planner">Practice Planning</button>
               </>;
@@ -12023,6 +12188,7 @@ export default function App() {
         {view==="assignments" && renderAssignments()}
         {view==="coverage" && renderCoachCoverage()}
         {view==="faq" && renderFaq()}
+        {view==="games" && renderGames()}
         {view==="askai" && renderAskAI()}
         </>}
       </div>
