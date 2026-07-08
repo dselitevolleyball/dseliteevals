@@ -2590,6 +2590,7 @@ export default function App() {
     const teamById = new Map(teamsList.map(t => [t.id, t]));
     const coachToItems = new Map();
     for (const a of tournamentAssignments) {
+      if (a.ignore_conflict || a.sub_coach) continue; // coach-covered (has a sub) — never conflicts
       const tn = tById.get(a.tournament_id);
       const tm = teamById.get(a.team_id);
       if (!tn || !tm) continue;
@@ -10394,6 +10395,7 @@ export default function App() {
     const out = [];
     for (const a of tournamentAssignments) {
       if (a.team_id === teamId) continue;
+      if (a.ignore_conflict || a.sub_coach) continue; // the other team has a sub — no clash
       const tn = tById.get(a.tournament_id);
       if (!tn || tn.id === tournament.id || tn.cancelled) continue;
       if (!(tn.start_date <= tournament.end_date && tournament.start_date <= tn.end_date)) continue;
@@ -10402,22 +10404,36 @@ export default function App() {
     }
     return out;
   };
-  const assignTeamToTournament = async (tournamentId, teamId, division) => {
-    // Hard stop on coach conflicts: a shared coach can't be in two places.
-    const target = tournaments.find(t => t.id === tournamentId);
-    const clashes = coachClashesFor(teamId, target);
-    if (clashes.length) {
-      window.alert("Can't schedule " + teamId + " for this weekend — coach conflict:\n\n" +
-        clashes.map(c => "• " + c.coach + " also coaches " + c.otherTeam + ", already going to " + c.otherTournament.name).join("\n") +
-        "\n\nRemove the other team's assignment (or change the coaching assignment) first.");
-      return;
-    }
+  const assignTeamToTournament = async (tournamentId, teamId, division, opts = {}) => {
     if (!tournamentId || !teamId) return;
+    const target = tournaments.find(t => t.id === tournamentId);
+    let subCoach = (opts.subCoach || "").trim() || null;
+    let ignore = !!opts.force;
+    // On a coach conflict, offer to override with a replacement coach instead of
+    // hard-stopping (e.g. send 13 Diamond with 14 Ruby, sub the shared coach).
+    const clashes = coachClashesFor(teamId, target);
+    if (clashes.length && !ignore) {
+      const ok = window.confirm("Coach conflict for " + teamId + ":\n\n" +
+        clashes.map(c => "• " + c.coach + " also coaches " + c.otherTeam + " (" + c.otherTournament.name + ")").join("\n") +
+        "\n\nSend " + teamId + " anyway with a replacement (sub) coach?");
+      if (!ok) return;
+      const n = window.prompt("Sub coach covering " + teamId + " (leave blank to just override the conflict):", "");
+      if (n === null) return;
+      subCoach = n.trim() || null;
+      ignore = true;
+    }
     const { error } = await supabase.from("tournament_assignments").upsert(
-      { tournament_id: tournamentId, team_id: teamId, division: division || null },
+      { tournament_id: tournamentId, team_id: teamId, division: division || null, sub_coach: subCoach, ignore_conflict: ignore },
       { onConflict: "tournament_id,team_id" }
     );
     if (error) { window.alert("Assign failed: " + error.message); return; }
+    loadTournaments();
+  };
+  // Set/clear a sub coach on an existing assignment. A sub clears the conflict flag.
+  const updateAssignmentSub = async (assignmentId, subCoach) => {
+    const sub = (subCoach || "").trim() || null;
+    const { error } = await supabase.from("tournament_assignments").update({ sub_coach: sub, ignore_conflict: !!sub }).eq("id", assignmentId);
+    if (error) { window.alert("Update failed: " + error.message); return; }
     loadTournaments();
   };
   const removeAssignment = async (assignmentId) => {
@@ -11308,6 +11324,7 @@ export default function App() {
                                 onMouseLeave={e=>e.currentTarget.style.textDecorationColor="transparent"}>
                                 {abbreviate(it.tournament.name, 26)}
                                 {it.assignment.division && <span style={{color:C.mut,fontSize:9}}> · {it.assignment.division}</span>}
+                                {it.assignment.sub_coach && <div style={{fontSize:8,fontWeight:800,color:"#a855f7"}}>🔁 sub: {it.assignment.sub_coach}</div>}
                               </div>
                             ))}
                           </td>
@@ -11697,6 +11714,9 @@ export default function App() {
                             <option value="">— division —</option>
                             {opts.map(d => <option key={d} value={d}>{d}</option>)}
                           </select>
+                          <DebouncedField value={a.sub_coach||""} onCommit={v=>updateAssignmentSub(a.id, v)} placeholder="sub coach…"
+                            title="Replacement coach — lets this team go even if a coach is double-booked; clears the conflict flag"
+                            style={{...inpStyle,fontSize:11,padding:"3px 6px",width:120}} />
                           <button onClick={()=>removeAssignment(a.id)} title={"Remove " + a.team_id + " from this tournament"}
                             style={{padding:"2px 9px",borderRadius:6,border:"1px solid "+C.red,background:"transparent",color:C.red,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Remove</button>
                         </div>
@@ -11709,8 +11729,8 @@ export default function App() {
                           <option value="">+ Add a team…</option>
                           {eligible.map(t => {
                             const clash = coachClashesFor(t.id, editingTournament);
-                            return <option key={t.id} value={t.id} disabled={clash.length > 0}>
-                              {t.id}{clash.length ? " — ⚠ " + clash[0].coach + " at " + truncName(clash[0].otherTournament.name, 18) : t.level ? " — " + t.level : ""}
+                            return <option key={t.id} value={t.id}>
+                              {t.id}{clash.length ? " — ⚠ conflict: " + clash[0].coach + " (override w/ sub)" : t.level ? " — " + t.level : ""}
                             </option>;
                           })}
                         </select>
