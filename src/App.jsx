@@ -8820,7 +8820,7 @@ export default function App() {
       const teams = [...emailTeams].sort();
       if (!teams.length || !emailSubject.trim() || !emailBody.trim()) return;
       const plan = teams.map(tn => {
-        const tp = players.filter(p => p.team_assignment === tn && !TERMINAL.includes(p.offer_status || "") && !emailExcluded.has(p.id));
+        const tp = sendPool.filter(p => p.team_assignment === tn);
         const parentRecips = emailAudience === "coaches" ? [] : tp.flatMap(emailsOf).map(e => e.toLowerCase());
         const coachRecips = emailAudience === "parents" ? [] : coachEmailsFor(tn);
         const recips = [...new Set([...parentRecips, ...coachRecips])];
@@ -9162,7 +9162,7 @@ export default function App() {
           {emailTeams.size > 0 && (() => {
             // Audience-aware address count so the button says exactly what will happen.
             const audTotal = [...emailTeams].reduce((sum, tn) => {
-              const tp = players.filter(p => p.team_assignment === tn && !TERMINAL.includes(p.offer_status || "") && !emailExcluded.has(p.id));
+              const tp = sendPool.filter(p => p.team_assignment === tn);
               const parentRecips = emailAudience === "coaches" ? [] : tp.flatMap(emailsOf).map(e => e.toLowerCase());
               const coachRecips = emailAudience === "parents" ? [] : coachEmailsFor(tn);
               return sum + new Set([...parentRecips, ...coachRecips]).size;
