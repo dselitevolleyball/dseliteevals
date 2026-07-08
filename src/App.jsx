@@ -875,6 +875,7 @@ export default function App() {
   // Queen of the Court game runner (persisted per device).
   const [gameState, setGameState]                           = useState(() => { try { return JSON.parse(localStorage.getItem("dse_qotc") || "null"); } catch { return null; } });
   const [gameSetup, setGameSetup]                           = useState({ names:"", courts:2, expected:20, newName:"" });
+  const [gameRankFair, setGameRankFair]                     = useState(true); // leaderboard: Fair Score vs Total points
   useEffect(() => { try { if (gameState) localStorage.setItem("dse_qotc", JSON.stringify(gameState)); else localStorage.removeItem("dse_qotc"); } catch {} }, [gameState]);
   const [qDraft, setQDraft]                                 = useState({}); // { `${team}|${item}`: text } ask-a-question drafts
   const [aDraft, setADraft]                                 = useState({}); // { [questionId]: text } answer drafts
@@ -9283,9 +9284,16 @@ export default function App() {
       });
       r.sitOut.forEach(id => stats[id] && stats[id].sat++);
     });
+    // Fair Score normalizes for uneven sit-outs: win% projected to the average
+    // number of games, so two equal win-rates tie no matter how many they played.
+    const totalPlayed = gs.players.reduce((s, p) => s + stats[p.id].played, 0);
+    const avgGames = gs.players.length ? totalPlayed / gs.players.length : 0;
+    gs.players.forEach(p => { const st = stats[p.id]; st.rate = st.played ? st.points / st.played : 0; st.fair = Math.round(st.rate * avgGames * 10) / 10; });
     const matchesPlayed = gs.rounds.reduce((s, r) => s + r.matches.filter(m => m.winner).length, 0);
     const roundReady = round.matches.every(m => m.winner);
-    const leaderboard = gs.players.slice().sort((a, b) => (stats[b.id].points - stats[a.id].points) || (stats[a.id].played - stats[b.id].played) || a.name.localeCompare(b.name));
+    const leaderboard = gs.players.slice().sort((a, b) =>
+      (gameRankFair ? (stats[b.id].fair - stats[a.id].fair) : (stats[b.id].points - stats[a.id].points))
+      || (stats[b.id].points - stats[a.id].points) || (stats[a.id].played - stats[b.id].played) || a.name.localeCompare(b.name));
 
     const setWinner = (matchIdx, winner) => setGameState(g => {
       const rounds = g.rounds.slice(); const last = { ...rounds[rounds.length - 1] };
@@ -9353,16 +9361,25 @@ export default function App() {
 
           {/* Leaderboard */}
           <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,overflow:"hidden"}}>
-            <div style={{padding:"10px 14px",borderBottom:"1px solid "+C.border,fontSize:12,fontWeight:800,color:C.gold,letterSpacing:0.5}}>🏆 LEADERBOARD</div>
-            <div style={{maxHeight:520,overflowY:"auto"}}>
-              {leaderboard.map((p, i) => (
+            <div style={{padding:"10px 14px",borderBottom:"1px solid "+C.border,display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+              <span style={{fontSize:12,fontWeight:800,color:C.gold,letterSpacing:0.5}}>🏆 LEADERBOARD</span>
+              <div style={{display:"flex",border:"1px solid "+C.border,borderRadius:6,overflow:"hidden"}}>
+                <button onClick={()=>setGameRankFair(true)} style={{padding:"3px 9px",border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:10,fontWeight:800,background:gameRankFair?C.gold:"transparent",color:gameRankFair?"#000":C.mut}}>Fair</button>
+                <button onClick={()=>setGameRankFair(false)} style={{padding:"3px 9px",border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:10,fontWeight:800,background:!gameRankFair?C.gold:"transparent",color:!gameRankFair?"#000":C.mut}}>Total</button>
+              </div>
+            </div>
+            <div style={{padding:"5px 14px",borderBottom:"1px solid "+C.border,fontSize:9,color:C.mut}}>{gameRankFair ? "Fair Score = win% × avg games — evens out uneven sit-outs" : "Ranked by total wins"}</div>
+            <div style={{maxHeight:480,overflowY:"auto"}}>
+              {leaderboard.map((p, i) => { const st = stats[p.id]; return (
                 <div key={p.id} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 14px",borderTop:i?"1px solid "+C.border:"none"}}>
                   <span style={{fontSize:12,fontWeight:800,color:i===0?C.gold:C.mut,width:20}}>{i+1}</span>
-                  <span style={{flex:1,fontSize:13,fontWeight:600,color:C.text}}>{p.name}</span>
-                  <span style={{fontSize:9,color:C.mut}}>{stats[p.id].played}g · {stats[p.id].sat} sat</span>
-                  <span style={{fontSize:15,fontWeight:800,color:C.gold,width:28,textAlign:"right"}}>{stats[p.id].points}</span>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:13,fontWeight:600,color:C.text}}>{p.name}</div>
+                    <div style={{fontSize:9,color:C.mut}}>{st.points} win{st.points===1?"":"s"} · {st.played}g · {st.played?Math.round(st.rate*100):0}% · {st.sat} sat</div>
+                  </div>
+                  <span style={{fontSize:16,fontWeight:800,color:C.gold,width:38,textAlign:"right"}}>{gameRankFair ? st.fair : st.points}</span>
                 </div>
-              ))}
+              ); })}
             </div>
           </div>
         </div>
