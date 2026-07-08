@@ -6683,7 +6683,13 @@ export default function App() {
             {teamTournaments.length === 0 && <div style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>No tournament assignments. Open the Tournaments tab to assign.</div>}
             {teamTournaments.length > 0 && (
               <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                {teamTournaments.map(({tournament:tn, ...a}, i) => (
+                {teamTournaments.map(({tournament:tn, ...a}, i) => {
+                  const gDays = (x, y) => Math.round((new Date(y + "T00:00") - new Date(x + "T00:00")) / 86400000);
+                  const prev = i > 0 ? teamTournaments[i - 1].tournament : null;
+                  const nxt = i < teamTournaments.length - 1 ? teamTournaments[i + 1].tournament : null;
+                  const sincePrev = prev ? gDays(prev.end_date, tn.start_date) : null;
+                  const tilNext = nxt ? gDays(tn.end_date, nxt.start_date) : null;
+                  return (
                   <div key={i} style={{padding:"6px 10px",background:C.card,borderRadius:6,border:"1px solid "+C.border,fontSize:12}}>
                     <div style={{fontWeight:700,color:C.text}}>{tn.name}</div>
                     <div style={{fontSize:10,color:C.mut,marginTop:2}}>
@@ -6691,8 +6697,13 @@ export default function App() {
                       {tn.location && " · " + tn.location}
                       {tn.is_qualifier && <span style={{color:"#a855f7",marginLeft:8,fontWeight:700}}>QUALIFIER</span>}
                     </div>
+                    <div style={{fontSize:10,fontWeight:700,color:C.acc,marginTop:3}}>
+                      {sincePrev == null ? "▲ no past tournament" : "▲ " + sincePrev + "d since previous"}
+                      {tilNext != null ? "  ·  ▼ " + tilNext + "d until next" : "  ·  ▼ last on schedule"}
+                    </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
