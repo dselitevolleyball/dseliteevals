@@ -11130,8 +11130,27 @@ export default function App() {
     const abbreviate = (name, n = 22) => name.length > n ? name.slice(0, n-1) + "…" : name;
     const fmtMD = (iso) => { const d = new Date(iso + "T00:00"); return (d.getMonth()+1) + "/" + d.getDate(); };
 
+    // Summary of what's assigned across the teams currently shown.
+    const shownTeamIds = new Set(teamsToShow.map(t => t.id));
+    const dayCount = (t) => { try { const s = new Date(t.start_date + "T00:00"), e = new Date(t.end_date + "T00:00"); return Math.max(1, Math.round((e - s) / 86400000) + 1); } catch { return 1; } };
+    let asgCount = 0; const tnSet = new Set(); let tnDays = 0; const wkndSet = new Set();
+    for (const [k, items] of cellMap) {
+      const teamId = k.slice(0, k.lastIndexOf(":"));
+      if (!shownTeamIds.has(teamId)) continue;
+      for (const it of items) { asgCount++; tnSet.add(it.tournament.id); tnDays += dayCount(it.tournament); wkndSet.add(k.slice(k.lastIndexOf(":") + 1)); }
+    }
+
     return (
       <div>
+        {/* Summary of the selected schedule */}
+        <div style={{display:"flex",gap:16,flexWrap:"wrap",alignItems:"center",marginBottom:8,padding:"9px 14px",background:C.card,borderRadius:10,border:"1px solid "+C.gold}}>
+          <span style={{fontSize:12,fontWeight:800,color:C.gold,textTransform:"uppercase",letterSpacing:0.5}}>Selected</span>
+          <span style={{fontSize:13,color:C.text}}><b style={{color:C.gold}}>{tnSet.size}</b> tournament{tnSet.size===1?"":"s"}</span>
+          <span style={{fontSize:13,color:C.text}}><b style={{color:C.gold}}>{tnDays}</b> tournament-day{tnDays===1?"":"s"}</span>
+          <span style={{fontSize:13,color:C.text}}><b style={{color:C.gold}}>{wkndSet.size}</b> weekend{wkndSet.size===1?"":"s"}</span>
+          <span style={{fontSize:13,color:C.text}}><b style={{color:C.gold}}>{asgCount}</b> team assignment{asgCount===1?"":"s"}</span>
+          <span style={{fontSize:10,color:C.mut,marginLeft:"auto"}}>across {teamsToShow.length} team{teamsToShow.length===1?"":"s"} shown</span>
+        </div>
         {/* Legend */}
         <div style={{display:"flex",gap:14,flexWrap:"wrap",marginBottom:8,fontSize:10,color:C.mut,alignItems:"center"}}>
           <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:12,height:12,borderRadius:3,background:"rgba(239,68,68,0.35)",display:"inline-block"}} /> Coach double-booked (two tournaments)</span>
@@ -11265,6 +11284,13 @@ export default function App() {
                                   <span style={{marginRight:2}}>⛔</span>{[...new Set(busy.map(b => b.coach.split(" ")[0]))].join(", ")}
                                   <div style={{fontSize:8,fontWeight:600,color:"#9ca3af"}}>w/ {[...new Set(busy.map(b => b.teamId))].join(", ")}</div>
                                 </div>
+                              ) : tnrsThis.length ? (
+                                <select value="" onChange={e=>{ if (e.target.value) assignTeamToTournament(e.target.value, team.id); }}
+                                  title="Assign a tournament to this team for this weekend"
+                                  style={{...inpStyle,padding:"2px 4px",fontSize:10,width:"100%",cursor:"pointer",color:C.mut,background:"transparent",border:"1px solid "+C.border}}>
+                                  <option value="">＋ pick…</option>
+                                  {tnrsThis.map(t => <option key={t.id} value={t.id}>{(t.is_qualifier?"Q · ":"")+abbreviate(t.name, 30)}</option>)}
+                                </select>
                               ) : (
                                 <span style={{color:C.mut,fontSize:11}}>—</span>
                               )
