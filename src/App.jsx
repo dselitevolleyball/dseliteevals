@@ -875,6 +875,7 @@ export default function App() {
   const [lineupSetIdx, setLineupSetIdx] = useState(0);       // active set tab
   const [lineupPhase, setLineupPhase]   = useState("serve"); // "serve" | "receive" rotation display
   const [lineupSaved, setLineupSaved]   = useState("");      // "", "saving", "saved" indicator
+  const [lineupSubSel, setLineupSubSel] = useState(null);    // {setId,r,i,outId,courtN,label,inId,scope} click-to-sub
   // Fires the "save a restore point first" nudge at most once per practice session.
   const practiceEditReminded = useRef(false);
   const [saBlock, setSaBlock]                         = useState(
@@ -9748,11 +9749,16 @@ export default function App() {
                        : isPass ? "rgba(34,197,94,0.22)"
                        : isSetB ? "rgba(6,182,212,0.18)"
                        : slot.row==="front" ? "rgba(233,30,140,0.07)" : "transparent";
+              const isSubbed = slot.id && slot.baseId && slot.id !== slot.baseId; // came in via a sub
+              const isSel = lineupSubSel && lineupSubSel.setId===set.id && lineupSubSel.r===ro.r && lineupSubSel.i===slot.i;
               return (
-                <td key={slot.n} title={(slot.id?pname(slot.id):"empty")+" · "+slot.label} style={{border:"1px solid "+C.border,borderRight:edge?"2px solid #3a3a3a":"1px solid "+C.border,background:bg,padding:"3px 2px",textAlign:"center",height:32,verticalAlign:"middle",overflow:"hidden"}}>
+                <td key={slot.n} title={slot.id ? (pname(slot.id)+" · "+slot.label+" — click to sub") : ("empty · "+slot.label)}
+                  onClick={slot.id ? () => setLineupSubSel(sel => (sel && sel.setId===set.id && sel.r===ro.r && sel.i===slot.i) ? null : { setId:set.id, r:ro.r, i:slot.i, outId:slot.id, courtN:slot.n, label:slot.label, inId:"", scope:"rest" }) : undefined}
+                  style={{border:"1px solid "+C.border,borderRight:edge?"2px solid #3a3a3a":"1px solid "+C.border,outline:isSel?"2px solid "+C.gold:"none",outlineOffset:-2,background:bg,padding:"3px 2px",textAlign:"center",height:32,verticalAlign:"middle",overflow:"hidden",cursor:slot.id?"pointer":"default"}}>
                   <span style={{fontSize:11,lineHeight:1.1,color:isServer?"#fde68a":isLib?"#06b6d4":C.text,fontWeight:(isSetB||isServer)?800:600,textDecoration:isLib?"underline":"none",whiteSpace:"nowrap"}}>{slot.id?pfirst(slot.id):"—"}</span>
                   {isSetB && <span style={{fontSize:7,color:"#06b6d4",fontWeight:800,marginLeft:2,verticalAlign:"super"}}>S</span>}
                   {isSetF && <span style={{fontSize:7,color:"#f59e0b",fontWeight:800,marginLeft:2,verticalAlign:"super"}}>rs</span>}
+                  {isSubbed && <span title="Substitute in this rotation" style={{fontSize:7,color:C.grn,fontWeight:800,marginLeft:2,verticalAlign:"super"}}>▲</span>}
                 </td>
               );
             };
@@ -9804,6 +9810,54 @@ export default function App() {
                     ))}
                   </div>
                 )}
+                {/* Click-to-sub panel — appears when a grid cell is tapped */}
+                {lineupSubSel && lineupSubSel.setId===set.id && (() => {
+                  const sel = lineupSubSel;
+                  const onCourt = new Set(vbRotation(set.lineup, sel.r, set.subs).map(s=>s.id).filter(Boolean));
+                  const bench = roster.filter(p => !onCourt.has(p.id));
+                  const related = (set.subs||[]).map((s,idx)=>({s,idx})).filter(({s}) => s.outId===sel.outId || s.inId===sel.outId);
+                  const applySub = () => {
+                    if(!sel.inId){ window.alert("Choose a player to bring in."); return; }
+                    updateDraft(d => { d.sets[setIdx].subs.push({ inId: sel.inId, outId: sel.outId, fromRotation: sel.r, thruRotation: sel.scope==="one" ? sel.r : 5 }); });
+                    setLineupSubSel(null);
+                  };
+                  return (
+                    <div style={{marginTop:12,border:"1px solid "+C.gold,borderRadius:10,padding:"10px 12px",background:"rgba(233,30,140,0.06)"}}>
+                      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,flexWrap:"wrap"}}>
+                        <span style={{fontSize:12,fontWeight:800,color:C.gold}}>Sub at R{sel.r+1}</span>
+                        <span style={{fontSize:11,color:C.mut}}>{sel.label}</span>
+                        <span style={{fontSize:13,fontWeight:700,color:C.text}}>{plabel(sel.outId)} out</span>
+                        <div style={{flex:1}} />
+                        <button style={{background:"none",border:"none",color:C.mut,cursor:"pointer",fontSize:15}} title="Close" onClick={()=>setLineupSubSel(null)}>✕</button>
+                      </div>
+                      <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                        <span style={{fontSize:12,color:C.mut}}>Bring in</span>
+                        <select value={sel.inId} onChange={e=>setLineupSubSel(s=>({...s,inId:e.target.value}))} style={S.sel}>
+                          <option value="">— pick a player —</option>
+                          {bench.map(p => <option key={p.id} value={p.id}>{plabel(p.id)}{p.pos?" ("+p.pos+")":""}</option>)}
+                        </select>
+                        <select value={sel.scope} onChange={e=>setLineupSubSel(s=>({...s,scope:e.target.value}))} style={S.sel} title="How long the sub stays in">
+                          <option value="rest">R{sel.r+1} → end of set</option>
+                          <option value="one">R{sel.r+1} only</option>
+                        </select>
+                        <button style={S.gold} onClick={applySub}>Sub in</button>
+                      </div>
+                      {bench.length===0 && <div style={{fontSize:11,color:"#f59e0b",marginTop:6}}>Everyone on the roster is already on court this rotation — add more players to the roster to have subs available.</div>}
+                      {related.length>0 && (
+                        <div style={{marginTop:8,borderTop:"1px solid "+C.border,paddingTop:6}}>
+                          <div style={{fontSize:10,fontWeight:800,color:C.mut,textTransform:"uppercase",letterSpacing:0.3,marginBottom:4}}>Subs involving {pfirst(sel.outId)}</div>
+                          {related.map(({s,idx}) => (
+                            <div key={idx} style={{display:"flex",alignItems:"center",gap:6,fontSize:11,color:C.text,marginBottom:2}}>
+                              <span style={{color:C.grn,fontWeight:700}}>{pfirst(s.inId)}</span><span style={{color:C.mut}}>in for</span><span style={{fontWeight:600}}>{pfirst(s.outId)}</span>
+                              <span style={{color:C.mut}}>· R{(s.fromRotation==null?0:s.fromRotation)+1}–R{(s.thruRotation==null?5:s.thruRotation)+1}</span>
+                              <button style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:12}} title="Remove this sub" onClick={()=>updateDraft(d=>{ d.sets[setIdx].subs.splice(idx,1); })}>✕</button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             );
           })()}
