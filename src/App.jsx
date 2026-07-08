@@ -1517,7 +1517,7 @@ export default function App() {
   // Notifications need updates + questions loaded on every view (the bell is in the header).
   useEffect(() => { if (isApproved) { loadUpdates(); loadTeamQuestions(); } }, [isApproved, loadUpdates, loadTeamQuestions]);
   useEffect(() => { if (isApproved && (view === "home" || view === "teamdir" || view === "coaches")) loadPracticeApprovals(); }, [isApproved, view, loadPracticeApprovals]);
-  useEffect(() => { if (isApproved && (view === "home" || view === "requests" || view === "practice" || view === "coverage")) loadCoachRequests(); }, [isApproved, view, loadCoachRequests]);
+  useEffect(() => { if (isApproved && (view === "home" || view === "requests" || view === "practice" || view === "coverage" || view === "tournaments")) loadCoachRequests(); }, [isApproved, view, loadCoachRequests]);
   useEffect(() => { if (isApproved && view === "practice") loadCoachFloats(); }, [isApproved, view, loadCoachFloats]);
   useEffect(() => { if (isApproved && (view === "practice" || view === "home")) loadPracticeCoverage(); }, [isApproved, view, loadPracticeCoverage]);
   useEffect(() => { if (isApproved && view === "coverage") { loadPracticeCoverage(); loadPractice(); } }, [isApproved, view, loadPracticeCoverage, loadPractice]);
@@ -11159,6 +11159,20 @@ export default function App() {
       for (const it of items) { asgCount++; tnSet.add(it.tournament.id); tnDays += dayCount(it.tournament); wkndSet.add(k.slice(k.lastIndexOf(":") + 1)); pt.tns.add(it.tournament.id); pt.days += dayCount(it.tournament); }
     }
 
+    // Weekends a coach requested off → big red flag on that team's cell (admin-only, visual only).
+    const nrmC = s => (s || "").trim().toLowerCase();
+    const offByWeekend = new Map(); // sat -> Set(coach name)
+    for (const r of coachRequests) {
+      if (r.type !== "weekend" || r.status === "denied" || !r.request_date) continue;
+      for (const wk of weeks) {
+        if (r.request_date >= wk.fri && r.request_date <= wk.sun) {
+          if (!offByWeekend.has(wk.sat)) offByWeekend.set(wk.sat, new Set());
+          offByWeekend.get(wk.sat).add(nrmC(r.coach_name));
+          break;
+        }
+      }
+    }
+
     return (
       <div>
         {/* Summary of the selected schedule */}
@@ -11292,13 +11306,19 @@ export default function App() {
                         const isConflict = conflictCells.has(k);
                         // Empty cell whose coach is already committed elsewhere → black it out.
                         const busy = items.length === 0 ? coachBusyFor(team, wk) : null;
-                        const bg = isConflict
+                        // Coach(es) of this team who requested this weekend off (admin-only, visual only).
+                        const offSet = offByWeekend.get(wk.sat);
+                        const askedOff = (canOps && offSet) ? [team.head_coach, team.assistant_coach].filter(c => c && offSet.has(nrmC(c))) : [];
+                        const bg = askedOff.length
+                          ? "rgba(239,68,68,0.30)"
+                          : isConflict
                           ? "rgba(239,68,68,0.18)"
                           : busy
                           ? "repeating-linear-gradient(45deg, rgba(90,90,90,0.30) 0, rgba(90,90,90,0.30) 5px, rgba(20,20,20,0.55) 5px, rgba(20,20,20,0.55) 10px)"
                           : "transparent";
                         return (
-                          <td key={team.id} style={{padding:"5px 6px",borderBottom:"1px solid "+C.border,background:bg,verticalAlign:"top",minWidth:90}}>
+                          <td key={team.id} style={{padding:"5px 6px",borderBottom:"1px solid "+C.border,background:bg,verticalAlign:"top",minWidth:90,boxShadow:askedOff.length?"inset 0 0 0 2px "+C.red:undefined}}>
+                            {askedOff.length > 0 && <div style={{fontSize:9,fontWeight:800,color:"#fff",background:C.red,borderRadius:4,padding:"2px 5px",marginBottom:3,textAlign:"center",lineHeight:1.2}}>🚫 {askedOff.map(c=>c.split(" ")[0]).join(", ")} OFF</div>}
                             {items.length === 0 ? (
                               busy ? (
                                 <div title={"Coach unavailable — " + [...new Set(busy.map(b => b.coach))].join(", ") + " already at: " + [...new Set(busy.map(b => b.tournament.name + " (" + b.teamId + ")"))].join("; ")}
