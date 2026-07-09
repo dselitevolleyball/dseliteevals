@@ -1062,6 +1062,13 @@ export default function App() {
     mq.addEventListener("change", onChange);
     return () => mq.removeEventListener("change", onChange);
   }, []);
+  // Practice Plans (per scheduled practice date — see renderPracticePlans).
+  const [ppPlans, setPpPlans]   = useState([]);   // saved practice_plans rows
+  const [ppTeam, setPpTeam]     = useState("");   // selected team
+  const [ppOpenId, setPpOpenId] = useState(null); // open plan row id
+  const [ppDraft, setPpDraft]   = useState(null); // working copy of the open plan
+  const [ppSaved, setPpSaved]   = useState("");   // "", "saving", "saved", "err"
+  const ppSkipSave = useRef(true);
   // Season-plan curriculum (per-team teaching checkboxes on the dashboard).
   const [currProgress, setCurrProgress]     = useState([]);
   const [currTeam, setCurrTeam]             = useState("");   // selected team in the panel
@@ -1822,6 +1829,37 @@ export default function App() {
       { onConflict: "team_name,item_key" });
     if (error) { console.error("Save curriculum_progress error:", error); loadCurriculumProgress(); }
   }, [coach, loadCurriculumProgress]);
+
+  // Practice Plans loader — needs the schedule, cancellations, and curriculum.
+  const loadPracticePlans = useCallback(async () => {
+    const { data, error } = await supabase.from("practice_plans").select("*")
+      .order("practice_date", { ascending: false }).limit(400);
+    if (error) { console.error("Load practice_plans error:", error); return; }
+    setPpPlans(data || []);
+  }, []);
+  useEffect(() => {
+    if (isApproved && view === "practiceplan") { loadPracticePlans(); loadPractice(); loadPracticeCancellations(); loadCurriculumProgress(); }
+  }, [isApproved, view, loadPracticePlans, loadPractice, loadPracticeCancellations, loadCurriculumProgress]);
+  // Debounced autosave of the open practice plan (mirrors the lineup autosave).
+  const ppDraftJson = ppDraft ? JSON.stringify(ppDraft) : "";
+  useEffect(() => {
+    if (!ppDraft || !ppOpenId) return;
+    if (ppSkipSave.current) { ppSkipSave.current = false; return; }
+    setPpSaved("saving");
+    const t = setTimeout(async () => {
+      const patch = {
+        blocks: ppDraft.blocks || [], focus_keys: ppDraft.focus_keys || [],
+        notes: ppDraft.notes || null, status: ppDraft.status || "draft",
+        updated_by: coach?.display_name || coach?.email || null,
+        updated_at: new Date().toISOString(),
+      };
+      const { error } = await supabase.from("practice_plans").update(patch).eq("id", ppOpenId);
+      if (error) { console.error("Save practice_plan error:", error); setPpSaved("err"); return; }
+      setPpSaved("saved");
+      setPpPlans(prev => prev.map(p => p.id === ppOpenId ? { ...p, ...patch } : p));
+    }, 900);
+    return () => clearTimeout(t);
+  }, [ppDraftJson, ppOpenId]); // eslint-disable-line react-hooks/exhaustive-deps
   // Coach card (openable from any view) shows pay — needs rates + check-ins.
   // Declared after the loaders above to avoid a TDZ on the useCallback consts.
   useEffect(() => { if (isApproved && coachCardName) { loadCoachRates(); loadCheckins(); } }, [isApproved, coachCardName, loadCoachRates, loadCheckins]);
@@ -4369,7 +4407,7 @@ export default function App() {
           return (
             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:10,marginBottom:14}}>
               {tile("📋","Lineups","Rotations, subs & lineup cards",()=>{ setView("lineups"); setOpenMenu(null); })}
-              {tile("🏐","Practice plan","Open the practice planner",()=>{ window.location.href = "/practice"; })}
+              {tile("🏐","Practice plans","Plan your scheduled practices",()=>{ setView("practiceplan"); setOpenMenu(null); })}
               {tile("🏆","Tournaments","Schedule & assignments",()=>{ setView("tournaments"); setOpenMenu(null); })}
               {tile("🗓","Time off","Request a weekend or practice off",()=>{ setReqForm({ type:"weekend", date:"", team:"", details:"" }); setRequestOffOpen(true); })}
             </div>
@@ -9995,6 +10033,257 @@ export default function App() {
     );
   }
 
+  // ── Practice Plans — plan each scheduled practice, fused with Season Plan ─
+  // The schedule already knows when each team practices; this lists those
+  // dates and gives each one a plan: time blocks (seeded from Drew's
+  // philosophy) + the Season Plan concepts it focuses on. Completing a
+  // practice can mark its focus concepts as taught.
+  function renderPracticePlans() {
+    const rid = p => (p||"b") + Math.random().toString(36).slice(2, 8);
+    const teams = myTeamNames.length ? myTeamNames : (canOps ? practiceTeams.map(t => t.team_name) : []);
+    const St = {
+      card:  { background:C.card, border:"1px solid "+C.border, borderRadius:12, padding:14, marginBottom:14 },
+      lbl:   { fontSize:10, fontWeight:800, letterSpacing:0.4, textTransform:"uppercase", color:C.mut, marginBottom:6 },
+      sel:   { background:C.bg, border:"1px solid "+C.border, borderRadius:6, color:C.text, fontFamily:"inherit", fontSize:13, padding:"6px 8px" },
+      gold:  { padding:"6px 12px", borderRadius:8, border:"none", background:C.gold, color:"#000", fontWeight:700, fontSize:12, cursor:"pointer", fontFamily:"inherit" },
+      ghost: { padding:"6px 12px", borderRadius:8, border:"1px solid "+C.border, background:"transparent", color:C.text, fontWeight:600, fontSize:12, cursor:"pointer", fontFamily:"inherit" },
+    };
+    if (!teams.length) return <div style={{padding:24,color:C.mut,textAlign:"center"}}>No teams are assigned to you yet — practice plans are per team.</div>;
+    const team = teams.includes(ppTeam) ? ppTeam : teams[0];
+    const today = localDateISO();
+    const fmtDay = iso => {
+      if (iso === today) return "Today";
+      const d = new Date(iso + "T12:00:00");
+      const tom = localDateISO(new Date(Date.now() + 86400000));
+      return (iso === tom ? "Tomorrow — " : "") + d.toLocaleDateString(undefined, { weekday:"long", month:"short", day:"numeric" });
+    };
+
+    // Upcoming scheduled practices from the schedule (phase), minus club-wide cancellations.
+    const cancelled = new Set(practiceCancellations.map(c => c.practice_date));
+    const byWd = {};
+    practiceAssignments.filter(a => (a.phase||"season")===schedulePhase && a.team_name===team)
+      .forEach(a => { (byWd[a.day] = byWd[a.day] || new Set()).add(a.slot); });
+    const upcoming = [];
+    for (let off = 0; off < 28 && upcoming.length < 8; off++) {
+      const d = new Date(); d.setDate(d.getDate() + off);
+      const iso = localDateISO(d);
+      if (cancelled.has(iso)) continue;
+      const wd = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][d.getDay()];
+      [...(byWd[wd] || [])].sort().forEach(slot => upcoming.push({ date: iso, slot }));
+    }
+    const planFor = (date, slot) => ppPlans.find(p => p.team_name===team && p.practice_date===date && (p.slot||"")===(slot||""));
+    const history = ppPlans.filter(p => p.team_name===team && p.practice_date < today).slice(0, 6);
+
+    // Curriculum hooks for this team.
+    const statusOf = k => { const r = currProgress.find(x => x.team_name===team && x.item_key===k); return r ? r.status : "todo"; };
+    const allItems = DSE_CURRICULUM.flatMap(s => s.tiers.flatMap((t,ti) => t.items.map(it => ({ ...it, subject:s.subject, tier:ti+1 }))));
+    const itemByKey = new Map(allItems.map(it => [it.k, it]));
+    const plannedItems = allItems.filter(it => statusOf(it.k) === "planned");
+
+    // Default block template scaled to the slot, per the coaching philosophy.
+    const defaultBlocks = (slot) => {
+      const total = (slotHours(slot) || 2) * 60;
+      const warm = 10, serve = Math.min(25, Math.max(15, Math.round(total*0.17))), cool = 5;
+      const rest = Math.max(20, total - warm - serve - cool);
+      const skill = Math.round(rest * 0.55), comp = rest - skill;
+      return [
+        { id:rid(), name:"Warmup + ball handling", minutes:warm,  desc:"Partner pepper — players do the work, quick resets, minimal balls on the floor." },
+        { id:rid(), name:"Serving block (non-negotiable)", minutes:serve, desc:"Every practice. Finish with pressure serving: everyone serves and returns ×3 — team of 12 = max 4 misses." },
+        { id:rid(), name:"Skill focus", minutes:skill, desc:"Run today's focus concepts — game-like, maximum touches, transition every drill toward match play." },
+        { id:rid(), name:"Competitive play", minutes:comp, desc:"Game-like pressure. Keep coaching cues going — celebrate game-like execution." },
+        { id:rid(), name:"Cooldown + huddle", minutes:cool, desc:"Recap today's focus. Next-ball mentality — end on the standard." },
+      ];
+    };
+
+    const openPractice = async (date, slot) => {
+      let row = planFor(date, slot);
+      if (!row) {
+        const ins = {
+          team_name: team, practice_date: date, slot: slot || "",
+          blocks: defaultBlocks(slot), focus_keys: plannedItems.map(p => p.k),
+          status: "draft", updated_by: coach?.display_name || coach?.email || null,
+        };
+        const { data, error } = await supabase.from("practice_plans").insert(ins).select().single();
+        if (error) { await loadPracticePlans(); row = planFor(date, slot); if (!row) { window.alert("Couldn't start the plan: " + error.message); return; } }
+        else { row = data; setPpPlans(prev => [data, ...prev]); }
+      }
+      ppSkipSave.current = true;
+      setPpOpenId(row.id);
+      setPpDraft({ date: row.practice_date, slot: row.slot || "", blocks: row.blocks || [], focus_keys: row.focus_keys || [], notes: row.notes || "", status: row.status || "draft" });
+      setPpSaved("");
+    };
+    const updateDraft = fn => setPpDraft(d => { if (!d) return d; const n = JSON.parse(JSON.stringify(d)); fn(n); return n; });
+    const closePlan = () => { setPpOpenId(null); setPpDraft(null); };
+
+    const teamBar = (
+      <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:14}}>
+        <div style={{fontSize:20,fontWeight:800,color:C.gold}}>Practice Plans</div>
+        <select value={team} onChange={e => { setPpTeam(e.target.value); closePlan(); }} style={{...St.sel,fontSize:13,padding:"7px 9px"}}>
+          {teams.map(t => <option key={t} value={t}>{t}</option>)}
+        </select>
+        {ppDraft && <span style={{fontSize:11,color:ppSaved==="err"?C.red:C.mut}}>{ppSaved==="saving"?"Saving…":ppSaved==="saved"?"Saved ✓":ppSaved==="err"?"Save failed":""}</span>}
+        <div style={{flex:1}} />
+        <button style={St.ghost} title="Open the drill library & AI plan generator in a new tab" onClick={() => window.open("/practice", "_blank")}>Drill library ↗</button>
+      </div>
+    );
+
+    // ── List: upcoming scheduled practices ────────────────────────────────
+    if (!ppDraft) {
+      return (
+        <div style={{maxWidth:900,margin:"0 auto"}}>
+          {teamBar}
+          <div style={St.card}>
+            <div style={St.lbl}>Upcoming practices — {team}</div>
+            {upcoming.length === 0 ? (
+              <div style={{fontSize:13,color:C.mut}}>No practices on the schedule for {team} in the next four weeks ({schedulePhase} phase). The schedule drives this list — check the Practice tab.</div>
+            ) : (
+              <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                {upcoming.map(({date, slot}) => {
+                  const p = planFor(date, slot);
+                  const blocks = (p && p.blocks) || [];
+                  const focus = (p && p.focus_keys) || [];
+                  return (
+                    <div key={date+"|"+slot} style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap",padding:"10px 12px",borderRadius:8,border:"1px solid "+(p ? (p.status==="done"?C.grn:C.gold) : C.border),background:C.bg}}>
+                      <div style={{flex:1,minWidth:170}}>
+                        <div style={{fontSize:14,fontWeight:800,color:date===today?C.gold:C.text}}>{fmtDay(date)}</div>
+                        <div style={{fontSize:12,color:C.mut}}>{slot} · {slotHours(slot)}h</div>
+                      </div>
+                      {p ? (
+                        <>
+                          <span style={{fontSize:11,fontWeight:700,color:p.status==="done"?C.grn:C.gold}}>
+                            {p.status==="done" ? "✓ Complete" : "Draft"} · {blocks.length} block{blocks.length===1?"":"s"}{focus.length ? " · "+focus.length+" focus" : ""}
+                          </span>
+                          <button style={St.gold} onClick={() => openPractice(date, slot)}>Open plan</button>
+                        </>
+                      ) : (
+                        <button style={{...St.ghost,borderColor:C.gold,color:C.gold}} onClick={() => openPractice(date, slot)}>+ Plan this practice</button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {plannedItems.length > 0 && (
+              <div style={{fontSize:11,color:C.acc,marginTop:10}}>📌 {plannedItems.length} concept{plannedItems.length===1?"":"s"} pinned in the Season plan — they'll auto-attach as the focus when you start a new plan.</div>
+            )}
+          </div>
+          {history.length > 0 && (
+            <div style={St.card}>
+              <div style={St.lbl}>Past practices</div>
+              <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                {history.map(p => (
+                  <div key={p.id} style={{display:"flex",alignItems:"center",gap:10,fontSize:12,color:C.text}}>
+                    <span style={{width:120,color:C.mut}}>{new Date(p.practice_date+"T12:00:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"})}</span>
+                    <span style={{flex:1}}>{p.slot} · {(p.blocks||[]).length} blocks{(p.focus_keys||[]).length?" · "+(p.focus_keys||[]).length+" focus":""}</span>
+                    <span style={{fontSize:11,fontWeight:700,color:p.status==="done"?C.grn:C.mut}}>{p.status==="done"?"✓ complete":"draft"}</span>
+                    <button style={{...St.ghost,padding:"3px 10px"}} onClick={() => { ppSkipSave.current = true; setPpOpenId(p.id); setPpDraft({ date:p.practice_date, slot:p.slot||"", blocks:p.blocks||[], focus_keys:p.focus_keys||[], notes:p.notes||"", status:p.status||"draft" }); }}>View</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ── Editor: one specific practice ─────────────────────────────────────
+    const totalMin = (ppDraft.blocks||[]).reduce((s,b) => s + (Number(b.minutes)||0), 0);
+    const slotMin = (slotHours(ppDraft.slot) || 2) * 60;
+    const focusItems = (ppDraft.focus_keys||[]).map(k => itemByKey.get(k)).filter(Boolean);
+    const addable = allItems.filter(it => statusOf(it.k) !== "done" && !(ppDraft.focus_keys||[]).includes(it.k));
+    const markComplete = async () => {
+      updateDraft(d => { d.status = "done"; });
+      if (focusItems.length && window.confirm("Mark the " + focusItems.length + " focus concept" + (focusItems.length===1?"":"s") + " as taught in the Season plan?")) {
+        for (const it of focusItems) await setCurriculumStatus(team, it.k, "done");
+      }
+    };
+    const copyPlan = () => {
+      const lines = [team + " practice — " + fmtDay(ppDraft.date) + " · " + ppDraft.slot];
+      if (focusItems.length) lines.push("Focus: " + focusItems.map(f => f.label).join(" · "));
+      (ppDraft.blocks||[]).forEach(b => lines.push(b.minutes + "min — " + b.name + (b.desc ? ": " + b.desc : "")));
+      if (ppDraft.notes) lines.push("Notes: " + ppDraft.notes);
+      navigator.clipboard?.writeText(lines.join("\n"));
+      window.alert("Plan copied to clipboard.");
+    };
+    return (
+      <div style={{maxWidth:900,margin:"0 auto"}}>
+        {teamBar}
+        <div style={{...St.card,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+          <button style={St.ghost} onClick={closePlan}>← All practices</button>
+          <div>
+            <div style={{fontSize:16,fontWeight:800,color:C.gold}}>{fmtDay(ppDraft.date)}</div>
+            <div style={{fontSize:12,color:C.mut}}>{ppDraft.slot} · {slotMin} min · {team}</div>
+          </div>
+          <div style={{flex:1}} />
+          <span style={{fontSize:12,fontWeight:800,color:totalMin===slotMin?C.grn:totalMin>slotMin?C.red:"#f59e0b"}} title="Planned minutes vs practice length">{totalMin}/{slotMin} min</span>
+          <button style={St.ghost} onClick={copyPlan}>Copy plan</button>
+          {ppDraft.status === "done"
+            ? <button style={{...St.ghost,color:C.grn,borderColor:C.grn}} onClick={() => updateDraft(d => { d.status = "draft"; })}>✓ Complete — reopen</button>
+            : <button style={St.gold} onClick={markComplete}>Mark practice complete</button>}
+        </div>
+
+        {/* Focus — the Season plan connection */}
+        <div style={St.card}>
+          <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:8}}>
+            <div style={{...St.lbl,marginBottom:0}}>📚 Focus concepts</div>
+            <span style={{fontSize:10,color:C.mut}}>from the Season plan — what this practice installs</span>
+            <div style={{flex:1}} />
+            <button style={{...St.ghost,padding:"4px 10px",fontSize:11}} onClick={() => { setCurrTeam(team); closePlan(); setView("home"); }}>Season plan →</button>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+            {focusItems.length === 0 && <span style={{fontSize:12,color:C.mut}}>No focus attached — add a concept below or pin one in the Season plan.</span>}
+            {focusItems.map(f => (
+              <span key={f.k} title={f.cue} style={{fontSize:11,fontWeight:700,padding:"4px 10px",borderRadius:12,border:"1px solid "+C.acc,background:"rgba(255,105,180,0.10)",color:C.text,display:"inline-flex",alignItems:"center",gap:5}}>
+                {f.subject} · {f.label}
+                <span onClick={() => updateDraft(d => { d.focus_keys = d.focus_keys.filter(x => x !== f.k); })} style={{color:C.mut,cursor:"pointer",fontWeight:800}} title="Remove from this practice">✕</span>
+              </span>
+            ))}
+            <select value="" onChange={e => { const k = e.target.value; if (k) updateDraft(d => { d.focus_keys = [...(d.focus_keys||[]), k]; }); }} style={{...St.sel,fontSize:11,padding:"4px 6px"}}>
+              <option value="">+ add concept…</option>
+              {addable.map(it => <option key={it.k} value={it.k}>{it.subject} · T{it.tier} · {it.label}</option>)}
+            </select>
+          </div>
+          {focusItems.length > 0 && <div style={{fontSize:11,color:C.mut,marginTop:8,lineHeight:1.5}}>{focusItems.map(f => <div key={f.k}><b style={{color:C.text}}>{f.label}:</b> {f.cue}</div>)}</div>}
+        </div>
+
+        {/* Blocks */}
+        <div style={St.card}>
+          <div style={St.lbl}>Practice blocks</div>
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
+            {(ppDraft.blocks||[]).map((b, i) => (
+              <div key={b.id || i} style={{display:"flex",gap:8,alignItems:"flex-start",background:C.bg,border:"1px solid "+C.border,borderRadius:8,padding:"8px 10px",flexWrap:"wrap"}}>
+                <input type="number" min="0" value={b.minutes} onChange={e => updateDraft(d => { d.blocks[i].minutes = e.target.value === "" ? "" : +e.target.value; })}
+                  title="Minutes" style={{...St.sel,width:58,textAlign:"center",fontWeight:800,color:C.gold}} />
+                <div style={{flex:1,minWidth:200}}>
+                  <input value={b.name} onChange={e => updateDraft(d => { d.blocks[i].name = e.target.value; })} placeholder="Block name"
+                    style={{...St.sel,width:"100%",fontWeight:700,marginBottom:4}} />
+                  <textarea value={b.desc || ""} onChange={e => updateDraft(d => { d.blocks[i].desc = e.target.value; })} placeholder="Details / drills / cues…"
+                    style={{...St.sel,width:"100%",minHeight:36,resize:"vertical",fontSize:12,lineHeight:1.4}} />
+                </div>
+                <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                  <button disabled={i===0} onClick={() => updateDraft(d => { const [x] = d.blocks.splice(i,1); d.blocks.splice(i-1,0,x); })} title="Move up" style={{...St.ghost,padding:"2px 8px",opacity:i===0?0.3:1}}>▲</button>
+                  <button disabled={i===(ppDraft.blocks.length-1)} onClick={() => updateDraft(d => { const [x] = d.blocks.splice(i,1); d.blocks.splice(i+1,0,x); })} title="Move down" style={{...St.ghost,padding:"2px 8px",opacity:i===(ppDraft.blocks.length-1)?0.3:1}}>▼</button>
+                  <button onClick={() => updateDraft(d => { d.blocks.splice(i,1); })} title="Remove block" style={{...St.ghost,padding:"2px 8px",color:C.red}}>✕</button>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div style={{display:"flex",gap:8,marginTop:10,flexWrap:"wrap"}}>
+            <button style={St.ghost} onClick={() => updateDraft(d => { d.blocks.push({ id:rid(), name:"", minutes:10, desc:"" }); })}>+ Add block</button>
+            <button style={St.ghost} title="Reset to the standard DS Elite template for this slot length" onClick={() => { if (window.confirm("Replace all blocks with the standard template?")) updateDraft(d => { d.blocks = defaultBlocks(d.slot); }); }}>Reset to template</button>
+          </div>
+        </div>
+
+        {/* Notes */}
+        <div style={St.card}>
+          <div style={St.lbl}>Notes</div>
+          <textarea value={ppDraft.notes} onChange={e => updateDraft(d => { d.notes = e.target.value; })} placeholder="Lineup reminders, players to watch, court/equipment notes…"
+            style={{...St.sel,width:"100%",minHeight:60,resize:"vertical",fontSize:13,lineHeight:1.5}} />
+        </div>
+      </div>
+    );
+  }
+
   // ── Season Plan — the DS Elite curriculum as dashboard checkboxes ───────
   // What to teach, why it matters, and when to have it in — per team, three
   // tiers per subject. "Plan" pins a concept for the next practice so coaches
@@ -10058,7 +10347,7 @@ export default function App() {
             ))}
             <div style={{flex:1}} />
             <button onClick={copyPlan} style={{...Sp.chip,cursor:"pointer",fontFamily:"inherit",color:C.acc,borderColor:C.acc}}>Copy focus list</button>
-            <button onClick={() => { window.location.href = "/practice"; }} style={{...Sp.chip,cursor:"pointer",fontFamily:"inherit",background:C.gold,color:"#000",border:"none"}}>Open practice planner →</button>
+            <button onClick={() => { setCurrTeam(team); setPpTeam(team); setView("practiceplan"); }} style={{...Sp.chip,cursor:"pointer",fontFamily:"inherit",background:C.gold,color:"#000",border:"none"}}>Plan a practice →</button>
           </div>
         )}
 
@@ -13861,8 +14150,7 @@ export default function App() {
                       {!canOps && mItem("notifications","🔔 Notifications" + (unreadCount>0?" ("+unreadCount+")":""))}
                       {mItem("tournaments","🏆 Tournaments")}
                       {mItem("lineups","📋 Lineups")}
-                      <button onClick={()=>{ window.location.href = "/practice"; }}
-                        style={{display:"block",width:"100%",textAlign:"left",padding:"11px 14px",borderRadius:8,border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:14,fontWeight:600,background:"transparent",color:C.text}}>🏐 Practice Planning</button>
+                      {mItem("practiceplan","🏐 Practice Plans")}
                       {groups.map(g => (
                         <div key={g.title}>
                           <div style={{padding:"10px 14px 4px",fontSize:9,fontWeight:800,letterSpacing:0.6,textTransform:"uppercase",color:C.gold,borderTop:"1px solid "+C.border,marginTop:6}}>{g.title}</div>
@@ -13880,7 +14168,7 @@ export default function App() {
                 {!canOps && item("notifications","Notifications" + (unreadCount>0?" ("+unreadCount+")":""))}
                 {item("tournaments","Tournaments")}
                 {item("lineups","Lineups")}
-                <button style={btn(false)} onClick={()=>{ window.location.href = "/practice"; }} title="Open the practice planner">Practice Planning</button>
+                {item("practiceplan","Practice Plans")}
                 {groups.map(g => {
                   const activeInGroup = g.items.some(([v]) => v === view);
                   const open = openMenu === g.title;
@@ -13998,7 +14286,7 @@ export default function App() {
           </div>
         );
       })()}
-      {!new Set(["home","dashboard","activity","coaches","tournaments","teamdir","requests","notifications","practice","scholarships","messages","lineups","checkin"]).has(view) && (
+      {!new Set(["home","dashboard","activity","coaches","tournaments","teamdir","requests","notifications","practice","scholarships","messages","lineups","checkin","practiceplan","timecards"]).has(view) && (
         <div style={{display:"flex",gap:4,padding:"10px 18px",borderBottom:"1px solid "+C.border,flexWrap:"wrap"}}>
           {divsWithPlayers.map(d => {
             const isSelected = selectedDivs.includes(d);
@@ -14045,6 +14333,7 @@ export default function App() {
         {view==="coverage" && renderCoachCoverage()}
         {view==="timecards" && renderTimeCards()}
         {view==="faq" && renderFaq()}
+        {view==="practiceplan" && renderPracticePlans()}
         {view==="lineups" && renderLineups()}
         {view==="games" && renderGames()}
         {view==="askai" && renderAskAI()}
