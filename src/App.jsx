@@ -1082,6 +1082,10 @@ export default function App() {
   const [ppDraft, setPpDraft]   = useState(null); // working copy of the open plan
   const [ppSaved, setPpSaved]   = useState("");   // "", "saving", "saved", "err"
   const ppSkipSave = useRef(true);
+  const [ppTab, setPpTab]       = useState("plan"); // plan | season | drills
+  const [drills, setDrills]     = useState([]);     // shared drill library
+  const [drillFilter, setDrillFilter] = useState({ q:"", skill:"", phase:"" });
+  const [ppLibOpen, setPpLibOpen] = useState(false); // drill picker inside a plan
   // Season-plan curriculum (per-team teaching checkboxes on the dashboard).
   const [currProgress, setCurrProgress]     = useState([]);
   const [currTeam, setCurrTeam]             = useState("");   // selected team in the panel
@@ -1850,9 +1854,14 @@ export default function App() {
     if (error) { console.error("Load practice_plans error:", error); return; }
     setPpPlans(data || []);
   }, []);
+  const loadDrills = useCallback(async () => {
+    const { data, error } = await supabase.from("drills").select("*").order("name");
+    if (error) { console.error("Load drills error:", error); return; }
+    setDrills(data || []);
+  }, []);
   useEffect(() => {
-    if (isApproved && view === "practiceplan") { loadPracticePlans(); loadPractice(); loadPracticeCancellations(); loadCurriculumProgress(); }
-  }, [isApproved, view, loadPracticePlans, loadPractice, loadPracticeCancellations, loadCurriculumProgress]);
+    if (isApproved && view === "practiceplan") { loadPracticePlans(); loadPractice(); loadPracticeCancellations(); loadCurriculumProgress(); loadDrills(); }
+  }, [isApproved, view, loadPracticePlans, loadPractice, loadPracticeCancellations, loadCurriculumProgress, loadDrills]);
   // Debounced autosave of the open practice plan (mirrors the lineup autosave).
   const ppDraftJson = ppDraft ? JSON.stringify(ppDraft) : "";
   useEffect(() => {
@@ -10102,6 +10111,7 @@ export default function App() {
   function renderPracticePlans() {
     const rid = p => (p||"b") + Math.random().toString(36).slice(2, 8);
     const teams = myTeamNames.length ? myTeamNames : (canOps ? practiceTeams.map(t => t.team_name) : []);
+    const norm = s => (s||"").toString().trim().toLowerCase();
     const St = {
       card:  { background:C.card, border:"1px solid "+C.border, borderRadius:12, padding:14, marginBottom:14 },
       lbl:   { fontSize:10, fontWeight:800, letterSpacing:0.4, textTransform:"uppercase", color:C.mut, marginBottom:6 },
@@ -10119,18 +10129,18 @@ export default function App() {
       return (iso === tom ? "Tomorrow — " : "") + d.toLocaleDateString(undefined, { weekday:"long", month:"short", day:"numeric" });
     };
 
-    // Upcoming scheduled practices from the schedule (phase), minus club-wide cancellations.
+    // Upcoming scheduled practices — using the phase active on each date (not
+    // the Practice tab's toggle), minus club-wide cancellations.
     const cancelled = new Set(practiceCancellations.map(c => c.practice_date));
-    const byWd = {};
-    practiceAssignments.filter(a => (a.phase||"season")===schedulePhase && a.team_name===team)
-      .forEach(a => { (byWd[a.day] = byWd[a.day] || new Set()).add(a.slot); });
     const upcoming = [];
-    for (let off = 0; off < 28 && upcoming.length < 8; off++) {
+    for (let off = 0; off < 35 && upcoming.length < 8; off++) {
       const d = new Date(); d.setDate(d.getDate() + off);
       const iso = localDateISO(d);
-      if (cancelled.has(iso)) continue;
+      const ph = phaseForDate(iso);
+      if (!ph || cancelled.has(iso)) continue;
       const wd = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][d.getDay()];
-      [...(byWd[wd] || [])].sort().forEach(slot => upcoming.push({ date: iso, slot }));
+      const slots = [...new Set(practiceAssignments.filter(a => (a.phase||"season")===ph && a.team_name===team && a.day===wd).map(a => a.slot))].sort();
+      slots.forEach(slot => upcoming.push({ date: iso, slot }));
     }
     const planFor = (date, slot) => ppPlans.find(p => p.team_name===team && p.practice_date===date && (p.slot||"")===(slot||""));
     const history = ppPlans.filter(p => p.team_name===team && p.practice_date < today).slice(0, 6);
@@ -10176,18 +10186,78 @@ export default function App() {
     const updateDraft = fn => setPpDraft(d => { if (!d) return d; const n = JSON.parse(JSON.stringify(d)); fn(n); return n; });
     const closePlan = () => { setPpOpenId(null); setPpDraft(null); };
 
-    const teamBar = (
+    // Add a library drill into the open plan as a block.
+    const addDrillToPlan = (dr) => {
+      updateDraft(d => { d.blocks.push({ id:rid(), name:dr.name, minutes:dr.minutes||10, desc:[dr.description, dr.notes].filter(Boolean).join(" — ") }); });
+    };
+
+    const tabBar = (
+      <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:14}}>
+        <div style={{fontSize:20,fontWeight:800,color:C.gold,marginRight:4}}>Practice</div>
+        {[["plan","Plan"],["season","Season plan"],["drills","Drills"]].map(([t,l]) => (
+          <button key={t} onClick={() => setPpTab(t)}
+            style={{padding:"6px 14px",borderRadius:8,border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,background:ppTab===t?C.gold:"transparent",color:ppTab===t?"#000":C.mut}}>{l}</button>
+        ))}
+      </div>
+    );
+    const teamBar = (<>
+      {tabBar}
       <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:14}}>
-        <div style={{fontSize:20,fontWeight:800,color:C.gold}}>Practice Plans</div>
+        <span style={{fontSize:11,fontWeight:800,letterSpacing:0.3,textTransform:"uppercase",color:C.mut}}>Team</span>
         <select value={team} onChange={e => { setPpTeam(e.target.value); closePlan(); }} style={{...St.sel,fontSize:13,padding:"7px 9px"}}>
           {teams.map(t => <option key={t} value={t}>{t}</option>)}
         </select>
         {ppDraft && <span style={{fontSize:11,color:ppSaved==="err"?C.red:C.mut}}>{ppSaved==="saving"?"Saving…":ppSaved==="saved"?"Saved ✓":ppSaved==="err"?"Save failed":""}</span>}
-        <div style={{flex:1}} />
-        <button style={St.ghost} title="Open the drill library & AI plan generator in a new tab" onClick={() => window.open("/practice", "_blank")}>Drill library ↗</button>
       </div>
-    );
+    </>);
 
+    // ── Drills tab — the shared library, browse + add ─────────────────────
+    const drillBrowser = (onPick) => {
+      const skills = [...new Set(drills.map(d => d.skill).filter(Boolean))].sort();
+      const q = norm(drillFilter.q);
+      const list = drills.filter(d =>
+        (!drillFilter.skill || d.skill === drillFilter.skill) &&
+        (!drillFilter.phase || d.phase === drillFilter.phase) &&
+        (!q || norm(d.name).includes(q) || norm(d.description).includes(q) || norm(d.notes).includes(q))
+      );
+      const phaseColor = { warmup:"#06b6d4", skill:C.gold, competitive:C.acc, cooldown:C.grn };
+      return (
+        <>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
+            <input value={drillFilter.q} onChange={e => setDrillFilter(f => ({...f,q:e.target.value}))} placeholder="Search drills…" style={{...St.sel,minWidth:170,flex:1}} />
+            <select value={drillFilter.skill} onChange={e => setDrillFilter(f => ({...f,skill:e.target.value}))} style={St.sel}>
+              <option value="">All skills</option>{skills.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+            <select value={drillFilter.phase} onChange={e => setDrillFilter(f => ({...f,phase:e.target.value}))} style={St.sel}>
+              <option value="">All phases</option>{["warmup","skill","competitive","cooldown"].map(p => <option key={p} value={p}>{p}</option>)}
+            </select>
+          </div>
+          <div style={{fontSize:11,color:C.mut,marginBottom:8}}>{list.length} drill{list.length===1?"":"s"}</div>
+          <div style={{display:"flex",flexDirection:"column",gap:8,maxHeight:onPick?360:"none",overflowY:onPick?"auto":"visible"}}>
+            {list.map(d => (
+              <div key={d.id} style={{border:"1px solid "+C.border,borderRadius:8,padding:"9px 11px",background:C.bg}}>
+                <div style={{display:"flex",alignItems:"baseline",gap:8,flexWrap:"wrap"}}>
+                  <span style={{fontSize:13,fontWeight:800,color:C.text}}>{d.name}</span>
+                  {d.phase && <span style={{fontSize:9,fontWeight:800,textTransform:"uppercase",letterSpacing:0.3,color:phaseColor[d.phase]||C.mut}}>{d.phase}</span>}
+                  {d.skill && <span style={{fontSize:10,color:C.mut}}>{d.skill}</span>}
+                  {d.minutes != null && <span style={{fontSize:10,color:C.mut}}>· {d.minutes}min</span>}
+                  <div style={{flex:1}} />
+                  {onPick && <button style={{...St.gold,padding:"3px 10px"}} onClick={() => onPick(d)}>+ Add</button>}
+                </div>
+                {d.description && <div style={{fontSize:12,color:C.text,marginTop:4,lineHeight:1.4,whiteSpace:"pre-wrap"}}>{d.description}</div>}
+                {d.notes && <div style={{fontSize:11,color:C.acc,marginTop:3,lineHeight:1.4}}>Notes: {d.notes}</div>}
+              </div>
+            ))}
+            {list.length===0 && <div style={{fontSize:12,color:C.mut}}>No drills match — adjust the filters.</div>}
+          </div>
+        </>
+      );
+    };
+
+    if (ppTab === "season") return <div style={{maxWidth:960,margin:"0 auto"}}>{tabBar}{renderSeasonPlan()}</div>;
+    if (ppTab === "drills") return <div style={{maxWidth:960,margin:"0 auto"}}>{tabBar}<div style={St.card}><div style={St.lbl}>Drill library · {drills.length}</div>{drillBrowser(null)}</div></div>;
+
+    // ── Plan tab ──────────────────────────────────────────────────────────
     // ── List: upcoming scheduled practices ────────────────────────────────
     if (!ppDraft) {
       return (
@@ -10196,7 +10266,7 @@ export default function App() {
           <div style={St.card}>
             <div style={St.lbl}>Upcoming practices — {team}</div>
             {upcoming.length === 0 ? (
-              <div style={{fontSize:13,color:C.mut}}>No practices on the schedule for {team} in the next four weeks ({schedulePhase} phase). The schedule drives this list — check the Practice tab.</div>
+              <div style={{fontSize:13,color:C.mut}}>No practices on the schedule for {team} in the next five weeks. Weekday practices start in December; summer &amp; fall are Sundays. The schedule drives this list.</div>
             ) : (
               <div style={{display:"flex",flexDirection:"column",gap:8}}>
                 {upcoming.map(({date, slot}) => {
@@ -10289,7 +10359,7 @@ export default function App() {
             <div style={{...St.lbl,marginBottom:0}}>📚 Focus concepts</div>
             <span style={{fontSize:10,color:C.mut}}>from the Season plan — what this practice installs</span>
             <div style={{flex:1}} />
-            <button style={{...St.ghost,padding:"4px 10px",fontSize:11}} onClick={() => { setCurrTeam(team); closePlan(); setView("home"); }}>Season plan →</button>
+            <button style={{...St.ghost,padding:"4px 10px",fontSize:11}} onClick={() => { setCurrTeam(team); setPpTab("season"); }}>Season plan →</button>
           </div>
           <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
             {focusItems.length === 0 && <span style={{fontSize:12,color:C.mut}}>No focus attached — add a concept below or pin one in the Season plan.</span>}
@@ -10331,8 +10401,15 @@ export default function App() {
           </div>
           <div style={{display:"flex",gap:8,marginTop:10,flexWrap:"wrap"}}>
             <button style={St.ghost} onClick={() => updateDraft(d => { d.blocks.push({ id:rid(), name:"", minutes:10, desc:"" }); })}>+ Add block</button>
+            <button style={{...St.ghost,borderColor:ppLibOpen?C.gold:C.border,color:ppLibOpen?C.gold:C.text}} onClick={() => setPpLibOpen(v => !v)}>{ppLibOpen?"Hide library":"+ From library"}</button>
             <button style={St.ghost} title="Reset to the standard DS Elite template for this slot length" onClick={() => { if (window.confirm("Replace all blocks with the standard template?")) updateDraft(d => { d.blocks = defaultBlocks(d.slot); }); }}>Reset to template</button>
           </div>
+          {ppLibOpen && (
+            <div style={{marginTop:10,borderTop:"1px solid "+C.border,paddingTop:10}}>
+              <div style={{fontSize:11,color:C.mut,marginBottom:8}}>Tap <b style={{color:C.gold}}>+ Add</b> to drop a drill into this practice as a block.</div>
+              {drillBrowser(dr => { addDrillToPlan(dr); setPpSaved("saving"); })}
+            </div>
+          )}
         </div>
 
         {/* Notes */}
@@ -10408,7 +10485,7 @@ export default function App() {
             ))}
             <div style={{flex:1}} />
             <button onClick={copyPlan} style={{...Sp.chip,cursor:"pointer",fontFamily:"inherit",color:C.acc,borderColor:C.acc}}>Copy focus list</button>
-            <button onClick={() => { setCurrTeam(team); setPpTeam(team); setView("practiceplan"); }} style={{...Sp.chip,cursor:"pointer",fontFamily:"inherit",background:C.gold,color:"#000",border:"none"}}>Plan a practice →</button>
+            <button onClick={() => { setCurrTeam(team); setPpTeam(team); setPpTab("plan"); setView("practiceplan"); }} style={{...Sp.chip,cursor:"pointer",fontFamily:"inherit",background:C.gold,color:"#000",border:"none"}}>Plan a practice →</button>
           </div>
         )}
 
