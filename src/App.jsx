@@ -868,6 +868,8 @@ function slotHours(slot){
   const to24 = h => (h===12 ? 12 : h+12);
   return Math.max(0, to24(+m[2]) - to24(+m[1]));
 }
+// Monday (week start) for a date, as YYYY-MM-DD.
+function weekMondayISO(d){ const x = d ? new Date(d) : new Date(); const back = (x.getDay()+6)%7; x.setDate(x.getDate()-back); return localDateISO(x); }
 
 export default function App() {
   // ─── Auth state ─────────────────────────────────────────────────────
@@ -933,6 +935,10 @@ export default function App() {
   const [checkinDate, setCheckinDate]   = useState(() => localDateISO()); // admin date picker
   const [checkinSub, setCheckinSub]     = useState({ team:"", slot:"5-7pm", role:"sub" }); // sub/float form
   const [checkinBusy, setCheckinBusy]   = useState("");     // key of the check-in being written
+  // Time Cards ledger (pay). coach_rates = one $/hr per coach.
+  const [coachRates, setCoachRates]     = useState([]);
+  const [tcWeekStart, setTcWeekStart]   = useState(() => weekMondayISO()); // Monday of the viewed week
+  const [tcOpen, setTcOpen]             = useState("");     // expanded coach name in the ledger
   // Fires the "save a restore point first" nudge at most once per practice session.
   const practiceEditReminded = useRef(false);
   const [saBlock, setSaBlock]                         = useState(
@@ -1117,7 +1123,7 @@ export default function App() {
   // Operations are admin-only: the whole "Operations" nav group and the views
   // behind it are hidden and blocked for non-admin coaches. The owner (Drew)
   // always counts here so a bad DB flag can't lock him out.
-  const OPS_VIEWS = new Set(["tracker","teamdir","coaches","practice","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage"]);
+  const OPS_VIEWS = new Set(["tracker","teamdir","coaches","practice","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","timecards"]);
   const canOps    = isAdmin || isOwner;
   const opsDenied = <div style={{padding:24,color:C.mut,textAlign:"center"}}>This section is restricted to administrators. Ask the club administrator (Drew) for access.</div>;
   // Once a player has accepted (or is locked/signed) onto a team, they're
@@ -1642,6 +1648,7 @@ export default function App() {
   useEffect(() => { if (isApproved && view === "practice") loadSnapshots(); }, [isApproved, view, loadSnapshots]);
   // Coach/team cards (openable from any view) need practice_teams loaded.
   useEffect(() => { if (isApproved && (coachCardName || teamCardName)) loadPractice(); }, [isApproved, coachCardName, teamCardName, loadPractice]);
+  useEffect(() => { if (isApproved && coachCardName) { loadCoachRates(); loadCheckins(); } }, [isApproved, coachCardName, loadCoachRates, loadCheckins]);
 
   // Lineups planner loader (cloud, per team). Needs practice_teams for the picker.
   const loadLineupPlans = useCallback(async () => {
@@ -1661,6 +1668,14 @@ export default function App() {
     setCheckins(data || []);
   }, []);
   useEffect(() => { if (isApproved && view === "home") { loadCheckins(); loadPractice(); loadCoachFloats(); } }, [isApproved, view, loadCheckins, loadPractice, loadCoachFloats]);
+
+  // Time Cards ledger loader.
+  const loadCoachRates = useCallback(async () => {
+    const { data, error } = await supabase.from("coach_rates").select("*");
+    if (error) { console.error("Load coach_rates error:", error); return; }
+    setCoachRates(data || []);
+  }, []);
+  useEffect(() => { if (isApproved && view === "timecards") { loadCheckins(); loadCoachRates(); loadCoachRoster(); loadPractice(); } }, [isApproved, view, loadCheckins, loadCoachRates, loadCoachRoster, loadPractice]);
   // Autosave the active lineup draft (debounced) → lineup_plans. lineupSkipSave
   // suppresses the write that would otherwise fire right after loading a plan.
   const lineupSkipSave = useRef(true);
@@ -6987,6 +7002,40 @@ export default function App() {
             <button onClick={close} style={{background:"none",border:"none",color:C.mut,fontSize:22,cursor:"pointer",lineHeight:1}}>✕</button>
           </div>
 
+          {/* Pay — rate + logged hours (admin only) */}
+          {canOps && (() => {
+            const money = n => "$" + Number(n||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+            const myRateRow = coachRates.find(x => norm(x.coach_name)===norm(displayName));
+            const myRate = myRateRow && myRateRow.hourly_rate!=null ? Number(myRateRow.hourly_rate) : null;
+            const myChecks = checkins.filter(c => norm(c.coach_name)===norm(displayName));
+            const hrs = myChecks.reduce((s,c)=>s+Number(c.hours||0),0);
+            const unpaidHrs = myChecks.filter(c=>!c.paid).reduce((s,c)=>s+Number(c.hours||0),0);
+            const setMyRate = async (val) => {
+              const rate = val==="" ? null : Number(val);
+              if (val!=="" && (isNaN(rate)||rate<0)) return;
+              const { error } = await supabase.from("coach_rates").upsert({ coach_name:displayName, hourly_rate:rate, updated_at:new Date().toISOString() }, { onConflict:"coach_name" });
+              if (error) { window.alert("Couldn't save rate: "+error.message); return; }
+              await loadCoachRates();
+            };
+            return (
+              <div style={sectionBox}>
+                <div style={lbl}>Pay</div>
+                <div style={{display:"flex",alignItems:"flex-end",gap:16,flexWrap:"wrap"}}>
+                  <div><div style={cFieldLbl}>Rate $/hr</div>
+                    <input key={displayName+"-"+(myRate??"")} type="number" min="0" step="0.5" defaultValue={myRate??""} placeholder="—"
+                      onBlur={e=>{ if((e.target.value===""?null:Number(e.target.value))!==myRate) setMyRate(e.target.value.trim()); }}
+                      onKeyDown={e=>{ if(e.key==="Enter") e.target.blur(); }}
+                      style={{...cInp,width:90,color:myRate!=null?C.gold:C.text,fontWeight:700}} />
+                  </div>
+                  <div><div style={cFieldLbl}>Logged (90d)</div><div style={{fontSize:16,fontWeight:800,color:C.text}}>{hrs}h{myRate!=null?" · "+money(hrs*myRate):""}</div></div>
+                  <div><div style={cFieldLbl}>Unpaid</div><div style={{fontSize:16,fontWeight:800,color:unpaidHrs>0?C.gold:C.grn}}>{unpaidHrs>0 ? (unpaidHrs+"h"+(myRate!=null?" · "+money(unpaidHrs*myRate):"")) : "✓ none"}</div></div>
+                  <div style={{flex:1}} />
+                  <button onClick={()=>{ setCoachCardName(null); setView("timecards"); }} style={{padding:"7px 12px",borderRadius:8,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>Open Time Cards →</button>
+                </div>
+              </div>
+            );
+          })()}
+
           {/* Contact info — editable */}
           {roster && (
             <div style={sectionBox}>
@@ -9721,6 +9770,156 @@ export default function App() {
             </div>
           );
         })()}
+      </div>
+    );
+  }
+
+  // ── Time Cards — coach hours + pay ledger ──────────────────────────────
+  function renderTimeCards() {
+    const norm = s => (s||"").toString().trim().toLowerCase();
+    const money = n => "$" + Number(n||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+    const wkStart = tcWeekStart;
+    const wkEnd = localDateISO(new Date(new Date(wkStart+"T12:00:00").getTime() + 6*86400000));
+    const fmtD = iso => new Date(iso+"T12:00:00").toLocaleDateString(undefined,{month:"short",day:"numeric"});
+    const timeOf = ts => { try { return new Date(ts).toLocaleDateString(undefined,{month:"short",day:"numeric"}); } catch { return ""; } };
+    const shiftWeek = delta => setTcWeekStart(localDateISO(new Date(new Date(wkStart+"T12:00:00").getTime() + delta*7*86400000)));
+    const rateOf = nm => { const r = coachRates.find(x => norm(x.coach_name)===norm(nm)); return r && r.hourly_rate!=null ? Number(r.hourly_rate) : null; };
+
+    const St = {
+      card:  { background:C.card, border:"1px solid "+C.border, borderRadius:12, padding:16, marginBottom:14 },
+      sel:   { background:C.bg, border:"1px solid "+C.border, borderRadius:6, color:C.text, fontFamily:"inherit", fontSize:13, padding:"6px 8px" },
+      gold:  { padding:"6px 12px", borderRadius:8, border:"none", background:C.gold, color:"#000", fontWeight:700, fontSize:12, cursor:"pointer", fontFamily:"inherit" },
+      ghost: { padding:"6px 10px", borderRadius:8, border:"1px solid "+C.border, background:"transparent", color:C.text, fontWeight:600, fontSize:12, cursor:"pointer", fontFamily:"inherit" },
+      th:    { textAlign:"left", fontSize:10, fontWeight:800, textTransform:"uppercase", letterSpacing:0.3, color:C.mut, padding:"6px 8px", borderBottom:"1px solid "+C.border },
+      td:    { fontSize:13, padding:"7px 8px", borderBottom:"1px solid "+C.border, color:C.text },
+    };
+
+    // Group this week's check-ins by coach.
+    const rows = {};
+    checkins.filter(c => c.check_date>=wkStart && c.check_date<=wkEnd).forEach(c => {
+      const g = rows[c.coach_name] = rows[c.coach_name] || { coach:c.coach_name, hours:0, unpaidHours:0, checks:[] };
+      g.hours += Number(c.hours||0);
+      if (!c.paid) g.unpaidHours += Number(c.hours||0);
+      g.checks.push(c);
+    });
+    const list = Object.values(rows).sort((a,b)=> a.coach.localeCompare(b.coach));
+    let totHours=0, totAmt=0, totUnpaid=0, totUnpaidHours=0;
+    list.forEach(g => {
+      g.rate = rateOf(g.coach);
+      g.amount = g.rate!=null ? g.hours*g.rate : null;
+      g.unpaidAmount = g.rate!=null ? g.unpaidHours*g.rate : null;
+      totHours += g.hours; totUnpaidHours += g.unpaidHours;
+      if (g.rate!=null) { totAmt += g.amount; totUnpaid += g.unpaidAmount; }
+    });
+
+    const setRate = async (coach, val) => {
+      const rate = val==="" ? null : Number(val);
+      if (val!=="" && (isNaN(rate) || rate<0)) return;
+      const { error } = await supabase.from("coach_rates").upsert({ coach_name:coach, hourly_rate:rate, updated_at:new Date().toISOString() }, { onConflict:"coach_name" });
+      if (error) { window.alert("Couldn't save rate: "+error.message); return; }
+      await loadCoachRates();
+    };
+    const markWeekPaid = async (coach, paid) => {
+      const ids = (rows[coach]?.checks||[]).filter(c => !!c.paid !== paid).map(c=>c.id);
+      if (!ids.length) return;
+      await supabase.from("coach_checkins").update({ paid, paid_at: paid ? new Date().toISOString() : null }).in("id", ids);
+      await loadCheckins();
+    };
+    const togglePaid = async (c) => {
+      await supabase.from("coach_checkins").update({ paid: !c.paid, paid_at: !c.paid ? new Date().toISOString() : null }).eq("id", c.id);
+      await loadCheckins();
+    };
+    const delCheck = async (id) => { if(!window.confirm("Delete this check-in?")) return; await supabase.from("coach_checkins").delete().eq("id", id); await loadCheckins(); };
+    const roleTag = (r) => { const m = { scheduled:["Sched",C.mut], sub:["Sub","#f59e0b"], float:["Float","#06b6d4"] }[r] || ["",C.mut]; return <span style={{fontSize:9,fontWeight:800,color:m[1],border:"1px solid "+m[1],borderRadius:4,padding:"0 4px"}}>{m[0]}</span>; };
+    const isThisWeek = wkStart === weekMondayISO();
+
+    return (
+      <div style={{maxWidth:1100, margin:"0 auto"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:14}}>
+          <div style={{fontSize:20,fontWeight:800,color:C.gold}}>Time Cards</div>
+          <div style={{flex:1}} />
+          <button style={St.ghost} onClick={()=>shiftWeek(-1)} title="Previous week">‹</button>
+          <div style={{fontSize:13,fontWeight:700,color:C.text,minWidth:150,textAlign:"center"}}>{fmtD(wkStart)} – {fmtD(wkEnd)}</div>
+          <button style={St.ghost} onClick={()=>shiftWeek(1)} title="Next week">›</button>
+          {!isThisWeek && <button style={St.ghost} onClick={()=>setTcWeekStart(weekMondayISO())}>This week</button>}
+        </div>
+
+        {/* Totals */}
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:12,marginBottom:14}}>
+          {[["Hours", totHours+"h"],["Payroll", money(totAmt)],["Unpaid", money(totUnpaid), C.gold],["Unpaid hours", totUnpaidHours+"h"]].map(([l,v,col],i)=>(
+            <div key={i} style={{background:C.bg,borderRadius:10,padding:"10px 14px",border:"1px solid "+C.border}}>
+              <div style={{fontSize:10,fontWeight:800,textTransform:"uppercase",letterSpacing:0.4,color:C.mut}}>{l}</div>
+              <div style={{fontSize:22,fontWeight:800,color:col||C.text,marginTop:2}}>{v}</div>
+            </div>
+          ))}
+        </div>
+
+        <div style={St.card}>
+          {list.length===0 ? (
+            <div style={{fontSize:13,color:C.mut,padding:"6px 0"}}>No check-ins this week. Coaches log hours from the Clock in section on their dashboard.</div>
+          ) : (
+            <div style={{overflowX:"auto"}}>
+              <table style={{width:"100%",borderCollapse:"collapse",minWidth:720}}>
+                <thead><tr>
+                  <th style={St.th}>Coach</th>
+                  <th style={{...St.th,textAlign:"right"}}>Hours</th>
+                  <th style={{...St.th,textAlign:"right"}}>Rate $/hr</th>
+                  <th style={{...St.th,textAlign:"right"}}>Amount</th>
+                  <th style={{...St.th,textAlign:"right"}}>Unpaid</th>
+                  <th style={St.th}></th>
+                </tr></thead>
+                <tbody>
+                  {list.map(g => {
+                    const open = tcOpen===g.coach;
+                    return (
+                      <Fragment key={g.coach}>
+                        <tr>
+                          <td style={St.td}>
+                            <button onClick={()=>setTcOpen(open?"":g.coach)} style={{background:"none",border:"none",color:C.text,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,padding:0,display:"flex",alignItems:"center",gap:6}}>
+                              <span style={{color:C.mut,fontSize:10}}>{open?"▼":"▶"}</span>{g.coach}
+                            </button>
+                          </td>
+                          <td style={{...St.td,textAlign:"right",fontWeight:700}}>{g.hours}h</td>
+                          <td style={{...St.td,textAlign:"right"}}>
+                            <input key={g.coach+"-"+(g.rate??"")} type="number" min="0" step="0.5" defaultValue={g.rate??""} placeholder="—"
+                              onBlur={e=>{ if((e.target.value===""?null:Number(e.target.value)) !== g.rate) setRate(g.coach, e.target.value.trim()); }}
+                              onKeyDown={e=>{ if(e.key==="Enter") e.target.blur(); }}
+                              style={{...St.sel,width:70,textAlign:"right",color:g.rate!=null?C.gold:C.mut,fontWeight:700}} />
+                          </td>
+                          <td style={{...St.td,textAlign:"right",fontWeight:700}}>{g.amount!=null?money(g.amount):<span style={{color:C.mut,fontWeight:400}}>set rate</span>}</td>
+                          <td style={{...St.td,textAlign:"right",color:g.unpaidHours>0?C.gold:C.grn,fontWeight:700}}>{g.unpaidHours>0 ? (g.unpaidAmount!=null?money(g.unpaidAmount):g.unpaidHours+"h") : "✓ paid"}</td>
+                          <td style={{...St.td,textAlign:"right"}}>
+                            {g.unpaidHours>0
+                              ? <button style={St.gold} onClick={()=>markWeekPaid(g.coach,true)}>Mark paid</button>
+                              : <button style={St.ghost} onClick={()=>markWeekPaid(g.coach,false)} title="Reopen this week as unpaid">Unpay</button>}
+                          </td>
+                        </tr>
+                        {open && (
+                          <tr><td colSpan={6} style={{padding:"0 8px 10px 8px",background:C.bg}}>
+                            <div style={{display:"flex",flexDirection:"column",gap:4,padding:"8px 0"}}>
+                              {g.checks.slice().sort((a,b)=> a.check_date.localeCompare(b.check_date) || (a.slot||"").localeCompare(b.slot||"")).map(c => (
+                                <div key={c.id} style={{display:"flex",alignItems:"center",gap:10,fontSize:12,color:C.text,flexWrap:"wrap"}}>
+                                  <span style={{width:64,color:C.mut}}>{timeOf(c.check_date)}</span>
+                                  {roleTag(c.role)}
+                                  <span style={{flex:1,minWidth:120}}>{c.team_name||"Floating"} · {c.slot} · {Number(c.hours||0)}h</span>
+                                  <label style={{display:"flex",alignItems:"center",gap:4,cursor:"pointer",color:c.paid?C.grn:C.mut}}>
+                                    <input type="checkbox" checked={!!c.paid} onChange={()=>togglePaid(c)} style={{accentColor:C.grn,cursor:"pointer"}} />paid
+                                  </label>
+                                  <button style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:12}} onClick={()=>delCheck(c.id)} title="Delete check-in">✕</button>
+                                </div>
+                              ))}
+                            </div>
+                          </td></tr>
+                        )}
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+        <div style={{fontSize:11,color:C.mut}}>Rates are per coach and saved as you type. Amount = hours × rate. “Mark paid” settles this week’s check-ins; the weekly report (coming) emails Mon–Sun totals.</div>
       </div>
     );
   }
@@ -13166,7 +13365,7 @@ export default function App() {
                 <button key={v} style={btn(view===v)} onClick={()=>{ setView(v); setOpenMenu(null); }}>{l}</button>;
               const groups = [
                 { title:"Tryouts", items:[["dashboard","Dashboard"], ["evaluate","Evaluate"], ["favorites","My Favorites" + (favorites.length ? " (" + favorites.length + ")" : "")], ...(canViewTeams ? [["teams","Teams"]] : []), ["rankings","Rankings"], ["physical","Physical Testing"], ["tryouts","Coach Assignments"]] },
-                ...(canOps ? [{ title:"Operations", items:[["tracker","Tracker"], ["teamdir","All Teams"], ["coaches","Coaches"], ["scholarships","Scholarships"], ["practice","Practice"], ["email","Email"], ["notifications","Notifications"], ["requests","Requests" + (coachRequests.filter(r=>r.status==="pending").length ? " (" + coachRequests.filter(r=>r.status==="pending").length + ")" : "")], ["messages", "Messages (SMS)" + (totalUnread > 0 ? " (" + totalUnread + ")" : "")], ["coachcomms", "Coach Comms"], ["assignments", "Assignments"], ["coverage", "Coach Coverage"]] }] : []),
+                ...(canOps ? [{ title:"Operations", items:[["tracker","Tracker"], ["teamdir","All Teams"], ["coaches","Coaches"], ["scholarships","Scholarships"], ["practice","Practice"], ["email","Email"], ["notifications","Notifications"], ["requests","Requests" + (coachRequests.filter(r=>r.status==="pending").length ? " (" + coachRequests.filter(r=>r.status==="pending").length + ")" : "")], ["messages", "Messages (SMS)" + (totalUnread > 0 ? " (" + totalUnread + ")" : "")], ["coachcomms", "Coach Comms"], ["assignments", "Assignments"], ["coverage", "Coach Coverage"], ["timecards", "Time Cards"]] }] : []),
               ];
               return <>
                 {item("home","Home")}
@@ -13338,6 +13537,7 @@ export default function App() {
         {view==="coachcomms" && renderCoachComms()}
         {view==="assignments" && renderAssignments()}
         {view==="coverage" && renderCoachCoverage()}
+        {view==="timecards" && renderTimeCards()}
         {view==="faq" && renderFaq()}
         {view==="lineups" && renderLineups()}
         {view==="games" && renderGames()}
