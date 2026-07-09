@@ -1660,7 +1660,7 @@ export default function App() {
     if (error) { console.error("Load coach_checkins error:", error); return; }
     setCheckins(data || []);
   }, []);
-  useEffect(() => { if (isApproved && view === "home") { loadCheckins(); loadPractice(); } }, [isApproved, view, loadCheckins, loadPractice]);
+  useEffect(() => { if (isApproved && view === "home") { loadCheckins(); loadPractice(); loadCoachFloats(); } }, [isApproved, view, loadCheckins, loadPractice, loadCoachFloats]);
   // Autosave the active lineup draft (debounced) → lineup_plans. lineupSkipSave
   // suppresses the write that would otherwise fire right after loading a plan.
   const lineupSkipSave = useRef(true);
@@ -9493,17 +9493,32 @@ export default function App() {
       ghost: { padding:"6px 12px", borderRadius:8, border:"1px solid "+C.border, background:"transparent", color:C.text, fontWeight:600, fontSize:12, cursor:"pointer", fontFamily:"inherit" },
     };
 
-    // Today's scheduled practices for this coach (their teams, today's weekday).
+    // Slot start/end hour (practice times read as PM).
+    const startH = sl => { const m=/^\s*(\d{1,2})/.exec(sl||""); if(!m) return 99; const h=+m[1]; return h===12?12:h+12; };
+    const endH   = sl => { const m=/-\s*(\d{1,2})/.exec(sl||""); if(!m) return 99; const h=+m[1]; return h===12?12:h+12; };
+    // Match the logged-in coach against the free-text coach names used in the
+    // schedule / floater tables.
+    const cand = new Set();
+    if (coach?.display_name) cand.add(norm(coach.display_name));
+    const myR = coachRoster.find(r => coach?.email && norm(r.email)===norm(coach.email));
+    if (myR) { const f=norm(myR.first_name), l=norm(myR.last_name); if(f){ cand.add((f+" "+l).trim()); cand.add(f); if(l) cand.add((f+" "+l[0]+".").trim()); } }
+    const isMe = nm => !!nm && cand.has(norm(nm));
+    // Everywhere this coach is scheduled today — coaching AND floating — as one
+    // time-ordered list, so we can lead with whichever comes next.
     const seen = new Set();
-    const mySlots = practiceAssignments
-      .filter(a => (a.phase||"season")===schedulePhase && a.day===wdToday && myTeamNames.includes(a.team_name))
-      .map(a => ({ team:a.team_name, slot:a.slot }))
-      .filter(x => { const k = x.team+"|"+x.slot; if(seen.has(k)) return false; seen.add(k); return true; })
-      .sort((a,b)=> (a.slot||"").localeCompare(b.slot||"") || a.team.localeCompare(b.team));
+    const mySlots = [
+      ...practiceAssignments.filter(a => (a.phase||"season")===schedulePhase && a.day===wdToday && myTeamNames.includes(a.team_name)).map(a => ({ team:a.team_name, slot:a.slot, role:"scheduled" })),
+      ...coachFloats.filter(f => (f.phase||"season")===schedulePhase && f.day===wdToday && isMe(f.coach_name)).map(f => ({ team:"", slot:f.slot, role:"float" })),
+    ].filter(x => { const k = x.role+"|"+x.team+"|"+x.slot; if(seen.has(k)) return false; seen.add(k); return true; })
+     .sort((a,b)=> startH(a.slot)-startH(b.slot) || (a.team||"").localeCompare(b.team||""));
 
     const myChecksToday = checkins.filter(c => c.check_date===today && norm(c.coach_name)===norm(coachName));
     const checkFor = (team, slot) => myChecksToday.find(c => (c.team_name||"")===(team||"") && (c.slot||"")===(slot||""));
     const myHoursToday = myChecksToday.reduce((s,c)=> s + Number(c.hours||0), 0);
+    // "Next up" = earliest slot not yet checked in whose end hasn't passed.
+    const nowH = new Date().getHours() + new Date().getMinutes()/60;
+    const nextItem = mySlots.find(s => !checkFor(s.team, s.slot) && endH(s.slot) >= nowH) || mySlots.find(s => !checkFor(s.team, s.slot)) || null;
+    const nextKey = nextItem ? (nextItem.role+"|"+nextItem.team+"|"+nextItem.slot) : null;
 
     const doCheckin = async ({ team, slot, role, dateISO }) => {
       const key = (team||"float")+"|"+(slot||"")+"|"+role;
@@ -9539,19 +9554,25 @@ export default function App() {
           {myHoursToday>0 && <span style={{fontSize:12,color:C.grn,fontWeight:700}}>· {myHoursToday}h logged today</span>}
         </div>
 
-        {/* Your scheduled practices today */}
+        {/* Where you're scheduled today — coaching + floating, next one first */}
         {mySlots.length>0 && (
         <div style={St.card}>
-          <div style={St.lbl}>Your practices today</div>
+          <div style={St.lbl}>Your schedule today</div>
             <div style={{display:"flex",flexDirection:"column",gap:8}}>
               {mySlots.map(s => {
                 const c = checkFor(s.team, s.slot);
-                const busy = checkinBusy === (s.team+"|"+s.slot+"|scheduled");
+                const key = s.role+"|"+s.team+"|"+s.slot;
+                const busy = checkinBusy === ((s.team||"float")+"|"+(s.slot||"")+"|"+s.role);
+                const isNext = !c && key===nextKey;
                 return (
-                  <div key={s.team+"|"+s.slot} style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap",padding:"10px 12px",borderRadius:8,border:"1px solid "+(c?C.grn:C.border),background:c?"rgba(34,197,94,0.08)":C.bg}}>
+                  <div key={key} style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap",padding:"10px 12px",borderRadius:8,border:"1px solid "+(c?C.grn:isNext?C.gold:C.border),background:c?"rgba(34,197,94,0.08)":isNext?"rgba(233,30,140,0.06)":C.bg}}>
                     <div style={{flex:1,minWidth:160}}>
-                      <div style={{fontSize:14,fontWeight:700,color:C.text}}>{s.team}</div>
-                      <div style={{fontSize:12,color:C.mut}}>{s.slot} · {slotHours(s.slot)}h</div>
+                      <div style={{display:"flex",alignItems:"center",gap:6}}>
+                        {isNext && <span style={{fontSize:8,fontWeight:800,color:"#000",background:C.gold,borderRadius:4,padding:"1px 5px",letterSpacing:0.4}}>NEXT UP</span>}
+                        <span style={{fontSize:14,fontWeight:700,color:C.text}}>{s.role==="float" ? "Floating" : s.team}</span>
+                        {s.role!=="scheduled" && roleTag(s.role)}
+                      </div>
+                      <div style={{fontSize:12,color:C.mut,marginTop:2}}>{s.slot} · {slotHours(s.slot)}h</div>
                     </div>
                     {c ? (
                       <>
@@ -9559,7 +9580,7 @@ export default function App() {
                         <button style={{...St.ghost,color:C.mut}} disabled={checkinBusy==="undo"+c.id} onClick={()=>undoCheckin(c.id)}>Undo</button>
                       </>
                     ) : (
-                      <button style={St.here} disabled={busy} onClick={()=>doCheckin({ team:s.team, slot:s.slot, role:"scheduled" })}>{busy?"…":"✅ I'm here"}</button>
+                      <button style={isNext?St.here:{...St.here,background:"transparent",border:"1px solid "+C.grn,color:C.grn}} disabled={busy} onClick={()=>doCheckin({ team:s.team, slot:s.slot, role:s.role })}>{busy?"…":"✅ I'm here"}</button>
                     )}
                   </div>
                 );
