@@ -1648,7 +1648,6 @@ export default function App() {
   useEffect(() => { if (isApproved && view === "practice") loadSnapshots(); }, [isApproved, view, loadSnapshots]);
   // Coach/team cards (openable from any view) need practice_teams loaded.
   useEffect(() => { if (isApproved && (coachCardName || teamCardName)) loadPractice(); }, [isApproved, coachCardName, teamCardName, loadPractice]);
-  useEffect(() => { if (isApproved && coachCardName) { loadCoachRates(); loadCheckins(); } }, [isApproved, coachCardName, loadCoachRates, loadCheckins]);
 
   // Lineups planner loader (cloud, per team). Needs practice_teams for the picker.
   const loadLineupPlans = useCallback(async () => {
@@ -1675,7 +1674,10 @@ export default function App() {
     if (error) { console.error("Load coach_rates error:", error); return; }
     setCoachRates(data || []);
   }, []);
-  useEffect(() => { if (isApproved && view === "timecards") { loadCheckins(); loadCoachRates(); loadCoachRoster(); loadPractice(); } }, [isApproved, view, loadCheckins, loadCoachRates, loadCoachRoster, loadPractice]);
+  useEffect(() => { if (isApproved && view === "timecards") { loadCheckins(); loadCoachRates(); loadPractice(); } }, [isApproved, view, loadCheckins, loadCoachRates, loadPractice]);
+  // Coach card (openable from any view) shows pay — needs rates + check-ins.
+  // Declared after the loaders above to avoid a TDZ on the useCallback consts.
+  useEffect(() => { if (isApproved && coachCardName) { loadCoachRates(); loadCheckins(); } }, [isApproved, coachCardName, loadCoachRates, loadCheckins]);
   // Autosave the active lineup draft (debounced) → lineup_plans. lineupSkipSave
   // suppresses the write that would otherwise fire right after loading a plan.
   const lineupSkipSave = useRef(true);
