@@ -871,6 +871,116 @@ function slotHours(slot){
 // Monday (week start) for a date, as YYYY-MM-DD.
 function weekMondayISO(d){ const x = d ? new Date(d) : new Date(); const back = (x.getDay()+6)%7; x.setDate(x.getDate()-back); return localDateISO(x); }
 
+// ── DS Elite coaching curriculum ────────────────────────────────────────────
+// Drew's coaching perspective — from "Core Philosophy: Game-Like Training with
+// High Efficiency" and "DS Elite Baseline Expectations" — organized so a new
+// coach knows WHAT to teach, WHY it matters, and WHEN to have it installed.
+// Subjects are in order of importance; each has three tiers (teach Tier 1
+// before Tier 2, etc.). Team progress lives in curriculum_progress keyed by
+// each item's `k`, so item keys must stay stable once shipped.
+const DSE_CURRICULUM = [
+  { key:"culture", subject:"Culture & Attitude", why:"Nothing else matters without this", tiers:[
+    { name:"Foundation", teachBy:"Preseason – week 2", items:[
+      { k:"culture-effort",   label:"Effort & hustle standard", cue:"Every ball is playable until it hits the floor. No balls drop. Sprint to your position, don't jog." },
+      { k:"culture-comm",     label:"Communication before skills", cue:"Call every ball — loud and early. Silence = an error waiting to happen. If you don't call it, you can't have it." },
+      { k:"culture-nextball", label:"Next-ball mentality", cue:"No dwelling. Mistakes happen, quitting doesn't. Play every point like it's 24-24." },
+      { k:"culture-habits",   label:"Practice habits", cue:"Be early, be ready, be focused. Players do the work: tossing, down balls, efficient shagging, quick resets." },
+    ]},
+    { name:"Build", teachBy:"Weeks 3 – 6", items:[
+      { k:"culture-account",  label:"Accountability", cue:"Own your errors — don't blame teammates. You're either coaching or being coached." },
+      { k:"culture-bench",    label:"Bench energy & celebration", cue:"Celebrate your teammates, not yourself. Energy is contagious — be the spark. Bench energy wins matches." },
+      { k:"culture-identity", label:"Team identity", cue:"Don't rush it — allow 2-3 weeks of full-team practice and let culture develop organically. Guide, don't force." },
+    ]},
+    { name:"Championship", teachBy:"Mid-season on", items:[
+      { k:"culture-tourney",  label:"Tournament standard", cue:"Tournament intensity starts in practice. First ball = last ball — every rep matters. Play like someone's recruiting you." },
+      { k:"culture-problem",  label:"Problem-solvers only", cue:"No complaining, only problem-solving. Leave your ego at the door." },
+    ]},
+  ]},
+  { key:"serving", subject:"Serving", why:"90% consistency wins matches — the non-negotiable", tiers:[
+    { name:"Foundation", teachBy:"Week 1 — then daily forever", items:[
+      { k:"serve-daily",    label:"Daily serving block", cue:"15-25 minutes EVERY practice. No exceptions, no shortcuts." },
+      { k:"serve-consist",  label:"Consistency over power", cue:"Team goal: 90% of serves in during tournaments. 'If we serve 90%, we win every match.' No unforced errors on serve." },
+      { k:"serve-pressure", label:"Pressure serving drill", cue:"Everyone serves once and returns to line; repeat ×3. Team of 12 = maximum 4 misses allowed." },
+    ]},
+    { name:"Build", teachBy:"Weeks 3 – 8", items:[
+      { k:"serve-timeout",  label:"Timeout serving ritual", cue:"Partner serve 3-5 balls at every timeout — every timeout, every time. Muscle memory under pressure." },
+      { k:"serve-track",    label:"Track & celebrate serve %", cue:"Measure serving consistency at every tournament; track it and celebrate progress toward 90%." },
+    ]},
+    { name:"Championship", teachBy:"Mid-season on", items:[
+      { k:"serve-spot",     label:"Spot serving", cue:"Target zones and seams — serve at weak passers. Tactical advantage." },
+      { k:"serve-short",    label:"Short serves & changing speeds", cue:"Move from consistency to disruption: short serves, deep serves ('miss deep'), mixed pace." },
+    ]},
+  ]},
+  { key:"receive", subject:"Serve Receive & Free Balls", why:"First-contact excellence — easy points can't be wasted", tiers:[
+    { name:"Foundation", teachBy:"Weeks 1 – 3", items:[
+      { k:"sr-first", label:"First-contact excellence", cue:"Feet beat the ball, platform to target. After serving, this is the most important skill in the gym." },
+      { k:"sr-call",  label:"Call it early", cue:"'Mine!' loud before the ball crosses the net — on every single ball." },
+      { k:"sr-free",  label:"Free-ball passing standard", cue:"Free balls are gifts — perfect pass every time. Easy points can't be wasted." },
+    ]},
+    { name:"Build", teachBy:"Weeks 4 – 8", items:[
+      { k:"sr-seams", label:"Formations & seam ownership", cue:"Every player knows her zone and the seams in all six rotations." },
+      { k:"sr-hands", label:"Overhand receive", cue:"Take high float serves with hands — don't back away from the ball." },
+    ]},
+    { name:"Championship", teachBy:"Mid-season on", items:[
+      { k:"sr-tempo", label:"Pass to run tempo", cue:"Tight, hittable passes that let the setter run Go / 1 / 3." },
+      { k:"sr-read",  label:"Read the server", cue:"Pre-serve cues — toss, shoulder line, contact. Anticipate, don't react." },
+    ]},
+  ]},
+  { key:"setting", subject:"Setting", why:"Consistent, hittable balls build the offense", tiers:[
+    { name:"Foundation", teachBy:"Weeks 2 – 4", items:[
+      { k:"set-hittable", label:"Consistent hittable sets", cue:"High outside every time. 'Finish your set' — hands extended, wrists close, point to target." },
+      { k:"set-feet",     label:"Footwork to target", cue:"Right-left to the ball, square to position 4. Feet first, hands second." },
+    ]},
+    { name:"Build", teachBy:"Weeks 5 – 9", items:[
+      { k:"set-decide", label:"2nd-ball decisions", cue:"When to set 4 / 2 / back — and when the smart play is the 2nd-ball attack." },
+      { k:"set-comm",   label:"Setter runs the offense out loud", cue:"Setter calls the offense every rally — hitters always know what's coming." },
+    ]},
+    { name:"Championship", teachBy:"Mid-season on", items:[
+      { k:"set-tempo", label:"Tempo sets", cue:"Go, 1, 3 balls — speed the offense up once passing supports it." },
+      { k:"set-dump",  label:"Setter dump", cue:"Deceptive 2nd-ball offense — pick the moment, don't force it." },
+    ]},
+  ]},
+  { key:"attack", subject:"Attacking", why:"Attack everything attackable — aggressive, not safe", tiers:[
+    { name:"Foundation", teachBy:"Weeks 2 – 5", items:[
+      { k:"att-approach", label:"Approach & armswing", cue:"'Go! Jump!' Full approach every time. 'Reach for the tag of your shirt' on the follow-through. 'Patience' on timing." },
+      { k:"att-basic",    label:"Attack from 4, 5, and 2", cue:"Basic attacking from the pins and right side before anything fancy." },
+    ]},
+    { name:"Build", teachBy:"Weeks 5 – 9", items:[
+      { k:"att-smart",  label:"Tips, push tips & swipes", cue:"Smart offensive options. Attack everything attackable — sending a free ball over is a last resort." },
+      { k:"att-second", label:"2nd-ball attack", cue:"Opportunistic scoring when the pass is tight — take what the defense gives." },
+    ]},
+    { name:"Championship", teachBy:"Mid-season on", items:[
+      { k:"att-tempo", label:"Tempo attacks", cue:"Go, 1, 3 — run them in matches once they're clean in practice." },
+      { k:"att-back",  label:"Back-row attack", cue:"Pipe / D balls for offensive diversity at the top level." },
+    ]},
+  ]},
+  { key:"defense", subject:"Defense", why:"Defense starts with your serve — no spectators", tiers:[
+    { name:"Foundation", teachBy:"Weeks 2 – 5", items:[
+      { k:"def-base",   label:"Base positions & reading", cue:"'Read, don't react.' Block or cover — no spectators. Defense starts with your serve." },
+      { k:"def-pursue", label:"Pursue every ball", cue:"Every ball is playable until it hits the floor. Chase like it's game point." },
+    ]},
+    { name:"Build", teachBy:"Weeks 5 – 9", items:[
+      { k:"def-tip",  label:"Tip coverage", cue:"Team awareness around the block — someone owns every tip zone." },
+      { k:"def-over", label:"Overhand digging", cue:"Versatile defense — take hard-driven and off-speed balls overhand when needed." },
+    ]},
+    { name:"Championship", teachBy:"Mid-season on", items:[
+      { k:"def-block", label:"Blocking", cue:"Net presence — footwork, press over, seam responsibility." },
+      { k:"def-dive",  label:"Diving & pancakes", cue:"Full-commitment defense — the last-resort saves that flip momentum." },
+    ]},
+  ]},
+  { key:"systems", subject:"Team Systems", why:"Know your rotations cold — no excuses", tiers:[
+    { name:"Foundation", teachBy:"Weeks 2 – 4", items:[
+      { k:"sys-rot", label:"Rotations cold", cue:"All six rotations, serve AND receive — every player knows where she stands. Build them in the Lineups tab." },
+    ]},
+    { name:"Build", teachBy:"Weeks 5 – 9", items:[
+      { k:"sys-trans", label:"Free-ball & down-ball transitions", cue:"Team movement patterns: call it early, convert it. A free ball should be a point." },
+    ]},
+    { name:"Championship", teachBy:"Mid-season on", items:[
+      { k:"sys-oos", label:"Out-of-system offense & coverage", cue:"Hitter-coverage schemes and scoring when the pass breaks down." },
+    ]},
+  ]},
+];
+
 export default function App() {
   // ─── Auth state ─────────────────────────────────────────────────────
   // We use Supabase Auth (email + password). Each coach has their own login.
@@ -942,6 +1052,10 @@ export default function App() {
   const [tcFilters, setTcFilters]       = useState({ coach:"", role:"", team:"", status:"" }); // ledger filters
   const [tcSettingsOpen, setTcSettingsOpen] = useState(false); // settings panel (rates editor, export)
   const [tcShowZero, setTcShowZero]     = useState(false);  // include coaches with no hours this week
+  // Season-plan curriculum (per-team teaching checkboxes on the dashboard).
+  const [currProgress, setCurrProgress]     = useState([]);
+  const [currTeam, setCurrTeam]             = useState("");   // selected team in the panel
+  const [currOpenSubject, setCurrOpenSubject] = useState(""); // expanded subject key
   // Fires the "save a restore point first" nudge at most once per practice session.
   const practiceEditReminded = useRef(false);
   const [saBlock, setSaBlock]                         = useState(
@@ -1678,6 +1792,26 @@ export default function App() {
     setCoachRates(data || []);
   }, []);
   useEffect(() => { if (isApproved && view === "timecards") { loadCheckins(); loadCoachRates(); loadPractice(); } }, [isApproved, view, loadCheckins, loadCoachRates, loadPractice]);
+
+  // Season-plan curriculum progress (dashboard checkboxes).
+  const loadCurriculumProgress = useCallback(async () => {
+    const { data, error } = await supabase.from("curriculum_progress").select("*");
+    if (error) { console.error("Load curriculum_progress error:", error); return; }
+    setCurrProgress(data || []);
+  }, []);
+  useEffect(() => { if (isApproved && view === "home") loadCurriculumProgress(); }, [isApproved, view, loadCurriculumProgress]);
+  // Optimistic status write: todo | planned | done per (team, concept).
+  const setCurriculumStatus = useCallback(async (team, itemKey, status) => {
+    setCurrProgress(prev => {
+      const i = prev.findIndex(r => r.team_name === team && r.item_key === itemKey);
+      if (i >= 0) { const n = [...prev]; n[i] = { ...n[i], status }; return n; }
+      return [...prev, { team_name: team, item_key: itemKey, status }];
+    });
+    const { error } = await supabase.from("curriculum_progress").upsert(
+      { team_name: team, item_key: itemKey, status, updated_by: coach?.display_name || coach?.email || null, updated_at: new Date().toISOString() },
+      { onConflict: "team_name,item_key" });
+    if (error) { console.error("Save curriculum_progress error:", error); loadCurriculumProgress(); }
+  }, [coach, loadCurriculumProgress]);
   // Coach card (openable from any view) shows pay — needs rates + check-ins.
   // Declared after the loaders above to avoid a TDZ on the useCallback consts.
   useEffect(() => { if (isApproved && coachCardName) { loadCoachRates(); loadCheckins(); } }, [isApproved, coachCardName, loadCoachRates, loadCheckins]);
@@ -4272,6 +4406,7 @@ export default function App() {
           );
         })()}
 
+        {renderSeasonPlan()}
         {renderUpdatesPanel(myTeams.map(t => t.team_name))}
         {renderOpenShiftsPanel(myRoster ? ((myRoster.first_name||"")+" "+(myRoster.last_name||"")).trim() : (coach?.display_name||""))}
         {renderQuestionsPanel()}
@@ -9846,6 +9981,136 @@ export default function App() {
             </div>
           );
         })()}
+      </div>
+    );
+  }
+
+  // ── Season Plan — the DS Elite curriculum as dashboard checkboxes ───────
+  // What to teach, why it matters, and when to have it in — per team, three
+  // tiers per subject. "Plan" pins a concept for the next practice so coaches
+  // can pivot straight into practice planning.
+  function renderSeasonPlan() {
+    const teams = myTeamNames.length ? myTeamNames : (canOps ? practiceTeams.map(t => t.team_name) : []);
+    if (!teams.length) return null;
+    const team = teams.includes(currTeam) ? currTeam : teams[0];
+    const statusOf = k => { const r = currProgress.find(x => x.team_name === team && x.item_key === k); return r ? r.status : "todo"; };
+    // Flat list in teaching order: subject importance → tier → item.
+    const allItems = DSE_CURRICULUM.flatMap(s => s.tiers.flatMap((t, ti) => t.items.map(it => ({ ...it, subject: s.subject, subjectKey: s.key, tier: ti + 1, tierName: t.name, teachBy: t.teachBy }))));
+    const doneCount = allItems.filter(it => statusOf(it.k) === "done").length;
+    const planned = allItems.filter(it => statusOf(it.k) === "planned");
+    const nextUp = allItems.filter(it => statusOf(it.k) !== "done").slice(0, 4);
+    const copyPlan = () => {
+      const text = "Practice focus — " + team + "\n" + planned.map(p => "• " + p.subject + " / " + p.label + " — " + p.cue).join("\n");
+      navigator.clipboard?.writeText(text);
+      window.alert("Copied " + planned.length + " concept" + (planned.length===1?"":"s") + " — paste into your practice plan.");
+    };
+    const Sp = {
+      lbl: { fontSize:10, fontWeight:800, letterSpacing:0.4, textTransform:"uppercase", color:C.mut },
+      chip: { fontSize:11, fontWeight:700, padding:"4px 10px", borderRadius:12, border:"1px solid "+C.border, background:C.bg, color:C.text },
+    };
+    return (
+      <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:14,marginBottom:14}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:4}}>
+          <span style={{fontSize:14,fontWeight:800,color:C.gold}}>📚 Season plan</span>
+          <span style={{fontSize:11,color:C.mut}}>what to teach, and when to have it in</span>
+          <div style={{flex:1}} />
+          {teams.length > 1 && (
+            <select value={team} onChange={e => setCurrTeam(e.target.value)} style={{background:C.bg,border:"1px solid "+C.border,borderRadius:6,color:C.text,fontFamily:"inherit",fontSize:12,padding:"5px 7px"}}>
+              {teams.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+          )}
+          <span style={{fontSize:11,fontWeight:800,color:doneCount===allItems.length?C.grn:C.mut}}>{doneCount}/{allItems.length} installed</span>
+        </div>
+
+        {/* Next up — first unfinished concepts in teaching order */}
+        {nextUp.length > 0 && (
+          <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",margin:"8px 0"}}>
+            <span style={{...Sp.lbl}}>Next up:</span>
+            {nextUp.map(it => (
+              <button key={it.k} onClick={() => setCurrOpenSubject(it.subjectKey)} title={it.cue + " — teach by " + it.teachBy}
+                style={{...Sp.chip,cursor:"pointer",fontFamily:"inherit",borderColor:it.tier===1?C.gold:C.border,color:it.tier===1?C.gold:C.text}}>
+                {it.subject} · {it.label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Planned for practice — the pivot into practice planning */}
+        {planned.length > 0 && (
+          <div style={{border:"1px solid "+C.acc,background:"rgba(255,105,180,0.06)",borderRadius:10,padding:"8px 10px",margin:"8px 0",display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+            <span style={{...Sp.lbl,color:C.acc}}>📌 For next practice ({planned.length}):</span>
+            {planned.map(p => (
+              <span key={p.k} style={{...Sp.chip,display:"inline-flex",alignItems:"center",gap:5}} title={p.cue}>
+                {p.label}
+                <span onClick={() => setCurriculumStatus(team, p.k, "done")} title="Mark taught ✓" style={{color:C.grn,cursor:"pointer",fontWeight:800}}>✓</span>
+                <span onClick={() => setCurriculumStatus(team, p.k, "todo")} title="Unpin" style={{color:C.mut,cursor:"pointer"}}>✕</span>
+              </span>
+            ))}
+            <div style={{flex:1}} />
+            <button onClick={copyPlan} style={{...Sp.chip,cursor:"pointer",fontFamily:"inherit",color:C.acc,borderColor:C.acc}}>Copy focus list</button>
+            <button onClick={() => { window.location.href = "/practice"; }} style={{...Sp.chip,cursor:"pointer",fontFamily:"inherit",background:C.gold,color:"#000",border:"none"}}>Open practice planner →</button>
+          </div>
+        )}
+
+        {/* Subjects — three tiers each, in order of importance */}
+        <div style={{display:"flex",flexDirection:"column",gap:6,marginTop:8}}>
+          {DSE_CURRICULUM.map(s => {
+            const items = s.tiers.flatMap(t => t.items);
+            const done = items.filter(it => statusOf(it.k) === "done").length;
+            const open = currOpenSubject === s.key;
+            const tierStat = s.tiers.map(t => { const d = t.items.filter(it => statusOf(it.k)==="done").length; return { d, n: t.items.length }; });
+            return (
+              <div key={s.key} style={{border:"1px solid "+(open?C.gold:C.border),borderRadius:10,background:C.bg}}>
+                <button onClick={() => setCurrOpenSubject(open ? "" : s.key)}
+                  style={{display:"flex",alignItems:"center",gap:10,width:"100%",textAlign:"left",background:"none",border:"none",cursor:"pointer",fontFamily:"inherit",padding:"9px 12px",flexWrap:"wrap"}}>
+                  <span style={{fontSize:13,fontWeight:800,color:done===items.length?C.grn:C.text}}>{done===items.length?"✓ ":""}{s.subject}</span>
+                  <span style={{fontSize:10,color:C.mut,flex:1,minWidth:120}}>{s.why}</span>
+                  {tierStat.map((t,i) => (
+                    <span key={i} title={"Tier "+(i+1)+" — "+s.tiers[i].name+" · teach by "+s.tiers[i].teachBy}
+                      style={{fontSize:9,fontWeight:800,padding:"2px 7px",borderRadius:8,border:"1px solid "+(t.d===t.n?C.grn:t.d>0?C.gold:C.border),color:t.d===t.n?C.grn:t.d>0?C.gold:C.mut}}>
+                      T{i+1} {t.d}/{t.n}
+                    </span>
+                  ))}
+                  <span style={{fontSize:11,color:C.mut}}>{open?"▴":"▾"}</span>
+                </button>
+                {open && (
+                  <div style={{padding:"0 12px 10px"}}>
+                    {s.tiers.map((t, ti) => (
+                      <div key={ti} style={{marginBottom:8}}>
+                        <div style={{fontSize:10,fontWeight:800,letterSpacing:0.4,textTransform:"uppercase",color:ti===0?C.gold:ti===1?C.acc:"#a855f7",marginBottom:4}}>
+                          Tier {ti+1} — {t.name} <span style={{color:C.mut,fontWeight:600,textTransform:"none",letterSpacing:0}}>· teach by {t.teachBy}</span>
+                        </div>
+                        {t.items.map(it => {
+                          const st = statusOf(it.k);
+                          return (
+                            <div key={it.k} style={{display:"flex",alignItems:"flex-start",gap:8,padding:"4px 0"}}>
+                              <input type="checkbox" checked={st==="done"} onChange={() => setCurriculumStatus(team, it.k, st==="done" ? "todo" : "done")}
+                                title={st==="done"?"Installed — uncheck to reopen":"Check when your team has this installed"}
+                                style={{width:15,height:15,marginTop:2,accentColor:C.grn,cursor:"pointer",flexShrink:0}} />
+                              <div style={{flex:1,minWidth:160}}>
+                                <span style={{fontSize:12.5,fontWeight:700,color:st==="done"?C.grn:C.text,textDecoration:st==="done"?"line-through":"none",textDecorationThickness:1}}>{it.label}</span>
+                                <div style={{fontSize:11,color:C.mut,lineHeight:1.45}}>{it.cue}</div>
+                              </div>
+                              {st!=="done" && (
+                                <button onClick={() => setCurriculumStatus(team, it.k, st==="planned" ? "todo" : "planned")}
+                                  title={st==="planned"?"Unpin from next practice":"Pin this concept to your next practice plan"}
+                                  style={{fontSize:10,fontWeight:800,padding:"3px 9px",borderRadius:8,cursor:"pointer",fontFamily:"inherit",flexShrink:0,
+                                    border:"1px solid "+(st==="planned"?C.acc:C.border),background:st==="planned"?"rgba(255,105,180,0.14)":"transparent",color:st==="planned"?C.acc:C.mut}}>
+                                  {st==="planned" ? "📌 planned" : "📌 plan"}
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        <div style={{fontSize:10,color:C.mut,marginTop:8}}>Teach top to bottom: finish a subject's Tier 1 before its Tier 2. ✓ = your team has it installed · 📌 = queued for your next practice.</div>
       </div>
     );
   }
