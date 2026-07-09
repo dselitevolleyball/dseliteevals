@@ -7012,28 +7012,38 @@ export default function App() {
             const money = n => "$" + Number(n||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
             const myRateRow = coachRates.find(x => norm(x.coach_name)===norm(displayName));
             const myRate = myRateRow && myRateRow.hourly_rate!=null ? Number(myRateRow.hourly_rate) : null;
+            const myHeadRate = myRateRow && myRateRow.head_rate!=null ? Number(myRateRow.head_rate) : null;
+            // Role-based: head_rate applies to shifts for teams they head-coach.
+            const shiftRate = (team) => (myHeadRate!=null && team && practiceTeams.some(t => t.team_name===team && norm(t.head_coach)===norm(displayName))) ? myHeadRate : myRate;
             const myChecks = checkins.filter(c => norm(c.coach_name)===norm(displayName));
             const hrs = myChecks.reduce((s,c)=>s+Number(c.hours||0),0);
             const unpaidHrs = myChecks.filter(c=>!c.paid).reduce((s,c)=>s+Number(c.hours||0),0);
-            const setMyRate = async (val) => {
-              const rate = val==="" ? null : Number(val);
-              if (val!=="" && (isNaN(rate)||rate<0)) return;
-              const { error } = await supabase.from("coach_rates").upsert({ coach_name:displayName, hourly_rate:rate, updated_at:new Date().toISOString() }, { onConflict:"coach_name" });
+            const earned = myRate==null ? null : myChecks.reduce((s,c)=>s+Number(c.hours||0)*(shiftRate(c.team_name)??myRate),0);
+            const unpaidAmt = myRate==null ? null : myChecks.filter(c=>!c.paid).reduce((s,c)=>s+Number(c.hours||0)*(shiftRate(c.team_name)??myRate),0);
+            const saveRate = async (patch) => {
+              const { error } = await supabase.from("coach_rates").upsert({ coach_name:displayName, ...patch, updated_at:new Date().toISOString() }, { onConflict:"coach_name" });
               if (error) { window.alert("Couldn't save rate: "+error.message); return; }
               await loadCoachRates();
             };
+            const numOrNull = v => v==="" ? null : (isNaN(Number(v))||Number(v)<0 ? undefined : Number(v));
             return (
               <div style={sectionBox}>
                 <div style={lbl}>Pay</div>
                 <div style={{display:"flex",alignItems:"flex-end",gap:16,flexWrap:"wrap"}}>
                   <div><div style={cFieldLbl}>Rate $/hr</div>
                     <input key={displayName+"-"+(myRate??"")} type="number" min="0" step="0.5" defaultValue={myRate??""} placeholder="—"
-                      onBlur={e=>{ if((e.target.value===""?null:Number(e.target.value))!==myRate) setMyRate(e.target.value.trim()); }}
+                      onBlur={e=>{ const v=numOrNull(e.target.value.trim()); if(v!==undefined && v!==myRate) saveRate({ hourly_rate:v }); }}
                       onKeyDown={e=>{ if(e.key==="Enter") e.target.blur(); }}
-                      style={{...cInp,width:90,color:myRate!=null?C.gold:C.text,fontWeight:700}} />
+                      style={{...cInp,width:80,color:myRate!=null?C.gold:C.text,fontWeight:700}} />
                   </div>
-                  <div><div style={cFieldLbl}>Logged (90d)</div><div style={{fontSize:16,fontWeight:800,color:C.text}}>{hrs}h{myRate!=null?" · "+money(hrs*myRate):""}</div></div>
-                  <div><div style={cFieldLbl}>Unpaid</div><div style={{fontSize:16,fontWeight:800,color:unpaidHrs>0?C.gold:C.grn}}>{unpaidHrs>0 ? (unpaidHrs+"h"+(myRate!=null?" · "+money(unpaidHrs*myRate):"")) : "✓ none"}</div></div>
+                  <div><div style={cFieldLbl} title="Rate on teams they head-coach — blank means the default rate applies everywhere">HC rate $/hr</div>
+                    <input key={displayName+"-hc-"+(myHeadRate??"")} type="number" min="0" step="0.5" defaultValue={myHeadRate??""} placeholder="—"
+                      onBlur={e=>{ const v=numOrNull(e.target.value.trim()); if(v!==undefined && v!==myHeadRate) saveRate({ head_rate:v }); }}
+                      onKeyDown={e=>{ if(e.key==="Enter") e.target.blur(); }}
+                      style={{...cInp,width:80,color:myHeadRate!=null?"#a855f7":C.text,fontWeight:700}} />
+                  </div>
+                  <div><div style={cFieldLbl}>Logged (90d)</div><div style={{fontSize:16,fontWeight:800,color:C.text}}>{hrs}h{earned!=null?" · "+money(earned):""}</div></div>
+                  <div><div style={cFieldLbl}>Unpaid</div><div style={{fontSize:16,fontWeight:800,color:unpaidHrs>0?C.gold:C.grn}}>{unpaidHrs>0 ? (unpaidHrs+"h"+(unpaidAmt!=null?" · "+money(unpaidAmt):"")) : "✓ none"}</div></div>
                   <div style={{flex:1}} />
                   <button onClick={()=>{ setCoachCardName(null); setView("timecards"); }} style={{padding:"7px 12px",borderRadius:8,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>Open Time Cards →</button>
                 </div>
@@ -9788,7 +9798,16 @@ export default function App() {
     const fmtD = iso => new Date(iso+"T12:00:00").toLocaleDateString(undefined,{month:"short",day:"numeric"});
     const timeOf = ts => { try { return new Date(ts).toLocaleDateString(undefined,{month:"short",day:"numeric"}); } catch { return ""; } };
     const shiftWeek = delta => setTcWeekStart(localDateISO(new Date(new Date(wkStart+"T12:00:00").getTime() + delta*7*86400000)));
-    const rateOf = nm => { const r = coachRates.find(x => norm(x.coach_name)===norm(nm)); return r && r.hourly_rate!=null ? Number(r.hourly_rate) : null; };
+    // Rate resolution: hourly_rate is the default; head_rate (if set) applies
+    // to shifts for a team whose head_coach is this coach (role-based pay).
+    const rateRow = nm => coachRates.find(x => norm(x.coach_name)===norm(nm));
+    const rateOf = nm => { const r = rateRow(nm); return r && r.hourly_rate!=null ? Number(r.hourly_rate) : null; };
+    const headRateOf = nm => { const r = rateRow(nm); return r && r.head_rate!=null ? Number(r.head_rate) : null; };
+    const rateFor = (nm, team) => {
+      const hr = headRateOf(nm);
+      if (hr!=null && team && practiceTeams.some(t => t.team_name===team && norm(t.head_coach)===norm(nm))) return hr;
+      return rateOf(nm);
+    };
 
     const St = {
       card:  { background:C.card, border:"1px solid "+C.border, borderRadius:12, padding:16, marginBottom:14 },
@@ -9829,8 +9848,16 @@ export default function App() {
     let totHours=0, totAmt=0, totUnpaid=0, totUnpaidHours=0;
     list.forEach(g => {
       g.rate = rateOf(g.coach);
-      g.amount = g.rate!=null ? g.hours*g.rate : null;
-      g.unpaidAmount = g.rate!=null ? g.unpaidHours*g.rate : null;
+      g.headRate = headRateOf(g.coach);
+      // Amount sums per check-in so head-coach shifts price at head_rate.
+      if (g.rate==null) { g.amount = null; g.unpaidAmount = null; }
+      else {
+        g.amount = 0; g.unpaidAmount = 0;
+        g.checks.forEach(c => {
+          const a = Number(c.hours||0) * (rateFor(c.coach_name, c.team_name) ?? g.rate);
+          g.amount += a; if (!c.paid) g.unpaidAmount += a;
+        });
+      }
       totHours += g.hours; totUnpaidHours += g.unpaidHours;
       if (g.rate!=null) { totAmt += g.amount; totUnpaid += g.unpaidAmount; }
     });
@@ -9840,6 +9867,13 @@ export default function App() {
       if (val!=="" && (isNaN(rate) || rate<0)) return;
       const { error } = await supabase.from("coach_rates").upsert({ coach_name:coach, hourly_rate:rate, updated_at:new Date().toISOString() }, { onConflict:"coach_name" });
       if (error) { window.alert("Couldn't save rate: "+error.message); return; }
+      await loadCoachRates();
+    };
+    const setHeadRate = async (coach, val) => {
+      const rate = val==="" ? null : Number(val);
+      if (val!=="" && (isNaN(rate) || rate<0)) return;
+      const { error } = await supabase.from("coach_rates").upsert({ coach_name:coach, head_rate:rate, updated_at:new Date().toISOString() }, { onConflict:"coach_name" });
+      if (error) { window.alert("Couldn't save HC rate: "+error.message); return; }
       await loadCoachRates();
     };
     const markWeekPaid = async (coach, paid) => {
@@ -9860,7 +9894,7 @@ export default function App() {
       const esc = v => { const s = (v==null?"":String(v)); return /[",\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s; };
       const lines = [["Date","Coach","Role","Team","Slot","Hours","Rate","Amount","Paid"].join(",")];
       list.forEach(g => g.checks.slice().sort((a,b)=>a.check_date.localeCompare(b.check_date)).forEach(c => {
-        const r = rateOf(c.coach_name);
+        const r = rateFor(c.coach_name, c.team_name);
         lines.push([c.check_date, esc(c.coach_name), c.role, esc(c.team_name||"Floating"), c.slot||"", Number(c.hours||0), r??"", r!=null?(Number(c.hours||0)*r).toFixed(2):"", c.paid?"yes":"no"].join(","));
       }));
       const a = document.createElement("a");
@@ -9919,20 +9953,25 @@ export default function App() {
             <div style={{fontSize:10,fontWeight:800,textTransform:"uppercase",letterSpacing:0.3,color:C.mut,marginBottom:6}}>Hourly rates — all coaches</div>
             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(210px,1fr))",gap:8,marginBottom:8}}>
               {allCoachNames.map(nm => {
-                const r = rateOf(nm);
+                const r = rateOf(nm), hr = headRateOf(nm);
                 return (
                   <div key={nm} style={{display:"flex",alignItems:"center",gap:6,background:C.bg,border:"1px solid "+C.border,borderRadius:8,padding:"5px 8px"}}>
                     <span style={{flex:1,fontSize:12,fontWeight:600,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{nm}</span>
                     <span style={{fontSize:11,color:C.mut}}>$</span>
-                    <input key={nm+"-"+(r??"")} type="number" min="0" step="0.5" defaultValue={r??""} placeholder="—"
+                    <input key={nm+"-"+(r??"")} type="number" min="0" step="0.5" defaultValue={r??""} placeholder="—" title="Default $/hr (assisting, subbing, floating)"
                       onBlur={e=>{ if((e.target.value===""?null:Number(e.target.value))!==r) setRate(nm, e.target.value.trim()); }}
                       onKeyDown={e=>{ if(e.key==="Enter") e.target.blur(); }}
-                      style={{...St.sel,width:64,textAlign:"right",color:r!=null?C.gold:C.mut,fontWeight:700,padding:"4px 6px"}} />
+                      style={{...St.sel,width:56,textAlign:"right",color:r!=null?C.gold:C.mut,fontWeight:700,padding:"4px 6px"}} />
+                    <span style={{fontSize:9,fontWeight:800,color:"#a855f7"}} title="Head-coach rate — applies to shifts for teams they head-coach. Leave blank if the default covers everything.">HC$</span>
+                    <input key={nm+"-hc-"+(hr??"")} type="number" min="0" step="0.5" defaultValue={hr??""} placeholder="—" title="Head-coach $/hr (blank = same as default)"
+                      onBlur={e=>{ if((e.target.value===""?null:Number(e.target.value))!==hr) setHeadRate(nm, e.target.value.trim()); }}
+                      onKeyDown={e=>{ if(e.key==="Enter") e.target.blur(); }}
+                      style={{...St.sel,width:56,textAlign:"right",color:hr!=null?"#a855f7":C.mut,fontWeight:700,padding:"4px 6px"}} />
                   </div>
                 );
               })}
             </div>
-            <div style={{fontSize:11,color:C.mut}}>Rates save as you type and apply everywhere (ledger, coach cards, weekly report). Coach names come from team assignments — a coach appears once their name is on a team or they log hours.</div>
+            <div style={{fontSize:11,color:C.mut}}>Rates save as you type and apply everywhere (ledger, coach cards, weekly report). <b style={{color:"#a855f7"}}>HC$</b> is the head-coach rate — used for shifts on teams they head-coach; the plain rate covers assisting, subbing, and floating. Leave HC$ blank for one flat rate.</div>
           </div>
         )}
 
@@ -9977,6 +10016,7 @@ export default function App() {
                               onBlur={e=>{ if((e.target.value===""?null:Number(e.target.value)) !== g.rate) setRate(g.coach, e.target.value.trim()); }}
                               onKeyDown={e=>{ if(e.key==="Enter") e.target.blur(); }}
                               style={{...St.sel,width:70,textAlign:"right",color:g.rate!=null?C.gold:C.mut,fontWeight:700}} />
+                            {g.headRate!=null && <div title={"Earns $"+g.headRate+"/hr on teams they head-coach"} style={{fontSize:9,fontWeight:800,color:"#a855f7",marginTop:2}}>HC ${g.headRate}</div>}
                           </td>
                           <td style={{...St.td,textAlign:"right",fontWeight:700}}>{g.amount!=null?money(g.amount):<span style={{color:C.mut,fontWeight:400}}>set rate</span>}</td>
                           <td style={{...St.td,textAlign:"right",color:g.unpaidHours>0?C.gold:C.grn,fontWeight:700}}>{g.unpaidHours>0 ? (g.unpaidAmount!=null?money(g.unpaidAmount):g.unpaidHours+"h") : "✓ paid"}</td>
@@ -9993,7 +10033,7 @@ export default function App() {
                                 <div key={c.id} style={{display:"flex",alignItems:"center",gap:10,fontSize:12,color:C.text,flexWrap:"wrap"}}>
                                   <span style={{width:64,color:C.mut}}>{timeOf(c.check_date)}</span>
                                   {roleTag(c.role)}
-                                  <span style={{flex:1,minWidth:120}}>{c.team_name||"Floating"} · {c.slot} · {Number(c.hours||0)}h</span>
+                                  <span style={{flex:1,minWidth:120}}>{c.team_name||"Floating"} · {c.slot} · {Number(c.hours||0)}h{(() => { const r = rateFor(c.coach_name, c.team_name); return r!=null ? <span style={{color:C.mut}}> · ${r}/hr{headRateOf(c.coach_name)!=null && r===headRateOf(c.coach_name) ? <b style={{color:"#a855f7"}}> HC</b> : null} = {money(Number(c.hours||0)*r)}</span> : null; })()}</span>
                                   <label style={{display:"flex",alignItems:"center",gap:4,cursor:"pointer",color:c.paid?C.grn:C.mut}}>
                                     <input type="checkbox" checked={!!c.paid} onChange={()=>togglePaid(c)} style={{accentColor:C.grn,cursor:"pointer"}} />paid
                                   </label>
