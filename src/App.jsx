@@ -939,6 +939,9 @@ export default function App() {
   const [coachRates, setCoachRates]     = useState([]);
   const [tcWeekStart, setTcWeekStart]   = useState(() => weekMondayISO()); // Monday of the viewed week
   const [tcOpen, setTcOpen]             = useState("");     // expanded coach name in the ledger
+  const [tcFilters, setTcFilters]       = useState({ coach:"", role:"", team:"", status:"" }); // ledger filters
+  const [tcSettingsOpen, setTcSettingsOpen] = useState(false); // settings panel (rates editor, export)
+  const [tcShowZero, setTcShowZero]     = useState(false);  // include coaches with no hours this week
   // Fires the "save a restore point first" nudge at most once per practice session.
   const practiceEditReminded = useRef(false);
   const [saBlock, setSaBlock]                         = useState(
@@ -9796,14 +9799,32 @@ export default function App() {
       td:    { fontSize:13, padding:"7px 8px", borderBottom:"1px solid "+C.border, color:C.text },
     };
 
-    // Group this week's check-ins by coach.
+    // Apply filters, then group this week's check-ins by coach.
+    const f = tcFilters;
+    const passes = c =>
+      (!f.role   || c.role === f.role) &&
+      (!f.team   || (f.team==="__float" ? !c.team_name : c.team_name === f.team)) &&
+      (!f.status || (f.status==="paid" ? !!c.paid : !c.paid)) &&
+      (!f.coach  || norm(c.coach_name).includes(norm(f.coach)));
+    const filtersOn = !!(f.role || f.team || f.status || f.coach);
     const rows = {};
-    checkins.filter(c => c.check_date>=wkStart && c.check_date<=wkEnd).forEach(c => {
+    checkins.filter(c => c.check_date>=wkStart && c.check_date<=wkEnd && passes(c)).forEach(c => {
       const g = rows[c.coach_name] = rows[c.coach_name] || { coach:c.coach_name, hours:0, unpaidHours:0, checks:[] };
       g.hours += Number(c.hours||0);
       if (!c.paid) g.unpaidHours += Number(c.hours||0);
       g.checks.push(c);
     });
+    // Optionally include every known coach (team HC/ACs + anyone with a rate)
+    // even with zero hours, so rates can be set up front.
+    if (tcShowZero) {
+      const known = new Set();
+      practiceTeams.forEach(t => [t.head_coach, t.assistant_coach].forEach(n => { if(n) known.add(n.trim()); }));
+      coachRates.forEach(r => { if(r.coach_name) known.add(r.coach_name.trim()); });
+      known.forEach(n => {
+        if (f.coach && !norm(n).includes(norm(f.coach))) return;
+        if (!Object.keys(rows).some(k => norm(k)===norm(n))) rows[n] = { coach:n, hours:0, unpaidHours:0, checks:[] };
+      });
+    }
     const list = Object.values(rows).sort((a,b)=> a.coach.localeCompare(b.coach));
     let totHours=0, totAmt=0, totUnpaid=0, totUnpaidHours=0;
     list.forEach(g => {
@@ -9834,6 +9855,27 @@ export default function App() {
     const delCheck = async (id) => { if(!window.confirm("Delete this check-in?")) return; await supabase.from("coach_checkins").delete().eq("id", id); await loadCheckins(); };
     const roleTag = (r) => { const m = { scheduled:["Sched",C.mut], sub:["Sub","#f59e0b"], float:["Float","#06b6d4"] }[r] || ["",C.mut]; return <span style={{fontSize:9,fontWeight:800,color:m[1],border:"1px solid "+m[1],borderRadius:4,padding:"0 4px"}}>{m[0]}</span>; };
     const isThisWeek = wkStart === weekMondayISO();
+    // Export the (filtered) week as CSV — one row per check-in.
+    const exportCsv = () => {
+      const esc = v => { const s = (v==null?"":String(v)); return /[",\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s; };
+      const lines = [["Date","Coach","Role","Team","Slot","Hours","Rate","Amount","Paid"].join(",")];
+      list.forEach(g => g.checks.slice().sort((a,b)=>a.check_date.localeCompare(b.check_date)).forEach(c => {
+        const r = rateOf(c.coach_name);
+        lines.push([c.check_date, esc(c.coach_name), c.role, esc(c.team_name||"Floating"), c.slot||"", Number(c.hours||0), r??"", r!=null?(Number(c.hours||0)*r).toFixed(2):"", c.paid?"yes":"no"].join(","));
+      }));
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([lines.join("\n")], { type:"text/csv" }));
+      a.download = "timecards_" + wkStart + ".csv";
+      a.click(); URL.revokeObjectURL(a.href);
+    };
+    // Every coach name we know about (teams' HC/AC + rated) for the rates editor.
+    const allCoachNames = (() => {
+      const s = new Map();
+      practiceTeams.forEach(t => [t.head_coach, t.assistant_coach].forEach(n => { if(n && n.trim()) s.set(norm(n), n.trim()); }));
+      coachRates.forEach(r => { if(r.coach_name) s.set(norm(r.coach_name), r.coach_name.trim()); });
+      checkins.forEach(c => { if(c.coach_name) s.set(norm(c.coach_name), c.coach_name.trim()); });
+      return Array.from(s.values()).sort((a,b)=>a.localeCompare(b));
+    })();
 
     return (
       <div style={{maxWidth:1100, margin:"0 auto"}}>
@@ -9844,7 +9886,55 @@ export default function App() {
           <div style={{fontSize:13,fontWeight:700,color:C.text,minWidth:150,textAlign:"center"}}>{fmtD(wkStart)} – {fmtD(wkEnd)}</div>
           <button style={St.ghost} onClick={()=>shiftWeek(1)} title="Next week">›</button>
           {!isThisWeek && <button style={St.ghost} onClick={()=>setTcWeekStart(weekMondayISO())}>This week</button>}
+          <button style={{...St.ghost, borderColor:tcSettingsOpen?C.gold:C.border, color:tcSettingsOpen?C.gold:C.text}} onClick={()=>setTcSettingsOpen(v=>!v)} title="Time Cards settings">⚙ Settings</button>
         </div>
+
+        {/* Filters */}
+        <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:12}}>
+          <input value={f.coach} onChange={e=>setTcFilters(x=>({...x,coach:e.target.value}))} placeholder="Search coach…" style={{...St.sel,width:150}} />
+          <select value={f.role} onChange={e=>setTcFilters(x=>({...x,role:e.target.value}))} style={St.sel} title="Filter by role">
+            <option value="">All roles</option><option value="scheduled">Scheduled</option><option value="sub">Subs</option><option value="float">Floats</option>
+          </select>
+          <select value={f.team} onChange={e=>setTcFilters(x=>({...x,team:e.target.value}))} style={St.sel} title="Filter by team">
+            <option value="">All teams</option>
+            <option value="__float">Floating (no team)</option>
+            {practiceTeams.map(t => <option key={t.team_name} value={t.team_name}>{t.team_name}</option>)}
+          </select>
+          <select value={f.status} onChange={e=>setTcFilters(x=>({...x,status:e.target.value}))} style={St.sel} title="Filter by paid status">
+            <option value="">Paid + unpaid</option><option value="unpaid">Unpaid only</option><option value="paid">Paid only</option>
+          </select>
+          {filtersOn && <button style={{...St.ghost,color:C.acc,borderColor:C.acc}} onClick={()=>setTcFilters({coach:"",role:"",team:"",status:""})}>✕ Clear filters</button>}
+          <div style={{flex:1}} />
+          <button style={St.ghost} onClick={exportCsv} title="Download this week (with filters applied) as a CSV for the bookkeeper">⬇ Export CSV</button>
+        </div>
+
+        {/* Settings */}
+        {tcSettingsOpen && (
+          <div style={{...St.card, border:"1px solid "+C.gold}}>
+            <div style={{fontSize:11,fontWeight:800,letterSpacing:0.4,textTransform:"uppercase",color:C.gold,marginBottom:10}}>Time Cards settings</div>
+            <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:C.text,cursor:"pointer",marginBottom:12}}>
+              <input type="checkbox" checked={tcShowZero} onChange={e=>setTcShowZero(e.target.checked)} style={{accentColor:C.gold,cursor:"pointer"}} />
+              Show every coach, even with no hours this week <span style={{color:C.mut}}>(useful for setting rates up front)</span>
+            </label>
+            <div style={{fontSize:10,fontWeight:800,textTransform:"uppercase",letterSpacing:0.3,color:C.mut,marginBottom:6}}>Hourly rates — all coaches</div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(210px,1fr))",gap:8,marginBottom:8}}>
+              {allCoachNames.map(nm => {
+                const r = rateOf(nm);
+                return (
+                  <div key={nm} style={{display:"flex",alignItems:"center",gap:6,background:C.bg,border:"1px solid "+C.border,borderRadius:8,padding:"5px 8px"}}>
+                    <span style={{flex:1,fontSize:12,fontWeight:600,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{nm}</span>
+                    <span style={{fontSize:11,color:C.mut}}>$</span>
+                    <input key={nm+"-"+(r??"")} type="number" min="0" step="0.5" defaultValue={r??""} placeholder="—"
+                      onBlur={e=>{ if((e.target.value===""?null:Number(e.target.value))!==r) setRate(nm, e.target.value.trim()); }}
+                      onKeyDown={e=>{ if(e.key==="Enter") e.target.blur(); }}
+                      style={{...St.sel,width:64,textAlign:"right",color:r!=null?C.gold:C.mut,fontWeight:700,padding:"4px 6px"}} />
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{fontSize:11,color:C.mut}}>Rates save as you type and apply everywhere (ledger, coach cards, weekly report). Coach names come from team assignments — a coach appears once their name is on a team or they log hours.</div>
+          </div>
+        )}
 
         {/* Totals */}
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:12,marginBottom:14}}>
@@ -9858,7 +9948,7 @@ export default function App() {
 
         <div style={St.card}>
           {list.length===0 ? (
-            <div style={{fontSize:13,color:C.mut,padding:"6px 0"}}>No check-ins this week. Coaches log hours from the Clock in section on their dashboard.</div>
+            <div style={{fontSize:13,color:C.mut,padding:"6px 0"}}>{filtersOn ? "Nothing matches the current filters — clear them to see the full week." : "No check-ins this week. Coaches log hours from the Clock in section on their dashboard."}</div>
           ) : (
             <div style={{overflowX:"auto"}}>
               <table style={{width:"100%",borderCollapse:"collapse",minWidth:720}}>
@@ -13365,13 +13455,26 @@ export default function App() {
               const btn = (active) => ({padding:"6px 14px",borderRadius:8,border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600,background:active?C.gold:"transparent",color:active?"#000":C.mut});
               const item = (v,l) =>
                 <button key={v} style={btn(view===v)} onClick={()=>{ setView(v); setOpenMenu(null); }}>{l}</button>;
+              // Dropdown entries: ["hdr","Label"] renders a section header.
+              const pendingReqs = coachRequests.filter(r=>r.status==="pending").length;
               const groups = [
                 { title:"Tryouts", items:[["dashboard","Dashboard"], ["evaluate","Evaluate"], ["favorites","My Favorites" + (favorites.length ? " (" + favorites.length + ")" : "")], ...(canViewTeams ? [["teams","Teams"]] : []), ["rankings","Rankings"], ["physical","Physical Testing"], ["tryouts","Coach Assignments"]] },
-                ...(canOps ? [{ title:"Operations", items:[["tracker","Tracker"], ["teamdir","All Teams"], ["coaches","Coaches"], ["scholarships","Scholarships"], ["practice","Practice"], ["email","Email"], ["notifications","Notifications"], ["requests","Requests" + (coachRequests.filter(r=>r.status==="pending").length ? " (" + coachRequests.filter(r=>r.status==="pending").length + ")" : "")], ["messages", "Messages (SMS)" + (totalUnread > 0 ? " (" + totalUnread + ")" : "")], ["coachcomms", "Coach Comms"], ["assignments", "Assignments"], ["coverage", "Coach Coverage"], ["timecards", "Time Cards"]] }] : []),
+                ...(canOps ? [{ title:"Operations", items:[
+                  ["hdr","Club"],
+                  ["tracker","Tracker"], ["teamdir","All Teams"], ["practice","Practice"], ["scholarships","Scholarships"],
+                  ["hdr","Coaches & Pay"],
+                  ["coaches","Coaches"], ["coverage","Coach Coverage"], ["timecards","Time Cards"], ["requests","Requests" + (pendingReqs ? " (" + pendingReqs + ")" : "")],
+                  ["hdr","Communication"],
+                  ["email","Email"], ["messages","Messages (SMS)" + (totalUnread > 0 ? " (" + totalUnread + ")" : "")], ["notifications","Notifications"], ["coachcomms","Coach Comms"], ["assignments","Assignments"],
+                ] }] : []),
+                { title:"More", items:[["activity","Activity"], ["faq","FAQ"], ["games","Games"], ...(isOwner ? [["askai","Ask AI"]] : [])] },
               ];
               return <>
                 {item("home","Home")}
                 {!canOps && item("notifications","Notifications" + (unreadCount>0?" ("+unreadCount+")":""))}
+                {item("tournaments","Tournaments")}
+                {item("lineups","Lineups")}
+                <button style={btn(false)} onClick={()=>{ window.location.href = "/practice"; }} title="Open the practice planner">Practice Planning</button>
                 {groups.map(g => {
                   const activeInGroup = g.items.some(([v]) => v === view);
                   const open = openMenu === g.title;
@@ -13381,22 +13484,17 @@ export default function App() {
                         {g.title} <span style={{fontSize:9,opacity:.8}}>▾</span>
                       </button>
                       {open && (
-                        <div style={{position:"absolute",top:"100%",left:0,marginTop:4,background:C.card,border:"1px solid "+C.border,borderRadius:8,padding:4,minWidth:150,boxShadow:"0 10px 28px rgba(0,0,0,0.45)"}}>
-                          {g.items.map(([v,l]) =>
-                            <button key={v} style={{display:"block",width:"100%",textAlign:"left",padding:"8px 12px",borderRadius:6,border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600,background:view===v?C.gold:"transparent",color:view===v?"#000":C.text}} onClick={()=>{ setView(v); setOpenMenu(null); }}>{l}</button>
+                        <div style={{position:"absolute",top:"100%",left:0,marginTop:4,background:C.card,border:"1px solid "+C.border,borderRadius:8,padding:4,minWidth:170,boxShadow:"0 10px 28px rgba(0,0,0,0.45)"}}>
+                          {g.items.map(([v,l],i) =>
+                            v === "hdr"
+                              ? <div key={"hdr"+i} style={{padding:"7px 12px 3px",fontSize:9,fontWeight:800,letterSpacing:0.6,textTransform:"uppercase",color:C.mut,borderTop:i>0?"1px solid "+C.border:"none",marginTop:i>0?4:0}}>{l}</div>
+                              : <button key={v} style={{display:"block",width:"100%",textAlign:"left",padding:"8px 12px",borderRadius:6,border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600,background:view===v?C.gold:"transparent",color:view===v?"#000":C.text}} onClick={()=>{ setView(v); setOpenMenu(null); }}>{l}</button>
                           )}
                         </div>
                       )}
                     </div>
                   );
                 })}
-                {item("tournaments","Tournaments")}
-                {item("activity","Activity")}
-                {item("faq","FAQ")}
-                {item("lineups","Lineups")}
-                {item("games","Games")}
-                {isOwner && item("askai","Ask AI")}
-                <button style={btn(false)} onClick={()=>{ window.location.href = "/practice"; }} title="Open the practice planner">Practice Planning</button>
               </>;
             })()}
           </nav>
