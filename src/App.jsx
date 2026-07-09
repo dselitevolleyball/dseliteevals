@@ -857,6 +857,18 @@ function vbPlayingTime(sets){
   return { tally, totalRot };
 }
 
+// Local calendar date as YYYY-MM-DD (avoids the UTC off-by-one that toISOString
+// gives in the evening in Central time).
+function localDateISO(d){ const x = d ? new Date(d) : new Date(); return new Date(x.getTime() - x.getTimezoneOffset()*60000).toISOString().slice(0,10); }
+// Hours in a practice slot label like "5-7pm" (=2) or "1-2pm" (=1). Practice
+// times are afternoon/evening, so both ends read as PM.
+function slotHours(slot){
+  const m = /^\s*(\d{1,2})\s*-\s*(\d{1,2})\s*(?:am|pm)?\s*$/i.exec(slot||"");
+  if(!m) return 0;
+  const to24 = h => (h===12 ? 12 : h+12);
+  return Math.max(0, to24(+m[2]) - to24(+m[1]));
+}
+
 export default function App() {
   // ─── Auth state ─────────────────────────────────────────────────────
   // We use Supabase Auth (email + password). Each coach has their own login.
@@ -916,6 +928,11 @@ export default function App() {
   const [lineupPhase, setLineupPhase]   = useState("serve"); // "serve" | "receive" rotation display
   const [lineupSaved, setLineupSaved]   = useState("");      // "", "saving", "saved" indicator
   const [lineupSubSel, setLineupSubSel] = useState(null);    // {setId,r,i,outId,courtN,label,inId,scope} click-to-sub
+  // Coach clock-in / attendance (see renderCheckIn).
+  const [checkins, setCheckins]         = useState([]);
+  const [checkinDate, setCheckinDate]   = useState(() => localDateISO()); // admin date picker
+  const [checkinSub, setCheckinSub]     = useState({ team:"", slot:"5-7pm", role:"sub" }); // sub/float form
+  const [checkinBusy, setCheckinBusy]   = useState("");     // key of the check-in being written
   // Fires the "save a restore point first" nudge at most once per practice session.
   const practiceEditReminded = useRef(false);
   const [saBlock, setSaBlock]                         = useState(
@@ -1634,6 +1651,16 @@ export default function App() {
     setLineupPlans(data || []);
   }, []);
   useEffect(() => { if (isApproved && view === "lineups") { loadLineupPlans(); loadPractice(); loadPlayers(); } }, [isApproved, view, loadLineupPlans, loadPractice, loadPlayers]);
+
+  // Coach clock-in loader — last ~90 days of check-ins.
+  const loadCheckins = useCallback(async () => {
+    const since = localDateISO(new Date(Date.now() - 90*86400000));
+    const { data, error } = await supabase.from("coach_checkins").select("*")
+      .gte("check_date", since).order("check_date", { ascending: false }).order("created_at", { ascending: false });
+    if (error) { console.error("Load coach_checkins error:", error); return; }
+    setCheckins(data || []);
+  }, []);
+  useEffect(() => { if (isApproved && view === "checkin") { loadCheckins(); loadPractice(); } }, [isApproved, view, loadCheckins, loadPractice]);
   // Autosave the active lineup draft (debounced) → lineup_plans. lineupSkipSave
   // suppresses the write that would otherwise fire right after loading a plan.
   const lineupSkipSave = useRef(true);
@@ -9447,6 +9474,209 @@ export default function App() {
   // to date as Twilio delivers inbound + status updates.
   // Queen of the Court — 4v4 game runner with random matchups, even sit-outs,
   // per-win scoring and a live leaderboard. State persists to localStorage.
+  // ── Coach clock-in / attendance ────────────────────────────────────────
+  function renderCheckIn() {
+    const norm = s => (s||"").toString().trim().toLowerCase();
+    const coachName = coach.display_name || coach.email || "";
+    const today = localDateISO();
+    const WD_OF = iso => ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][new Date(iso+"T12:00:00").getDay()];
+    const wdToday = WD_OF(today);
+    const SLOT_OPTS = ["1-3pm","3-5pm","5-7pm","7-9pm","1-2pm","2-3pm","3-4pm","4-5pm","5-6pm","6-7pm","7-8pm","8-9pm"];
+    const timeOf = ts => { try { return new Date(ts).toLocaleTimeString(undefined,{hour:"numeric",minute:"2-digit"}); } catch { return ""; } };
+
+    const St = {
+      card:  { background:C.card, border:"1px solid "+C.border, borderRadius:12, padding:16, marginBottom:14 },
+      lbl:   { fontSize:10, fontWeight:800, letterSpacing:0.4, textTransform:"uppercase", color:C.mut, marginBottom:8 },
+      sel:   { background:C.bg, border:"1px solid "+C.border, borderRadius:6, color:C.text, fontFamily:"inherit", fontSize:13, padding:"6px 8px" },
+      here:  { padding:"8px 16px", borderRadius:8, border:"none", background:C.grn, color:"#04240f", fontWeight:800, fontSize:13, cursor:"pointer", fontFamily:"inherit" },
+      ghost: { padding:"6px 12px", borderRadius:8, border:"1px solid "+C.border, background:"transparent", color:C.text, fontWeight:600, fontSize:12, cursor:"pointer", fontFamily:"inherit" },
+    };
+
+    // Today's scheduled practices for this coach (their teams, today's weekday).
+    const seen = new Set();
+    const mySlots = practiceAssignments
+      .filter(a => (a.phase||"season")===schedulePhase && a.day===wdToday && myTeamNames.includes(a.team_name))
+      .map(a => ({ team:a.team_name, slot:a.slot }))
+      .filter(x => { const k = x.team+"|"+x.slot; if(seen.has(k)) return false; seen.add(k); return true; })
+      .sort((a,b)=> (a.slot||"").localeCompare(b.slot||"") || a.team.localeCompare(b.team));
+
+    const myChecksToday = checkins.filter(c => c.check_date===today && norm(c.coach_name)===norm(coachName));
+    const checkFor = (team, slot) => myChecksToday.find(c => (c.team_name||"")===(team||"") && (c.slot||"")===(slot||""));
+    const myHoursToday = myChecksToday.reduce((s,c)=> s + Number(c.hours||0), 0);
+
+    const doCheckin = async ({ team, slot, role, dateISO }) => {
+      const key = (team||"float")+"|"+(slot||"")+"|"+role;
+      setCheckinBusy(key);
+      const row = {
+        coach_name: coachName, coach_email: coach.email||null,
+        check_date: dateISO || today, team_name: team||null, slot: slot||null,
+        phase: schedulePhase, hours: slotHours(slot), role, status:"present",
+        source:"app", created_by: coachName,
+      };
+      const { error } = await supabase.from("coach_checkins").insert(row);
+      if (error && !/duplicate|unique/i.test(error.message||"")) window.alert("Couldn't check in: "+error.message);
+      await loadCheckins();
+      setCheckinBusy("");
+    };
+    const undoCheckin = async (id) => { setCheckinBusy("undo"+id); await supabase.from("coach_checkins").delete().eq("id", id); await loadCheckins(); setCheckinBusy(""); };
+    const submitSub = async () => {
+      if (checkinSub.role==="sub" && !checkinSub.team) { window.alert("Pick the team you're subbing for."); return; }
+      if (!checkinSub.slot) { window.alert("Pick a time slot."); return; }
+      await doCheckin({ team: checkinSub.role==="float" ? "" : checkinSub.team, slot: checkinSub.slot, role: checkinSub.role });
+    };
+
+    const roleTag = (r) => {
+      const m = { scheduled:["Scheduled",C.mut], sub:["Sub","#f59e0b"], float:["Float","#06b6d4"] }[r] || ["",C.mut];
+      return <span style={{fontSize:9,fontWeight:800,color:m[1],border:"1px solid "+m[1],borderRadius:4,padding:"0 4px",textTransform:"uppercase",letterSpacing:0.3}}>{m[0]}</span>;
+    };
+
+    return (
+      <div style={{maxWidth:960, margin:"0 auto"}}>
+        <div style={{display:"flex",alignItems:"baseline",gap:10,flexWrap:"wrap",marginBottom:14}}>
+          <div style={{fontSize:20,fontWeight:800,color:C.gold}}>Clock In</div>
+          <div style={{fontSize:13,color:C.mut}}>{new Date(today+"T12:00:00").toLocaleDateString(undefined,{weekday:"long",month:"long",day:"numeric"})}</div>
+          {myHoursToday>0 && <span style={{fontSize:12,color:C.grn,fontWeight:700}}>· {myHoursToday}h logged today</span>}
+        </div>
+
+        {/* Your scheduled practices today */}
+        <div style={St.card}>
+          <div style={St.lbl}>Your practices today</div>
+          {mySlots.length===0 ? (
+            <div style={{fontSize:13,color:C.mut}}>No practices are scheduled for you today. If you're covering as a sub or floating, use the box below.</div>
+          ) : (
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {mySlots.map(s => {
+                const c = checkFor(s.team, s.slot);
+                const busy = checkinBusy === (s.team+"|"+s.slot+"|scheduled");
+                return (
+                  <div key={s.team+"|"+s.slot} style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap",padding:"10px 12px",borderRadius:8,border:"1px solid "+(c?C.grn:C.border),background:c?"rgba(34,197,94,0.08)":C.bg}}>
+                    <div style={{flex:1,minWidth:160}}>
+                      <div style={{fontSize:14,fontWeight:700,color:C.text}}>{s.team}</div>
+                      <div style={{fontSize:12,color:C.mut}}>{s.slot} · {slotHours(s.slot)}h</div>
+                    </div>
+                    {c ? (
+                      <>
+                        <span style={{fontSize:13,color:C.grn,fontWeight:800}}>✓ Checked in{c.created_at?" · "+timeOf(c.created_at):""}</span>
+                        <button style={{...St.ghost,color:C.mut}} disabled={checkinBusy==="undo"+c.id} onClick={()=>undoCheckin(c.id)}>Undo</button>
+                      </>
+                    ) : (
+                      <button style={St.here} disabled={busy} onClick={()=>doCheckin({ team:s.team, slot:s.slot, role:"scheduled" })}>{busy?"…":"✅ I'm here"}</button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Sub / float check-in */}
+        <div style={St.card}>
+          <div style={St.lbl}>Subbing or floating today?</div>
+          <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+            <div style={{display:"flex",borderRadius:8,overflow:"hidden",border:"1px solid "+C.border}}>
+              {[["sub","Subbing"],["float","Floating"]].map(([r,l]) => (
+                <button key={r} onClick={()=>setCheckinSub(s=>({...s,role:r}))} style={{padding:"6px 14px",border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700,background:checkinSub.role===r?C.gold:"transparent",color:checkinSub.role===r?"#000":C.mut}}>{l}</button>
+              ))}
+            </div>
+            {checkinSub.role==="sub" && (
+              <select value={checkinSub.team} onChange={e=>setCheckinSub(s=>({...s,team:e.target.value}))} style={St.sel}>
+                <option value="">— team you're covering —</option>
+                {practiceTeams.map(t => <option key={t.team_name} value={t.team_name}>{t.team_name}</option>)}
+              </select>
+            )}
+            <select value={checkinSub.slot} onChange={e=>setCheckinSub(s=>({...s,slot:e.target.value}))} style={St.sel} title="Time slot">
+              {SLOT_OPTS.map(x => <option key={x} value={x}>{x} · {slotHours(x)}h</option>)}
+            </select>
+            <button style={St.here} onClick={submitSub}>✅ I'm here</button>
+          </div>
+          <div style={{fontSize:11,color:C.mut,marginTop:8}}>Your check-in is tagged as a <b style={{color:"#f59e0b"}}>sub</b> or <b style={{color:"#06b6d4"}}>float</b> so payroll knows.</div>
+        </div>
+
+        {/* Your check-ins today */}
+        {myChecksToday.length>0 && (
+          <div style={St.card}>
+            <div style={St.lbl}>Your check-ins today — {myHoursToday}h</div>
+            <div style={{display:"flex",flexDirection:"column",gap:6}}>
+              {myChecksToday.map(c => (
+                <div key={c.id} style={{display:"flex",alignItems:"center",gap:10,fontSize:13,color:C.text}}>
+                  {roleTag(c.role)}
+                  <span style={{flex:1}}>{c.team_name || "Floating"} · {c.slot} · {Number(c.hours||0)}h{c.created_at?" · "+timeOf(c.created_at):""}</span>
+                  <button style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:12}} disabled={checkinBusy==="undo"+c.id} onClick={()=>undoCheckin(c.id)} title="Remove this check-in">✕</button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Admin: attendance board for a date */}
+        {canOps && (() => {
+          const wd = WD_OF(checkinDate);
+          const daySlots = practiceAssignments.filter(a => (a.phase||"season")===schedulePhase && a.day===wd);
+          const dateChecks = checkins.filter(c => c.check_date===checkinDate);
+          const teamCoaches = (tn) => { const t = practiceTeams.find(x=>x.team_name===tn); return [t?.head_coach, t?.assistant_coach].filter(Boolean); };
+          const isPresent = (nm, tn) => dateChecks.some(c => norm(c.coach_name)===norm(nm) && (c.team_name||"")===(tn||""));
+          // group scheduled assignments by slot
+          const slots = {}; daySlots.forEach(a => { (slots[a.slot] = slots[a.slot]||[]).push(a); });
+          const slotKeys = Object.keys(slots).sort();
+          const extras = dateChecks.filter(c => c.role!=="scheduled");
+          // hours per coach this date
+          const byCoach = {};
+          dateChecks.forEach(c => { byCoach[c.coach_name] = (byCoach[c.coach_name]||0) + Number(c.hours||0); });
+          return (
+            <div style={St.card}>
+              <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:10}}>
+                <div style={St.lbl} >Attendance board</div>
+                <div style={{flex:1}} />
+                <input type="date" value={checkinDate} onChange={e=>setCheckinDate(e.target.value)} style={St.sel} />
+                <span style={{fontSize:11,color:C.mut}}>{dateChecks.length} check-in{dateChecks.length===1?"":"s"}</span>
+              </div>
+              {slotKeys.length===0 && extras.length===0 ? (
+                <div style={{fontSize:13,color:C.mut}}>No practices scheduled for {wd} in the {schedulePhase} phase, and no check-ins.</div>
+              ) : (
+                <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                  {slotKeys.map(sk => (
+                    <div key={sk} style={{border:"1px solid "+C.border,borderRadius:8,padding:"8px 10px",background:C.bg}}>
+                      <div style={{fontSize:12,fontWeight:800,color:C.gold,marginBottom:6}}>{sk} · {slotHours(sk)}h</div>
+                      <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+                        {slots[sk].slice().sort((a,b)=>a.team_name.localeCompare(b.team_name)).flatMap(a => teamCoaches(a.team_name).map(cn => {
+                          const present = isPresent(cn, a.team_name);
+                          return (
+                            <span key={a.team_name+"|"+cn} title={a.team_name} style={{fontSize:12,fontWeight:700,padding:"3px 9px",borderRadius:14,border:"1px solid "+(present?C.grn:C.border),background:present?"rgba(34,197,94,0.14)":"transparent",color:present?C.grn:C.mut}}>
+                              {present?"✓ ":"○ "}{cn} <span style={{fontWeight:500,opacity:0.7}}>· {a.team_name}</span>
+                            </span>
+                          );
+                        }))}
+                      </div>
+                    </div>
+                  ))}
+                  {extras.length>0 && (
+                    <div style={{border:"1px solid "+C.border,borderRadius:8,padding:"8px 10px",background:C.bg}}>
+                      <div style={{fontSize:12,fontWeight:800,color:"#f59e0b",marginBottom:6}}>Subs &amp; floats</div>
+                      <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                        {extras.map(c => (
+                          <div key={c.id} style={{display:"flex",alignItems:"center",gap:8,fontSize:12,color:C.text}}>
+                            {roleTag(c.role)}
+                            <span style={{flex:1}}>{c.coach_name} · {c.team_name||"Floating"} · {c.slot} · {Number(c.hours||0)}h</span>
+                            <button style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:12}} onClick={()=>undoCheckin(c.id)} title="Remove">✕</button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {Object.keys(byCoach).length>0 && (
+                    <div style={{fontSize:11,color:C.mut,paddingTop:4}}>
+                      Hours: {Object.entries(byCoach).sort((a,b)=>b[1]-a[1]).map(([n,h])=> n+" "+h+"h").join(" · ")}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+      </div>
+    );
+  }
+
   // ── Lineups & Rotations (6-2 planner) ──────────────────────────────────
   function renderLineups() {
     const rid = (p="r") => p + Math.random().toString(36).slice(2, 8);
@@ -12892,6 +13122,7 @@ export default function App() {
               ];
               return <>
                 {item("home","Home")}
+                {item("checkin","Clock In")}
                 {!canOps && item("notifications","Notifications" + (unreadCount>0?" ("+unreadCount+")":""))}
                 {groups.map(g => {
                   const activeInGroup = g.items.some(([v]) => v === view);
@@ -13015,7 +13246,7 @@ export default function App() {
           </div>
         );
       })()}
-      {!new Set(["home","dashboard","activity","coaches","tournaments","teamdir","requests","notifications","practice","scholarships","messages","lineups"]).has(view) && (
+      {!new Set(["home","dashboard","activity","coaches","tournaments","teamdir","requests","notifications","practice","scholarships","messages","lineups","checkin"]).has(view) && (
         <div style={{display:"flex",gap:4,padding:"10px 18px",borderBottom:"1px solid "+C.border,flexWrap:"wrap"}}>
           {divsWithPlayers.map(d => {
             const isSelected = selectedDivs.includes(d);
@@ -13061,6 +13292,7 @@ export default function App() {
         {view==="assignments" && renderAssignments()}
         {view==="coverage" && renderCoachCoverage()}
         {view==="faq" && renderFaq()}
+        {view==="checkin" && renderCheckIn()}
         {view==="lineups" && renderLineups()}
         {view==="games" && renderGames()}
         {view==="askai" && renderAskAI()}
