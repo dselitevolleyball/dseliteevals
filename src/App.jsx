@@ -4206,18 +4206,72 @@ export default function App() {
 
     return (
       <div>
-        <div style={{marginBottom:14,display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,flexWrap:"wrap"}}>
-          <div>
-            <h2 style={{margin:0,fontSize:22,fontWeight:800,color:C.gold}}>Welcome, {firstName}</h2>
-            <div style={{fontSize:12,color:C.mut,marginTop:3}}>Your teams — practices, tournaments, and rosters at a glance.</div>
-          </div>
-          <button onClick={()=>{ setReqForm({ type:"weekend", date:"", team:"", details:"" }); setRequestOffOpen(true); }}
-            title="Request a weekend off (tournaments) or a practice off (needs coverage)"
-            style={{padding:"8px 14px",borderRadius:8,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
-            🗓 Request time off
-          </button>
+        <div style={{marginBottom:14}}>
+          <h2 style={{margin:0,fontSize:22,fontWeight:800,color:C.gold}}>Welcome, {firstName}</h2>
+          <div style={{fontSize:12,color:C.mut,marginTop:3}}>Clock in, plan, and see what's next.</div>
         </div>
         {renderCheckIn()}
+
+        {/* Quick actions — the things a coach actually comes here to do. */}
+        {(() => {
+          const tile = (emoji, label, sub, onClick) => (
+            <button key={label} onClick={onClick}
+              style={{display:"flex",flexDirection:"column",alignItems:"flex-start",gap:3,background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:"13px 15px",cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
+              <span style={{fontSize:21,lineHeight:1}}>{emoji}</span>
+              <span style={{fontSize:14,fontWeight:800,color:C.text,marginTop:3}}>{label}</span>
+              <span style={{fontSize:10,color:C.mut,lineHeight:1.3}}>{sub}</span>
+            </button>
+          );
+          return (
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:10,marginBottom:14}}>
+              {tile("📋","Lineups","Rotations, subs & lineup cards",()=>{ setView("lineups"); setOpenMenu(null); })}
+              {tile("🏐","Practice plan","Open the practice planner",()=>{ window.location.href = "/practice"; })}
+              {tile("🏆","Tournaments","Schedule & assignments",()=>{ setView("tournaments"); setOpenMenu(null); })}
+              {tile("🗓","Time off","Request a weekend or practice off",()=>{ setReqForm({ type:"weekend", date:"", team:"", details:"" }); setRequestOffOpen(true); })}
+            </div>
+          );
+        })()}
+
+        {/* Next tournaments across my teams — "when do I work a tournament next?" */}
+        {myTeams.length > 0 && (() => {
+          const todayISO = localDateISO();
+          const myTeamSet = new Set(myTeams.map(t => t.team_name));
+          const seenTn = new Set();
+          const upcoming = tournamentAssignments
+            .filter(ta => myTeamSet.has(ta.team_id) || myTeamSet.has(ta.team_name))
+            .map(ta => ({ team: ta.team_id || ta.team_name, tn: tournamentById.get(ta.tournament_id) }))
+            .filter(x => x.tn && !x.tn.cancelled && (x.tn.end_date || x.tn.start_date) >= todayISO)
+            .filter(x => { const k = x.team + "|" + x.tn.id; if (seenTn.has(k)) return false; seenTn.add(k); return true; })
+            .sort((a,b) => (a.tn.start_date||"").localeCompare(b.tn.start_date||""))
+            .slice(0, 4);
+          const dUntil = d => Math.round((new Date(d+"T00:00") - new Date(todayISO+"T00:00"))/86400000);
+          return (
+            <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:14,marginBottom:14}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,marginBottom:8}}>
+                <span style={{fontSize:10,fontWeight:800,letterSpacing:0.4,textTransform:"uppercase",color:C.mut}}>Next tournaments</span>
+                <button onClick={()=>{ setView("tournaments"); setOpenMenu(null); }} style={{background:"none",border:"none",color:C.acc,cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:700}}>All tournaments →</button>
+              </div>
+              {upcoming.length === 0 ? (
+                <div style={{fontSize:12,color:C.mut}}>No upcoming tournaments for your teams.</div>
+              ) : (
+                <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                  {upcoming.map((x,i) => {
+                    const du = dUntil(x.tn.start_date);
+                    const live = x.tn.start_date <= todayISO && (x.tn.end_date || x.tn.start_date) >= todayISO;
+                    return (
+                      <div key={i} style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",fontSize:13}}>
+                        <span style={{minWidth:92,color:C.gold,fontWeight:800}}>{fmtDate(x.tn.start_date)}{x.tn.end_date && x.tn.end_date!==x.tn.start_date ? "–"+fmtDate(x.tn.end_date) : ""}</span>
+                        <span style={{flex:1,minWidth:140,color:C.text,fontWeight:600}}>{x.tn.name} <span style={{color:C.mut,fontWeight:500}}>· {x.team}</span>{x.tn.is_qualifier && <span style={{color:"#a855f7",fontWeight:800,marginLeft:5,fontSize:9}}>QUAL</span>}</span>
+                        <span style={{fontSize:11,fontWeight:800,color:live?C.grn:du<=7?"#f59e0b":C.mut}}>{live ? "LIVE NOW" : du===0 ? "today" : "in "+du+"d"}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
         {renderUpdatesPanel(myTeams.map(t => t.team_name))}
         {renderOpenShiftsPanel(myRoster ? ((myRoster.first_name||"")+" "+(myRoster.last_name||"")).trim() : (coach?.display_name||""))}
         {renderQuestionsPanel()}
@@ -4256,12 +4310,18 @@ export default function App() {
               const roster = players.filter(p => p.team_assignment === t.team_name && (p.offer_status === "accepted" || p.offer_status === "locked"))
                 .sort((a, b) => (a.roster_pos || "").localeCompare(b.roster_pos || "") || (a.last_name || "").localeCompare(b.last_name || ""));
               const coLine = [t.head_coach && "HC: " + t.head_coach, t.assistant_coach && "AC: " + t.assistant_coach].filter(Boolean).join(" · ");
+              const gap = tournamentGap(t.team_name);
               return (
-                <div key={t.team_name} style={{background:C.card,borderRadius:12,border:"1px solid "+C.border,padding:"14px 16px"}}>
-                  <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",gap:8,marginBottom:2}}>
-                    <span onClick={()=>setTeamCardName(t.team_name)} title="Open team card" style={{fontSize:17,fontWeight:800,color:C.gold,cursor:"pointer"}}>{t.team_name}</span>
+                <details key={t.team_name} style={{background:C.card,borderRadius:12,border:"1px solid "+C.border}}>
+                  <summary style={{listStyle:"none",cursor:"pointer",padding:"13px 16px",display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}} title="Tap to expand practices, roster, and checklists">
+                    <span style={{fontSize:16,fontWeight:800,color:C.gold}}>{t.team_name}</span>
                     <span style={{fontSize:9,fontWeight:800,letterSpacing:0.5,color:t.role==="Head Coach"?C.gold:C.acc}}>{t.role.toUpperCase()}</span>
-                  </div>
+                    <span style={{flex:1}} />
+                    <span style={{fontSize:11,color:gap.ongoing?C.grn:C.mut}}>{gap.ongoing ? "🏐 tournament live" : gap.untilDays != null ? "next tournament in "+gap.untilDays+"d" : "no tournament scheduled"}</span>
+                    <span onClick={e=>{ e.preventDefault(); e.stopPropagation(); setTeamCardName(t.team_name); }} title="Open the full team card" style={{fontSize:11,fontWeight:700,color:C.acc,textDecoration:"underline",cursor:"pointer"}}>team card</span>
+                    <span className="dse-caret" style={{fontSize:11,color:C.mut,display:"inline-block",transition:"transform 0.15s"}}>▾</span>
+                  </summary>
+                  <div style={{padding:"0 16px 14px"}}>
                   <div style={{fontSize:10,color:C.mut,marginBottom:10}}>{coLine}</div>
 
                   {/* Team info across one row (wraps on narrow screens). */}
@@ -4378,7 +4438,8 @@ export default function App() {
                   {/* Operations status — enlarged and prominent. */}
                   {renderOpsChecklist(t.team_name, canOps, true)}
                   {renderCoachChecklist(t.team_name)}
-                </div>
+                  </div>
+                </details>
               );
             })}
           </div>
