@@ -11073,94 +11073,106 @@ export default function App() {
             }}>Duplicate set →</button>}
           </div>
 
-          {/* Starting lineup — 6 court positions */}
-          <div style={S.lbl}>Starting lineup — court positions (Rotation 1)</div>
-          <div style={{fontSize:10,color:C.mut,marginBottom:8}}>Position 1 serves first, then 2, 3… Front row is 2·3·4, back row is 1·5·6.</div>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,maxWidth:520,marginBottom:6}}>
-            {/* front row 4,3,2 then back row 5,6,1 */}
-            {[3,2,1,4,5,0].map(i => (
-              <div key={i} style={{background:VB_COURT[i].row==="front"?"rgba(233,30,140,0.06)":C.bg,border:"1px solid "+C.border,borderRadius:8,padding:"6px 7px"}}>
-                <div style={{fontSize:9,fontWeight:800,color:C.mut,marginBottom:3}}>{VB_COURT[i].n} · {VB_COURT[i].slot}{VB_COURT[i].n===1?" (serve)":""}</div>
-                <select value={set.lineup[i] || ""} onChange={e => updateDraft(d => { d.sets[setIdx].lineup[i] = e.target.value || null; })} style={{...S.sel,width:"100%"}}>
-                  {rosterOptions}
-                </select>
-              </div>
-            ))}
-          </div>
-          <div style={{fontSize:10,color:C.mut,marginBottom:14,textAlign:"center",maxWidth:520}}>▲ net side ▲</div>
-
-          {/* Roles — setters / libero / passers per player */}
-          <div style={S.lbl}>Roles for {set.name}</div>
-          {!settersOk && (set.setters||[]).length>0 && <div style={{fontSize:11,color:"#f59e0b",marginBottom:6}}>⚠ For a true 6-2, your two setters should be opposite each other (3 positions apart) in the lineup so one is always in the back row to set.</div>}
-          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:6,marginBottom:8}}>
-            {roster.map(p => {
-              const isSetter = (set.setters||[]).includes(p.id);
-              const isMid = (set.middles||[]).includes(p.id);
-              const isLib = set.liberoId === p.id;
-              const isPass = (set.passers||[]).includes(p.id);
-              const setterFull = (set.setters||[]).length >= 2 && !isSetter;
-              const midFull = (set.middles||[]).length >= 2 && !isMid;
-              return (
-                <div key={p.id} style={{display:"flex",alignItems:"center",gap:6,background:C.bg,border:"1px solid "+C.border,borderRadius:8,padding:"4px 8px"}}>
-                  <span style={{flex:1,fontSize:12,color:C.text,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{plabel(p.id)}</span>
-                  {[["M",isMid,"#a855f7",midFull],["S",isSetter,C.acc,setterFull],["L",isLib,"#06b6d4",false],["P",isPass,C.grn,false]].map(([lab,on,col,dis]) => (
-                    <button key={lab} disabled={dis} title={lab==="M"?"Middle (pick 2 for the libero switch)":lab==="S"?"Setter":lab==="L"?"Libero":"Passer (serve-receive)"} onClick={() => updateDraft(d => {
-                      const t = d.sets[setIdx];
-                      if(lab==="M"){ t.middles = on ? (t.middles||[]).filter(x=>x!==p.id) : [...(t.middles||[]), p.id]; }
-                      if(lab==="S"){ t.setters = on ? t.setters.filter(x=>x!==p.id) : [...t.setters, p.id]; }
-                      if(lab==="L"){ t.liberoId = on ? null : p.id; }
-                      if(lab==="P"){ t.passers = on ? t.passers.filter(x=>x!==p.id) : [...(t.passers||[]), p.id]; }
-                    })} style={{width:22,height:22,borderRadius:5,fontSize:10,fontWeight:800,cursor:dis?"not-allowed":"pointer",fontFamily:"inherit",border:"1px solid "+(on?col:C.border),background:on?col:"transparent",color:on?"#000":dis?"#555":C.mut}}>{lab}</button>
+          {/* Lineup & roles — starting six + bench in one place */}
+          <div style={S.lbl}>Lineup &amp; roles — {set.name}</div>
+          <div style={{fontSize:10,color:C.mut,marginBottom:8}}>Pos 1 serves first, then 2, 3… Front row 2·3·4, back row 1·5·6. Pick each player and their role — rotations, the libero switch and serve-receive update automatically.</div>
+          {(() => {
+            const ROLES = ["S","OH","M","RS","L","DS"];
+            const ROLE_LABEL = { S:"Setter", OH:"Outside", M:"Middle", RS:"Right side", L:"Libero", DS:"Def. spec." };
+            const ROLE_COLOR = { S:C.acc, OH:C.gold, M:"#a855f7", RS:"#f59e0b", L:"#06b6d4", DS:C.grn };
+            const roleOf = (pid) => {
+              if (!pid) return "";
+              if ((set.setters||[]).includes(pid)) return "S";
+              if (set.liberoId === pid) return "L";
+              if ((set.middles||[]).includes(pid)) return "M";
+              if ((set.passers||[]).includes(pid)) return (byId[pid]?.pos==="DS" ? "DS" : "OH");
+              const rp = byId[pid]?.pos || ""; return ROLES.includes(rp) ? rp : "";
+            };
+            const applyRole = (pid, role) => updateDraft(d => {
+              const t = d.sets[setIdx];
+              t.setters = (t.setters||[]).filter(x=>x!==pid);
+              t.middles = (t.middles||[]).filter(x=>x!==pid);
+              t.passers = (t.passers||[]).filter(x=>x!==pid);
+              if (t.liberoId===pid) t.liberoId = null;
+              if (role==="S") t.setters=[...t.setters,pid];
+              else if (role==="M") t.middles=[...t.middles,pid];
+              else if (role==="L") { t.liberoId=pid; t.passers=[...t.passers,pid]; }
+              else if (role==="OH"||role==="DS") t.passers=[...t.passers,pid];
+            });
+            const roleSelect = (pid) => (
+              <select value={roleOf(pid)} onChange={e=>applyRole(pid, e.target.value)} disabled={!pid}
+                style={{...S.sel,fontSize:11,padding:"4px 5px",width:"100%",color:ROLE_COLOR[roleOf(pid)]||C.mut,fontWeight:700}}>
+                <option value="">role…</option>
+                {ROLES.map(r => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
+              </select>
+            );
+            const benchIds = roster.map(p=>p.id).filter(id => !(set.lineup||[]).includes(id));
+            return (
+              <>
+                {/* Court positions — player + role together */}
+                <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,maxWidth:560,marginBottom:6}}>
+                  {[3,2,1,4,5,0].map(i => (
+                    <div key={i} style={{background:VB_COURT[i].row==="front"?"rgba(233,30,140,0.06)":C.bg,border:"1px solid "+C.border,borderRadius:8,padding:"6px 7px"}}>
+                      <div style={{fontSize:9,fontWeight:800,color:C.mut,marginBottom:3}}>{VB_COURT[i].n} · {VB_COURT[i].slot}{VB_COURT[i].n===1?" (serve)":""}</div>
+                      <select value={set.lineup[i]||""} onChange={e=>updateDraft(d=>{ d.sets[setIdx].lineup[i]=e.target.value||null; })} style={{...S.sel,width:"100%",marginBottom:4}}>{rosterOptions}</select>
+                      {roleSelect(set.lineup[i])}
+                    </div>
                   ))}
                 </div>
-              );
-            })}
-          </div>
-          <div style={{fontSize:10,color:C.mut,marginBottom:10}}><b style={{color:"#a855f7"}}>M</b> middle (pick 2) · <b style={{color:C.acc}}>S</b> setter (pick 2 for 6-2) · <b style={{color:"#06b6d4"}}>L</b> libero · <b style={{color:C.grn}}>P</b> passer (serve-receive)</div>
-          {/* Libero / middle back-row switch */}
-          {(set.middles||[]).length===2 && set.liberoId && (() => {
-            const mids = set.middles;
-            const servesFor = (set.liberoServesFor && mids.includes(set.liberoServesFor)) ? set.liberoServesFor : mids[1];
-            const servingMid = mids.find(m => m!==servesFor);
-            return (
-              <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:14,padding:"8px 10px",borderRadius:8,border:"1px solid "+(set.autoLibero?"#a855f7":C.border),background:set.autoLibero?"rgba(168,85,247,0.08)":C.bg}}>
-                <label style={{display:"flex",alignItems:"center",gap:6,fontSize:12,fontWeight:700,color:C.text,cursor:"pointer"}}>
-                  <input type="checkbox" checked={!!set.autoLibero} onChange={e=>updateDraft(d=>{ const t=d.sets[setIdx]; t.autoLibero=e.target.checked; if(e.target.checked && !t.liberoServesFor) t.liberoServesFor=mids[1]; })} style={{width:15,height:15,accentColor:"#a855f7",cursor:"pointer"}} />
-                  Libero ⇄ middle switch
-                </label>
-                {set.autoLibero ? (
-                  <span style={{fontSize:12,color:C.mut,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-                    {pfirst(set.liberoId)} covers the back-row middle · serves for
-                    <select value={servesFor} onChange={e=>updateDraft(d=>{ d.sets[setIdx].liberoServesFor=e.target.value; })} style={S.sel}>
-                      {mids.map(m => <option key={m} value={m}>{plabel(m)}</option>)}
-                    </select>
-                    <span style={{color:C.text}}>· {pfirst(servingMid)} serves</span>
-                  </span>
-                ) : (
-                  <span style={{fontSize:11,color:C.mut}}>Turn on to auto-sub {pfirst(set.liberoId)} in for whichever middle is in the back row.</span>
+                <div style={{fontSize:10,color:C.mut,marginBottom:12,textAlign:"center",maxWidth:560}}>▲ net side ▲</div>
+
+                {/* By jersey number */}
+                {lineupFilled && (
+                  <div style={{marginBottom:12}}>
+                    <div style={{fontSize:9,fontWeight:800,letterSpacing:0.4,color:C.mut,marginBottom:4}}>ON THE COURT — BY JERSEY #</div>
+                    <div style={{display:"grid",gridTemplateColumns:"repeat(3,56px)",gap:4}}>
+                      {[3,2,1,4,5,0].map(i => { const pid=set.lineup[i]; const r=roleOf(pid); return (
+                        <div key={i} title={pname(pid)} style={{background:VB_COURT[i].row==="front"?"rgba(233,30,140,0.08)":C.bg,border:"1px solid "+C.border,borderRadius:6,padding:"5px 2px",textAlign:"center"}}>
+                          <div style={{fontSize:16,fontWeight:800,color:C.gold,lineHeight:1.1}}>#{pnum(pid)||"—"}</div>
+                          <div style={{fontSize:8,fontWeight:800,color:ROLE_COLOR[r]||C.mut}}>{r||"—"}</div>
+                        </div>
+                      ); })}
+                    </div>
+                  </div>
                 )}
-              </div>
+
+                {!settersOk && (set.setters||[]).length>0 && <div style={{fontSize:11,color:"#f59e0b",marginBottom:8}}>⚠ For a true 6-2, your two setters should be opposite (3 apart) so one is always back to set.</div>}
+
+                {/* Bench + roles */}
+                {benchIds.length>0 && (
+                  <div style={{marginBottom:10}}>
+                    <div style={{fontSize:9,fontWeight:800,letterSpacing:0.4,color:C.mut,marginBottom:4}}>BENCH — set their role so subs know who they are</div>
+                    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:6}}>
+                      {benchIds.map(id => (
+                        <div key={id} style={{display:"flex",alignItems:"center",gap:6,background:C.bg,border:"1px solid "+C.border,borderRadius:8,padding:"4px 8px"}}>
+                          <span style={{flex:1,fontSize:12,color:C.text,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{plabel(id)}</span>
+                          <div style={{width:96}}>{roleSelect(id)}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Libero ⇄ middle switch */}
+                {(set.middles||[]).length===2 && set.liberoId && (() => {
+                  const mids=set.middles; const servesFor=(set.liberoServesFor&&mids.includes(set.liberoServesFor))?set.liberoServesFor:mids[1]; const servingMid=mids.find(m=>m!==servesFor);
+                  return (
+                    <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",padding:"8px 10px",borderRadius:8,border:"1px solid "+(set.autoLibero?"#a855f7":C.border),background:set.autoLibero?"rgba(168,85,247,0.08)":C.bg}}>
+                      <label style={{display:"flex",alignItems:"center",gap:6,fontSize:12,fontWeight:700,color:C.text,cursor:"pointer"}}>
+                        <input type="checkbox" checked={!!set.autoLibero} onChange={e=>updateDraft(d=>{ const t=d.sets[setIdx]; t.autoLibero=e.target.checked; if(e.target.checked&&!t.liberoServesFor) t.liberoServesFor=mids[1]; })} style={{width:15,height:15,accentColor:"#a855f7",cursor:"pointer"}} />
+                        Libero ⇄ middle switch
+                      </label>
+                      {set.autoLibero ? (
+                        <span style={{fontSize:12,color:C.mut,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>{pfirst(set.liberoId)} covers the back-row middle · serves for
+                          <select value={servesFor} onChange={e=>updateDraft(d=>{ d.sets[setIdx].liberoServesFor=e.target.value; })} style={S.sel}>{mids.map(m=><option key={m} value={m}>{plabel(m)}</option>)}</select>
+                          <span style={{color:C.text}}>· {pfirst(servingMid)} serves</span></span>
+                      ) : <span style={{fontSize:11,color:C.mut}}>Turn on to auto-sub {pfirst(set.liberoId)} in for whichever middle is back row.</span>}
+                    </div>
+                  );
+                })()}
+              </>
             );
           })()}
-
-          {/* Subs */}
-          <div style={S.lbl}>Planned subs</div>
-          <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:8}}>
-            {(set.subs||[]).map((sub, si) => (
-              <div key={si} style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",fontSize:12,color:C.mut}}>
-                <select value={sub.inId||""} onChange={e => updateDraft(d => { d.sets[setIdx].subs[si].inId = e.target.value||null; })} style={S.sel}>{rosterOptions}</select>
-                <span>in for</span>
-                <select value={sub.outId||""} onChange={e => updateDraft(d => { d.sets[setIdx].subs[si].outId = e.target.value||null; })} style={S.sel}>{rosterOptions}</select>
-                <span>rotations</span>
-                <select value={sub.fromRotation??0} onChange={e => updateDraft(d => { d.sets[setIdx].subs[si].fromRotation = +e.target.value; })} style={S.sel}>{[0,1,2,3,4,5].map(r=><option key={r} value={r}>R{r+1}</option>)}</select>
-                <span>to</span>
-                <select value={sub.thruRotation??5} onChange={e => updateDraft(d => { d.sets[setIdx].subs[si].thruRotation = +e.target.value; })} style={S.sel}>{[0,1,2,3,4,5].map(r=><option key={r} value={r}>R{r+1}</option>)}</select>
-                <select value={sub.phase||"both"} onChange={e => updateDraft(d => { d.sets[setIdx].subs[si].phase = e.target.value; })} style={S.sel} title="Which grid this sub affects"><option value="both">both</option><option value="serve">serve</option><option value="receive">receive</option></select>
-                <button style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:14}} onClick={() => updateDraft(d => { d.sets[setIdx].subs.splice(si,1); })}>✕</button>
-              </div>
-            ))}
-            <button style={{...S.ghost,alignSelf:"flex-start"}} onClick={() => updateDraft(d => { d.sets[setIdx].subs.push({ inId:null, outId:null, fromRotation:0, thruRotation:5, phase:"both" }); })}>+ Sub</button>
-          </div>
         </div>
 
         {/* Rotations */}
@@ -11275,8 +11287,8 @@ export default function App() {
                 {/* Click-to-sub panel — appears when a grid cell is tapped */}
                 {lineupSubSel && lineupSubSel.setId===set.id && (() => {
                   const sel = lineupSubSel;
-                  const aPhase = sel.applyPhase || "both";
-                  const onCourt = new Set(vbRotation(set.lineup, sel.r, set.subs, aPhase==="both"?null:aPhase, lib).map(s=>s.id).filter(Boolean));
+                  const aPhase = sel.phase || "serve"; // sub applies to the half you tapped
+                  const onCourt = new Set(vbRotation(set.lineup, sel.r, set.subs, aPhase, lib).map(s=>s.id).filter(Boolean));
                   const bench = roster.filter(p => !onCourt.has(p.id));
                   const related = (set.subs||[]).map((s,idx)=>({s,idx})).filter(({s}) => s.outId===sel.outId || s.inId===sel.outId);
                   const phaseWord = { both:"whole rotation", serve:"serve only", receive:"receive only" };
@@ -11288,8 +11300,8 @@ export default function App() {
                   return (
                     <div style={{marginTop:12,border:"1px solid "+C.gold,borderRadius:10,padding:"10px 12px",background:"rgba(233,30,140,0.06)"}}>
                       <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,flexWrap:"wrap"}}>
-                        <span style={{fontSize:12,fontWeight:800,color:C.gold}}>Sub at R{sel.r+1}</span>
-                        <span style={{fontSize:11,color:C.mut}}>{sel.label} · tapped {sel.phase==="receive"?"receive":"serve"} grid</span>
+                        <span style={{fontSize:12,fontWeight:800,color:C.gold}}>Sub at R{sel.r+1} · {aPhase==="receive"?"serve-receive":"serve"} half</span>
+                        <span style={{fontSize:11,color:C.mut}}>{sel.label}</span>
                         <span style={{fontSize:13,fontWeight:700,color:C.text}}>{plabel(sel.outId)} out</span>
                         <div style={{flex:1}} />
                         <button style={{background:"none",border:"none",color:C.mut,cursor:"pointer",fontSize:15}} title="Close" onClick={()=>setLineupSubSel(null)}>✕</button>
@@ -11303,11 +11315,6 @@ export default function App() {
                         <select value={sel.scope} onChange={e=>setLineupSubSel(s=>({...s,scope:e.target.value}))} style={S.sel} title="How long the sub stays in">
                           <option value="rest">R{sel.r+1} → end of set</option>
                           <option value="one">R{sel.r+1} only</option>
-                        </select>
-                        <select value={aPhase} onChange={e=>setLineupSubSel(s=>({...s,applyPhase:e.target.value}))} style={S.sel} title="Apply this sub to the serve grid, the receive grid, or both">
-                          <option value="both">whole rotation</option>
-                          <option value="serve">serve only</option>
-                          <option value="receive">receive only</option>
                         </select>
                         <button style={S.gold} onClick={applySub}>Sub in</button>
                       </div>
