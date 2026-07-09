@@ -1052,6 +1052,16 @@ export default function App() {
   const [tcFilters, setTcFilters]       = useState({ coach:"", role:"", team:"", status:"" }); // ledger filters
   const [tcSettingsOpen, setTcSettingsOpen] = useState(false); // settings panel (rates editor, export)
   const [tcShowZero, setTcShowZero]     = useState(false);  // include coaches with no hours this week
+  // Mobile nav: collapse the header buttons into a hamburger under 700px.
+  const [isNarrow, setIsNarrow] = useState(() => typeof window !== "undefined" && window.matchMedia("(max-width: 700px)").matches);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mq = window.matchMedia("(max-width: 700px)");
+    const onChange = e => { setIsNarrow(e.matches); if (!e.matches) setMobileNavOpen(false); };
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
   // Season-plan curriculum (per-team teaching checkboxes on the dashboard).
   const [currProgress, setCurrProgress]     = useState([]);
   const [currTeam, setCurrTeam]             = useState("");   // selected team in the panel
@@ -13835,6 +13845,36 @@ export default function App() {
                 ] }] : []),
                 { title:"More", items:[["activity","Activity"], ["faq","FAQ"], ["games","Games"], ...(isOwner ? [["askai","Ask AI"]] : [])] },
               ];
+              // Mobile: one hamburger opening a full-height grouped menu.
+              if (isNarrow) {
+                const mItem = (v, l) => (
+                  <button key={v} onClick={()=>{ setView(v); setOpenMenu(null); setMobileNavOpen(false); }}
+                    style={{display:"block",width:"100%",textAlign:"left",padding:"11px 14px",borderRadius:8,border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:14,fontWeight:600,background:view===v?C.gold:"transparent",color:view===v?"#000":C.text}}>{l}</button>
+                );
+                return <>
+                  <button onClick={()=>setMobileNavOpen(v=>!v)} title="Menu"
+                    style={{...btn(mobileNavOpen),fontSize:17,padding:"5px 13px",border:"1px solid "+(mobileNavOpen?C.gold:C.border)}}>☰</button>
+                  {mobileNavOpen && <>
+                    <div onClick={()=>setMobileNavOpen(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",zIndex:79}} />
+                    <div style={{position:"fixed",top:54,left:8,right:8,zIndex:80,background:C.card,border:"1px solid "+C.border,borderRadius:12,boxShadow:"0 16px 40px rgba(0,0,0,0.6)",maxHeight:"calc(100vh - 70px)",overflowY:"auto",padding:6}}>
+                      {mItem("home","🏠 Home")}
+                      {!canOps && mItem("notifications","🔔 Notifications" + (unreadCount>0?" ("+unreadCount+")":""))}
+                      {mItem("tournaments","🏆 Tournaments")}
+                      {mItem("lineups","📋 Lineups")}
+                      <button onClick={()=>{ window.location.href = "/practice"; }}
+                        style={{display:"block",width:"100%",textAlign:"left",padding:"11px 14px",borderRadius:8,border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:14,fontWeight:600,background:"transparent",color:C.text}}>🏐 Practice Planning</button>
+                      {groups.map(g => (
+                        <div key={g.title}>
+                          <div style={{padding:"10px 14px 4px",fontSize:9,fontWeight:800,letterSpacing:0.6,textTransform:"uppercase",color:C.gold,borderTop:"1px solid "+C.border,marginTop:6}}>{g.title}</div>
+                          {g.items.map(([v,l],i) => v==="hdr"
+                            ? <div key={"sh"+i} style={{padding:"7px 14px 2px",fontSize:9,fontWeight:800,letterSpacing:0.5,textTransform:"uppercase",color:C.mut}}>{l}</div>
+                            : mItem(v,l))}
+                        </div>
+                      ))}
+                    </div>
+                  </>}
+                </>;
+              }
               return <>
                 {item("home","Home")}
                 {!canOps && item("notifications","Notifications" + (unreadCount>0?" ("+unreadCount+")":""))}

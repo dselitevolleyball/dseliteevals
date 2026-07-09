@@ -1,0 +1,120 @@
+// Vercel Cron: Monday-morning payroll report.
+//
+// Every Monday (12:00 UTC ≈ 7am Central) this emails the previous week's
+// (Mon–Sun) coach hours and pay — computed from coach_checkins × coach_rates —
+// to the bookkeeper and club admins. Rate resolution matches the app's Time
+// Cards ledger: head_rate applies to shifts for a team the coach head-coaches,
+// hourly_rate covers everything else (assisting, subbing, floating).
+//
+// Auth: Vercel Cron sends `Authorization: Bearer <CRON_SECRET>`; also accepts ?token=.
+// Optional query: ?week=YYYY-MM-DD (any date inside the week to report on).
+//
+// Env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, CRON_SECRET,
+//      RESEND_API_KEY (or resend_api_key), DSE_FROM_EMAIL, DSE_REPLY_TO (opt),
+//      PAYROLL_REPORT_TO (opt comma list — overrides the default recipients).
+
+import { createClient } from "@supabase/supabase-js";
+
+const DEFAULT_TO = ["bpounds@generalledgerpartners.com", "drew@dselitevolleyball.com", "kristen@dselitevolleyball.com"];
+const escapeHtml = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const norm = (s) => String(s || "").trim().toLowerCase();
+const money = (n) => "$" + Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtD = (iso) => { try { return new Date(iso + "T00:00:00Z").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" }); } catch { return iso; } };
+const addDays = (iso, n) => { const d = new Date(iso + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+
+export default async function handler(req, res) {
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, CRON_SECRET, DSE_FROM_EMAIL, DSE_REPLY_TO, PAYROLL_REPORT_TO } = process.env;
+  const RESEND_API_KEY = process.env.RESEND_API_KEY || process.env.resend_api_key;
+
+  const url = (() => { try { return new URL(req.url, "https://x"); } catch { return null; } })();
+  const urlToken = url?.searchParams.get("token") || "";
+  const bearer = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+  if (!CRON_SECRET || (bearer !== CRON_SECRET && urlToken !== CRON_SECRET)) return res.status(403).json({ error: "Forbidden" });
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return res.status(500).json({ error: "Server not configured" });
+  if (!RESEND_API_KEY || !DSE_FROM_EMAIL) return res.status(500).json({ error: "Email not configured" });
+
+  // Report window: the Mon–Sun week BEFORE the current week (Central time).
+  // ?week=YYYY-MM-DD reports the week containing that date instead.
+  const chicagoToday = new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
+  const anchor = url?.searchParams.get("week") || null;
+  const mondayOf = (iso) => { const d = new Date(iso + "T12:00:00Z"); return addDays(iso, -((d.getUTCDay() + 6) % 7)); };
+  const weekStart = anchor ? mondayOf(anchor) : addDays(mondayOf(chicagoToday), -7);
+  const weekEnd = addDays(weekStart, 6);
+
+  const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
+  const [{ data: checks }, { data: rates }, { data: teams }] = await Promise.all([
+    supabase.from("coach_checkins").select("*").gte("check_date", weekStart).lte("check_date", weekEnd),
+    supabase.from("coach_rates").select("*"),
+    supabase.from("practice_teams").select("team_name, head_coach"),
+  ]);
+
+  const rateRow = (nm) => (rates || []).find(r => norm(r.coach_name) === norm(nm));
+  const isHeadOf = (nm, team) => !!team && (teams || []).some(t => t.team_name === team && norm(t.head_coach) === norm(nm));
+  const rateFor = (nm, team) => {
+    const r = rateRow(nm);
+    if (!r) return null;
+    if (r.head_rate != null && isHeadOf(nm, team)) return Number(r.head_rate);
+    return r.hourly_rate != null ? Number(r.hourly_rate) : null;
+  };
+
+  // Group by coach.
+  const byCoach = new Map();
+  for (const c of (checks || [])) {
+    const g = byCoach.get(c.coach_name) || { coach: c.coach_name, hours: 0, amount: 0, unpaidAmount: 0, missingRate: false, shifts: [] };
+    const hrs = Number(c.hours || 0);
+    const rate = rateFor(c.coach_name, c.team_name);
+    const amt = rate != null ? hrs * rate : null;
+    g.hours += hrs;
+    if (amt != null) { g.amount += amt; if (!c.paid) g.unpaidAmount += amt; }
+    else g.missingRate = true;
+    g.shifts.push({ date: c.check_date, team: c.team_name || "Floating", slot: c.slot || "", role: c.role, hours: hrs, rate, amount: amt, paid: !!c.paid });
+    byCoach.set(c.coach_name, g);
+  }
+  const rows = [...byCoach.values()].sort((a, b) => a.coach.localeCompare(b.coach));
+  const totHours = rows.reduce((s, g) => s + g.hours, 0);
+  const totAmount = rows.reduce((s, g) => s + g.amount, 0);
+  const totUnpaid = rows.reduce((s, g) => s + g.unpaidAmount, 0);
+  const anyMissing = rows.some(g => g.missingRate);
+
+  const rangeLabel = `${fmtD(weekStart)} – ${fmtD(weekEnd)}`;
+  const th = 'style="text-align:left;padding:6px 10px;border-bottom:2px solid #ccc;font-size:12px"';
+  const thR = 'style="text-align:right;padding:6px 10px;border-bottom:2px solid #ccc;font-size:12px"';
+  const td = 'style="padding:6px 10px;border-bottom:1px solid #eee;font-size:13px"';
+  const tdR = 'style="padding:6px 10px;border-bottom:1px solid #eee;font-size:13px;text-align:right"';
+
+  const summaryRows = rows.map(g =>
+    `<tr><td ${td}><b>${escapeHtml(g.coach)}</b></td><td ${tdR}>${g.hours}</td><td ${tdR}>${g.missingRate ? "⚠ rate missing" : money(g.amount)}</td><td ${tdR}>${g.missingRate ? "—" : money(g.unpaidAmount)}</td></tr>`).join("");
+  const detailRows = rows.map(g => g.shifts
+    .sort((a, b) => a.date.localeCompare(b.date) || a.slot.localeCompare(b.slot))
+    .map(s => `<tr><td ${td}>${escapeHtml(g.coach)}</td><td ${td}>${escapeHtml(fmtD(s.date))}</td><td ${td}>${escapeHtml(s.team)}</td><td ${td}>${escapeHtml(s.slot)}</td><td ${td}>${escapeHtml(s.role)}</td><td ${tdR}>${s.hours}</td><td ${tdR}>${s.rate != null ? "$" + s.rate : "—"}</td><td ${tdR}>${s.amount != null ? money(s.amount) : "—"}</td><td ${td}>${s.paid ? "✓ paid" : "unpaid"}</td></tr>`).join("")).join("");
+
+  const html = rows.length === 0
+    ? `<div style="font-family:sans-serif;font-size:14px"><h2 style="margin:0 0 6px">DS Elite payroll — ${rangeLabel}</h2><p>No coach hours were logged this week.</p></div>`
+    : `<div style="font-family:sans-serif;font-size:14px">
+        <h2 style="margin:0 0 6px">DS Elite payroll — ${rangeLabel}</h2>
+        <p style="margin:0 0 12px;color:#555">${rows.length} coach${rows.length === 1 ? "" : "es"} · <b>${totHours} hours</b> · <b>${money(totAmount)}</b> total (${money(totUnpaid)} unpaid)${anyMissing ? ' · <span style="color:#b45309">⚠ some coaches have no rate set — set it in Operations → Time Cards</span>' : ""}</p>
+        <table style="border-collapse:collapse;margin-bottom:18px"><thead><tr><th ${th}>Coach</th><th ${thR}>Hours</th><th ${thR}>Amount</th><th ${thR}>Unpaid</th></tr></thead>
+        <tbody>${summaryRows}</tbody>
+        <tfoot><tr><td ${td}><b>Total</b></td><td ${tdR}><b>${totHours}</b></td><td ${tdR}><b>${money(totAmount)}</b></td><td ${tdR}><b>${money(totUnpaid)}</b></td></tr></tfoot></table>
+        <h3 style="margin:0 0 6px;font-size:14px">Shift detail</h3>
+        <table style="border-collapse:collapse"><thead><tr><th ${th}>Coach</th><th ${th}>Date</th><th ${th}>Team</th><th ${th}>Time</th><th ${th}>Role</th><th ${thR}>Hrs</th><th ${thR}>Rate</th><th ${thR}>Amount</th><th ${th}>Status</th></tr></thead><tbody>${detailRows}</tbody></table>
+        <p style="margin-top:14px;font-size:12px;color:#777">Head-coach shifts pay the HC rate; assisting, subbing, and floating pay the default rate. Full ledger: DS Elite HQ → Operations → Time Cards.</p>
+      </div>`;
+
+  const text = rows.length === 0
+    ? `DS Elite payroll ${rangeLabel}: no coach hours logged.`
+    : `DS Elite payroll — ${rangeLabel}\n` + rows.map(g => `${g.coach}: ${g.hours}h · ${g.missingRate ? "rate missing" : money(g.amount)} (${g.missingRate ? "—" : money(g.unpaidAmount)} unpaid)`).join("\n") + `\nTOTAL: ${totHours}h · ${money(totAmount)} (${money(totUnpaid)} unpaid)`;
+
+  const to = (PAYROLL_REPORT_TO ? PAYROLL_REPORT_TO.split(",").map(s => s.trim()).filter(Boolean) : DEFAULT_TO);
+  const replyTo = (DSE_REPLY_TO || DSE_FROM_EMAIL).trim();
+  const resp = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ from: DSE_FROM_EMAIL, to, reply_to: replyTo, subject: `DS Elite payroll — ${rangeLabel} (${totHours}h · ${money(totAmount)})`, html, text }),
+  });
+  if (!resp.ok) {
+    const err = await resp.text().catch(() => "");
+    return res.status(502).json({ error: "Email send failed", detail: err.slice(0, 300) });
+  }
+  return res.status(200).json({ ok: true, weekStart, weekEnd, coaches: rows.length, hours: totHours, amount: totAmount, unpaid: totUnpaid, to });
+}
