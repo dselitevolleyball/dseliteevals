@@ -871,6 +871,19 @@ function slotHours(slot){
 // Monday (week start) for a date, as YYYY-MM-DD.
 function weekMondayISO(d){ const x = d ? new Date(d) : new Date(); const back = (x.getDay()+6)%7; x.setDate(x.getDate()-back); return localDateISO(x); }
 
+// Which practice phase is actually ACTIVE on a calendar date (clock-in and
+// attendance must not trust the Practice tab's toggle — that's a planning
+// view). Gaps between phases (and before summer starts) have NO practices:
+// weekday practices don't begin until the regular season in December.
+const PHASE_DATES = [
+  { id:"summer",     from:"2026-07-12", to:"2026-09-12" },
+  { id:"fall1",      from:"2026-09-13", to:"2026-10-11" },
+  { id:"fall2",      from:"2026-10-18", to:"2026-11-15" },
+  { id:"season",     from:"2026-12-01", to:"2027-05-06" },
+  { id:"postseason", from:"2027-05-07", to:"2027-06-15" },
+];
+function phaseForDate(iso){ const p = PHASE_DATES.find(p => iso >= p.from && iso <= p.to); return p ? p.id : null; }
+
 // ── DS Elite coaching curriculum ────────────────────────────────────────────
 // Drew's coaching perspective — from "Core Philosophy: Game-Like Training with
 // High Efficiency" and "DS Elite Baseline Expectations" — organized so a new
@@ -1800,7 +1813,7 @@ export default function App() {
     if (error) { console.error("Load coach_checkins error:", error); return; }
     setCheckins(data || []);
   }, []);
-  useEffect(() => { if (isApproved && view === "home") { loadCheckins(); loadPractice(); loadCoachFloats(); } }, [isApproved, view, loadCheckins, loadPractice, loadCoachFloats]);
+  useEffect(() => { if (isApproved && view === "home") { loadCheckins(); loadPractice(); loadCoachFloats(); loadPracticeCancellations(); } }, [isApproved, view, loadCheckins, loadPractice, loadCoachFloats, loadPracticeCancellations]);
 
   // Time Cards ledger loader.
   const loadCoachRates = useCallback(async () => {
@@ -9790,7 +9803,6 @@ export default function App() {
     const today = localDateISO();
     const WD_OF = iso => ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][new Date(iso+"T12:00:00").getDay()];
     const wdToday = WD_OF(today);
-    const SLOT_OPTS = ["1-3pm","3-5pm","5-7pm","7-9pm","1-2pm","2-3pm","3-4pm","4-5pm","5-6pm","6-7pm","7-8pm","8-9pm"];
     const timeOf = ts => { try { return new Date(ts).toLocaleTimeString(undefined,{hour:"numeric",minute:"2-digit"}); } catch { return ""; } };
 
     const St = {
@@ -9811,31 +9823,50 @@ export default function App() {
     const myR = coachRoster.find(r => coach?.email && norm(r.email)===norm(coach.email));
     if (myR) { const f=norm(myR.first_name), l=norm(myR.last_name); if(f){ cand.add((f+" "+l).trim()); cand.add(f); if(l) cand.add((f+" "+l[0]+".").trim()); } }
     const isMe = nm => !!nm && cand.has(norm(nm));
-    // Everywhere this coach is scheduled on a given weekday — coaching AND
-    // floating — deduped and time-ordered.
-    const slotsForWD = (wd) => {
+    // Am I marked out for a slot on a date? Two sources: processed coverage
+    // rows (practice_coverage.coach_out) and my own time-off requests (any
+    // status but denied — if you asked off, we don't prompt you to clock in).
+    const iAmOut = (iso, team) => {
+      const covOut = practiceCoverage.some(c => c.practice_date === iso && (!team || c.team_name === team) && isMe(c.coach_out));
+      const reqOut = coachRequests.some(r => isMe(r.coach_name) && r.request_date === iso
+        && !/denied|declined|rejected/i.test(r.status || "")
+        && (!r.team_name || !team || r.team_name === team));
+      return covOut || reqOut;
+    };
+    // Everywhere this coach is scheduled on a given DATE — coaching AND
+    // floating — using the phase actually active that date (not the Practice
+    // tab's toggle), minus club cancellations and my call-outs.
+    const slotsForDate = (iso) => {
+      const ph = phaseForDate(iso);
+      if (!ph || practiceCancellations.some(c => c.practice_date === iso)) return [];
+      const wd = WD_OF(iso);
       const seen2 = new Set();
       return [
-        ...practiceAssignments.filter(a => (a.phase||"season")===schedulePhase && a.day===wd && myTeamNames.includes(a.team_name)).map(a => ({ team:a.team_name, slot:a.slot, role:"scheduled" })),
-        ...coachFloats.filter(f => (f.phase||"season")===schedulePhase && f.day===wd && isMe(f.coach_name)).map(f => ({ team:"", slot:f.slot, role:"float" })),
+        ...practiceAssignments.filter(a => (a.phase||"season")===ph && a.day===wd && myTeamNames.includes(a.team_name)).map(a => ({ team:a.team_name, slot:a.slot, role:"scheduled" })),
+        ...coachFloats.filter(f => (f.phase||"season")===ph && f.day===wd && isMe(f.coach_name)).map(f => ({ team:"", slot:f.slot, role:"float" })),
       ].filter(x => { const k = x.role+"|"+x.team+"|"+x.slot; if(seen2.has(k)) return false; seen2.add(k); return true; })
+       .filter(x => !iAmOut(iso, x.team || null))
        .sort((a,b)=> startH(a.slot)-startH(b.slot) || (a.team||"").localeCompare(b.team||""));
     };
-    const mySlots = slotsForWD(wdToday);
+    const todayPhase = phaseForDate(today);
+    const mySlots = slotsForDate(today);
 
     const myChecksToday = checkins.filter(c => c.check_date===today && norm(c.coach_name)===norm(coachName));
     const checkFor = (team, slot) => myChecksToday.find(c => (c.team_name||"")===(team||"") && (c.slot||"")===(slot||""));
     const myHoursToday = myChecksToday.reduce((s,c)=> s + Number(c.hours||0), 0);
-    // "Next up" today = earliest slot not yet checked in whose end hasn't passed.
+    // Check-in window: opens 30 minutes before the slot starts, closes at its end.
     const nowH = new Date().getHours() + new Date().getMinutes()/60;
-    const nextItem = mySlots.find(s => !checkFor(s.team, s.slot) && endH(s.slot) >= nowH) || mySlots.find(s => !checkFor(s.team, s.slot)) || null;
+    const windowState = (slot) => nowH < startH(slot) - 0.5 ? "early" : nowH > endH(slot) ? "past" : "open";
+    const fmtOpens = (slot) => { const h = startH(slot) - 0.5; const hh = Math.floor(h), mm = Math.round((h-hh)*60); const h12 = hh > 12 ? hh - 12 : hh; return h12 + (mm ? ":" + String(mm).padStart(2,"0") : ":00") + "pm"; };
+    // "Next up" today = earliest slot not yet checked in whose end hasn't passed.
+    const nextItem = mySlots.find(s => !checkFor(s.team, s.slot) && endH(s.slot) >= nowH) || null;
     const nextKey = nextItem ? (nextItem.role+"|"+nextItem.team+"|"+nextItem.slot) : null;
-    // Next shift overall — scan up to 2 weeks ahead across coaching + floating.
+    // Next shift overall — scan up to 60 days ahead (phases have long gaps).
     let nextShift = null;
-    for (let off=0; off<14 && !nextShift; off++) {
+    for (let off=0; off<60 && !nextShift; off++) {
       const d = new Date(); d.setDate(d.getDate()+off);
       const iso = localDateISO(d);
-      for (const s of slotsForWD(WD_OF(iso))) {
+      for (const s of slotsForDate(iso)) {
         if (off===0 && (endH(s.slot) < nowH || checkFor(s.team, s.slot))) continue; // ended or already logged
         nextShift = { ...s, iso, off };
         break;
@@ -9843,12 +9874,13 @@ export default function App() {
     }
 
     const doCheckin = async ({ team, slot, role, dateISO }) => {
+      if (windowState(slot) !== "open") { window.alert("Check-in opens 30 minutes before the practice starts."); return; }
       const key = (team||"float")+"|"+(slot||"")+"|"+role;
       setCheckinBusy(key);
       const row = {
         coach_name: coachName, coach_email: coach.email||null,
         check_date: dateISO || today, team_name: team||null, slot: slot||null,
-        phase: schedulePhase, hours: slotHours(slot), role, status:"present",
+        phase: todayPhase || "none", hours: slotHours(slot), role, status:"present",
         source:"app", created_by: coachName,
       };
       const { error } = await supabase.from("coach_checkins").insert(row);
@@ -9857,10 +9889,11 @@ export default function App() {
       setCheckinBusy("");
     };
     const undoCheckin = async (id) => { setCheckinBusy("undo"+id); await supabase.from("coach_checkins").delete().eq("id", id); await loadCheckins(); setCheckinBusy(""); };
-    const submitSub = async () => {
+    const submitSub = async (slot) => {
+      const useSlot = slot || checkinSub.slot;
       if (checkinSub.role==="sub" && !checkinSub.team) { window.alert("Pick the team you're subbing for."); return; }
-      if (!checkinSub.slot) { window.alert("Pick a time slot."); return; }
-      await doCheckin({ team: checkinSub.role==="float" ? "" : checkinSub.team, slot: checkinSub.slot, role: checkinSub.role });
+      if (!useSlot) { window.alert("Pick a time slot."); return; }
+      await doCheckin({ team: checkinSub.role==="float" ? "" : checkinSub.team, slot: useSlot, role: checkinSub.role });
     };
 
     const roleTag = (r) => {
@@ -9915,6 +9948,10 @@ export default function App() {
                         <span style={{fontSize:13,color:C.grn,fontWeight:800}}>✓ Checked in{c.created_at?" · "+timeOf(c.created_at):""}</span>
                         <button style={{...St.ghost,color:C.mut}} disabled={checkinBusy==="undo"+c.id} onClick={()=>undoCheckin(c.id)}>Undo</button>
                       </>
+                    ) : windowState(s.slot)==="early" ? (
+                      <span style={{fontSize:12,color:C.mut,fontWeight:700}} title="Check-in opens 30 minutes before the practice starts">🔒 Opens {fmtOpens(s.slot)}</span>
+                    ) : windowState(s.slot)==="past" ? (
+                      <span style={{fontSize:12,color:C.mut,fontWeight:700}}>Practice ended</span>
                     ) : (
                       <button style={isNext?St.here:{...St.here,background:"transparent",border:"1px solid "+C.grn,color:C.grn}} disabled={busy} onClick={()=>doCheckin({ team:s.team, slot:s.slot, role:s.role })}>{busy?"…":"✅ I'm here"}</button>
                     )}
@@ -9925,28 +9962,45 @@ export default function App() {
         </div>
         )}
 
-        {/* Sub / float check-in */}
-        <div style={St.card}>
-          <div style={St.lbl}>Subbing or floating today?</div>
-          <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
-            <div style={{display:"flex",borderRadius:8,overflow:"hidden",border:"1px solid "+C.border}}>
-              {[["sub","Subbing"],["float","Floating"]].map(([r,l]) => (
-                <button key={r} onClick={()=>setCheckinSub(s=>({...s,role:r}))} style={{padding:"6px 14px",border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700,background:checkinSub.role===r?C.gold:"transparent",color:checkinSub.role===r?"#000":C.mut}}>{l}</button>
-              ))}
+        {/* Sub / float check-in — only when teams actually practice today. */}
+        {(() => {
+          const dayCancelled = practiceCancellations.some(c => c.practice_date === today);
+          const dayAssigns = (todayPhase && !dayCancelled) ? practiceAssignments.filter(a => (a.phase||"season")===todayPhase && a.day===wdToday) : [];
+          const daySlots = [...new Set(dayAssigns.map(a => a.slot))].sort((a,b) => startH(a) - startH(b));
+          if (!daySlots.length) return null; // no practices today — nothing to sub/float into
+          const subSlot = daySlots.includes(checkinSub.slot) ? checkinSub.slot : daySlots[0];
+          const slotTeams = [...new Set(dayAssigns.filter(a => a.slot === subSlot).map(a => a.team_name))].sort();
+          const ws = windowState(subSlot);
+          return (
+            <div style={St.card}>
+              <div style={St.lbl}>Subbing or floating today?</div>
+              <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+                <div style={{display:"flex",borderRadius:8,overflow:"hidden",border:"1px solid "+C.border}}>
+                  {[["sub","Subbing"],["float","Floating"]].map(([r,l]) => (
+                    <button key={r} onClick={()=>setCheckinSub(s=>({...s,role:r}))} style={{padding:"6px 14px",border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700,background:checkinSub.role===r?C.gold:"transparent",color:checkinSub.role===r?"#000":C.mut}}>{l}</button>
+                  ))}
+                </div>
+                <select value={subSlot} onChange={e=>setCheckinSub(s=>({...s,slot:e.target.value}))} style={St.sel} title="Time slot (today's practice times)">
+                  {daySlots.map(x => <option key={x} value={x}>{x} · {slotHours(x)}h</option>)}
+                </select>
+                {checkinSub.role==="sub" && (
+                  <select value={checkinSub.team} onChange={e=>setCheckinSub(s=>({...s,team:e.target.value}))} style={St.sel}>
+                    <option value="">— team you're covering —</option>
+                    {slotTeams.map(tn => <option key={tn} value={tn}>{tn}</option>)}
+                  </select>
+                )}
+                {ws==="early" ? (
+                  <span style={{fontSize:12,color:C.mut,fontWeight:700}} title="Check-in opens 30 minutes before the practice starts">🔒 Opens {fmtOpens(subSlot)}</span>
+                ) : ws==="past" ? (
+                  <span style={{fontSize:12,color:C.mut,fontWeight:700}}>Practice ended</span>
+                ) : (
+                  <button style={St.here} onClick={() => submitSub(subSlot)}>✅ I'm here</button>
+                )}
+              </div>
+              <div style={{fontSize:11,color:C.mut,marginTop:8}}>Your check-in is tagged as a <b style={{color:"#f59e0b"}}>sub</b> or <b style={{color:"#06b6d4"}}>float</b> so payroll knows.</div>
             </div>
-            {checkinSub.role==="sub" && (
-              <select value={checkinSub.team} onChange={e=>setCheckinSub(s=>({...s,team:e.target.value}))} style={St.sel}>
-                <option value="">— team you're covering —</option>
-                {practiceTeams.map(t => <option key={t.team_name} value={t.team_name}>{t.team_name}</option>)}
-              </select>
-            )}
-            <select value={checkinSub.slot} onChange={e=>setCheckinSub(s=>({...s,slot:e.target.value}))} style={St.sel} title="Time slot">
-              {SLOT_OPTS.map(x => <option key={x} value={x}>{x} · {slotHours(x)}h</option>)}
-            </select>
-            <button style={St.here} onClick={submitSub}>✅ I'm here</button>
-          </div>
-          <div style={{fontSize:11,color:C.mut,marginTop:8}}>Your check-in is tagged as a <b style={{color:"#f59e0b"}}>sub</b> or <b style={{color:"#06b6d4"}}>float</b> so payroll knows.</div>
-        </div>
+          );
+        })()}
 
         {/* Your check-ins today */}
         {myChecksToday.length>0 && (
@@ -9967,10 +10021,15 @@ export default function App() {
         {/* Admin: attendance board for a date */}
         {canOps && (() => {
           const wd = WD_OF(checkinDate);
-          const daySlots = practiceAssignments.filter(a => (a.phase||"season")===schedulePhase && a.day===wd);
+          const ph = phaseForDate(checkinDate);
+          const dayCancelled = practiceCancellations.some(c => c.practice_date===checkinDate);
+          const daySlots = (ph && !dayCancelled) ? practiceAssignments.filter(a => (a.phase||"season")===ph && a.day===wd) : [];
           const dateChecks = checkins.filter(c => c.check_date===checkinDate);
           const teamCoaches = (tn) => { const t = practiceTeams.find(x=>x.team_name===tn); return [t?.head_coach, t?.assistant_coach].filter(Boolean); };
           const isPresent = (nm, tn) => dateChecks.some(c => norm(c.coach_name)===norm(nm) && (c.team_name||"")===(tn||""));
+          // A scheduled coach who called out (coverage row) or requested off.
+          const coachOut = (nm, tn) => practiceCoverage.some(c => c.practice_date===checkinDate && (!tn||c.team_name===tn) && norm(c.coach_out)===norm(nm))
+            || coachRequests.some(r => r.request_date===checkinDate && !/denied|declined|rejected/i.test(r.status||"") && norm(r.coach_name)===norm(nm) && (!r.team_name||!tn||r.team_name===tn));
           // group scheduled assignments by slot
           const slots = {}; daySlots.forEach(a => { (slots[a.slot] = slots[a.slot]||[]).push(a); });
           const slotKeys = Object.keys(slots).sort();
@@ -9987,7 +10046,7 @@ export default function App() {
                 <span style={{fontSize:11,color:C.mut}}>{dateChecks.length} check-in{dateChecks.length===1?"":"s"}</span>
               </div>
               {slotKeys.length===0 && extras.length===0 ? (
-                <div style={{fontSize:13,color:C.mut}}>No practices scheduled for {wd} in the {schedulePhase} phase, and no check-ins.</div>
+                <div style={{fontSize:13,color:C.mut}}>{!ph ? "No practice phase is active on this date — no teams are scheduled to work." : dayCancelled ? "Practice is cancelled on this date." : "No practices scheduled for " + wd + " in the " + ph + " phase, and no check-ins."}</div>
               ) : (
                 <div style={{display:"flex",flexDirection:"column",gap:10}}>
                   {slotKeys.map(sk => (
@@ -9995,10 +10054,12 @@ export default function App() {
                       <div style={{fontSize:12,fontWeight:800,color:C.gold,marginBottom:6}}>{sk} · {slotHours(sk)}h</div>
                       <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
                         {slots[sk].slice().sort((a,b)=>a.team_name.localeCompare(b.team_name)).flatMap(a => teamCoaches(a.team_name).map(cn => {
+                          const out = coachOut(cn, a.team_name);
                           const present = isPresent(cn, a.team_name);
+                          const col = out ? "#f59e0b" : present ? C.grn : C.mut;
                           return (
-                            <span key={a.team_name+"|"+cn} title={a.team_name} style={{fontSize:12,fontWeight:700,padding:"3px 9px",borderRadius:14,border:"1px solid "+(present?C.grn:C.border),background:present?"rgba(34,197,94,0.14)":"transparent",color:present?C.grn:C.mut}}>
-                              {present?"✓ ":"○ "}{cn} <span style={{fontWeight:500,opacity:0.7}}>· {a.team_name}</span>
+                            <span key={a.team_name+"|"+cn} title={out ? cn+" is out / requested off" : a.team_name} style={{fontSize:12,fontWeight:700,padding:"3px 9px",borderRadius:14,border:"1px solid "+(out?"#f59e0b":present?C.grn:C.border),background:present&&!out?"rgba(34,197,94,0.14)":out?"rgba(245,158,11,0.12)":"transparent",color:col,textDecoration:out?"line-through":"none"}}>
+                              {out?"⊘ ":present?"✓ ":"○ "}{cn} <span style={{fontWeight:500,opacity:0.7,textDecoration:"none"}}>· {a.team_name}</span>
                             </span>
                           );
                         }))}
