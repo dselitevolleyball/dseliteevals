@@ -1660,7 +1660,7 @@ export default function App() {
     if (error) { console.error("Load coach_checkins error:", error); return; }
     setCheckins(data || []);
   }, []);
-  useEffect(() => { if (isApproved && view === "checkin") { loadCheckins(); loadPractice(); } }, [isApproved, view, loadCheckins, loadPractice]);
+  useEffect(() => { if (isApproved && view === "home") { loadCheckins(); loadPractice(); } }, [isApproved, view, loadCheckins, loadPractice]);
   // Autosave the active lineup draft (debounced) → lineup_plans. lineupSkipSave
   // suppresses the write that would otherwise fire right after loading a plan.
   const lineupSkipSave = useRef(true);
@@ -4197,6 +4197,7 @@ export default function App() {
             🗓 Request time off
           </button>
         </div>
+        {renderCheckIn()}
         {renderUpdatesPanel(myTeams.map(t => t.team_name))}
         {renderOpenShiftsPanel(myRoster ? ((myRoster.first_name||"")+" "+(myRoster.last_name||"")).trim() : (coach?.display_name||""))}
         {renderQuestionsPanel()}
@@ -9531,19 +9532,17 @@ export default function App() {
     };
 
     return (
-      <div style={{maxWidth:960, margin:"0 auto"}}>
-        <div style={{display:"flex",alignItems:"baseline",gap:10,flexWrap:"wrap",marginBottom:14}}>
-          <div style={{fontSize:20,fontWeight:800,color:C.gold}}>Clock In</div>
-          <div style={{fontSize:13,color:C.mut}}>{new Date(today+"T12:00:00").toLocaleDateString(undefined,{weekday:"long",month:"long",day:"numeric"})}</div>
+      <div style={{marginBottom:18}}>
+        <div style={{display:"flex",alignItems:"baseline",gap:10,flexWrap:"wrap",marginBottom:10}}>
+          <div style={{fontSize:15,fontWeight:800,color:C.gold}}>⏱ Clock in</div>
+          <div style={{fontSize:12,color:C.mut}}>{new Date(today+"T12:00:00").toLocaleDateString(undefined,{weekday:"long",month:"long",day:"numeric"})}</div>
           {myHoursToday>0 && <span style={{fontSize:12,color:C.grn,fontWeight:700}}>· {myHoursToday}h logged today</span>}
         </div>
 
         {/* Your scheduled practices today */}
+        {mySlots.length>0 && (
         <div style={St.card}>
           <div style={St.lbl}>Your practices today</div>
-          {mySlots.length===0 ? (
-            <div style={{fontSize:13,color:C.mut}}>No practices are scheduled for you today. If you're covering as a sub or floating, use the box below.</div>
-          ) : (
             <div style={{display:"flex",flexDirection:"column",gap:8}}>
               {mySlots.map(s => {
                 const c = checkFor(s.team, s.slot);
@@ -9566,8 +9565,8 @@ export default function App() {
                 );
               })}
             </div>
-          )}
         </div>
+        )}
 
         {/* Sub / float check-in */}
         <div style={St.card}>
@@ -13122,7 +13121,6 @@ export default function App() {
               ];
               return <>
                 {item("home","Home")}
-                {item("checkin","Clock In")}
                 {!canOps && item("notifications","Notifications" + (unreadCount>0?" ("+unreadCount+")":""))}
                 {groups.map(g => {
                   const activeInGroup = g.items.some(([v]) => v === view);
@@ -13292,7 +13290,6 @@ export default function App() {
         {view==="assignments" && renderAssignments()}
         {view==="coverage" && renderCoachCoverage()}
         {view==="faq" && renderFaq()}
-        {view==="checkin" && renderCheckIn()}
         {view==="lineups" && renderLineups()}
         {view==="games" && renderGames()}
         {view==="askai" && renderAskAI()}
