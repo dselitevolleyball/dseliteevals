@@ -9503,22 +9503,36 @@ export default function App() {
     const myR = coachRoster.find(r => coach?.email && norm(r.email)===norm(coach.email));
     if (myR) { const f=norm(myR.first_name), l=norm(myR.last_name); if(f){ cand.add((f+" "+l).trim()); cand.add(f); if(l) cand.add((f+" "+l[0]+".").trim()); } }
     const isMe = nm => !!nm && cand.has(norm(nm));
-    // Everywhere this coach is scheduled today — coaching AND floating — as one
-    // time-ordered list, so we can lead with whichever comes next.
-    const seen = new Set();
-    const mySlots = [
-      ...practiceAssignments.filter(a => (a.phase||"season")===schedulePhase && a.day===wdToday && myTeamNames.includes(a.team_name)).map(a => ({ team:a.team_name, slot:a.slot, role:"scheduled" })),
-      ...coachFloats.filter(f => (f.phase||"season")===schedulePhase && f.day===wdToday && isMe(f.coach_name)).map(f => ({ team:"", slot:f.slot, role:"float" })),
-    ].filter(x => { const k = x.role+"|"+x.team+"|"+x.slot; if(seen.has(k)) return false; seen.add(k); return true; })
-     .sort((a,b)=> startH(a.slot)-startH(b.slot) || (a.team||"").localeCompare(b.team||""));
+    // Everywhere this coach is scheduled on a given weekday — coaching AND
+    // floating — deduped and time-ordered.
+    const slotsForWD = (wd) => {
+      const seen2 = new Set();
+      return [
+        ...practiceAssignments.filter(a => (a.phase||"season")===schedulePhase && a.day===wd && myTeamNames.includes(a.team_name)).map(a => ({ team:a.team_name, slot:a.slot, role:"scheduled" })),
+        ...coachFloats.filter(f => (f.phase||"season")===schedulePhase && f.day===wd && isMe(f.coach_name)).map(f => ({ team:"", slot:f.slot, role:"float" })),
+      ].filter(x => { const k = x.role+"|"+x.team+"|"+x.slot; if(seen2.has(k)) return false; seen2.add(k); return true; })
+       .sort((a,b)=> startH(a.slot)-startH(b.slot) || (a.team||"").localeCompare(b.team||""));
+    };
+    const mySlots = slotsForWD(wdToday);
 
     const myChecksToday = checkins.filter(c => c.check_date===today && norm(c.coach_name)===norm(coachName));
     const checkFor = (team, slot) => myChecksToday.find(c => (c.team_name||"")===(team||"") && (c.slot||"")===(slot||""));
     const myHoursToday = myChecksToday.reduce((s,c)=> s + Number(c.hours||0), 0);
-    // "Next up" = earliest slot not yet checked in whose end hasn't passed.
+    // "Next up" today = earliest slot not yet checked in whose end hasn't passed.
     const nowH = new Date().getHours() + new Date().getMinutes()/60;
     const nextItem = mySlots.find(s => !checkFor(s.team, s.slot) && endH(s.slot) >= nowH) || mySlots.find(s => !checkFor(s.team, s.slot)) || null;
     const nextKey = nextItem ? (nextItem.role+"|"+nextItem.team+"|"+nextItem.slot) : null;
+    // Next shift overall — scan up to 2 weeks ahead across coaching + floating.
+    let nextShift = null;
+    for (let off=0; off<14 && !nextShift; off++) {
+      const d = new Date(); d.setDate(d.getDate()+off);
+      const iso = localDateISO(d);
+      for (const s of slotsForWD(WD_OF(iso))) {
+        if (off===0 && (endH(s.slot) < nowH || checkFor(s.team, s.slot))) continue; // ended or already logged
+        nextShift = { ...s, iso, off };
+        break;
+      }
+    }
 
     const doCheckin = async ({ team, slot, role, dateISO }) => {
       const key = (team||"float")+"|"+(slot||"")+"|"+role;
@@ -9553,6 +9567,20 @@ export default function App() {
           <div style={{fontSize:12,color:C.mut}}>{new Date(today+"T12:00:00").toLocaleDateString(undefined,{weekday:"long",month:"long",day:"numeric"})}</div>
           {myHoursToday>0 && <span style={{fontSize:12,color:C.grn,fontWeight:700}}>· {myHoursToday}h logged today</span>}
         </div>
+
+        {/* Next shift — the next time you're due to work (coaching or floating) */}
+        {nextShift ? (
+          <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",padding:"9px 12px",borderRadius:8,border:"1px solid "+C.gold,background:"rgba(233,30,140,0.06)",marginBottom:12}}>
+            <span style={{fontSize:9,fontWeight:800,color:"#000",background:C.gold,borderRadius:4,padding:"2px 6px",letterSpacing:0.4}}>NEXT SHIFT</span>
+            <span style={{fontSize:13,fontWeight:700,color:C.text}}>{nextShift.off===0 ? "Today" : nextShift.off===1 ? "Tomorrow" : new Date(nextShift.iso+"T12:00:00").toLocaleDateString(undefined,{weekday:"long",month:"short",day:"numeric"})}</span>
+            <span style={{fontSize:13,fontWeight:700,color:C.gold}}>{nextShift.slot}</span>
+            <span style={{fontSize:12,color:C.mut}}>({slotHours(nextShift.slot)}h)</span>
+            <span style={{fontSize:13,color:C.text,fontWeight:600}}>· {nextShift.role==="float" ? "Floating" : nextShift.team}</span>
+            {nextShift.role==="float" && roleTag("float")}
+          </div>
+        ) : (
+          <div style={{fontSize:12,color:C.mut,marginBottom:12}}>No upcoming shifts scheduled in the next two weeks.</div>
+        )}
 
         {/* Where you're scheduled today — coaching + floating, next one first */}
         {mySlots.length>0 && (
