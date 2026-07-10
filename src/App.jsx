@@ -673,6 +673,19 @@ function DropZone({ id, children, style }) {
   return <div ref={setNodeRef}
     style={{ ...style, outline: isOver ? "2px solid " + C.gold : "2px solid transparent", outlineOffset: -2, transition: "outline-color 0.1s" }}>{children}</div>;
 }
+// A vertical-sortable row for dnd-kit (a row is both draggable and a drop
+// target). Only the element given `handleProps` starts a drag, so inputs in
+// the row stay usable. children is a render-prop receiving the handle props.
+function SortableRow({ id, children }) {
+  const drag = useDraggable({ id });
+  const drop = useDroppable({ id });
+  const ref = (el) => { drag.setNodeRef(el); drop.setNodeRef(el); };
+  return (
+    <div ref={ref} style={{ opacity: drag.isDragging ? 0.4 : 1, borderRadius: 8, outline: drop.isOver && !drag.isDragging ? "2px dashed " + C.gold : "2px solid transparent", outlineOffset: 1, transition: "outline-color 0.1s" }}>
+      {children({ ...drag.listeners, ...drag.attributes, style: { cursor: "grab", touchAction: "none" } })}
+    </div>
+  );
+}
 // Debounced text input/textarea. Holds keystrokes locally and only fires
 // onCommit once the user has paused typing for `delay` ms (or blurs the
 // field, or the component unmounts). Keeps the Supabase players row — and
@@ -1086,6 +1099,8 @@ export default function App() {
   const [drills, setDrills]     = useState([]);     // shared drill library
   const [drillFilter, setDrillFilter] = useState({ q:"", skill:"", phase:"" });
   const [ppLibOpen, setPpLibOpen] = useState(false); // drill picker inside a plan
+  const [ppAiBusy, setPpAiBusy]   = useState(false); // AI plan generation in flight
+  const [ppAiInstr, setPpAiInstr] = useState("");    // extra instruction for the AI
   // Season-plan curriculum (per-team teaching checkboxes on the dashboard).
   const [currProgress, setCurrProgress]     = useState([]);
   const [currTeam, setCurrTeam]             = useState("");   // selected team in the panel
@@ -10295,7 +10310,7 @@ export default function App() {
               </div>
             )}
             {plannedItems.length > 0 && (
-              <div style={{fontSize:11,color:C.acc,marginTop:10}}>📌 {plannedItems.length} concept{plannedItems.length===1?"":"s"} pinned in the Season plan — they'll auto-attach as the focus when you start a new plan.</div>
+              <div style={{fontSize:11,color:C.acc,marginTop:10}}>🎯 {plannedItems.length} concept{plannedItems.length===1?"":"s"} you're working on in the Season plan — they auto-attach as the focus (and seed the AI) when you start a plan.</div>
             )}
           </div>
           {history.length > 0 && (
@@ -10336,6 +10351,61 @@ export default function App() {
       navigator.clipboard?.writeText(lines.join("\n"));
       window.alert("Plan copied to clipboard.");
     };
+    // Drag-reorder blocks.
+    const onBlockDragEnd = ({ active, over }) => {
+      if (!over || active.id === over.id) return;
+      updateDraft(d => { const b = d.blocks; const from = b.findIndex(x=>x.id===active.id); const to = b.findIndex(x=>x.id===over.id); if (from<0||to<0) return; const [m] = b.splice(from,1); b.splice(to,0,m); });
+    };
+    // Print a clean plan in a new window.
+    const printPlan = () => {
+      const esc = s => (s||"").toString().replace(/[&<>]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+      const rows = (ppDraft.blocks||[]).map(b => `<tr><td class="m">${Number(b.minutes)||0} min</td><td><b>${esc(b.name)||"(block)"}</b>${b.desc?`<div class="d">${esc(b.desc)}</div>`:""}</td></tr>`).join("");
+      const html = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(team)} practice</title><style>
+        body{font-family:Arial,Helvetica,sans-serif;margin:34px;color:#111}
+        h1{margin:0 0 2px;font-size:22px} .sub{color:#555;margin-bottom:14px;font-size:14px}
+        table{border-collapse:collapse;width:100%} td{border-bottom:1px solid #ddd;padding:9px 6px;vertical-align:top}
+        td.m{width:70px;font-weight:700;white-space:nowrap} .d{color:#444;font-size:13px;margin-top:3px;line-height:1.4}
+        .box{margin:10px 0;padding:9px 11px;background:#f4f4f4;border-radius:6px;font-size:13px}
+        .tot{margin-top:10px;font-size:13px;color:#333;font-weight:700} .foot{margin-top:16px;color:#888;font-size:12px}
+        @media print{body{margin:12mm}}</style></head><body>
+        <h1>${esc(team)} — Practice Plan</h1>
+        <div class="sub">${esc(fmtDay(ppDraft.date))} &nbsp;·&nbsp; ${esc(ppDraft.slot)} &nbsp;·&nbsp; ${totalMin} min</div>
+        ${focusItems.length?`<div class="box"><b>Focus:</b> ${focusItems.map(f=>esc(f.subject+" / "+f.label)).join(" &nbsp;·&nbsp; ")}</div>`:""}
+        <table>${rows || '<tr><td colspan="2" style="color:#999">No blocks yet.</td></tr>'}</table>
+        <div class="tot">Total: ${totalMin} / ${slotMin} min</div>
+        ${ppDraft.notes?`<div class="box"><b>Notes:</b> ${esc(ppDraft.notes)}</div>`:""}
+        <div class="foot">DS Elite Volleyball</div>
+        <scr`+`ipt>window.onload=function(){window.print()}</scr`+`ipt></body></html>`;
+      const w = window.open("", "_blank");
+      if (!w) { window.alert("Allow pop-ups to print the plan."); return; }
+      w.document.write(html); w.document.close();
+    };
+    // AI-draft the plan from the team's focus / working-on concepts + optional instruction.
+    const aiDraft = async () => {
+      const workingOn = allItems.filter(it => statusOf(it.k) === "planned");
+      const seedItems = focusItems.length ? focusItems : workingOn;
+      if (!seedItems.length && !ppAiInstr.trim()) { window.alert("Attach a focus concept (or mark some 'Working on' in the Season plan), or type an instruction for the AI."); return; }
+      if ((ppDraft.blocks||[]).length && !window.confirm("Replace the current blocks with a fresh AI draft?")) return;
+      setPpAiBusy(true);
+      try {
+        const parts = [];
+        if (seedItems.length) parts.push("Build this practice to install these concepts:\n" + seedItems.map(f => "- " + f.subject + " / " + f.label + ": " + f.cue).join("\n"));
+        parts.push("Coaching philosophy: game-like and high-touch, players do the work, a 15-25 minute serving block EVERY practice (non-negotiable) that finishes with pressure serving, warm up and cool down, and keep it moving.");
+        if (ppAiInstr.trim()) parts.push("Also: " + ppAiInstr.trim());
+        const nPlayers = players.filter(p => p.team_assignment===team && (p.offer_status==="accepted"||p.offer_status==="locked")).length || 12;
+        const res = await fetch("/api/plan-practice", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({
+          prompt: parts.join("\n\n"), minutes: slotMin, players: nPlayers, level: "All levels",
+          library: drills.slice(0, 140).map(d => ({ name:d.name, skill:d.skill, phase:d.phase, minutes:d.minutes, level:d.level })),
+        }) });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) { window.alert(json.error || "AI generation failed."); setPpAiBusy(false); return; }
+        const blocks = (json.plan?.blocks || []).map(b => ({ id: rid(), name: b.name || "Block", minutes: Number(b.minutes)||10, desc: b.desc || "" }));
+        if (!blocks.length) { window.alert("The AI didn't return any blocks — try adding an instruction."); setPpAiBusy(false); return; }
+        updateDraft(d => { d.blocks = blocks; });
+        setPpAiInstr("");
+      } catch (e) { window.alert("AI error: " + (e.message || e)); }
+      setPpAiBusy(false);
+    };
     return (
       <div style={{maxWidth:900,margin:"0 auto"}}>
         {teamBar}
@@ -10347,6 +10417,7 @@ export default function App() {
           </div>
           <div style={{flex:1}} />
           <span style={{fontSize:12,fontWeight:800,color:totalMin===slotMin?C.grn:totalMin>slotMin?C.red:"#f59e0b"}} title="Planned minutes vs practice length">{totalMin}/{slotMin} min</span>
+          <button style={St.ghost} onClick={printPlan} title="Open a printable version">🖨 Print</button>
           <button style={St.ghost} onClick={copyPlan}>Copy plan</button>
           {ppDraft.status === "done"
             ? <button style={{...St.ghost,color:C.grn,borderColor:C.grn}} onClick={() => updateDraft(d => { d.status = "draft"; })}>✓ Complete — reopen</button>
@@ -10379,30 +10450,45 @@ export default function App() {
 
         {/* Blocks */}
         <div style={St.card}>
-          <div style={St.lbl}>Practice blocks</div>
-          <div style={{display:"flex",flexDirection:"column",gap:8}}>
-            {(ppDraft.blocks||[]).map((b, i) => (
-              <div key={b.id || i} style={{display:"flex",gap:8,alignItems:"flex-start",background:C.bg,border:"1px solid "+C.border,borderRadius:8,padding:"8px 10px",flexWrap:"wrap"}}>
-                <input type="number" min="0" value={b.minutes} onChange={e => updateDraft(d => { d.blocks[i].minutes = e.target.value === "" ? "" : +e.target.value; })}
-                  title="Minutes" style={{...St.sel,width:58,textAlign:"center",fontWeight:800,color:C.gold}} />
-                <div style={{flex:1,minWidth:200}}>
-                  <input value={b.name} onChange={e => updateDraft(d => { d.blocks[i].name = e.target.value; })} placeholder="Block name"
-                    style={{...St.sel,width:"100%",fontWeight:700,marginBottom:4}} />
-                  <textarea value={b.desc || ""} onChange={e => updateDraft(d => { d.blocks[i].desc = e.target.value; })} placeholder="Details / drills / cues…"
-                    style={{...St.sel,width:"100%",minHeight:36,resize:"vertical",fontSize:12,lineHeight:1.4}} />
-                </div>
-                <div style={{display:"flex",flexDirection:"column",gap:3}}>
-                  <button disabled={i===0} onClick={() => updateDraft(d => { const [x] = d.blocks.splice(i,1); d.blocks.splice(i-1,0,x); })} title="Move up" style={{...St.ghost,padding:"2px 8px",opacity:i===0?0.3:1}}>▲</button>
-                  <button disabled={i===(ppDraft.blocks.length-1)} onClick={() => updateDraft(d => { const [x] = d.blocks.splice(i,1); d.blocks.splice(i+1,0,x); })} title="Move down" style={{...St.ghost,padding:"2px 8px",opacity:i===(ppDraft.blocks.length-1)?0.3:1}}>▼</button>
-                  <button onClick={() => updateDraft(d => { d.blocks.splice(i,1); })} title="Remove block" style={{...St.ghost,padding:"2px 8px",color:C.red}}>✕</button>
-                </div>
-              </div>
-            ))}
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,flexWrap:"wrap"}}>
+            <div style={{...St.lbl,marginBottom:0}}>Practice blocks</div>
+            <span style={{fontSize:10,color:C.mut}}>drag ⠿ to reorder</span>
           </div>
+          <DndContext sensors={dndSensors} onDragEnd={onBlockDragEnd}>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {(ppDraft.blocks||[]).map((b, i) => (
+                <SortableRow key={b.id || ("b"+i)} id={b.id || ("b"+i)}>
+                  {(handle) => (
+                    <div style={{display:"flex",gap:8,alignItems:"flex-start",background:C.bg,border:"1px solid "+C.border,borderRadius:8,padding:"8px 10px",flexWrap:"wrap"}}>
+                      <span {...handle} title="Drag to reorder" style={{...handle.style,fontSize:17,color:C.mut,padding:"6px 3px",lineHeight:1,userSelect:"none",alignSelf:"center"}}>⠿</span>
+                      <input type="number" min="0" value={b.minutes} onChange={e => updateDraft(d => { d.blocks[i].minutes = e.target.value === "" ? "" : +e.target.value; })}
+                        title="Minutes" style={{...St.sel,width:52,textAlign:"center",fontWeight:800,color:C.gold}} />
+                      <div style={{flex:1,minWidth:190}}>
+                        <input value={b.name} onChange={e => updateDraft(d => { d.blocks[i].name = e.target.value; })} placeholder="Block name"
+                          style={{...St.sel,width:"100%",fontWeight:700,marginBottom:4}} />
+                        <textarea value={b.desc || ""} onChange={e => updateDraft(d => { d.blocks[i].desc = e.target.value; })} placeholder="Details / drills / cues…"
+                          style={{...St.sel,width:"100%",minHeight:36,resize:"vertical",fontSize:12,lineHeight:1.4}} />
+                      </div>
+                      <button onClick={() => updateDraft(d => { d.blocks.splice(i,1); })} title="Remove block" style={{...St.ghost,padding:"4px 9px",color:C.red,alignSelf:"center"}}>✕</button>
+                    </div>
+                  )}
+                </SortableRow>
+              ))}
+              {(ppDraft.blocks||[]).length===0 && <div style={{fontSize:12,color:C.mut}}>No blocks yet — add one, pull from the library, use the template, or draft with AI below.</div>}
+            </div>
+          </DndContext>
           <div style={{display:"flex",gap:8,marginTop:10,flexWrap:"wrap"}}>
             <button style={St.ghost} onClick={() => updateDraft(d => { d.blocks.push({ id:rid(), name:"", minutes:10, desc:"" }); })}>+ Add block</button>
             <button style={{...St.ghost,borderColor:ppLibOpen?C.gold:C.border,color:ppLibOpen?C.gold:C.text}} onClick={() => setPpLibOpen(v => !v)}>{ppLibOpen?"Hide library":"+ From library"}</button>
             <button style={St.ghost} title="Reset to the standard DS Elite template for this slot length" onClick={() => { if (window.confirm("Replace all blocks with the standard template?")) updateDraft(d => { d.blocks = defaultBlocks(d.slot); }); }}>Reset to template</button>
+          </div>
+          {/* AI draft */}
+          <div style={{marginTop:12,borderTop:"1px solid "+C.border,paddingTop:10}}>
+            <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+              <input value={ppAiInstr} onChange={e=>setPpAiInstr(e.target.value)} placeholder="Optional AI instruction (e.g. add out-of-system, more scrimmage)…" style={{...St.sel,flex:1,minWidth:200}} />
+              <button style={{...St.gold,opacity:ppAiBusy?0.6:1}} disabled={ppAiBusy} onClick={aiDraft}>{ppAiBusy?"Drafting…":"✨ Draft with AI"}</button>
+            </div>
+            <div style={{fontSize:10,color:C.mut,marginTop:6}}>Builds a plan from {focusItems.length?"this practice's focus concepts":"what you're Working on in the Season plan"} + the drill library, following the DS Elite philosophy. Replaces the blocks — then edit freely.</div>
           </div>
           {ppLibOpen && (
             <div style={{marginTop:10,borderTop:"1px solid "+C.border,paddingTop:10}}>
@@ -10472,19 +10558,19 @@ export default function App() {
           </div>
         )}
 
-        {/* Planned for practice — the pivot into practice planning */}
+        {/* Working on — the pivot into practice planning + what the AI references */}
         {planned.length > 0 && (
           <div style={{border:"1px solid "+C.acc,background:"rgba(255,105,180,0.06)",borderRadius:10,padding:"8px 10px",margin:"8px 0",display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-            <span style={{...Sp.lbl,color:C.acc}}>📌 For next practice ({planned.length}):</span>
+            <span style={{...Sp.lbl,color:C.acc}}>🎯 Working on ({planned.length}):</span>
             {planned.map(p => (
               <span key={p.k} style={{...Sp.chip,display:"inline-flex",alignItems:"center",gap:5}} title={p.cue}>
                 {p.label}
                 <span onClick={() => setCurriculumStatus(team, p.k, "done")} title="Mark taught ✓" style={{color:C.grn,cursor:"pointer",fontWeight:800}}>✓</span>
-                <span onClick={() => setCurriculumStatus(team, p.k, "todo")} title="Unpin" style={{color:C.mut,cursor:"pointer"}}>✕</span>
+                <span onClick={() => setCurriculumStatus(team, p.k, "todo")} title="Stop working on this" style={{color:C.mut,cursor:"pointer"}}>✕</span>
               </span>
             ))}
             <div style={{flex:1}} />
-            <button onClick={copyPlan} style={{...Sp.chip,cursor:"pointer",fontFamily:"inherit",color:C.acc,borderColor:C.acc}}>Copy focus list</button>
+            <button onClick={copyPlan} style={{...Sp.chip,cursor:"pointer",fontFamily:"inherit",color:C.acc,borderColor:C.acc}}>Copy list</button>
             <button onClick={() => { setCurrTeam(team); setPpTeam(team); setPpTab("plan"); setView("practiceplan"); }} style={{...Sp.chip,cursor:"pointer",fontFamily:"inherit",background:C.gold,color:"#000",border:"none"}}>Plan a practice →</button>
           </div>
         )}
@@ -10530,10 +10616,10 @@ export default function App() {
                               </div>
                               {st!=="done" && (
                                 <button onClick={() => setCurriculumStatus(team, it.k, st==="planned" ? "todo" : "planned")}
-                                  title={st==="planned"?"Unpin from next practice":"Pin this concept to your next practice plan"}
+                                  title={st==="planned"?"Currently working on this — click to stop":"Mark as something you're working on (the AI uses these to draft practices)"}
                                   style={{fontSize:10,fontWeight:800,padding:"3px 9px",borderRadius:8,cursor:"pointer",fontFamily:"inherit",flexShrink:0,
                                     border:"1px solid "+(st==="planned"?C.acc:C.border),background:st==="planned"?"rgba(255,105,180,0.14)":"transparent",color:st==="planned"?C.acc:C.mut}}>
-                                  {st==="planned" ? "📌 planned" : "📌 plan"}
+                                  {st==="planned" ? "🎯 working on" : "🎯 work on"}
                                 </button>
                               )}
                             </div>
@@ -10547,7 +10633,7 @@ export default function App() {
             );
           })}
         </div>
-        <div style={{fontSize:10,color:C.mut,marginTop:8}}>Teach top to bottom: finish a subject's Tier 1 before its Tier 2. ✓ = your team has it installed · 📌 = queued for your next practice.</div>
+        <div style={{fontSize:10,color:C.mut,marginTop:8}}>Teach top to bottom: finish a subject's Tier 1 before its Tier 2. ✓ = your team has it installed · 🎯 = currently working on (feeds practice plans + the AI).</div>
       </div>
     );
   }
