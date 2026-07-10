@@ -59,6 +59,9 @@ export default async function handler(req, res) {
   } else if (audience.type === "email") {
     const e = String(audience.email || "").toLowerCase();
     targets = targets.filter(s => (s.email || "").toLowerCase() === e);
+  } else if (audience.type === "emails") {
+    const set = new Set((audience.emails || []).map(e => String(e || "").toLowerCase()));
+    targets = targets.filter(s => set.has((s.email || "").toLowerCase()));
   } // "all" → everyone
 
   const payload = JSON.stringify({ title, body: text, url });

@@ -686,6 +686,15 @@ function SortableRow({ id, children }) {
     </div>
   );
 }
+// Textarea that grows to fit its content as you type (no inner scrollbar).
+function AutoTextarea({ value, onChange, minRows = 3, style, ...rest }) {
+  const ref = useRef(null);
+  const resize = () => { const el = ref.current; if (!el) return; el.style.height = "auto"; el.style.height = Math.max(el.scrollHeight, minRows * 22) + "px"; };
+  useEffect(() => { resize(); }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
+  return <textarea ref={ref} rows={minRows} value={value}
+    onChange={(e) => { onChange(e); resize(); }}
+    style={{ ...style, overflow: "hidden", resize: "none" }} {...rest} />;
+}
 // Debounced text input/textarea. Holds keystrokes locally and only fires
 // onCommit once the user has paused typing for `delay` ms (or blurs the
 // field, or the component unmounts). Keeps the Supabase players row — and
@@ -1198,6 +1207,8 @@ export default function App() {
   const [updates, setUpdates]                               = useState([]); // club-wide announcements
   const [updateDraft, setUpdateDraft]                       = useState(""); // new-update composer
   const [updateTeamTarget, setUpdateTeamTarget]             = useState(""); // "" = club-wide; else a team name
+  // Targeted-notification composer (Notifications screen).
+  const [notif, setNotif] = useState({ subject:"", msg:"", role:"both", divs:[], ages:[], teams:[], sending:false, sent:null });
   const [showChecklistSetup, setShowChecklistSetup]         = useState(false);
   const [practiceApprovals, setPracticeApprovals]           = useState({}); // { [team_name]: { approved, approved_by_name, approved_at } }
   const [schedChangeOpen, setSchedChangeOpen]               = useState({}); // { [team]: bool } request-a-change composer open
@@ -4184,8 +4195,8 @@ export default function App() {
         {showChecklistSetup && (
           <div style={{marginTop:12}}>
             <div style={{fontSize:10,fontWeight:800,textTransform:"uppercase",color:C.gold,marginBottom:6}}>Post an Update</div>
-            <textarea value={updateDraft} onChange={e=>setUpdateDraft(e.target.value)} placeholder={updateTeamTarget ? "Share an update with " + updateTeamTarget + "…" : "Share an update with all coaches…"}
-              style={{...inpStyle,width:"100%",minHeight:50,padding:"8px 10px",fontSize:12,resize:"vertical",boxSizing:"border-box"}} />
+            <AutoTextarea value={updateDraft} onChange={e=>setUpdateDraft(e.target.value)} minRows={2} placeholder={updateTeamTarget ? "Share an update with " + updateTeamTarget + "…" : "Share an update with all coaches…"}
+              style={{...inpStyle,width:"100%",padding:"8px 10px",fontSize:12,boxSizing:"border-box"}} />
             <div style={{marginTop:6,display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,flexWrap:"wrap"}}>
               <label style={{display:"flex",alignItems:"center",gap:5,fontSize:11,fontWeight:700,color:C.mut}}>Audience
                 <select value={updateTeamTarget} onChange={e=>setUpdateTeamTarget(e.target.value)}
@@ -4274,12 +4285,107 @@ export default function App() {
       });
       return { label: u.team_name, count: matched.length || null };
     };
+    // ── Targeted notification composer ────────────────────────────────────
+    const nrm = s => (s||"").toString().trim().toLowerCase();
+    const emailForName = (name) => {
+      const t = nrm(name); if (!t) return null;
+      const r = (coachRoster||[]).find(r => { const f=nrm(r.first_name), l=nrm(r.last_name); const full=(f+" "+l).trim(), fli=(f+" "+(l?l[0]:"")+".").trim(); return t===full || t===f || t===fli || t===(f+" "+(l?l[0]:"")).trim(); });
+      if (r && r.email) return r.email.trim();
+      const c = approvedCoaches.find(c => nrm(c.display_name)===t);
+      if (c) return c.email;
+      const c2 = approvedCoaches.find(c => nrm(c.display_name).split(" ")[0] === t.split(" ")[0]);
+      return c2 ? c2.email : null;
+    };
+    const divsAll = [...new Set(practiceTeams.map(t=>t.level).filter(Boolean))];
+    const agesAll = [...new Set(practiceTeams.map(t=>t.age_div).filter(Boolean))].sort((a,b)=>(parseInt(a.replace(/\D/g,""))||0)-(parseInt(b.replace(/\D/g,""))||0));
+    const teamsMatching = practiceTeams.filter(t =>
+      (notif.divs.length===0 || notif.divs.includes(t.level)) &&
+      (notif.ages.length===0 || notif.ages.includes(t.age_div)) &&
+      (notif.teams.length===0 || notif.teams.includes(t.team_name)));
+    const namePairs = [];
+    teamsMatching.forEach(t => {
+      if (notif.role!=="ac" && t.head_coach) namePairs.push(t.head_coach);
+      if (notif.role!=="hc" && t.assistant_coach) namePairs.push(t.assistant_coach);
+    });
+    const emailMap = new Map(); const unresolved = new Set();
+    [...new Set(namePairs)].forEach(nm => { const e = emailForName(nm); if (e) emailMap.set(nrm(e), e.trim()); else unresolved.add(nm); });
+    const recipEmails = [...emailMap.values()];
+    const toggleArr = (key, val) => setNotif(n => ({ ...n, [key]: n[key].includes(val) ? n[key].filter(x=>x!==val) : [...n[key], val] }));
+    const sendNotif = async () => {
+      if (!notif.msg.trim()) { window.alert("Write a message first."); return; }
+      if (!recipEmails.length) { window.alert("No coaches match this audience — widen the filters or check coach emails."); return; }
+      const audWords = (notif.role==="hc"?"head coaches":notif.role==="ac"?"assistant coaches":"head + assistant coaches")
+        + (notif.divs.length?" · "+notif.divs.join("/"):"") + (notif.ages.length?" · "+notif.ages.join("/"):"") + (notif.teams.length?" · "+notif.teams.length+" team(s)":"");
+      if (!window.confirm("Send this notification to "+recipEmails.length+" coach"+(recipEmails.length===1?"":"es")+" ("+audWords+")?")) return;
+      setNotif(n => ({ ...n, sending:true, sent:null }));
+      const title = notif.subject.trim() || "DS Elite Update";
+      const emailBody = notif.msg.trim() + "\n\n—\nOpen DS Elite HQ: " + APP_URL + "\nLog in with your coach email.";
+      try {
+        await Promise.all([
+          fetch("/api/send-push", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ title, body: notif.msg.trim(), url:"/", audience:{ type:"emails", emails: recipEmails } }) }),
+          fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ subject: title + " — DS Elite HQ", body: emailBody, recipients: recipEmails }) }),
+        ]);
+        setNotif(n => ({ ...n, sending:false, sent: recipEmails.length, msg:"", subject:"" }));
+      } catch (e) { window.alert("Send failed: " + (e.message||e)); setNotif(n => ({ ...n, sending:false })); }
+    };
+    const chip = (on, label, onClick, col=C.gold) => (
+      <button key={label} onClick={onClick} style={{padding:"5px 11px",borderRadius:16,border:"1px solid "+(on?col:C.border),background:on?"rgba(233,30,140,0.12)":"transparent",color:on?col:C.mut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>{label}</button>
+    );
+
     return (
       <div style={{maxWidth:820}}>
         <div style={{marginBottom:14}}>
-          <h2 style={{margin:0,fontSize:18,fontWeight:800,color:C.gold}}>Notification History</h2>
-          <div style={{fontSize:12,color:C.mut,marginTop:4}}>Every update you've posted — what was sent, to whom, and when. Each goes out in-app, via push, and by email. Post new ones from the All Teams page.</div>
+          <h2 style={{margin:0,fontSize:18,fontWeight:800,color:C.gold}}>Notifications</h2>
+          <div style={{fontSize:12,color:C.mut,marginTop:4}}>Send a targeted push + email to any slice of your staff, and review what's gone out.</div>
         </div>
+
+        {/* Composer */}
+        <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:16,marginBottom:18}}>
+          <div style={{fontSize:10,fontWeight:800,textTransform:"uppercase",letterSpacing:0.4,color:C.gold,marginBottom:8}}>Send a notification</div>
+          <input value={notif.subject} onChange={e=>setNotif(n=>({...n,subject:e.target.value}))} placeholder="Title (optional — defaults to “DS Elite Update”)"
+            style={{...inpStyle,width:"100%",padding:"8px 10px",fontSize:13,fontWeight:700,boxSizing:"border-box",marginBottom:8}} />
+          <AutoTextarea value={notif.msg} onChange={e=>setNotif(n=>({...n,msg:e.target.value}))} minRows={3} placeholder="Write your message…"
+            style={{...inpStyle,width:"100%",padding:"10px 12px",fontSize:14,lineHeight:1.5,boxSizing:"border-box"}} />
+
+          <div style={{marginTop:12,display:"flex",flexDirection:"column",gap:8}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+              <span style={{fontSize:10,fontWeight:800,textTransform:"uppercase",color:C.mut,width:66}}>Role</span>
+              {[["both","Head + Assistant"],["hc","Head coaches"],["ac","Assistant coaches"]].map(([v,l]) => chip(notif.role===v, l, ()=>setNotif(n=>({...n,role:v})), C.acc))}
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+              <span style={{fontSize:10,fontWeight:800,textTransform:"uppercase",color:C.mut,width:66}}>Division</span>
+              {chip(notif.divs.length===0, "All", ()=>setNotif(n=>({...n,divs:[]})))}
+              {divsAll.map(d => chip(notif.divs.includes(d), d, ()=>toggleArr("divs",d)))}
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+              <span style={{fontSize:10,fontWeight:800,textTransform:"uppercase",color:C.mut,width:66}}>Age</span>
+              {chip(notif.ages.length===0, "All", ()=>setNotif(n=>({...n,ages:[]})))}
+              {agesAll.map(a => chip(notif.ages.includes(a), a, ()=>toggleArr("ages",a)))}
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+              <span style={{fontSize:10,fontWeight:800,textTransform:"uppercase",color:C.mut,width:66}}>Teams</span>
+              {chip(notif.teams.length===0, "All matching", ()=>setNotif(n=>({...n,teams:[]})))}
+              {notif.teams.length>0 && <span style={{fontSize:11,color:C.mut}}>{notif.teams.length} selected</span>}
+              <select value="" onChange={e=>{ if(e.target.value) toggleArr("teams", e.target.value); }} style={{...inpStyle,padding:"4px 8px",fontSize:11}}>
+                <option value="">+ specific team…</option>
+                {practiceTeams.map(t => <option key={t.team_name} value={t.team_name}>{notif.teams.includes(t.team_name)?"✓ ":""}{t.team_name}</option>)}
+              </select>
+              {notif.teams.map(tn => <span key={tn} onClick={()=>toggleArr("teams",tn)} style={{fontSize:10,fontWeight:700,padding:"3px 8px",borderRadius:12,background:"rgba(233,30,140,0.12)",color:C.gold,cursor:"pointer"}}>{tn} ✕</span>)}
+            </div>
+          </div>
+
+          <div style={{display:"flex",alignItems:"center",gap:12,marginTop:14,flexWrap:"wrap"}}>
+            <button onClick={sendNotif} disabled={notif.sending || !notif.msg.trim() || !recipEmails.length}
+              style={{padding:"9px 18px",borderRadius:8,border:"none",background:(notif.sending||!notif.msg.trim()||!recipEmails.length)?C.border:C.gold,color:(notif.sending||!notif.msg.trim()||!recipEmails.length)?C.mut:"#000",fontFamily:"inherit",fontSize:14,fontWeight:800,cursor:(notif.sending||!notif.msg.trim()||!recipEmails.length)?"default":"pointer"}}>
+              {notif.sending ? "Sending…" : "Send to " + recipEmails.length + " coach" + (recipEmails.length===1?"":"es")}
+            </button>
+            <span style={{fontSize:11,color:C.mut}}>push + email · {teamsMatching.length} team{teamsMatching.length===1?"":"s"} matched</span>
+            {notif.sent!=null && <span style={{fontSize:12,fontWeight:700,color:C.grn}}>✓ Sent to {notif.sent}</span>}
+            {unresolved.size>0 && <span style={{fontSize:11,color:"#f59e0b"}} title={[...unresolved].join(", ")}>⚠ {unresolved.size} coach{unresolved.size===1?"":"es"} have no email on file</span>}
+          </div>
+        </div>
+
+        <div style={{fontSize:10,fontWeight:800,textTransform:"uppercase",letterSpacing:0.4,color:C.mut,marginBottom:8}}>Notification history</div>
         {updates.length === 0 ? (
           <div style={{padding:24,textAlign:"center",color:C.mut,fontSize:13,background:C.card,borderRadius:12,border:"1px solid "+C.border}}>No notifications sent yet.</div>
         ) : (
