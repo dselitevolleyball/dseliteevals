@@ -11848,24 +11848,21 @@ export default function App() {
           <button style={{...S.ghost,color:C.red,borderColor:"rgba(239,68,68,0.4)"}} onClick={() => deletePlan(lineupPlanId)}>Delete plan</button>
         </div>
 
-        {/* Roster */}
-        <div style={S.card}>
-          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8,flexWrap:"wrap"}}>
-            <div style={S.lbl}>Roster ({roster.length})</div>
+        {/* Roster — tucked away; positions/roles are assigned per court slot below */}
+        <details style={{...S.card,marginBottom:12}}>
+          <summary style={{cursor:"pointer",fontSize:12,fontWeight:800,color:C.mut,letterSpacing:0.3,listStyle:"revert"}}>Roster ({roster.length}) — add or edit players</summary>
+          <div style={{display:"flex",alignItems:"center",gap:10,margin:"10px 0 8px",flexWrap:"wrap"}}>
+            <div style={{fontSize:11,color:C.mut}}>Players come from the team roster; assign each one's role per court slot below.</div>
             <div style={{flex:1}} />
             {teamPlayerCount > 0 && <button style={S.ghost} title={"Add " + team + "'s players (from the team roster) that aren't already here"} onClick={() => { const n = mergeTeamRoster(team); window.alert(n ? "Added " + n + " player" + (n===1?"":"s") + " from " + team + "." : "Everyone on " + team + "'s roster is already here."); }}>⬇ {team} roster ({teamPlayerCount})</button>}
             <button style={S.ghost} onClick={addPlayer}>+ Player</button>
           </div>
           {roster.length === 0 && <div style={{fontSize:12,color:C.mut,marginBottom:8}}>{teamPlayerCount > 0 ? <>Pull <b>{team}</b>'s {teamPlayerCount} players with <b>⬇ {team} roster</b> above, add them one at a time, or paste a list.</> : <>Add players below, or paste a roster (one per line, e.g. <code>24 Hattie M</code>).</>}</div>}
-          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:8,marginBottom:10}}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:8,marginBottom:10}}>
             {roster.map(p => (
               <div key={p.id} style={{display:"flex",alignItems:"center",gap:5,background:C.bg,border:"1px solid "+C.border,borderRadius:8,padding:"5px 7px"}}>
                 <input value={p.num} onChange={e => updateDraft(d => { const r = d.roster.find(x=>x.id===p.id); if(r) r.num = e.target.value.replace(/\D/g,"").slice(0,2); })} placeholder="#" style={{...S.sel,width:34,textAlign:"center",color:C.gold,fontWeight:700}} />
                 <input value={p.name} onChange={e => updateDraft(d => { const r = d.roster.find(x=>x.id===p.id); if(r) r.name = e.target.value; })} placeholder="Name" style={{...S.sel,flex:1,minWidth:60}} />
-                <select value={p.pos} onChange={e => updateDraft(d => { const r = d.roster.find(x=>x.id===p.id); if(r) r.pos = e.target.value; })} style={{...S.sel,width:60}} title="Position">
-                  <option value="">pos</option>
-                  {VB_POSITIONS.map(x => <option key={x} value={x}>{x}</option>)}
-                </select>
                 <button style={{background:"none",border:"none",color:C.mut,cursor:"pointer",fontSize:14,padding:"0 2px"}} title="Remove" onClick={() => updateDraft(d => { d.roster = d.roster.filter(x=>x.id!==p.id); })}>✕</button>
               </div>
             ))}
@@ -11878,7 +11875,7 @@ export default function App() {
             </div>
             <div style={{fontSize:10,color:C.mut,marginTop:4}}>One player per line: number, name, and position (S/OH/M/RS/L/DS) in any order. Number and position optional.</div>
           </details>
-        </div>
+        </details>
 
         {/* Set tabs */}
         <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:12}}>
@@ -12025,7 +12022,8 @@ export default function App() {
               const isServer = phase==="serve" && slot.n===1;
               const isSetF = slot.id && slot.id===ro.setterFront;
               const isPass = phase==="receive" && slot.id && ro.passers && ro.passers.has(slot.id);
-              const libSwitch = slot.id && ro.switchIds && ro.switchIds.has(slot.id); // the half the libero⇄middle switch happens
+              const liberoServing = phase==="serve" && slot.n===1 && slot.id===liberoId && !!slot.libFor; // libero serving in for the middle
+              const libSwitch = (slot.id && ro.switchIds && ro.switchIds.has(slot.id)) || liberoServing; // the half the libero⇄middle switch happens (incl. serving for the middle)
               const enteredHere = slot.id && !libSwitch && ro.entered && ro.entered.has(slot.id); // rotated / subbed in
               const pos = slot.id && byId[slot.id] ? (byId[slot.id].pos||"") : "";
               const num = slot.id ? pnum(slot.id) : "";
@@ -12069,8 +12067,9 @@ export default function App() {
                         <th key={ro.r} colSpan={3} style={hd}>
                           <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>
                             <span style={{fontSize:12,fontWeight:800,color:C.gold}}>R{ro.r+1}</span>
-                            {ro.entered && ro.entered.size>0 && <span title={ro.entered.size+" subbed in"} style={{fontSize:9,fontWeight:800,color:"#22c55e",background:"rgba(34,197,94,0.16)",borderRadius:8,padding:"0 5px"}}>▲{ro.entered.size}</span>}
+                            {ro.entered && ro.entered.size>0 && <span title={ro.entered.size+" subbed in this half"} style={{fontSize:9,fontWeight:800,color:"#22c55e",background:"rgba(34,197,94,0.16)",borderRadius:8,padding:"0 5px"}}>▲{ro.entered.size}</span>}
                           </div>
+                          <div title="Total subs used through here" style={{fontSize:9,fontWeight:800,color:ro.cumSubs>SUBS_PER_SET?C.red:C.mut}}>Σ {ro.cumSubs||0}/{SUBS_PER_SET}</div>
                           <div style={{fontSize:9,fontWeight:600,color:C.mut,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ro.setterBack?"sets "+pfirst(ro.setterBack):"—"}</div>
                         </th>
                       ))}
@@ -12106,7 +12105,7 @@ export default function App() {
             // both). Uses the no-libero effective six, so the libero covering a
             // middle doesn't register as a substitution.
             {
-              let prevNo = null, prevWith = null;
+              let prevNo = null, prevWith = null, run = 0;
               for(let s=0;s<24;s++){
                 const r = Math.floor(s/2), ph = (s%2===0) ? "serve" : "receive";
                 const rots = (s%2===0) ? serveRots : recvRots;
@@ -12119,6 +12118,7 @@ export default function App() {
                 // real sub) — so the libero is colored ONLY the half it switches
                 // in / the middle switches back, not the whole time it's on.
                 ro.switchIds = prevWith ? new Set([...nowWith].filter(id => !prevWith.has(id) && !ro.entered.has(id))) : new Set();
+                run += ro.entered.size; ro.cumSubs = run; // running total of subs used through this half
                 prevNo = nowNo; prevWith = nowWith;
               }
             }
