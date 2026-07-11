@@ -11992,16 +11992,39 @@ export default function App() {
           {!lineupFilled ? (
             <div style={{fontSize:12,color:C.mut,padding:"6px 0"}}>Fill all 6 court positions above to see the rotations.</div>
           ) : (() => {
-            const passers = new Set(set.passers||[]);
             const liberoId = set.liberoId;
             const lib = vbLiberoConf(set); // libero/middle back-row switch, or null
+            const isMiddle = id => (set.middles||[]).includes(id);
+            const isSetter = id => (set.setters||[]).includes(id);
+            // In serve-receive the passers are: the libero (always), the back-row
+            // OH/DS (always), plus ONE front-row pin (the RS or the OH) that the
+            // coach pulls back — chosen per rotation via set.srFront[base].
+            const frontPins = ro => ro.slots.filter(s => s.row==="front" && s.id && !isMiddle(s.id)); // the RS & OH
+            const pinRole = id => (isSetter(id) || byId[id]?.pos==="RS") ? "RS" : "OH"; // front setter runs right side
+            const srFront = set.srFront || {};
+            const pullPick = ro => {
+              const cands = frontPins(ro);
+              const chosen = cands.find(s => s.id===srFront[ro.r%6]);
+              return chosen || cands.find(s => pinRole(s.id)==="OH") || cands[0] || null; // default: the OH
+            };
+            const receivePassers = ro => {
+              const out = new Set();
+              ro.slots.forEach(s => {
+                if(!s.id) return;
+                if(s.id===liberoId){ out.add(s.id); return; }                        // libero: always
+                if(s.row==="back" && !isMiddle(s.id) && !isSetter(s.id)) out.add(s.id); // back-row OH/DS: always
+              });
+              const pull = pullPick(ro);
+              if(pull) out.add(pull.id);                                              // chosen front pin pulled back
+              return out;
+            };
             const frontIdx = [3,2,1], backIdx = [4,5,0]; // court indexes for front row (4·3·2) and back (5·6·1)
             const hd = { border:"1px solid "+C.border, borderRight:"2px solid #3a3a3a", padding:"2px 3px", background:"rgba(255,255,255,0.03)", textAlign:"center" };
             const rlbl = { border:"1px solid "+C.border, fontSize:8, fontWeight:800, color:C.mut, textTransform:"uppercase", letterSpacing:0.3, padding:"2px 4px", textAlign:"center", background:"rgba(255,255,255,0.02)", width:42 };
             const cell = (slot, ro, edge, phase) => {
               const isServer = phase==="serve" && slot.n===1;
               const isSetF = slot.id && slot.id===ro.setterFront;
-              const isPass = phase==="receive" && slot.id && passers.has(slot.id);
+              const isPass = phase==="receive" && slot.id && ro.passers && ro.passers.has(slot.id);
               const libSwitch = slot.id && ro.switchIds && ro.switchIds.has(slot.id); // the half the libero⇄middle switch happens
               const enteredHere = slot.id && !libSwitch && ro.entered && ro.entered.has(slot.id); // rotated / subbed in
               const pos = slot.id && byId[slot.id] ? (byId[slot.id].pos||"") : "";
@@ -12076,6 +12099,7 @@ export default function App() {
             });
             const serveRots = buildRots("serve");
             const recvRots  = buildRots("receive");
+            recvRots.forEach(ro => { ro.passers = receivePassers(ro); }); // libero + back OH/DS + chosen front pin
             // Mark a sub-in at the ONE chronological half-step where the player
             // first appears — walking serve then serve-receive, rotation by
             // rotation — so a sub is flagged only once (in serve OR receive, not
@@ -12125,6 +12149,25 @@ export default function App() {
                     <span style={{fontSize:11,fontWeight:700,color:C.mut}}>{subsLeft<0 ? Math.abs(subsLeft)+" over limit" : subsLeft+" left"}</span>
                   </div>
                   <span style={{fontSize:10,color:C.mut}}>#num top-left · position top-right · ▲ = rotates in · SR = passer</span>
+                </div>
+                {/* Serve-receive: pick which front pin (RS or OH) is pulled back to pass, per rotation */}
+                <div style={{border:"1px solid "+C.border,borderRadius:9,padding:"8px 10px",margin:"6px 0 4px",background:"rgba(255,255,255,0.02)"}}>
+                  <div style={{fontSize:10,fontWeight:800,color:C.mut,textTransform:"uppercase",letterSpacing:0.4,marginBottom:6}}>Serve-receive · front passer pulled back <span style={{fontWeight:600,textTransform:"none",letterSpacing:0}}>— libero + back-row OH/DS always pass; pick the RS or OH to join them each rotation</span></div>
+                  <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                    {[0,1,2,3,4,5].map(b => {
+                      const cands = frontPins(recvRots[b]);
+                      const cur = pullPick(recvRots[b]);
+                      return (
+                        <div key={b} style={{display:"flex",flexDirection:"column",gap:2}}>
+                          <span style={{fontSize:9,fontWeight:800,color:C.gold}}>R{b+1}<span style={{color:C.mut,fontWeight:600}}> / R{b+7}</span></span>
+                          <select value={cur?cur.id:""} onChange={e=>updateDraft(d=>{ const t=d.sets[setIdx]; t.srFront={...(t.srFront||{}),[b]:e.target.value}; })} style={{...S.sel,minWidth:118}} disabled={cands.length<2} title={cands.length<2?"Only one front pin here":"Front pin pulled back to pass"}>
+                            {cands.length===0 && <option value="">—</option>}
+                            {cands.map(s=><option key={s.id} value={s.id}>{pfirst(s.id)} ({pinRole(s.id)})</option>)}
+                          </select>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
                 {passBlock("First pass · R1–R6", 0, 6)}
                 {passBlock("Second pass · R7–R12", 6, 12)}
