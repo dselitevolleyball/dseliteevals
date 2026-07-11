@@ -12002,7 +12002,7 @@ export default function App() {
               const isServer = phase==="serve" && slot.n===1;
               const isSetF = slot.id && slot.id===ro.setterFront;
               const isPass = phase==="receive" && slot.id && passers.has(slot.id);
-              const libSwitch = !!slot.libFor; // libero is on court covering a middle this rotation
+              const libSwitch = slot.id && ro.switchIds && ro.switchIds.has(slot.id); // the half the libero⇄middle switch happens
               const enteredHere = slot.id && !libSwitch && ro.entered && ro.entered.has(slot.id); // rotated / subbed in
               const pos = slot.id && byId[slot.id] ? (byId[slot.id].pos||"") : "";
               const num = slot.id ? pnum(slot.id) : "";
@@ -12082,15 +12082,27 @@ export default function App() {
             // both). Uses the no-libero effective six, so the libero covering a
             // middle doesn't register as a substitution.
             {
-              let prev = null;
+              let prevNo = null, prevWith = null;
               for(let s=0;s<24;s++){
                 const r = Math.floor(s/2), ph = (s%2===0) ? "serve" : "receive";
                 const rots = (s%2===0) ? serveRots : recvRots;
-                const now = new Set(vbRotation(set.lineup, r, set.subs, ph).map(x=>x.id).filter(Boolean));
-                rots[r].entered = prev ? new Set([...now].filter(id => !prev.has(id))) : new Set();
-                prev = now;
+                const ro = rots[r];
+                const nowNo   = new Set(vbRotation(set.lineup, r, set.subs, ph).map(x=>x.id).filter(Boolean)); // no libero
+                const nowWith = new Set(ro.slots.map(x=>x.id).filter(Boolean));                                // libero applied
+                ro.entered = prevNo ? new Set([...nowNo].filter(id => !prevNo.has(id))) : new Set();
+                // Libero⇄middle switch: cells newly on court from the libero swap
+                // only (present in the libero six but not last half, and not a
+                // real sub) — so the libero is colored ONLY the half it switches
+                // in / the middle switches back, not the whole time it's on.
+                ro.switchIds = prevWith ? new Set([...nowWith].filter(id => !prevWith.has(id) && !ro.entered.has(id))) : new Set();
+                prevNo = nowNo; prevWith = nowWith;
               }
             }
+            // Total real substitutions used this set (each entry counts once;
+            // libero swaps don't count). Clubs get 15 subs per set.
+            const SUBS_PER_SET = 15;
+            const subsUsed = [...serveRots, ...recvRots].reduce((n,ro)=>n+(ro.entered?ro.entered.size:0),0);
+            const subsLeft = SUBS_PER_SET - subsUsed;
             // One block per pass; within a pass, serve then receive are stacked
             // for the SAME rotations so you compare them side by side.
             const passBlock = (label, from, to) => (
@@ -12107,7 +12119,13 @@ export default function App() {
             if (liberoId && !legendIds.includes(liberoId)) legendIds.push(liberoId);
             return (
               <div>
-                <div style={{fontSize:10,color:C.mut,margin:"2px 0 4px"}}>#num top-left · position top-right · ▲ = rotates in · SR = passer</div>
+                <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",margin:"2px 0 6px"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:7,background:subsLeft<0?"rgba(239,68,68,0.14)":subsLeft<=3?"rgba(245,158,11,0.14)":"rgba(34,197,94,0.12)",border:"1px solid "+(subsLeft<0?C.red:subsLeft<=3?"#f59e0b":C.grn),borderRadius:9,padding:"4px 10px"}}>
+                    <span style={{fontSize:13,fontWeight:800,color:subsLeft<0?C.red:subsLeft<=3?"#f59e0b":C.grn}}>{subsUsed} / {SUBS_PER_SET} subs used</span>
+                    <span style={{fontSize:11,fontWeight:700,color:C.mut}}>{subsLeft<0 ? Math.abs(subsLeft)+" over limit" : subsLeft+" left"}</span>
+                  </div>
+                  <span style={{fontSize:10,color:C.mut}}>#num top-left · position top-right · ▲ = rotates in · SR = passer</span>
+                </div>
                 {passBlock("First pass · R1–R6", 0, 6)}
                 {passBlock("Second pass · R7–R12", 6, 12)}
                 {/* Legend row: colors + roster positions */}
