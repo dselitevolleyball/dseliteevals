@@ -11784,7 +11784,7 @@ export default function App() {
 
       // Live court for the current rotation/phase.
       const phase = (play.stage==="live" ? (play.serving==="us") : (play.startServe==="us")) ? "serve" : "receive";
-      const rr = play.stage==="live" ? play.r : 0;
+      const rr = play.stage==="live" ? play.r : (play.startRot||0);
       const lib = set ? vbLiberoConf(set) : null;
       // Only apply the libero once we're live. On the approval/lineup-card
       // screen we show the base six (the real middle, with jersey #) because a
@@ -11846,7 +11846,7 @@ export default function App() {
         pl.stage = "setup";
         pl.setIdx = Math.min((pl.usSets||0)+(pl.themSets||0), Math.max(0, psets.length-1));
       });
-      const startPlay = () => upd(pl => { pl.stage="live"; pl.us=0; pl.them=0; pl.serving=pl.startServe; pl.r=0; pl.confirmed={}; pl.history=[]; });
+      const startPlay = () => upd(pl => { pl.stage="live"; pl.us=0; pl.them=0; pl.serving=pl.startServe; pl.r=pl.startRot||0; pl.confirmed={}; pl.history=[]; });
 
       const PS = {
         btn:   { padding:"14px 18px", borderRadius:12, border:"none", fontWeight:800, fontSize:16, cursor:"pointer", fontFamily:"inherit" },
@@ -11948,11 +11948,19 @@ export default function App() {
                 <button onClick={()=>upd(pl=>{pl.startServe="us";})} style={{...PS.chip,flex:1,...(play.startServe==="us"?{background:C.grn,color:"#000",borderColor:C.grn}:{})}}>We serve</button>
                 <button onClick={()=>upd(pl=>{pl.startServe="them";})} style={{...PS.chip,flex:1,...(play.startServe==="them"?{background:C.acc,color:"#000",borderColor:C.acc}:{})}}>We receive</button>
               </div>
+              <div style={S.lbl}>Start at rotation</div>
+              <div style={{fontSize:10,color:C.mut,marginBottom:6}}>Rotate the lineup so a different player serves first (e.g. start at R6 when receiving to rotate the libero in to serve).</div>
+              <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:14}}>
+                {[0,1,2,3,4,5].map(rn=>(
+                  <button key={rn} onClick={()=>upd(pl=>{pl.startRot=rn;})} style={{...PS.chip,padding:"8px 12px",...((play.startRot||0)===rn?{background:C.gold,color:"#000",borderColor:C.gold}:{})}}>R{rn+1}</button>
+                ))}
+              </div>
               {!lineupOk && <div style={{fontSize:12,color:C.red,marginBottom:10}}>This set's lineup isn't complete (needs 6 players). Pick another set or finish it in the editor.</div>}
               {play.stage==="setup" ? (
                 <button disabled={!lineupOk} style={{...PS.btn,width:"100%",background:lineupOk?C.gold:C.border,color:lineupOk?"#000":C.mut}} onClick={()=>upd(pl=>{pl.stage="review";})}>Approve lineup →</button>
               ) : (
                 <>
+                  <div style={{fontSize:12,fontWeight:800,color:C.gold,textAlign:"center",marginBottom:2}}>Rotation R{(play.startRot||0)+1} · {play.startServe==="us"?"we serve":"we receive"}</div>
                   <div style={{fontSize:11,color:C.mut,marginBottom:6,textAlign:"center"}}>Tap any player to quick-swap them for this game (doesn't change the saved plan).</div>
                   <div style={{margin:"0 0 10px"}}>{court}</div>
                   <div style={{display:"flex",gap:8}}>
