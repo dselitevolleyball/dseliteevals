@@ -11769,7 +11769,11 @@ export default function App() {
       const phase = (play.stage==="live" ? (play.serving==="us") : (play.startServe==="us")) ? "serve" : "receive";
       const rr = play.stage==="live" ? play.r : 0;
       const lib = set ? vbLiberoConf(set) : null;
-      const slots = lineupOk ? vbRotation(set.lineup, rr, set.subs, phase, lib) : [];
+      // Only apply the libero once we're live. On the approval/lineup-card
+      // screen we show the base six (the real middle, with jersey #) because a
+      // libero can't be written into the six on the card you hand in.
+      const applyLib = play.stage==="live";
+      const slots = lineupOk ? vbRotation(set.lineup, rr, set.subs, phase, applyLib ? lib : null) : [];
       const byN = {}; slots.forEach(s => { byN[s.n] = s; });
       const sInfo = lineupOk ? vbSetterInfo(slots, set.setters) : { setterBack:null, setterFront:null };
       const liberoSlot = slots.find(s => s.libFor);
@@ -11832,8 +11836,14 @@ export default function App() {
           </div>
           <div style={{fontSize:10,color:C.mut,textAlign:"center",marginTop:6}}>
             {weServe ? "We serve — #1 serves" : "We receive — check serve-receive order"}
-            {liberoSlot ? " · Libero " + pFirst(set.liberoId) + " in for " + pFirst(liberoSlot.libFor) : ""}
+            {applyLib && liberoSlot ? " · Libero " + pFirst(set.liberoId) + " in for " + pFirst(liberoSlot.libFor) : ""}
           </div>
+          {!applyLib && set && set.liberoId && (
+            <div style={{fontSize:12,fontWeight:700,color:"#06b6d4",textAlign:"center",marginTop:8,padding:"8px 10px",border:"1px dashed #06b6d4",borderRadius:10}}>
+              Libero (separate box on the card): <b>#{pNum(set.liberoId)} {pName(set.liberoId)}</b><br/>
+              <span style={{fontSize:10,color:C.mut,fontWeight:600}}>The six above are what you write in — both middles listed, libero swaps in once play starts.</span>
+            </div>
+          )}
         </div>
       );
 
