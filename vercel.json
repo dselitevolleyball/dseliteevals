@@ -9,6 +9,7 @@
     { "path": "/api/sportsyou-reminders", "schedule": "0 14 * * *" },
     { "path": "/api/comm-reminders", "schedule": "0 15 * * *" },
     { "path": "/api/open-shifts", "schedule": "0 1 * * *" },
-    { "path": "/api/payroll-report", "schedule": "0 12 * * 1" }
+    { "path": "/api/payroll-report", "schedule": "0 12 * * 1" },
+    { "path": "/api/daily-changelog", "schedule": "0 17 * * *" }
   ]
 }

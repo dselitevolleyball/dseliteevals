@@ -1274,6 +1274,9 @@ export default function App() {
   const [updateTeamTarget, setUpdateTeamTarget]             = useState(""); // "" = club-wide; else a team name
   // Targeted-notification composer (Notifications screen).
   const [notif, setNotif] = useState({ subject:"", msg:"", role:"both", divs:[], ages:[], teams:[], sending:false, sent:null });
+  // App changelog digest (admin approves before it pushes to coaches).
+  const [changelog, setChangelog] = useState({ broadcasts:[], entries:[] });
+  const [clNew, setClNew] = useState({ kind:"feature", title:"", detail:"" });
   const [showChecklistSetup, setShowChecklistSetup]         = useState(false);
   const [practiceApprovals, setPracticeApprovals]           = useState({}); // { [team_name]: { approved, approved_by_name, approved_at } }
   const [schedChangeOpen, setSchedChangeOpen]               = useState({}); // { [team]: bool } request-a-change composer open
@@ -1699,6 +1702,14 @@ export default function App() {
     if (error) { console.error("Load updates error:", error); return; }
     setUpdates(data || []);
   }, []);
+  const loadChangelog = useCallback(async () => {
+    const [b, e] = await Promise.all([
+      supabase.from("changelog_broadcasts").select("*").order("created_at", { ascending: false }).limit(12),
+      supabase.from("changelog_entries").select("*").order("created_at", { ascending: false }).limit(60),
+    ]);
+    setChangelog({ broadcasts: b.data || [], entries: e.data || [] });
+  }, []);
+  useEffect(() => { if (isApproved && view === "notifications") loadChangelog(); }, [isApproved, view, loadChangelog]);
   // Per-team practice-schedule approvals.
   const loadPracticeApprovals = useCallback(async () => {
     const { data, error } = await supabase.from("practice_approvals").select("*");
@@ -4407,11 +4418,96 @@ export default function App() {
       <button key={label} onClick={onClick} style={{padding:"5px 11px",borderRadius:16,border:"1px solid "+(on?col:C.border),background:on?"rgba(233,30,140,0.12)":"transparent",color:on?col:C.mut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>{label}</button>
     );
 
+    // ── App changelog digest ──────────────────────────────────────────────
+    const KIND = { feature:["New","#22c55e"], fix:["Fix","#f59e0b"], improvement:["Improved","#06b6d4"], other:["Update",C.mut] };
+    const clPending = changelog.broadcasts.find(b => b.status==="pending");
+    const clUnsent = changelog.entries.filter(e => !e.broadcast_id);
+    const clTodayBc = changelog.broadcasts.find(b => b.created_for_date === localDateISO());
+    const compileBody = (list) => list.map(e => "• " + (KIND[e.kind]?.[0]||"Update") + ": " + e.title + (e.detail?" — "+e.detail:"")).join("\n");
+    const addChangeEntry = async () => {
+      if (!clNew.title.trim()) { window.alert("Give the change a title."); return; }
+      const { error } = await supabase.from("changelog_entries").insert({ kind: clNew.kind, title: clNew.title.trim(), detail: clNew.detail.trim()||null, created_by: coach?.display_name||coach?.email||null });
+      if (error) { window.alert("Couldn't add: " + error.message); return; }
+      setClNew({ kind:"feature", title:"", detail:"" }); await loadChangelog();
+    };
+    const delChangeEntry = async (id) => { await supabase.from("changelog_entries").delete().eq("id", id); await loadChangelog(); };
+    const stageDigest = async () => {
+      if (!clUnsent.length) { window.alert("Nothing new to announce."); return; }
+      const { error } = await supabase.from("changelog_broadcasts").upsert(
+        { title:"What's new in DS Elite HQ", body: compileBody(clUnsent), entry_ids: clUnsent.map(e=>e.id), status:"pending", created_for_date: localDateISO() },
+        { onConflict:"created_for_date" });
+      if (error) { window.alert("Couldn't prepare digest: " + error.message); return; }
+      await loadChangelog();
+    };
+    const approveDigest = async (bc, bodyText) => {
+      const emails = [...new Set((coachesList||[]).filter(c=>c.is_approved && c.email).map(c=>c.email))];
+      if (!window.confirm("Send this changelog to all coaches (push + email)?")) return;
+      const short = bodyText.length > 280 ? bodyText.slice(0,277)+"…" : bodyText;
+      await Promise.all([
+        fetch("/api/send-push", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ title: bc.title, body: short, url:"/", audience:{ type:"all" } }) }),
+        emails.length ? fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ subject: bc.title, body: bodyText + "\n\n" + APP_URL, recipients: emails }) }) : Promise.resolve(),
+      ]).catch(()=>{});
+      await supabase.from("changelog_broadcasts").update({ status:"sent", body: bodyText, approved_by: coach?.display_name||coach?.email||null, sent_at: new Date().toISOString(), sent_count: emails.length }).eq("id", bc.id);
+      const ids = bc.entry_ids || [];
+      if (ids.length) await supabase.from("changelog_entries").update({ broadcast_id: bc.id }).in("id", ids);
+      await loadChangelog();
+      window.alert("Sent to coaches.");
+    };
+    const skipDigest = async (bc) => { if(!window.confirm("Skip this digest? Its changes roll into the next one.")) return; await supabase.from("changelog_broadcasts").update({ status:"skipped" }).eq("id", bc.id); await loadChangelog(); };
+
     return (
       <div style={{maxWidth:820}}>
         <div style={{marginBottom:14}}>
           <h2 style={{margin:0,fontSize:18,fontWeight:800,color:C.gold}}>Notifications</h2>
           <div style={{fontSize:12,color:C.mut,marginTop:4}}>Send a targeted push + email to any slice of your staff, and review what's gone out.</div>
+        </div>
+
+        {/* Changelog digest — approve before it goes to coaches */}
+        <div style={{background:C.card,border:"1px solid "+(clPending?C.gold:C.border),borderRadius:12,padding:16,marginBottom:18}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:10}}>
+            <span style={{fontSize:10,fontWeight:800,textTransform:"uppercase",letterSpacing:0.4,color:C.gold}}>📣 What's new — changelog</span>
+            <span style={{fontSize:11,color:C.mut}}>a digest of app changes auto-stages daily at noon for your approval</span>
+            <div style={{flex:1}} />
+            {!clPending && clUnsent.length>0 && !clTodayBc && <button onClick={stageDigest} style={{padding:"6px 12px",borderRadius:8,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>Prepare digest ({clUnsent.length})</button>}
+          </div>
+
+          {clPending ? (
+            <div style={{border:"1px solid "+C.gold,borderRadius:10,padding:"12px 14px",background:"rgba(233,30,140,0.05)"}}>
+              <div style={{fontSize:13,fontWeight:800,color:C.text,marginBottom:6}}>{clPending.title} <span style={{fontSize:10,fontWeight:700,color:"#f59e0b"}}>· pending your approval</span></div>
+              <AutoTextarea value={clPending.__edit ?? clPending.body} onChange={e=>setChangelog(c=>({ ...c, broadcasts: c.broadcasts.map(b=>b.id===clPending.id?{...b,__edit:e.target.value}:b) }))} minRows={4}
+                style={{...inpStyle,width:"100%",padding:"10px 12px",fontSize:13,lineHeight:1.5,boxSizing:"border-box"}} />
+              <div style={{display:"flex",gap:8,marginTop:10,flexWrap:"wrap"}}>
+                <button onClick={()=>approveDigest(clPending, clPending.__edit ?? clPending.body)} style={{padding:"9px 16px",borderRadius:8,border:"none",background:C.grn,color:"#04240f",fontWeight:800,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>✓ Approve &amp; send to coaches</button>
+                <button onClick={()=>skipDigest(clPending)} style={{padding:"9px 14px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Skip</button>
+                <span style={{fontSize:11,color:C.mut,alignSelf:"center"}}>{(clPending.entry_ids||[]).length} change{(clPending.entry_ids||[]).length===1?"":"s"} · goes out via push + email</span>
+              </div>
+            </div>
+          ) : (
+            <div style={{fontSize:12,color:C.mut}}>{clUnsent.length>0 ? clUnsent.length+" change"+(clUnsent.length===1?"":"s")+" not yet announced — auto-stages at noon, or prepare it now above." : "Nothing new to announce right now."}</div>
+          )}
+
+          {/* Log a change + recent entries */}
+          <details style={{marginTop:12}}>
+            <summary style={{fontSize:11,color:C.acc,cursor:"pointer",fontWeight:700}}>Log a change ({clUnsent.length} unsent)</summary>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:8,alignItems:"flex-start"}}>
+              <select value={clNew.kind} onChange={e=>setClNew(n=>({...n,kind:e.target.value}))} style={{...inpStyle,padding:"6px 8px",fontSize:12,width:120}}>
+                {Object.keys(KIND).map(k => <option key={k} value={k}>{KIND[k][0]}</option>)}
+              </select>
+              <input value={clNew.title} onChange={e=>setClNew(n=>({...n,title:e.target.value}))} placeholder="What changed (title)" style={{...inpStyle,padding:"6px 8px",fontSize:12,flex:1,minWidth:160}} />
+              <input value={clNew.detail} onChange={e=>setClNew(n=>({...n,detail:e.target.value}))} placeholder="Detail (optional)" style={{...inpStyle,padding:"6px 8px",fontSize:12,flex:1,minWidth:160}} />
+              <button onClick={addChangeEntry} style={{padding:"6px 12px",borderRadius:8,border:"none",background:C.gold,color:"#000",fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>Add</button>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:4,marginTop:10}}>
+              {changelog.entries.slice(0,20).map(e => (
+                <div key={e.id} style={{display:"flex",alignItems:"center",gap:8,fontSize:12,color:e.broadcast_id?C.mut:C.text}}>
+                  <span style={{fontSize:8,fontWeight:800,textTransform:"uppercase",color:KIND[e.kind]?.[1]||C.mut,border:"1px solid "+(KIND[e.kind]?.[1]||C.border),borderRadius:4,padding:"0 4px"}}>{KIND[e.kind]?.[0]||"Update"}</span>
+                  <span style={{flex:1}}>{e.title}{e.detail?" — "+e.detail:""}</span>
+                  {e.broadcast_id ? <span style={{fontSize:9,color:C.grn}}>sent</span> : <span style={{fontSize:9,color:"#f59e0b"}}>new</span>}
+                  <button onClick={()=>delChangeEntry(e.id)} style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:12}}>✕</button>
+                </div>
+              ))}
+            </div>
+          </details>
         </div>
 
         {/* Composer */}
