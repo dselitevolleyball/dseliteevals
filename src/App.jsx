@@ -828,6 +828,21 @@ function vbEffective(baseId, rotation, subs, phase){
   return id;
 }
 
+// Remove duplicate planned subs. Two subs are "the same" when the same player
+// comes in for the same player starting at the same rotation + half — keeping
+// the widest thru. Guards against the sub prompt firing 2–3× for one swap.
+function vbDedupeSubs(subs){
+  const seen = new Map();
+  (subs||[]).forEach(s => {
+    if(!s || !s.inId || !s.outId) return;
+    const key = s.outId + ">" + s.inId + "@" + (s.fromRotation==null?0:s.fromRotation) + "|" + (s.phase||"both");
+    const prev = seen.get(key);
+    if(!prev) seen.set(key, { ...s });
+    else if((s.thruRotation==null?11:s.thruRotation) > (prev.thruRotation==null?11:prev.thruRotation)) seen.set(key, { ...s });
+  });
+  return [...seen.values()];
+}
+
 // Build the libero/middle-switch config for a set (or null if not set up).
 // In this system the libero covers whichever of the two middles is in the back
 // row; one middle serves for itself, and the libero serves in the OTHER
@@ -11699,12 +11714,14 @@ export default function App() {
       lineupSkipSave.current = true;
       if (plan.team_name) setLineupTeam(plan.team_name);
       setLineupPlanId(plan.id);
+      const openSets = (plan.data && plan.data.sets && plan.data.sets.length) ? plan.data.sets : [defaultSet()];
+      openSets.forEach(st => { st.subs = vbDedupeSubs(st.subs); }); // heal duplicate sub entries on open
       setLineupDraft({
         title: plan.title || "Untitled plan",
         opponent: plan.opponent || "",
         match_date: plan.match_date || "",
         roster: (plan.data && plan.data.roster) || [],
-        sets: (plan.data && plan.data.sets && plan.data.sets.length) ? plan.data.sets : [defaultSet()],
+        sets: openSets,
       });
       setLineupSetIdx(0);
       setLineupSaved("");
@@ -11759,7 +11776,7 @@ export default function App() {
       const pPos   = id => (pById[id] && pById[id].pos) || "";
       const set = psets[play.setIdx] || psets[0] || null;
       const lineupOk = set && (set.lineup||[]).filter(Boolean).length === 6;
-      const upd = fn => setLineupPlay(pl => { const n = JSON.parse(JSON.stringify(pl)); n.plan = pl.plan; fn(n); return n; });
+      const upd = fn => setLineupPlay(pl => { const n = JSON.parse(JSON.stringify(pl)); fn(n); return n; }); // deep clone incl. plan → edits are game-only
       const exitPlay = () => setLineupPlay(null);
 
       const usName = play.opponent ? team : (team || "Us");
@@ -11778,14 +11795,44 @@ export default function App() {
       const sInfo = lineupOk ? vbSetterInfo(slots, set.setters) : { setterBack:null, setterFront:null };
       const liberoSlot = slots.find(s => s.libFor);
       const weServe = phase==="serve";
+      const onCourtIds = new Set(slots.map(s => s.id).filter(Boolean));
+      const bench = proster.filter(p => !onCourtIds.has(p.id));
 
-      // Planned subs that start at this exact rotation (base) + serve/receive half.
+      // Serve-receive passers for this rotation: libero + back-row OH/DS + the
+      // one front pin the coach ticked (set.srFront), so we can mark S/R on the
+      // three receivers when the other team serves.
+      const srPassers = (() => {
+        if (!lineupOk || phase!=="receive") return new Set();
+        const isMid = id => (set.middles||[]).includes(id);
+        const isSet = id => (set.setters||[]).includes(id);
+        const out = new Set();
+        slots.forEach(s => {
+          if (!s.id) return;
+          if (s.id===set.liberoId) { out.add(s.id); return; }
+          if (s.row==="back" && !isMid(s.id) && !isSet(s.id)) out.add(s.id);
+        });
+        const pins = slots.filter(s => s.row==="front" && s.id && !isMid(s.id));
+        const chosen = pins.find(s => s.id===(set.srFront||{})[rr%6]) || pins.find(s => pPos(s.id)==="OH") || pins[0];
+        if (chosen) out.add(chosen.id);
+        return out;
+      })();
+
+      // Planned subs that start at this exact rotation (base) + serve/receive
+      // half — deduped so one swap only prompts once.
       const halfOf = ph => ph==="receive" ? "receive" : "serve";
       const dueSubs = play.stage==="live"
-        ? (set.subs||[]).filter(s => s.inId && s.outId && ((s.fromRotation==null?0:s.fromRotation)%6)===play.r && halfOf(s.phase)===phase)
+        ? vbDedupeSubs((set.subs||[]).filter(s => s.inId && s.outId && ((s.fromRotation==null?0:s.fromRotation)%6)===play.r && halfOf(s.phase)===phase))
         : [];
       const subKey = s => play.r + "|" + phase + "|" + s.inId + "|" + s.outId;
       const pendingSubs = dueSubs.filter(s => !(play.confirmed||{})[subKey(s)]);
+
+      // Tap a player to sub — swap in a bench player at that rotational slot for
+      // the rest of this game (session only; the saved plan isn't touched).
+      const doLiveSub = (courtI, inId) => upd(pl => {
+        const st = pl.plan.data.sets[pl.setIdx];
+        if (st) st.lineup[(courtI + rr) % 6] = inId || null;
+        pl.subPick = null;
+      });
 
       const addPoint = who => upd(pl => {
         pl.history = [...(pl.history||[]), { us:pl.us, them:pl.them, serving:pl.serving, r:pl.r }];
@@ -11809,21 +11856,50 @@ export default function App() {
       const courtCell = n => {
         const s = byN[n];
         const id = s ? s.id : null;
+        const courtI = s ? s.i : null;
         const isServer = weServe && n===1;
         const isLibero = id && liberoSlot && liberoSlot.n===n;
         const isSetterBack = id && id===sInfo.setterBack;
+        const isPasser = id && !weServe && srPassers.has(id);
         return (
-          <div key={n} style={{position:"relative",background:isServer?"rgba(245,158,11,0.16)":isLibero?"rgba(6,182,212,0.16)":C.bg,border:"2px solid "+(isServer?"#f59e0b":isLibero?"#06b6d4":C.border),borderRadius:12,padding:"12px 8px",minHeight:78,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:2}}>
+          <div key={n} onClick={id!=null && courtI!=null && !isLibero ? () => upd(pl => { pl.subPick = { i:courtI, n, outId:id }; }) : undefined}
+            style={{position:"relative",background:isServer?"rgba(245,158,11,0.16)":isLibero?"rgba(6,182,212,0.16)":isPasser?"rgba(34,197,94,0.10)":C.bg,border:"2px solid "+(isServer?"#f59e0b":isLibero?"#06b6d4":isPasser?C.grn:C.border),borderRadius:12,padding:"14px 8px",minHeight:82,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:2,cursor:id?"pointer":"default"}}>
             <span style={{position:"absolute",top:4,left:6,fontSize:11,fontWeight:800,color:C.mut}}>{n}</span>
-            {pNum(id) ? <span style={{position:"absolute",top:4,right:6,fontSize:11,fontWeight:800,color:C.gold}}>#{pNum(id)}</span> : null}
+            {pNum(id) ? <span style={{position:"absolute",top:4,right:6,fontSize:12,fontWeight:900,color:C.gold}}>#{pNum(id)}</span> : null}
             <span style={{fontSize:20,fontWeight:800,color:C.text,textAlign:"center",lineHeight:1.05}}>{id ? pFirst(id) : "—"}</span>
             <span style={{fontSize:11,fontWeight:700,color:C.mut}}>
               {isLibero ? "LIBERO" : (pPos(id) || "")}{isSetterBack ? " · sets" : ""}
             </span>
             {isServer && <span style={{position:"absolute",bottom:3,fontSize:9,fontWeight:900,letterSpacing:1,color:"#f59e0b"}}>● SERVE</span>}
+            {isPasser && <span style={{position:"absolute",bottom:3,fontSize:10,fontWeight:900,letterSpacing:1,color:C.grn}}>S/R</span>}
           </div>
         );
       };
+
+      // Tap-to-sub picker (shows when a court player is tapped).
+      const subPickerUI = play.subPick && (() => {
+        const sp = play.subPick;
+        return (
+          <div onClick={()=>upd(pl=>{pl.subPick=null;})} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",zIndex:60,display:"flex",alignItems:"flex-end",justifyContent:"center"}}>
+            <div onClick={e=>e.stopPropagation()} style={{background:C.card,border:"1px solid "+C.border,borderRadius:"16px 16px 0 0",padding:16,width:"100%",maxWidth:520,maxHeight:"70vh",overflowY:"auto"}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+                <div style={{fontSize:16,fontWeight:900,color:C.text}}>Sub for {pName(sp.outId)}</div>
+                <div style={{flex:1}} />
+                <button style={S.ghost} onClick={()=>upd(pl=>{pl.subPick=null;})}>Cancel</button>
+              </div>
+              <div style={{fontSize:11,color:C.mut,marginBottom:10}}>Pick who comes in (rest of this game). Position {sp.n} on court.</div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(130px,1fr))",gap:8}}>
+                {bench.length===0 && <div style={{fontSize:12,color:C.mut}}>Everyone's on court — no bench players available.</div>}
+                {bench.map(p => (
+                  <button key={p.id} onClick={()=>doLiveSub(sp.i, p.id)} style={{...PS.chip,textAlign:"left"}}>
+                    <b style={{color:C.gold}}>{p.num?"#"+p.num+" ":""}</b>{pFirst(p.id)}{p.pos?<span style={{color:C.mut,fontWeight:600}}> · {p.pos}</span>:null}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        );
+      })();
 
       const court = (
         <div style={{maxWidth:520,margin:"0 auto"}}>
@@ -11877,7 +11953,8 @@ export default function App() {
                 <button disabled={!lineupOk} style={{...PS.btn,width:"100%",background:lineupOk?C.gold:C.border,color:lineupOk?"#000":C.mut}} onClick={()=>upd(pl=>{pl.stage="review";})}>Approve lineup →</button>
               ) : (
                 <>
-                  <div style={{margin:"6px 0 10px"}}>{court}</div>
+                  <div style={{fontSize:11,color:C.mut,marginBottom:6,textAlign:"center"}}>Tap any player to quick-swap them for this game (doesn't change the saved plan).</div>
+                  <div style={{margin:"0 0 10px"}}>{court}</div>
                   <div style={{display:"flex",gap:8}}>
                     <button style={{...PS.btn,flex:1,background:C.bg,color:C.text,border:"1px solid "+C.border}} onClick={()=>upd(pl=>{pl.stage="setup";})}>← Back</button>
                     <button style={{...PS.btn,flex:2,background:C.grn,color:"#000"}} onClick={startPlay}>▶ Play</button>
@@ -11885,6 +11962,7 @@ export default function App() {
                 </>
               )}
             </div>
+            {subPickerUI}
           </div>
         );
       }
@@ -11927,12 +12005,14 @@ export default function App() {
             </div>
           ))}
 
+          <div style={{fontSize:11,color:C.mut,textAlign:"center",marginBottom:6}}>Tap any player to sub. {weServe ? "#1 serves." : "S/R marks the three receivers."}</div>
           {court}
 
           <div style={{display:"flex",gap:8,marginTop:14}}>
             <button style={{...PS.btn,flex:1,background:setWon?C.gold:C.bg,color:setWon?"#000":C.text,border:"1px solid "+(setWon?C.gold:C.border)}} onClick={endSet}>{setWon?"End set ✓":"End set"}</button>
           </div>
           {setWon && <div style={{fontSize:12,color:C.mut,textAlign:"center",marginTop:6}}>Looks like set point was reached — tap End set when the set is over.</div>}
+          {subPickerUI}
         </div>
       );
     }
@@ -11974,7 +12054,7 @@ export default function App() {
                         {p.opponent ? "vs " + p.opponent + " · " : ""}{p.match_date || "no date"} · {((p.data && p.data.sets) || []).length} set{((p.data && p.data.sets) || []).length===1?"":"s"} · {((p.data && p.data.roster) || []).length} players
                       </div>
                     </button>
-                    <button style={{...S.gold,padding:"6px 12px"}} title="Run this lineup live in a game" onClick={() => setLineupPlay({ planId:p.id, plan:p, stage:"setup", opponent:p.opponent||"", setIdx:0, startServe:"us", us:0, them:0, serving:"us", r:0, usSets:0, themSets:0, confirmed:{}, history:[] })}>▶ Play</button>
+                    <button style={{...S.gold,padding:"6px 12px"}} title="Run this lineup live in a game" onClick={() => { const pc = JSON.parse(JSON.stringify(p)); (pc.data && pc.data.sets || []).forEach(st => { st.subs = vbDedupeSubs(st.subs); }); setLineupPlay({ planId:p.id, plan:pc, stage:"setup", opponent:p.opponent||"", setIdx:0, startServe:"us", us:0, them:0, serving:"us", r:0, usSets:0, themSets:0, confirmed:{}, history:[] }); }}>▶ Play</button>
                     <button style={S.ghost} onClick={() => openPlan(p)}>Open</button>
                     <button style={S.ghost} onClick={() => dupPlan(p)} title="Duplicate">⧉</button>
                     <button style={{...S.ghost,color:C.red,borderColor:"rgba(239,68,68,0.4)"}} onClick={() => deletePlan(p.id)} title="Delete">✕</button>
@@ -12044,7 +12124,7 @@ export default function App() {
           <DebouncedField value={draft.title} onCommit={v => updateDraft(d => { d.title = v; })} placeholder="Plan title" style={{...S.sel,fontSize:14,fontWeight:700,minWidth:200,flex:1}} />
           <input value={draft.opponent} onChange={e => updateDraft(d => { d.opponent = e.target.value; })} placeholder="Opponent" style={{...S.sel,width:150}} />
           <input type="date" value={draft.match_date || ""} onChange={e => updateDraft(d => { d.match_date = e.target.value; })} style={{...S.sel,width:150}} />
-          <button style={S.gold} title="Run this lineup live in a game" onClick={() => setLineupPlay({ planId:lineupPlanId, plan:{ id:lineupPlanId, team_name:team, title:draft.title, opponent:draft.opponent, data:{ roster:draft.roster, sets:draft.sets } }, stage:"setup", opponent:draft.opponent||"", setIdx:0, startServe:"us", us:0, them:0, serving:"us", r:0, usSets:0, themSets:0, confirmed:{}, history:[] })}>▶ Play</button>
+          <button style={S.gold} title="Run this lineup live in a game" onClick={() => setLineupPlay({ planId:lineupPlanId, plan:JSON.parse(JSON.stringify({ id:lineupPlanId, team_name:team, title:draft.title, opponent:draft.opponent, data:{ roster:draft.roster, sets:draft.sets } })), stage:"setup", opponent:draft.opponent||"", setIdx:0, startServe:"us", us:0, them:0, serving:"us", r:0, usSets:0, themSets:0, confirmed:{}, history:[] })}>▶ Play</button>
           <button style={{...S.ghost,color:C.red,borderColor:"rgba(239,68,68,0.4)"}} onClick={() => deletePlan(lineupPlanId)}>Delete plan</button>
         </div>
 
@@ -12388,7 +12468,7 @@ export default function App() {
                   const subRange = s => { const f=(s.fromRotation==null?0:s.fromRotation), t=(s.thruRotation==null?11:s.thruRotation); const h=s.phase==="receive"?"serve-receive":"serve"; return `from R${f+1} ${h} → R${t+1}`; };
                   const applySub = () => {
                     if(!sel.inId){ window.alert("Choose a player to bring in."); return; }
-                    updateDraft(d => { d.sets[setIdx].subs.push({ inId: sel.inId, outId: sel.outId, fromRotation: sel.r, thruRotation: sel.scope==="one" ? sel.r : 11, phase: aPhase }); });
+                    updateDraft(d => { d.sets[setIdx].subs.push({ inId: sel.inId, outId: sel.outId, fromRotation: sel.r, thruRotation: sel.scope==="one" ? sel.r : 11, phase: aPhase }); d.sets[setIdx].subs = vbDedupeSubs(d.sets[setIdx].subs); });
                     setLineupSubSel(null);
                   };
                   return (
