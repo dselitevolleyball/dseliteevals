@@ -12000,33 +12000,38 @@ export default function App() {
               const enteredHere = slot.id && ro.entered && ro.entered.has(slot.id); // just rotated / subbed in
               const pos = slot.id && byId[slot.id] ? (byId[slot.id].pos||"") : "";
               const num = slot.id ? pnum(slot.id) : "";
-              const bg = isLib ? "rgba(6,182,212,0.20)"
-                       : enteredHere ? "rgba(34,197,94,0.30)"
-                       : isServer ? "rgba(245,158,11,0.26)"
-                       : isMid ? "rgba(168,85,247,0.13)"
-                       : isSetB ? "rgba(6,182,212,0.15)"
+              const nm = slot.id ? (pfirst(slot.id) || "") : "";
+              const nmFs = nm.length<=4 ? 16 : nm.length<=6 ? 14 : nm.length<=8 ? 12.5 : nm.length<=10 ? 11 : 10;
+              const bg = isLib ? "rgba(20,184,166,0.26)"      // libero: teal
+                       : enteredHere ? "rgba(34,197,94,0.30)"  // rotate-in: green
+                       : isServer ? "rgba(245,158,11,0.26)"    // server: amber
+                       : isMid ? "rgba(168,85,247,0.13)"       // middle: purple
+                       : isSetB ? "rgba(59,130,246,0.20)"      // setter: blue
                        : slot.row==="front" ? "rgba(233,30,140,0.06)" : "transparent";
               const isSel = lineupSubSel && lineupSubSel.setId===set.id && lineupSubSel.r===ro.r && lineupSubSel.i===slot.i && lineupSubSel.phase===phase;
               const tip = slot.id ? (pname(slot.id)+(pos?" · "+pos:"")+(slot.libFor?(" (libero for "+pname(slot.libFor)+")"):"")+" · "+slot.label+" — tap to sub") : ("empty · "+slot.label);
               return (
                 <td key={slot.n} title={tip}
                   onClick={slot.id ? () => setLineupSubSel(sel => (sel && sel.setId===set.id && sel.r===ro.r && sel.i===slot.i && sel.phase===phase) ? null : { setId:set.id, r:ro.r, i:slot.i, outId:slot.id, courtN:slot.n, label:slot.label, inId:"", scope:"rest", phase }) : undefined}
-                  style={{border:"1px solid "+C.border,borderRight:edge?"2px solid #3a3a3a":"1px solid "+C.border,outline:isSel?"2px solid "+C.gold:"none",outlineOffset:-2,background:bg,padding:"5px 4px",textAlign:"center",height:62,verticalAlign:"middle",overflow:"hidden",cursor:slot.id?"pointer":"default"}}>
+                  style={{position:"relative",border:"1px solid "+C.border,borderRight:edge?"2px solid #3a3a3a":"1px solid "+C.border,outline:isSel?"2px solid "+C.gold:"none",outlineOffset:-2,background:bg,padding:"15px 3px 6px",textAlign:"center",height:62,verticalAlign:"middle",overflow:"hidden",cursor:slot.id?"pointer":"default"}}>
                   {slot.id ? (
-                    <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:1,lineHeight:1.1}}>
-                      <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:3}}>
-                        {enteredHere && <span title="Rotates in here" style={{fontSize:11,color:"#22c55e",fontWeight:800}}>▲</span>}
-                        {num ? <span style={{fontSize:10,fontWeight:800,color:C.mut}}>#{num}</span> : null}
-                        <span style={{fontSize:14,color:isServer?"#fde68a":isLib?"#67e8f9":isMid?"#e9d5ff":C.text,fontWeight:(isSetB||isServer||enteredHere||isMid)?800:700,textDecoration:isLib?"underline":"none",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:96}}>{pfirst(slot.id)}</span>
+                    <>
+                      {num ? <span style={{position:"absolute",top:2,left:3,fontSize:9,fontWeight:800,color:C.mut,lineHeight:1}}>#{num}</span> : null}
+                      {pos ? <span style={{position:"absolute",top:2,right:3,fontSize:9,fontWeight:800,color:isLib?"#5eead4":isSetB?"#93c5fd":C.mut,lineHeight:1}}>{pos}</span> : null}
+                      <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:1,lineHeight:1.05}}>
+                        <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:2,maxWidth:"100%"}}>
+                          {enteredHere && <span title="Rotates in here" style={{fontSize:11,color:"#22c55e",fontWeight:800}}>▲</span>}
+                          <span style={{fontSize:nmFs,color:isServer?"#fde68a":isLib?"#5eead4":isSetB?"#bfdbfe":isMid?"#e9d5ff":C.text,fontWeight:(isSetB||isServer||enteredHere||isMid||isLib)?800:700,textDecoration:isLib?"underline":"none",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:"100%"}}>{nm}</span>
+                        </div>
+                        <div style={{fontSize:9.5,lineHeight:1,whiteSpace:"nowrap",fontWeight:800}}>
+                          {isServer && <span style={{color:"#f59e0b"}}>serve</span>}
+                          {isSetB && <span style={{color:"#60a5fa"}}>{isServer?" · ":""}S</span>}
+                          {isSetF && <span style={{color:"#f59e0b"}}>{(isServer||isSetB)?" · ":""}rs</span>}
+                          {isLib && <span style={{color:"#2dd4bf"}}>{(isServer||isSetB||isSetF)?" · ":""}L</span>}
+                          {isPass && <span style={{color:C.grn}}>{(isServer||isSetB||isSetF||isLib)?" · ":""}SR</span>}
+                        </div>
                       </div>
-                      <div style={{fontSize:10,lineHeight:1,whiteSpace:"nowrap",color:C.mut,fontWeight:700}}>
-                        {pos}
-                        {isSetB && <span style={{color:"#06b6d4",fontWeight:800}}> · S</span>}
-                        {isSetF && <span style={{color:"#f59e0b",fontWeight:800}}> · rs</span>}
-                        {isLib && <span style={{color:"#06b6d4",fontWeight:800}}> · L</span>}
-                        {isPass && <span style={{color:C.grn,fontWeight:800}}> · SR</span>}
-                      </div>
-                    </div>
+                    </>
                   ) : <span style={{fontSize:14,color:C.mut}}>—</span>}
                 </td>
               );
@@ -12088,18 +12093,18 @@ export default function App() {
             const phaseHead = (txt, sub) => <div style={{display:"flex",alignItems:"baseline",gap:8,margin:"4px 0 5px"}}><span style={{fontSize:12,fontWeight:800,color:C.text}}>{txt}</span><span style={{fontSize:10,color:C.mut}}>{sub}</span></div>;
             return (
               <div>
-                {phaseHead("When we serve","server in amber · pos + who sets under each name · ▲ = rotates in")}
+                {phaseHead("When we serve","#num top-left · position top-right · ▲ = rotates in")}
                 {renderGrid("serve")}
-                {phaseHead("When we receive","•SR marks the passers · subs can differ from serve · ▲ = rotates in")}
+                {phaseHead("When we receive","SR marks the passers · subs can differ from serve · ▲ = rotates in")}
                 {renderGrid("receive")}
                 {/* Legend row: colors + roster positions */}
                 <div style={{display:"flex",gap:14,flexWrap:"wrap",alignItems:"center",marginTop:8,fontSize:10,color:C.mut}}>
                   <span><span style={{display:"inline-block",width:9,height:9,background:"rgba(245,158,11,0.5)",borderRadius:2,marginRight:3,verticalAlign:"middle"}} />server</span>
                   <span><span style={{color:"#22c55e",fontWeight:800}}>▲</span> rotates in here</span>
-                  <span><span style={{color:"#06b6d4",fontWeight:800}}>S</span> back-row setter</span>
+                  <span><span style={{display:"inline-block",width:9,height:9,background:"rgba(59,130,246,0.6)",borderRadius:2,marginRight:3,verticalAlign:"middle"}} /><span style={{color:"#60a5fa",fontWeight:800}}>S</span> setter (blue)</span>
                   <span><span style={{color:"#f59e0b",fontWeight:800}}>rs</span> front setter → right side</span>
-                  <span><span style={{color:"#67e8f9",textDecoration:"underline",fontWeight:700}}>L</span> libero</span>
-                  <span><span style={{color:C.grn,fontWeight:800}}>•SR</span> passer</span>
+                  <span><span style={{display:"inline-block",width:9,height:9,background:"rgba(20,184,166,0.6)",borderRadius:2,marginRight:3,verticalAlign:"middle"}} /><span style={{color:"#2dd4bf",textDecoration:"underline",fontWeight:800}}>L</span> libero (teal)</span>
+                  <span><span style={{color:C.grn,fontWeight:800}}>SR</span> passer</span>
                 </div>
                 {legendIds.length>0 && (
                   <div style={{display:"flex",gap:10,flexWrap:"wrap",marginTop:6,fontSize:11}}>
