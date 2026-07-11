@@ -12045,7 +12045,10 @@ export default function App() {
                       <th style={{...hd,width:44}}></th>
                       {rots.map(ro => (
                         <th key={ro.r} colSpan={3} style={hd}>
-                          <div style={{fontSize:12,fontWeight:800,color:C.gold}}>R{ro.r+1}</div>
+                          <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>
+                            <span style={{fontSize:12,fontWeight:800,color:C.gold}}>R{ro.r+1}</span>
+                            {ro.entered && ro.entered.size>0 && <span title={ro.entered.size+" subbed in"} style={{fontSize:9,fontWeight:800,color:"#22c55e",background:"rgba(34,197,94,0.16)",borderRadius:8,padding:"0 5px"}}>▲{ro.entered.size}</span>}
+                          </div>
                           <div style={{fontSize:9,fontWeight:600,color:C.mut,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ro.setterBack?"sets "+pfirst(ro.setterBack):"—"}</div>
                         </th>
                       ))}
@@ -12066,23 +12069,29 @@ export default function App() {
             );
             const passLbl = { fontSize:11, fontWeight:800, color:C.gold, textTransform:"uppercase", letterSpacing:0.6, margin:"12px 0 4px" };
             const phaseLbl = { fontSize:10, fontWeight:800, color:C.mut, textTransform:"uppercase", letterSpacing:0.4, margin:"6px 0 3px" };
-            const buildRots = (phase) => {
-              const rots = Array.from({length:12}, (_,r) => {
-                const slots = vbRotation(set.lineup, r, set.subs, phase, lib);
-                const info = vbSetterInfo(slots, set.setters);
-                const byIndex = {}; slots.forEach(s => { byIndex[s.i] = s; });
-                return { r, slots, byIndex, setterBack: info.setterBack, setterFront: info.setterFront };
-              });
-              // Mark the rotation where each player first appears (vs the prior
-              // rotation) — a rotate-in / sub-in — instead of flagging a sub forever.
-              rots.forEach((ro, idx) => {
-                const prev = idx>0 ? new Set(rots[idx-1].slots.map(s=>s.id).filter(Boolean)) : null;
-                ro.entered = prev ? new Set(ro.slots.filter(s=>s.id && !prev.has(s.id)).map(s=>s.id)) : new Set();
-              });
-              return rots;
-            };
+            const buildRots = (phase) => Array.from({length:12}, (_,r) => {
+              const slots = vbRotation(set.lineup, r, set.subs, phase, lib);
+              const info = vbSetterInfo(slots, set.setters);
+              const byIndex = {}; slots.forEach(s => { byIndex[s.i] = s; });
+              return { r, slots, byIndex, setterBack: info.setterBack, setterFront: info.setterFront };
+            });
             const serveRots = buildRots("serve");
             const recvRots  = buildRots("receive");
+            // Mark a sub-in at the ONE chronological half-step where the player
+            // first appears — walking serve then serve-receive, rotation by
+            // rotation — so a sub is flagged only once (in serve OR receive, not
+            // both). Uses the no-libero effective six, so the libero covering a
+            // middle doesn't register as a substitution.
+            {
+              let prev = null;
+              for(let s=0;s<24;s++){
+                const r = Math.floor(s/2), ph = (s%2===0) ? "serve" : "receive";
+                const rots = (s%2===0) ? serveRots : recvRots;
+                const now = new Set(vbRotation(set.lineup, r, set.subs, ph).map(x=>x.id).filter(Boolean));
+                rots[r].entered = prev ? new Set([...now].filter(id => !prev.has(id))) : new Set();
+                prev = now;
+              }
+            }
             // One block per pass; within a pass, serve then receive are stacked
             // for the SAME rotations so you compare them side by side.
             const passBlock = (label, from, to) => (
