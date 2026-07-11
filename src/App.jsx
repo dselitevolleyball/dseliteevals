@@ -12064,8 +12064,9 @@ export default function App() {
                 </table>
               </div>
             );
-            const passLbl = { fontSize:10, fontWeight:800, color:C.mut, textTransform:"uppercase", letterSpacing:0.4, margin:"7px 0 3px" };
-            const renderGrid = (phase) => {
+            const passLbl = { fontSize:11, fontWeight:800, color:C.gold, textTransform:"uppercase", letterSpacing:0.6, margin:"12px 0 4px" };
+            const phaseLbl = { fontSize:10, fontWeight:800, color:C.mut, textTransform:"uppercase", letterSpacing:0.4, margin:"6px 0 3px" };
+            const buildRots = (phase) => {
               const rots = Array.from({length:12}, (_,r) => {
                 const slots = vbRotation(set.lineup, r, set.subs, phase, lib);
                 const info = vbSetterInfo(slots, set.setters);
@@ -12078,25 +12079,29 @@ export default function App() {
                 const prev = idx>0 ? new Set(rots[idx-1].slots.map(s=>s.id).filter(Boolean)) : null;
                 ro.entered = prev ? new Set(ro.slots.filter(s=>s.id && !prev.has(s.id)).map(s=>s.id)) : new Set();
               });
-              return (
-                <div>
-                  <div style={passLbl}>First pass · R1–R6</div>
-                  {subTable(rots.slice(0,6), phase)}
-                  <div style={passLbl}>Second pass · R7–R12</div>
-                  {subTable(rots.slice(6,12), phase)}
-                </div>
-              );
+              return rots;
             };
+            const serveRots = buildRots("serve");
+            const recvRots  = buildRots("receive");
+            // One block per pass; within a pass, serve then receive are stacked
+            // for the SAME rotations so you compare them side by side.
+            const passBlock = (label, from, to) => (
+              <div>
+                <div style={passLbl}>{label}</div>
+                <div style={phaseLbl}>When we serve</div>
+                {subTable(serveRots.slice(from,to), "serve")}
+                <div style={phaseLbl}>When we receive</div>
+                {subTable(recvRots.slice(from,to), "receive")}
+              </div>
+            );
             // Roster positions legend (starting six + libero), like the spreadsheet's side list.
             const legendIds = [...(set.lineup||[]).filter(Boolean)];
             if (liberoId && !legendIds.includes(liberoId)) legendIds.push(liberoId);
-            const phaseHead = (txt, sub) => <div style={{display:"flex",alignItems:"baseline",gap:8,margin:"4px 0 5px"}}><span style={{fontSize:12,fontWeight:800,color:C.text}}>{txt}</span><span style={{fontSize:10,color:C.mut}}>{sub}</span></div>;
             return (
               <div>
-                {phaseHead("When we serve","#num top-left · position top-right · ▲ = rotates in")}
-                {renderGrid("serve")}
-                {phaseHead("When we receive","SR marks the passers · subs can differ from serve · ▲ = rotates in")}
-                {renderGrid("receive")}
+                <div style={{fontSize:10,color:C.mut,margin:"2px 0 4px"}}>#num top-left · position top-right · ▲ = rotates in · SR = passer</div>
+                {passBlock("First pass · R1–R6", 0, 6)}
+                {passBlock("Second pass · R7–R12", 6, 12)}
                 {/* Legend row: colors + roster positions */}
                 <div style={{display:"flex",gap:14,flexWrap:"wrap",alignItems:"center",marginTop:8,fontSize:10,color:C.mut}}>
                   <span><span style={{display:"inline-block",width:9,height:9,background:"rgba(245,158,11,0.5)",borderRadius:2,marginRight:3,verticalAlign:"middle"}} />server</span>
