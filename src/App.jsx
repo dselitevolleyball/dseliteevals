@@ -4610,6 +4610,13 @@ export default function App() {
           <h2 style={{margin:0,fontSize:22,fontWeight:800,color:C.gold}}>Welcome, {firstName}</h2>
           <div style={{fontSize:12,color:C.mut,marginTop:3}}>Clock in, plan, and see what's next.</div>
         </div>
+        <div style={{display:"flex",alignItems:"center",gap:10,background:"linear-gradient(135deg,rgba(233,30,140,0.12),rgba(233,30,140,0.04))",border:"1px solid "+C.gold,borderRadius:12,padding:"10px 14px",marginBottom:14}}>
+          <span style={{fontSize:20}}>💛</span>
+          <div>
+            <div style={{fontSize:15,fontWeight:800,color:C.gold,letterSpacing:0.5}}>{(pbMeta&&pbMeta.motto)||"Team Over Self"}</div>
+            <div style={{fontSize:11,color:C.mut}}>Our culture — talk about it every practice.</div>
+          </div>
+        </div>
         {renderCheckIn()}
 
         {/* Quick actions — the things a coach actually comes here to do. */}
@@ -4625,7 +4632,7 @@ export default function App() {
           return (
             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:10,marginBottom:14}}>
               {tile("📋","Lineups","Rotations, subs & lineup cards",()=>{ setView("lineups"); setOpenMenu(null); })}
-              {tile("🏐","Practice plans","Plan your scheduled practices",()=>{ setView("practiceplan"); setOpenMenu(null); })}
+              {tile("📖","Playbook","Plans, drills, standards & culture",()=>{ setView("practiceplan"); setOpenMenu(null); })}
               {tile("🏆","Tournaments","Schedule & assignments",()=>{ setView("tournaments"); setOpenMenu(null); })}
               {tile("🗓","Time off","Request a weekend or practice off",()=>{ setReqForm({ type:"weekend", date:"", team:"", details:"" }); setRequestOffOpen(true); })}
             </div>
@@ -10761,13 +10768,19 @@ export default function App() {
       updateDraft(d => { d.blocks.push({ id:rid(), name:dr.name, minutes:dr.minutes||10, desc:[dr.description, dr.notes].filter(Boolean).join(" — ") }); });
     };
 
+    const motto = (pbMeta && pbMeta.motto) || "Team Over Self";
     const tabBar = (
-      <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:14}}>
-        <div style={{fontSize:20,fontWeight:800,color:C.gold,marginRight:4}}>Practice</div>
-        {[["plan","Plan"],["season","Season plan"],["drills","Drills"],["playbook","Playbook"]].map(([t,l]) => (
-          <button key={t} onClick={() => setPpTab(t)}
-            style={{padding:"6px 14px",borderRadius:8,border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,background:ppTab===t?C.gold:"transparent",color:ppTab===t?"#000":C.mut}}>{l}</button>
-        ))}
+      <div style={{marginBottom:14}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:8}}>
+          <div style={{fontSize:20,fontWeight:800,color:C.gold,marginRight:2}}>Playbook</div>
+          <span title="Our culture — talk about it every practice" style={{fontSize:10,fontWeight:800,letterSpacing:1,textTransform:"uppercase",color:"#000",background:C.gold,borderRadius:12,padding:"3px 10px"}}>💛 {motto}</span>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+          {[["plan","Plan"],["season","Season plan"],["drills","Drills"],["playbook","Manifesto"]].map(([t,l]) => (
+            <button key={t} onClick={() => setPpTab(t)}
+              style={{padding:"6px 14px",borderRadius:8,border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,background:ppTab===t?C.gold:"transparent",color:ppTab===t?"#000":C.mut}}>{l}</button>
+          ))}
+        </div>
       </div>
     );
     const teamBar = (<>
@@ -10852,8 +10865,8 @@ export default function App() {
                       </div>
                       {p ? (
                         <>
-                          <span style={{fontSize:11,fontWeight:700,color:p.status==="done"?C.grn:C.gold}}>
-                            {p.status==="done" ? "✓ Complete" : "Draft"} · {blocks.length} block{blocks.length===1?"":"s"}{focus.length ? " · "+focus.length+" focus" : ""}
+                          <span style={{fontSize:11,fontWeight:700,color:p.status==="done"?C.grn:p.status==="in_progress"?"#f59e0b":C.gold}}>
+                            {p.status==="done" ? "✓ Complete" : p.status==="in_progress" ? "● In progress" : "Draft"} · {blocks.length} block{blocks.length===1?"":"s"}{focus.length ? " · "+focus.length+" focus" : ""}{p.updated_by?" · "+p.updated_by:""}
                           </span>
                           <button style={St.gold} onClick={() => openPractice(date, slot)}>Open plan</button>
                         </>
@@ -10889,6 +10902,9 @@ export default function App() {
     }
 
     // ── Editor: one specific practice ─────────────────────────────────────
+    const openRow = ppPlans.find(p => p.id===ppOpenId) || {};
+    const lastEditedWhen = openRow.updated_at ? new Date(openRow.updated_at).toLocaleString(undefined,{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}) : "";
+    const stMeta = { draft:["Draft",C.mut], in_progress:["In progress","#f59e0b"], done:["Complete",C.grn] };
     const totalMin = (ppDraft.blocks||[]).reduce((s,b) => s + (Number(b.minutes)||0), 0);
     const slotMin = (slotHours(ppDraft.slot) || 2) * 60;
     const focusItems = (ppDraft.focus_keys||[]).map(k => itemByKey.get(k)).filter(Boolean);
@@ -10965,19 +10981,35 @@ export default function App() {
     return (
       <div style={{maxWidth:900,margin:"0 auto"}}>
         {teamBar}
-        <div style={{...St.card,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
-          <button style={St.ghost} onClick={closePlan}>← All practices</button>
-          <div>
-            <div style={{fontSize:16,fontWeight:800,color:C.gold}}>{fmtDay(ppDraft.date)}</div>
-            <div style={{fontSize:12,color:C.mut}}>{ppDraft.slot} · {slotMin} min · {team}</div>
+        <div style={{...St.card}}>
+          <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+            <button style={St.ghost} onClick={closePlan}>← All practices</button>
+            <div>
+              <div style={{fontSize:16,fontWeight:800,color:C.gold}}>{fmtDay(ppDraft.date)}</div>
+              <div style={{fontSize:12,color:C.mut}}>{ppDraft.slot} · {slotMin} min · {team}</div>
+            </div>
+            <div style={{flex:1}} />
+            <span style={{fontSize:12,fontWeight:800,color:totalMin===slotMin?C.grn:totalMin>slotMin?C.red:"#f59e0b"}} title="Planned minutes vs practice length">{totalMin}/{slotMin} min</span>
+            <button style={St.ghost} onClick={printPlan} title="Open a printable version">🖨 Print</button>
+            <button style={St.ghost} onClick={copyPlan}>Copy plan</button>
           </div>
-          <div style={{flex:1}} />
-          <span style={{fontSize:12,fontWeight:800,color:totalMin===slotMin?C.grn:totalMin>slotMin?C.red:"#f59e0b"}} title="Planned minutes vs practice length">{totalMin}/{slotMin} min</span>
-          <button style={St.ghost} onClick={printPlan} title="Open a printable version">🖨 Print</button>
-          <button style={St.ghost} onClick={copyPlan}>Copy plan</button>
-          {ppDraft.status === "done"
-            ? <button style={{...St.ghost,color:C.grn,borderColor:C.grn}} onClick={() => updateDraft(d => { d.status = "draft"; })}>✓ Complete — reopen</button>
-            : <button style={St.gold} onClick={markComplete}>Mark practice complete</button>}
+          {/* Status — visible to both coaches on the team */}
+          <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginTop:10,paddingTop:10,borderTop:"1px solid "+C.border}}>
+            <span style={{fontSize:10,fontWeight:800,textTransform:"uppercase",letterSpacing:0.3,color:C.mut}}>Status</span>
+            <div style={{display:"flex",borderRadius:8,overflow:"hidden",border:"1px solid "+C.border}}>
+              {[["draft","Draft"],["in_progress","In progress"],["done","Complete"]].map(([v,l]) => (
+                <button key={v} onClick={() => { if(v==="done") markComplete(); else updateDraft(d=>{ d.status=v; }); }}
+                  style={{padding:"6px 12px",border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700,background:(ppDraft.status||"draft")===v?(stMeta[v][1]):"transparent",color:(ppDraft.status||"draft")===v?"#000":C.mut}}>{l}</button>
+              ))}
+            </div>
+            {openRow.updated_by && <span style={{fontSize:11,color:C.mut}}>last edited by <b style={{color:C.text}}>{openRow.updated_by}</b>{lastEditedWhen?" · "+lastEditedWhen:""}</span>}
+            <span style={{fontSize:10,color:C.mut}}>· both coaches on {team} share this plan</span>
+          </div>
+        </div>
+
+        {/* Team Over Self — our culture, every practice */}
+        <div style={{background:"rgba(233,30,140,0.06)",border:"1px solid "+C.gold,borderRadius:10,padding:"9px 12px",marginBottom:14,fontSize:12,color:C.text,lineHeight:1.5}}>
+          💛 <b style={{color:C.gold}}>Team Over Self</b> — say it out loud today. Catch a player choosing the team (a cover, a call, celebrating a teammate) and connect it to winning. <button onClick={()=>{ setPpTab("drills"); setDrillFilter(f=>({...f,q:"Team Over Self"})); }} style={{background:"none",border:"none",color:C.acc,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700,textDecoration:"underline",padding:0}}>See Team Over Self drills →</button>
         </div>
 
         {/* Focus — the Season plan connection */}
@@ -14937,7 +14969,7 @@ export default function App() {
                       {!canOps && mItem("notifications","🔔 Notifications" + (unreadCount>0?" ("+unreadCount+")":""))}
                       {mItem("tournaments","🏆 Tournaments")}
                       {mItem("lineups","📋 Lineups")}
-                      {mItem("practiceplan","🏐 Practice Plans")}
+                      {mItem("practiceplan","📖 Playbook")}
                       {groups.map(g => (
                         <div key={g.title}>
                           <div style={{padding:"10px 14px 4px",fontSize:9,fontWeight:800,letterSpacing:0.6,textTransform:"uppercase",color:C.gold,borderTop:"1px solid "+C.border,marginTop:6}}>{g.title}</div>
@@ -14955,7 +14987,7 @@ export default function App() {
                 {!canOps && item("notifications","Notifications" + (unreadCount>0?" ("+unreadCount+")":""))}
                 {item("tournaments","Tournaments")}
                 {item("lineups","Lineups")}
-                {item("practiceplan","Practice Plans")}
+                {item("practiceplan","Playbook")}
                 {groups.map(g => {
                   const activeInGroup = g.items.some(([v]) => v === view);
                   const open = openMenu === g.title;
