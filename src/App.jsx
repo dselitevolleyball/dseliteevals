@@ -1102,6 +1102,7 @@ export default function App() {
   const [lineupDraft, setLineupDraft]   = useState(null);    // working copy of the active plan
   const [lineupSetIdx, setLineupSetIdx] = useState(0);       // active set tab
   const [lineupPhase, setLineupPhase]   = useState("serve"); // "serve" | "receive" rotation display
+  const [lineupPlay, setLineupPlay]     = useState(null);    // live game-mode session (Play Lineup)
   const [lineupSaved, setLineupSaved]   = useState("");      // "", "saving", "saved" indicator
   const [lineupSubSel, setLineupSubSel] = useState(null);    // {setId,r,i,outId,courtN,label,inId,scope} click-to-sub
   // Coach clock-in / attendance (see renderCheckIn).
@@ -11739,6 +11740,193 @@ export default function App() {
       ghost:  { padding:"6px 12px", borderRadius:8, border:"1px solid "+C.border, background:"transparent", color:C.text, fontWeight:600, fontSize:12, cursor:"pointer", fontFamily:"inherit" },
     };
 
+    // ── Play Lineup: simplified, phone-first live game runner ──────────────
+    // Runs a match off a saved plan: pick a set + who serves, then tap points.
+    // We rotate our lineup only on a side-out (win the serve back); the libero
+    // switch is applied automatically and called out; planned subs pop a
+    // "Sub now" prompt to confirm. Court shows positions so overlaps/serve
+    // order are easy to check on a phone.
+    if (lineupPlay) {
+      const play = lineupPlay;
+      const plan = play.plan || {};
+      const pdata = plan.data || {};
+      const psets = pdata.sets || [];
+      const proster = pdata.roster || [];
+      const pById = Object.fromEntries(proster.map(p => [p.id, p]));
+      const pFirst = id => { const p = pById[id]; if (!p) return "—"; return ((p.name||"").trim().split(/\s+/)[0]) || ("#"+(p.num||"?")); };
+      const pName  = id => { const p = pById[id]; return p ? (p.name || ("#"+(p.num||"?"))) : "—"; };
+      const pNum   = id => (pById[id] && pById[id].num) || "";
+      const pPos   = id => (pById[id] && pById[id].pos) || "";
+      const set = psets[play.setIdx] || psets[0] || null;
+      const lineupOk = set && (set.lineup||[]).filter(Boolean).length === 6;
+      const upd = fn => setLineupPlay(pl => { const n = JSON.parse(JSON.stringify(pl)); n.plan = pl.plan; fn(n); return n; });
+      const exitPlay = () => setLineupPlay(null);
+
+      const usName = play.opponent ? team : (team || "Us");
+      const oppName = play.opponent || "Opponent";
+
+      // Live court for the current rotation/phase.
+      const phase = (play.stage==="live" ? (play.serving==="us") : (play.startServe==="us")) ? "serve" : "receive";
+      const rr = play.stage==="live" ? play.r : 0;
+      const lib = set ? vbLiberoConf(set) : null;
+      const slots = lineupOk ? vbRotation(set.lineup, rr, set.subs, phase, lib) : [];
+      const byN = {}; slots.forEach(s => { byN[s.n] = s; });
+      const sInfo = lineupOk ? vbSetterInfo(slots, set.setters) : { setterBack:null, setterFront:null };
+      const liberoSlot = slots.find(s => s.libFor);
+      const weServe = phase==="serve";
+
+      // Planned subs that start at this exact rotation (base) + serve/receive half.
+      const halfOf = ph => ph==="receive" ? "receive" : "serve";
+      const dueSubs = play.stage==="live"
+        ? (set.subs||[]).filter(s => s.inId && s.outId && ((s.fromRotation==null?0:s.fromRotation)%6)===play.r && halfOf(s.phase)===phase)
+        : [];
+      const subKey = s => play.r + "|" + phase + "|" + s.inId + "|" + s.outId;
+      const pendingSubs = dueSubs.filter(s => !(play.confirmed||{})[subKey(s)]);
+
+      const addPoint = who => upd(pl => {
+        pl.history = [...(pl.history||[]), { us:pl.us, them:pl.them, serving:pl.serving, r:pl.r }];
+        if (who==="us") { pl.us++; if (pl.serving==="them") { pl.serving="us"; pl.r=(pl.r+1)%6; } }   // side-out → rotate
+        else            { pl.them++; if (pl.serving==="us")   { pl.serving="them"; } }                  // lost the serve
+      });
+      const undo = () => upd(pl => { const h=(pl.history||[]); if(!h.length) return; const last=h[h.length-1]; pl.history=h.slice(0,-1); pl.us=last.us; pl.them=last.them; pl.serving=last.serving; pl.r=last.r; });
+      const endSet = () => upd(pl => {
+        if (pl.us!==pl.them) { if (pl.us>pl.them) pl.usSets=(pl.usSets||0)+1; else pl.themSets=(pl.themSets||0)+1; }
+        pl.lastScore = { us:pl.us, them:pl.them };
+        pl.stage = "setup";
+        pl.setIdx = Math.min((pl.usSets||0)+(pl.themSets||0), Math.max(0, psets.length-1));
+      });
+      const startPlay = () => upd(pl => { pl.stage="live"; pl.us=0; pl.them=0; pl.serving=pl.startServe; pl.r=0; pl.confirmed={}; pl.history=[]; });
+
+      const PS = {
+        btn:   { padding:"14px 18px", borderRadius:12, border:"none", fontWeight:800, fontSize:16, cursor:"pointer", fontFamily:"inherit" },
+        chip:  { padding:"10px 14px", borderRadius:10, border:"1px solid "+C.border, background:C.bg, color:C.text, fontWeight:700, fontSize:14, cursor:"pointer", fontFamily:"inherit" },
+      };
+
+      const courtCell = n => {
+        const s = byN[n];
+        const id = s ? s.id : null;
+        const isServer = weServe && n===1;
+        const isLibero = id && liberoSlot && liberoSlot.n===n;
+        const isSetterBack = id && id===sInfo.setterBack;
+        return (
+          <div key={n} style={{position:"relative",background:isServer?"rgba(245,158,11,0.16)":isLibero?"rgba(6,182,212,0.16)":C.bg,border:"2px solid "+(isServer?"#f59e0b":isLibero?"#06b6d4":C.border),borderRadius:12,padding:"12px 8px",minHeight:78,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:2}}>
+            <span style={{position:"absolute",top:4,left:6,fontSize:11,fontWeight:800,color:C.mut}}>{n}</span>
+            {pNum(id) ? <span style={{position:"absolute",top:4,right:6,fontSize:11,fontWeight:800,color:C.gold}}>#{pNum(id)}</span> : null}
+            <span style={{fontSize:20,fontWeight:800,color:C.text,textAlign:"center",lineHeight:1.05}}>{id ? pFirst(id) : "—"}</span>
+            <span style={{fontSize:11,fontWeight:700,color:C.mut}}>
+              {isLibero ? "LIBERO" : (pPos(id) || "")}{isSetterBack ? " · sets" : ""}
+            </span>
+            {isServer && <span style={{position:"absolute",bottom:3,fontSize:9,fontWeight:900,letterSpacing:1,color:"#f59e0b"}}>● SERVE</span>}
+          </div>
+        );
+      };
+
+      const court = (
+        <div style={{maxWidth:520,margin:"0 auto"}}>
+          <div style={{fontSize:10,fontWeight:800,letterSpacing:1,color:C.mut,textAlign:"center",marginBottom:4}}>▲ NET ▲</div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginBottom:8}}>
+            {[4,3,2].map(courtCell)}
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
+            {[5,6,1].map(courtCell)}
+          </div>
+          <div style={{fontSize:10,color:C.mut,textAlign:"center",marginTop:6}}>
+            {weServe ? "We serve — #1 serves" : "We receive — check serve-receive order"}
+            {liberoSlot ? " · Libero " + pFirst(set.liberoId) + " in for " + pFirst(liberoSlot.libFor) : ""}
+          </div>
+        </div>
+      );
+
+      // ── Setup / between-sets ─────────────────────────────────────────────
+      if (play.stage==="setup" || play.stage==="review") {
+        const matchNote = (play.usSets||play.themSets) ? (usName+" "+(play.usSets||0)+" – "+(play.themSets||0)+" "+oppName) : null;
+        const decider = (play.usSets||0)===1 && (play.themSets||0)===1;
+        return (
+          <div style={{maxWidth:560,margin:"0 auto",padding:"4px 2px"}}>
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
+              <button style={S.ghost} onClick={exitPlay}>← Exit</button>
+              <div style={{fontSize:22,fontWeight:900,color:C.gold}}>Play Lineup</div>
+            </div>
+            {play.lastScore && <div style={{...S.card,textAlign:"center"}}><div style={{fontSize:13,color:C.mut}}>Last set</div><div style={{fontSize:22,fontWeight:900,color:C.text}}>{usName} {play.lastScore.us} – {play.lastScore.them} {oppName}</div>{matchNote && <div style={{fontSize:14,fontWeight:800,color:C.gold,marginTop:4}}>Match: {matchNote}</div>}</div>}
+            <div style={S.card}>
+              <div style={S.lbl}>Opponent</div>
+              <input value={play.opponent} onChange={e=>upd(pl=>{pl.opponent=e.target.value;})} placeholder="Team name" style={{...S.sel,fontSize:16,padding:"10px 12px",width:"100%",marginBottom:12}} />
+              <div style={S.lbl}>{decider ? "Deciding set — pick any lineup" : "Which saved lineup"}</div>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:12}}>
+                {psets.map((st,i)=>(
+                  <button key={st.id||i} onClick={()=>upd(pl=>{pl.setIdx=i;})} style={{...PS.chip,...(i===play.setIdx?{background:C.gold,color:"#000",borderColor:C.gold}:{})}}>{st.name||("Set "+(i+1))}</button>
+                ))}
+              </div>
+              <div style={S.lbl}>Start of set</div>
+              <div style={{display:"flex",gap:8,marginBottom:14}}>
+                <button onClick={()=>upd(pl=>{pl.startServe="us";})} style={{...PS.chip,flex:1,...(play.startServe==="us"?{background:C.grn,color:"#000",borderColor:C.grn}:{})}}>We serve</button>
+                <button onClick={()=>upd(pl=>{pl.startServe="them";})} style={{...PS.chip,flex:1,...(play.startServe==="them"?{background:C.acc,color:"#000",borderColor:C.acc}:{})}}>We receive</button>
+              </div>
+              {!lineupOk && <div style={{fontSize:12,color:C.red,marginBottom:10}}>This set's lineup isn't complete (needs 6 players). Pick another set or finish it in the editor.</div>}
+              {play.stage==="setup" ? (
+                <button disabled={!lineupOk} style={{...PS.btn,width:"100%",background:lineupOk?C.gold:C.border,color:lineupOk?"#000":C.mut}} onClick={()=>upd(pl=>{pl.stage="review";})}>Approve lineup →</button>
+              ) : (
+                <>
+                  <div style={{margin:"6px 0 10px"}}>{court}</div>
+                  <div style={{display:"flex",gap:8}}>
+                    <button style={{...PS.btn,flex:1,background:C.bg,color:C.text,border:"1px solid "+C.border}} onClick={()=>upd(pl=>{pl.stage="setup";})}>← Back</button>
+                    <button style={{...PS.btn,flex:2,background:C.grn,color:"#000"}} onClick={startPlay}>▶ Play</button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        );
+      }
+
+      // ── Live ─────────────────────────────────────────────────────────────
+      const setPoint = 25; // (informational only)
+      const setWon = Math.max(play.us,play.them)>=setPoint && Math.abs(play.us-play.them)>=2;
+      return (
+        <div style={{maxWidth:560,margin:"0 auto",padding:"4px 2px"}}>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+            <button style={S.ghost} onClick={exitPlay}>← Exit</button>
+            <div style={{fontSize:12,color:C.mut}}>{set.name} · Rotation <b style={{color:C.gold}}>{play.r+1}</b> · {weServe?"serving":"receiving"}</div>
+            <div style={{flex:1}} />
+            <button style={S.ghost} onClick={undo} disabled={!(play.history||[]).length}>↶ Undo</button>
+          </div>
+
+          {/* Scoreboard */}
+          <div style={{display:"flex",gap:8,marginBottom:12}}>
+            <button onClick={()=>addPoint("us")} style={{flex:1,padding:"16px 8px",borderRadius:14,border:"2px solid "+(play.serving==="us"?"#f59e0b":C.grn),background:"rgba(34,197,94,0.12)",cursor:"pointer",fontFamily:"inherit"}}>
+              <div style={{fontSize:12,fontWeight:800,color:C.grn}}>{usName}{play.serving==="us"?" ● serving":""}</div>
+              <div style={{fontSize:44,fontWeight:900,color:C.text,lineHeight:1}}>{play.us}</div>
+              <div style={{fontSize:11,fontWeight:800,color:C.grn}}>+ POINT</div>
+            </button>
+            <button onClick={()=>addPoint("them")} style={{flex:1,padding:"16px 8px",borderRadius:14,border:"2px solid "+(play.serving==="them"?"#f59e0b":C.acc),background:"rgba(233,30,140,0.10)",cursor:"pointer",fontFamily:"inherit"}}>
+              <div style={{fontSize:12,fontWeight:800,color:C.acc}}>{oppName}{play.serving==="them"?" ● serving":""}</div>
+              <div style={{fontSize:44,fontWeight:900,color:C.text,lineHeight:1}}>{play.them}</div>
+              <div style={{fontSize:11,fontWeight:800,color:C.acc}}>+ POINT</div>
+            </button>
+          </div>
+
+          {/* Sub prompt */}
+          {pendingSubs.map(s => (
+            <div key={subKey(s)} style={{display:"flex",alignItems:"center",gap:10,padding:"12px 14px",borderRadius:12,border:"2px solid "+C.gold,background:"rgba(233,30,140,0.08)",marginBottom:10}}>
+              <span style={{fontSize:22}}>🔁</span>
+              <div style={{flex:1}}>
+                <div style={{fontSize:14,fontWeight:900,color:C.gold}}>SUB NOW</div>
+                <div style={{fontSize:15,fontWeight:700,color:C.text}}>{pName(s.inId)} <span style={{color:C.mut}}>in for</span> {pName(s.outId)}</div>
+              </div>
+              <button style={{...PS.btn,background:C.grn,color:"#000",padding:"10px 14px"}} onClick={()=>upd(pl=>{ pl.confirmed={...(pl.confirmed||{}),[subKey(s)]:true}; })}>✓ Done</button>
+            </div>
+          ))}
+
+          {court}
+
+          <div style={{display:"flex",gap:8,marginTop:14}}>
+            <button style={{...PS.btn,flex:1,background:setWon?C.gold:C.bg,color:setWon?"#000":C.text,border:"1px solid "+(setWon?C.gold:C.border)}} onClick={endSet}>{setWon?"End set ✓":"End set"}</button>
+          </div>
+          {setWon && <div style={{fontSize:12,color:C.mut,textAlign:"center",marginTop:6}}>Looks like set point was reached — tap End set when the set is over.</div>}
+        </div>
+      );
+    }
+
     // ── No plan open: team picker + plan list ─────────────────────────────
     if (teams.length === 0) {
       return <div style={{maxWidth:900,margin:"0 auto",padding:24,color:C.mut,textAlign:"center"}}>
@@ -11776,6 +11964,7 @@ export default function App() {
                         {p.opponent ? "vs " + p.opponent + " · " : ""}{p.match_date || "no date"} · {((p.data && p.data.sets) || []).length} set{((p.data && p.data.sets) || []).length===1?"":"s"} · {((p.data && p.data.roster) || []).length} players
                       </div>
                     </button>
+                    <button style={{...S.gold,padding:"6px 12px"}} title="Run this lineup live in a game" onClick={() => setLineupPlay({ planId:p.id, plan:p, stage:"setup", opponent:p.opponent||"", setIdx:0, startServe:"us", us:0, them:0, serving:"us", r:0, usSets:0, themSets:0, confirmed:{}, history:[] })}>▶ Play</button>
                     <button style={S.ghost} onClick={() => openPlan(p)}>Open</button>
                     <button style={S.ghost} onClick={() => dupPlan(p)} title="Duplicate">⧉</button>
                     <button style={{...S.ghost,color:C.red,borderColor:"rgba(239,68,68,0.4)"}} onClick={() => deletePlan(p.id)} title="Delete">✕</button>
@@ -11845,6 +12034,7 @@ export default function App() {
           <DebouncedField value={draft.title} onCommit={v => updateDraft(d => { d.title = v; })} placeholder="Plan title" style={{...S.sel,fontSize:14,fontWeight:700,minWidth:200,flex:1}} />
           <input value={draft.opponent} onChange={e => updateDraft(d => { d.opponent = e.target.value; })} placeholder="Opponent" style={{...S.sel,width:150}} />
           <input type="date" value={draft.match_date || ""} onChange={e => updateDraft(d => { d.match_date = e.target.value; })} style={{...S.sel,width:150}} />
+          <button style={S.gold} title="Run this lineup live in a game" onClick={() => setLineupPlay({ planId:lineupPlanId, plan:{ id:lineupPlanId, team_name:team, title:draft.title, opponent:draft.opponent, data:{ roster:draft.roster, sets:draft.sets } }, stage:"setup", opponent:draft.opponent||"", setIdx:0, startServe:"us", us:0, them:0, serving:"us", r:0, usSets:0, themSets:0, confirmed:{}, history:[] })}>▶ Play</button>
           <button style={{...S.ghost,color:C.red,borderColor:"rgba(239,68,68,0.4)"}} onClick={() => deletePlan(lineupPlanId)}>Delete plan</button>
         </div>
 
