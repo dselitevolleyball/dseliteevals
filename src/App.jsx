@@ -689,11 +689,18 @@ function SortableRow({ id, children }) {
 // Textarea that grows to fit its content as you type (no inner scrollbar).
 function AutoTextarea({ value, onChange, minRows = 3, style, ...rest }) {
   const ref = useRef(null);
-  const resize = () => { const el = ref.current; if (!el) return; el.style.height = "auto"; el.style.height = Math.max(el.scrollHeight, minRows * 22) + "px"; };
+  const resize = () => {
+    const el = ref.current; if (!el) return;
+    el.style.overflowY = "hidden"; el.style.height = "auto";
+    const cap = Math.max(320, Math.round((typeof window!=="undefined"?window.innerHeight:800) * 0.6));
+    const h = Math.max(el.scrollHeight, minRows * 22) + 2;
+    el.style.height = Math.min(h, cap) + "px";
+    if (h > cap) el.style.overflowY = "auto";
+  };
   useEffect(() => { resize(); }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
   return <textarea ref={ref} rows={minRows} value={value}
     onChange={(e) => { onChange(e); resize(); }}
-    style={{ ...style, overflow: "hidden", resize: "none" }} {...rest} />;
+    style={{ ...style, resize: "none" }} {...rest} />;
 }
 // Debounced text input/textarea. Holds keystrokes locally and only fires
 // onCommit once the user has paused typing for `delay` ms (or blurs the
@@ -740,8 +747,21 @@ function DebouncedField({ value, onCommit, delay = 800, multiline = false, ...re
   };
   // Flush on unmount so closing a modal mid-edit still persists.
   useEffect(() => () => flush(), []); // eslint-disable-line react-hooks/exhaustive-deps
+  // Grow a multiline field to fit its content (covers prop-driven value syncs
+  // that don't fire an input event; typing is handled globally too).
+  const taRef = useRef(null);
+  useEffect(() => {
+    const el = taRef.current;
+    if (!multiline || !el) return;
+    el.style.overflowY = "hidden"; el.style.height = "auto";
+    const cap = Math.max(320, Math.round((typeof window!=="undefined"?window.innerHeight:800) * 0.6));
+    const h = el.scrollHeight + 2;
+    el.style.height = Math.min(h, cap) + "px";
+    if (h > cap) el.style.overflowY = "auto";
+  }, [local, multiline]);
   const Tag = multiline ? "textarea" : "input";
-  return <Tag {...rest} value={local} onChange={handleChange} onBlur={flush} />;
+  const extra = multiline ? { ref: taRef, style: { ...(rest.style || {}), resize: "none" } } : {};
+  return <Tag {...rest} {...extra} value={local} onChange={handleChange} onBlur={flush} />;
 }
 
 function RankInput({ value, max, onCommit }) {
@@ -1097,6 +1117,40 @@ export default function App() {
     mq.addEventListener("change", onChange);
     return () => mq.removeEventListener("change", onChange);
   }, []);
+
+  // Auto-grow every textarea in the app: size it to its content on mount and
+  // as you type (works on mobile Safari, unlike CSS field-sizing). Wires new
+  // textareas via a MutationObserver so it covers modals/editors that mount
+  // later. Caps at ~60% of the viewport, then scrolls.
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const cap = () => Math.max(320, Math.round(window.innerHeight * 0.6));
+    const grow = (el) => {
+      if (!el || el.__grownBusy) return;
+      el.__grownBusy = true;
+      el.style.overflowY = "hidden";
+      el.style.height = "auto";
+      const h = el.scrollHeight;
+      const C = cap();
+      el.style.height = Math.min(h + 2, C) + "px";
+      if (h + 2 > C) el.style.overflowY = "auto";
+      el.__grownBusy = false;
+    };
+    const wire = (el) => { if (el.__grown) { grow(el); return; } el.__grown = true; el.addEventListener("input", () => grow(el)); grow(el); };
+    document.querySelectorAll("textarea").forEach(wire);
+    const mo = new MutationObserver((muts) => {
+      for (const m of muts) m.addedNodes && m.addedNodes.forEach((n) => {
+        if (n.nodeType !== 1) return;
+        if (n.tagName === "TEXTAREA") wire(n);
+        else if (n.querySelectorAll) n.querySelectorAll("textarea").forEach(wire);
+      });
+    });
+    mo.observe(document.body, { childList: true, subtree: true });
+    const onResize = () => document.querySelectorAll("textarea").forEach(grow);
+    window.addEventListener("resize", onResize);
+    return () => { mo.disconnect(); window.removeEventListener("resize", onResize); };
+  }, []);
+
   // Practice Plans (per scheduled practice date — see renderPracticePlans).
   const [ppPlans, setPpPlans]   = useState([]);   // saved practice_plans rows
   const [ppTeam, setPpTeam]     = useState("");   // selected team
