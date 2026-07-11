@@ -10817,6 +10817,11 @@ export default function App() {
     }
     const planFor = (date, slot) => ppPlans.find(p => p.team_name===team && p.practice_date===date && (p.slot||"")===(slot||""));
     const history = ppPlans.filter(p => p.team_name===team && p.practice_date < today).slice(0, 6);
+    // Once a practice's date has passed, it's Executed no matter what.
+    const effStatus = (p) => (p && p.practice_date < today && p.status !== "executed") ? "executed" : (p ? (p.status||"planned") : "planned");
+    // The single in-progress plan for this team = the "current practice".
+    const currentPlan = ppPlans.find(p => p.team_name===team && p.status==="in_progress");
+    const shortDay = iso => new Date(iso+"T12:00:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"});
 
     // Curriculum hooks for this team.
     const statusOf = k => { const r = currProgress.find(x => x.team_name===team && x.item_key===k); return r ? r.status : "todo"; };
@@ -10845,7 +10850,7 @@ export default function App() {
         const ins = {
           team_name: team, practice_date: date, slot: slot || "",
           blocks: defaultBlocks(slot), focus_keys: plannedItems.map(p => p.k),
-          status: "draft", updated_by: coach?.display_name || coach?.email || null,
+          status: "planned", updated_by: coach?.display_name || coach?.email || null,
         };
         const { data, error } = await supabase.from("practice_plans").insert(ins).select().single();
         if (error) { await loadPracticePlans(); row = planFor(date, slot); if (!row) { window.alert("Couldn't start the plan: " + error.message); return; } }
@@ -10863,6 +10868,36 @@ export default function App() {
     const addDrillToPlan = (dr) => {
       updateDraft(d => { d.blocks.push({ id:rid(), name:dr.name, minutes:dr.minutes||10, desc:[dr.description, dr.notes].filter(Boolean).join(" — ") }); });
     };
+    // Add a drill as a block to a specific practice (creating the plan if it
+    // doesn't exist yet). Used from the Drills tab.
+    const drillBlock = (dr) => ({ id:rid(), name:dr.name, minutes:dr.minutes||10, desc:[dr.description, dr.notes].filter(Boolean).join(" — ") });
+    const addDrillToPractice = async (tm, date, slot, dr) => {
+      const row = ppPlans.find(p => p.team_name===tm && p.practice_date===date && (p.slot||"")===(slot||""));
+      const by = coach?.display_name || coach?.email || null;
+      if (row) {
+        const blocks = [...(row.blocks||[]), drillBlock(dr)];
+        // If we're editing this exact plan, update the draft too so it shows live.
+        if (ppOpenId===row.id) updateDraft(d => { d.blocks.push(drillBlock(dr)); });
+        else { const { error } = await supabase.from("practice_plans").update({ blocks, updated_by:by, updated_at:new Date().toISOString() }).eq("id", row.id); if(error){ window.alert("Couldn't add: "+error.message); return; } }
+      } else {
+        const { error } = await supabase.from("practice_plans").insert({ team_name:tm, practice_date:date, slot:slot||"", blocks:[drillBlock(dr)], focus_keys:plannedItems.map(p=>p.k), status:"planned", updated_by:by });
+        if(error){ window.alert("Couldn't create plan: "+error.message); return; }
+      }
+      await loadPracticePlans();
+      window.alert("Added “"+dr.name+"” to "+tm+" · "+shortDay(date)+".");
+    };
+    // Per-drill "Add to…" picker for the Drills tab: current in-progress plan
+    // (this team) or any upcoming scheduled practice.
+    const drillAddControl = (dr) => (
+      <select value="" onChange={e => { const v=e.target.value; if(!v) return; e.target.value="";
+          if(v==="current" && currentPlan) addDrillToPractice(team, currentPlan.practice_date, currentPlan.slot, dr);
+          else { const [d,s] = v.split("||"); addDrillToPractice(team, d, s||"", dr); } }}
+        style={{...St.sel,fontSize:11,padding:"4px 6px",color:C.gold,fontWeight:700}}>
+        <option value="">+ Add to…</option>
+        {currentPlan && <option value="current">▶ Current practice — {shortDay(currentPlan.practice_date)}</option>}
+        {upcoming.map(u => <option key={u.date+u.slot} value={u.date+"||"+u.slot}>{shortDay(u.date)} · {u.slot}{planFor(u.date,u.slot)?" (has plan)":""}</option>)}
+      </select>
+    );
 
     const motto = (pbMeta && pbMeta.motto) || "Team Over Self";
     const tabBar = (
@@ -10891,7 +10926,7 @@ export default function App() {
     </>);
 
     // ── Drills tab — the shared library, browse + add ─────────────────────
-    const drillBrowser = (onPick) => {
+    const drillBrowser = (renderAdd) => {
       const skills = [...new Set(drills.map(d => d.skill).filter(Boolean))].sort();
       const q = norm(drillFilter.q);
       const list = drills.filter(d =>
@@ -10912,16 +10947,16 @@ export default function App() {
             </select>
           </div>
           <div style={{fontSize:11,color:C.mut,marginBottom:8}}>{list.length} drill{list.length===1?"":"s"}</div>
-          <div style={{display:"flex",flexDirection:"column",gap:8,maxHeight:onPick?360:"none",overflowY:onPick?"auto":"visible"}}>
+          <div style={{display:"flex",flexDirection:"column",gap:8}}>
             {list.map(d => (
               <div key={d.id} style={{border:"1px solid "+C.border,borderRadius:8,padding:"9px 11px",background:C.bg}}>
-                <div style={{display:"flex",alignItems:"baseline",gap:8,flexWrap:"wrap"}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
                   <span style={{fontSize:13,fontWeight:800,color:C.text}}>{d.name}</span>
                   {d.phase && <span style={{fontSize:9,fontWeight:800,textTransform:"uppercase",letterSpacing:0.3,color:phaseColor[d.phase]||C.mut}}>{d.phase}</span>}
                   {d.skill && <span style={{fontSize:10,color:C.mut}}>{d.skill}</span>}
                   {d.minutes != null && <span style={{fontSize:10,color:C.mut}}>· {d.minutes}min</span>}
                   <div style={{flex:1}} />
-                  {onPick && <button style={{...St.gold,padding:"3px 10px"}} onClick={() => onPick(d)}>+ Add</button>}
+                  {renderAdd && renderAdd(d)}
                 </div>
                 {d.description && <div style={{fontSize:12,color:C.text,marginTop:4,lineHeight:1.4,whiteSpace:"pre-wrap"}}>{d.description}</div>}
                 {d.notes && <div style={{fontSize:11,color:C.acc,marginTop:3,lineHeight:1.4}}>Notes: {d.notes}</div>}
@@ -10934,7 +10969,21 @@ export default function App() {
     };
 
     if (ppTab === "season") return <div style={{maxWidth:960,margin:"0 auto"}}>{tabBar}{renderSeasonPlan()}</div>;
-    if (ppTab === "drills") return <div style={{maxWidth:960,margin:"0 auto"}}>{tabBar}<div style={St.card}><div style={St.lbl}>Drill library · {drills.length}</div>{drillBrowser(null)}</div></div>;
+    if (ppTab === "drills") return (
+      <div style={{maxWidth:960,margin:"0 auto"}}>
+        {tabBar}
+        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:12}}>
+          <span style={{fontSize:11,fontWeight:800,letterSpacing:0.3,textTransform:"uppercase",color:C.mut}}>Add to</span>
+          <select value={team} onChange={e => { setPpTeam(e.target.value); }} style={{...St.sel,fontSize:13,padding:"7px 9px"}}>
+            {teams.map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
+          {currentPlan
+            ? <span style={{fontSize:11,color:"#f59e0b",fontWeight:700}}>● Current practice: {shortDay(currentPlan.practice_date)} {currentPlan.slot}</span>
+            : <span style={{fontSize:11,color:C.mut}}>No in-progress practice — “+ Add to…” lets you pick an upcoming one.</span>}
+        </div>
+        <div style={St.card}><div style={St.lbl}>Drill library · {drills.length}</div>{drillBrowser(drillAddControl)}</div>
+      </div>
+    );
     if (ppTab === "playbook") return <div style={{maxWidth:960,margin:"0 auto"}}>{tabBar}{renderPlaybook(St)}</div>;
 
     // ── Plan tab ──────────────────────────────────────────────────────────
@@ -10954,15 +11003,15 @@ export default function App() {
                   const blocks = (p && p.blocks) || [];
                   const focus = (p && p.focus_keys) || [];
                   return (
-                    <div key={date+"|"+slot} style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap",padding:"10px 12px",borderRadius:8,border:"1px solid "+(p ? (p.status==="done"?C.grn:C.gold) : C.border),background:C.bg}}>
+                    <div key={date+"|"+slot} style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap",padding:"10px 12px",borderRadius:8,border:"1px solid "+(p ? (effStatus(p)==="executed"?C.grn:effStatus(p)==="in_progress"?"#f59e0b":C.gold) : C.border),background:C.bg}}>
                       <div style={{flex:1,minWidth:170}}>
                         <div style={{fontSize:14,fontWeight:800,color:date===today?C.gold:C.text}}>{fmtDay(date)}</div>
                         <div style={{fontSize:12,color:C.mut}}>{slot} · {slotHours(slot)}h</div>
                       </div>
                       {p ? (
                         <>
-                          <span style={{fontSize:11,fontWeight:700,color:p.status==="done"?C.grn:p.status==="in_progress"?"#f59e0b":C.gold}}>
-                            {p.status==="done" ? "✓ Complete" : p.status==="in_progress" ? "● In progress" : "Draft"} · {blocks.length} block{blocks.length===1?"":"s"}{focus.length ? " · "+focus.length+" focus" : ""}{p.updated_by?" · "+p.updated_by:""}
+                          <span style={{fontSize:11,fontWeight:700,color:effStatus(p)==="executed"?C.grn:effStatus(p)==="in_progress"?"#f59e0b":C.gold}}>
+                            {effStatus(p)==="executed" ? "✓ Executed" : effStatus(p)==="in_progress" ? "● In progress" : "Planned"} · {blocks.length} block{blocks.length===1?"":"s"}{focus.length ? " · "+focus.length+" focus" : ""}{p.updated_by?" · "+p.updated_by:""}
                           </span>
                           <button style={St.gold} onClick={() => openPractice(date, slot)}>Open plan</button>
                         </>
@@ -10986,7 +11035,7 @@ export default function App() {
                   <div key={p.id} style={{display:"flex",alignItems:"center",gap:10,fontSize:12,color:C.text}}>
                     <span style={{width:120,color:C.mut}}>{new Date(p.practice_date+"T12:00:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"})}</span>
                     <span style={{flex:1}}>{p.slot} · {(p.blocks||[]).length} blocks{(p.focus_keys||[]).length?" · "+(p.focus_keys||[]).length+" focus":""}</span>
-                    <span style={{fontSize:11,fontWeight:700,color:p.status==="done"?C.grn:C.mut}}>{p.status==="done"?"✓ complete":"draft"}</span>
+                    <span style={{fontSize:11,fontWeight:700,color:effStatus(p)==="executed"?C.grn:C.mut}}>{effStatus(p)==="executed"?"✓ executed":effStatus(p)}</span>
                     <button style={{...St.ghost,padding:"3px 10px"}} onClick={() => { ppSkipSave.current = true; setPpOpenId(p.id); setPpDraft({ date:p.practice_date, slot:p.slot||"", blocks:p.blocks||[], focus_keys:p.focus_keys||[], notes:p.notes||"", status:p.status||"draft" }); }}>View</button>
                   </div>
                 ))}
@@ -11000,13 +11049,24 @@ export default function App() {
     // ── Editor: one specific practice ─────────────────────────────────────
     const openRow = ppPlans.find(p => p.id===ppOpenId) || {};
     const lastEditedWhen = openRow.updated_at ? new Date(openRow.updated_at).toLocaleString(undefined,{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}) : "";
-    const stMeta = { draft:["Draft",C.mut], in_progress:["In progress","#f59e0b"], done:["Complete",C.grn] };
+    const stMeta = { planned:["Planned",C.gold], in_progress:["In progress","#f59e0b"], executed:["Executed",C.grn] };
+    // Set status; making a plan 'in progress' clears any other in-progress plan
+    // for the same team (only one at a time).
+    const setStatus = async (v) => {
+      if (v === "executed") { markComplete(); return; }
+      updateDraft(d => { d.status = v; });
+      if (v === "in_progress") {
+        const others = ppPlans.filter(p => p.team_name===team && p.id!==ppOpenId && p.status==="in_progress");
+        for (const o of others) await supabase.from("practice_plans").update({ status:"planned" }).eq("id", o.id);
+        if (others.length) await loadPracticePlans();
+      }
+    };
     const totalMin = (ppDraft.blocks||[]).reduce((s,b) => s + (Number(b.minutes)||0), 0);
     const slotMin = (slotHours(ppDraft.slot) || 2) * 60;
     const focusItems = (ppDraft.focus_keys||[]).map(k => itemByKey.get(k)).filter(Boolean);
     const addable = allItems.filter(it => statusOf(it.k) !== "done" && !(ppDraft.focus_keys||[]).includes(it.k));
     const markComplete = async () => {
-      updateDraft(d => { d.status = "done"; });
+      updateDraft(d => { d.status = "executed"; });
       if (focusItems.length && window.confirm("Mark the " + focusItems.length + " focus concept" + (focusItems.length===1?"":"s") + " as taught in the Season plan?")) {
         for (const it of focusItems) await setCurriculumStatus(team, it.k, "done");
       }
@@ -11093,9 +11153,9 @@ export default function App() {
           <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginTop:10,paddingTop:10,borderTop:"1px solid "+C.border}}>
             <span style={{fontSize:10,fontWeight:800,textTransform:"uppercase",letterSpacing:0.3,color:C.mut}}>Status</span>
             <div style={{display:"flex",borderRadius:8,overflow:"hidden",border:"1px solid "+C.border}}>
-              {[["draft","Draft"],["in_progress","In progress"],["done","Complete"]].map(([v,l]) => (
-                <button key={v} onClick={() => { if(v==="done") markComplete(); else updateDraft(d=>{ d.status=v; }); }}
-                  style={{padding:"6px 12px",border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700,background:(ppDraft.status||"draft")===v?(stMeta[v][1]):"transparent",color:(ppDraft.status||"draft")===v?"#000":C.mut}}>{l}</button>
+              {[["planned","Planned"],["in_progress","In progress"],["executed","Executed"]].map(([v,l]) => (
+                <button key={v} onClick={() => setStatus(v)}
+                  style={{padding:"6px 12px",border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700,background:(ppDraft.status||"planned")===v?(stMeta[v][1]):"transparent",color:(ppDraft.status||"planned")===v?"#000":C.mut}}>{l}</button>
               ))}
             </div>
             {openRow.updated_by && <span style={{fontSize:11,color:C.mut}}>last edited by <b style={{color:C.text}}>{openRow.updated_by}</b>{lastEditedWhen?" · "+lastEditedWhen:""}</span>}
@@ -11177,7 +11237,7 @@ export default function App() {
           {ppLibOpen && (
             <div style={{marginTop:10,borderTop:"1px solid "+C.border,paddingTop:10}}>
               <div style={{fontSize:11,color:C.mut,marginBottom:8}}>Tap <b style={{color:C.gold}}>+ Add</b> to drop a drill into this practice as a block.</div>
-              {drillBrowser(dr => { addDrillToPlan(dr); setPpSaved("saving"); })}
+              {drillBrowser(dr => <button style={{...St.gold,padding:"3px 10px"}} onClick={() => { addDrillToPlan(dr); setPpSaved("saving"); }}>+ Add</button>)}
             </div>
           )}
         </div>
