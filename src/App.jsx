@@ -805,17 +805,25 @@ const VB_COURT = [
 const VB_GRID = [3, 2, 1, 4, 5, 0];
 
 // Apply planned subs to a base (rotation-1) player id for a given rotation.
-// A sub's phase ("serve" | "receive" | "both") gates whether it applies to the
-// serve grid, the serve-receive grid, or both — so a libero/defensive sub can
-// show up only when receiving. phase=null means "ignore phase" (apply all).
+// Subs flow CHRONOLOGICALLY, not per-phase. Play runs as a sequence of half
+// steps: each rotation has a serve half (even) then a serve-receive half (odd).
+//   step = rotation*2 + (phase==="receive" ? 1 : 0)
+// A sub persists forward from the half it was made through the end of its `thru`
+// rotation's receive half — so subbing someone in FOR SERVE also keeps them in
+// for that rotation's serve-receive, and subbing in FOR SERVE-RECEIVE also keeps
+// them in for the NEXT rotation's serve. A later reverse sub (original back in)
+// ends it. The sub's `phase` marks where it STARTS, not a filter.
 function vbEffective(baseId, rotation, subs, phase){
+  const halfOf = ph => ph==="receive" ? 1 : 0;
+  const curStep = rotation*2 + halfOf(phase);
   let id = baseId;
   for(const s of (subs||[])){
+    if(s.outId!==id || !s.inId) continue;
     const from = s.fromRotation==null ? 0 : s.fromRotation;
-    const thru = s.thruRotation==null ? 5 : s.thruRotation;
-    const ph = s.phase || "both";
-    const phaseOk = !phase || ph==="both" || ph===phase;
-    if(phaseOk && s.outId===id && s.inId && rotation>=from && rotation<=thru) id = s.inId;
+    const thru = s.thruRotation==null ? 11 : s.thruRotation;
+    const startStep = from*2 + halfOf(s.phase);
+    const endStep   = thru*2 + 1; // through the serve-receive half of the thru rotation
+    if(curStep>=startStep && curStep<=endStep) id = s.inId;
   }
   return id;
 }
@@ -12125,7 +12133,7 @@ export default function App() {
                   const onCourt = new Set(vbRotation(set.lineup, sel.r, set.subs, aPhase, lib).map(s=>s.id).filter(Boolean));
                   const bench = roster.filter(p => !onCourt.has(p.id));
                   const related = (set.subs||[]).map((s,idx)=>({s,idx})).filter(({s}) => s.outId===sel.outId || s.inId===sel.outId);
-                  const phaseWord = { both:"whole rotation", serve:"serve only", receive:"receive only" };
+                  const subRange = s => { const f=(s.fromRotation==null?0:s.fromRotation), t=(s.thruRotation==null?11:s.thruRotation); const h=s.phase==="receive"?"serve-receive":"serve"; return `from R${f+1} ${h} → R${t+1}`; };
                   const applySub = () => {
                     if(!sel.inId){ window.alert("Choose a player to bring in."); return; }
                     updateDraft(d => { d.sets[setIdx].subs.push({ inId: sel.inId, outId: sel.outId, fromRotation: sel.r, thruRotation: sel.scope==="one" ? sel.r : 11, phase: aPhase }); });
@@ -12159,7 +12167,7 @@ export default function App() {
                           {related.map(({s,idx}) => (
                             <div key={idx} style={{display:"flex",alignItems:"center",gap:6,fontSize:11,color:C.text,marginBottom:2}}>
                               <span style={{color:C.grn,fontWeight:700}}>{pfirst(s.inId)}</span><span style={{color:C.mut}}>in for</span><span style={{fontWeight:600}}>{pfirst(s.outId)}</span>
-                              <span style={{color:C.mut}}>· R{(s.fromRotation==null?0:s.fromRotation)+1}–R{(s.thruRotation==null?5:s.thruRotation)+1} · {phaseWord[s.phase||"both"]}</span>
+                              <span style={{color:C.mut}}>· {subRange(s)}</span>
                               <button style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:12}} title="Remove this sub" onClick={()=>updateDraft(d=>{ d.sets[setIdx].subs.splice(idx,1); })}>✕</button>
                             </div>
                           ))}
