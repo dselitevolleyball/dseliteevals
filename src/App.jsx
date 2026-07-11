@@ -4535,6 +4535,34 @@ export default function App() {
           </details>
         </div>
 
+        {/* Changelog history — sent digests, kept separate from staff notifications */}
+        {(() => {
+          const sentCl = changelog.broadcasts.filter(b => b.status === "sent");
+          if (!sentCl.length) return null;
+          return (
+            <div style={{marginBottom:18}}>
+              <div style={{fontSize:10,fontWeight:800,textTransform:"uppercase",letterSpacing:0.4,color:C.mut,marginBottom:8}}>📣 Changelog history</div>
+              <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                {sentCl.map(b => {
+                  const when = new Date(b.sent_at || b.created_at).toLocaleString(undefined,{weekday:"short",month:"short",day:"numeric",hour:"numeric",minute:"2-digit"});
+                  const n = (b.entry_ids||[]).length;
+                  return (
+                    <div key={b.id} style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:"12px 14px"}}>
+                      <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginBottom:6}}>
+                        <span style={{fontSize:10,fontWeight:800,color:C.gold,border:"1px solid "+C.gold,borderRadius:6,padding:"2px 7px"}}>What's new</span>
+                        <span style={{fontSize:13,fontWeight:800,color:C.text}}>{b.title}</span>
+                        <div style={{flex:1}} />
+                        <span style={{fontSize:11,color:C.mut}}>{when}{b.sent_count!=null?" · "+b.sent_count+" coach"+(b.sent_count===1?"":"es"):""}{n?" · "+n+" change"+(n===1?"":"s"):""}</span>
+                      </div>
+                      <pre style={{margin:0,whiteSpace:"pre-wrap",fontFamily:"inherit",fontSize:12,lineHeight:1.5,color:C.text}}>{b.body}</pre>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
+
         {/* Composer */}
         <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:16,marginBottom:18}}>
           <div style={{fontSize:10,fontWeight:800,textTransform:"uppercase",letterSpacing:0.4,color:C.gold,marginBottom:8}}>Send a notification</div>
