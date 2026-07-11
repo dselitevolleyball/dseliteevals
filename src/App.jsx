@@ -1110,6 +1110,11 @@ export default function App() {
   const [ppLibOpen, setPpLibOpen] = useState(false); // drill picker inside a plan
   const [ppAiBusy, setPpAiBusy]   = useState(false); // AI plan generation in flight
   const [ppAiInstr, setPpAiInstr] = useState("");    // extra instruction for the AI
+  // Coaching Playbook (manifesto + sign-off), a hub tab.
+  const [pbMeta, setPbMeta]       = useState(null);
+  const [pbEntries, setPbEntries] = useState([]);
+  const [pbAcks, setPbAcks]       = useState([]);
+  const [pbEdit, setPbEdit]       = useState(false);
   // Season-plan curriculum (per-team teaching checkboxes on the dashboard).
   const [currProgress, setCurrProgress]     = useState([]);
   const [currTeam, setCurrTeam]             = useState("");   // selected team in the panel
@@ -1885,9 +1890,19 @@ export default function App() {
     if (error) { console.error("Load drills error:", error); return; }
     setDrills(data || []);
   }, []);
+  const loadPlaybook = useCallback(async () => {
+    const [m, e, a] = await Promise.all([
+      supabase.from("playbook_meta").select("*").eq("id", 1).maybeSingle(),
+      supabase.from("playbook_entries").select("*").order("sort_order"),
+      supabase.from("playbook_acks").select("*"),
+    ]);
+    if (m.data) setPbMeta(m.data);
+    setPbEntries(e.data || []);
+    setPbAcks(a.data || []);
+  }, []);
   useEffect(() => {
-    if (isApproved && view === "practiceplan") { loadPracticePlans(); loadPractice(); loadPracticeCancellations(); loadCurriculumProgress(); loadDrills(); }
-  }, [isApproved, view, loadPracticePlans, loadPractice, loadPracticeCancellations, loadCurriculumProgress, loadDrills]);
+    if (isApproved && view === "practiceplan") { loadPracticePlans(); loadPractice(); loadPracticeCancellations(); loadCurriculumProgress(); loadDrills(); loadPlaybook(); }
+  }, [isApproved, view, loadPracticePlans, loadPractice, loadPracticeCancellations, loadCurriculumProgress, loadDrills, loadPlaybook]);
   // Debounced autosave of the open practice plan (mirrors the lineup autosave).
   const ppDraftJson = ppDraft ? JSON.stringify(ppDraft) : "";
   useEffect(() => {
@@ -10224,6 +10239,164 @@ export default function App() {
     );
   }
 
+  // ── Coaching Playbook — the DSSC / DS Elite training manifesto ───────────
+  // A versioned document every coach reads and affirms; publishing a new
+  // version re-opens sign-off and notifies coaches.
+  function renderPlaybook(St) {
+    const norm = s => (s||"").toString().trim().toLowerCase();
+    const meta = pbMeta || { title:"DS Elite Coaching Playbook", subtitle:"", version:1 };
+    const ver = meta.version || 1;
+    const coachName = coach?.display_name || coach?.email || "";
+    const myAck = pbAcks.find(a => norm(a.coach_name)===norm(coachName) && a.version===ver);
+    const entries = pbEntries.slice().sort((a,b)=>(a.sort_order||0)-(b.sort_order||0));
+    const cats = [...new Set(entries.map(e => e.category || "General"))];
+    const fmtDate = ts => { try { return new Date(ts).toLocaleDateString(undefined,{month:"short",day:"numeric",year:"numeric"}); } catch { return ""; } };
+
+    const affirm = async () => {
+      const { error } = await supabase.from("playbook_acks").upsert(
+        { coach_name: coachName, coach_email: coach?.email || null, version: ver, acked_at: new Date().toISOString() },
+        { onConflict: "coach_name,version" });
+      if (error) { window.alert("Couldn't record your sign-off: " + error.message); return; }
+      await loadPlaybook();
+    };
+    const saveMeta = async (patch) => { await supabase.from("playbook_meta").update(patch).eq("id", 1); await loadPlaybook(); };
+    const saveEntry = async (id, patch) => {
+      await supabase.from("playbook_entries").update({ ...patch, updated_by: coachName, updated_at: new Date().toISOString() }).eq("id", id);
+      await loadPlaybook();
+    };
+    const addEntry = async () => {
+      const maxSo = entries.reduce((m,e)=>Math.max(m, e.sort_order||0), 0);
+      await supabase.from("playbook_entries").insert({ category: cats[cats.length-1] || "General", title: "New entry", body: "", sort_order: maxSo+1, updated_by: coachName });
+      await loadPlaybook();
+    };
+    const delEntry = async (id) => { if(!window.confirm("Delete this entry?")) return; await supabase.from("playbook_entries").delete().eq("id", id); await loadPlaybook(); };
+    const moveEntry = async (id, dir) => {
+      const i = entries.findIndex(e => e.id===id); const j = i+dir;
+      if (i<0 || j<0 || j>=entries.length) return;
+      const a = entries[i], b = entries[j];
+      await Promise.all([
+        supabase.from("playbook_entries").update({ sort_order: b.sort_order }).eq("id", a.id),
+        supabase.from("playbook_entries").update({ sort_order: a.sort_order }).eq("id", b.id),
+      ]);
+      await loadPlaybook();
+    };
+    const publish = async () => {
+      const note = window.prompt("What changed in this version? (a short note coaches will see)", meta.changelog || "");
+      if (note === null) return;
+      const { error } = await supabase.from("playbook_meta").update({ version: ver+1, changelog: note.trim() || null, published_at: new Date().toISOString(), published_by: coachName }).eq("id", 1);
+      if (error) { window.alert("Publish failed: " + error.message); return; }
+      // Notify coaches to re-read + re-affirm.
+      const emails = [...new Set((coachesList||[]).filter(c=>c.is_approved && c.email).map(c=>c.email))];
+      const body = "The DS Elite Coaching Playbook was updated to v" + (ver+1) + (note.trim()?": " + note.trim():".") + "\n\nOpen the Practice > Playbook tab to read and affirm it.\n" + APP_URL;
+      fetch("/api/send-push", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ title:"Coaching Playbook updated — v"+(ver+1), body: note.trim()||"Please read and affirm.", url:"/", audience:{ type:"all" } }) }).catch(()=>{});
+      if (emails.length) fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ subject:"Coaching Playbook updated — please affirm", body, recipients: emails }) }).catch(()=>{});
+      await loadPlaybook();
+      window.alert("Published v" + (ver+1) + " and notified coaches.");
+    };
+
+    // Sign-off roster (admin): every approved coach's affirm status for this version.
+    const roster = (coachesList||[]).filter(c => c.is_approved).map(c => ({ name: c.display_name || c.email, acked: pbAcks.some(a => norm(a.coach_name)===norm(c.display_name||c.email) && a.version===ver) }));
+    const ackedCount = roster.filter(r => r.acked).length;
+
+    const inp = { background:C.bg, border:"1px solid "+C.border, borderRadius:6, color:C.text, fontFamily:"inherit", fontSize:13, padding:"6px 8px", width:"100%", boxSizing:"border-box" };
+
+    return (
+      <div>
+        {/* Header */}
+        <div style={{...St.card}}>
+          <div style={{display:"flex",alignItems:"flex-start",gap:10,flexWrap:"wrap"}}>
+            <div style={{flex:1,minWidth:220}}>
+              {pbEdit ? (
+                <>
+                  <input defaultValue={meta.title} onBlur={e=>{ if(e.target.value!==meta.title) saveMeta({ title:e.target.value }); }} style={{...inp,fontSize:19,fontWeight:800,color:C.gold,marginBottom:4}} />
+                  <input defaultValue={meta.subtitle||""} onBlur={e=>{ if(e.target.value!==meta.subtitle) saveMeta({ subtitle:e.target.value }); }} placeholder="Subtitle" style={{...inp,fontSize:12}} />
+                </>
+              ) : (
+                <>
+                  <div style={{fontSize:19,fontWeight:800,color:C.gold}}>{meta.title}</div>
+                  {meta.subtitle && <div style={{fontSize:12,color:C.mut,marginTop:2}}>{meta.subtitle}</div>}
+                </>
+              )}
+              <div style={{fontSize:11,color:C.mut,marginTop:6}}>Version {ver}{meta.published_at?" · updated "+fmtDate(meta.published_at):""}{meta.changelog?" · "+meta.changelog:""}</div>
+            </div>
+            {canOps && (
+              <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                <button onClick={()=>setPbEdit(v=>!v)} style={{padding:"6px 12px",borderRadius:8,border:"1px solid "+(pbEdit?C.gold:C.border),background:pbEdit?"rgba(233,30,140,0.12)":"transparent",color:pbEdit?C.gold:C.text,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>{pbEdit?"Done editing":"✎ Edit"}</button>
+                {pbEdit && <button onClick={publish} style={{padding:"6px 12px",borderRadius:8,border:"none",background:C.gold,color:"#000",fontWeight:800,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>Publish new version →</button>}
+              </div>
+            )}
+          </div>
+
+          {/* Affirm banner */}
+          <div style={{marginTop:12,padding:"10px 12px",borderRadius:8,border:"1px solid "+(myAck?C.grn:C.gold),background:myAck?"rgba(34,197,94,0.08)":"rgba(233,30,140,0.06)",display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+            {myAck ? (
+              <span style={{fontSize:13,fontWeight:700,color:C.grn}}>✓ You've read and affirmed v{ver}{myAck.acked_at?" on "+fmtDate(myAck.acked_at):""}.</span>
+            ) : (
+              <>
+                <span style={{fontSize:13,fontWeight:700,color:C.text,flex:1,minWidth:180}}>Please read the playbook, then affirm you've reviewed v{ver}.</span>
+                <button onClick={affirm} style={{padding:"8px 16px",borderRadius:8,border:"none",background:C.grn,color:"#04240f",fontWeight:800,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>✓ I've read &amp; affirm</button>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Sign-off roster (admin) */}
+        {canOps && (
+          <div style={St.card}>
+            <div style={{...St.lbl}}>Sign-off — {ackedCount}/{roster.length} affirmed v{ver}</div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+              {roster.sort((a,b)=>Number(a.acked)-Number(b.acked)||a.name.localeCompare(b.name)).map(r => (
+                <span key={r.name} style={{fontSize:11,fontWeight:700,padding:"3px 9px",borderRadius:12,border:"1px solid "+(r.acked?C.grn:C.border),background:r.acked?"rgba(34,197,94,0.12)":"transparent",color:r.acked?C.grn:C.mut}}>{r.acked?"✓ ":"○ "}{r.name}</span>
+              ))}
+              {roster.length===0 && <span style={{fontSize:12,color:C.mut}}>No approved coaches yet.</span>}
+            </div>
+          </div>
+        )}
+
+        {/* Content */}
+        {pbEdit ? (
+          <div style={St.card}>
+            <div style={{...St.lbl}}>Edit entries — drag order with ▲▼</div>
+            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+              {entries.map((en, i) => (
+                <div key={en.id} style={{border:"1px solid "+C.border,borderRadius:8,padding:"10px 12px",background:C.bg}}>
+                  <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:6,flexWrap:"wrap"}}>
+                    <input defaultValue={en.category} onBlur={e=>{ if(e.target.value!==en.category) saveEntry(en.id,{category:e.target.value}); }} placeholder="Category" style={{...inp,width:170,fontSize:11,fontWeight:700,color:C.acc}} />
+                    <div style={{flex:1}} />
+                    <button onClick={()=>moveEntry(en.id,-1)} disabled={i===0} style={{...St.ghost,padding:"2px 8px",opacity:i===0?0.3:1}}>▲</button>
+                    <button onClick={()=>moveEntry(en.id,1)} disabled={i===entries.length-1} style={{...St.ghost,padding:"2px 8px",opacity:i===entries.length-1?0.3:1}}>▼</button>
+                    <button onClick={()=>delEntry(en.id)} style={{...St.ghost,padding:"2px 8px",color:C.red}}>✕</button>
+                  </div>
+                  <input defaultValue={en.title} onBlur={e=>{ if(e.target.value!==en.title) saveEntry(en.id,{title:e.target.value}); }} placeholder="Title" style={{...inp,fontWeight:700,marginBottom:6}} />
+                  <textarea defaultValue={en.body||""} onBlur={e=>{ if(e.target.value!==en.body) saveEntry(en.id,{body:e.target.value}); }} placeholder="What we teach / believe…" style={{...inp,minHeight:60,resize:"vertical",lineHeight:1.5,marginBottom:6}} />
+                  <textarea defaultValue={en.cues||""} onBlur={e=>{ if(e.target.value!==en.cues) saveEntry(en.id,{cues:e.target.value}); }} placeholder="Cues / exact words we use (optional)" style={{...inp,minHeight:36,resize:"vertical",fontSize:12}} />
+                </div>
+              ))}
+            </div>
+            <button onClick={addEntry} style={{...St.ghost,marginTop:10}}>+ Add entry</button>
+            <div style={{fontSize:10,color:C.mut,marginTop:8}}>Edits save as you click out of a field. When your changes are ready for the staff, hit <b style={{color:C.gold}}>Publish new version</b> — that bumps the version, re-opens sign-off, and notifies every coach.</div>
+          </div>
+        ) : (
+          cats.map(cat => (
+            <div key={cat} style={St.card}>
+              <div style={{fontSize:11,fontWeight:800,letterSpacing:0.5,textTransform:"uppercase",color:C.gold,marginBottom:10}}>{cat}</div>
+              <div style={{display:"flex",flexDirection:"column",gap:14}}>
+                {entries.filter(e => (e.category||"General")===cat && e.active!==false).map(en => (
+                  <div key={en.id}>
+                    <div style={{fontSize:14,fontWeight:800,color:C.text,marginBottom:3}}>{en.title}</div>
+                    {en.body && <div style={{fontSize:13,color:C.text,lineHeight:1.6,whiteSpace:"pre-wrap",opacity:0.92}}>{en.body}</div>}
+                    {en.cues && <div style={{fontSize:12,color:C.acc,marginTop:5,lineHeight:1.5,whiteSpace:"pre-wrap"}}><b style={{color:C.gold}}>Cues:</b> {en.cues}</div>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))
+        )}
+        {entries.length===0 && !pbEdit && <div style={{fontSize:13,color:C.mut,padding:12}}>The playbook is empty. {canOps ? "Tap ✎ Edit to add entries." : "Check back soon."}</div>}
+      </div>
+    );
+  }
+
   // ── Practice Plans — plan each scheduled practice, fused with Season Plan ─
   // The schedule already knows when each team practices; this lists those
   // dates and gives each one a plan: time blocks (seeded from Drew's
@@ -10315,7 +10488,7 @@ export default function App() {
     const tabBar = (
       <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:14}}>
         <div style={{fontSize:20,fontWeight:800,color:C.gold,marginRight:4}}>Practice</div>
-        {[["plan","Plan"],["season","Season plan"],["drills","Drills"]].map(([t,l]) => (
+        {[["plan","Plan"],["season","Season plan"],["drills","Drills"],["playbook","Playbook"]].map(([t,l]) => (
           <button key={t} onClick={() => setPpTab(t)}
             style={{padding:"6px 14px",borderRadius:8,border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,background:ppTab===t?C.gold:"transparent",color:ppTab===t?"#000":C.mut}}>{l}</button>
         ))}
@@ -10377,6 +10550,7 @@ export default function App() {
 
     if (ppTab === "season") return <div style={{maxWidth:960,margin:"0 auto"}}>{tabBar}{renderSeasonPlan()}</div>;
     if (ppTab === "drills") return <div style={{maxWidth:960,margin:"0 auto"}}>{tabBar}<div style={St.card}><div style={St.lbl}>Drill library · {drills.length}</div>{drillBrowser(null)}</div></div>;
+    if (ppTab === "playbook") return <div style={{maxWidth:960,margin:"0 auto"}}>{tabBar}{renderPlaybook(St)}</div>;
 
     // ── Plan tab ──────────────────────────────────────────────────────────
     // ── List: upcoming scheduled practices ────────────────────────────────
