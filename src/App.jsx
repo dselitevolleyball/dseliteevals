@@ -12022,6 +12022,8 @@ export default function App() {
               const isServer = phase==="serve" && slot.n===1;
               const isSetF = slot.id && slot.id===ro.setterFront;
               const isPass = phase==="receive" && slot.id && ro.passers && ro.passers.has(slot.id);
+              const isRecvPin = phase==="receive" && slot.id && slot.row==="front" && !isMiddle(slot.id); // the RS / OH the coach can pull back
+              const pinSel = isRecvPin && ro.passers && ro.passers.has(slot.id);                          // this pin is the one pulled back
               const liberoServing = phase==="serve" && slot.n===1 && slot.id===liberoId && !!slot.libFor; // libero serving in for the middle
               const libSwitch = (slot.id && ro.switchIds && ro.switchIds.has(slot.id)) || liberoServing; // the half the libero⇄middle switch happens (incl. serving for the middle)
               const enteredHere = slot.id && !libSwitch && ro.entered && ro.entered.has(slot.id); // rotated / subbed in
@@ -12043,12 +12045,19 @@ export default function App() {
                       {num ? <span style={{position:"absolute",top:2,left:3,fontSize:9,fontWeight:800,color:C.mut,lineHeight:1}}>#{num}</span> : null}
                       {pos ? <span style={{position:"absolute",top:2,right:3,fontSize:9,fontWeight:800,color:C.mut,lineHeight:1}}>{pos}</span> : null}
                       {enteredHere && <span title="Rotates in here" style={{position:"absolute",bottom:2,left:3,fontSize:11,color:"#22c55e",fontWeight:800,lineHeight:1}}>▲</span>}
+                      {isRecvPin && (
+                        <label title="Pull this front-row player back to pass in serve-receive" onClick={e=>e.stopPropagation()}
+                          style={{position:"absolute",bottom:1,right:2,display:"flex",alignItems:"center",gap:1,fontSize:8,fontWeight:800,cursor:"pointer",lineHeight:1,opacity:pinSel?1:0.4,color:pinSel?C.grn:C.mut}}>
+                          <input type="checkbox" checked={!!pinSel} onChange={e=>{ e.stopPropagation(); updateDraft(d=>{ const t=d.sets[setIdx]; t.srFront={...(t.srFront||{}),[ro.r%6]:slot.id}; }); }} style={{width:11,height:11,accentColor:C.grn,cursor:"pointer",margin:0}} />
+                          s/r
+                        </label>
+                      )}
                       <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:1,lineHeight:1.05}}>
                         <span style={{fontSize:nmFs,color:C.text,fontWeight:enteredHere?800:700,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:"100%"}}>{nm}</span>
                         <div style={{fontSize:9.5,lineHeight:1,whiteSpace:"nowrap",fontWeight:800}}>
                           {isServer && <span style={{color:"#f59e0b"}}>serve</span>}
                           {isSetF && <span style={{color:"#f59e0b"}}>{isServer?" · ":""}rs</span>}
-                          {isPass && <span style={{color:C.grn}}>{(isServer||isSetF)?" · ":""}SR</span>}
+                          {isPass && !isRecvPin && <span style={{color:C.grn}}>{(isServer||isSetF)?" · ":""}SR</span>}
                         </div>
                       </div>
                     </>
@@ -12150,25 +12159,7 @@ export default function App() {
                   </div>
                   <span style={{fontSize:10,color:C.mut}}>#num top-left · position top-right · ▲ = rotates in · SR = passer</span>
                 </div>
-                {/* Serve-receive: pick which front pin (RS or OH) is pulled back to pass, per rotation */}
-                <div style={{border:"1px solid "+C.border,borderRadius:9,padding:"8px 10px",margin:"6px 0 4px",background:"rgba(255,255,255,0.02)"}}>
-                  <div style={{fontSize:10,fontWeight:800,color:C.mut,textTransform:"uppercase",letterSpacing:0.4,marginBottom:6}}>Serve-receive · front passer pulled back <span style={{fontWeight:600,textTransform:"none",letterSpacing:0}}>— libero + back-row OH/DS always pass; pick the RS or OH to join them each rotation</span></div>
-                  <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                    {[0,1,2,3,4,5].map(b => {
-                      const cands = frontPins(recvRots[b]);
-                      const cur = pullPick(recvRots[b]);
-                      return (
-                        <div key={b} style={{display:"flex",flexDirection:"column",gap:2}}>
-                          <span style={{fontSize:9,fontWeight:800,color:C.gold}}>R{b+1}<span style={{color:C.mut,fontWeight:600}}> / R{b+7}</span></span>
-                          <select value={cur?cur.id:""} onChange={e=>updateDraft(d=>{ const t=d.sets[setIdx]; t.srFront={...(t.srFront||{}),[b]:e.target.value}; })} style={{...S.sel,minWidth:118}} disabled={cands.length<2} title={cands.length<2?"Only one front pin here":"Front pin pulled back to pass"}>
-                            {cands.length===0 && <option value="">—</option>}
-                            {cands.map(s=><option key={s.id} value={s.id}>{pfirst(s.id)} ({pinRole(s.id)})</option>)}
-                          </select>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
+                <div style={{fontSize:10,color:C.mut,margin:"6px 0 2px"}}>Serve-receive: libero + back-row OH/DS always pass. Tick the <b style={{color:C.grn}}>s/r</b> box on the front-row RS or OH to pull that one back as the third passer (one per rotation).</div>
                 {passBlock("First pass · R1–R6", 0, 6)}
                 {passBlock("Second pass · R7–R12", 6, 12)}
                 {/* Legend row: colors + roster positions */}
