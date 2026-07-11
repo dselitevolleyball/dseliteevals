@@ -1115,6 +1115,10 @@ export default function App() {
   const [pbEntries, setPbEntries] = useState([]);
   const [pbAcks, setPbAcks]       = useState([]);
   const [pbEdit, setPbEdit]       = useState(false);
+  const [pbView, setPbView]       = useState("standards"); // standards | ideas
+  const [pbNew, setPbNew]         = useState(null);   // add-idea form draft or null
+  const [pbEditId, setPbEditId]   = useState(null);   // idea being edited inline
+  const [pbIdeaFilter, setPbIdeaFilter] = useState({ q:"", type:"", cat:"" });
   // Season-plan curriculum (per-team teaching checkboxes on the dashboard).
   const [currProgress, setCurrProgress]     = useState([]);
   const [currTeam, setCurrTeam]             = useState("");   // selected team in the panel
@@ -10248,8 +10252,18 @@ export default function App() {
     const ver = meta.version || 1;
     const coachName = coach?.display_name || coach?.email || "";
     const myAck = pbAcks.find(a => norm(a.coach_name)===norm(coachName) && a.version===ver);
-    const entries = pbEntries.slice().sort((a,b)=>(a.sort_order||0)-(b.sort_order||0));
+    const all = pbEntries.slice().sort((a,b)=>(a.sort_order||0)-(b.sort_order||0));
+    const entries = all.filter(e => (e.tier||"standard")==="standard");   // golden standards
+    const ideas   = all.filter(e => (e.tier||"standard")==="contribution"); // coach contributions
     const cats = [...new Set(entries.map(e => e.category || "General"))];
+    const TYPES = ["Technique","Cue","System","Idea","Drill note","Other"];
+    const isMine = (e) => norm(e.author_name)===norm(coachName) || norm(e.author_email)===norm(coach?.email||"");
+    const ideaCats = [...new Set(ideas.map(e=>e.category).filter(Boolean))].sort();
+    const _fq = norm(pbIdeaFilter.q);
+    const filteredIdeas = ideas.filter(e =>
+      (!pbIdeaFilter.type || e.entry_type===pbIdeaFilter.type) &&
+      (!pbIdeaFilter.cat  || (e.category||"")===pbIdeaFilter.cat) &&
+      (!_fq || norm(e.title).includes(_fq) || norm(e.body).includes(_fq) || norm(e.cues).includes(_fq)));
     const fmtDate = ts => { try { return new Date(ts).toLocaleDateString(undefined,{month:"short",day:"numeric",year:"numeric"}); } catch { return ""; } };
 
     const affirm = async () => {
@@ -10265,11 +10279,41 @@ export default function App() {
       await loadPlaybook();
     };
     const addEntry = async () => {
-      const maxSo = entries.reduce((m,e)=>Math.max(m, e.sort_order||0), 0);
-      await supabase.from("playbook_entries").insert({ category: cats[cats.length-1] || "General", title: "New entry", body: "", sort_order: maxSo+1, updated_by: coachName });
+      const maxSo = all.reduce((m,e)=>Math.max(m, e.sort_order||0), 0);
+      await supabase.from("playbook_entries").insert({ tier:"standard", category: cats[cats.length-1] || "General", title: "New entry", body: "", sort_order: maxSo+1, updated_by: coachName });
       await loadPlaybook();
     };
-    const delEntry = async (id) => { if(!window.confirm("Delete this entry?")) return; await supabase.from("playbook_entries").delete().eq("id", id); await loadPlaybook(); };
+    const delEntry = async (id) => { if(!window.confirm("Delete this entry?")) return; await supabase.from("playbook_entries").delete().eq("id", id); setPbEditId(null); await loadPlaybook(); };
+    // Coach adds a contribution (idea/cue/technique/system).
+    const postIdea = async () => {
+      const f = pbNew || {};
+      if (!(f.title||"").trim()) { window.alert("Give your idea a title."); return; }
+      const maxSo = all.reduce((m,e)=>Math.max(m, e.sort_order||0), 0);
+      const { error } = await supabase.from("playbook_entries").insert({
+        tier:"contribution", entry_type: f.entry_type || "Idea", category: (f.category||"").trim() || "General",
+        title: f.title.trim(), body: (f.body||"").trim() || null, cues: (f.cues||"").trim() || null,
+        author_name: coachName, author_email: coach?.email || null, updated_by: coachName, sort_order: maxSo+1,
+      });
+      if (error) { window.alert("Couldn't post: " + error.message); return; }
+      setPbNew(null); await loadPlaybook();
+    };
+    // Notify all coaches to look at an entry.
+    const distribute = async (en) => {
+      if (!window.confirm("Send this to all coaches for review?")) return;
+      const emails = [...new Set((coachesList||[]).filter(c=>c.is_approved && c.email).map(c=>c.email))];
+      const title = "Playbook — for review: " + en.title;
+      const body = (en.author_name?en.author_name+" shared: ":"For review: ") + en.title + (en.body?"\n\n"+en.body:"") + (en.cues?"\n\nCues: "+en.cues:"") + "\n\nOpen Practice → Playbook: " + APP_URL;
+      fetch("/api/send-push", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ title:"Playbook: review “"+en.title+"”", body: en.body||"Tap to review.", url:"/", audience:{ type:"all" } }) }).catch(()=>{});
+      if (emails.length) fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ subject:title, body, recipients: emails }) }).catch(()=>{});
+      window.alert("Sent to " + emails.length + " coaches for review.");
+    };
+    // Admin elevates a contribution to a golden standard.
+    const elevate = async (en) => {
+      if (!window.confirm("Elevate “" + en.title + "” to a Golden Standard? It becomes part of the affirmed playbook.")) return;
+      await supabase.from("playbook_entries").update({ tier:"standard", updated_by: coachName, updated_at: new Date().toISOString() }).eq("id", en.id);
+      await loadPlaybook();
+      if (window.confirm("Distribute this new standard to all coaches for review now?")) distribute(en);
+    };
     const moveEntry = async (id, dir) => {
       const i = entries.findIndex(e => e.id===id); const j = i+dir;
       if (i<0 || j<0 || j>=entries.length) return;
@@ -10321,7 +10365,7 @@ export default function App() {
             </div>
             {canOps && (
               <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-                <button onClick={()=>setPbEdit(v=>!v)} style={{padding:"6px 12px",borderRadius:8,border:"1px solid "+(pbEdit?C.gold:C.border),background:pbEdit?"rgba(233,30,140,0.12)":"transparent",color:pbEdit?C.gold:C.text,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>{pbEdit?"Done editing":"✎ Edit"}</button>
+                <button onClick={()=>{ setPbEdit(v=>!v); setPbView("standards"); }} style={{padding:"6px 12px",borderRadius:8,border:"1px solid "+(pbEdit?C.gold:C.border),background:pbEdit?"rgba(233,30,140,0.12)":"transparent",color:pbEdit?C.gold:C.text,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>{pbEdit?"Done editing":"✎ Edit standards"}</button>
                 {pbEdit && <button onClick={publish} style={{padding:"6px 12px",borderRadius:8,border:"none",background:C.gold,color:"#000",fontWeight:800,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>Publish new version →</button>}
               </div>
             )}
@@ -10340,8 +10384,16 @@ export default function App() {
           </div>
         </div>
 
+        {/* Standards / Ideas toggle */}
+        <div style={{display:"flex",gap:6,marginBottom:14,flexWrap:"wrap"}}>
+          {[["standards","🏛 Golden Standards"],["ideas","💡 Coach Ideas · "+ideas.length]].map(([v,l]) => (
+            <button key={v} onClick={()=>{ setPbView(v); if(v!=="standards") setPbEdit(false); }}
+              style={{padding:"7px 14px",borderRadius:8,border:"1px solid "+(pbView===v?C.gold:C.border),background:pbView===v?"rgba(233,30,140,0.12)":"transparent",color:pbView===v?C.gold:C.mut,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>{l}</button>
+          ))}
+        </div>
+
         {/* Sign-off roster (admin) */}
-        {canOps && (
+        {canOps && pbView==="standards" && (
           <div style={St.card}>
             <div style={{...St.lbl}}>Sign-off — {ackedCount}/{roster.length} affirmed v{ver}</div>
             <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
@@ -10353,10 +10405,11 @@ export default function App() {
           </div>
         )}
 
-        {/* Content */}
+        {/* Golden standards content */}
+        {pbView==="standards" && <>
         {pbEdit ? (
           <div style={St.card}>
-            <div style={{...St.lbl}}>Edit entries — drag order with ▲▼</div>
+            <div style={{...St.lbl}}>Edit standards — reorder with ▲▼</div>
             <div style={{display:"flex",flexDirection:"column",gap:10}}>
               {entries.map((en, i) => (
                 <div key={en.id} style={{border:"1px solid "+C.border,borderRadius:8,padding:"10px 12px",background:C.bg}}>
@@ -10392,7 +10445,90 @@ export default function App() {
             </div>
           ))
         )}
-        {entries.length===0 && !pbEdit && <div style={{fontSize:13,color:C.mut,padding:12}}>The playbook is empty. {canOps ? "Tap ✎ Edit to add entries." : "Check back soon."}</div>}
+        {entries.length===0 && !pbEdit && <div style={{fontSize:13,color:C.mut,padding:12}}>No golden standards yet. {canOps ? "Tap ✎ Edit standards to add them." : "Check back soon."}</div>}
+        </>}
+
+        {/* Coach ideas */}
+        {pbView==="ideas" && (
+          <div style={St.card}>
+            <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:10}}>
+              <div style={{...St.lbl,marginBottom:0}}>Coach ideas · {ideas.length}</div>
+              <span style={{fontSize:11,color:C.mut}}>techniques, cues, systems — anything but drills. Everyone can add.</span>
+              <div style={{flex:1}} />
+              <button onClick={()=>setPbNew(pbNew ? null : { entry_type:"Idea", category:"", title:"", body:"", cues:"" })} style={St.gold}>{pbNew?"Cancel":"+ Add idea"}</button>
+            </div>
+
+            {pbNew && (
+              <div style={{border:"1px solid "+C.gold,borderRadius:8,padding:"10px 12px",background:"rgba(233,30,140,0.05)",marginBottom:12}}>
+                <div style={{display:"flex",gap:6,marginBottom:6,flexWrap:"wrap"}}>
+                  <select value={pbNew.entry_type} onChange={e=>setPbNew(n=>({...n,entry_type:e.target.value}))} style={{...inp,width:130,fontSize:12}}>
+                    {TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                  <input value={pbNew.category} onChange={e=>setPbNew(n=>({...n,category:e.target.value}))} placeholder="Skill / category (e.g. Serving)" style={{...inp,flex:1,minWidth:150}} />
+                </div>
+                <input value={pbNew.title} onChange={e=>setPbNew(n=>({...n,title:e.target.value}))} placeholder="Title (e.g. Proper wall trap, How to hold your platform)" style={{...inp,fontWeight:700,marginBottom:6}} />
+                <textarea value={pbNew.body} onChange={e=>setPbNew(n=>({...n,body:e.target.value}))} placeholder="How to do it / teach it…" style={{...inp,minHeight:64,resize:"vertical",lineHeight:1.5,marginBottom:6}} />
+                <textarea value={pbNew.cues} onChange={e=>setPbNew(n=>({...n,cues:e.target.value}))} placeholder="Cues / exact words (optional)" style={{...inp,minHeight:36,resize:"vertical",fontSize:12,marginBottom:8}} />
+                <button onClick={postIdea} style={St.gold}>Post idea</button>
+              </div>
+            )}
+
+            {ideas.length>0 && (
+              <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
+                <input value={pbIdeaFilter.q} onChange={e=>setPbIdeaFilter(f=>({...f,q:e.target.value}))} placeholder="Search ideas…" style={{...inp,width:160,flex:1,minWidth:140}} />
+                <select value={pbIdeaFilter.type} onChange={e=>setPbIdeaFilter(f=>({...f,type:e.target.value}))} style={{...inp,width:130}}>
+                  <option value="">All types</option>{TYPES.map(t=><option key={t} value={t}>{t}</option>)}
+                </select>
+                <select value={pbIdeaFilter.cat} onChange={e=>setPbIdeaFilter(f=>({...f,cat:e.target.value}))} style={{...inp,width:150}}>
+                  <option value="">All categories</option>{ideaCats.map(c=><option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+            )}
+
+            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+              {filteredIdeas.map(en => {
+                const editing = pbEditId===en.id;
+                const canEdit = canOps || isMine(en);
+                const typeCol = { Cue:C.acc, Technique:"#06b6d4", System:"#a855f7", Idea:C.gold, "Drill note":C.grn }[en.entry_type] || C.mut;
+                return (
+                  <div key={en.id} style={{border:"1px solid "+C.border,borderRadius:8,padding:"10px 12px",background:C.bg}}>
+                    <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:6}}>
+                      {en.entry_type && <span style={{fontSize:9,fontWeight:800,textTransform:"uppercase",letterSpacing:0.3,color:typeCol,border:"1px solid "+typeCol,borderRadius:4,padding:"1px 5px"}}>{en.entry_type}</span>}
+                      {en.category && <span style={{fontSize:10,color:C.mut}}>{en.category}</span>}
+                      <div style={{flex:1}} />
+                      {en.author_name && <span style={{fontSize:10,color:C.mut}}>by {en.author_name}</span>}
+                    </div>
+                    {editing ? (
+                      <>
+                        <input defaultValue={en.title} onBlur={e=>{ if(e.target.value!==en.title) saveEntry(en.id,{title:e.target.value}); }} style={{...inp,fontWeight:700,marginBottom:6}} />
+                        <textarea defaultValue={en.body||""} onBlur={e=>{ if(e.target.value!==en.body) saveEntry(en.id,{body:e.target.value}); }} placeholder="How to do it / teach it…" style={{...inp,minHeight:60,resize:"vertical",lineHeight:1.5,marginBottom:6}} />
+                        <textarea defaultValue={en.cues||""} onBlur={e=>{ if(e.target.value!==en.cues) saveEntry(en.id,{cues:e.target.value}); }} placeholder="Cues (optional)" style={{...inp,minHeight:34,resize:"vertical",fontSize:12,marginBottom:6}} />
+                        <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                          <input defaultValue={en.category||""} onBlur={e=>{ if(e.target.value!==en.category) saveEntry(en.id,{category:e.target.value}); }} placeholder="Category" style={{...inp,width:150,fontSize:11}} />
+                          <select defaultValue={en.entry_type||"Idea"} onChange={e=>saveEntry(en.id,{entry_type:e.target.value})} style={{...inp,width:120,fontSize:11}}>{TYPES.map(t=><option key={t} value={t}>{t}</option>)}</select>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div style={{fontSize:14,fontWeight:800,color:C.text,marginBottom:3}}>{en.title}</div>
+                        {en.body && <div style={{fontSize:13,color:C.text,lineHeight:1.6,whiteSpace:"pre-wrap",opacity:0.92}}>{en.body}</div>}
+                        {en.cues && <div style={{fontSize:12,color:C.acc,marginTop:5,lineHeight:1.5,whiteSpace:"pre-wrap"}}><b style={{color:C.gold}}>Cues:</b> {en.cues}</div>}
+                      </>
+                    )}
+                    <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:8}}>
+                      {canEdit && <button onClick={()=>setPbEditId(editing?null:en.id)} style={{...St.ghost,padding:"3px 10px",fontSize:11}}>{editing?"Done":"✎ Edit"}</button>}
+                      {canEdit && <button onClick={()=>delEntry(en.id)} style={{...St.ghost,padding:"3px 10px",fontSize:11,color:C.red}}>Delete</button>}
+                      {canOps && <button onClick={()=>elevate(en)} title="Make this a Golden Standard" style={{...St.ghost,padding:"3px 10px",fontSize:11,color:C.gold,borderColor:C.gold}}>⬆ Elevate</button>}
+                      {canOps && <button onClick={()=>distribute(en)} title="Notify all coaches to review this" style={{...St.ghost,padding:"3px 10px",fontSize:11,color:C.acc,borderColor:C.acc}}>📣 Distribute</button>}
+                    </div>
+                  </div>
+                );
+              })}
+              {ideas.length===0 && <div style={{fontSize:13,color:C.mut,padding:8}}>No coach ideas yet — be the first. Share a technique, cue, or system.</div>}
+              {ideas.length>0 && filteredIdeas.length===0 && <div style={{fontSize:12,color:C.mut,padding:8}}>Nothing matches those filters.</div>}
+            </div>
+          </div>
+        )}
       </div>
     );
   }
