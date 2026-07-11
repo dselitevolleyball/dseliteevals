@@ -4703,16 +4703,14 @@ export default function App() {
 
     return (
       <div>
+        <div style={{background:"linear-gradient(135deg,rgba(233,30,140,0.16),rgba(233,30,140,0.03))",border:"1px solid "+C.gold,borderRadius:14,padding:"18px 20px",marginBottom:16,textAlign:"center"}}>
+          <div style={{fontSize:9,fontWeight:800,letterSpacing:2,textTransform:"uppercase",color:C.mut}}>💛 Our #1 Standard</div>
+          <div style={{fontSize:26,fontWeight:900,color:C.gold,letterSpacing:0.5,margin:"4px 0 2px"}}>{(pbMeta&&pbMeta.motto)||"Team Over Self"}</div>
+          <div style={{fontSize:11,color:C.mut}}>Talk about it every practice.</div>
+        </div>
         <div style={{marginBottom:14}}>
           <h2 style={{margin:0,fontSize:22,fontWeight:800,color:C.gold}}>Welcome, {firstName}</h2>
           <div style={{fontSize:12,color:C.mut,marginTop:3}}>Clock in, plan, and see what's next.</div>
-        </div>
-        <div style={{display:"flex",alignItems:"center",gap:10,background:"linear-gradient(135deg,rgba(233,30,140,0.12),rgba(233,30,140,0.04))",border:"1px solid "+C.gold,borderRadius:12,padding:"10px 14px",marginBottom:14}}>
-          <span style={{fontSize:20}}>💛</span>
-          <div>
-            <div style={{fontSize:15,fontWeight:800,color:C.gold,letterSpacing:0.5}}>{(pbMeta&&pbMeta.motto)||"Team Over Self"}</div>
-            <div style={{fontSize:11,color:C.mut}}>Our culture — talk about it every practice.</div>
-          </div>
         </div>
         {renderCheckIn()}
 
