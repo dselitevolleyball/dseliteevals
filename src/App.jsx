@@ -11790,7 +11790,10 @@ export default function App() {
       // screen we show the base six (the real middle, with jersey #) because a
       // libero can't be written into the six on the card you hand in.
       const applyLib = play.stage==="live";
-      const slots = lineupOk ? vbRotation(set.lineup, rr, set.subs, phase, applyLib ? lib : null) : [];
+      // Play uses the LIVE lineup (base six, which we mutate on a sub) + libero
+      // only. Planned subs are NOT auto-applied here — they surface as "Sub now"
+      // prompts and are applied on confirm, so nothing double-applies or sticks.
+      const slots = lineupOk ? vbRotation(set.lineup, rr, [], phase, applyLib ? lib : null) : [];
       const byN = {}; slots.forEach(s => { byN[s.n] = s; });
       const sInfo = lineupOk ? vbSetterInfo(slots, set.setters) : { setterBack:null, setterFront:null };
       const liberoSlot = slots.find(s => s.libFor);
@@ -11817,14 +11820,21 @@ export default function App() {
         return out;
       })();
 
-      // Planned subs that start at this exact rotation (base) + serve/receive
-      // half — deduped so one swap only prompts once.
+      // "Sub now" prompts: planned subs whose base rotation + serve/receive
+      // half match right now, whose OUT player is still on court and whose IN
+      // player is not — deduped by the pair, so each swap prompts exactly once
+      // and never re-fires once you've made it (or already have that player in).
       const halfOf = ph => ph==="receive" ? "receive" : "serve";
-      const dueSubs = play.stage==="live"
-        ? vbDedupeSubs((set.subs||[]).filter(s => s.inId && s.outId && ((s.fromRotation==null?0:s.fromRotation)%6)===play.r && halfOf(s.phase)===phase))
+      const subKey = s => s.inId + "|" + s.outId;
+      const dueRaw = play.stage==="live"
+        ? (set.subs||[]).filter(s => s.inId && s.outId
+            && ((s.fromRotation==null?0:s.fromRotation)%6)===play.r
+            && halfOf(s.phase)===phase
+            && onCourtIds.has(s.outId) && !onCourtIds.has(s.inId)
+            && !(play.confirmed||{})[subKey(s)])
         : [];
-      const subKey = s => play.r + "|" + phase + "|" + s.inId + "|" + s.outId;
-      const pendingSubs = dueSubs.filter(s => !(play.confirmed||{})[subKey(s)]);
+      const seenPair = new Set();
+      const pendingSubs = dueRaw.filter(s => { const k=subKey(s); if(seenPair.has(k)) return false; seenPair.add(k); return true; });
 
       // Tap a player to sub — swap in a bench player at that rotational slot for
       // the rest of this game (session only; the saved plan isn't touched).
@@ -11832,6 +11842,13 @@ export default function App() {
         const st = pl.plan.data.sets[pl.setIdx];
         if (st) st.lineup[(courtI + rr) % 6] = inId || null;
         pl.subPick = null;
+      });
+      // Confirm a planned sub: swap IN for OUT in the live lineup (find the OUT
+      // player wherever they are) and mark it done so it won't prompt again.
+      const confirmPlannedSub = s => upd(pl => {
+        const st = pl.plan.data.sets[pl.setIdx];
+        if (st) { const j = (st.lineup||[]).indexOf(s.outId); if (j>=0) st.lineup[j] = s.inId; }
+        pl.confirmed = { ...(pl.confirmed||{}), [subKey(s)]: true };
       });
 
       const addPoint = who => upd(pl => {
@@ -12009,7 +12026,8 @@ export default function App() {
                 <div style={{fontSize:14,fontWeight:900,color:C.gold}}>SUB NOW</div>
                 <div style={{fontSize:15,fontWeight:700,color:C.text}}>{pName(s.inId)} <span style={{color:C.mut}}>in for</span> {pName(s.outId)}</div>
               </div>
-              <button style={{...PS.btn,background:C.grn,color:"#000",padding:"10px 14px"}} onClick={()=>upd(pl=>{ pl.confirmed={...(pl.confirmed||{}),[subKey(s)]:true}; })}>✓ Done</button>
+              <button style={{...S.ghost,padding:"10px 12px"}} title="Skip this planned sub" onClick={()=>upd(pl=>{ pl.confirmed={...(pl.confirmed||{}),[subKey(s)]:true}; })}>Skip</button>
+              <button style={{...PS.btn,background:C.grn,color:"#000",padding:"10px 14px"}} onClick={()=>confirmPlannedSub(s)}>✓ Sub</button>
             </div>
           ))}
 
