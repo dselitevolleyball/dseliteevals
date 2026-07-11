@@ -12001,8 +12001,9 @@ export default function App() {
               const isMid = lib && slot.id && lib.middleIds.has(slot.id); // a middle, on as themselves
               const enteredHere = slot.id && ro.entered && ro.entered.has(slot.id); // just rotated / subbed in
               const pos = slot.id && byId[slot.id] ? (byId[slot.id].pos||"") : "";
+              const num = slot.id ? pnum(slot.id) : "";
               const bg = isLib ? "rgba(6,182,212,0.20)"
-                       : enteredHere ? "rgba(34,197,94,0.32)"
+                       : enteredHere ? "rgba(34,197,94,0.30)"
                        : isServer ? "rgba(245,158,11,0.26)"
                        : isMid ? "rgba(168,85,247,0.13)"
                        : isSetB ? "rgba(6,182,212,0.15)"
@@ -12012,21 +12013,55 @@ export default function App() {
               return (
                 <td key={slot.n} title={tip}
                   onClick={slot.id ? () => setLineupSubSel(sel => (sel && sel.setId===set.id && sel.r===ro.r && sel.i===slot.i && sel.phase===phase) ? null : { setId:set.id, r:ro.r, i:slot.i, outId:slot.id, courtN:slot.n, label:slot.label, inId:"", scope:"rest", phase }) : undefined}
-                  style={{border:"1px solid "+C.border,borderRight:edge?"2px solid #3a3a3a":"1px solid "+C.border,outline:isSel?"2px solid "+C.gold:"none",outlineOffset:-2,background:bg,padding:"2px 1px",textAlign:"center",height:38,verticalAlign:"middle",overflow:"hidden",cursor:slot.id?"pointer":"default"}}>
-                  <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:1,lineHeight:1.05}}>
-                    {enteredHere && <span title="Rotates in here" style={{fontSize:8,color:"#22c55e",fontWeight:800}}>▲</span>}
-                    <span style={{fontSize:11,color:isServer?"#fde68a":isLib?"#67e8f9":isMid?"#e9d5ff":C.text,fontWeight:(isSetB||isServer||enteredHere||isMid)?800:600,textDecoration:isLib?"underline":"none",whiteSpace:"nowrap"}}>{slot.id ? (pnum(slot.id)?"#"+pnum(slot.id):pfirst(slot.id)) : "—"}</span>
-                  </div>
-                  <div style={{fontSize:7,lineHeight:1,whiteSpace:"nowrap",color:C.mut}}>
-                    {pos}
-                    {isSetB && <span style={{color:"#06b6d4",fontWeight:800}}> S</span>}
-                    {isSetF && <span style={{color:"#f59e0b",fontWeight:800}}> rs</span>}
-                    {isLib && <span style={{color:"#06b6d4",fontWeight:800}}> L</span>}
-                    {isPass && <span style={{color:C.grn,fontWeight:800}}> •SR</span>}
-                  </div>
+                  style={{border:"1px solid "+C.border,borderRight:edge?"2px solid #3a3a3a":"1px solid "+C.border,outline:isSel?"2px solid "+C.gold:"none",outlineOffset:-2,background:bg,padding:"5px 4px",textAlign:"center",height:62,verticalAlign:"middle",overflow:"hidden",cursor:slot.id?"pointer":"default"}}>
+                  {slot.id ? (
+                    <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:1,lineHeight:1.1}}>
+                      <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:3}}>
+                        {enteredHere && <span title="Rotates in here" style={{fontSize:11,color:"#22c55e",fontWeight:800}}>▲</span>}
+                        {num ? <span style={{fontSize:10,fontWeight:800,color:C.mut}}>#{num}</span> : null}
+                        <span style={{fontSize:14,color:isServer?"#fde68a":isLib?"#67e8f9":isMid?"#e9d5ff":C.text,fontWeight:(isSetB||isServer||enteredHere||isMid)?800:700,textDecoration:isLib?"underline":"none",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:96}}>{pfirst(slot.id)}</span>
+                      </div>
+                      <div style={{fontSize:10,lineHeight:1,whiteSpace:"nowrap",color:C.mut,fontWeight:700}}>
+                        {pos}
+                        {isSetB && <span style={{color:"#06b6d4",fontWeight:800}}> · S</span>}
+                        {isSetF && <span style={{color:"#f59e0b",fontWeight:800}}> · rs</span>}
+                        {isLib && <span style={{color:"#06b6d4",fontWeight:800}}> · L</span>}
+                        {isPass && <span style={{color:C.grn,fontWeight:800}}> · SR</span>}
+                      </div>
+                    </div>
+                  ) : <span style={{fontSize:14,color:C.mut}}>—</span>}
                 </td>
               );
             };
+            const subTable = (rots, phase) => (
+              <div style={{overflowX:"auto"}}>
+                <table style={{borderCollapse:"collapse",width:"100%",minWidth:820,tableLayout:"fixed"}}>
+                  <colgroup><col style={{width:44}} />{rots.map(ro => <col key={ro.r} span={3} />)}</colgroup>
+                  <thead>
+                    <tr>
+                      <th style={{...hd,width:44}}></th>
+                      {rots.map(ro => (
+                        <th key={ro.r} colSpan={3} style={hd}>
+                          <div style={{fontSize:12,fontWeight:800,color:C.gold}}>R{ro.r+1}</div>
+                          <div style={{fontSize:9,fontWeight:600,color:C.mut,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ro.setterBack?"sets "+pfirst(ro.setterBack):"—"}</div>
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td style={rlbl} title="Front row (net side)">Front<br/>▲net</td>
+                      {rots.map(ro => frontIdx.map((gi,ci) => cell(ro.byIndex[gi], ro, ci===2, phase)))}
+                    </tr>
+                    <tr>
+                      <td style={rlbl} title="Back row">Back</td>
+                      {rots.map(ro => backIdx.map((gi,ci) => cell(ro.byIndex[gi], ro, ci===2, phase)))}
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            );
+            const passLbl = { fontSize:10, fontWeight:800, color:C.mut, textTransform:"uppercase", letterSpacing:0.4, margin:"7px 0 3px" };
             const renderGrid = (phase) => {
               const rots = Array.from({length:12}, (_,r) => {
                 const slots = vbRotation(set.lineup, r, set.subs, phase, lib);
@@ -12041,31 +12076,11 @@ export default function App() {
                 ro.entered = prev ? new Set(ro.slots.filter(s=>s.id && !prev.has(s.id)).map(s=>s.id)) : new Set();
               });
               return (
-                <div style={{overflowX:"auto"}}>
-                  <table style={{borderCollapse:"collapse",width:"100%",minWidth:1320,tableLayout:"fixed"}}>
-                    <colgroup><col style={{width:38}} />{rots.map(ro => <col key={ro.r} span={3} />)}</colgroup>
-                    <thead>
-                      <tr>
-                        <th style={{...hd,width:38}}></th>
-                        {rots.map(ro => (
-                          <th key={ro.r} colSpan={3} style={{...hd,borderLeft:ro.r===6?"3px solid "+C.gold:hd.border}}>
-                            <div style={{fontSize:10,fontWeight:800,color:C.gold}}>R{ro.r+1}</div>
-                            <div style={{fontSize:7,fontWeight:600,color:C.mut,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ro.setterBack?"sets "+pfirst(ro.setterBack):"—"}</div>
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr>
-                        <td style={rlbl} title="Front row (net side)">Front<br/>▲net</td>
-                        {rots.map(ro => frontIdx.map((gi,ci) => cell(ro.byIndex[gi], ro, ci===2, phase)))}
-                      </tr>
-                      <tr>
-                        <td style={rlbl} title="Back row">Back</td>
-                        {rots.map(ro => backIdx.map((gi,ci) => cell(ro.byIndex[gi], ro, ci===2, phase)))}
-                      </tr>
-                    </tbody>
-                  </table>
+                <div>
+                  <div style={passLbl}>First pass · R1–R6</div>
+                  {subTable(rots.slice(0,6), phase)}
+                  <div style={passLbl}>Second pass · R7–R12</div>
+                  {subTable(rots.slice(6,12), phase)}
                 </div>
               );
             };
