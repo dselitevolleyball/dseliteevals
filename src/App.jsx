@@ -879,17 +879,18 @@ function vbSettersOpposite(lineup, setters){
 }
 
 // Playing-time tally across all sets → { tally:{[id]:rotationsOnCourt}, totalRot }.
+// Playing time counts each rotation's SERVE and SERVE-RECEIVE separately, over
+// two full passes of the six (12 rotations) — so a full set is up to 24 counted
+// rotations, and a serve-only or receive-only sub is credited correctly.
 function vbPlayingTime(sets){
   const tally = {}; let totalRot = 0;
   (sets||[]).forEach(set=>{
     if((set.lineup||[]).filter(Boolean).length!==6) return;
     const lib = vbLiberoConf(set);
-    for(let r=0;r<6;r++){
-      totalRot++;
-      const seen = new Set();
-      // A player counts for the rotation if on court in either phase (serve or
-      // receive), so libero/defensive subs still register as playing time.
+    for(let r=0;r<12;r++){
       ["serve","receive"].forEach(ph => {
+        totalRot++;
+        const seen = new Set();
         vbRotation(set.lineup, r, set.subs, ph, lib).forEach(s=>{
           if(s.id && !seen.has(s.id)){ seen.add(s.id); tally[s.id]=(tally[s.id]||0)+1; }
         });
@@ -11903,9 +11904,9 @@ export default function App() {
             }}>Duplicate set →</button>}
           </div>
 
-          {/* Lineup & roles — starting six + bench in one place */}
-          <div style={S.lbl}>Lineup &amp; roles — {set.name}</div>
-          <div style={{fontSize:10,color:C.mut,marginBottom:8}}>Pos 1 serves first, then 2, 3… Front row 2·3·4, back row 1·5·6. Pick each player and their role — rotations, the libero switch and serve-receive update automatically.</div>
+          {/* Starting six — feeds the rotation diagram below */}
+          <div style={S.lbl}>Starting six — {set.name}</div>
+          <div style={{fontSize:10,color:C.mut,marginBottom:8}}>Pos 1 serves first, then 2, 3… Front row 2·3·4, back row 1·5·6. Pick each player + role; everything else (all 12 rotations, subs, serve-receive) shows in the diagram below.</div>
           {(() => {
             const ROLES = ["S","OH","M","RS","L","DS"];
             const ROLE_LABEL = { S:"Setter", OH:"Outside", M:"Middle", RS:"Right side", L:"Libero", DS:"Def. spec." };
@@ -11951,37 +11952,7 @@ export default function App() {
                 </div>
                 <div style={{fontSize:10,color:C.mut,marginBottom:12,textAlign:"center",maxWidth:560}}>▲ net side ▲</div>
 
-                {/* By jersey number */}
-                {lineupFilled && (
-                  <div style={{marginBottom:12}}>
-                    <div style={{fontSize:9,fontWeight:800,letterSpacing:0.4,color:C.mut,marginBottom:4}}>ON THE COURT — BY JERSEY #</div>
-                    <div style={{display:"grid",gridTemplateColumns:"repeat(3,56px)",gap:4}}>
-                      {[3,2,1,4,5,0].map(i => { const pid=set.lineup[i]; const r=roleOf(pid); return (
-                        <div key={i} title={pname(pid)} style={{background:VB_COURT[i].row==="front"?"rgba(233,30,140,0.08)":C.bg,border:"1px solid "+C.border,borderRadius:6,padding:"5px 2px",textAlign:"center"}}>
-                          <div style={{fontSize:16,fontWeight:800,color:C.gold,lineHeight:1.1}}>#{pnum(pid)||"—"}</div>
-                          <div style={{fontSize:8,fontWeight:800,color:ROLE_COLOR[r]||C.mut}}>{r||"—"}</div>
-                        </div>
-                      ); })}
-                    </div>
-                  </div>
-                )}
-
                 {!settersOk && (set.setters||[]).length>0 && <div style={{fontSize:11,color:"#f59e0b",marginBottom:8}}>⚠ For a true 6-2, your two setters should be opposite (3 apart) so one is always back to set.</div>}
-
-                {/* Bench + roles */}
-                {benchIds.length>0 && (
-                  <div style={{marginBottom:10}}>
-                    <div style={{fontSize:9,fontWeight:800,letterSpacing:0.4,color:C.mut,marginBottom:4}}>BENCH — set their role so subs know who they are</div>
-                    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:6}}>
-                      {benchIds.map(id => (
-                        <div key={id} style={{display:"flex",alignItems:"center",gap:6,background:C.bg,border:"1px solid "+C.border,borderRadius:8,padding:"4px 8px"}}>
-                          <span style={{flex:1,fontSize:12,color:C.text,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{plabel(id)}</span>
-                          <div style={{width:96}}>{roleSelect(id)}</div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
 
                 {/* Libero ⇄ middle switch */}
                 {(set.middles||[]).length===2 && set.liberoId && (() => {
@@ -12008,9 +11979,9 @@ export default function App() {
         {/* Rotations */}
         <div style={S.card}>
           <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:6,flexWrap:"wrap"}}>
-            <div style={S.lbl}>The 6 rotations — {set.name}</div>
+            <div style={S.lbl}>Rotations — {set.name} · 12 rotations (2 passes)</div>
             <div style={{flex:1}} />
-            <span style={{fontSize:10,color:C.mut}}>Tap any player to sub · <span style={{color:C.grn,fontWeight:800}}>green</span> = subbed in</span>
+            <span style={{fontSize:10,color:C.mut}}>Tap a player to sub · <span style={{color:C.grn,fontWeight:800}}>▲ green</span> = rotates in here · <span style={{color:C.gold,fontWeight:800}}>┃</span> 2nd pass</span>
           </div>
           {!lineupFilled ? (
             <div style={{fontSize:12,color:C.mut,padding:"6px 0"}}>Fill all 6 court positions above to see the rotations.</div>
@@ -12028,47 +11999,58 @@ export default function App() {
               const isPass = phase==="receive" && slot.id && passers.has(slot.id);
               const isLib = slot.id && slot.id===liberoId;
               const isMid = lib && slot.id && lib.middleIds.has(slot.id); // a middle, on as themselves
-              const isSubbed = slot.id && slot.baseId && slot.id!==slot.baseId; // came in via a sub
-              const bg = isLib ? "rgba(6,182,212,0.22)"
-                       : isSubbed ? "rgba(34,197,94,0.34)"
-                       : isServer ? "rgba(245,158,11,0.30)"
-                       : isMid ? "rgba(168,85,247,0.16)"
-                       : isSetB ? "rgba(6,182,212,0.18)"
-                       : slot.row==="front" ? "rgba(233,30,140,0.07)" : "transparent";
+              const enteredHere = slot.id && ro.entered && ro.entered.has(slot.id); // just rotated / subbed in
+              const pos = slot.id && byId[slot.id] ? (byId[slot.id].pos||"") : "";
+              const bg = isLib ? "rgba(6,182,212,0.20)"
+                       : enteredHere ? "rgba(34,197,94,0.32)"
+                       : isServer ? "rgba(245,158,11,0.26)"
+                       : isMid ? "rgba(168,85,247,0.13)"
+                       : isSetB ? "rgba(6,182,212,0.15)"
+                       : slot.row==="front" ? "rgba(233,30,140,0.06)" : "transparent";
               const isSel = lineupSubSel && lineupSubSel.setId===set.id && lineupSubSel.r===ro.r && lineupSubSel.i===slot.i && lineupSubSel.phase===phase;
-              const tip = slot.id ? (pname(slot.id)+(slot.libFor?(" (libero for "+pname(slot.libFor)+")"):isSubbed?" (sub)":isMid?" (middle)":"")+" · "+slot.label+" — click to sub") : ("empty · "+slot.label);
+              const tip = slot.id ? (pname(slot.id)+(pos?" · "+pos:"")+(slot.libFor?(" (libero for "+pname(slot.libFor)+")"):"")+" · "+slot.label+" — tap to sub") : ("empty · "+slot.label);
               return (
                 <td key={slot.n} title={tip}
-                  onClick={slot.id ? () => setLineupSubSel(sel => (sel && sel.setId===set.id && sel.r===ro.r && sel.i===slot.i && sel.phase===phase) ? null : { setId:set.id, r:ro.r, i:slot.i, outId:slot.id, courtN:slot.n, label:slot.label, inId:"", scope:"rest", phase, applyPhase:"both" }) : undefined}
-                  style={{border:"1px solid "+C.border,borderRight:edge?"2px solid #3a3a3a":"1px solid "+C.border,outline:isSel?"2px solid "+C.gold:"none",outlineOffset:-2,background:bg,padding:"3px 2px",textAlign:"center",height:32,verticalAlign:"middle",overflow:"hidden",cursor:slot.id?"pointer":"default"}}>
-                  <span style={{fontSize:11,lineHeight:1.1,color:isServer?"#fde68a":isLib?"#67e8f9":isMid?"#e9d5ff":C.text,fontWeight:(isSetB||isServer||isSubbed||isMid)?800:600,textDecoration:isLib?"underline":"none",whiteSpace:"nowrap"}}>{slot.id?pfirst(slot.id):"—"}</span>
-                  {isSetB && <span style={{fontSize:7,color:"#06b6d4",fontWeight:800,marginLeft:2,verticalAlign:"super"}}>S</span>}
-                  {isSetF && <span style={{fontSize:7,color:"#f59e0b",fontWeight:800,marginLeft:2,verticalAlign:"super"}}>rs</span>}
-                  {isMid && <span title="Middle" style={{fontSize:7,color:"#c084fc",fontWeight:800,marginLeft:2,verticalAlign:"super"}}>M</span>}
-                  {isLib && <span title={slot.libFor?("Libero (in for "+pname(slot.libFor)+")"):"Libero"} style={{fontSize:7,color:"#06b6d4",fontWeight:800,marginLeft:2,verticalAlign:"super"}}>L</span>}
-                  {isPass && <span title="Passer (serve-receive)" style={{fontSize:9,color:C.grn,fontWeight:800,marginLeft:2}}>•</span>}
-                  {isSubbed && !isLib && <span title="Substitute" style={{fontSize:7,color:"#22c55e",fontWeight:800,marginLeft:2,verticalAlign:"super"}}>in</span>}
+                  onClick={slot.id ? () => setLineupSubSel(sel => (sel && sel.setId===set.id && sel.r===ro.r && sel.i===slot.i && sel.phase===phase) ? null : { setId:set.id, r:ro.r, i:slot.i, outId:slot.id, courtN:slot.n, label:slot.label, inId:"", scope:"rest", phase }) : undefined}
+                  style={{border:"1px solid "+C.border,borderRight:edge?"2px solid #3a3a3a":"1px solid "+C.border,outline:isSel?"2px solid "+C.gold:"none",outlineOffset:-2,background:bg,padding:"2px 1px",textAlign:"center",height:38,verticalAlign:"middle",overflow:"hidden",cursor:slot.id?"pointer":"default"}}>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:1,lineHeight:1.05}}>
+                    {enteredHere && <span title="Rotates in here" style={{fontSize:8,color:"#22c55e",fontWeight:800}}>▲</span>}
+                    <span style={{fontSize:11,color:isServer?"#fde68a":isLib?"#67e8f9":isMid?"#e9d5ff":C.text,fontWeight:(isSetB||isServer||enteredHere||isMid)?800:600,textDecoration:isLib?"underline":"none",whiteSpace:"nowrap"}}>{slot.id ? (pnum(slot.id)?"#"+pnum(slot.id):pfirst(slot.id)) : "—"}</span>
+                  </div>
+                  <div style={{fontSize:7,lineHeight:1,whiteSpace:"nowrap",color:C.mut}}>
+                    {pos}
+                    {isSetB && <span style={{color:"#06b6d4",fontWeight:800}}> S</span>}
+                    {isSetF && <span style={{color:"#f59e0b",fontWeight:800}}> rs</span>}
+                    {isLib && <span style={{color:"#06b6d4",fontWeight:800}}> L</span>}
+                    {isPass && <span style={{color:C.grn,fontWeight:800}}> •SR</span>}
+                  </div>
                 </td>
               );
             };
             const renderGrid = (phase) => {
-              const rots = [0,1,2,3,4,5].map(r => {
+              const rots = Array.from({length:12}, (_,r) => {
                 const slots = vbRotation(set.lineup, r, set.subs, phase, lib);
                 const info = vbSetterInfo(slots, set.setters);
                 const byIndex = {}; slots.forEach(s => { byIndex[s.i] = s; });
                 return { r, slots, byIndex, setterBack: info.setterBack, setterFront: info.setterFront };
               });
+              // Mark the rotation where each player first appears (vs the prior
+              // rotation) — a rotate-in / sub-in — instead of flagging a sub forever.
+              rots.forEach((ro, idx) => {
+                const prev = idx>0 ? new Set(rots[idx-1].slots.map(s=>s.id).filter(Boolean)) : null;
+                ro.entered = prev ? new Set(ro.slots.filter(s=>s.id && !prev.has(s.id)).map(s=>s.id)) : new Set();
+              });
               return (
                 <div style={{overflowX:"auto"}}>
-                  <table style={{borderCollapse:"collapse",width:"100%",minWidth:720,tableLayout:"fixed"}}>
-                    <colgroup><col style={{width:42}} />{rots.map(ro => <col key={ro.r} span={3} />)}</colgroup>
+                  <table style={{borderCollapse:"collapse",width:"100%",minWidth:1320,tableLayout:"fixed"}}>
+                    <colgroup><col style={{width:38}} />{rots.map(ro => <col key={ro.r} span={3} />)}</colgroup>
                     <thead>
                       <tr>
-                        <th style={{...hd,width:42}}></th>
+                        <th style={{...hd,width:38}}></th>
                         {rots.map(ro => (
-                          <th key={ro.r} colSpan={3} style={hd}>
-                            <div style={{fontSize:11,fontWeight:800,color:C.gold}}>R{ro.r+1}</div>
-                            <div style={{fontSize:8,fontWeight:600,color:C.mut,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ro.setterBack?("sets "+pfirst(ro.setterBack)):"no setter"}</div>
+                          <th key={ro.r} colSpan={3} style={{...hd,borderLeft:ro.r===6?"3px solid "+C.gold:hd.border}}>
+                            <div style={{fontSize:10,fontWeight:800,color:C.gold}}>R{ro.r+1}</div>
+                            <div style={{fontSize:7,fontWeight:600,color:C.mut,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ro.setterBack?"sets "+pfirst(ro.setterBack):"—"}</div>
                           </th>
                         ))}
                       </tr>
@@ -12093,19 +12075,18 @@ export default function App() {
             const phaseHead = (txt, sub) => <div style={{display:"flex",alignItems:"baseline",gap:8,margin:"4px 0 5px"}}><span style={{fontSize:12,fontWeight:800,color:C.text}}>{txt}</span><span style={{fontSize:10,color:C.mut}}>{sub}</span></div>;
             return (
               <div>
-                {phaseHead("When we serve","server in amber · who sets each rotation up top")}
+                {phaseHead("When we serve","server in amber · pos + who sets under each name · ▲ = rotates in")}
                 {renderGrid("serve")}
-                {phaseHead("When we receive","passers marked • · libero / defensive subs show green")}
+                {phaseHead("When we receive","•SR marks the passers · subs can differ from serve · ▲ = rotates in")}
                 {renderGrid("receive")}
                 {/* Legend row: colors + roster positions */}
                 <div style={{display:"flex",gap:14,flexWrap:"wrap",alignItems:"center",marginTop:8,fontSize:10,color:C.mut}}>
                   <span><span style={{display:"inline-block",width:9,height:9,background:"rgba(245,158,11,0.5)",borderRadius:2,marginRight:3,verticalAlign:"middle"}} />server</span>
-                  <span><span style={{display:"inline-block",width:9,height:9,background:"rgba(34,197,94,0.6)",borderRadius:2,marginRight:3,verticalAlign:"middle"}} />subbed in</span>
-                  <span><span style={{color:"#06b6d4",fontWeight:800}}>ˢ</span> back-row setter (sets)</span>
+                  <span><span style={{color:"#22c55e",fontWeight:800}}>▲</span> rotates in here</span>
+                  <span><span style={{color:"#06b6d4",fontWeight:800}}>S</span> back-row setter</span>
                   <span><span style={{color:"#f59e0b",fontWeight:800}}>rs</span> front setter → right side</span>
-                  <span><span style={{color:"#c084fc",fontWeight:800}}>M</span> middle</span>
-                  <span><span style={{color:"#67e8f9",textDecoration:"underline",fontWeight:700}}>L</span> libero (in for back-row middle)</span>
-                  <span><span style={{color:C.grn,fontWeight:800}}>•</span> passer (on receive)</span>
+                  <span><span style={{color:"#67e8f9",textDecoration:"underline",fontWeight:700}}>L</span> libero</span>
+                  <span><span style={{color:C.grn,fontWeight:800}}>•SR</span> passer</span>
                 </div>
                 {legendIds.length>0 && (
                   <div style={{display:"flex",gap:10,flexWrap:"wrap",marginTop:6,fontSize:11}}>
@@ -12124,7 +12105,7 @@ export default function App() {
                   const phaseWord = { both:"whole rotation", serve:"serve only", receive:"receive only" };
                   const applySub = () => {
                     if(!sel.inId){ window.alert("Choose a player to bring in."); return; }
-                    updateDraft(d => { d.sets[setIdx].subs.push({ inId: sel.inId, outId: sel.outId, fromRotation: sel.r, thruRotation: sel.scope==="one" ? sel.r : 5, phase: aPhase }); });
+                    updateDraft(d => { d.sets[setIdx].subs.push({ inId: sel.inId, outId: sel.outId, fromRotation: sel.r, thruRotation: sel.scope==="one" ? sel.r : 11, phase: aPhase }); });
                     setLineupSubSel(null);
                   };
                   return (
@@ -12171,7 +12152,7 @@ export default function App() {
 
         {/* Playing time */}
         <div style={S.card}>
-          <div style={S.lbl}>Playing time — across {draft.sets.length} set{draft.sets.length===1?"":"s"} ({totalRot} rotations)</div>
+          <div style={S.lbl}>Playing time — counting serve + serve-receive across {draft.sets.length} set{draft.sets.length===1?"":"s"} ({totalRot} of {draft.sets.length*24} rotations)</div>
           {totalRot === 0 ? (
             <div style={{fontSize:12,color:C.mut}}>Fill in a lineup to compute playing time.</div>
           ) : (
@@ -12193,15 +12174,6 @@ export default function App() {
           )}
         </div>
 
-        {/* Lineup card */}
-        <div style={S.card}>
-          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
-            <div style={S.lbl}>Lineup card</div>
-            <div style={{flex:1}} />
-            <button style={S.ghost} onClick={() => { navigator.clipboard?.writeText(cardText()); setLineupSaved("saved"); window.alert("Lineup card copied to clipboard."); }}>Copy all sets</button>
-          </div>
-          <pre style={{margin:0,fontSize:12,color:C.text,fontFamily:"monospace",whiteSpace:"pre-wrap",lineHeight:1.5}}>{cardText()}</pre>
-        </div>
       </div>
     );
   }
