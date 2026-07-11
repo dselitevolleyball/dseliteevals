@@ -11797,6 +11797,7 @@ export default function App() {
       const byN = {}; slots.forEach(s => { byN[s.n] = s; });
       const sInfo = lineupOk ? vbSetterInfo(slots, set.setters) : { setterBack:null, setterFront:null };
       const liberoSlot = slots.find(s => s.libFor);
+      const frontMidSlot = lineupOk ? slots.find(s => s.row==="front" && (set.middles||[]).includes(s.id)) : null; // middle up front (pairs with the libero switch)
       const weServe = phase==="serve";
       const onCourtIds = new Set(slots.map(s => s.id).filter(Boolean));
       const bench = proster.filter(p => !onCourtIds.has(p.id));
@@ -11876,18 +11877,20 @@ export default function App() {
         const courtI = s ? s.i : null;
         const isServer = weServe && n===1;
         const isLibero = id && liberoSlot && liberoSlot.n===n;
+        const isFrontMid = id && frontMidSlot && frontMidSlot.n===n && applyLib && !!liberoSlot; // middle up front while libero covers back
         const isSetterBack = id && id===sInfo.setterBack;
-        const isPasser = id && !weServe && srPassers.has(id);
+        const isPasser = id && !weServe && srPassers.has(id) && !isFrontMid;
         return (
           <div key={n} onClick={id!=null && courtI!=null && !isLibero ? () => upd(pl => { pl.subPick = { i:courtI, n, outId:id }; }) : undefined}
-            style={{position:"relative",background:isServer?"rgba(245,158,11,0.16)":isLibero?"rgba(6,182,212,0.16)":isPasser?"rgba(34,197,94,0.10)":C.bg,border:"2px solid "+(isServer?"#f59e0b":isLibero?"#06b6d4":isPasser?C.grn:C.border),borderRadius:12,padding:"14px 8px",minHeight:82,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:2,cursor:id?"pointer":"default"}}>
+            style={{position:"relative",background:isServer?"rgba(245,158,11,0.16)":isLibero?"rgba(6,182,212,0.16)":isFrontMid?"rgba(168,85,247,0.16)":isPasser?"rgba(34,197,94,0.10)":C.bg,border:"2px solid "+(isServer?"#f59e0b":isLibero?"#06b6d4":isFrontMid?"#a855f7":isPasser?C.grn:C.border),borderRadius:12,padding:"14px 8px",minHeight:82,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:2,cursor:id?"pointer":"default"}}>
             <span style={{position:"absolute",top:4,left:6,fontSize:11,fontWeight:800,color:C.mut}}>{n}</span>
             {pNum(id) ? <span style={{position:"absolute",top:4,right:6,fontSize:12,fontWeight:900,color:C.gold}}>#{pNum(id)}</span> : null}
             <span style={{fontSize:20,fontWeight:800,color:C.text,textAlign:"center",lineHeight:1.05}}>{id ? pFirst(id) : "—"}</span>
-            <span style={{fontSize:11,fontWeight:700,color:C.mut}}>
+            <span style={{fontSize:11,fontWeight:700,color:isFrontMid?"#c084fc":C.mut}}>
               {isLibero ? "LIBERO" : (pPos(id) || "")}{isSetterBack ? " · sets" : ""}
             </span>
             {isServer && <span style={{position:"absolute",bottom:3,fontSize:9,fontWeight:900,letterSpacing:1,color:"#f59e0b"}}>● SERVE</span>}
+            {isFrontMid && <span style={{position:"absolute",bottom:3,fontSize:9,fontWeight:900,letterSpacing:1,color:"#c084fc"}}>↕ SWITCH</span>}
             {isPasser && <span style={{position:"absolute",bottom:3,fontSize:10,fontWeight:900,letterSpacing:1,color:C.grn}}>S/R</span>}
           </div>
         );
@@ -12031,6 +12034,15 @@ export default function App() {
             </div>
           ))}
 
+          {applyLib && liberoSlot && (
+            <div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderRadius:12,border:"2px solid #06b6d4",background:"rgba(6,182,212,0.12)",marginBottom:10}}>
+              <span style={{fontSize:20}}>🔵</span>
+              <div style={{flex:1,fontSize:13,fontWeight:800,color:"#22d3ee"}}>
+                LIBERO SWITCH — {pFirst(set.liberoId)} in back for {pFirst(liberoSlot.libFor)}
+                {frontMidSlot ? <span style={{color:"#c084fc"}}> · {pFirst(frontMidSlot.id)} (mid) up front</span> : null}
+              </div>
+            </div>
+          )}
           <div style={{fontSize:11,color:C.mut,textAlign:"center",marginBottom:6}}>Tap any player to sub. {weServe ? "#1 serves." : "S/R marks the three receivers."}</div>
           {court}
 
