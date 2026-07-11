@@ -1119,6 +1119,8 @@ export default function App() {
   const [pbNew, setPbNew]         = useState(null);   // add-idea form draft or null
   const [pbEditId, setPbEditId]   = useState(null);   // idea being edited inline
   const [pbIdeaFilter, setPbIdeaFilter] = useState({ q:"", type:"", cat:"" });
+  // AI intake for playbook ideas: conversation + proposed entries.
+  const [pbAi, setPbAi] = useState({ open:false, input:"", busy:false, history:[], question:"", entries:[], note:"" });
   // Season-plan curriculum (per-team teaching checkboxes on the dashboard).
   const [currProgress, setCurrProgress]     = useState([]);
   const [currTeam, setCurrTeam]             = useState("");   // selected team in the panel
@@ -10297,6 +10299,36 @@ export default function App() {
       if (error) { window.alert("Couldn't post: " + error.message); return; }
       setPbNew(null); await loadPlaybook();
     };
+    // AI intake: send the running conversation; get a question or entries back.
+    const aiSend = async () => {
+      const text = pbAi.input.trim();
+      if (!text || pbAi.busy) return;
+      const history = [...pbAi.history, { role:"user", text }];
+      setPbAi(a => ({ ...a, history, input:"", busy:true, question:"", note:"" }));
+      try {
+        const res = await fetch("/api/playbook-assist", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ history, draft: pbAi.entries }) });
+        const j = await res.json().catch(()=>({}));
+        if (!res.ok) { window.alert(j.error || "Assist failed."); setPbAi(a => ({ ...a, busy:false })); return; }
+        const asstText = j.need_more ? (j.question || "Can you tell me a bit more?") : (j.note || "Here's what I put together — edit anything, then add.");
+        setPbAi(a => ({ ...a, busy:false, question: j.need_more ? (j.question||"") : "", note: j.need_more ? "" : (j.note||""), entries: j.need_more ? a.entries : (j.entries||[]), history: [...history, { role:"assistant", text: asstText }] }));
+      } catch (e) { window.alert("AI error: " + (e.message||e)); setPbAi(a => ({ ...a, busy:false })); }
+    };
+    const aiEditEntry = (i, patch) => setPbAi(a => { const e = a.entries.slice(); e[i] = { ...e[i], ...patch }; return { ...a, entries:e }; });
+    const aiRemoveEntry = (i) => setPbAi(a => ({ ...a, entries: a.entries.filter((_,x)=>x!==i) }));
+    const aiAddAll = async () => {
+      const rows = pbAi.entries.filter(e => (e.title||"").trim()).map((e, idx) => ({
+        tier:"contribution", entry_type: e.entry_type || "Idea", category: (e.category||"").trim() || "General",
+        title: e.title.trim(), body: (e.body||"").trim() || null, cues: (e.cues||"").trim() || null,
+        author_name: coachName, author_email: coach?.email || null, updated_by: coachName, sort_order: 9000 + idx,
+      }));
+      if (!rows.length) { window.alert("Nothing to add yet."); return; }
+      const { error } = await supabase.from("playbook_entries").insert(rows);
+      if (error) { window.alert("Couldn't add: " + error.message); return; }
+      setPbAi({ open:false, input:"", busy:false, history:[], question:"", entries:[], note:"" });
+      await loadPlaybook();
+      window.alert("Added " + rows.length + " " + (rows.length===1?"entry":"entries") + " to Coach Ideas.");
+    };
+    const aiReset = () => setPbAi({ open:true, input:"", busy:false, history:[], question:"", entries:[], note:"" });
     // Notify all coaches to look at an entry.
     const distribute = async (en) => {
       if (!window.confirm("Send this to all coaches for review?")) return;
@@ -10455,8 +10487,62 @@ export default function App() {
               <div style={{...St.lbl,marginBottom:0}}>Coach ideas · {ideas.length}</div>
               <span style={{fontSize:11,color:C.mut}}>techniques, cues, systems — anything but drills. Everyone can add.</span>
               <div style={{flex:1}} />
+              <button onClick={()=>setPbAi(a=>({...a, open:!a.open}))} style={{...St.ghost,borderColor:pbAi.open?C.gold:C.border,color:pbAi.open?C.gold:C.text}}>✨ AI assist</button>
               <button onClick={()=>setPbNew(pbNew ? null : { entry_type:"Idea", category:"", title:"", body:"", cues:"" })} style={St.gold}>{pbNew?"Cancel":"+ Add idea"}</button>
             </div>
+
+            {/* AI intake — dump thoughts, it structures them (and asks if unclear) */}
+            {pbAi.open && (
+              <div style={{border:"1px solid "+C.gold,borderRadius:10,padding:"12px 14px",background:"rgba(233,30,140,0.05)",marginBottom:12}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,flexWrap:"wrap"}}>
+                  <span style={{fontSize:12,fontWeight:800,color:C.gold}}>✨ Describe it — I'll write the entries</span>
+                  <div style={{flex:1}} />
+                  {(pbAi.history.length>0 || pbAi.entries.length>0) && <button onClick={aiReset} style={{...St.ghost,padding:"3px 10px",fontSize:11}}>Start over</button>}
+                </div>
+
+                {/* Conversation */}
+                {pbAi.history.length>0 && (
+                  <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:8,maxHeight:220,overflowY:"auto"}}>
+                    {pbAi.history.map((m,i) => (
+                      <div key={i} style={{alignSelf:m.role==="user"?"flex-end":"flex-start",maxWidth:"90%",background:m.role==="user"?"rgba(255,255,255,0.06)":C.bg,border:"1px solid "+C.border,borderRadius:10,padding:"7px 10px"}}>
+                        <div style={{fontSize:9,fontWeight:800,color:m.role==="user"?C.mut:C.gold,marginBottom:2}}>{m.role==="user"?"You":"Assistant"}</div>
+                        <div style={{fontSize:12,color:C.text,lineHeight:1.5,whiteSpace:"pre-wrap"}}>{m.text}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Proposed entries — editable before adding */}
+                {pbAi.entries.length>0 && (
+                  <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:8}}>
+                    <div style={{fontSize:10,fontWeight:800,color:C.gold,textTransform:"uppercase",letterSpacing:0.3}}>Proposed — {pbAi.entries.length} entr{pbAi.entries.length===1?"y":"ies"} · edit anything</div>
+                    {pbAi.entries.map((en,i) => (
+                      <div key={i} style={{border:"1px solid "+C.border,borderRadius:8,padding:"8px 10px",background:C.card}}>
+                        <div style={{display:"flex",gap:6,marginBottom:6,flexWrap:"wrap"}}>
+                          <select value={en.entry_type||"Idea"} onChange={e=>aiEditEntry(i,{entry_type:e.target.value})} style={{...inp,width:120,fontSize:11}}>{TYPES.map(t=><option key={t} value={t}>{t}</option>)}</select>
+                          <input value={en.category||""} onChange={e=>aiEditEntry(i,{category:e.target.value})} placeholder="Category" style={{...inp,flex:1,minWidth:120,fontSize:11}} />
+                          <button onClick={()=>aiRemoveEntry(i)} style={{...St.ghost,padding:"2px 8px",color:C.red}}>✕</button>
+                        </div>
+                        <input value={en.title||""} onChange={e=>aiEditEntry(i,{title:e.target.value})} placeholder="Title" style={{...inp,fontWeight:700,marginBottom:6}} />
+                        <textarea value={en.body||""} onChange={e=>aiEditEntry(i,{body:e.target.value})} placeholder="How to teach it…" style={{...inp,minHeight:52,resize:"vertical",fontSize:12,lineHeight:1.5,marginBottom:6}} />
+                        <textarea value={en.cues||""} onChange={e=>aiEditEntry(i,{cues:e.target.value})} placeholder="Cues" style={{...inp,minHeight:30,resize:"vertical",fontSize:12}} />
+                      </div>
+                    ))}
+                    <button onClick={aiAddAll} style={St.gold}>✓ Add {pbAi.entries.length} to Coach Ideas</button>
+                  </div>
+                )}
+
+                {/* Input */}
+                <div style={{display:"flex",gap:8,alignItems:"flex-end",flexWrap:"wrap"}}>
+                  <textarea value={pbAi.input} onChange={e=>setPbAi(a=>({...a,input:e.target.value}))}
+                    onKeyDown={e=>{ if(e.key==="Enter" && (e.metaKey||e.ctrlKey)) { e.preventDefault(); aiSend(); } }}
+                    placeholder={pbAi.entries.length ? "Refine it… (e.g. 'split into two', 'add cues for the arm swing')" : pbAi.question ? "Answer the question above…" : "Dump your thoughts — a technique, cue, or system. I'll structure it (and ask if it's unclear)."}
+                    style={{...inp,flex:1,minWidth:200,minHeight:56,resize:"vertical",lineHeight:1.5}} />
+                  <button onClick={aiSend} disabled={pbAi.busy || !pbAi.input.trim()} style={{...St.gold,opacity:(pbAi.busy||!pbAi.input.trim())?0.6:1}}>{pbAi.busy?"Thinking…":pbAi.entries.length?"Refine":"Send"}</button>
+                </div>
+                <div style={{fontSize:10,color:C.mut,marginTop:6}}>⌘/Ctrl+Enter to send. The assistant breaks your notes into entries, or asks a question if it needs more.</div>
+              </div>
+            )}
 
             {pbNew && (
               <div style={{border:"1px solid "+C.gold,borderRadius:8,padding:"10px 12px",background:"rgba(233,30,140,0.05)",marginBottom:12}}>
