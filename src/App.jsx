@@ -12010,7 +12010,6 @@ export default function App() {
               const nmFs = nm.length<=4 ? 16 : nm.length<=6 ? 14 : nm.length<=8 ? 12.5 : nm.length<=10 ? 11 : 10;
               const bg = libSwitch ? "rgba(6,182,212,0.28)"    // libero⇄middle switch: cyan
                        : enteredHere ? "rgba(34,197,94,0.30)"   // rotate-in / sub: green
-                       : isServer ? "rgba(245,158,11,0.26)"     // server: amber
                        : slot.row==="front" ? "rgba(233,30,140,0.06)" : "transparent";
               const isSel = lineupSubSel && lineupSubSel.setId===set.id && lineupSubSel.r===ro.r && lineupSubSel.i===slot.i && lineupSubSel.phase===phase;
               const tip = slot.id ? (pname(slot.id)+(pos?" · "+pos:"")+(slot.libFor?(" (libero for "+pname(slot.libFor)+")"):"")+" · "+slot.label+" — tap to sub") : ("empty · "+slot.label);
@@ -12024,7 +12023,7 @@ export default function App() {
                       {pos ? <span style={{position:"absolute",top:2,right:3,fontSize:9,fontWeight:800,color:C.mut,lineHeight:1}}>{pos}</span> : null}
                       {enteredHere && <span title="Rotates in here" style={{position:"absolute",bottom:2,left:3,fontSize:11,color:"#22c55e",fontWeight:800,lineHeight:1}}>▲</span>}
                       <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:1,lineHeight:1.05}}>
-                        <span style={{fontSize:nmFs,color:isServer?"#fde68a":C.text,fontWeight:(isServer||enteredHere)?800:700,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:"100%"}}>{nm}</span>
+                        <span style={{fontSize:nmFs,color:C.text,fontWeight:enteredHere?800:700,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:"100%"}}>{nm}</span>
                         <div style={{fontSize:9.5,lineHeight:1,whiteSpace:"nowrap",fontWeight:800}}>
                           {isServer && <span style={{color:"#f59e0b"}}>serve</span>}
                           {isSetF && <span style={{color:"#f59e0b"}}>{isServer?" · ":""}rs</span>}
@@ -12113,7 +12112,7 @@ export default function App() {
                 {passBlock("Second pass · R7–R12", 6, 12)}
                 {/* Legend row: colors + roster positions */}
                 <div style={{display:"flex",gap:14,flexWrap:"wrap",alignItems:"center",marginTop:8,fontSize:10,color:C.mut}}>
-                  <span><span style={{display:"inline-block",width:9,height:9,background:"rgba(245,158,11,0.5)",borderRadius:2,marginRight:3,verticalAlign:"middle"}} />server</span>
+                  <span><span style={{color:"#f59e0b",fontWeight:800}}>serve</span> server</span>
                   <span><span style={{color:"#22c55e",fontWeight:800}}>▲</span> rotates / subs in</span>
                   <span><span style={{display:"inline-block",width:9,height:9,background:"rgba(34,197,94,0.6)",borderRadius:2,marginRight:3,verticalAlign:"middle"}} />sub</span>
                   <span><span style={{display:"inline-block",width:9,height:9,background:"rgba(6,182,212,0.7)",borderRadius:2,marginRight:3,verticalAlign:"middle"}} />libero ⇄ middle switch</span>
