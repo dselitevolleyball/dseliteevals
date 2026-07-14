@@ -11600,9 +11600,40 @@ export default function App() {
       (!f.status || (f.status==="paid" ? !!c.paid : !c.paid)) &&
       (!f.coach  || norm(c.coach_name).includes(norm(f.coach)));
     const filtersOn = !!(f.role || f.team || f.status || f.coach);
+
+    // Coaches log in with all sorts of display names ("Coach Sam R", "Shellie",
+    // "britneyaparker"). Resolve each check-in to its canonical First-Last so
+    // hours group under the real name and pick up the right rate — by email
+    // first (coach_roster), then a name-token fallback.
+    const rosterByEmail = new Map();
+    coachRoster.forEach(r => { if (r.email) rosterByEmail.set(norm(r.email), ((r.first_name||"")+" "+(r.last_name||"")).trim()); });
+    const canonNames = (() => {
+      const s = new Map(); // norm -> display
+      coachRoster.forEach(r => { const full=((r.first_name||"")+" "+(r.last_name||"")).trim(); if(full) s.set(norm(full), full); });
+      practiceTeams.forEach(t => [t.head_coach,t.assistant_coach].forEach(n => { if(n&&n.trim()) s.set(norm(n), n.trim()); }));
+      coachRates.forEach(r => { if(r.coach_name) s.set(norm(r.coach_name), r.coach_name.trim()); });
+      return s;
+    })();
+    const canonicalName = (raw, email) => {
+      if (email) { const e = rosterByEmail.get(norm(email)); if (e) return e; }
+      const base = (raw||"").replace(/^\s*coach\s+/i,"").trim();
+      const n = norm(base);
+      if (canonNames.has(n)) return canonNames.get(n);
+      const toks = n.split(/\s+/).filter(Boolean);
+      if (toks.length) {
+        const first = toks[0], last = toks[toks.length-1];
+        for (const [k,v] of canonNames) { const kt=k.split(/\s+/), kf=kt[0], kl=kt[kt.length-1];
+          if (kl===last && (kf===first || kf.startsWith(first) || first.startsWith(kf))) return v; }
+        const firstOnly = [...canonNames.values()].filter(v => norm(v).split(/\s+/)[0]===first);
+        if (firstOnly.length===1) return firstOnly[0];
+      }
+      return base || raw;
+    };
+
     const rows = {};
     checkins.filter(c => c.check_date>=wkStart && c.check_date<=wkEnd && passes(c)).forEach(c => {
-      const g = rows[c.coach_name] = rows[c.coach_name] || { coach:c.coach_name, hours:0, unpaidHours:0, checks:[] };
+      const cn = canonicalName(c.coach_name, c.coach_email);
+      const g = rows[cn] = rows[cn] || { coach:cn, hours:0, unpaidHours:0, checks:[] };
       g.hours += Number(c.hours||0);
       if (!c.paid) g.unpaidHours += Number(c.hours||0);
       g.checks.push(c);
@@ -11628,7 +11659,7 @@ export default function App() {
       else {
         g.amount = 0; g.unpaidAmount = 0;
         g.checks.forEach(c => {
-          const a = Number(c.hours||0) * (rateFor(c.coach_name, c.team_name) ?? g.rate);
+          const a = Number(c.hours||0) * (rateFor(g.coach, c.team_name) ?? g.rate);
           g.amount += a; if (!c.paid) g.unpaidAmount += a;
         });
       }
@@ -11676,8 +11707,8 @@ export default function App() {
       const esc = v => { const s = (v==null?"":String(v)); return /[",\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s; };
       const lines = [["Date","Coach","Role","Team","Slot","Hours","Rate","Amount","Paid"].join(",")];
       list.forEach(g => g.checks.slice().sort((a,b)=>a.check_date.localeCompare(b.check_date)).forEach(c => {
-        const r = rateFor(c.coach_name, c.team_name);
-        lines.push([c.check_date, esc(c.coach_name), c.role, esc(c.team_name||"Floating"), c.slot||"", Number(c.hours||0), r??"", r!=null?(Number(c.hours||0)*r).toFixed(2):"", c.paid?"yes":"no"].join(","));
+        const r = rateFor(g.coach, c.team_name);
+        lines.push([c.check_date, esc(g.coach), c.role, esc(c.team_name||"Floating"), c.slot||"", Number(c.hours||0), r??"", r!=null?(Number(c.hours||0)*r).toFixed(2):"", c.paid?"yes":"no"].join(","));
       }));
       const a = document.createElement("a");
       a.href = URL.createObjectURL(new Blob([lines.join("\n")], { type:"text/csv" }));
@@ -11812,7 +11843,7 @@ export default function App() {
                           <tr><td colSpan={6} style={{padding:"0 8px 10px 8px",background:C.bg}}>
                             <div style={{display:"flex",flexDirection:"column",gap:6,padding:"8px 0"}}>
                               {g.checks.slice().sort((a,b)=> a.check_date.localeCompare(b.check_date) || (a.slot||"").localeCompare(b.slot||"")).map(c => {
-                                const r = rateFor(c.coach_name, c.team_name);
+                                const r = rateFor(g.coach, c.team_name);
                                 return (
                                 <div key={c.id} style={{display:"flex",alignItems:"center",gap:8,fontSize:12,color:C.text,flexWrap:"wrap"}}>
                                   <input type="date" value={c.check_date} onChange={e=>editCheck(c.id,{ check_date:e.target.value, phase:phaseForDate(e.target.value)||c.phase })} style={{...St.sel,width:135,padding:"4px 6px"}} title="Shift date" />
