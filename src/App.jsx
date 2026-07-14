@@ -1124,6 +1124,7 @@ export default function App() {
   const [checkins, setCheckins]         = useState([]);
   const [checkinDate, setCheckinDate]   = useState(() => localDateISO()); // admin date picker
   const [checkinSub, setCheckinSub]     = useState({ team:"", slot:"5-7pm", role:"sub" }); // sub/float form
+  const [pastShift, setPastShift]       = useState({ date:"", team:"", slot:"", role:"scheduled" }); // coach: clock in for a past day
   const [checkinBusy, setCheckinBusy]   = useState("");     // key of the check-in being written
   const [shiftIntents, setShiftIntents] = useState([]);     // coaches declaring working / not-working per shift
   // Time Cards ledger (pay). coach_rates = one $/hr per coach.
@@ -10364,6 +10365,71 @@ export default function App() {
             </div>
         </div>
         )}
+
+        {/* Clock in for another day — always-available past-shift logger. */}
+        {(() => {
+          const iso = pastShift.date || today;
+          const sched = slotsForDate(iso);
+          const ph = phaseForDate(iso);
+          const wd = WD_OF(iso);
+          const dayAssigns = ph ? practiceAssignments.filter(a => (a.phase||"season")===ph && a.day===wd) : [];
+          const daySlots = [...new Set(dayAssigns.map(a => a.slot))].sort((a,b)=> startH(a)-startH(b));
+          const slotOpts = daySlots.length ? daySlots : ["3-5pm","4-6pm","5-7pm","6-8pm","7-9pm"];
+          const teamOpts = pastShift.role==="scheduled" ? myTeamNames : practiceTeams.map(t=>t.team_name);
+          const manualSlot = pastShift.slot || slotOpts[0] || "5-7pm";
+          const logManual = async () => {
+            const team = pastShift.role==="float" ? "" : pastShift.team;
+            if (pastShift.role!=="float" && !team) { window.alert("Pick your team (or choose Floating)."); return; }
+            if (!manualSlot) { window.alert("Pick a time slot."); return; }
+            await doCheckin({ team, slot: manualSlot, role: pastShift.role, dateISO: iso, force: true });
+          };
+          return (
+            <div style={St.card}>
+              <div style={St.lbl}>Clock in for another day</div>
+              <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:10}}>
+                <input type="date" max={today} value={iso} onChange={e=>setPastShift(s=>({...s,date:e.target.value}))} style={St.sel} />
+                <span style={{fontSize:11,color:C.mut}}>Pick a day you worked but didn't clock in.</span>
+              </div>
+              {sched.length>0 && (
+                <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:10}}>
+                  {sched.map(s => {
+                    const already = checkins.some(c => c.check_date===iso && norm(c.coach_name)===norm(coachName) && (c.team_name||"")===(s.team||"") && (c.slot||"")===(s.slot||""));
+                    const bkey = iso+"|"+(s.team||"float")+"|"+(s.slot||"")+"|"+s.role;
+                    return (
+                      <div key={bkey} style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap",padding:"9px 12px",borderRadius:8,border:"1px solid "+C.border,background:C.bg}}>
+                        <div style={{flex:1,minWidth:150}}>
+                          <span style={{fontSize:13,fontWeight:700,color:C.text}}>{s.role==="float"?"Floating":s.team}</span>
+                          <span style={{fontSize:12,color:C.mut}}> · {s.slot} · {slotHours(s.slot)}h</span>
+                        </div>
+                        {already
+                          ? <span style={{fontSize:12,color:C.grn,fontWeight:800}}>✓ Logged</span>
+                          : <button style={{...St.here,background:"transparent",border:"1px solid "+C.mut,color:C.mut}} disabled={checkinBusy===bkey} onClick={()=>doCheckin({ team:s.team, slot:s.slot, role:s.role, dateISO:iso, force:true })}>⏱ Clock in late</button>}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              <div style={{fontSize:10,fontWeight:800,textTransform:"uppercase",letterSpacing:0.3,color:C.mut,marginBottom:6}}>{sched.length>0 ? "Or log it manually" : "No scheduled shift found that day — log it manually"}</div>
+              <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                <div style={{display:"flex",borderRadius:8,overflow:"hidden",border:"1px solid "+C.border}}>
+                  {[["scheduled","Scheduled"],["sub","Sub"],["float","Float"]].map(([r,l]) => (
+                    <button key={r} onClick={()=>setPastShift(s=>({...s,role:r}))} style={{padding:"6px 12px",border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700,background:pastShift.role===r?C.gold:"transparent",color:pastShift.role===r?"#000":C.mut}}>{l}</button>
+                  ))}
+                </div>
+                {pastShift.role!=="float" && (
+                  <select value={pastShift.team} onChange={e=>setPastShift(s=>({...s,team:e.target.value}))} style={St.sel}>
+                    <option value="">— team —</option>
+                    {teamOpts.map(tn => <option key={tn} value={tn}>{tn}</option>)}
+                  </select>
+                )}
+                <select value={manualSlot} onChange={e=>setPastShift(s=>({...s,slot:e.target.value}))} style={St.sel}>
+                  {slotOpts.map(x => <option key={x} value={x}>{x} · {slotHours(x)}h</option>)}
+                </select>
+                <button style={St.here} disabled={checkinBusy===(iso+"|"+((pastShift.role==="float"?"float":pastShift.team)||"")+"|"+manualSlot+"|"+pastShift.role)} onClick={logManual}>⏱ Log shift</button>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Covered practices — where you're out and who's covering (and where you're covering). */}
         {(() => {
