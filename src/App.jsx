@@ -1125,6 +1125,7 @@ export default function App() {
   const [checkinDate, setCheckinDate]   = useState(() => localDateISO()); // admin date picker
   const [checkinSub, setCheckinSub]     = useState({ team:"", slot:"5-7pm", role:"sub" }); // sub/float form
   const [checkinBusy, setCheckinBusy]   = useState("");     // key of the check-in being written
+  const [shiftIntents, setShiftIntents] = useState([]);     // coaches declaring working / not-working per shift
   // Time Cards ledger (pay). coach_rates = one $/hr per coach.
   const [coachRates, setCoachRates]     = useState([]);
   const [tcWeekStart, setTcWeekStart]   = useState(() => weekMondayISO()); // Monday of the viewed week
@@ -1944,7 +1945,14 @@ export default function App() {
     if (error) { console.error("Load coach_checkins error:", error); return; }
     setCheckins(data || []);
   }, []);
-  useEffect(() => { if (isApproved && view === "home") { loadCheckins(); loadPractice(); loadCoachFloats(); loadPracticeCancellations(); } }, [isApproved, view, loadCheckins, loadPractice, loadCoachFloats, loadPracticeCancellations]);
+  // Shift intents — coaches declaring working / not-working for a shift.
+  const loadShiftIntents = useCallback(async () => {
+    const since = localDateISO(new Date(Date.now() - 30*86400000));
+    const { data, error } = await supabase.from("shift_intents").select("*").gte("shift_date", since);
+    if (error) { console.error("Load shift_intents error:", error); return; }
+    setShiftIntents(data || []);
+  }, []);
+  useEffect(() => { if (isApproved && view === "home") { loadCheckins(); loadShiftIntents(); loadPractice(); loadCoachFloats(); loadPracticeCancellations(); } }, [isApproved, view, loadCheckins, loadShiftIntents, loadPractice, loadCoachFloats, loadPracticeCancellations]);
 
   // Time Cards ledger loader.
   const loadCoachRates = useCallback(async () => {
@@ -10232,15 +10240,16 @@ export default function App() {
       }
     }
 
-    const doCheckin = async ({ team, slot, role, dateISO }) => {
-      if (windowState(slot) !== "open") { window.alert("Check-in opens 30 minutes before the practice starts."); return; }
-      const key = (team||"float")+"|"+(slot||"")+"|"+role;
+    const doCheckin = async ({ team, slot, role, dateISO, force }) => {
+      const d = dateISO || today;
+      if (!force && windowState(slot) !== "open") { window.alert("Check-in opens 30 minutes before the practice starts."); return; }
+      const key = (dateISO?dateISO+"|":"")+(team||"float")+"|"+(slot||"")+"|"+role;
       setCheckinBusy(key);
       const row = {
         coach_name: coachName, coach_email: coach.email||null,
-        check_date: dateISO || today, team_name: team||null, slot: slot||null,
-        phase: todayPhase || "none", hours: slotHours(slot), role, status:"present",
-        source:"app", created_by: coachName,
+        check_date: d, team_name: team||null, slot: slot||null,
+        phase: phaseForDate(d) || "none", hours: slotHours(slot), role, status:"present",
+        source: force ? "app-late" : "app", created_by: coachName,
       };
       const { error } = await supabase.from("coach_checkins").insert(row);
       if (error && !/duplicate|unique/i.test(error.message||"")) window.alert("Couldn't check in: "+error.message);
@@ -10253,6 +10262,26 @@ export default function App() {
       if (checkinSub.role==="sub" && !checkinSub.team) { window.alert("Pick the team you're subbing for."); return; }
       if (!useSlot) { window.alert("Pick a time slot."); return; }
       await doCheckin({ team: checkinSub.role==="float" ? "" : checkinSub.team, slot: useSlot, role: checkinSub.role });
+    };
+    // Declaring working / not-working for a scheduled shift ahead of time. A
+    // covered shift (someone picked it up) is already filtered out of the list,
+    // so the option only shows on shifts still yours. "Not working" also files a
+    // practice-off request so coverage kicks in.
+    const myIntent = (iso, team, slot) => shiftIntents.find(x => norm(x.coach_name)===norm(coachName) && x.shift_date===iso && (x.team_name||"")===(team||"") && (x.slot||"")===(slot||""));
+    const setIntent = async (iso, team, slot, intent) => {
+      const key = "intent|"+iso+"|"+(team||"")+"|"+(slot||"");
+      setCheckinBusy(key);
+      const { error } = await supabase.from("shift_intents").upsert(
+        { coach_name:coachName, coach_email:coach.email||null, shift_date:iso, team_name:team||null, slot:slot||null, intent, created_at:new Date().toISOString() },
+        { onConflict:"coach_name,shift_date,team_name,slot" });
+      if (error) { window.alert("Couldn't save: "+error.message); setCheckinBusy(""); return; }
+      if (intent==="out") {
+        if (team) await supabase.from("coach_requests").insert({ coach_name:coachName, coach_email:coach.email||"", type:"practice", request_date:iso, team_name:team, details:"Can't work this shift (marked on clock-in)" });
+        fetch("/api/send-push", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ title:"Coach can't make a shift", body: coachName+" marked not working — "+(team||"float")+" on "+iso, url:"/?view=home", audience:{type:"admins"} }) }).catch(()=>{});
+        await loadCoachRequests();
+      }
+      await loadShiftIntents();
+      setCheckinBusy("");
     };
 
     const roleTag = (r) => {
@@ -10310,16 +10339,67 @@ export default function App() {
                     ) : windowState(s.slot)==="early" ? (
                       <span style={{fontSize:12,color:C.mut,fontWeight:700}} title="Check-in opens 30 minutes before the practice starts">🔒 Opens {fmtOpens(s.slot)}</span>
                     ) : windowState(s.slot)==="past" ? (
-                      <span style={{fontSize:12,color:C.mut,fontWeight:700}}>Practice ended</span>
+                      <button style={{...St.here,background:"transparent",border:"1px solid "+C.mut,color:C.mut}} disabled={busy} onClick={()=>doCheckin({ team:s.team, slot:s.slot, role:s.role, force:true })} title="This shift already ended — clock in late">{busy?"…":"⏱ Clock in late"}</button>
                     ) : (
                       <button style={isNext?St.here:{...St.here,background:"transparent",border:"1px solid "+C.grn,color:C.grn}} disabled={busy} onClick={()=>doCheckin({ team:s.team, slot:s.slot, role:s.role })}>{busy?"…":"✅ I'm here"}</button>
                     )}
+                    {/* Declare working / not-working ahead of the shift (scheduled only, not yet clocked in). */}
+                    {!c && s.role==="scheduled" && (() => {
+                      const it = myIntent(today, s.team, s.slot);
+                      const ibusy = checkinBusy === ("intent|"+today+"|"+(s.team||"")+"|"+(s.slot||""));
+                      const mini = (on,color) => ({ padding:"5px 10px", borderRadius:7, border:"1px solid "+(on?color:C.border), background:on?color:"transparent", color:on?"#04240f":C.mut, fontWeight:700, fontSize:11, cursor:"pointer", fontFamily:"inherit" });
+                      return (
+                        <div style={{display:"flex",gap:6,width:"100%",alignItems:"center"}}>
+                          <span style={{fontSize:10,fontWeight:800,textTransform:"uppercase",color:C.mut}}>Plan to:</span>
+                          <button disabled={ibusy} style={mini(it?.intent==="working",C.grn)} onClick={()=>setIntent(today,s.team,s.slot,"working")}>Working</button>
+                          <button disabled={ibusy} style={mini(it?.intent==="out","#f59e0b")} onClick={()=>{ if(window.confirm("Tell the directors you can't work "+s.team+" ("+s.slot+")? They'll arrange coverage.")) setIntent(today,s.team,s.slot,"out"); }}>Not working</button>
+                          {it && <span style={{fontSize:10,color:it.intent==="working"?C.grn:"#f59e0b",fontWeight:700}}>{it.intent==="working"?"✓ confirmed":"called out"}</span>}
+                        </div>
+                      );
+                    })()}
                   </div>
                 );
               })}
             </div>
         </div>
         )}
+
+        {/* Missed shifts — scheduled in the last week but never clocked in. */}
+        {(() => {
+          const missed = [];
+          for (let off=1; off<=7; off++) {
+            const dd = new Date(); dd.setDate(dd.getDate()-off); const iso = localDateISO(dd);
+            slotsForDate(iso).forEach(s => {
+              const already = checkins.some(c => c.check_date===iso && norm(c.coach_name)===norm(coachName) && (c.team_name||"")===(s.team||"") && (c.slot||"")===(s.slot||""));
+              if (!already) missed.push({ ...s, iso });
+            });
+          }
+          if (!missed.length) return null;
+          return (
+            <div style={St.card}>
+              <div style={St.lbl}>Missed shifts — clock in late</div>
+              <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                {missed.map(s => {
+                  const key = s.iso+"|"+(s.team||"float")+"|"+(s.slot||"")+"|"+s.role;
+                  const busy = checkinBusy === key;
+                  return (
+                    <div key={key} style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap",padding:"10px 12px",borderRadius:8,border:"1px solid "+C.border,background:C.bg}}>
+                      <div style={{flex:1,minWidth:160}}>
+                        <div style={{display:"flex",alignItems:"center",gap:6}}>
+                          <span style={{fontSize:13,fontWeight:700,color:C.text}}>{new Date(s.iso+"T12:00:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"})}</span>
+                          <span style={{fontSize:14,fontWeight:700,color:C.text}}>· {s.role==="float" ? "Floating" : s.team}</span>
+                          {s.role!=="scheduled" && roleTag(s.role)}
+                        </div>
+                        <div style={{fontSize:12,color:C.mut,marginTop:2}}>{s.slot} · {slotHours(s.slot)}h</div>
+                      </div>
+                      <button style={{...St.here,background:"transparent",border:"1px solid "+C.mut,color:C.mut}} disabled={busy} onClick={()=>doCheckin({ team:s.team, slot:s.slot, role:s.role, dateISO:s.iso, force:true })} title="Clock in for this past shift">{busy?"…":"⏱ Clock in late"}</button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Sub / float check-in — only when teams actually practice today. */}
         {(() => {
@@ -11531,6 +11611,14 @@ export default function App() {
       await loadCheckins();
     };
     const delCheck = async (id) => { if(!window.confirm("Delete this check-in?")) return; await supabase.from("coach_checkins").delete().eq("id", id); await loadCheckins(); };
+    // Admin: edit a check-in's fields, or add a shift manually before finalizing.
+    const editCheck = async (id, patch) => { const { error } = await supabase.from("coach_checkins").update(patch).eq("id", id); if(error){ window.alert("Couldn't save: "+error.message); return; } await loadCheckins(); };
+    const addShift = async (coachNm) => {
+      const row = { coach_name: coachNm, check_date: wkStart, team_name: null, slot: null, hours: 0, role: "scheduled", status: "present", source: "admin", phase: phaseForDate(wkStart)||"none", created_by: coach?.display_name || coach?.email || "admin" };
+      const { error } = await supabase.from("coach_checkins").insert(row);
+      if (error) { window.alert("Couldn't add shift: "+error.message); return; }
+      await loadCheckins(); setTcOpen(coachNm);
+    };
     const roleTag = (r) => { const m = { scheduled:["Sched",C.mut], sub:["Sub","#f59e0b"], float:["Float","#06b6d4"] }[r] || ["",C.mut]; return <span style={{fontSize:9,fontWeight:800,color:m[1],border:"1px solid "+m[1],borderRadius:4,padding:"0 4px"}}>{m[0]}</span>; };
     const isThisWeek = wkStart === weekMondayISO();
     // Export the (filtered) week as CSV — one row per check-in.
@@ -11672,18 +11760,30 @@ export default function App() {
                         </tr>
                         {open && (
                           <tr><td colSpan={6} style={{padding:"0 8px 10px 8px",background:C.bg}}>
-                            <div style={{display:"flex",flexDirection:"column",gap:4,padding:"8px 0"}}>
-                              {g.checks.slice().sort((a,b)=> a.check_date.localeCompare(b.check_date) || (a.slot||"").localeCompare(b.slot||"")).map(c => (
-                                <div key={c.id} style={{display:"flex",alignItems:"center",gap:10,fontSize:12,color:C.text,flexWrap:"wrap"}}>
-                                  <span style={{width:64,color:C.mut}}>{timeOf(c.check_date)}</span>
-                                  {roleTag(c.role)}
-                                  <span style={{flex:1,minWidth:120}}>{c.team_name||"Floating"} · {c.slot} · {Number(c.hours||0)}h{(() => { const r = rateFor(c.coach_name, c.team_name); return r!=null ? <span style={{color:C.mut}}> · ${r}/hr{headRateOf(c.coach_name)!=null && r===headRateOf(c.coach_name) ? <b style={{color:"#a855f7"}}> HC</b> : null} = {money(Number(c.hours||0)*r)}</span> : null; })()}</span>
+                            <div style={{display:"flex",flexDirection:"column",gap:6,padding:"8px 0"}}>
+                              {g.checks.slice().sort((a,b)=> a.check_date.localeCompare(b.check_date) || (a.slot||"").localeCompare(b.slot||"")).map(c => {
+                                const r = rateFor(c.coach_name, c.team_name);
+                                return (
+                                <div key={c.id} style={{display:"flex",alignItems:"center",gap:8,fontSize:12,color:C.text,flexWrap:"wrap"}}>
+                                  <input type="date" value={c.check_date} onChange={e=>editCheck(c.id,{ check_date:e.target.value, phase:phaseForDate(e.target.value)||c.phase })} style={{...St.sel,width:135,padding:"4px 6px"}} title="Shift date" />
+                                  <select value={c.role} onChange={e=>editCheck(c.id,{ role:e.target.value })} style={{...St.sel,padding:"4px 6px"}} title="Role">
+                                    <option value="scheduled">Scheduled</option><option value="sub">Sub</option><option value="float">Float</option>
+                                  </select>
+                                  <select value={c.team_name||""} onChange={e=>editCheck(c.id,{ team_name:e.target.value||null })} style={{...St.sel,padding:"4px 6px",minWidth:120}} title="Team">
+                                    <option value="">Floating</option>
+                                    {practiceTeams.map(t => <option key={t.team_name} value={t.team_name}>{t.team_name}</option>)}
+                                  </select>
+                                  <input defaultValue={c.slot||""} key={"slot"+c.id+(c.slot||"")} onBlur={e=>{ const v=e.target.value.trim(); if(v!==(c.slot||"")) editCheck(c.id,{ slot:v||null }); }} placeholder="slot" style={{...St.sel,width:80,padding:"4px 6px"}} title="Time slot" />
+                                  <input type="number" min="0" step="0.5" defaultValue={Number(c.hours||0)} key={"hr"+c.id+c.hours} onBlur={e=>{ const v=Number(e.target.value)||0; if(v!==Number(c.hours||0)) editCheck(c.id,{ hours:v }); }} onKeyDown={e=>{ if(e.key==="Enter") e.target.blur(); }} style={{...St.sel,width:56,padding:"4px 6px",textAlign:"right",fontWeight:700}} title="Hours" />
+                                  <span style={{color:C.mut,minWidth:96}}>h{r!=null ? " · $"+r+"/hr = "+money(Number(c.hours||0)*r) : ""}</span>
                                   <label style={{display:"flex",alignItems:"center",gap:4,cursor:"pointer",color:c.paid?C.grn:C.mut}}>
                                     <input type="checkbox" checked={!!c.paid} onChange={()=>togglePaid(c)} style={{accentColor:C.grn,cursor:"pointer"}} />paid
                                   </label>
-                                  <button style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:12}} onClick={()=>delCheck(c.id)} title="Delete check-in">✕</button>
+                                  <button style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:14}} onClick={()=>delCheck(c.id)} title="Delete check-in">✕</button>
                                 </div>
-                              ))}
+                                );
+                              })}
+                              <div><button style={{...St.ghost,color:C.acc,borderColor:C.acc,marginTop:2}} onClick={()=>addShift(g.coach)}>+ Add shift</button></div>
                             </div>
                           </td></tr>
                         )}
