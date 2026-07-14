@@ -1952,7 +1952,7 @@ export default function App() {
     if (error) { console.error("Load shift_intents error:", error); return; }
     setShiftIntents(data || []);
   }, []);
-  useEffect(() => { if (isApproved && view === "home") { loadCheckins(); loadShiftIntents(); loadPractice(); loadCoachFloats(); loadPracticeCancellations(); } }, [isApproved, view, loadCheckins, loadShiftIntents, loadPractice, loadCoachFloats, loadPracticeCancellations]);
+  useEffect(() => { if (isApproved && (view === "home" || view === "clockin")) { loadCheckins(); loadShiftIntents(); loadPractice(); loadCoachFloats(); loadPracticeCancellations(); } }, [isApproved, view, loadCheckins, loadShiftIntents, loadPractice, loadCoachFloats, loadPracticeCancellations]);
 
   // Time Cards ledger loader.
   const loadCoachRates = useCallback(async () => {
@@ -2072,9 +2072,9 @@ export default function App() {
   // Notifications need updates + questions loaded on every view (the bell is in the header).
   useEffect(() => { if (isApproved) { loadUpdates(); loadTeamQuestions(); } }, [isApproved, loadUpdates, loadTeamQuestions]);
   useEffect(() => { if (isApproved && (view === "home" || view === "teamdir" || view === "coaches")) loadPracticeApprovals(); }, [isApproved, view, loadPracticeApprovals]);
-  useEffect(() => { if (isApproved && (view === "home" || view === "requests" || view === "practice" || view === "coverage" || view === "tournaments")) loadCoachRequests(); }, [isApproved, view, loadCoachRequests]);
+  useEffect(() => { if (isApproved && (view === "home" || view === "clockin" || view === "requests" || view === "practice" || view === "coverage" || view === "tournaments")) loadCoachRequests(); }, [isApproved, view, loadCoachRequests]);
   useEffect(() => { if (isApproved && view === "practice") loadCoachFloats(); }, [isApproved, view, loadCoachFloats]);
-  useEffect(() => { if (isApproved && (view === "practice" || view === "home")) loadPracticeCoverage(); }, [isApproved, view, loadPracticeCoverage]);
+  useEffect(() => { if (isApproved && (view === "practice" || view === "home" || view === "clockin")) loadPracticeCoverage(); }, [isApproved, view, loadPracticeCoverage]);
   useEffect(() => { if (isApproved && view === "coverage") { loadPracticeCoverage(); loadPractice(); } }, [isApproved, view, loadPracticeCoverage, loadPractice]);
   useEffect(() => { if (isApproved && view === "practice") loadPracticeCancellations(); }, [isApproved, view, loadPracticeCancellations]);
   // Optimistically patch local state, then upsert the merged row. `merged` is
@@ -2833,7 +2833,7 @@ export default function App() {
   useEffect(() => {
     // Roster also drives the Tryout coach picker / Text Coaches lookup,
     // so make sure it's loaded whenever either tab opens.
-    if (isApproved && (view === "coaches" || view === "tryouts" || view === "home" || view === "teamdir" || view === "practice")) loadCoachRoster();
+    if (isApproved && (view === "coaches" || view === "tryouts" || view === "home" || view === "clockin" || view === "teamdir" || view === "practice")) loadCoachRoster();
   }, [isApproved, view, loadCoachRoster]);
   // The coach card edits coach_roster, so make sure it's loaded when one opens.
   useEffect(() => { if (isApproved && coachCardName) loadCoachRoster(); }, [isApproved, coachCardName, loadCoachRoster]);
@@ -15737,6 +15737,7 @@ export default function App() {
                     <div onClick={()=>setMobileNavOpen(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",zIndex:79}} />
                     <div style={{position:"fixed",top:54,left:8,right:8,zIndex:80,background:C.card,border:"1px solid "+C.border,borderRadius:12,boxShadow:"0 16px 40px rgba(0,0,0,0.6)",maxHeight:"calc(100vh - 70px)",overflowY:"auto",padding:6}}>
                       {mItem("home","🏠 Home")}
+                      {mItem("clockin","⏱ Clock In")}
                       {!canOps && mItem("notifications","🔔 Notifications" + (unreadCount>0?" ("+unreadCount+")":""))}
                       {mItem("tournaments","🏆 Tournaments")}
                       {mItem("lineups","📋 Lineups")}
@@ -15755,6 +15756,7 @@ export default function App() {
               }
               return <>
                 {item("home","Home")}
+                {item("clockin","Clock In")}
                 {!canOps && item("notifications","Notifications" + (unreadCount>0?" ("+unreadCount+")":""))}
                 {item("tournaments","Tournaments")}
                 {item("lineups","Lineups")}
@@ -15900,6 +15902,12 @@ export default function App() {
       <div style={{padding:"14px 18px",maxWidth:1500,margin:"0 auto"}}>
         {OPS_VIEWS.has(view) && view !== "notifications" && !canOps ? opsDenied : <>
         {view==="home" && renderHome()}
+        {view==="clockin" && (
+          <div style={{maxWidth:820,margin:"0 auto"}}>
+            <h2 style={{margin:"0 0 12px",fontSize:20,fontWeight:800,color:C.gold}}>⏱ Clock In &amp; Timesheet</h2>
+            {renderCheckIn()}
+          </div>
+        )}
         {view==="dashboard" && renderDashboard()}
         {view==="evaluate" && renderEval()}
         {view==="favorites" && renderFavorites()}
