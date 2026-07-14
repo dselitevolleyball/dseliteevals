@@ -42,11 +42,36 @@ export default async function handler(req, res) {
   const weekEnd = addDays(weekStart, 6);
 
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
-  const [{ data: checks }, { data: rates }, { data: teams }] = await Promise.all([
+  const [{ data: checks }, { data: rates }, { data: teams }, { data: roster }] = await Promise.all([
     supabase.from("coach_checkins").select("*").gte("check_date", weekStart).lte("check_date", weekEnd),
     supabase.from("coach_rates").select("*"),
-    supabase.from("practice_teams").select("team_name, head_coach"),
+    supabase.from("practice_teams").select("team_name, head_coach, assistant_coach"),
+    supabase.from("coach_roster").select("first_name, last_name, email"),
   ]);
+
+  // Resolve a check-in's free-text coach_name to a canonical First-Last, so
+  // hours group under the real name (coaches log in with varied display names).
+  const rosterByEmail = new Map();
+  (roster || []).forEach(r => { if (r.email) rosterByEmail.set(norm(r.email), `${r.first_name || ""} ${r.last_name || ""}`.trim()); });
+  const canonNames = new Map();
+  (roster || []).forEach(r => { const full = `${r.first_name || ""} ${r.last_name || ""}`.trim(); if (full) canonNames.set(norm(full), full); });
+  (teams || []).forEach(t => [t.head_coach, t.assistant_coach].forEach(n => { if (n && n.trim()) canonNames.set(norm(n), n.trim()); }));
+  (rates || []).forEach(r => { if (r.coach_name) canonNames.set(norm(r.coach_name), r.coach_name.trim()); });
+  const canonicalName = (raw, email) => {
+    if (email) { const e = rosterByEmail.get(norm(email)); if (e) return e; }
+    const base = String(raw || "").replace(/^\s*coach\s+/i, "").trim();
+    const n = norm(base);
+    if (canonNames.has(n)) return canonNames.get(n);
+    const toks = n.split(/\s+/).filter(Boolean);
+    if (toks.length) {
+      const first = toks[0], last = toks[toks.length - 1];
+      for (const [k, v] of canonNames) { const kt = k.split(/\s+/), kf = kt[0], kl = kt[kt.length - 1];
+        if (kl === last && (kf === first || kf.startsWith(first) || first.startsWith(kf))) return v; }
+      const firstOnly = [...canonNames.values()].filter(v => norm(v).split(/\s+/)[0] === first);
+      if (firstOnly.length === 1) return firstOnly[0];
+    }
+    return base || raw;
+  };
 
   const rateRow = (nm) => (rates || []).find(r => norm(r.coach_name) === norm(nm));
   const isHeadOf = (nm, team) => !!team && (teams || []).some(t => t.team_name === team && norm(t.head_coach) === norm(nm));
@@ -57,20 +82,24 @@ export default async function handler(req, res) {
     return r.hourly_rate != null ? Number(r.hourly_rate) : null;
   };
 
-  // Group by coach.
+  // Group by canonical coach.
   const byCoach = new Map();
   for (const c of (checks || [])) {
-    const g = byCoach.get(c.coach_name) || { coach: c.coach_name, hours: 0, amount: 0, unpaidAmount: 0, missingRate: false, shifts: [] };
+    const coach = canonicalName(c.coach_name, c.coach_email);
+    const g = byCoach.get(coach) || { coach, hours: 0, amount: 0, unpaidAmount: 0, missingRate: false, lateCount: 0, shifts: [] };
     const hrs = Number(c.hours || 0);
-    const rate = rateFor(c.coach_name, c.team_name);
+    const rate = rateFor(coach, c.team_name);
     const amt = rate != null ? hrs * rate : null;
+    const late = c.source === "app-late";
     g.hours += hrs;
     if (amt != null) { g.amount += amt; if (!c.paid) g.unpaidAmount += amt; }
     else g.missingRate = true;
-    g.shifts.push({ date: c.check_date, team: c.team_name || "Floating", slot: c.slot || "", role: c.role, hours: hrs, rate, amount: amt, paid: !!c.paid });
-    byCoach.set(c.coach_name, g);
+    if (late) g.lateCount += 1;
+    g.shifts.push({ date: c.check_date, team: c.team_name || "Floating", slot: c.slot || "", role: c.role, hours: hrs, rate, amount: amt, paid: !!c.paid, late });
+    byCoach.set(coach, g);
   }
   const rows = [...byCoach.values()].sort((a, b) => a.coach.localeCompare(b.coach));
+  const totLate = rows.reduce((s, g) => s + g.lateCount, 0);
   const totHours = rows.reduce((s, g) => s + g.hours, 0);
   const totAmount = rows.reduce((s, g) => s + g.amount, 0);
   const totUnpaid = rows.reduce((s, g) => s + g.unpaidAmount, 0);
@@ -83,16 +112,16 @@ export default async function handler(req, res) {
   const tdR = 'style="padding:6px 10px;border-bottom:1px solid #eee;font-size:13px;text-align:right"';
 
   const summaryRows = rows.map(g =>
-    `<tr><td ${td}><b>${escapeHtml(g.coach)}</b></td><td ${tdR}>${g.hours}</td><td ${tdR}>${g.missingRate ? "⚠ rate missing" : money(g.amount)}</td><td ${tdR}>${g.missingRate ? "—" : money(g.unpaidAmount)}</td></tr>`).join("");
+    `<tr><td ${td}><b>${escapeHtml(g.coach)}</b>${g.lateCount ? ` <span style="color:#b45309;font-size:11px">⏱ ${g.lateCount} late</span>` : ""}</td><td ${tdR}>${g.hours}</td><td ${tdR}>${g.missingRate ? "⚠ rate missing" : money(g.amount)}</td><td ${tdR}>${g.missingRate ? "—" : money(g.unpaidAmount)}</td></tr>`).join("");
   const detailRows = rows.map(g => g.shifts
     .sort((a, b) => a.date.localeCompare(b.date) || a.slot.localeCompare(b.slot))
-    .map(s => `<tr><td ${td}>${escapeHtml(g.coach)}</td><td ${td}>${escapeHtml(fmtD(s.date))}</td><td ${td}>${escapeHtml(s.team)}</td><td ${td}>${escapeHtml(s.slot)}</td><td ${td}>${escapeHtml(s.role)}</td><td ${tdR}>${s.hours}</td><td ${tdR}>${s.rate != null ? "$" + s.rate : "—"}</td><td ${tdR}>${s.amount != null ? money(s.amount) : "—"}</td><td ${td}>${s.paid ? "✓ paid" : "unpaid"}</td></tr>`).join("")).join("");
+    .map(s => `<tr${s.late ? ' style="background:#fff7ed"' : ""}><td ${td}>${escapeHtml(g.coach)}</td><td ${td}>${escapeHtml(fmtD(s.date))}</td><td ${td}>${escapeHtml(s.team)}</td><td ${td}>${escapeHtml(s.slot)}</td><td ${td}>${escapeHtml(s.role)}</td><td ${tdR}>${s.hours}</td><td ${tdR}>${s.rate != null ? "$" + s.rate : "—"}</td><td ${tdR}>${s.amount != null ? money(s.amount) : "—"}</td><td ${td}>${s.paid ? "✓ paid" : "unpaid"}${s.late ? ' · <span style="color:#b45309;font-weight:700">⏱ late</span>' : ""}</td></tr>`).join("")).join("");
 
   const html = rows.length === 0
     ? `<div style="font-family:sans-serif;font-size:14px"><h2 style="margin:0 0 6px">DS Elite payroll — ${rangeLabel}</h2><p>No coach hours were logged this week.</p></div>`
     : `<div style="font-family:sans-serif;font-size:14px">
         <h2 style="margin:0 0 6px">DS Elite payroll — ${rangeLabel}</h2>
-        <p style="margin:0 0 12px;color:#555">${rows.length} coach${rows.length === 1 ? "" : "es"} · <b>${totHours} hours</b> · <b>${money(totAmount)}</b> total (${money(totUnpaid)} unpaid)${anyMissing ? ' · <span style="color:#b45309">⚠ some coaches have no rate set — set it in Operations → Time Cards</span>' : ""}</p>
+        <p style="margin:0 0 12px;color:#555">${rows.length} coach${rows.length === 1 ? "" : "es"} · <b>${totHours} hours</b> · <b>${money(totAmount)}</b> total (${money(totUnpaid)} unpaid)${totLate ? ` · <span style="color:#b45309">⏱ ${totLate} late clock-in${totLate === 1 ? "" : "s"} (highlighted below — verify)</span>` : ""}${anyMissing ? ' · <span style="color:#b45309">⚠ some coaches have no rate set — set it in Operations → Time Cards</span>' : ""}</p>
         <table style="border-collapse:collapse;margin-bottom:18px"><thead><tr><th ${th}>Coach</th><th ${thR}>Hours</th><th ${thR}>Amount</th><th ${thR}>Unpaid</th></tr></thead>
         <tbody>${summaryRows}</tbody>
         <tfoot><tr><td ${td}><b>Total</b></td><td ${tdR}><b>${totHours}</b></td><td ${tdR}><b>${money(totAmount)}</b></td><td ${tdR}><b>${money(totUnpaid)}</b></td></tr></tfoot></table>
@@ -103,7 +132,7 @@ export default async function handler(req, res) {
 
   const text = rows.length === 0
     ? `DS Elite payroll ${rangeLabel}: no coach hours logged.`
-    : `DS Elite payroll — ${rangeLabel}\n` + rows.map(g => `${g.coach}: ${g.hours}h · ${g.missingRate ? "rate missing" : money(g.amount)} (${g.missingRate ? "—" : money(g.unpaidAmount)} unpaid)`).join("\n") + `\nTOTAL: ${totHours}h · ${money(totAmount)} (${money(totUnpaid)} unpaid)`;
+    : `DS Elite payroll — ${rangeLabel}\n` + rows.map(g => `${g.coach}: ${g.hours}h · ${g.missingRate ? "rate missing" : money(g.amount)} (${g.missingRate ? "—" : money(g.unpaidAmount)} unpaid)${g.lateCount ? ` [${g.lateCount} late]` : ""}`).join("\n") + `\nTOTAL: ${totHours}h · ${money(totAmount)} (${money(totUnpaid)} unpaid)${totLate ? ` · ${totLate} late clock-in(s)` : ""}`;
 
   const to = (PAYROLL_REPORT_TO ? PAYROLL_REPORT_TO.split(",").map(s => s.trim()).filter(Boolean) : DEFAULT_TO);
   const replyTo = (DSE_REPLY_TO || DSE_FROM_EMAIL).trim();

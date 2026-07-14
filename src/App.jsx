@@ -10257,6 +10257,7 @@ export default function App() {
       setCheckinBusy("");
     };
     const undoCheckin = async (id) => { setCheckinBusy("undo"+id); await supabase.from("coach_checkins").delete().eq("id", id); await loadCheckins(); setCheckinBusy(""); };
+    const editMyCheck = async (id, patch) => { const { error } = await supabase.from("coach_checkins").update(patch).eq("id", id); if(error){ window.alert("Couldn't save: "+error.message); return; } await loadCheckins(); };
     const submitSub = async (slot) => {
       const useSlot = slot || checkinSub.slot;
       if (checkinSub.role==="sub" && !checkinSub.team) { window.alert("Pick the team you're subbing for."); return; }
@@ -10506,6 +10507,38 @@ export default function App() {
             </div>
           </div>
         )}
+
+        {/* Your recent shifts — see past clock-ins and fix hours / remove. */}
+        {(() => {
+          const since = localDateISO(new Date(Date.now() - 28*86400000));
+          const mine = checkins.filter(c => c.check_date >= since && (norm(c.coach_name)===norm(coachName) || (c.coach_email && coach?.email && norm(c.coach_email)===norm(coach.email))))
+            .sort((a,b)=> b.check_date.localeCompare(a.check_date) || (a.slot||"").localeCompare(b.slot||""));
+          if (!mine.length) return null;
+          const dfmt = iso => new Date(iso+"T12:00:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"});
+          const totH = mine.reduce((s,c)=>s+Number(c.hours||0),0);
+          return (
+            <div style={St.card}>
+              <div style={St.lbl}>Your recent shifts (last 4 weeks) — {totH}h</div>
+              <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                {mine.map(c => (
+                  <div key={c.id} style={{display:"flex",alignItems:"center",gap:8,fontSize:12,color:C.text,flexWrap:"wrap"}}>
+                    <span style={{width:96,color:C.mut,fontWeight:700}}>{dfmt(c.check_date)}</span>
+                    {roleTag(c.role)}
+                    {c.source==="app-late" && <span style={{fontSize:8,fontWeight:800,color:"#f59e0b",border:"1px solid #f59e0b",borderRadius:4,padding:"0 4px",textTransform:"uppercase"}}>⏱ Late</span>}
+                    {c.paid && <span style={{fontSize:8,fontWeight:800,color:C.grn,border:"1px solid "+C.grn,borderRadius:4,padding:"0 4px",textTransform:"uppercase"}}>Paid</span>}
+                    <span style={{flex:1,minWidth:120}}>{c.team_name || "Floating"}{c.slot?" · "+c.slot:""}</span>
+                    <input type="number" min="0" step="0.5" defaultValue={Number(c.hours||0)} key={"mh"+c.id+c.hours} disabled={!!c.paid}
+                      onBlur={e=>{ const v=Number(e.target.value)||0; if(v!==Number(c.hours||0)) editMyCheck(c.id,{ hours:v }); }} onKeyDown={e=>{ if(e.key==="Enter") e.target.blur(); }}
+                      style={{...St.sel,width:56,textAlign:"right",fontWeight:700,padding:"4px 6px",opacity:c.paid?0.5:1}} title={c.paid?"Paid — ask a director to change":"Hours"} />
+                    <span style={{color:C.mut}}>h</span>
+                    {!c.paid && <button style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:14}} disabled={checkinBusy==="undo"+c.id} onClick={()=>undoCheckin(c.id)} title="Remove this shift">✕</button>}
+                  </div>
+                ))}
+              </div>
+              <div style={{fontSize:11,color:C.mut,marginTop:8}}>Fix wrong hours or remove a shift you didn't work. <b style={{color:"#f59e0b"}}>Late</b> clock-ins are flagged to the directors in the weekly report. Paid shifts are locked — ask a director to change those.</div>
+            </div>
+          );
+        })()}
 
         {/* Admin: attendance board for a date */}
         {canOps && (() => {
