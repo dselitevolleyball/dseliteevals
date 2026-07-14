@@ -10364,6 +10364,56 @@ export default function App() {
         </div>
         )}
 
+        {/* Covered practices — where you're out and who's covering (and where you're covering). */}
+        {(() => {
+          const dfmt = iso => new Date(iso+"T12:00:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"});
+          const mineCovered = practiceCoverage.filter(c => isMe(c.coach_out) && c.practice_date >= today).sort((a,b)=> a.practice_date.localeCompare(b.practice_date) || (a.team_name||"").localeCompare(b.team_name||""));
+          const iCover = practiceCoverage.filter(c => isMe(c.sub_name) && c.practice_date >= today).sort((a,b)=> a.practice_date.localeCompare(b.practice_date) || (a.team_name||"").localeCompare(b.team_name||""));
+          if (!mineCovered.length && !iCover.length) return null;
+          const rowSty = { display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",padding:"9px 12px",borderRadius:8,border:"1px solid "+C.border,background:C.bg };
+          return (
+            <div style={St.card}>
+              {mineCovered.length>0 && (
+                <>
+                  <div style={St.lbl}>Your covered practices</div>
+                  <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:iCover.length?14:0}}>
+                    {mineCovered.map((c,i) => {
+                      const covered = !!c.sub_name || !!c.combine_with_team;
+                      return (
+                        <div key={"o"+i} style={rowSty}>
+                          <div style={{flex:1,minWidth:150}}>
+                            <div style={{fontSize:13,fontWeight:700,color:C.text}}>{dfmt(c.practice_date)} · {c.team_name}</div>
+                            <div style={{fontSize:12,color:C.mut,marginTop:2}}>{c.slot}{c.slot?" · ":""}You're marked out</div>
+                          </div>
+                          {c.sub_name ? <span style={{fontSize:13,fontWeight:800,color:C.grn}}>✓ Covered by {c.sub_name}</span>
+                            : c.combine_with_team ? <span style={{fontSize:13,fontWeight:700,color:"#06b6d4"}}>Combining with {c.combine_with_team}</span>
+                            : <span style={{fontSize:13,fontWeight:800,color:"#f59e0b"}}>⚠ Needs coverage</span>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+              {iCover.length>0 && (
+                <>
+                  <div style={St.lbl}>You're covering</div>
+                  <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                    {iCover.map((c,i) => (
+                      <div key={"c"+i} style={rowSty}>
+                        <div style={{flex:1,minWidth:150}}>
+                          <div style={{fontSize:13,fontWeight:700,color:C.text}}>{dfmt(c.practice_date)} · {c.team_name}</div>
+                          <div style={{fontSize:12,color:C.mut,marginTop:2}}>{c.slot}{c.slot?" · ":""}Covering for {c.coach_out}</div>
+                        </div>
+                        <span style={{fontSize:9,fontWeight:800,color:"#06b6d4",border:"1px solid #06b6d4",borderRadius:4,padding:"2px 6px",textTransform:"uppercase"}}>Sub</span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          );
+        })()}
+
         {/* Missed shifts — scheduled in the last week but never clocked in. */}
         {(() => {
           const missed = [];
