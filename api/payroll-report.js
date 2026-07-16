@@ -19,7 +19,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 
-const DEFAULT_TO = ["bpounds@generalledgerpartners.com", "drew@dselitevolleyball.com", "kristen@dselitevolleyball.com"];
+const DEFAULT_TO = ["bpounds@generalledgerpartners.com", "drew@dselitevolleyball.com", "kristen@dselitevolleyball.com", "tionne@dselitevolleyball.com"];
 const OWNER_EMAILS = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"];
 const escapeHtml = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const norm = (s) => String(s || "").trim().toLowerCase();
