@@ -1134,6 +1134,7 @@ export default function App() {
   const [tcFilters, setTcFilters]       = useState({ coach:"", role:"", team:"", status:"" }); // ledger filters
   const [tcSettingsOpen, setTcSettingsOpen] = useState(false); // settings panel (rates editor, export)
   const [tcShowZero, setTcShowZero]     = useState(false);  // include coaches with no hours this week
+  const [tcEmailing, setTcEmailing]     = useState(false);  // re-sending the weekly payroll email
   // Mobile nav: collapse the header buttons into a hamburger under 700px.
   const [isNarrow, setIsNarrow] = useState(() => typeof window !== "undefined" && window.matchMedia("(max-width: 700px)").matches);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -11814,6 +11815,21 @@ export default function App() {
       a.download = "timecards_" + wkStart + ".csv";
       a.click(); URL.revokeObjectURL(a.href);
     };
+    // Re-send the payroll email (with the hours CSV attached) for the viewed
+    // week — same report the Monday cron sends, on demand for any week.
+    const emailReport = async () => {
+      if (!window.confirm("Email the "+fmtD(wkStart)+" – "+fmtD(wkEnd)+" payroll report + hours CSV to the bookkeeper and admins?")) return;
+      setTcEmailing(true);
+      try {
+        const { data:{ session } } = await supabase.auth.getSession();
+        if (!session?.access_token) throw new Error("Not signed in");
+        const r = await fetch("/api/payroll-report?week="+wkStart, { method:"POST", headers:{ Authorization:"Bearer "+session.access_token } });
+        const d = await r.json().catch(()=>({}));
+        if (!r.ok) throw new Error(d.error || ("HTTP "+r.status));
+        window.alert("Sent ✓ — "+(d.hours??0)+"h · "+money(d.amount??0)+"\nEmailed with CSV to: "+((d.to||[]).join(", ")));
+      } catch(e) { window.alert("Couldn't send: "+(e.message||"error")); }
+      setTcEmailing(false);
+    };
     // Every coach name we know about (teams' HC/AC + rated) for the rates editor.
     const allCoachNames = (() => {
       const s = new Map();
@@ -11852,6 +11868,8 @@ export default function App() {
           {filtersOn && <button style={{...St.ghost,color:C.acc,borderColor:C.acc}} onClick={()=>setTcFilters({coach:"",role:"",team:"",status:""})}>✕ Clear filters</button>}
           <div style={{flex:1}} />
           <button style={St.ghost} onClick={exportCsv} title="Download this week (with filters applied) as a CSV for the bookkeeper">⬇ Export CSV</button>
+          <button style={{...St.ghost,borderColor:C.gold,color:C.gold}} disabled={tcEmailing} onClick={emailReport}
+            title="Email this week's payroll report + hours CSV to the bookkeeper and admins (same as the Monday report)">{tcEmailing?"Sending…":"📧 Email report + CSV"}</button>
         </div>
 
         {/* Settings */}

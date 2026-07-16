@@ -7,7 +7,11 @@
 // hourly_rate covers everything else (assisting, subbing, floating).
 //
 // Auth: Vercel Cron sends `Authorization: Bearer <CRON_SECRET>`; also accepts ?token=.
+// Admins can also re-send any week from the app: `Authorization: Bearer <supabase
+// access token>` — verified server-side and checked for owner/is_admin.
 // Optional query: ?week=YYYY-MM-DD (any date inside the week to report on).
+//
+// The email includes an hours CSV attachment (one row per shift).
 //
 // Env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, CRON_SECRET,
 //      RESEND_API_KEY (or resend_api_key), DSE_FROM_EMAIL, DSE_REPLY_TO (opt),
@@ -16,6 +20,7 @@
 import { createClient } from "@supabase/supabase-js";
 
 const DEFAULT_TO = ["bpounds@generalledgerpartners.com", "drew@dselitevolleyball.com", "kristen@dselitevolleyball.com"];
+const OWNER_EMAILS = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"];
 const escapeHtml = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const norm = (s) => String(s || "").trim().toLowerCase();
 const money = (n) => "$" + Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -29,9 +34,26 @@ export default async function handler(req, res) {
   const url = (() => { try { return new URL(req.url, "https://x"); } catch { return null; } })();
   const urlToken = url?.searchParams.get("token") || "";
   const bearer = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
-  if (!CRON_SECRET || (bearer !== CRON_SECRET && urlToken !== CRON_SECRET)) return res.status(403).json({ error: "Forbidden" });
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return res.status(500).json({ error: "Server not configured" });
   if (!RESEND_API_KEY || !DSE_FROM_EMAIL) return res.status(500).json({ error: "Email not configured" });
+
+  const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
+
+  // Allowed either by the cron secret, or by an admin's Supabase session token
+  // (so Time Cards can re-send any week on demand).
+  let authed = !!CRON_SECRET && (bearer === CRON_SECRET || urlToken === CRON_SECRET);
+  if (!authed && bearer) {
+    const { data: { user } = {} } = await supabase.auth.getUser(bearer).catch(() => ({ data: {} }));
+    const email = (user?.email || "").trim().toLowerCase();
+    if (email) {
+      if (OWNER_EMAILS.includes(email)) authed = true;
+      else {
+        const { data: c } = await supabase.from("coaches").select("is_admin, is_approved").ilike("email", email).maybeSingle();
+        authed = !!(c && c.is_approved && c.is_admin);
+      }
+    }
+  }
+  if (!authed) return res.status(403).json({ error: "Forbidden" });
 
   // Report window: the Mon–Sun week BEFORE the current week (Central time).
   // ?week=YYYY-MM-DD reports the week containing that date instead.
@@ -41,7 +63,6 @@ export default async function handler(req, res) {
   const weekStart = anchor ? mondayOf(anchor) : addDays(mondayOf(chicagoToday), -7);
   const weekEnd = addDays(weekStart, 6);
 
-  const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
   const [{ data: checks }, { data: rates }, { data: teams }, { data: roster }] = await Promise.all([
     supabase.from("coach_checkins").select("*").gte("check_date", weekStart).lte("check_date", weekEnd),
     supabase.from("coach_rates").select("*"),
@@ -134,12 +155,25 @@ export default async function handler(req, res) {
     ? `DS Elite payroll ${rangeLabel}: no coach hours logged.`
     : `DS Elite payroll — ${rangeLabel}\n` + rows.map(g => `${g.coach}: ${g.hours}h · ${g.missingRate ? "rate missing" : money(g.amount)} (${g.missingRate ? "—" : money(g.unpaidAmount)} unpaid)${g.lateCount ? ` [${g.lateCount} late]` : ""}`).join("\n") + `\nTOTAL: ${totHours}h · ${money(totAmount)} (${money(totUnpaid)} unpaid)${totLate ? ` · ${totLate} late clock-in(s)` : ""}`;
 
+  // Hours CSV — one row per shift, same columns as the Time Cards export.
+  const csvEsc = (v) => { const s = v == null ? "" : String(v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  const csvLines = [["Date", "Coach", "Role", "Team", "Slot", "Hours", "Rate", "Amount", "Paid", "Late"].join(",")];
+  rows.forEach(g => g.shifts.slice().sort((a, b) => a.date.localeCompare(b.date) || a.slot.localeCompare(b.slot)).forEach(s => {
+    csvLines.push([s.date, csvEsc(g.coach), s.role, csvEsc(s.team), csvEsc(s.slot), s.hours, s.rate ?? "", s.amount != null ? s.amount.toFixed(2) : "", s.paid ? "yes" : "no", s.late ? "yes" : "no"].join(","));
+  }));
+  csvLines.push(["", "TOTAL", "", "", "", totHours, "", totAmount.toFixed(2), "", ""].join(","));
+  const csv = csvLines.join("\n");
+
   const to = (PAYROLL_REPORT_TO ? PAYROLL_REPORT_TO.split(",").map(s => s.trim()).filter(Boolean) : DEFAULT_TO);
   const replyTo = (DSE_REPLY_TO || DSE_FROM_EMAIL).trim();
   const resp = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ from: DSE_FROM_EMAIL, to, reply_to: replyTo, subject: `DS Elite payroll — ${rangeLabel} (${totHours}h · ${money(totAmount)})`, html, text }),
+    body: JSON.stringify({
+      from: DSE_FROM_EMAIL, to, reply_to: replyTo,
+      subject: `DS Elite payroll — ${rangeLabel} (${totHours}h · ${money(totAmount)})`, html, text,
+      attachments: [{ filename: `dse_hours_${weekStart}.csv`, content: Buffer.from(csv, "utf8").toString("base64") }],
+    }),
   });
   if (!resp.ok) {
     const err = await resp.text().catch(() => "");
