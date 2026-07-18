@@ -2586,7 +2586,7 @@ export default function App() {
         const t = practiceTeams.find(x => x.team_name === tn);
         emails = [...new Set([t?.head_coach, t?.assistant_coach].filter(Boolean).map(emailFor).filter(Boolean))];
         title = tn + " practice cancelled";
-        bodyText = tn + "'s practice on " + prettyDate + " has been CANCELLED. If this is a mistake, reach out to a director right away.";
+        bodyText = tn + "'s practice on " + prettyDate + " has been CANCELLED" + (row.reason ? " — " + row.reason : "") + ". If this is a mistake, reach out to a director right away.";
         audience = { type: "team", team: tn, excludeAdmins: true };
       } else {
         emails = [...new Set(coachRoster.map(cr => cr.email).filter(Boolean))];
@@ -8205,7 +8205,7 @@ export default function App() {
             <button onClick={()=>jumpToPractice(1)} style={{...navBtn,color:"#000",background:C.gold,borderColor:C.gold}} title="Jump to the next day that has practice">Next practice ⏭</button>
             <span style={{fontSize:11,color:C.acc,fontWeight:800,textTransform:"uppercase"}}>· {phaseLabel}</span>
             {practiceToday && !todayCancelled && (
-              <button onClick={()=>{ const r = window.prompt("Cancel all practice on " + prettyDate + "?\nOptional reason (e.g. holiday name):", ""); if (r !== null) toggleCancelDate(dailyDate, r); }}
+              <button onClick={()=>{ const r = window.prompt("Cancel all practice on " + prettyDate + "?\nOptional note for coaches (e.g. holiday name) — it's included in the alert:", ""); if (r !== null) toggleCancelDate(dailyDate, r); }}
                 style={{marginLeft:"auto",padding:"5px 12px",borderRadius:6,border:"1px solid "+C.red,background:"transparent",color:C.red,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>🚫 Cancel this day</button>
             )}
           </div>
@@ -8258,7 +8258,7 @@ export default function App() {
                                 <div style={{flex:1}} />
                                 {tCancelled
                                   ? <button onClick={()=>toggleCancelDate(dailyDate, "", a.team_name)} title="Un-cancel this team's practice" style={{padding:"2px 8px",borderRadius:6,border:"1px solid "+C.grn,background:"transparent",color:C.grn,fontSize:10,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>Un-cancel</button>
-                                  : <button onClick={()=>{ if(window.confirm("Cancel "+a.team_name+"'s practice on "+prettyDate+"?")) toggleCancelDate(dailyDate, "", a.team_name); }} title="Cancel just this team's practice this day" style={{padding:"2px 8px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.red,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>🚫 Cancel</button>}
+                                  : <button onClick={()=>{ const r = window.prompt("Cancel "+a.team_name+"'s practice on "+prettyDate+"?\nAdd an optional note for the coaches (reason) — it's included in the alert:", ""); if (r !== null) toggleCancelDate(dailyDate, r, a.team_name); }} title="Cancel just this team's practice this day" style={{padding:"2px 8px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.red,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>🚫 Cancel</button>}
                               </div>
                               {tCancelled && <div style={{fontSize:10,fontWeight:800,color:C.red,marginBottom:5}}>🚫 Practice cancelled for this team</div>}
                               <div style={{display:"flex",flexDirection:"column",gap:3,opacity:tCancelled?0.5:1}}>
