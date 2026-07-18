@@ -10619,6 +10619,16 @@ export default function App() {
           // A scheduled coach who called out (coverage row) or requested off.
           const coachOut = (nm, tn) => practiceCoverage.some(c => c.practice_date===checkinDate && (!tn||c.team_name===tn) && norm(c.coach_out)===norm(nm))
             || coachRequests.some(r => r.request_date===checkinDate && !/denied|declined|rejected/i.test(r.status||"") && norm(r.coach_name)===norm(nm) && (!r.team_name||!tn||r.team_name===tn));
+          // Who's covering an out coach: the assigned sub / combined team, else a
+          // sub who actually clocked in for that team, else nobody yet.
+          const coverInfo = (nm, tn) => {
+            const cov = practiceCoverage.find(c => c.practice_date===checkinDate && c.team_name===tn && norm(c.coach_out)===norm(nm));
+            if (cov?.sub_name) return { label:"→ "+cov.sub_name, color:C.grn };
+            if (cov?.combine_with_team) return { label:"→ combine w/ "+cov.combine_with_team, color:"#06b6d4" };
+            const sub = dateChecks.find(c => c.role==="sub" && (c.team_name||"")===(tn||""));
+            if (sub) return { label:"→ "+sub.coach_name+" (in)", color:C.grn };
+            return { label:"→ needs cover", color:"#f59e0b" };
+          };
           // group scheduled assignments by slot
           const slots = {}; daySlots.forEach(a => { (slots[a.slot] = slots[a.slot]||[]).push(a); });
           const slotKeys = Object.keys(slots).sort();
@@ -10646,9 +10656,13 @@ export default function App() {
                           const out = coachOut(cn, a.team_name);
                           const present = isPresent(cn, a.team_name);
                           const col = out ? "#f59e0b" : present ? C.grn : C.mut;
+                          const cover = out ? coverInfo(cn, a.team_name) : null;
                           return (
-                            <span key={a.team_name+"|"+cn} title={out ? cn+" is out / requested off" : a.team_name} style={{fontSize:12,fontWeight:700,padding:"3px 9px",borderRadius:14,border:"1px solid "+(out?"#f59e0b":present?C.grn:C.border),background:present&&!out?"rgba(34,197,94,0.14)":out?"rgba(245,158,11,0.12)":"transparent",color:col,textDecoration:out?"line-through":"none"}}>
-                              {out?"⊘ ":present?"✓ ":"○ "}{cn} <span style={{fontWeight:500,opacity:0.7,textDecoration:"none"}}>· {a.team_name}</span>
+                            <span key={a.team_name+"|"+cn} style={{display:"inline-flex",alignItems:"center",gap:4}}>
+                              <span title={out ? cn+" is out / requested off" : a.team_name} style={{fontSize:12,fontWeight:700,padding:"3px 9px",borderRadius:14,border:"1px solid "+(out?"#f59e0b":present?C.grn:C.border),background:present&&!out?"rgba(34,197,94,0.14)":out?"rgba(245,158,11,0.12)":"transparent",color:col,textDecoration:out?"line-through":"none"}}>
+                                {out?"⊘ ":present?"✓ ":"○ "}{cn} <span style={{fontWeight:500,opacity:0.7,textDecoration:"none"}}>· {a.team_name}</span>
+                              </span>
+                              {cover && <span title="Covering this shift" style={{fontSize:11,fontWeight:800,color:cover.color}}>{cover.label}</span>}
                             </span>
                           );
                         }))}
