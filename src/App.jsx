@@ -10469,8 +10469,9 @@ export default function App() {
         {/* Covered practices — where you're out and who's covering (and where you're covering). */}
         {(() => {
           const dfmt = iso => new Date(iso+"T12:00:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"});
-          const mineCovered = practiceCoverage.filter(c => isMe(c.coach_out) && c.practice_date >= today).sort((a,b)=> a.practice_date.localeCompare(b.practice_date) || (a.team_name||"").localeCompare(b.team_name||""));
-          const iCover = practiceCoverage.filter(c => isMe(c.sub_name) && c.practice_date >= today).sort((a,b)=> a.practice_date.localeCompare(b.practice_date) || (a.team_name||"").localeCompare(b.team_name||""));
+          const notCancelled = c => !practiceCancellations.some(x => x.practice_date===c.practice_date && (!x.team_name || x.team_name===c.team_name));
+          const mineCovered = practiceCoverage.filter(c => isMe(c.coach_out) && c.practice_date >= today && notCancelled(c)).sort((a,b)=> a.practice_date.localeCompare(b.practice_date) || (a.team_name||"").localeCompare(b.team_name||""));
+          const iCover = practiceCoverage.filter(c => isMe(c.sub_name) && c.practice_date >= today && notCancelled(c)).sort((a,b)=> a.practice_date.localeCompare(b.practice_date) || (a.team_name||"").localeCompare(b.team_name||""));
           if (!mineCovered.length && !iCover.length) return null;
           const rowSty = { display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",padding:"9px 12px",borderRadius:8,border:"1px solid "+C.border,background:C.bg };
           return (
@@ -13173,7 +13174,10 @@ export default function App() {
     const WD = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
     const today = new Date().toISOString().slice(0,10);
     const inp = { padding:"3px 6px", borderRadius:6, border:"1px solid "+C.border, background:C.bg, color:C.text, fontFamily:"inherit", fontSize:11 };
-    const upcoming = practiceCoverage.filter(c => (c.practice_date||"") >= today)
+    // A coverage need is moot if the practice is cancelled — whole-day
+    // (team_name '') or just that team on the date.
+    const isCancelled = (date, team) => practiceCancellations.some(x => x.practice_date === date && (!x.team_name || x.team_name === team));
+    const upcoming = practiceCoverage.filter(c => (c.practice_date||"") >= today && !isCancelled(c.practice_date, c.team_name))
       .slice().sort((a,b)=> (a.practice_date||"").localeCompare(b.practice_date||"") || (a.slot||"").localeCompare(b.slot||"") || (a.team_name||"").localeCompare(b.team_name||""));
     const pastCount = practiceCoverage.filter(c => (c.practice_date||"") < today).length;
     const statusOf = (c) => c.combine_with_team ? "combine" : (c.sub_name ? "covered" : "needs");
