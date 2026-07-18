@@ -1430,6 +1430,19 @@ export default function App() {
   const [favorites, setFavorites] = useState([]); // player_ids the current coach favorited
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState("home");
+  // Deep links from notifications (e.g. /?view=practiceplan&tab=playbook) — read
+  // the URL once after sign-in, jump to that view/tab, then clean the URL.
+  const deepLinkDone = useRef(false);
+  useEffect(() => {
+    if (!isApproved || deepLinkDone.current) return;
+    try {
+      const p = new URLSearchParams(window.location.search);
+      const v = p.get("view"), tab = p.get("tab");
+      if (v) setView(v);
+      if (tab) setPpTab(tab);
+      if (v || tab) { deepLinkDone.current = true; window.history.replaceState({}, "", window.location.pathname); }
+    } catch { /* ignore */ }
+  }, [isApproved]); // eslint-disable-line react-hooks/exhaustive-deps
   // Physical Testing tab — dot-plot of a physical metric per player. Age group
   // comes from the global selectedDivs chips; these add team/position filters
   // and pick which metric drives the horizontal axis.
@@ -10823,7 +10836,7 @@ export default function App() {
       const emails = [...new Set((coachesList||[]).filter(c=>c.is_approved && c.email).map(c=>c.email))];
       const title = "Playbook — for review: " + en.title;
       const body = (en.author_name?en.author_name+" shared: ":"For review: ") + en.title + (en.body?"\n\n"+en.body:"") + (en.cues?"\n\nCues: "+en.cues:"") + "\n\nOpen Practice → Playbook: " + APP_URL;
-      fetch("/api/send-push", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ title:"Playbook: review “"+en.title+"”", body: en.body||"Tap to review.", url:"/", audience:{ type:"all" } }) }).catch(()=>{});
+      fetch("/api/send-push", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ title:"Playbook: review “"+en.title+"”", body: en.body||"Tap to review.", url:"/?view=practiceplan&tab=playbook", audience:{ type:"all" } }) }).catch(()=>{});
       if (emails.length) fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ subject:title, body, recipients: emails }) }).catch(()=>{});
       window.alert("Sent to " + emails.length + " coaches for review.");
     };
@@ -10852,10 +10865,29 @@ export default function App() {
       // Notify coaches to re-read + re-affirm.
       const emails = [...new Set((coachesList||[]).filter(c=>c.is_approved && c.email).map(c=>c.email))];
       const body = "The DS Elite Coaching Playbook was updated to v" + (ver+1) + (note.trim()?": " + note.trim():".") + "\n\nOpen the Practice > Playbook tab to read and affirm it.\n" + APP_URL;
-      fetch("/api/send-push", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ title:"Coaching Playbook updated — v"+(ver+1), body: note.trim()||"Please read and affirm.", url:"/", audience:{ type:"all" } }) }).catch(()=>{});
+      fetch("/api/send-push", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ title:"Coaching Playbook updated — v"+(ver+1), body: note.trim()||"Please read and affirm.", url:"/?view=practiceplan&tab=playbook", audience:{ type:"all" } }) }).catch(()=>{});
       if (emails.length) fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ subject:"Coaching Playbook updated — please affirm", body, recipients: emails }) }).catch(()=>{});
       await loadPlaybook();
       window.alert("Published v" + (ver+1) + " and notified coaches.");
+    };
+    // Nudge coaches to open + affirm the Manifesto (no version bump) — links
+    // straight to the Playbook tab. Offers to send only to those who haven't
+    // affirmed the current version.
+    const remindReview = async () => {
+      const approved = (coachesList||[]).filter(c => c.is_approved);
+      const signed = new Set(pbAcks.filter(a => a.version===ver).map(a => norm(a.coach_name)));
+      const outstanding = approved.filter(c => !signed.has(norm(c.display_name||c.email||"")));
+      let onlyUnsigned = false;
+      if (outstanding.length > 0) {
+        onlyUnsigned = window.confirm("Remind the " + outstanding.length + " coach" + (outstanding.length===1?"":"es") + " who haven't affirmed v" + ver + "?\n\nOK = just them · Cancel = all coaches");
+      } else if (!window.confirm("Everyone has affirmed v" + ver + ". Send a review reminder to all coaches anyway?")) return;
+      const targets = onlyUnsigned ? outstanding : approved;
+      const emails = [...new Set(targets.filter(c => c.email).map(c => c.email))];
+      const link = "?view=practiceplan&tab=playbook";
+      fetch("/api/send-push", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ title:"Review the Coaching Playbook", body:"Please read & affirm the DS Elite Manifesto (v"+ver+"). Tap to open it.", url:"/"+link, audience: onlyUnsigned ? { type:"emails", emails } : { type:"all" } }) }).catch(()=>{});
+      const emailBody = "Please take a few minutes to read and affirm the DS Elite Coaching Playbook / Manifesto (v" + ver + ").\n\nOpen it here: " + APP_URL + link + "\n(or go to Practice → Playbook → Manifesto in the app.)";
+      if (emails.length) fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ subject:"Please review the Coaching Playbook", body: emailBody, recipients: emails }) }).catch(()=>{});
+      window.alert("Reminder sent" + (onlyUnsigned ? " to " + emails.length + " coach" + (emails.length===1?"":"es") + " who haven't affirmed" : " to all coaches") + ".");
     };
 
     // Sign-off roster (admin): every approved coach's affirm status for this version.
@@ -10885,6 +10917,7 @@ export default function App() {
             </div>
             {canOps && (
               <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                <button onClick={remindReview} title="Notify coaches to open and affirm the Manifesto" style={{padding:"6px 12px",borderRadius:8,border:"1px solid "+C.acc,background:"transparent",color:C.acc,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>📣 Remind to review</button>
                 <button onClick={()=>{ setPbEdit(v=>!v); setPbView("standards"); }} style={{padding:"6px 12px",borderRadius:8,border:"1px solid "+(pbEdit?C.gold:C.border),background:pbEdit?"rgba(233,30,140,0.12)":"transparent",color:pbEdit?C.gold:C.text,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>{pbEdit?"Done editing":"✎ Edit standards"}</button>
                 {pbEdit && <button onClick={publish} style={{padding:"6px 12px",borderRadius:8,border:"none",background:C.gold,color:"#000",fontWeight:800,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>Publish new version →</button>}
               </div>
