@@ -2561,18 +2561,20 @@ export default function App() {
     const { error } = await supabase.from("practice_coverage").delete().match({ practice_date, team_name, slot, phase, coach_out });
     if (error) { window.alert("Couldn't clear coverage: " + error.message); loadPracticeCoverage(); }
   }, [loadPracticeCoverage]);
-  // Cancel (or un-cancel) all practice on a given date — e.g. a holiday.
-  const toggleCancelDate = useCallback(async (practice_date, reason) => {
+  // Cancel (or un-cancel) practice on a date. team = "" cancels the whole day
+  // (a holiday); team = a name cancels just that team on that date.
+  const toggleCancelDate = useCallback(async (practice_date, reason, team = "") => {
     if (!practice_date) return;
-    const existing = practiceCancellations.find(c => c.practice_date === practice_date);
+    const tn = team || "";
+    const existing = practiceCancellations.find(c => c.practice_date === practice_date && (c.team_name || "") === tn);
     if (existing) {
-      setPracticeCancellations(prev => prev.filter(c => c.practice_date !== practice_date));
-      const { error } = await supabase.from("practice_cancellations").delete().eq("practice_date", practice_date);
+      setPracticeCancellations(prev => prev.filter(c => !(c.practice_date === practice_date && (c.team_name || "") === tn)));
+      const { error } = await supabase.from("practice_cancellations").delete().eq("practice_date", practice_date).eq("team_name", tn);
       if (error) { window.alert("Couldn't un-cancel: " + error.message); loadPracticeCancellations(); }
     } else {
-      const row = { practice_date, reason: (reason || "").trim() || null, cancelled_by: coach?.display_name || coach?.email || "" };
+      const row = { practice_date, team_name: tn, reason: (reason || "").trim() || null, cancelled_by: coach?.display_name || coach?.email || "" };
       setPracticeCancellations(prev => [...prev, row]);
-      const { error } = await supabase.from("practice_cancellations").upsert(row, { onConflict: "practice_date" });
+      const { error } = await supabase.from("practice_cancellations").upsert(row, { onConflict: "practice_date,team_name" });
       if (error) { window.alert("Couldn't cancel: " + error.message); loadPracticeCancellations(); }
     }
   }, [practiceCancellations, coach, loadPracticeCancellations]);
@@ -8084,8 +8086,11 @@ export default function App() {
         const arr = ph === "summer" ? (PHASE_DATES.summer || []) : ph === "fall1" ? (PHASE_DATES.fall1 || []) : (PHASE_DATES.fall2 || []);
         return arr.includes(iso);
       };
-      const cancelledSet = new Set(practiceCancellations.map(c => c.practice_date));
-      const cancelReasonFor = (iso) => { const c = practiceCancellations.find(x => x.practice_date === iso); return c ? (c.reason || "") : ""; };
+      // Whole-day cancellations only (team_name empty). Per-team cancels live
+      // in practiceCancellations too, keyed by team_name.
+      const cancelledSet = new Set(practiceCancellations.filter(c => !(c.team_name)).map(c => c.practice_date));
+      const cancelReasonFor = (iso) => { const c = practiceCancellations.find(x => x.practice_date === iso && !x.team_name); return c ? (c.reason || "") : ""; };
+      const teamCancelled = (iso, team) => practiceCancellations.some(c => c.practice_date === iso && c.team_name === team);
       const practiceToday = dayHasPractice(dailyDate) && daySlots.length > 0;
       const todayCancelled = cancelledSet.has(dailyDate);
       // Month-grid math for the persistent calendar.
@@ -8220,17 +8225,23 @@ export default function App() {
                           const combinedWith = combinedRow?.combine_with_team || "";
                           const setCombine = (target) => { for (const c of coachNames) setCoverage(dailyDate, a.team_name, s.label, dayPhase, c, null, target || null); };
                           const otherTeams = teamsFor(s.label).map(x=>x.team_name).filter(tn => tn !== a.team_name);
+                          const tCancelled = teamCancelled(dailyDate, a.team_name);
                           return (
-                            <div key={a.team_name} style={{padding:"8px 12px",borderBottom:"1px solid "+C.border}}>
+                            <div key={a.team_name} style={{padding:"8px 12px",borderBottom:"1px solid "+C.border,background:tCancelled?"rgba(239,68,68,0.06)":"transparent"}}>
                               <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:5}}>
                                 <select value={a.court ?? ""} onChange={e=>setTeamCourt(a.team_name, weekday, s.label, dayPhase, e.target.value)}
                                   title="Court" style={{...inpStyle,padding:"2px 4px",fontSize:12,fontWeight:800,color:a.court?C.gold:C.mut,width:46}}>
                                   <option value="">C—</option>
                                   {[1,2,3,4,5,6].map(n => <option key={n} value={n}>{"C"+n}</option>)}
                                 </select>
-                                <span onClick={()=>setTeamCardName(a.team_name)} style={{fontSize:13,fontWeight:800,color:C.gold,cursor:"pointer"}}>{a.team_name}</span>
+                                <span onClick={()=>setTeamCardName(a.team_name)} style={{fontSize:13,fontWeight:800,color:tCancelled?C.mut:C.gold,cursor:"pointer",textDecoration:tCancelled?"line-through":"none"}}>{a.team_name}</span>
+                                <div style={{flex:1}} />
+                                {tCancelled
+                                  ? <button onClick={()=>toggleCancelDate(dailyDate, "", a.team_name)} title="Un-cancel this team's practice" style={{padding:"2px 8px",borderRadius:6,border:"1px solid "+C.grn,background:"transparent",color:C.grn,fontSize:10,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>Un-cancel</button>
+                                  : <button onClick={()=>{ if(window.confirm("Cancel "+a.team_name+"'s practice on "+prettyDate+"?")) toggleCancelDate(dailyDate, "", a.team_name); }} title="Cancel just this team's practice this day" style={{padding:"2px 8px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.red,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>🚫 Cancel</button>}
                               </div>
-                              <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                              {tCancelled && <div style={{fontSize:10,fontWeight:800,color:C.red,marginBottom:5}}>🚫 Practice cancelled for this team</div>}
+                              <div style={{display:"flex",flexDirection:"column",gap:3,opacity:tCancelled?0.5:1}}>
                                 {coaches.length === 0
                                   ? <span style={{fontSize:11,color:C.mut}}>No coaches assigned</span>
                                   : coaches.map(([role,c]) => <div key={role}>{coachCell(a.team_name, s.label, c, role, !!combinedWith)}</div>)}
@@ -10207,11 +10218,14 @@ export default function App() {
     // tab's toggle), minus club cancellations and my call-outs.
     const slotsForDate = (iso) => {
       const ph = phaseForDate(iso);
-      if (!ph || practiceCancellations.some(c => c.practice_date === iso)) return [];
+      // Whole-day cancellation (empty team_name) kills everything; per-team
+      // cancellations drop just that team's scheduled slots.
+      if (!ph || practiceCancellations.some(c => c.practice_date === iso && !c.team_name)) return [];
+      const teamCanceled = tn => practiceCancellations.some(c => c.practice_date === iso && c.team_name === tn);
       const wd = WD_OF(iso);
       const seen2 = new Set();
       return [
-        ...practiceAssignments.filter(a => (a.phase||"season")===ph && a.day===wd && myTeamNames.includes(a.team_name)).map(a => ({ team:a.team_name, slot:a.slot, role:"scheduled" })),
+        ...practiceAssignments.filter(a => (a.phase||"season")===ph && a.day===wd && myTeamNames.includes(a.team_name) && !teamCanceled(a.team_name)).map(a => ({ team:a.team_name, slot:a.slot, role:"scheduled" })),
         ...coachFloats.filter(f => (f.phase||"season")===ph && f.day===wd && isMe(f.coach_name)).map(f => ({ team:"", slot:f.slot, role:"float" })),
       ].filter(x => { const k = x.role+"|"+x.team+"|"+x.slot; if(seen2.has(k)) return false; seen2.add(k); return true; })
        .filter(x => !iAmOut(iso, x.team || null))
@@ -10521,7 +10535,7 @@ export default function App() {
 
         {/* Sub / float check-in — only when teams actually practice today. */}
         {(() => {
-          const dayCancelled = practiceCancellations.some(c => c.practice_date === today);
+          const dayCancelled = practiceCancellations.some(c => c.practice_date === today && !c.team_name);
           const dayAssigns = (todayPhase && !dayCancelled) ? practiceAssignments.filter(a => (a.phase||"season")===todayPhase && a.day===wdToday) : [];
           const daySlots = [...new Set(dayAssigns.map(a => a.slot))].sort((a,b) => startH(a) - startH(b));
           if (!daySlots.length) return null; // no practices today — nothing to sub/float into
@@ -10611,8 +10625,9 @@ export default function App() {
         {canOps && (() => {
           const wd = WD_OF(checkinDate);
           const ph = phaseForDate(checkinDate);
-          const dayCancelled = practiceCancellations.some(c => c.practice_date===checkinDate);
-          const daySlots = (ph && !dayCancelled) ? practiceAssignments.filter(a => (a.phase||"season")===ph && a.day===wd) : [];
+          const dayCancelled = practiceCancellations.some(c => c.practice_date===checkinDate && !c.team_name);
+          const teamCancelledOn = tn => practiceCancellations.some(c => c.practice_date===checkinDate && c.team_name===tn);
+          const daySlots = (ph && !dayCancelled) ? practiceAssignments.filter(a => (a.phase||"season")===ph && a.day===wd && !teamCancelledOn(a.team_name)) : [];
           const dateChecks = checkins.filter(c => c.check_date===checkinDate);
           const teamCoaches = (tn) => { const t = practiceTeams.find(x=>x.team_name===tn); return [t?.head_coach, t?.assistant_coach].filter(Boolean); };
           const isPresent = (nm, tn) => dateChecks.some(c => norm(c.coach_name)===norm(nm) && (c.team_name||"")===(tn||""));
@@ -11098,8 +11113,8 @@ export default function App() {
     };
 
     // Upcoming scheduled practices — using the phase active on each date (not
-    // the Practice tab's toggle), minus club-wide cancellations.
-    const cancelled = new Set(practiceCancellations.map(c => c.practice_date));
+    // the Practice tab's toggle), minus club-wide cancellations (whole-day only).
+    const cancelled = new Set(practiceCancellations.filter(c => !c.team_name).map(c => c.practice_date));
     const upcoming = [];
     for (let off = 0; off < 35 && upcoming.length < 8; off++) {
       const d = new Date(); d.setDate(d.getDate() + off);
