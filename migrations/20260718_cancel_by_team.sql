@@ -11,3 +11,8 @@ ALTER TABLE public.practice_cancellations ADD COLUMN IF NOT EXISTS team_name TEX
 ALTER TABLE public.practice_cancellations DROP CONSTRAINT IF EXISTS practice_cancellations_pkey;
 CREATE UNIQUE INDEX IF NOT EXISTS practice_cancellations_date_team_uniq
   ON public.practice_cancellations (practice_date, team_name);
+
+-- The table is in the supabase_realtime publication (publishes deletes), so
+-- without the old PK it needs a replica identity or DELETEs fail. Use the new
+-- unique index as the identity.
+ALTER TABLE public.practice_cancellations REPLICA IDENTITY USING INDEX practice_cancellations_date_team_uniq;
