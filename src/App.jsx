@@ -2575,9 +2575,29 @@ export default function App() {
       const row = { practice_date, team_name: tn, reason: (reason || "").trim() || null, cancelled_by: coach?.display_name || coach?.email || "" };
       setPracticeCancellations(prev => [...prev, row]);
       const { error } = await supabase.from("practice_cancellations").upsert(row, { onConflict: "practice_date,team_name" });
-      if (error) { window.alert("Couldn't cancel: " + error.message); loadPracticeCancellations(); }
+      if (error) { window.alert("Couldn't cancel: " + error.message); loadPracticeCancellations(); return; }
+      // Notify the affected coaches (push + email) so a mistaken cancel gets
+      // caught quickly and they can reach out.
+      const nrm = s => (s || "").trim().toLowerCase();
+      const prettyDate = (() => { try { return new Date(practice_date + "T12:00:00").toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }); } catch { return practice_date; } })();
+      const emailFor = nm => { const r = coachRoster.find(cr => cr.email && nrm(((cr.first_name || "") + " " + (cr.last_name || "")).trim()) === nrm(nm)); return r?.email || null; };
+      let title, bodyText, emails, audience;
+      if (tn) {
+        const t = practiceTeams.find(x => x.team_name === tn);
+        emails = [...new Set([t?.head_coach, t?.assistant_coach].filter(Boolean).map(emailFor).filter(Boolean))];
+        title = tn + " practice cancelled";
+        bodyText = tn + "'s practice on " + prettyDate + " has been CANCELLED. If this is a mistake, reach out to a director right away.";
+        audience = { type: "team", team: tn, excludeAdmins: true };
+      } else {
+        emails = [...new Set(coachRoster.map(cr => cr.email).filter(Boolean))];
+        title = "Practice cancelled — " + prettyDate;
+        bodyText = "All DS Elite practices on " + prettyDate + " are CANCELLED" + (row.reason ? " (" + row.reason + ")" : "") + ". If this is a mistake, reach out to a director right away.";
+        audience = { type: "all" };
+      }
+      fetch("/api/send-push", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title, body: bodyText, url: "/?view=practice", audience }) }).catch(() => {});
+      if (emails.length) fetch("/api/send-email", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ subject: title + " — DS Elite HQ", body: bodyText, recipients: emails }) }).catch(() => {});
     }
-  }, [practiceCancellations, coach, loadPracticeCancellations]);
+  }, [practiceCancellations, coach, coachRoster, practiceTeams, loadPracticeCancellations]);
   // Coach emails the director a potential practice-schedule change request.
   const requestScheduleChange = useCallback(async (team, message) => {
     const msg = (message || "").trim();
