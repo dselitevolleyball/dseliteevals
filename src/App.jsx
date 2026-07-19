@@ -1187,6 +1187,7 @@ export default function App() {
   const [ppSaved, setPpSaved]   = useState("");   // "", "saving", "saved", "err"
   const ppSkipSave = useRef(true);
   const [ppTab, setPpTab]       = useState("plan"); // plan | season | drills
+  const [ppThoughtShuffle, setPpThoughtShuffle] = useState(0); // "thought before practice" — cycle offset
   const [drills, setDrills]     = useState([]);     // shared drill library
   const [drillFilter, setDrillFilter] = useState({ q:"", skill:"", phase:"" });
   const [ppLibOpen, setPpLibOpen] = useState(false); // drill picker inside a plan
@@ -11527,10 +11528,40 @@ export default function App() {
           </div>
         </div>
 
-        {/* Team Over Self — our culture, every practice */}
-        <div style={{background:"rgba(233,30,140,0.06)",border:"1px solid "+C.gold,borderRadius:10,padding:"9px 12px",marginBottom:14,fontSize:12,color:C.text,lineHeight:1.5}}>
-          💛 <b style={{color:C.gold}}>Team Over Self</b> — say it out loud today. Catch a player choosing the team (a cover, a call, celebrating a teammate) and connect it to winning. <button onClick={()=>{ setPpTab("drills"); setDrillFilter(f=>({...f,q:"Team Over Self"})); }} style={{background:"none",border:"none",color:C.acc,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700,textDecoration:"underline",padding:0}}>See Team Over Self drills →</button>
-        </div>
+        {/* Before practice — the motto + a rotating thought pulled from the Manifesto */}
+        {(() => {
+          const pool = (pbEntries||[]).slice().sort((a,b)=>(a.sort_order||0)-(b.sort_order||0));
+          // Day-stable pick: same thought for a given practice date, but the
+          // coach can shuffle to the next one. Rotates through the whole manifesto.
+          const seed = String(ppDraft.date||"").split("").reduce((h,c)=>h+c.charCodeAt(0),0);
+          const thought = pool.length ? pool[((seed + ppThoughtShuffle) % pool.length + pool.length) % pool.length] : null;
+          const tierLabel = thought ? ((thought.tier||"standard")==="standard" ? "Golden standard" : ((thought.entry_type||"Idea")+" · coach idea")) : "";
+          return (
+            <div style={{background:"rgba(233,30,140,0.06)",border:"1px solid "+C.gold,borderRadius:10,padding:"11px 13px",marginBottom:14}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:thought?8:0}}>
+                <span style={{fontSize:13,fontWeight:800,color:C.gold}}>💛 {motto}</span>
+                <span style={{fontSize:11,color:C.mut}}>— say it out loud; catch a player choosing the team.</span>
+              </div>
+              {thought ? (
+                <div style={{borderTop:"1px dashed "+C.gold,paddingTop:8}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:3,flexWrap:"wrap"}}>
+                    <span style={{fontSize:9,fontWeight:800,textTransform:"uppercase",letterSpacing:0.4,color:C.acc}}>🧠 Thought before practice</span>
+                    {thought.category && <span style={{fontSize:9,fontWeight:700,color:C.mut}}>· {thought.category}</span>}
+                    <span style={{fontSize:9,fontWeight:700,color:C.mut}}>· {tierLabel}</span>
+                    <div style={{flex:1}} />
+                    <button onClick={()=>setPpThoughtShuffle(n=>n+1)} title="Show another thought from the Manifesto" style={{background:"none",border:"1px solid "+C.border,borderRadius:6,color:C.mut,cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:700,padding:"2px 8px"}}>🔀 Another</button>
+                  </div>
+                  <div style={{fontSize:13,fontWeight:800,color:C.text}}>{thought.title}</div>
+                  {thought.body && <div style={{fontSize:12,color:C.text,lineHeight:1.5,marginTop:2}}>{thought.body}</div>}
+                  {thought.cues && <div style={{fontSize:11,color:C.mut,marginTop:3}}><b style={{color:C.acc}}>Cues:</b> {thought.cues}</div>}
+                  <button onClick={()=>{ setPpTab("playbook"); }} style={{background:"none",border:"none",color:C.acc,cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:700,textDecoration:"underline",padding:"4px 0 0"}}>Open the Manifesto →</button>
+                </div>
+              ) : (
+                <div style={{fontSize:11,color:C.mut,marginTop:4}}>Add standards to the <button onClick={()=>setPpTab("playbook")} style={{background:"none",border:"none",color:C.acc,cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:700,textDecoration:"underline",padding:0}}>Manifesto</button> and a thought of the day will show here before each practice.</div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Focus — the Season plan connection */}
         <div style={St.card}>
