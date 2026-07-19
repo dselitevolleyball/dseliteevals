@@ -4841,7 +4841,7 @@ export default function App() {
           <h2 style={{margin:0,fontSize:22,fontWeight:800,color:C.gold}}>Welcome, {firstName}</h2>
           <div style={{fontSize:12,color:C.mut,marginTop:3}}>Clock in, plan, and see what's next.</div>
         </div>
-        {renderCheckIn()}
+        {renderCheckIn(true)}
 
         {/* Quick actions — the things a coach actually comes here to do. */}
         {(() => {
@@ -10242,7 +10242,7 @@ export default function App() {
   // Queen of the Court — 4v4 game runner with random matchups, even sit-outs,
   // per-win scoring and a live leaderboard. State persists to localStorage.
   // ── Coach clock-in / attendance ────────────────────────────────────────
-  function renderCheckIn() {
+  function renderCheckIn(compact) {
     const norm = s => (s||"").toString().trim().toLowerCase();
     const coachName = coach.display_name || coach.email || "";
     const today = localDateISO();
@@ -10446,6 +10446,15 @@ export default function App() {
         </div>
         )}
 
+        {/* Compact (home dashboard): send everything else to the full Clock In screen. */}
+        {compact && (
+          <button onClick={()=>setView("clockin")} style={{display:"flex",alignItems:"center",gap:8,width:"100%",textAlign:"left",padding:"10px 12px",borderRadius:8,border:"1px solid "+C.border,background:C.bg,color:C.text,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700}}>
+            ⏱ <span style={{flex:1}}>Clock In &amp; Timesheet — sub/float, past shifts, time-off status, missed shifts</span>
+            <span style={{color:C.gold}}>→</span>
+          </button>
+        )}
+
+        {!compact && (<>
         {/* Clock in for another day — always-available past-shift logger. */}
         {(() => {
           const iso = pastShift.date || today;
@@ -10809,6 +10818,7 @@ export default function App() {
             </div>
           );
         })()}
+        </>)}
       </div>
     );
   }
