@@ -10511,6 +10511,41 @@ export default function App() {
           );
         })()}
 
+        {/* My time-off requests — status + coverage, so coaches see if it went through. */}
+        {(() => {
+          const dfmt = iso => new Date(iso+"T12:00:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"});
+          const myReqs = coachRequests.filter(r => isMe(r.coach_name) && (r.request_date||"") >= today)
+            .sort((a,b)=> (a.request_date||"").localeCompare(b.request_date||""));
+          if (!myReqs.length) return null;
+          const denied = s => /denied|declined|rejected/i.test(s||"");
+          const stCol = s => s==="approved" ? C.grn : denied(s) ? C.red : "#f59e0b";
+          const stLbl = s => s==="approved" ? "✓ Approved" : denied(s) ? "✕ Denied" : "⏳ Pending";
+          return (
+            <div style={St.card}>
+              <div style={St.lbl}>My time-off requests</div>
+              <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                {myReqs.map(r => {
+                  const isW = r.type==="weekend";
+                  const cov = !isW && r.status==="approved" ? practiceCoverage.find(c => c.practice_date===r.request_date && (!r.team_name||c.team_name===r.team_name) && isMe(c.coach_out)) : null;
+                  const coverLabel = (!isW && r.status==="approved") ? (cov?.sub_name ? "✓ Covered by "+cov.sub_name : cov?.combine_with_team ? "Combining with "+cov.combine_with_team : "⚠ Needs coverage") : null;
+                  const coverCol = coverLabel ? (coverLabel.startsWith("✓") ? C.grn : coverLabel.startsWith("⚠") ? "#f59e0b" : "#06b6d4") : C.mut;
+                  return (
+                    <div key={r.id ?? (r.request_date+r.type+(r.team_name||""))} style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",padding:"9px 12px",borderRadius:8,border:"1px solid "+C.border,background:C.bg}}>
+                      <div style={{flex:1,minWidth:150}}>
+                        <div style={{fontSize:13,fontWeight:700,color:C.text}}>{dfmt(r.request_date)} · {isW ? "Weekend off" : "Practice off"}</div>
+                        <div style={{fontSize:12,color:C.mut,marginTop:2}}>{isW ? "Out all weekend (tournaments)" : (r.team_name||"")}{r.details?" · "+r.details:""}</div>
+                      </div>
+                      {coverLabel && <span style={{fontSize:12,fontWeight:800,color:coverCol}}>{coverLabel}</span>}
+                      <span style={{fontSize:11,fontWeight:800,color:stCol(r.status),border:"1px solid "+stCol(r.status),borderRadius:6,padding:"2px 8px"}}>{stLbl(r.status)}</span>
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={{fontSize:11,color:C.mut,marginTop:8}}>Practice-off requests show coverage once a director approves them. Questions? Reach out to a director.</div>
+            </div>
+          );
+        })()}
+
         {/* Covered practices — where you're out and who's covering (and where you're covering). */}
         {(() => {
           const dfmt = iso => new Date(iso+"T12:00:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"});
