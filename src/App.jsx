@@ -1184,6 +1184,9 @@ export default function App() {
   const [ppTeam, setPpTeam]     = useState("");   // selected team
   const [ppOpenId, setPpOpenId] = useState(null); // open plan row id
   const [ppDraft, setPpDraft]   = useState(null); // working copy of the open plan
+  const [ppRun, setPpRun]       = useState(null); // live practice runner: { idx, endsAt, paused, remainingMs }
+  const [ppNow, setPpNow]       = useState(0);    // tick to re-render the countdown
+  const ppDingRef               = useRef({});     // which block-end beeps have fired
   const [ppSaved, setPpSaved]   = useState("");   // "", "saving", "saved", "err"
   const ppSkipSave = useRef(true);
   const [ppTab, setPpTab]       = useState("plan"); // plan | season | drills
@@ -2056,6 +2059,21 @@ export default function App() {
     }, 900);
     return () => clearTimeout(t);
   }, [ppDraftJson, ppOpenId]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Practice runner: tick the countdown while a block is running.
+  useEffect(() => {
+    if (!ppRun || ppRun.paused) return;
+    const t = setInterval(() => setPpNow(Date.now()), 500);
+    return () => clearInterval(t);
+  }, [ppRun]);
+  // Beep + buzz once when a block's timer hits zero.
+  useEffect(() => {
+    if (!ppRun || ppRun.paused) return;
+    if (ppRun.endsAt - Date.now() <= 0 && !ppDingRef.current["b" + ppRun.idx]) {
+      ppDingRef.current["b" + ppRun.idx] = true;
+      try { const AC = window.AudioContext || window.webkitAudioContext; if (AC) { const a = new AC(); const o = a.createOscillator(); const g = a.createGain(); o.connect(g); g.connect(a.destination); o.type = "sine"; o.frequency.value = 880; g.gain.value = 0.12; o.start(); setTimeout(() => { try { o.stop(); a.close(); } catch { /* */ } }, 450); } } catch { /* */ }
+      if (navigator.vibrate) { try { navigator.vibrate([200, 100, 200]); } catch { /* */ } }
+    }
+  }, [ppNow, ppRun]);
   // Coach card (openable from any view) shows pay — needs rates + check-ins.
   // Declared after the loaders above to avoid a TDZ on the useCallback consts.
   useEffect(() => { if (isApproved && coachCardName) { loadCoachRates(); loadCheckins(); } }, [isApproved, coachCardName, loadCoachRates, loadCheckins]);
@@ -11443,6 +11461,22 @@ export default function App() {
     const slotMin = (slotHours(ppDraft.slot) || 2) * 60;
     const focusItems = (ppDraft.focus_keys||[]).map(k => itemByKey.get(k)).filter(Boolean);
     const addable = allItems.filter(it => statusOf(it.k) !== "done" && !(ppDraft.focus_keys||[]).includes(it.k));
+
+    // ── Practice runner (Launch practice): per-block countdown + drill notes ──
+    const runBlocks = ppDraft.blocks || [];
+    const runGoTo = (i) => { const mins = Number(runBlocks[i]?.minutes) || 10; ppDingRef.current["b"+i] = false; setPpRun(r => ({ ...r, idx:i, paused:false, endsAt: Date.now()+mins*60000, remainingMs:null })); };
+    const launchRun = () => {
+      if (!runBlocks.length) { window.alert("Add some blocks to the plan first."); return; }
+      ppDingRef.current = {};
+      setPpRun({ idx:0, paused:false, endsAt: Date.now()+(Number(runBlocks[0].minutes)||10)*60000, remainingMs:null });
+      if ((ppDraft.status||"planned") === "planned") setStatus("in_progress");
+    };
+    const runPause  = () => setPpRun(r => r.paused ? r : ({ ...r, paused:true, remainingMs: r.endsAt - Date.now() }));
+    const runResume = () => setPpRun(r => !r.paused ? r : ({ ...r, paused:false, endsAt: Date.now() + (r.remainingMs||0) }));
+    const runAddMin = () => setPpRun(r => r.paused ? ({ ...r, remainingMs: (r.remainingMs||0)+60000 }) : ({ ...r, endsAt: r.endsAt+60000 }));
+    const runNext = () => { if (ppRun && ppRun.idx < runBlocks.length-1) runGoTo(ppRun.idx+1); };
+    const runPrev = () => { if (ppRun && ppRun.idx > 0) runGoTo(ppRun.idx-1); };
+    const endRun = (executed) => { setPpRun(null); if (executed && (ppDraft.status||"") !== "executed") setStatus("executed"); };
     const markComplete = async () => {
       updateDraft(d => { d.status = "executed"; });
       if (focusItems.length && window.confirm("Mark the " + focusItems.length + " focus concept" + (focusItems.length===1?"":"s") + " as taught in the Season plan?")) {
@@ -11524,6 +11558,7 @@ export default function App() {
             </div>
             <div style={{flex:1}} />
             <span style={{fontSize:12,fontWeight:800,color:totalMin===slotMin?C.grn:totalMin>slotMin?C.red:"#f59e0b"}} title="Planned minutes vs practice length">{totalMin}/{slotMin} min</span>
+            <button style={{...St.gold,fontSize:13,padding:"7px 14px"}} onClick={launchRun} title="Run this practice with per-block timers">▶ Launch practice</button>
             <button style={St.ghost} onClick={printPlan} title="Open a printable version">🖨 Print</button>
             <button style={St.ghost} onClick={copyPlan}>Copy plan</button>
           </div>
@@ -11623,6 +11658,7 @@ export default function App() {
                           style={{...St.sel,width:"100%",fontWeight:700,marginBottom:4}} />
                         <textarea value={b.desc || ""} onChange={e => updateDraft(d => { d.blocks[i].desc = e.target.value; })} placeholder="Details / drills / cues…"
                           style={{...St.sel,width:"100%",minHeight:36,resize:"vertical",fontSize:12,lineHeight:1.4}} />
+                        {(b.notes||"").trim() && <div style={{fontSize:11,color:C.grn,marginTop:4,lineHeight:1.4}}><b>📝 How it went:</b> {b.notes}</div>}
                       </div>
                       <button onClick={() => updateDraft(d => { d.blocks.splice(i,1); })} title="Remove block" style={{...St.ghost,padding:"4px 9px",color:C.red,alignSelf:"center"}}>✕</button>
                     </div>
@@ -11659,6 +11695,71 @@ export default function App() {
           <textarea value={ppDraft.notes} onChange={e => updateDraft(d => { d.notes = e.target.value; })} placeholder="Lineup reminders, players to watch, court/equipment notes…"
             style={{...St.sel,width:"100%",minHeight:60,resize:"vertical",fontSize:13,lineHeight:1.5}} />
         </div>
+
+        {/* ── Practice runner overlay ────────────────────────────────────── */}
+        {ppRun && (() => {
+          const idx = ppRun.idx;
+          const b = runBlocks[idx] || {};
+          const remMs = ppRun.paused ? (ppRun.remainingMs||0) : (ppRun.endsAt - Date.now());
+          const over = remMs < 0;
+          const soon = !over && remMs <= 60000;
+          const secs = Math.max(0, Math.ceil(Math.abs(remMs)/1000));
+          const mmss = Math.floor(secs/60) + ":" + String(secs%60).padStart(2,"0");
+          const timerColor = over ? C.red : soon ? "#f59e0b" : C.grn;
+          const blockMs = (Number(b.minutes)||10)*60000;
+          const pct = Math.max(0, Math.min(100, over ? 0 : (remMs/blockMs)*100));
+          return (
+            <div style={{position:"fixed",inset:0,zIndex:100,background:"#0a0a0a",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
+              <div style={{maxWidth:640,margin:"0 auto",padding:"14px 16px 40px"}}>
+                <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+                  <div style={{fontSize:13,fontWeight:800,color:C.gold}}>{team} · {fmtDay(ppDraft.date)}</div>
+                  <div style={{flex:1}} />
+                  <button onClick={()=>endRun(false)} style={{...St.ghost,fontSize:12}}>Exit</button>
+                </div>
+
+                <div style={{fontSize:11,fontWeight:800,textTransform:"uppercase",letterSpacing:0.5,color:C.mut,textAlign:"center"}}>Block {idx+1} of {runBlocks.length}{over?" · TIME UP":soon?" · finishing":""}</div>
+                <div style={{fontSize:24,fontWeight:900,color:C.text,textAlign:"center",lineHeight:1.15,margin:"4px 0 2px"}}>{b.name || "Block"}</div>
+                <div style={{fontSize:64,fontWeight:900,color:timerColor,textAlign:"center",lineHeight:1,fontVariantNumeric:"tabular-nums",letterSpacing:1}}>{over?"+":""}{mmss}</div>
+                <div style={{height:6,borderRadius:3,background:"rgba(255,255,255,0.08)",overflow:"hidden",margin:"8px 0 2px"}}><div style={{height:"100%",width:pct+"%",background:timerColor,transition:"width .4s linear"}} /></div>
+                {ppRun.paused && <div style={{fontSize:12,fontWeight:800,color:"#f59e0b",textAlign:"center"}}>⏸ Paused</div>}
+
+                {/* Controls */}
+                <div style={{display:"flex",gap:8,justifyContent:"center",margin:"14px 0",flexWrap:"wrap"}}>
+                  <button onClick={runPrev} disabled={idx===0} style={{...St.ghost,fontSize:20,padding:"10px 14px",opacity:idx===0?0.4:1}} title="Previous block">⏮</button>
+                  {ppRun.paused
+                    ? <button onClick={runResume} style={{padding:"12px 24px",borderRadius:12,border:"none",background:C.grn,color:"#04240f",fontWeight:900,fontSize:18,cursor:"pointer",fontFamily:"inherit"}}>▶ Resume</button>
+                    : <button onClick={runPause} style={{padding:"12px 24px",borderRadius:12,border:"none",background:"#f59e0b",color:"#000",fontWeight:900,fontSize:18,cursor:"pointer",fontFamily:"inherit"}}>⏸ Pause</button>}
+                  <button onClick={runAddMin} style={{...St.ghost,fontSize:14,fontWeight:800,padding:"10px 12px"}} title="Add a minute">+1:00</button>
+                  <button onClick={()=>runGoTo(idx)} style={{...St.ghost,fontSize:18,padding:"10px 14px"}} title="Restart this block">↺</button>
+                  <button onClick={runNext} disabled={idx>=runBlocks.length-1} style={{...St.ghost,fontSize:20,padding:"10px 14px",opacity:idx>=runBlocks.length-1?0.4:1}} title="Next block">⏭</button>
+                </div>
+
+                {b.desc && <div style={{fontSize:13,color:C.text,lineHeight:1.5,background:C.card,border:"1px solid "+C.border,borderRadius:10,padding:"10px 12px",marginBottom:10}}>{b.desc}</div>}
+
+                {/* How did it go? — saved to the block */}
+                <div style={{marginBottom:14}}>
+                  <div style={{fontSize:10,fontWeight:800,textTransform:"uppercase",letterSpacing:0.3,color:C.mut,marginBottom:4}}>📝 How did it go?</div>
+                  <AutoTextarea value={b.notes||""} onChange={e=>updateDraft(d=>{ d.blocks[idx].notes = e.target.value; })} minRows={2}
+                    placeholder="What worked, what to fix, reps, who stood out…" style={{...St.sel,width:"100%",fontSize:14,lineHeight:1.5,boxSizing:"border-box"}} />
+                </div>
+
+                {/* All blocks — jump around; note/✓ markers */}
+                <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:16}}>
+                  {runBlocks.map((bl,i) => (
+                    <button key={bl.id||i} onClick={()=>runGoTo(i)} style={{display:"flex",alignItems:"center",gap:10,textAlign:"left",padding:"9px 12px",borderRadius:10,border:"1px solid "+(i===idx?C.gold:C.border),background:i===idx?"rgba(233,30,140,0.10)":C.card,cursor:"pointer",fontFamily:"inherit"}}>
+                      <span style={{fontSize:12,fontWeight:800,color:i===idx?C.gold:C.mut,minWidth:20}}>{i+1}</span>
+                      <span style={{flex:1,fontSize:13,fontWeight:i===idx?800:600,color:C.text}}>{bl.name||"Block"}</span>
+                      {(bl.notes||"").trim() && <span title="Has notes" style={{fontSize:12}}>📝</span>}
+                      <span style={{fontSize:12,color:C.mut,fontWeight:700}}>{Number(bl.minutes)||0}m</span>
+                    </button>
+                  ))}
+                </div>
+
+                <button onClick={()=>{ if(window.confirm("End practice and mark it executed?")) endRun(true); }} style={{width:"100%",padding:"14px",borderRadius:12,border:"none",background:C.gold,color:"#000",fontWeight:900,fontSize:16,cursor:"pointer",fontFamily:"inherit"}}>✓ End practice</button>
+              </div>
+            </div>
+          );
+        })()}
       </div>
     );
   }
