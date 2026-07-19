@@ -76,10 +76,14 @@ export default async function handler(req, res) {
   const [assigns, saRows, cancels] = await Promise.all([
     q("practice_assignments?team_name=eq." + enc + "&select=day,slot,phase,court"),
     q("sa_sessions?team_name=eq." + enc + "&select=session_date,slot,block"),
-    q("practice_cancellations?select=practice_date"),
+    q("practice_cancellations?select=practice_date,team_name"),
   ]);
   if (!Array.isArray(assigns)) return res.status(500).send("Query failed.");
-  const cancelled = new Set((Array.isArray(cancels) ? cancels : []).map(c => c.practice_date));
+  // A cancellation hits this team's feed if it's whole-day (team_name empty) or
+  // targets this team specifically.
+  const cancelled = new Set((Array.isArray(cancels) ? cancels : [])
+    .filter(c => !c.team_name || c.team_name === team)
+    .map(c => c.practice_date));
 
   const ev = [];
   const push = (uid, summary, startIso, sHour, eHour, opts = {}) => {
