@@ -1208,6 +1208,7 @@ export default function App() {
   const [currProgress, setCurrProgress]     = useState([]);
   const [currTeam, setCurrTeam]             = useState("");   // selected team in the panel
   const [currOpenSubject, setCurrOpenSubject] = useState(""); // expanded subject key
+  const [teamCharters, setTeamCharters]     = useState([]);   // per-team Game Plan / charter
   // Fires the "save a restore point first" nudge at most once per practice session.
   const practiceEditReminded = useRef(false);
   const [saBlock, setSaBlock]                         = useState(
@@ -2020,9 +2021,21 @@ export default function App() {
     setPbEntries(e.data || []);
     setPbAcks(a.data || []);
   }, []);
+  const loadTeamCharters = useCallback(async () => {
+    const { data, error } = await supabase.from("team_charters").select("*");
+    if (error) { console.error("Load team_charters error:", error); return; }
+    setTeamCharters(data || []);
+  }, []);
+  const saveCharter = useCallback(async (team, data) => {
+    if (!team) return;
+    const row = { team_name: team, data, updated_by: coach?.display_name || coach?.email || null, updated_at: new Date().toISOString() };
+    setTeamCharters(prev => [...prev.filter(c => c.team_name !== team), row]);
+    const { error } = await supabase.from("team_charters").upsert(row, { onConflict: "team_name" });
+    if (error) { console.error("save team_charter error:", error); window.alert("Couldn't save the game plan: " + error.message); loadTeamCharters(); }
+  }, [coach, loadTeamCharters]);
   useEffect(() => {
-    if (isApproved && view === "practiceplan") { loadPracticePlans(); loadPractice(); loadPracticeCancellations(); loadCurriculumProgress(); loadDrills(); loadPlaybook(); }
-  }, [isApproved, view, loadPracticePlans, loadPractice, loadPracticeCancellations, loadCurriculumProgress, loadDrills, loadPlaybook]);
+    if (isApproved && view === "practiceplan") { loadPracticePlans(); loadPractice(); loadPracticeCancellations(); loadCurriculumProgress(); loadDrills(); loadPlaybook(); loadTeamCharters(); }
+  }, [isApproved, view, loadPracticePlans, loadPractice, loadPracticeCancellations, loadCurriculumProgress, loadDrills, loadPlaybook, loadTeamCharters]);
   // Debounced autosave of the open practice plan (mirrors the lineup autosave).
   const ppDraftJson = ppDraft ? JSON.stringify(ppDraft) : "";
   useEffect(() => {
@@ -11333,7 +11346,7 @@ export default function App() {
       );
     };
 
-    if (ppTab === "season") return <div style={{maxWidth:960,margin:"0 auto"}}>{tabBar}{renderSeasonPlan()}</div>;
+    if (ppTab === "season") { const seasonTeams = myTeamNames.length ? myTeamNames : (canOps ? practiceTeams.map(t => t.team_name) : []); const seasonTeam = seasonTeams.includes(currTeam) ? currTeam : seasonTeams[0]; return <div style={{maxWidth:960,margin:"0 auto"}}>{tabBar}{seasonTeam && renderTeamCharter(seasonTeam)}{renderSeasonPlan()}</div>; }
     if (ppTab === "drills") return (
       <div style={{maxWidth:960,margin:"0 auto"}}>
         {tabBar}
@@ -11563,6 +11576,9 @@ export default function App() {
           );
         })()}
 
+        {/* Team Game Plan — the coach's per-team summary, to pivot from */}
+        {renderTeamCharter(team, { compact: true })}
+
         {/* Focus — the Season plan connection */}
         <div style={St.card}>
           <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:8}}>
@@ -11643,6 +11659,91 @@ export default function App() {
           <textarea value={ppDraft.notes} onChange={e => updateDraft(d => { d.notes = e.target.value; })} placeholder="Lineup reminders, players to watch, court/equipment notes…"
             style={{...St.sel,width:"100%",minHeight:60,resize:"vertical",fontSize:13,lineHeight:1.5}} />
         </div>
+      </div>
+    );
+  }
+
+  // ── Team Game Plan — a coach's per-team summary (standards, must-do-better,
+  // role reminders, goals, mindset) they build once and pivot from while
+  // practice planning. Editable board of sections + bullet items.
+  const CHARTER_TEMPLATE = [
+    { title: "Team standards", items: ["Leadership & accountability", "Communication & energy", "Respect the system", "Readiness & hustle", "Court IQ & awareness"] },
+    { title: "What we must do better", items: [""] },
+    { title: "On-court role reminders", items: ["Setter — ", "Libero — ", "Middle — ", "Outside — ", "Back row — "] },
+    { title: "Season goals", items: [""] },
+    { title: "Mindset & commitment", items: [""] },
+  ];
+  function renderTeamCharter(team, opts = {}) {
+    const compact = !!opts.compact;
+    const rid = (p = "sec") => p + Math.random().toString(36).slice(2, 8);
+    const data = (teamCharters.find(c => c.team_name === team)?.data) || {};
+    const sections = Array.isArray(data.sections) ? data.sections : [];
+    const commit = next => saveCharter(team, { ...data, sections: next });
+    const setSection = (si, patch) => commit(sections.map((s, i) => i === si ? { ...s, ...patch } : s));
+    const setItem = (si, ii, text) => setSection(si, { items: sections[si].items.map((it, i) => i === ii ? { ...it, text } : it) });
+    const addItem = si => setSection(si, { items: [...(sections[si].items || []), { id: rid("it"), text: "" }] });
+    const delItem = (si, ii) => setSection(si, { items: sections[si].items.filter((_, i) => i !== ii) });
+    const addSection = () => commit([...sections, { id: rid(), title: "New section", items: [{ id: rid("it"), text: "" }] }]);
+    const delSection = si => { if (!window.confirm("Delete this section?")) return; commit(sections.filter((_, i) => i !== si)); };
+    const seed = () => { if (sections.length && !window.confirm("Add the starter sections to this team's game plan?")) return; commit([...sections, ...CHARTER_TEMPLATE.map(t => ({ id: rid(), title: t.title, items: t.items.map(x => ({ id: rid("it"), text: x })) }))]); };
+    const C2 = { card: { background: C.card, border: "1px solid " + C.border, borderRadius: 12, padding: 14, marginBottom: 14 } };
+
+    // Compact read-only reference (practice plan).
+    if (compact) {
+      const filled = sections.filter(s => (s.title || "").trim() || (s.items || []).some(it => (it.text || "").trim()));
+      if (!filled.length) return null;
+      return (
+        <details style={{ ...C2.card, marginBottom: 14 }}>
+          <summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 800, color: C.gold, listStyle: "revert" }}>📋 {team} Game Plan — what we care about</summary>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 12, marginTop: 10 }}>
+            {filled.map(s => (
+              <div key={s.id}>
+                <div style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.3, color: C.acc, marginBottom: 4 }}>{s.title || "—"}</div>
+                <ul style={{ margin: 0, paddingLeft: 16 }}>
+                  {(s.items || []).filter(it => (it.text || "").trim()).map(it => <li key={it.id} style={{ fontSize: 12, color: C.text, lineHeight: 1.5 }}>{it.text}</li>)}
+                </ul>
+              </div>
+            ))}
+          </div>
+          <button onClick={() => { setCurrTeam(team); setPpTab("season"); }} style={{ background: "none", border: "none", color: C.acc, cursor: "pointer", fontFamily: "inherit", fontSize: 11, fontWeight: 700, textDecoration: "underline", padding: "8px 0 0" }}>Edit the game plan →</button>
+        </details>
+      );
+    }
+
+    // Full editor (Season tab).
+    return (
+      <div style={C2.card}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+          <span style={{ fontSize: 14, fontWeight: 800, color: C.gold }}>📋 {team} Game Plan</span>
+          <span style={{ fontSize: 11, color: C.mut }}>what you care about for this team — shows on every practice plan</span>
+          <div style={{ flex: 1 }} />
+          {sections.length === 0 && <button onClick={seed} style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid " + C.gold, background: "transparent", color: C.gold, fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>✨ Start from template</button>}
+        </div>
+        {sections.length === 0 ? (
+          <div style={{ fontSize: 12, color: C.mut }}>Build your team's standards, goals, role reminders and mindset. <b>Start from template</b> for the usual sections, or add your own.</div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {sections.map((s, si) => (
+              <div key={s.id} style={{ border: "1px solid " + C.border, borderRadius: 10, padding: "8px 10px", background: C.bg }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                  <DebouncedField value={s.title || ""} onCommit={v => setSection(si, { title: v })} placeholder="Section title" style={{ flex: 1, background: "transparent", border: "none", color: C.gold, fontFamily: "inherit", fontSize: 13, fontWeight: 800 }} />
+                  <button onClick={() => delSection(si)} title="Delete section" style={{ background: "none", border: "none", color: C.mut, cursor: "pointer", fontSize: 14 }}>🗑</button>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {(s.items || []).map((it, ii) => (
+                    <div key={it.id} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <span style={{ color: C.acc, fontWeight: 800 }}>•</span>
+                      <DebouncedField value={it.text || ""} onCommit={v => setItem(si, ii, v)} placeholder="Add a point…" style={{ flex: 1, background: C.card, border: "1px solid " + C.border, borderRadius: 6, color: C.text, fontFamily: "inherit", fontSize: 12.5, padding: "5px 7px" }} />
+                      <button onClick={() => delItem(si, ii)} title="Remove" style={{ background: "none", border: "none", color: C.red, cursor: "pointer", fontSize: 13 }}>✕</button>
+                    </div>
+                  ))}
+                  <button onClick={() => addItem(si)} style={{ alignSelf: "flex-start", background: "none", border: "none", color: C.acc, cursor: "pointer", fontFamily: "inherit", fontSize: 11, fontWeight: 700, padding: "2px 0" }}>+ Add point</button>
+                </div>
+              </div>
+            ))}
+            <button onClick={addSection} style={{ alignSelf: "flex-start", padding: "6px 12px", borderRadius: 8, border: "1px dashed " + C.border, background: "transparent", color: C.text, fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>+ Add section</button>
+          </div>
+        )}
       </div>
     );
   }
