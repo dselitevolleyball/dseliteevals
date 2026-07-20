@@ -12172,7 +12172,7 @@ export default function App() {
     // Admin: edit a check-in's fields, or add a shift manually before finalizing.
     const editCheck = async (id, patch) => { const { error } = await supabase.from("coach_checkins").update(patch).eq("id", id); if(error){ window.alert("Couldn't save: "+error.message); return; } await loadCheckins(); };
     const addShift = async (coachNm) => {
-      const row = { coach_name: coachNm, check_date: wkStart, team_name: null, slot: null, hours: 0, role: "scheduled", status: "present", source: "admin", phase: phaseForDate(wkStart)||"none", created_by: coach?.display_name || coach?.email || "admin" };
+      const row = { coach_name: coachNm, check_date: wkStart, team_name: null, slot: null, hours: 2, role: "scheduled", status: "present", source: "admin", phase: phaseForDate(wkStart)||"none", paid: false, created_by: coach?.display_name || coach?.email || "admin" };
       const { error } = await supabase.from("coach_checkins").insert(row);
       if (error) { window.alert("Couldn't add shift: "+error.message); return; }
       await loadCheckins(); setTcOpen(coachNm);
@@ -12236,8 +12236,8 @@ export default function App() {
       if (practiceCancellations.some(c => c.practice_date===date && !c.team_name)) continue; // whole day off
       const wd = weekdayOf(date);
       const teamCanceled = tn => practiceCancellations.some(c => c.practice_date===date && c.team_name===tn);
-      const teamsToday = [...new Set(practiceAssignments.filter(a => (a.phase||"season")===ph && a.day===wd && !teamCanceled(a.team_name)).map(a=>a.team_name))];
-      teamsToday.forEach(tn => {
+      practiceAssignments.filter(a => (a.phase||"season")===ph && a.day===wd && !teamCanceled(a.team_name)).forEach(a => {
+        const tn = a.team_name, slot = a.slot;
         const t = practiceTeams.find(x=>x.team_name===tn);
         [t?.head_coach, t?.assistant_coach].filter(Boolean).forEach(rawName => {
           const cname = canonicalName(rawName, null);
@@ -12246,11 +12246,19 @@ export default function App() {
           if (isOut(rawName, date, tn)) return;
           if ((clockedByDate[date]||new Set()).has(nk)) return;
           const g = missMap[nk] = missMap[nk] || { coach: cname, days: [] };
-          if (!g.days.some(d=>d.date===date && d.team===tn)) g.days.push({ date, team: tn });
+          if (!g.days.some(d=>d.date===date && d.team===tn)) g.days.push({ date, team: tn, slot });
         });
       });
     }
     const missingList = Object.values(missMap).sort((a,b)=>a.coach.localeCompare(b.coach));
+    // Log the actual missed shift(s) for a coach — on the right date/team/slot
+    // with real hours — so they clear from "expected" and price correctly.
+    const addMissingShifts = async (m) => {
+      const rows = m.days.map(d => ({ coach_name: m.coach, check_date: d.date, team_name: d.team, slot: d.slot || null, hours: slotHours(d.slot) || 2, role: "scheduled", status: "present", source: "admin", phase: phaseForDate(d.date) || "none", paid: false, created_by: coach?.display_name || coach?.email || "admin" }));
+      const { error } = await supabase.from("coach_checkins").insert(rows);
+      if (error) { window.alert("Couldn't add shift: " + error.message); return; }
+      await loadCheckins();
+    };
     const muteCoach = async (name, on) => {
       if (on) { const note = window.prompt("Stop flagging "+name+" as \"didn't clock in\"?\nOptional reason (e.g. stipend only, on leave):", ""); if (note===null) return;
         const { error } = await supabase.from("hours_reminder_excludes").upsert({ coach_name:name, note:note.trim()||null, created_by: coach?.display_name||coach?.email||null }, { onConflict:"coach_name" });
@@ -12305,7 +12313,7 @@ export default function App() {
                   <div key={m.coach} style={{display:"flex",alignItems:"center",gap:8,fontSize:12,color:C.text,flexWrap:"wrap"}}>
                     <span style={{fontWeight:800,minWidth:130}}>{m.coach}</span>
                     <span style={{flex:1,color:C.mut}}>{m.days.map(d => new Date(d.date+"T12:00:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"})+" · "+d.team).join("  ·  ")}</span>
-                    <button style={{...St.ghost,padding:"3px 10px",color:C.acc,borderColor:C.acc}} onClick={()=>addShift(m.coach)}>+ Add shift</button>
+                    <button style={{...St.ghost,padding:"3px 10px",color:C.acc,borderColor:C.acc}} onClick={()=>addMissingShifts(m)} title="Log this coach's missed shift(s) with the right date and hours">+ Add shift</button>
                     <button style={{...St.ghost,padding:"3px 10px"}} onClick={()=>muteCoach(m.coach, true)} title="Stop flagging this coach in reminders">🔕 Mute</button>
                   </div>
                 ))}
