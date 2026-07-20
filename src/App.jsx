@@ -1135,6 +1135,7 @@ export default function App() {
   const [tcSettingsOpen, setTcSettingsOpen] = useState(false); // settings panel (rates editor, export)
   const [tcShowZero, setTcShowZero]     = useState(false);  // include coaches with no hours this week
   const [tcEmailing, setTcEmailing]     = useState(false);  // re-sending the weekly payroll email
+  const [hoursExcludes, setHoursExcludes] = useState([]);   // coaches excluded from the "didn't clock in" flag
   // Mobile nav: collapse the header buttons into a hamburger under 700px.
   const [isNarrow, setIsNarrow] = useState(() => typeof window !== "undefined" && window.matchMedia("(max-width: 700px)").matches);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -1980,7 +1981,12 @@ export default function App() {
     if (error) { console.error("Load coach_rates error:", error); return; }
     setCoachRates(data || []);
   }, []);
-  useEffect(() => { if (isApproved && view === "timecards") { loadCheckins(); loadCoachRates(); loadPractice(); } }, [isApproved, view, loadCheckins, loadCoachRates, loadPractice]);
+  const loadHoursExcludes = useCallback(async () => {
+    const { data, error } = await supabase.from("hours_reminder_excludes").select("*");
+    if (error) { console.error("Load hours_reminder_excludes error:", error); return; }
+    setHoursExcludes(data || []);
+  }, []);
+  useEffect(() => { if (isApproved && view === "timecards") { loadCheckins(); loadCoachRates(); loadPractice(); loadPracticeCancellations(); loadPracticeCoverage(); loadCoachRequests(); loadCoachRoster(); loadHoursExcludes(); } }, [isApproved, view, loadCheckins, loadCoachRates, loadPractice, loadPracticeCancellations, loadPracticeCoverage, loadCoachRequests, loadCoachRoster, loadHoursExcludes]);
 
   // Season-plan curriculum progress (dashboard checkboxes).
   const loadCurriculumProgress = useCallback(async () => {
@@ -12210,6 +12216,49 @@ export default function App() {
       return Array.from(s.values()).sort((a,b)=>a.localeCompare(b));
     })();
 
+    // Expected-but-didn't-clock-in for the viewed week: HC/AC of teams that
+    // practiced (phase active, day scheduled, not cancelled), minus coaches
+    // marked out/covered, minus muted coaches, who logged nothing that day.
+    const weekdayOf = iso => ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][new Date(iso+"T12:00:00").getDay()];
+    const excludedSet = new Set(hoursExcludes.map(x => norm(x.coach_name)));
+    const clockedByDate = {};
+    checkins.filter(c => c.check_date>=wkStart && c.check_date<=wkEnd).forEach(c => {
+      const cn = norm(canonicalName(c.coach_name, c.coach_email));
+      (clockedByDate[c.check_date] = clockedByDate[c.check_date] || new Set()).add(cn);
+    });
+    const isOut = (nm, date, team) => practiceCoverage.some(c => c.practice_date===date && (!team||c.team_name===team) && norm(c.coach_out)===norm(nm))
+      || coachRequests.some(r => r.request_date===date && !/denied|declined|rejected/i.test(r.status||"") && norm(r.coach_name)===norm(nm) && (!r.team_name||!team||r.team_name===team));
+    const missMap = {};
+    for (let off=0; off<7; off++) {
+      const date = localDateISO(new Date(new Date(wkStart+"T12:00:00").getTime()+off*86400000));
+      const ph = phaseForDate(date);
+      if (!ph) continue;
+      if (practiceCancellations.some(c => c.practice_date===date && !c.team_name)) continue; // whole day off
+      const wd = weekdayOf(date);
+      const teamCanceled = tn => practiceCancellations.some(c => c.practice_date===date && c.team_name===tn);
+      const teamsToday = [...new Set(practiceAssignments.filter(a => (a.phase||"season")===ph && a.day===wd && !teamCanceled(a.team_name)).map(a=>a.team_name))];
+      teamsToday.forEach(tn => {
+        const t = practiceTeams.find(x=>x.team_name===tn);
+        [t?.head_coach, t?.assistant_coach].filter(Boolean).forEach(rawName => {
+          const cname = canonicalName(rawName, null);
+          const nk = norm(cname);
+          if (excludedSet.has(nk) || excludedSet.has(norm(rawName))) return;
+          if (isOut(rawName, date, tn)) return;
+          if ((clockedByDate[date]||new Set()).has(nk)) return;
+          const g = missMap[nk] = missMap[nk] || { coach: cname, days: [] };
+          if (!g.days.some(d=>d.date===date && d.team===tn)) g.days.push({ date, team: tn });
+        });
+      });
+    }
+    const missingList = Object.values(missMap).sort((a,b)=>a.coach.localeCompare(b.coach));
+    const muteCoach = async (name, on) => {
+      if (on) { const note = window.prompt("Stop flagging "+name+" as \"didn't clock in\"?\nOptional reason (e.g. stipend only, on leave):", ""); if (note===null) return;
+        const { error } = await supabase.from("hours_reminder_excludes").upsert({ coach_name:name, note:note.trim()||null, created_by: coach?.display_name||coach?.email||null }, { onConflict:"coach_name" });
+        if (error) { window.alert("Couldn't save: "+error.message); return; } }
+      else { await supabase.from("hours_reminder_excludes").delete().eq("coach_name", name); }
+      await loadHoursExcludes();
+    };
+
     return (
       <div style={{maxWidth:1100, margin:"0 auto"}}>
         <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:14}}>
@@ -12242,6 +12291,41 @@ export default function App() {
           <button style={{...St.gold,padding:"6px 12px"}} disabled={tcEmailing} onClick={emailReport}
             title="Approve this week's hours — emails the payroll report + CSV to the bookkeeper, Drew and Kristen">{tcEmailing?"Sending…":"✓ Approve & email hours"}</button>
         </div>
+
+        {/* Expected but didn't clock in + reminder mutes */}
+        {(missingList.length>0 || hoursExcludes.length>0) && (
+          <div style={{...St.card, border:"1px solid "+(missingList.length?"#f59e0b":C.border), background:missingList.length?"rgba(245,158,11,0.06)":C.card}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:missingList.length?8:0}}>
+              <span style={{fontSize:12,fontWeight:800,color:missingList.length?"#f59e0b":C.mut}}>⚠ Expected but didn't clock in{missingList.length?" — "+missingList.length:" — none"}</span>
+              <span style={{fontSize:11,color:C.mut}}>· {fmtD(wkStart)} – {fmtD(wkEnd)} · fix before approving</span>
+            </div>
+            {missingList.length>0 && (
+              <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                {missingList.map(m => (
+                  <div key={m.coach} style={{display:"flex",alignItems:"center",gap:8,fontSize:12,color:C.text,flexWrap:"wrap"}}>
+                    <span style={{fontWeight:800,minWidth:130}}>{m.coach}</span>
+                    <span style={{flex:1,color:C.mut}}>{m.days.map(d => new Date(d.date+"T12:00:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"})+" · "+d.team).join("  ·  ")}</span>
+                    <button style={{...St.ghost,padding:"3px 10px",color:C.acc,borderColor:C.acc}} onClick={()=>addShift(m.coach)}>+ Add shift</button>
+                    <button style={{...St.ghost,padding:"3px 10px"}} onClick={()=>muteCoach(m.coach, true)} title="Stop flagging this coach in reminders">🔕 Mute</button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {hoursExcludes.length>0 && (
+              <details style={{marginTop:missingList.length?10:2}}>
+                <summary style={{fontSize:11,color:C.acc,cursor:"pointer",fontWeight:700}}>Muted from reminders ({hoursExcludes.length})</summary>
+                <div style={{display:"flex",flexDirection:"column",gap:4,marginTop:6}}>
+                  {hoursExcludes.slice().sort((a,b)=>(a.coach_name||"").localeCompare(b.coach_name||"")).map(x => (
+                    <div key={x.coach_name} style={{display:"flex",alignItems:"center",gap:8,fontSize:12,color:C.text}}>
+                      <span style={{flex:1}}>{x.coach_name}{x.note?<span style={{color:C.mut}}> — {x.note}</span>:null}</span>
+                      <button style={{...St.ghost,padding:"3px 10px",color:C.grn,borderColor:C.grn}} onClick={()=>muteCoach(x.coach_name, false)}>Un-mute</button>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )}
+          </div>
+        )}
 
         {/* Settings */}
         {tcSettingsOpen && (
