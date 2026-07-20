@@ -12239,8 +12239,8 @@ export default function App() {
           {filtersOn && <button style={{...St.ghost,color:C.acc,borderColor:C.acc}} onClick={()=>setTcFilters({coach:"",role:"",team:"",status:""})}>✕ Clear filters</button>}
           <div style={{flex:1}} />
           <button style={St.ghost} onClick={exportCsv} title="Download this week (with filters applied) as a CSV for the bookkeeper">⬇ Export CSV</button>
-          <button style={{...St.ghost,borderColor:C.gold,color:C.gold}} disabled={tcEmailing} onClick={emailReport}
-            title="Email this week's payroll report + hours CSV to the bookkeeper and admins (same as the Monday report)">{tcEmailing?"Sending…":"📧 Email report + CSV"}</button>
+          <button style={{...St.gold,padding:"6px 12px"}} disabled={tcEmailing} onClick={emailReport}
+            title="Approve this week's hours — emails the payroll report + CSV to the bookkeeper, Drew and Kristen">{tcEmailing?"Sending…":"✓ Approve & email hours"}</button>
         </div>
 
         {/* Settings */}
