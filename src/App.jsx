@@ -1986,7 +1986,7 @@ export default function App() {
     if (error) { console.error("Load hours_reminder_excludes error:", error); return; }
     setHoursExcludes(data || []);
   }, []);
-  useEffect(() => { if (isApproved && view === "timecards") { loadCheckins(); loadCoachRates(); loadPractice(); loadPracticeCancellations(); loadPracticeCoverage(); loadCoachRequests(); loadCoachRoster(); loadHoursExcludes(); } }, [isApproved, view, loadCheckins, loadCoachRates, loadPractice, loadPracticeCancellations, loadPracticeCoverage, loadCoachRequests, loadCoachRoster, loadHoursExcludes]);
+  useEffect(() => { if (isApproved && view === "timecards") { loadCheckins(); loadCoachRates(); loadPractice(); loadPracticeCancellations(); loadPracticeCoverage(); loadCoachRequests(); loadHoursExcludes(); } }, [isApproved, view, loadCheckins, loadCoachRates, loadPractice, loadPracticeCancellations, loadPracticeCoverage, loadCoachRequests, loadHoursExcludes]);
 
   // Season-plan curriculum progress (dashboard checkboxes).
   const loadCurriculumProgress = useCallback(async () => {
@@ -2908,7 +2908,7 @@ export default function App() {
   useEffect(() => {
     // Roster also drives the Tryout coach picker / Text Coaches lookup,
     // so make sure it's loaded whenever either tab opens.
-    if (isApproved && (view === "coaches" || view === "tryouts" || view === "home" || view === "clockin" || view === "teamdir" || view === "practice")) loadCoachRoster();
+    if (isApproved && (view === "coaches" || view === "tryouts" || view === "home" || view === "clockin" || view === "teamdir" || view === "practice" || view === "timecards")) loadCoachRoster();
   }, [isApproved, view, loadCoachRoster]);
   // The coach card edits coach_roster, so make sure it's loaded when one opens.
   useEffect(() => { if (isApproved && coachCardName) loadCoachRoster(); }, [isApproved, coachCardName, loadCoachRoster]);
