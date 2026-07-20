@@ -10289,10 +10289,16 @@ export default function App() {
       const teamCanceled = tn => practiceCancellations.some(c => c.practice_date === iso && c.team_name === tn);
       const wd = WD_OF(iso);
       const seen2 = new Set();
-      return [
-        ...practiceAssignments.filter(a => (a.phase||"season")===ph && a.day===wd && myTeamNames.includes(a.team_name) && !teamCanceled(a.team_name)).map(a => ({ team:a.team_name, slot:a.slot, role:"scheduled" })),
-        ...coachFloats.filter(f => (f.phase||"season")===ph && f.day===wd && isMe(f.coach_name)).map(f => ({ team:"", slot:f.slot, role:"float" })),
-      ].filter(x => { const k = x.role+"|"+x.team+"|"+x.slot; if(seen2.has(k)) return false; seen2.add(k); return true; })
+      const scheduled = practiceAssignments.filter(a => (a.phase||"season")===ph && a.day===wd && myTeamNames.includes(a.team_name) && !teamCanceled(a.team_name)).map(a => ({ team:a.team_name, slot:a.slot, role:"scheduled" }));
+      // Dedupe OVERLAPPING float assignments — some coaches have both a 1-hour
+      // and an overlapping 2-hour float for the same window (data entry). Keep
+      // the widest coverage so we don't offer/double-count overlapping shifts.
+      const floats = coachFloats.filter(f => (f.phase||"season")===ph && f.day===wd && isMe(f.coach_name)).map(f => ({ team:"", slot:f.slot, role:"float" }));
+      floats.sort((a,b)=> startH(a.slot)-startH(b.slot) || (endH(b.slot)-startH(b.slot))-(endH(a.slot)-startH(a.slot)));
+      const keptFloats = [];
+      floats.forEach(f => { const s=startH(f.slot), e=endH(f.slot); if(!keptFloats.some(k => s < endH(k.slot) && startH(k.slot) < e)) keptFloats.push(f); });
+      return [...scheduled, ...keptFloats]
+       .filter(x => { const k = x.role+"|"+x.team+"|"+x.slot; if(seen2.has(k)) return false; seen2.add(k); return true; })
        .filter(x => !iAmOut(iso, x.team || null))
        .sort((a,b)=> startH(a.slot)-startH(b.slot) || (a.team||"").localeCompare(b.team||""));
     };
@@ -10324,6 +10330,10 @@ export default function App() {
     const doCheckin = async ({ team, slot, role, dateISO, force }) => {
       const d = dateISO || today;
       if (!force && windowState(slot) !== "open") { window.alert("Check-in opens 30 minutes before the practice starts."); return; }
+      // Guard against overlapping check-ins (e.g. a 1-hr and a 2-hr float that
+      // cover the same window) so hours aren't double-counted.
+      const clash = checkins.find(c => c.check_date===d && norm(c.coach_name)===norm(coachName) && startH(slot) < endH(c.slot) && startH(c.slot) < endH(slot));
+      if (clash && !window.confirm("This overlaps a shift you already logged that day (" + (clash.team_name||"Floating") + " · " + clash.slot + " · " + Number(clash.hours||0) + "h). Log it anyway?")) return;
       const key = (dateISO?dateISO+"|":"")+(team||"float")+"|"+(slot||"")+"|"+role;
       setCheckinBusy(key);
       const row = {
