@@ -12639,11 +12639,34 @@ export default function App() {
     };
     // Availability / interest.
     const myAvail = dsscAvail.find(a => cand.has(norm(a.coach_name)));
-    const setAvail = async (available, note) => {
-      const row = { coach_name: coachName, coach_email: coach?.email||null, available, note: note!==undefined ? note : (myAvail?.note||null), updated_at: new Date().toISOString() };
+    const setAvail = async (patch) => {
+      const row = { coach_name: coachName, coach_email: coach?.email||null, available: patch.available!==undefined?patch.available:(myAvail?.available??true), note: patch.note!==undefined?patch.note:(myAvail?.note||null), skills: patch.skills!==undefined?patch.skills:(myAvail?.skills||null), updated_at: new Date().toISOString() };
       const { error } = await supabase.from("dssc_availability").upsert(row, { onConflict:"coach_name" });
       if (error) { window.alert("Couldn't save: "+error.message); return; }
       await loadDsscAvail();
+    };
+    // Staffing suggestions: who's available + skilled, preferring back-to-back.
+    const coachSessionsMap = (() => { const m={}; clinics.forEach(c => (Array.isArray(c.sessions)?c.sessions:[]).forEach(s => { if(s.coach_name){ (m[norm(s.coach_name)]=m[norm(s.coach_name)]||[]).push({date:s.date, start:parseTime(s.start_time), end:parseTime(s.end_time), court:s.court, name:c.name}); } })); return m; })();
+    const availByName = {}; dsscAvail.forEach(a => { availByName[norm(a.coach_name)] = a; });
+    const suggestForSession = (clinic, s, exclude) => {
+      const st=parseTime(s.start_time), en=parseTime(s.end_time);
+      const target=((clinic.category||"")+" "+(clinic.age_group||"")+" "+(clinic.name||"")).toLowerCase();
+      return coachOptions.map(name => {
+        const nk=norm(name); if(exclude && exclude.has(nk)) return null;
+        const a=availByName[nk], mySess=coachSessionsMap[nk]||[];
+        const clash = mySess.some(x=> x.date===s.date && st!=null && en!=null && x.start!=null && x.end!=null && st<x.end && x.start<en);
+        if(clash) return null;
+        const sameDay=mySess.filter(x=>x.date===s.date);
+        const b2b = sameDay.some(x=> (x.end!=null&&st!=null&&x.end===st) || (x.start!=null&&en!=null&&x.start===en));
+        const skillsTxt=((a?.skills||"")+" "+(a?.note||"")).toLowerCase();
+        const skill = !!skillsTxt.trim() && skillsTxt.split(/[\s,;/|]+/).some(w=>w.length>2 && target.includes(w));
+        let score=0; const reasons=[];
+        if(a?.available){ score+=2; reasons.push("available"); }
+        if(b2b){ score+=6; reasons.push("back-to-back"); } else if(sameDay.length){ score+=3; reasons.push("here that day"); }
+        if(skill){ score+=3; reasons.push("skill"); }
+        if(score===0) return null;
+        return { name, score, reasons };
+      }).filter(Boolean).sort((a,b)=>b.score-a.score).slice(0,4);
     };
 
     const methodBanner = (
@@ -12731,6 +12754,24 @@ export default function App() {
             const setSess = (i, patch) => saveClinic(open.id, { sessions: sessions.map((s,ix)=> ix===i ? {...s,...patch} : s) });
             const unassigned = sessions.filter(s => !s.coach_name).length;
             const sfmt = d => d ? new Date(d+"T12:00:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"}) : "—";
+            // Greedily staff every open session: best-ranked available/skilled coach,
+            // never double-booking anyone across overlapping same-day sessions.
+            const autoFill = () => {
+              const next = sessions.map(s => ({ ...s }));
+              const taken = {}; // nk -> [{date,start,end}] windows already committed
+              next.forEach(s => { if (s.coach_name) { const nk=norm(s.coach_name); (taken[nk]=taken[nk]||[]).push({date:s.date,start:parseTime(s.start_time),end:parseTime(s.end_time)}); } });
+              let filled = 0;
+              next.forEach((s,i) => {
+                if (s.coach_name) return;
+                const st=parseTime(s.start_time), en=parseTime(s.end_time);
+                const exclude = new Set();
+                Object.keys(taken).forEach(nk => { if (taken[nk].some(w => w.date===s.date && st!=null&&en!=null&&w.start!=null&&w.end!=null && st<w.end && w.start<en)) exclude.add(nk); });
+                const sug = suggestForSession(open, s, exclude);
+                if (sug.length) { const pick=sug[0].name; next[i]={...s,coach_name:pick,needsCoverage:false}; const nk=norm(pick); (taken[nk]=taken[nk]||[]).push({date:s.date,start:st,end:en}); filled++; }
+              });
+              if (!filled) { window.alert("No available coaches to auto-fill. Ask coaches to flag availability & skills first."); return; }
+              saveClinic(open.id, { sessions: next });
+            };
             return (
               <div style={S.card}>
                 <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:8}}>
@@ -12752,6 +12793,21 @@ export default function App() {
                           ? <select value={s.coach_name||""} onChange={e=>setSess(i,{coach_name:e.target.value||null})} style={{...S.sel,minWidth:150}}><option value="">⚠ assign coach</option>{coachOptions.map(n=><option key={n} value={n}>{n}</option>)}{s.coach_name && !coachOptions.includes(s.coach_name) && <option value={s.coach_name}>{s.coach_name}</option>}</select>
                           : <span style={{fontSize:12,fontWeight:700,color:s.coach_name?C.grn:"#f59e0b"}}>{s.coach_name?("Coach "+s.coach_name):"needs a coach"}</span>}
                       </div>
+                      {canManage && !s.coach_name && (() => {
+                        const sug = suggestForSession(open, s);
+                        if (!sug.length) return null;
+                        const rlabel = r => r.includes("back-to-back")?"⚡ back-to-back":r.includes("here that day")?"📍 here that day":r.includes("available")?"✅ available":r.includes("skill")?"🎯 skill fit":"";
+                        return (
+                          <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:7,alignItems:"center"}}>
+                            <span style={{fontSize:10,fontWeight:800,textTransform:"uppercase",color:C.mut}}>Suggested:</span>
+                            {sug.map(g => (
+                              <button key={g.name} onClick={()=>setSess(i,{coach_name:g.name,needsCoverage:false})} title={g.reasons.map(rlabel).filter(Boolean).join(" · ")} style={{padding:"3px 9px",borderRadius:999,border:"1px solid "+(g.reasons.includes("back-to-back")?"#a855f7":C.border),background:g.reasons.includes("back-to-back")?"rgba(168,85,247,0.12)":"transparent",color:C.text,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",display:"inline-flex",alignItems:"center",gap:5}}>
+                                {g.name}<span style={{fontSize:9,color:C.mut,fontWeight:600}}>{g.reasons.map(rlabel).filter(Boolean)[0]}</span>
+                              </button>
+                            ))}
+                          </div>
+                        );
+                      })()}
                       {prev && (prev.focus||prev.recap) && (
                         <div style={{fontSize:11,color:C.mut,marginTop:6,paddingLeft:10,borderLeft:"2px solid #06b6d4",lineHeight:1.5}}>
                           <b style={{color:"#22d3ee"}}>Last session ({sfmt(prev.date)}{prev.coach_name?" · "+prev.coach_name:""}):</b>{prev.focus?" Focus — "+prev.focus:""}{prev.recap?" · Recap — "+prev.recap:""}
@@ -12771,7 +12827,12 @@ export default function App() {
                     );
                   })}
                 </div>
-                {canManage && open.coach_name && unassigned>0 && <button style={{...S.ghost,marginTop:8}} onClick={()=>saveClinic(open.id,{sessions:sessions.map(s=>s.coach_name?s:{...s,coach_name:open.coach_name})})}>Assign {open.coach_name} to all open sessions</button>}
+                {canManage && unassigned>0 && (
+                  <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:8}}>
+                    <button style={{...S.gold}} onClick={autoFill} title="Fill every open session with the best available, skilled coach — favoring back-to-back so coaches work consecutive shifts">⚡ Auto-fill {unassigned} open session{unassigned===1?"":"s"}</button>
+                    {open.coach_name && <button style={S.ghost} onClick={()=>saveClinic(open.id,{sessions:sessions.map(s=>s.coach_name?s:{...s,coach_name:open.coach_name})})}>Assign {open.coach_name} to all</button>}
+                  </div>
+                )}
               </div>
             );
           })()}
@@ -12968,15 +13029,18 @@ export default function App() {
               <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:8}}>
                 <div style={{...S.lbl,marginBottom:0}}>Coach availability for clinics</div>
                 <div style={{flex:1}} />
-                <button onClick={()=>setAvail(!(myAvail?.available))} style={{padding:"5px 12px",borderRadius:8,border:"1px solid "+(myAvail?.available?C.grn:C.border),background:myAvail?.available?"rgba(34,197,94,0.12)":"transparent",color:myAvail?.available?C.grn:C.text,fontWeight:800,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>{myAvail?.available?"✓ I'm available":"I'm available to help"}</button>
+                <button onClick={()=>setAvail({available:!(myAvail?.available)})} style={{padding:"5px 12px",borderRadius:8,border:"1px solid "+(myAvail?.available?C.grn:C.border),background:myAvail?.available?"rgba(34,197,94,0.12)":"transparent",color:myAvail?.available?C.grn:C.text,fontWeight:800,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>{myAvail?.available?"✓ I'm available":"I'm available to help"}</button>
               </div>
-              {myAvail?.available && <DebouncedField value={myAvail?.note||""} onCommit={v=>setAvail(true, v)} placeholder="When can you help? (days/times, which programs)" style={{...S.sel,width:"100%",marginBottom:8,boxSizing:"border-box"}} />}
+              {myAvail?.available && <>
+                <DebouncedField value={myAvail?.note||""} onCommit={v=>setAvail({note:v})} placeholder="When can you help? (days/times)" style={{...S.sel,width:"100%",marginBottom:6,boxSizing:"border-box"}} />
+                <DebouncedField value={myAvail?.skills||""} onCommit={v=>setAvail({skills:v})} placeholder="What can you coach? (levels, ages, focus — e.g. beginner, serving, U11-14)" style={{...S.sel,width:"100%",marginBottom:8,boxSizing:"border-box"}} />
+              </>}
               {isDirector && (
                 interested.length ? (
                   <div style={{display:"flex",flexDirection:"column",gap:4}}>
                     <div style={{fontSize:10,fontWeight:800,textTransform:"uppercase",color:C.mut}}>Interested ({interested.length})</div>
                     {interested.slice().sort((a,b)=>(a.coach_name||"").localeCompare(b.coach_name||"")).map(a => (
-                      <div key={a.coach_name} style={{fontSize:12,color:C.text}}><b>{a.coach_name}</b>{a.note?<span style={{color:C.mut}}> — {a.note}</span>:""}</div>
+                      <div key={a.coach_name} style={{fontSize:12,color:C.text}}><b>{a.coach_name}</b>{a.skills?<span style={{color:"#22d3ee"}}> · {a.skills}</span>:""}{a.note?<span style={{color:C.mut}}> — {a.note}</span>:""}</div>
                     ))}
                   </div>
                 ) : <div style={{fontSize:12,color:C.mut}}>No coaches have flagged availability yet.</div>
