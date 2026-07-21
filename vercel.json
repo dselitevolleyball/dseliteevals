@@ -11,6 +11,7 @@
     { "path": "/api/open-shifts", "schedule": "0 1 * * *" },
     { "path": "/api/hours-approval-reminder", "schedule": "0 15 * * 1" },
     { "path": "/api/dssc-plan-reminder", "schedule": "0 14 * * *" },
+    { "path": "/api/aes-poll", "schedule": "0 13 * * *" },
     { "path": "/api/daily-changelog", "schedule": "0 17 * * *" }
   ]
 }

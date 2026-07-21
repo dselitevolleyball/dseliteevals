@@ -1203,6 +1203,9 @@ export default function App() {
   const [dsscAvail, setDsscAvail]       = useState([]);     // coach availability/interest for clinics
   const [dsscSync, setDsscSync]         = useState(null);   // last Playbook→clinics sync {last_synced_at, summary}
   const [dsscSyncTok, setDsscSyncTok]   = useState(null);   // built sync bookmarklet {href, calendarUrl} | {configured:false} | {error}
+  const [aesEvents, setAesEvents]       = useState([]);     // Lone Star region AES events (mirrored by api/aes-poll)
+  const [aesQuery, setAesQuery]         = useState("");
+  const [aesRegOnly, setAesRegOnly]     = useState(false);
   const [clinicBusy, setClinicBusy]     = useState("");     // key of clinic action in flight
   const [drills, setDrills]     = useState([]);     // shared drill library
   const [drillFilter, setDrillFilter] = useState({ q:"", skill:"", phase:"" });
@@ -2067,6 +2070,12 @@ export default function App() {
     const { data } = await supabase.from("dssc_sync").select("*").eq("id", 1).maybeSingle();
     setDsscSync(data || null);
   }, []);
+  const loadAesEvents = useCallback(async () => {
+    const today = new Date().toLocaleDateString("en-CA");
+    const { data, error } = await supabase.from("aes_events").select("*").gte("end_date", today).order("start_date");
+    if (error) { console.error("Load aes_events error:", error); return; }
+    setAesEvents(data || []);
+  }, []);
   // Build the one-click "Sync DSSC clinics" bookmarklet. Fetches the shared
   // secret (admin-only) and assembles a javascript: URL the director drags to
   // their bookmarks bar; clicking it on the Playbook calendar page reads
@@ -2086,6 +2095,7 @@ export default function App() {
   }, []);
   useEffect(() => { if (isApproved && (view === "clinics" || view === "home")) { loadClinics(); loadDsscCheckins(); } }, [isApproved, view, loadClinics, loadDsscCheckins]);
   useEffect(() => { if (isApproved && view === "clinics") { loadPlaybook(); loadDsscAvail(); loadDsscSync(); } }, [isApproved, view, loadPlaybook, loadDsscAvail, loadDsscSync]);
+  useEffect(() => { if (isApproved && view === "aesevents") loadAesEvents(); }, [isApproved, view, loadAesEvents]);
   const saveCharter = useCallback(async (team, data) => {
     if (!team) return;
     const row = { team_name: team, data, updated_by: coach?.display_name || coach?.email || null, updated_at: new Date().toISOString() };
@@ -12573,6 +12583,70 @@ export default function App() {
     );
   }
 
+  // ── Lone Star events (AES) ──────────────────────────────────────────────
+  // Live mirror of the public AES event feed for the Lone Star region, pulled
+  // by api/aes-poll. Admin-only browse; new events also push/email Drew.
+  function renderAesEvents() {
+    if (!canOps) return <div style={{color:C.mut,fontSize:14,padding:20}}>Lone Star events are admin-only.</div>;
+    const S = {
+      card:{ background:C.card, border:"1px solid "+C.border, borderRadius:12, padding:16, marginBottom:14 },
+      sel:{ background:C.bg, border:"1px solid "+C.border, borderRadius:8, color:C.text, fontFamily:"inherit", fontSize:13, padding:"8px 10px" },
+    };
+    const q = aesQuery.trim().toLowerCase();
+    const rows = aesEvents
+      .filter(e => !aesRegOnly || e.reg_open)
+      .filter(e => !q || (e.name||"").toLowerCase().includes(q) || (e.city||"").toLowerCase().includes(q));
+    const monthOf = e => { const d=e.start_date||""; return d ? new Date(d+"T12:00:00").toLocaleDateString(undefined,{month:"long",year:"numeric"}) : "Dates TBD"; };
+    const drange = e => {
+      const f = iso => iso ? new Date(iso+"T12:00:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"}) : "";
+      return e.end_date && e.end_date!==e.start_date ? f(e.start_date)+" – "+f(e.end_date) : f(e.start_date);
+    };
+    const groups = []; let cur = null;
+    rows.forEach(e => { const m=monthOf(e); if(!cur||cur.m!==m){ cur={m, items:[]}; groups.push(cur);} cur.items.push(e); });
+    const regOpenCount = aesEvents.filter(e=>e.reg_open).length;
+
+    return (
+      <div style={{maxWidth:820,margin:"0 auto"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:4}}>
+          <h2 style={{margin:0,fontSize:20,fontWeight:800,color:C.text}}>🏐 Lone Star events</h2>
+          <span style={{fontSize:11,fontWeight:700,color:"#22d3ee",background:"rgba(6,182,212,0.12)",border:"1px solid #06b6d4",borderRadius:999,padding:"2px 9px"}}>LIVE · AES feed</span>
+        </div>
+        <div style={{fontSize:12,color:C.mut,marginBottom:14}}>Every upcoming Lone Star Region (USAV) event on Advanced Event Systems. Updated daily — you get a push/email the moment a new one is posted.</div>
+
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",marginBottom:14}}>
+          <input value={aesQuery} onChange={e=>setAesQuery(e.target.value)} placeholder="Search name or city…" style={{...S.sel,flex:1,minWidth:180}} />
+          <button onClick={()=>setAesRegOnly(v=>!v)} style={{padding:"8px 12px",borderRadius:8,border:"1px solid "+(aesRegOnly?C.grn:C.border),background:aesRegOnly?"rgba(34,197,94,0.12)":"transparent",color:aesRegOnly?C.grn:C.text,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>{aesRegOnly?"✓ Registration open":"Registration open"}{regOpenCount?` (${regOpenCount})`:""}</button>
+          <button onClick={loadAesEvents} title="Reload" style={{padding:"8px 12px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.text,fontWeight:600,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>↻</button>
+        </div>
+
+        <div style={{fontSize:12,color:C.mut,marginBottom:10}}>{rows.length} of {aesEvents.length} upcoming</div>
+
+        {aesEvents.length===0 ? (
+          <div style={{...S.card,color:C.mut,fontSize:13}}>No Lone Star events loaded yet. The daily sync populates this — or ask Drew to run it once.</div>
+        ) : groups.map(g => (
+          <div key={g.m} style={{marginBottom:16}}>
+            <div style={{fontSize:11,fontWeight:800,textTransform:"uppercase",letterSpacing:0.4,color:C.mut,marginBottom:6}}>{g.m}</div>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {g.items.map(e => (
+                <a key={e.event_id} href={e.url} target="_blank" rel="noreferrer" style={{textDecoration:"none",display:"block"}}>
+                  <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:10,padding:"11px 13px",display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+                    <div style={{minWidth:120,fontSize:13,fontWeight:700,color:C.text}}>{drange(e)}</div>
+                    <div style={{flex:1,minWidth:160}}>
+                      <div style={{fontSize:14,fontWeight:700,color:C.text}}>{e.name}</div>
+                      <div style={{fontSize:12,color:C.mut}}>{[e.city,e.state].filter(Boolean).join(", ")||"Location TBD"}</div>
+                    </div>
+                    {e.reg_open && <span style={{fontSize:10,fontWeight:800,color:C.grn,background:"rgba(34,197,94,0.12)",border:"1px solid "+C.grn,borderRadius:6,padding:"2px 7px"}}>REG OPEN</span>}
+                    <span style={{fontSize:12,color:"#22d3ee",fontWeight:700}}>View →</span>
+                  </div>
+                </a>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
   // ── DSSC Clinics & Camps ────────────────────────────────────────────────
   // Lives inside DS Elite (shared login/coaches). Hunter (director) schedules
   // clinics, assigns a coach, and sets goals/level/expectations + a plan that
@@ -17118,7 +17192,7 @@ export default function App() {
                 { title:"Tryouts", items:[["dashboard","Dashboard"], ["evaluate","Evaluate"], ["favorites","My Favorites" + (favorites.length ? " (" + favorites.length + ")" : "")], ...(canViewTeams ? [["teams","Teams"]] : []), ["rankings","Rankings"], ["physical","Physical Testing"], ["tryouts","Coach Assignments"]] },
                 ...(canOps ? [{ title:"Operations", items:[
                   ["hdr","Club"],
-                  ["tracker","Tracker"], ["teamdir","All Teams"], ["practice","Practice"], ["scholarships","Scholarships"],
+                  ["tracker","Tracker"], ["teamdir","All Teams"], ["practice","Practice"], ["clinics","DSSC Clinics"], ["aesevents","Lone Star events"], ["scholarships","Scholarships"],
                   ["hdr","Coaches & Pay"],
                   ["coaches","Coaches"], ["coverage","Coach Coverage"], ["timecards","Time Cards"], ["requests","Requests" + (pendingReqs ? " (" + pendingReqs + ")" : "")],
                   ["hdr","Communication"],
@@ -17337,6 +17411,7 @@ export default function App() {
         {view==="faq" && renderFaq()}
         {view==="practiceplan" && renderPracticePlans()}
         {view==="clinics" && renderClinics()}
+        {view==="aesevents" && renderAesEvents()}
         {view==="lineups" && renderLineups()}
         {view==="games" && renderGames()}
         {view==="askai" && renderAskAI()}
