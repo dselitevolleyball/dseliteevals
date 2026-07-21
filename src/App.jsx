@@ -12574,6 +12574,35 @@ export default function App() {
             </div>
           </div>
 
+          {/* Sessions — recurring dates, each needs a coach */}
+          {(() => {
+            const sessions = Array.isArray(open.sessions) ? open.sessions : [];
+            if (!sessions.length) return null;
+            const setSess = (i, patch) => saveClinic(open.id, { sessions: sessions.map((s,ix)=> ix===i ? {...s,...patch} : s) });
+            const unassigned = sessions.filter(s => !s.coach_name).length;
+            const sfmt = d => d ? new Date(d+"T12:00:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"}) : "—";
+            return (
+              <div style={S.card}>
+                <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:8}}>
+                  <div style={{...S.lbl,marginBottom:0}}>Sessions ({sessions.length})</div>
+                  {unassigned>0 ? <span style={{fontSize:11,fontWeight:800,color:"#f59e0b"}}>⚠ {unassigned} need a coach</span> : <span style={{fontSize:11,fontWeight:800,color:C.grn}}>✓ all covered</span>}
+                </div>
+                <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                  {sessions.map((s,i) => (
+                    <div key={s.id||i} style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",padding:"7px 10px",borderRadius:8,border:"1px solid "+(s.coach_name?C.border:"#f59e0b"),background:s.coach_name?C.bg:"rgba(245,158,11,0.06)"}}>
+                      <span style={{fontSize:13,fontWeight:700,color:C.text,minWidth:120}}>{sfmt(s.date)}</span>
+                      <span style={{fontSize:12,color:C.mut,flex:1,minWidth:100}}>{s.start_time}{s.end_time?"–"+s.end_time:""}{s.court?" · "+s.court:""}</span>
+                      {canManage
+                        ? <select value={s.coach_name||""} onChange={e=>setSess(i,{coach_name:e.target.value||null})} style={{...S.sel,minWidth:150}}><option value="">⚠ assign coach</option>{coachOptions.map(n=><option key={n} value={n}>{n}</option>)}{s.coach_name && !coachOptions.includes(s.coach_name) && <option value={s.coach_name}>{s.coach_name}</option>}</select>
+                        : <span style={{fontSize:12,fontWeight:700,color:s.coach_name?C.grn:"#f59e0b"}}>{s.coach_name?("Coach "+s.coach_name):"needs a coach"}</span>}
+                    </div>
+                  ))}
+                </div>
+                {canManage && open.coach_name && unassigned>0 && <button style={{...S.ghost,marginTop:8}} onClick={()=>saveClinic(open.id,{sessions:sessions.map(s=>s.coach_name?s:{...s,coach_name:open.coach_name})})}>Assign {open.coach_name} to all open sessions</button>}
+              </div>
+            );
+          })()}
+
           {/* Plan — goals / level / expectations + blocks */}
           <div style={S.card}>
             <div style={S.lbl}>Clinic plan</div>
@@ -12614,22 +12643,30 @@ export default function App() {
 
     // ── Clinic list ────────────────────────────────────────────────────────
     const today = localDateISO();
-    const upcoming = clinics.filter(c => !c.clinic_date || c.clinic_date >= today);
-    const past = clinics.filter(c => c.clinic_date && c.clinic_date < today).reverse();
-    const row = c => (
+    const lastDate = c => { const ss=Array.isArray(c.sessions)?c.sessions:[]; return ss.length ? ss.map(s=>s.date).sort().slice(-1)[0] : c.clinic_date; };
+    const isUpcoming = c => { const ld=lastDate(c); return !ld || ld >= today; };
+    const needCoach = c => (Array.isArray(c.sessions)?c.sessions:[]).filter(s=>!s.coach_name).length;
+    const upcoming = clinics.filter(isUpcoming);
+    const past = clinics.filter(c => !isUpcoming(c)).reverse();
+    const row = c => {
+      const ss = Array.isArray(c.sessions) ? c.sessions : [];
+      const need = needCoach(c);
+      return (
       <button key={c.id} onClick={()=>setClinicOpenId(c.id)} style={{display:"flex",alignItems:"center",gap:12,textAlign:"left",width:"100%",padding:"11px 13px",borderRadius:10,border:"1px solid "+(isMine(c)?C.gold:C.border),background:isMine(c)?"rgba(233,30,140,0.05)":C.bg,cursor:"pointer",fontFamily:"inherit",marginBottom:8}}>
         <div style={{minWidth:96}}>
           <div style={{fontSize:13,fontWeight:800,color:C.text}}>{fmtDate(c.clinic_date)}</div>
-          <div style={{fontSize:11,color:C.mut}}>{c.start_time||""}{c.start_time&&c.end_time?"–":""}{c.end_time||""}</div>
+          <div style={{fontSize:11,color:C.mut}}>{ss.length ? ss.length+" sessions" : (c.start_time||"")+((c.start_time&&c.end_time)?"–":"")+(c.end_time||"")}</div>
         </div>
         <div style={{flex:1,minWidth:120}}>
           <div style={{fontSize:14,fontWeight:700,color:C.text}}>{c.name}</div>
-          <div style={{fontSize:11,color:C.mut,marginTop:1}}>{[c.age_group,c.level,c.location].filter(Boolean).join(" · ")||"—"} · {c.coach_name?("Coach "+c.coach_name):"unassigned"}</div>
+          <div style={{fontSize:11,color:C.mut,marginTop:1}}>{[c.age_group,c.category||c.level,c.location].filter(Boolean).join(" · ")||"—"}{c.coach_name?" · Coach "+c.coach_name:""}</div>
         </div>
+        {need>0 && <span style={{fontSize:9,fontWeight:800,color:"#f59e0b",border:"1px solid #f59e0b",borderRadius:5,padding:"1px 6px"}}>⚠ {need} need coach</span>}
         <span style={{fontSize:9,fontWeight:800,color:KIND[c.kind]?.[1],border:"1px solid "+KIND[c.kind]?.[1],borderRadius:5,padding:"1px 6px",textTransform:"uppercase"}}>{KIND[c.kind]?.[0]}</span>
         <span style={{fontSize:9,fontWeight:800,color:STATUS[c.status]?.[1],border:"1px solid "+STATUS[c.status]?.[1],borderRadius:5,padding:"1px 6px",textTransform:"uppercase"}}>{STATUS[c.status]?.[0]}</span>
       </button>
-    );
+      );
+    };
     return (
       <div style={{maxWidth:900,margin:"0 auto"}}>
         <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:12}}>
