@@ -1190,6 +1190,7 @@ export default function App() {
   const [ppRun, setPpRun]       = useState(null); // live practice runner: { idx, endsAt, paused, remainingMs }
   const [ppNow, setPpNow]       = useState(0);    // tick to re-render the countdown
   const ppDingRef               = useRef({});     // which block-end beeps have fired
+  const [clinicRun, setClinicRun] = useState(null); // live DSSC clinic runner (same engine)
   const [ppSaved, setPpSaved]   = useState("");   // "", "saving", "saved", "err"
   const ppSkipSave = useRef(true);
   const [ppTab, setPpTab]       = useState("plan"); // plan | season | drills
@@ -2052,7 +2053,8 @@ export default function App() {
     if (error) { console.error("Load dssc_checkins error:", error); return; }
     setDsscCheckins(data || []);
   }, []);
-  useEffect(() => { if (isApproved && view === "clinics") { loadClinics(); loadDsscCheckins(); loadPlaybook(); } }, [isApproved, view, loadClinics, loadDsscCheckins, loadPlaybook]);
+  useEffect(() => { if (isApproved && (view === "clinics" || view === "home")) { loadClinics(); loadDsscCheckins(); } }, [isApproved, view, loadClinics, loadDsscCheckins]);
+  useEffect(() => { if (isApproved && view === "clinics") loadPlaybook(); }, [isApproved, view, loadPlaybook]);
   const saveCharter = useCallback(async (team, data) => {
     if (!team) return;
     const row = { team_name: team, data, updated_by: coach?.display_name || coach?.email || null, updated_at: new Date().toISOString() };
@@ -2098,6 +2100,20 @@ export default function App() {
       if (navigator.vibrate) { try { navigator.vibrate([200, 100, 200]); } catch { /* */ } }
     }
   }, [ppNow, ppRun]);
+  // Same runner engine for DSSC clinics.
+  useEffect(() => {
+    if (!clinicRun || clinicRun.paused) return;
+    const t = setInterval(() => setPpNow(Date.now()), 500);
+    return () => clearInterval(t);
+  }, [clinicRun]);
+  useEffect(() => {
+    if (!clinicRun || clinicRun.paused) return;
+    if (clinicRun.endsAt - Date.now() <= 0 && !ppDingRef.current["c" + clinicRun.idx]) {
+      ppDingRef.current["c" + clinicRun.idx] = true;
+      try { const AC = window.AudioContext || window.webkitAudioContext; if (AC) { const a = new AC(); const o = a.createOscillator(); const g = a.createGain(); o.connect(g); g.connect(a.destination); o.type = "sine"; o.frequency.value = 880; g.gain.value = 0.12; o.start(); setTimeout(() => { try { o.stop(); a.close(); } catch { /* */ } }, 450); } } catch { /* */ }
+      if (navigator.vibrate) { try { navigator.vibrate([200, 100, 200]); } catch { /* */ } }
+    }
+  }, [ppNow, clinicRun]);
   // Coach card (openable from any view) shows pay — needs rates + check-ins.
   // Declared after the loaders above to avoid a TDZ on the useCallback consts.
   useEffect(() => { if (isApproved && coachCardName) { loadCoachRates(); loadCheckins(); } }, [isApproved, coachCardName, loadCoachRates, loadCheckins]);
@@ -4866,6 +4882,39 @@ export default function App() {
           <div style={{fontSize:12,color:C.mut,marginTop:3}}>Clock in, plan, and see what's next.</div>
         </div>
         {renderCheckIn(true)}
+
+        {/* Your DSSC clinics — for coaches assigned to clinic sessions */}
+        {(() => {
+          const nrm = s => (s||"").toString().trim().toLowerCase();
+          const cand = new Set(); if (coach?.display_name) cand.add(nrm(coach.display_name));
+          const mr = coachRoster.find(r => coach?.email && nrm(r.email)===nrm(coach.email));
+          if (mr) cand.add(nrm(((mr.first_name||"")+" "+(mr.last_name||"")).trim()));
+          const todayISO = localDateISO();
+          const mine = [];
+          (clinics||[]).forEach(c => (Array.isArray(c.sessions)?c.sessions:[]).forEach(s => { if (s.coach_name && cand.has(nrm(s.coach_name)) && s.date >= todayISO) mine.push({ c, s }); }));
+          if (!mine.length) return null;
+          mine.sort((a,b)=> (a.s.date||"").localeCompare(b.s.date||""));
+          const sfmt = d => d===todayISO ? "Today" : new Date(d+"T12:00:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"});
+          return (
+            <div style={{background:"rgba(6,182,212,0.06)",border:"1px solid #06b6d4",borderRadius:12,padding:"12px 14px",marginBottom:14}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+                <span style={{fontSize:11,fontWeight:800,textTransform:"uppercase",letterSpacing:0.4,color:"#22d3ee"}}>🏐 Your DSSC clinics</span>
+                <div style={{flex:1}} />
+                <button onClick={()=>setView("clinics")} style={{background:"none",border:"none",color:"#22d3ee",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700}}>Open DSSC →</button>
+              </div>
+              <div style={{display:"flex",flexDirection:"column",gap:5}}>
+                {mine.slice(0,4).map(({c,s},i) => (
+                  <div key={s.id||i} style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:C.text}}>
+                    <span style={{minWidth:90,fontWeight:700,color:s.date===todayISO?C.gold:C.text}}>{sfmt(s.date)}</span>
+                    <span style={{flex:1}}>{c.name}</span>
+                    <span style={{fontSize:12,color:C.mut}}>{s.start_time}{s.court?" · "+s.court:""}</span>
+                  </div>
+                ))}
+                {mine.length>4 && <div style={{fontSize:11,color:C.mut}}>+{mine.length-4} more</div>}
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Quick actions — the things a coach actually comes here to do. */}
         {(() => {
@@ -12565,6 +12614,12 @@ export default function App() {
       const blocks = Array.isArray(plan.blocks) ? plan.blocks : [];
       const setPlan = (next) => saveClinic(open.id, { plan: { ...plan, ...next } });
       const setBlock = (i, patch) => setPlan({ blocks: blocks.map((b,ix)=> ix===i ? {...b,...patch} : b) });
+      // Clinic runner (same engine as the practice execution tool).
+      const runGoTo = (i) => { const mins=Number(blocks[i]?.minutes)||10; ppDingRef.current["c"+i]=false; setClinicRun(r=>({...r, idx:i, paused:false, endsAt:Date.now()+mins*60000, remainingMs:null})); };
+      const launchClinicRun = () => { if(!blocks.length){ window.alert("Add plan blocks first."); return; } ppDingRef.current={}; setClinicRun({ idx:0, paused:false, endsAt:Date.now()+(Number(blocks[0].minutes)||10)*60000, remainingMs:null }); };
+      const runPause  = () => setClinicRun(r=> r.paused ? r : ({...r, paused:true, remainingMs:r.endsAt-Date.now()}));
+      const runResume = () => setClinicRun(r=> !r.paused ? r : ({...r, paused:false, endsAt:Date.now()+(r.remainingMs||0)}));
+      const runAddMin = () => setClinicRun(r=> r.paused ? ({...r, remainingMs:(r.remainingMs||0)+60000}) : ({...r, endsAt:r.endsAt+60000}));
       const field = (label, key, ph, rows) => (
         <div style={{marginBottom:10}}>
           <div style={S.lbl}>{label}</div>
@@ -12645,7 +12700,11 @@ export default function App() {
 
           {/* Plan — goals / level / expectations + blocks */}
           <div style={S.card}>
-            <div style={S.lbl}>Clinic plan</div>
+            <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:8}}>
+              <div style={{...S.lbl,marginBottom:0}}>Clinic plan</div>
+              <div style={{flex:1}} />
+              {canFeedback && blocks.length>0 && <button style={S.gold} onClick={launchClinicRun} title="Run the clinic with per-block timers">▶ Launch clinic</button>}
+            </div>
             {field("Goals","goals","What players should walk away with…")}
             {field("Focus / level of training","focus","Skills & concepts, matched to the level (e.g. platform, serving mechanics, movement)…")}
             {field("Expectations for the coach","expectations","Energy, structure, safety, communication, our standards…")}
@@ -12677,6 +12736,59 @@ export default function App() {
               ? <AutoTextarea value={open.director_notes||""} onChange={e=>saveClinic(open.id,{director_notes:e.target.value})} minRows={2} placeholder="Oversight: coaching quality, follow-ups, what to adjust next time…" style={{...S.sel,width:"100%",fontSize:13,lineHeight:1.5,boxSizing:"border-box"}} />
               : <div style={{fontSize:13,color:open.director_notes?C.text:C.mut,whiteSpace:"pre-wrap",lineHeight:1.5}}>{open.director_notes||"—"}</div>}
           </div>
+
+          {/* Clinic runner overlay */}
+          {clinicRun && (() => {
+            const idx = clinicRun.idx, b = blocks[idx] || {};
+            const remMs = clinicRun.paused ? (clinicRun.remainingMs||0) : (clinicRun.endsAt - Date.now());
+            const over = remMs < 0, soon = !over && remMs <= 60000;
+            const secs = Math.max(0, Math.ceil(Math.abs(remMs)/1000));
+            const mmss = Math.floor(secs/60)+":"+String(secs%60).padStart(2,"0");
+            const col = over ? C.red : soon ? "#f59e0b" : C.grn;
+            const blockMs = (Number(b.minutes)||10)*60000, pct = Math.max(0,Math.min(100, over?0:(remMs/blockMs)*100));
+            const next = () => { if(idx<blocks.length-1) runGoTo(idx+1); };
+            return (
+              <div style={{position:"fixed",inset:0,zIndex:100,background:"#0a0a0a",overflowY:"auto"}}>
+                <div style={{maxWidth:640,margin:"0 auto",padding:"14px 16px 40px"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+                    <div style={{fontSize:13,fontWeight:800,color:C.gold}}>{open.name}</div>
+                    <div style={{flex:1}} />
+                    <button style={S.ghost} onClick={()=>setClinicRun(null)}>Exit</button>
+                  </div>
+                  <div style={{fontSize:11,fontWeight:800,textTransform:"uppercase",letterSpacing:0.5,color:C.mut,textAlign:"center"}}>Block {idx+1} of {blocks.length}{over?" · TIME UP":soon?" · finishing":""}</div>
+                  <div style={{fontSize:24,fontWeight:900,color:C.text,textAlign:"center",lineHeight:1.15,margin:"4px 0 2px"}}>{b.name||"Block"}</div>
+                  <div style={{fontSize:64,fontWeight:900,color:col,textAlign:"center",lineHeight:1,fontVariantNumeric:"tabular-nums"}}>{over?"+":""}{mmss}</div>
+                  <div style={{height:6,borderRadius:3,background:"rgba(255,255,255,0.08)",overflow:"hidden",margin:"8px 0 2px"}}><div style={{height:"100%",width:pct+"%",background:col,transition:"width .4s linear"}} /></div>
+                  {clinicRun.paused && <div style={{fontSize:12,fontWeight:800,color:"#f59e0b",textAlign:"center"}}>⏸ Paused</div>}
+                  <div style={{display:"flex",gap:8,justifyContent:"center",margin:"14px 0",flexWrap:"wrap"}}>
+                    <button onClick={()=>idx>0&&runGoTo(idx-1)} disabled={idx===0} style={{...S.ghost,fontSize:20,padding:"10px 14px",opacity:idx===0?0.4:1}}>⏮</button>
+                    {clinicRun.paused
+                      ? <button onClick={runResume} style={{padding:"12px 24px",borderRadius:12,border:"none",background:C.grn,color:"#04240f",fontWeight:900,fontSize:18,cursor:"pointer",fontFamily:"inherit"}}>▶ Resume</button>
+                      : <button onClick={runPause} style={{padding:"12px 24px",borderRadius:12,border:"none",background:"#f59e0b",color:"#000",fontWeight:900,fontSize:18,cursor:"pointer",fontFamily:"inherit"}}>⏸ Pause</button>}
+                    <button onClick={runAddMin} style={{...S.ghost,fontSize:14,fontWeight:800,padding:"10px 12px"}}>+1:00</button>
+                    <button onClick={()=>runGoTo(idx)} style={{...S.ghost,fontSize:18,padding:"10px 14px"}}>↺</button>
+                    <button onClick={next} disabled={idx>=blocks.length-1} style={{...S.ghost,fontSize:20,padding:"10px 14px",opacity:idx>=blocks.length-1?0.4:1}}>⏭</button>
+                  </div>
+                  {b.desc && <div style={{fontSize:13,color:C.text,lineHeight:1.5,background:C.card,border:"1px solid "+C.border,borderRadius:10,padding:"10px 12px",marginBottom:10}}>{b.desc}</div>}
+                  <div style={{marginBottom:14}}>
+                    <div style={{fontSize:10,fontWeight:800,textTransform:"uppercase",letterSpacing:0.3,color:C.mut,marginBottom:4}}>📝 How did it go?</div>
+                    <AutoTextarea value={b.notes||""} onChange={e=>setBlock(idx,{notes:e.target.value})} minRows={2} placeholder="What worked, what to fix, standout kids…" style={{...S.sel,width:"100%",fontSize:14,lineHeight:1.5,boxSizing:"border-box"}} />
+                  </div>
+                  <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:16}}>
+                    {blocks.map((bl,i)=>(
+                      <button key={bl.id||i} onClick={()=>runGoTo(i)} style={{display:"flex",alignItems:"center",gap:10,textAlign:"left",padding:"9px 12px",borderRadius:10,border:"1px solid "+(i===idx?C.gold:C.border),background:i===idx?"rgba(233,30,140,0.10)":C.card,cursor:"pointer",fontFamily:"inherit"}}>
+                        <span style={{fontSize:12,fontWeight:800,color:i===idx?C.gold:C.mut,minWidth:20}}>{i+1}</span>
+                        <span style={{flex:1,fontSize:13,fontWeight:i===idx?800:600,color:C.text}}>{bl.name||"Block"}</span>
+                        {(bl.notes||"").trim() && <span>📝</span>}
+                        <span style={{fontSize:12,color:C.mut,fontWeight:700}}>{Number(bl.minutes)||0}m</span>
+                      </button>
+                    ))}
+                  </div>
+                  <button onClick={()=>{ if(window.confirm("End the clinic run?")){ setClinicRun(null); if((open.status||"")!=="done") saveClinic(open.id,{status:"done"}); } }} style={{width:"100%",padding:"14px",borderRadius:12,border:"none",background:C.gold,color:"#000",fontWeight:900,fontSize:16,cursor:"pointer",fontFamily:"inherit"}}>✓ End clinic</button>
+                </div>
+              </div>
+            );
+          })()}
         </div>
       );
     }
@@ -12752,6 +12864,44 @@ export default function App() {
                 </div>
               ) : <div style={{fontSize:12,color:C.mut}}>No clinic today.</div>}
               {upNext && <div style={{fontSize:11,color:C.mut,marginTop:8}}>Next: <b style={{color:C.text}}>{upNext.c.name}</b> · {sfmt(upNext.s.date)} {upNext.s.start_time}</div>}
+            </div>
+          );
+        })()}
+
+        {/* DSSC clinic hours & pay — $25/hr flat, separate from DS Elite payroll */}
+        {isDirector && dsscCheckins.length>0 && (() => {
+          const RATE = 25;
+          const money = n => "$"+Number(n||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+          const g = {};
+          dsscCheckins.forEach(c => { const r = g[c.coach_name] = g[c.coach_name]||{coach:c.coach_name, hours:0, unpaidHours:0, ids:[]}; r.hours+=Number(c.hours||0); if(!c.paid){ r.unpaidHours+=Number(c.hours||0); r.ids.push(c.id); } });
+          const list = Object.values(g).sort((a,b)=>a.coach.localeCompare(b.coach));
+          const totH = list.reduce((s,x)=>s+x.hours,0), totUnpaid = list.reduce((s,x)=>s+x.unpaidHours,0);
+          const markPaid = async (ids) => { if(!ids.length) return; await supabase.from("dssc_checkins").update({ paid:true, paid_at:new Date().toISOString() }).in("id", ids); await loadDsscCheckins(); };
+          const exportCsv = () => {
+            const lines=[["Date","Coach","Clinic","Hours","Rate","Amount","Paid"].join(",")];
+            dsscCheckins.slice().sort((a,b)=>(a.session_date||"").localeCompare(b.session_date||"")).forEach(c=>{ const esc=v=>{const s=v==null?"":String(v);return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;}; lines.push([c.session_date,esc(c.coach_name),esc(c.clinic_name),Number(c.hours||0),RATE,(Number(c.hours||0)*RATE).toFixed(2),c.paid?"yes":"no"].join(",")); });
+            const a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([lines.join("\n")],{type:"text/csv"})); a.download="dssc_clinic_hours.csv"; a.click(); URL.revokeObjectURL(a.href);
+          };
+          return (
+            <div style={S.card}>
+              <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:8}}>
+                <div style={{...S.lbl,marginBottom:0}}>DSSC clinic hours &amp; pay <span style={{color:C.mut,fontWeight:600,textTransform:"none"}}>· $25/hr · separate from DS Elite</span></div>
+                <div style={{flex:1}} />
+                <span style={{fontSize:12,fontWeight:800,color:C.text}}>{totH}h · {money(totH*RATE)}</span>
+                <button style={S.ghost} onClick={exportCsv}>⬇ CSV</button>
+              </div>
+              <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                {list.map(x => (
+                  <div key={x.coach} style={{display:"flex",alignItems:"center",gap:10,fontSize:13,color:C.text}}>
+                    <span style={{flex:1,fontWeight:700}}>{x.coach}</span>
+                    <span style={{color:C.mut}}>{x.hours}h · {money(x.hours*RATE)}</span>
+                    {x.unpaidHours>0
+                      ? <button style={S.gold} onClick={()=>markPaid(x.ids)} title={money(x.unpaidHours*RATE)+" unpaid"}>Mark paid ({money(x.unpaidHours*RATE)})</button>
+                      : <span style={{fontSize:12,color:C.grn,fontWeight:700}}>✓ paid</span>}
+                  </div>
+                ))}
+              </div>
+              {totUnpaid>0 && <div style={{fontSize:11,color:"#f59e0b",marginTop:6}}>{totUnpaid}h unpaid · {money(totUnpaid*RATE)}</div>}
             </div>
           );
         })()}
