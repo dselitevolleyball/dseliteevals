@@ -34,7 +34,23 @@ export default async function handler(req, res) {
   const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
   const horizon = addDays(today, LEAD_DAYS);
 
-  const { data: clinics } = await supabase.from("dssc_clinics").select("*");
+  const [{ data: clinics }, { data: roster }] = await Promise.all([
+    supabase.from("dssc_clinics").select("*"),
+    supabase.from("coach_roster").select("first_name, last_name, email"),
+  ]);
+  const nrm = s => String(s || "").trim().toLowerCase();
+  const emailFor = nm => { const r = (roster || []).find(x => x.email && nrm(`${x.first_name || ""} ${x.last_name || ""}`.trim()) === nrm(nm)); return r?.email || null; };
+  const fmtDate2 = iso => { try { return new Date(iso + "T00:00:00Z").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" }); } catch { return iso; } };
+
+  // Recaps owed: sessions in the last 3 days with a coach and no recap.
+  const recapFloor = addDays(today, -3);
+  const owed = {}; // coach -> [{clinic, date}]
+  (clinics || []).forEach(c => (Array.isArray(c.sessions) ? c.sessions : []).forEach(s => {
+    if (s.coach_name && s.date && s.date >= recapFloor && s.date < today && !(s.recap || "").trim()) {
+      (owed[s.coach_name] = owed[s.coach_name] || []).push({ clinic: c.name, date: s.date });
+    }
+  }));
+
   // Upcoming (a session in [today, horizon]) and not yet planned.
   const need = (clinics || []).filter(c => {
     if (isPlanned(c)) return false;
@@ -47,9 +63,28 @@ export default async function handler(req, res) {
     return { name: c.name, nextDate };
   }).sort((a, b) => (a.nextDate || "").localeCompare(b.nextDate || ""));
 
-  if (!need.length) return res.status(200).json({ ok: true, note: "all upcoming clinics are planned" });
-
   const url = (APP_URL || ("https://" + (req.headers["x-forwarded-host"] || req.headers.host))) + "/?view=clinics";
+  const owedCoaches = Object.keys(owed);
+  if (!need.length && !owedCoaches.length) return res.status(200).json({ ok: true, note: "nothing to remind" });
+
+  // Feedback nudges — one per coach who owes a recap, plus a summary to planners.
+  if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY && owedCoaches.length) {
+    webpush.setVapidDetails(VAPID_SUBJECT || "mailto:drew@dselitevolleyball.com", VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+    const { data: subs } = await supabase.from("push_subscriptions").select("endpoint, p256dh, auth, email");
+    for (const coach of owedCoaches) {
+      const em = emailFor(coach); if (!em) continue;
+      const list = owed[coach].map(o => `${o.clinic} — ${fmtDate2(o.date)}`).join("\n");
+      const mine = (subs || []).filter(s => (s.email || "").toLowerCase() === em.toLowerCase());
+      const payload = JSON.stringify({ title: "Add your clinic recap", body: `${owed[coach].length} session${owed[coach].length === 1 ? "" : "s"} need a recap so next week builds on it. Tap to add.`, url });
+      await Promise.all(mine.map(s => webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, payload).catch(() => {})));
+      if (RESEND_API_KEY && DSE_FROM_EMAIL) {
+        await fetch("https://api.resend.com/emails", { method: "POST", headers: { Authorization: `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ from: DSE_FROM_EMAIL, to: [em], subject: "Add your DSSC clinic recap", text: `Please add a recap for so the next coach can build on it:\n${list}\n\nOpen DS Elite HQ → DSSC.` }) }).catch(() => {});
+      }
+    }
+  }
+  if (!need.length) return res.status(200).json({ ok: true, note: "planning ok; nudged recaps", recapCoaches: owedCoaches.length });
+
   const fmt = iso => { try { return new Date(iso + "T00:00:00Z").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" }); } catch { return iso; } };
   const lines = need.map(n => `• ${n.name} — first session ${fmt(n.nextDate)}`);
   const bodyText = `${need.length} upcoming DSSC clinic${need.length === 1 ? "" : "s"} still need a plan & notes:\n${lines.join("\n")}\n\nOpen DS Elite HQ → DSSC to add goals, session focus and a plan (light or detailed).`;
@@ -75,5 +110,5 @@ export default async function handler(req, res) {
     }).catch(() => {});
   }
 
-  return res.status(200).json({ ok: true, needCount: need.length, clinics: need.map(n => n.name), pushed });
+  return res.status(200).json({ ok: true, needCount: need.length, clinics: need.map(n => n.name), recapCoaches: owedCoaches.length, pushed });
 }

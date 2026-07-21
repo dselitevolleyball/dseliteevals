@@ -12655,7 +12655,14 @@ export default function App() {
     const open = clinicOpenId ? clinics.find(c => c.id===clinicOpenId) : null;
     if (open) {
       const canManage = isDirector;
-      const canFeedback = isDirector || isMine(open);
+      const assignedToMe = isMine(open) || (Array.isArray(open.sessions) && open.sessions.some(s => cand.has(norm(s.coach_name))));
+      const canFeedback = isDirector || assignedToMe;
+      const canPlan = isDirector || assignedToMe; // coaches can draft their plan; directors approve
+      const planStatus = open.plan_status || "draft";
+      const submitPlan = () => { saveClinic(open.id, { plan_status:"submitted" }); notifyDirectors("DSSC plan submitted — "+open.name, coachName+" submitted a plan for "+open.name+" for your review. Open DSSC to approve or request changes."); };
+      const approvePlan = () => saveClinic(open.id, { plan_status:"approved", plan_approved_by: coachName, plan_approved_at: new Date().toISOString() });
+      const requestChanges = () => { const em = open.coach_name ? coachEmail(open.coach_name) : null; saveClinic(open.id, { plan_status:"draft" }); if (em) { fetch("/api/send-push",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({title:"DSSC plan — changes requested",body:open.name+": please revise the plan (see director notes).",url:"/?view=clinics",audience:{type:"emails",emails:[em]}})}).catch(()=>{}); fetch("/api/send-email",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({subject:"DSSC plan — changes requested for "+open.name,body:"Please revise the "+open.name+" plan. Director notes:\n"+(open.director_notes||"(see the clinic)"),recipients:[em]})}).catch(()=>{}); } };
+      const PLANST = { draft:["Draft",C.mut], submitted:["Submitted for review","#f59e0b"], approved:["✓ Approved",C.grn] };
       const plan = open.plan || {};
       const blocks = Array.isArray(plan.blocks) ? plan.blocks : [];
       const setPlan = (next) => saveClinic(open.id, { plan: { ...plan, ...next } });
@@ -12669,7 +12676,7 @@ export default function App() {
       const field = (label, key, ph, rows) => (
         <div style={{marginBottom:10}}>
           <div style={S.lbl}>{label}</div>
-          {canManage
+          {canPlan
             ? <AutoTextarea value={open[key]||""} onChange={e=>saveClinic(open.id,{[key]:e.target.value})} minRows={rows||2} placeholder={ph} style={{...S.sel,width:"100%",fontSize:13,lineHeight:1.5,boxSizing:"border-box"}} />
             : <div style={{fontSize:13,color:open[key]?C.text:C.mut,whiteSpace:"pre-wrap",lineHeight:1.5}}>{open[key]||"—"}</div>}
         </div>
@@ -12771,7 +12778,11 @@ export default function App() {
           <div style={S.card}>
             <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:8}}>
               <div style={{...S.lbl,marginBottom:0}}>Clinic plan</div>
+              <span style={{fontSize:10,fontWeight:800,color:PLANST[planStatus]?.[1],border:"1px solid "+PLANST[planStatus]?.[1],borderRadius:6,padding:"1px 7px"}}>{PLANST[planStatus]?.[0]}{planStatus==="approved"&&open.plan_approved_by?" · "+open.plan_approved_by:""}</span>
               <div style={{flex:1}} />
+              {canPlan && !isDirector && planStatus!=="submitted" && <button style={{...S.ghost,borderColor:C.acc,color:C.acc}} onClick={submitPlan}>Submit for review</button>}
+              {isDirector && planStatus==="submitted" && <button style={{...S.ghost,borderColor:"#f59e0b",color:"#f59e0b"}} onClick={requestChanges}>Request changes</button>}
+              {isDirector && planStatus!=="approved" && <button style={{padding:"6px 12px",borderRadius:8,border:"none",background:C.grn,color:"#04240f",fontWeight:800,fontSize:12,cursor:"pointer",fontFamily:"inherit"}} onClick={approvePlan}>✓ Approve plan</button>}
               {canFeedback && blocks.length>0 && <button style={S.gold} onClick={launchClinicRun} title="Run the clinic with per-block timers">▶ Launch clinic</button>}
             </div>
             {field("Goals","goals","What players should walk away with…")}
@@ -12781,16 +12792,16 @@ export default function App() {
             <div style={{display:"flex",flexDirection:"column",gap:6}}>
               {blocks.map((b,i)=>(
                 <div key={b.id||i} style={{display:"flex",gap:8,alignItems:"flex-start"}}>
-                  {canManage ? <input type="number" min="0" value={b.minutes??""} onChange={e=>setBlock(i,{minutes:e.target.value===""?"":+e.target.value})} style={{...S.sel,width:56,textAlign:"right"}} /> : <span style={{fontSize:12,color:C.mut,width:56,textAlign:"right",paddingTop:6}}>{b.minutes||0}m</span>}
+                  {canPlan ? <input type="number" min="0" value={b.minutes??""} onChange={e=>setBlock(i,{minutes:e.target.value===""?"":+e.target.value})} style={{...S.sel,width:56,textAlign:"right"}} /> : <span style={{fontSize:12,color:C.mut,width:56,textAlign:"right",paddingTop:6}}>{b.minutes||0}m</span>}
                   <div style={{flex:1}}>
-                    {canManage ? <input value={b.name||""} onChange={e=>setBlock(i,{name:e.target.value})} placeholder="Block" style={{...S.sel,width:"100%",fontWeight:700,marginBottom:3}} /> : <div style={{fontSize:13,fontWeight:700}}>{b.name}</div>}
-                    {canManage ? <textarea value={b.desc||""} onChange={e=>setBlock(i,{desc:e.target.value})} placeholder="Drills / cues…" style={{...S.sel,width:"100%",minHeight:34,resize:"vertical",fontSize:12}} /> : (b.desc && <div style={{fontSize:12,color:C.mut}}>{b.desc}</div>)}
+                    {canPlan ? <input value={b.name||""} onChange={e=>setBlock(i,{name:e.target.value})} placeholder="Block" style={{...S.sel,width:"100%",fontWeight:700,marginBottom:3}} /> : <div style={{fontSize:13,fontWeight:700}}>{b.name}</div>}
+                    {canPlan ? <textarea value={b.desc||""} onChange={e=>setBlock(i,{desc:e.target.value})} placeholder="Drills / cues…" style={{...S.sel,width:"100%",minHeight:34,resize:"vertical",fontSize:12}} /> : (b.desc && <div style={{fontSize:12,color:C.mut}}>{b.desc}</div>)}
                   </div>
-                  {canManage && <button onClick={()=>setPlan({blocks:blocks.filter((_,ix)=>ix!==i)})} style={{...S.ghost,padding:"4px 9px",color:C.red}}>✕</button>}
+                  {canPlan && <button onClick={()=>setPlan({blocks:blocks.filter((_,ix)=>ix!==i)})} style={{...S.ghost,padding:"4px 9px",color:C.red}}>✕</button>}
                 </div>
               ))}
             </div>
-            {canManage && <button style={{...S.ghost,marginTop:8}} onClick={()=>setPlan({blocks:[...blocks,{id:rid(),name:"",minutes:15,desc:""}]})}>+ Add block</button>}
+            {canPlan && <button style={{...S.ghost,marginTop:8}} onClick={()=>setPlan({blocks:[...blocks,{id:rid(),name:"",minutes:15,desc:""}]})}>+ Add block</button>}
           </div>
 
           {/* Feedback loop */}
@@ -12893,8 +12904,9 @@ export default function App() {
         <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:12}}>
           <div><div style={{fontSize:20,fontWeight:800,color:C.gold}}>DSSC Clinics &amp; Camps</div><div style={{fontSize:12,color:C.mut,marginTop:2}}>Schedule, plans, assignments and feedback — on the DS Elite methodology.</div></div>
           <div style={{flex:1}} />
+          {isDirector && (() => { const n = clinics.filter(c=>!clinicPlanned(c) && (()=>{const nd=clinicNextDate(c);return nd&&nd>=today;})()).sort((a,b)=>(clinicNextDate(a)||"").localeCompare(clinicNextDate(b)||""))[0]; return n ? <button style={S.gold} onClick={()=>setClinicOpenId(n.id)} title="Open the next clinic that still needs a plan">🗓 Plan next: {n.name}</button> : null; })()}
           {isDirector && <button style={S.ghost} onClick={remindToPlan} title="Push + email Hunter to plan the unplanned upcoming clinics">📣 Remind to plan</button>}
-          {isDirector && <button style={S.gold} onClick={newClinic}>+ New clinic</button>}
+          {isDirector && <button style={S.ghost} onClick={newClinic}>+ New clinic</button>}
         </div>
         {methodBanner}
 
@@ -13023,6 +13035,14 @@ export default function App() {
             dsscCheckins.slice().sort((a,b)=>(a.session_date||"").localeCompare(b.session_date||"")).forEach(c=>{ const esc=v=>{const s=v==null?"":String(v);return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s;}; lines.push([c.session_date,esc(c.coach_name),esc(c.clinic_name),Number(c.hours||0),RATE,(Number(c.hours||0)*RATE).toFixed(2),c.paid?"yes":"no"].join(",")); });
             const a=document.createElement("a"); a.href=URL.createObjectURL(new Blob([lines.join("\n")],{type:"text/csv"})); a.download="dssc_clinic_hours.csv"; a.click(); URL.revokeObjectURL(a.href);
           };
+          const emailPay = async () => {
+            if(!window.confirm("Approve & email last week's DSSC clinic pay + CSV to the bookkeeper and directors?")) return;
+            try { const { data:{ session } } = await supabase.auth.getSession(); if(!session?.access_token) throw new Error("Not signed in");
+              const r = await fetch("/api/dssc-payroll-report", { method:"POST", headers:{ Authorization:"Bearer "+session.access_token } });
+              const d = await r.json().catch(()=>({})); if(!r.ok) throw new Error(d.error||("HTTP "+r.status));
+              window.alert("Sent ✓ — "+(d.hours??0)+"h · "+money(d.amount??0)+"\nTo: "+((d.to||[]).join(", ")));
+            } catch(e){ window.alert("Couldn't send: "+(e.message||"error")); }
+          };
           return (
             <div style={S.card}>
               <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:8}}>
@@ -13030,6 +13050,7 @@ export default function App() {
                 <div style={{flex:1}} />
                 <span style={{fontSize:12,fontWeight:800,color:C.text}}>{totH}h · {money(totH*RATE)}</span>
                 <button style={S.ghost} onClick={exportCsv}>⬇ CSV</button>
+                <button style={S.gold} onClick={emailPay} title="Approve & email last week's DSSC pay + CSV to the bookkeeper and directors">✓ Approve &amp; email pay</button>
               </div>
               <div style={{display:"flex",flexDirection:"column",gap:4}}>
                 {list.map(x => (
