@@ -1198,6 +1198,7 @@ export default function App() {
   const [clinics, setClinics]           = useState([]);     // DSSC clinics & camps
   const [clinicOpenId, setClinicOpenId] = useState(null);   // open clinic detail
   const [dsscCheckins, setDsscCheckins] = useState([]);     // DSSC clinic clock-ins (separate from DS Elite)
+  const [dsscAvail, setDsscAvail]       = useState([]);     // coach availability/interest for clinics
   const [clinicBusy, setClinicBusy]     = useState("");     // key of clinic action in flight
   const [drills, setDrills]     = useState([]);     // shared drill library
   const [drillFilter, setDrillFilter] = useState({ q:"", skill:"", phase:"" });
@@ -2053,8 +2054,13 @@ export default function App() {
     if (error) { console.error("Load dssc_checkins error:", error); return; }
     setDsscCheckins(data || []);
   }, []);
+  const loadDsscAvail = useCallback(async () => {
+    const { data, error } = await supabase.from("dssc_availability").select("*");
+    if (error) { console.error("Load dssc_availability error:", error); return; }
+    setDsscAvail(data || []);
+  }, []);
   useEffect(() => { if (isApproved && (view === "clinics" || view === "home")) { loadClinics(); loadDsscCheckins(); } }, [isApproved, view, loadClinics, loadDsscCheckins]);
-  useEffect(() => { if (isApproved && view === "clinics") loadPlaybook(); }, [isApproved, view, loadPlaybook]);
+  useEffect(() => { if (isApproved && view === "clinics") { loadPlaybook(); loadDsscAvail(); } }, [isApproved, view, loadPlaybook, loadDsscAvail]);
   const saveCharter = useCallback(async (team, data) => {
     if (!team) return;
     const row = { team_name: team, data, updated_by: coach?.display_name || coach?.email || null, updated_at: new Date().toISOString() };
@@ -12597,6 +12603,46 @@ export default function App() {
       if (error && !/duplicate|unique/i.test(error.message||"")) window.alert("Couldn't clock in: "+error.message);
       await loadDsscCheckins(); setClinicBusy("");
     };
+    const directorList = [...new Set([...DSSC_DIRECTOR_EMAILS, ...OWNER_EMAILS])];
+    const notifyDirectors = (title, body) => {
+      fetch("/api/send-push", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ title, body, url:"/?view=clinics", audience:{ type:"emails", emails: directorList } }) }).catch(()=>{});
+      fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ subject: title, body, recipients: directorList }) }).catch(()=>{});
+    };
+    // Planning status helper.
+    const clinicPlanned = c => { const p=c.plan||{}; const hasBlocks=Array.isArray(p.blocks)&&p.blocks.some(b=>(b.name||"").trim()||(b.desc||"").trim()); return !!((c.goals||"").trim()||(c.focus||"").trim()||(c.expectations||"").trim()||hasBlocks); };
+    const clinicNextDate = c => { const ss=Array.isArray(c.sessions)?c.sessions:[]; return ss.length ? ss.map(s=>s.date).filter(Boolean).sort().find(d=>d>=today) : c.clinic_date; };
+    // Director: remind Hunter to plan the unplanned upcoming clinics (push + email).
+    const remindToPlan = () => {
+      const need = clinics.filter(c => !clinicPlanned(c) && (() => { const nd=clinicNextDate(c); return nd && nd>=today; })());
+      if (!need.length) { window.alert("All upcoming clinics already have a plan."); return; }
+      if (!window.confirm("Remind Hunter to plan "+need.length+" upcoming clinic"+(need.length===1?"":"s")+"?")) return;
+      const list = need.map(c => "• "+c.name).join("\n");
+      const emails = [...new Set(DSSC_DIRECTOR_EMAILS)];
+      fetch("/api/send-push", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ title:"Plan your DSSC clinics", body: need.length+" clinic"+(need.length===1?"":"s")+" need a plan & notes. Tap to plan.", url:"/?view=clinics", audience:{ type:"emails", emails } }) }).catch(()=>{});
+      fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ subject:"Plan your DSSC clinics — "+need.length+" upcoming", body:"These upcoming DSSC clinics still need a plan & notes:\n"+list+"\n\nOpen DS Elite HQ → DSSC to add goals, session focus and a plan (light or detailed).", recipients: emails }) }).catch(()=>{});
+      window.alert("Reminded Hunter about "+need.length+" clinic"+(need.length===1?"":"s")+".");
+    };
+    // Coach gives up a session and asks for coverage; anyone can claim it.
+    const requestCoverage = async (c, s) => {
+      if (!window.confirm("Give up "+c.name+" on "+ new Date(s.date+"T12:00:00").toLocaleDateString() +" and ask another coach to pick it up?")) return;
+      const sess = (c.sessions||[]).map(x => x.id===s.id ? { ...x, coach_name:null, needsCoverage:true } : x);
+      await saveClinic(c.id, { sessions: sess });
+      notifyDirectors("DSSC shift needs coverage — "+c.name, coachName+" can't make "+c.name+" on "+ new Date(s.date+"T12:00:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"}) +" ("+s.start_time+"). It's open for another coach to pick up in DSSC.");
+    };
+    const claimSession = async (c, s) => {
+      if (!window.confirm("Pick up "+c.name+" on "+ new Date(s.date+"T12:00:00").toLocaleDateString() +"?")) return;
+      const sess = (c.sessions||[]).map(x => x.id===s.id ? { ...x, coach_name:coachName, needsCoverage:false } : x);
+      await saveClinic(c.id, { sessions: sess });
+      notifyDirectors("DSSC shift picked up — "+c.name, coachName+" picked up "+c.name+" on "+ new Date(s.date+"T12:00:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"}) +" ("+s.start_time+").");
+    };
+    // Availability / interest.
+    const myAvail = dsscAvail.find(a => cand.has(norm(a.coach_name)));
+    const setAvail = async (available, note) => {
+      const row = { coach_name: coachName, coach_email: coach?.email||null, available, note: note!==undefined ? note : (myAvail?.note||null), updated_at: new Date().toISOString() };
+      const { error } = await supabase.from("dssc_availability").upsert(row, { onConflict:"coach_name" });
+      if (error) { window.alert("Couldn't save: "+error.message); return; }
+      await loadDsscAvail();
+    };
 
     const methodBanner = (
       <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",background:"rgba(233,30,140,0.06)",border:"1px solid "+C.gold,borderRadius:10,padding:"9px 12px",marginBottom:14}}>
@@ -12847,9 +12893,80 @@ export default function App() {
         <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:12}}>
           <div><div style={{fontSize:20,fontWeight:800,color:C.gold}}>DSSC Clinics &amp; Camps</div><div style={{fontSize:12,color:C.mut,marginTop:2}}>Schedule, plans, assignments and feedback — on the DS Elite methodology.</div></div>
           <div style={{flex:1}} />
+          {isDirector && <button style={S.ghost} onClick={remindToPlan} title="Push + email Hunter to plan the unplanned upcoming clinics">📣 Remind to plan</button>}
           {isDirector && <button style={S.gold} onClick={newClinic}>+ New clinic</button>}
         </div>
         {methodBanner}
+
+        {/* Director oversight — planning + staffing status across all clinics */}
+        {isDirector && clinics.length>0 && (() => {
+          const up = clinics.filter(c => { const nd=clinicNextDate(c); return nd && nd>=today; });
+          const noPlan = up.filter(c => !clinicPlanned(c));
+          const noCoach = up.filter(c => (Array.isArray(c.sessions)?c.sessions:[]).some(s => !s.coach_name));
+          const noFeedback = clinics.filter(c => { const nd=clinicNextDate(c); return (!nd || nd<today) && (Array.isArray(c.sessions)?c.sessions:[]).some(s=>s.date<today) && !(c.coach_feedback||"").trim() && !(Array.isArray(c.sessions)?c.sessions:[]).some(s=>(s.recap||"").trim()); });
+          const pill = (n, label, color, onClick) => <button onClick={onClick} style={{padding:"4px 10px",borderRadius:8,border:"1px solid "+(n?color:C.border),background:n?"transparent":C.bg,color:n?color:C.mut,fontWeight:800,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>{n} {label}</button>;
+          return (
+            <div style={S.card}>
+              <div style={{...S.lbl,marginBottom:8}}>Oversight — {up.length} upcoming clinic{up.length===1?"":"s"}</div>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                {pill(noPlan.length,"need a plan","#f59e0b", noPlan.length?remindToPlan:undefined)}
+                {pill(noCoach.length,"have open sessions","#f59e0b")}
+                {pill(noFeedback.length,"missing feedback",C.acc)}
+              </div>
+              {(noPlan.length>0) && <div style={{fontSize:11,color:C.mut,marginTop:8}}>Needs a plan: {noPlan.map(c=>c.name).join(", ")}</div>}
+            </div>
+          );
+        })()}
+
+        {/* Open sessions — any coach can pick up */}
+        {(() => {
+          const openSess = [];
+          clinics.forEach(c => (Array.isArray(c.sessions)?c.sessions:[]).forEach(s => { if (!s.coach_name && s.date >= today && !cand.has(norm(s.coach_name))) openSess.push({ c, s }); }));
+          if (!openSess.length) return null;
+          openSess.sort((a,b)=>(a.s.date||"").localeCompare(b.s.date||""));
+          const sfmt = d => new Date(d+"T12:00:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"});
+          return (
+            <div style={{...S.card,border:"1px solid #f59e0b"}}>
+              <div style={{...S.lbl,color:"#f59e0b"}}>🙋 Open clinic sessions — pick one up ({openSess.length})</div>
+              <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                {openSess.slice(0,10).map(({c,s},i) => (
+                  <div key={s.id||i} style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",padding:"8px 11px",borderRadius:8,border:"1px solid "+C.border,background:C.bg}}>
+                    <div style={{flex:1,minWidth:150}}>
+                      <div style={{fontSize:13,fontWeight:700,color:C.text}}>{c.name}{s.needsCoverage?<span style={{color:"#f59e0b",fontWeight:800}}> · needs coverage</span>:""}</div>
+                      <div style={{fontSize:12,color:C.mut,marginTop:1}}>{sfmt(s.date)} · {s.start_time}{s.court?" · "+s.court:""} · {clinicHours(s)}h · ${25*clinicHours(s)}</div>
+                    </div>
+                    <button style={S.gold} onClick={()=>claimSession(c,s)}>I'll take it</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Availability / interest */}
+        {(() => {
+          const interested = dsscAvail.filter(a => a.available);
+          return (
+            <div style={S.card}>
+              <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:8}}>
+                <div style={{...S.lbl,marginBottom:0}}>Coach availability for clinics</div>
+                <div style={{flex:1}} />
+                <button onClick={()=>setAvail(!(myAvail?.available))} style={{padding:"5px 12px",borderRadius:8,border:"1px solid "+(myAvail?.available?C.grn:C.border),background:myAvail?.available?"rgba(34,197,94,0.12)":"transparent",color:myAvail?.available?C.grn:C.text,fontWeight:800,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>{myAvail?.available?"✓ I'm available":"I'm available to help"}</button>
+              </div>
+              {myAvail?.available && <DebouncedField value={myAvail?.note||""} onCommit={v=>setAvail(true, v)} placeholder="When can you help? (days/times, which programs)" style={{...S.sel,width:"100%",marginBottom:8,boxSizing:"border-box"}} />}
+              {isDirector && (
+                interested.length ? (
+                  <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                    <div style={{fontSize:10,fontWeight:800,textTransform:"uppercase",color:C.mut}}>Interested ({interested.length})</div>
+                    {interested.slice().sort((a,b)=>(a.coach_name||"").localeCompare(b.coach_name||"")).map(a => (
+                      <div key={a.coach_name} style={{fontSize:12,color:C.text}}><b>{a.coach_name}</b>{a.note?<span style={{color:C.mut}}> — {a.note}</span>:""}</div>
+                    ))}
+                  </div>
+                ) : <div style={{fontSize:12,color:C.mut}}>No coaches have flagged availability yet.</div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* My clinic shifts — clock in (DSSC, separate from DS Elite) */}
         {(() => {
@@ -12881,6 +12998,7 @@ export default function App() {
                           : ws==="early" ? <span style={{fontSize:12,color:C.mut,fontWeight:700}}>🔒 Opens 30 min before</span>
                           : ws==="past" ? <button style={{...S.ghost,color:C.mut}} disabled={busy} onClick={()=>doClinicCheckin(c,s,true)}>⏱ Clock in late</button>
                           : <button style={{padding:"8px 16px",borderRadius:8,border:"none",background:C.grn,color:"#04240f",fontWeight:800,fontSize:13,cursor:"pointer",fontFamily:"inherit"}} disabled={busy} onClick={()=>doClinicCheckin(c,s)}>{busy?"…":"✅ I'm here"}</button>}
+                        {!done && s.date>=today && <button style={{...S.ghost,padding:"6px 10px",color:"#f59e0b",borderColor:"#f59e0b"}} onClick={()=>requestCoverage(c,s)} title="Ask another coach to cover this">Can't make it</button>}
                       </div>
                     );
                   })}
