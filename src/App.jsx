@@ -1196,6 +1196,8 @@ export default function App() {
   const [ppThoughtShuffle, setPpThoughtShuffle] = useState(0); // "thought before practice" — cycle offset
   const [clinics, setClinics]           = useState([]);     // DSSC clinics & camps
   const [clinicOpenId, setClinicOpenId] = useState(null);   // open clinic detail
+  const [dsscCheckins, setDsscCheckins] = useState([]);     // DSSC clinic clock-ins (separate from DS Elite)
+  const [clinicBusy, setClinicBusy]     = useState("");     // key of clinic action in flight
   const [drills, setDrills]     = useState([]);     // shared drill library
   const [drillFilter, setDrillFilter] = useState({ q:"", skill:"", phase:"" });
   const [ppLibOpen, setPpLibOpen] = useState(false); // drill picker inside a plan
@@ -2044,7 +2046,13 @@ export default function App() {
     if (error) { console.error("Load dssc_clinics error:", error); return; }
     setClinics(data || []);
   }, []);
-  useEffect(() => { if (isApproved && view === "clinics") { loadClinics(); loadPlaybook(); } }, [isApproved, view, loadClinics, loadPlaybook]);
+  const loadDsscCheckins = useCallback(async () => {
+    const since = localDateISO(new Date(Date.now() - 90*86400000));
+    const { data, error } = await supabase.from("dssc_checkins").select("*").gte("session_date", since);
+    if (error) { console.error("Load dssc_checkins error:", error); return; }
+    setDsscCheckins(data || []);
+  }, []);
+  useEffect(() => { if (isApproved && view === "clinics") { loadClinics(); loadDsscCheckins(); loadPlaybook(); } }, [isApproved, view, loadClinics, loadDsscCheckins, loadPlaybook]);
   const saveCharter = useCallback(async (team, data) => {
     if (!team) return;
     const row = { team_name: team, data, updated_by: coach?.display_name || coach?.email || null, updated_at: new Date().toISOString() };
@@ -12509,6 +12517,37 @@ export default function App() {
       await loadClinics(); setClinicOpenId(data.id);
     };
     const delClinic = async (id) => { if(!window.confirm("Delete this clinic?")) return; await supabase.from("dssc_clinics").delete().eq("id", id); setClinicOpenId(null); await loadClinics(); };
+    const coachEmail = nm => { const r = coachRoster.find(x => norm(((x.first_name||"")+" "+(x.last_name||"")).trim())===norm(nm)); return r?.email || null; };
+    const parseTime = t => { const m=/(\d+)(?::(\d+))?\s*(am|pm)/i.exec(t||""); if(!m) return null; let h=+m[1]%12; if(/pm/i.test(m[3])) h+=12; return h + (m[2]?+m[2]/60:0); };
+    const clinicHours = s => { const a=parseTime(s.start_time), b=parseTime(s.end_time); return (a!=null&&b!=null) ? Math.max(0.5, Math.round((b-a)*4)/4) : 1; };
+    const nowH = new Date().getHours() + new Date().getMinutes()/60;
+    const winState = s => { const a=parseTime(s.start_time), b=parseTime(s.end_time); if(a==null) return "open"; if(nowH < a-0.5) return "early"; if(b!=null && nowH > b) return "past"; return "open"; };
+    const checkedSession = sid => dsscCheckins.some(x => x.session_id===sid && cand.has(norm(x.coach_name)));
+    // Notify each assigned coach of their sessions for this clinic (push + email).
+    const notifyAssigned = async (c) => {
+      const sess = Array.isArray(c.sessions) ? c.sessions : [];
+      const byCoach = {}; sess.forEach(s => { if (s.coach_name) (byCoach[s.coach_name] = byCoach[s.coach_name] || []).push(s); });
+      const names = Object.keys(byCoach);
+      if (!names.length) { window.alert("No coaches assigned to any session yet — assign coaches first."); return; }
+      if (!window.confirm("Notify "+names.length+" coach"+(names.length===1?"":"es")+" of their "+c.name+" session"+(sess.length===1?"":"s")+"?")) return;
+      names.forEach(nm => {
+        const email = coachEmail(nm);
+        const list = byCoach[nm].sort((a,b)=>(a.date||"").localeCompare(b.date||"")).map(s => new Date(s.date+"T12:00:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"})+" · "+s.start_time+(s.court?" · "+s.court:"")).join("\n");
+        const body = "You're assigned to coach the DSSC clinic \""+c.name+"\" ("+byCoach[nm].length+" session"+(byCoach[nm].length===1?"":"s")+"):\n"+list+"\n\nOpen DS Elite HQ → DSSC to see the plan and clock in for each session.";
+        fetch("/api/send-push", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ title:"DSSC clinic assignment — "+c.name, body: byCoach[nm].length+" session"+(byCoach[nm].length===1?"":"s")+". Tap to view.", url:"/?view=clinics", audience: email ? { type:"emails", emails:[email] } : { type:"all" } }) }).catch(()=>{});
+        if (email) fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ subject:"DSSC clinic assignment — "+c.name, body, recipients:[email] }) }).catch(()=>{});
+      });
+      if ((c.status||"planned")==="planned") saveClinic(c.id, { status:"assigned" });
+      window.alert("Notified "+names.length+" coach"+(names.length===1?"":"es")+".");
+    };
+    // DSSC clinic clock-in (separate company / payroll from DS Elite).
+    const doClinicCheckin = async (c, s, force) => {
+      setClinicBusy("ci|"+s.id);
+      const row = { coach_name: coachName, coach_email: coach?.email||null, clinic_id: c.id, session_id: s.id, session_date: s.date, clinic_name: c.name, hours: clinicHours(s), status:"present", source: force?"app-late":"app", created_by: coachName };
+      const { error } = await supabase.from("dssc_checkins").insert(row);
+      if (error && !/duplicate|unique/i.test(error.message||"")) window.alert("Couldn't clock in: "+error.message);
+      await loadDsscCheckins(); setClinicBusy("");
+    };
 
     const methodBanner = (
       <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",background:"rgba(233,30,140,0.06)",border:"1px solid "+C.gold,borderRadius:10,padding:"9px 12px",marginBottom:14}}>
@@ -12539,6 +12578,7 @@ export default function App() {
           <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12,flexWrap:"wrap"}}>
             <button style={S.ghost} onClick={()=>setClinicOpenId(null)}>← All clinics</button>
             <div style={{flex:1}} />
+            {canManage && <button style={S.gold} onClick={()=>notifyAssigned(open)} title="Push + email each assigned coach their sessions">📣 Notify coaches</button>}
             {canManage && <button style={{...S.ghost,color:C.red,borderColor:"rgba(239,68,68,0.4)"}} onClick={()=>delClinic(open.id)}>Delete</button>}
           </div>
           {methodBanner}
@@ -12675,6 +12715,46 @@ export default function App() {
           {isDirector && <button style={S.gold} onClick={newClinic}>+ New clinic</button>}
         </div>
         {methodBanner}
+
+        {/* My clinic shifts — clock in (DSSC, separate from DS Elite) */}
+        {(() => {
+          const mine = [];
+          clinics.forEach(c => (Array.isArray(c.sessions)?c.sessions:[]).forEach(s => { if (s.coach_name && cand.has(norm(s.coach_name))) mine.push({ c, s }); }));
+          if (!mine.length) return null;
+          mine.sort((a,b)=> (a.s.date||"").localeCompare(b.s.date||"") || (parseTime(a.s.start_time)||0)-(parseTime(b.s.start_time)||0));
+          const since = localDateISO(new Date(Date.now()-14*86400000));
+          const act = mine.filter(x => x.s.date===today || (x.s.date < today && x.s.date >= since && !checkedSession(x.s.id))).slice(0,12);
+          const upNext = mine.find(x => x.s.date > today);
+          if (!act.length && !upNext) return null;
+          const sfmt = d => new Date(d+"T12:00:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"});
+          return (
+            <div style={{...S.card,border:"1px solid "+C.gold}}>
+              <div style={{...S.lbl,color:C.gold}}>⏱ Clock in — your DSSC clinics <span style={{color:C.mut,fontWeight:600,textTransform:"none"}}>· separate from DS Elite</span></div>
+              {act.length ? (
+                <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                  {act.map(({c,s}) => {
+                    const done = checkedSession(s.id);
+                    const ws = winState(s);
+                    const busy = clinicBusy==="ci|"+s.id;
+                    return (
+                      <div key={s.id} style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap",padding:"9px 12px",borderRadius:8,border:"1px solid "+(done?C.grn:C.border),background:done?"rgba(34,197,94,0.08)":C.bg}}>
+                        <div style={{flex:1,minWidth:150}}>
+                          <div style={{fontSize:13,fontWeight:700,color:C.text}}>{c.name}</div>
+                          <div style={{fontSize:12,color:C.mut,marginTop:1}}>{sfmt(s.date)} · {s.start_time}{s.end_time?"–"+s.end_time:""}{s.court?" · "+s.court:""} · {clinicHours(s)}h</div>
+                        </div>
+                        {done ? <span style={{fontSize:13,color:C.grn,fontWeight:800}}>✓ Clocked in</span>
+                          : ws==="early" ? <span style={{fontSize:12,color:C.mut,fontWeight:700}}>🔒 Opens 30 min before</span>
+                          : ws==="past" ? <button style={{...S.ghost,color:C.mut}} disabled={busy} onClick={()=>doClinicCheckin(c,s,true)}>⏱ Clock in late</button>
+                          : <button style={{padding:"8px 16px",borderRadius:8,border:"none",background:C.grn,color:"#04240f",fontWeight:800,fontSize:13,cursor:"pointer",fontFamily:"inherit"}} disabled={busy} onClick={()=>doClinicCheckin(c,s)}>{busy?"…":"✅ I'm here"}</button>}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : <div style={{fontSize:12,color:C.mut}}>No clinic today.</div>}
+              {upNext && <div style={{fontSize:11,color:C.mut,marginTop:8}}>Next: <b style={{color:C.text}}>{upNext.c.name}</b> · {sfmt(upNext.s.date)} {upNext.s.start_time}</div>}
+            </div>
+          );
+        })()}
         {clinics.length===0 ? (
           <div style={{...S.card,textAlign:"center",color:C.mut,fontSize:13}}>{isDirector ? "No clinics yet — click + New clinic to schedule one." : "No clinics scheduled yet."}</div>
         ) : (
