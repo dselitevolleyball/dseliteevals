@@ -1197,6 +1197,8 @@ export default function App() {
   const [ppThoughtShuffle, setPpThoughtShuffle] = useState(0); // "thought before practice" — cycle offset
   const [clinics, setClinics]           = useState([]);     // DSSC clinics & camps
   const [clinicOpenId, setClinicOpenId] = useState(null);   // open clinic detail
+  const [clinicViewMode, setClinicViewMode] = useState("list"); // list | calendar
+  const [clinicMonth, setClinicMonth]   = useState(null);   // "YYYY-MM" calendar anchor
   const [dsscCheckins, setDsscCheckins] = useState([]);     // DSSC clinic clock-ins (separate from DS Elite)
   const [dsscAvail, setDsscAvail]       = useState([]);     // coach availability/interest for clinics
   const [clinicBusy, setClinicBusy]     = useState("");     // key of clinic action in flight
@@ -12883,15 +12885,18 @@ export default function App() {
     const row = c => {
       const ss = Array.isArray(c.sessions) ? c.sessions : [];
       const need = needCoach(c);
+      const md = iso => new Date(iso+"T12:00:00").toLocaleDateString(undefined,{month:"short",day:"numeric"});
+      const dateStr = ss.length ? ss.map(s=>s.date).filter(Boolean).sort().map(md).join(", ") : "";
       return (
       <button key={c.id} onClick={()=>setClinicOpenId(c.id)} style={{display:"flex",alignItems:"center",gap:12,textAlign:"left",width:"100%",padding:"11px 13px",borderRadius:10,border:"1px solid "+(isMine(c)?C.gold:C.border),background:isMine(c)?"rgba(233,30,140,0.05)":C.bg,cursor:"pointer",fontFamily:"inherit",marginBottom:8}}>
         <div style={{minWidth:96}}>
           <div style={{fontSize:13,fontWeight:800,color:C.text}}>{fmtDate(c.clinic_date)}</div>
-          <div style={{fontSize:11,color:C.mut}}>{ss.length ? ss.length+" sessions" : (c.start_time||"")+((c.start_time&&c.end_time)?"–":"")+(c.end_time||"")}</div>
+          <div style={{fontSize:11,color:C.mut}}>{ss.length ? ss.length+" sessions · "+(c.start_time||"") : (c.start_time||"")+((c.start_time&&c.end_time)?"–":"")+(c.end_time||"")}</div>
         </div>
         <div style={{flex:1,minWidth:120}}>
           <div style={{fontSize:14,fontWeight:700,color:C.text}}>{c.name}</div>
           <div style={{fontSize:11,color:C.mut,marginTop:1}}>{[c.age_group,c.category||c.level,c.location].filter(Boolean).join(" · ")||"—"}{c.coach_name?" · Coach "+c.coach_name:""}</div>
+          {dateStr && <div style={{fontSize:10,color:"#22d3ee",marginTop:2}}>🗓 {dateStr}</div>}
         </div>
         {need>0 && <span style={{fontSize:9,fontWeight:800,color:"#f59e0b",border:"1px solid #f59e0b",borderRadius:5,padding:"1px 6px"}}>⚠ {need} need coach</span>}
         <span style={{fontSize:9,fontWeight:800,color:KIND[c.kind]?.[1],border:"1px solid "+KIND[c.kind]?.[1],borderRadius:5,padding:"1px 6px",textTransform:"uppercase"}}>{KIND[c.kind]?.[0]}</span>
@@ -13071,9 +13076,62 @@ export default function App() {
           <div style={{...S.card,textAlign:"center",color:C.mut,fontSize:13}}>{isDirector ? "No clinics yet — click + New clinic to schedule one." : "No clinics scheduled yet."}</div>
         ) : (
           <>
-            <div style={S.lbl}>Upcoming ({upcoming.length})</div>
-            {upcoming.length ? upcoming.map(row) : <div style={{fontSize:12,color:C.mut,marginBottom:10}}>Nothing upcoming.</div>}
-            {past.length>0 && <><div style={{...S.lbl,marginTop:10}}>Past ({past.length})</div>{past.map(row)}</>}
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+              <div style={{...S.lbl,marginBottom:0}}>Clinic schedule</div>
+              <div style={{flex:1}} />
+              <div style={{display:"flex",borderRadius:8,overflow:"hidden",border:"1px solid "+C.border}}>
+                {[["list","☰ List"],["calendar","📅 Calendar"]].map(([v,l]) => (
+                  <button key={v} onClick={()=>setClinicViewMode(v)} style={{padding:"6px 12px",border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700,background:clinicViewMode===v?C.gold:"transparent",color:clinicViewMode===v?"#000":C.mut}}>{l}</button>
+                ))}
+              </div>
+            </div>
+            {clinicViewMode==="calendar" ? (() => {
+              const byDate = {};
+              clinics.forEach(c => (Array.isArray(c.sessions)?c.sessions:[]).forEach(s => { if(s.date) (byDate[s.date]=byDate[s.date]||[]).push({ c, s }); }));
+              const firstUp = Object.keys(byDate).filter(d=>d>=today).sort()[0] || today;
+              const anchor = clinicMonth || firstUp.slice(0,7);
+              const [Y,Mo] = anchor.split("-").map(Number);
+              const daysIn = new Date(Y, Mo, 0).getDate();
+              const startDow = new Date(Y, Mo-1, 1).getDay();
+              const iso = d => `${Y}-${String(Mo).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
+              const shift = delta => { let m=Mo-1+delta, y=Y; while(m<0){m+=12;y--;} while(m>11){m-=12;y++;} setClinicMonth(`${y}-${String(m+1).padStart(2,"0")}`); };
+              const cells = []; for(let i=0;i<startDow;i++) cells.push(null); for(let d=1;d<=daysIn;d++) cells.push(d);
+              while(cells.length%7) cells.push(null);
+              const monLbl = new Date(Y, Mo-1, 1).toLocaleDateString(undefined,{month:"long",year:"numeric"});
+              return (
+                <div style={S.card}>
+                  <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+                    <button style={S.ghost} onClick={()=>shift(-1)}>‹</button>
+                    <div style={{flex:1,textAlign:"center",fontSize:15,fontWeight:800,color:C.gold}}>{monLbl}</div>
+                    <button style={S.ghost} onClick={()=>shift(1)}>›</button>
+                    <button style={S.ghost} onClick={()=>setClinicMonth(today.slice(0,7))}>Today</button>
+                  </div>
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3}}>
+                    {["S","M","T","W","T","F","S"].map((d,i)=><div key={i} style={{fontSize:9,fontWeight:800,color:C.mut,textAlign:"center",padding:"2px 0"}}>{d}</div>)}
+                    {cells.map((d,i) => {
+                      if(!d) return <div key={i} />;
+                      const day = iso(d), evs = (byDate[day]||[]).sort((a,b)=>(parseTime(a.s.start_time)||0)-(parseTime(b.s.start_time)||0));
+                      const isToday = day===today;
+                      return (
+                        <div key={i} style={{minHeight:64,border:"1px solid "+(isToday?C.gold:C.border),borderRadius:6,padding:"2px 3px",background:isToday?"rgba(233,30,140,0.05)":C.bg,overflow:"hidden"}}>
+                          <div style={{fontSize:10,fontWeight:800,color:isToday?C.gold:C.mut}}>{d}</div>
+                          {evs.slice(0,3).map(({c,s},j) => (
+                            <button key={j} onClick={()=>setClinicOpenId(c.id)} title={c.name+" · "+s.start_time+(s.coach_name?" · "+s.coach_name:" · needs coach")} style={{display:"block",width:"100%",textAlign:"left",marginTop:2,padding:"1px 3px",borderRadius:3,border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:8.5,fontWeight:700,lineHeight:1.15,background:s.coach_name?"rgba(34,197,94,0.16)":"rgba(245,158,11,0.16)",color:s.coach_name?C.grn:"#f59e0b",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>{s.start_time} {c.name}</button>
+                          ))}
+                          {evs.length>3 && <div style={{fontSize:8,color:C.mut,marginTop:1}}>+{evs.length-3}</div>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div style={{fontSize:10,color:C.mut,marginTop:6}}><span style={{color:C.grn,fontWeight:800}}>■</span> coached · <span style={{color:"#f59e0b",fontWeight:800}}>■</span> needs a coach · tap a session to open it</div>
+                </div>
+              );
+            })() : (
+              <>
+                {upcoming.length ? upcoming.map(row) : <div style={{fontSize:12,color:C.mut,marginBottom:10}}>Nothing upcoming.</div>}
+                {past.length>0 && <><div style={{...S.lbl,marginTop:10}}>Past ({past.length})</div>{past.map(row)}</>}
+              </>
+            )}
           </>
         )}
       </div>
