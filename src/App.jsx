@@ -73,6 +73,8 @@ const STATUS_TO_OFFER = { "In Progress":"", "Open Team":"", Locked:"locked", Off
 const C = {bg:"#0a0a0a",card:"#141414",border:"#2a2a2a",gold:"#e91e8c",text:"#ffffff",mut:"#999999",acc:"#ff69b4",red:"#ef4444",grn:"#22c55e"};
 // Only these owner emails may open the Coaches management screen. UI-level gate.
 const OWNER_EMAILS = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"];
+// DSSC clinic directors — schedule/assign/oversee clinics alongside admins.
+const DSSC_DIRECTOR_EMAILS = ["hunterhaleysc10@gmail.com"];
 // Convert a base64url VAPID key to the Uint8Array the Push API expects.
 function urlBase64ToUint8Array(base64String) {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
@@ -1192,6 +1194,8 @@ export default function App() {
   const ppSkipSave = useRef(true);
   const [ppTab, setPpTab]       = useState("plan"); // plan | season | drills
   const [ppThoughtShuffle, setPpThoughtShuffle] = useState(0); // "thought before practice" — cycle offset
+  const [clinics, setClinics]           = useState([]);     // DSSC clinics & camps
+  const [clinicOpenId, setClinicOpenId] = useState(null);   // open clinic detail
   const [drills, setDrills]     = useState([]);     // shared drill library
   const [drillFilter, setDrillFilter] = useState({ q:"", skill:"", phase:"" });
   const [ppLibOpen, setPpLibOpen] = useState(false); // drill picker inside a plan
@@ -2035,6 +2039,12 @@ export default function App() {
     if (error) { console.error("Load team_charters error:", error); return; }
     setTeamCharters(data || []);
   }, []);
+  const loadClinics = useCallback(async () => {
+    const { data, error } = await supabase.from("dssc_clinics").select("*").order("clinic_date", { ascending: true, nullsFirst: false }).order("start_time");
+    if (error) { console.error("Load dssc_clinics error:", error); return; }
+    setClinics(data || []);
+  }, []);
+  useEffect(() => { if (isApproved && view === "clinics") { loadClinics(); loadPlaybook(); } }, [isApproved, view, loadClinics, loadPlaybook]);
   const saveCharter = useCallback(async (team, data) => {
     if (!team) return;
     const row = { team_name: team, data, updated_by: coach?.display_name || coach?.email || null, updated_at: new Date().toISOString() };
@@ -2908,7 +2918,7 @@ export default function App() {
   useEffect(() => {
     // Roster also drives the Tryout coach picker / Text Coaches lookup,
     // so make sure it's loaded whenever either tab opens.
-    if (isApproved && (view === "coaches" || view === "tryouts" || view === "home" || view === "clockin" || view === "teamdir" || view === "practice" || view === "timecards")) loadCoachRoster();
+    if (isApproved && (view === "coaches" || view === "tryouts" || view === "home" || view === "clockin" || view === "teamdir" || view === "practice" || view === "timecards" || view === "clinics")) loadCoachRoster();
   }, [isApproved, view, loadCoachRoster]);
   // The coach card edits coach_roster, so make sure it's loaded when one opens.
   useEffect(() => { if (isApproved && coachCardName) loadCoachRoster(); }, [isApproved, coachCardName, loadCoachRoster]);
@@ -12461,6 +12471,186 @@ export default function App() {
     );
   }
 
+  // ── DSSC Clinics & Camps ────────────────────────────────────────────────
+  // Lives inside DS Elite (shared login/coaches). Hunter (director) schedules
+  // clinics, assigns a coach, and sets goals/level/expectations + a plan that
+  // mirrors our DS Elite methodology; the coach runs it and leaves feedback.
+  function renderClinics() {
+    const norm = s => (s||"").toString().trim().toLowerCase();
+    const coachName = coach?.display_name || coach?.email || "";
+    const isDirector = canOps || DSSC_DIRECTOR_EMAILS.includes(norm(coach?.email||""));
+    // Match the logged-in coach to a clinic's assigned coach name.
+    const cand = new Set(); if (coach?.display_name) cand.add(norm(coach.display_name));
+    const myR = coachRoster.find(r => coach?.email && norm(r.email)===norm(coach.email));
+    if (myR) { const f=norm(myR.first_name), l=norm(myR.last_name); if(f){ cand.add((f+" "+l).trim()); } }
+    const isMine = c => c.coach_name && cand.has(norm(c.coach_name));
+    const rid = () => "b"+Math.random().toString(36).slice(2,8);
+    const coachOptions = coachRoster.slice().sort((a,b)=>(a.first_name||"").localeCompare(b.first_name||"")).map(r => ((r.first_name||"")+" "+(r.last_name||"")).trim()).filter(Boolean);
+
+    const S = {
+      card:  { background:C.card, border:"1px solid "+C.border, borderRadius:12, padding:16, marginBottom:14 },
+      lbl:   { fontSize:10, fontWeight:800, letterSpacing:0.4, textTransform:"uppercase", color:C.mut, marginBottom:6 },
+      sel:   { background:C.bg, border:"1px solid "+C.border, borderRadius:6, color:C.text, fontFamily:"inherit", fontSize:13, padding:"6px 8px" },
+      gold:  { padding:"6px 12px", borderRadius:8, border:"none", background:C.gold, color:"#000", fontWeight:700, fontSize:12, cursor:"pointer", fontFamily:"inherit" },
+      ghost: { padding:"6px 12px", borderRadius:8, border:"1px solid "+C.border, background:"transparent", color:C.text, fontWeight:600, fontSize:12, cursor:"pointer", fontFamily:"inherit" },
+    };
+    const KIND = { clinic:["Clinic","#06b6d4"], camp:["Camp","#a855f7"] };
+    const STATUS = { planned:["Planned",C.mut], assigned:["Assigned","#f59e0b"], done:["Done",C.grn] };
+    const fmtDate = iso => iso ? new Date(iso+"T12:00:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"}) : "No date";
+
+    const saveClinic = async (id, patch) => {
+      setClinics(prev => prev.map(c => c.id===id ? { ...c, ...patch } : c));
+      const { error } = await supabase.from("dssc_clinics").update({ ...patch, updated_by: coachName, updated_at: new Date().toISOString() }).eq("id", id);
+      if (error) { window.alert("Couldn't save: " + error.message); loadClinics(); }
+    };
+    const newClinic = async () => {
+      const { data, error } = await supabase.from("dssc_clinics").insert({ name:"New clinic", kind:"clinic", status:"planned", created_by: coachName }).select().single();
+      if (error) { window.alert("Couldn't create: " + error.message); return; }
+      await loadClinics(); setClinicOpenId(data.id);
+    };
+    const delClinic = async (id) => { if(!window.confirm("Delete this clinic?")) return; await supabase.from("dssc_clinics").delete().eq("id", id); setClinicOpenId(null); await loadClinics(); };
+
+    const methodBanner = (
+      <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",background:"rgba(233,30,140,0.06)",border:"1px solid "+C.gold,borderRadius:10,padding:"9px 12px",marginBottom:14}}>
+        <span style={{fontSize:12,color:C.text,flex:1,minWidth:200}}>💛 Same system as DS Elite — plan clinics to our methodology, cues and standards.</span>
+        <button style={S.ghost} onClick={()=>{ setView("practiceplan"); setPpTab("playbook"); }}>Open the Playbook →</button>
+      </div>
+    );
+
+    // ── Clinic detail ──────────────────────────────────────────────────────
+    const open = clinicOpenId ? clinics.find(c => c.id===clinicOpenId) : null;
+    if (open) {
+      const canManage = isDirector;
+      const canFeedback = isDirector || isMine(open);
+      const plan = open.plan || {};
+      const blocks = Array.isArray(plan.blocks) ? plan.blocks : [];
+      const setPlan = (next) => saveClinic(open.id, { plan: { ...plan, ...next } });
+      const setBlock = (i, patch) => setPlan({ blocks: blocks.map((b,ix)=> ix===i ? {...b,...patch} : b) });
+      const field = (label, key, ph, rows) => (
+        <div style={{marginBottom:10}}>
+          <div style={S.lbl}>{label}</div>
+          {canManage
+            ? <AutoTextarea value={open[key]||""} onChange={e=>saveClinic(open.id,{[key]:e.target.value})} minRows={rows||2} placeholder={ph} style={{...S.sel,width:"100%",fontSize:13,lineHeight:1.5,boxSizing:"border-box"}} />
+            : <div style={{fontSize:13,color:open[key]?C.text:C.mut,whiteSpace:"pre-wrap",lineHeight:1.5}}>{open[key]||"—"}</div>}
+        </div>
+      );
+      return (
+        <div style={{maxWidth:820,margin:"0 auto"}}>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12,flexWrap:"wrap"}}>
+            <button style={S.ghost} onClick={()=>setClinicOpenId(null)}>← All clinics</button>
+            <div style={{flex:1}} />
+            {canManage && <button style={{...S.ghost,color:C.red,borderColor:"rgba(239,68,68,0.4)"}} onClick={()=>delClinic(open.id)}>Delete</button>}
+          </div>
+          {methodBanner}
+
+          {/* Schedule + assignment */}
+          <div style={S.card}>
+            <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:10}}>
+              {canManage
+                ? <input value={open.name||""} onChange={e=>saveClinic(open.id,{name:e.target.value})} style={{...S.sel,fontSize:16,fontWeight:800,flex:1,minWidth:180}} />
+                : <div style={{fontSize:18,fontWeight:800,color:C.gold,flex:1}}>{open.name}</div>}
+              <span style={{fontSize:10,fontWeight:800,color:KIND[open.kind]?.[1]||C.mut,border:"1px solid "+(KIND[open.kind]?.[1]||C.border),borderRadius:6,padding:"2px 8px",textTransform:"uppercase"}}>{KIND[open.kind]?.[0]||"Clinic"}</span>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:10}}>
+              {canManage ? (<>
+                <div><div style={S.lbl}>Type</div><select value={open.kind||"clinic"} onChange={e=>saveClinic(open.id,{kind:e.target.value})} style={{...S.sel,width:"100%"}}><option value="clinic">Clinic</option><option value="camp">Camp</option></select></div>
+                <div><div style={S.lbl}>Date</div><input type="date" value={open.clinic_date||""} onChange={e=>saveClinic(open.id,{clinic_date:e.target.value||null})} style={{...S.sel,width:"100%"}} /></div>
+                <div><div style={S.lbl}>End date (camp)</div><input type="date" value={open.end_date||""} onChange={e=>saveClinic(open.id,{end_date:e.target.value||null})} style={{...S.sel,width:"100%"}} /></div>
+                <div><div style={S.lbl}>Start</div><input value={open.start_time||""} onChange={e=>saveClinic(open.id,{start_time:e.target.value})} placeholder="9am" style={{...S.sel,width:"100%"}} /></div>
+                <div><div style={S.lbl}>End</div><input value={open.end_time||""} onChange={e=>saveClinic(open.id,{end_time:e.target.value})} placeholder="12pm" style={{...S.sel,width:"100%"}} /></div>
+                <div><div style={S.lbl}>Location</div><input value={open.location||""} onChange={e=>saveClinic(open.id,{location:e.target.value})} placeholder="Warehouse" style={{...S.sel,width:"100%"}} /></div>
+                <div><div style={S.lbl}>Age group</div><input value={open.age_group||""} onChange={e=>saveClinic(open.id,{age_group:e.target.value})} placeholder="10-12U" style={{...S.sel,width:"100%"}} /></div>
+                <div><div style={S.lbl}>Level</div><input value={open.level||""} onChange={e=>saveClinic(open.id,{level:e.target.value})} placeholder="Beginner / Intermediate" style={{...S.sel,width:"100%"}} /></div>
+                <div><div style={S.lbl}>Lead coach</div><select value={open.coach_name||""} onChange={e=>saveClinic(open.id,{coach_name:e.target.value||null, status: e.target.value?(open.status==="planned"?"assigned":open.status):open.status})} style={{...S.sel,width:"100%"}}><option value="">— assign —</option>{coachOptions.map(n=><option key={n} value={n}>{n}</option>)}{open.coach_name && !coachOptions.includes(open.coach_name) && <option value={open.coach_name}>{open.coach_name}</option>}</select></div>
+                <div><div style={S.lbl}>Assistants</div><input value={open.assistants||""} onChange={e=>saveClinic(open.id,{assistants:e.target.value})} placeholder="Extra coaches" style={{...S.sel,width:"100%"}} /></div>
+                <div><div style={S.lbl}>Status</div><select value={open.status||"planned"} onChange={e=>saveClinic(open.id,{status:e.target.value})} style={{...S.sel,width:"100%"}}>{Object.keys(STATUS).map(k=><option key={k} value={k}>{STATUS[k][0]}</option>)}</select></div>
+              </>) : (
+                <div style={{gridColumn:"1/-1",fontSize:13,color:C.text,lineHeight:1.7}}>
+                  {fmtDate(open.clinic_date)}{open.end_date?" – "+fmtDate(open.end_date):""} · {open.start_time||"?"}–{open.end_time||"?"} · {open.location||"—"}<br/>
+                  {open.age_group||"—"} · {open.level||"—"} · Lead: <b>{open.coach_name||"unassigned"}</b>{open.assistants?" · +"+open.assistants:""}
+                  <span style={{marginLeft:8,fontSize:10,fontWeight:800,color:STATUS[open.status]?.[1],border:"1px solid "+STATUS[open.status]?.[1],borderRadius:6,padding:"1px 7px",textTransform:"uppercase"}}>{STATUS[open.status]?.[0]}</span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Plan — goals / level / expectations + blocks */}
+          <div style={S.card}>
+            <div style={S.lbl}>Clinic plan</div>
+            {field("Goals","goals","What players should walk away with…")}
+            {field("Focus / level of training","focus","Skills & concepts, matched to the level (e.g. platform, serving mechanics, movement)…")}
+            {field("Expectations for the coach","expectations","Energy, structure, safety, communication, our standards…")}
+            <div style={S.lbl}>Session blocks</div>
+            <div style={{display:"flex",flexDirection:"column",gap:6}}>
+              {blocks.map((b,i)=>(
+                <div key={b.id||i} style={{display:"flex",gap:8,alignItems:"flex-start"}}>
+                  {canManage ? <input type="number" min="0" value={b.minutes??""} onChange={e=>setBlock(i,{minutes:e.target.value===""?"":+e.target.value})} style={{...S.sel,width:56,textAlign:"right"}} /> : <span style={{fontSize:12,color:C.mut,width:56,textAlign:"right",paddingTop:6}}>{b.minutes||0}m</span>}
+                  <div style={{flex:1}}>
+                    {canManage ? <input value={b.name||""} onChange={e=>setBlock(i,{name:e.target.value})} placeholder="Block" style={{...S.sel,width:"100%",fontWeight:700,marginBottom:3}} /> : <div style={{fontSize:13,fontWeight:700}}>{b.name}</div>}
+                    {canManage ? <textarea value={b.desc||""} onChange={e=>setBlock(i,{desc:e.target.value})} placeholder="Drills / cues…" style={{...S.sel,width:"100%",minHeight:34,resize:"vertical",fontSize:12}} /> : (b.desc && <div style={{fontSize:12,color:C.mut}}>{b.desc}</div>)}
+                  </div>
+                  {canManage && <button onClick={()=>setPlan({blocks:blocks.filter((_,ix)=>ix!==i)})} style={{...S.ghost,padding:"4px 9px",color:C.red}}>✕</button>}
+                </div>
+              ))}
+            </div>
+            {canManage && <button style={{...S.ghost,marginTop:8}} onClick={()=>setPlan({blocks:[...blocks,{id:rid(),name:"",minutes:15,desc:""}]})}>+ Add block</button>}
+          </div>
+
+          {/* Feedback loop */}
+          <div style={S.card}>
+            <div style={S.lbl}>Coach feedback / recap {isMine(open) && !isDirector && <span style={{color:C.acc}}>· your clinic</span>}</div>
+            {canFeedback
+              ? <AutoTextarea value={open.coach_feedback||""} onChange={e=>saveClinic(open.id,{coach_feedback:e.target.value, coach_feedback_by:coachName, coach_feedback_at:new Date().toISOString()})} minRows={3} placeholder="How it went: attendance, what worked, what to improve, standout players, anything the director should know…" style={{...S.sel,width:"100%",fontSize:14,lineHeight:1.5,boxSizing:"border-box"}} />
+              : <div style={{fontSize:13,color:open.coach_feedback?C.text:C.mut,whiteSpace:"pre-wrap",lineHeight:1.5}}>{open.coach_feedback||"No feedback yet."}</div>}
+            {open.coach_feedback_by && <div style={{fontSize:10,color:C.mut,marginTop:4}}>— {open.coach_feedback_by}{open.coach_feedback_at?" · "+new Date(open.coach_feedback_at).toLocaleDateString():""}</div>}
+            <div style={{...S.lbl,marginTop:12}}>Director notes / oversight</div>
+            {isDirector
+              ? <AutoTextarea value={open.director_notes||""} onChange={e=>saveClinic(open.id,{director_notes:e.target.value})} minRows={2} placeholder="Oversight: coaching quality, follow-ups, what to adjust next time…" style={{...S.sel,width:"100%",fontSize:13,lineHeight:1.5,boxSizing:"border-box"}} />
+              : <div style={{fontSize:13,color:open.director_notes?C.text:C.mut,whiteSpace:"pre-wrap",lineHeight:1.5}}>{open.director_notes||"—"}</div>}
+          </div>
+        </div>
+      );
+    }
+
+    // ── Clinic list ────────────────────────────────────────────────────────
+    const today = localDateISO();
+    const upcoming = clinics.filter(c => !c.clinic_date || c.clinic_date >= today);
+    const past = clinics.filter(c => c.clinic_date && c.clinic_date < today).reverse();
+    const row = c => (
+      <button key={c.id} onClick={()=>setClinicOpenId(c.id)} style={{display:"flex",alignItems:"center",gap:12,textAlign:"left",width:"100%",padding:"11px 13px",borderRadius:10,border:"1px solid "+(isMine(c)?C.gold:C.border),background:isMine(c)?"rgba(233,30,140,0.05)":C.bg,cursor:"pointer",fontFamily:"inherit",marginBottom:8}}>
+        <div style={{minWidth:96}}>
+          <div style={{fontSize:13,fontWeight:800,color:C.text}}>{fmtDate(c.clinic_date)}</div>
+          <div style={{fontSize:11,color:C.mut}}>{c.start_time||""}{c.start_time&&c.end_time?"–":""}{c.end_time||""}</div>
+        </div>
+        <div style={{flex:1,minWidth:120}}>
+          <div style={{fontSize:14,fontWeight:700,color:C.text}}>{c.name}</div>
+          <div style={{fontSize:11,color:C.mut,marginTop:1}}>{[c.age_group,c.level,c.location].filter(Boolean).join(" · ")||"—"} · {c.coach_name?("Coach "+c.coach_name):"unassigned"}</div>
+        </div>
+        <span style={{fontSize:9,fontWeight:800,color:KIND[c.kind]?.[1],border:"1px solid "+KIND[c.kind]?.[1],borderRadius:5,padding:"1px 6px",textTransform:"uppercase"}}>{KIND[c.kind]?.[0]}</span>
+        <span style={{fontSize:9,fontWeight:800,color:STATUS[c.status]?.[1],border:"1px solid "+STATUS[c.status]?.[1],borderRadius:5,padding:"1px 6px",textTransform:"uppercase"}}>{STATUS[c.status]?.[0]}</span>
+      </button>
+    );
+    return (
+      <div style={{maxWidth:900,margin:"0 auto"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:12}}>
+          <div><div style={{fontSize:20,fontWeight:800,color:C.gold}}>DSSC Clinics &amp; Camps</div><div style={{fontSize:12,color:C.mut,marginTop:2}}>Schedule, plans, assignments and feedback — on the DS Elite methodology.</div></div>
+          <div style={{flex:1}} />
+          {isDirector && <button style={S.gold} onClick={newClinic}>+ New clinic</button>}
+        </div>
+        {methodBanner}
+        {clinics.length===0 ? (
+          <div style={{...S.card,textAlign:"center",color:C.mut,fontSize:13}}>{isDirector ? "No clinics yet — click + New clinic to schedule one." : "No clinics scheduled yet."}</div>
+        ) : (
+          <>
+            <div style={S.lbl}>Upcoming ({upcoming.length})</div>
+            {upcoming.length ? upcoming.map(row) : <div style={{fontSize:12,color:C.mut,marginBottom:10}}>Nothing upcoming.</div>}
+            {past.length>0 && <><div style={{...S.lbl,marginTop:10}}>Past ({past.length})</div>{past.map(row)}</>}
+          </>
+        )}
+      </div>
+    );
+  }
+
   // ── Lineups & Rotations (6-2 planner) ──────────────────────────────────
   function renderLineups() {
     const rid = (p="r") => p + Math.random().toString(36).slice(2, 8);
@@ -16292,6 +16482,7 @@ export default function App() {
                       {mItem("tournaments","🏆 Tournaments")}
                       {mItem("lineups","📋 Lineups")}
                       {mItem("practiceplan","📖 Playbook")}
+                      {mItem("clinics","🏐 DSSC Clinics")}
                       {groups.map(g => (
                         <div key={g.title}>
                           <div style={{padding:"10px 14px 4px",fontSize:9,fontWeight:800,letterSpacing:0.6,textTransform:"uppercase",color:C.gold,borderTop:"1px solid "+C.border,marginTop:6}}>{g.title}</div>
@@ -16311,6 +16502,7 @@ export default function App() {
                 {item("tournaments","Tournaments")}
                 {item("lineups","Lineups")}
                 {item("practiceplan","Playbook")}
+                {item("clinics","DSSC")}
                 {groups.map(g => {
                   const activeInGroup = g.items.some(([v]) => v === view);
                   const open = openMenu === g.title;
@@ -16482,6 +16674,7 @@ export default function App() {
         {view==="timecards" && renderTimeCards()}
         {view==="faq" && renderFaq()}
         {view==="practiceplan" && renderPracticePlans()}
+        {view==="clinics" && renderClinics()}
         {view==="lineups" && renderLineups()}
         {view==="games" && renderGames()}
         {view==="askai" && renderAskAI()}
