@@ -12640,10 +12640,28 @@ export default function App() {
     // Availability / interest.
     const myAvail = dsscAvail.find(a => cand.has(norm(a.coach_name)));
     const setAvail = async (patch) => {
-      const row = { coach_name: coachName, coach_email: coach?.email||null, available: patch.available!==undefined?patch.available:(myAvail?.available??true), note: patch.note!==undefined?patch.note:(myAvail?.note||null), skills: patch.skills!==undefined?patch.skills:(myAvail?.skills||null), updated_at: new Date().toISOString() };
+      const row = { coach_name: coachName, coach_email: coach?.email||null, available: patch.available!==undefined?patch.available:(myAvail?.available??true), note: patch.note!==undefined?patch.note:(myAvail?.note||null), skills: patch.skills!==undefined?patch.skills:(myAvail?.skills||null), interest_source: "self", updated_at: new Date().toISOString() };
       const { error } = await supabase.from("dssc_availability").upsert(row, { onConflict:"coach_name" });
       if (error) { window.alert("Couldn't save: "+error.message); return; }
       await loadDsscAvail();
+    };
+    // Director marks a coach they already know coaches for us (or removes them).
+    const setAvailFor = async (name, cemail, on) => {
+      const prev = dsscAvail.find(a => norm(a.coach_name)===norm(name));
+      const row = { coach_name: name, coach_email: cemail||prev?.coach_email||null, available: on, note: prev?.note||null, skills: prev?.skills||null, interest_source: prev?.interest_source==="self" ? "self" : (coach?.email||"director"), updated_at: new Date().toISOString() };
+      const { error } = await supabase.from("dssc_availability").upsert(row, { onConflict:"coach_name" });
+      if (error) { window.alert("Couldn't save: "+error.message); return; }
+      await loadDsscAvail();
+    };
+    // Recruitment blast: ask every coach if they want to coach DSSC clinics.
+    const recruitInterest = async () => {
+      const emails = [...new Set(coachRoster.map(r => (r.email||"").trim().toLowerCase()).filter(Boolean))];
+      if (!emails.length) { window.alert("No coach emails on file to invite."); return; }
+      if (!window.confirm("Ask all "+emails.length+" coaches if they're interested in coaching DSSC clinics? (push + email)")) return;
+      const body = "We're building out the DSSC clinic coaching pool. Interested in picking up clinic sessions? All clinic coaching pays $25/hr and is separate from DS Elite.\n\nOpen DS Elite HQ → DSSC and tap \"Yes, I'm interested\" — then add what you can coach and when you're free so we can match you to sessions.";
+      fetch("/api/send-push", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ title:"Interested in coaching DSSC clinics?", body:"Tap to join the clinic coach pool — $25/hr, flexible sessions.", url:"/?view=clinics", audience:{ type:"emails", emails } }) }).catch(()=>{});
+      fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ subject:"Interested in coaching DSSC clinics? ($25/hr)", body, recipients: emails }) }).catch(()=>{});
+      window.alert("Invited "+emails.length+" coaches to join the DSSC clinic pool.");
     };
     // Staffing suggestions: who's available + skilled, preferring back-to-back.
     const coachSessionsMap = (() => { const m={}; clinics.forEach(c => (Array.isArray(c.sessions)?c.sessions:[]).forEach(s => { if(s.coach_name){ (m[norm(s.coach_name)]=m[norm(s.coach_name)]||[]).push({date:s.date, start:parseTime(s.start_time), end:parseTime(s.end_time), court:s.court, name:c.name}); } })); return m; })();
@@ -13021,30 +13039,51 @@ export default function App() {
           );
         })()}
 
-        {/* Availability / interest */}
+        {/* Interested in coaching DSSC clinics? — coach opt-in + director recruiting */}
         {(() => {
           const interested = dsscAvail.filter(a => a.available);
           return (
             <div style={S.card}>
               <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:8}}>
-                <div style={{...S.lbl,marginBottom:0}}>Coach availability for clinics</div>
+                <div style={{...S.lbl,marginBottom:0}}>Interested in coaching DSSC clinics?</div>
                 <div style={{flex:1}} />
-                <button onClick={()=>setAvail({available:!(myAvail?.available)})} style={{padding:"5px 12px",borderRadius:8,border:"1px solid "+(myAvail?.available?C.grn:C.border),background:myAvail?.available?"rgba(34,197,94,0.12)":"transparent",color:myAvail?.available?C.grn:C.text,fontWeight:800,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>{myAvail?.available?"✓ I'm available":"I'm available to help"}</button>
+                <button onClick={()=>setAvail({available:!(myAvail?.available)})} style={{padding:"5px 12px",borderRadius:8,border:"1px solid "+(myAvail?.available?C.grn:C.border),background:myAvail?.available?"rgba(34,197,94,0.12)":"transparent",color:myAvail?.available?C.grn:C.text,fontWeight:800,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>{myAvail?.available?"✓ I'm in the pool":"Yes, I'm interested"}</button>
               </div>
+              <div style={{fontSize:11,color:C.mut,marginBottom:8}}>All clinic coaching pays <b>$25/hr</b>, separate from DS Elite. Tell us what you can coach and when — we'll match you to sessions.</div>
               {myAvail?.available && <>
-                <DebouncedField value={myAvail?.note||""} onCommit={v=>setAvail({note:v})} placeholder="When can you help? (days/times)" style={{...S.sel,width:"100%",marginBottom:6,boxSizing:"border-box"}} />
-                <DebouncedField value={myAvail?.skills||""} onCommit={v=>setAvail({skills:v})} placeholder="What can you coach? (levels, ages, focus — e.g. beginner, serving, U11-14)" style={{...S.sel,width:"100%",marginBottom:8,boxSizing:"border-box"}} />
+                <DebouncedField value={myAvail?.skills||""} onCommit={v=>setAvail({skills:v})} placeholder="What can you coach? (levels, ages, focus — e.g. beginner, serving, U11-14)" style={{...S.sel,width:"100%",marginBottom:6,boxSizing:"border-box"}} />
+                <DebouncedField value={myAvail?.note||""} onCommit={v=>setAvail({note:v})} placeholder="When are you free? (days/times)" style={{...S.sel,width:"100%",marginBottom:8,boxSizing:"border-box"}} />
               </>}
-              {isDirector && (
-                interested.length ? (
-                  <div style={{display:"flex",flexDirection:"column",gap:4}}>
-                    <div style={{fontSize:10,fontWeight:800,textTransform:"uppercase",color:C.mut}}>Interested ({interested.length})</div>
-                    {interested.slice().sort((a,b)=>(a.coach_name||"").localeCompare(b.coach_name||"")).map(a => (
-                      <div key={a.coach_name} style={{fontSize:12,color:C.text}}><b>{a.coach_name}</b>{a.skills?<span style={{color:"#22d3ee"}}> · {a.skills}</span>:""}{a.note?<span style={{color:C.mut}}> — {a.note}</span>:""}</div>
-                    ))}
+              {isDirector && (() => {
+                const availByNm = {}; dsscAvail.forEach(a => { availByNm[norm(a.coach_name)] = a; });
+                const roster = coachRoster.slice().sort((a,b)=>(a.first_name||"").localeCompare(b.first_name||"")).map(r => ({ name:((r.first_name||"")+" "+(r.last_name||"")).trim(), email:r.email||"" })).filter(r=>r.name);
+                return (
+                  <div style={{marginTop:6,borderTop:"1px solid "+C.border,paddingTop:10}}>
+                    <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:8}}>
+                      <div style={{fontSize:10,fontWeight:800,textTransform:"uppercase",color:C.mut}}>Clinic coach pool ({interested.length} in)</div>
+                      <div style={{flex:1}} />
+                      <button style={S.gold} onClick={recruitInterest}>📣 Ask coaches: interested?</button>
+                    </div>
+                    <div style={{fontSize:11,color:C.mut,marginBottom:8}}>Toggle any coach you already know coaches for us. <span style={{color:"#22d3ee"}}>self</span> = they opted in themselves.</div>
+                    <div style={{display:"flex",flexDirection:"column",gap:2,maxHeight:280,overflowY:"auto"}}>
+                      {roster.map(r => {
+                        const a = availByNm[norm(r.name)];
+                        const inPool = !!a?.available;
+                        return (
+                          <div key={r.name} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 7px",borderRadius:7,background:inPool?"rgba(34,197,94,0.07)":"transparent"}}>
+                            <button onClick={()=>setAvailFor(r.name, r.email, !inPool)} title={inPool?"Remove from pool":"Add to pool"} style={{width:22,height:22,flexShrink:0,borderRadius:6,border:"1px solid "+(inPool?C.grn:C.border),background:inPool?C.grn:"transparent",color:"#fff",fontSize:13,fontWeight:900,cursor:"pointer",lineHeight:1,fontFamily:"inherit"}}>{inPool?"✓":""}</button>
+                            <div style={{flex:1,minWidth:0}}>
+                              <div style={{fontSize:13,fontWeight:inPool?800:600,color:C.text}}>{r.name} {inPool && a?.interest_source==="self" && <span style={{fontSize:9,color:"#22d3ee",fontWeight:800}}>self</span>}{inPool && a?.interest_source && a.interest_source!=="self" && <span style={{fontSize:9,color:C.mut,fontWeight:700}}>added</span>}</div>
+                              {inPool && (a?.skills||a?.note) && <div style={{fontSize:10,color:C.mut,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{a.skills?a.skills:""}{a.skills&&a.note?" · ":""}{a.note||""}</div>}
+                            </div>
+                          </div>
+                        );
+                      })}
+                      {!roster.length && <div style={{fontSize:12,color:C.mut}}>No coaches in the roster yet.</div>}
+                    </div>
                   </div>
-                ) : <div style={{fontSize:12,color:C.mut}}>No coaches have flagged availability yet.</div>
-              )}
+                );
+              })()}
             </div>
           );
         })()}
