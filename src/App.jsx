@@ -1201,6 +1201,8 @@ export default function App() {
   const [clinicMonth, setClinicMonth]   = useState(null);   // "YYYY-MM" calendar anchor
   const [dsscCheckins, setDsscCheckins] = useState([]);     // DSSC clinic clock-ins (separate from DS Elite)
   const [dsscAvail, setDsscAvail]       = useState([]);     // coach availability/interest for clinics
+  const [dsscSync, setDsscSync]         = useState(null);   // last Playbook→clinics sync {last_synced_at, summary}
+  const [dsscSyncTok, setDsscSyncTok]   = useState(null);   // built sync bookmarklet {href, calendarUrl} | {configured:false} | {error}
   const [clinicBusy, setClinicBusy]     = useState("");     // key of clinic action in flight
   const [drills, setDrills]     = useState([]);     // shared drill library
   const [drillFilter, setDrillFilter] = useState({ q:"", skill:"", phase:"" });
@@ -2061,8 +2063,29 @@ export default function App() {
     if (error) { console.error("Load dssc_availability error:", error); return; }
     setDsscAvail(data || []);
   }, []);
+  const loadDsscSync = useCallback(async () => {
+    const { data } = await supabase.from("dssc_sync").select("*").eq("id", 1).maybeSingle();
+    setDsscSync(data || null);
+  }, []);
+  // Build the one-click "Sync DSSC clinics" bookmarklet. Fetches the shared
+  // secret (admin-only) and assembles a javascript: URL the director drags to
+  // their bookmarks bar; clicking it on the Playbook calendar page reads
+  // getEvents() and POSTs to /api/dssc-clinic-sync.
+  const fetchSyncBookmarklet = useCallback(async () => {
+    setDsscSyncTok({ loading: true });
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error("Not signed in");
+      const r = await fetch("/api/dssc-sync-token", { headers: { Authorization: "Bearer " + session.access_token } });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || "Failed");
+      if (!j.configured) { setDsscSyncTok({ configured: false }); return; }
+      const bm = "javascript:(function(){var c=window.fullCalendar;if(!c||!c.getEvents){alert('Open the Playbook calendar page first.');return;}var g=function(s,l){var m=new RegExp(l+' - <b>(.*?)<\\/b>').exec(s||'');return m?m[1]:'';};var ev=c.getEvents().filter(function(e){return /volleyball/i.test(g((e.extendedProps||{}).contents,'Category'));}).map(function(e){var x=e.extendedProps||{};return{start:e.startStr,end:e.endStr,ext:{event_program:x.event_program,contents:x.contents}};});if(!ev.length){alert('No volleyball clinics in the loaded range. Widen the calendar dates first.');return;}fetch('" + j.endpoint + "',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({secret:'" + j.secret + "',by:'bookmarklet',events:ev})}).then(function(r){return r.json();}).then(function(o){alert(o.ok?('DSSC synced \\u2713 '+o.programs+' clinics, +'+o.sessionsAdded+' new sessions'):('Sync error: '+(o.error||'unknown')));}).catch(function(e){alert('Sync failed: '+e);});})();";
+      setDsscSyncTok({ configured: true, href: bm, calendarUrl: j.calendarUrl });
+    } catch (e) { setDsscSyncTok({ error: String(e.message || e) }); }
+  }, []);
   useEffect(() => { if (isApproved && (view === "clinics" || view === "home")) { loadClinics(); loadDsscCheckins(); } }, [isApproved, view, loadClinics, loadDsscCheckins]);
-  useEffect(() => { if (isApproved && view === "clinics") { loadPlaybook(); loadDsscAvail(); } }, [isApproved, view, loadPlaybook, loadDsscAvail]);
+  useEffect(() => { if (isApproved && view === "clinics") { loadPlaybook(); loadDsscAvail(); loadDsscSync(); } }, [isApproved, view, loadPlaybook, loadDsscAvail, loadDsscSync]);
   const saveCharter = useCallback(async (team, data) => {
     if (!team) return;
     const row = { team_name: team, data, updated_by: coach?.display_name || coach?.email || null, updated_at: new Date().toISOString() };
@@ -13007,6 +13030,41 @@ export default function App() {
           {isDirector && <button style={S.ghost} onClick={newClinic}>+ New clinic</button>}
         </div>
         {methodBanner}
+
+        {/* Playbook sync — one-click pull of the DSSC clinic schedule */}
+        {isDirector && (() => {
+          const last = dsscSync?.last_synced_at ? new Date(dsscSync.last_synced_at) : null;
+          const sum = dsscSync?.summary || null;
+          const t = dsscSyncTok;
+          return (
+            <div style={{...S.card,border:"1px solid #06b6d4"}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:6}}>
+                <div style={{...S.lbl,marginBottom:0,color:"#22d3ee"}}>📅 Playbook calendar sync</div>
+                <div style={{flex:1}} />
+                {last ? <span style={{fontSize:11,color:C.mut}}>Last synced {last.toLocaleDateString(undefined,{month:"short",day:"numeric"})} {last.toLocaleTimeString(undefined,{hour:"numeric",minute:"2-digit"})}{sum?` · ${sum.programs} clinics`:""}</span> : <span style={{fontSize:11,color:C.mut}}>Not synced yet</span>}
+              </div>
+              <div style={{fontSize:12,color:C.mut,marginBottom:8,lineHeight:1.5}}>The clinic schedule comes from Playbook. Pull the latest with one click — new sessions are added and times refreshed, while coach assignments, focus, recap and plans are kept. Volleyball clinics only.</div>
+              {!t && <button style={S.gold} onClick={fetchSyncBookmarklet}>Set up one-click sync →</button>}
+              {t?.loading && <span style={{fontSize:12,color:C.mut}}>Loading…</span>}
+              {t?.error && <div style={{fontSize:12,color:"#ef4444"}}>Couldn't load: {t.error}</div>}
+              {t?.configured===false && <div style={{fontSize:12,color:"#f59e0b"}}>Add a <b>DSSC_SYNC_SECRET</b> env var in Vercel (any random string), redeploy, then reload this page.</div>}
+              {t?.href && (
+                <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                  <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+                    <a ref={el=>{ if(el) el.setAttribute("href", t.href); }} onClick={e=>e.preventDefault()} draggable="true"
+                       style={{display:"inline-block",padding:"7px 14px",borderRadius:8,background:C.gold,color:"#000",fontWeight:800,fontSize:13,textDecoration:"none",cursor:"grab"}}>🔄 Sync DSSC clinics</a>
+                    <button style={S.ghost} onClick={()=>{ navigator.clipboard?.writeText(t.href); window.alert("Sync code copied. Create a new bookmark and paste it as the URL."); }}>Copy code</button>
+                    <a href={t.calendarUrl+"?start_date="+today.slice(0,4)+"-08-01&end_date="+today.slice(0,4)+"-12-31"} target="_blank" rel="noreferrer" style={{fontSize:12,fontWeight:700,color:"#22d3ee"}}>Open Playbook (Aug–Dec) →</a>
+                  </div>
+                  <div style={{fontSize:11,color:C.mut,lineHeight:1.6}}>
+                    <b>One-time setup:</b> drag <b>🔄 Sync DSSC clinics</b> to your bookmarks bar (or Copy code → new bookmark → paste as URL).<br/>
+                    <b>To sync:</b> open the Playbook calendar (use the link above for the full season), then click the <b>🔄 Sync DSSC clinics</b> bookmark. Done.
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Director oversight — planning + staffing status across all clinics */}
         {isDirector && clinics.length>0 && (() => {
