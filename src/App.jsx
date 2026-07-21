@@ -12682,16 +12682,39 @@ export default function App() {
                   <div style={{...S.lbl,marginBottom:0}}>Sessions ({sessions.length})</div>
                   {unassigned>0 ? <span style={{fontSize:11,fontWeight:800,color:"#f59e0b"}}>⚠ {unassigned} need a coach</span> : <span style={{fontSize:11,fontWeight:800,color:C.grn}}>✓ all covered</span>}
                 </div>
-                <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                  {sessions.map((s,i) => (
-                    <div key={s.id||i} style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",padding:"7px 10px",borderRadius:8,border:"1px solid "+(s.coach_name?C.border:"#f59e0b"),background:s.coach_name?C.bg:"rgba(245,158,11,0.06)"}}>
-                      <span style={{fontSize:13,fontWeight:700,color:C.text,minWidth:120}}>{sfmt(s.date)}</span>
-                      <span style={{fontSize:12,color:C.mut,flex:1,minWidth:100}}>{s.start_time}{s.end_time?"–"+s.end_time:""}{s.court?" · "+s.court:""}</span>
-                      {canManage
-                        ? <select value={s.coach_name||""} onChange={e=>setSess(i,{coach_name:e.target.value||null})} style={{...S.sel,minWidth:150}}><option value="">⚠ assign coach</option>{coachOptions.map(n=><option key={n} value={n}>{n}</option>)}{s.coach_name && !coachOptions.includes(s.coach_name) && <option value={s.coach_name}>{s.coach_name}</option>}</select>
-                        : <span style={{fontSize:12,fontWeight:700,color:s.coach_name?C.grn:"#f59e0b"}}>{s.coach_name?("Coach "+s.coach_name):"needs a coach"}</span>}
+                <div style={{fontSize:11,color:C.mut,marginBottom:8}}>Multi-week: each session shows the <b>previous</b> session's focus so coaches build week to week — even when the coach changes.</div>
+                <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                  {sessions.map((s,i) => {
+                    const prev = i>0 ? sessions[i-1] : null;
+                    const canEditSess = isDirector || (s.coach_name && cand.has(norm(s.coach_name)));
+                    return (
+                    <div key={s.id||i} style={{padding:"9px 11px",borderRadius:8,border:"1px solid "+(s.coach_name?C.border:"#f59e0b"),background:s.coach_name?C.bg:"rgba(245,158,11,0.06)"}}>
+                      <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+                        <span style={{fontSize:13,fontWeight:800,color:C.text,minWidth:44}}>#{i+1}</span>
+                        <span style={{fontSize:13,fontWeight:700,color:C.text,minWidth:110}}>{sfmt(s.date)}</span>
+                        <span style={{fontSize:12,color:C.mut,flex:1,minWidth:90}}>{s.start_time}{s.end_time?"–"+s.end_time:""}{s.court?" · "+s.court:""}</span>
+                        {canManage
+                          ? <select value={s.coach_name||""} onChange={e=>setSess(i,{coach_name:e.target.value||null})} style={{...S.sel,minWidth:150}}><option value="">⚠ assign coach</option>{coachOptions.map(n=><option key={n} value={n}>{n}</option>)}{s.coach_name && !coachOptions.includes(s.coach_name) && <option value={s.coach_name}>{s.coach_name}</option>}</select>
+                          : <span style={{fontSize:12,fontWeight:700,color:s.coach_name?C.grn:"#f59e0b"}}>{s.coach_name?("Coach "+s.coach_name):"needs a coach"}</span>}
+                      </div>
+                      {prev && (prev.focus||prev.recap) && (
+                        <div style={{fontSize:11,color:C.mut,marginTop:6,paddingLeft:10,borderLeft:"2px solid #06b6d4",lineHeight:1.5}}>
+                          <b style={{color:"#22d3ee"}}>Last session ({sfmt(prev.date)}{prev.coach_name?" · "+prev.coach_name:""}):</b>{prev.focus?" Focus — "+prev.focus:""}{prev.recap?" · Recap — "+prev.recap:""}
+                        </div>
+                      )}
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginTop:6}}>
+                        <div>
+                          <div style={{fontSize:9,fontWeight:800,textTransform:"uppercase",color:C.mut,marginBottom:2}}>This session's focus</div>
+                          {canEditSess ? <AutoTextarea value={s.focus||""} onChange={e=>setSess(i,{focus:e.target.value})} minRows={1} placeholder="What we're building this week…" style={{...S.sel,width:"100%",fontSize:12,lineHeight:1.4,boxSizing:"border-box"}} /> : <div style={{fontSize:12,color:s.focus?C.text:C.mut}}>{s.focus||"—"}</div>}
+                        </div>
+                        <div>
+                          <div style={{fontSize:9,fontWeight:800,textTransform:"uppercase",color:C.mut,marginBottom:2}}>Recap (for next week)</div>
+                          {canEditSess ? <AutoTextarea value={s.recap||""} onChange={e=>setSess(i,{recap:e.target.value})} minRows={1} placeholder="How it went, where to pick up…" style={{...S.sel,width:"100%",fontSize:12,lineHeight:1.4,boxSizing:"border-box"}} /> : <div style={{fontSize:12,color:s.recap?C.text:C.mut}}>{s.recap||"—"}</div>}
+                        </div>
+                      </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
                 {canManage && open.coach_name && unassigned>0 && <button style={{...S.ghost,marginTop:8}} onClick={()=>saveClinic(open.id,{sessions:sessions.map(s=>s.coach_name?s:{...s,coach_name:open.coach_name})})}>Assign {open.coach_name} to all open sessions</button>}
               </div>
