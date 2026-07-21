@@ -4891,7 +4891,7 @@ export default function App() {
         </div>
         {renderCheckIn(true)}
 
-        {/* Your DSSC clinics — for coaches assigned to clinic sessions */}
+        {/* Your DSSC clinics — opt into the clinic coach pool + assigned sessions */}
         {(() => {
           const nrm = s => (s||"").toString().trim().toLowerCase();
           const cand = new Set(); if (coach?.display_name) cand.add(nrm(coach.display_name));
@@ -4900,26 +4900,40 @@ export default function App() {
           const todayISO = localDateISO();
           const mine = [];
           (clinics||[]).forEach(c => (Array.isArray(c.sessions)?c.sessions:[]).forEach(s => { if (s.coach_name && cand.has(nrm(s.coach_name)) && s.date >= todayISO) mine.push({ c, s }); }));
-          if (!mine.length) return null;
           mine.sort((a,b)=> (a.s.date||"").localeCompare(b.s.date||""));
+          const myAvail = (dsscAvail||[]).find(a => cand.has(nrm(a.coach_name)));
+          const inPool = !!myAvail?.available;
+          const optIn = async (on) => {
+            const nm = myAvail?.coach_name || coach?.display_name || coach?.email || "";
+            if (!nm) return;
+            const row = { coach_name: nm, coach_email: coach?.email||myAvail?.coach_email||null, available: on, note: myAvail?.note||null, skills: myAvail?.skills||null, interest_source: myAvail?.interest_source==="self"?"self":(myAvail?.interest_source||"self"), updated_at: new Date().toISOString() };
+            const { error } = await supabase.from("dssc_availability").upsert(row, { onConflict:"coach_name" });
+            if (error) { window.alert("Couldn't save: "+error.message); return; }
+            await loadDsscAvail();
+          };
           const sfmt = d => d===todayISO ? "Today" : new Date(d+"T12:00:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"});
           return (
             <div style={{background:"rgba(6,182,212,0.06)",border:"1px solid #06b6d4",borderRadius:12,padding:"12px 14px",marginBottom:14}}>
-              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
-                <span style={{fontSize:11,fontWeight:800,textTransform:"uppercase",letterSpacing:0.4,color:"#22d3ee"}}>🏐 Your DSSC clinics</span>
+              <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:8}}>
+                <span style={{fontSize:11,fontWeight:800,textTransform:"uppercase",letterSpacing:0.4,color:"#22d3ee"}}>🏐 DSSC clinics</span>
                 <div style={{flex:1}} />
+                <button onClick={()=>optIn(!inPool)} style={{padding:"5px 12px",borderRadius:8,border:"1px solid "+(inPool?C.grn:"#06b6d4"),background:inPool?"rgba(34,197,94,0.12)":"transparent",color:inPool?C.grn:"#22d3ee",fontWeight:800,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>{inPool?"✓ In the clinic pool":"Coach clinics? I'm interested"}</button>
                 <button onClick={()=>setView("clinics")} style={{background:"none",border:"none",color:"#22d3ee",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700}}>Open DSSC →</button>
               </div>
-              <div style={{display:"flex",flexDirection:"column",gap:5}}>
-                {mine.slice(0,4).map(({c,s},i) => (
-                  <div key={s.id||i} style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:C.text}}>
-                    <span style={{minWidth:90,fontWeight:700,color:s.date===todayISO?C.gold:C.text}}>{sfmt(s.date)}</span>
-                    <span style={{flex:1}}>{c.name}</span>
-                    <span style={{fontSize:12,color:C.mut}}>{s.start_time}{s.court?" · "+s.court:""}</span>
-                  </div>
-                ))}
-                {mine.length>4 && <div style={{fontSize:11,color:C.mut}}>+{mine.length-4} more</div>}
-              </div>
+              {!inPool && !mine.length && <div style={{fontSize:12,color:C.mut}}>Pick up clinic sessions for <b>$25/hr</b> — separate from DS Elite. Tap <b>I'm interested</b> to join the pool, then tell us what you can coach.</div>}
+              {inPool && !mine.length && <div style={{fontSize:12,color:C.mut}}>You're in the clinic pool — we'll match you to sessions. <button onClick={()=>setView("clinics")} style={{background:"none",border:"none",color:"#22d3ee",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700,padding:0}}>Add your skills & availability →</button></div>}
+              {!!mine.length && (
+                <div style={{display:"flex",flexDirection:"column",gap:5}}>
+                  {mine.slice(0,4).map(({c,s},i) => (
+                    <div key={s.id||i} style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:C.text}}>
+                      <span style={{minWidth:90,fontWeight:700,color:s.date===todayISO?C.gold:C.text}}>{sfmt(s.date)}</span>
+                      <span style={{flex:1}}>{c.name}</span>
+                      <span style={{fontSize:12,color:C.mut}}>{s.start_time}{s.court?" · "+s.court:""}</span>
+                    </div>
+                  ))}
+                  {mine.length>4 && <div style={{fontSize:11,color:C.mut}}>+{mine.length-4} more</div>}
+                </div>
+              )}
             </div>
           );
         })()}
