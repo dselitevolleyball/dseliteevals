@@ -561,6 +561,8 @@ function emailMarkupToHtml(text) {
   text = repairSplitLinks(text);
   const inline = (raw) => {
     let s = escEmailHtml(raw);
+    // ![alt](url) — inline image. Must run before the link rule below.
+    s = s.replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (_, alt, url) => '<img src="' + normalizeUrl(url) + '" alt="' + alt + '" style="max-width:100%;height:auto;border-radius:8px;display:block;margin:10px 0" />');
     // [label](url) — protocol optional; we normalize the href.
     s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, label, url) => '<a href="' + normalizeUrl(url) + '" style="color:#c2185b;font-weight:600">' + label + "</a>");
     s = s.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
@@ -581,6 +583,7 @@ function emailMarkupToHtml(text) {
 }
 function emailMarkupToText(text) {
   return repairSplitLinks(text)
+    .replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g, (_, alt, url) => (alt ? "[" + alt + " image] " : "[image] ") + normalizeUrl(url))
     .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, label, url) => label + " (" + normalizeUrl(url) + ")")
     .replace(/\*\*([^*]+)\*\*/g, "$1")
     .replace(/(^|[^*\w])\*([^*\n]+)\*(?!\*)/g, "$1$2")
@@ -1302,6 +1305,8 @@ export default function App() {
   const [emailPreviewOpen, setEmailPreviewOpen]       = useState(false); // formatted-preview toggle
   const [emailAudience, setEmailAudience]             = useState("parents"); // team sends: parents | both | coaches
   const emailBodyRef                                  = useRef(null);   // textarea ref for toolbar selection edits
+  const emailImgInputRef                              = useRef(null);   // hidden file input for inserting images
+  const [emailImgUploading, setEmailImgUploading]     = useState(false);
   const [teamsList, setTeamsList]                           = useState([]);
   const [teamStatus, setTeamStatus]                         = useState({}); // { [team_name]: { status, looking_positions } }
   const [teamTasks, setTeamTasks]                           = useState({}); // { `${team}|${item}`: { status, notes } }
@@ -10298,6 +10303,31 @@ export default function App() {
               {label}
             </button>
           );
+          // Upload a picture to public Storage and insert it at the cursor.
+          const insertImage = async (file) => {
+            if (!file) return;
+            if (!/^image\//.test(file.type)) { window.alert("Please choose an image file."); return; }
+            if (file.size > 10 * 1024 * 1024) { window.alert("Image is too large (max 10 MB)."); return; }
+            setEmailImgUploading(true);
+            try {
+              const ext = (file.name.split(".").pop() || "png").toLowerCase().replace(/[^a-z0-9]/g, "");
+              const path = Date.now() + "-" + Math.random().toString(36).slice(2, 8) + "." + ext;
+              const { error } = await supabase.storage.from("email-images").upload(path, file, { cacheControl: "31536000", contentType: file.type, upsert: false });
+              if (error) throw error;
+              const { data } = supabase.storage.from("email-images").getPublicUrl(path);
+              const url = data?.publicUrl;
+              if (!url) throw new Error("Could not get image URL");
+              const ta = emailBodyRef.current;
+              const at = ta ? ta.selectionStart : emailBody.length;
+              const before = emailBody.slice(0, at), after = emailBody.slice(at);
+              const snippet = (before && !before.endsWith("\n") ? "\n" : "") + "![image](" + url + ")\n" + (after && !after.startsWith("\n") ? "\n" : "");
+              const next = before + snippet + after;
+              setEmailBody(next);
+              const caret = (before + snippet).length;
+              requestAnimationFrame(() => { if (ta) { ta.focus(); try { ta.setSelectionRange(caret, caret); } catch {} } });
+            } catch (e) { window.alert("Image upload failed: " + (e?.message || e)); }
+            finally { setEmailImgUploading(false); }
+          };
           return (
             <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6,flexWrap:"wrap"}}>
               <span style={{fontSize:11,fontWeight:700,color:C.mut}}>Format:</span>
@@ -10308,6 +10338,12 @@ export default function App() {
               {fbtn("Med", "h2", "Medium heading — ## line", {fontWeight:700})}
               {fbtn("• List", "bullet", "Bullet the selected lines — - line")}
               {fbtn("🔗 Link", "link", "Turn the selection into a link — [text](url)")}
+              <input ref={emailImgInputRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp" style={{display:"none"}}
+                onChange={e=>{ const f=e.target.files?.[0]; e.target.value=""; insertImage(f); }} />
+              <button onClick={()=>emailImgInputRef.current?.click()} disabled={emailImgUploading} title="Add a picture (uploaded and embedded in the email)"
+                style={{padding:"5px 10px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:emailImgUploading?C.mut:C.text,fontSize:12,cursor:emailImgUploading?"default":"pointer",fontFamily:"inherit"}}>
+                {emailImgUploading ? "Uploading…" : "🖼 Image"}
+              </button>
               <button onClick={()=>setEmailPreviewOpen(v=>!v)} title="Preview how the formatted email will look to parents"
                 style={{marginLeft:"auto",padding:"5px 12px",borderRadius:6,border:"1px solid "+(emailPreviewOpen?C.gold:C.border),background:emailPreviewOpen?"rgba(233,30,140,0.12)":"transparent",color:emailPreviewOpen?C.gold:C.mut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
                 👁 Preview{emailPreviewOpen?" ✓":""}
