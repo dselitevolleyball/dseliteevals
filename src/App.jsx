@@ -1203,6 +1203,7 @@ export default function App() {
   const [dsscAvail, setDsscAvail]       = useState([]);     // coach availability/interest for clinics
   const [dsscSync, setDsscSync]         = useState(null);   // last Playbook→clinics sync {last_synced_at, summary}
   const [dsscSyncTok, setDsscSyncTok]   = useState(null);   // built sync bookmarklet {href, calendarUrl} | {configured:false} | {error}
+  const [swSyncTok, setSwSyncTok]       = useState(null);   // SportWrench sync bookmarklet {href} | {configured:false} | {error}
   const [clinicBusy, setClinicBusy]     = useState("");     // key of clinic action in flight
   const [drills, setDrills]     = useState([]);     // shared drill library
   const [drillFilter, setDrillFilter] = useState({ q:"", skill:"", phase:"" });
@@ -2083,6 +2084,22 @@ export default function App() {
       const bm = "javascript:(function(){var c=window.fullCalendar;if(!c||!c.getEvents){alert('Open the Playbook calendar page first.');return;}var g=function(s,l){var m=new RegExp(l+' - <b>(.*?)<\\/b>').exec(s||'');return m?m[1]:'';};var ev=c.getEvents().filter(function(e){return /volleyball/i.test(g((e.extendedProps||{}).contents,'Category'));}).map(function(e){var x=e.extendedProps||{};return{start:e.startStr,end:e.endStr,ext:{event_program:x.event_program,contents:x.contents}};});if(!ev.length){alert('No volleyball clinics in the loaded range. Widen the calendar dates first.');return;}fetch('" + j.endpoint + "',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({secret:'" + j.secret + "',by:'bookmarklet',events:ev})}).then(function(r){return r.json();}).then(function(o){alert(o.ok?('DSSC synced \\u2713 '+o.programs+' clinics, +'+o.sessionsAdded+' new sessions'):('Sync error: '+(o.error||'unknown')));}).catch(function(e){alert('Sync failed: '+e);});})();";
       setDsscSyncTok({ configured: true, href: bm, calendarUrl: j.calendarUrl });
     } catch (e) { setDsscSyncTok({ error: String(e.message || e) }); }
+  }, []);
+  // Build the "Sync SportWrench" bookmarklet (qualifiers + Texas). SportWrench is
+  // Cloudflare-gated so this runs in the browser on events.sportwrench.com.
+  const fetchSwBookmarklet = useCallback(async () => {
+    setSwSyncTok({ loading: true });
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error("Not signed in");
+      const r = await fetch("/api/dssc-sync-token", { headers: { Authorization: "Bearer " + session.access_token } });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || "Failed");
+      if (!j.configured) { setSwSyncTok({ configured: false }); return; }
+      const endpoint = "https://dseliteevals.vercel.app/api/sportwrench-sync";
+      const bm = "javascript:(function(){fetch('/api/esw/events',{headers:{Accept:'application/json'}}).then(function(r){return r.json();}).then(function(arr){if(!Array.isArray(arr)){alert('Open events.sportwrench.com first.');return;}var t=new Date().toISOString().slice(0,10);var q=function(e){return /qualifier|national championship/i.test((e.long_name||'')+' '+(e.name||''));};var ev=arr.filter(function(e){return (e.date_end||'').slice(0,10)>=t&&(q(e)||e.state==='TX');}).map(function(e){return{event_id:e.event_id,name:e.long_name||e.name,date_start:(e.date_start||'').slice(0,10),date_end:(e.date_end||'').slice(0,10),city:e.city,state:e.state,qualifier:q(e)};});if(!ev.length){alert('No qualifiers or Texas events found.');return;}fetch('" + endpoint + "',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({secret:'" + j.secret + "',events:ev})}).then(function(r){return r.json();}).then(function(o){alert(o.ok?('SportWrench synced \\u2713 +'+o.inserted+' new, '+o.updated+' updated'):('Sync error: '+(o.error||'unknown')));}).catch(function(e){alert('Sync failed: '+e);});}).catch(function(e){alert('Could not read SportWrench. Open events.sportwrench.com and try again. '+e);});})();";
+      setSwSyncTok({ configured: true, href: bm });
+    } catch (e) { setSwSyncTok({ error: String(e.message || e) }); }
   }, []);
   useEffect(() => { if (isApproved && (view === "clinics" || view === "home")) { loadClinics(); loadDsscCheckins(); } }, [isApproved, view, loadClinics, loadDsscCheckins]);
   useEffect(() => { if (isApproved && view === "clinics") { loadPlaybook(); loadDsscAvail(); loadDsscSync(); } }, [isApproved, view, loadPlaybook, loadDsscAvail, loadDsscSync]);
@@ -15757,9 +15774,10 @@ export default function App() {
     // multi-select since "what's the calendar of selected teams" doesn't
     // need the listing filters).
     const filtered = tournaments.filter(t => {
-      // Default scope: only Lone Star events (from AES) and National Qualifiers.
-      // Flip "Show all sources" to see every imported tournament.
-      if (!tnFilters.showAllSources && !((t.source||"").startsWith("AES") || t.is_qualifier)) return false;
+      // Default scope: Lone Star events (from AES), National Qualifiers, and the
+      // live SportWrench sync (qualifiers + Texas). "Show all sources" reveals
+      // every imported tournament.
+      if (!tnFilters.showAllSources && !((t.source||"").startsWith("AES") || (t.source||"").startsWith("SportWrench:Sync") || t.is_qualifier)) return false;
       if (tnFilters.hideCancelled && t.cancelled) return false;
       if (tnFilters.qualifierOnly && !t.is_qualifier) return false;
       if (tnFilters.hideClosed && (t.status||"").toLowerCase().includes("closed")) return false;
@@ -15918,6 +15936,26 @@ export default function App() {
             </button>
           ) : null}
         </div>
+        {/* SportWrench sync — admin one-click bookmarklet (qualifiers + Texas) */}
+        {canOps && tnView==="list" && (() => {
+          const t = swSyncTok;
+          return (
+            <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",marginBottom:6,padding:"7px 10px",background:C.card,borderRadius:10,border:"1px solid "+C.border}}>
+              <span style={{fontSize:11,fontWeight:800,textTransform:"uppercase",letterSpacing:0.3,color:"#22d3ee"}}>🔄 SportWrench sync</span>
+              <span style={{fontSize:11,color:C.mut,flex:1,minWidth:160}}>National Qualifiers + Texas events. SportWrench blocks servers, so this pulls from your browser.</span>
+              {!t && <button onClick={fetchSwBookmarklet} style={{padding:"5px 11px",borderRadius:8,border:"none",background:C.gold,color:"#000",fontWeight:800,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>Set up sync →</button>}
+              {t?.loading && <span style={{fontSize:11,color:C.mut}}>Loading…</span>}
+              {t?.error && <span style={{fontSize:11,color:"#ef4444"}}>{t.error}</span>}
+              {t?.configured===false && <span style={{fontSize:11,color:"#f59e0b"}}>Set DSSC_SYNC_SECRET in Vercel, then reload.</span>}
+              {t?.href && <>
+                <a ref={el=>{ if(el) el.setAttribute("href", t.href); }} onClick={e=>e.preventDefault()} draggable="true" style={{display:"inline-block",padding:"5px 12px",borderRadius:8,background:C.gold,color:"#000",fontWeight:800,fontSize:12,textDecoration:"none",cursor:"grab"}}>🔄 Sync SportWrench</a>
+                <button onClick={()=>{ navigator.clipboard?.writeText(t.href); window.alert("Copied. Create a bookmark and paste as the URL."); }} style={{padding:"5px 10px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.text,fontWeight:600,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>Copy</button>
+                <a href="https://events.sportwrench.com/" target="_blank" rel="noreferrer" style={{fontSize:11,fontWeight:700,color:"#22d3ee"}}>Open SportWrench →</a>
+                <span style={{fontSize:10,color:C.mut,width:"100%"}}>Drag <b>🔄 Sync SportWrench</b> to your bookmarks bar, open SportWrench, then click it.</span>
+              </>}
+            </div>
+          );
+        })()}
         {/* Filter row 2 — day-of-week + date range */}
         <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center",marginBottom:6,padding:"6px 10px",background:C.card,borderRadius:10,border:"1px solid "+C.border}}>
           <span style={{fontSize:11,color:C.mut,fontWeight:600}}>Starts on:</span>
