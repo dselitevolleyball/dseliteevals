@@ -7740,9 +7740,27 @@ export default function App() {
 
           {/* Tournament schedule */}
           <div style={sectionBox}>
-            {(() => { const nights = teamTournaments.reduce((s,x)=>s+tnHotelNights(x.tournament),0); const stays = teamTournaments.filter(x=>x.tournament.stay_over).length; return (
-              <div style={lbl}>Tournament Schedule · {teamTournaments.length}{nights>0 && <span style={{color:"#22d3ee",marginLeft:8}}>🏨 {stays} stay-over{stays===1?"":"s"} · {nights} night{nights===1?"":"s"}</span>}</div>
-            ); })()}
+            <div style={lbl}>Tournament Schedule</div>
+            {(() => {
+              const total = teamTournaments.length;
+              const quals = teamTournaments.filter(x => x.tournament.is_qualifier).length;
+              const nights = teamTournaments.reduce((s, x) => s + tnHotelNights(x.tournament), 0);
+              const stays = teamTournaments.filter(x => x.tournament.stay_over).length;
+              const chip = (label, val, color) => (
+                <div style={{ background: C.card, border: "1px solid " + C.border, borderRadius: 8, padding: "6px 12px", minWidth: 74, textAlign: "center" }}>
+                  <div style={{ fontSize: 19, fontWeight: 800, color, lineHeight: 1.1 }}>{val}</div>
+                  <div style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4, color: C.mut, marginTop: 1 }}>{label}</div>
+                </div>
+              );
+              return (
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+                  {chip("Tournaments", total, C.gold)}
+                  {chip("Qualifiers", quals, "#a855f7")}
+                  {chip("Hotel nights", nights, "#22d3ee")}
+                  {stays > 0 && chip("Stay-overs", stays, "#22d3ee")}
+                </div>
+              );
+            })()}
             <div style={{fontSize:12,fontWeight:700,color:C.acc,marginBottom:8}}>{tournamentTimingText(teamCardName)}</div>
             {teamTournaments.length === 0 && <div style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>No tournament assignments. Open the Tournaments tab to assign.</div>}
             {teamTournaments.length > 0 && (
