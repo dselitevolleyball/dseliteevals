@@ -3350,7 +3350,10 @@ export default function App() {
       for (let i = 0; i < sorted.length; i++) {
         for (let j = i + 1; j < sorted.length; j++) {
           const a = sorted[i].tournament, b = sorted[j].tournament;
-          if (a.id === b.id) continue;
+          // Two teams at the SAME tournament (a.id===b.id) is still a conflict —
+          // the coach can't run both. Only skip if it's literally the same team
+          // (coach listed as both head & assistant).
+          if (sorted[i].team_id === sorted[j].team_id) continue;
           if (a.start_date <= b.end_date && b.start_date <= a.end_date) {
             conflicts.push({
               coach,
@@ -15526,7 +15529,7 @@ export default function App() {
       if (a.team_id === teamId) continue;
       if (tnConflictHandled(a)) continue; // the other team has a REAL sub / explicit override — no clash ("TBD" still clashes)
       const tn = tById.get(a.tournament_id);
-      if (!tn || tn.id === tournament.id || tn.cancelled) continue;
+      if (!tn || tn.cancelled) continue; // same tournament, different team still clashes (one coach, two teams)
       if (!(tn.start_date <= tournament.end_date && tournament.start_date <= tn.end_date)) continue;
       const shared = coachesOfTeam(a.team_id).filter(c => mine.has(c.trim().toLowerCase()));
       for (const c of shared) out.push({ coach: c, otherTeam: a.team_id, otherTournament: tn });
