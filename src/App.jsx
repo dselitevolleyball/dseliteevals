@@ -15940,6 +15940,7 @@ export default function App() {
               <option value="browse">Browse by Weekend</option>
               <option value="month">Month View</option>
               <option value="calendar">Team Calendar</option>
+              <option value="gaps">Coverage / Gaps</option>
             </select>
             <div style={{fontSize:11,color:C.mut}}>
               {tournaments.length} total · {filtered.length} match filters · {tournamentAssignments.length} assignments · {tournamentConflicts.length} conflict{tournamentConflicts.length===1?"":"s"}
@@ -16135,6 +16136,7 @@ export default function App() {
         {tnView === "calendar" ? renderTournamentCalendar(filtered)
          : tnView === "browse" ? renderTournamentBrowser(filtered)
          : tnView === "month" ? renderTournamentMonthView(filtered)
+         : tnView === "gaps" ? renderTournamentGaps()
          : (<>
         {/* Bulk selection bar — check tournaments (or select all filtered) and delete in one shot. */}
         <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:10,padding:"8px 12px",background:tnSelected.size?"rgba(239,68,68,0.08)":C.card,border:"1px solid "+(tnSelected.size?C.red:C.border),borderRadius:8}}>
@@ -16185,6 +16187,88 @@ export default function App() {
           })()
         )}
         </>)}
+      </div>
+    );
+  }
+
+  // ─── TOURNAMENT COVERAGE / GAPS ───────────────────────────────────────
+  // Target tournaments per team by level vs. what's booked, so you see what's
+  // still missing. National teams target Qualifier + Regional (any non-Q);
+  // Regional & Developmental split non-Q into 2-Day (multi-day) and 1-Day.
+  function renderTournamentGaps() {
+    const teams = teamsList.filter(t => t.active);
+    const tnById = new Map(tournaments.map(t => [t.id, t]));
+    const isMultiDay = (t) => !!(t.start_date && t.end_date && t.start_date !== t.end_date);
+    const ageOf = (t) => parseInt(String(t.id || "").match(/^\d+/)?.[0] || String(t.age_div || "").replace(/\D/g, "") || "0", 10) || 0;
+    const goalFor = (t) => {
+      if (t.level === "National")      { const a = ageOf(t); return { kind: "national", qual: a <= 12 ? 3 : 4, regional: a <= 12 ? 6 : 5 }; }
+      if (t.level === "Regional")      return { kind: "split", qual: 2, twoDay: 5, oneDay: 2 };
+      if (t.level === "Developmental") return { kind: "split", qual: 1, twoDay: 1, oneDay: 4 };
+      return null;
+    };
+    // Distinct tournaments per team, categorized.
+    const stats = new Map();
+    for (const a of tournamentAssignments) {
+      const t = tnById.get(a.tournament_id); if (!t) continue;
+      if (!stats.has(a.team_id)) stats.set(a.team_id, { qual: new Set(), twoDay: new Set(), oneDay: new Set(), nonQual: new Set() });
+      const s = stats.get(a.team_id);
+      if (t.is_qualifier) s.qual.add(t.id);
+      else { s.nonQual.add(t.id); (isMultiDay(t) ? s.twoDay : s.oneDay).add(t.id); }
+    }
+    const byLevel = { National: [], Regional: [], Developmental: [] };
+    teams.forEach(t => { if (byLevel[t.level]) byLevel[t.level].push(t); });
+    const sortT = (arr) => arr.slice().sort((a, b) => (ageOf(a) - ageOf(b)) || String(a.id).localeCompare(String(b.id)));
+
+    const th = { padding: "6px 10px", fontSize: 10, fontWeight: 800, textTransform: "uppercase", color: C.mut, textAlign: "center", borderBottom: "2px solid " + C.border };
+    const thL = { ...th, textAlign: "left" };
+    const cell = (a, target) => { const short = target - a; return (
+      <td style={{ padding: "6px 10px", textAlign: "center", fontWeight: 800, color: a >= target ? C.grn : short > 0 ? "#f59e0b" : C.mut }}>{a}/{target}{short > 0 ? <span style={{ color: "#ef4444", fontSize: 10 }}> (−{short})</span> : ""}</td>
+    ); };
+    const nameCell = (t) => (
+      <td style={{ padding: "6px 10px", fontWeight: 700, color: C.text, whiteSpace: "nowrap" }}>
+        <span onClick={() => setTeamCardName(t.id)} style={{ cursor: "pointer", textDecoration: "underline", textDecorationColor: "transparent", textUnderlineOffset: 2 }}
+          onMouseEnter={e => e.currentTarget.style.textDecorationColor = C.gold} onMouseLeave={e => e.currentTarget.style.textDecorationColor = "transparent"}>{t.id}</span>
+      </td>
+    );
+    const totalCell = (a, tt) => <td style={{ padding: "6px 10px", textAlign: "center", fontWeight: 800, color: a >= tt ? C.grn : C.text }}>{a}/{tt}</td>;
+    const needsCell = (parts) => { const needs = parts.filter(Boolean).join(", ") || "✓ complete"; return <td style={{ padding: "6px 10px", fontSize: 12, fontWeight: 700, color: needs === "✓ complete" ? C.grn : "#f59e0b" }}>{needs}</td>; };
+
+    const section = (title, arr, kind) => arr.length === 0 ? null : (
+      <div key={title} style={{ marginBottom: 18 }}>
+        <div style={{ fontSize: 12, fontWeight: 800, color: C.gold, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>{title} · {arr.length} team{arr.length === 1 ? "" : "s"}</div>
+        <div style={{ overflowX: "auto", border: "1px solid " + C.border, borderRadius: 10 }}>
+          <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13, background: C.card }}>
+            <thead><tr>
+              <th style={thL}>Team</th><th style={th}>Qualifier</th>
+              {kind === "national" ? <th style={th}>Regional</th> : <><th style={th}>2-Day</th><th style={th}>1-Day</th></>}
+              <th style={th}>Total</th><th style={thL}>Still needs</th>
+            </tr></thead>
+            <tbody>
+              {sortT(arr).map(t => {
+                const g = goalFor(t); const s = stats.get(t.id) || { qual: new Set(), twoDay: new Set(), oneDay: new Set(), nonQual: new Set() };
+                const q = s.qual.size, needQ = Math.max(0, g.qual - q);
+                if (kind === "national") {
+                  const r = s.nonQual.size, needR = Math.max(0, g.regional - r);
+                  return <tr key={t.id} style={{ borderBottom: "1px solid " + C.border }}>{nameCell(t)}{cell(q, g.qual)}{cell(r, g.regional)}{totalCell(q + r, g.qual + g.regional)}{needsCell([needQ && needQ + " qualifier" + (needQ > 1 ? "s" : ""), needR && needR + " regional"])}</tr>;
+                }
+                const d2 = s.twoDay.size, d1 = s.oneDay.size, needD2 = Math.max(0, g.twoDay - d2), needD1 = Math.max(0, g.oneDay - d1);
+                return <tr key={t.id} style={{ borderBottom: "1px solid " + C.border }}>{nameCell(t)}{cell(q, g.qual)}{cell(d2, g.twoDay)}{cell(d1, g.oneDay)}{totalCell(q + d2 + d1, g.qual + g.twoDay + g.oneDay)}{needsCell([needQ && needQ + " qualifier" + (needQ > 1 ? "s" : ""), needD2 && needD2 + " 2-day", needD1 && needD1 + " 1-day"])}</tr>;
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+
+    return (
+      <div>
+        <div style={{ fontSize: 12, color: C.mut, marginBottom: 14, lineHeight: 1.5 }}>
+          Target tournaments per team (by level) vs. what's booked. <b style={{ color: "#f59e0b" }}>Amber (−n)</b> = short by n; <b style={{ color: C.grn }}>green</b> = met. Qualifier = flagged qualifiers · 2-Day = multi-day tournaments · 1-Day = single-day · Regional (National teams) = any non-qualifier.
+        </div>
+        {section("National", byLevel.National, "national")}
+        {section("Regional", byLevel.Regional, "split")}
+        {section("Developmental", byLevel.Developmental, "split")}
+        {teams.every(t => !goalFor(t)) && <div style={{ color: C.mut, fontSize: 13 }}>No active teams have a level set (National / Regional / Developmental), so no targets to compare.</div>}
       </div>
     );
   }
