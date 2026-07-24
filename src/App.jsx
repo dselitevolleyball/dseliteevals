@@ -7744,8 +7744,16 @@ export default function App() {
                   return (
                   <div key={i} style={{padding:"6px 10px",background:C.card,borderRadius:6,border:"1px solid "+C.border,borderLeft:"4px solid "+st.color,fontSize:12}}>
                     <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                      <span style={{fontWeight:700,color:C.text}}>{tn.name}</span>
-                      <span style={{fontSize:9,fontWeight:800,textTransform:"uppercase",letterSpacing:0.3,color:st.color,background:st.color+"22",border:"1px solid "+st.color,borderRadius:999,padding:"1px 8px"}}>{st.label}</span>
+                      <span style={{fontWeight:700,color:C.text,flex:1,minWidth:120}}>{tn.name}</span>
+                      {canOps ? (
+                        <select value={TN_STATUS[a.status]?a.status:"planned"} onChange={e=>updateAssignmentStatus(a.id, e.target.value)}
+                          title="Registration status for this team"
+                          style={{...inpStyle,fontSize:10,padding:"2px 6px",fontWeight:800,color:st.color,borderColor:st.color}}>
+                          {TN_STATUS_ORDER.map(s => <option key={s} value={s} style={{color:C.text,fontWeight:600}}>{TN_STATUS[s].label}</option>)}
+                        </select>
+                      ) : (
+                        <span style={{fontSize:9,fontWeight:800,textTransform:"uppercase",letterSpacing:0.3,color:st.color,background:st.color+"22",border:"1px solid "+st.color,borderRadius:999,padding:"1px 8px"}}>{st.label}</span>
+                      )}
                     </div>
                     <div style={{fontSize:10,color:C.mut,marginTop:2}}>
                       {tn.start_date}{tn.end_date && tn.end_date !== tn.start_date ? " – " + tn.end_date : ""}
