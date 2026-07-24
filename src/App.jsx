@@ -16341,12 +16341,20 @@ export default function App() {
     const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     const fmtMD = (iso) => { try { return new Date(iso + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }); } catch { return iso; } };
     const first = (s) => esc(String(s || "").split(" ")[0]);
+    // Shared-tournament colors (2+ teams at the same event) for the printout too.
+    const shC = (() => {
+      const tnT = new Map();
+      for (const [k, its] of cellMap) { const teamId = k.slice(0, k.lastIndexOf(":")); for (const it of its) { if (!tnT.has(it.tournament.id)) tnT.set(it.tournament.id, new Set()); tnT.get(it.tournament.id).add(teamId); } }
+      const pal = ["#2563eb", "#db2777", "#0d9488", "#d97706", "#7c3aed", "#dc2626", "#059669", "#ca8a04", "#0891b2", "#e11d48", "#65a30d", "#9333ea", "#f43f5e", "#0e7490", "#ea580c", "#a21caf"];
+      const ids = [...tnT.entries()].filter(([, s]) => s.size >= 2).map(([id]) => id).sort((a, b) => ((tnById.get(a)?.start_date) || "").localeCompare((tnById.get(b)?.start_date) || "") || String(a).localeCompare(String(b)));
+      return new Map(ids.map((id, i) => [id, pal[i % pal.length]]));
+    })();
     const headCells = teamsToShow.map(t => `<th>${esc(t.id)}${t.head_coach ? `<div class="coach">${first(t.head_coach)}${t.assistant_coach ? "/" + first(t.assistant_coach) : ""}</div>` : ""}</th>`).join("");
     const bodyRows = weeks.map(wk => {
       const cells = teamsToShow.map(team => {
         const items = cellMap.get(cellKey(team.id, wk.sat)) || [];
         if (!items.length) return "<td></td>";
-        const inner = items.map(it => { const c = tnStatusMeta(it.assignment.status).color; return `<div class="tn" style="border-left:3px solid ${c}"><b>${esc(it.tournament.name)}</b>${it.tournament.is_qualifier ? ' <span class="q">Q</span>' : ""}${it.tournament.stay_over ? " 🏨" : ""}${it.assignment.division ? ` <span class="dv">${esc(it.assignment.division)}</span>` : ""}${it.assignment.sub_coach ? ` <span class="sub">sub: ${esc(it.assignment.sub_coach)}</span>` : ""}</div>`; }).join("");
+        const inner = items.map(it => { const c = tnStatusMeta(it.assignment.status).color; const sc = shC.get(it.tournament.id); const extra = sc ? `background:${sc}22;box-shadow:inset 0 0 0 1.5px ${sc};` : ""; return `<div class="tn" style="border-left:3px solid ${c};${extra}"><b>${esc(it.tournament.name)}</b>${it.tournament.is_qualifier ? ' <span class="q">Q</span>' : ""}${it.tournament.stay_over ? " 🏨" : ""}${it.assignment.division ? ` <span class="dv">${esc(it.assignment.division)}</span>` : ""}${it.assignment.sub_coach ? ` <span class="sub">sub: ${esc(it.assignment.sub_coach)}</span>` : ""}</div>`; }).join("");
         return `<td>${inner}</td>`;
       }).join("");
       return `<tr><td class="wk">${fmtMD(wk.fri)}–${fmtMD(wk.sun)}</td>${cells}</tr>`;
@@ -16425,6 +16433,15 @@ export default function App() {
         }
       }
     }
+    // Shared-tournament colors: any tournament that 2+ shown teams attend gets a
+    // distinct hue, so you can see at a glance which teams are together.
+    const shownIds = new Set(teamsToShow.map(t => t.id));
+    const SHARE_PALETTE = ["#3b82f6", "#ec4899", "#14b8a6", "#f59e0b", "#8b5cf6", "#ef4444", "#10b981", "#eab308", "#06b6d4", "#f472b6", "#84cc16", "#a78bfa", "#fb7185", "#22d3ee", "#f97316", "#c084fc"];
+    const tnTeams = new Map();
+    for (const [k, its] of cellMap) { const teamId = k.slice(0, k.lastIndexOf(":")); if (!shownIds.has(teamId)) continue; for (const it of its) { if (!tnTeams.has(it.tournament.id)) tnTeams.set(it.tournament.id, new Set()); tnTeams.get(it.tournament.id).add(teamId); } }
+    const sharedIds = [...tnTeams.entries()].filter(([, s]) => s.size >= 2).map(([id]) => id)
+      .sort((a, b) => ((tnById.get(a)?.start_date) || "").localeCompare((tnById.get(b)?.start_date) || "") || String(a).localeCompare(String(b)));
+    const sharedColor = new Map(sharedIds.map((id, i) => [id, SHARE_PALETTE[i % SHARE_PALETTE.length]]));
     // Conflict lookup: (team_id, weekend) pairs that are in a conflict
     const conflictCells = new Set();
     for (const c of tournamentConflicts) {
@@ -16541,6 +16558,8 @@ export default function App() {
           <span style={{width:1,height:14,background:C.border,margin:"0 2px"}} />
           <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:12,height:12,borderRadius:3,background:"rgba(239,68,68,0.35)",display:"inline-block"}} /> Coach double-booked</span>
           <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:12,height:12,borderRadius:3,background:"repeating-linear-gradient(45deg, rgba(90,90,90,0.5) 0, rgba(90,90,90,0.5) 3px, rgba(20,20,20,0.8) 3px, rgba(20,20,20,0.8) 6px)",display:"inline-block"}} /> ⛔ Coach committed elsewhere</span>
+          <span style={{width:1,height:14,background:C.border,margin:"0 2px"}} />
+          <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:12,height:12,borderRadius:3,boxShadow:"inset 0 0 0 2px #3b82f6",background:"#3b82f633",display:"inline-block"}} /> Matching outline = teams at the <b>same tournament</b></span>
         </div>
         {/* Team multi-select chips */}
         <div style={{background:C.card,borderRadius:10,border:"1px solid "+C.border,padding:"10px 12px",marginBottom:10}}>
@@ -16696,10 +16715,10 @@ export default function App() {
                                   <span style={{color:C.mut,fontSize:11}}>—</span>
                                 );
                               })()
-                            ) : items.map(it => { const st = tnStatusMeta(it.assignment.status); const cur = TN_STATUS[it.assignment.status] ? it.assignment.status : "planned"; return (
-                              <div key={it.assignment.id} title={it.tournament.name + (it.assignment.division ? " · " + it.assignment.division : "") + " — " + st.label + " · click to open & edit"}
+                            ) : items.map(it => { const st = tnStatusMeta(it.assignment.status); const cur = TN_STATUS[it.assignment.status] ? it.assignment.status : "planned"; const shc = sharedColor.get(it.tournament.id); const shN = shc ? tnTeams.get(it.tournament.id).size : 0; return (
+                              <div key={it.assignment.id} title={it.tournament.name + (it.assignment.division ? " · " + it.assignment.division : "") + " — " + st.label + (shN ? " · " + shN + " of our teams here" : "") + " · click to open & edit"}
                                 onClick={()=>openEditTournament(it.tournament)}
-                                style={{fontSize:10,fontWeight:600,color:isConflict?C.red:C.text,lineHeight:1.3,marginBottom:3,cursor:"pointer",borderLeft:"3px solid "+st.color,background:st.color+"1f",borderRadius:4,padding:"2px 4px 2px 5px",textDecoration:"underline",textDecorationColor:"transparent",textUnderlineOffset:2}}
+                                style={{fontSize:10,fontWeight:600,color:isConflict?C.red:C.text,lineHeight:1.3,marginBottom:3,cursor:"pointer",borderLeft:"3px solid "+st.color,background:shc?shc+"33":st.color+"1f",boxShadow:shc?"inset 0 0 0 1.5px "+shc:undefined,borderRadius:4,padding:"2px 4px 2px 5px",textDecoration:"underline",textDecorationColor:"transparent",textUnderlineOffset:2}}
                                 onMouseEnter={e=>e.currentTarget.style.textDecorationColor=C.gold}
                                 onMouseLeave={e=>e.currentTarget.style.textDecorationColor="transparent"}>
                                 <span onClick={canOps ? (e)=>{ e.stopPropagation(); const i=TN_STATUS_ORDER.indexOf(cur); updateAssignmentStatus(it.assignment.id, TN_STATUS_ORDER[(i+1)%TN_STATUS_ORDER.length]); } : undefined}
