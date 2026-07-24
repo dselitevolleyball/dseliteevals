@@ -15833,10 +15833,14 @@ export default function App() {
     // multi-select since "what's the calendar of selected teams" doesn't
     // need the listing filters).
     const filtered = tournaments.filter(t => {
-      // Default scope: Lone Star events (from AES), National Qualifiers, and the
-      // live SportWrench sync (qualifiers + Texas). "Show all sources" reveals
-      // every imported tournament.
-      if (!tnFilters.showAllSources && !((t.source||"").startsWith("AES") || (t.source||"").startsWith("SportWrench:Sync") || t.is_qualifier)) return false;
+      // Default scope: anything YOU added by hand (source "manual"), Lone Star
+      // events (from AES), National Qualifiers, and the live SportWrench sync
+      // (qualifiers + Texas). "Show all sources" reveals every bulk import too.
+      if (!tnFilters.showAllSources) {
+        const src = (t.source || "").trim();
+        const inScope = src === "manual" || !src || src.startsWith("AES") || src.startsWith("SportWrench:Sync") || t.is_qualifier;
+        if (!inScope) return false;
+      }
       if (tnFilters.hideCancelled && t.cancelled) return false;
       if (tnFilters.qualifierOnly && !t.is_qualifier) return false;
       if (tnFilters.hideClosed && (t.status||"").toLowerCase().includes("closed")) return false;
