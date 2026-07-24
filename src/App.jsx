@@ -15981,6 +15981,7 @@ export default function App() {
               <option value="month">Month View</option>
               <option value="calendar">Team Calendar</option>
               <option value="gaps">Coverage / Gaps</option>
+              <option value="totals">Team Totals</option>
             </select>
             <div style={{fontSize:11,color:C.mut}}>
               {tournaments.length} total · {filtered.length} match filters · {tournamentAssignments.length} assignments · {tournamentConflicts.length} conflict{tournamentConflicts.length===1?"":"s"}
@@ -16177,6 +16178,7 @@ export default function App() {
          : tnView === "browse" ? renderTournamentBrowser(filtered)
          : tnView === "month" ? renderTournamentMonthView(filtered)
          : tnView === "gaps" ? renderTournamentGaps()
+         : tnView === "totals" ? renderTournamentTeamTotals()
          : (<>
         {/* Bulk selection bar — check tournaments (or select all filtered) and delete in one shot. */}
         <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:10,padding:"8px 12px",background:tnSelected.size?"rgba(239,68,68,0.08)":C.card,border:"1px solid "+(tnSelected.size?C.red:C.border),borderRadius:8}}>
@@ -16227,6 +16229,72 @@ export default function App() {
           })()
         )}
         </>)}
+      </div>
+    );
+  }
+
+  // ─── TOURNAMENT TEAM TOTALS ───────────────────────────────────────────
+  // One row per team: tournaments, tournament-days, qualifiers, stay-overs,
+  // and hotel nights, with a club-wide totals row.
+  function renderTournamentTeamTotals() {
+    const teams = teamsList.filter(t => t.active);
+    const tnById = new Map(tournaments.map(t => [t.id, t]));
+    const byTeam = new Map(); // teamId -> Map(tournamentId -> tournament)  (distinct)
+    for (const a of tournamentAssignments) {
+      const t = tnById.get(a.tournament_id); if (!t) continue;
+      if (!byTeam.has(a.team_id)) byTeam.set(a.team_id, new Map());
+      byTeam.get(a.team_id).set(t.id, t);
+    }
+    const ageOf = (t) => parseInt(String(t.id || "").match(/^\d+/)?.[0] || "0", 10) || 0;
+    const rows = teams.slice().sort((a, b) => (ageOf(a) - ageOf(b)) || String(a.id).localeCompare(String(b.id))).map(team => {
+      const tns = [...(byTeam.get(team.id)?.values() || [])];
+      return {
+        team,
+        count: tns.length,
+        days: tns.reduce((s, t) => s + tnDayCount(t), 0),
+        quals: tns.filter(t => t.is_qualifier).length,
+        stays: tns.filter(t => t.stay_over).length,
+        nights: tns.reduce((s, t) => s + tnHotelNights(t), 0),
+      };
+    });
+    const tot = rows.reduce((a, r) => ({ count: a.count + r.count, days: a.days + r.days, quals: a.quals + r.quals, stays: a.stays + r.stays, nights: a.nights + r.nights }), { count: 0, days: 0, quals: 0, stays: 0, nights: 0 });
+
+    const th = { padding: "7px 12px", fontSize: 10, fontWeight: 800, textTransform: "uppercase", color: C.mut, textAlign: "center", borderBottom: "2px solid " + C.border, whiteSpace: "nowrap" };
+    const thL = { ...th, textAlign: "left" };
+    const td = (v, color) => <td style={{ padding: "7px 12px", textAlign: "center", fontWeight: 800, color: v ? (color || C.text) : C.mut }}>{v}</td>;
+    return (
+      <div>
+        <div style={{ fontSize: 12, color: C.mut, marginBottom: 12 }}>Every active team's booked tournaments at a glance. Click a team to open its card. Days = sum of each tournament's day count · Hotel nights = stay-over day counts.</div>
+        <div style={{ overflowX: "auto", border: "1px solid " + C.border, borderRadius: 10 }}>
+          <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13, background: C.card }}>
+            <thead><tr>
+              <th style={thL}>Team</th><th style={thL}>Level</th>
+              <th style={th}>Tournaments</th><th style={th}>Tourn. days</th><th style={th}>Qualifiers</th><th style={th}>Stay-overs</th><th style={th}>Hotel nights</th>
+            </tr></thead>
+            <tbody>
+              {rows.map(r => (
+                <tr key={r.team.id} style={{ borderBottom: "1px solid " + C.border }}>
+                  <td style={{ padding: "7px 12px", fontWeight: 700, color: C.text, whiteSpace: "nowrap" }}>
+                    <span onClick={() => setTeamCardName(r.team.id)} style={{ cursor: "pointer", textDecoration: "underline", textDecorationColor: "transparent", textUnderlineOffset: 2 }}
+                      onMouseEnter={e => e.currentTarget.style.textDecorationColor = C.gold} onMouseLeave={e => e.currentTarget.style.textDecorationColor = "transparent"}>{r.team.id}</span>
+                  </td>
+                  <td style={{ padding: "7px 12px", fontSize: 11, color: C.mut, whiteSpace: "nowrap" }}>{r.team.level || "—"}</td>
+                  {td(r.count, C.gold)}{td(r.days, C.acc)}{td(r.quals, "#a855f7")}{td(r.stays, "#22d3ee")}{td(r.nights, "#22d3ee")}
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr style={{ borderTop: "2px solid " + C.border, background: C.bg }}>
+                <td style={{ padding: "8px 12px", fontWeight: 800, color: C.text }} colSpan={2}>All teams ({rows.length})</td>
+                <td style={{ padding: "8px 12px", textAlign: "center", fontWeight: 800, color: C.gold }}>{tot.count}</td>
+                <td style={{ padding: "8px 12px", textAlign: "center", fontWeight: 800, color: C.acc }}>{tot.days}</td>
+                <td style={{ padding: "8px 12px", textAlign: "center", fontWeight: 800, color: "#a855f7" }}>{tot.quals}</td>
+                <td style={{ padding: "8px 12px", textAlign: "center", fontWeight: 800, color: "#22d3ee" }}>{tot.stays}</td>
+                <td style={{ padding: "8px 12px", textAlign: "center", fontWeight: 800, color: "#22d3ee" }}>{tot.nights}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
       </div>
     );
   }
