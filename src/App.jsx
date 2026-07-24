@@ -16325,6 +16325,57 @@ export default function App() {
     );
   }
 
+  // Clean, print-friendly team calendar in a new window: light theme, no
+  // dropdowns, empty cells blank, status shown as a colored left-border.
+  const printTeamCalendar = () => {
+    const activeTeams = teamsList.filter(t => t.active);
+    const teamsToShow = activeTeams.filter(t => tnSelectedTeams.size === 0 || tnSelectedTeams.has(t.id));
+    const SEASON_MONTHS = new Set([12, 1, 2, 3, 4, 5, 6]);
+    const weeks = [];
+    { const end = new Date(tnCalTo + "T00:00"); let d = new Date(tnCalFrom + "T00:00"); while (d.getDay() !== 6) d.setDate(d.getDate() + 1);
+      while (d <= end) { const sat = new Date(d), satISO = sat.toISOString().slice(0, 10); if (SEASON_MONTHS.has(parseInt(satISO.slice(5, 7)))) { const fri = new Date(sat); fri.setDate(fri.getDate() - 1); const sun = new Date(sat); sun.setDate(sun.getDate() + 1); weeks.push({ fri: fri.toISOString().slice(0, 10), sat: satISO, sun: sun.toISOString().slice(0, 10) }); } d.setDate(d.getDate() + 7); } }
+    const tnById = new Map(tournaments.map(t => [t.id, t]));
+    const cellMap = new Map();
+    const cellKey = (teamId, sat) => teamId + ":" + sat;
+    for (const a of tournamentAssignments) { const tn = tnById.get(a.tournament_id); if (!tn) continue; for (const wk of weeks) { if (tn.start_date <= wk.sun && tn.end_date >= wk.fri) { const k = cellKey(a.team_id, wk.sat); if (!cellMap.has(k)) cellMap.set(k, []); cellMap.get(k).push({ assignment: a, tournament: tn }); break; } } }
+    const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const fmtMD = (iso) => { try { return new Date(iso + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }); } catch { return iso; } };
+    const first = (s) => esc(String(s || "").split(" ")[0]);
+    const headCells = teamsToShow.map(t => `<th>${esc(t.id)}${t.head_coach ? `<div class="coach">${first(t.head_coach)}${t.assistant_coach ? "/" + first(t.assistant_coach) : ""}</div>` : ""}</th>`).join("");
+    const bodyRows = weeks.map(wk => {
+      const cells = teamsToShow.map(team => {
+        const items = cellMap.get(cellKey(team.id, wk.sat)) || [];
+        if (!items.length) return "<td></td>";
+        const inner = items.map(it => { const c = tnStatusMeta(it.assignment.status).color; return `<div class="tn" style="border-left:3px solid ${c}"><b>${esc(it.tournament.name)}</b>${it.tournament.is_qualifier ? ' <span class="q">Q</span>' : ""}${it.tournament.stay_over ? " 🏨" : ""}${it.assignment.division ? ` <span class="dv">${esc(it.assignment.division)}</span>` : ""}${it.assignment.sub_coach ? ` <span class="sub">sub: ${esc(it.assignment.sub_coach)}</span>` : ""}</div>`; }).join("");
+        return `<td>${inner}</td>`;
+      }).join("");
+      return `<tr><td class="wk">${fmtMD(wk.fri)}–${fmtMD(wk.sun)}</td>${cells}</tr>`;
+    }).join("");
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>Team Tournament Calendar</title><style>
+      *{box-sizing:border-box} body{font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;margin:14px;color:#111}
+      h1{font-size:17px;margin:0 0 3px} .sub{font-size:11px;color:#666;margin-bottom:10px}
+      table{border-collapse:collapse;width:100%;font-size:9px;table-layout:fixed}
+      th,td{border:1px solid #cfcfcf;padding:3px 4px;vertical-align:top;text-align:left;word-wrap:break-word}
+      thead th{background:#f0f0f0;font-weight:800;font-size:9px}
+      th .coach{font-weight:500;color:#777;font-size:8px}
+      td.wk{white-space:nowrap;font-weight:700;background:#f7f7f7;width:78px}
+      .tn{padding:2px 4px;margin-bottom:2px;line-height:1.25;background:#f8f8f8;border-radius:2px}
+      .q{color:#7c3aed;font-weight:800} .dv{color:#555} .sub{color:#a855f7;font-weight:700}
+      .legend{margin-top:10px;font-size:9px;color:#333;display:flex;gap:16px;flex-wrap:wrap;align-items:center}
+      .dot{display:inline-block;width:9px;height:9px;border-radius:50%;vertical-align:middle;margin-right:3px}
+      @media print{ body{margin:6px} @page{size:landscape;margin:7mm} }
+    </style></head><body>
+      <h1>DS Elite — Team Tournament Calendar</h1>
+      <div class="sub">${fmtMD(tnCalFrom)} – ${fmtMD(tnCalTo)} · ${teamsToShow.length} team${teamsToShow.length === 1 ? "" : "s"}</div>
+      <table><thead><tr><th class="wk">Weekend</th>${headCells}</tr></thead><tbody>${bodyRows}</tbody></table>
+      <div class="legend"><span><span class="dot" style="background:#eab308"></span>In Progress</span><span><span class="dot" style="background:#f97316"></span>Locked</span><span><span class="dot" style="background:#22c55e"></span>Registered</span><span><b class="q">Q</b> Qualifier</span><span>🏨 Stay-over</span></div>
+      <script>window.onload=function(){setTimeout(function(){window.print()},350)}<\/script>
+    </body></html>`;
+    const w = window.open("", "_blank");
+    if (!w) { window.alert("Please allow pop-ups to open the printable calendar."); return; }
+    w.document.write(html); w.document.close(); w.focus();
+  };
+
   // ─── TOURNAMENT CALENDAR VIEW ─────────────────────────────────────────
   // Rows = weekends (Sat) in the chosen date range. Columns = selected teams.
   // Each cell shows the tournament that team is going to that weekend, or
@@ -16477,6 +16528,8 @@ export default function App() {
           <span style={{fontSize:13,color:C.text}}><b style={{color:C.gold}}>{wkndSet.size}</b> weekend{wkndSet.size===1?"":"s"}</span>
           <span style={{fontSize:13,color:C.text}}><b style={{color:C.gold}}>{asgCount}</b> team assignment{asgCount===1?"":"s"}</span>
           <span style={{fontSize:10,color:C.mut,marginLeft:"auto"}}>across {teamsToShow.length} team{teamsToShow.length===1?"":"s"} shown</span>
+          <button onClick={printTeamCalendar} title="Open a clean, printable version (no dropdowns)"
+            style={{padding:"6px 12px",borderRadius:8,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontWeight:800,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>🖨 Print</button>
         </div>
         {/* Legend */}
         <div style={{display:"flex",gap:14,flexWrap:"wrap",marginBottom:8,fontSize:10,color:C.mut,alignItems:"center"}}>
