@@ -7747,6 +7747,7 @@ export default function App() {
             {(() => {
               const total = teamTournaments.length;
               const quals = teamTournaments.filter(x => x.tournament.is_qualifier).length;
+              const tdays = teamTournaments.reduce((s, x) => s + tnDayCount(x.tournament), 0);
               const nights = teamTournaments.reduce((s, x) => s + tnHotelNights(x.tournament), 0);
               const stays = teamTournaments.filter(x => x.tournament.stay_over).length;
               const chip = (label, val, color) => (
@@ -7758,6 +7759,7 @@ export default function App() {
               return (
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
                   {chip("Tournaments", total, C.gold)}
+                  {chip("Tourn. days", tdays, C.acc)}
                   {chip("Qualifiers", quals, "#a855f7")}
                   {chip("Hotel nights", nights, "#22d3ee")}
                   {stays > 0 && chip("Stay-overs", stays, "#22d3ee")}
