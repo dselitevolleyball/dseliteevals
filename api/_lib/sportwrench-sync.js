@@ -40,7 +40,9 @@ export async function syncSportWrench(supabase, events) {
   const firstRun = idByUrl.size === 0;
 
   const updates = rows.filter((r) => idByUrl.has(r.source_url)).map((r) => ({ id: idByUrl.get(r.source_url), ...r }));
-  const inserts = rows.filter((r) => !idByUrl.has(r.source_url));
+  // New rows only: stay-over unless local (Austin/Buda/Round Rock). Never reset
+  // stay_over on existing rows, so a manual override survives re-syncs.
+  const inserts = rows.filter((r) => !idByUrl.has(r.source_url)).map((r) => ({ ...r, stay_over: !!r.location && !/austin|buda|round rock/i.test(r.location) }));
 
   if (updates.length) { const { error } = await supabase.from("tournaments").upsert(updates, { onConflict: "id" }); if (error) throw new Error("update: " + error.message); }
   if (inserts.length) { const { error } = await supabase.from("tournaments").insert(inserts); if (error) throw new Error("insert: " + error.message); }

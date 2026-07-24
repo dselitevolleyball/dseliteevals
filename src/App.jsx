@@ -38,6 +38,9 @@ const tnConflictHandled = (a) => { const sub = String(a?.sub_coach || "").trim()
 // tournament = its day count (2-day → 2 nights, 3-day → 3 nights).
 const tnDayCount = (t) => { try { const s = new Date(t.start_date + "T00:00"), e = new Date((t.end_date || t.start_date) + "T00:00"); return Math.max(1, Math.round((e - s) / 86400000) + 1); } catch { return 1; } };
 const tnHotelNights = (t) => (t && t.stay_over) ? tnDayCount(t) : 0;
+// Local (no-hotel) cities. Anything outside these is treated as a stay-over.
+const TN_LOCAL_CITIES = /austin|buda|round rock/i;
+const tnStaysOver = (loc) => { const s = String(loc || "").trim(); return !!s && !TN_LOCAL_CITIES.test(s); };
 const DIVS = ["U10","U11","U12","U13","U14","U15","U16","U17"];
 // ── Per-team operational checklist (see migrations/20260629_team_operations_checklist) ──
 // COACH_TASKS: things each coach does for their team (status + notes + questions).
@@ -16940,7 +16943,7 @@ export default function App() {
             <div style={{gridColumn:"1 / -1"}}><span style={lbl}>Name *</span><input style={editInp} autoFocus value={newTournament.name} onChange={e=>setF("name", e.target.value)} placeholder="e.g. 2027 Lone Star Regional Championship" /></div>
             <div><span style={lbl}>Start Date *</span><input type="date" style={editInp} value={newTournament.start_date} onChange={e=>setF("start_date", e.target.value)} /></div>
             <div><span style={lbl}>End Date *</span><input type="date" style={editInp} value={newTournament.end_date} onChange={e=>setF("end_date", e.target.value)} /></div>
-            <div><span style={lbl}>Location (city, state)</span><input style={editInp} value={newTournament.location} onChange={e=>setF("location", e.target.value)} placeholder="e.g. Austin, TX" /></div>
+            <div><span style={lbl}>Location (city, state)</span><input style={editInp} value={newTournament.location} onChange={e=>{ setF("location", e.target.value); setF("stay_over", tnStaysOver(e.target.value)); }} placeholder="e.g. Austin, TX" /></div>
             <div><span style={lbl}>Venue</span><input style={editInp} value={newTournament.venue} onChange={e=>setF("venue", e.target.value)} placeholder="e.g. Austin Convention Center" /></div>
             <div><span style={lbl}>Age Low</span><input type="number" style={editInp} value={newTournament.age_low} onChange={e=>setF("age_low", e.target.value)} placeholder="12" /></div>
             <div><span style={lbl}>Age High</span><input type="number" style={editInp} value={newTournament.age_high} onChange={e=>setF("age_high", e.target.value)} placeholder="18" /></div>

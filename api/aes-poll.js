@@ -76,7 +76,9 @@ export default async function handler(req, res) {
   const firstRun = idByUrl.size === 0;
 
   const updates = rows.filter((r) => idByUrl.has(r.source_url)).map((r) => ({ id: idByUrl.get(r.source_url), ...r }));
-  const inserts = rows.filter((r) => !idByUrl.has(r.source_url));
+  // New rows only: mark stay-over unless local (Austin/Buda/Round Rock). Never
+  // reset stay_over on existing rows, so a manual override survives re-syncs.
+  const inserts = rows.filter((r) => !idByUrl.has(r.source_url)).map((r) => ({ ...r, stay_over: !!r.location && !/austin|buda|round rock/i.test(r.location) }));
 
   if (updates.length) { const { error } = await supabase.from("tournaments").upsert(updates, { onConflict: "id" }); if (error) return res.status(500).json({ error: "update: " + error.message }); }
   if (inserts.length) { const { error } = await supabase.from("tournaments").insert(inserts); if (error) return res.status(500).json({ error: "insert: " + error.message }); }
