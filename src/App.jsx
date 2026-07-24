@@ -16353,6 +16353,35 @@ export default function App() {
           <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:12,height:12,borderRadius:3,background:"rgba(239,68,68,0.35)",display:"inline-block"}} /> Coach double-booked</span>
           <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:12,height:12,borderRadius:3,background:"repeating-linear-gradient(45deg, rgba(90,90,90,0.5) 0, rgba(90,90,90,0.5) 3px, rgba(20,20,20,0.8) 3px, rgba(20,20,20,0.8) 6px)",display:"inline-block"}} /> ⛔ Coach committed elsewhere</span>
         </div>
+        {/* Qualifiers selected per team */}
+        {(() => {
+          const tq = new Map(tournaments.map(t => [t.id, !!t.is_qualifier]));
+          const qCount = new Map(); const seen = new Set();
+          for (const a of tournamentAssignments) {
+            if (!tq.get(a.tournament_id)) continue;
+            const k = a.team_id + "|" + a.tournament_id; if (seen.has(k)) continue; seen.add(k);
+            qCount.set(a.team_id, (qCount.get(a.team_id) || 0) + 1);
+          }
+          const totalQ = [...qCount.values()].reduce((s, n) => s + n, 0);
+          const teamsWithQ = activeTeams.filter(t => qCount.get(t.id)).length;
+          const rows = activeTeams.slice().sort((a, b) => (parseInt(a.id) || 0) - (parseInt(b.id) || 0) || String(a.id).localeCompare(String(b.id)));
+          return (
+            <div style={{background:C.card,borderRadius:10,border:"1px solid #a855f7",padding:"10px 12px",marginBottom:10}}>
+              <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:8}}>
+                <span style={{fontSize:11,fontWeight:800,textTransform:"uppercase",letterSpacing:0.5,color:"#c084fc"}}>Q · Qualifiers selected per team</span>
+                <span style={{fontSize:11,color:C.mut}}>{totalQ} qualifier assignment{totalQ===1?"":"s"} · {teamsWithQ} of {activeTeams.length} teams have one</span>
+              </div>
+              <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                {rows.map(t => { const n = qCount.get(t.id) || 0; return (
+                  <span key={t.id} onClick={()=>setTeamCardName(t.id)} title={n + " qualifier" + (n===1?"":"s") + " selected — open " + t.id}
+                    style={{display:"inline-flex",alignItems:"center",gap:5,padding:"3px 9px",borderRadius:999,fontSize:11,fontWeight:700,cursor:"pointer",border:"1px solid "+(n?"#a855f7":C.border),background:n?"rgba(168,85,247,0.14)":"transparent",color:n?"#c084fc":C.mut}}>
+                    {t.id}<span style={{fontWeight:900,fontSize:12}}>{n}</span>
+                  </span>
+                ); })}
+              </div>
+            </div>
+          );
+        })()}
         {/* Team multi-select chips */}
         <div style={{background:C.card,borderRadius:10,border:"1px solid "+C.border,padding:"10px 12px",marginBottom:10}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6,gap:8,flexWrap:"wrap"}}>
