@@ -7744,7 +7744,10 @@ export default function App() {
                   return (
                   <div key={i} style={{padding:"6px 10px",background:C.card,borderRadius:6,border:"1px solid "+C.border,borderLeft:"4px solid "+st.color,fontSize:12}}>
                     <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                      <span style={{fontWeight:700,color:C.text,flex:1,minWidth:120}}>{tn.name}</span>
+                      <span onClick={()=>{ setTeamCardName(null); openEditTournament(tn); }} title="Open this tournament"
+                        style={{fontWeight:700,color:C.text,flex:1,minWidth:120,cursor:"pointer",textDecoration:"underline",textDecorationColor:"transparent",textUnderlineOffset:2}}
+                        onMouseEnter={e=>e.currentTarget.style.textDecorationColor=C.gold}
+                        onMouseLeave={e=>e.currentTarget.style.textDecorationColor="transparent"}>{tn.name}</span>
                       {canOps ? (
                         <select value={TN_STATUS[a.status]?a.status:"planned"} onChange={e=>updateAssignmentStatus(a.id, e.target.value)}
                           title="Registration status for this team"
