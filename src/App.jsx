@@ -16,6 +16,17 @@ const SKILL_ABBR = {Serving:"SRV",Passing:"PASS","Serve Receive":"S/R",Attacking
 const PROJ_OPTS = ["","1","1/2","2","2/3","3"];
 const ROSTER_POS = ["S1","S2","Pin1","Pin2","Pin3","Pin4","M1","M2","M3","L","DS1","DS2","U1","U2"];
 const ROSTER_GROUPS = [{label:"Setters",pos:["S1","S2"]},{label:"Pins",pos:["Pin1","Pin2","Pin3","Pin4"]},{label:"Middles",pos:["M1","M2","M3"]},{label:"Libero/DS",pos:["L","DS1","DS2"]},{label:"Utility",pos:["U1","U2"]}];
+// Per-team tournament registration workflow status → color. Shown on the
+// tournament card, the team calendar, and each team's schedule so a team's
+// status color follows it everywhere.
+const TN_STATUS = {
+  planned:     { label: "Planned",     color: "#9ca3af" },
+  in_progress: { label: "In Progress", color: "#eab308" }, // yellow
+  locked:      { label: "Locked",      color: "#f97316" }, // orange
+  registered:  { label: "Registered",  color: "#22c55e" }, // green
+};
+const TN_STATUS_ORDER = ["planned", "in_progress", "locked", "registered"];
+const tnStatusMeta = (s) => TN_STATUS[s] || TN_STATUS.planned;
 const DIVS = ["U10","U11","U12","U13","U14","U15","U16","U17"];
 // ── Per-team operational checklist (see migrations/20260629_team_operations_checklist) ──
 // COACH_TASKS: things each coach does for their team (status + notes + questions).
@@ -7729,9 +7740,13 @@ export default function App() {
                   const nxt = i < teamTournaments.length - 1 ? teamTournaments[i + 1].tournament : null;
                   const sincePrev = prev ? gDays(prev.end_date, tn.start_date) : null;
                   const tilNext = nxt ? gDays(tn.end_date, nxt.start_date) : null;
+                  const st = tnStatusMeta(a.status);
                   return (
-                  <div key={i} style={{padding:"6px 10px",background:C.card,borderRadius:6,border:"1px solid "+C.border,fontSize:12}}>
-                    <div style={{fontWeight:700,color:C.text}}>{tn.name}</div>
+                  <div key={i} style={{padding:"6px 10px",background:C.card,borderRadius:6,border:"1px solid "+C.border,borderLeft:"4px solid "+st.color,fontSize:12}}>
+                    <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                      <span style={{fontWeight:700,color:C.text}}>{tn.name}</span>
+                      <span style={{fontSize:9,fontWeight:800,textTransform:"uppercase",letterSpacing:0.3,color:st.color,background:st.color+"22",border:"1px solid "+st.color,borderRadius:999,padding:"1px 8px"}}>{st.label}</span>
+                    </div>
                     <div style={{fontSize:10,color:C.mut,marginTop:2}}>
                       {tn.start_date}{tn.end_date && tn.end_date !== tn.start_date ? " – " + tn.end_date : ""}
                       {tn.location && " · " + tn.location}
@@ -8013,10 +8028,11 @@ export default function App() {
             {coachTournaments.length === 0 && <div style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>No tournament assignments.</div>}
             {coachTournaments.length > 0 && (
               <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                {coachTournaments.map(({tournament:tn, team}, i) => (
-                  <div key={i} style={{padding:"6px 10px",background:C.card,borderRadius:6,border:"1px solid "+C.border,fontSize:12}}>
-                    <div style={{display:"flex",alignItems:"center",gap:8}}>
+                {coachTournaments.map(({tournament:tn, team, ...a}, i) => { const st = tnStatusMeta(a.status); return (
+                  <div key={i} style={{padding:"6px 10px",background:C.card,borderRadius:6,border:"1px solid "+C.border,borderLeft:"4px solid "+st.color,fontSize:12}}>
+                    <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
                       <span style={{fontWeight:700,color:C.text,flex:1}}>{tn.name}</span>
+                      <span style={{fontSize:9,fontWeight:800,textTransform:"uppercase",letterSpacing:0.3,color:st.color,background:st.color+"22",border:"1px solid "+st.color,borderRadius:999,padding:"1px 8px"}}>{st.label}</span>
                       <span onClick={()=>{ setCoachCardName(null); setTeamCardName(team); }} style={{fontSize:11,fontWeight:700,color:C.gold,cursor:"pointer",textDecoration:"underline",textDecorationColor:"transparent"}}
                         onMouseEnter={e=>e.currentTarget.style.textDecorationColor=C.gold}
                         onMouseLeave={e=>e.currentTarget.style.textDecorationColor="transparent"}>{team}</span>
@@ -8027,7 +8043,7 @@ export default function App() {
                       {tn.is_qualifier && <span style={{color:"#a855f7",marginLeft:8,fontWeight:700}}>QUALIFIER</span>}
                     </div>
                   </div>
-                ))}
+                ); })}
               </div>
             )}
           </div>
@@ -15508,6 +15524,13 @@ export default function App() {
     if (error) { window.alert("Update failed: " + error.message); return; }
     loadTournaments();
   };
+  const updateAssignmentStatus = async (assignmentId, status) => {
+    const s = TN_STATUS[status] ? status : "planned";
+    // Optimistic: reflect the new color immediately, then persist.
+    setTournamentAssignments(prev => prev.map(a => a.id === assignmentId ? { ...a, status: s } : a));
+    const { error } = await supabase.from("tournament_assignments").update({ status: s }).eq("id", assignmentId);
+    if (error) { window.alert("Update failed: " + error.message); loadTournaments(); }
+  };
 
   const saveTournament = async () => {
     const t = newTournament;
@@ -16276,8 +16299,14 @@ export default function App() {
         </div>
         {/* Legend */}
         <div style={{display:"flex",gap:14,flexWrap:"wrap",marginBottom:8,fontSize:10,color:C.mut,alignItems:"center"}}>
-          <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:12,height:12,borderRadius:3,background:"rgba(239,68,68,0.35)",display:"inline-block"}} /> Coach double-booked (two tournaments)</span>
-          <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:12,height:12,borderRadius:3,background:"repeating-linear-gradient(45deg, rgba(90,90,90,0.5) 0, rgba(90,90,90,0.5) 3px, rgba(20,20,20,0.8) 3px, rgba(20,20,20,0.8) 6px)",display:"inline-block"}} /> ⛔ Coach committed elsewhere — unavailable</span>
+          <span style={{fontWeight:800,color:C.text,textTransform:"uppercase",letterSpacing:0.4}}>Status:</span>
+          {["in_progress","locked","registered"].map(s => (
+            <span key={s} style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:10,height:10,borderRadius:"50%",background:TN_STATUS[s].color,display:"inline-block"}} /> {TN_STATUS[s].label}</span>
+          ))}
+          {canOps && <span style={{color:C.mut,fontStyle:"italic"}}>· click a tournament's dot to change it</span>}
+          <span style={{width:1,height:14,background:C.border,margin:"0 2px"}} />
+          <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:12,height:12,borderRadius:3,background:"rgba(239,68,68,0.35)",display:"inline-block"}} /> Coach double-booked</span>
+          <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:12,height:12,borderRadius:3,background:"repeating-linear-gradient(45deg, rgba(90,90,90,0.5) 0, rgba(90,90,90,0.5) 3px, rgba(20,20,20,0.8) 3px, rgba(20,20,20,0.8) 6px)",display:"inline-block"}} /> ⛔ Coach committed elsewhere</span>
         </div>
         {/* Team multi-select chips */}
         <div style={{background:C.card,borderRadius:10,border:"1px solid "+C.border,padding:"10px 12px",marginBottom:10}}>
@@ -16426,17 +16455,20 @@ export default function App() {
                               ) : (
                                 <span style={{color:C.mut,fontSize:11}}>—</span>
                               )
-                            ) : items.map(it => (
-                              <div key={it.assignment.id} title={it.tournament.name + (it.assignment.division ? " · " + it.assignment.division : "") + " — click to open & edit"}
+                            ) : items.map(it => { const st = tnStatusMeta(it.assignment.status); const cur = TN_STATUS[it.assignment.status] ? it.assignment.status : "planned"; return (
+                              <div key={it.assignment.id} title={it.tournament.name + (it.assignment.division ? " · " + it.assignment.division : "") + " — " + st.label + " · click to open & edit"}
                                 onClick={()=>openEditTournament(it.tournament)}
-                                style={{fontSize:10,fontWeight:600,color:isConflict?C.red:C.text,lineHeight:1.3,marginBottom:2,cursor:"pointer",textDecoration:"underline",textDecorationColor:"transparent",textUnderlineOffset:2}}
+                                style={{fontSize:10,fontWeight:600,color:isConflict?C.red:C.text,lineHeight:1.3,marginBottom:3,cursor:"pointer",borderLeft:"3px solid "+st.color,background:st.color+"1f",borderRadius:4,padding:"2px 4px 2px 5px",textDecoration:"underline",textDecorationColor:"transparent",textUnderlineOffset:2}}
                                 onMouseEnter={e=>e.currentTarget.style.textDecorationColor=C.gold}
                                 onMouseLeave={e=>e.currentTarget.style.textDecorationColor="transparent"}>
-                                {abbreviate(it.tournament.name, 26)}
+                                <span onClick={canOps ? (e)=>{ e.stopPropagation(); const i=TN_STATUS_ORDER.indexOf(cur); updateAssignmentStatus(it.assignment.id, TN_STATUS_ORDER[(i+1)%TN_STATUS_ORDER.length]); } : undefined}
+                                  title={canOps ? st.label + " — click to change status" : st.label}
+                                  style={{display:"inline-block",width:9,height:9,borderRadius:"50%",background:st.color,marginRight:4,cursor:canOps?"pointer":"default",verticalAlign:"middle"}} />
+                                {abbreviate(it.tournament.name, 24)}
                                 {it.assignment.division && <span style={{color:C.mut,fontSize:9}}> · {it.assignment.division}</span>}
                                 {it.assignment.sub_coach && <div style={{fontSize:8,fontWeight:800,color:"#a855f7"}}>🔁 sub: {it.assignment.sub_coach}</div>}
                               </div>
-                            ))}
+                            ); })}
                           </td>
                         );
                       })}
@@ -16824,6 +16856,13 @@ export default function App() {
                             <option value="">— division —</option>
                             {opts.map(d => <option key={d} value={d}>{d}</option>)}
                           </select>
+                          {(() => { const st=tnStatusMeta(a.status); return (
+                            <select value={TN_STATUS[a.status]?a.status:"planned"} onChange={e=>updateAssignmentStatus(a.id, e.target.value)}
+                              title="Registration status for this team — the color follows the team everywhere"
+                              style={{...inpStyle,fontSize:11,padding:"3px 6px",fontWeight:800,color:st.color,borderColor:st.color}}>
+                              {TN_STATUS_ORDER.map(s => <option key={s} value={s} style={{color:C.text,fontWeight:600}}>{TN_STATUS[s].label}</option>)}
+                            </select>
+                          ); })()}
                           <DebouncedField value={a.sub_coach||""} onCommit={v=>updateAssignmentSub(a.id, v)} placeholder="sub coach…"
                             title="Replacement coach — lets this team go even if a coach is double-booked; clears the conflict flag"
                             style={{...inpStyle,fontSize:11,padding:"3px 6px",width:120}} />
