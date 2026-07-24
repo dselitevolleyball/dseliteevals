@@ -34,6 +34,10 @@ const isRealSub = (s) => { const v = String(s || "").trim().toLowerCase(); retur
 // True only when a coach clash is genuinely handled: a real replacement is
 // named, OR it was explicitly overridden with no sub at all (not a placeholder).
 const tnConflictHandled = (a) => { const sub = String(a?.sub_coach || "").trim(); if (isRealSub(sub)) return true; return !!(a?.ignore_conflict && !sub); };
+// Number of days a tournament spans (inclusive). Hotel nights for a stay-over
+// tournament = its day count (2-day → 2 nights, 3-day → 3 nights).
+const tnDayCount = (t) => { try { const s = new Date(t.start_date + "T00:00"), e = new Date((t.end_date || t.start_date) + "T00:00"); return Math.max(1, Math.round((e - s) / 86400000) + 1); } catch { return 1; } };
+const tnHotelNights = (t) => (t && t.stay_over) ? tnDayCount(t) : 0;
 const DIVS = ["U10","U11","U12","U13","U14","U15","U16","U17"];
 // ── Per-team operational checklist (see migrations/20260629_team_operations_checklist) ──
 // COACH_TASKS: things each coach does for their team (status + notes + questions).
@@ -7736,7 +7740,9 @@ export default function App() {
 
           {/* Tournament schedule */}
           <div style={sectionBox}>
-            <div style={lbl}>Tournament Schedule · {teamTournaments.length}</div>
+            {(() => { const nights = teamTournaments.reduce((s,x)=>s+tnHotelNights(x.tournament),0); const stays = teamTournaments.filter(x=>x.tournament.stay_over).length; return (
+              <div style={lbl}>Tournament Schedule · {teamTournaments.length}{nights>0 && <span style={{color:"#22d3ee",marginLeft:8}}>🏨 {stays} stay-over{stays===1?"":"s"} · {nights} night{nights===1?"":"s"}</span>}</div>
+            ); })()}
             <div style={{fontSize:12,fontWeight:700,color:C.acc,marginBottom:8}}>{tournamentTimingText(teamCardName)}</div>
             {teamTournaments.length === 0 && <div style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>No tournament assignments. Open the Tournaments tab to assign.</div>}
             {teamTournaments.length > 0 && (
@@ -7769,6 +7775,7 @@ export default function App() {
                       {tn.start_date}{tn.end_date && tn.end_date !== tn.start_date ? " – " + tn.end_date : ""}
                       {tn.location && " · " + tn.location}
                       {tn.is_qualifier && <span style={{color:"#a855f7",marginLeft:8,fontWeight:700}}>QUALIFIER</span>}
+                      {tn.stay_over && (() => { const n = tnDayCount(tn); return <span style={{color:"#22d3ee",marginLeft:8,fontWeight:800}}>🏨 {n} night{n===1?"":"s"}</span>; })()}
                     </div>
                     <div style={{fontSize:10,fontWeight:700,color:C.acc,marginTop:3}}>
                       {sincePrev == null ? "▲ no past tournament" : "▲ " + sincePrev + "d since previous"}
@@ -8059,6 +8066,7 @@ export default function App() {
                       {tn.start_date}{tn.end_date && tn.end_date !== tn.start_date ? " – " + tn.end_date : ""}
                       {tn.location && " · " + tn.location}
                       {tn.is_qualifier && <span style={{color:"#a855f7",marginLeft:8,fontWeight:700}}>QUALIFIER</span>}
+                      {tn.stay_over && (() => { const n = tnDayCount(tn); return <span style={{color:"#22d3ee",marginLeft:8,fontWeight:800}}>🏨 {n} night{n===1?"":"s"}</span>; })()}
                     </div>
                   </div>
                 ); })}
@@ -15593,6 +15601,7 @@ export default function App() {
       age_high: t.age_high ? parseInt(t.age_high) : null,
       gender: t.gender || null,
       is_qualifier: !!t.is_qualifier,
+      stay_over: !!t.stay_over,
       source: t.source || "manual",
       status: t.status.trim() || null,
       notes: t.notes.trim() || null,
@@ -15610,7 +15619,7 @@ export default function App() {
     if (error) { window.alert("Save failed: " + error.message); return; }
     setAddingTournament(false);
     setEditingTournament(null);
-    setNewTournament({ name: "", start_date: "", end_date: "", location: "", venue: "", age_low: "", age_high: "", gender: "Female", is_qualifier: false, source: "manual", status: "", notes: "", divisions: [], wish_list: [], entries: [] });
+    setNewTournament({ name: "", start_date: "", end_date: "", location: "", venue: "", age_low: "", age_high: "", gender: "Female", is_qualifier: false, stay_over: false, source: "manual", status: "", notes: "", divisions: [], wish_list: [], entries: [] });
     loadTournaments();
   };
   const openEditTournament = (tn) => {
@@ -15625,6 +15634,7 @@ export default function App() {
       age_high: tn.age_high != null ? String(tn.age_high) : "",
       gender: tn.gender || "Female",
       is_qualifier: !!tn.is_qualifier,
+      stay_over: !!tn.stay_over,
       source: tn.source || "manual",
       status: tn.status || "",
       notes: tn.notes || "",
@@ -15959,7 +15969,7 @@ export default function App() {
               style={{padding:"6px 14px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.text,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
               Bulk import
             </button>
-            <button onClick={()=>{ setEditingTournament(null); setNewTournament({ name: "", start_date: "", end_date: "", location: "", venue: "", age_low: "", age_high: "", gender: "Female", is_qualifier: false, source: "manual", status: "", notes: "", divisions: [], wish_list: [], entries: [] }); setAddingTournament(true); }}
+            <button onClick={()=>{ setEditingTournament(null); setNewTournament({ name: "", start_date: "", end_date: "", location: "", venue: "", age_low: "", age_high: "", gender: "Female", is_qualifier: false, stay_over: false, source: "manual", status: "", notes: "", divisions: [], wish_list: [], entries: [] }); setAddingTournament(true); }}
               style={{padding:"6px 14px",borderRadius:6,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
               + Add tournament
             </button>
@@ -16927,9 +16937,16 @@ export default function App() {
               </select>
             </div>
             <div style={{gridColumn:"1 / -1"}}><span style={lbl}>Status</span><input style={editInp} value={newTournament.status} onChange={e=>setF("status", e.target.value)} placeholder="e.g. Registration Open" /></div>
-            <div style={{gridColumn:"1 / -1",display:"flex",alignItems:"center",gap:6}}>
-              <input type="checkbox" id="newt-q" checked={newTournament.is_qualifier} onChange={e=>setF("is_qualifier", e.target.checked)} />
-              <label htmlFor="newt-q" style={{fontSize:12,color:C.text,cursor:"pointer"}}>Is qualifier</label>
+            <div style={{gridColumn:"1 / -1",display:"flex",alignItems:"center",gap:18,flexWrap:"wrap"}}>
+              <span style={{display:"flex",alignItems:"center",gap:6}}>
+                <input type="checkbox" id="newt-q" checked={newTournament.is_qualifier} onChange={e=>setF("is_qualifier", e.target.checked)} />
+                <label htmlFor="newt-q" style={{fontSize:12,color:C.text,cursor:"pointer"}}>Is qualifier</label>
+              </span>
+              <span style={{display:"flex",alignItems:"center",gap:6}}>
+                <input type="checkbox" id="newt-stay" checked={!!newTournament.stay_over} onChange={e=>setF("stay_over", e.target.checked)} />
+                <label htmlFor="newt-stay" style={{fontSize:12,color:C.text,cursor:"pointer"}}>🏨 Stay-over (hotel)</label>
+                {newTournament.stay_over && newTournament.start_date && newTournament.end_date && (() => { const n = tnDayCount(newTournament); return <span style={{fontSize:11,color:"#22d3ee",fontWeight:700}}>{n} night{n===1?"":"s"}</span>; })()}
+              </span>
             </div>
             <div style={{gridColumn:"1 / -1"}}>
               <span style={lbl}>Divisions &amp; Ages (tap cells, e.g. 17 × American)</span>
