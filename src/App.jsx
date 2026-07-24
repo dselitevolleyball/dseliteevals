@@ -27,6 +27,13 @@ const TN_STATUS = {
 };
 const TN_STATUS_ORDER = ["planned", "in_progress", "locked", "registered"];
 const tnStatusMeta = (s) => TN_STATUS[s] || TN_STATUS.planned;
+// A sub coach only clears a coach conflict when it's a REAL name — placeholders
+// like "TBD" mean a coach still needs to be found, so the conflict must remain.
+const TN_SUB_PLACEHOLDERS = new Set(["tbd", "tba", "t.b.d.", "?", "??", "???", "-", "--", "—", "n/a", "na", "none", "pending", "sub", "open", "needed", "?tbd"]);
+const isRealSub = (s) => { const v = String(s || "").trim().toLowerCase(); return !!v && !TN_SUB_PLACEHOLDERS.has(v); };
+// True only when a coach clash is genuinely handled: a real replacement is
+// named, OR it was explicitly overridden with no sub at all (not a placeholder).
+const tnConflictHandled = (a) => { const sub = String(a?.sub_coach || "").trim(); if (isRealSub(sub)) return true; return !!(a?.ignore_conflict && !sub); };
 const DIVS = ["U10","U11","U12","U13","U14","U15","U16","U17"];
 // ── Per-team operational checklist (see migrations/20260629_team_operations_checklist) ──
 // COACH_TASKS: things each coach does for their team (status + notes + questions).
@@ -3318,7 +3325,7 @@ export default function App() {
     const teamById = new Map(teamsList.map(t => [t.id, t]));
     const coachToItems = new Map();
     for (const a of tournamentAssignments) {
-      if (a.ignore_conflict || a.sub_coach) continue; // coach-covered (has a sub) — never conflicts
+      if (tnConflictHandled(a)) continue; // real sub or explicit override — never conflicts ("TBD" still does)
       const tn = tById.get(a.tournament_id);
       const tm = teamById.get(a.team_id);
       if (!tn || !tm) continue;
@@ -15484,7 +15491,7 @@ export default function App() {
     const out = [];
     for (const a of tournamentAssignments) {
       if (a.team_id === teamId) continue;
-      if (a.ignore_conflict || a.sub_coach) continue; // the other team has a sub — no clash
+      if (tnConflictHandled(a)) continue; // the other team has a REAL sub / explicit override — no clash ("TBD" still clashes)
       const tn = tById.get(a.tournament_id);
       if (!tn || tn.id === tournament.id || tn.cancelled) continue;
       if (!(tn.start_date <= tournament.end_date && tournament.start_date <= tn.end_date)) continue;
@@ -15551,7 +15558,7 @@ export default function App() {
   // Set/clear a sub coach on an existing assignment. A sub clears the conflict flag.
   const updateAssignmentSub = async (assignmentId, subCoach) => {
     const sub = (subCoach || "").trim() || null;
-    const { error } = await supabase.from("tournament_assignments").update({ sub_coach: sub, ignore_conflict: !!sub }).eq("id", assignmentId);
+    const { error } = await supabase.from("tournament_assignments").update({ sub_coach: sub, ignore_conflict: isRealSub(sub) }).eq("id", assignmentId);
     if (error) { window.alert("Update failed: " + error.message); return; }
     loadTournaments();
   };
