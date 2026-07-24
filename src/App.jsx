@@ -1369,6 +1369,8 @@ export default function App() {
   const [tnFilters, setTnFilters]                           = useState({ search: "", ageFor: "", qualifierOnly: false, dateFrom: "", dateTo: "", hideClosed: false, hideCancelled: true, startsOn: [], state: "", numDays: "", divisions: [], tags: [], showAllSources: false });
   const [tnSelected, setTnSelected]                         = useState(() => new Set()); // tournament ids checked for bulk delete
   const [tnView, setTnView]                                 = useState("list"); // "list" | "calendar"
+  const [tnSumLevel, setTnSumLevel]                         = useState("all");  // Summary filter: all | National | Regional | Developmental
+  const [tnSumSort, setTnSumSort]                           = useState({ key: "age", dir: "asc" }); // Summary table sort
   const [tnSelectedTeams, setTnSelectedTeams]               = useState(new Set()); // empty = all shown
   const [tnCalFrom, setTnCalFrom]                           = useState("2026-12-01");
   const [tnCalTo, setTnCalTo]                               = useState("2027-06-30");
@@ -16251,7 +16253,7 @@ export default function App() {
       if (!byTeam.has(a.team_id)) byTeam.set(a.team_id, new Map());
       byTeam.get(a.team_id).set(t.id, t);
     }
-    const rows = teams.slice().sort((a, b) => (ageOf(a) - ageOf(b)) || String(a.id).localeCompare(String(b.id))).map(team => {
+    const allRows = teams.map(team => {
       const tns = [...(byTeam.get(team.id)?.values() || [])];
       const q = tns.filter(t => t.is_qualifier).length;
       const nonQ = tns.filter(t => !t.is_qualifier);
@@ -16263,26 +16265,39 @@ export default function App() {
         if (g.kind === "national") { const needR = Math.max(0, g.regional - nonQ.length); needs = [needQ && needQ + " qual", needR && needR + " regional"].filter(Boolean).join(", ") || "✓ complete"; }
         else { const needD2 = Math.max(0, g.twoDay - d2), needD1 = Math.max(0, g.oneDay - d1); needs = [needQ && needQ + " qual", needD2 && needD2 + " 2-day", needD1 && needD1 + " 1-day"].filter(Boolean).join(", ") || "✓ complete"; }
       }
-      return { team, count: tns.length, days: tns.reduce((s, t) => s + tnDayCount(t), 0), q, qGoal: g ? g.qual : null, totalGoal: g ? g.total : null, stays: tns.filter(t => t.stay_over).length, nights: tns.reduce((s, t) => s + tnHotelNights(t), 0), needs };
+      return { team, age: ageOf(team), count: tns.length, days: tns.reduce((s, t) => s + tnDayCount(t), 0), q, qGoal: g ? g.qual : null, totalGoal: g ? g.total : null, stays: tns.filter(t => t.stay_over).length, nights: tns.reduce((s, t) => s + tnHotelNights(t), 0), needs };
     });
+    // Filter by level (Rise = Developmental), then sort by the chosen column.
+    const levelChips = [["all", "All"], ["National", "National"], ["Regional", "Regional"], ["Developmental", "Rise"]];
+    const rows = (tnSumLevel === "all" ? allRows : allRows.filter(r => r.team.level === tnSumLevel)).slice();
+    const dir = tnSumSort.dir === "desc" ? -1 : 1;
+    const getV = (r) => ({ level: r.team.level || "", count: r.count, q: r.q, days: r.days, stays: r.stays, nights: r.nights }[tnSumSort.key] ?? r.age);
+    rows.sort((a, b) => { const va = getV(a), vb = getV(b); let c = typeof va === "number" ? va - vb : String(va).localeCompare(String(vb)); if (c === 0) c = (a.age - b.age) || String(a.team.id).localeCompare(String(b.team.id)); return c * dir; });
     const tot = rows.reduce((a, r) => ({ count: a.count + r.count, days: a.days + r.days, q: a.q + r.q, stays: a.stays + r.stays, nights: a.nights + r.nights }), { count: 0, days: 0, q: 0, stays: 0, nights: 0 });
 
     const th = { padding: "7px 11px", fontSize: 10, fontWeight: 800, textTransform: "uppercase", color: C.mut, textAlign: "center", borderBottom: "2px solid " + C.border, whiteSpace: "nowrap" };
     const thL = { ...th, textAlign: "left" };
+    const toggleSort = (key) => setTnSumSort(s => s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: (key === "age" || key === "level") ? "asc" : "desc" });
+    const sortTh = (label, key, left) => <th onClick={() => toggleSort(key)} title="Sort" style={{ ...(left ? thL : th), cursor: "pointer", userSelect: "none", color: tnSumSort.key === key ? C.gold : C.mut }}>{label}{tnSumSort.key === key ? (tnSumSort.dir === "asc" ? " ▲" : " ▼") : ""}</th>;
     const frac = (a, target) => <td style={{ padding: "7px 11px", textAlign: "center", fontWeight: 800, color: target == null ? C.text : (a >= target ? C.grn : "#f59e0b") }}>{a}{target != null ? "/" + target : ""}{target != null && a < target ? <span style={{ color: "#ef4444", fontSize: 10 }}> (−{target - a})</span> : ""}</td>;
     const num = (v, color) => <td style={{ padding: "7px 11px", textAlign: "center", fontWeight: 800, color: v ? (color || C.text) : C.mut }}>{v}</td>;
     const footNum = (v, color) => <td style={{ padding: "8px 11px", textAlign: "center", fontWeight: 800, color }}>{v}</td>;
 
     return (
       <div>
-        <div style={{ fontSize: 12, color: C.mut, marginBottom: 12, lineHeight: 1.5 }}>
-          Every active team at a glance. <b style={{ color: C.grn }}>Green</b> = target met · <b style={{ color: "#f59e0b" }}>amber (−n)</b> = short. Days = total tournament days · Hotel nights = stay-over day counts. Click a team to open its card.
+        <div style={{ fontSize: 12, color: C.mut, marginBottom: 10, lineHeight: 1.5 }}>
+          Every active team at a glance. <b style={{ color: C.grn }}>Green</b> = target met · <b style={{ color: "#f59e0b" }}>amber (−n)</b> = short. Tap a column header to sort; tap a team to open its card.
+        </div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+          {levelChips.map(([v, l]) => { const on = tnSumLevel === v; const n = v === "all" ? allRows.length : allRows.filter(r => r.team.level === v).length; return (
+            <button key={v} onClick={() => setTnSumLevel(v)} style={{ padding: "5px 12px", borderRadius: 999, border: "1px solid " + (on ? C.gold : C.border), background: on ? "rgba(233,30,140,0.15)" : "transparent", color: on ? C.gold : C.mut, fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>{l} ({n})</button>
+          ); })}
         </div>
         <div style={{ overflowX: "auto", border: "1px solid " + C.border, borderRadius: 10 }}>
           <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13, background: C.card }}>
             <thead><tr>
-              <th style={thL}>Team</th><th style={thL}>Level</th>
-              <th style={th}>Tournaments</th><th style={th}>Qualifiers</th><th style={th}>Tourn. days</th><th style={th}>Stay-overs</th><th style={th}>Hotel nights</th><th style={thL}>Still needs</th>
+              {sortTh("Team", "age", true)}{sortTh("Level", "level", true)}
+              {sortTh("Tournaments", "count")}{sortTh("Qualifiers", "q")}{sortTh("Tourn. days", "days")}{sortTh("Stay-overs", "stays")}{sortTh("Hotel nights", "nights")}<th style={thL}>Still needs</th>
             </tr></thead>
             <tbody>
               {rows.map(r => (
@@ -16299,7 +16314,7 @@ export default function App() {
             </tbody>
             <tfoot>
               <tr style={{ borderTop: "2px solid " + C.border, background: C.bg }}>
-                <td style={{ padding: "8px 11px", fontWeight: 800, color: C.text }} colSpan={2}>All teams ({rows.length})</td>
+                <td style={{ padding: "8px 11px", fontWeight: 800, color: C.text }} colSpan={2}>{tnSumLevel === "all" ? "All teams" : (tnSumLevel === "Developmental" ? "Rise" : tnSumLevel) + " teams"} ({rows.length})</td>
                 {footNum(tot.count, C.gold)}{footNum(tot.q, "#a855f7")}{footNum(tot.days, C.acc)}{footNum(tot.stays, "#22d3ee")}{footNum(tot.nights, "#22d3ee")}
                 <td />
               </tr>
