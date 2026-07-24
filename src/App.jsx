@@ -16308,13 +16308,13 @@ export default function App() {
     const shownTeamIds = new Set(teamsToShow.map(t => t.id));
     const dayCount = (t) => { try { const s = new Date(t.start_date + "T00:00"), e = new Date(t.end_date + "T00:00"); return Math.max(1, Math.round((e - s) / 86400000) + 1); } catch { return 1; } };
     let asgCount = 0; const tnSet = new Set(); let tnDays = 0; const wkndSet = new Set();
-    const perTeam = new Map(); // teamId -> { tns:Set, days }
+    const perTeam = new Map(); // teamId -> { tns:Set, days, qtns:Set(qualifier tournament ids) }
     for (const [k, items] of cellMap) {
       const teamId = k.slice(0, k.lastIndexOf(":"));
       if (!shownTeamIds.has(teamId)) continue;
-      if (!perTeam.has(teamId)) perTeam.set(teamId, { tns: new Set(), days: 0 });
+      if (!perTeam.has(teamId)) perTeam.set(teamId, { tns: new Set(), days: 0, qtns: new Set() });
       const pt = perTeam.get(teamId);
-      for (const it of items) { asgCount++; tnSet.add(it.tournament.id); tnDays += dayCount(it.tournament); wkndSet.add(k.slice(k.lastIndexOf(":") + 1)); pt.tns.add(it.tournament.id); pt.days += dayCount(it.tournament); }
+      for (const it of items) { asgCount++; tnSet.add(it.tournament.id); tnDays += dayCount(it.tournament); wkndSet.add(k.slice(k.lastIndexOf(":") + 1)); pt.tns.add(it.tournament.id); pt.days += dayCount(it.tournament); if (it.tournament.is_qualifier) pt.qtns.add(it.tournament.id); }
     }
 
     // Weekends a coach requested off → big red flag on that team's cell (admin-only, visual only).
@@ -16353,35 +16353,6 @@ export default function App() {
           <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:12,height:12,borderRadius:3,background:"rgba(239,68,68,0.35)",display:"inline-block"}} /> Coach double-booked</span>
           <span style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:12,height:12,borderRadius:3,background:"repeating-linear-gradient(45deg, rgba(90,90,90,0.5) 0, rgba(90,90,90,0.5) 3px, rgba(20,20,20,0.8) 3px, rgba(20,20,20,0.8) 6px)",display:"inline-block"}} /> ⛔ Coach committed elsewhere</span>
         </div>
-        {/* Qualifiers selected per team */}
-        {(() => {
-          const tq = new Map(tournaments.map(t => [t.id, !!t.is_qualifier]));
-          const qCount = new Map(); const seen = new Set();
-          for (const a of tournamentAssignments) {
-            if (!tq.get(a.tournament_id)) continue;
-            const k = a.team_id + "|" + a.tournament_id; if (seen.has(k)) continue; seen.add(k);
-            qCount.set(a.team_id, (qCount.get(a.team_id) || 0) + 1);
-          }
-          const totalQ = [...qCount.values()].reduce((s, n) => s + n, 0);
-          const teamsWithQ = activeTeams.filter(t => qCount.get(t.id)).length;
-          const rows = activeTeams.slice().sort((a, b) => (parseInt(a.id) || 0) - (parseInt(b.id) || 0) || String(a.id).localeCompare(String(b.id)));
-          return (
-            <div style={{background:C.card,borderRadius:10,border:"1px solid #a855f7",padding:"10px 12px",marginBottom:10}}>
-              <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:8}}>
-                <span style={{fontSize:11,fontWeight:800,textTransform:"uppercase",letterSpacing:0.5,color:"#c084fc"}}>Q · Qualifiers selected per team</span>
-                <span style={{fontSize:11,color:C.mut}}>{totalQ} qualifier assignment{totalQ===1?"":"s"} · {teamsWithQ} of {activeTeams.length} teams have one</span>
-              </div>
-              <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-                {rows.map(t => { const n = qCount.get(t.id) || 0; return (
-                  <span key={t.id} onClick={()=>setTeamCardName(t.id)} title={n + " qualifier" + (n===1?"":"s") + " selected — open " + t.id}
-                    style={{display:"inline-flex",alignItems:"center",gap:5,padding:"3px 9px",borderRadius:999,fontSize:11,fontWeight:700,cursor:"pointer",border:"1px solid "+(n?"#a855f7":C.border),background:n?"rgba(168,85,247,0.14)":"transparent",color:n?"#c084fc":C.mut}}>
-                    {t.id}<span style={{fontWeight:900,fontSize:12}}>{n}</span>
-                  </span>
-                ); })}
-              </div>
-            </div>
-          );
-        })()}
         {/* Team multi-select chips */}
         <div style={{background:C.card,borderRadius:10,border:"1px solid "+C.border,padding:"10px 12px",marginBottom:10}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6,gap:8,flexWrap:"wrap"}}>
@@ -16452,8 +16423,11 @@ export default function App() {
                           onMouseEnter={e=>e.currentTarget.style.textDecorationColor=C.mut}
                           onMouseLeave={e=>e.currentTarget.style.textDecorationColor="transparent"}>{team.assistant_coach}</span></>}
                       </div>
-                      {(() => { const pt = perTeam.get(team.id); const c = pt ? pt.tns.size : 0; const dys = pt ? pt.days : 0; return (
-                        <div style={{fontSize:9,fontWeight:800,color:c?C.acc:C.mut,textTransform:"none",marginTop:2}}>{c} tourn · {dys}d</div>
+                      {(() => { const pt = perTeam.get(team.id); const c = pt ? pt.tns.size : 0; const dys = pt ? pt.days : 0; const q = pt ? pt.qtns.size : 0; return (
+                        <div style={{fontSize:9,fontWeight:800,textTransform:"none",marginTop:2}}>
+                          <span style={{color:c?C.acc:C.mut}}>{c} tourn · {dys}d</span>
+                          <span style={{color:q?"#c084fc":C.mut,marginLeft:5}}>· {q}Q</span>
+                        </div>
                       ); })()}
                     </th>
                   ))}
