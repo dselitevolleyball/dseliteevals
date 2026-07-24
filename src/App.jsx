@@ -15493,9 +15493,39 @@ export default function App() {
     }
     return out;
   };
+  // Age alignment: a team can only go to a tournament that actually hosts its
+  // age group. Ages a tournament offers come from its parsed entries (age
+  // tokens) if present, else its age_low..age_high range.
+  const tournamentAgeSet = (t) => new Set((Array.isArray(t?.entries) ? t.entries : []).map(entryAge).filter(Boolean));
+  const tournamentOffersAge = (t, age) => {
+    if (!t || !age) return true;                 // unknown age → can't verify → allow
+    const ages = tournamentAgeSet(t);
+    if (ages.size) return ages.has(age);
+    const num = (v) => { const n = Number(v); return (v !== "" && v != null && Number.isFinite(n)) ? n : null; };
+    const lo = num(t.age_low), hi = num(t.age_high);
+    if (lo != null && age < lo) return false;
+    if (hi != null && age > hi) return false;
+    return true;                                 // no age data at all → allow
+  };
+  const teamAgeOf = (teamId) => {
+    const fromName = parseInt(String(teamId || "").match(/^\d+/)?.[0] || "", 10);
+    if (fromName) return fromName;
+    const pt = practiceTeams.find(t => t.team_name === teamId) || teamsList.find(t => t.id === teamId);
+    return pt ? (parseInt(String(pt.age_div || "").replace(/\D/g, ""), 10) || 0) : 0;
+  };
+
   const assignTeamToTournament = async (tournamentId, teamId, division, opts = {}) => {
     if (!tournamentId || !teamId) return;
     const target = tournaments.find(t => t.id === tournamentId);
+    // Block bookings the tournament isn't hosting for this team's age group.
+    const teamAge = teamAgeOf(teamId);
+    if (teamAge && target && !tournamentOffersAge(target, teamAge)) {
+      const ages = [...tournamentAgeSet(target)].sort((a, b) => a - b);
+      const offered = ages.length ? ages.map(a => a + "s").join(", ")
+        : (target.age_low != null || target.age_high != null) ? ((target.age_low || "?") + "s–" + (target.age_high || "?") + "s") : "other ages";
+      window.alert(teamId + " is a " + teamAge + "s team, but " + (target.name || "this tournament") + " only hosts " + offered + ".\n\nYou can't book a team into an age group the tournament isn't offering.");
+      return;
+    }
     let subCoach = (opts.subCoach || "").trim() || null;
     let ignore = !!opts.force;
     // On a coach conflict, offer to override with a replacement coach instead of
@@ -16460,16 +16490,20 @@ export default function App() {
                                   <span style={{marginRight:2}}>⛔</span>{[...new Set(busy.map(b => b.coach.split(" ")[0]))].join(", ")}
                                   <div style={{fontSize:8,fontWeight:600,color:"#9ca3af"}}>w/ {[...new Set(busy.map(b => b.teamId))].join(", ")}</div>
                                 </div>
-                              ) : tnrsThis.length ? (
-                                <select value="" onChange={e=>{ if (e.target.value) assignTeamToTournament(e.target.value, team.id); }}
-                                  title="Assign a tournament to this team for this weekend"
-                                  style={{...inpStyle,padding:"2px 4px",fontSize:10,width:"100%",cursor:"pointer",color:C.mut,background:"transparent",border:"1px solid "+C.border}}>
-                                  <option value="">＋ pick…</option>
-                                  {tnrsThis.map(t => <option key={t.id} value={t.id}>{(t.is_qualifier?"Q · ":"")+abbreviate(t.name, 30)}</option>)}
-                                </select>
-                              ) : (
-                                <span style={{color:C.mut,fontSize:11}}>—</span>
-                              )
+                              ) : (() => {
+                                // Only offer tournaments that host this team's age group.
+                                const pickable = tnrsThis.filter(t => tournamentOffersAge(t, teamAgeOf(team.id)));
+                                return pickable.length ? (
+                                  <select value="" onChange={e=>{ if (e.target.value) assignTeamToTournament(e.target.value, team.id); }}
+                                    title="Assign a tournament to this team for this weekend (only ones hosting this team's age)"
+                                    style={{...inpStyle,padding:"2px 4px",fontSize:10,width:"100%",cursor:"pointer",color:C.mut,background:"transparent",border:"1px solid "+C.border}}>
+                                    <option value="">＋ pick…</option>
+                                    {pickable.map(t => <option key={t.id} value={t.id}>{(t.is_qualifier?"Q · ":"")+abbreviate(t.name, 30)}</option>)}
+                                  </select>
+                                ) : (
+                                  <span style={{color:C.mut,fontSize:11}}>—</span>
+                                );
+                              })()
                             ) : items.map(it => { const st = tnStatusMeta(it.assignment.status); const cur = TN_STATUS[it.assignment.status] ? it.assignment.status : "planned"; return (
                               <div key={it.assignment.id} title={it.tournament.name + (it.assignment.division ? " · " + it.assignment.division : "") + " — " + st.label + " · click to open & edit"}
                                 onClick={()=>openEditTournament(it.tournament)}
@@ -16854,7 +16888,9 @@ export default function App() {
                 const anyTiers = [...new Set(entries.map(entryTier))].filter(Boolean);
                 return ageTiers.length ? ageTiers : anyTiers.length ? anyTiers : TN_DIVISIONS;
               };
-              const eligible = teamsList.filter(t => t.active && !myAsg.some(a => a.team_id === t.id));
+              // Only offer teams whose age this tournament actually hosts.
+              const ageTarget = { entries, age_low: newTournament.age_low, age_high: newTournament.age_high };
+              const eligible = teamsList.filter(t => t.active && !myAsg.some(a => a.team_id === t.id) && tournamentOffersAge(ageTarget, teamAgeOf(t.id)));
               return (
                 <div style={{gridColumn:"1 / -1",background:C.bg,borderRadius:10,padding:"10px 12px"}}>
                   <span style={lbl}>Teams going ({myAsg.length}) — changes here save instantly</span>
