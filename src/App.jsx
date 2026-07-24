@@ -16037,6 +16037,8 @@ export default function App() {
             )}
           </div>
         )}
+        {/* Listings-only filters — hidden on Calendar / Summary / etc. */}
+        {tnView === "list" && (<>
         {/* Filter row 1 — primary filters */}
         <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center",marginBottom:6,padding:"8px 10px",background:C.card,borderRadius:10,border:"1px solid "+C.border}}>
           <DebouncedField placeholder="Search name / city / venue"
@@ -16163,6 +16165,7 @@ export default function App() {
             </div>
           );
         })()}
+        </>)}
         {/* Conflict alert */}
         {tournamentConflicts.length > 0 && (
           <details open style={{marginBottom:14,background:"rgba(239,68,68,0.08)",border:"1px solid "+C.red,borderRadius:10,padding:"10px 14px"}}>
