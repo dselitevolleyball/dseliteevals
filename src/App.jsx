@@ -45,6 +45,9 @@ const tnStaysOver = (loc) => { const s = String(loc || "").trim(); return !!s &&
 // from the team's roster unless the assignment overrides them (a sub). A slot
 // is "sub" when its override differs from the team default.
 const tnIsPlaceholder = (s) => { const v = String(s || "").trim().toLowerCase(); return !!v && TN_SUB_PLACEHOLDERS.has(v); };
+// A coach name that isn't a real person yet (TBD, a hire placeholder, or the
+// tournament floater) — excluded from availability math.
+const isPlaceholderCoach = (c) => { const v = String(c || "").trim(); return !v || tnIsPlaceholder(v) || /new coach|floater coach|assistant coach$/i.test(v); };
 function tnEffectiveStaff(a, team) {
   const dHead = team?.head_coach || null, dAsst = team?.assistant_coach || null;
   const head = (a?.head_override || dHead) || null;
@@ -1982,7 +1985,7 @@ export default function App() {
     setTournamentAssignments(aRes.data || []);
     setTournamentsLoading(false);
   }, []);
-  useEffect(() => { if (isApproved && (view === "tournaments" || view === "teamdir" || view === "home")) loadTournaments(); }, [isApproved, view, loadTournaments]);
+  useEffect(() => { if (isApproved && (view === "tournaments" || view === "teamdir" || view === "home" || view === "practice")) loadTournaments(); }, [isApproved, view, loadTournaments]);
 
   // Practice tab loader
   const loadPractice = useCallback(async () => {
@@ -9006,6 +9009,50 @@ export default function App() {
 
     return (
       <div>
+        {/* Sunday practices that need a sub — team not competing, but BOTH its
+            coaches are at a travel (stay-over) tournament that weekend. */}
+        {(() => {
+          const tnById = new Map(tournaments.map(t => [t.id, t]));
+          const teamById = new Map(teamsList.map(t => [t.id, t]));
+          const effReal = (a) => { const tm = teamById.get(a.team_id) || {}; return [a.head_override || tm.head_coach, a.asst_override || tm.assistant_coach].filter(c => c && !isPlaceholderCoach(c)); };
+          const satOf = (iso) => { const d = new Date(iso + "T00:00"); while (d.getDay() !== 6) d.setDate(d.getDate() + 1); return d.toISOString().slice(0, 10); };
+          const sunByPhase = {}; practiceAssignments.forEach(p => { if (/^sun/i.test(p.day)) (sunByPhase[p.phase] = sunByPhase[p.phase] || new Set()).add(p.team_name); });
+          const travelWeekends = [...new Set(tournaments.filter(t => t.stay_over && t.start_date >= "2026-11-01").map(t => satOf(t.start_date)))].sort();
+          const out = [];
+          for (const sat of travelWeekends) {
+            const s = new Date(sat + "T00:00"); const fri = new Date(s); fri.setDate(fri.getDate() - 1); const sun = new Date(s); sun.setDate(sun.getDate() + 1);
+            const friS = fri.toISOString().slice(0, 10), sunS = sun.toISOString().slice(0, 10);
+            const practicing = sunByPhase[phaseForDate(sat)] || new Set();
+            const competing = new Set(), away = new Set();
+            for (const a of tournamentAssignments) { const tn = tnById.get(a.tournament_id); if (!tn) continue; if (tn.start_date <= sunS && tn.end_date >= friS) { competing.add(a.team_id); if (tn.stay_over) effReal(a).forEach(c => away.add(c)); } }
+            for (const teamName of practicing) {
+              if (competing.has(teamName)) continue;
+              const tm = teamById.get(teamName); if (!tm || tm.active === false) continue;
+              const h = tm.head_coach, as = tm.assistant_coach;
+              if (h && as && !isPlaceholderCoach(h) && !isPlaceholderCoach(as) && away.has(h) && away.has(as)) out.push({ sat, team: teamName, head: h, asst: as });
+            }
+          }
+          if (!out.length) return null;
+          const byWk = {}; out.forEach(o => (byWk[o.sat] = byWk[o.sat] || []).push(o));
+          const fmt = (iso) => new Date(iso + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+          return (
+            <details open style={{marginBottom:12,background:"rgba(245,158,11,0.08)",border:"1px solid #f59e0b",borderRadius:10,padding:"10px 14px"}}>
+              <summary style={{cursor:"pointer",fontSize:12,fontWeight:800,color:"#f59e0b"}}>🏐 {out.length} Sunday practice{out.length===1?"":"s"} need a sub — both coaches at a travel tournament</summary>
+              <div style={{marginTop:8,display:"flex",flexDirection:"column",gap:8}}>
+                {Object.keys(byWk).sort().map(sat => (
+                  <div key={sat}>
+                    <div style={{fontSize:11,fontWeight:800,color:C.text,marginBottom:2}}>{fmt(sat)}</div>
+                    {byWk[sat].map((o,i) => (
+                      <div key={i} style={{fontSize:11,color:C.text,lineHeight:1.5,paddingLeft:8}}>
+                        <b onClick={()=>setTeamCardName(o.team)} style={{cursor:"pointer",textDecoration:"underline"}} title="Open team card">{o.team}</b> — both <b>{o.head}</b> &amp; <b>{o.asst}</b> away
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </details>
+          );
+        })()}
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,flexWrap:"wrap",marginBottom:10}}>
           <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
             <h2 style={{margin:0,fontSize:18,fontWeight:800,color:C.gold}}>Practice Schedule</h2>
