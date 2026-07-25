@@ -728,6 +728,12 @@ function DropZone({ id, children, style }) {
   return <div ref={setNodeRef}
     style={{ ...style, outline: isOver ? "2px solid " + C.gold : "2px solid transparent", outlineOffset: -2, transition: "outline-color 0.1s" }}>{children}</div>;
 }
+// Generic draggable handle (used for team chips on the Sunday court planner).
+function DraggableChip({ id, children, style }) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id });
+  return <span ref={setNodeRef} {...listeners} {...attributes}
+    style={{ ...(style||{}), opacity: isDragging ? 0.3 : 1, cursor: "grab", touchAction: "none" }}>{children}</span>;
+}
 // A vertical-sortable row for dnd-kit (a row is both draggable and a drop
 // target). Only the element given `handleProps` starts a drag, so inputs in
 // the row stay usable. children is a render-prop receiving the handle props.
@@ -8950,6 +8956,16 @@ export default function App() {
               const statusColor = fits ? C.grn : "#f59e0b";
               const status = fits ? "✓ Fits " + COURT_BUDGET + " courts" : tooMany ? teams.length + " teams — can't fit " + COURT_BUDGET + " courts (" + (teams.length-cap) + " over)" : "Needs " + maxCount + " courts — rebalance";
               const changeMove = (t, to) => setSlotMove(dailyDate, t.team, to === t.def ? null : to, dayPhase);
+              const defOf = (team) => { const a = dayAssignments.find(x => x.team_name === team && x.day === weekday); return a ? a.slot : null; };
+              const onCourtDrag = (e) => {
+                const { active, over } = e; if (!over) return;
+                const team = String(active.id).replace(/^cteam-/, "");
+                const to = String(over.id).replace(/^cblk-/, "");
+                if (!team || !planBlocks.includes(to)) return;
+                const def = defOf(team);
+                if ((moveFor(team) || def) === to) return; // already there
+                setSlotMove(dailyDate, team, to === def ? null : to, dayPhase);
+              };
               return (
                 <div style={{background:C.card,border:"1px solid "+statusColor,borderRadius:12,padding:"12px 14px",marginBottom:10}}>
                   <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:8}}>
@@ -8961,20 +8977,24 @@ export default function App() {
                     {dateHasMoves && <button onClick={()=>{ if (window.confirm("Reset all court moves for this Sunday back to the normal schedule?")) clearSlotMovesForDate(dailyDate); }} style={{padding:"6px 10px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Reset moves</button>}
                   </div>
                   {!courtPlan ? (
+                    <DndContext sensors={dndSensors} onDragEnd={onCourtDrag}>
+                    <div style={{fontSize:10,color:C.mut,marginBottom:6}}>Drag a team to another block, or use its dropdown.</div>
                     <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:8}}>
                       {planBlocks.map(b => {
                         const bt = byBlock[b] || []; const over = bt.length > COURT_BUDGET;
                         return (
-                          <div key={b} style={{background:C.bg,border:"1px solid "+(over?C.red:C.border),borderRadius:10,padding:"8px 10px"}}>
+                          <DropZone key={b} id={"cblk-"+b} style={{background:C.bg,border:"1px solid "+(over?C.red:C.border),borderRadius:10,padding:"8px 10px",minHeight:56}}>
                             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:5}}>
                               <span style={{fontSize:12,fontWeight:800,color:C.text}}>{b}</span>
                               <span style={{fontSize:11,fontWeight:800,color:over?C.red:bt.length===COURT_BUDGET?"#f59e0b":C.grn}}>{bt.length}/{COURT_BUDGET}</span>
                             </div>
                             <div style={{display:"flex",flexDirection:"column",gap:3}}>
-                              {bt.length===0 && <span style={{fontSize:10,color:C.mut,fontStyle:"italic"}}>empty</span>}
+                              {bt.length===0 && <span style={{fontSize:10,color:C.mut,fontStyle:"italic"}}>drop here</span>}
                               {bt.map(t => (
                                 <div key={t.team} style={{display:"flex",alignItems:"center",gap:4}}>
-                                  <span style={{fontSize:11,fontWeight:600,color:t.eff!==t.def?"#c084fc":C.text,flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={t.eff!==t.def?("moved from "+t.def):""}>{t.eff!==t.def?"↦ ":""}{t.team}</span>
+                                  <DraggableChip id={"cteam-"+t.team} style={{fontSize:11,fontWeight:600,color:t.eff!==t.def?"#c084fc":C.text,flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:3}}>
+                                    <span style={{color:C.mut,fontSize:10}} title="Drag to move">⠿</span>{t.eff!==t.def?"↦ ":""}{t.team}
+                                  </DraggableChip>
                                   <select value={t.eff} onChange={e=>changeMove(t, e.target.value)} title="Move this team to another block for this Sunday"
                                     style={{...inpStyle,padding:"1px 3px",fontSize:10,fontWeight:700}}>
                                     {planBlocks.map(bb => <option key={bb} value={bb}>{bb}</option>)}
@@ -8982,10 +9002,11 @@ export default function App() {
                                 </div>
                               ))}
                             </div>
-                          </div>
+                          </DropZone>
                         );
                       })}
                     </div>
+                    </DndContext>
                   ) : (() => {
                     const changes = courtPlan.rows.filter(r => r.to && r.to !== (moveFor(r.team) || r.from));
                     return (
