@@ -1164,6 +1164,7 @@ export default function App() {
   const [coachFloats, setCoachFloats]                 = useState([]); // per (coach,day,slot,phase) floater availability
   const [practiceCoverage, setPracticeCoverage]       = useState([]); // per-date coach absences + subs (Daily view)
   const [practiceCancellations, setPracticeCancellations] = useState([]); // dates with practice cancelled (holidays)
+  const [slotMoves, setSlotMoves]                     = useState([]); // per-date team → block moves (Sunday 4-court planner)
   const [homeCalOff, setHomeCalOff]                   = useState(0);    // Home calendar: months offset from the current month
   const [homeCalSel, setHomeCalSel]                   = useState(null); // Home calendar: selected day (YYYY-MM-DD)
   const [homeUpdatesOpen, setHomeUpdatesOpen]         = useState(false);// Home: expand the Updates box to see all updates
@@ -1313,6 +1314,7 @@ export default function App() {
   const [dailyDate, setDailyDate]                     = useState(() => { try { return new Date().toISOString().slice(0,10); } catch { return ""; } });
   const [calMonth, setCalMonth]                       = useState(() => { try { return new Date().toISOString().slice(0,7); } catch { return "2026-11"; } }); // YYYY-MM shown in the Daily calendar
   const [autoFill, setAutoFill]                       = useState(null); // Daily board: proposed sub assignments awaiting approval [{team,slot,phase,coach_out,role,coach}]
+  const [courtPlan, setCourtPlan]                     = useState(null); // Sunday 4-court planner: proposed team→block layout awaiting approval [{team,from,to}]
   const [tryouts, setTryouts]                         = useState([]);
   const [coachRoster, setCoachRoster]                 = useState([]);
   // SMS state
@@ -1861,6 +1863,30 @@ export default function App() {
     if (error) { console.error("Load practice_cancellations error:", error); return; }
     setPracticeCancellations(data || []);
   }, []);
+  const loadSlotMoves = useCallback(async () => {
+    const { data, error } = await supabase.from("practice_slot_moves").select("*");
+    if (error) { console.error("Load practice_slot_moves error:", error); return; }
+    setSlotMoves(data || []);
+  }, []);
+  // Move a team to a different Sunday block for ONE date (or clear it → normal slot).
+  const setSlotMove = useCallback(async (practice_date, team_name, slot, phase) => {
+    if (!practice_date || !team_name) return;
+    if (!slot) {
+      setSlotMoves(prev => prev.filter(m => !(m.practice_date === practice_date && m.team_name === team_name)));
+      const { error } = await supabase.from("practice_slot_moves").delete().eq("practice_date", practice_date).eq("team_name", team_name);
+      if (error) { window.alert("Couldn't clear move: " + error.message); loadSlotMoves(); }
+      return;
+    }
+    const row = { practice_date, team_name, slot, phase: phase || null, updated_at: new Date().toISOString() };
+    setSlotMoves(prev => [...prev.filter(m => !(m.practice_date === practice_date && m.team_name === team_name)), row]);
+    const { error } = await supabase.from("practice_slot_moves").upsert(row, { onConflict: "practice_date,team_name" });
+    if (error) { window.alert("Couldn't save move: " + error.message); loadSlotMoves(); }
+  }, [loadSlotMoves]);
+  const clearSlotMovesForDate = useCallback(async (practice_date) => {
+    setSlotMoves(prev => prev.filter(m => m.practice_date !== practice_date));
+    const { error } = await supabase.from("practice_slot_moves").delete().eq("practice_date", practice_date);
+    if (error) { window.alert("Couldn't reset: " + error.message); loadSlotMoves(); }
+  }, [loadSlotMoves]);
 
   // ─── Realtime sync ──────────────────────────────────────────────────
   // Subscribe to Postgres change events on the tables the eval site cares
@@ -2272,7 +2298,7 @@ export default function App() {
   useEffect(() => { if (isApproved && view === "practice") loadCoachFloats(); }, [isApproved, view, loadCoachFloats]);
   useEffect(() => { if (isApproved && (view === "practice" || view === "home" || view === "clockin")) loadPracticeCoverage(); }, [isApproved, view, loadPracticeCoverage]);
   useEffect(() => { if (isApproved && view === "coverage") { loadPracticeCoverage(); loadPractice(); } }, [isApproved, view, loadPracticeCoverage, loadPractice]);
-  useEffect(() => { if (isApproved && view === "practice") loadPracticeCancellations(); }, [isApproved, view, loadPracticeCancellations]);
+  useEffect(() => { if (isApproved && view === "practice") { loadPracticeCancellations(); loadSlotMoves(); } }, [isApproved, view, loadPracticeCancellations, loadSlotMoves]);
   // Optimistically patch local state, then upsert the merged row. `merged` is
   // computed from current state synchronously (NOT inside the setState updater,
   // which React may run later) so the upsert payload is always complete.
@@ -8573,7 +8599,10 @@ export default function App() {
           }
         }
       }
-      const teamsFor = (label) => dayAssignments.filter(a => a.day === weekday && a.slot === label && !noPracticeTeams.has(a.team_name))
+      // A team can be moved to a different block for THIS date (Sunday 4-court
+      // planner). moveFor returns the override slot, or null.
+      const moveFor = (team) => { const m = slotMoves.find(x => x.practice_date === dailyDate && x.team_name === team); return m ? m.slot : null; };
+      const teamsFor = (label) => dayAssignments.filter(a => a.day === weekday && (moveFor(a.team_name) || a.slot) === label && !noPracticeTeams.has(a.team_name))
         .slice().sort((a,b) => ((a.court ?? 99) - (b.court ?? 99)) || a.team_name.localeCompare(b.team_name));
       const nrmName = s => (s || "").trim().toLowerCase();
       // A coach who called out (approved request) or is already marked out this
@@ -8696,6 +8725,37 @@ export default function App() {
         setAutoFill(null);
       };
       const setAutoRow = (i, coach) => setAutoFill(prev => (prev || []).map((x, ix) => ix === i ? { ...x, coach } : x));
+      // ── Sunday 4-court planner ──────────────────────────────────────────
+      const isSunSeason = weekday === "Sun" && (dayPhase === "season" || dayPhase === "postseason");
+      const COURT_BUDGET = 4;
+      const planBlocks = daySlots.map(s => s.label); // the 4 Sunday blocks
+      const coachesOf = (team) => { const tm = teamByName2.get(team) || {}; return [tm.head_coach, tm.assistant_coach].filter(c => c && !isPlaceholderCoach(c)).map(c => c.trim().toLowerCase()); };
+      // Teams actually practicing this Sunday (tournament-aware), with default +
+      // effective (moved) block.
+      const practicingTeams = () => { const seen = new Set(), out = []; dayAssignments.forEach(a => { if (a.day !== weekday || noPracticeTeams.has(a.team_name) || teamCancelled(dailyDate, a.team_name) || seen.has(a.team_name)) return; seen.add(a.team_name); out.push({ team: a.team_name, def: a.slot, eff: moveFor(a.team_name) || a.slot }); }); return out; };
+      // Distribute the practicing teams across the 4 blocks so each holds ≤ budget,
+      // keeping teams in place when possible and never putting two teams that share
+      // a coach in the same block (a coach can't run both at once).
+      const buildCourtBalance = () => {
+        const teams = practicingTeams();
+        const list = {}, coachIn = {}; planBlocks.forEach(b => { list[b] = []; coachIn[b] = new Set(); });
+        const canPlace = (t, b) => list[b].length < COURT_BUDGET && coachesOf(t.team).every(c => !coachIn[b].has(c));
+        const place = (t, b) => { list[b].push(t.team); coachesOf(t.team).forEach(c => coachIn[b].add(c)); t._to = b; };
+        const sorted = [...teams].sort((a, b) => a.eff.localeCompare(b.eff) || a.team.localeCompare(b.team));
+        const unplaced = [];
+        for (const t of sorted) {
+          const order = [t.eff, ...planBlocks.filter(b => b !== t.eff).sort((x, y) => list[x].length - list[y].length)];
+          const b = order.find(bb => canPlace(t, bb));
+          if (b) place(t, b); else unplaced.push(t.team);
+        }
+        return { rows: teams.map(t => ({ team: t.team, from: t.def, to: t._to || null })), unplaced };
+      };
+      const approveCourtPlan = async () => {
+        const rows = (courtPlan && courtPlan.rows) || [];
+        for (const r of rows) { if (!r.to) continue; if (r.to === r.from) await setSlotMove(dailyDate, r.team, null); else await setSlotMove(dailyDate, r.team, r.to, dayPhase); }
+        setCourtPlan(null);
+      };
+      const dateHasMoves = slotMoves.some(m => m.practice_date === dailyDate);
       const practiceToday = dayHasPractice(dailyDate) && daySlots.length > 0;
       const todayCancelled = cancelledSet.has(dailyDate);
       // Month-grid math for the persistent calendar.
@@ -8874,6 +8934,85 @@ export default function App() {
                       </div>
                     </div>
                   )}
+                </div>
+              );
+            })()}
+            {isSunSeason && (() => {
+              const teams = practicingTeams();
+              const cap = planBlocks.length * COURT_BUDGET;
+              const byBlock = {}; planBlocks.forEach(b => byBlock[b] = []);
+              teams.forEach(t => { (byBlock[t.eff] = byBlock[t.eff] || (byBlock[t.eff]=[])).push(t); });
+              const counts = planBlocks.map(b => (byBlock[b]||[]).length);
+              const maxCount = counts.length ? Math.max(...counts) : 0;
+              const overflow = planBlocks.filter(b => (byBlock[b]||[]).length > COURT_BUDGET);
+              const tooMany = teams.length > cap;
+              const fits = !tooMany && overflow.length === 0;
+              const statusColor = fits ? C.grn : "#f59e0b";
+              const status = fits ? "✓ Fits " + COURT_BUDGET + " courts" : tooMany ? teams.length + " teams — can't fit " + COURT_BUDGET + " courts (" + (teams.length-cap) + " over)" : "Needs " + maxCount + " courts — rebalance";
+              const changeMove = (t, to) => setSlotMove(dailyDate, t.team, to === t.def ? null : to, dayPhase);
+              return (
+                <div style={{background:C.card,border:"1px solid "+statusColor,borderRadius:12,padding:"12px 14px",marginBottom:10}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:8}}>
+                    <span style={{fontSize:13,fontWeight:800,color:C.text}}>🏟️ Sunday courts</span>
+                    <span style={{fontSize:11,fontWeight:800,color:statusColor,border:"1px solid "+statusColor,borderRadius:999,padding:"1px 9px"}}>{status}</span>
+                    <span style={{fontSize:10,color:C.mut}}>{teams.length} practicing · budget {COURT_BUDGET}/block</span>
+                    <div style={{flex:1}} />
+                    {!courtPlan && <button onClick={()=>setCourtPlan(buildCourtBalance())} style={{padding:"6px 12px",borderRadius:8,border:"1px solid "+C.gold,background:"rgba(233,30,140,0.10)",color:C.gold,fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>✨ Auto-balance to {COURT_BUDGET}</button>}
+                    {dateHasMoves && <button onClick={()=>{ if (window.confirm("Reset all court moves for this Sunday back to the normal schedule?")) clearSlotMovesForDate(dailyDate); }} style={{padding:"6px 10px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Reset moves</button>}
+                  </div>
+                  {!courtPlan ? (
+                    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:8}}>
+                      {planBlocks.map(b => {
+                        const bt = byBlock[b] || []; const over = bt.length > COURT_BUDGET;
+                        return (
+                          <div key={b} style={{background:C.bg,border:"1px solid "+(over?C.red:C.border),borderRadius:10,padding:"8px 10px"}}>
+                            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:5}}>
+                              <span style={{fontSize:12,fontWeight:800,color:C.text}}>{b}</span>
+                              <span style={{fontSize:11,fontWeight:800,color:over?C.red:bt.length===COURT_BUDGET?"#f59e0b":C.grn}}>{bt.length}/{COURT_BUDGET}</span>
+                            </div>
+                            <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                              {bt.length===0 && <span style={{fontSize:10,color:C.mut,fontStyle:"italic"}}>empty</span>}
+                              {bt.map(t => (
+                                <div key={t.team} style={{display:"flex",alignItems:"center",gap:4}}>
+                                  <span style={{fontSize:11,fontWeight:600,color:t.eff!==t.def?"#c084fc":C.text,flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={t.eff!==t.def?("moved from "+t.def):""}>{t.eff!==t.def?"↦ ":""}{t.team}</span>
+                                  <select value={t.eff} onChange={e=>changeMove(t, e.target.value)} title="Move this team to another block for this Sunday"
+                                    style={{...inpStyle,padding:"1px 3px",fontSize:10,fontWeight:700}}>
+                                    {planBlocks.map(bb => <option key={bb} value={bb}>{bb}</option>)}
+                                  </select>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (() => {
+                    const changes = courtPlan.rows.filter(r => r.to && r.to !== (moveFor(r.team) || r.from));
+                    return (
+                      <div>
+                        <div style={{fontSize:11,color:C.mut,marginBottom:6}}>{changes.length} move{changes.length===1?"":"s"} proposed to fit {COURT_BUDGET} courts{courtPlan.unplaced.length?" · "+courtPlan.unplaced.length+" couldn't fit":""}. Review, then approve.</div>
+                        <div style={{display:"flex",flexDirection:"column",gap:4,maxHeight:240,overflowY:"auto"}}>
+                          {changes.length===0 && <div style={{fontSize:12,color:C.grn,fontWeight:700}}>Already balanced — no moves needed.</div>}
+                          {changes.map((r,i) => (
+                            <div key={i} style={{display:"flex",alignItems:"center",gap:8,fontSize:12,borderBottom:"1px solid "+C.border,paddingBottom:4}}>
+                              <span style={{flex:1,fontWeight:700,color:C.text}}>{r.team}</span>
+                              <span style={{color:C.mut}}>{moveFor(r.team)||r.from}</span>
+                              <span style={{color:"#c084fc",fontWeight:800}}>→ {r.to}</span>
+                            </div>
+                          ))}
+                          {courtPlan.unplaced.map(tn => (
+                            <div key={"u"+tn} style={{fontSize:11,color:C.red,fontWeight:700}}>⚠ {tn} — no block with room (too many teams this Sunday)</div>
+                          ))}
+                        </div>
+                        <div style={{display:"flex",alignItems:"center",gap:8,marginTop:10,flexWrap:"wrap"}}>
+                          <button onClick={approveCourtPlan} disabled={changes.length===0} style={{padding:"7px 14px",borderRadius:8,border:"none",background:changes.length?C.grn:C.border,color:changes.length?"#000":C.mut,fontSize:12,fontWeight:800,cursor:changes.length?"pointer":"default",fontFamily:"inherit"}}>✓ Approve &amp; move {changes.length}</button>
+                          <button onClick={()=>setCourtPlan(buildCourtBalance())} style={{padding:"7px 12px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>↻ Re-run</button>
+                          <button onClick={()=>setCourtPlan(null)} style={{padding:"7px 12px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Cancel</button>
+                          <span style={{fontSize:10,color:C.mut}}>Nothing moves until you approve.</span>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
               );
             })()}
