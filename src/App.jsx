@@ -16026,6 +16026,7 @@ export default function App() {
               <option value="month">Month View</option>
               <option value="calendar">Team Calendar</option>
               <option value="summary">Summary</option>
+              <option value="assistants">Assistants</option>
             </select>
             <div style={{fontSize:11,color:C.mut}}>
               {tournaments.length} total · {filtered.length} match filters · {tournamentAssignments.length} assignments · {tournamentConflicts.length} conflict{tournamentConflicts.length===1?"":"s"}
@@ -16251,6 +16252,7 @@ export default function App() {
          : tnView === "browse" ? renderTournamentBrowser(filtered)
          : tnView === "month" ? renderTournamentMonthView(filtered)
          : tnView === "summary" ? renderTournamentSummary()
+         : tnView === "assistants" ? renderTournamentAssistants()
          : (<>
         {/* Bulk selection bar — check tournaments (or select all filtered) and delete in one shot. */}
         <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:10,padding:"8px 12px",background:tnSelected.size?"rgba(239,68,68,0.08)":C.card,border:"1px solid "+(tnSelected.size?C.red:C.border),borderRadius:8}}>
@@ -16301,6 +16303,93 @@ export default function App() {
           })()
         )}
         </>)}
+      </div>
+    );
+  }
+
+  // ─── ASSISTANTS ───────────────────────────────────────────────────────
+  // Assistants needed per weekend (one per team playing) + a fairness table:
+  // for each assistant, how many of THEIR teams' tournaments they actually
+  // cover vs. miss (get replaced by a sub). Low coverage = spread too thin.
+  function renderTournamentAssistants() {
+    const teams = teamsList.filter(t => t.active);
+    const teamById = new Map(teamsList.map(t => [t.id, t]));
+    const tnById = new Map(tournaments.map(t => [t.id, t]));
+    const isPh = (c) => tnIsPlaceholder(c);
+    const mondayOf = (iso) => { try { const d = new Date(iso + "T00:00"); const off = (d.getDay() + 6) % 7; d.setDate(d.getDate() - off); return d.toISOString().slice(0, 10); } catch { return iso; } };
+    const fmt = (iso) => { try { return new Date(iso + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }); } catch { return iso; } };
+
+    // Per weekend: assistants needed = distinct teams playing; TBD = open subs.
+    const wk = new Map();
+    for (const a of tournamentAssignments) {
+      const tn = tnById.get(a.tournament_id); if (!tn) continue;
+      const k = mondayOf(tn.start_date);
+      if (!wk.has(k)) wk.set(k, { start: tn.start_date, teams: new Set(), tbd: 0, subs: 0, names: new Set() });
+      const g = wk.get(k); g.teams.add(a.team_id);
+      if (tn.start_date < g.start) g.start = tn.start_date; g.names.add(tn.name);
+      const eff = tnEffectiveStaff(a, teamById.get(a.team_id));
+      if (eff.asstTodo) g.tbd++; else if (eff.asstSub) g.subs++;
+    }
+    const weeks = [...wk.values()].sort((x, y) => (x.start || "").localeCompare(y.start || ""));
+
+    // Per assistant: their default teams, and coverage across those tournaments.
+    const asstTeams = new Map();
+    teams.forEach(t => { const c = t.assistant_coach; if (c) { if (!asstTeams.has(c)) asstTeams.set(c, []); asstTeams.get(c).push(t.id); } });
+    const asstRows = [...asstTeams.entries()].map(([coach, tms]) => {
+      const teamSet = new Set(tms);
+      const own = tournamentAssignments.filter(a => teamSet.has(a.team_id));
+      let covered = 0, tbd = 0;
+      own.forEach(a => { const eff = tnEffectiveStaff(a, teamById.get(a.team_id)); if (eff.asst === coach) covered++; else if (eff.asstTodo) tbd++; });
+      let elsewhere = 0; // subbing in for a team they don't normally assist
+      tournamentAssignments.forEach(a => { if (teamSet.has(a.team_id)) return; const eff = tnEffectiveStaff(a, teamById.get(a.team_id)); if (eff.asst === coach) elsewhere++; });
+      const total = own.length;
+      return { coach, teams: tms, total, covered, missed: total - covered, tbd, elsewhere, pct: total ? Math.round(covered / total * 100) : 0 };
+    }).sort((a, b) => a.pct - b.pct || b.missed - a.missed);
+
+    const th = { padding: "7px 11px", fontSize: 10, fontWeight: 800, textTransform: "uppercase", color: C.mut, textAlign: "center", borderBottom: "2px solid " + C.border, whiteSpace: "nowrap" };
+    const thL = { ...th, textAlign: "left" };
+    const num = (v, color) => <td style={{ padding: "7px 11px", textAlign: "center", fontWeight: 800, color: v ? (color || C.text) : C.mut }}>{v}</td>;
+    const peak = weeks.reduce((m, w) => Math.max(m, w.teams.size), 0);
+
+    return (
+      <div>
+        <div style={{ fontSize: 12, color: C.mut, marginBottom: 14, lineHeight: 1.5 }}>
+          One assistant is needed per team, per tournament. <b style={{ color: "#f59e0b" }}>TBD</b> = an open sub to find. The fairness table shows how many of each assistant's own teams' tournaments they actually make.
+        </div>
+
+        <div style={{ fontSize: 12, fontWeight: 800, color: C.gold, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>Assistants needed per weekend {peak ? <span style={{ color: C.mut, fontWeight: 600, textTransform: "none" }}>· peak {peak}</span> : null}</div>
+        <div style={{ overflowX: "auto", border: "1px solid " + C.border, borderRadius: 10, marginBottom: 18 }}>
+          <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13, background: C.card }}>
+            <thead><tr><th style={thL}>Weekend</th><th style={th}>Assistants needed</th><th style={th}>Subs (TBD)</th><th style={thL}>Events</th></tr></thead>
+            <tbody>
+              {weeks.map(w => (
+                <tr key={w.start} style={{ borderBottom: "1px solid " + C.border }}>
+                  <td style={{ padding: "7px 11px", fontWeight: 700, color: C.text, whiteSpace: "nowrap" }}>{fmt(w.start)}</td>
+                  {num(w.teams.size, w.teams.size === peak ? "#ef4444" : C.gold)}{num(w.tbd, "#f59e0b")}
+                  <td style={{ padding: "7px 11px", fontSize: 11, color: C.mut }}>{[...w.names].join(" · ")}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div style={{ fontSize: 12, fontWeight: 800, color: C.gold, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>Fairness — is each assistant getting to their teams?</div>
+        <div style={{ overflowX: "auto", border: "1px solid " + C.border, borderRadius: 10 }}>
+          <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13, background: C.card }}>
+            <thead><tr><th style={thL}>Assistant</th><th style={thL}>Team(s)</th><th style={th}>Tournaments</th><th style={th}>Covering</th><th style={th}>Missing</th><th style={th}>TBD</th><th style={th}>Coverage</th><th style={th}>Subs elsewhere</th></tr></thead>
+            <tbody>
+              {asstRows.map(r => (
+                <tr key={r.coach} style={{ borderBottom: "1px solid " + C.border }}>
+                  <td style={{ padding: "7px 11px", fontWeight: 700, color: C.text, whiteSpace: "nowrap", cursor: "pointer", textDecoration: "underline", textDecorationColor: "transparent" }} onMouseEnter={e => e.currentTarget.style.textDecorationColor = C.gold} onMouseLeave={e => e.currentTarget.style.textDecorationColor = "transparent"} onClick={() => setCoachCardName(r.coach)}>{r.coach}</td>
+                  <td style={{ padding: "7px 11px", fontSize: 11, color: C.mut, whiteSpace: "nowrap" }}>{r.teams.join(", ")}</td>
+                  {num(r.total, C.text)}{num(r.covered, C.grn)}{num(r.missed, r.missed ? "#f59e0b" : C.mut)}{num(r.tbd, "#f59e0b")}
+                  <td style={{ padding: "7px 11px", textAlign: "center", fontWeight: 800, color: r.pct >= 90 ? C.grn : r.pct >= 70 ? "#f59e0b" : "#ef4444" }}>{r.pct}%</td>
+                  {num(r.elsewhere, "#c084fc")}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     );
   }
