@@ -8702,9 +8702,35 @@ export default function App() {
                                   const avail = coaches.filter(([,c]) => !awayCoachSet.has(c));
                                   const awayHere = coaches.filter(([,c]) => awayCoachSet.has(c)).map(([,c]) => c);
                                   if (coaches.length === 0) return <span style={{fontSize:11,color:C.mut}}>No coaches assigned</span>;
+                                  // Both coaches away at a tournament → let admin pick a sub. Store
+                                  // it as coverage keyed on the (away) head coach so the sub is
+                                  // recorded and credited. Options: coaches who marked availability
+                                  // for this slot, then the general floating-coach pool.
+                                  const subKeyCoach = awayHere[0] || (coaches[0] && coaches[0][1]) || a.team_name;
+                                  const teamCov = covFor(a.team_name, s.label, subKeyCoach);
+                                  const assignedSub = teamCov?.sub_name || "";
+                                  const poolFloating = (floatingCoaches||[]).map(x=>(x||"").trim()).filter(Boolean)
+                                    .filter(n => !floaters.some(f=>f.toLowerCase()===n.toLowerCase()) && !outTodaySet.has(nrmName(n)));
                                   return <>
                                     {avail.length === 0
-                                      ? <span style={{fontSize:11,fontWeight:800,color:"#f59e0b"}}>⚠ Needs a sub{awayHere.length ? " — " + awayHere.join(" & ") + " at a tournament" : ""}</span>
+                                      ? <div>
+                                          <span style={{fontSize:11,fontWeight:800,color:"#f59e0b"}}>⚠ Needs a sub{awayHere.length ? " — " + awayHere.join(" & ") + " at a tournament" : ""}</span>
+                                          <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginTop:4}}>
+                                            <span style={{fontSize:9,fontWeight:800,color:C.mut,textTransform:"uppercase"}}>Assign sub</span>
+                                            <select value={assignedSub} onChange={e=>{ const v=e.target.value;
+                                                if (v==="__other") { const n=window.prompt("Sub's name:", assignedSub||""); if (n!=null && n.trim()) setCoverage(dailyDate, a.team_name, s.label, dayPhase, subKeyCoach, n.trim()); }
+                                                else if (v==="") clearCoverage(dailyDate, a.team_name, s.label, dayPhase, subKeyCoach);
+                                                else setCoverage(dailyDate, a.team_name, s.label, dayPhase, subKeyCoach, v); }}
+                                              style={{...inpStyle,padding:"3px 6px",fontSize:11,color:assignedSub?"#06b6d4":"#f59e0b",fontWeight:700}}>
+                                              <option value="">⚠ pick a coach…</option>
+                                              {floaters.length>0 && <optgroup label="Available this slot">{floaters.map(f=><option key={"a"+f} value={f}>{f}</option>)}</optgroup>}
+                                              {poolFloating.length>0 && <optgroup label="Floating coaches">{poolFloating.map(f=><option key={"f"+f} value={f}>{f}</option>)}</optgroup>}
+                                              {assignedSub && !floaters.includes(assignedSub) && !poolFloating.includes(assignedSub) && <option value={assignedSub}>{assignedSub}</option>}
+                                              <option value="__other">＋ Other…</option>
+                                            </select>
+                                            {assignedSub && <button onClick={()=>clearCoverage(dailyDate, a.team_name, s.label, dayPhase, subKeyCoach)} title="Clear the assigned sub" style={{padding:"1px 8px",borderRadius:6,border:"1px solid "+C.grn,background:"transparent",color:C.grn,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Clear</button>}
+                                          </div>
+                                        </div>
                                       : avail.map(([role,c]) => <div key={role}>{coachCell(a.team_name, s.label, c, role, !!combinedWith)}</div>)}
                                     {awayHere.length > 0 && avail.length > 0 && <div style={{fontSize:9,color:"#22d3ee",fontWeight:600}}>🏐 {awayHere.join(", ")} at a tournament</div>}
                                   </>;
