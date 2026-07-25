@@ -5103,6 +5103,16 @@ export default function App() {
           const abbr = (name) => { const s = String(name||""); const mm = s.match(/^(\d+)\s*(.*)$/); if (!mm) return s.slice(0,4); const parts = mm[2].split(/\s+/).filter(Boolean).map(w => /^\d+$/.test(w) ? w : (w[0]||"")).join(""); return (mm[1]+parts).toUpperCase(); };
           // Compact a slot for tight cells: "5-7pm" → "5-7p".
           const shortTime = (s) => String(s||"").replace(/m\b/g, "").replace(/\s+/g, "");
+          // Tournament name → initials ("Countdown City Classic" → "CCC"), skipping
+          // filler words; capped so long qualifier names stay short.
+          const TN_STOP = new Set(["of","the","and","at","for","a","an","to","girls","boys","volleyball","tournament","weekend"]);
+          const tnAbbr = (name) => {
+            const words = String(name||"").replace(/[^\w\s]/g," ").split(/\s+/).filter(Boolean).filter(w => !TN_STOP.has(w.toLowerCase()));
+            const ini = words.map(w => /^\d+$/.test(w) ? w : (w[0]||"")).join("").toUpperCase();
+            return ini.slice(0,6) || String(name||"").slice(0,4);
+          };
+          // City only, dropping the state / extra legs: "San Antonio, TX" → "San Antonio".
+          const shortCity = (loc) => { const s = String(loc||"").split("/")[0].trim(); return s.replace(/,\s*[A-Z]{2}\b.*$/,"").trim() || s; };
           // Tournaments for my teams — plus any where I'm the swapped-in sub
           // (head/asst override), so sub coaching shows on the calendar too.
           const myTns = tournamentAssignments
@@ -5165,7 +5175,8 @@ export default function App() {
                   if (d === null) return <div key={"b"+i} />;
                   const iso = isoOf(d);
                   const evP = practicesOn(iso), evT = tnsOn(iso);
-                  const events = [...evT.map(x => ({ label: abbr(x.team), c: TNC })), ...evP.map(x => ({ label: abbr(x.team) + " " + shortTime(x.slots.join(",")), c: PR }))];
+                  const tnLabels = [...new Set(evT.map(x => tnAbbr(x.tn.name)))];
+                  const events = [...tnLabels.map(l => ({ label: l, c: TNC })), ...evP.map(x => ({ label: abbr(x.team) + " " + shortTime(x.slots.join(",")), c: PR }))];
                   const isToday = iso === todayISO;
                   const isSel = iso === sel;
                   return (
@@ -5197,7 +5208,7 @@ export default function App() {
                       {selT.map((x,i) => (
                         <div key={"t"+i} style={{display:"flex",alignItems:"center",gap:8,fontSize:13}}>
                           <span style={{width:6,height:6,borderRadius:3,background:TNC,flexShrink:0}} />
-                          <span style={{flex:1,color:C.text,fontWeight:600}}>{x.tn.name} <span style={{color:C.mut,fontWeight:500}}>· {x.team}</span>{x.tn.location && <span style={{color:C.mut,fontWeight:500}}> · 📍{x.tn.location}</span>}{x.sub && <span style={{color:"#a855f7",fontWeight:800,marginLeft:4,fontSize:9}}>SUB</span>}{x.tn.is_qualifier && <span style={{color:"#a855f7",fontWeight:800,marginLeft:4,fontSize:9}}>QUAL</span>}</span>
+                          <span style={{flex:1,color:C.text,fontWeight:600}} title={x.tn.name}><b style={{color:TNC}}>{tnAbbr(x.tn.name)}</b> <span style={{fontWeight:500}}>{x.tn.name}</span> <span style={{color:C.mut,fontWeight:500}}>· {x.team}</span>{x.tn.location && <span style={{color:C.mut,fontWeight:500}}> · 📍{shortCity(x.tn.location)}</span>}{x.sub && <span style={{color:"#a855f7",fontWeight:800,marginLeft:4,fontSize:9}}>SUB</span>}{x.tn.is_qualifier && <span style={{color:"#a855f7",fontWeight:800,marginLeft:4,fontSize:9}}>QUAL</span>}</span>
                           <span style={{fontSize:10,fontWeight:800,color:TNC,textTransform:"uppercase"}}>Tourn.</span>
                         </div>
                       ))}
@@ -8758,7 +8769,7 @@ export default function App() {
                                   const teamCov = covFor(a.team_name, s.label, subKeyCoach);
                                   const assignedSub = teamCov?.sub_name || "";
                                   const poolFloating = (floatingCoaches||[]).map(x=>(x||"").trim()).filter(Boolean)
-                                    .filter(n => !floaters.some(f=>f.toLowerCase()===n.toLowerCase()) && !outTodaySet.has(nrmName(n)));
+                                    .filter(n => !floaters.some(f=>f.toLowerCase()===n.toLowerCase()) && !outTodaySet.has(nrmName(n)) && !awayLow.has(nrmName(n)));
                                   return <>
                                     {avail.length === 0
                                       ? <div>
@@ -14873,6 +14884,26 @@ export default function App() {
     // A coverage need is moot if the practice is cancelled — whole-day
     // (team_name '') or just that team on the date.
     const isCancelled = (date, team) => practiceCancellations.some(x => x.practice_date === date && (!x.team_name || x.team_name === team));
+    // Coaches at a tournament on a given date can't also be picked to float — a
+    // coach there only as an override sub for another team keeps their own team.
+    const cvTeamByName = new Map(practiceTeams.map(t => [t.team_name, t]));
+    const cvRosteredLow = new Set(practiceTeams.flatMap(t => [t.head_coach, t.assistant_coach]).filter(Boolean).map(c => c.trim().toLowerCase()));
+    const cvTnById = new Map(tournaments.map(t => [t.id, t]));
+    const cvAwayCache = new Map();
+    const coachesAtTnOn = (date) => {
+      if (cvAwayCache.has(date)) return cvAwayCache.get(date);
+      const s = new Set();
+      for (const a of tournamentAssignments) {
+        const tn = cvTnById.get(a.tournament_id); if (!tn || tn.cancelled) continue;
+        if (!(tn.start_date <= date && (tn.end_date || tn.start_date) >= date)) continue;
+        const team = cvTeamByName.get(a.team_id) || {};
+        const add = (cc, isSub) => { if (!cc || isPlaceholderCoach(cc)) return; if (isSub && cvRosteredLow.has(cc.trim().toLowerCase())) return; s.add(cc.trim().toLowerCase()); };
+        add(a.head_override || team.head_coach, !!a.head_override && a.head_override !== team.head_coach);
+        add(a.asst_override || team.assistant_coach, !!a.asst_override && a.asst_override !== team.assistant_coach);
+      }
+      cvAwayCache.set(date, s);
+      return s;
+    };
     const upcoming = practiceCoverage.filter(c => (c.practice_date||"") >= today && !isCancelled(c.practice_date, c.team_name))
       .slice().sort((a,b)=> (a.practice_date||"").localeCompare(b.practice_date||"") || (a.slot||"").localeCompare(b.slot||"") || (a.team_name||"").localeCompare(b.team_name||""));
     const pastCount = practiceCoverage.filter(c => (c.practice_date||"") < today).length;
@@ -14897,7 +14928,10 @@ export default function App() {
       const ph = c.phase || "season";
       for (const name of cs) setCoverage(c.practice_date, c.team_name, c.slot, ph, name, null, target);
     };
-    const coverageSelect = (c) => (
+    const coverageSelect = (c) => {
+      const away = coachesAtTnOn(c.practice_date);
+      const floatOptions = floatingCoaches.filter(f => !away.has((f||"").trim().toLowerCase()));
+      return (
       <select value={c.sub_name || ""} onChange={e=>{
           const v = e.target.value;
           const ph = c.phase || "season";
@@ -14906,12 +14940,13 @@ export default function App() {
           else setCoverage(c.practice_date, c.team_name, c.slot, ph, c.coach_out, v);
         }} style={{...inp, color: c.sub_name?"#06b6d4":"#f59e0b", fontWeight:700}}>
         <option value="">⚠ needs coverage</option>
-        {floatingCoaches.map(f => <option key={f} value={f}>{f} (floating)</option>)}
+        {floatOptions.map(f => <option key={f} value={f}>{f} (floating)</option>)}
         {c.sub_name && !floatingCoaches.includes(c.sub_name) && <option value={c.sub_name}>{c.sub_name}</option>}
         <option value="__other">＋ Other sub…</option>
         {bothCoachesOut(c) && <option value="__combine">🔀 Combine teams (no coach)…</option>}
       </select>
-    );
+      );
+    };
 
     return (
       <div style={{maxWidth:1000,margin:"0 auto"}}>
