@@ -1162,6 +1162,7 @@ export default function App() {
   const [practiceCancellations, setPracticeCancellations] = useState([]); // dates with practice cancelled (holidays)
   const [homeCalOff, setHomeCalOff]                   = useState(0);    // Home calendar: months offset from the current month
   const [homeCalSel, setHomeCalSel]                   = useState(null); // Home calendar: selected day (YYYY-MM-DD)
+  const [homeUpdatesOpen, setHomeUpdatesOpen]         = useState(false);// Home: expand the Updates box to see all updates
   const [snapshots, setSnapshots]                     = useState([]);
   // Lineups / rotation planner (cloud, per team) — see renderLineups.
   const [lineupPlans, setLineupPlans]   = useState([]);      // list of plans (metadata + data)
@@ -4477,25 +4478,38 @@ export default function App() {
     if (visible.length === 0) return null;
     const recentMs = Date.now() - 3 * 24 * 60 * 60 * 1000;
     const fmt = (iso) => new Date(iso).toLocaleDateString(undefined, { month:"short", day:"numeric" });
+    const newCount = visible.filter(u => new Date(u.created_at).getTime() > recentMs).length;
+    const open = homeUpdatesOpen;
+    const latest = visible[0];
     return (
-      <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:"9px 12px",marginBottom:12}}>
-        <div style={{fontSize:10,fontWeight:800,letterSpacing:0.4,textTransform:"uppercase",color:C.mut,marginBottom:6}}>Updates</div>
-        <div style={{display:"flex",flexDirection:"column",gap:5,maxHeight:170,overflowY:"auto"}}>
-          {visible.map(u => {
-            const isNew = new Date(u.created_at).getTime() > recentMs;
-            return (
-              <div key={u.id} style={{display:"flex",alignItems:"baseline",gap:7,paddingBottom:5,borderBottom:"1px solid "+C.border}}>
-                <span style={{fontSize:9,color:C.mut,whiteSpace:"nowrap",flexShrink:0}}>{fmt(u.created_at)}</span>
-                {u.team_name
-                  ? <span style={{fontSize:8,fontWeight:800,color:C.acc,border:"1px solid "+C.acc,borderRadius:4,padding:"0 4px",flexShrink:0}}>{u.team_name}</span>
-                  : <span style={{fontSize:8,fontWeight:800,color:C.mut,border:"1px solid "+C.border,borderRadius:4,padding:"0 4px",flexShrink:0}}>ALL</span>}
-                <span style={{fontSize:11.5,color:C.text,whiteSpace:"pre-wrap",lineHeight:1.35,flex:1,minWidth:0}}>{u.body}</span>
-                {isNew && <span style={{fontSize:8,fontWeight:800,color:C.grn,flexShrink:0}}>NEW</span>}
-                {canOps && <button onClick={()=>setUpdateHidden(u.id, true)} title="Hide from Home — stays in Notification History" style={{background:"none",border:"none",color:C.mut,cursor:"pointer",fontSize:12,fontWeight:800,lineHeight:1,padding:0,flexShrink:0}}>×</button>}
-              </div>
-            );
-          })}
-        </div>
+      <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,marginBottom:12,overflow:"hidden"}}>
+        <button onClick={()=>setHomeUpdatesOpen(o=>!o)} title={open?"Collapse":"See all updates"}
+          style={{display:"flex",alignItems:"center",gap:8,width:"100%",textAlign:"left",background:"none",border:"none",cursor:"pointer",fontFamily:"inherit",padding:"10px 12px"}}>
+          <span style={{fontSize:12,fontWeight:800,color:C.text}}>🔔 Updates</span>
+          <span style={{fontSize:10,fontWeight:800,color:C.mut}}>{visible.length}</span>
+          {newCount>0 && <span style={{fontSize:8,fontWeight:800,color:C.grn,border:"1px solid "+C.grn,borderRadius:5,padding:"1px 5px",flexShrink:0}}>{newCount} NEW</span>}
+          {!open && latest && <span style={{flex:1,minWidth:0,fontSize:11,color:C.mut,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{(latest.team_name?"["+latest.team_name+"] ":"")+latest.body}</span>}
+          {open && <div style={{flex:1}} />}
+          <span style={{fontSize:10,color:C.mut,flexShrink:0}}>{open?"▴":"▾"}</span>
+        </button>
+        {open && (
+          <div style={{padding:"0 12px 10px",display:"flex",flexDirection:"column",gap:5,maxHeight:260,overflowY:"auto"}}>
+            {visible.map(u => {
+              const isNew = new Date(u.created_at).getTime() > recentMs;
+              return (
+                <div key={u.id} style={{display:"flex",alignItems:"baseline",gap:7,paddingBottom:5,borderBottom:"1px solid "+C.border}}>
+                  <span style={{fontSize:9,color:C.mut,whiteSpace:"nowrap",flexShrink:0}}>{fmt(u.created_at)}</span>
+                  {u.team_name
+                    ? <span style={{fontSize:8,fontWeight:800,color:C.acc,border:"1px solid "+C.acc,borderRadius:4,padding:"0 4px",flexShrink:0}}>{u.team_name}</span>
+                    : <span style={{fontSize:8,fontWeight:800,color:C.mut,border:"1px solid "+C.border,borderRadius:4,padding:"0 4px",flexShrink:0}}>ALL</span>}
+                  <span style={{fontSize:11.5,color:C.text,whiteSpace:"pre-wrap",lineHeight:1.35,flex:1,minWidth:0}}>{u.body}</span>
+                  {isNew && <span style={{fontSize:8,fontWeight:800,color:C.grn,flexShrink:0}}>NEW</span>}
+                  {canOps && <button onClick={(e)=>{ e.stopPropagation(); setUpdateHidden(u.id, true); }} title="Hide from Home — stays in Notification History" style={{background:"none",border:"none",color:C.mut,cursor:"pointer",fontSize:12,fontWeight:800,lineHeight:1,padding:0,flexShrink:0}}>×</button>}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     );
   };
@@ -5045,7 +5059,7 @@ export default function App() {
             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:10,marginBottom:14}}>
               {tile("📋","Lineups","Rotations, subs & lineup cards",()=>{ setView("lineups"); setOpenMenu(null); })}
               {tile("📖","Playbook","Plans, drills, standards & culture",()=>{ setView("practiceplan"); setOpenMenu(null); })}
-              {tile("🏆","Tournaments","Schedule & assignments",()=>{ setView("tournaments"); setOpenMenu(null); })}
+              {canOps && tile("🏆","Tournaments","Schedule & assignments",()=>{ setView("tournaments"); setOpenMenu(null); })}
               {tile("🗓","Time off","Request a weekend or practice off",()=>{ setReqForm({ type:"weekend", date:"", team:"", details:"" }); setRequestOffOpen(true); })}
             </div>
           );
@@ -5078,15 +5092,21 @@ export default function App() {
             });
             return Object.entries(byTeam).map(([team, slots]) => ({ team, slots: mergeAdjacentSlots(slots) }));
           };
+          // Team → short tag ("13 Diamond" → 13D, "11 Rise 1" → 11R1) for the
+          // in-cell rectangles, so a multi-team coach can tell teams apart.
+          const abbr = (name) => { const s = String(name||""); const mm = s.match(/^(\d+)\s*(.*)$/); if (!mm) return s.slice(0,4); const parts = mm[2].split(/\s+/).filter(Boolean).map(w => /^\d+$/.test(w) ? w : (w[0]||"")).join(""); return (mm[1]+parts).toUpperCase(); };
+          // Tournaments for my teams — plus any where I'm the swapped-in sub
+          // (head/asst override), so sub coaching shows on the calendar too.
           const myTns = tournamentAssignments
-            .filter(ta => myTeamSet.has(ta.team_id) || myTeamSet.has(ta.team_name))
-            .map(ta => ({ team: ta.team_id || ta.team_name, tn: tournamentById.get(ta.tournament_id) }))
+            .filter(ta => myTeamSet.has(ta.team_id) || myTeamSet.has(ta.team_name) || isMine(ta.head_override) || isMine(ta.asst_override))
+            .map(ta => ({ team: ta.team_id || ta.team_name, tn: tournamentById.get(ta.tournament_id), sub: !(myTeamSet.has(ta.team_id) || myTeamSet.has(ta.team_name)) }))
             .filter(x => x.tn && !x.tn.cancelled);
           const tnsOn = (iso) => {
             const seen = new Set();
             return myTns.filter(x => x.tn.start_date <= iso && (x.tn.end_date || x.tn.start_date) >= iso)
               .filter(x => { const k = x.team + "|" + x.tn.id; if (seen.has(k)) return false; seen.add(k); return true; });
           };
+          const PR = "#06b6d4", TNC = "#f59e0b"; // practice = cyan, tournament = amber
           const sel = (homeCalSel && homeCalSel.slice(0,7) === monthKey) ? homeCalSel
                     : (todayISO.slice(0,7) === monthKey ? todayISO : null);
           const selP = sel ? practicesOn(sel) : [];
@@ -5095,47 +5115,46 @@ export default function App() {
           const cells = [];
           for (let i = 0; i < leadPad; i++) cells.push(null);
           for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+          const chip = (color) => ({fontSize:7.5,fontWeight:800,lineHeight:"11px",height:11,borderRadius:2,padding:"0 2px",background:color+"33",color,overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis",letterSpacing:0.2});
           return (
-            <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:14,marginBottom:14}}>
-              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+            <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:"10px 12px",marginBottom:14}}>
+              <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
                 <span style={{fontSize:10,fontWeight:800,letterSpacing:0.4,textTransform:"uppercase",color:C.mut}}>My schedule</span>
                 <div style={{flex:1}} />
-                <button onClick={()=>setHomeCalOff(o=>o-1)} title="Previous month" style={{background:"none",border:"1px solid "+C.border,borderRadius:6,color:C.text,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:800,width:26,height:26,lineHeight:1,padding:0}}>‹</button>
-                <span style={{fontSize:12,fontWeight:800,color:C.text,minWidth:118,textAlign:"center"}}>{monthLabel}</span>
-                <button onClick={()=>setHomeCalOff(o=>o+1)} title="Next month" style={{background:"none",border:"1px solid "+C.border,borderRadius:6,color:C.text,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:800,width:26,height:26,lineHeight:1,padding:0}}>›</button>
+                <button onClick={()=>setHomeCalOff(o=>o-1)} title="Previous month" style={{background:"none",border:"1px solid "+C.border,borderRadius:6,color:C.text,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:800,width:22,height:22,lineHeight:1,padding:0}}>‹</button>
+                <span style={{fontSize:11,fontWeight:800,color:C.text,minWidth:104,textAlign:"center"}}>{monthLabel}</span>
+                <button onClick={()=>setHomeCalOff(o=>o+1)} title="Next month" style={{background:"none",border:"1px solid "+C.border,borderRadius:6,color:C.text,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:800,width:22,height:22,lineHeight:1,padding:0}}>›</button>
                 {homeCalOff !== 0 && <button onClick={()=>{ setHomeCalOff(0); setHomeCalSel(todayISO); }} style={{background:"none",border:"none",color:C.acc,cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:700}}>Today</button>}
               </div>
-              <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3,marginBottom:3}}>
-                {["S","M","T","W","T","F","S"].map((d,i) => <div key={i} style={{textAlign:"center",fontSize:9,fontWeight:800,color:C.mut}}>{d}</div>)}
+              <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:2,marginBottom:2}}>
+                {["S","M","T","W","T","F","S"].map((d,i) => <div key={i} style={{textAlign:"center",fontSize:8,fontWeight:800,color:C.mut}}>{d}</div>)}
               </div>
-              <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3}}>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:2}}>
                 {cells.map((d,i) => {
                   if (d === null) return <div key={"b"+i} />;
                   const iso = isoOf(d);
-                  const hasP = practicesOn(iso).length > 0;
-                  const hasT = tnsOn(iso).length > 0;
+                  const evP = practicesOn(iso), evT = tnsOn(iso);
+                  const events = [...evT.map(x => ({ label: abbr(x.team), c: TNC })), ...evP.map(x => ({ label: abbr(x.team), c: PR }))];
                   const isToday = iso === todayISO;
                   const isSel = iso === sel;
                   return (
                     <button key={iso} onClick={()=>setHomeCalSel(iso)}
-                      style={{aspectRatio:"1 / 1",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:2,
-                        background:isSel?"rgba(233,30,140,0.14)":(hasP||hasT)?C.bg:"transparent",
+                      style={{display:"flex",flexDirection:"column",alignItems:"stretch",gap:1,minHeight:30,textAlign:"left",
+                        background:isSel?"rgba(233,30,140,0.14)":events.length?C.bg:"transparent",
                         border:"1px solid "+(isSel?C.gold:isToday?C.acc:"transparent"),
-                        borderRadius:8,cursor:"pointer",fontFamily:"inherit",padding:0,minHeight:34}}>
-                      <span style={{fontSize:12,fontWeight:isToday?800:600,color:isToday?C.gold:C.text}}>{d}</span>
-                      <span style={{display:"flex",gap:2,height:5}}>
-                        {hasT && <span style={{width:5,height:5,borderRadius:3,background:C.gold}} />}
-                        {hasP && <span style={{width:5,height:5,borderRadius:3,background:C.acc}} />}
-                      </span>
+                        borderRadius:6,cursor:"pointer",fontFamily:"inherit",padding:"2px 2px 3px",overflow:"hidden"}}>
+                      <span style={{fontSize:9,fontWeight:isToday?800:600,color:isToday?C.gold:C.mut,paddingLeft:1}}>{d}</span>
+                      {events.slice(0,2).map((e,ei) => <span key={ei} style={chip(e.c)}>{e.label}</span>)}
+                      {events.length > 2 && <span style={{fontSize:7.5,fontWeight:800,color:C.mut,paddingLeft:1}}>+{events.length-2}</span>}
                     </button>
                   );
                 })}
               </div>
-              <div style={{display:"flex",alignItems:"center",gap:12,marginTop:8,fontSize:10,color:C.mut}}>
-                <span style={{display:"flex",alignItems:"center",gap:4}}><span style={{width:6,height:6,borderRadius:3,background:C.acc}} />Practice</span>
-                <span style={{display:"flex",alignItems:"center",gap:4}}><span style={{width:6,height:6,borderRadius:3,background:C.gold}} />Tournament</span>
+              <div style={{display:"flex",alignItems:"center",gap:10,marginTop:8,fontSize:10,color:C.mut}}>
+                <span style={{display:"flex",alignItems:"center",gap:4}}><span style={{width:10,height:8,borderRadius:2,background:PR+"33",border:"1px solid "+PR}} />Practice</span>
+                <span style={{display:"flex",alignItems:"center",gap:4}}><span style={{width:10,height:8,borderRadius:2,background:TNC+"33",border:"1px solid "+TNC}} />Tournament</span>
                 <div style={{flex:1}} />
-                <button onClick={()=>{ setView("tournaments"); setOpenMenu(null); }} style={{background:"none",border:"none",color:C.acc,cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:700}}>All tournaments →</button>
+                {canOps && <button onClick={()=>{ setView("tournaments"); setOpenMenu(null); }} style={{background:"none",border:"none",color:C.acc,cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:700}}>All tournaments →</button>}
               </div>
               {sel && (
                 <div style={{marginTop:10,borderTop:"1px solid "+C.border,paddingTop:10}}>
@@ -5146,14 +5165,14 @@ export default function App() {
                     <div style={{display:"flex",flexDirection:"column",gap:5}}>
                       {selT.map((x,i) => (
                         <div key={"t"+i} style={{display:"flex",alignItems:"center",gap:8,fontSize:13}}>
-                          <span style={{width:6,height:6,borderRadius:3,background:C.gold,flexShrink:0}} />
-                          <span style={{flex:1,color:C.text,fontWeight:600}}>{x.tn.name} <span style={{color:C.mut,fontWeight:500}}>· {x.team}</span>{x.tn.is_qualifier && <span style={{color:"#a855f7",fontWeight:800,marginLeft:4,fontSize:9}}>QUAL</span>}</span>
-                          <span style={{fontSize:10,fontWeight:800,color:C.gold,textTransform:"uppercase"}}>Tourn.</span>
+                          <span style={{width:6,height:6,borderRadius:3,background:TNC,flexShrink:0}} />
+                          <span style={{flex:1,color:C.text,fontWeight:600}}>{x.tn.name} <span style={{color:C.mut,fontWeight:500}}>· {x.team}</span>{x.sub && <span style={{color:"#a855f7",fontWeight:800,marginLeft:4,fontSize:9}}>SUB</span>}{x.tn.is_qualifier && <span style={{color:"#a855f7",fontWeight:800,marginLeft:4,fontSize:9}}>QUAL</span>}</span>
+                          <span style={{fontSize:10,fontWeight:800,color:TNC,textTransform:"uppercase"}}>Tourn.</span>
                         </div>
                       ))}
                       {selP.map((x,i) => (
                         <div key={"p"+i} style={{display:"flex",alignItems:"center",gap:8,fontSize:13}}>
-                          <span style={{width:6,height:6,borderRadius:3,background:C.acc,flexShrink:0}} />
+                          <span style={{width:6,height:6,borderRadius:3,background:PR,flexShrink:0}} />
                           <span style={{flex:1,color:C.text,fontWeight:600}}>{x.team}</span>
                           <span style={{fontSize:11,color:C.mut}}>{x.slots.join(", ")}</span>
                         </div>
@@ -16143,6 +16162,13 @@ export default function App() {
   }
 
   function renderTournaments() {
+    // Admin-only planner. Coaches see their own tournaments on the Home calendar
+    // and each team card — the full tournament tab is not exposed to them.
+    if (!canOps) return (
+      <div style={{maxWidth:520,margin:"40px auto",padding:24,textAlign:"center",color:C.mut,fontSize:13,background:C.card,borderRadius:12,border:"1px solid "+C.border,lineHeight:1.6}}>
+        The tournament planner is admin-only. Your team's tournaments show on your <button onClick={()=>setView("home")} style={{background:"none",border:"none",color:C.acc,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,padding:0}}>Home calendar</button>.
+      </div>
+    );
     // Filtering (used by Listings view; Calendar respects only the team
     // multi-select since "what's the calendar of selected teams" doesn't
     // need the listing filters).
@@ -17904,7 +17930,7 @@ export default function App() {
                       {mItem("home","🏠 Home")}
                       {mItem("clockin","⏱ Clock In")}
                       {!canOps && mItem("notifications","🔔 Notifications" + (unreadCount>0?" ("+unreadCount+")":""))}
-                      {mItem("tournaments","🏆 Tournaments")}
+                      {canOps && mItem("tournaments","🏆 Tournaments")}
                       {mItem("lineups","📋 Lineups")}
                       {mItem("practiceplan","📖 Playbook")}
                       {mItem("clinics","🏐 DSSC Clinics")}
@@ -17924,7 +17950,7 @@ export default function App() {
                 {item("home","Home")}
                 {item("clockin","Clock In")}
                 {!canOps && item("notifications","Notifications" + (unreadCount>0?" ("+unreadCount+")":""))}
-                {item("tournaments","Tournaments")}
+                {canOps && item("tournaments","Tournaments")}
                 {item("lineups","Lineups")}
                 {item("practiceplan","Playbook")}
                 {item("clinics","DSSC")}
