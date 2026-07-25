@@ -8359,6 +8359,20 @@ export default function App() {
           if (tn.start_date <= sun && tn.end_date >= fri && (tn.end_date > tn.start_date || a.status === "locked")) noPracticeTeams.set(a.team_id, tn.name);
         }
       }
+      // Coaches unavailable this day because they're at a tournament happening on
+      // this date (effective staff, real names) → removed from the practice board.
+      const awayCoachSet = new Set();
+      if (weekday === "Sun" && dailyDate) {
+        const teamById3 = new Map(teamsList.map(t => [t.id, t]));
+        const tnById3 = new Map(tournaments.map(t => [t.id, t]));
+        for (const a of tournamentAssignments) {
+          const tn = tnById3.get(a.tournament_id); if (!tn) continue;
+          if (tn.start_date <= dailyDate && tn.end_date >= dailyDate) {
+            const eff = tnEffectiveStaff(a, teamById3.get(a.team_id));
+            [eff.head, eff.asst].forEach(c => { if (c && !isPlaceholderCoach(c)) awayCoachSet.add(c); });
+          }
+        }
+      }
       const teamsFor = (label) => dayAssignments.filter(a => a.day === weekday && a.slot === label && !noPracticeTeams.has(a.team_name))
         .slice().sort((a,b) => ((a.court ?? 99) - (b.court ?? 99)) || a.team_name.localeCompare(b.team_name));
       const nrmName = s => (s || "").trim().toLowerCase();
@@ -8565,9 +8579,17 @@ export default function App() {
                               </div>
                               {tCancelled && <div style={{fontSize:10,fontWeight:800,color:C.red,marginBottom:5}}>🚫 Practice cancelled for this team</div>}
                               <div style={{display:"flex",flexDirection:"column",gap:3,opacity:tCancelled?0.5:1}}>
-                                {coaches.length === 0
-                                  ? <span style={{fontSize:11,color:C.mut}}>No coaches assigned</span>
-                                  : coaches.map(([role,c]) => <div key={role}>{coachCell(a.team_name, s.label, c, role, !!combinedWith)}</div>)}
+                                {(() => {
+                                  const avail = coaches.filter(([,c]) => !awayCoachSet.has(c));
+                                  const awayHere = coaches.filter(([,c]) => awayCoachSet.has(c)).map(([,c]) => c);
+                                  if (coaches.length === 0) return <span style={{fontSize:11,color:C.mut}}>No coaches assigned</span>;
+                                  return <>
+                                    {avail.length === 0
+                                      ? <span style={{fontSize:11,fontWeight:800,color:"#f59e0b"}}>⚠ Needs a sub{awayHere.length ? " — " + awayHere.join(" & ") + " at a tournament" : ""}</span>
+                                      : avail.map(([role,c]) => <div key={role}>{coachCell(a.team_name, s.label, c, role, !!combinedWith)}</div>)}
+                                    {awayHere.length > 0 && avail.length > 0 && <div style={{fontSize:9,color:"#22d3ee",fontWeight:600}}>🏐 {awayHere.join(", ")} at a tournament</div>}
+                                  </>;
+                                })()}
                               </div>
                               {bothOut && (
                                 <div style={{marginTop:6,paddingTop:6,borderTop:"1px dashed "+C.border,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
