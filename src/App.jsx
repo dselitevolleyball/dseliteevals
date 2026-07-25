@@ -48,6 +48,10 @@ const tnIsPlaceholder = (s) => { const v = String(s || "").trim().toLowerCase();
 // A coach name that isn't a real person yet (TBD, a hire placeholder, or the
 // tournament floater) — excluded from availability math.
 const isPlaceholderCoach = (c) => { const v = String(c || "").trim(); return !v || tnIsPlaceholder(v) || /new coach|floater coach|assistant coach$/i.test(v); };
+// Generic "coverage bodies" that can be assigned to cover a practice (e.g. when a
+// team's coaches are all traveling). They're placeholders — excluded from the
+// away/conflict math above — but always offered as sub options on the boards.
+const COVERAGE_SUBS = ["Tournament Floater Coach", "13-1 Assistant Coach", "15-2 Assistant Coach"];
 function tnEffectiveStaff(a, team) {
   const dHead = team?.head_coach || null, dAsst = team?.assistant_coach || null;
   const head = (a?.head_override || dHead) || null;
@@ -8662,7 +8666,8 @@ export default function App() {
                 style={{...inpStyle,padding:"3px 6px",fontSize:11,color:cov.sub_name?"#06b6d4":"#f59e0b",fontWeight:700}}>
                 <option value="">⚠ needs coverage</option>
                 {floaters.map(f => <option key={f} value={f}>{f} (floating)</option>)}
-                {cov.sub_name && !floaters.includes(cov.sub_name) && <option value={cov.sub_name}>{cov.sub_name}</option>}
+                <optgroup label="Coverage staff">{COVERAGE_SUBS.map(f => <option key={f} value={f}>{f}</option>)}</optgroup>
+                {cov.sub_name && !floaters.includes(cov.sub_name) && !COVERAGE_SUBS.includes(cov.sub_name) && <option value={cov.sub_name}>{cov.sub_name}</option>}
                 <option value="__other">＋ Other sub…</option>
               </select>
             )}
@@ -8805,7 +8810,8 @@ export default function App() {
                                               <option value="">⚠ pick a coach…</option>
                                               {floaters.length>0 && <optgroup label="Available this slot">{floaters.map(f=><option key={"a"+f} value={f}>{f}</option>)}</optgroup>}
                                               {poolFloating.length>0 && <optgroup label="Floating coaches">{poolFloating.map(f=><option key={"f"+f} value={f}>{f}</option>)}</optgroup>}
-                                              {assignedSub && !floaters.includes(assignedSub) && !poolFloating.includes(assignedSub) && <option value={assignedSub}>{assignedSub}</option>}
+                                              <optgroup label="Coverage staff">{COVERAGE_SUBS.map(f=><option key={"c"+f} value={f}>{f}</option>)}</optgroup>
+                                              {assignedSub && !floaters.includes(assignedSub) && !poolFloating.includes(assignedSub) && !COVERAGE_SUBS.includes(assignedSub) && <option value={assignedSub}>{assignedSub}</option>}
                                               <option value="__other">＋ Other…</option>
                                             </select>
                                             {assignedSub && <button onClick={()=>clearCoverage(dailyDate, a.team_name, s.label, dayPhase, subKeyCoach)} title="Clear the assigned sub" style={{padding:"1px 8px",borderRadius:6,border:"1px solid "+C.grn,background:"transparent",color:C.grn,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Clear</button>}
@@ -14962,7 +14968,8 @@ export default function App() {
         }} style={{...inp, color: c.sub_name?"#06b6d4":"#f59e0b", fontWeight:700}}>
         <option value="">⚠ needs coverage</option>
         {floatOptions.map(f => <option key={f} value={f}>{f} (floating)</option>)}
-        {c.sub_name && !floatingCoaches.includes(c.sub_name) && <option value={c.sub_name}>{c.sub_name}</option>}
+        <optgroup label="Coverage staff">{COVERAGE_SUBS.map(f => <option key={f} value={f}>{f}</option>)}</optgroup>
+        {c.sub_name && !floatingCoaches.includes(c.sub_name) && !COVERAGE_SUBS.includes(c.sub_name) && <option value={c.sub_name}>{c.sub_name}</option>}
         <option value="__other">＋ Other sub…</option>
         {bothCoachesOut(c) && <option value="__combine">🔀 Combine teams (no coach)…</option>}
       </select>
