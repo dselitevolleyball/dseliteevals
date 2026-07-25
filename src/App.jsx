@@ -44,11 +44,20 @@ const tnStaysOver = (loc) => { const s = String(loc || "").trim(); return !!s &&
 // The coaching staff actually working a team's tournament: head/assistant come
 // from the team's roster unless the assignment overrides them (a sub). A slot
 // is "sub" when its override differs from the team default.
+const tnIsPlaceholder = (s) => { const v = String(s || "").trim().toLowerCase(); return !!v && TN_SUB_PLACEHOLDERS.has(v); };
 function tnEffectiveStaff(a, team) {
   const dHead = team?.head_coach || null, dAsst = team?.assistant_coach || null;
   const head = (a?.head_override || dHead) || null;
   const asst = (a?.asst_override || dAsst) || null;
-  return { head, asst, dHead, dAsst, headSub: !!(a?.head_override && a.head_override !== dHead), asstSub: !!(a?.asst_override && a.asst_override !== dAsst) };
+  // "todo" = a placeholder sub like TBD — the regular coach is freed (no
+  // conflict) but a real replacement still needs to be found.
+  return {
+    head, asst, dHead, dAsst,
+    headSub: !!(a?.head_override && a.head_override !== dHead),
+    asstSub: !!(a?.asst_override && a.asst_override !== dAsst),
+    headTodo: tnIsPlaceholder(a?.head_override),
+    asstTodo: tnIsPlaceholder(a?.asst_override),
+  };
 }
 const DIVS = ["U10","U11","U12","U13","U14","U15","U16","U17"];
 // ── Per-team operational checklist (see migrations/20260629_team_operations_checklist) ──
@@ -3348,7 +3357,7 @@ export default function App() {
       const tm = teamById.get(a.team_id);
       if (!tn || !tm) continue;
       const { head, asst } = tnEffectiveStaff(a, tm); // use the coaches actually working it (overrides = subs)
-      const coaches = [head, asst].filter(Boolean);
+      const coaches = [head, asst].filter(c => c && !tnIsPlaceholder(c)); // "TBD" frees the coach — it's a todo, not a conflict
       for (const coach of coaches) {
         if (!coachToItems.has(coach)) coachToItems.set(coach, []);
         coachToItems.get(coach).push({ tournament: tn, team_id: a.team_id });
@@ -7815,10 +7824,12 @@ export default function App() {
                       {tn.is_qualifier && <span style={{color:"#a855f7",marginLeft:8,fontWeight:700}}>QUALIFIER</span>}
                       {tn.stay_over && (() => { const n = tnDayCount(tn); return <span style={{color:"#22d3ee",marginLeft:8,fontWeight:800}}>🏨 {n} night{n===1?"":"s"}</span>; })()}
                     </div>
-                    {(() => { const eff = tnEffectiveStaff(a, team); return (
+                    {(() => { const eff = tnEffectiveStaff(a, team);
+                      const cc = (name, sub, todo) => <span style={{color:todo?"#f59e0b":sub?"#c084fc":C.text,fontWeight:(sub||todo)?800:600}}>{todo ? "⚠ sub needed" : (name||"—")+(sub?" (sub)":"")}</span>;
+                      return (
                       <div style={{fontSize:10,marginTop:3}}>
-                        <span style={{color:C.mut,fontWeight:800}}>H </span><span style={{color:eff.headSub?"#c084fc":C.text,fontWeight:eff.headSub?800:600}}>{eff.head||"—"}{eff.headSub?" (sub)":""}</span>
-                        <span style={{color:C.mut,fontWeight:800,marginLeft:10}}>A </span><span style={{color:eff.asstSub?"#c084fc":C.text,fontWeight:eff.asstSub?800:600}}>{eff.asst||"—"}{eff.asstSub?" (sub)":""}</span>
+                        <span style={{color:C.mut,fontWeight:800}}>H </span>{cc(eff.head, eff.headSub, eff.headTodo)}
+                        <span style={{color:C.mut,fontWeight:800,marginLeft:10}}>A </span>{cc(eff.asst, eff.asstSub, eff.asstTodo)}
                       </div>
                     ); })()}
                     <div style={{fontSize:10,fontWeight:700,color:C.acc,marginTop:3}}>
@@ -15549,7 +15560,7 @@ export default function App() {
       if (!(tn.start_date <= tournament.end_date && tournament.start_date <= tn.end_date)) continue;
       const otherTeam = practiceTeams.find(t => t.team_name === a.team_id) || teamsList.find(t => t.id === a.team_id);
       const { head, asst } = tnEffectiveStaff(a, otherTeam);
-      const shared = [head, asst].filter(Boolean).filter(c => mine.has(c.trim().toLowerCase()));
+      const shared = [head, asst].filter(c => c && !tnIsPlaceholder(c)).filter(c => mine.has(c.trim().toLowerCase()));
       for (const c of shared) out.push({ coach: c, otherTeam: a.team_id, otherTournament: tn });
     }
     return out;
@@ -15638,7 +15649,8 @@ export default function App() {
   // sub, which recomputes conflicts via the effective staff.
   const updateAssignmentCoach = async (assignmentId, slot, name, teamDefault) => {
     const col = slot === "head" ? "head_override" : "asst_override";
-    const val = (!name || name.trim() === "" || name === teamDefault) ? null : name.trim();
+    let val = (!name || name.trim() === "" || name === teamDefault) ? null : name.trim();
+    if (val && tnIsPlaceholder(val)) val = "TBD"; // normalize any placeholder to TBD (a todo)
     setTournamentAssignments(prev => prev.map(a => a.id === assignmentId ? { ...a, [col]: val } : a));
     const { error } = await supabase.from("tournament_assignments").update({ [col]: val }).eq("id", assignmentId);
     if (error) { window.alert("Update failed: " + error.message); loadTournaments(); }
@@ -16209,6 +16221,32 @@ export default function App() {
             </div>
           </details>
         )}
+        {/* Subs to find — every slot marked TBD, a running to-do list */}
+        {(() => {
+          const teamById = new Map(teamsList.map(t => [t.id, t]));
+          const tnById2 = new Map(tournaments.map(t => [t.id, t]));
+          const todos = [];
+          for (const a of tournamentAssignments) {
+            const eff = tnEffectiveStaff(a, teamById.get(a.team_id) || practiceTeams.find(t => t.team_name === a.team_id));
+            if (!eff.headTodo && !eff.asstTodo) continue;
+            const tn = tnById2.get(a.tournament_id); if (!tn) continue;
+            todos.push({ tn, team: a.team_id, slots: [eff.headTodo && "head coach", eff.asstTodo && "assistant"].filter(Boolean) });
+          }
+          todos.sort((x, y) => (x.tn.start_date || "").localeCompare(y.tn.start_date || ""));
+          if (!todos.length) return null;
+          return (
+            <details open style={{marginBottom:14,background:"rgba(245,158,11,0.08)",border:"1px solid #f59e0b",borderRadius:10,padding:"10px 14px"}}>
+              <summary style={{cursor:"pointer",fontSize:12,fontWeight:800,color:"#f59e0b"}}>🧩 {todos.length} sub{todos.length===1?"":"s"} still to find</summary>
+              <div style={{marginTop:8,display:"flex",flexDirection:"column",gap:5}}>
+                {todos.map((t,i)=>(
+                  <div key={i} style={{fontSize:11,color:C.text,lineHeight:1.5}}>
+                    <b onClick={()=>setTeamCardName(t.team)} style={{cursor:"pointer",textDecoration:"underline"}} title="Open team card">{t.team}</b> needs a <b>{t.slots.join(" & ")}</b> for <b onClick={()=>openEditTournament(t.tn)} style={{cursor:"pointer",textDecoration:"underline",color:"#f59e0b"}} title="Open tournament">{t.tn.name}</b> ({new Date(t.tn.start_date+"T00:00").toLocaleDateString()}).
+                  </div>
+                ))}
+              </div>
+            </details>
+          );
+        })()}
         {tnView === "calendar" ? renderTournamentCalendar(filtered)
          : tnView === "browse" ? renderTournamentBrowser(filtered)
          : tnView === "month" ? renderTournamentMonthView(filtered)
@@ -17145,14 +17183,15 @@ export default function App() {
               const eligible = teamsList.filter(t => t.active && !myAsg.some(a => a.team_id === t.id) && tournamentOffersAge(ageTarget, teamAgeOf(t.id)));
               const coachChoices = [...new Set([...practiceTeams, ...teamsList].flatMap(t => [t.head_coach, t.assistant_coach]).filter(Boolean))].sort((a, b) => a.localeCompare(b));
               const teamRecOf = (teamId) => practiceTeams.find(t => t.team_name === teamId) || teamsList.find(t => t.id === teamId);
-              const coachSelect = (a, slot, effName, defName, isSub) => (
-                <select value={effName || ""} onChange={e => { const v = e.target.value; if (v === "__sub__") { const n = window.prompt("Sub coach's name:", ""); if (n && n.trim()) updateAssignmentCoach(a.id, slot, n.trim(), defName); } else updateAssignmentCoach(a.id, slot, v, defName); }}
-                  title={(slot === "head" ? "Head" : "Assistant") + " coach working this tournament — swap to a sub to resolve a conflict"}
-                  style={{ ...inpStyle, fontSize: 11, padding: "3px 6px", fontWeight: isSub ? 800 : 600, color: isSub ? "#c084fc" : C.text, borderColor: isSub ? "#a855f7" : C.border, maxWidth: 150 }}>
+              const coachSelect = (a, slot, effName, defName, isSub, isTodo) => (
+                <select value={effName || ""} onChange={e => { const v = e.target.value; if (v === "__sub__") { const n = window.prompt("Sub coach's name (type TBD if not found yet):", ""); if (n && n.trim()) updateAssignmentCoach(a.id, slot, n.trim(), defName); } else updateAssignmentCoach(a.id, slot, v, defName); }}
+                  title={(slot === "head" ? "Head" : "Assistant") + " coach working this tournament — swap to a sub to resolve a conflict; TBD = still to find"}
+                  style={{ ...inpStyle, fontSize: 11, padding: "3px 6px", fontWeight: (isSub || isTodo) ? 800 : 600, color: isTodo ? "#f59e0b" : isSub ? "#c084fc" : C.text, borderColor: isTodo ? "#f59e0b" : isSub ? "#a855f7" : C.border, maxWidth: 150 }}>
                   <option value="">— none —</option>
                   {defName && <option value={defName}>{defName} (default)</option>}
                   {coachChoices.filter(c => c !== defName).map(c => <option key={c} value={c}>{c}</option>)}
-                  {effName && effName !== defName && !coachChoices.includes(effName) && <option value={effName}>{effName}</option>}
+                  {effName && effName !== defName && !coachChoices.includes(effName) && !tnIsPlaceholder(effName) && <option value={effName}>{effName}</option>}
+                  <option value="TBD">TBD — find a sub</option>
                   <option value="__sub__">＋ add a sub…</option>
                 </select>
               );
@@ -17166,7 +17205,7 @@ export default function App() {
                       const eff = tnEffectiveStaff(a, teamRecOf(a.team_id));
                       const st = tnStatusMeta(a.status);
                       return (
-                        <div key={a.id} style={{background:C.card,border:"1px solid "+((eff.headSub||eff.asstSub)?"#a855f7":C.border),borderRadius:8,padding:"8px 10px",display:"flex",flexDirection:"column",gap:6}}>
+                        <div key={a.id} style={{background:C.card,border:"1px solid "+((eff.headTodo||eff.asstTodo)?"#f59e0b":(eff.headSub||eff.asstSub)?"#a855f7":C.border),borderRadius:8,padding:"8px 10px",display:"flex",flexDirection:"column",gap:6}}>
                           <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
                             <span style={{fontSize:13,fontWeight:700,color:C.text,minWidth:96}}>{a.team_id}</span>
                             <select value={a.division||""} onChange={e=>updateAssignmentDivision(a.id, e.target.value)}
@@ -17186,10 +17225,10 @@ export default function App() {
                           </div>
                           <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
                             <span style={{fontSize:10,fontWeight:800,textTransform:"uppercase",color:C.mut}}>Head</span>
-                            {coachSelect(a, "head", eff.head, eff.dHead, eff.headSub)}
+                            {coachSelect(a, "head", eff.head, eff.dHead, eff.headSub, eff.headTodo)}
                             <span style={{fontSize:10,fontWeight:800,textTransform:"uppercase",color:C.mut,marginLeft:6}}>Asst</span>
-                            {coachSelect(a, "asst", eff.asst, eff.dAsst, eff.asstSub)}
-                            {(eff.headSub||eff.asstSub) && <span style={{fontSize:9,fontWeight:800,color:"#c084fc",background:"rgba(168,85,247,0.15)",border:"1px solid #a855f7",borderRadius:999,padding:"1px 7px",marginLeft:2}}>SUB</span>}
+                            {coachSelect(a, "asst", eff.asst, eff.dAsst, eff.asstSub, eff.asstTodo)}
+                            {(eff.headTodo||eff.asstTodo) ? <span style={{fontSize:9,fontWeight:800,color:"#f59e0b",background:"rgba(245,158,11,0.15)",border:"1px solid #f59e0b",borderRadius:999,padding:"1px 7px",marginLeft:2}}>SUB NEEDED</span> : (eff.headSub||eff.asstSub) ? <span style={{fontSize:9,fontWeight:800,color:"#c084fc",background:"rgba(168,85,247,0.15)",border:"1px solid #a855f7",borderRadius:999,padding:"1px 7px",marginLeft:2}}>SUB</span> : null}
                           </div>
                         </div>
                       );
