@@ -41,6 +41,15 @@ const tnHotelNights = (t) => (t && t.stay_over) ? tnDayCount(t) : 0;
 // Local (no-hotel) cities. Anything outside these is treated as a stay-over.
 const TN_LOCAL_CITIES = /austin|buda|round rock/i;
 const tnStaysOver = (loc) => { const s = String(loc || "").trim(); return !!s && !TN_LOCAL_CITIES.test(s); };
+// The coaching staff actually working a team's tournament: head/assistant come
+// from the team's roster unless the assignment overrides them (a sub). A slot
+// is "sub" when its override differs from the team default.
+function tnEffectiveStaff(a, team) {
+  const dHead = team?.head_coach || null, dAsst = team?.assistant_coach || null;
+  const head = (a?.head_override || dHead) || null;
+  const asst = (a?.asst_override || dAsst) || null;
+  return { head, asst, dHead, dAsst, headSub: !!(a?.head_override && a.head_override !== dHead), asstSub: !!(a?.asst_override && a.asst_override !== dAsst) };
+}
 const DIVS = ["U10","U11","U12","U13","U14","U15","U16","U17"];
 // ── Per-team operational checklist (see migrations/20260629_team_operations_checklist) ──
 // COACH_TASKS: things each coach does for their team (status + notes + questions).
@@ -3334,11 +3343,12 @@ export default function App() {
     const teamById = new Map(teamsList.map(t => [t.id, t]));
     const coachToItems = new Map();
     for (const a of tournamentAssignments) {
-      if (tnConflictHandled(a)) continue; // real sub or explicit override — never conflicts ("TBD" still does)
+      if (tnConflictHandled(a)) continue; // legacy real sub / explicit override — never conflicts ("TBD" still does)
       const tn = tById.get(a.tournament_id);
       const tm = teamById.get(a.team_id);
       if (!tn || !tm) continue;
-      const coaches = [tm.head_coach, tm.assistant_coach].filter(Boolean);
+      const { head, asst } = tnEffectiveStaff(a, tm); // use the coaches actually working it (overrides = subs)
+      const coaches = [head, asst].filter(Boolean);
       for (const coach of coaches) {
         if (!coachToItems.has(coach)) coachToItems.set(coach, []);
         coachToItems.get(coach).push({ tournament: tn, team_id: a.team_id });
@@ -7805,6 +7815,12 @@ export default function App() {
                       {tn.is_qualifier && <span style={{color:"#a855f7",marginLeft:8,fontWeight:700}}>QUALIFIER</span>}
                       {tn.stay_over && (() => { const n = tnDayCount(tn); return <span style={{color:"#22d3ee",marginLeft:8,fontWeight:800}}>🏨 {n} night{n===1?"":"s"}</span>; })()}
                     </div>
+                    {(() => { const eff = tnEffectiveStaff(a, team); return (
+                      <div style={{fontSize:10,marginTop:3}}>
+                        <span style={{color:C.mut,fontWeight:800}}>H </span><span style={{color:eff.headSub?"#c084fc":C.text,fontWeight:eff.headSub?800:600}}>{eff.head||"—"}{eff.headSub?" (sub)":""}</span>
+                        <span style={{color:C.mut,fontWeight:800,marginLeft:10}}>A </span><span style={{color:eff.asstSub?"#c084fc":C.text,fontWeight:eff.asstSub?800:600}}>{eff.asst||"—"}{eff.asstSub?" (sub)":""}</span>
+                      </div>
+                    ); })()}
                     <div style={{fontSize:10,fontWeight:700,color:C.acc,marginTop:3}}>
                       {sincePrev == null ? "▲ no past tournament" : "▲ " + sincePrev + "d since previous"}
                       {tilNext != null ? "  ·  ▼ " + tilNext + "d until next" : "  ·  ▼ last on schedule"}
@@ -15531,7 +15547,9 @@ export default function App() {
       const tn = tById.get(a.tournament_id);
       if (!tn || tn.cancelled) continue; // same tournament, different team still clashes (one coach, two teams)
       if (!(tn.start_date <= tournament.end_date && tournament.start_date <= tn.end_date)) continue;
-      const shared = coachesOfTeam(a.team_id).filter(c => mine.has(c.trim().toLowerCase()));
+      const otherTeam = practiceTeams.find(t => t.team_name === a.team_id) || teamsList.find(t => t.id === a.team_id);
+      const { head, asst } = tnEffectiveStaff(a, otherTeam);
+      const shared = [head, asst].filter(Boolean).filter(c => mine.has(c.trim().toLowerCase()));
       for (const c of shared) out.push({ coach: c, otherTeam: a.team_id, otherTournament: tn });
     }
     return out;
@@ -15613,6 +15631,16 @@ export default function App() {
     // Optimistic: reflect the new color immediately, then persist.
     setTournamentAssignments(prev => prev.map(a => a.id === assignmentId ? { ...a, status: s } : a));
     const { error } = await supabase.from("tournament_assignments").update({ status: s }).eq("id", assignmentId);
+    if (error) { window.alert("Update failed: " + error.message); loadTournaments(); }
+  };
+  // Set the head/assistant coach for one tournament assignment. Passing the team
+  // default (or blank) clears the override. Storing an override = swapping in a
+  // sub, which recomputes conflicts via the effective staff.
+  const updateAssignmentCoach = async (assignmentId, slot, name, teamDefault) => {
+    const col = slot === "head" ? "head_override" : "asst_override";
+    const val = (!name || name.trim() === "" || name === teamDefault) ? null : name.trim();
+    setTournamentAssignments(prev => prev.map(a => a.id === assignmentId ? { ...a, [col]: val } : a));
+    const { error } = await supabase.from("tournament_assignments").update({ [col]: val }).eq("id", assignmentId);
     if (error) { window.alert("Update failed: " + error.message); loadTournaments(); }
   };
 
@@ -17115,6 +17143,19 @@ export default function App() {
               // Only offer teams whose age this tournament actually hosts.
               const ageTarget = { entries, age_low: newTournament.age_low, age_high: newTournament.age_high };
               const eligible = teamsList.filter(t => t.active && !myAsg.some(a => a.team_id === t.id) && tournamentOffersAge(ageTarget, teamAgeOf(t.id)));
+              const coachChoices = [...new Set([...practiceTeams, ...teamsList].flatMap(t => [t.head_coach, t.assistant_coach]).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+              const teamRecOf = (teamId) => practiceTeams.find(t => t.team_name === teamId) || teamsList.find(t => t.id === teamId);
+              const coachSelect = (a, slot, effName, defName, isSub) => (
+                <select value={effName || ""} onChange={e => { const v = e.target.value; if (v === "__sub__") { const n = window.prompt("Sub coach's name:", ""); if (n && n.trim()) updateAssignmentCoach(a.id, slot, n.trim(), defName); } else updateAssignmentCoach(a.id, slot, v, defName); }}
+                  title={(slot === "head" ? "Head" : "Assistant") + " coach working this tournament — swap to a sub to resolve a conflict"}
+                  style={{ ...inpStyle, fontSize: 11, padding: "3px 6px", fontWeight: isSub ? 800 : 600, color: isSub ? "#c084fc" : C.text, borderColor: isSub ? "#a855f7" : C.border, maxWidth: 150 }}>
+                  <option value="">— none —</option>
+                  {defName && <option value={defName}>{defName} (default)</option>}
+                  {coachChoices.filter(c => c !== defName).map(c => <option key={c} value={c}>{c}</option>)}
+                  {effName && effName !== defName && !coachChoices.includes(effName) && <option value={effName}>{effName}</option>}
+                  <option value="__sub__">＋ add a sub…</option>
+                </select>
+              );
               return (
                 <div style={{gridColumn:"1 / -1",background:C.bg,borderRadius:10,padding:"10px 12px"}}>
                   <span style={lbl}>Teams going ({myAsg.length}) — changes here save instantly</span>
@@ -17122,27 +17163,34 @@ export default function App() {
                     {myAsg.map(a => {
                       const offered = divOptionsFor(a.team_id);
                       const opts = (a.division && !offered.includes(a.division)) ? [...offered, a.division] : offered;
+                      const eff = tnEffectiveStaff(a, teamRecOf(a.team_id));
+                      const st = tnStatusMeta(a.status);
                       return (
-                        <div key={a.id} style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                          <span style={{fontSize:13,fontWeight:700,color:C.text,minWidth:110}}>{a.team_id}</span>
-                          <select value={a.division||""} onChange={e=>updateAssignmentDivision(a.id, e.target.value)}
-                            title="Playing division (from this tournament's offered divisions)"
-                            style={{...inpStyle,fontSize:11,padding:"3px 6px"}}>
-                            <option value="">— division —</option>
-                            {opts.map(d => <option key={d} value={d}>{d}</option>)}
-                          </select>
-                          {(() => { const st=tnStatusMeta(a.status); return (
+                        <div key={a.id} style={{background:C.card,border:"1px solid "+((eff.headSub||eff.asstSub)?"#a855f7":C.border),borderRadius:8,padding:"8px 10px",display:"flex",flexDirection:"column",gap:6}}>
+                          <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                            <span style={{fontSize:13,fontWeight:700,color:C.text,minWidth:96}}>{a.team_id}</span>
+                            <select value={a.division||""} onChange={e=>updateAssignmentDivision(a.id, e.target.value)}
+                              title="Playing division (from this tournament's offered divisions)"
+                              style={{...inpStyle,fontSize:11,padding:"3px 6px"}}>
+                              <option value="">— division —</option>
+                              {opts.map(d => <option key={d} value={d}>{d}</option>)}
+                            </select>
                             <select value={TN_STATUS[a.status]?a.status:"planned"} onChange={e=>updateAssignmentStatus(a.id, e.target.value)}
-                              title="Registration status for this team — the color follows the team everywhere"
+                              title="Registration status for this team"
                               style={{...inpStyle,fontSize:11,padding:"3px 6px",fontWeight:800,color:st.color,borderColor:st.color}}>
                               {TN_STATUS_ORDER.map(s => <option key={s} value={s} style={{color:C.text,fontWeight:600}}>{TN_STATUS[s].label}</option>)}
                             </select>
-                          ); })()}
-                          <DebouncedField value={a.sub_coach||""} onCommit={v=>updateAssignmentSub(a.id, v)} placeholder="sub coach…"
-                            title="Replacement coach — lets this team go even if a coach is double-booked; clears the conflict flag"
-                            style={{...inpStyle,fontSize:11,padding:"3px 6px",width:120}} />
-                          <button onClick={()=>removeAssignment(a.id)} title={"Remove " + a.team_id + " from this tournament"}
-                            style={{padding:"2px 9px",borderRadius:6,border:"1px solid "+C.red,background:"transparent",color:C.red,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Remove</button>
+                            <div style={{flex:1}} />
+                            <button onClick={()=>removeAssignment(a.id)} title={"Remove " + a.team_id + " from this tournament"}
+                              style={{padding:"2px 9px",borderRadius:6,border:"1px solid "+C.red,background:"transparent",color:C.red,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Remove</button>
+                          </div>
+                          <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                            <span style={{fontSize:10,fontWeight:800,textTransform:"uppercase",color:C.mut}}>Head</span>
+                            {coachSelect(a, "head", eff.head, eff.dHead, eff.headSub)}
+                            <span style={{fontSize:10,fontWeight:800,textTransform:"uppercase",color:C.mut,marginLeft:6}}>Asst</span>
+                            {coachSelect(a, "asst", eff.asst, eff.dAsst, eff.asstSub)}
+                            {(eff.headSub||eff.asstSub) && <span style={{fontSize:9,fontWeight:800,color:"#c084fc",background:"rgba(168,85,247,0.15)",border:"1px solid #a855f7",borderRadius:999,padding:"1px 7px",marginLeft:2}}>SUB</span>}
+                          </div>
                         </div>
                       );
                     })}
