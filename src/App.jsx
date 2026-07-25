@@ -8484,11 +8484,23 @@ export default function App() {
       if (weekday === "Sun" && dailyDate) {
         const teamById3 = new Map(teamsList.map(t => [t.id, t]));
         const tnById3 = new Map(tournaments.map(t => [t.id, t]));
+        // Coaches who head/assist a rostered team. A coach at a tournament only
+        // as a swapped-in override (a sub/extra for another team) keeps their own
+        // team's Sunday practice as the priority, so they're NOT marked away —
+        // e.g. Jayden assists 13 Diamond on Saturday but coaches her 14 Ruby on
+        // Sunday. Coaches there as the team's own rostered staff are truly away.
+        const rosteredLow = new Set(practiceTeams.flatMap(t => [t.head_coach, t.assistant_coach]).filter(Boolean).map(c => c.trim().toLowerCase()));
         for (const a of tournamentAssignments) {
           const tn = tnById3.get(a.tournament_id); if (!tn) continue;
           if (tn.start_date <= dailyDate && tn.end_date >= dailyDate) {
             const eff = tnEffectiveStaff(a, teamById3.get(a.team_id));
-            [eff.head, eff.asst].forEach(c => { if (c && !isPlaceholderCoach(c)) awayCoachSet.add(c); });
+            const consider = (c, isSub) => {
+              if (!c || isPlaceholderCoach(c)) return;
+              if (isSub && rosteredLow.has(c.trim().toLowerCase())) return;
+              awayCoachSet.add(c);
+            };
+            consider(eff.head, eff.headSub);
+            consider(eff.asst, eff.asstSub);
           }
         }
       }
