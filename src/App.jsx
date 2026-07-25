@@ -1302,7 +1302,7 @@ export default function App() {
   useEffect(() => {
     if (typeof localStorage !== "undefined") localStorage.setItem("dse_practice_phase", schedulePhase);
   }, [schedulePhase]);
-  const [practiceViewMode, setPracticeViewMode]       = useState("team"); // "team" | "coach" | "daily"
+  const [practiceViewMode, setPracticeViewMode]       = useState("daily"); // "team" | "coach" | "daily"
   const [dailyDate, setDailyDate]                     = useState(() => { try { return new Date().toISOString().slice(0,10); } catch { return ""; } });
   const [calMonth, setCalMonth]                       = useState(() => { try { return new Date().toISOString().slice(0,7); } catch { return "2026-11"; } }); // YYYY-MM shown in the Daily calendar
   const [tryouts, setTryouts]                         = useState([]);
@@ -1389,7 +1389,7 @@ export default function App() {
   const [blackoutDates, setBlackoutDates]                   = useState([]);
   const [tnFilters, setTnFilters]                           = useState({ search: "", ageFor: "", qualifierOnly: false, dateFrom: "", dateTo: "", hideClosed: false, hideCancelled: true, startsOn: [], state: "", numDays: "", divisions: [], tags: [], showAllSources: false });
   const [tnSelected, setTnSelected]                         = useState(() => new Set()); // tournament ids checked for bulk delete
-  const [tnView, setTnView]                                 = useState("list"); // "list" | "calendar"
+  const [tnView, setTnView]                                 = useState("calendar"); // "list" | "calendar"
   const [tnSumLevel, setTnSumLevel]                         = useState("all");  // Summary filter: all | National | Regional | Developmental
   const [tnSumSort, setTnSumSort]                           = useState({ key: "age", dir: "asc" }); // Summary table sort
   const [tnSelectedTeams, setTnSelectedTeams]               = useState(new Set()); // empty = all shown
