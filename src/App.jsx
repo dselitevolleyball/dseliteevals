@@ -1312,6 +1312,7 @@ export default function App() {
   const [practiceViewMode, setPracticeViewMode]       = useState("daily"); // "team" | "coach" | "daily"
   const [dailyDate, setDailyDate]                     = useState(() => { try { return new Date().toISOString().slice(0,10); } catch { return ""; } });
   const [calMonth, setCalMonth]                       = useState(() => { try { return new Date().toISOString().slice(0,7); } catch { return "2026-11"; } }); // YYYY-MM shown in the Daily calendar
+  const [autoFill, setAutoFill]                       = useState(null); // Daily board: proposed sub assignments awaiting approval [{team,slot,phase,coach_out,role,coach}]
   const [tryouts, setTryouts]                         = useState([]);
   const [coachRoster, setCoachRoster]                 = useState([]);
   // SMS state
@@ -8649,6 +8650,52 @@ export default function App() {
         return busy;
       };
       const coverageSubsFree = (label) => { const busy = coverageBusyFor(label); return COVERAGE_SUBS.filter(f => !busy.has(f.trim().toLowerCase())); };
+      // General floating-coach pool available for a slot (not on it, not out/away).
+      const poolFloatingFor = (label) => { const fl = floatersFor(label); return (floatingCoaches||[]).map(x=>(x||"").trim()).filter(Boolean)
+        .filter(n => !fl.some(f=>f.toLowerCase()===n.toLowerCase()) && !outTodaySet.has(nrmName(n)) && !awayLow.has(nrmName(n))); };
+      // Real coaches at THIS gym today in a different slot (before/after), free now.
+      const slotCoachSet = (lbl) => { const set = new Set(); dayAssignments.filter(x => x.day===weekday && x.slot===lbl && !noPracticeTeams.has(x.team_name)).forEach(x => { if (teamCancelled(dailyDate, x.team_name)) return; const tm = teamByName2.get(x.team_name) || {}; [tm.head_coach, tm.assistant_coach].forEach(cc => { if (cc && !isPlaceholderCoach(cc)) set.add(cc); }); }); return set; };
+      const beforeAfterFor = (label) => { const here = slotCoachSet(label); return [...new Set(daySlots.flatMap(ss => ss.label===label ? [] : [...slotCoachSet(ss.label)]))]
+        .filter(cc => !here.has(cc) && !awayLow.has(nrmName(cc)) && !outTodaySet.has(nrmName(cc))).sort(); };
+      // Build a fair auto-fill proposal for every OPEN spot today (a coach away at
+      // a tournament with no real sub yet). Nothing is written — returned for review.
+      const buildAutoFill = () => {
+        const load = new Map(); // coach -> how many sessions they're already covering (fairness)
+        practiceCoverage.forEach(c => { if (isRealSub(c.sub_name)) load.set(nrmName(c.sub_name), (load.get(nrmName(c.sub_name))||0)+1); });
+        const usedPerSlot = new Map(); // slot -> Set(coach) picked this run (a coach can't cover 2 teams at once)
+        const bump = (slot, coach) => { if (!usedPerSlot.has(slot)) usedPerSlot.set(slot, new Set()); usedPerSlot.get(slot).add(nrmName(coach)); load.set(nrmName(coach), (load.get(nrmName(coach))||0)+1); };
+        const proposal = [];
+        for (const s of daySlots) {
+          const used = () => usedPerSlot.get(s.label) || new Set();
+          // Candidate tiers, best first: on-site before/after, floaters, pool, coverage staff.
+          const tiers = [beforeAfterFor(s.label), floatersFor(s.label), poolFloatingFor(s.label), coverageSubsFree(s.label)];
+          for (const a of teamsFor(s.label)) {
+            if (teamCancelled(dailyDate, a.team_name)) continue;
+            const tm = teamByName2.get(a.team_name) || {};
+            for (const [role, c] of [["Head", tm.head_coach],["Asst", tm.assistant_coach]]) {
+              if (!c || !awayCoachSet.has(c)) continue; // only away spots
+              const existing = covFor(a.team_name, s.label, c);
+              if (existing && isRealSub(existing.sub_name)) continue; // already covered
+              // Pick the best-tier candidate not used at this slot, lowest load, tie A-Z.
+              let pick = null;
+              for (const tier of tiers) {
+                const elig = tier.filter(n => !used().has(nrmName(n)) && nrmName(n) !== nrmName(c));
+                if (elig.length) { pick = [...elig].sort((x,y) => (load.get(nrmName(x))||0) - (load.get(nrmName(y))||0) || x.localeCompare(y))[0]; break; }
+              }
+              proposal.push({ team: a.team_name, slot: s.label, phase: dayPhase, coach_out: c, role, away: c, coach: pick || "" });
+              if (pick) bump(s.label, pick);
+            }
+          }
+        }
+        return proposal;
+      };
+      // Commit an approved proposal — writes coverage only for rows with a coach.
+      const approveAutoFill = async () => {
+        const items = (autoFill || []).filter(p => p.coach && p.coach.trim());
+        for (const p of items) await setCoverage(dailyDate, p.team, p.slot, p.phase, p.coach_out, p.coach.trim());
+        setAutoFill(null);
+      };
+      const setAutoRow = (i, coach) => setAutoFill(prev => (prev || []).map((x, ix) => ix === i ? { ...x, coach } : x));
       const practiceToday = dayHasPractice(dailyDate) && daySlots.length > 0;
       const todayCancelled = cancelledSet.has(dailyDate);
       // Month-grid math for the persistent calendar.
@@ -8764,20 +8811,80 @@ export default function App() {
               No practice scheduled on {prettyDate || "this day"} ({phaseLabel}). Regular season starts Nov 29.
             </div>
           ) : (
+            <>
+            {(() => {
+              // Count open spots (a coach away with no real sub yet).
+              let openCount = 0;
+              for (const s of daySlots) for (const a of teamsFor(s.label)) {
+                if (teamCancelled(dailyDate, a.team_name)) continue;
+                const tm = teamByName2.get(a.team_name) || {};
+                for (const c of [tm.head_coach, tm.assistant_coach]) {
+                  if (c && awayCoachSet.has(c)) { const ex = covFor(a.team_name, s.label, c); if (!(ex && isRealSub(ex.sub_name))) openCount++; }
+                }
+              }
+              if (!openCount && !autoFill) return null;
+              const proposedCount = (autoFill || []).filter(p => p.coach && p.coach.trim()).length;
+              const rowOpts = (slot) => { const ba = beforeAfterFor(slot), fl = floatersFor(slot), pf = poolFloatingFor(slot), cf = coverageSubsFree(slot); return { ba, fl, pf, cf, all: [...ba, ...fl, ...pf, ...cf] }; };
+              return (
+                <div style={{marginBottom:10}}>
+                  {!autoFill ? (
+                    <button onClick={()=>setAutoFill(buildAutoFill())}
+                      style={{padding:"8px 14px",borderRadius:8,border:"1px solid "+C.gold,background:"rgba(233,30,140,0.10)",color:C.gold,fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>
+                      ✨ Auto-fill {openCount} open coach spot{openCount===1?"":"s"} — review before assigning
+                    </button>
+                  ) : (
+                    <div style={{background:C.card,border:"1px solid "+C.gold,borderRadius:12,padding:"12px 14px"}}>
+                      <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:8}}>
+                        <span style={{fontSize:13,fontWeight:800,color:C.gold}}>✨ Proposed subs — review before assigning</span>
+                        <span style={{fontSize:11,color:C.mut}}>{proposedCount} of {autoFill.length} filled · balanced by current load</span>
+                        <div style={{flex:1}} />
+                        <button onClick={()=>setAutoFill(buildAutoFill())} title="Re-shuffle the proposal" style={{padding:"4px 10px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>↻ Re-run</button>
+                      </div>
+                      <div style={{display:"flex",flexDirection:"column",gap:5,maxHeight:320,overflowY:"auto"}}>
+                        {autoFill.length === 0 && <div style={{fontSize:12,color:C.mut}}>No open spots to fill.</div>}
+                        {autoFill.map((p, i) => {
+                          const o = rowOpts(p.slot);
+                          return (
+                            <div key={i} style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",fontSize:12,borderBottom:"1px solid "+C.border,paddingBottom:5}}>
+                              <span style={{minWidth:150}}><b style={{color:C.text}}>{p.team}</b> <span style={{color:C.mut}}>· {p.slot} · {p.role}</span></span>
+                              <span style={{fontSize:11,color:"#22d3ee"}}>🏐 {p.away}</span>
+                              <span style={{color:C.mut}}>→</span>
+                              <select value={p.coach} onChange={e=>{ const v=e.target.value; if (v==="__other") { const n=window.prompt("Coach's name:", p.coach||""); if (n!=null) setAutoRow(i, n.trim()); } else setAutoRow(i, v); }}
+                                style={{...inpStyle,padding:"3px 6px",fontSize:11,fontWeight:700,color:p.coach?"#06b6d4":"#f59e0b",maxWidth:170}}>
+                                <option value="">— skip —</option>
+                                {o.ba.length>0 && <optgroup label="Coaching before/after (here)">{o.ba.map(f=><option key={"ba"+f} value={f}>{f}</option>)}</optgroup>}
+                                {o.fl.length>0 && <optgroup label="Available this slot">{o.fl.map(f=><option key={"fl"+f} value={f}>{f} (floating)</option>)}</optgroup>}
+                                {o.pf.length>0 && <optgroup label="Floating coaches">{o.pf.map(f=><option key={"pf"+f} value={f}>{f}</option>)}</optgroup>}
+                                {o.cf.length>0 && <optgroup label="Coverage staff">{o.cf.map(f=><option key={"cf"+f} value={f}>{f}</option>)}</optgroup>}
+                                {p.coach && !o.all.includes(p.coach) && <option value={p.coach}>{p.coach}</option>}
+                                <option value="__other">＋ Other…</option>
+                              </select>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <div style={{display:"flex",alignItems:"center",gap:8,marginTop:10,flexWrap:"wrap"}}>
+                        <button onClick={approveAutoFill} disabled={proposedCount===0}
+                          style={{padding:"7px 14px",borderRadius:8,border:"none",background:proposedCount?C.grn:C.border,color:proposedCount?"#000":C.mut,fontSize:12,fontWeight:800,cursor:proposedCount?"pointer":"default",fontFamily:"inherit"}}>
+                          ✓ Approve &amp; assign {proposedCount}
+                        </button>
+                        <button onClick={()=>setAutoFill(null)}
+                          style={{padding:"7px 14px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Cancel</button>
+                        <span style={{fontSize:10,color:C.mut}}>Nothing is saved until you approve.</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
             <div style={{display:"flex",gap:12,overflowX:"auto",paddingBottom:8,alignItems:"flex-start"}}>
               {daySlots.map(s => {
                 const teams = teamsFor(s.label);
                 const floaters = floatersFor(s.label);
                 // Sub-option groups for filling an away coach's spot at this slot.
-                const poolFloating = (floatingCoaches||[]).map(x=>(x||"").trim()).filter(Boolean)
-                  .filter(n => !floaters.some(f=>f.toLowerCase()===n.toLowerCase()) && !outTodaySet.has(nrmName(n)) && !awayLow.has(nrmName(n)));
+                const poolFloating = poolFloatingFor(s.label);
                 const coverageFree = coverageSubsFree(s.label);
-                // Real coaches coaching a DIFFERENT slot today (before/after) who are
-                // free at this slot — no conflict, and already on-site.
-                const slotCoachSet = (lbl) => { const set = new Set(); dayAssignments.filter(x => x.day===weekday && x.slot===lbl && !noPracticeTeams.has(x.team_name)).forEach(x => { if (teamCancelled(dailyDate, x.team_name)) return; const tm = teamByName2.get(x.team_name) || {}; [tm.head_coach, tm.assistant_coach].forEach(cc => { if (cc && !isPlaceholderCoach(cc)) set.add(cc); }); }); return set; };
-                const thisSlotCoaches = slotCoachSet(s.label);
-                const beforeAfter = [...new Set(daySlots.flatMap(ss => ss.label===s.label ? [] : [...slotCoachSet(ss.label)]))]
-                  .filter(cc => !thisSlotCoaches.has(cc) && !awayLow.has(nrmName(cc)) && !outTodaySet.has(nrmName(cc))).sort();
+                const beforeAfter = beforeAfterFor(s.label);
                 return (
                   <div key={s.label} style={{flex:"0 0 280px",width:280,background:C.card,border:"1px solid "+C.border,borderRadius:12,overflow:"hidden"}}>
                     <div style={{padding:"8px 12px",borderBottom:"1px solid "+C.border,background:C.bg}}>
@@ -8880,6 +8987,7 @@ export default function App() {
                 );
               })}
             </div>
+            </>
           )}
         </div>
       );
