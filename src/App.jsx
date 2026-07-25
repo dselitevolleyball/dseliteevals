@@ -2573,15 +2573,33 @@ export default function App() {
     const rN = nrm(coachRaw), rFirst = rN.split(" ")[0];
     const coachMatches = (name) => { const nn = nrm(name); return nn === rN || nn.split(" ")[0] === rN || nn === rFirst || nn.split(" ")[0] === rFirst; };
 
-    const [fRes, cRes, ptRes, rRes] = await Promise.all([
+    const [fRes, cRes, ptRes, rRes, taRes, tnRes] = await Promise.all([
       supabase.from("coach_floats").select("coach_name, day, slot, phase"),
       supabase.from("practice_coverage").select("practice_date, team_name, slot, phase, sub_name, coach_out").eq("practice_date", date),
       supabase.from("practice_teams").select("team_name, head_coach, assistant_coach"),
       supabase.from("coach_requests").select("coach_name, request_date, status").eq("request_date", date).eq("status", "approved"),
+      supabase.from("tournament_assignments").select("team_id, tournament_id, head_override, asst_override"),
+      supabase.from("tournaments").select("id, start_date, end_date, cancelled"),
     ]);
     const floats = fRes.data || [], cov = cRes.data || [], allTeams = ptRes.data || [], reqsToday = rRes.data || [];
     // Coaches who can't float this date (they also called out / are marked out).
     const outSet = new Set([...reqsToday.map(r => nrm(r.coach_name)), ...cov.map(c => nrm(c.coach_out))].filter(Boolean));
+    // Coaches with a tournament responsibility on this date can't also float — a
+    // weekend (2-day) tournament running into the practice date wins. A coach
+    // there only as a swapped-in override for another team keeps their own team
+    // (they're not counted away); rostered tournament staff are away.
+    const tnById = new Map((tnRes.data || []).map(t => [t.id, t]));
+    const teamByNameCov = new Map(allTeams.map(t => [t.team_name, t]));
+    const rosteredLowCov = new Set(allTeams.flatMap(t => [t.head_coach, t.assistant_coach]).filter(Boolean).map(c => nrm(c)));
+    const awaySet = new Set();
+    for (const a of (taRes.data || [])) {
+      const tn = tnById.get(a.tournament_id); if (!tn || tn.cancelled) continue;
+      if (!(tn.start_date <= date && (tn.end_date || tn.start_date) >= date)) continue;
+      const team = teamByNameCov.get(a.team_id) || {};
+      const add = (c, isSub) => { if (!c || isPlaceholderCoach(c)) return; if (isSub && rosteredLowCov.has(nrm(c))) return; awaySet.add(nrm(c)); };
+      add(a.head_override || team.head_coach, !!a.head_override && a.head_override !== team.head_coach);
+      add(a.asst_override || team.assistant_coach, !!a.asst_override && a.asst_override !== team.assistant_coach);
+    }
 
     // Which teams to cover: the one team (practice request) or EVERY team this
     // coach coaches (a weekend request has no team → they're out of all of them).
@@ -2608,7 +2626,7 @@ export default function App() {
       for (const slot of slots) {
         const alreadySubbed = new Set(cov.filter(c => c.slot === slot && (c.phase || "season") === phase && c.sub_name).map(c => (c.sub_name || "").trim().toLowerCase()));
         const candidates = [...new Set(floats.filter(f => (f.phase || "season") === phase && f.day === weekday && f.slot === slot).map(f => (f.coach_name || "").trim()).filter(Boolean))]
-          .filter(n => !coachMatches(n) && !outSet.has(nrm(n)));
+          .filter(n => !coachMatches(n) && !outSet.has(nrm(n)) && !awaySet.has(nrm(n)));
         const floater = candidates.find(n => !alreadySubbed.has(n.toLowerCase()) && !usedInRun.has(n.toLowerCase() + "|" + slot)) || null;
         if (floater) { usedInRun.add(floater.toLowerCase() + "|" + slot); coveredBy.push(floater); }
         else anyNeedsCoverage = true;
@@ -5166,7 +5184,7 @@ export default function App() {
                       {selT.map((x,i) => (
                         <div key={"t"+i} style={{display:"flex",alignItems:"center",gap:8,fontSize:13}}>
                           <span style={{width:6,height:6,borderRadius:3,background:TNC,flexShrink:0}} />
-                          <span style={{flex:1,color:C.text,fontWeight:600}}>{x.tn.name} <span style={{color:C.mut,fontWeight:500}}>· {x.team}</span>{x.sub && <span style={{color:"#a855f7",fontWeight:800,marginLeft:4,fontSize:9}}>SUB</span>}{x.tn.is_qualifier && <span style={{color:"#a855f7",fontWeight:800,marginLeft:4,fontSize:9}}>QUAL</span>}</span>
+                          <span style={{flex:1,color:C.text,fontWeight:600}}>{x.tn.name} <span style={{color:C.mut,fontWeight:500}}>· {x.team}</span>{x.tn.location && <span style={{color:C.mut,fontWeight:500}}> · 📍{x.tn.location}</span>}{x.sub && <span style={{color:"#a855f7",fontWeight:800,marginLeft:4,fontSize:9}}>SUB</span>}{x.tn.is_qualifier && <span style={{color:"#a855f7",fontWeight:800,marginLeft:4,fontSize:9}}>QUAL</span>}</span>
                           <span style={{fontSize:10,fontWeight:800,color:TNC,textTransform:"uppercase"}}>Tourn.</span>
                         </div>
                       ))}
@@ -5328,6 +5346,7 @@ export default function App() {
                         <div key={tn.id} style={{fontSize:11,marginBottom:2}}>
                           <span style={{color:C.text,fontWeight:600}}>{tn.name}</span>
                           <span style={{color:C.mut}}> · {fmtDate(tn.start_date)}{tn.end_date && tn.end_date!==tn.start_date ? "–"+fmtDate(tn.end_date) : ""}</span>
+                          {tn.location && <span style={{color:C.mut}}> · 📍{tn.location}</span>}
                           {tn.is_qualifier && <span style={{color:"#a855f7",fontWeight:700,marginLeft:5,fontSize:9}}>QUAL</span>}
                         </div>
                       ))}
@@ -8513,10 +8532,14 @@ export default function App() {
         ...coachRequests.filter(r => r.status === "approved" && r.request_date === dailyDate).map(r => nrmName(r.coach_name)),
         ...practiceCoverage.filter(c => c.practice_date === dailyDate).map(c => nrmName(c.coach_out)),
       ].filter(Boolean));
+      // A coach at a tournament this date (a weekend tournament running into
+      // Sunday) can't also float — drop them from the pool even if they signed
+      // up to float, so a tournament responsibility always wins.
+      const awayLow = new Set([...awayCoachSet].map(nrmName));
       const floatersFor = (label) => [...new Set(coachFloats
         .filter(f => (f.phase || "season") === dayPhase && f.day === weekday && f.slot === label)
         .map(f => (f.coach_name || "").trim()).filter(Boolean))]
-        .filter(name => !outTodaySet.has(nrmName(name)));
+        .filter(name => !outTodaySet.has(nrmName(name)) && !awayLow.has(nrmName(name)));
       const covFor = (team, label, coachName) => practiceCoverage.find(c =>
         c.practice_date === dailyDate && c.team_name === team && c.slot === label &&
         (c.phase || "season") === dayPhase && c.coach_out === coachName);
