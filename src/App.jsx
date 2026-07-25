@@ -7890,7 +7890,7 @@ export default function App() {
     const teamSet = new Set(allTeamNames);
     const tournamentById = new Map(tournaments.map(t => [t.id, t]));
     const coachTournaments = tournamentAssignments
-      .filter(ta => teamSet.has(ta.team_id) || teamSet.has(ta.team_name))
+      .filter(ta => teamSet.has(ta.team_id) || teamSet.has(ta.team_name) || norm(ta.head_override) === target || norm(ta.asst_override) === target)
       .map(ta => ({ ...ta, tournament: tournamentById.get(ta.tournament_id), team: ta.team_id || ta.team_name }))
       .filter(x => x.tournament)
       .sort((a, b) => (a.tournament.start_date||"").localeCompare(b.tournament.start_date||""));
@@ -8347,7 +8347,19 @@ export default function App() {
       const daySLOTS = (dayPhase === "season" || dayPhase === "postseason") ? SEASON_SLOTS : dayPhase === "summer" ? PRESEASON_SLOTS : FALL_SLOTS;
       const dayAssignments = practiceAssignments.filter(a => (a.phase || "fall1") === dayPhase);
       const daySlots = (daySLOTS[weekday] || []);
-      const teamsFor = (label) => dayAssignments.filter(a => a.day === weekday && a.slot === label)
+      // Teams with NO practice this day because they're at a tournament that
+      // weekend that is multi-day (2-3 day) OR locked → team -> tournament name.
+      const noPracticeTeams = new Map();
+      if (weekday === "Sun" && dailyDate) {
+        const friD = new Date(dailyDate + "T00:00"); friD.setDate(friD.getDate() - 2);
+        const fri = friD.toISOString().slice(0, 10), sun = dailyDate;
+        const tnById2 = new Map(tournaments.map(t => [t.id, t]));
+        for (const a of tournamentAssignments) {
+          const tn = tnById2.get(a.tournament_id); if (!tn) continue;
+          if (tn.start_date <= sun && tn.end_date >= fri && (tn.end_date > tn.start_date || a.status === "locked")) noPracticeTeams.set(a.team_id, tn.name);
+        }
+      }
+      const teamsFor = (label) => dayAssignments.filter(a => a.day === weekday && a.slot === label && !noPracticeTeams.has(a.team_name))
         .slice().sort((a,b) => ((a.court ?? 99) - (b.court ?? 99)) || a.team_name.localeCompare(b.team_name));
       const nrmName = s => (s || "").trim().toLowerCase();
       // A coach who called out (approved request) or is already marked out this
@@ -8494,6 +8506,12 @@ export default function App() {
                 style={{marginLeft:"auto",padding:"5px 12px",borderRadius:6,border:"1px solid "+C.red,background:"transparent",color:C.red,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>🚫 Cancel this day</button>
             )}
           </div>
+          {noPracticeTeams.size > 0 && (
+            <div style={{padding:"9px 14px",background:"rgba(6,182,212,0.08)",border:"1px solid #06b6d4",borderRadius:10,marginBottom:8,fontSize:12,color:C.text,lineHeight:1.6}}>
+              <b style={{color:"#22d3ee"}}>🏐 At a tournament this weekend — no practice:</b>{" "}
+              {[...noPracticeTeams.entries()].sort((a,b)=>a[0].localeCompare(b[0])).map(([team,tn]) => <span key={team} onClick={()=>setTeamCardName(team)} title={tn} style={{marginRight:10,cursor:"pointer",fontWeight:700,textDecoration:"underline",textDecorationColor:"transparent"}} onMouseEnter={e=>e.currentTarget.style.textDecorationColor="#22d3ee"} onMouseLeave={e=>e.currentTarget.style.textDecorationColor="transparent"}>{team}</span>)}
+            </div>
+          )}
           {todayCancelled ? (
             <div style={{padding:"14px 16px",background:"rgba(239,68,68,0.10)",border:"1px solid "+C.red,borderRadius:12,display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,flexWrap:"wrap"}}>
               <span style={{fontSize:14,fontWeight:800,color:C.red}}>🚫 Practice cancelled{cancelReasonFor(dailyDate) ? " — " + cancelReasonFor(dailyDate) : ""}</span>
@@ -9024,7 +9042,7 @@ export default function App() {
             const friS = fri.toISOString().slice(0, 10), sunS = sun.toISOString().slice(0, 10);
             const practicing = sunByPhase[phaseForDate(sat)] || new Set();
             const competing = new Set(), away = new Set();
-            for (const a of tournamentAssignments) { const tn = tnById.get(a.tournament_id); if (!tn) continue; if (tn.start_date <= sunS && tn.end_date >= friS) { competing.add(a.team_id); if (tn.stay_over) effReal(a).forEach(c => away.add(c)); } }
+            for (const a of tournamentAssignments) { const tn = tnById.get(a.tournament_id); if (!tn) continue; if (tn.start_date <= sunS && tn.end_date >= friS) { if (tn.end_date > tn.start_date || a.status === "locked") competing.add(a.team_id); if (tn.stay_over) effReal(a).forEach(c => away.add(c)); } }
             for (const teamName of practicing) {
               if (competing.has(teamName)) continue;
               const tm = teamById.get(teamName); if (!tm || tm.active === false) continue;
