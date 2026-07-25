@@ -16507,13 +16507,17 @@ export default function App() {
       const nonQ = tns.filter(t => !t.is_qualifier);
       const d2 = nonQ.filter(t => isMultiDay(t)).length, d1 = nonQ.length - d2;
       const g = goalFor(team);
+      // National & Regional teams are set on tournaments — always complete; only
+      // Developmental (Rise) still tracks gaps.
+      const done = !!g && (team.level === "National" || team.level === "Regional");
       let needs = "—";
-      if (g) {
+      if (done) { needs = "✓ complete"; }
+      else if (g) {
         const needQ = Math.max(0, g.qual - q);
         if (g.kind === "national") { const needR = Math.max(0, g.regional - nonQ.length); needs = [needQ && needQ + " qual", needR && needR + " regional"].filter(Boolean).join(", ") || "✓ complete"; }
         else { const needD2 = Math.max(0, g.twoDay - d2), needD1 = Math.max(0, g.oneDay - d1); needs = [needQ && needQ + " qual", needD2 && needD2 + " 2-day", needD1 && needD1 + " 1-day"].filter(Boolean).join(", ") || "✓ complete"; }
       }
-      return { team, age: ageOf(team), count: tns.length, days: tns.reduce((s, t) => s + tnDayCount(t), 0), q, qGoal: g ? g.qual : null, totalGoal: g ? g.total : null, stays: tns.filter(t => t.stay_over).length, nights: tns.reduce((s, t) => s + tnHotelNights(t), 0), needs };
+      return { team, age: ageOf(team), count: tns.length, days: tns.reduce((s, t) => s + tnDayCount(t), 0), q, qGoal: (g && !done) ? g.qual : null, totalGoal: (g && !done) ? g.total : null, stays: tns.filter(t => t.stay_over).length, nights: tns.reduce((s, t) => s + tnHotelNights(t), 0), needs };
     });
     // Filter by level (Rise = Developmental), then sort by the chosen column.
     const levelChips = [["all", "All"], ["National", "National"], ["Regional", "Regional"], ["Developmental", "Rise"]];
