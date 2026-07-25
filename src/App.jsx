@@ -8768,6 +8768,16 @@ export default function App() {
               {daySlots.map(s => {
                 const teams = teamsFor(s.label);
                 const floaters = floatersFor(s.label);
+                // Sub-option groups for filling an away coach's spot at this slot.
+                const poolFloating = (floatingCoaches||[]).map(x=>(x||"").trim()).filter(Boolean)
+                  .filter(n => !floaters.some(f=>f.toLowerCase()===n.toLowerCase()) && !outTodaySet.has(nrmName(n)) && !awayLow.has(nrmName(n)));
+                const coverageFree = coverageSubsFree(s.label);
+                // Real coaches coaching a DIFFERENT slot today (before/after) who are
+                // free at this slot — no conflict, and already on-site.
+                const slotCoachSet = (lbl) => { const set = new Set(); dayAssignments.filter(x => x.day===weekday && x.slot===lbl && !noPracticeTeams.has(x.team_name)).forEach(x => { if (teamCancelled(dailyDate, x.team_name)) return; const tm = teamByName2.get(x.team_name) || {}; [tm.head_coach, tm.assistant_coach].forEach(cc => { if (cc && !isPlaceholderCoach(cc)) set.add(cc); }); }); return set; };
+                const thisSlotCoaches = slotCoachSet(s.label);
+                const beforeAfter = [...new Set(daySlots.flatMap(ss => ss.label===s.label ? [] : [...slotCoachSet(ss.label)]))]
+                  .filter(cc => !thisSlotCoaches.has(cc) && !awayLow.has(nrmName(cc)) && !outTodaySet.has(nrmName(cc))).sort();
                 return (
                   <div key={s.label} style={{flex:"0 0 280px",width:280,background:C.card,border:"1px solid "+C.border,borderRadius:12,overflow:"hidden"}}>
                     <div style={{padding:"8px 12px",borderBottom:"1px solid "+C.border,background:C.bg}}>
@@ -8784,8 +8794,9 @@ export default function App() {
                           const t = teamByName2.get(a.team_name) || {};
                           const coaches = [["Head",t.head_coach],["Asst",t.assistant_coach]].filter(([,c]) => c);
                           const coachNames = coaches.map(([,c]) => c);
-                          // Team is left with no coach when both are out → offer to combine.
-                          const bothOut = coachNames.length >= 2 && coachNames.every(c => !!covFor(a.team_name, s.label, c));
+                          // Team is left with no coach when both are out AND neither
+                          // has a real sub filled in → offer to combine.
+                          const bothOut = coachNames.length >= 2 && coachNames.every(c => { const cv = covFor(a.team_name, s.label, c); return !!cv && !isRealSub(cv.sub_name); });
                           const combinedRow = practiceCoverage.find(cv => cv.practice_date===dailyDate && cv.team_name===a.team_name && cv.slot===s.label && (cv.phase||"season")===dayPhase && cv.combine_with_team);
                           const combinedWith = combinedRow?.combine_with_team || "";
                           const setCombine = (target) => { for (const c of coachNames) setCoverage(dailyDate, a.team_name, s.label, dayPhase, c, null, target || null); };
@@ -8808,42 +8819,45 @@ export default function App() {
                               {tCancelled && <div style={{fontSize:10,fontWeight:800,color:C.red,marginBottom:5}}>🚫 Practice cancelled for this team</div>}
                               <div style={{display:"flex",flexDirection:"column",gap:3,opacity:tCancelled?0.5:1}}>
                                 {(() => {
-                                  const avail = coaches.filter(([,c]) => !awayCoachSet.has(c));
-                                  const awayHere = coaches.filter(([,c]) => awayCoachSet.has(c)).map(([,c]) => c);
                                   if (coaches.length === 0) return <span style={{fontSize:11,color:C.mut}}>No coaches assigned</span>;
-                                  // Both coaches away at a tournament → let admin pick a sub. Store
-                                  // it as coverage keyed on the (away) head coach so the sub is
-                                  // recorded and credited. Options: coaches who marked availability
-                                  // for this slot, then the general floating-coach pool.
-                                  const subKeyCoach = awayHere[0] || (coaches[0] && coaches[0][1]) || a.team_name;
-                                  const teamCov = covFor(a.team_name, s.label, subKeyCoach);
-                                  const assignedSub = teamCov?.sub_name || "";
-                                  const poolFloating = (floatingCoaches||[]).map(x=>(x||"").trim()).filter(Boolean)
-                                    .filter(n => !floaters.some(f=>f.toLowerCase()===n.toLowerCase()) && !outTodaySet.has(nrmName(n)) && !awayLow.has(nrmName(n)));
-                                  return <>
-                                    {avail.length === 0
-                                      ? <div>
-                                          <span style={{fontSize:11,fontWeight:800,color:"#f59e0b"}}>⚠ Needs a sub{awayHere.length ? " — " + awayHere.join(" & ") + " at a tournament" : ""}</span>
-                                          <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginTop:4}}>
-                                            <span style={{fontSize:9,fontWeight:800,color:C.mut,textTransform:"uppercase"}}>Assign sub</span>
-                                            <select value={assignedSub} onChange={e=>{ const v=e.target.value;
-                                                if (v==="__other") { const n=window.prompt("Sub's name:", assignedSub||""); if (n!=null && n.trim()) setCoverage(dailyDate, a.team_name, s.label, dayPhase, subKeyCoach, n.trim()); }
-                                                else if (v==="") clearCoverage(dailyDate, a.team_name, s.label, dayPhase, subKeyCoach);
-                                                else setCoverage(dailyDate, a.team_name, s.label, dayPhase, subKeyCoach, v); }}
-                                              style={{...inpStyle,padding:"3px 6px",fontSize:11,color:assignedSub?"#06b6d4":"#f59e0b",fontWeight:700}}>
-                                              <option value="">⚠ pick a coach…</option>
-                                              {floaters.length>0 && <optgroup label="Available this slot">{floaters.map(f=><option key={"a"+f} value={f}>{f}</option>)}</optgroup>}
-                                              {poolFloating.length>0 && <optgroup label="Floating coaches">{poolFloating.map(f=><option key={"f"+f} value={f}>{f}</option>)}</optgroup>}
-                                              {(() => { const cs = coverageSubsFree(s.label); return cs.length>0 && <optgroup label="Coverage staff">{cs.map(f=><option key={"c"+f} value={f}>{f}</option>)}</optgroup>; })()}
-                                              {assignedSub && !floaters.includes(assignedSub) && !poolFloating.includes(assignedSub) && !COVERAGE_SUBS.includes(assignedSub) && <option value={assignedSub}>{assignedSub}</option>}
-                                              <option value="__other">＋ Other…</option>
+                                  // Options for filling an away coach's spot, so the practice
+                                  // still gets to 2 coaches. "Before/after" = a real coach here
+                                  // in another slot with no conflict.
+                                  const subOptions = (current) => (<>
+                                    <option value="">⚠ pick a coach…</option>
+                                    {beforeAfter.length>0 && <optgroup label="Coaching before/after (here)">{beforeAfter.map(f=><option key={"ba"+f} value={f}>{f}</option>)}</optgroup>}
+                                    {floaters.length>0 && <optgroup label="Available this slot">{floaters.map(f=><option key={"a"+f} value={f}>{f} (floating)</option>)}</optgroup>}
+                                    {poolFloating.length>0 && <optgroup label="Floating coaches">{poolFloating.map(f=><option key={"f"+f} value={f}>{f}</option>)}</optgroup>}
+                                    {coverageFree.length>0 && <optgroup label="Coverage staff">{coverageFree.map(f=><option key={"c"+f} value={f}>{f}</option>)}</optgroup>}
+                                    {current && ![...beforeAfter,...floaters,...poolFloating,...coverageFree].includes(current) && <option value={current}>{current}</option>}
+                                    <option value="__other">＋ Other…</option>
+                                  </>);
+                                  return (
+                                    <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                                      {coaches.map(([role,c]) => {
+                                        // Present coach → normal cell (mark out / sub). Away at a
+                                        // tournament → offer a replacement for this exact spot.
+                                        if (!awayCoachSet.has(c)) return <div key={role}>{coachCell(a.team_name, s.label, c, role, !!combinedWith)}</div>;
+                                        const cov = covFor(a.team_name, s.label, c);
+                                        const sub = cov?.sub_name || "";
+                                        return (
+                                          <div key={role} style={{display:"flex",alignItems:"center",gap:5,flexWrap:"wrap"}}>
+                                            <span style={{fontSize:9,fontWeight:800,color:C.mut,textTransform:"uppercase",width:30}}>{role}</span>
+                                            <span style={{fontSize:11,color:"#22d3ee",fontWeight:600}} title={c + " is at a tournament"}>🏐 {c}</span>
+                                            <select value={sub} onChange={e=>{ const v=e.target.value;
+                                                if (v==="__other") { const n=window.prompt("Sub's name:", sub||""); if (n!=null && n.trim()) setCoverage(dailyDate, a.team_name, s.label, dayPhase, c, n.trim()); }
+                                                else if (v==="") clearCoverage(dailyDate, a.team_name, s.label, dayPhase, c);
+                                                else setCoverage(dailyDate, a.team_name, s.label, dayPhase, c, v); }}
+                                              title="Assign a replacement for this coach so the practice still has two coaches"
+                                              style={{...inpStyle,padding:"3px 6px",fontSize:11,color:sub?"#06b6d4":"#f59e0b",fontWeight:700,maxWidth:150}}>
+                                              {subOptions(sub)}
                                             </select>
-                                            {assignedSub && <button onClick={()=>clearCoverage(dailyDate, a.team_name, s.label, dayPhase, subKeyCoach)} title="Clear the assigned sub" style={{padding:"1px 8px",borderRadius:6,border:"1px solid "+C.grn,background:"transparent",color:C.grn,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Clear</button>}
+                                            {sub && <button onClick={()=>clearCoverage(dailyDate, a.team_name, s.label, dayPhase, c)} title="Clear this sub" style={{padding:"1px 8px",borderRadius:6,border:"1px solid "+C.grn,background:"transparent",color:C.grn,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Clear</button>}
                                           </div>
-                                        </div>
-                                      : avail.map(([role,c]) => <div key={role}>{coachCell(a.team_name, s.label, c, role, !!combinedWith)}</div>)}
-                                    {awayHere.length > 0 && avail.length > 0 && <div style={{fontSize:9,color:"#22d3ee",fontWeight:600}}>🏐 {awayHere.join(", ")} at a tournament</div>}
-                                  </>;
+                                        );
+                                      })}
+                                    </div>
+                                  );
                                 })()}
                               </div>
                               {bothOut && (
