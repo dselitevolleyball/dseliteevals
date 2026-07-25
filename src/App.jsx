@@ -5147,11 +5147,22 @@ export default function App() {
             return myTns.filter(x => x.tn.start_date <= iso && (x.tn.end_date || x.tn.start_date) >= iso)
               .filter(x => { const k = x.team + "|" + x.tn.id; if (seen.has(k)) return false; seen.add(k); return true; });
           };
-          const PR = "#06b6d4", TNC = "#f59e0b"; // practice = cyan, tournament = amber
+          // Speed & Agility sessions (sa_sessions have concrete dates) for my teams.
+          const saOn = (iso) => {
+            const byTeam = {};
+            (saSessions || []).forEach(s => {
+              if (!myTeamSet.has(s.team_name) || s.session_date !== iso) return;
+              if (isCancelled(iso, s.team_name) || teamAtTn(s.team_name, iso)) return;
+              (byTeam[s.team_name] = byTeam[s.team_name] || []).push(s.slot);
+            });
+            return Object.entries(byTeam).map(([team, slots]) => ({ team, slots: mergeAdjacentSlots(slots) }));
+          };
+          const PR = "#06b6d4", TNC = "#f59e0b", SA = "#22c55e"; // practice=cyan, tournament=amber, S&A=green
           const sel = (homeCalSel && homeCalSel.slice(0,7) === monthKey) ? homeCalSel
                     : (todayISO.slice(0,7) === monthKey ? todayISO : null);
           const selP = sel ? practicesOn(sel) : [];
           const selT = sel ? tnsOn(sel) : [];
+          const selSA = sel ? saOn(sel) : [];
           const fmtLong = (iso) => new Date(iso + "T12:00:00").toLocaleDateString(undefined, { weekday:"long", month:"short", day:"numeric" });
           const cells = [];
           for (let i = 0; i < leadPad; i++) cells.push(null);
@@ -5174,9 +5185,11 @@ export default function App() {
                 {cells.map((d,i) => {
                   if (d === null) return <div key={"b"+i} />;
                   const iso = isoOf(d);
-                  const evP = practicesOn(iso), evT = tnsOn(iso);
+                  const evP = practicesOn(iso), evT = tnsOn(iso), evSA = saOn(iso);
                   const tnLabels = [...new Set(evT.map(x => tnAbbr(x.tn.name)))];
-                  const events = [...tnLabels.map(l => ({ label: l, c: TNC })), ...evP.map(x => ({ label: abbr(x.team) + " " + shortTime(x.slots.join(",")), c: PR }))];
+                  const events = [...tnLabels.map(l => ({ label: l, c: TNC })),
+                    ...evSA.map(x => ({ label: abbr(x.team) + " S&A", c: SA })),
+                    ...evP.map(x => ({ label: abbr(x.team) + " " + shortTime(x.slots.join(",")), c: PR }))];
                   const isToday = iso === todayISO;
                   const isSel = iso === sel;
                   return (
@@ -5194,6 +5207,7 @@ export default function App() {
               </div>
               <div style={{display:"flex",alignItems:"center",gap:10,marginTop:8,fontSize:10,color:C.mut}}>
                 <span style={{display:"flex",alignItems:"center",gap:4}}><span style={{width:10,height:8,borderRadius:2,background:PR+"33",border:"1px solid "+PR}} />Practice</span>
+                <span style={{display:"flex",alignItems:"center",gap:4}}><span style={{width:10,height:8,borderRadius:2,background:SA+"33",border:"1px solid "+SA}} />S&amp;A</span>
                 <span style={{display:"flex",alignItems:"center",gap:4}}><span style={{width:10,height:8,borderRadius:2,background:TNC+"33",border:"1px solid "+TNC}} />Tournament</span>
                 <div style={{flex:1}} />
                 {canOps && <button onClick={()=>{ setView("tournaments"); setOpenMenu(null); }} style={{background:"none",border:"none",color:C.acc,cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:700}}>All tournaments →</button>}
@@ -5201,7 +5215,7 @@ export default function App() {
               {sel && (
                 <div style={{marginTop:10,borderTop:"1px solid "+C.border,paddingTop:10}}>
                   <div style={{fontSize:11,fontWeight:800,color:C.text,marginBottom:6}}>{fmtLong(sel)}{sel===todayISO?" · Today":""}</div>
-                  {(selP.length===0 && selT.length===0) ? (
+                  {(selP.length===0 && selT.length===0 && selSA.length===0) ? (
                     <div style={{fontSize:12,color:C.mut}}>Nothing scheduled.</div>
                   ) : (
                     <div style={{display:"flex",flexDirection:"column",gap:5}}>
@@ -5210,6 +5224,13 @@ export default function App() {
                           <span style={{width:6,height:6,borderRadius:3,background:TNC,flexShrink:0}} />
                           <span style={{flex:1,color:C.text,fontWeight:600}} title={x.tn.name}><b style={{color:TNC}}>{tnAbbr(x.tn.name)}</b> <span style={{fontWeight:500}}>{x.tn.name}</span> <span style={{color:C.mut,fontWeight:500}}>· {x.team}</span>{x.tn.location && <span style={{color:C.mut,fontWeight:500}}> · 📍{shortCity(x.tn.location)}</span>}{x.sub && <span style={{color:"#a855f7",fontWeight:800,marginLeft:4,fontSize:9}}>SUB</span>}{x.tn.is_qualifier && <span style={{color:"#a855f7",fontWeight:800,marginLeft:4,fontSize:9}}>QUAL</span>}</span>
                           <span style={{fontSize:10,fontWeight:800,color:TNC,textTransform:"uppercase"}}>Tourn.</span>
+                        </div>
+                      ))}
+                      {selSA.map((x,i) => (
+                        <div key={"sa"+i} style={{display:"flex",alignItems:"center",gap:8,fontSize:13}}>
+                          <span style={{width:6,height:6,borderRadius:3,background:SA,flexShrink:0}} />
+                          <span style={{flex:1,color:C.text,fontWeight:600}}>{x.team} <span style={{color:SA,fontWeight:800,fontSize:10}}>S&amp;A</span></span>
+                          <span style={{fontSize:11,color:C.mut}}>{x.slots.join(", ")}</span>
                         </div>
                       ))}
                       {selP.map((x,i) => (
