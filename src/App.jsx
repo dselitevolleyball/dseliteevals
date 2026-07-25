@@ -1160,6 +1160,8 @@ export default function App() {
   const [coachFloats, setCoachFloats]                 = useState([]); // per (coach,day,slot,phase) floater availability
   const [practiceCoverage, setPracticeCoverage]       = useState([]); // per-date coach absences + subs (Daily view)
   const [practiceCancellations, setPracticeCancellations] = useState([]); // dates with practice cancelled (holidays)
+  const [homeCalOff, setHomeCalOff]                   = useState(0);    // Home calendar: months offset from the current month
+  const [homeCalSel, setHomeCalSel]                   = useState(null); // Home calendar: selected day (YYYY-MM-DD)
   const [snapshots, setSnapshots]                     = useState([]);
   // Lineups / rotation planner (cloud, per team) — see renderLineups.
   const [lineupPlans, setLineupPlans]   = useState([]);      // list of plans (metadata + data)
@@ -4476,26 +4478,20 @@ export default function App() {
     const recentMs = Date.now() - 3 * 24 * 60 * 60 * 1000;
     const fmt = (iso) => new Date(iso).toLocaleDateString(undefined, { month:"short", day:"numeric" });
     return (
-      <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:"14px 16px",marginBottom:18}}>
-        <div style={{fontSize:13,fontWeight:800,color:C.gold,marginBottom:8}}>Updates</div>
-        <div style={{display:"flex",flexDirection:"column",gap:8,maxHeight:280,overflowY:"auto"}}>
+      <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:"9px 12px",marginBottom:12}}>
+        <div style={{fontSize:10,fontWeight:800,letterSpacing:0.4,textTransform:"uppercase",color:C.mut,marginBottom:6}}>Updates</div>
+        <div style={{display:"flex",flexDirection:"column",gap:5,maxHeight:170,overflowY:"auto"}}>
           {visible.map(u => {
             const isNew = new Date(u.created_at).getTime() > recentMs;
             return (
-              <div key={u.id} style={{background:C.bg,border:"1px solid "+C.border,borderRadius:8,padding:"8px 10px"}}>
-                <div style={{display:"flex",justifyContent:"space-between",gap:8,marginBottom:3,alignItems:"center"}}>
-                  <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-                    <span style={{fontSize:10,color:C.mut}}>{fmt(u.created_at)}{u.created_by_name?" · "+u.created_by_name:""}</span>
-                    {u.team_name
-                      ? <span style={{fontSize:8,fontWeight:800,color:C.acc,border:"1px solid "+C.acc,borderRadius:5,padding:"1px 5px"}}>{u.team_name}</span>
-                      : <span style={{fontSize:8,fontWeight:800,color:C.mut,border:"1px solid "+C.border,borderRadius:5,padding:"1px 5px"}}>ALL</span>}
-                  </div>
-                  <div style={{display:"flex",gap:6,alignItems:"center"}}>
-                    {isNew && <span style={{fontSize:8,fontWeight:800,color:C.grn,border:"1px solid "+C.grn,borderRadius:5,padding:"1px 5px"}}>NEW</span>}
-                    {canOps && <button onClick={()=>setUpdateHidden(u.id, true)} title="Hide from Home — stays in Notification History" style={{background:"none",border:"none",color:C.mut,cursor:"pointer",fontSize:13,fontWeight:800,lineHeight:1,padding:0}}>×</button>}
-                  </div>
-                </div>
-                <div style={{fontSize:12,color:C.text,whiteSpace:"pre-wrap",lineHeight:1.4}}>{u.body}</div>
+              <div key={u.id} style={{display:"flex",alignItems:"baseline",gap:7,paddingBottom:5,borderBottom:"1px solid "+C.border}}>
+                <span style={{fontSize:9,color:C.mut,whiteSpace:"nowrap",flexShrink:0}}>{fmt(u.created_at)}</span>
+                {u.team_name
+                  ? <span style={{fontSize:8,fontWeight:800,color:C.acc,border:"1px solid "+C.acc,borderRadius:4,padding:"0 4px",flexShrink:0}}>{u.team_name}</span>
+                  : <span style={{fontSize:8,fontWeight:800,color:C.mut,border:"1px solid "+C.border,borderRadius:4,padding:"0 4px",flexShrink:0}}>ALL</span>}
+                <span style={{fontSize:11.5,color:C.text,whiteSpace:"pre-wrap",lineHeight:1.35,flex:1,minWidth:0}}>{u.body}</span>
+                {isNew && <span style={{fontSize:8,fontWeight:800,color:C.grn,flexShrink:0}}>NEW</span>}
+                {canOps && <button onClick={()=>setUpdateHidden(u.id, true)} title="Hide from Home — stays in Notification History" style={{background:"none",border:"none",color:C.mut,cursor:"pointer",fontSize:12,fontWeight:800,lineHeight:1,padding:0,flexShrink:0}}>×</button>}
               </div>
             );
           })}
@@ -5055,50 +5051,125 @@ export default function App() {
           );
         })()}
 
-        {/* Next tournaments across my teams — "when do I work a tournament next?" */}
+        {/* My schedule — this month's practices + tournaments in one calendar. */}
         {myTeams.length > 0 && (() => {
           const todayISO = localDateISO();
           const myTeamSet = new Set(myTeams.map(t => t.team_name));
-          const seenTn = new Set();
-          const upcoming = tournamentAssignments
+          const DOW = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+          const t0 = new Date(todayISO + "T00:00");
+          const anchor = new Date(t0.getFullYear(), t0.getMonth() + homeCalOff, 1);
+          const y = anchor.getFullYear(), m = anchor.getMonth();
+          const monthKey = y + "-" + String(m+1).padStart(2,"0");
+          const monthLabel = anchor.toLocaleDateString(undefined, { month:"long", year:"numeric" });
+          const daysInMonth = new Date(y, m+1, 0).getDate();
+          const leadPad = new Date(y, m, 1).getDay(); // 0=Sun
+          const isoOf = (day) => localDateISO(new Date(y, m, day));
+          // A practice is off if the whole day (team_name "") or that team is cancelled.
+          const isCancelled = (iso, team) => practiceCancellations.some(c => c.practice_date === iso && (!c.team_name || c.team_name === team));
+          // Materialize the weekly practice slots into concrete dates for my teams.
+          const practicesOn = (iso) => {
+            const phase = phaseForDate(iso); if (!phase) return [];
+            const dow = DOW[new Date(iso + "T00:00").getDay()];
+            const byTeam = {};
+            practiceAssignments.forEach(a => {
+              if (!myTeamSet.has(a.team_name) || (a.phase || "fall1") !== phase || a.day !== dow) return;
+              if (isCancelled(iso, a.team_name)) return;
+              (byTeam[a.team_name] = byTeam[a.team_name] || []).push(a.slot);
+            });
+            return Object.entries(byTeam).map(([team, slots]) => ({ team, slots: mergeAdjacentSlots(slots) }));
+          };
+          const myTns = tournamentAssignments
             .filter(ta => myTeamSet.has(ta.team_id) || myTeamSet.has(ta.team_name))
             .map(ta => ({ team: ta.team_id || ta.team_name, tn: tournamentById.get(ta.tournament_id) }))
-            .filter(x => x.tn && !x.tn.cancelled && (x.tn.end_date || x.tn.start_date) >= todayISO)
-            .filter(x => { const k = x.team + "|" + x.tn.id; if (seenTn.has(k)) return false; seenTn.add(k); return true; })
-            .sort((a,b) => (a.tn.start_date||"").localeCompare(b.tn.start_date||""))
-            .slice(0, 4);
-          const dUntil = d => Math.round((new Date(d+"T00:00") - new Date(todayISO+"T00:00"))/86400000);
+            .filter(x => x.tn && !x.tn.cancelled);
+          const tnsOn = (iso) => {
+            const seen = new Set();
+            return myTns.filter(x => x.tn.start_date <= iso && (x.tn.end_date || x.tn.start_date) >= iso)
+              .filter(x => { const k = x.team + "|" + x.tn.id; if (seen.has(k)) return false; seen.add(k); return true; });
+          };
+          const sel = (homeCalSel && homeCalSel.slice(0,7) === monthKey) ? homeCalSel
+                    : (todayISO.slice(0,7) === monthKey ? todayISO : null);
+          const selP = sel ? practicesOn(sel) : [];
+          const selT = sel ? tnsOn(sel) : [];
+          const fmtLong = (iso) => new Date(iso + "T12:00:00").toLocaleDateString(undefined, { weekday:"long", month:"short", day:"numeric" });
+          const cells = [];
+          for (let i = 0; i < leadPad; i++) cells.push(null);
+          for (let d = 1; d <= daysInMonth; d++) cells.push(d);
           return (
             <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:14,marginBottom:14}}>
-              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,marginBottom:8}}>
-                <span style={{fontSize:10,fontWeight:800,letterSpacing:0.4,textTransform:"uppercase",color:C.mut}}>Next tournaments</span>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+                <span style={{fontSize:10,fontWeight:800,letterSpacing:0.4,textTransform:"uppercase",color:C.mut}}>My schedule</span>
+                <div style={{flex:1}} />
+                <button onClick={()=>setHomeCalOff(o=>o-1)} title="Previous month" style={{background:"none",border:"1px solid "+C.border,borderRadius:6,color:C.text,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:800,width:26,height:26,lineHeight:1,padding:0}}>‹</button>
+                <span style={{fontSize:12,fontWeight:800,color:C.text,minWidth:118,textAlign:"center"}}>{monthLabel}</span>
+                <button onClick={()=>setHomeCalOff(o=>o+1)} title="Next month" style={{background:"none",border:"1px solid "+C.border,borderRadius:6,color:C.text,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:800,width:26,height:26,lineHeight:1,padding:0}}>›</button>
+                {homeCalOff !== 0 && <button onClick={()=>{ setHomeCalOff(0); setHomeCalSel(todayISO); }} style={{background:"none",border:"none",color:C.acc,cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:700}}>Today</button>}
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3,marginBottom:3}}>
+                {["S","M","T","W","T","F","S"].map((d,i) => <div key={i} style={{textAlign:"center",fontSize:9,fontWeight:800,color:C.mut}}>{d}</div>)}
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3}}>
+                {cells.map((d,i) => {
+                  if (d === null) return <div key={"b"+i} />;
+                  const iso = isoOf(d);
+                  const hasP = practicesOn(iso).length > 0;
+                  const hasT = tnsOn(iso).length > 0;
+                  const isToday = iso === todayISO;
+                  const isSel = iso === sel;
+                  return (
+                    <button key={iso} onClick={()=>setHomeCalSel(iso)}
+                      style={{aspectRatio:"1 / 1",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:2,
+                        background:isSel?"rgba(233,30,140,0.14)":(hasP||hasT)?C.bg:"transparent",
+                        border:"1px solid "+(isSel?C.gold:isToday?C.acc:"transparent"),
+                        borderRadius:8,cursor:"pointer",fontFamily:"inherit",padding:0,minHeight:34}}>
+                      <span style={{fontSize:12,fontWeight:isToday?800:600,color:isToday?C.gold:C.text}}>{d}</span>
+                      <span style={{display:"flex",gap:2,height:5}}>
+                        {hasT && <span style={{width:5,height:5,borderRadius:3,background:C.gold}} />}
+                        {hasP && <span style={{width:5,height:5,borderRadius:3,background:C.acc}} />}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:12,marginTop:8,fontSize:10,color:C.mut}}>
+                <span style={{display:"flex",alignItems:"center",gap:4}}><span style={{width:6,height:6,borderRadius:3,background:C.acc}} />Practice</span>
+                <span style={{display:"flex",alignItems:"center",gap:4}}><span style={{width:6,height:6,borderRadius:3,background:C.gold}} />Tournament</span>
+                <div style={{flex:1}} />
                 <button onClick={()=>{ setView("tournaments"); setOpenMenu(null); }} style={{background:"none",border:"none",color:C.acc,cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:700}}>All tournaments →</button>
               </div>
-              {upcoming.length === 0 ? (
-                <div style={{fontSize:12,color:C.mut}}>No upcoming tournaments for your teams.</div>
-              ) : (
-                <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                  {upcoming.map((x,i) => {
-                    const du = dUntil(x.tn.start_date);
-                    const live = x.tn.start_date <= todayISO && (x.tn.end_date || x.tn.start_date) >= todayISO;
-                    return (
-                      <div key={i} style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",fontSize:13}}>
-                        <span style={{minWidth:92,color:C.gold,fontWeight:800}}>{fmtDate(x.tn.start_date)}{x.tn.end_date && x.tn.end_date!==x.tn.start_date ? "–"+fmtDate(x.tn.end_date) : ""}</span>
-                        <span style={{flex:1,minWidth:140,color:C.text,fontWeight:600}}>{x.tn.name} <span style={{color:C.mut,fontWeight:500}}>· {x.team}</span>{x.tn.is_qualifier && <span style={{color:"#a855f7",fontWeight:800,marginLeft:5,fontSize:9}}>QUAL</span>}</span>
-                        <span style={{fontSize:11,fontWeight:800,color:live?C.grn:du<=7?"#f59e0b":C.mut}}>{live ? "LIVE NOW" : du===0 ? "today" : "in "+du+"d"}</span>
-                      </div>
-                    );
-                  })}
+              {sel && (
+                <div style={{marginTop:10,borderTop:"1px solid "+C.border,paddingTop:10}}>
+                  <div style={{fontSize:11,fontWeight:800,color:C.text,marginBottom:6}}>{fmtLong(sel)}{sel===todayISO?" · Today":""}</div>
+                  {(selP.length===0 && selT.length===0) ? (
+                    <div style={{fontSize:12,color:C.mut}}>Nothing scheduled.</div>
+                  ) : (
+                    <div style={{display:"flex",flexDirection:"column",gap:5}}>
+                      {selT.map((x,i) => (
+                        <div key={"t"+i} style={{display:"flex",alignItems:"center",gap:8,fontSize:13}}>
+                          <span style={{width:6,height:6,borderRadius:3,background:C.gold,flexShrink:0}} />
+                          <span style={{flex:1,color:C.text,fontWeight:600}}>{x.tn.name} <span style={{color:C.mut,fontWeight:500}}>· {x.team}</span>{x.tn.is_qualifier && <span style={{color:"#a855f7",fontWeight:800,marginLeft:4,fontSize:9}}>QUAL</span>}</span>
+                          <span style={{fontSize:10,fontWeight:800,color:C.gold,textTransform:"uppercase"}}>Tourn.</span>
+                        </div>
+                      ))}
+                      {selP.map((x,i) => (
+                        <div key={"p"+i} style={{display:"flex",alignItems:"center",gap:8,fontSize:13}}>
+                          <span style={{width:6,height:6,borderRadius:3,background:C.acc,flexShrink:0}} />
+                          <span style={{flex:1,color:C.text,fontWeight:600}}>{x.team}</span>
+                          <span style={{fontSize:11,color:C.mut}}>{x.slots.join(", ")}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
           );
         })()}
 
-        {renderSeasonPlan()}
         {renderUpdatesPanel(myTeams.map(t => t.team_name))}
         {renderOpenShiftsPanel(myRoster ? ((myRoster.first_name||"")+" "+(myRoster.last_name||"")).trim() : (coach?.display_name||""))}
         {renderQuestionsPanel()}
+        {renderSeasonPlan(true)}
         {myTeams.length === 0 ? (
           <div style={{padding:24,textAlign:"center",color:C.mut,fontSize:13,background:C.card,borderRadius:12,border:"1px solid "+C.border,lineHeight:1.6}}>
             You're not listed as a coach on any team yet — coaches are matched by name on each team.
@@ -12292,7 +12363,7 @@ export default function App() {
   // What to teach, why it matters, and when to have it in — per team, three
   // tiers per subject. "Plan" pins a concept for the next practice so coaches
   // can pivot straight into practice planning.
-  function renderSeasonPlan() {
+  function renderSeasonPlan(compact) {
     const teams = myTeamNames.length ? myTeamNames : (canOps ? practiceTeams.map(t => t.team_name) : []);
     if (!teams.length) return null;
     const team = teams.includes(currTeam) ? currTeam : teams[0];
@@ -12315,7 +12386,7 @@ export default function App() {
       <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:14,marginBottom:14}}>
         <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:4}}>
           <span style={{fontSize:14,fontWeight:800,color:C.gold}}>📚 Season plan</span>
-          <span style={{fontSize:11,color:C.mut}}>what to teach, and when to have it in</span>
+          {!compact && <span style={{fontSize:11,color:C.mut}}>what to teach, and when to have it in</span>}
           <div style={{flex:1}} />
           {teams.length > 1 && (
             <select value={team} onChange={e => setCurrTeam(e.target.value)} style={{background:C.bg,border:"1px solid "+C.border,borderRadius:6,color:C.text,fontFamily:"inherit",fontSize:12,padding:"5px 7px"}}>
@@ -12323,6 +12394,7 @@ export default function App() {
             </select>
           )}
           <span style={{fontSize:11,fontWeight:800,color:doneCount===allItems.length?C.grn:C.mut}}>{doneCount}/{allItems.length} installed</span>
+          {compact && <button onClick={() => { setCurrTeam(team); setPpTab("season"); setView("practiceplan"); }} style={{background:"none",border:"none",color:C.acc,cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:700}}>Full plan →</button>}
         </div>
 
         {/* Next up — first unfinished concepts in teaching order */}
@@ -12356,7 +12428,7 @@ export default function App() {
         )}
 
         {/* Subjects — three tiers each, in order of importance */}
-        <div style={{display:"flex",flexDirection:"column",gap:6,marginTop:8}}>
+        {!compact && <div style={{display:"flex",flexDirection:"column",gap:6,marginTop:8}}>
           {DSE_CURRICULUM.map(s => {
             const items = s.tiers.flatMap(t => t.items);
             const done = items.filter(it => statusOf(it.k) === "done").length;
@@ -12412,8 +12484,8 @@ export default function App() {
               </div>
             );
           })}
-        </div>
-        <div style={{fontSize:10,color:C.mut,marginTop:8}}>Teach top to bottom: finish a subject's Tier 1 before its Tier 2. ✓ = your team has it installed · 🎯 = currently working on (feeds practice plans + the AI).</div>
+        </div>}
+        {!compact && <div style={{fontSize:10,color:C.mut,marginTop:8}}>Teach top to bottom: finish a subject's Tier 1 before its Tier 2. ✓ = your team has it installed · 🎯 = currently working on (feeds practice plans + the AI).</div>}
       </div>
     );
   }
