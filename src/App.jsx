@@ -3040,7 +3040,7 @@ export default function App() {
   useEffect(() => {
     // Roster also drives the Tryout coach picker / Text Coaches lookup,
     // so make sure it's loaded whenever either tab opens.
-    if (isApproved && (view === "coaches" || view === "tryouts" || view === "home" || view === "clockin" || view === "teamdir" || view === "practice" || view === "timecards" || view === "clinics")) loadCoachRoster();
+    if (isApproved && (view === "coaches" || view === "tryouts" || view === "home" || view === "clockin" || view === "teamdir" || view === "practice" || view === "timecards" || view === "clinics" || view === "tournaments")) loadCoachRoster();
   }, [isApproved, view, loadCoachRoster]);
   // The coach card edits coach_roster, so make sure it's loaded when one opens.
   useEffect(() => { if (isApproved && coachCardName) loadCoachRoster(); }, [isApproved, coachCardName, loadCoachRoster]);
@@ -17270,7 +17270,7 @@ export default function App() {
               // Only offer teams whose age this tournament actually hosts.
               const ageTarget = { entries, age_low: newTournament.age_low, age_high: newTournament.age_high };
               const eligible = teamsList.filter(t => t.active && !myAsg.some(a => a.team_id === t.id) && tournamentOffersAge(ageTarget, teamAgeOf(t.id)));
-              const coachChoices = [...new Set([...practiceTeams, ...teamsList].flatMap(t => [t.head_coach, t.assistant_coach]).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+              const coachChoices = [...new Set([...practiceTeams, ...teamsList].flatMap(t => [t.head_coach, t.assistant_coach]).filter(Boolean).concat(coachRoster.map(r => ((r.first_name || "") + " " + (r.last_name || "")).trim()).filter(Boolean)))].sort((a, b) => a.localeCompare(b));
               const teamRecOf = (teamId) => practiceTeams.find(t => t.team_name === teamId) || teamsList.find(t => t.id === teamId);
               const coachSelect = (a, slot, effName, defName, isSub, isTodo) => (
                 <select value={effName || ""} onChange={e => { const v = e.target.value; if (v === "__sub__") { const n = window.prompt("Sub coach's name (type TBD if not found yet):", ""); if (n && n.trim()) updateAssignmentCoach(a.id, slot, n.trim(), defName); } else updateAssignmentCoach(a.id, slot, v, defName); }}
