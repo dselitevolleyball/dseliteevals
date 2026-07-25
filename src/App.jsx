@@ -8625,6 +8625,30 @@ export default function App() {
       const cancelledSet = new Set(practiceCancellations.filter(c => !(c.team_name)).map(c => c.practice_date));
       const cancelReasonFor = (iso) => { const c = practiceCancellations.find(x => x.practice_date === iso && !x.team_name); return c ? (c.reason || "") : ""; };
       const teamCancelled = (iso, team) => practiceCancellations.some(c => c.practice_date === iso && c.team_name === team);
+      // Coverage-staff bodies (Tournament Floater / 13-1 / 15-2 Assistant) that
+      // are already working THIS date shouldn't be offered to cover a practice:
+      // a placeholder is "busy" if it's staffing a team's practice at this slot,
+      // or working a tournament that covers this date (as override or default).
+      const cvTeamById = new Map(teamsList.map(t => [t.id, t]));
+      const cvTnById = new Map(tournaments.map(t => [t.id, t]));
+      const coverageBusyFor = (label) => {
+        const busy = new Set(); const low = s => (s || "").trim().toLowerCase();
+        // Practices at this slot today (team practicing, not cancelled).
+        (dayAssignments.filter(a => a.day === weekday && a.slot === label && !noPracticeTeams.has(a.team_name))).forEach(a => {
+          if (teamCancelled(dailyDate, a.team_name)) return;
+          const tm = teamByName2.get(a.team_name) || {};
+          [tm.head_coach, tm.assistant_coach].forEach(c => { if (c) busy.add(low(c)); });
+        });
+        // Tournaments covering this date — effective staff incl. placeholders.
+        for (const ta of tournamentAssignments) {
+          const tn = cvTnById.get(ta.tournament_id); if (!tn || tn.cancelled) continue;
+          if (!(tn.start_date <= dailyDate && (tn.end_date || tn.start_date) >= dailyDate)) continue;
+          const team = cvTeamById.get(ta.team_id) || {};
+          [ta.head_override || team.head_coach, ta.asst_override || team.assistant_coach].forEach(c => { if (c) busy.add(low(c)); });
+        }
+        return busy;
+      };
+      const coverageSubsFree = (label) => { const busy = coverageBusyFor(label); return COVERAGE_SUBS.filter(f => !busy.has(f.trim().toLowerCase())); };
       const practiceToday = dayHasPractice(dailyDate) && daySlots.length > 0;
       const todayCancelled = cancelledSet.has(dailyDate);
       // Month-grid math for the persistent calendar.
@@ -8666,7 +8690,7 @@ export default function App() {
                 style={{...inpStyle,padding:"3px 6px",fontSize:11,color:cov.sub_name?"#06b6d4":"#f59e0b",fontWeight:700}}>
                 <option value="">⚠ needs coverage</option>
                 {floaters.map(f => <option key={f} value={f}>{f} (floating)</option>)}
-                <optgroup label="Coverage staff">{COVERAGE_SUBS.map(f => <option key={f} value={f}>{f}</option>)}</optgroup>
+                {(() => { const cs = coverageSubsFree(label); return cs.length>0 && <optgroup label="Coverage staff">{cs.map(f => <option key={f} value={f}>{f}</option>)}</optgroup>; })()}
                 {cov.sub_name && !floaters.includes(cov.sub_name) && !COVERAGE_SUBS.includes(cov.sub_name) && <option value={cov.sub_name}>{cov.sub_name}</option>}
                 <option value="__other">＋ Other sub…</option>
               </select>
@@ -8810,7 +8834,7 @@ export default function App() {
                                               <option value="">⚠ pick a coach…</option>
                                               {floaters.length>0 && <optgroup label="Available this slot">{floaters.map(f=><option key={"a"+f} value={f}>{f}</option>)}</optgroup>}
                                               {poolFloating.length>0 && <optgroup label="Floating coaches">{poolFloating.map(f=><option key={"f"+f} value={f}>{f}</option>)}</optgroup>}
-                                              <optgroup label="Coverage staff">{COVERAGE_SUBS.map(f=><option key={"c"+f} value={f}>{f}</option>)}</optgroup>
+                                              {(() => { const cs = coverageSubsFree(s.label); return cs.length>0 && <optgroup label="Coverage staff">{cs.map(f=><option key={"c"+f} value={f}>{f}</option>)}</optgroup>; })()}
                                               {assignedSub && !floaters.includes(assignedSub) && !poolFloating.includes(assignedSub) && !COVERAGE_SUBS.includes(assignedSub) && <option value={assignedSub}>{assignedSub}</option>}
                                               <option value="__other">＋ Other…</option>
                                             </select>
@@ -14931,6 +14955,25 @@ export default function App() {
       cvAwayCache.set(date, s);
       return s;
     };
+    // Coverage-staff placeholders already working a (date, slot): staffing a
+    // team's practice at that slot, or working a tournament covering the date.
+    const coverageSubsFreeCov = (date, slot, phase) => {
+      const busy = new Set(); const low = s => (s||"").trim().toLowerCase();
+      const wd = WD[new Date(date+"T00:00").getDay()];
+      practiceAssignments.forEach(a => {
+        if (a.day !== wd || a.slot !== slot || (a.phase||"season") !== (phase||"season")) return;
+        if (isCancelled(date, a.team_name)) return;
+        const tm = cvTeamByName.get(a.team_name) || {};
+        [tm.head_coach, tm.assistant_coach].forEach(c => { if (c) busy.add(low(c)); });
+      });
+      for (const a of tournamentAssignments) {
+        const tn = cvTnById.get(a.tournament_id); if (!tn || tn.cancelled) continue;
+        if (!(tn.start_date <= date && (tn.end_date||tn.start_date) >= date)) continue;
+        const team = cvTeamByName.get(a.team_id) || {};
+        [a.head_override || team.head_coach, a.asst_override || team.assistant_coach].forEach(c => { if (c) busy.add(low(c)); });
+      }
+      return COVERAGE_SUBS.filter(f => !busy.has(f.trim().toLowerCase()));
+    };
     const upcoming = practiceCoverage.filter(c => (c.practice_date||"") >= today && !isCancelled(c.practice_date, c.team_name))
       .slice().sort((a,b)=> (a.practice_date||"").localeCompare(b.practice_date||"") || (a.slot||"").localeCompare(b.slot||"") || (a.team_name||"").localeCompare(b.team_name||""));
     const pastCount = practiceCoverage.filter(c => (c.practice_date||"") < today).length;
@@ -14958,6 +15001,7 @@ export default function App() {
     const coverageSelect = (c) => {
       const away = coachesAtTnOn(c.practice_date);
       const floatOptions = floatingCoaches.filter(f => !away.has((f||"").trim().toLowerCase()));
+      const coverageFree = coverageSubsFreeCov(c.practice_date, c.slot, c.phase || "season");
       return (
       <select value={c.sub_name || ""} onChange={e=>{
           const v = e.target.value;
@@ -14968,7 +15012,7 @@ export default function App() {
         }} style={{...inp, color: c.sub_name?"#06b6d4":"#f59e0b", fontWeight:700}}>
         <option value="">⚠ needs coverage</option>
         {floatOptions.map(f => <option key={f} value={f}>{f} (floating)</option>)}
-        <optgroup label="Coverage staff">{COVERAGE_SUBS.map(f => <option key={f} value={f}>{f}</option>)}</optgroup>
+        {coverageFree.length>0 && <optgroup label="Coverage staff">{coverageFree.map(f => <option key={f} value={f}>{f}</option>)}</optgroup>}
         {c.sub_name && !floatingCoaches.includes(c.sub_name) && !COVERAGE_SUBS.includes(c.sub_name) && <option value={c.sub_name}>{c.sub_name}</option>}
         <option value="__other">＋ Other sub…</option>
         {bothCoachesOut(c) && <option value="__combine">🔀 Combine teams (no coach)…</option>}
