@@ -5098,6 +5098,27 @@ export default function App() {
           const isoOf = (day) => localDateISO(new Date(y, m, day));
           // A practice is off if the whole day (team_name "") or that team is cancelled.
           const isCancelled = (iso, team) => practiceCancellations.some(c => c.practice_date === iso && (!c.team_name || c.team_name === team));
+          // Team → short tag ("13 Diamond" → 13D, "11 Rise 1" → 11R1) for the
+          // in-cell rectangles, so a multi-team coach can tell teams apart.
+          const abbr = (name) => { const s = String(name||""); const mm = s.match(/^(\d+)\s*(.*)$/); if (!mm) return s.slice(0,4); const parts = mm[2].split(/\s+/).filter(Boolean).map(w => /^\d+$/.test(w) ? w : (w[0]||"")).join(""); return (mm[1]+parts).toUpperCase(); };
+          // Compact a slot for tight cells: "5-7pm" → "5-7p".
+          const shortTime = (s) => String(s||"").replace(/m\b/g, "").replace(/\s+/g, "");
+          // Tournaments for my teams — plus any where I'm the swapped-in sub
+          // (head/asst override), so sub coaching shows on the calendar too.
+          const myTns = tournamentAssignments
+            .filter(ta => myTeamSet.has(ta.team_id) || myTeamSet.has(ta.team_name) || isMine(ta.head_override) || isMine(ta.asst_override))
+            .map(ta => ({ team: ta.team_id || ta.team_name, tn: tournamentById.get(ta.tournament_id), sub: !(myTeamSet.has(ta.team_id) || myTeamSet.has(ta.team_name)) }))
+            .filter(x => x.tn && !x.tn.cancelled);
+          // A team doesn't practice when it's competing that weekend: a tournament
+          // covering the day, or a multi-day tournament over that Sunday (Fri–Sun),
+          // suppresses the practice.
+          const teamAtTn = (team, iso) => {
+            const dow = new Date(iso + "T00:00").getDay();
+            let winStart = iso; if (dow === 0) { const f = new Date(iso + "T00:00"); f.setDate(f.getDate() - 2); winStart = localDateISO(f); }
+            return myTns.some(x => x.team === team && x.tn.start_date <= iso
+              && (((x.tn.end_date || x.tn.start_date) >= iso)
+                  || (dow === 0 && x.tn.end_date && x.tn.end_date > x.tn.start_date && x.tn.end_date >= winStart)));
+          };
           // Materialize the weekly practice slots into concrete dates for my teams.
           const practicesOn = (iso) => {
             const phase = phaseForDate(iso); if (!phase) return [];
@@ -5106,19 +5127,11 @@ export default function App() {
             practiceAssignments.forEach(a => {
               if (!myTeamSet.has(a.team_name) || (a.phase || "fall1") !== phase || a.day !== dow) return;
               if (isCancelled(iso, a.team_name)) return;
+              if (teamAtTn(a.team_name, iso)) return;
               (byTeam[a.team_name] = byTeam[a.team_name] || []).push(a.slot);
             });
             return Object.entries(byTeam).map(([team, slots]) => ({ team, slots: mergeAdjacentSlots(slots) }));
           };
-          // Team → short tag ("13 Diamond" → 13D, "11 Rise 1" → 11R1) for the
-          // in-cell rectangles, so a multi-team coach can tell teams apart.
-          const abbr = (name) => { const s = String(name||""); const mm = s.match(/^(\d+)\s*(.*)$/); if (!mm) return s.slice(0,4); const parts = mm[2].split(/\s+/).filter(Boolean).map(w => /^\d+$/.test(w) ? w : (w[0]||"")).join(""); return (mm[1]+parts).toUpperCase(); };
-          // Tournaments for my teams — plus any where I'm the swapped-in sub
-          // (head/asst override), so sub coaching shows on the calendar too.
-          const myTns = tournamentAssignments
-            .filter(ta => myTeamSet.has(ta.team_id) || myTeamSet.has(ta.team_name) || isMine(ta.head_override) || isMine(ta.asst_override))
-            .map(ta => ({ team: ta.team_id || ta.team_name, tn: tournamentById.get(ta.tournament_id), sub: !(myTeamSet.has(ta.team_id) || myTeamSet.has(ta.team_name)) }))
-            .filter(x => x.tn && !x.tn.cancelled);
           const tnsOn = (iso) => {
             const seen = new Set();
             return myTns.filter(x => x.tn.start_date <= iso && (x.tn.end_date || x.tn.start_date) >= iso)
@@ -5152,7 +5165,7 @@ export default function App() {
                   if (d === null) return <div key={"b"+i} />;
                   const iso = isoOf(d);
                   const evP = practicesOn(iso), evT = tnsOn(iso);
-                  const events = [...evT.map(x => ({ label: abbr(x.team), c: TNC })), ...evP.map(x => ({ label: abbr(x.team), c: PR }))];
+                  const events = [...evT.map(x => ({ label: abbr(x.team), c: TNC })), ...evP.map(x => ({ label: abbr(x.team) + " " + shortTime(x.slots.join(",")), c: PR }))];
                   const isToday = iso === todayISO;
                   const isSel = iso === sel;
                   return (
