@@ -7553,6 +7553,7 @@ export default function App() {
         || (t.team_name||"").toLowerCase().includes(q)
         || (t.head_coach||"").toLowerCase().includes(q)
         || (t.assistant_coach||"").toLowerCase().includes(q)
+        || (t.third_coach||"").toLowerCase().includes(q)
         || (t.level||"").toLowerCase().includes(q))
       .slice()
       .sort((a, b) => ageOf(a) - ageOf(b) || (a.team_name||"").localeCompare(b.team_name||""));
@@ -7699,6 +7700,7 @@ export default function App() {
             <div style={lbl}>Coaches</div>
             {!team && <div style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>No practice_teams record for this team.</div>}
             {team && (
+              <>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
                 <div>
                   <div style={{fontSize:9,fontWeight:700,color:C.mut,textTransform:"uppercase",letterSpacing:0.5,marginBottom:4}}>Head</div>
@@ -7717,6 +7719,15 @@ export default function App() {
                     : <i style={{color:C.mut,fontWeight:400}}>not assigned</i>}
                 </div>
               </div>
+              {team.third_coach && (
+                <div style={{marginTop:14}}>
+                  <div style={{fontSize:9,fontWeight:700,color:C.mut,textTransform:"uppercase",letterSpacing:0.5,marginBottom:4}}>3rd Coach</div>
+                  <span onClick={()=>{ setTeamCardName(null); setCoachCardName(team.third_coach); }} title="Open coach card" style={{fontSize:14,fontWeight:700,color:"#a855f7",cursor:"pointer",textDecoration:"underline",textDecorationColor:"transparent"}}
+                    onMouseEnter={e=>e.currentTarget.style.textDecorationColor="#a855f7"}
+                    onMouseLeave={e=>e.currentTarget.style.textDecorationColor="transparent"}>{team.third_coach}</span>
+                </div>
+              )}
+              </>
             )}
           </div>
 
@@ -7874,7 +7885,14 @@ export default function App() {
     const matchesCoach = (coachField) => norm(coachField) === target;
     const headOf = practiceTeams.filter(t => matchesCoach(t.head_coach)).map(t => t.team_name);
     const assistOf = practiceTeams.filter(t => matchesCoach(t.assistant_coach)).map(t => t.team_name);
+    const thirdOf = practiceTeams.filter(t => matchesCoach(t.third_coach)).map(t => t.team_name);
+    // Head + assistant drive weekly practices and the team's full tournament
+    // list. A "3rd coach" is a tournament-only extra (they still surface just the
+    // events they're actually staffed on, via the head/asst override match
+    // below), so they're shown as a team membership but NOT folded into the
+    // practice/tournament team-set.
     const allTeamNames = Array.from(new Set([...headOf, ...assistOf]));
+    const teamsForDisplay = Array.from(new Set([...headOf, ...assistOf, ...thirdOf]));
     // Practice slots across all their teams.
     const dayOrder = { Sun:0, Mon:1, Tue:2, Wed:3, Thu:4 };
     const coachPractices = practiceAssignments
@@ -7900,14 +7918,15 @@ export default function App() {
     const displayName = roster ? ((roster.first_name||"") + " " + (roster.last_name||"")).trim() : name;
     // Assign/unassign this coach to a team's head/assistant slot (practice_teams).
     // Uses the same name string this card matches on, so it shows up immediately.
+    const coachField = (role) => role === "assistant" ? "assistant_coach" : role === "third" ? "third_coach" : "head_coach";
     const assignCoachTeam = async (teamName, role) => {
-      const field = role === "assistant" ? "assistant_coach" : "head_coach";
+      const field = coachField(role);
       const { error } = await supabase.from("practice_teams").update({ [field]: name, updated_at: new Date().toISOString() }).eq("team_name", teamName);
       if (error) { window.alert("Assign failed: " + error.message); return; }
       await loadPractice();
     };
     const unassignCoachTeam = async (teamName, role) => {
-      const field = role === "assistant" ? "assistant_coach" : "head_coach";
+      const field = coachField(role);
       const { error } = await supabase.from("practice_teams").update({ [field]: null, updated_at: new Date().toISOString() }).eq("team_name", teamName);
       if (error) { window.alert("Remove failed: " + error.message); return; }
       await loadPractice();
@@ -8003,9 +8022,9 @@ export default function App() {
           {/* Teams coached — editable: assign this coach as head/assistant to
               any team, straight from their card. */}
           <div style={sectionBox}>
-            <div style={lbl}>Teams · {allTeamNames.length}</div>
-            {allTeamNames.length === 0 && <div style={{fontSize:11,color:C.mut,fontStyle:"italic",marginBottom:8}}>Not assigned to any team yet — add one below.</div>}
-            {allTeamNames.length > 0 && (
+            <div style={lbl}>Teams · {teamsForDisplay.length}</div>
+            {teamsForDisplay.length === 0 && <div style={{fontSize:11,color:C.mut,fontStyle:"italic",marginBottom:8}}>Not assigned to any team yet — add one below.</div>}
+            {teamsForDisplay.length > 0 && (
               <div style={{display:"flex",flexDirection:"column",gap:4,marginBottom:10}}>
                 {headOf.map(tn => (
                   <div key={"h-"+tn} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 8px",background:C.card,borderRadius:6,border:"1px solid "+C.border,fontSize:12}}>
@@ -8025,6 +8044,15 @@ export default function App() {
                     <button onClick={()=>unassignCoachTeam(tn,"assistant")} title="Remove from this team" style={{width:18,height:18,borderRadius:9,border:"none",background:"transparent",color:C.mut,cursor:"pointer",fontFamily:"inherit",fontSize:14,lineHeight:1,padding:0}}>×</button>
                   </div>
                 ))}
+                {thirdOf.map(tn => (
+                  <div key={"t-"+tn} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 8px",background:C.card,borderRadius:6,border:"1px solid "+C.border,fontSize:12}}>
+                    <span onClick={()=>{ setCoachCardName(null); setTeamCardName(tn); }} style={{fontWeight:700,cursor:"pointer",flex:1,color:C.text,textDecoration:"underline",textDecorationColor:"transparent"}}
+                      onMouseEnter={e=>e.currentTarget.style.textDecorationColor="#a855f7"}
+                      onMouseLeave={e=>e.currentTarget.style.textDecorationColor="transparent"}>{tn}</span>
+                    <span style={{fontSize:9,fontWeight:800,color:"#a855f7",padding:"1px 6px",borderRadius:5,border:"1px solid #a855f7",letterSpacing:0.5}}>3RD</span>
+                    <button onClick={()=>unassignCoachTeam(tn,"third")} title="Remove from this team" style={{width:18,height:18,borderRadius:9,border:"none",background:"transparent",color:C.mut,cursor:"pointer",fontFamily:"inherit",fontSize:14,lineHeight:1,padding:0}}>×</button>
+                  </div>
+                ))}
               </div>
             )}
             {/* Assign to a team */}
@@ -8033,13 +8061,14 @@ export default function App() {
                 <option value="">+ Assign to team…</option>
                 {[...practiceTeams].sort((a,b)=>(a.team_name||"").localeCompare(b.team_name||"")).map(t => (
                   <option key={t.team_name} value={t.team_name}>
-                    {t.team_name}{t.head_coach?" · HC "+t.head_coach:""}{t.assistant_coach?" · AC "+t.assistant_coach:""}
+                    {t.team_name}{t.head_coach?" · HC "+t.head_coach:""}{t.assistant_coach?" · AC "+t.assistant_coach:""}{t.third_coach?" · 3rd "+t.third_coach:""}
                   </option>
                 ))}
               </select>
               <select id="coach-assign-role" defaultValue="head" style={{...inpStyle,fontSize:12,padding:"6px 8px"}}>
                 <option value="head">Head</option>
                 <option value="assistant">Assistant</option>
+                <option value="third">3rd Coach</option>
               </select>
               <button onClick={()=>{
                   const ts = document.getElementById("coach-assign-team");
@@ -8047,8 +8076,8 @@ export default function App() {
                   if (!ts || !ts.value) return;
                   const teamName = ts.value, role = (rs && rs.value) || "head";
                   const existing = practiceTeams.find(t => t.team_name === teamName);
-                  const cur = role === "assistant" ? existing?.assistant_coach : existing?.head_coach;
-                  if (cur && norm(cur) !== target && !window.confirm(teamName + " already has " + (role==="assistant"?"assistant":"head") + " coach \"" + cur + "\". Replace with " + displayName + "?")) return;
+                  const cur = role === "assistant" ? existing?.assistant_coach : role === "third" ? existing?.third_coach : existing?.head_coach;
+                  if (cur && norm(cur) !== target && !window.confirm(teamName + " already has " + (role==="assistant"?"assistant":role==="third"?"3rd":"head") + " coach \"" + cur + "\". Replace with " + displayName + "?")) return;
                   assignCoachTeam(teamName, role);
                   ts.value = "";
                 }}
