@@ -5272,18 +5272,102 @@ export default function App() {
     const box = {background:C.bg,borderRadius:10,padding:"10px 12px",marginBottom:8};
     const fmtDate = d => d ? new Date(d + "T00:00").toLocaleDateString(undefined,{month:"short",day:"numeric"}) : "";
 
+    // Section header — gives the dashboard its three-tier rhythm:
+    // act now → schedule & info → plan & dig deeper.
+    const sectionHdr = (label, sub) => (
+      <div style={{display:"flex",alignItems:"baseline",gap:8,flexWrap:"wrap",margin:"20px 0 10px",borderBottom:"1px solid "+C.border,paddingBottom:6}}>
+        <span style={{fontSize:13,fontWeight:800,color:C.text,letterSpacing:0.3}}>{label}</span>
+        {sub && <span style={{fontSize:11,color:C.mut}}>{sub}</span>}
+      </div>
+    );
+
     return (
       <div>
-        <div style={{background:"linear-gradient(135deg,rgba(233,30,140,0.16),rgba(233,30,140,0.03))",border:"1px solid "+C.gold,borderRadius:14,padding:"18px 20px",marginBottom:16,textAlign:"center"}}>
-          <div style={{fontSize:9,fontWeight:800,letterSpacing:2,textTransform:"uppercase",color:C.mut}}>💛 Our #1 Standard</div>
-          <div style={{fontSize:26,fontWeight:900,color:C.gold,letterSpacing:0.5,margin:"4px 0 2px"}}>{(pbMeta&&pbMeta.motto)||"Team Over Self"}</div>
-          <div style={{fontSize:11,color:C.mut}}>Talk about it every practice.</div>
+        {/* Header — compact welcome + motto inline (was a full-width banner). */}
+        <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",gap:12,flexWrap:"wrap",marginBottom:12}}>
+          <div>
+            <h2 style={{margin:0,fontSize:22,fontWeight:800,color:C.gold}}>Welcome, {firstName}</h2>
+            <div style={{fontSize:12,color:C.mut,marginTop:2}}>Today at a glance, then dig into your teams.</div>
+          </div>
+          <div style={{textAlign:"right"}}>
+            <div style={{fontSize:8,fontWeight:800,letterSpacing:1.5,textTransform:"uppercase",color:C.mut}}>💛 Our #1 Standard</div>
+            <div style={{fontSize:16,fontWeight:900,color:C.gold,letterSpacing:0.4}}>{(pbMeta&&pbMeta.motto)||"Team Over Self"}</div>
+          </div>
         </div>
-        <div style={{marginBottom:14}}>
-          <h2 style={{margin:0,fontSize:22,fontWeight:800,color:C.gold}}>Welcome, {firstName}</h2>
-          <div style={{fontSize:12,color:C.mut,marginTop:3}}>Clock in, plan, and see what's next.</div>
-        </div>
+
+        {/* TODAY — what's actually on for this coach right now. */}
+        {(() => {
+          const todayISO = localDateISO();
+          const WD = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+          const dow = WD[new Date(todayISO+"T00:00").getDay()];
+          const ph = phaseForDate(todayISO);
+          const isCancelledToday = (team) => practiceCancellations.some(c => c.practice_date===todayISO && (!c.team_name || c.team_name===team));
+          const moveFor = (team) => { const mv=(slotMoves||[]).find(x=>x.practice_date===todayISO&&x.team_name===team); return mv?mv.slot:null; };
+          const myTnToday = tournamentAssignments
+            .map(ta => ({ team: ta.team_id, tn: tournamentById.get(ta.tournament_id) }))
+            .filter(x => x.tn && !x.tn.cancelled && x.tn.start_date<=todayISO && (x.tn.end_date||x.tn.start_date)>=todayISO && myTeams.some(t=>t.team_name===x.team));
+          const atTn = new Set(myTnToday.map(x=>x.team));
+          const items = [];
+          myTnToday.forEach(x => items.push({ icon:"🏆", text:<><b>{x.tn.name}</b> <span style={{color:C.mut}}>· {x.team}{x.tn.location?" · 📍"+String(x.tn.location).split(",")[0]:""}</span></> }));
+          if (ph) myTeams.forEach(t => {
+            const as = practiceAssignments.filter(x=>x.team_name===t.team_name && x.day===dow && (x.phase||"fall1")===ph);
+            if (!as.length || atTn.has(t.team_name)) return;
+            if (isCancelledToday(t.team_name)) { items.push({ icon:"🚫", text:<><b>{t.team_name}</b> <span style={{color:C.red}}>practice cancelled today</span></> }); return; }
+            const eff = moveFor(t.team_name);
+            items.push({ icon:"🏐", text:<><b>{t.team_name}</b> practice <span style={{color:C.mut}}>· {eff||mergeAdjacentSlots(as.map(x=>x.slot)).join(", ")}{eff?" (moved)":""}</span></> });
+          });
+          (practiceCoverage||[]).forEach(c => { if (c.practice_date===todayISO && isRealSub(c.sub_name) && isMine(c.sub_name)) items.push({ icon:"🔁", text:<>Covering <b>{c.team_name}</b> <span style={{color:C.mut}}>· {moveFor(c.team_name)||c.slot}</span></> }); });
+          (saSessions||[]).forEach(s => { if (s.session_date===todayISO && myTeams.some(t=>t.team_name===s.team_name) && !atTn.has(s.team_name)) items.push({ icon:"💪", text:<><b>{s.team_name}</b> S&amp;A <span style={{color:C.mut}}>· {s.slot}</span></> }); });
+          return (
+            <div style={{background:"linear-gradient(135deg,rgba(233,30,140,0.10),rgba(233,30,140,0.02))",border:"1px solid "+C.gold,borderRadius:12,padding:"12px 14px",marginBottom:12}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:items.length?8:0}}>
+                <span style={{fontSize:11,fontWeight:800,letterSpacing:0.5,textTransform:"uppercase",color:C.gold}}>⚡ Today</span>
+                <span style={{fontSize:11,color:C.mut}}>{new Date(todayISO+"T12:00:00").toLocaleDateString(undefined,{weekday:"long",month:"long",day:"numeric"})}</span>
+                {items.length===0 && <span style={{fontSize:12,color:C.mut}}>— nothing on your schedule today.</span>}
+              </div>
+              {items.length>0 && (
+                <div style={{display:"flex",flexDirection:"column",gap:5}}>
+                  {items.map((it,i)=>(
+                    <div key={i} style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:C.text}}>
+                      <span style={{fontSize:12}}>{it.icon}</span><span>{it.text}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* Quick actions — one compact row of pills that drive everywhere else. */}
+        {(() => {
+          const pill = (emoji, label, onClick, accent) => (
+            <button key={label} onClick={onClick}
+              style={{display:"flex",alignItems:"center",gap:6,padding:"8px 14px",borderRadius:999,border:"1px solid "+(accent||C.border),background:C.card,color:accent||C.text,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
+              <span>{emoji}</span>{label}
+            </button>
+          );
+          return (
+            <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:4}}>
+              {pill("🗓","Request time off",()=>{ setReqForm({ type:"weekend", date:"", team:"", details:"" }); setRequestOffOpen(true); },C.gold)}
+              {pill("📋","Lineups",()=>{ setView("lineups"); setOpenMenu(null); })}
+              {pill("📖","Playbook & plans",()=>{ setView("practiceplan"); setOpenMenu(null); })}
+              {pill("🏐","DSSC clinics",()=>{ setView("clinics"); setOpenMenu(null); })}
+              {canOps && pill("🏆","Tournaments",()=>{ setView("tournaments"); setOpenMenu(null); })}
+            </div>
+          );
+        })()}
+
+        {/* ── Tier 1: quick + real-time ─────────────────────────────────── */}
+        {sectionHdr("⚡ Right now", "clock in & things that need action")}
         {renderCheckIn(true)}
+        {renderOpenShiftsPanel(myRoster ? ((myRoster.first_name||"")+" "+(myRoster.last_name||"")).trim() : (coach?.display_name||""))}
+        {renderCoachScheduleAlerts(isMine, myTeams.map(t => t.team_name))}
+        {renderQuestionsPanel()}
+
+        {/* ── Tier 2: schedule & information ────────────────────────────── */}
+        {sectionHdr("📅 My schedule & updates")}
+        {renderCoachCalendar(isMine, myTeams.map(t => t.team_name), homeCalOff, setHomeCalOff, homeCalSel, setHomeCalSel, {title:"My schedule"})}
+        {renderUpdatesPanel(myTeams.map(t => t.team_name))}
 
         {/* Your DSSC clinics — opt into the clinic coach pool + assigned sessions */}
         {(() => {
@@ -5332,32 +5416,8 @@ export default function App() {
           );
         })()}
 
-        {/* Quick actions — the things a coach actually comes here to do. */}
-        {(() => {
-          const tile = (emoji, label, sub, onClick) => (
-            <button key={label} onClick={onClick}
-              style={{display:"flex",flexDirection:"column",alignItems:"flex-start",gap:3,background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:"13px 15px",cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
-              <span style={{fontSize:21,lineHeight:1}}>{emoji}</span>
-              <span style={{fontSize:14,fontWeight:800,color:C.text,marginTop:3}}>{label}</span>
-              <span style={{fontSize:10,color:C.mut,lineHeight:1.3}}>{sub}</span>
-            </button>
-          );
-          return (
-            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:10,marginBottom:14}}>
-              {tile("📋","Lineups","Rotations, subs & lineup cards",()=>{ setView("lineups"); setOpenMenu(null); })}
-              {tile("📖","Playbook","Plans, drills, standards & culture",()=>{ setView("practiceplan"); setOpenMenu(null); })}
-              {canOps && tile("🏆","Tournaments","Schedule & assignments",()=>{ setView("tournaments"); setOpenMenu(null); })}
-              {tile("🗓","Time off","Request a weekend or practice off",()=>{ setReqForm({ type:"weekend", date:"", team:"", details:"" }); setRequestOffOpen(true); })}
-            </div>
-          );
-        })()}
-
-        {renderCoachCalendar(isMine, myTeams.map(t => t.team_name), homeCalOff, setHomeCalOff, homeCalSel, setHomeCalSel, {title:"My schedule"})}
-
-        {renderCoachScheduleAlerts(isMine, myTeams.map(t => t.team_name))}
-        {renderUpdatesPanel(myTeams.map(t => t.team_name))}
-        {renderOpenShiftsPanel(myRoster ? ((myRoster.first_name||"")+" "+(myRoster.last_name||"")).trim() : (coach?.display_name||""))}
-        {renderQuestionsPanel()}
+        {/* ── Tier 3: plan & dig deeper ─────────────────────────────────── */}
+        {sectionHdr("🧭 Plan & dig deeper", "season plan, practice planning & your teams")}
         {renderSeasonPlan(true)}
         {myTeams.length === 0 ? (
           <div style={{padding:24,textAlign:"center",color:C.mut,fontSize:13,background:C.card,borderRadius:12,border:"1px solid "+C.border,lineHeight:1.6}}>
