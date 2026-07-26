@@ -1321,6 +1321,8 @@ export default function App() {
   const [calMonth, setCalMonth]                       = useState(() => { try { return new Date().toISOString().slice(0,7); } catch { return "2026-11"; } }); // YYYY-MM shown in the Daily calendar
   const [autoFill, setAutoFill]                       = useState(null); // Daily board: proposed sub assignments awaiting approval [{team,slot,phase,coach_out,role,coach}]
   const [courtPlan, setCourtPlan]                     = useState(null); // Sunday 4-court planner: proposed team→block layout awaiting approval [{team,from,to}]
+  const [teamCalOff, setTeamCalOff]                   = useState(0);    // team card calendar: months offset from current
+  const [teamCalSel, setTeamCalSel]                   = useState(null); // team card calendar: selected day
   const [tryouts, setTryouts]                         = useState([]);
   const [coachRoster, setCoachRoster]                 = useState([]);
   // SMS state
@@ -2082,6 +2084,9 @@ export default function App() {
   useEffect(() => { if (isApproved && (view === "home" || view === "clockin")) { loadCheckins(); loadShiftIntents(); loadPractice(); loadCoachFloats(); loadPracticeCancellations(); loadPracticeCoverage(); loadSlotMoves(); } }, [isApproved, view, loadCheckins, loadShiftIntents, loadPractice, loadCoachFloats, loadPracticeCancellations, loadPracticeCoverage, loadSlotMoves]);
   // The coach card shows a coach's schedule changes + pickups — load the sources when it opens.
   useEffect(() => { if (isApproved && coachCardName) { loadPractice(); loadPracticeCoverage(); loadSlotMoves(); loadPracticeCancellations(); } }, [isApproved, coachCardName, loadPractice, loadPracticeCoverage, loadSlotMoves, loadPracticeCancellations]);
+  // The team card shows a per-team schedule calendar (practices, tournaments,
+  // moves, subs) — load its sources when it opens, and reset its month.
+  useEffect(() => { if (isApproved && teamCardName) { loadPractice(); loadTournaments(); loadPracticeCoverage(); loadSlotMoves(); loadPracticeCancellations(); setTeamCalOff(0); setTeamCalSel(null); } }, [isApproved, teamCardName, loadPractice, loadTournaments, loadPracticeCoverage, loadSlotMoves, loadPracticeCancellations]);
 
   // Time Cards ledger loader.
   const loadCoachRates = useCallback(async () => {
@@ -7997,6 +8002,126 @@ export default function App() {
               )}
               </>
             )}
+          </div>
+
+          {/* Schedule calendar — practices, tournaments, moves, subs, cancellations. */}
+          <div style={sectionBox}>
+            <div style={lbl}>Schedule</div>
+            {(() => {
+              const WD = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+              const PR = "#06b6d4", TNC = "#f59e0b", SAc = "#22c55e", MV = "#a855f7", SUBC = "#ec4899";
+              const todayISO = localDateISO();
+              const t0 = new Date(todayISO + "T00:00");
+              const anchor = new Date(t0.getFullYear(), t0.getMonth() + teamCalOff, 1);
+              const y = anchor.getFullYear(), m = anchor.getMonth();
+              const monthKey = y + "-" + String(m+1).padStart(2,"0");
+              const monthLabel = anchor.toLocaleDateString(undefined, { month:"long", year:"numeric" });
+              const daysInMonth = new Date(y, m+1, 0).getDate();
+              const leadPad = new Date(y, m, 1).getDay();
+              const isoOf = (day) => localDateISO(new Date(y, m, day));
+              const shortTime = (s) => String(s||"").replace(/m\b/g,"").replace(/\s+/g,"");
+              const tnAbbr = (name) => { const w = String(name||"").replace(/[^\w\s]/g," ").split(/\s+/).filter(Boolean).filter(x => !/^(of|the|and|at|for|girls|boys|weekend|tournament)$/i.test(x)); return (w.map(x => /^\d+$/.test(x)?x:(x[0]||"")).join("").toUpperCase().slice(0,6)) || String(name||"").slice(0,4); };
+              const shortCity = (loc) => { const s = String(loc||"").split("/")[0].trim(); return s.replace(/,\s*[A-Z]{2}\b.*$/,"").trim() || s; };
+              const teamAtTnDate = (iso) => { const dow = new Date(iso+"T00:00").getDay(); let ws = iso; if (dow===0){ const f=new Date(iso+"T00:00"); f.setDate(f.getDate()-2); ws=localDateISO(f); } return teamTournaments.some(x => { const tn=x.tournament; return tn.start_date<=iso && (((tn.end_date||tn.start_date)>=iso) || (dow===0 && tn.end_date && tn.end_date>tn.start_date && tn.end_date>=ws)); }); };
+              const tnsOnDate = (iso) => { const seen=new Set(); return teamTournaments.filter(x => x.tournament.start_date<=iso && (x.tournament.end_date||x.tournament.start_date)>=iso).filter(x => { if (seen.has(x.tournament.id)) return false; seen.add(x.tournament.id); return true; }); };
+              const saOnDate = (iso) => (saSessions||[]).filter(s => s.team_name===teamCardName && s.session_date===iso);
+              const practiceOn = (iso) => {
+                const ph = phaseForDate(iso); if (!ph) return null;
+                const wd = WD[new Date(iso+"T00:00").getDay()];
+                const as = practiceAssignments.filter(a => a.team_name===teamCardName && a.day===wd && (a.phase||"fall1")===ph);
+                if (!as.length) return null;
+                const def = as[0].slot;
+                const mv = (slotMoves||[]).find(x => x.practice_date===iso && x.team_name===teamCardName);
+                const eff = mv ? mv.slot : def;
+                const cancelled = (practiceCancellations||[]).some(c => c.practice_date===iso && (!c.team_name || c.team_name===teamCardName));
+                const subs = (practiceCoverage||[]).filter(c => c.practice_date===iso && c.team_name===teamCardName && isRealSub(c.sub_name));
+                return { def, eff, moved: eff!==def, cancelled, atTn: teamAtTnDate(iso), subs };
+              };
+              const sel = (teamCalSel && teamCalSel.slice(0,7)===monthKey) ? teamCalSel : (todayISO.slice(0,7)===monthKey ? todayISO : null);
+              const fmtLong = (iso) => new Date(iso+"T12:00:00").toLocaleDateString(undefined,{weekday:"long",month:"short",day:"numeric"});
+              const cells = []; for (let i=0;i<leadPad;i++) cells.push(null); for (let dn=1;dn<=daysInMonth;dn++) cells.push(dn);
+              const chip = (color) => ({fontSize:7.5,fontWeight:800,lineHeight:"11px",height:11,borderRadius:2,padding:"0 2px",background:color+"33",color,overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"});
+              const selP = sel ? practiceOn(sel) : null, selT = sel ? tnsOnDate(sel) : [], selSA = sel ? saOnDate(sel) : [];
+              return (
+                <div>
+                  <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
+                    <button onClick={()=>setTeamCalOff(o=>o-1)} title="Previous month" style={{background:"none",border:"1px solid "+C.border,borderRadius:6,color:C.text,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:800,width:22,height:22,lineHeight:1,padding:0}}>‹</button>
+                    <span style={{fontSize:12,fontWeight:800,color:C.text,minWidth:110,textAlign:"center"}}>{monthLabel}</span>
+                    <button onClick={()=>setTeamCalOff(o=>o+1)} title="Next month" style={{background:"none",border:"1px solid "+C.border,borderRadius:6,color:C.text,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:800,width:22,height:22,lineHeight:1,padding:0}}>›</button>
+                    {teamCalOff!==0 && <button onClick={()=>{ setTeamCalOff(0); setTeamCalSel(todayISO); }} style={{background:"none",border:"none",color:C.acc,cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:700}}>Today</button>}
+                  </div>
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:2,marginBottom:2}}>
+                    {["S","M","T","W","T","F","S"].map((dd,i)=><div key={i} style={{textAlign:"center",fontSize:8,fontWeight:800,color:C.mut}}>{dd}</div>)}
+                  </div>
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:2}}>
+                    {cells.map((dn,i) => {
+                      if (dn===null) return <div key={"b"+i} />;
+                      const iso = isoOf(dn);
+                      const p = practiceOn(iso), tns = tnsOnDate(iso), sa = saOnDate(iso);
+                      const events = [];
+                      tns.forEach(x => events.push({ label: tnAbbr(x.tournament.name), c: TNC }));
+                      sa.forEach(() => events.push({ label: "S&A", c: SAc }));
+                      if (p && !p.atTn) { if (p.cancelled) events.push({ label: "✕ off", c: C.red }); else events.push({ label: shortTime(p.eff) + (p.moved?" ↦":"") + (p.subs.length?" 🔁":""), c: p.moved?MV:p.subs.length?SUBC:PR }); }
+                      const isToday = iso===todayISO, isSel = iso===sel;
+                      return (
+                        <button key={iso} onClick={()=>setTeamCalSel(iso)} style={{display:"flex",flexDirection:"column",alignItems:"stretch",gap:1,minHeight:30,textAlign:"left",background:isSel?"rgba(233,30,140,0.14)":events.length?C.bg:"transparent",border:"1px solid "+(isSel?C.gold:isToday?C.acc:"transparent"),borderRadius:6,cursor:"pointer",fontFamily:"inherit",padding:"2px 2px 3px",overflow:"hidden"}}>
+                          <span style={{fontSize:9,fontWeight:isToday?800:600,color:isToday?C.gold:C.mut,paddingLeft:1}}>{dn}</span>
+                          {events.slice(0,2).map((e,ei)=><span key={ei} style={chip(e.c)}>{e.label}</span>)}
+                          {events.length>2 && <span style={{fontSize:7.5,fontWeight:800,color:C.mut,paddingLeft:1}}>+{events.length-2}</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div style={{display:"flex",alignItems:"center",gap:9,marginTop:8,fontSize:10,color:C.mut,flexWrap:"wrap"}}>
+                    <span style={{display:"flex",alignItems:"center",gap:3}}><span style={{width:9,height:8,borderRadius:2,background:PR+"33",border:"1px solid "+PR}} />Practice</span>
+                    <span style={{display:"flex",alignItems:"center",gap:3}}><span style={{width:9,height:8,borderRadius:2,background:MV+"33",border:"1px solid "+MV}} />↦ Moved</span>
+                    <span style={{display:"flex",alignItems:"center",gap:3}}><span style={{width:9,height:8,borderRadius:2,background:SUBC+"33",border:"1px solid "+SUBC}} />🔁 Sub</span>
+                    <span style={{display:"flex",alignItems:"center",gap:3}}><span style={{width:9,height:8,borderRadius:2,background:C.red+"33",border:"1px solid "+C.red}} />Off</span>
+                    <span style={{display:"flex",alignItems:"center",gap:3}}><span style={{width:9,height:8,borderRadius:2,background:TNC+"33",border:"1px solid "+TNC}} />Tourn.</span>
+                  </div>
+                  {sel && (
+                    <div style={{marginTop:10,borderTop:"1px solid "+C.border,paddingTop:10}}>
+                      <div style={{fontSize:11,fontWeight:800,color:C.text,marginBottom:6}}>{fmtLong(sel)}{sel===todayISO?" · Today":""}</div>
+                      {(!selP && selT.length===0 && selSA.length===0) || (selP && selP.atTn && selT.length===0 && selSA.length===0) ? (
+                        <div style={{fontSize:12,color:C.mut}}>Nothing scheduled.</div>
+                      ) : (
+                        <div style={{display:"flex",flexDirection:"column",gap:5}}>
+                          {selT.map((x,i)=>(
+                            <div key={"t"+i} style={{display:"flex",alignItems:"center",gap:8,fontSize:13}}>
+                              <span style={{width:6,height:6,borderRadius:3,background:TNC,flexShrink:0}} />
+                              <span style={{flex:1,color:C.text,fontWeight:600}}>{x.tournament.name}{x.tournament.location && <span style={{color:C.mut,fontWeight:500}}> · 📍{shortCity(x.tournament.location)}</span>}</span>
+                              <span style={{fontSize:10,fontWeight:800,color:TNC,textTransform:"uppercase"}}>Tourn.</span>
+                            </div>
+                          ))}
+                          {selSA.map((x,i)=>(
+                            <div key={"sa"+i} style={{display:"flex",alignItems:"center",gap:8,fontSize:13}}>
+                              <span style={{width:6,height:6,borderRadius:3,background:SAc,flexShrink:0}} />
+                              <span style={{flex:1,color:C.text,fontWeight:600}}>Speed &amp; Agility</span>
+                              <span style={{fontSize:11,color:C.mut}}>{x.slot}</span>
+                            </div>
+                          ))}
+                          {selP && !selP.atTn && (
+                            <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                              <div style={{display:"flex",alignItems:"center",gap:8,fontSize:13}}>
+                                <span style={{width:6,height:6,borderRadius:3,background:selP.cancelled?C.red:selP.moved?MV:PR,flexShrink:0}} />
+                                <span style={{flex:1,color:C.text,fontWeight:600}}>{selP.cancelled ? <span style={{color:C.red}}>Practice cancelled</span> : <>Practice · {selP.eff}{selP.moved && <span style={{color:MV,fontWeight:700}}> (moved from {selP.def})</span>}</>}</span>
+                                {!selP.cancelled && <span style={{fontSize:11,color:C.mut}}>{selP.eff}</span>}
+                              </div>
+                              {selP.subs.map((s,i)=>(
+                                <div key={"s"+i} style={{display:"flex",alignItems:"center",gap:8,fontSize:12,paddingLeft:14}}>
+                                  <span style={{color:SUBC,fontWeight:800}}>🔁 sub</span>
+                                  <span style={{color:C.text}}><b>{s.sub_name}</b> for {s.coach_out}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
 
           {/* Players */}
