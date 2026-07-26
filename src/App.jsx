@@ -1488,7 +1488,7 @@ export default function App() {
   // Operations are admin-only: the whole "Operations" nav group and the views
   // behind it are hidden and blocked for non-admin coaches. The owner (Drew)
   // always counts here so a bad DB flag can't lock him out.
-  const OPS_VIEWS = new Set(["tracker","teamdir","coaches","practice","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","timecards"]);
+  const OPS_VIEWS = new Set(["tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","timecards"]);
   const canOps    = isAdmin || isOwner;
   const opsDenied = <div style={{padding:24,color:C.mut,textAlign:"center"}}>This section is restricted to administrators. Ask the club administrator (Drew) for access.</div>;
   // Once a player has accepted (or is locked/signed) onto a team, they're
@@ -2056,6 +2056,7 @@ export default function App() {
   }, []);
   useEffect(() => { if (isApproved && (view === "practice" || view === "teamdir" || view === "home" || view === "coaches" || view === "tournaments")) loadPractice(); }, [isApproved, view, loadPractice]);
   useEffect(() => { if (isApproved && view === "practice") loadSnapshots(); }, [isApproved, view, loadSnapshots]);
+  useEffect(() => { if (isApproved && view === "sa") loadPractice(); }, [isApproved, view, loadPractice]);
   // Coach/team cards (openable from any view) need practice_teams loaded.
   useEffect(() => { if (isApproved && (coachCardName || teamCardName)) loadPractice(); }, [isApproved, coachCardName, teamCardName, loadPractice]);
 
@@ -10311,113 +10312,96 @@ export default function App() {
     );
   }
 
-  // S&A per-Sunday detail grid. Kept for reference but no longer used —
-  // the S&A schedule now lives inside the practice grid as pink columns.
-  // eslint-disable-next-line no-unused-vars
+  // ─── S&A SCHEDULE — trainer-shareable screen ─────────────────────────
+  // The whole Speed & Agility program on one page: every date, every trainer
+  // hour, which team (open hours visible), block badges, and a copy-as-text
+  // button to send the trainer. Tabs: Regular Season (season1+season2) / Fall.
   function renderSASchedule() {
-    const BLOCKS = {
-      fall_b1: {
-        label: "Fall Block 1",
-        sub: "Sep 13 – Oct 11 · 8 Nationals · 12-8pm",
-        dates: ["2026-09-13","2026-09-20","2026-09-27","2026-10-04","2026-10-11"],
-        slots: ["12-1pm","1-2pm","2-3pm","3-4pm","4-5pm","5-6pm","6-7pm","7-8pm"],
-      },
-      fall_b2: {
-        label: "Fall Block 2",
-        sub: "Oct 18 – Nov 15 · 9 Regionals · 12-9pm",
-        dates: ["2026-10-18","2026-10-25","2026-11-01","2026-11-08","2026-11-15"],
-        slots: ["12-1pm","1-2pm","2-3pm","3-4pm","4-5pm","5-6pm","6-7pm","7-8pm","8-9pm"],
-      },
+    const HOURS = ["12-1pm","1-2pm","2-3pm","3-4pm","4-5pm","5-6pm","6-7pm","7-8pm","8-9pm"];
+    const tab = (saBlock === "fall1" || saBlock === "fall2") ? saBlock : "season";
+    const inTab = (b) => tab === "season" ? String(b||"").startsWith("season") : b === tab;
+    const rowsAll = (saSessions||[]).filter(s => inTab(s.block));
+    const dates = [...new Set(rowsAll.map(s => (s.session_date||"").slice(0,10)))].sort();
+    const byKey = new Map(); rowsAll.forEach(s => byKey.set((s.session_date||"").slice(0,10) + "|" + s.slot, s));
+    const todayISO = localDateISO();
+    const nextDate = dates.find(d => d >= todayISO);
+    const BLK = { season1:{tag:"B1",color:"#22c55e"}, season2:{tag:"B2",color:"#06b6d4"}, fall1:{tag:"F1",color:"#f59e0b"}, fall2:{tag:"F2",color:"#f59e0b"} };
+    const fmtDate = (iso) => new Date(iso+"T12:00:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"});
+    const teamsOf = (b) => [...new Set(rowsAll.filter(s => s.block===b).map(s => s.team_name))].sort();
+    const copyText = () => {
+      const lines = ["DS Elite — Speed & Agility" + (tab==="season" ? " · Regular Season" : " · " + tab), "One team per hour · S&A room open 12pm-9pm", ""];
+      for (const d of dates) {
+        const parts = HOURS.map(h => { const s = byKey.get(d+"|"+h); return s ? h.replace("pm","") + " " + s.team_name : null; }).filter(Boolean);
+        lines.push(fmtDate(d) + ":  " + parts.join("  ·  "));
+      }
+      try { navigator.clipboard.writeText(lines.join("\n")); window.alert("Schedule copied — paste it into a text or email to the trainer."); } catch { window.alert("Couldn't copy on this device."); }
     };
-    const block = BLOCKS[saBlock] || BLOCKS.fall_b1;
-    // Index assignments by (date|slot) for O(1) lookup.
-    const byKey = new Map();
-    for (const s of saSessions) {
-      if (s.block !== saBlock) continue;
-      // session_date can come back as 'YYYY-MM-DD' or ISO with a T — normalize.
-      const d = (s.session_date||"").slice(0,10);
-      byKey.set(d + "|" + s.slot, s);
-    }
-    const fmtDate = (iso) => {
-      const [, m, d] = (iso||"").split("-").map(n => parseInt(n,10));
-      const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-      return months[m-1] + " " + d;
-    };
-    // Distinct teams in this block (for the summary line).
-    const teamsInBlock = Array.from(new Set(
-      saSessions.filter(s => s.block === saBlock).map(s => s.team_name)
-    )).sort((a,b) => a.localeCompare(b));
-
-    const th  = {padding:"6px 8px",fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut,borderBottom:"1px solid "+C.border,background:C.card,position:"sticky",top:0,zIndex:1,whiteSpace:"nowrap",textAlign:"left"};
-    const td  = {padding:"6px 8px",fontSize:12,borderBottom:"1px solid "+C.border,verticalAlign:"middle"};
-    const slotCell = {...td, fontWeight:700, color:C.mut, background:C.card, position:"sticky", left:0, zIndex:1};
-
+    const thX = {padding:"7px 8px",fontSize:10,fontWeight:800,letterSpacing:0.4,textTransform:"uppercase",color:C.mut,borderBottom:"1px solid "+C.border,background:C.bg,position:"sticky",top:0};
+    const tdX = {padding:"7px 8px",fontSize:12,borderBottom:"1px solid "+C.border,textAlign:"center"};
     return (
-      <div style={{marginTop:24,paddingTop:24,borderTop:"2px solid "+C.border}}>
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,flexWrap:"wrap",marginBottom:12}}>
-          <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
-            <h2 style={{margin:0,fontSize:18,fontWeight:800,color:C.gold}}>Speed &amp; Agility</h2>
-            <div role="tablist" aria-label="S&A block"
-              style={{display:"inline-flex",border:"1px solid "+C.border,borderRadius:8,overflow:"hidden"}}>
-              {["fall_b1","fall_b2"].map(b => {
-                const on = saBlock === b;
-                return (
-                  <button key={b} role="tab" aria-selected={on}
-                    onClick={()=>setSaBlock(b)}
-                    style={{padding:"6px 14px",border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:800,letterSpacing:0.5,textTransform:"uppercase",
-                      background:on ? C.gold : "transparent",
-                      color:on ? "#000" : C.mut}}>
-                    {BLOCKS[b].label}
-                  </button>
-                );
-              })}
-            </div>
+      <div style={{maxWidth:1100,margin:"0 auto"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:4}}>
+          <h2 style={{margin:0,fontSize:20,fontWeight:800,color:"#22c55e"}}>💪 Speed &amp; Agility Schedule</h2>
+          <div style={{flex:1}} />
+          <div role="tablist" style={{display:"inline-flex",border:"1px solid "+C.border,borderRadius:8,overflow:"hidden"}}>
+            {[["season","Regular Season"],["fall1","Fall 1"],["fall2","Fall 2"]].map(([id,label]) => (
+              <button key={id} onClick={()=>setSaBlock(id)}
+                style={{padding:"6px 14px",border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:800,letterSpacing:0.5,textTransform:"uppercase",background:tab===id?"#22c55e":"transparent",color:tab===id?"#000":C.mut}}>{label}</button>
+            ))}
           </div>
-          <div style={{fontSize:11,color:C.mut}}>
-            {block.sub} · {teamsInBlock.length} teams · {byKey.size} sessions
-          </div>
+          <button onClick={copyText} style={{padding:"7px 14px",borderRadius:8,border:"1px solid #22c55e",background:"rgba(34,197,94,0.10)",color:"#22c55e",fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>📋 Copy for trainer</button>
         </div>
-
-        <div style={{background:C.card,borderRadius:12,border:"1px solid "+C.border,overflow:"hidden"}}>
-          <div style={{overflow:"auto",maxHeight:"60vh"}}>
-            <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0,minWidth:720}}>
-              <thead>
-                <tr>
-                  <th style={th}>Slot</th>
-                  {block.dates.map(d => (
-                    <th key={d} style={{...th,textAlign:"center"}}>{fmtDate(d)}</th>
+        <div style={{fontSize:11,color:C.mut,marginBottom:12}}>One team per hour · S&amp;A room open 12pm–9pm · every session sits directly before/after (or inside) that team's practice. Blank cells are open hours.</div>
+        {tab === "season" && (
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(320px,1fr))",gap:10,marginBottom:14}}>
+            {["season1","season2"].map(b => (
+              <div key={b} style={{background:C.card,border:"1px solid "+BLK[b].color,borderRadius:12,padding:"10px 14px"}}>
+                <div style={{fontSize:11,fontWeight:800,textTransform:"uppercase",letterSpacing:0.4,color:BLK[b].color,marginBottom:6}}>Block {b==="season1"?"1":"2"} · {teamsOf(b).length} teams · 5 sessions each</div>
+                <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
+                  {teamsOf(b).map(tn => (
+                    <span key={tn} onClick={()=>setTeamCardName(tn)} title="Open team card"
+                      style={{fontSize:11,fontWeight:700,color:C.text,border:"1px solid "+C.border,borderRadius:8,padding:"2px 8px",cursor:"pointer",background:C.bg}}>{tn}</span>
                   ))}
-                </tr>
-              </thead>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        <div style={{background:C.card,borderRadius:12,border:"1px solid "+C.border,overflow:"hidden"}}>
+          <div style={{overflow:"auto",maxHeight:"calc(100vh - 300px)"}}>
+            <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0,minWidth:900}}>
+              <thead><tr>
+                <th style={{...thX,textAlign:"left",minWidth:110}}>Sunday</th>
+                {HOURS.map(h => <th key={h} style={thX}>{h}</th>)}
+                <th style={{...thX,minWidth:36}}>#</th>
+              </tr></thead>
               <tbody>
-                {block.slots.map(slot => (
-                  <tr key={slot}>
-                    <td style={slotCell}>{slot}</td>
-                    {block.dates.map(d => {
-                      const cell = byKey.get(d + "|" + slot);
-                      const name = cell?.team_name;
-                      return (
-                        <td key={d} style={{...td,textAlign:"center"}}>
-                          {name
-                            ? <span onClick={()=>setTeamCardName(name)}
-                                title="Open team card"
-                                style={{fontWeight:700,color:C.text,cursor:"pointer",textDecoration:"underline",textDecorationColor:"transparent",textUnderlineOffset:2}}
-                                onMouseEnter={e=>e.currentTarget.style.textDecorationColor=C.gold}
-                                onMouseLeave={e=>e.currentTarget.style.textDecorationColor="transparent"}>
-                                {name}
-                              </span>
-                            : <span style={{color:C.mut,fontStyle:"italic"}}>—</span>}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
+                {dates.length === 0 && <tr><td colSpan={HOURS.length+2} style={{...tdX,color:C.mut,fontStyle:"italic",padding:20}}>No sessions in this block yet.</td></tr>}
+                {dates.map(d => {
+                  const isPast = d < todayISO, isNext = d === nextDate;
+                  const count = HOURS.filter(h => byKey.get(d+"|"+h)).length;
+                  return (
+                    <tr key={d} style={{opacity:isPast?0.55:1,background:isNext?"rgba(34,197,94,0.07)":"transparent"}}>
+                      <td style={{...tdX,textAlign:"left",fontWeight:800,color:isNext?"#22c55e":C.text,whiteSpace:"nowrap"}}>{fmtDate(d)}{isNext && <span style={{fontSize:8,fontWeight:800,marginLeft:6,border:"1px solid #22c55e",borderRadius:4,padding:"0 4px",color:"#22c55e"}}>NEXT</span>}</td>
+                      {HOURS.map(h => { const s = byKey.get(d+"|"+h); const bl = s && BLK[s.block];
+                        return (
+                          <td key={h} style={tdX}>
+                            {s
+                              ? <span onClick={()=>setTeamCardName(s.team_name)} title={"Open team card" + (bl?" · Block "+bl.tag:"")}
+                                  style={{fontWeight:700,color:bl?bl.color:C.text,cursor:"pointer",whiteSpace:"nowrap"}}>{s.team_name}</span>
+                              : <span style={{color:"rgba(153,153,153,0.35)"}}>·</span>}
+                          </td>
+                        ); })}
+                      <td style={{...tdX,fontWeight:800,color:C.mut}}>{count}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         </div>
         <div style={{marginTop:10,fontSize:11,color:C.mut,lineHeight:1.5}}>
-          One team at a time in the S&amp;A space. <b>Fall B1</b> serves the 8 Nationals; <b>Fall B2</b> serves 9 Regionals (excludes 11 Diamond). Each team gets the same slot every week for 5 Sundays. Click a team name to open the team card.
+          <b style={{color:"#22c55e"}}>Green</b> team = Block 1 · <b style={{color:"#06b6d4"}}>cyan</b> = Block 2 · dimmed rows are past · <b style={{color:"#22c55e"}}>NEXT</b> marks the upcoming Sunday. Blank cells = trainer hour open (useful for makeups). Screenshot this page or use <b>Copy for trainer</b> to share.
         </div>
       </div>
     );
@@ -18744,7 +18728,7 @@ export default function App() {
                 { title:"Tryouts", items:[["dashboard","Dashboard"], ["evaluate","Evaluate"], ["favorites","My Favorites" + (favorites.length ? " (" + favorites.length + ")" : "")], ...(canViewTeams ? [["teams","Teams"]] : []), ["rankings","Rankings"], ["physical","Physical Testing"], ["tryouts","Coach Assignments"]] },
                 ...(canOps ? [{ title:"Operations", items:[
                   ["hdr","Club"],
-                  ["tracker","Tracker"], ["teamdir","All Teams"], ["practice","Practice"], ["clinics","DSSC Clinics"], ["scholarships","Scholarships"],
+                  ["tracker","Tracker"], ["teamdir","All Teams"], ["practice","Practice"], ["sa","S&A Schedule"], ["clinics","DSSC Clinics"], ["scholarships","Scholarships"],
                   ["hdr","Coaches & Pay"],
                   ["coaches","Coaches"], ["coverage","Coach Coverage"], ["timecards","Time Cards"], ["requests","Requests" + (pendingReqs ? " (" + pendingReqs + ")" : "")],
                   ["hdr","Communication"],
@@ -18954,6 +18938,7 @@ export default function App() {
         {view==="requests" && renderRequests()}
         {view==="tournaments" && renderTournaments()}
         {view==="practice" && renderPractice()}
+        {view==="sa" && renderSASchedule()}
         {view==="physical" && renderPhysicalTesting()}
         {view==="tryouts" && renderTryouts()}
         {view==="email" && renderEmailBlast()}
