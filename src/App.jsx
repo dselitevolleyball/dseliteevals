@@ -1407,7 +1407,7 @@ export default function App() {
   const [notifSeenAt, setNotifSeenAt]                       = useState("1970-01-01T00:00:00.000Z"); // last time notifications were viewed
   const [pushState, setPushState]                          = useState("loading"); // unsupported | off | on | denied
   const [blackoutDates, setBlackoutDates]                   = useState([]);
-  const [tnFilters, setTnFilters]                           = useState({ search: "", ageFor: "", qualifierOnly: false, dateFrom: "", dateTo: "", hideClosed: false, hideCancelled: true, startsOn: [], state: "", numDays: "", divisions: [], tags: [], showAllSources: false, hideOurs: [] });
+  const [tnFilters, setTnFilters]                           = useState({ search: "", ageFor: "", qualifierOnly: false, dateFrom: "", dateTo: "", hideClosed: false, hideCancelled: true, startsOn: [], state: "", numDays: "", divisions: [], tags: [], showAllSources: false, ourStatus: [] });
   const [tnSelected, setTnSelected]                         = useState(() => new Set()); // tournament ids checked for bulk delete
   const [tnView, setTnView]                                 = useState("calendar"); // "list" | "calendar"
   const [tnSumLevel, setTnSumLevel]                         = useState("all");  // Summary filter: all | National | Regional | Developmental
@@ -17150,16 +17150,16 @@ export default function App() {
         const eff = tnEffectiveTags(t);
         if (!tnFilters.tags.some(tag => eff.includes(tag))) return false;
       }
-      // "Hide ours" — drop tournaments we already have on our schedule at any of
+      // "Our status" — show ONLY tournaments we have on our schedule at one of
       // the chosen assignment statuses (planned / in progress / locked /
-      // registered), so the list shows only what is still up for grabs.
-      if (tnFilters.hideOurs.length > 0) {
+      // registered). Nothing selected = no filtering.
+      if (tnFilters.ourStatus.length > 0) {
         const mine = tournamentAssignments.filter(a => a.tournament_id === t.id);
-        if (mine.some(a => tnFilters.hideOurs.includes(a.status || "planned"))) return false;
+        if (!mine.some(a => tnFilters.ourStatus.includes(a.status || "planned"))) return false;
       }
       return true;
     });
-    const hasActiveFilters = tnFilters.search || tnFilters.ageFor || tnFilters.qualifierOnly || tnFilters.hideClosed || tnFilters.dateFrom || tnFilters.dateTo || tnFilters.startsOn.length || tnFilters.state || tnFilters.numDays || tnFilters.divisions.length || tnFilters.tags.length || tnFilters.hideOurs.length;
+    const hasActiveFilters = tnFilters.search || tnFilters.ageFor || tnFilters.qualifierOnly || tnFilters.hideClosed || tnFilters.dateFrom || tnFilters.dateTo || tnFilters.startsOn.length || tnFilters.state || tnFilters.numDays || tnFilters.divisions.length || tnFilters.tags.length || tnFilters.ourStatus.length;
     return (
       <div>
         {/* Header + view dropdown */}
@@ -17269,28 +17269,27 @@ export default function App() {
             <input type="checkbox" checked={tnFilters.showAllSources} onChange={e=>setTnFilters(prev=>({...prev,showAllSources:e.target.checked}))} />
             Show all sources
           </label>
-          {/* Hide tournaments we're already on, by our assignment status —
-              leaves only what's still open for consideration. */}
+          {/* Show ONLY tournaments we're on, by our assignment status. */}
           <span style={{display:"inline-flex",alignItems:"center",gap:5,flexWrap:"wrap"}}>
-            <span style={{fontSize:11,color:C.mut,fontWeight:700}} title="Hide tournaments we already have on our schedule at these statuses">Hide ours:</span>
+            <span style={{fontSize:11,color:C.mut,fontWeight:700}} title="Show only tournaments we have on our schedule at these statuses">Show only ours:</span>
             {TN_STATUS_ORDER.map(st => {
-              const on = tnFilters.hideOurs.includes(st);
+              const on = tnFilters.ourStatus.includes(st);
               const meta = TN_STATUS[st];
               return (
-                <button key={st} onClick={()=>setTnFilters(prev=>({...prev,hideOurs: on ? prev.hideOurs.filter(x=>x!==st) : [...prev.hideOurs, st]}))}
-                  title={on ? "Showing hidden — click to include " + meta.label + " again" : "Hide tournaments we have as " + meta.label}
-                  style={{padding:"3px 9px",borderRadius:12,border:"1px solid "+(on?meta.color:C.border),background:on?meta.color+"22":"transparent",color:on?meta.color:C.mut,fontSize:10,fontWeight:800,cursor:"pointer",fontFamily:"inherit",textDecoration:on?"line-through":"none"}}>
-                  {meta.label}
+                <button key={st} onClick={()=>setTnFilters(prev=>({...prev,ourStatus: on ? prev.ourStatus.filter(x=>x!==st) : [...prev.ourStatus, st]}))}
+                  title={on ? "Click to stop showing only " + meta.label : "Show only tournaments we have as " + meta.label}
+                  style={{padding:"3px 9px",borderRadius:12,border:"1px solid "+(on?meta.color:C.border),background:on?meta.color+"22":"transparent",color:on?meta.color:C.mut,fontSize:10,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>
+                  {on ? "✓ " : ""}{meta.label}
                 </button>
               );
             })}
-            {tnFilters.hideOurs.length > 0 && (
-              <button onClick={()=>setTnFilters(prev=>({...prev,hideOurs:[]}))} title="Show all of ours again"
+            {tnFilters.ourStatus.length > 0 && (
+              <button onClick={()=>setTnFilters(prev=>({...prev,ourStatus:[]}))} title="Clear — show all tournaments again"
                 style={{padding:"3px 7px",borderRadius:12,border:"none",background:"transparent",color:C.mut,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>×</button>
             )}
           </span>
           {hasActiveFilters ? (
-            <button onClick={()=>setTnFilters({ search:"", ageFor:"", qualifierOnly:false, dateFrom:"", dateTo:"", hideClosed:false, hideCancelled:true, startsOn:[], state:"", numDays:"", divisions:[], tags:[], showAllSources:false, hideOurs:[] })}
+            <button onClick={()=>setTnFilters({ search:"", ageFor:"", qualifierOnly:false, dateFrom:"", dateTo:"", hideClosed:false, hideCancelled:true, startsOn:[], state:"", numDays:"", divisions:[], tags:[], showAllSources:false, ourStatus:[] })}
               style={{padding:"4px 8px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit",marginLeft:"auto"}}>
               Clear all
             </button>

@@ -44,6 +44,13 @@ function toRow(e) {
     location: loc,
     venue: e.locationName || null,
     status: e.isRegistrationOpen ? "Registration open" : "",
+    // AES publishes the registration window on every event — feed it straight
+    // through so the tournament cards show when signup opens/closes. AES is
+    // authoritative for its own events, so re-syncs refresh these.
+    // registration_platform is intentionally NOT written: the UI infers "AES"
+    // from the source, which keeps any manual override intact.
+    registration_opens: (e.registrationPeriod?.startDate || "").slice(0, 10) || null,
+    registration_deadline: (e.registrationPeriod?.endDate || "").slice(0, 10) || null,
     source: SOURCE,
     source_url: aesUrl(e.eventId),
     is_qualifier: false,
