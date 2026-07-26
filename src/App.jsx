@@ -51,7 +51,7 @@ const isPlaceholderCoach = (c) => { const v = String(c || "").trim(); return !v 
 // Generic "coverage bodies" that can be assigned to cover a practice (e.g. when a
 // team's coaches are all traveling). They're placeholders — excluded from the
 // away/conflict math above — but always offered as sub options on the boards.
-const COVERAGE_SUBS = ["Practice Floater Coach 1", "Tournament Floater Coach", "13-1 Assistant Coach", "15-2 Assistant Coach"];
+const COVERAGE_SUBS = ["Tournament Floater Coach", "13-1 Assistant Coach", "15-2 Assistant Coach"];
 function tnEffectiveStaff(a, team) {
   const dHead = team?.head_coach || null, dAsst = team?.assistant_coach || null;
   const head = (a?.head_override || dHead) || null;
