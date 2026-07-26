@@ -1407,7 +1407,7 @@ export default function App() {
   const [notifSeenAt, setNotifSeenAt]                       = useState("1970-01-01T00:00:00.000Z"); // last time notifications were viewed
   const [pushState, setPushState]                          = useState("loading"); // unsupported | off | on | denied
   const [blackoutDates, setBlackoutDates]                   = useState([]);
-  const [tnFilters, setTnFilters]                           = useState({ search: "", ageFor: "", qualifierOnly: false, dateFrom: "", dateTo: "", hideClosed: false, hideCancelled: true, startsOn: [], state: "", numDays: "", divisions: [], tags: [], showAllSources: false, ourStatus: [] });
+  const [tnFilters, setTnFilters]                           = useState({ search: "", ageFor: "", qualifierOnly: false, dateFrom: "", dateTo: "", hideClosed: false, hideCancelled: true, startsOn: [], state: "", numDays: "", divisions: [], tags: [], sourceScope: "ours", ourStatus: [] });
   const [tnSelected, setTnSelected]                         = useState(() => new Set()); // tournament ids checked for bulk delete
   const [regShowDone, setRegShowDone]                       = useState(false); // Registration view: include finished tournaments
   const [tnView, setTnView]                                 = useState("calendar"); // "list" | "calendar"
@@ -16478,6 +16478,27 @@ export default function App() {
   const TN_AGES = [18, 17, 16, 15, 14, 13, 12, 11];
   // An "entry" token is "<age> <tier>", e.g. "17 American".
   const entryToken = (age, tier) => age + " " + tier;
+  // Which tournaments a source scope includes. "ours" is the default working
+  // set: anything we added by hand, the Lone Star feed (AES), every National
+  // Qualifier, and the live SportWrench sync — i.e. everything except the bulk
+  // catalog imports (USAV / JVC / AAU browse data).
+  const TN_SCOPES = [
+    { id: "ours",  label: "Ours · Lone Star · Qualifiers" },
+    { id: "manual",label: "Manual (added by us)" },
+    { id: "aes",   label: "AES · Lone Star" },
+    { id: "qual",  label: "Qualifiers only" },
+    { id: "all",   label: "All sources" },
+  ];
+  const tnSourceMatch = (t, scope) => {
+    const src = (t.source || "").trim();
+    switch (scope) {
+      case "all":    return true;
+      case "manual": return src === "manual" || !src;
+      case "aes":    return src.startsWith("AES");
+      case "qual":   return !!t.is_qualifier;
+      default:       return src === "manual" || !src || src.startsWith("AES") || src.startsWith("SportWrench:Sync") || !!t.is_qualifier;
+    }
+  };
   const entryTier = (token) => token.slice(token.indexOf(" ") + 1);
   const entryAge  = (token) => parseInt(token);
   const TN_DOW_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -17172,11 +17193,7 @@ export default function App() {
       // Default scope: anything YOU added by hand (source "manual"), Lone Star
       // events (from AES), National Qualifiers, and the live SportWrench sync
       // (qualifiers + Texas). "Show all sources" reveals every bulk import too.
-      if (!tnFilters.showAllSources) {
-        const src = (t.source || "").trim();
-        const inScope = src === "manual" || !src || src.startsWith("AES") || src.startsWith("SportWrench:Sync") || t.is_qualifier;
-        if (!inScope) return false;
-      }
+      if (!tnSourceMatch(t, tnFilters.sourceScope)) return false;
       if (tnFilters.hideCancelled && t.cancelled) return false;
       if (tnFilters.qualifierOnly && !t.is_qualifier) return false;
       if (tnFilters.hideClosed && (t.status||"").toLowerCase().includes("closed")) return false;
@@ -17336,9 +17353,16 @@ export default function App() {
             <input type="checkbox" checked={tnFilters.hideCancelled} onChange={e=>setTnFilters(prev=>({...prev,hideCancelled:e.target.checked}))} />
             Hide cancelled
           </label>
-          <label style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:11,color:tnFilters.showAllSources?C.gold:C.mut,cursor:"pointer",fontWeight:700}} title="By default the listings show only Lone Star events (from AES) and National Qualifiers. Check this to see every imported tournament.">
-            <input type="checkbox" checked={tnFilters.showAllSources} onChange={e=>setTnFilters(prev=>({...prev,showAllSources:e.target.checked}))} />
-            Show all sources
+          <label style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:11,color:C.mut,fontWeight:700}}
+            title="Which tournaments to list. “Ours · Lone Star · Qualifiers” is the default working set: anything we added by hand, the AES Lone Star feed, every National Qualifier, and the live SportWrench sync — the bulk USAV/JVC/AAU catalog is left out.">
+            Source:
+            <select value={tnFilters.sourceScope} onChange={e=>setTnFilters(prev=>({...prev,sourceScope:e.target.value}))}
+              style={{...inpStyle,padding:"6px 10px",fontSize:12,fontWeight:700,color:tnFilters.sourceScope==="ours"?C.text:C.gold}}>
+              {TN_SCOPES.map(sc => {
+                const n = tournaments.filter(t => (!tnFilters.hideCancelled || !t.cancelled) && tnSourceMatch(t, sc.id)).length;
+                return <option key={sc.id} value={sc.id}>{sc.label} ({n})</option>;
+              })}
+            </select>
           </label>
           {/* Show ONLY tournaments we're on, by our assignment status. */}
           <span style={{display:"inline-flex",alignItems:"center",gap:5,flexWrap:"wrap"}}>
@@ -17360,7 +17384,7 @@ export default function App() {
             )}
           </span>
           {hasActiveFilters ? (
-            <button onClick={()=>setTnFilters({ search:"", ageFor:"", qualifierOnly:false, dateFrom:"", dateTo:"", hideClosed:false, hideCancelled:true, startsOn:[], state:"", numDays:"", divisions:[], tags:[], showAllSources:false, ourStatus:[] })}
+            <button onClick={()=>setTnFilters({ search:"", ageFor:"", qualifierOnly:false, dateFrom:"", dateTo:"", hideClosed:false, hideCancelled:true, startsOn:[], state:"", numDays:"", divisions:[], tags:[], sourceScope:"ours", ourStatus:[] })}
               style={{padding:"4px 8px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit",marginLeft:"auto"}}>
               Clear all
             </button>
