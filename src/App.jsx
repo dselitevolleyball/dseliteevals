@@ -3280,7 +3280,7 @@ export default function App() {
     if (error) { console.error("Load email_log error:", error); return; }
     setEmailLog(data || []);
   }, []);
-  useEffect(() => { if (isApproved && view === "email") { loadEmailTemplates(); loadEmailLog(); } }, [isApproved, view, loadEmailTemplates, loadEmailLog]);
+  useEffect(() => { if (isApproved && view === "email") { loadEmailTemplates(); loadEmailLog(); loadTournaments(); loadSlotMoves(); loadPracticeCoverage(); loadPractice(); } }, [isApproved, view, loadEmailTemplates, loadEmailLog, loadTournaments, loadSlotMoves, loadPracticeCoverage, loadPractice]);
   // One-time: import any templates a device previously saved to localStorage
   // into the shared DB table, so existing templates aren't lost in the move.
   useEffect(() => {
@@ -11003,6 +11003,7 @@ export default function App() {
 
     // ── Per-team mail merge ────────────────────────────────────────────
     // {{TEAM}} {{PLAYERS}} {{COACHES}} {{PRACTICES}} {{FLEX}} {{SPORTSYOU}}
+    // {{TOURNAMENTS}} {{SCHEDULE_CHANGES}} {{COACH_COVERAGE}} {{SA_SCHEDULE}}
     // are substituted with each team's live data at send time, so one draft
     // becomes a personalized email per selected team.
     const mergeFields = (tn) => {
@@ -11047,7 +11048,47 @@ export default function App() {
         : "";
       const code = sportsYouCodeFor(t.team_name ? t : tn) || "(code coming soon)";
       const orientation = orientationDateFor(tn) || "(date announced soon)";
-      return { TEAM: tn, PLAYERS: playersTxt, COACHES: coachesTxt, PRACTICES: practicesTxt, FLEX: flex, SPORTSYOU: code, ORIENTATION: orientation };
+      // ── Season-update merge fields ──────────────────────────────────
+      const fmtMD = iso => iso ? new Date(iso + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "";
+      const fmtWD = iso => new Date(iso + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+      const todayISO = localDateISO();
+      // {{TOURNAMENTS}} — this team's schedule; ✓ = locked, everything else tentative.
+      const tnById = new Map((tournaments || []).map(x => [x.id, x]));
+      const tnsTxt = (tournamentAssignments || [])
+        .filter(a => a.team_id === tn)
+        .map(a => ({ a, x: tnById.get(a.tournament_id) }))
+        .filter(({ x }) => x && !x.cancelled && x.start_date)
+        .sort((p, r) => p.x.start_date.localeCompare(r.x.start_date))
+        .map(({ a, x }) => {
+          const dates = fmtMD(x.start_date) + (x.end_date && x.end_date !== x.start_date ? "–" + fmtMD(x.end_date) : "");
+          const city = (x.location || "").split("/")[0].trim();
+          return "• " + dates + " — " + x.name + (city ? " (" + city + ")" : "") + (x.stay_over ? " · overnight" : "") + (a.status === "locked" ? " ✓" : " (tentative)");
+        }).join("\n") || "(tournament schedule coming soon)";
+      // {{SCHEDULE_CHANGES}} — per-date practice time moves (court / S&A planning).
+      const sunSlot = (() => { const a = practiceAssignments.find(x => x.team_name === tn && x.day === "Sun" && (x.phase || "season") === "season"); return a ? a.slot : null; })();
+      const movesTxt = (slotMoves || [])
+        .filter(m => m.team_name === tn && (m.practice_date || "") >= todayISO)
+        .sort((p, r) => p.practice_date.localeCompare(r.practice_date))
+        .map(m => "• " + fmtWD(m.practice_date) + " — practice runs " + m.slot + (sunSlot ? " (instead of the usual " + sunSlot + ")" : ""))
+        .join("\n") || "No time changes — your normal practice times hold all season.";
+      // {{COACH_COVERAGE}} — who runs practice when a coach travels. Deduped by
+      // (date + coach first name) in case a coach is keyed under both a short
+      // and full name.
+      const covSeen = new Set();
+      const covTxt = (practiceCoverage || [])
+        .filter(c => c.team_name === tn && (c.practice_date || "") >= todayISO && isRealSub(c.sub_name))
+        .sort((p, r) => (p.practice_date + p.coach_out).localeCompare(r.practice_date + r.coach_out))
+        .filter(c => { const k = c.practice_date + "|" + (c.coach_out || "").trim().toLowerCase().split(" ")[0]; if (covSeen.has(k)) return false; covSeen.add(k); return true; })
+        .map(c => "• " + fmtWD(c.practice_date) + " — " + c.coach_out + " is away; " + c.sub_name + " will be coaching")
+        .join("\n") || "No coaching absences currently scheduled — your coaches will be at every practice.";
+      // {{SA_SCHEDULE}} — the team's regular-season Speed & Agility sessions.
+      const saTxt = (saSessions || [])
+        .filter(s => s.team_name === tn && String(s.block || "").startsWith("season"))
+        .sort((p, r) => (p.session_date || "").localeCompare(r.session_date || ""))
+        .map(s => "• " + fmtWD(s.session_date) + " — " + s.slot)
+        .join("\n") || "(no Speed & Agility scheduled for this team)";
+      return { TEAM: tn, PLAYERS: playersTxt, COACHES: coachesTxt, PRACTICES: practicesTxt, FLEX: flex, SPORTSYOU: code, ORIENTATION: orientation,
+        TOURNAMENTS: tnsTxt, SCHEDULE_CHANGES: movesTxt, COACH_COVERAGE: covTxt, SA_SCHEDULE: saTxt };
     };
     // Replace ANY {{KEY}} that exists in the fields object (unknown keys are
     // left visible so a typo is obvious rather than silently deleted).
@@ -11453,7 +11494,7 @@ export default function App() {
             const audWord = emailAudience === "both" ? "parents + coaches" : emailAudience === "coaches" ? "coaches only" : "parents";
             return (
               <button onClick={sendPerTeam} disabled={emailSending || !emailSubject.trim() || !emailBody.trim() || audTotal === 0}
-                title="Sends a separate email to each checked team with {{TEAM}}, {{PLAYERS}}, {{COACHES}}, {{PRACTICES}}, {{FLEX}}, {{SPORTSYOU}} and {{ORIENTATION}} filled in with that team's data"
+                title="Sends a separate email to each checked team with {{TEAM}}, {{PLAYERS}}, {{COACHES}}, {{PRACTICES}}, {{FLEX}}, {{SPORTSYOU}}, {{ORIENTATION}}, {{TOURNAMENTS}}, {{SCHEDULE_CHANGES}}, {{COACH_COVERAGE}} and {{SA_SCHEDULE}} filled in with that team's data"
                 style={{padding:"10px 20px",borderRadius:8,border:"none",background:(emailSending||!emailSubject.trim()||!emailBody.trim()||audTotal===0)?C.border:C.acc,color:(emailSending||!emailSubject.trim()||!emailBody.trim()||audTotal===0)?C.mut:"#000",fontFamily:"inherit",fontSize:14,fontWeight:800,cursor:(emailSending||!emailSubject.trim()||!emailBody.trim()||audTotal===0)?"default":"pointer"}}>
                 {emailSending ? "Sending…" : "Send to " + emailTeams.size + " team" + (emailTeams.size===1?"":"s") + " — " + audTotal + " address" + (audTotal===1?"":"es") + " (" + audWord + ")"}
               </button>
