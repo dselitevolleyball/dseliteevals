@@ -197,9 +197,13 @@ export default async function handler(req, res) {
     const end = tn.end_date || tn.start_date;
     const summary = team + " Tournament — " + tn.name + (a.status === "planned" ? " (tentative)" : "");
     const desc = ["Status: " + (a.status || "planned"), a.division ? "Division: " + a.division : "", tn.stay_over ? "Travel tournament — overnight stay." : ""].filter(Boolean).join("\n");
+    // Timed (not all-day) so importers that mangle VALUE=DATE spans — SportsYou
+    // shifts/shortens them — render the full Sat–Sun (or Fri–Sun) span. 8am on
+    // day 1 through 6pm on the final day, in the same TZID the practice events
+    // already use correctly.
     ev.push(["BEGIN:VEVENT", "UID:" + (team + "-tn-" + tn.id).replace(/\s+/g, "_") + "@dseliteevals", "DTSTAMP:20260702T000000Z",
-      "DTSTART;VALUE=DATE:" + tn.start_date.replace(/-/g, ""),
-      "DTEND;VALUE=DATE:" + addDays(end, 1).replace(/-/g, ""),
+      `DTSTART;TZID=${TZ}:` + tn.start_date.replace(/-/g, "") + "T080000",
+      `DTEND;TZID=${TZ}:` + end.replace(/-/g, "") + "T180000",
       "SUMMARY:" + icsEsc(summary),
       "DESCRIPTION:" + icsEsc(desc),
       "LOCATION:" + icsEsc([tn.venue, tn.location].filter(Boolean).join(", ")),
