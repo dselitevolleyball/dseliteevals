@@ -2788,6 +2788,9 @@ export default function App() {
     if (error) { window.alert("Couldn't set court: " + error.message); loadPractice(); }
   }, [loadPractice]);
   // Daily view: mark a coach out (and optionally who's subbing) for one date.
+  // Keyed on (date, team, coach_out) regardless of slot — a team practices once
+  // a day, so its coverage follows it even if the team is moved to another block
+  // for the Sunday 4-court plan.
   const setCoverage = useCallback(async (practice_date, team_name, slot, phase, coach_out, sub_name, combine_with_team = null) => {
     if (!practice_date || !coach_out) return;
     const row = {
@@ -2796,15 +2799,17 @@ export default function App() {
       combine_with_team: (combine_with_team || "").trim() || null,
     };
     setPracticeCoverage(prev => {
-      const rest = prev.filter(c => !(c.practice_date === practice_date && c.team_name === team_name && c.slot === slot && (c.phase||"season") === phase && c.coach_out === coach_out));
+      const rest = prev.filter(c => !(c.practice_date === practice_date && c.team_name === team_name && c.coach_out === coach_out));
       return [...rest, row];
     });
-    const { error } = await supabase.from("practice_coverage").upsert(row, { onConflict: "practice_date,team_name,slot,phase,coach_out" });
+    // Replace any existing row for this coach/team/date (at any slot), then insert.
+    await supabase.from("practice_coverage").delete().eq("practice_date", practice_date).eq("team_name", team_name).eq("coach_out", coach_out);
+    const { error } = await supabase.from("practice_coverage").insert(row);
     if (error) { window.alert("Couldn't save coverage: " + error.message); loadPracticeCoverage(); }
   }, [loadPracticeCoverage]);
   const clearCoverage = useCallback(async (practice_date, team_name, slot, phase, coach_out) => {
-    setPracticeCoverage(prev => prev.filter(c => !(c.practice_date === practice_date && c.team_name === team_name && c.slot === slot && (c.phase||"season") === phase && c.coach_out === coach_out)));
-    const { error } = await supabase.from("practice_coverage").delete().match({ practice_date, team_name, slot, phase, coach_out });
+    setPracticeCoverage(prev => prev.filter(c => !(c.practice_date === practice_date && c.team_name === team_name && c.coach_out === coach_out)));
+    const { error } = await supabase.from("practice_coverage").delete().eq("practice_date", practice_date).eq("team_name", team_name).eq("coach_out", coach_out);
     if (error) { window.alert("Couldn't clear coverage: " + error.message); loadPracticeCoverage(); }
   }, [loadPracticeCoverage]);
   // Cancel (or un-cancel) practice on a date. team = "" cancels the whole day
@@ -5029,6 +5034,8 @@ export default function App() {
     const WD = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
     const wd = (iso) => { try { return WD[new Date(iso + "T00:00").getDay()]; } catch { return ""; } };
     const origSlot = (team, iso) => { const a = practiceAssignments.find(x => x.team_name === team && x.day === wd(iso)); return a ? a.slot : null; };
+    // Did this team actually have a practice scheduled on this date?
+    const practicesOnDate = (team, iso) => { const ph = phaseForDate(iso), day = wd(iso); return !!ph && practiceAssignments.some(a => a.team_name === team && a.day === day && (a.phase || "fall1") === ph); };
     const items = [];
     (practiceCoverage || []).forEach(c => {
       if ((c.practice_date || "") < today) return;
@@ -5036,7 +5043,12 @@ export default function App() {
       else if (isRealSub(c.sub_name) && matches(c.coach_out)) items.push({ date: c.practice_date, kind: "off", team: c.team_name, slot: c.slot, sub: c.sub_name });
     });
     (slotMoves || []).forEach(m => { if ((m.practice_date || "") >= today && teamSet.has(m.team_name)) { const from = origSlot(m.team_name, m.practice_date); if (from !== m.slot) items.push({ date: m.practice_date, kind: "moved", team: m.team_name, slot: m.slot, from }); } });
-    (practiceCancellations || []).forEach(x => { if ((x.practice_date || "") >= today && (!x.team_name || teamSet.has(x.team_name))) items.push({ date: x.practice_date, kind: "cancelled", team: x.team_name || "" }); });
+    // Cancellations: only for the coach's teams that actually had a practice that date.
+    (practiceCancellations || []).forEach(x => {
+      if ((x.practice_date || "") < today) return;
+      const affected = x.team_name ? (teamSet.has(x.team_name) ? [x.team_name] : []) : [...teamSet];
+      affected.forEach(t => { if (practicesOnDate(t, x.practice_date)) items.push({ date: x.practice_date, kind: "cancelled", team: t }); });
+    });
     // De-dupe (same date/kind/team/slot) and sort by date.
     const seen = new Set();
     return items.filter(it => { const k = it.date + "|" + it.kind + "|" + it.team + "|" + (it.slot||""); if (seen.has(k)) return false; seen.add(k); return true; })
@@ -5244,12 +5256,17 @@ export default function App() {
             });
             return Object.entries(byTeam).map(([team, slots]) => ({ team, slots: mergeAdjacentSlots(slots) }));
           };
-          const PR = "#06b6d4", TNC = "#f59e0b", SA = "#22c55e"; // practice=cyan, tournament=amber, S&A=green
+          const PR = "#06b6d4", TNC = "#f59e0b", SA = "#22c55e", SUBC = "#ec4899"; // practice=cyan, tournament=amber, S&A=green, subbing=pink
+          // Shifts I'm picking up (covering another team) — shown in pink so a
+          // coach can spot where they're subbing. Effective slot honors a court move.
+          const mySubs = (practiceCoverage || []).filter(c => isRealSub(c.sub_name) && isMine(c.sub_name));
+          const subsOn = (iso) => { const seen = new Set(); return mySubs.filter(c => c.practice_date === iso).map(c => { const mv = (slotMoves||[]).find(m => m.practice_date === iso && m.team_name === c.team_name); return { team: c.team_name, slot: (mv && mv.slot) || c.slot }; }).filter(x => { const k = x.team + "|" + x.slot; if (seen.has(k)) return false; seen.add(k); return true; }); };
           const sel = (homeCalSel && homeCalSel.slice(0,7) === monthKey) ? homeCalSel
                     : (todayISO.slice(0,7) === monthKey ? todayISO : null);
           const selP = sel ? practicesOn(sel) : [];
           const selT = sel ? tnsOn(sel) : [];
           const selSA = sel ? saOn(sel) : [];
+          const selSub = sel ? subsOn(sel) : [];
           const fmtLong = (iso) => new Date(iso + "T12:00:00").toLocaleDateString(undefined, { weekday:"long", month:"short", day:"numeric" });
           const cells = [];
           for (let i = 0; i < leadPad; i++) cells.push(null);
@@ -5272,9 +5289,10 @@ export default function App() {
                 {cells.map((d,i) => {
                   if (d === null) return <div key={"b"+i} />;
                   const iso = isoOf(d);
-                  const evP = practicesOn(iso), evT = tnsOn(iso), evSA = saOn(iso);
+                  const evP = practicesOn(iso), evT = tnsOn(iso), evSA = saOn(iso), evSub = subsOn(iso);
                   const tnLabels = [...new Set(evT.map(x => tnAbbr(x.tn.name)))];
                   const events = [...tnLabels.map(l => ({ label: l, c: TNC })),
+                    ...evSub.map(x => ({ label: "🔁 " + abbr(x.team) + " " + shortTime(x.slot), c: SUBC })),
                     ...evSA.map(x => ({ label: abbr(x.team) + " S&A", c: SA })),
                     ...evP.map(x => ({ label: abbr(x.team) + " " + shortTime(x.slots.join(",")), c: PR }))];
                   const isToday = iso === todayISO;
@@ -5292,8 +5310,9 @@ export default function App() {
                   );
                 })}
               </div>
-              <div style={{display:"flex",alignItems:"center",gap:10,marginTop:8,fontSize:10,color:C.mut}}>
+              <div style={{display:"flex",alignItems:"center",gap:10,marginTop:8,fontSize:10,color:C.mut,flexWrap:"wrap"}}>
                 <span style={{display:"flex",alignItems:"center",gap:4}}><span style={{width:10,height:8,borderRadius:2,background:PR+"33",border:"1px solid "+PR}} />Practice</span>
+                {mySubs.length>0 && <span style={{display:"flex",alignItems:"center",gap:4}}><span style={{width:10,height:8,borderRadius:2,background:SUBC+"33",border:"1px solid "+SUBC}} />🔁 Subbing</span>}
                 <span style={{display:"flex",alignItems:"center",gap:4}}><span style={{width:10,height:8,borderRadius:2,background:SA+"33",border:"1px solid "+SA}} />S&amp;A</span>
                 <span style={{display:"flex",alignItems:"center",gap:4}}><span style={{width:10,height:8,borderRadius:2,background:TNC+"33",border:"1px solid "+TNC}} />Tournament</span>
                 <div style={{flex:1}} />
@@ -5302,10 +5321,17 @@ export default function App() {
               {sel && (
                 <div style={{marginTop:10,borderTop:"1px solid "+C.border,paddingTop:10}}>
                   <div style={{fontSize:11,fontWeight:800,color:C.text,marginBottom:6}}>{fmtLong(sel)}{sel===todayISO?" · Today":""}</div>
-                  {(selP.length===0 && selT.length===0 && selSA.length===0) ? (
+                  {(selP.length===0 && selT.length===0 && selSA.length===0 && selSub.length===0) ? (
                     <div style={{fontSize:12,color:C.mut}}>Nothing scheduled.</div>
                   ) : (
                     <div style={{display:"flex",flexDirection:"column",gap:5}}>
+                      {selSub.map((x,i) => (
+                        <div key={"sub"+i} style={{display:"flex",alignItems:"center",gap:8,fontSize:13}}>
+                          <span style={{width:6,height:6,borderRadius:3,background:SUBC,flexShrink:0}} />
+                          <span style={{flex:1,color:C.text,fontWeight:600}}>🔁 Subbing <b>{x.team}</b> <span style={{color:SUBC,fontWeight:800,fontSize:10}}>PICKUP</span></span>
+                          <span style={{fontSize:11,color:C.mut}}>{x.slot}</span>
+                        </div>
+                      ))}
                       {selT.map((x,i) => (
                         <div key={"t"+i} style={{display:"flex",alignItems:"center",gap:8,fontSize:13}}>
                           <span style={{width:6,height:6,borderRadius:3,background:TNC,flexShrink:0}} />
@@ -8679,9 +8705,10 @@ export default function App() {
         .filter(f => (f.phase || "season") === dayPhase && f.day === weekday && f.slot === label)
         .map(f => (f.coach_name || "").trim()).filter(Boolean))]
         .filter(name => !outTodaySet.has(nrmName(name)) && !awayLow.has(nrmName(name)));
+      // Slot-agnostic: coverage follows the team even if it's moved to another
+      // block that day (one practice per team per day).
       const covFor = (team, label, coachName) => practiceCoverage.find(c =>
-        c.practice_date === dailyDate && c.team_name === team && c.slot === label &&
-        (c.phase || "season") === dayPhase && c.coach_out === coachName);
+        c.practice_date === dailyDate && c.team_name === team && c.coach_out === coachName);
       const shiftDay = (n) => { if (!d) return; const nd = new Date(d); nd.setDate(nd.getDate()+n); const iso = nd.toISOString().slice(0,10); setDailyDate(iso); setCalMonth(iso.slice(0,7)); };
       // Jump to the next/previous date that actually has practice scheduled.
       const jumpToPractice = (dir) => {
