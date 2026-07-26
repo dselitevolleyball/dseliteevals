@@ -9344,6 +9344,30 @@ export default function App() {
                 </div>
               );
             })()}
+            {/* S&A lane — who's with the trainer each hour on this date. */}
+            {(() => {
+              const saToday = (saSessions||[]).filter(s => s.session_date === dailyDate);
+              if (!saToday.length) return null;
+              const startOf = (sl) => { const n = parseInt(sl); return n === 12 ? 12 : n + 12; };
+              const list = [...saToday].sort((a,b) => startOf(a.slot) - startOf(b.slot));
+              const blk = (b) => ({season1:"B1",season2:"B2",fall1:"F1",fall2:"F2"})[b] || null;
+              return (
+                <div style={{background:"rgba(34,197,94,0.06)",border:"1px solid #22c55e",borderRadius:12,padding:"10px 14px",marginBottom:10}}>
+                  <div style={{fontSize:11,fontWeight:800,letterSpacing:0.4,textTransform:"uppercase",color:"#22c55e",marginBottom:6}}>💪 Speed &amp; Agility · {list.length} session{list.length===1?"":"s"} · one team per hour</div>
+                  <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                    {list.map((s,i) => (
+                      <div key={i} style={{display:"flex",alignItems:"center",gap:6,background:C.bg,border:"1px solid "+C.border,borderRadius:8,padding:"5px 10px"}}>
+                        <span style={{fontSize:11,fontWeight:800,color:"#22c55e",minWidth:50}}>{s.slot}</span>
+                        <span onClick={()=>setTeamCardName(s.team_name)} title="Open team card" style={{fontSize:12,fontWeight:700,color:C.text,cursor:"pointer",textDecoration:"underline",textDecorationColor:"transparent"}}
+                          onMouseEnter={e=>e.currentTarget.style.textDecorationColor="#22c55e"}
+                          onMouseLeave={e=>e.currentTarget.style.textDecorationColor="transparent"}>{s.team_name}</span>
+                        {blk(s.block) && <span style={{fontSize:8,fontWeight:800,color:"#22c55e",border:"1px solid #22c55e",borderRadius:4,padding:"0 4px"}}>{blk(s.block)}</span>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
             <div style={{display:"flex",gap:12,overflowX:"auto",paddingBottom:8,alignItems:"flex-start"}}>
               {daySlots.map(s => {
                 const teams = teamsFor(s.label);
@@ -9385,6 +9409,8 @@ export default function App() {
                                   {[1,2,3,4,5,6].map(n => <option key={n} value={n}>{"C"+n}</option>)}
                                 </select>
                                 <span onClick={()=>setTeamCardName(a.team_name)} style={{fontSize:13,fontWeight:800,color:tCancelled?C.mut:C.gold,cursor:"pointer",textDecoration:tCancelled?"line-through":"none"}}>{a.team_name}</span>
+                                {(() => { const sa2 = (saSessions||[]).find(x => x.session_date === dailyDate && x.team_name === a.team_name);
+                                  return sa2 ? <span title={"Speed & Agility " + sa2.slot} style={{fontSize:9,fontWeight:800,color:"#22c55e",border:"1px solid #22c55e",borderRadius:5,padding:"1px 5px",whiteSpace:"nowrap"}}>💪 {sa2.slot}</span> : null; })()}
                                 <div style={{flex:1}} />
                                 {tCancelled
                                   ? <button onClick={()=>toggleCancelDate(dailyDate, "", a.team_name)} title="Un-cancel this team's practice" style={{padding:"2px 8px",borderRadius:6,border:"1px solid "+C.grn,background:"transparent",color:C.grn,fontSize:10,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>Un-cancel</button>
