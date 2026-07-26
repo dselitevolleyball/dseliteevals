@@ -5193,7 +5193,7 @@ export default function App() {
     const items = [];
     (practiceCoverage || []).forEach(c => {
       if ((c.practice_date || "") < today) return;
-      if (isRealSub(c.sub_name) && matches(c.sub_name)) items.push({ date: c.practice_date, kind: "pickup", team: c.team_name, slot: c.slot });
+      if (isRealSub(c.sub_name) && matches(c.sub_name)) items.push({ date: c.practice_date, kind: "pickup", team: c.team_name, slot: c.slot, coach_out: c.coach_out, phase: c.phase, who: c.sub_name });
       else if (isRealSub(c.sub_name) && matches(c.coach_out)) items.push({ date: c.practice_date, kind: "off", team: c.team_name, slot: c.slot, sub: c.sub_name, tn: coachTnOn(c.practice_date) });
     });
     (slotMoves || []).forEach(m => { if ((m.practice_date || "") >= today && teamSet.has(m.team_name)) { const from = origSlot(m.team_name, m.practice_date); if (from !== m.slot) items.push({ date: m.practice_date, kind: "moved", team: m.team_name, slot: m.slot, from }); } });
@@ -5223,6 +5223,15 @@ export default function App() {
                    tag: (it) => it.tn ? "AT TOURN." : "COVERED", tagColor: (it) => it.tn ? "#f59e0b" : C.mut },
     };
     const val = (v, it) => typeof v === "function" ? v(it) : v;
+    // Give back an assigned pickup: clears the sub so it re-opens for others,
+    // and pings the directors — same as a time-off request feeding an open shift.
+    const releaseShift = (it) => {
+      const d = fmt(it.date);
+      if (!window.confirm("Give back " + it.team + " on " + d + " · " + it.slot + "?\nIt'll re-open for another coach to pick up, and the directors are notified.")) return;
+      setCoverage(it.date, it.team, it.slot, it.phase || "season", it.coach_out, null);
+      fetch("/api/send-push", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: "Coverage shift given back", body: (it.who || "A coach") + " can't cover " + it.team + " on " + d + " · " + it.slot + " — it's open for pickup.", url: "/", audience: { type: "admins" } }) }).catch(() => {});
+    };
     return (
       <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:"10px 12px",marginBottom:opts.marginBottom ?? 12}}>
         <div style={{fontSize:11,fontWeight:800,letterSpacing:0.4,textTransform:"uppercase",color:C.mut,marginBottom:7}}>📋 Schedule changes &amp; pickups <span style={{color:C.gold}}>({items.length})</span></div>
@@ -5232,6 +5241,8 @@ export default function App() {
               <span style={{fontSize:11}}>{val(m.icon, it)}</span>
               <span style={{minWidth:96,color:C.mut,fontWeight:600}}>{fmt(it.date)}</span>
               <span style={{flex:1,color:val(m.color, it),minWidth:0}}>{m.text(it)}</span>
+              {it.kind === "pickup" && <button onClick={()=>releaseShift(it)} title="Can't make this shift — give it back for another coach to pick up"
+                style={{fontSize:9,fontWeight:800,color:"#f59e0b",border:"1px solid #f59e0b",background:"transparent",borderRadius:5,padding:"1px 6px",cursor:"pointer",fontFamily:"inherit",flexShrink:0}}>Can't make it</button>}
               <span style={{fontSize:8,fontWeight:800,color:tagColor,border:"1px solid "+tagColor,borderRadius:5,padding:"1px 5px",flexShrink:0}}>{val(m.tag, it)}</span>
             </div>
           ); })}
