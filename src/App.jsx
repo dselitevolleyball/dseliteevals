@@ -1407,7 +1407,7 @@ export default function App() {
   const [notifSeenAt, setNotifSeenAt]                       = useState("1970-01-01T00:00:00.000Z"); // last time notifications were viewed
   const [pushState, setPushState]                          = useState("loading"); // unsupported | off | on | denied
   const [blackoutDates, setBlackoutDates]                   = useState([]);
-  const [tnFilters, setTnFilters]                           = useState({ search: "", ageFor: "", qualifierOnly: false, dateFrom: "", dateTo: "", hideClosed: false, hideCancelled: true, startsOn: [], state: "", numDays: "", divisions: [], tags: [], showAllSources: false });
+  const [tnFilters, setTnFilters]                           = useState({ search: "", ageFor: "", qualifierOnly: false, dateFrom: "", dateTo: "", hideClosed: false, hideCancelled: true, startsOn: [], state: "", numDays: "", divisions: [], tags: [], showAllSources: false, hideOurs: [] });
   const [tnSelected, setTnSelected]                         = useState(() => new Set()); // tournament ids checked for bulk delete
   const [tnView, setTnView]                                 = useState("calendar"); // "list" | "calendar"
   const [tnSumLevel, setTnSumLevel]                         = useState("all");  // Summary filter: all | National | Regional | Developmental
@@ -16859,6 +16859,28 @@ export default function App() {
     if (error) { window.alert("Update failed: " + error.message); return; }
     loadTournaments();
   };
+  // Registration fields on a tournament card (opens date / platform).
+  const updateTournamentReg = async (t, patch) => {
+    setTournaments(prev => prev.map(x => x.id === t.id ? { ...x, ...patch } : x)); // optimistic
+    const { error } = await supabase.from("tournaments").update({ ...patch, updated_at: new Date().toISOString() }).eq("id", t.id);
+    if (error) { window.alert("Couldn't save: " + error.message); loadTournaments(); }
+  };
+  // Where a tournament is registered. An explicit choice wins; otherwise infer
+  // from where the row came from (AES feed / SportWrench sync).
+  const TN_PLATFORMS = ["AES", "SportWrench"];
+  const tnPlatformOf = (t) => {
+    const explicit = (t.registration_platform || "").trim();
+    if (explicit) return explicit;
+    const src = (t.source || "").trim();
+    if (src.startsWith("AES")) return "AES";
+    if (src.startsWith("SportWrench")) return "SportWrench";
+    return "";
+  };
+  const tnPlatformUrl = (t, p) => {
+    const u = (t.source_url || "").trim();
+    if (u) return u.startsWith("http") ? u : "https://" + u;
+    return p === "AES" ? "https://www.advancedeventsystems.com/" : p === "SportWrench" ? "https://events.sportwrench.com/" : "";
+  };
 
   function TournamentCard({ tn }) {
     // Assignments for this tournament with looked-up team.
@@ -16922,6 +16944,40 @@ export default function App() {
               {tn.status && <span style={{color:tn.status.includes("Open")?C.grn:C.mut}}>{tn.status}</span>}
             </div>
             {tn.venue && <div style={{fontSize:10,color:C.mut,marginTop:2}}>{tn.venue}</div>}
+            {/* Registration — when it opens, when it closes, and where to do it. */}
+            {(() => {
+              const plat = tnPlatformOf(tn);
+              const opens = tn.registration_opens || "";
+              const today = localDateISO();
+              const openState = !opens ? null : opens > today ? "soon" : "open";
+              const url = tnPlatformUrl(tn, plat);
+              const fld = {...inpStyle, padding:"2px 5px", fontSize:10, fontFamily:"inherit"};
+              return (
+                <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginTop:5,paddingTop:5,borderTop:"1px dashed "+C.border}}>
+                  <span style={{fontSize:9,fontWeight:800,textTransform:"uppercase",letterSpacing:0.4,color:C.mut}}>Registration</span>
+                  <label style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:10,color:C.mut}} title="Date registration opens">
+                    Opens
+                    {canOps
+                      ? <input type="date" value={opens} onChange={e=>updateTournamentReg(tn, { registration_opens: e.target.value || null })}
+                          style={{...fld, color: openState==="open" ? C.grn : openState==="soon" ? "#f59e0b" : C.text}} />
+                      : <b style={{color:C.text}}>{opens ? new Date(opens+"T12:00:00").toLocaleDateString() : "—"}</b>}
+                  </label>
+                  {openState && <span style={{fontSize:9,fontWeight:800,color:openState==="open"?C.grn:"#f59e0b",border:"1px solid "+(openState==="open"?C.grn:"#f59e0b"),borderRadius:5,padding:"1px 5px"}}>{openState==="open"?"OPEN NOW":"OPENS "+new Date(opens+"T12:00:00").toLocaleDateString(undefined,{month:"short",day:"numeric"})}</span>}
+                  {tn.registration_deadline && <span style={{fontSize:10,color:C.mut}}>Closes <b style={{color:C.text}}>{new Date(tn.registration_deadline+"T12:00:00").toLocaleDateString()}</b></span>}
+                  <label style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:10,color:C.mut}} title="Which platform we register on">
+                    Register on
+                    {canOps
+                      ? <select value={tn.registration_platform || ""} onChange={e=>updateTournamentReg(tn, { registration_platform: e.target.value || null })}
+                          style={{...fld, fontWeight:700, color: plat ? "#22d3ee" : C.mut}}>
+                          <option value="">{plat ? plat + " (from source)" : "— pick —"}</option>
+                          {TN_PLATFORMS.map(p => <option key={p} value={p}>{p}</option>)}
+                        </select>
+                      : <b style={{color: plat ? "#22d3ee" : C.mut}}>{plat || "—"}</b>}
+                  </label>
+                  {plat && url && <a href={url} target="_blank" rel="noreferrer" onClick={e=>e.stopPropagation()} style={{fontSize:10,fontWeight:700,color:"#22d3ee"}}>Open {plat} →</a>}
+                </div>
+              );
+            })()}
           </div>
           <div style={{display:"flex",gap:5,alignItems:"center"}}>
             <button onClick={()=>openEditTournament(tn)}
@@ -17094,9 +17150,16 @@ export default function App() {
         const eff = tnEffectiveTags(t);
         if (!tnFilters.tags.some(tag => eff.includes(tag))) return false;
       }
+      // "Hide ours" — drop tournaments we already have on our schedule at any of
+      // the chosen assignment statuses (planned / in progress / locked /
+      // registered), so the list shows only what is still up for grabs.
+      if (tnFilters.hideOurs.length > 0) {
+        const mine = tournamentAssignments.filter(a => a.tournament_id === t.id);
+        if (mine.some(a => tnFilters.hideOurs.includes(a.status || "planned"))) return false;
+      }
       return true;
     });
-    const hasActiveFilters = tnFilters.search || tnFilters.ageFor || tnFilters.qualifierOnly || tnFilters.hideClosed || tnFilters.dateFrom || tnFilters.dateTo || tnFilters.startsOn.length || tnFilters.state || tnFilters.numDays || tnFilters.divisions.length || tnFilters.tags.length;
+    const hasActiveFilters = tnFilters.search || tnFilters.ageFor || tnFilters.qualifierOnly || tnFilters.hideClosed || tnFilters.dateFrom || tnFilters.dateTo || tnFilters.startsOn.length || tnFilters.state || tnFilters.numDays || tnFilters.divisions.length || tnFilters.tags.length || tnFilters.hideOurs.length;
     return (
       <div>
         {/* Header + view dropdown */}
@@ -17206,8 +17269,28 @@ export default function App() {
             <input type="checkbox" checked={tnFilters.showAllSources} onChange={e=>setTnFilters(prev=>({...prev,showAllSources:e.target.checked}))} />
             Show all sources
           </label>
+          {/* Hide tournaments we're already on, by our assignment status —
+              leaves only what's still open for consideration. */}
+          <span style={{display:"inline-flex",alignItems:"center",gap:5,flexWrap:"wrap"}}>
+            <span style={{fontSize:11,color:C.mut,fontWeight:700}} title="Hide tournaments we already have on our schedule at these statuses">Hide ours:</span>
+            {TN_STATUS_ORDER.map(st => {
+              const on = tnFilters.hideOurs.includes(st);
+              const meta = TN_STATUS[st];
+              return (
+                <button key={st} onClick={()=>setTnFilters(prev=>({...prev,hideOurs: on ? prev.hideOurs.filter(x=>x!==st) : [...prev.hideOurs, st]}))}
+                  title={on ? "Showing hidden — click to include " + meta.label + " again" : "Hide tournaments we have as " + meta.label}
+                  style={{padding:"3px 9px",borderRadius:12,border:"1px solid "+(on?meta.color:C.border),background:on?meta.color+"22":"transparent",color:on?meta.color:C.mut,fontSize:10,fontWeight:800,cursor:"pointer",fontFamily:"inherit",textDecoration:on?"line-through":"none"}}>
+                  {meta.label}
+                </button>
+              );
+            })}
+            {tnFilters.hideOurs.length > 0 && (
+              <button onClick={()=>setTnFilters(prev=>({...prev,hideOurs:[]}))} title="Show all of ours again"
+                style={{padding:"3px 7px",borderRadius:12,border:"none",background:"transparent",color:C.mut,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>×</button>
+            )}
+          </span>
           {hasActiveFilters ? (
-            <button onClick={()=>setTnFilters({ search:"", ageFor:"", qualifierOnly:false, dateFrom:"", dateTo:"", hideClosed:false, hideCancelled:true, startsOn:[], state:"", numDays:"", divisions:[], tags:[], showAllSources:false })}
+            <button onClick={()=>setTnFilters({ search:"", ageFor:"", qualifierOnly:false, dateFrom:"", dateTo:"", hideClosed:false, hideCancelled:true, startsOn:[], state:"", numDays:"", divisions:[], tags:[], showAllSources:false, hideOurs:[] })}
               style={{padding:"4px 8px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit",marginLeft:"auto"}}>
               Clear all
             </button>
