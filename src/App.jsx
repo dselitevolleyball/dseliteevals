@@ -1409,6 +1409,7 @@ export default function App() {
   const [blackoutDates, setBlackoutDates]                   = useState([]);
   const [tnFilters, setTnFilters]                           = useState({ search: "", ageFor: "", qualifierOnly: false, dateFrom: "", dateTo: "", hideClosed: false, hideCancelled: true, startsOn: [], state: "", numDays: "", divisions: [], tags: [], showAllSources: false, ourStatus: [] });
   const [tnSelected, setTnSelected]                         = useState(() => new Set()); // tournament ids checked for bulk delete
+  const [regShowDone, setRegShowDone]                       = useState(false); // Registration view: include finished tournaments
   const [tnView, setTnView]                                 = useState("calendar"); // "list" | "calendar"
   const [tnSumLevel, setTnSumLevel]                         = useState("all");  // Summary filter: all | National | Regional | Developmental
   const [tnSumSort, setTnSumSort]                           = useState({ key: "age", dir: "asc" }); // Summary table sort
@@ -17171,6 +17172,7 @@ export default function App() {
               <option value="list">Listings</option>
               <option value="browse">Browse by Weekend</option>
               <option value="month">Month View</option>
+              <option value="registration">Registration</option>
               <option value="calendar">Team Calendar</option>
               <option value="summary">Summary</option>
               <option value="assistants">Assistants</option>
@@ -17315,63 +17317,6 @@ export default function App() {
             </div>
           );
         })()}
-        {/* Filter row 2 — day-of-week + date range */}
-        <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center",marginBottom:6,padding:"6px 10px",background:C.card,borderRadius:10,border:"1px solid "+C.border}}>
-          <span style={{fontSize:11,color:C.mut,fontWeight:600}}>Starts on:</span>
-          {TN_DOW_NAMES.map((name, idx) => {
-            const on = tnFilters.startsOn.includes(idx);
-            return (
-              <span key={idx} onClick={()=>setTnFilters(prev=>({...prev,startsOn: on ? prev.startsOn.filter(x=>x!==idx) : [...prev.startsOn, idx]}))}
-                style={{padding:"3px 9px",borderRadius:10,fontSize:11,fontWeight:700,cursor:"pointer",border:on?"1px solid "+C.gold:"1px solid "+C.border,background:on?"rgba(233,30,140,0.18)":"transparent",color:on?C.gold:C.mut,userSelect:"none"}}>
-                {name}
-              </span>
-            );
-          })}
-          <span style={{fontSize:11,color:C.mut,marginLeft:8}}>Dates:</span>
-          <input type="date" value={tnFilters.dateFrom} onChange={e=>setTnFilters(prev=>({...prev,dateFrom:e.target.value}))}
-            style={{...inpStyle,padding:"5px 8px",fontSize:11,colorScheme:"dark",color:tnFilters.dateFrom?C.gold:C.text}} />
-          <span style={{fontSize:11,color:C.mut}}>to</span>
-          <input type="date" value={tnFilters.dateTo} onChange={e=>setTnFilters(prev=>({...prev,dateTo:e.target.value}))}
-            style={{...inpStyle,padding:"5px 8px",fontSize:11,colorScheme:"dark",color:tnFilters.dateTo?C.gold:C.text}} />
-        </div>
-        {/* Filter row 3 — divisions */}
-        <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center",marginBottom:12,padding:"6px 10px",background:C.card,borderRadius:10,border:"1px solid "+C.border}}>
-          <span style={{fontSize:11,color:C.mut,fontWeight:600}}>Divisions:</span>
-          {TN_DIVISIONS.map(div => {
-            const on = tnFilters.divisions.includes(div);
-            return (
-              <span key={div} onClick={()=>setTnFilters(prev=>({...prev,divisions: on ? prev.divisions.filter(x=>x!==div) : [...prev.divisions, div]}))}
-                style={{padding:"3px 9px",borderRadius:10,fontSize:11,fontWeight:700,cursor:"pointer",border:on?"1px solid "+C.gold:"1px solid "+C.border,background:on?"rgba(233,30,140,0.18)":"transparent",color:on?C.gold:C.mut,userSelect:"none"}}>
-                {div}
-              </span>
-            );
-          })}
-          {tnFilters.divisions.length > 0 && (
-            <span style={{fontSize:10,color:C.mut,marginLeft:6,fontStyle:"italic"}}>matches tournaments that include ANY selected division</span>
-          )}
-        </div>
-        {/* Filter row 4 — tags */}
-        {(() => {
-          const allTags = [...new Set(tournaments.flatMap(t => tnEffectiveTags(t)))].sort((a,b)=>a.localeCompare(b));
-          if (allTags.length === 0) return null;
-          return (
-            <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center",marginBottom:12,padding:"6px 10px",background:C.card,borderRadius:10,border:"1px solid "+C.border}}>
-              <span style={{fontSize:11,color:C.mut,fontWeight:600}}>Tags:</span>
-              {allTags.map(tag => {
-                const on = tnFilters.tags.includes(tag);
-                return (
-                  <span key={tag} onClick={()=>setTnFilters(prev=>({...prev,tags: on ? prev.tags.filter(x=>x!==tag) : [...prev.tags, tag]}))}
-                    style={{padding:"3px 9px",borderRadius:10,fontSize:11,fontWeight:700,cursor:"pointer",border:"1px solid "+(on?tagColor(tag):C.border),background:on?tagColor(tag)+"22":"transparent",color:on?tagColor(tag):C.mut,userSelect:"none"}}>
-                    {tag}
-                  </span>
-                );
-              })}
-              {tnFilters.tags.length > 0 && (
-                <span onClick={()=>setTnFilters(prev=>({...prev,tags:[]}))} style={{fontSize:10,color:C.mut,marginLeft:6,cursor:"pointer",fontStyle:"italic",textDecoration:"underline"}}>clear</span>
-              )}
-            </div>
-          );
-        })()}
         </>)}
         {/* Conflict alert */}
         {tournamentConflicts.length > 0 && (
@@ -17414,7 +17359,8 @@ export default function App() {
             </details>
           );
         })()}
-        {tnView === "calendar" ? renderTournamentCalendar(filtered)
+        {tnView === "registration" ? renderTournamentRegistration()
+         : tnView === "calendar" ? renderTournamentCalendar(filtered)
          : tnView === "browse" ? renderTournamentBrowser(filtered)
          : tnView === "month" ? renderTournamentMonthView(filtered)
          : tnView === "summary" ? renderTournamentSummary()
@@ -17477,6 +17423,158 @@ export default function App() {
   // Assistants needed per weekend (one per team playing) + a fairness table:
   // for each assistant, how many of THEIR teams' tournaments they actually
   // cover vs. miss (get replaced by a sub). Low coverage = spread too thin.
+  // ─── REGISTRATION CALENDAR ────────────────────────────────────────────
+  // "What do I need to register, when, and for which division?" Groups every
+  // team assignment by the tournament's registration-opens date, so the top of
+  // the page is always what's actionable right now.
+  function renderTournamentRegistration() {
+    const today = localDateISO();
+    const fmt = (iso) => iso ? new Date(iso + "T12:00:00").toLocaleDateString(undefined, { weekday:"short", month:"short", day:"numeric" }) : "";
+    const fmtShort = (iso) => iso ? new Date(iso + "T12:00:00").toLocaleDateString(undefined, { month:"short", day:"numeric" }) : "";
+    const daysTo = (iso) => Math.round((new Date(iso + "T00:00") - new Date(today + "T00:00")) / 86400000);
+    // One entry per tournament that has at least one team assigned.
+    const byTn = new Map();
+    for (const a of tournamentAssignments) {
+      const tn = tournaments.find(t => t.id === a.tournament_id);
+      if (!tn || tn.cancelled) continue;
+      if (!byTn.has(tn.id)) byTn.set(tn.id, { tn, teams: [] });
+      byTn.get(tn.id).teams.push(a);
+    }
+    let all = [...byTn.values()].map(g => ({
+      ...g,
+      teams: g.teams.slice().sort((x, y) => (x.team_id || "").localeCompare(y.team_id || "")),
+      done: g.teams.every(a => a.status === "registered"),
+      opens: g.tn.registration_opens || null,
+      closes: g.tn.registration_deadline || null,
+    }));
+    if (!regShowDone) all = all.filter(g => !g.done);
+    // Buckets, most urgent first.
+    const overdue = [], openNow = [], soon = [], noDate = [], doneList = [];
+    for (const g of all) {
+      if (g.done) { doneList.push(g); continue; }
+      if (!g.opens) { noDate.push(g); continue; }
+      if (g.closes && g.closes < today) overdue.push(g);
+      else if (g.opens <= today) openNow.push(g);
+      else soon.push(g);
+    }
+    const byOpens = (a, b) => (a.opens || "9999").localeCompare(b.opens || "9999") || (a.tn.start_date || "").localeCompare(b.tn.start_date || "");
+    const byCloses = (a, b) => (a.closes || "9999").localeCompare(b.closes || "9999");
+    overdue.sort(byCloses); openNow.sort(byCloses); soon.sort(byOpens); noDate.sort((a,b)=>(a.tn.start_date||"").localeCompare(b.tn.start_date||"")); doneList.sort(byOpens);
+    const teamCount = (list) => list.reduce((s, g) => s + g.teams.filter(a => a.status !== "registered").length, 0);
+    const copyList = () => {
+      const lines = ["DS Elite — Registration to-do", ""];
+      for (const [label, list] of [["OPEN NOW", openNow], ["PAST DEADLINE", overdue], ["OPENS SOON", soon], ["NO OPEN DATE", noDate]]) {
+        if (!list.length) continue;
+        lines.push(label + ":");
+        list.forEach(g => {
+          lines.push("  " + g.tn.name + "  [" + fmtShort(g.tn.start_date) + "]" + (g.closes ? "  — register by " + fmtShort(g.closes) : "") + (tnPlatformOf(g.tn) ? "  via " + tnPlatformOf(g.tn) : ""));
+          g.teams.filter(a => a.status !== "registered").forEach(a => lines.push("     • " + a.team_id + (a.division ? " — " + a.division : " — (division TBD)")));
+        });
+        lines.push("");
+      }
+      try { navigator.clipboard.writeText(lines.join("\n")); window.alert("Registration list copied."); } catch { window.alert("Couldn't copy on this device."); }
+    };
+    // One tournament block: header + a row per team needing registration.
+    const card = (g, tone) => {
+      const plat = tnPlatformOf(g.tn);
+      const url = tnPlatformUrl(g.tn, plat);
+      const dLeft = g.closes ? daysTo(g.closes) : null;
+      const urgent = dLeft != null && dLeft >= 0 && dLeft <= 7;
+      return (
+        <div key={g.tn.id} style={{background:C.bg,border:"1px solid "+(tone==="overdue"?C.red:urgent?"#f59e0b":C.border),borderRadius:10,padding:"9px 12px",marginBottom:7}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:6}}>
+            <span onClick={()=>openEditTournament(g.tn)} title="Edit tournament"
+              style={{fontSize:13,fontWeight:800,color:C.gold,cursor:"pointer"}}>{g.tn.name}</span>
+            <span style={{fontSize:10,color:C.mut}}>plays {fmtShort(g.tn.start_date)}{g.tn.end_date && g.tn.end_date !== g.tn.start_date ? "–" + fmtShort(g.tn.end_date) : ""}</span>
+            {g.tn.is_qualifier && <Tag c="#a855f7">QUALIFIER</Tag>}
+            <div style={{flex:1}} />
+            {g.closes && (
+              <span style={{fontSize:10,fontWeight:800,color:dLeft<0?C.red:urgent?"#f59e0b":C.mut,border:"1px solid "+(dLeft<0?C.red:urgent?"#f59e0b":C.border),borderRadius:5,padding:"1px 6px",whiteSpace:"nowrap"}}>
+                {dLeft < 0 ? "closed " + fmtShort(g.closes) : "by " + fmtShort(g.closes) + " · " + dLeft + "d"}
+              </span>
+            )}
+            {plat
+              ? <a href={url} target="_blank" rel="noreferrer" style={{fontSize:10,fontWeight:800,color:"#22d3ee",border:"1px solid #22d3ee",borderRadius:5,padding:"1px 6px",textDecoration:"none",whiteSpace:"nowrap"}}>{plat} →</a>
+              : <span style={{fontSize:10,fontWeight:700,color:C.mut,fontStyle:"italic"}}>no platform set</span>}
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:3}}>
+            {g.teams.map(a => {
+              const meta = tnStatusMeta(a.status);
+              const isDone = a.status === "registered";
+              return (
+                <div key={a.id} style={{display:"flex",alignItems:"center",gap:8,fontSize:12,opacity:isDone?0.55:1}}>
+                  <span onClick={()=>setTeamCardName(a.team_id)} title="Open team card"
+                    style={{minWidth:104,fontWeight:700,color:C.text,cursor:"pointer",textDecoration:isDone?"line-through":"none"}}>{a.team_id}</span>
+                  {canOps ? (
+                    <select value={a.division || ""} onChange={e=>updateAssignmentDivision(a.id, e.target.value)}
+                      title="Division to register in"
+                      style={{...inpStyle,padding:"2px 5px",fontSize:11,fontWeight:700,color:a.division?"#22c55e":"#f59e0b",minWidth:104}}>
+                      <option value="">⚠ division TBD</option>
+                      {(() => { const teamAge = parseInt(String(a.team_id).replace(/[^0-9]/g,"")) || 0;
+                        const tiers = [...new Set((g.tn.entries||[]).filter(tok => entryAge(tok)===teamAge).map(entryTier))].filter(Boolean);
+                        const opts = tiers.length ? tiers : TN_DIVISIONS;
+                        const list = a.division && !opts.includes(a.division) ? [...opts, a.division] : opts;
+                        return list.map(d => <option key={d} value={d}>{d}</option>); })()}
+                    </select>
+                  ) : (
+                    <span style={{fontSize:11,fontWeight:700,color:a.division?"#22c55e":"#f59e0b",minWidth:104}}>{a.division || "division TBD"}</span>
+                  )}
+                  {canOps ? (
+                    <select value={TN_STATUS[a.status]?a.status:"planned"} onChange={e=>updateAssignmentStatus(a.id, e.target.value)}
+                      style={{...inpStyle,padding:"2px 5px",fontSize:11,fontWeight:800,color:meta.color,borderColor:meta.color}}>
+                      {TN_STATUS_ORDER.map(s => <option key={s} value={s} style={{color:C.text,fontWeight:600}}>{TN_STATUS[s].label}</option>)}
+                    </select>
+                  ) : <span style={{fontSize:11,fontWeight:800,color:meta.color}}>{meta.label}</span>}
+                  {canOps && !isDone && (
+                    <button onClick={()=>updateAssignmentStatus(a.id, "registered")} title="Mark this team registered"
+                      style={{padding:"1px 8px",borderRadius:6,border:"1px solid "+C.grn,background:"transparent",color:C.grn,fontSize:10,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>✓ Registered</button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      );
+    };
+    const section = (title, sub, list, color, tone) => list.length === 0 ? null : (
+      <div style={{marginBottom:16}}>
+        <div style={{display:"flex",alignItems:"baseline",gap:8,flexWrap:"wrap",marginBottom:7,borderBottom:"1px solid "+C.border,paddingBottom:5}}>
+          <span style={{fontSize:13,fontWeight:800,color}}>{title}</span>
+          <span style={{fontSize:11,color:C.mut}}>{list.length} tournament{list.length===1?"":"s"} · {teamCount(list)} team registration{teamCount(list)===1?"":"s"}{sub?" · "+sub:""}</span>
+        </div>
+        {list.map(g => card(g, tone))}
+      </div>
+    );
+    const totalNeeded = teamCount([...overdue, ...openNow, ...soon, ...noDate]);
+    const noDiv = [...overdue, ...openNow, ...soon, ...noDate].reduce((s,g)=>s+g.teams.filter(a=>a.status!=="registered"&&!a.division).length,0);
+    return (
+      <div>
+        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:12,padding:"10px 14px",background:C.card,border:"1px solid "+C.border,borderRadius:12}}>
+          <span style={{fontSize:13,fontWeight:800,color:C.text}}>📝 Registration to-do</span>
+          <span style={{fontSize:12,color:C.mut}}><b style={{color:C.gold}}>{totalNeeded}</b> team registration{totalNeeded===1?"":"s"} outstanding</span>
+          {openNow.length > 0 && <span style={{fontSize:11,fontWeight:800,color:C.grn,border:"1px solid "+C.grn,borderRadius:6,padding:"2px 8px"}}>{teamCount(openNow)} can be done now</span>}
+          {noDiv > 0 && <span style={{fontSize:11,fontWeight:800,color:"#f59e0b",border:"1px solid #f59e0b",borderRadius:6,padding:"2px 8px"}}>{noDiv} missing a division</span>}
+          <div style={{flex:1}} />
+          <label style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:11,color:C.mut,cursor:"pointer"}}>
+            <input type="checkbox" checked={regShowDone} onChange={e=>setRegShowDone(e.target.checked)} />
+            Show completed
+          </label>
+          <button onClick={copyList} style={{padding:"5px 12px",borderRadius:8,border:"1px solid "+C.gold,background:"rgba(233,30,140,0.10)",color:C.gold,fontSize:11,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>📋 Copy list</button>
+        </div>
+        {section("🔴 Past deadline", "registration closed — check with the host", overdue, C.red, "overdue")}
+        {section("🟢 Open now — register these", "registration is open", openNow, C.grn)}
+        {section("🟡 Opens soon", "not open yet — nothing to do until the open date", soon, "#f59e0b")}
+        {section("⚪ No registration date set", "add an Opens date on the tournament card", noDate, C.mut)}
+        {regShowDone && section("✓ Completed", "every team registered", doneList, C.grn)}
+        {totalNeeded === 0 && !regShowDone && (
+          <div style={{padding:28,textAlign:"center",color:C.mut,fontSize:13,background:C.card,borderRadius:12,border:"1px solid "+C.border}}>
+            🎉 Nothing outstanding — every assigned team is registered.
+          </div>
+        )}
+      </div>
+    );
+  }
+
   function renderTournamentAssistants() {
     const teams = teamsList.filter(t => t.active);
     const teamById = new Map(teamsList.map(t => [t.id, t]));
