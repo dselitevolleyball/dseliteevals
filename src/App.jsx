@@ -11003,7 +11003,7 @@ export default function App() {
 
     // ── Per-team mail merge ────────────────────────────────────────────
     // {{TEAM}} {{PLAYERS}} {{COACHES}} {{PRACTICES}} {{FLEX}} {{SPORTSYOU}}
-    // {{TOURNAMENTS}} {{SCHEDULE_CHANGES}} {{COACH_COVERAGE}} {{SA_SCHEDULE}}
+    // {{TOURNAMENTS}} {{SEASON_PRACTICES}} {{SCHEDULE_CHANGES}} {{COACH_COVERAGE}} {{SA_SCHEDULE}}
     // are substituted with each team's live data at send time, so one draft
     // becomes a personalized email per selected team.
     const mergeFields = (tn) => {
@@ -11064,6 +11064,14 @@ export default function App() {
           const city = (x.location || "").split("/")[0].trim();
           return "• " + dates + " — " + x.name + (city ? " (" + city + ")" : "") + (x.stay_over ? " · overnight" : "") + (a.status === "locked" ? " ✓" : " (tentative)");
         }).join("\n") || "(tournament schedule coming soon)";
+      // {{SEASON_PRACTICES}} — the team's regular-season weekly times (these are
+      // the standing times, which may have changed with court rebalancing).
+      const seasonByDay = {};
+      practiceAssignments.filter(a => a.team_name === tn && (a.phase || "season") === "season")
+        .forEach(a => { (seasonByDay[a.day] = seasonByDay[a.day] || []).push(a.slot); });
+      const seasonPractices = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].filter(d => seasonByDay[d])
+        .map(d => "• " + ({Sun:"Sunday",Mon:"Monday",Tue:"Tuesday",Wed:"Wednesday",Thu:"Thursday",Fri:"Friday",Sat:"Saturday"})[d] + " — " + mergeAdjacentSlots(seasonByDay[d]).join(", "))
+        .join("\n") || "(schedule coming soon)";
       // {{SCHEDULE_CHANGES}} — per-date practice time moves (court / S&A planning).
       const sunSlot = (() => { const a = practiceAssignments.find(x => x.team_name === tn && x.day === "Sun" && (x.phase || "season") === "season"); return a ? a.slot : null; })();
       const movesTxt = (slotMoves || [])
@@ -11088,7 +11096,7 @@ export default function App() {
         .map(s => "• " + fmtWD(s.session_date) + " — " + s.slot)
         .join("\n") || "(no Speed & Agility scheduled for this team)";
       return { TEAM: tn, PLAYERS: playersTxt, COACHES: coachesTxt, PRACTICES: practicesTxt, FLEX: flex, SPORTSYOU: code, ORIENTATION: orientation,
-        TOURNAMENTS: tnsTxt, SCHEDULE_CHANGES: movesTxt, COACH_COVERAGE: covTxt, SA_SCHEDULE: saTxt };
+        TOURNAMENTS: tnsTxt, SEASON_PRACTICES: seasonPractices, SCHEDULE_CHANGES: movesTxt, COACH_COVERAGE: covTxt, SA_SCHEDULE: saTxt };
     };
     // Replace ANY {{KEY}} that exists in the fields object (unknown keys are
     // left visible so a typo is obvious rather than silently deleted).
@@ -11494,7 +11502,7 @@ export default function App() {
             const audWord = emailAudience === "both" ? "parents + coaches" : emailAudience === "coaches" ? "coaches only" : "parents";
             return (
               <button onClick={sendPerTeam} disabled={emailSending || !emailSubject.trim() || !emailBody.trim() || audTotal === 0}
-                title="Sends a separate email to each checked team with {{TEAM}}, {{PLAYERS}}, {{COACHES}}, {{PRACTICES}}, {{FLEX}}, {{SPORTSYOU}}, {{ORIENTATION}}, {{TOURNAMENTS}}, {{SCHEDULE_CHANGES}}, {{COACH_COVERAGE}} and {{SA_SCHEDULE}} filled in with that team's data"
+                title="Sends a separate email to each checked team with {{TEAM}}, {{PLAYERS}}, {{COACHES}}, {{PRACTICES}}, {{FLEX}}, {{SPORTSYOU}}, {{ORIENTATION}}, {{TOURNAMENTS}}, {{SEASON_PRACTICES}}, {{SCHEDULE_CHANGES}}, {{COACH_COVERAGE}} and {{SA_SCHEDULE}} filled in with that team's data"
                 style={{padding:"10px 20px",borderRadius:8,border:"none",background:(emailSending||!emailSubject.trim()||!emailBody.trim()||audTotal===0)?C.border:C.acc,color:(emailSending||!emailSubject.trim()||!emailBody.trim()||audTotal===0)?C.mut:"#000",fontFamily:"inherit",fontSize:14,fontWeight:800,cursor:(emailSending||!emailSubject.trim()||!emailBody.trim()||audTotal===0)?"default":"pointer"}}>
                 {emailSending ? "Sending…" : "Send to " + emailTeams.size + " team" + (emailTeams.size===1?"":"s") + " — " + audTotal + " address" + (audTotal===1?"":"es") + " (" + audWord + ")"}
               </button>
