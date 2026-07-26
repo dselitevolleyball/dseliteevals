@@ -16963,7 +16963,14 @@ export default function App() {
                           style={{...fld, color: openState==="open" ? C.grn : openState==="soon" ? "#f59e0b" : C.text}} />
                       : <b style={{color:C.text}}>{opens ? new Date(opens+"T12:00:00").toLocaleDateString() : "—"}</b>}
                   </label>
-                  {openState && <span style={{fontSize:9,fontWeight:800,color:openState==="open"?C.grn:"#f59e0b",border:"1px solid "+(openState==="open"?C.grn:"#f59e0b"),borderRadius:5,padding:"1px 5px"}}>{openState==="open"?"OPEN NOW":"OPENS "+new Date(opens+"T12:00:00").toLocaleDateString(undefined,{month:"short",day:"numeric"})}</span>}
+                  {canOps && (
+                    <input type="text" defaultValue={tn.registration_opens_time || ""} placeholder="time?"
+                      onBlur={e=>{ const v=e.target.value.trim(); if (v !== (tn.registration_opens_time||"")) updateTournamentReg(tn, { registration_opens_time: v || null }); }}
+                      onKeyDown={e=>{ if (e.key==="Enter") e.target.blur(); }}
+                      title="Host-announced open time, if any. AES publishes the date only."
+                      style={{...fld, width:78, color: tn.registration_opens_time ? C.text : C.mut}} />
+                  )}
+                  {openState && <span style={{fontSize:9,fontWeight:800,color:openState==="open"?C.grn:"#f59e0b",border:"1px solid "+(openState==="open"?C.grn:"#f59e0b"),borderRadius:5,padding:"1px 5px"}}>{openState==="open"?"OPEN NOW":"OPENS "+new Date(opens+"T12:00:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"})+(tn.registration_opens_time?" "+tn.registration_opens_time:"")}</span>}
                   {tn.registration_deadline && <span style={{fontSize:10,color:C.mut}}>Closes <b style={{color:C.text}}>{new Date(tn.registration_deadline+"T12:00:00").toLocaleDateString()}</b></span>}
                   <label style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:10,color:C.mut}} title="Which platform we register on">
                     Register on
@@ -17467,7 +17474,8 @@ export default function App() {
         if (!list.length) continue;
         lines.push(label + ":");
         list.forEach(g => {
-          lines.push("  " + g.tn.name + "  [" + fmtShort(g.tn.start_date) + "]" + (g.closes ? "  — register by " + fmtShort(g.closes) : "") + (tnPlatformOf(g.tn) ? "  via " + tnPlatformOf(g.tn) : ""));
+          const opensTxt = g.opens ? "opens " + fmt(g.opens) + ((g.tn.registration_opens_time || "").trim() ? " at " + g.tn.registration_opens_time.trim() : "") : "open date TBD";
+          lines.push("  " + g.tn.name + "  [plays " + fmtShort(g.tn.start_date) + "]  — " + opensTxt + (g.closes ? ", register by " + fmtShort(g.closes) : "") + (tnPlatformOf(g.tn) ? "  via " + tnPlatformOf(g.tn) : ""));
           g.teams.filter(a => a.status !== "registered").forEach(a => lines.push("     • " + a.team_id + (a.division ? " — " + a.division : " — (division TBD)")));
         });
         lines.push("");
@@ -17497,6 +17505,34 @@ export default function App() {
               ? <a href={url} target="_blank" rel="noreferrer" style={{fontSize:10,fontWeight:800,color:"#22d3ee",border:"1px solid #22d3ee",borderRadius:5,padding:"1px 6px",textDecoration:"none",whiteSpace:"nowrap"}}>{plat} →</a>
               : <span style={{fontSize:10,fontWeight:700,color:C.mut,fontStyle:"italic"}}>no platform set</span>}
           </div>
+          {/* When registration opens — the day (and time, when a host announced
+              one; AES publishes a date only). */}
+          {(() => {
+            const dOpen = g.opens ? daysTo(g.opens) : null;
+            const timeTxt = (g.tn.registration_opens_time || "").trim();
+            const isOpen = g.opens && g.opens <= today;
+            const col = !g.opens ? C.mut : isOpen ? C.grn : "#f59e0b";
+            return (
+              <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:6,fontSize:11}}>
+                <span style={{fontSize:9,fontWeight:800,textTransform:"uppercase",letterSpacing:0.4,color:C.mut}}>Opens</span>
+                {g.opens ? (
+                  <span style={{fontWeight:800,color:col}}>
+                    {fmt(g.opens)}{timeTxt ? " at " + timeTxt : ""}
+                    <span style={{fontWeight:600,color:C.mut}}>
+                      {isOpen ? " · open now" : dOpen === 1 ? " · tomorrow" : " · in " + dOpen + " days"}
+                    </span>
+                  </span>
+                ) : <span style={{fontStyle:"italic",color:C.mut}}>no open date set</span>}
+                {canOps && (
+                  <input type="text" defaultValue={timeTxt} placeholder="+ time (e.g. 9:00 AM)"
+                    onBlur={e=>{ const v = e.target.value.trim(); if (v !== timeTxt) updateTournamentReg(g.tn, { registration_opens_time: v || null }); }}
+                    onKeyDown={e=>{ if (e.key === "Enter") e.target.blur(); }}
+                    title="Host-announced open time, if there is one. AES only publishes the date."
+                    style={{...inpStyle,padding:"1px 6px",fontSize:10,width:118,color:timeTxt?C.text:C.mut}} />
+                )}
+              </div>
+            );
+          })()}
           <div style={{display:"flex",flexDirection:"column",gap:3}}>
             {g.teams.map(a => {
               const meta = tnStatusMeta(a.status);
