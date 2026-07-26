@@ -9645,7 +9645,17 @@ export default function App() {
         {(() => {
           const tnById = new Map(tournaments.map(t => [t.id, t]));
           const teamById = new Map(teamsList.map(t => [t.id, t]));
-          const effReal = (a) => { const tm = teamById.get(a.team_id) || {}; return [a.head_override || tm.head_coach, a.asst_override || tm.assistant_coach].filter(c => c && !isPlaceholderCoach(c)); };
+          // A coach at a tournament ONLY as a swapped-in override (sub for another
+          // team) keeps their own team, so exclude them from "away" — matches the
+          // Daily board. Otherwise use the effective (override-or-default) staff.
+          const rosteredLow = new Set(practiceTeams.flatMap(t => [t.head_coach, t.assistant_coach]).filter(Boolean).map(c => c.trim().toLowerCase()));
+          const effReal = (a) => { const tm = teamById.get(a.team_id) || {}; const out2 = [];
+            const add = (c, isSub) => { if (!c || isPlaceholderCoach(c)) return; if (isSub && rosteredLow.has(c.trim().toLowerCase())) return; out2.push(c); };
+            add(a.head_override || tm.head_coach, !!a.head_override && a.head_override !== tm.head_coach);
+            add(a.asst_override || tm.assistant_coach, !!a.asst_override && a.asst_override !== tm.assistant_coach);
+            return out2; };
+          // A coach spot is handled if a real sub is assigned for it that Sunday.
+          const covered = (team, coach, sunS) => practiceCoverage.some(c => c.practice_date === sunS && c.team_name === team && c.coach_out === coach && isRealSub(c.sub_name));
           const satOf = (iso) => { const d = new Date(iso + "T00:00"); while (d.getDay() !== 6) d.setDate(d.getDate() + 1); return d.toISOString().slice(0, 10); };
           const sunByPhase = {}; practiceAssignments.forEach(p => { if (/^sun/i.test(p.day)) (sunByPhase[p.phase] = sunByPhase[p.phase] || new Set()).add(p.team_name); });
           const travelWeekends = [...new Set(tournaments.filter(t => t.stay_over && t.start_date >= "2026-11-01").map(t => satOf(t.start_date)))].sort();
@@ -9660,7 +9670,8 @@ export default function App() {
               if (competing.has(teamName)) continue;
               const tm = teamById.get(teamName); if (!tm || tm.active === false) continue;
               const h = tm.head_coach, as = tm.assistant_coach;
-              if (h && as && !isPlaceholderCoach(h) && !isPlaceholderCoach(as) && away.has(h) && away.has(as)) out.push({ sat, team: teamName, head: h, asst: as });
+              // Both coaches away AND not already covered by real subs → still needs one.
+              if (h && as && !isPlaceholderCoach(h) && !isPlaceholderCoach(as) && away.has(h) && away.has(as) && !(covered(teamName, h, sunS) && covered(teamName, as, sunS))) out.push({ sat, team: teamName, head: h, asst: as });
             }
           }
           if (!out.length) return null;
