@@ -12924,6 +12924,36 @@ export default function App() {
       } catch (e) { window.alert("AI error: " + (e.message || e)); }
       setPpAiBusy(false);
     };
+    // Photo → plan. Reads a picture of a written/whiteboard plan and drops the
+    // transcribed blocks into this draft, where the normal edit + submit-for-
+    // review flow takes over.
+    const readPhoto = async (file) => {
+      if (!file) return;
+      if (!/^image\//.test(file.type)) { window.alert("Pick a photo (JPEG, PNG, GIF, or WebP)."); return; }
+      if ((ppDraft.blocks||[]).length && !window.confirm("Replace the current blocks with the plan in this photo?")) return;
+      setPpAiBusy(true);
+      try {
+        const dataUrl = await new Promise((resolve, reject) => {
+          const fr = new FileReader();
+          fr.onload = () => resolve(fr.result); fr.onerror = () => reject(new Error("Couldn't read that file"));
+          fr.readAsDataURL(file);
+        });
+        const res = await fetch("/api/read-practice-plan", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({
+          image: dataUrl, minutes: slotMin,
+          library: drills.slice(0, 140).map(d => ({ name:d.name, skill:d.skill, phase:d.phase })),
+        }) });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) { window.alert(json.error || "Couldn't read that photo."); setPpAiBusy(false); return; }
+        const blocks = (json.plan?.blocks || []).map(b => ({ id: rid(), name: b.name || "Block", minutes: Number(b.minutes)||10, desc: b.desc || "" }));
+        if (!blocks.length) { window.alert("No practice blocks were found in that photo."); setPpAiBusy(false); return; }
+        updateDraft(d => { d.blocks = blocks; });
+        const flags = json.plan?.unreadable || [];
+        window.alert("Read " + blocks.length + " block" + (blocks.length===1?"":"s") + " from the photo." +
+          (flags.length ? "\n\nPlease double-check:\n• " + flags.join("\n• ") : "") +
+          "\n\nEdit anything that came through wrong, then submit for review.");
+      } catch (e) { window.alert("Photo error: " + (e.message || e)); }
+      setPpAiBusy(false);
+    };
     return (
       <div style={{maxWidth:900,margin:"0 auto"}}>
         {teamBar}
@@ -13056,8 +13086,14 @@ export default function App() {
             <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
               <input value={ppAiInstr} onChange={e=>setPpAiInstr(e.target.value)} placeholder="Optional AI instruction (e.g. add out-of-system, more scrimmage)…" style={{...St.sel,flex:1,minWidth:200}} />
               <button style={{...St.gold,opacity:ppAiBusy?0.6:1}} disabled={ppAiBusy} onClick={aiDraft}>{ppAiBusy?"Drafting…":"✨ Draft with AI"}</button>
+              <label style={{...St.ghost,opacity:ppAiBusy?0.6:1,cursor:ppAiBusy?"default":"pointer",display:"inline-flex",alignItems:"center",gap:5,whiteSpace:"nowrap"}}
+                title="Photograph a written or whiteboard practice plan and turn it into this plan">
+                📷 Upload a photo
+                <input type="file" accept="image/*" disabled={ppAiBusy} style={{display:"none"}}
+                  onChange={e => { const f = e.target.files && e.target.files[0]; e.target.value = ""; readPhoto(f); }} />
+              </label>
             </div>
-            <div style={{fontSize:10,color:C.mut,marginTop:6}}>Builds a plan from {focusItems.length?"this practice's focus concepts":"what you're Working on in the Season plan"} + the drill library, following the DS Elite philosophy. Replaces the blocks — then edit freely.</div>
+            <div style={{fontSize:10,color:C.mut,marginTop:6}}>Builds a plan from {focusItems.length?"this practice's focus concepts":"what you're Working on in the Season plan"} + the drill library, following the DS Elite philosophy. Replaces the blocks — then edit freely. <b style={{color:C.text}}>📷 Upload a photo</b> reads a plan you wrote on a whiteboard or on paper and fills these blocks in — it transcribes what's there rather than inventing anything, and flags whatever it couldn't read clearly.</div>
           </div>
           {ppLibOpen && (
             <div style={{marginTop:10,borderTop:"1px solid "+C.border,paddingTop:10}}>
