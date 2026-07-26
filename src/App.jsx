@@ -1323,6 +1323,8 @@ export default function App() {
   const [courtPlan, setCourtPlan]                     = useState(null); // Sunday 4-court planner: proposed team→block layout awaiting approval [{team,from,to}]
   const [teamCalOff, setTeamCalOff]                   = useState(0);    // team card calendar: months offset from current
   const [teamCalSel, setTeamCalSel]                   = useState(null); // team card calendar: selected day
+  const [coachCalOff, setCoachCalOff]                 = useState(0);    // coach card calendar: months offset
+  const [coachCalSel, setCoachCalSel]                 = useState(null); // coach card calendar: selected day
   const [tryouts, setTryouts]                         = useState([]);
   const [coachRoster, setCoachRoster]                 = useState([]);
   // SMS state
@@ -2083,7 +2085,7 @@ export default function App() {
   }, []);
   useEffect(() => { if (isApproved && (view === "home" || view === "clockin")) { loadCheckins(); loadShiftIntents(); loadPractice(); loadCoachFloats(); loadPracticeCancellations(); loadPracticeCoverage(); loadSlotMoves(); } }, [isApproved, view, loadCheckins, loadShiftIntents, loadPractice, loadCoachFloats, loadPracticeCancellations, loadPracticeCoverage, loadSlotMoves]);
   // The coach card shows a coach's schedule changes + pickups — load the sources when it opens.
-  useEffect(() => { if (isApproved && coachCardName) { loadPractice(); loadPracticeCoverage(); loadSlotMoves(); loadPracticeCancellations(); loadTournaments(); } }, [isApproved, coachCardName, loadPractice, loadPracticeCoverage, loadSlotMoves, loadPracticeCancellations, loadTournaments]);
+  useEffect(() => { if (isApproved && coachCardName) { loadPractice(); loadPracticeCoverage(); loadSlotMoves(); loadPracticeCancellations(); loadTournaments(); loadCoachFloats(); setCoachCalOff(0); setCoachCalSel(null); } }, [isApproved, coachCardName, loadPractice, loadPracticeCoverage, loadSlotMoves, loadPracticeCancellations, loadTournaments, loadCoachFloats]);
   // The team card shows a per-team schedule calendar (practices, tournaments,
   // moves, subs) — load its sources when it opens, and reset its month.
   useEffect(() => { if (isApproved && teamCardName) { loadPractice(); loadTournaments(); loadPracticeCoverage(); loadSlotMoves(); loadPracticeCancellations(); setTeamCalOff(0); setTeamCalSel(null); } }, [isApproved, teamCardName, loadPractice, loadTournaments, loadPracticeCoverage, loadSlotMoves, loadPracticeCancellations]);
@@ -5031,6 +5033,141 @@ export default function App() {
     );
   }
 
+  // A coach's month calendar — their teams' practices/tournaments/S&A, shifts
+  // they're picking up (subbing), and their floating availability. Reused on the
+  // Home dashboard and on any coach card. `matches` tests a coach name.
+  function renderCoachCalendar(matches, teamNames, calOff, setCalOff, calSel, setCalSel, opts = {}) {
+    const todayISO = localDateISO();
+    const myTeamSet = new Set(teamNames || []);
+    const DOW = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+    const tournamentById = new Map((tournaments || []).map(t => [t.id, t]));
+    const t0 = new Date(todayISO + "T00:00");
+    const anchor = new Date(t0.getFullYear(), t0.getMonth() + calOff, 1);
+    const y = anchor.getFullYear(), m = anchor.getMonth();
+    const monthKey = y + "-" + String(m+1).padStart(2,"0");
+    const monthLabel = anchor.toLocaleDateString(undefined, { month:"long", year:"numeric" });
+    const daysInMonth = new Date(y, m+1, 0).getDate();
+    const leadPad = new Date(y, m, 1).getDay();
+    const isoOf = (day) => localDateISO(new Date(y, m, day));
+    const isCancelled = (iso, team) => (practiceCancellations||[]).some(c => c.practice_date === iso && (!c.team_name || c.team_name === team));
+    const abbr = (name) => { const s = String(name||""); const mm = s.match(/^(\d+)\s*(.*)$/); if (!mm) return s.slice(0,4); const parts = mm[2].split(/\s+/).filter(Boolean).map(w => /^\d+$/.test(w) ? w : (w[0]||"")).join(""); return (mm[1]+parts).toUpperCase(); };
+    const shortTime = (s) => String(s||"").replace(/m\b/g, "").replace(/\s+/g, "");
+    const TN_STOP = new Set(["of","the","and","at","for","a","an","to","girls","boys","volleyball","tournament","weekend"]);
+    const tnAbbr = (name) => { const words = String(name||"").replace(/[^\w\s]/g," ").split(/\s+/).filter(Boolean).filter(w => !TN_STOP.has(w.toLowerCase())); const ini = words.map(w => /^\d+$/.test(w) ? w : (w[0]||"")).join("").toUpperCase(); return ini.slice(0,6) || String(name||"").slice(0,4); };
+    const shortCity = (loc) => { const s = String(loc||"").split("/")[0].trim(); return s.replace(/,\s*[A-Z]{2}\b.*$/,"").trim() || s; };
+    // Tournaments for my teams, plus any I'm the swapped-in sub on (a tournament pickup).
+    const myTns = (tournamentAssignments||[])
+      .filter(ta => myTeamSet.has(ta.team_id) || myTeamSet.has(ta.team_name) || matches(ta.head_override) || matches(ta.asst_override))
+      .map(ta => ({ team: ta.team_id || ta.team_name, tn: tournamentById.get(ta.tournament_id), sub: !(myTeamSet.has(ta.team_id) || myTeamSet.has(ta.team_name)) }))
+      .filter(x => x.tn && !x.tn.cancelled);
+    const teamAtTn = (team, iso) => { const dow = new Date(iso + "T00:00").getDay(); let winStart = iso; if (dow === 0) { const f = new Date(iso + "T00:00"); f.setDate(f.getDate() - 2); winStart = localDateISO(f); } return myTns.some(x => x.team === team && x.tn.start_date <= iso && (((x.tn.end_date || x.tn.start_date) >= iso) || (dow === 0 && x.tn.end_date && x.tn.end_date > x.tn.start_date && x.tn.end_date >= winStart))); };
+    const practicesOn = (iso) => { const phase = phaseForDate(iso); if (!phase) return []; const dow = DOW[new Date(iso + "T00:00").getDay()]; const byTeam = {}; (practiceAssignments||[]).forEach(a => { if (!myTeamSet.has(a.team_name) || (a.phase || "fall1") !== phase || a.day !== dow) return; if (isCancelled(iso, a.team_name) || teamAtTn(a.team_name, iso)) return; (byTeam[a.team_name] = byTeam[a.team_name] || []).push(a.slot); }); return Object.entries(byTeam).map(([team, slots]) => ({ team, slots: mergeAdjacentSlots(slots) })); };
+    const tnsOn = (iso) => { const seen = new Set(); return myTns.filter(x => x.tn.start_date <= iso && (x.tn.end_date || x.tn.start_date) >= iso).filter(x => { const k = x.team + "|" + x.tn.id; if (seen.has(k)) return false; seen.add(k); return true; }); };
+    const saOn = (iso) => { const byTeam = {}; (saSessions || []).forEach(s => { if (!myTeamSet.has(s.team_name) || s.session_date !== iso) return; if (isCancelled(iso, s.team_name) || teamAtTn(s.team_name, iso)) return; (byTeam[s.team_name] = byTeam[s.team_name] || []).push(s.slot); }); return Object.entries(byTeam).map(([team, slots]) => ({ team, slots: mergeAdjacentSlots(slots) })); };
+    const PR = "#06b6d4", TNC = "#f59e0b", SA = "#22c55e", SUBC = "#ec4899", FLT = "#14b8a6"; // practice/tournament/S&A/subbing/floating
+    const mySubs = (practiceCoverage || []).filter(c => isRealSub(c.sub_name) && matches(c.sub_name));
+    const subsOn = (iso) => { const seen = new Set(); return mySubs.filter(c => c.practice_date === iso).map(c => { const mv = (slotMoves||[]).find(x => x.practice_date === iso && x.team_name === c.team_name); return { team: c.team_name, slot: (mv && mv.slot) || c.slot }; }).filter(x => { const k = x.team + "|" + x.slot; if (seen.has(k)) return false; seen.add(k); return true; }); };
+    // Floating availability (coach_floats): slots this coach signed up to float.
+    const myFloats = (coachFloats || []).filter(f => f.coach_name && matches(f.coach_name));
+    const floatsOn = (iso) => { const phase = phaseForDate(iso); if (!phase) return []; const dow = DOW[new Date(iso + "T00:00").getDay()]; const picked = new Set(subsOn(iso).map(x => x.slot)); return [...new Set(myFloats.filter(f => (f.phase||"season") === phase && f.day === dow).map(f => f.slot))].filter(sl => !picked.has(sl)); };
+    // Nothing to show for this coach → skip.
+    if (!teamNames.length && !myTns.length && !mySubs.length && !myFloats.length) return null;
+    const sel = (calSel && calSel.slice(0,7) === monthKey) ? calSel : (todayISO.slice(0,7) === monthKey ? todayISO : null);
+    const selP = sel ? practicesOn(sel) : [], selT = sel ? tnsOn(sel) : [], selSA = sel ? saOn(sel) : [], selSub = sel ? subsOn(sel) : [], selFl = sel ? floatsOn(sel) : [];
+    const fmtLong = (iso) => new Date(iso + "T12:00:00").toLocaleDateString(undefined, { weekday:"long", month:"short", day:"numeric" });
+    const cells = []; for (let i = 0; i < leadPad; i++) cells.push(null); for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+    const chip = (color) => ({fontSize:7.5,fontWeight:800,lineHeight:"11px",height:11,borderRadius:2,padding:"0 2px",background:color+"33",color,overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis",letterSpacing:0.2});
+    return (
+      <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:"10px 12px",marginBottom:opts.marginBottom ?? 14}}>
+        <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
+          <span style={{fontSize:10,fontWeight:800,letterSpacing:0.4,textTransform:"uppercase",color:C.mut}}>{opts.title || "Schedule"}</span>
+          <div style={{flex:1}} />
+          <button onClick={()=>setCalOff(o=>o-1)} title="Previous month" style={{background:"none",border:"1px solid "+C.border,borderRadius:6,color:C.text,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:800,width:22,height:22,lineHeight:1,padding:0}}>‹</button>
+          <span style={{fontSize:11,fontWeight:800,color:C.text,minWidth:104,textAlign:"center"}}>{monthLabel}</span>
+          <button onClick={()=>setCalOff(o=>o+1)} title="Next month" style={{background:"none",border:"1px solid "+C.border,borderRadius:6,color:C.text,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:800,width:22,height:22,lineHeight:1,padding:0}}>›</button>
+          {calOff !== 0 && <button onClick={()=>{ setCalOff(0); setCalSel(todayISO); }} style={{background:"none",border:"none",color:C.acc,cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:700}}>Today</button>}
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:2,marginBottom:2}}>
+          {["S","M","T","W","T","F","S"].map((d,i) => <div key={i} style={{textAlign:"center",fontSize:8,fontWeight:800,color:C.mut}}>{d}</div>)}
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:2}}>
+          {cells.map((d,i) => {
+            if (d === null) return <div key={"b"+i} />;
+            const iso = isoOf(d);
+            const evP = practicesOn(iso), evT = tnsOn(iso), evSA = saOn(iso), evSub = subsOn(iso), evFl = floatsOn(iso);
+            const tnLabels = [...new Set(evT.map(x => tnAbbr(x.tn.name)))];
+            const events = [...tnLabels.map(l => ({ label: l, c: TNC })),
+              ...evSub.map(x => ({ label: "🔁 " + abbr(x.team) + " " + shortTime(x.slot), c: SUBC })),
+              ...evFl.map(sl => ({ label: "☁ " + shortTime(sl), c: FLT })),
+              ...evSA.map(x => ({ label: abbr(x.team) + " S&A", c: SA })),
+              ...evP.map(x => ({ label: abbr(x.team) + " " + shortTime(x.slots.join(",")), c: PR }))];
+            const isToday = iso === todayISO, isSel = iso === sel;
+            return (
+              <button key={iso} onClick={()=>setCalSel(iso)} style={{display:"flex",flexDirection:"column",alignItems:"stretch",gap:1,minHeight:30,textAlign:"left",background:isSel?"rgba(233,30,140,0.14)":events.length?C.bg:"transparent",border:"1px solid "+(isSel?C.gold:isToday?C.acc:"transparent"),borderRadius:6,cursor:"pointer",fontFamily:"inherit",padding:"2px 2px 3px",overflow:"hidden"}}>
+                <span style={{fontSize:9,fontWeight:isToday?800:600,color:isToday?C.gold:C.mut,paddingLeft:1}}>{d}</span>
+                {events.slice(0,2).map((e,ei) => <span key={ei} style={chip(e.c)}>{e.label}</span>)}
+                {events.length > 2 && <span style={{fontSize:7.5,fontWeight:800,color:C.mut,paddingLeft:1}}>+{events.length-2}</span>}
+              </button>
+            );
+          })}
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginTop:8,fontSize:10,color:C.mut,flexWrap:"wrap"}}>
+          {teamNames.length>0 && <span style={{display:"flex",alignItems:"center",gap:4}}><span style={{width:10,height:8,borderRadius:2,background:PR+"33",border:"1px solid "+PR}} />Practice</span>}
+          {mySubs.length>0 && <span style={{display:"flex",alignItems:"center",gap:4}}><span style={{width:10,height:8,borderRadius:2,background:SUBC+"33",border:"1px solid "+SUBC}} />🔁 Subbing</span>}
+          {myFloats.length>0 && <span style={{display:"flex",alignItems:"center",gap:4}}><span style={{width:10,height:8,borderRadius:2,background:FLT+"33",border:"1px solid "+FLT}} />☁ Floating</span>}
+          <span style={{display:"flex",alignItems:"center",gap:4}}><span style={{width:10,height:8,borderRadius:2,background:SA+"33",border:"1px solid "+SA}} />S&amp;A</span>
+          <span style={{display:"flex",alignItems:"center",gap:4}}><span style={{width:10,height:8,borderRadius:2,background:TNC+"33",border:"1px solid "+TNC}} />Tourn.</span>
+        </div>
+        {sel && (
+          <div style={{marginTop:10,borderTop:"1px solid "+C.border,paddingTop:10}}>
+            <div style={{fontSize:11,fontWeight:800,color:C.text,marginBottom:6}}>{fmtLong(sel)}{sel===todayISO?" · Today":""}</div>
+            {(selP.length===0 && selT.length===0 && selSA.length===0 && selSub.length===0 && selFl.length===0) ? (
+              <div style={{fontSize:12,color:C.mut}}>Nothing scheduled.</div>
+            ) : (
+              <div style={{display:"flex",flexDirection:"column",gap:5}}>
+                {selSub.map((x,i) => (
+                  <div key={"sub"+i} style={{display:"flex",alignItems:"center",gap:8,fontSize:13}}>
+                    <span style={{width:6,height:6,borderRadius:3,background:SUBC,flexShrink:0}} />
+                    <span style={{flex:1,color:C.text,fontWeight:600}}>🔁 Subbing <b>{x.team}</b> <span style={{color:SUBC,fontWeight:800,fontSize:10}}>PICKUP</span></span>
+                    <span style={{fontSize:11,color:C.mut}}>{x.slot}</span>
+                  </div>
+                ))}
+                {selT.map((x,i) => (
+                  <div key={"t"+i} style={{display:"flex",alignItems:"center",gap:8,fontSize:13}}>
+                    <span style={{width:6,height:6,borderRadius:3,background:TNC,flexShrink:0}} />
+                    <span style={{flex:1,color:C.text,fontWeight:600}} title={x.tn.name}><b style={{color:TNC}}>{tnAbbr(x.tn.name)}</b> <span style={{fontWeight:500}}>{x.tn.name}</span> <span style={{color:C.mut,fontWeight:500}}>· {x.team}</span>{x.tn.location && <span style={{color:C.mut,fontWeight:500}}> · 📍{shortCity(x.tn.location)}</span>}{x.sub && <span style={{color:"#a855f7",fontWeight:800,marginLeft:4,fontSize:9}}>SHIFT</span>}{x.tn.is_qualifier && <span style={{color:"#a855f7",fontWeight:800,marginLeft:4,fontSize:9}}>QUAL</span>}</span>
+                    <span style={{fontSize:10,fontWeight:800,color:TNC,textTransform:"uppercase"}}>Tourn.</span>
+                  </div>
+                ))}
+                {selFl.map((sl,i) => (
+                  <div key={"fl"+i} style={{display:"flex",alignItems:"center",gap:8,fontSize:13}}>
+                    <span style={{width:6,height:6,borderRadius:3,background:FLT,flexShrink:0}} />
+                    <span style={{flex:1,color:C.text,fontWeight:600}}>☁ Available to float <span style={{color:FLT,fontWeight:800,fontSize:10}}>FLOATING</span></span>
+                    <span style={{fontSize:11,color:C.mut}}>{sl}</span>
+                  </div>
+                ))}
+                {selSA.map((x,i) => (
+                  <div key={"sa"+i} style={{display:"flex",alignItems:"center",gap:8,fontSize:13}}>
+                    <span style={{width:6,height:6,borderRadius:3,background:SA,flexShrink:0}} />
+                    <span style={{flex:1,color:C.text,fontWeight:600}}>{x.team} <span style={{color:SA,fontWeight:800,fontSize:10}}>S&amp;A</span></span>
+                    <span style={{fontSize:11,color:C.mut}}>{x.slots.join(", ")}</span>
+                  </div>
+                ))}
+                {selP.map((x,i) => (
+                  <div key={"p"+i} style={{display:"flex",alignItems:"center",gap:8,fontSize:13}}>
+                    <span style={{width:6,height:6,borderRadius:3,background:PR,flexShrink:0}} />
+                    <span style={{flex:1,color:C.text,fontWeight:600}}>{x.team}</span>
+                    <span style={{fontSize:11,color:C.mut}}>{x.slots.join(", ")}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   // Upcoming schedule changes + shift pickups for a coach. `matches` tests a
   // freeform coach name against this coach; myTeamNames are their teams.
   function coachScheduleAlerts(matches, myTeamNames) {
@@ -5204,184 +5341,7 @@ export default function App() {
           );
         })()}
 
-        {/* My schedule — this month's practices + tournaments in one calendar. */}
-        {myTeams.length > 0 && (() => {
-          const todayISO = localDateISO();
-          const myTeamSet = new Set(myTeams.map(t => t.team_name));
-          const DOW = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
-          const t0 = new Date(todayISO + "T00:00");
-          const anchor = new Date(t0.getFullYear(), t0.getMonth() + homeCalOff, 1);
-          const y = anchor.getFullYear(), m = anchor.getMonth();
-          const monthKey = y + "-" + String(m+1).padStart(2,"0");
-          const monthLabel = anchor.toLocaleDateString(undefined, { month:"long", year:"numeric" });
-          const daysInMonth = new Date(y, m+1, 0).getDate();
-          const leadPad = new Date(y, m, 1).getDay(); // 0=Sun
-          const isoOf = (day) => localDateISO(new Date(y, m, day));
-          // A practice is off if the whole day (team_name "") or that team is cancelled.
-          const isCancelled = (iso, team) => practiceCancellations.some(c => c.practice_date === iso && (!c.team_name || c.team_name === team));
-          // Team → short tag ("13 Diamond" → 13D, "11 Rise 1" → 11R1) for the
-          // in-cell rectangles, so a multi-team coach can tell teams apart.
-          const abbr = (name) => { const s = String(name||""); const mm = s.match(/^(\d+)\s*(.*)$/); if (!mm) return s.slice(0,4); const parts = mm[2].split(/\s+/).filter(Boolean).map(w => /^\d+$/.test(w) ? w : (w[0]||"")).join(""); return (mm[1]+parts).toUpperCase(); };
-          // Compact a slot for tight cells: "5-7pm" → "5-7p".
-          const shortTime = (s) => String(s||"").replace(/m\b/g, "").replace(/\s+/g, "");
-          // Tournament name → initials ("Countdown City Classic" → "CCC"), skipping
-          // filler words; capped so long qualifier names stay short.
-          const TN_STOP = new Set(["of","the","and","at","for","a","an","to","girls","boys","volleyball","tournament","weekend"]);
-          const tnAbbr = (name) => {
-            const words = String(name||"").replace(/[^\w\s]/g," ").split(/\s+/).filter(Boolean).filter(w => !TN_STOP.has(w.toLowerCase()));
-            const ini = words.map(w => /^\d+$/.test(w) ? w : (w[0]||"")).join("").toUpperCase();
-            return ini.slice(0,6) || String(name||"").slice(0,4);
-          };
-          // City only, dropping the state / extra legs: "San Antonio, TX" → "San Antonio".
-          const shortCity = (loc) => { const s = String(loc||"").split("/")[0].trim(); return s.replace(/,\s*[A-Z]{2}\b.*$/,"").trim() || s; };
-          // Tournaments for my teams — plus any where I'm the swapped-in sub
-          // (head/asst override), so sub coaching shows on the calendar too.
-          const myTns = tournamentAssignments
-            .filter(ta => myTeamSet.has(ta.team_id) || myTeamSet.has(ta.team_name) || isMine(ta.head_override) || isMine(ta.asst_override))
-            .map(ta => ({ team: ta.team_id || ta.team_name, tn: tournamentById.get(ta.tournament_id), sub: !(myTeamSet.has(ta.team_id) || myTeamSet.has(ta.team_name)) }))
-            .filter(x => x.tn && !x.tn.cancelled);
-          // A team doesn't practice when it's competing that weekend: a tournament
-          // covering the day, or a multi-day tournament over that Sunday (Fri–Sun),
-          // suppresses the practice.
-          const teamAtTn = (team, iso) => {
-            const dow = new Date(iso + "T00:00").getDay();
-            let winStart = iso; if (dow === 0) { const f = new Date(iso + "T00:00"); f.setDate(f.getDate() - 2); winStart = localDateISO(f); }
-            return myTns.some(x => x.team === team && x.tn.start_date <= iso
-              && (((x.tn.end_date || x.tn.start_date) >= iso)
-                  || (dow === 0 && x.tn.end_date && x.tn.end_date > x.tn.start_date && x.tn.end_date >= winStart)));
-          };
-          // Materialize the weekly practice slots into concrete dates for my teams.
-          const practicesOn = (iso) => {
-            const phase = phaseForDate(iso); if (!phase) return [];
-            const dow = DOW[new Date(iso + "T00:00").getDay()];
-            const byTeam = {};
-            practiceAssignments.forEach(a => {
-              if (!myTeamSet.has(a.team_name) || (a.phase || "fall1") !== phase || a.day !== dow) return;
-              if (isCancelled(iso, a.team_name)) return;
-              if (teamAtTn(a.team_name, iso)) return;
-              (byTeam[a.team_name] = byTeam[a.team_name] || []).push(a.slot);
-            });
-            return Object.entries(byTeam).map(([team, slots]) => ({ team, slots: mergeAdjacentSlots(slots) }));
-          };
-          const tnsOn = (iso) => {
-            const seen = new Set();
-            return myTns.filter(x => x.tn.start_date <= iso && (x.tn.end_date || x.tn.start_date) >= iso)
-              .filter(x => { const k = x.team + "|" + x.tn.id; if (seen.has(k)) return false; seen.add(k); return true; });
-          };
-          // Speed & Agility sessions (sa_sessions have concrete dates) for my teams.
-          const saOn = (iso) => {
-            const byTeam = {};
-            (saSessions || []).forEach(s => {
-              if (!myTeamSet.has(s.team_name) || s.session_date !== iso) return;
-              if (isCancelled(iso, s.team_name) || teamAtTn(s.team_name, iso)) return;
-              (byTeam[s.team_name] = byTeam[s.team_name] || []).push(s.slot);
-            });
-            return Object.entries(byTeam).map(([team, slots]) => ({ team, slots: mergeAdjacentSlots(slots) }));
-          };
-          const PR = "#06b6d4", TNC = "#f59e0b", SA = "#22c55e", SUBC = "#ec4899"; // practice=cyan, tournament=amber, S&A=green, subbing=pink
-          // Shifts I'm picking up (covering another team) — shown in pink so a
-          // coach can spot where they're subbing. Effective slot honors a court move.
-          const mySubs = (practiceCoverage || []).filter(c => isRealSub(c.sub_name) && isMine(c.sub_name));
-          const subsOn = (iso) => { const seen = new Set(); return mySubs.filter(c => c.practice_date === iso).map(c => { const mv = (slotMoves||[]).find(m => m.practice_date === iso && m.team_name === c.team_name); return { team: c.team_name, slot: (mv && mv.slot) || c.slot }; }).filter(x => { const k = x.team + "|" + x.slot; if (seen.has(k)) return false; seen.add(k); return true; }); };
-          const sel = (homeCalSel && homeCalSel.slice(0,7) === monthKey) ? homeCalSel
-                    : (todayISO.slice(0,7) === monthKey ? todayISO : null);
-          const selP = sel ? practicesOn(sel) : [];
-          const selT = sel ? tnsOn(sel) : [];
-          const selSA = sel ? saOn(sel) : [];
-          const selSub = sel ? subsOn(sel) : [];
-          const fmtLong = (iso) => new Date(iso + "T12:00:00").toLocaleDateString(undefined, { weekday:"long", month:"short", day:"numeric" });
-          const cells = [];
-          for (let i = 0; i < leadPad; i++) cells.push(null);
-          for (let d = 1; d <= daysInMonth; d++) cells.push(d);
-          const chip = (color) => ({fontSize:7.5,fontWeight:800,lineHeight:"11px",height:11,borderRadius:2,padding:"0 2px",background:color+"33",color,overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis",letterSpacing:0.2});
-          return (
-            <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:"10px 12px",marginBottom:14}}>
-              <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
-                <span style={{fontSize:10,fontWeight:800,letterSpacing:0.4,textTransform:"uppercase",color:C.mut}}>My schedule</span>
-                <div style={{flex:1}} />
-                <button onClick={()=>setHomeCalOff(o=>o-1)} title="Previous month" style={{background:"none",border:"1px solid "+C.border,borderRadius:6,color:C.text,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:800,width:22,height:22,lineHeight:1,padding:0}}>‹</button>
-                <span style={{fontSize:11,fontWeight:800,color:C.text,minWidth:104,textAlign:"center"}}>{monthLabel}</span>
-                <button onClick={()=>setHomeCalOff(o=>o+1)} title="Next month" style={{background:"none",border:"1px solid "+C.border,borderRadius:6,color:C.text,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:800,width:22,height:22,lineHeight:1,padding:0}}>›</button>
-                {homeCalOff !== 0 && <button onClick={()=>{ setHomeCalOff(0); setHomeCalSel(todayISO); }} style={{background:"none",border:"none",color:C.acc,cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:700}}>Today</button>}
-              </div>
-              <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:2,marginBottom:2}}>
-                {["S","M","T","W","T","F","S"].map((d,i) => <div key={i} style={{textAlign:"center",fontSize:8,fontWeight:800,color:C.mut}}>{d}</div>)}
-              </div>
-              <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:2}}>
-                {cells.map((d,i) => {
-                  if (d === null) return <div key={"b"+i} />;
-                  const iso = isoOf(d);
-                  const evP = practicesOn(iso), evT = tnsOn(iso), evSA = saOn(iso), evSub = subsOn(iso);
-                  const tnLabels = [...new Set(evT.map(x => tnAbbr(x.tn.name)))];
-                  const events = [...tnLabels.map(l => ({ label: l, c: TNC })),
-                    ...evSub.map(x => ({ label: "🔁 " + abbr(x.team) + " " + shortTime(x.slot), c: SUBC })),
-                    ...evSA.map(x => ({ label: abbr(x.team) + " S&A", c: SA })),
-                    ...evP.map(x => ({ label: abbr(x.team) + " " + shortTime(x.slots.join(",")), c: PR }))];
-                  const isToday = iso === todayISO;
-                  const isSel = iso === sel;
-                  return (
-                    <button key={iso} onClick={()=>setHomeCalSel(iso)}
-                      style={{display:"flex",flexDirection:"column",alignItems:"stretch",gap:1,minHeight:30,textAlign:"left",
-                        background:isSel?"rgba(233,30,140,0.14)":events.length?C.bg:"transparent",
-                        border:"1px solid "+(isSel?C.gold:isToday?C.acc:"transparent"),
-                        borderRadius:6,cursor:"pointer",fontFamily:"inherit",padding:"2px 2px 3px",overflow:"hidden"}}>
-                      <span style={{fontSize:9,fontWeight:isToday?800:600,color:isToday?C.gold:C.mut,paddingLeft:1}}>{d}</span>
-                      {events.slice(0,2).map((e,ei) => <span key={ei} style={chip(e.c)}>{e.label}</span>)}
-                      {events.length > 2 && <span style={{fontSize:7.5,fontWeight:800,color:C.mut,paddingLeft:1}}>+{events.length-2}</span>}
-                    </button>
-                  );
-                })}
-              </div>
-              <div style={{display:"flex",alignItems:"center",gap:10,marginTop:8,fontSize:10,color:C.mut,flexWrap:"wrap"}}>
-                <span style={{display:"flex",alignItems:"center",gap:4}}><span style={{width:10,height:8,borderRadius:2,background:PR+"33",border:"1px solid "+PR}} />Practice</span>
-                {mySubs.length>0 && <span style={{display:"flex",alignItems:"center",gap:4}}><span style={{width:10,height:8,borderRadius:2,background:SUBC+"33",border:"1px solid "+SUBC}} />🔁 Subbing</span>}
-                <span style={{display:"flex",alignItems:"center",gap:4}}><span style={{width:10,height:8,borderRadius:2,background:SA+"33",border:"1px solid "+SA}} />S&amp;A</span>
-                <span style={{display:"flex",alignItems:"center",gap:4}}><span style={{width:10,height:8,borderRadius:2,background:TNC+"33",border:"1px solid "+TNC}} />Tournament</span>
-                <div style={{flex:1}} />
-                {canOps && <button onClick={()=>{ setView("tournaments"); setOpenMenu(null); }} style={{background:"none",border:"none",color:C.acc,cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:700}}>All tournaments →</button>}
-              </div>
-              {sel && (
-                <div style={{marginTop:10,borderTop:"1px solid "+C.border,paddingTop:10}}>
-                  <div style={{fontSize:11,fontWeight:800,color:C.text,marginBottom:6}}>{fmtLong(sel)}{sel===todayISO?" · Today":""}</div>
-                  {(selP.length===0 && selT.length===0 && selSA.length===0 && selSub.length===0) ? (
-                    <div style={{fontSize:12,color:C.mut}}>Nothing scheduled.</div>
-                  ) : (
-                    <div style={{display:"flex",flexDirection:"column",gap:5}}>
-                      {selSub.map((x,i) => (
-                        <div key={"sub"+i} style={{display:"flex",alignItems:"center",gap:8,fontSize:13}}>
-                          <span style={{width:6,height:6,borderRadius:3,background:SUBC,flexShrink:0}} />
-                          <span style={{flex:1,color:C.text,fontWeight:600}}>🔁 Subbing <b>{x.team}</b> <span style={{color:SUBC,fontWeight:800,fontSize:10}}>PICKUP</span></span>
-                          <span style={{fontSize:11,color:C.mut}}>{x.slot}</span>
-                        </div>
-                      ))}
-                      {selT.map((x,i) => (
-                        <div key={"t"+i} style={{display:"flex",alignItems:"center",gap:8,fontSize:13}}>
-                          <span style={{width:6,height:6,borderRadius:3,background:TNC,flexShrink:0}} />
-                          <span style={{flex:1,color:C.text,fontWeight:600}} title={x.tn.name}><b style={{color:TNC}}>{tnAbbr(x.tn.name)}</b> <span style={{fontWeight:500}}>{x.tn.name}</span> <span style={{color:C.mut,fontWeight:500}}>· {x.team}</span>{x.tn.location && <span style={{color:C.mut,fontWeight:500}}> · 📍{shortCity(x.tn.location)}</span>}{x.sub && <span style={{color:"#a855f7",fontWeight:800,marginLeft:4,fontSize:9}}>SUB</span>}{x.tn.is_qualifier && <span style={{color:"#a855f7",fontWeight:800,marginLeft:4,fontSize:9}}>QUAL</span>}</span>
-                          <span style={{fontSize:10,fontWeight:800,color:TNC,textTransform:"uppercase"}}>Tourn.</span>
-                        </div>
-                      ))}
-                      {selSA.map((x,i) => (
-                        <div key={"sa"+i} style={{display:"flex",alignItems:"center",gap:8,fontSize:13}}>
-                          <span style={{width:6,height:6,borderRadius:3,background:SA,flexShrink:0}} />
-                          <span style={{flex:1,color:C.text,fontWeight:600}}>{x.team} <span style={{color:SA,fontWeight:800,fontSize:10}}>S&amp;A</span></span>
-                          <span style={{fontSize:11,color:C.mut}}>{x.slots.join(", ")}</span>
-                        </div>
-                      ))}
-                      {selP.map((x,i) => (
-                        <div key={"p"+i} style={{display:"flex",alignItems:"center",gap:8,fontSize:13}}>
-                          <span style={{width:6,height:6,borderRadius:3,background:PR,flexShrink:0}} />
-                          <span style={{flex:1,color:C.text,fontWeight:600}}>{x.team}</span>
-                          <span style={{fontSize:11,color:C.mut}}>{x.slots.join(", ")}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          );
-        })()}
+        {renderCoachCalendar(isMine, myTeams.map(t => t.team_name), homeCalOff, setHomeCalOff, homeCalSel, setHomeCalSel, {title:"My schedule"})}
 
         {renderCoachScheduleAlerts(isMine, myTeams.map(t => t.team_name))}
         {renderUpdatesPanel(myTeams.map(t => t.team_name))}
@@ -8428,6 +8388,9 @@ export default function App() {
               <div style={{fontSize:10,color:C.mut,marginTop:6,fontStyle:"italic"}}>Changing the name here won't rename their team assignments — if you rename a coach, re-pick their teams below (or update the team's HC/AC).</div>
             </div>
           )}
+
+          {/* This coach's calendar — teams, floating, and shifts they've picked up. */}
+          {renderCoachCalendar(matchesCoach, teamsForDisplay, coachCalOff, setCoachCalOff, coachCalSel, setCoachCalSel, { title: (displayName || "Coach") + "'s schedule" })}
 
           {/* Schedule changes + shift pickups for this coach. */}
           {renderCoachScheduleAlerts(matchesCoach, teamsForDisplay)}
