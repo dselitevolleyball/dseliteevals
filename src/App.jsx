@@ -5197,12 +5197,29 @@ export default function App() {
       else if (isRealSub(c.sub_name) && matches(c.coach_out)) items.push({ date: c.practice_date, kind: "off", team: c.team_name, slot: c.slot, sub: c.sub_name, tn: coachTnOn(c.practice_date) });
     });
     (slotMoves || []).forEach(m => { if ((m.practice_date || "") >= today && teamSet.has(m.team_name)) { const from = origSlot(m.team_name, m.practice_date); if (from !== m.slot) items.push({ date: m.practice_date, kind: "moved", team: m.team_name, slot: m.slot, from }); } });
-    // Cancellations: only for the coach's teams that actually had a practice that date.
+    // Cancellations. Per-team cancels stay as individual rows; club-wide days
+    // off (winter/spring break etc.) are merged into ONE compact range row
+    // instead of a wall of per-day, per-team "practice cancelled" lines.
+    const breakDays = [];
     (practiceCancellations || []).forEach(x => {
       if ((x.practice_date || "") < today) return;
-      const affected = x.team_name ? (teamSet.has(x.team_name) ? [x.team_name] : []) : [...teamSet];
-      affected.forEach(t => { if (practicesOnDate(t, x.practice_date)) items.push({ date: x.practice_date, kind: "cancelled", team: t }); });
+      if (x.team_name) { if (teamSet.has(x.team_name) && practicesOnDate(x.team_name, x.practice_date)) items.push({ date: x.practice_date, kind: "cancelled", team: x.team_name }); return; }
+      breakDays.push({ date: x.practice_date, reason: (x.reason || "").trim() });
     });
+    // Merge ALL club-wide days into ranges first, THEN keep only ranges where
+    // this coach actually loses a practice (gating per-day first would split a
+    // break into fragments for teams that don't practice every day).
+    breakDays.sort((a, b) => a.date.localeCompare(b.date));
+    const rNorm = s => (s || "").toLowerCase().replace(/[^a-z]/g, "");
+    const relevant = (run2) => { for (let d = new Date(run2.from + "T12:00:00"); localDateISO(d) <= run2.to; d.setDate(d.getDate() + 1)) { const iso = localDateISO(d); if ([...teamSet].some(t => practicesOnDate(t, iso))) return true; } return false; };
+    let run = null;
+    const flushRun = () => { if (run) { if (relevant(run)) items.push({ date: run.from, kind: "break", from: run.from, to: run.to, reason: run.reason }); run = null; } };
+    for (const b of breakDays) {
+      const gap = run ? (new Date(b.date + "T00:00") - new Date(run.to + "T00:00")) / 86400000 : 99;
+      if (run && gap <= 4 && (rNorm(b.reason) === rNorm(run.reason) || !b.reason || !run.reason)) { run.to = b.date; if (!run.reason) run.reason = b.reason; }
+      else { flushRun(); run = { from: b.date, to: b.date, reason: b.reason }; }
+    }
+    flushRun();
     // De-dupe (same date/kind/team/slot) and sort by date.
     const seen = new Set();
     return items.filter(it => { const k = it.date + "|" + it.kind + "|" + it.team + "|" + (it.slot||""); if (seen.has(k)) return false; seen.add(k); return true; })
@@ -5216,6 +5233,7 @@ export default function App() {
       pickup:    { icon: "🟢", color: C.grn,     text: (it) => <>Pick up <b>{it.team}</b> · {it.slot}</>, tag: "PICKUP", tagColor: C.grn },
       moved:     { icon: "🟣", color: "#a855f7", text: (it) => <><b>{it.team}</b> moved{it.from ? " from " + it.from : ""} → {it.slot}</>, tag: "MOVED", tagColor: "#a855f7" },
       cancelled: { icon: "🔴", color: C.red,     text: (it) => <><b>{it.team || "All teams"}</b> practice cancelled</>, tag: "OFF", tagColor: C.red },
+      break:     { icon: "🌴", color: C.mut,     text: (it) => <>No practice {it.from === it.to ? fmt(it.from) : <b>{fmt(it.from)} – {fmt(it.to)}</b>}{it.reason ? " · " + it.reason : ""}</>, tag: "BREAK", tagColor: C.mut },
       off:       { icon: (it) => it.tn ? "🏐" : "⚪", color: (it) => it.tn ? "#f59e0b" : C.mut,
                    text: (it) => it.tn
                      ? <>At <b>{it.tn.name}</b> with <b>{it.tn.team}</b>{it.tn.loc ? " · 📍" + String(it.tn.loc).split(",")[0].trim() : ""} <span style={{color:C.mut}}>· {it.team} practice covered by {it.sub}</span></>
