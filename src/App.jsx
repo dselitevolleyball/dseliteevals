@@ -16986,6 +16986,45 @@ export default function App() {
                 </div>
               );
             })()}
+            {/* Housing — only for travel events (outside Austin) or stay-to-play,
+                where the hotel block opens on its own date. */}
+            {(tn.stay_over || tn.stay_to_play) && (() => {
+              const hOpens = tn.housing_opens || "";
+              const today = localDateISO();
+              const hState = !hOpens ? null : hOpens > today ? "soon" : "open";
+              const fld = {...inpStyle, padding:"2px 5px", fontSize:10, fontFamily:"inherit"};
+              return (
+                <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginTop:4,paddingTop:4,borderTop:"1px dashed "+C.border}}>
+                  <span style={{fontSize:9,fontWeight:800,textTransform:"uppercase",letterSpacing:0.4,color:"#a855f7"}}>🏨 Housing</span>
+                  {tn.stay_to_play && <span style={{fontSize:9,fontWeight:800,color:"#a855f7",border:"1px solid #a855f7",borderRadius:5,padding:"1px 5px"}}>STAY TO PLAY</span>}
+                  <label style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:10,color:C.mut}} title="Date the hotel block / housing portal opens">
+                    Opens
+                    {canOps
+                      ? <input type="date" value={hOpens} onChange={e=>updateTournamentReg(tn, { housing_opens: e.target.value || null })}
+                          style={{...fld, color: hState==="open" ? C.grn : hState==="soon" ? "#f59e0b" : C.text}} />
+                      : <b style={{color:C.text}}>{hOpens ? new Date(hOpens+"T12:00:00").toLocaleDateString() : "—"}</b>}
+                  </label>
+                  {canOps && (
+                    <input type="text" defaultValue={tn.housing_opens_time || ""} placeholder="time?"
+                      onBlur={e=>{ const v=e.target.value.trim(); if (v !== (tn.housing_opens_time||"")) updateTournamentReg(tn, { housing_opens_time: v || null }); }}
+                      onKeyDown={e=>{ if (e.key==="Enter") e.target.blur(); }}
+                      title="Host-announced housing open time, if any"
+                      style={{...fld, width:78, color: tn.housing_opens_time ? C.text : C.mut}} />
+                  )}
+                  {hState && <span style={{fontSize:9,fontWeight:800,color:hState==="open"?C.grn:"#f59e0b",border:"1px solid "+(hState==="open"?C.grn:"#f59e0b"),borderRadius:5,padding:"1px 5px"}}>{hState==="open"?"BOOK NOW":"OPENS "+new Date(hOpens+"T12:00:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"})+(tn.housing_opens_time?" "+tn.housing_opens_time:"")}</span>}
+                  {canOps && (
+                    <label style={{display:"inline-flex",alignItems:"center",gap:3,fontSize:10,color:C.mut,cursor:"pointer"}} title="Host requires booking through their housing partner">
+                      <input type="checkbox" checked={!!tn.stay_to_play} onChange={e=>updateTournamentReg(tn, { stay_to_play: e.target.checked })} />
+                      Stay to play
+                    </label>
+                  )}
+                  {tn.housing_url
+                    ? <a href={tn.housing_url.startsWith("http")?tn.housing_url:"https://"+tn.housing_url} target="_blank" rel="noreferrer" onClick={e=>e.stopPropagation()} style={{fontSize:10,fontWeight:700,color:"#a855f7"}}>Housing portal →</a>
+                    : canOps && <button onClick={e=>{ e.stopPropagation(); const v=window.prompt("Housing portal link for “"+tn.name+"”:", ""); if (v!==null) updateTournamentReg(tn, { housing_url: v.trim() || null }); }}
+                        style={{padding:"1px 7px",borderRadius:6,border:"1px dashed "+C.border,background:"transparent",color:C.mut,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>+ portal link</button>}
+                </div>
+              );
+            })()}
           </div>
           <div style={{display:"flex",gap:5,alignItems:"center"}}>
             <button onClick={()=>openEditTournament(tn)}
@@ -17476,6 +17515,10 @@ export default function App() {
         list.forEach(g => {
           const opensTxt = g.opens ? "opens " + fmt(g.opens) + ((g.tn.registration_opens_time || "").trim() ? " at " + g.tn.registration_opens_time.trim() : "") : "open date TBD";
           lines.push("  " + g.tn.name + "  [plays " + fmtShort(g.tn.start_date) + "]  — " + opensTxt + (g.closes ? ", register by " + fmtShort(g.closes) : "") + (tnPlatformOf(g.tn) ? "  via " + tnPlatformOf(g.tn) : ""));
+          if (g.tn.stay_over || g.tn.stay_to_play) {
+            const h = g.tn.housing_opens ? "housing opens " + fmt(g.tn.housing_opens) + ((g.tn.housing_opens_time||"").trim() ? " at " + g.tn.housing_opens_time.trim() : "") : "housing date TBD";
+            lines.push("     🏨 " + (g.tn.stay_to_play ? "STAY TO PLAY — " : "") + h);
+          }
           g.teams.filter(a => a.status !== "registered").forEach(a => lines.push("     • " + a.team_id + (a.division ? " — " + a.division : " — (division TBD)")));
         });
         lines.push("");
@@ -17530,6 +17573,32 @@ export default function App() {
                     title="Host-announced open time, if there is one. AES only publishes the date."
                     style={{...inpStyle,padding:"1px 6px",fontSize:10,width:118,color:timeTxt?C.text:C.mut}} />
                 )}
+              </div>
+            );
+          })()}
+          {/* Housing — travel events book a hotel block that opens on its own
+              date, so it belongs on the same to-do as registration. */}
+          {(g.tn.stay_over || g.tn.stay_to_play) && (() => {
+            const hOpens = g.tn.housing_opens || null;
+            const hTime = (g.tn.housing_opens_time || "").trim();
+            const isOpen = hOpens && hOpens <= today;
+            const dOpen = hOpens ? daysTo(hOpens) : null;
+            const col = !hOpens ? C.mut : isOpen ? C.grn : "#f59e0b";
+            return (
+              <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:6,fontSize:11}}>
+                <span style={{fontSize:9,fontWeight:800,textTransform:"uppercase",letterSpacing:0.4,color:"#a855f7"}}>🏨 Housing</span>
+                {g.tn.stay_to_play && <span style={{fontSize:9,fontWeight:800,color:"#a855f7",border:"1px solid #a855f7",borderRadius:5,padding:"0 5px"}}>STAY TO PLAY</span>}
+                {hOpens ? (
+                  <span style={{fontWeight:800,color:col}}>
+                    {fmt(hOpens)}{hTime ? " at " + hTime : ""}
+                    <span style={{fontWeight:600,color:C.mut}}>{isOpen ? " · book now" : dOpen === 1 ? " · tomorrow" : " · in " + dOpen + " days"}</span>
+                  </span>
+                ) : canOps ? (
+                  <input type="date" value="" onChange={e=>{ if (e.target.value) updateTournamentReg(g.tn, { housing_opens: e.target.value }); }}
+                    title="Set the date the hotel block opens"
+                    style={{...inpStyle,padding:"1px 6px",fontSize:10,color:C.mut}} />
+                ) : <span style={{fontStyle:"italic",color:C.mut}}>housing date TBD</span>}
+                {g.tn.housing_url && <a href={g.tn.housing_url.startsWith("http")?g.tn.housing_url:"https://"+g.tn.housing_url} target="_blank" rel="noreferrer" style={{fontSize:10,fontWeight:800,color:"#a855f7"}}>portal →</a>}
               </div>
             );
           })()}
