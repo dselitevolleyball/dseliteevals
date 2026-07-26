@@ -7,7 +7,9 @@
 // URL once and the team calendar stays in sync with the practice planner:
 // summer/fall Sundays (dated), ALL S&A sessions (fall + regular-season Block
 // 1/2), weekly regular-season and post-season practices (holiday cancellations
-// excluded, per-date practice moves honored as one-off "time change" events),
+// excluded, per-date practice moves honored as one-off "time change" events,
+// tournament weekends suppressing that Sunday's practice + S&A), every
+// tournament assignment as an all-day event (planned ones tagged tentative),
 // and each team's DS Elite Orientation Night.
 //
 // Env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY (read-only queries).
@@ -74,12 +76,17 @@ export default async function handler(req, res) {
   }
 
   const enc = encodeURIComponent(team);
-  const [assigns, saRows, cancels, moves] = await Promise.all([
+  const [assigns, saRows, cancels, moves, tnAssigns] = await Promise.all([
     q("practice_assignments?team_name=eq." + enc + "&select=day,slot,phase,court"),
     q("sa_sessions?team_name=eq." + enc + "&select=session_date,slot,block"),
     q("practice_cancellations?select=practice_date,team_name"),
     q("practice_slot_moves?team_name=eq." + enc + "&select=practice_date,slot"),
+    q("tournament_assignments?team_id=eq." + enc + "&select=tournament_id,status,division"),
   ]);
+  // This team's tournaments (any status except a cancelled tournament).
+  const tnIds = [...new Set((Array.isArray(tnAssigns) ? tnAssigns : []).map(a => a.tournament_id).filter(Boolean))];
+  const tnRows = tnIds.length ? await q("tournaments?id=in.(" + tnIds.join(",") + ")&select=id,name,start_date,end_date,location,venue,cancelled,stay_over") : [];
+  const tnById = new Map((Array.isArray(tnRows) ? tnRows : []).map(t => [t.id, t]));
   if (!Array.isArray(assigns)) return res.status(500).send("Query failed.");
   // A cancellation hits this team's feed if it's whole-day (team_name empty) or
   // targets this team specifically.
@@ -90,6 +97,20 @@ export default async function handler(req, res) {
   // the team practices at a different block, so the normal occurrence is
   // excluded and a one-off event at the moved time is emitted instead.
   const moveByDate = new Map((Array.isArray(moves) ? moves : []).map(m => [m.practice_date, m.slot]));
+  // Sundays with NO practice because the team competes that weekend — same rule
+  // as the app's boards: a multi-day (or locked) tournament whose Fri–Sun window
+  // covers the Sunday suppresses that week's Sunday practice (and S&A).
+  const addDays = (iso, n) => { const d = new Date(iso + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+  const goneSun = new Set();
+  for (const a of (Array.isArray(tnAssigns) ? tnAssigns : [])) {
+    const tn = tnById.get(a.tournament_id);
+    if (!tn || tn.cancelled || !tn.start_date) continue;
+    const end = tn.end_date || tn.start_date;
+    if (!(end > tn.start_date || a.status === "locked")) continue;
+    let s = firstOnOrAfter(tn.start_date, 0);           // first Sunday on/after start
+    const lastSun = addDays(end, 2);                     // Fri–Sun window reach
+    while (s <= lastSun) { goneSun.add(s); s = addDays(s, 7); }
+  }
 
   const ev = [];
   const push = (uid, summary, startIso, sHour, eHour, opts = {}) => {
@@ -128,14 +149,14 @@ export default async function handler(req, res) {
     for (const a of assigns.filter(x => (x.phase || "season") === phase && x.day === "Sun")) {
       const t = slotTimes(a.slot); if (!t) continue;
       for (const d of dates) {
-        if (cancelled.has(d) || moveByDate.has(d)) continue;
+        if (cancelled.has(d) || moveByDate.has(d) || goneSun.has(d)) continue;
         push(`${team}-${phase}-${d}-${a.slot}`.replace(/\s+/g, "_"), team + " Practice", d, t[0], t[1], { location: locFor(a) });
       }
     }
   }
   // Fall Speed & Agility (already dated rows)
   for (const s of (Array.isArray(saRows) ? saRows : [])) {
-    const t = slotTimes(s.slot); if (!t || !s.session_date || cancelled.has(s.session_date)) continue;
+    const t = slotTimes(s.slot); if (!t || !s.session_date || cancelled.has(s.session_date) || goneSun.has(s.session_date)) continue;
     push(`${team}-sa-${s.session_date}-${s.slot}`.replace(/\s+/g, "_"), team + " Speed & Agility", s.session_date, t[0], t[1], { location: WAREHOUSE_LOC });
   }
   // Weekly: regular season + post season
@@ -146,13 +167,13 @@ export default async function handler(req, res) {
       if (!t || dow == null) continue;
       const first = firstOnOrAfter(start, dow);
       if (first > end) continue;
-      const exdates = datesBetween(start, end, dow).filter(d => cancelled.has(d) || moveByDate.has(d));
+      const exdates = datesBetween(start, end, dow).filter(d => cancelled.has(d) || moveByDate.has(d) || goneSun.has(d));
       push(`${team}-${phase}-${a.day}-${a.slot}`.replace(/\s+/g, "_"), team + " Practice", first, t[0], t[1], { location: locFor(a), rruleUntil: end, exdates });
     }
   }
   // One-off events at the moved time for each per-date practice move.
   for (const [d, slot] of moveByDate) {
-    if (cancelled.has(d)) continue;
+    if (cancelled.has(d) || goneSun.has(d)) continue;
     const t = slotTimes(slot); if (!t) continue;
     push(`${team}-moved-${d}-${slot}`.replace(/\s+/g, "_"), team + " Practice (time change)", d, t[0], t[1], { location: WAREHOUSE_LOC });
   }
@@ -165,6 +186,24 @@ export default async function handler(req, res) {
       "SUMMARY:" + icsEsc("DS Elite Orientation Night — " + team),
       "DESCRIPTION:" + icsEsc("Jersey tryout, parent orientation, player commitment, and team building. First hour with parents; remaining three hours are team-only."),
       "LOCATION:" + icsEsc(WAREHOUSE_LOC), "END:VEVENT"].join("\r\n"));
+  }
+
+  // Tournaments — every assignment for this team (planned included; only a
+  // cancelled tournament is skipped). All-day span events; "planned" is tagged
+  // tentative so parents know it isn't locked yet.
+  for (const a of (Array.isArray(tnAssigns) ? tnAssigns : [])) {
+    const tn = tnById.get(a.tournament_id);
+    if (!tn || tn.cancelled || !tn.start_date) continue;
+    const end = tn.end_date || tn.start_date;
+    const summary = team + " Tournament — " + tn.name + (a.status === "planned" ? " (tentative)" : "");
+    const desc = ["Status: " + (a.status || "planned"), a.division ? "Division: " + a.division : "", tn.stay_over ? "Travel tournament — overnight stay." : ""].filter(Boolean).join("\n");
+    ev.push(["BEGIN:VEVENT", "UID:" + (team + "-tn-" + tn.id).replace(/\s+/g, "_") + "@dseliteevals", "DTSTAMP:20260702T000000Z",
+      "DTSTART;VALUE=DATE:" + tn.start_date.replace(/-/g, ""),
+      "DTEND;VALUE=DATE:" + addDays(end, 1).replace(/-/g, ""),
+      "SUMMARY:" + icsEsc(summary),
+      "DESCRIPTION:" + icsEsc(desc),
+      "LOCATION:" + icsEsc([tn.venue, tn.location].filter(Boolean).join(", ")),
+      "END:VEVENT"].join("\r\n"));
   }
 
   const ics = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//DS Elite HQ//Practice Calendar//EN",
