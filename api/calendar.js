@@ -5,9 +5,10 @@
 //
 // Built for sportsYou's "Import External Calendar (URL)" — paste a team's feed
 // URL once and the team calendar stays in sync with the practice planner:
-// summer/fall Sundays (dated), Fall S&A sessions, weekly regular-season and
-// post-season practices (with holiday cancellations excluded), and each
-// team's DS Elite Orientation Night.
+// summer/fall Sundays (dated), ALL S&A sessions (fall + regular-season Block
+// 1/2), weekly regular-season and post-season practices (holiday cancellations
+// excluded, per-date practice moves honored as one-off "time change" events),
+// and each team's DS Elite Orientation Night.
 //
 // Env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY (read-only queries).
 
@@ -73,10 +74,11 @@ export default async function handler(req, res) {
   }
 
   const enc = encodeURIComponent(team);
-  const [assigns, saRows, cancels] = await Promise.all([
+  const [assigns, saRows, cancels, moves] = await Promise.all([
     q("practice_assignments?team_name=eq." + enc + "&select=day,slot,phase,court"),
     q("sa_sessions?team_name=eq." + enc + "&select=session_date,slot,block"),
     q("practice_cancellations?select=practice_date,team_name"),
+    q("practice_slot_moves?team_name=eq." + enc + "&select=practice_date,slot"),
   ]);
   if (!Array.isArray(assigns)) return res.status(500).send("Query failed.");
   // A cancellation hits this team's feed if it's whole-day (team_name empty) or
@@ -84,6 +86,10 @@ export default async function handler(req, res) {
   const cancelled = new Set((Array.isArray(cancels) ? cancels : [])
     .filter(c => !c.team_name || c.team_name === team)
     .map(c => c.practice_date));
+  // Per-date practice moves (Sunday court planner / S&A plan): on these dates
+  // the team practices at a different block, so the normal occurrence is
+  // excluded and a one-off event at the moved time is emitted instead.
+  const moveByDate = new Map((Array.isArray(moves) ? moves : []).map(m => [m.practice_date, m.slot]));
 
   const ev = [];
   const push = (uid, summary, startIso, sHour, eHour, opts = {}) => {
@@ -122,7 +128,7 @@ export default async function handler(req, res) {
     for (const a of assigns.filter(x => (x.phase || "season") === phase && x.day === "Sun")) {
       const t = slotTimes(a.slot); if (!t) continue;
       for (const d of dates) {
-        if (cancelled.has(d)) continue;
+        if (cancelled.has(d) || moveByDate.has(d)) continue;
         push(`${team}-${phase}-${d}-${a.slot}`.replace(/\s+/g, "_"), team + " Practice", d, t[0], t[1], { location: locFor(a) });
       }
     }
@@ -140,9 +146,15 @@ export default async function handler(req, res) {
       if (!t || dow == null) continue;
       const first = firstOnOrAfter(start, dow);
       if (first > end) continue;
-      const exdates = datesBetween(start, end, dow).filter(d => cancelled.has(d));
+      const exdates = datesBetween(start, end, dow).filter(d => cancelled.has(d) || moveByDate.has(d));
       push(`${team}-${phase}-${a.day}-${a.slot}`.replace(/\s+/g, "_"), team + " Practice", first, t[0], t[1], { location: locFor(a), rruleUntil: end, exdates });
     }
+  }
+  // One-off events at the moved time for each per-date practice move.
+  for (const [d, slot] of moveByDate) {
+    if (cancelled.has(d)) continue;
+    const t = slotTimes(slot); if (!t) continue;
+    push(`${team}-moved-${d}-${slot}`.replace(/\s+/g, "_"), team + " Practice (time change)", d, t[0], t[1], { location: WAREHOUSE_LOC });
   }
   // Orientation Night (all-day)
   const age = parseInt(team.match(/^\d+/)?.[0] || "", 10);
