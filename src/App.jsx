@@ -8879,7 +8879,7 @@ export default function App() {
         (dayAssignments.filter(a => a.day === weekday && a.slot === label && !noPracticeTeams.has(a.team_name))).forEach(a => {
           if (teamCancelled(dailyDate, a.team_name)) return;
           const tm = teamByName2.get(a.team_name) || {};
-          [tm.head_coach, tm.assistant_coach].forEach(c => { if (c) busy.add(low(c)); });
+          [tm.head_coach, tm.assistant_coach, tm.third_coach].forEach(c => { if (c) busy.add(low(c)); });
         });
         // Tournaments covering this date — effective staff incl. placeholders.
         for (const ta of tournamentAssignments) {
@@ -8895,7 +8895,7 @@ export default function App() {
       const poolFloatingFor = (label) => { const fl = floatersFor(label); return (floatingCoaches||[]).map(x=>(x||"").trim()).filter(Boolean)
         .filter(n => !fl.some(f=>f.toLowerCase()===n.toLowerCase()) && !outTodaySet.has(nrmName(n)) && !awayLow.has(nrmName(n))); };
       // Real coaches at THIS gym today in a different slot (before/after), free now.
-      const slotCoachSet = (lbl) => { const set = new Set(); dayAssignments.filter(x => x.day===weekday && x.slot===lbl && !noPracticeTeams.has(x.team_name)).forEach(x => { if (teamCancelled(dailyDate, x.team_name)) return; const tm = teamByName2.get(x.team_name) || {}; [tm.head_coach, tm.assistant_coach].forEach(cc => { if (cc && !isPlaceholderCoach(cc)) set.add(cc); }); }); return set; };
+      const slotCoachSet = (lbl) => { const set = new Set(); dayAssignments.filter(x => x.day===weekday && x.slot===lbl && !noPracticeTeams.has(x.team_name)).forEach(x => { if (teamCancelled(dailyDate, x.team_name)) return; const tm = teamByName2.get(x.team_name) || {}; [tm.head_coach, tm.assistant_coach, tm.third_coach].forEach(cc => { if (cc && !isPlaceholderCoach(cc)) set.add(cc); }); }); return set; };
       const beforeAfterFor = (label) => { const here = slotCoachSet(label); return [...new Set(daySlots.flatMap(ss => ss.label===label ? [] : [...slotCoachSet(ss.label)]))]
         .filter(cc => !here.has(cc) && !awayLow.has(nrmName(cc)) && !outTodaySet.has(nrmName(cc))).sort(); };
       // Build a fair auto-fill proposal for every OPEN spot today (a coach away at
@@ -9265,7 +9265,7 @@ export default function App() {
                       <div style={{display:"flex",flexDirection:"column"}}>
                         {teams.map(a => {
                           const t = teamByName2.get(a.team_name) || {};
-                          const coaches = [["Head",t.head_coach],["Asst",t.assistant_coach]].filter(([,c]) => c);
+                          const coaches = [["Head",t.head_coach],["Asst",t.assistant_coach],["2nd Asst",t.third_coach]].filter(([,c]) => c);
                           const coachNames = coaches.map(([,c]) => c);
                           // Team is left with no coach when both are out AND neither
                           // has a real sub filled in → offer to combine.
