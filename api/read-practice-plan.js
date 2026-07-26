@@ -1,32 +1,38 @@
-// Vercel serverless function: reads a PHOTO of a practice plan (a whiteboard,
-// a handwritten page, a printed sheet) and converts it into the app's
-// structured practice-plan format so a coach can save, share, and run it.
+// Vercel serverless function: reads an UPLOADED practice plan — a photo of a
+// whiteboard, a scanned PDF, a Word doc, a spreadsheet, a CSV — and converts it
+// into the app's structured practice-plan format so a coach can save, share,
+// and run it.
 //
-// Called from the Practice Planner page's "Upload a photo" box. Same output
+// Called from the Practice Planner page's "Upload a plan" box. Same output
 // shape as api/plan-practice.js, so the extracted plan drops straight into the
 // existing planner UI, review flow, and practice_plans table.
+//
+// Images and PDFs go to Claude natively as content blocks. Office files are
+// unzipped to text first — see api/_lib/extract-doc.js.
 //
 // Env vars (Vercel -> Project Settings -> Environment Variables):
 //   ANTHROPIC_API_KEY  - required. Same key the other AI endpoints use.
 //
 // Request body: {
-//   image:   string,                 // data URL or bare base64 of the photo
-//   minutes: number,                 // total practice length (a hint)
-//   library: [{ name, skill, phase, minutes, level }]   // club drills, to match names
+//   file:      string,               // data URL or bare base64 of the upload
+//   filename:  string,               // original name — how we tell .xlsx from .docx
+//   mediaType: string,               // optional; falls back to the data URL / extension
+//   image:     string,               // legacy alias for `file`
+//   minutes:   number,               // total practice length (a hint)
+//   library:   [{ name, skill, phase, minutes, level }]   // club drills, to match names
 // }
 // Response: { plan: { name, blocks: [{ name, skill, phase, minutes, desc }], unreadable: [] } }
 //           { error: "<message>" }
 
 import Anthropic from "@anthropic-ai/sdk";
+import { parseUpload } from "./_lib/extract-doc.js";
 
 const SKILLS = ["Serving","Passing","Setting","Hitting","Blocking","Defense","Ball control","Team play","Conditioning"];
-const MEDIA_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
-const MAX_BYTES = 5 * 1024 * 1024; // API caps images ~5MB base64
 
-const SYSTEM_PROMPT = `You transcribe volleyball practice plans from photos for DS Elite Volleyball. A coach photographs a plan — a whiteboard, a handwritten notebook page, a printed sheet, a phone note — and you convert exactly what they wrote into the club's structured format.
+const SYSTEM_PROMPT = `You transcribe volleyball practice plans for DS Elite Volleyball. A coach uploads a plan — a photo of a whiteboard, a handwritten notebook page, a scanned PDF, a Word document, a spreadsheet, a phone note — and you convert exactly what they wrote into the club's structured format.
 
 You are TRANSCRIBING, not designing. This is the most important rule:
-- Read what is actually on the page. Do not invent blocks the coach did not write, and do not drop blocks because they seem unusual.
+- Read what is actually there. Do not invent blocks the coach did not write, and do not drop blocks because they seem unusual.
 - Keep the coach's own wording for block names wherever it is legible. Do not "improve" their names.
 - Keep the order exactly as written, top to bottom.
 
@@ -37,23 +43,27 @@ Filling the structured fields:
 - desc: put the coach's own supporting notes here (reps, scoring, rotations, coaching points). If they wrote nothing, write one short sentence describing what the block clearly is. Never leave desc empty.
 - If a block's name closely matches a drill in the LIBRARY, use the library's EXACT name so it links to the saved drill. Only do this when it is clearly the same drill.
 
+Reading extracted text (spreadsheets, documents):
+- Spreadsheets arrive as a tab-separated grid, one row per line. Documents arrive as lines, with table rows written as "cell | cell | cell". A header row naming the columns tells you what each column means — use it, and do not turn the header itself into a block.
+- Ignore rows that are totals, blank separators, or notes to the coach rather than practice blocks.
+
 Handling what you cannot read:
-- If a word or number is illegible, make your best reading and add it to the "unreadable" list so the coach can check it.
-- If the whole image is not a practice plan (a roster, a scoresheet, a random photo), return zero blocks and explain in the "unreadable" list.
+- If a word or number is illegible or ambiguous, make your best reading and add it to the "unreadable" list so the coach can check it.
+- If the upload is not a practice plan at all (a roster, a scoresheet, a random photo), return zero blocks and explain in the "unreadable" list.
 - Never guess a time you cannot see and present it as certain — flag it.
 
 Return the transcription by calling read_plan. Do not write any prose outside the tool call.`;
 
 const PLAN_TOOL = {
   name: "read_plan",
-  description: "Return the practice plan transcribed from the photo.",
+  description: "Return the practice plan transcribed from the uploaded file.",
   input_schema: {
     type: "object",
     properties: {
-      name: { type: "string", description: "The plan's title as written on the page. If untitled, write a short descriptive one." },
+      name: { type: "string", description: "The plan's title as written in the file. If untitled, write a short descriptive one." },
       blocks: {
         type: "array",
-        description: "The practice blocks in the order written on the page.",
+        description: "The practice blocks in the order written in the file.",
         items: {
           type: "object",
           properties: {
@@ -68,7 +78,7 @@ const PLAN_TOOL = {
       },
       unreadable: {
         type: "array",
-        description: "Anything you could not read with confidence, or had to estimate, so the coach can verify it. Empty when the photo was fully legible.",
+        description: "Anything you could not read with confidence, or had to estimate, so the coach can verify it. Empty when the file was fully legible.",
         items: { type: "string" },
       },
     },
@@ -76,28 +86,19 @@ const PLAN_TOOL = {
   },
 };
 
-// Accepts a data URL ("data:image/png;base64,AAA...") or bare base64.
-function parseImage(raw) {
+// Splits a data URL ("data:image/png;base64,AAA...") into its media type and
+// payload. A bare base64 string passes straight through.
+function splitDataUrl(raw, mediaTypeHint) {
   const s = String(raw || "").trim();
-  if (!s) return { error: "No photo was uploaded." };
   const m = /^data:([^;,]+);base64,(.*)$/is.exec(s);
-  let mediaType = "image/jpeg", data = s;
-  if (m) { mediaType = m[1].toLowerCase().trim(); data = m[2]; }
-  data = data.replace(/\s/g, "");
-  if (!MEDIA_TYPES.has(mediaType)) {
-    return { error: "That image type isn't supported. Use a JPEG, PNG, GIF, or WebP photo." };
-  }
-  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(data) || data.length < 100) {
-    return { error: "That photo didn't upload correctly. Try taking it again." };
-  }
-  // base64 -> bytes is a 4:3 ratio.
-  if (Math.floor(data.length * 3 / 4) > MAX_BYTES) {
-    return { error: "That photo is too large. Retake it at a lower resolution, or crop it to just the plan." };
-  }
-  return { mediaType, data };
+  if (m) return { data: m[2], mediaType: m[1].toLowerCase().trim() };
+  return { data: s, mediaType: String(mediaTypeHint || "").toLowerCase().trim() };
 }
 
-function buildUserText(body) {
+// What to call the upload when talking to the coach.
+const NOUN = { image: "photo", pdf: "PDF", spreadsheet: "spreadsheet", document: "document", text: "file" };
+
+function buildUserText(body, kind) {
   const lines = [];
   if (body.minutes) lines.push(`The coach says this practice is about ${body.minutes} minutes total — use it to sanity-check any times you have to estimate.`);
   const library = Array.isArray(body.library) ? body.library : [];
@@ -107,7 +108,7 @@ function buildUserText(body) {
     for (const d of library) lines.push(`- ${d.name} | ${d.skill} | ${d.phase}`);
   }
   lines.push("");
-  lines.push("Transcribe the plan in this photo now by calling read_plan.");
+  lines.push(`Transcribe the plan in this ${NOUN[kind] || "file"} now by calling read_plan.`);
   return lines.join("\n");
 }
 
@@ -123,9 +124,24 @@ export default async function handler(req, res) {
   } catch {
     return res.status(400).json({ error: "Invalid JSON body" });
   }
-  const img = parseImage(body && body.image);
-  if (img.error) return res.status(400).json({ error: img.error });
+  body = body || {};
 
+  // `image` is the original field name — still accepted so older clients work.
+  const { data, mediaType } = splitDataUrl(body.file ?? body.image, body.mediaType);
+  let upload;
+  try {
+    upload = parseUpload({ data, mediaType, filename: body.filename });
+  } catch (e) {
+    return res.status(400).json({ error: e.message });
+  }
+
+  // Native block for images/PDFs; extracted text for everything else.
+  const content = upload.block
+    ? [upload.block]
+    : [{ type: "text", text: `PRACTICE PLAN (extracted from the coach's ${NOUN[upload.kind] || "file"}${body.filename ? ` "${body.filename}"` : ""}):\n\n${upload.text}` }];
+  content.push({ type: "text", text: buildUserText(body, upload.kind) });
+
+  const noun = NOUN[upload.kind] || "file";
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
   try {
@@ -136,26 +152,23 @@ export default async function handler(req, res) {
       system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
       tools: [PLAN_TOOL],
       tool_choice: { type: "tool", name: "read_plan" },
-      messages: [{
-        role: "user",
-        content: [
-          { type: "image", source: { type: "base64", media_type: img.mediaType, data: img.data } },
-          { type: "text", text: buildUserText(body || {}) },
-        ],
-      }],
+      messages: [{ role: "user", content }],
     });
 
     if (response.stop_reason === "refusal") {
-      return res.status(422).json({ error: "That photo couldn't be processed. Try a photo of just the practice plan." });
+      return res.status(422).json({ error: `That ${noun} couldn't be processed. Try uploading just the practice plan.` });
     }
     const toolUse = (response.content || []).find(b => b.type === "tool_use" && b.name === "read_plan");
     if (!toolUse || !toolUse.input) {
-      return res.status(502).json({ error: "Couldn't read that photo. Try a straighter, better-lit shot of the plan." });
+      const hint = upload.kind === "image"
+        ? "Try a straighter, better-lit shot of the plan."
+        : "Try re-saving the file, or export it as a PDF.";
+      return res.status(502).json({ error: `Couldn't read that ${noun}. ${hint}` });
     }
     const plan = toolUse.input;
     if (!Array.isArray(plan.blocks) || !plan.blocks.length) {
       const why = Array.isArray(plan.unreadable) && plan.unreadable.length ? " " + plan.unreadable.join(" ") : "";
-      return res.status(422).json({ error: "No practice blocks were found in that photo." + why });
+      return res.status(422).json({ error: `No practice blocks were found in that ${noun}.` + why });
     }
     // Round minutes so the planner's totals stay clean.
     plan.blocks = plan.blocks.map(b => ({ ...b, minutes: Math.max(1, Math.round(+b.minutes || 0)) }));
@@ -163,7 +176,7 @@ export default async function handler(req, res) {
     return res.status(200).json({ plan });
   } catch (err) {
     console.error("read-practice-plan error:", err);
-    const msg = (err && err.message) || "Could not read the photo";
+    const msg = (err && err.message) || `Could not read the ${noun}`;
     const status = err && err.status ? err.status : 500;
     return res.status(status >= 400 && status < 600 ? status : 500).json({ error: msg });
   }
