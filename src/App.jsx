@@ -5063,7 +5063,9 @@ export default function App() {
     const teamAtTn = (team, iso) => { const dow = new Date(iso + "T00:00").getDay(); let winStart = iso; if (dow === 0) { const f = new Date(iso + "T00:00"); f.setDate(f.getDate() - 2); winStart = localDateISO(f); } return myTns.some(x => x.team === team && x.tn.start_date <= iso && (((x.tn.end_date || x.tn.start_date) >= iso) || (dow === 0 && x.tn.end_date && x.tn.end_date > x.tn.start_date && x.tn.end_date >= winStart))); };
     const practicesOn = (iso) => { const phase = phaseForDate(iso); if (!phase) return []; const dow = DOW[new Date(iso + "T00:00").getDay()]; const byTeam = {}; (practiceAssignments||[]).forEach(a => { if (!myTeamSet.has(a.team_name) || (a.phase || "fall1") !== phase || a.day !== dow) return; if (isCancelled(iso, a.team_name) || teamAtTn(a.team_name, iso)) return; (byTeam[a.team_name] = byTeam[a.team_name] || []).push(a.slot); }); return Object.entries(byTeam).map(([team, slots]) => ({ team, slots: mergeAdjacentSlots(slots) })); };
     const tnsOn = (iso) => { const seen = new Set(); return myTns.filter(x => x.tn.start_date <= iso && (x.tn.end_date || x.tn.start_date) >= iso).filter(x => { const k = x.team + "|" + x.tn.id; if (seen.has(k)) return false; seen.add(k); return true; }); };
-    const saOn = (iso) => { const byTeam = {}; (saSessions || []).forEach(s => { if (!myTeamSet.has(s.team_name) || s.session_date !== iso) return; if (isCancelled(iso, s.team_name) || teamAtTn(s.team_name, iso)) return; (byTeam[s.team_name] = byTeam[s.team_name] || []).push(s.slot); }); return Object.entries(byTeam).map(([team, slots]) => ({ team, slots: mergeAdjacentSlots(slots) })); };
+    const saOn = (iso) => { const byTeam = {}; (saSessions || []).forEach(s => { if (!myTeamSet.has(s.team_name) || s.session_date !== iso) return; if (isCancelled(iso, s.team_name) || teamAtTn(s.team_name, iso)) return; (byTeam[s.team_name] = byTeam[s.team_name] || { slots: [], block: s.block }).slots.push(s.slot); }); return Object.entries(byTeam).map(([team, v]) => ({ team, slots: mergeAdjacentSlots(v.slots), block: v.block })); };
+    // Short block tag for S&A entries (season1 → B1, fall2 → F2, …).
+    const saTag = (b) => ({ season1:"B1", season2:"B2", fall1:"F1", fall2:"F2" })[b] || null;
     const PR = "#06b6d4", TNC = "#f59e0b", SA = "#22c55e", SUBC = "#ec4899", FLT = "#14b8a6"; // practice/tournament/S&A/subbing/floating
     const mySubs = (practiceCoverage || []).filter(c => isRealSub(c.sub_name) && matches(c.sub_name));
     const subsOn = (iso) => { const seen = new Set(); return mySubs.filter(c => c.practice_date === iso).map(c => { const mv = (slotMoves||[]).find(x => x.practice_date === iso && x.team_name === c.team_name); return { team: c.team_name, slot: (mv && mv.slot) || c.slot }; }).filter(x => { const k = x.team + "|" + x.slot; if (seen.has(k)) return false; seen.add(k); return true; }); };
@@ -5149,7 +5151,7 @@ export default function App() {
                 {selSA.map((x,i) => (
                   <div key={"sa"+i} style={{display:"flex",alignItems:"center",gap:8,fontSize:13}}>
                     <span style={{width:6,height:6,borderRadius:3,background:SA,flexShrink:0}} />
-                    <span style={{flex:1,color:C.text,fontWeight:600}}>{x.team} <span style={{color:SA,fontWeight:800,fontSize:10}}>S&amp;A</span></span>
+                    <span style={{flex:1,color:C.text,fontWeight:600}}>{x.team} <span style={{color:SA,fontWeight:800,fontSize:10}}>S&amp;A</span>{saTag(x.block) && <span style={{color:SA,fontWeight:800,fontSize:9,border:"1px solid "+SA,borderRadius:5,padding:"0 4px",marginLeft:4}}>{saTag(x.block)}</span>}</span>
                     <span style={{fontSize:11,color:C.mut}}>{x.slots.join(", ")}</span>
                   </div>
                 ))}
@@ -5462,7 +5464,8 @@ export default function App() {
               const saByPhase = {};
               saSessions.forEach(s => {
                 if (s.team_name !== t.team_name) return;
-                const ph = s.block || "fall1";
+                // season1/season2 (regular-season S&A blocks) roll up under "season".
+                const ph = String(s.block || "fall1").startsWith("season") ? "season" : s.block;
                 (saByPhase[ph] = saByPhase[ph] || new Set()).add(s.slot);
               });
               // Ordered rows combining practices + S&A; a phase shows if it has either.
@@ -8170,7 +8173,7 @@ export default function App() {
                           {selSA.map((x,i)=>(
                             <div key={"sa"+i} style={{display:"flex",alignItems:"center",gap:8,fontSize:13}}>
                               <span style={{width:6,height:6,borderRadius:3,background:SAc,flexShrink:0}} />
-                              <span style={{flex:1,color:C.text,fontWeight:600}}>Speed &amp; Agility</span>
+                              <span style={{flex:1,color:C.text,fontWeight:600}}>Speed &amp; Agility{({season1:" · Block 1",season2:" · Block 2",fall1:" · Fall 1",fall2:" · Fall 2"})[x.block] || ""}</span>
                               <span style={{fontSize:11,color:C.mut}}>{x.slot}</span>
                             </div>
                           ))}
@@ -8193,6 +8196,27 @@ export default function App() {
                       )}
                     </div>
                   )}
+                  {/* S&A program — this team's sessions broken down by block. */}
+                  {(() => {
+                    const mine = (saSessions||[]).filter(s => s.team_name === teamCardName && String(s.block||"").startsWith("season"))
+                      .sort((a,b) => (a.session_date||"").localeCompare(b.session_date||""));
+                    if (!mine.length) return null;
+                    const byBlock = {}; mine.forEach(s => (byBlock[s.block] = byBlock[s.block] || []).push(s));
+                    const fmtD = iso => new Date(iso+"T12:00:00").toLocaleDateString(undefined,{month:"short",day:"numeric"});
+                    const BL = { season1:"S&A Block 1", season2:"S&A Block 2" };
+                    return (
+                      <div style={{marginTop:10,borderTop:"1px solid "+C.border,paddingTop:10}}>
+                        {Object.keys(byBlock).sort().map(b => (
+                          <div key={b} style={{marginBottom:6}}>
+                            <span style={{fontSize:10,fontWeight:800,textTransform:"uppercase",letterSpacing:0.4,color:"#22c55e"}}>💪 {BL[b]||b} · {byBlock[b].length} session{byBlock[b].length===1?"":"s"}</span>
+                            <div style={{fontSize:12,color:C.text,marginTop:3,lineHeight:1.7}}>
+                              {byBlock[b].map(s => fmtD(s.session_date)+" ("+s.slot+")").join("  ·  ")}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
                 </div>
               );
             })()}
