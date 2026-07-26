@@ -2079,7 +2079,9 @@ export default function App() {
     if (error) { console.error("Load shift_intents error:", error); return; }
     setShiftIntents(data || []);
   }, []);
-  useEffect(() => { if (isApproved && (view === "home" || view === "clockin")) { loadCheckins(); loadShiftIntents(); loadPractice(); loadCoachFloats(); loadPracticeCancellations(); } }, [isApproved, view, loadCheckins, loadShiftIntents, loadPractice, loadCoachFloats, loadPracticeCancellations]);
+  useEffect(() => { if (isApproved && (view === "home" || view === "clockin")) { loadCheckins(); loadShiftIntents(); loadPractice(); loadCoachFloats(); loadPracticeCancellations(); loadPracticeCoverage(); loadSlotMoves(); } }, [isApproved, view, loadCheckins, loadShiftIntents, loadPractice, loadCoachFloats, loadPracticeCancellations, loadPracticeCoverage, loadSlotMoves]);
+  // The coach card shows a coach's schedule changes + pickups — load the sources when it opens.
+  useEffect(() => { if (isApproved && coachCardName) { loadPractice(); loadPracticeCoverage(); loadSlotMoves(); loadPracticeCancellations(); } }, [isApproved, coachCardName, loadPractice, loadPracticeCoverage, loadSlotMoves, loadPracticeCancellations]);
 
   // Time Cards ledger loader.
   const loadCoachRates = useCallback(async () => {
@@ -5019,6 +5021,54 @@ export default function App() {
     );
   }
 
+  // Upcoming schedule changes + shift pickups for a coach. `matches` tests a
+  // freeform coach name against this coach; myTeamNames are their teams.
+  function coachScheduleAlerts(matches, myTeamNames) {
+    const today = localDateISO();
+    const teamSet = new Set(myTeamNames || []);
+    const WD = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+    const wd = (iso) => { try { return WD[new Date(iso + "T00:00").getDay()]; } catch { return ""; } };
+    const origSlot = (team, iso) => { const a = practiceAssignments.find(x => x.team_name === team && x.day === wd(iso)); return a ? a.slot : null; };
+    const items = [];
+    (practiceCoverage || []).forEach(c => {
+      if ((c.practice_date || "") < today) return;
+      if (isRealSub(c.sub_name) && matches(c.sub_name)) items.push({ date: c.practice_date, kind: "pickup", team: c.team_name, slot: c.slot });
+      else if (isRealSub(c.sub_name) && matches(c.coach_out)) items.push({ date: c.practice_date, kind: "off", team: c.team_name, slot: c.slot, sub: c.sub_name });
+    });
+    (slotMoves || []).forEach(m => { if ((m.practice_date || "") >= today && teamSet.has(m.team_name)) { const from = origSlot(m.team_name, m.practice_date); if (from !== m.slot) items.push({ date: m.practice_date, kind: "moved", team: m.team_name, slot: m.slot, from }); } });
+    (practiceCancellations || []).forEach(x => { if ((x.practice_date || "") >= today && (!x.team_name || teamSet.has(x.team_name))) items.push({ date: x.practice_date, kind: "cancelled", team: x.team_name || "" }); });
+    // De-dupe (same date/kind/team/slot) and sort by date.
+    const seen = new Set();
+    return items.filter(it => { const k = it.date + "|" + it.kind + "|" + it.team + "|" + (it.slot||""); if (seen.has(k)) return false; seen.add(k); return true; })
+      .sort((a, b) => (a.date||"").localeCompare(b.date||"") || a.kind.localeCompare(b.kind));
+  }
+  function renderCoachScheduleAlerts(matches, myTeamNames, opts = {}) {
+    const items = coachScheduleAlerts(matches, myTeamNames);
+    if (!items.length) return null;
+    const fmt = (iso) => { try { return new Date(iso + "T12:00:00").toLocaleDateString(undefined, { weekday:"short", month:"short", day:"numeric" }); } catch { return iso; } };
+    const META = {
+      pickup:    { icon: "🟢", color: C.grn,     text: (it) => <>Pick up <b>{it.team}</b> · {it.slot}</>, tag: "PICKUP", tagColor: C.grn },
+      moved:     { icon: "🟣", color: "#a855f7", text: (it) => <><b>{it.team}</b> moved{it.from ? " from " + it.from : ""} → {it.slot}</>, tag: "MOVED", tagColor: "#a855f7" },
+      cancelled: { icon: "🔴", color: C.red,     text: (it) => <><b>{it.team || "All teams"}</b> practice cancelled</>, tag: "OFF", tagColor: C.red },
+      off:       { icon: "⚪", color: C.mut,     text: (it) => <>Off <b>{it.team}</b> · {it.slot} <span style={{color:C.mut}}>({it.sub} covering)</span></>, tag: "COVERED", tagColor: C.mut },
+    };
+    return (
+      <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:"10px 12px",marginBottom:opts.marginBottom ?? 12}}>
+        <div style={{fontSize:11,fontWeight:800,letterSpacing:0.4,textTransform:"uppercase",color:C.mut,marginBottom:7}}>📋 Schedule changes &amp; pickups <span style={{color:C.gold}}>({items.length})</span></div>
+        <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:opts.maxHeight ?? 260,overflowY:"auto"}}>
+          {items.map((it, i) => { const m = META[it.kind]; return (
+            <div key={i} style={{display:"flex",alignItems:"center",gap:8,fontSize:12.5}}>
+              <span style={{fontSize:11}}>{m.icon}</span>
+              <span style={{minWidth:96,color:C.mut,fontWeight:600}}>{fmt(it.date)}</span>
+              <span style={{flex:1,color:m.color,minWidth:0}}>{m.text(it)}</span>
+              <span style={{fontSize:8,fontWeight:800,color:m.tagColor,border:"1px solid "+m.tagColor,borderRadius:5,padding:"1px 5px",flexShrink:0}}>{m.tag}</span>
+            </div>
+          ); })}
+        </div>
+      </div>
+    );
+  }
+
   function renderHome() {
     const norm = s => (s || "").toString().trim().toLowerCase();
     const myRoster = coachRoster.find(r => coach?.email && norm(r.email) === norm(coach.email));
@@ -5285,6 +5335,7 @@ export default function App() {
           );
         })()}
 
+        {renderCoachScheduleAlerts(isMine, myTeams.map(t => t.team_name))}
         {renderUpdatesPanel(myTeams.map(t => t.team_name))}
         {renderOpenShiftsPanel(myRoster ? ((myRoster.first_name||"")+" "+(myRoster.last_name||"")).trim() : (coach?.display_name||""))}
         {renderQuestionsPanel()}
@@ -8209,6 +8260,9 @@ export default function App() {
               <div style={{fontSize:10,color:C.mut,marginTop:6,fontStyle:"italic"}}>Changing the name here won't rename their team assignments — if you rename a coach, re-pick their teams below (or update the team's HC/AC).</div>
             </div>
           )}
+
+          {/* Schedule changes + shift pickups for this coach. */}
+          {renderCoachScheduleAlerts(matchesCoach, teamsForDisplay)}
 
           {/* Teams coached — editable: assign this coach as head/assistant to
               any team, straight from their card. */}
