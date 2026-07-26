@@ -5375,13 +5375,18 @@ export default function App() {
           );
         })()}
 
+        {/* Tiers 1 + 2 sit side-by-side on desktop, stacked on mobile. */}
+        <div style={{display:"grid",gridTemplateColumns:isNarrow?"1fr":"1fr 1fr",gap:isNarrow?0:20,alignItems:"start"}}>
+        <div style={{minWidth:0}}>
         {/* ── Tier 1: quick + real-time ─────────────────────────────────── */}
         {sectionHdr("⚡ Right now", "clock in & things that need action")}
         {renderCheckIn(true)}
         {renderOpenShiftsPanel(myRoster ? ((myRoster.first_name||"")+" "+(myRoster.last_name||"")).trim() : (coach?.display_name||""))}
         {renderCoachScheduleAlerts(isMine, myTeams.map(t => t.team_name))}
         {renderQuestionsPanel()}
+        </div>
 
+        <div style={{minWidth:0}}>
         {/* ── Tier 2: schedule & information ────────────────────────────── */}
         {sectionHdr("📅 My schedule & updates")}
         {renderCoachCalendar(isMine, myTeams.map(t => t.team_name), homeCalOff, setHomeCalOff, homeCalSel, setHomeCalSel, {title:"My schedule"})}
@@ -5434,7 +5439,10 @@ export default function App() {
           );
         })()}
 
-        {/* ── Tier 3: plan & dig deeper ─────────────────────────────────── */}
+        </div>
+        </div>
+
+        {/* ── Tier 3: plan & dig deeper (full width) ────────────────────── */}
         {sectionHdr("🧭 Plan & dig deeper", "season plan, practice planning & your teams")}
         {renderSeasonPlan(true)}
         {myTeams.length === 0 ? (
@@ -18820,7 +18828,9 @@ export default function App() {
           </div>
         );
       })()}
-      {!new Set(["home","dashboard","activity","coaches","tournaments","teamdir","requests","notifications","practice","scholarships","messages","lineups","checkin","practiceplan","timecards"]).has(view) && (
+      {/* Age-group chips — only on views that actually filter by age group.
+          (Allow-list: everything else — clock-in, timecards, clinics, etc. — has no use for them.) */}
+      {new Set(["evaluate","favorites","teams","rankings","tracker","physical","tryouts","email"]).has(view) && (
         <div style={{display:"flex",gap:4,padding:"10px 18px",borderBottom:"1px solid "+C.border,flexWrap:"wrap"}}>
           {divsWithPlayers.map(d => {
             const isSelected = selectedDivs.includes(d);
