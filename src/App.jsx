@@ -1352,6 +1352,7 @@ export default function App() {
   const [emailTeam, setEmailTeam]                     = useState("");    // "" any | "__has" | "__none"
   const [emailTeams, setEmailTeams]                   = useState(() => new Set()); // specific teams (multi-select); overrides emailTeam when non-empty
   const [emailBuckets, setEmailBuckets]               = useState(() => new Set()); // status buckets: unassigned | declined | not_invited | opted_out
+  const [emailStaff, setEmailStaff]                   = useState(() => new Set()); // per-COACH staff send (own merge fields; independent of the team chips)
   const [emailStatus, setEmailStatus]                 = useState("");    // "" any | a STATUS_OPTS value
   const [emailSubject, setEmailSubject]               = useState("");
   const [emailBody, setEmailBody]                     = useState("");
@@ -11127,6 +11128,141 @@ export default function App() {
       return { TEAM: tn, PLAYERS: playersTxt, COACHES: coachesTxt, PRACTICES: practicesTxt, FLEX: flex, SPORTSYOU: code, ORIENTATION: orientation,
         TOURNAMENTS: tnsTxt, SEASON_PRACTICES: seasonPractices, SCHEDULE_CHANGES: movesTxt, COACH_COVERAGE: covTxt, SA_SCHEDULE: saTxt };
     };
+
+    // ── Per-COACH mail merge ───────────────────────────────────────────
+    // Staff emails are personalized per coach, not per team: their own teams,
+    // the practices they were auto-assigned to cover for other teams, and the
+    // tournaments their team travels to without them because they're booked
+    // with their other team that weekend.
+    //
+    // Names are matched in FULL, never on first name — the roster has both a
+    // Sam Robinson and a Sam Mabry, so first-name matching would merge two
+    // coaches' schedules into one email.
+    const coachMergeFields = (cn) => {
+      const nrm = s => (s || "").toString().trim().toLowerCase().replace(/\s+/g, " ");
+      const me = nrm(cn);
+      const isMe = f => !!f && nrm(f) === me;
+      const todayISO = localDateISO();
+      const fmtMD = iso => iso ? new Date(iso + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "";
+      const fmtWD = iso => iso ? new Date(iso + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }) : "";
+      const cityOf = t => (t.location || "").split("/")[0].trim();
+      const tnById = new Map((tournaments || []).map(x => [x.id, x]));
+      const teamByName = new Map((practiceTeams || []).map(t => [t.team_name, t]));
+      const DAYFULL = { Sun:"Sunday", Mon:"Monday", Tue:"Tuesday", Wed:"Wednesday", Thu:"Thursday", Fri:"Friday", Sat:"Saturday" };
+      const DAYORD = { Sun:0, Mon:1, Tue:2, Wed:3, Thu:4, Fri:5, Sat:6 };
+
+      // Their teams, with the role they hold on each.
+      const roles = (practiceTeams || [])
+        .map(t => ({ t, role: isMe(t.head_coach) ? "Head Coach" : isMe(t.assistant_coach) ? "Assistant Coach" : isMe(t.third_coach) ? "3rd Coach" : null }))
+        .filter(x => x.role)
+        .sort((a, b) => (a.t.team_name || "").localeCompare(b.t.team_name || ""));
+      const myTeams = roles.map(x => x.t.team_name);
+      const rolesTxt = roles.map(x => "• " + x.role + " — " + x.t.team_name).join("\n");
+
+      // Weekly regular-season practices across their teams.
+      const practicesTxt = (practiceAssignments || [])
+        .filter(a => myTeams.includes(a.team_name) && (a.phase || "season") === "season")
+        .sort((a, b) => (DAYORD[a.day] ?? 9) - (DAYORD[b.day] ?? 9) || (a.slot || "").localeCompare(b.slot || ""))
+        .map(a => "• " + DAYFULL[a.day] + " " + a.slot + " — " + a.team_name)
+        .join("\n");
+
+      // Tournaments they are actually working — their own teams' events plus
+      // any team they were put on as a sub via an override.
+      const myTns = [];
+      for (const a of (tournamentAssignments || [])) {
+        const x = tnById.get(a.tournament_id);
+        if (!x || x.cancelled || !x.start_date) continue;
+        const team = teamByName.get(a.team_id) || {};
+        const eff = tnEffectiveStaff(a, team);
+        const asHead = isMe(eff.head), asAsst = isMe(eff.asst);
+        if (!asHead && !asAsst) continue;
+        // "Covering" means a team that isn't theirs. A 3rd coach filling their
+        // OWN team's assistant slot is an override too, but it's still their team.
+        const subbing = ((asHead && eff.headSub) || (asAsst && eff.asstSub)) && !myTeams.includes(a.team_id);
+        myTns.push({ x, team: a.team_id, role: asHead ? "head coach" : "assistant", subbing, status: a.status });
+      }
+      myTns.sort((p, r) => p.x.start_date.localeCompare(r.x.start_date));
+      const tnsTxt = myTns.map(({ x, team, role, subbing, status }) =>
+        "• " + fmtMD(x.start_date) + (x.end_date && x.end_date !== x.start_date ? "–" + fmtMD(x.end_date) : "") +
+        " — " + x.name + (cityOf(x) ? " (" + cityOf(x) + ")" : "") +
+        " · " + team + " as " + role + (subbing ? " [covering — not your regular team]" : "") +
+        (x.stay_over ? " · overnight" : "") + (status === "locked" ? " ✓" : " (tentative)")
+      ).join("\n");
+
+      // Tournaments their team goes to WITHOUT them, because they're booked
+      // with another team that weekend. Names the replacement and says where
+      // they'll be instead — and stays silent on the reason when there isn't a
+      // competing tournament to point at.
+      const gaps = [];
+      for (const a of (tournamentAssignments || [])) {
+        const x = tnById.get(a.tournament_id);
+        if (!x || x.cancelled || !x.start_date) continue;
+        const team = teamByName.get(a.team_id) || {};
+        const eff = tnEffectiveStaff(a, team);
+        const lostHead = isMe(eff.dHead) && eff.headSub, lostAsst = isMe(eff.dAsst) && eff.asstSub;
+        if (!lostHead && !lostAsst) continue;
+        const replacement = lostHead ? eff.head : eff.asst;
+        const end = x.end_date || x.start_date;
+        const elsewhere = myTns.find(m => m.team !== a.team_id && m.x.start_date <= end && (m.x.end_date || m.x.start_date) >= x.start_date);
+        gaps.push({ date: x.start_date, line: "• " + fmtMD(x.start_date) + " — " + a.team_id + " plays " + x.name +
+          " without you; " + (tnIsPlaceholder(replacement) ? "a replacement is still being confirmed" : replacement + " is covering") +
+          (elsewhere ? ". You're with " + elsewhere.team + " at " + elsewhere.x.name + " that weekend." : ".") });
+      }
+      const gapsTxt = gaps.sort((p, r) => p.date.localeCompare(r.date)).map(g => g.line).join("\n");
+
+      // Practices they were auto-assigned to cover for another team.
+      const covSeen = new Set();
+      const subShiftsTxt = (practiceCoverage || [])
+        .filter(c => isMe(c.sub_name) && (c.practice_date || "") >= todayISO)
+        .sort((p, r) => (p.practice_date || "").localeCompare(r.practice_date || ""))
+        .filter(c => { const k = c.practice_date + "|" + c.team_name; if (covSeen.has(k)) return false; covSeen.add(k); return true; })
+        .map(c => "• " + fmtWD(c.practice_date) + " — " + c.team_name + " " + (c.slot || "") + " (covering for " + c.coach_out + ")")
+        .join("\n");
+
+      // Their own practices someone else is covering, so they know they're off.
+      const offSeen = new Set();
+      const coveredTxt = (practiceCoverage || [])
+        .filter(c => isMe(c.coach_out) && isRealSub(c.sub_name) && (c.practice_date || "") >= todayISO)
+        .sort((p, r) => (p.practice_date || "").localeCompare(r.practice_date || ""))
+        .filter(c => { const k = c.practice_date + "|" + c.team_name; if (offSeen.has(k)) return false; offSeen.add(k); return true; })
+        .map(c => "• " + fmtWD(c.practice_date) + " — " + c.team_name + " " + (c.slot || "") + " covered by " + c.sub_name)
+        .join("\n");
+
+      // Per-date practice time moves affecting their teams.
+      const movesTxt = (slotMoves || [])
+        .filter(m => myTeams.includes(m.team_name) && (m.practice_date || "") >= todayISO)
+        .sort((p, r) => (p.practice_date || "").localeCompare(r.practice_date || ""))
+        .map(m => "• " + fmtWD(m.practice_date) + " — " + m.team_name + " runs " + m.slot)
+        .join("\n");
+
+      // Regular-season Speed & Agility for their teams.
+      const saTxt = (saSessions || [])
+        .filter(s => myTeams.includes(s.team_name) && String(s.block || "").startsWith("season"))
+        .sort((p, r) => (p.session_date || "").localeCompare(r.session_date || "") || (p.team_name || "").localeCompare(r.team_name || ""))
+        .map(s => "• " + fmtWD(s.session_date) + " — " + s.team_name + " " + s.slot)
+        .join("\n");
+
+      return {
+        COACH: String(cn || "").trim().split(/\s+/)[0] || "Coach",
+        COACH_FULL: String(cn || "").trim(),
+        MY_ROLES: rolesTxt, MY_PRACTICES: practicesTxt, MY_TOURNAMENTS: tnsTxt,
+        MY_TOURNAMENT_GAPS: gapsTxt, MY_SUB_SHIFTS: subShiftsTxt, MY_COVERED: coveredTxt,
+        MY_SCHEDULE_CHANGES: movesTxt, MY_SA: saTxt,
+      };
+    };
+    // Everyone who should get a staff email: on the roster, has an email, and
+    // either coaches a team or was assigned coverage.
+    const staffList = (() => {
+      const nrm = s => (s || "").toString().trim().toLowerCase().replace(/\s+/g, " ");
+      const active = new Set();
+      (practiceTeams || []).forEach(t => [t.head_coach, t.assistant_coach, t.third_coach]
+        .forEach(c => { if (c && !isPlaceholderCoach(c)) active.add(nrm(c)); }));
+      (practiceCoverage || []).forEach(c => { if (isRealSub(c.sub_name) && !isPlaceholderCoach(c.sub_name)) active.add(nrm(c.sub_name)); });
+      return (coachRoster || [])
+        .map(r => ({ name: ((r.first_name || "") + " " + (r.last_name || "")).trim(), email: (r.email || "").trim().toLowerCase() }))
+        .filter(r => r.name && r.email && active.has(nrm(r.name)))
+        .sort((a, b) => a.name.localeCompare(b.name));
+    })();
     // Replace ANY {{KEY}} that exists in the fields object (unknown keys are
     // left visible so a typo is obvious rather than silently deleted).
     //
@@ -11208,6 +11344,40 @@ export default function App() {
             sent_by: coach?.display_name || "", sent_by_email: coach?.email || "",
           }).then(({ error }) => { if (error) console.error("email_log insert error:", error); });
         } catch (e) { failed.push({ email: tn, error: e.message || "error" }); }
+      }
+      loadEmailLog();
+      setEmailSending(false);
+      setEmailResult({ sent, failed });
+    };
+
+    // One personalized email per COACH, using their own merge fields.
+    const sendPerCoach = async () => {
+      const picked = staffList.filter(s => emailStaff.has(s.name));
+      if (!picked.length || !emailSubject.trim() || !emailBody.trim()) return;
+      if (!window.confirm("Send a PERSONALIZED staff email to each coach?\n\n" +
+        picked.map(s => s.name + " — " + s.email).join("\n") +
+        "\n\nTotal: " + picked.length + " emails.")) return;
+      setEmailSending(true); setEmailErr(""); setEmailResult(null);
+      let sent = 0; const failed = [];
+      for (const s of picked) {
+        const f = coachMergeFields(s.name);
+        const subj = applyMerge(emailSubject, f).trim();
+        const bod = applyMerge(emailBody, f).trim();
+        try {
+          const res = await fetch("/api/send-email", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ subject: subj, body: emailMarkupToText(bod), bodyHtml: emailMarkupToHtml(bod), recipients: [s.email] }),
+          });
+          const d = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(d.error || "Send failed");
+          sent += 1;
+          supabase.from("email_log").insert({
+            subject: subj, body: bod, recipient_count: 1, recipients: [s.email],
+            sent_count: (d && typeof d.sent === "number") ? d.sent : 1,
+            failed_count: (d && Array.isArray(d.failed)) ? d.failed.length : 0,
+            sent_by: coach?.display_name || "", sent_by_email: coach?.email || "",
+          }).then(({ error }) => { if (error) console.error("email_log insert error:", error); });
+        } catch (e) { failed.push({ email: s.name, error: e.message || "error" }); }
       }
       loadEmailLog();
       setEmailSending(false);
@@ -11353,6 +11523,35 @@ export default function App() {
                 </span>
               </span>
             )}
+          </div>
+        )}
+
+        {/* Per-COACH staff send — independent of the team/player scope above.
+            Each coach gets their own schedule, sub shifts and tournament gaps. */}
+        {canOps && staffList.length > 0 && (
+          <div style={{marginBottom:12,padding:"10px 12px",background:C.card,border:"1px solid "+(emailStaff.size?C.gold:C.border),borderRadius:10}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:emailStaff.size?8:0}}>
+              <span style={{fontSize:11,fontWeight:800,color:C.text}}>👥 Staff (one personalized email per coach)</span>
+              <button onClick={()=>setEmailStaff(new Set(staffList.map(s=>s.name)))}
+                style={{padding:"3px 10px",borderRadius:14,border:"1px solid "+C.border,background:"transparent",color:C.mut,cursor:"pointer",fontFamily:"inherit",fontSize:10,fontWeight:800}}>Select all ({staffList.length})</button>
+              {emailStaff.size > 0 && (
+                <button onClick={()=>setEmailStaff(new Set())}
+                  style={{padding:"3px 10px",borderRadius:14,border:"1px solid "+C.border,background:"transparent",color:C.mut,cursor:"pointer",fontFamily:"inherit",fontSize:10,fontWeight:800}}>Clear ({emailStaff.size})</button>
+              )}
+              <span style={{fontSize:10,color:C.mut}}>Uses {"{{COACH}}"}, {"{{MY_SUB_SHIFTS}}"}, {"{{MY_TOURNAMENT_GAPS}}"} …</span>
+            </div>
+            <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+              {staffList.map(s => {
+                const on = emailStaff.has(s.name);
+                return (
+                  <button key={s.name} onClick={()=>setEmailStaff(prev => { const n = new Set(prev); n.has(s.name) ? n.delete(s.name) : n.add(s.name); return n; })}
+                    title={s.email}
+                    style={{padding:"3px 10px",borderRadius:14,border:"1px solid "+(on?C.gold:C.border),background:on?"rgba(233,30,140,0.12)":"transparent",color:on?C.gold:C.mut,cursor:"pointer",fontFamily:"inherit",fontSize:10,fontWeight:700}}>
+                    {s.name}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         )}
 
@@ -11537,15 +11736,34 @@ export default function App() {
           style={{...inpStyle,width:"100%",minHeight:200,padding:"10px 12px",fontSize:14,fontFamily:"inherit",resize:"vertical",lineHeight:1.5}} />
         {emailPreviewOpen && (
           <div style={{marginTop:8,background:"#fff",borderRadius:10,border:"1px solid "+C.border,padding:"14px 16px",maxHeight:400,overflowY:"auto"}}>
-            <div style={{fontSize:9,fontWeight:800,letterSpacing:0.5,textTransform:"uppercase",color:"#999",marginBottom:8}}>Preview — how parents will see it{emailTeams.size>0 && /\{\{/.test(emailBody) ? " (merged for " + [...emailTeams].sort()[0] + ")" : ""}</div>
-            <div dangerouslySetInnerHTML={{__html: emailMarkupToHtml(
-              emailTeams.size > 0 && /\{\{/.test(emailBody) ? applyMerge(emailBody, mergeFields([...emailTeams].sort()[0])) : emailBody
-            )}} />
+            {(() => {
+              // Staff sends preview against a real coach so empty sections and
+              // their own sub shifts show exactly as that coach will get them.
+              const staffOne = emailStaff.size > 0 ? [...emailStaff].sort()[0] : null;
+              const teamOne = emailTeams.size > 0 ? [...emailTeams].sort()[0] : null;
+              const merged = /\{\{/.test(emailBody)
+                ? (staffOne ? applyMerge(emailBody, coachMergeFields(staffOne))
+                  : teamOne ? applyMerge(emailBody, mergeFields(teamOne)) : emailBody)
+                : emailBody;
+              return (<>
+                <div style={{fontSize:9,fontWeight:800,letterSpacing:0.5,textTransform:"uppercase",color:"#999",marginBottom:8}}>
+                  Preview — {staffOne ? "as " + staffOne + " will receive it" : "how parents will see it" + (teamOne && /\{\{/.test(emailBody) ? " (merged for " + teamOne + ")" : "")}
+                </div>
+                <div dangerouslySetInnerHTML={{__html: emailMarkupToHtml(merged)}} />
+              </>);
+            })()}
           </div>
         )}
 
         <div style={{display:"flex",alignItems:"center",gap:12,marginTop:12,flexWrap:"wrap"}}>
-          {emailTeams.size > 0 && (() => {
+          {emailStaff.size > 0 && (
+            <button onClick={sendPerCoach} disabled={emailSending || !emailSubject.trim() || !emailBody.trim()}
+              title="Sends a separate email to each selected coach with {{COACH}}, {{MY_ROLES}}, {{MY_PRACTICES}}, {{MY_TOURNAMENTS}}, {{MY_TOURNAMENT_GAPS}}, {{MY_SUB_SHIFTS}}, {{MY_COVERED}}, {{MY_SCHEDULE_CHANGES}} and {{MY_SA}} filled in with that coach's own data"
+              style={{padding:"10px 20px",borderRadius:8,border:"none",background:(emailSending||!emailSubject.trim()||!emailBody.trim())?C.border:C.acc,color:(emailSending||!emailSubject.trim()||!emailBody.trim())?C.mut:"#000",fontFamily:"inherit",fontSize:14,fontWeight:800,cursor:(emailSending||!emailSubject.trim()||!emailBody.trim())?"default":"pointer"}}>
+              {emailSending ? "Sending…" : "Send to " + emailStaff.size + " coach" + (emailStaff.size===1?"":"es") + " (personalized)"}
+            </button>
+          )}
+          {emailStaff.size === 0 && emailTeams.size > 0 && (() => {
             // Audience-aware address count so the button says exactly what will happen.
             const audTotal = [...emailTeams].reduce((sum, tn) => {
               const tp = sendPool.filter(p => p.team_assignment === tn);
@@ -11562,7 +11780,7 @@ export default function App() {
               </button>
             );
           })()}
-          {emailTeams.size === 0 && (
+          {emailStaff.size === 0 && emailTeams.size === 0 && (
             <button onClick={send} disabled={emailSending || !emailSubject.trim() || !emailBody.trim() || !recipients.length}
               style={{padding:"10px 20px",borderRadius:8,border:"none",background:(emailSending||!emailSubject.trim()||!emailBody.trim()||!recipients.length)?C.border:C.gold,color:(emailSending||!emailSubject.trim()||!emailBody.trim()||!recipients.length)?C.mut:"#000",fontFamily:"inherit",fontSize:14,fontWeight:800,cursor:(emailSending||!emailSubject.trim()||!emailBody.trim()||!recipients.length)?"default":"pointer"}}>
               {emailSending ? "Sending…" : "Send to " + recipients.length}
