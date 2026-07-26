@@ -2083,7 +2083,7 @@ export default function App() {
   }, []);
   useEffect(() => { if (isApproved && (view === "home" || view === "clockin")) { loadCheckins(); loadShiftIntents(); loadPractice(); loadCoachFloats(); loadPracticeCancellations(); loadPracticeCoverage(); loadSlotMoves(); } }, [isApproved, view, loadCheckins, loadShiftIntents, loadPractice, loadCoachFloats, loadPracticeCancellations, loadPracticeCoverage, loadSlotMoves]);
   // The coach card shows a coach's schedule changes + pickups — load the sources when it opens.
-  useEffect(() => { if (isApproved && coachCardName) { loadPractice(); loadPracticeCoverage(); loadSlotMoves(); loadPracticeCancellations(); } }, [isApproved, coachCardName, loadPractice, loadPracticeCoverage, loadSlotMoves, loadPracticeCancellations]);
+  useEffect(() => { if (isApproved && coachCardName) { loadPractice(); loadPracticeCoverage(); loadSlotMoves(); loadPracticeCancellations(); loadTournaments(); } }, [isApproved, coachCardName, loadPractice, loadPracticeCoverage, loadSlotMoves, loadPracticeCancellations, loadTournaments]);
   // The team card shows a per-team schedule calendar (practices, tournaments,
   // moves, subs) — load its sources when it opens, and reset its month.
   useEffect(() => { if (isApproved && teamCardName) { loadPractice(); loadTournaments(); loadPracticeCoverage(); loadSlotMoves(); loadPracticeCancellations(); setTeamCalOff(0); setTeamCalSel(null); } }, [isApproved, teamCardName, loadPractice, loadTournaments, loadPracticeCoverage, loadSlotMoves, loadPracticeCancellations]);
@@ -5041,11 +5041,23 @@ export default function App() {
     const origSlot = (team, iso) => { const a = practiceAssignments.find(x => x.team_name === team && x.day === wd(iso)); return a ? a.slot : null; };
     // Did this team actually have a practice scheduled on this date?
     const practicesOnDate = (team, iso) => { const ph = phaseForDate(iso), day = wd(iso); return !!ph && practiceAssignments.some(a => a.team_name === team && a.day === day && (a.phase || "fall1") === ph); };
+    // Which tournament is THIS coach at on a given date, and for which team?
+    const tnById = new Map((tournaments || []).map(t => [t.id, t]));
+    const teamRec = (name) => practiceTeams.find(t => t.team_name === name) || teamsList.find(t => t.id === name) || {};
+    const coachTnOn = (iso) => {
+      for (const a of (tournamentAssignments || [])) {
+        const tn = tnById.get(a.tournament_id); if (!tn || tn.cancelled) continue;
+        if (!(tn.start_date <= iso && (tn.end_date || tn.start_date) >= iso)) continue;
+        const tm = teamRec(a.team_id);
+        if (matches(a.head_override || tm.head_coach) || matches(a.asst_override || tm.assistant_coach)) return { name: tn.name, team: a.team_id, loc: tn.location };
+      }
+      return null;
+    };
     const items = [];
     (practiceCoverage || []).forEach(c => {
       if ((c.practice_date || "") < today) return;
       if (isRealSub(c.sub_name) && matches(c.sub_name)) items.push({ date: c.practice_date, kind: "pickup", team: c.team_name, slot: c.slot });
-      else if (isRealSub(c.sub_name) && matches(c.coach_out)) items.push({ date: c.practice_date, kind: "off", team: c.team_name, slot: c.slot, sub: c.sub_name });
+      else if (isRealSub(c.sub_name) && matches(c.coach_out)) items.push({ date: c.practice_date, kind: "off", team: c.team_name, slot: c.slot, sub: c.sub_name, tn: coachTnOn(c.practice_date) });
     });
     (slotMoves || []).forEach(m => { if ((m.practice_date || "") >= today && teamSet.has(m.team_name)) { const from = origSlot(m.team_name, m.practice_date); if (from !== m.slot) items.push({ date: m.practice_date, kind: "moved", team: m.team_name, slot: m.slot, from }); } });
     // Cancellations: only for the coach's teams that actually had a practice that date.
@@ -5067,18 +5079,23 @@ export default function App() {
       pickup:    { icon: "🟢", color: C.grn,     text: (it) => <>Pick up <b>{it.team}</b> · {it.slot}</>, tag: "PICKUP", tagColor: C.grn },
       moved:     { icon: "🟣", color: "#a855f7", text: (it) => <><b>{it.team}</b> moved{it.from ? " from " + it.from : ""} → {it.slot}</>, tag: "MOVED", tagColor: "#a855f7" },
       cancelled: { icon: "🔴", color: C.red,     text: (it) => <><b>{it.team || "All teams"}</b> practice cancelled</>, tag: "OFF", tagColor: C.red },
-      off:       { icon: "⚪", color: C.mut,     text: (it) => <>Off <b>{it.team}</b> · {it.slot} <span style={{color:C.mut}}>({it.sub} covering)</span></>, tag: "COVERED", tagColor: C.mut },
+      off:       { icon: (it) => it.tn ? "🏐" : "⚪", color: (it) => it.tn ? "#f59e0b" : C.mut,
+                   text: (it) => it.tn
+                     ? <>At <b>{it.tn.name}</b> with <b>{it.tn.team}</b>{it.tn.loc ? " · 📍" + String(it.tn.loc).split(",")[0].trim() : ""} <span style={{color:C.mut}}>· {it.team} practice covered by {it.sub}</span></>
+                     : <>Off <b>{it.team}</b> · {it.slot} <span style={{color:C.mut}}>({it.sub} covering)</span></>,
+                   tag: (it) => it.tn ? "AT TOURN." : "COVERED", tagColor: (it) => it.tn ? "#f59e0b" : C.mut },
     };
+    const val = (v, it) => typeof v === "function" ? v(it) : v;
     return (
       <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:"10px 12px",marginBottom:opts.marginBottom ?? 12}}>
         <div style={{fontSize:11,fontWeight:800,letterSpacing:0.4,textTransform:"uppercase",color:C.mut,marginBottom:7}}>📋 Schedule changes &amp; pickups <span style={{color:C.gold}}>({items.length})</span></div>
         <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:opts.maxHeight ?? 260,overflowY:"auto"}}>
-          {items.map((it, i) => { const m = META[it.kind]; return (
+          {items.map((it, i) => { const m = META[it.kind]; const tagColor = val(m.tagColor, it); return (
             <div key={i} style={{display:"flex",alignItems:"center",gap:8,fontSize:12.5}}>
-              <span style={{fontSize:11}}>{m.icon}</span>
+              <span style={{fontSize:11}}>{val(m.icon, it)}</span>
               <span style={{minWidth:96,color:C.mut,fontWeight:600}}>{fmt(it.date)}</span>
-              <span style={{flex:1,color:m.color,minWidth:0}}>{m.text(it)}</span>
-              <span style={{fontSize:8,fontWeight:800,color:m.tagColor,border:"1px solid "+m.tagColor,borderRadius:5,padding:"1px 5px",flexShrink:0}}>{m.tag}</span>
+              <span style={{flex:1,color:val(m.color, it),minWidth:0}}>{m.text(it)}</span>
+              <span style={{fontSize:8,fontWeight:800,color:tagColor,border:"1px solid "+tagColor,borderRadius:5,padding:"1px 5px",flexShrink:0}}>{val(m.tag, it)}</span>
             </div>
           ); })}
         </div>
