@@ -2926,7 +2926,11 @@ export default function App() {
       if (f) { cand.add((f + " " + l).trim()); cand.add(f); if (l) cand.add((f + " " + l[0] + ".").trim()); }
     }
     const isMine = field => !!field && cand.has(norm(field));
-    return practiceTeams.filter(t => isMine(t.head_coach) || isMine(t.assistant_coach)).map(t => t.team_name);
+    // A 3rd coach is a full practice coach on that team — they run every
+    // practice and clock in like anyone else. (Tournaments are separate: a 3rd
+    // coach only travels to the events they're actually staffed on, which the
+    // per-tournament overrides handle.)
+    return practiceTeams.filter(t => isMine(t.head_coach) || isMine(t.assistant_coach) || isMine(t.third_coach)).map(t => t.team_name);
   }, [coach, coachRoster, practiceTeams]);
 
   // Build the per-user notification list from existing data (updates + Q&A).
@@ -5307,8 +5311,8 @@ export default function App() {
     }
     const isMine = field => !!field && cand.has(norm(field));
     const myTeams = practiceTeams
-      .filter(t => isMine(t.head_coach) || isMine(t.assistant_coach))
-      .map(t => ({ ...t, role: isMine(t.head_coach) ? "Head Coach" : "Assistant Coach" }))
+      .filter(t => isMine(t.head_coach) || isMine(t.assistant_coach) || isMine(t.third_coach))
+      .map(t => ({ ...t, role: isMine(t.head_coach) ? "Head Coach" : isMine(t.assistant_coach) ? "Assistant Coach" : "3rd Coach" }))
       .sort((a, b) => (a.team_name || "").localeCompare(b.team_name || ""));
     const tournamentById = new Map(tournaments.map(t => [t.id, t]));
     const firstName = (myRoster ? (myRoster.first_name || "") : (coach?.display_name || "")).split(/\s+/)[0] || "Coach";
@@ -7545,7 +7549,7 @@ export default function App() {
       if (!dn) return null;
       const fn = dn.split(" ")[0];
       const matches = (field) => { const f = norm(field); return !!f && (f === dn || f.split(" ")[0] === fn); };
-      const myTeams = practiceTeams.filter(t => matches(t.head_coach) || matches(t.assistant_coach));
+      const myTeams = practiceTeams.filter(t => matches(t.head_coach) || matches(t.assistant_coach) || matches(t.third_coach));
       if (!myTeams.length) return null;
       let approved = 0;
       for (const t of myTeams) {
@@ -8402,17 +8406,18 @@ export default function App() {
     const headOf = practiceTeams.filter(t => matchesCoach(t.head_coach)).map(t => t.team_name);
     const assistOf = practiceTeams.filter(t => matchesCoach(t.assistant_coach)).map(t => t.team_name);
     const thirdOf = practiceTeams.filter(t => matchesCoach(t.third_coach)).map(t => t.team_name);
-    // Head + assistant drive weekly practices and the team's full tournament
-    // list. A "3rd coach" is a tournament-only extra (they still surface just the
-    // events they're actually staffed on, via the head/asst override match
-    // below), so they're shown as a team membership but NOT folded into the
-    // practice/tournament team-set.
+    // A 3rd coach runs every one of that team's practices, so they count for
+    // the practice set. Tournaments are different: a 3rd coach travels only to
+    // the events they're actually staffed on (Jayden takes 13 Diamond only when
+    // 14 Ruby isn't playing), which the head/asst override match below handles
+    // — so thirdOf stays OUT of the tournament team-set.
     const allTeamNames = Array.from(new Set([...headOf, ...assistOf]));
-    const teamsForDisplay = Array.from(new Set([...headOf, ...assistOf, ...thirdOf]));
+    const practiceTeamNames = Array.from(new Set([...headOf, ...assistOf, ...thirdOf]));
+    const teamsForDisplay = practiceTeamNames;
     // Practice slots across all their teams.
     const dayOrder = { Sun:0, Mon:1, Tue:2, Wed:3, Thu:4 };
     const coachPractices = practiceAssignments
-      .filter(a => allTeamNames.includes(a.team_name) && (a.phase || "fall1") === schedulePhase)
+      .filter(a => practiceTeamNames.includes(a.team_name) && (a.phase || "fall1") === schedulePhase)
       .sort((a, b) => {
         const da = dayOrder[a.day] ?? 99, db = dayOrder[b.day] ?? 99;
         if (da !== db) return da - db;
