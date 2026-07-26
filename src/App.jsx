@@ -1661,6 +1661,29 @@ export default function App() {
   const [addingPlayer, setAddingPlayer] = useState(false);
   const [newPlayer, setNewPlayer] = useState({ first_name:"", last_name:"", dob:"", age:"", usav_div:"", positions:[], parent_name:"", parent_email:"", parent_email2:"", parent_phone:"" });
   const [addMsg, setAddMsg] = useState("");
+  // Keep the page behind a modal exactly where it was. Every modal is a
+  // position:fixed overlay, so while one is open we freeze the body at the
+  // current offset and restore it on close — otherwise saving from a card
+  // re-renders the list and the page snaps back to the top, losing your place
+  // in a long listing (tournaments, teams, coaches, players).
+  const anyModalOpen = profileId !== null || !!teamCardName || !!coachCardName || addingPlayer ||
+    addingTournament || addingCoach || bulkImportOpen || !!reminderModal || !!reminderHistory ||
+    !!viewPost || requestOffOpen;
+  useEffect(() => {
+    if (!anyModalOpen || typeof window === "undefined") return;
+    const y = window.scrollY;
+    const b = document.body;
+    const prev = { position: b.style.position, top: b.style.top, width: b.style.width, overflowY: b.style.overflowY };
+    b.style.position = "fixed";
+    b.style.top = -y + "px";
+    b.style.width = "100%";
+    b.style.overflowY = "scroll";           // keep the scrollbar so nothing shifts sideways
+    return () => {
+      b.style.position = prev.position; b.style.top = prev.top;
+      b.style.width = prev.width; b.style.overflowY = prev.overflowY;
+      window.scrollTo(0, y);
+    };
+  }, [anyModalOpen]);
   // DnD sensors at App level (hook order must be stable across renders, can't live in renderTeams).
   const dndSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
