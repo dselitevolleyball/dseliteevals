@@ -10132,6 +10132,7 @@ export default function App() {
                       </th>
                     );
                   }))}
+                  {schedulePhase === "season" && <th style={{...thS,textAlign:"left",minWidth:250}}>S&amp;A <span style={{fontSize:9,fontWeight:600}}>(5 sessions · B1/B2)</span></th>}
                   <th style={{...thS,textAlign:"center",minWidth:60}}>Count</th>
                 </tr>
               </thead>
@@ -10235,6 +10236,35 @@ export default function App() {
                           </td>
                         );
                       }))}
+                      {schedulePhase === "season" && (() => {
+                        // Fall-style S&A visibility for the season: this team's block,
+                        // progress, and each session — done ✓ struck, next highlighted.
+                        const mine = saSessions.filter(s => s.team_name === t.team_name && String(s.block||"").startsWith("season"))
+                          .sort((a,b) => (a.session_date||"").localeCompare(b.session_date||""));
+                        if (!mine.length) return <td style={{...tdS,color:C.mut,fontSize:11}}>—</td>;
+                        const todayISO2 = localDateISO();
+                        const done = mine.filter(s => s.session_date < todayISO2).length;
+                        const nextIdx = mine.findIndex(s => s.session_date >= todayISO2);
+                        const blk = mine[0].block === "season1" ? "B1" : "B2";
+                        const fmtD = iso => { const d = new Date(iso+"T12:00:00"); return (d.getMonth()+1)+"/"+d.getDate(); };
+                        return (
+                          <td style={{...tdS,textAlign:"left",padding:"5px 8px"}}>
+                            <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:3}}>
+                              <span style={{fontSize:9,fontWeight:800,color:"#22c55e",border:"1px solid #22c55e",borderRadius:5,padding:"0 5px"}}>{blk}</span>
+                              <span style={{fontSize:10,fontWeight:800,color:done>=5?C.grn:done>0?"#f59e0b":C.mut}}>{done}/5 done</span>
+                            </div>
+                            <div style={{display:"flex",flexWrap:"wrap",gap:3}}>
+                              {mine.map((s,i) => { const isDone = s.session_date < todayISO2; const isNext = i === nextIdx;
+                                return <span key={i} title={s.session_date+" · "+s.slot+(isDone?" · done":isNext?" · next up":"")}
+                                  style={{fontSize:9,fontWeight:700,borderRadius:5,padding:"1px 5px",border:"1px solid "+(isNext?"#22c55e":C.border),
+                                    background:isDone?"transparent":isNext?"rgba(34,197,94,0.15)":C.bg,
+                                    color:isDone?C.mut:isNext?"#22c55e":C.text,textDecoration:isDone?"line-through":"none"}}>
+                                  {fmtD(s.session_date)} {s.slot.replace(/pm$/,"")}
+                                </span>; })}
+                            </div>
+                          </td>
+                        );
+                      })()}
                       <td style={{...tdS,fontWeight:700,color:countOff?"#f59e0b":C.grn,minWidth:40}}>
                         {(schedulePhase === "summer" || schedulePhase === "postseason") ? actualHours + "h" : actualHours + "/" + expectedHours + "h"}
                       </td>
@@ -10248,7 +10278,7 @@ export default function App() {
         <div style={{marginTop:10,fontSize:11,color:C.mut,lineHeight:1.5}}>
           {sa
             ? <>Click a Sunday cell to cycle it: empty → <b style={{color:C.grn}}>green ✓ Practice</b> → <b style={{color:"#f59e0b"}}>orange dumbbell = Speed &amp; Agility</b> → empty. Each team's hour is one or the other. <b style={{color:C.red}}>Red</b> = court overflow or coach double-booked; <b style={{color:"#f59e0b"}}>amber ✓</b> = U11/U12 practicing 7-9pm.</>
-            : <><b style={{color:C.grn}}>Green ✓</b> = court (up to {schedulePhase==="summer"?5:6} teams per hour). Click to toggle. <b style={{color:C.red}}>Red</b> means court overflow or coach double-booked; <b style={{color:"#f59e0b"}}>amber</b> means U11/U12 in 7-9pm; <b style={{color:"#06b6d4"}}>cyan FLEX</b> = practices at DSSC Flex (court 5, set in the Daily view).</>}
+            : <><b style={{color:C.grn}}>Green ✓</b> = court (up to {schedulePhase==="summer"?5:6} teams per hour). Click to toggle. <b style={{color:C.red}}>Red</b> means court overflow or coach double-booked; <b style={{color:"#f59e0b"}}>amber</b> means U11/U12 in 7-9pm; <b style={{color:"#06b6d4"}}>cyan FLEX</b> = practices at DSSC Flex (court 5, set in the Daily view).{schedulePhase==="season" && <> The <b style={{color:"#22c55e"}}>S&amp;A</b> column shows each team's block (B1/B2) and where they're at — struck-through = completed, <b style={{color:"#22c55e"}}>green</b> = next session.</>}</>}
         </div>
         </>)}
       </div>
