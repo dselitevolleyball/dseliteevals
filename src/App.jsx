@@ -11102,7 +11102,7 @@ export default function App() {
         .filter(m => m.team_name === tn && (m.practice_date || "") >= todayISO)
         .sort((p, r) => p.practice_date.localeCompare(r.practice_date))
         .map(m => "• " + fmtWD(m.practice_date) + " — practice runs " + m.slot + (sunSlot ? " (instead of the usual " + sunSlot + ")" : ""))
-        .join("\n") || "No time changes — your normal practice times hold all season.";
+        .join("\n"); // empty on purpose — applyMerge drops the whole section
       // {{COACH_COVERAGE}} — who runs practice when a coach travels. Deduped by
       // (date + coach first name) in case a coach is keyed under both a short
       // and full name.
@@ -11112,19 +11112,44 @@ export default function App() {
         .sort((p, r) => (p.practice_date + p.coach_out).localeCompare(r.practice_date + r.coach_out))
         .filter(c => { const k = c.practice_date + "|" + (c.coach_out || "").trim().toLowerCase().split(" ")[0]; if (covSeen.has(k)) return false; covSeen.add(k); return true; })
         .map(c => "• " + fmtWD(c.practice_date) + " — " + c.coach_out + " is away; " + c.sub_name + " will be coaching")
-        .join("\n") || "No coaching absences currently scheduled — your coaches will be at every practice.";
+        .join("\n"); // empty on purpose — applyMerge drops the whole section
       // {{SA_SCHEDULE}} — the team's regular-season Speed & Agility sessions.
       const saTxt = (saSessions || [])
         .filter(s => s.team_name === tn && String(s.block || "").startsWith("season"))
         .sort((p, r) => (p.session_date || "").localeCompare(r.session_date || ""))
         .map(s => "• " + fmtWD(s.session_date) + " — " + s.slot)
-        .join("\n") || "(no Speed & Agility scheduled for this team)";
+        .join("\n"); // empty on purpose — Rise teams have no S&A, so the section drops
       return { TEAM: tn, PLAYERS: playersTxt, COACHES: coachesTxt, PRACTICES: practicesTxt, FLEX: flex, SPORTSYOU: code, ORIENTATION: orientation,
         TOURNAMENTS: tnsTxt, SEASON_PRACTICES: seasonPractices, SCHEDULE_CHANGES: movesTxt, COACH_COVERAGE: covTxt, SA_SCHEDULE: saTxt };
     };
     // Replace ANY {{KEY}} that exists in the fields object (unknown keys are
     // left visible so a typo is obvious rather than silently deleted).
-    const applyMerge = (text, f) => (text || "").replace(/\{\{([A-Z_]+)\}\}/g, (m, k) => (k in f ? f[k] : m));
+    //
+    // Sections that came back empty for this team are dropped entirely rather
+    // than printed as "none" — a team with no coach absences and no time
+    // changes should never read a paragraph telling them so. A paragraph whose
+    // whole content is merge fields that all resolved to empty is removed, and
+    // so is the lead-in above it (recognised by its trailing colon), which is
+    // where the heading and explanation live.
+    const applyMerge = (text, f) => {
+      const keep = [];
+      for (const p of String(text || "").split(/\n{2,}/)) {
+        const keys = [...p.matchAll(/\{\{([A-Z_]+)\}\}/g)].map(m => m[1]);
+        const isBody = keys.length > 0 && p.replace(/\{\{[A-Z_]+\}\}/g, "").trim() === "";
+        // `k in f` matters: an unknown key is a typo, not an empty section, so
+        // it stays visible.
+        if (isBody && keys.every(k => k in f && !String(f[k]).trim())) {
+          if (keep.length && /:\s*$/.test(keep[keep.length - 1])) keep.pop();
+          continue;
+        }
+        keep.push(p);
+      }
+      // Renumber "1)" "2)" headings so a dropped section doesn't leave a gap.
+      // Done before substitution so team data can never be mistaken for a heading.
+      let n = 0;
+      return keep.join("\n\n").replace(/^\d+\)/gm, () => ++n + ")")
+        .replace(/\{\{([A-Z_]+)\}\}/g, (m, k) => (k in f ? f[k] : m));
+    };
     // A team's coach emails (head + assistant), matched against coach accounts
     // and the coach roster the same way the {{COACHES}} merge field does.
     const coachEmailsFor = (tn) => {
