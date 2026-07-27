@@ -11250,19 +11250,40 @@ export default function App() {
         MY_SCHEDULE_CHANGES: movesTxt, MY_SA: saTxt,
       };
     };
-    // Everyone who should get a staff email: on the roster, has an email, and
-    // either coaches a team or was assigned coverage.
+    // Everyone who should get a staff email: coaches a team or was assigned
+    // coverage. Names are gathered from BOTH the coach roster and app accounts,
+    // because a coach can have one without the other — David Stanley head
+    // coaches 13 Sapphire with an account but no roster row, and a roster-only
+    // lookup dropped him from staff sends with no indication he was missing.
+    //
+    // Anyone active but with no email anywhere is still listed, shown disabled,
+    // so a missing address is visible instead of silently shrinking the send.
     const staffList = (() => {
       const nrm = s => (s || "").toString().trim().toLowerCase().replace(/\s+/g, " ");
       const active = new Set();
       (practiceTeams || []).forEach(t => [t.head_coach, t.assistant_coach, t.third_coach]
         .forEach(c => { if (c && !isPlaceholderCoach(c)) active.add(nrm(c)); }));
       (practiceCoverage || []).forEach(c => { if (isRealSub(c.sub_name) && !isPlaceholderCoach(c.sub_name)) active.add(nrm(c.sub_name)); });
-      return (coachRoster || [])
-        .map(r => ({ name: ((r.first_name || "") + " " + (r.last_name || "")).trim(), email: (r.email || "").trim().toLowerCase() }))
-        .filter(r => r.name && r.email && active.has(nrm(r.name)))
-        .sort((a, b) => a.name.localeCompare(b.name));
+      const byName = new Map();
+      const put = (name, email, fromRoster) => {
+        const k = nrm(name);
+        if (!k || !active.has(k)) return;
+        const e = (email || "").trim().toLowerCase();
+        const cur = byName.get(k);
+        if (!cur) { byName.set(k, { name: String(name).trim(), email: e }); return; }
+        if (!cur.email && e) cur.email = e; // fill a gap, never overwrite
+        // Roster names are the properly-cased record; some account display
+        // names are typed in lower case, which would greet them "Hi ella,".
+        if (fromRoster && String(name).trim()) cur.name = String(name).trim();
+      };
+      // Accounts first — that's the address they actually log in with, which is
+      // also how coachEmailsFor() resolves a coach. A coach with two accounts
+      // therefore still yields exactly one address.
+      (coachesList || []).forEach(c => put(c.display_name, c.email, false));
+      (coachRoster || []).forEach(r => put(((r.first_name || "") + " " + (r.last_name || "")).trim(), r.email, true));
+      return [...byName.values()].filter(s => s.name).sort((a, b) => a.name.localeCompare(b.name));
     })();
+    const staffNoEmail = staffList.filter(s => !s.email);
     // Replace ANY {{KEY}} that exists in the fields object (unknown keys are
     // left visible so a typo is obvious rather than silently deleted).
     //
@@ -11352,7 +11373,7 @@ export default function App() {
 
     // One personalized email per COACH, using their own merge fields.
     const sendPerCoach = async () => {
-      const picked = staffList.filter(s => emailStaff.has(s.name));
+      const picked = staffList.filter(s => emailStaff.has(s.name) && s.email);
       if (!picked.length || !emailSubject.trim() || !emailBody.trim()) return;
       if (!window.confirm("Send a PERSONALIZED staff email to each coach?\n\n" +
         picked.map(s => s.name + " — " + s.email).join("\n") +
@@ -11532,17 +11553,31 @@ export default function App() {
           <div style={{marginBottom:12,padding:"10px 12px",background:C.card,border:"1px solid "+(emailStaff.size?C.gold:C.border),borderRadius:10}}>
             <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:emailStaff.size?8:0}}>
               <span style={{fontSize:11,fontWeight:800,color:C.text}}>👥 Staff (one personalized email per coach)</span>
-              <button onClick={()=>setEmailStaff(new Set(staffList.map(s=>s.name)))}
-                style={{padding:"3px 10px",borderRadius:14,border:"1px solid "+C.border,background:"transparent",color:C.mut,cursor:"pointer",fontFamily:"inherit",fontSize:10,fontWeight:800}}>Select all ({staffList.length})</button>
+              <button onClick={()=>setEmailStaff(new Set(staffList.filter(s=>s.email).map(s=>s.name)))}
+                style={{padding:"3px 10px",borderRadius:14,border:"1px solid "+C.border,background:"transparent",color:C.mut,cursor:"pointer",fontFamily:"inherit",fontSize:10,fontWeight:800}}>Select all ({staffList.filter(s=>s.email).length})</button>
               {emailStaff.size > 0 && (
                 <button onClick={()=>setEmailStaff(new Set())}
                   style={{padding:"3px 10px",borderRadius:14,border:"1px solid "+C.border,background:"transparent",color:C.mut,cursor:"pointer",fontFamily:"inherit",fontSize:10,fontWeight:800}}>Clear ({emailStaff.size})</button>
               )}
               <span style={{fontSize:10,color:C.mut}}>Uses {"{{COACH}}"}, {"{{MY_SUB_SHIFTS}}"}, {"{{MY_TOURNAMENT_GAPS}}"} …</span>
+              {staffNoEmail.length > 0 && (
+                <span title={"No email on file — they can't be sent to:\n" + staffNoEmail.map(s=>s.name).join("\n")}
+                  style={{fontSize:10,fontWeight:800,color:"#f59e0b",border:"1px solid #f59e0b",borderRadius:6,padding:"1px 7px"}}>
+                  ⚠ {staffNoEmail.length} with no email
+                </span>
+              )}
             </div>
             <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
               {staffList.map(s => {
                 const on = emailStaff.has(s.name);
+                // Shown but unselectable when there's no address, so a coach
+                // never drops out of the send without you noticing.
+                if (!s.email) return (
+                  <span key={s.name} title="No email on file — add one on their coach card to include them"
+                    style={{padding:"3px 10px",borderRadius:14,border:"1px dashed #f59e0b",color:"#f59e0b",fontSize:10,fontWeight:700,opacity:0.8}}>
+                    {s.name} · no email
+                  </span>
+                );
                 return (
                   <button key={s.name} onClick={()=>setEmailStaff(prev => { const n = new Set(prev); n.has(s.name) ? n.delete(s.name) : n.add(s.name); return n; })}
                     title={s.email}
