@@ -52,6 +52,21 @@ const isPlaceholderCoach = (c) => { const v = String(c || "").trim(); return !v 
 // team's coaches are all traveling). They're placeholders — excluded from the
 // away/conflict math above — but always offered as sub options on the boards.
 const COVERAGE_SUBS = ["Tournament Floater Coach", "13-1 Assistant Coach", "15-2 Assistant Coach"];
+// ── Staff gear sizing ────────────────────────────────────────────────────
+// Sizes are collected once, per coach, to place the gear order. Style is kept
+// separate from size everywhere so the export hands a supplier clean columns.
+const GEAR_DEADLINE = "2026-07-30"; // Thursday
+const GEAR_TEE_SIZES = ["XS", "S", "M", "L", "XL", "2XL", "3XL"];
+const GEAR_SHOE_SIZES = ["5","5.5","6","6.5","7","7.5","8","8.5","9","9.5","10","10.5","11","11.5","12","12.5","13","14","15"];
+const GEAR_FIELDS = [
+  { key: "shoe",       label: "Shoe size",                 size: "shoe_size",       sizes: GEAR_SHOE_SIZES, styleKey: "shoe_gender",      styles: ["mens", "womens"],   styleLabel: "Men's or women's" },
+  { key: "tshirt",     label: "T-shirt (unisex)",          size: "tshirt_size",     sizes: GEAR_TEE_SIZES },
+  { key: "sweatshirt", label: "Sweatshirt",                size: "sweatshirt_size", sizes: GEAR_TEE_SIZES,  styleKey: "sweatshirt_style", styles: ["crew neck", "hoodie"], styleLabel: "Crew neck or hoodie" },
+  { key: "longsleeve", label: "Performance long sleeve",   size: "longsleeve_size", sizes: GEAR_TEE_SIZES,  styleKey: "longsleeve_style", styles: ["crew neck", "hooded tee"], styleLabel: "Crew neck or hooded tee" },
+];
+// Every answer is required — a half-filled row can't be ordered against.
+const gearComplete = (g) => !!g && GEAR_FIELDS.every(f => String(g[f.size] || "").trim() && (!f.styleKey || String(g[f.styleKey] || "").trim()))
+  && !!String(g.backpack_name || "").trim();
 function tnEffectiveStaff(a, team) {
   const dHead = team?.head_coach || null, dAsst = team?.assistant_coach || null;
   const head = (a?.head_override || dHead) || null;
@@ -1171,6 +1186,10 @@ export default function App() {
   const [practiceCoverage, setPracticeCoverage]       = useState([]); // per-date coach absences + subs (Daily view)
   const [practiceCancellations, setPracticeCancellations] = useState([]); // dates with practice cancelled (holidays)
   const [slotMoves, setSlotMoves]                     = useState([]); // per-date team → block moves (Sunday 4-court planner)
+  const [coachGear, setCoachGear]                     = useState([]); // staff gear sizes, one row per coach
+  const [gearOpen, setGearOpen]                       = useState(false);
+  const [gearForm, setGearForm]                       = useState(null); // draft while the modal is open
+  const [gearSaving, setGearSaving]                   = useState(false);
   const [homeCalOff, setHomeCalOff]                   = useState(0);    // Home calendar: months offset from the current month
   const [homeCalSel, setHomeCalSel]                   = useState(null); // Home calendar: selected day (YYYY-MM-DD)
   const [homeUpdatesOpen, setHomeUpdatesOpen]         = useState(false);// Home: expand the Updates box to see all updates
@@ -1490,7 +1509,7 @@ export default function App() {
   // Operations are admin-only: the whole "Operations" nav group and the views
   // behind it are hidden and blocked for non-admin coaches. The owner (Drew)
   // always counts here so a bad DB flag can't lock him out.
-  const OPS_VIEWS = new Set(["tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","timecards"]);
+  const OPS_VIEWS = new Set(["tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","timecards","gear"]);
   const canOps    = isAdmin || isOwner;
   const opsDenied = <div style={{padding:24,color:C.mut,textAlign:"center"}}>This section is restricted to administrators. Ask the club administrator (Drew) for access.</div>;
   // Once a player has accepted (or is locked/signed) onto a team, they're
@@ -1669,7 +1688,7 @@ export default function App() {
   // in a long listing (tournaments, teams, coaches, players).
   const anyModalOpen = profileId !== null || !!teamCardName || !!coachCardName || addingPlayer ||
     addingTournament || addingCoach || bulkImportOpen || !!reminderModal || !!reminderHistory ||
-    !!viewPost || requestOffOpen;
+    !!viewPost || requestOffOpen || gearOpen;
   useEffect(() => {
     if (!anyModalOpen || typeof window === "undefined") return;
     const y = window.scrollY;
@@ -1902,6 +1921,11 @@ export default function App() {
     const { data, error } = await supabase.from("practice_slot_moves").select("*");
     if (error) { console.error("Load practice_slot_moves error:", error); return; }
     setSlotMoves(data || []);
+  }, []);
+  const loadCoachGear = useCallback(async () => {
+    const { data, error } = await supabase.from("coach_gear").select("*");
+    if (error) { console.error("Load coach_gear error:", error); return; }
+    setCoachGear(data || []);
   }, []);
   // Move a team to a different Sunday block for ONE date (or clear it → normal slot).
   const setSlotMove = useCallback(async (practice_date, team_name, slot, phase) => {
@@ -2338,6 +2362,7 @@ export default function App() {
   useEffect(() => { if (isApproved && (view === "home" || view === "clockin" || view === "requests" || view === "practice" || view === "coverage" || view === "tournaments")) loadCoachRequests(); }, [isApproved, view, loadCoachRequests]);
   useEffect(() => { if (isApproved && view === "practice") loadCoachFloats(); }, [isApproved, view, loadCoachFloats]);
   useEffect(() => { if (isApproved && (view === "practice" || view === "home" || view === "clockin")) loadPracticeCoverage(); }, [isApproved, view, loadPracticeCoverage]);
+  useEffect(() => { if (isApproved && (view === "home" || view === "coaches" || view === "gear")) loadCoachGear(); }, [isApproved, view, loadCoachGear]);
   useEffect(() => { if (isApproved && view === "coverage") { loadPracticeCoverage(); loadPractice(); } }, [isApproved, view, loadPracticeCoverage, loadPractice]);
   useEffect(() => { if (isApproved && view === "practice") { loadPracticeCancellations(); loadSlotMoves(); } }, [isApproved, view, loadPracticeCancellations, loadSlotMoves]);
   // Optimistically patch local state, then upsert the merged row. `merged` is
@@ -2933,6 +2958,41 @@ export default function App() {
     // per-tournament overrides handle.)
     return practiceTeams.filter(t => isMine(t.head_coach) || isMine(t.assistant_coach) || isMine(t.third_coach)).map(t => t.team_name);
   }, [coach, coachRoster, practiceTeams]);
+
+  // Every active coach — coaches a team, or was assigned practice coverage —
+  // with the address to reach them. Names come from BOTH the roster and app
+  // accounts, because a coach can have one without the other (David Stanley
+  // head coaches 13 Sapphire with an account but no roster row). Accounts
+  // supply the address they log in with; the roster supplies the properly-cased
+  // name, since some account display names are typed lower case.
+  // Anyone active with no address is still listed, so a gap is visible rather
+  // than silently shrinking a send.
+  const staffRoster = useMemo(() => {
+    const nrm = s => (s || "").toString().trim().toLowerCase().replace(/\s+/g, " ");
+    const active = new Set();
+    (practiceTeams || []).forEach(t => [t.head_coach, t.assistant_coach, t.third_coach]
+      .forEach(c => { if (c && !isPlaceholderCoach(c)) active.add(nrm(c)); }));
+    (practiceCoverage || []).forEach(c => { if (isRealSub(c.sub_name) && !isPlaceholderCoach(c.sub_name)) active.add(nrm(c.sub_name)); });
+    const byName = new Map();
+    const put = (name, email, fromRoster) => {
+      const k = nrm(name);
+      if (!k || !active.has(k)) return;
+      const e = (email || "").trim().toLowerCase();
+      const cur = byName.get(k);
+      if (!cur) { byName.set(k, { name: String(name).trim(), email: e }); return; }
+      if (!cur.email && e) cur.email = e;
+      if (fromRoster && String(name).trim()) cur.name = String(name).trim();
+    };
+    (coachesList || []).forEach(c => put(c.display_name, c.email, false));
+    (coachRoster || []).forEach(r => put(((r.first_name || "") + " " + (r.last_name || "")).trim(), r.email, true));
+    return [...byName.values()].filter(s => s.name).sort((a, b) => a.name.localeCompare(b.name));
+  }, [practiceTeams, practiceCoverage, coachesList, coachRoster]);
+  // Coaches who still owe gear sizes — drives the nav badge.
+  const gearOutstanding = useMemo(() => {
+    const nrm = s => (s || "").toString().trim().toLowerCase().replace(/\s+/g, " ");
+    const by = new Map((coachGear || []).map(g => [nrm(g.coach_name), g]));
+    return staffRoster.filter(s => !gearComplete(by.get(nrm(s.name)))).length;
+  }, [staffRoster, coachGear]);
 
   // Build the per-user notification list from existing data (updates + Q&A).
   const notifications = useMemo(() => {
@@ -4500,6 +4560,225 @@ export default function App() {
     );
   };
   // Home panel: future practices that need a sub — any coach can pick one up.
+  // ── Staff gear sizing ──────────────────────────────────────────────────
+  // My gear row, matched on full name (the roster has both a Sam Robinson and
+  // a Sam Mabry, so first-name matching would collide).
+  const myGearName = (() => {
+    const nrm = s => (s || "").toString().trim().toLowerCase().replace(/\s+/g, " ");
+    const r = coachRoster.find(x => coach?.email && nrm(x.email) === nrm(coach.email));
+    return r ? ((r.first_name || "") + " " + (r.last_name || "")).trim() : (coach?.display_name || "").trim();
+  })();
+  const myGear = coachGear.find(g => (g.coach_name || "").trim().toLowerCase() === myGearName.toLowerCase()) || null;
+  const openGear = () => {
+    setGearForm({
+      shoe_size: myGear?.shoe_size || "", shoe_gender: myGear?.shoe_gender || "",
+      tshirt_size: myGear?.tshirt_size || "",
+      sweatshirt_size: myGear?.sweatshirt_size || "", sweatshirt_style: myGear?.sweatshirt_style || "",
+      longsleeve_size: myGear?.longsleeve_size || "", longsleeve_style: myGear?.longsleeve_style || "",
+      backpack_name: myGear?.backpack_name || (myGearName ? "Coach " + myGearName.split(/\s+/)[0] : ""),
+    });
+    setGearOpen(true);
+  };
+  const saveGear = async () => {
+    if (!myGearName) { window.alert("We couldn't match your account to a coach name — tell Drew and he'll fix it."); return; }
+    setGearSaving(true);
+    const row = { coach_name: myGearName, coach_email: (coach?.email || "").toLowerCase(), ...gearForm,
+      backpack_name: (gearForm.backpack_name || "").trim(), updated_at: new Date().toISOString() };
+    if (gearComplete(row)) row.submitted_at = new Date().toISOString();
+    const { error } = await supabase.from("coach_gear").upsert(row, { onConflict: "coach_name" });
+    setGearSaving(false);
+    if (error) { window.alert("Couldn't save: " + error.message); return; }
+    await loadCoachGear();
+    setGearOpen(false);
+  };
+  // The ask, on the coach's dashboard. Turns into a quiet confirmation once
+  // they're done, so it stops nagging the people who already answered.
+  const renderGearPanel = () => {
+    const done = gearComplete(myGear);
+    const today = localDateISO();
+    const past = today > GEAR_DEADLINE;
+    const dl = new Date(GEAR_DEADLINE + "T12:00:00").toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+    const daysLeft = Math.round((new Date(GEAR_DEADLINE + "T00:00") - new Date(today + "T00:00")) / 86400000);
+    if (done) return (
+      <div style={{background:C.card,border:"1px solid "+C.grn,borderRadius:12,padding:"10px 14px",marginBottom:10,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+        <span style={{fontSize:13,fontWeight:800,color:C.grn}}>✓ Gear sizes submitted</span>
+        <span style={{fontSize:11,color:C.mut}}>{myGear.tshirt_size} tee · {myGear.shoe_gender} {myGear.shoe_size} shoe · "{myGear.backpack_name}"</span>
+        <div style={{flex:1}} />
+        <button onClick={openGear} style={{padding:"4px 12px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Change</button>
+      </div>
+    );
+    return (
+      <div style={{background:C.card,border:"2px solid "+(past?C.red:C.gold),borderRadius:12,padding:"14px 16px",marginBottom:10}}>
+        <div style={{fontSize:14,fontWeight:800,color:past?C.red:C.gold,marginBottom:4}}>👕 We need your gear sizes</div>
+        <div style={{fontSize:12,color:C.text,lineHeight:1.5,marginBottom:10}}>
+          Five quick questions so we can order your coaches gear — shoes, tee, sweatshirt, long sleeve, and the name on your backpack.
+          {past
+            ? <> <b style={{color:C.red}}>The deadline ({dl}) has passed.</b> Fill this in now and we'll do what we can, but gear can't be guaranteed.</>
+            : <> Please do it by <b style={{color:C.gold}}>{dl}</b>{daysLeft >= 0 ? " (" + (daysLeft === 0 ? "today" : daysLeft === 1 ? "tomorrow" : daysLeft + " days") + ")" : ""} — after that we place the order, and anyone who hasn't answered doesn't get gear.</>}
+        </div>
+        <button onClick={openGear} style={{padding:"9px 18px",borderRadius:8,border:"none",background:C.gold,color:"#000",fontSize:13,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>
+          {myGear ? "Finish my sizes — 1 min" : "Fill out my sizes — 1 min"}
+        </button>
+      </div>
+    );
+  };
+  const renderGearModal = () => {
+    if (!gearOpen || !gearForm) return null;
+    const set = (k, v) => setGearForm(f => ({ ...f, [k]: v }));
+    const sel = { background:C.bg, border:"1px solid "+C.border, borderRadius:8, color:C.text, fontFamily:"inherit", fontSize:14, padding:"9px 10px", width:"100%" };
+    const missing = !gearComplete({ ...gearForm });
+    return (
+      <div onClick={()=>setGearOpen(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:3000,display:"flex",justifyContent:"center",alignItems:"flex-start",padding:"24px 14px",overflowY:"auto"}}>
+        <div onClick={e=>e.stopPropagation()} style={{background:C.card,border:"1px solid "+C.border,borderRadius:16,padding:20,maxWidth:460,width:"100%"}}>
+          <div style={{fontSize:17,fontWeight:800,color:C.gold,marginBottom:2}}>👕 Your coaches gear</div>
+          <div style={{fontSize:12,color:C.mut,marginBottom:16}}>All five are needed to place the order.</div>
+          {GEAR_FIELDS.map(f => (
+            <div key={f.key} style={{marginBottom:14}}>
+              <div style={{fontSize:12,fontWeight:800,color:C.text,marginBottom:5}}>{f.label}</div>
+              <div style={{display:"flex",gap:8}}>
+                <select value={gearForm[f.size]||""} onChange={e=>set(f.size, e.target.value)} style={{...sel,flex:f.styleKey?"0 0 34%":"1"}}>
+                  <option value="">Size…</option>
+                  {f.sizes.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+                {f.styleKey && (
+                  <select value={gearForm[f.styleKey]||""} onChange={e=>set(f.styleKey, e.target.value)} style={{...sel,flex:1}}>
+                    <option value="">{f.styleLabel}…</option>
+                    {f.styles.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                )}
+              </div>
+            </div>
+          ))}
+          <div style={{marginBottom:16}}>
+            <div style={{fontSize:12,fontWeight:800,color:C.text,marginBottom:2}}>Name printed on your backpack</div>
+            <div style={{fontSize:11,color:C.mut,marginBottom:5}}>However you want it to read — e.g. "Coach Drew" or "Coach Rose".</div>
+            <input value={gearForm.backpack_name||""} onChange={e=>set("backpack_name", e.target.value)} maxLength={28}
+              placeholder="Coach Drew" style={sel} />
+          </div>
+          <div style={{display:"flex",gap:10,alignItems:"center"}}>
+            <button onClick={saveGear} disabled={missing || gearSaving}
+              title={missing ? "Answer all five so we can order" : undefined}
+              style={{padding:"10px 20px",borderRadius:8,border:"none",background:(missing||gearSaving)?C.border:C.gold,color:(missing||gearSaving)?C.mut:"#000",fontSize:14,fontWeight:800,cursor:(missing||gearSaving)?"default":"pointer",fontFamily:"inherit"}}>
+              {gearSaving ? "Saving…" : "Submit my sizes"}
+            </button>
+            <button onClick={()=>setGearOpen(false)} style={{padding:"10px 16px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Cancel</button>
+            {missing && <span style={{fontSize:11,color:C.mut}}>All five needed</span>}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // Admin: who has answered, who hasn't, and the order sheet to hand a supplier.
+  function renderGearTracker() {
+    const nrm = s => (s || "").toString().trim().toLowerCase().replace(/\s+/g, " ");
+    const gearBy = new Map(coachGear.map(g => [nrm(g.coach_name), g]));
+    const rows = staffRoster.map(s => ({ ...s, gear: gearBy.get(nrm(s.name)) || null }))
+      .map(r => ({ ...r, done: gearComplete(r.gear) }));
+    const done = rows.filter(r => r.done), pending = rows.filter(r => !r.done);
+    const today = localDateISO();
+    const dl = new Date(GEAR_DEADLINE + "T12:00:00").toLocaleDateString(undefined, { weekday:"long", month:"short", day:"numeric" });
+    const daysLeft = Math.round((new Date(GEAR_DEADLINE + "T00:00") - new Date(today + "T00:00")) / 86400000);
+    const COLS = ["Coach","Email","Shoe size","Shoe gender","T-shirt","Sweatshirt","Sweatshirt style","Long sleeve","Long sleeve style","Backpack name","Submitted"];
+    const cells = (r) => [r.name, r.email || "", r.gear?.shoe_size || "", r.gear?.shoe_gender || "", r.gear?.tshirt_size || "",
+      r.gear?.sweatshirt_size || "", r.gear?.sweatshirt_style || "", r.gear?.longsleeve_size || "", r.gear?.longsleeve_style || "",
+      r.gear?.backpack_name || "", r.gear?.submitted_at ? String(r.gear.submitted_at).slice(0,10) : ""];
+    const exportCsv = (list, name) => {
+      const esc = v => /[",\n]/.test(String(v)) ? '"' + String(v).replace(/"/g,'""') + '"' : String(v);
+      const csv = [COLS.join(","), ...list.map(r => cells(r).map(esc).join(","))].join("\n");
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([csv], { type:"text/csv" }));
+      a.download = name; a.click(); URL.revokeObjectURL(a.href);
+    };
+    // Manual nudge, on top of the daily cron. Uses the same browser-callable
+    // endpoints the rest of the app uses, so no cron secret is needed here.
+    const chaseAll = async () => {
+      const withEmail = pending.filter(r => r.email);
+      if (!withEmail.length) return;
+      const noEmail = pending.filter(r => !r.email);
+      if (!window.confirm("Send a gear reminder now to " + withEmail.length + " coach" + (withEmail.length===1?"":"es") + " who haven't answered?\n\n" +
+        withEmail.map(r => r.name).join("\n") +
+        (noEmail.length ? "\n\nSkipping (no email on file): " + noEmail.map(r=>r.name).join(", ") : "") +
+        "\n\nThey get an email, plus a push if they've enabled notifications.")) return;
+      const dlShort = new Date(GEAR_DEADLINE + "T12:00:00").toLocaleDateString(undefined, { weekday:"long", month:"short", day:"numeric" });
+      const subject = "Action needed: your coaches gear sizes (due " + dlShort + ")";
+      const bodyFor = (n) => "Hi " + n.split(/\s+/)[0] + ",\n\n" +
+        "We're placing the coaches gear order and still need your sizes — shoes, t-shirt, sweatshirt, performance long sleeve, and the name you want printed on your backpack.\n\n" +
+        "It takes about a minute: open the DS Elite app and the form is right at the top of your dashboard.\n\n" +
+        "Please do it by " + dlShort + ". After that the order goes in, and anyone who hasn't answered won't have gear in their size.\n\n" +
+        "Thanks,\nDrew";
+      let emailed = 0, pushed = 0;
+      for (const r of withEmail) {
+        try {
+          const res = await fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"},
+            body: JSON.stringify({ subject, body: bodyFor(r.name), recipients: [r.email] }) });
+          if (res.ok) emailed++;
+        } catch { /* keep going — one bad address shouldn't stop the rest */ }
+        try {
+          const res = await fetch("/api/send-push", { method:"POST", headers:{"Content-Type":"application/json"},
+            body: JSON.stringify({ title:"Gear sizes needed by " + dlShort, body:"One minute — shoes, tee, sweatshirt, long sleeve, backpack name.",
+              url:"/?view=home", audience:{ type:"email", email:r.email } }) });
+          const d = await res.json().catch(()=>({}));
+          if (res.ok) pushed += (d.sent || 0);
+        } catch { /* push is best-effort */ }
+      }
+      await supabase.from("coach_gear_reminders").insert(withEmail.map(r => ({ coach_name: r.name, channel: "manual" })));
+      window.alert("Emailed " + emailed + " of " + withEmail.length + ".\nPush delivered to " + pushed + " device" + (pushed===1?"":"s") + ".");
+    };
+    const th = { textAlign:"left", fontSize:10, fontWeight:800, color:C.mut, textTransform:"uppercase", letterSpacing:0.4, padding:"6px 8px", borderBottom:"1px solid "+C.border, whiteSpace:"nowrap" };
+    const td = { fontSize:12, color:C.text, padding:"6px 8px", borderBottom:"1px solid "+C.border, whiteSpace:"nowrap" };
+    return (
+      <div style={{maxWidth:1100,margin:"0 auto"}}>
+        <h2 style={{margin:"0 0 4px",fontSize:20,fontWeight:800,color:C.gold}}>👕 Coaches gear sizes</h2>
+        <div style={{fontSize:12,color:C.mut,marginBottom:14}}>
+          Due {dl}{daysLeft >= 0 ? " · " + (daysLeft === 0 ? "today" : daysLeft + " day" + (daysLeft===1?"":"s") + " left") : " · deadline passed"}.
+          Coaches see this on their dashboard and get a daily reminder until they answer.
+        </div>
+        <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center",marginBottom:14}}>
+          <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:10,padding:"10px 16px"}}>
+            <div style={{fontSize:10,color:C.mut,fontWeight:800,textTransform:"uppercase"}}>Answered</div>
+            <div style={{fontSize:22,fontWeight:800,color:C.grn}}>{done.length}<span style={{fontSize:13,color:C.mut,fontWeight:600}}> / {rows.length}</span></div>
+          </div>
+          <div style={{background:C.card,border:"1px solid "+(pending.length?C.gold:C.border),borderRadius:10,padding:"10px 16px"}}>
+            <div style={{fontSize:10,color:C.mut,fontWeight:800,textTransform:"uppercase"}}>Still needed</div>
+            <div style={{fontSize:22,fontWeight:800,color:pending.length?C.gold:C.grn}}>{pending.length}</div>
+          </div>
+          <div style={{flex:1}} />
+          <button onClick={chaseAll} disabled={!pending.length}
+            style={{padding:"8px 14px",borderRadius:8,border:"1px solid "+C.gold,background:pending.length?"rgba(233,30,140,0.10)":"transparent",color:pending.length?C.gold:C.mut,fontSize:12,fontWeight:800,cursor:pending.length?"pointer":"default",fontFamily:"inherit"}}>
+            🔔 Remind the {pending.length} outstanding
+          </button>
+          <button onClick={()=>exportCsv(done, "coach_gear_order.csv")} disabled={!done.length}
+            style={{padding:"8px 14px",borderRadius:8,border:"1px solid "+C.grn,background:"transparent",color:done.length?C.grn:C.mut,fontSize:12,fontWeight:800,cursor:done.length?"pointer":"default",fontFamily:"inherit"}}>
+            ⬇ Export order sheet ({done.length})
+          </button>
+          <button onClick={()=>exportCsv(rows, "coach_gear_all.csv")}
+            style={{padding:"8px 14px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>
+            ⬇ Export all
+          </button>
+        </div>
+        <div style={{overflowX:"auto",background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:4}}>
+          <table style={{borderCollapse:"collapse",width:"100%"}}>
+            <thead><tr><th style={th}>Coach</th>{COLS.slice(2).map(c => <th key={c} style={th}>{c}</th>)}</tr></thead>
+            <tbody>
+              {[...pending, ...done].map(r => (
+                <tr key={r.name} style={{opacity:r.done?1:0.75}}>
+                  <td style={{...td,fontWeight:700}}>
+                    <span style={{color:r.done?C.grn:C.gold,marginRight:6}}>{r.done?"✓":"○"}</span>
+                    <span onClick={()=>setCoachCardName(r.name)} style={{cursor:"pointer"}} title="Open coach card">{r.name}</span>
+                    {!r.email && <span style={{fontSize:10,color:"#f59e0b",marginLeft:6}}>no email</span>}
+                  </td>
+                  {cells(r).slice(2).map((v,i) => <td key={i} style={{...td,color:v?C.text:C.mut}}>{v || "—"}</td>)}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {!rows.length && <div style={{padding:24,textAlign:"center",color:C.mut,fontSize:13}}>No active coaches found.</div>}
+      </div>
+    );
+  }
+
   const renderOpenShiftsPanel = (myName) => {
     const today = new Date().toISOString().slice(0,10);
     const open = practiceCoverage
@@ -5412,6 +5691,7 @@ export default function App() {
         <div style={{minWidth:0}}>
         {/* ── Tier 1: quick + real-time ─────────────────────────────────── */}
         {sectionHdr("⚡ Right now", "clock in & things that need action")}
+        {renderGearPanel()}
         {renderCheckIn(true)}
         {renderOpenShiftsPanel(myRoster ? ((myRoster.first_name||"")+" "+(myRoster.last_name||"")).trim() : (coach?.display_name||""))}
         {renderCoachScheduleAlerts(isMine, myTeams.map(t => t.team_name))}
@@ -8616,6 +8896,39 @@ export default function App() {
             {practiceTeams.length === 0 && <div style={{fontSize:10,color:C.mut,marginTop:6,fontStyle:"italic"}}>No teams exist yet — add teams in the Practice tab first.</div>}
           </div>
 
+          {/* Gear sizes — what this coach submitted for the staff order. */}
+          {(() => {
+            const g = coachGear.find(x => (x.coach_name||"").trim().toLowerCase() === displayName.trim().toLowerCase());
+            const ok = gearComplete(g);
+            const line = (label, val) => (
+              <div key={label} style={{display:"flex",justifyContent:"space-between",gap:10,fontSize:12}}>
+                <span style={{fontWeight:700,color:C.text}}>{label}</span>
+                <span style={{color:val?C.mut:"#f59e0b"}}>{val || "not answered"}</span>
+              </div>
+            );
+            return (
+              <div style={sectionBox}>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+                  <div style={{...lbl,marginBottom:0}}>Gear Sizes</div>
+                  <span style={{fontSize:10,fontWeight:800,color:ok?C.grn:"#f59e0b"}}>{ok ? "✓ submitted" : "○ outstanding"}</span>
+                </div>
+                <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                  {line("Shoe", g?.shoe_size ? g.shoe_size + " " + (g.shoe_gender||"") : "")}
+                  {line("T-shirt", g?.tshirt_size)}
+                  {line("Sweatshirt", g?.sweatshirt_size ? g.sweatshirt_size + " " + (g.sweatshirt_style||"") : "")}
+                  {line("Long sleeve", g?.longsleeve_size ? g.longsleeve_size + " " + (g.longsleeve_style||"") : "")}
+                  {line("Backpack name", g?.backpack_name)}
+                </div>
+                {canOps && (
+                  <button onClick={()=>{ setCoachCardName(null); setView("gear"); }}
+                    style={{marginTop:8,padding:"5px 12px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+                    Open gear tracker →
+                  </button>
+                )}
+              </div>
+            );
+          })()}
+
           {/* Season blocks — date range for each phase, for reference */}
           <div style={sectionBox}>
             <div style={lbl}>Season Blocks</div>
@@ -11250,39 +11563,8 @@ export default function App() {
         MY_SCHEDULE_CHANGES: movesTxt, MY_SA: saTxt,
       };
     };
-    // Everyone who should get a staff email: coaches a team or was assigned
-    // coverage. Names are gathered from BOTH the coach roster and app accounts,
-    // because a coach can have one without the other — David Stanley head
-    // coaches 13 Sapphire with an account but no roster row, and a roster-only
-    // lookup dropped him from staff sends with no indication he was missing.
-    //
-    // Anyone active but with no email anywhere is still listed, shown disabled,
-    // so a missing address is visible instead of silently shrinking the send.
-    const staffList = (() => {
-      const nrm = s => (s || "").toString().trim().toLowerCase().replace(/\s+/g, " ");
-      const active = new Set();
-      (practiceTeams || []).forEach(t => [t.head_coach, t.assistant_coach, t.third_coach]
-        .forEach(c => { if (c && !isPlaceholderCoach(c)) active.add(nrm(c)); }));
-      (practiceCoverage || []).forEach(c => { if (isRealSub(c.sub_name) && !isPlaceholderCoach(c.sub_name)) active.add(nrm(c.sub_name)); });
-      const byName = new Map();
-      const put = (name, email, fromRoster) => {
-        const k = nrm(name);
-        if (!k || !active.has(k)) return;
-        const e = (email || "").trim().toLowerCase();
-        const cur = byName.get(k);
-        if (!cur) { byName.set(k, { name: String(name).trim(), email: e }); return; }
-        if (!cur.email && e) cur.email = e; // fill a gap, never overwrite
-        // Roster names are the properly-cased record; some account display
-        // names are typed in lower case, which would greet them "Hi ella,".
-        if (fromRoster && String(name).trim()) cur.name = String(name).trim();
-      };
-      // Accounts first — that's the address they actually log in with, which is
-      // also how coachEmailsFor() resolves a coach. A coach with two accounts
-      // therefore still yields exactly one address.
-      (coachesList || []).forEach(c => put(c.display_name, c.email, false));
-      (coachRoster || []).forEach(r => put(((r.first_name || "") + " " + (r.last_name || "")).trim(), r.email, true));
-      return [...byName.values()].filter(s => s.name).sort((a, b) => a.name.localeCompare(b.name));
-    })();
+    // Shared with the gear tracker — see staffRoster above.
+    const staffList = staffRoster;
     const staffNoEmail = staffList.filter(s => !s.email);
     // Replace ANY {{KEY}} that exists in the fields object (unknown keys are
     // left visible so a typo is obvious rather than silently deleted).
@@ -19436,7 +19718,7 @@ export default function App() {
                   ["hdr","Club"],
                   ["tracker","Tracker"], ["teamdir","All Teams"], ["practice","Practice"], ["sa","S&A Schedule"], ["clinics","DSSC Clinics"], ["scholarships","Scholarships"],
                   ["hdr","Coaches & Pay"],
-                  ["coaches","Coaches"], ["coverage","Coach Coverage"], ["timecards","Time Cards"], ["requests","Requests" + (pendingReqs ? " (" + pendingReqs + ")" : "")],
+                  ["coaches","Coaches"], ["coverage","Coach Coverage"], ["timecards","Time Cards"], ["gear","Gear Sizes" + (gearOutstanding ? " (" + gearOutstanding + ")" : "")], ["requests","Requests" + (pendingReqs ? " (" + pendingReqs + ")" : "")],
                   ["hdr","Communication"],
                   ["email","Email"], ["messages","Messages (SMS)" + (totalUnread > 0 ? " (" + totalUnread + ")" : "")], ["notifications","Notifications"], ["coachcomms","Coach Comms"], ["assignments","Assignments"],
                 ] }] : []),
@@ -19653,6 +19935,7 @@ export default function App() {
         {view==="assignments" && renderAssignments()}
         {view==="coverage" && renderCoachCoverage()}
         {view==="timecards" && renderTimeCards()}
+        {view==="gear" && (canOps ? renderGearTracker() : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Gear ordering is admin-only.</div>)}
         {view==="faq" && renderFaq()}
         {view==="practiceplan" && renderPracticePlans()}
         {view==="clinics" && renderClinics()}
@@ -19662,6 +19945,7 @@ export default function App() {
         </>}
       </div>
       {renderRequestOffModal()}
+      {renderGearModal()}
       {profileId !== null && renderProfile()}
       {teamCardName && renderTeamCard()}
       {coachCardName && renderCoachCard()}
