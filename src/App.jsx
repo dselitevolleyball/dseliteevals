@@ -3050,9 +3050,23 @@ export default function App() {
         const reg = await navigator.serviceWorker.ready;
         const sub = await reg.pushManager.getSubscription();
         setPushState(sub ? "on" : "off");
+        // The browser having a subscription does NOT mean the server can reach
+        // this coach — the row can go missing (cleaned up after a transient
+        // 404/410 in send-push, or an upsert that failed at enable time). That
+        // shows as "notifications on" in the app while every push silently
+        // skips them. Re-register on load so "on" always means there's a live
+        // row. Idempotent on endpoint, and refreshes email/admin/teams too.
+        if (sub && isApproved && coach?.email) {
+          const j = sub.toJSON();
+          const { error } = await supabase.from("push_subscriptions").upsert({
+            endpoint: sub.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth,
+            email: coach.email, is_admin: !!canOps, teams: myTeamNames,
+          }, { onConflict: "endpoint" });
+          if (error) console.error("re-register push sub", error);
+        }
       } catch { setPushState("off"); }
     })();
-  }, [isApproved]);
+  }, [isApproved, coach, canOps, myTeamNames]);
   const enablePush = useCallback(async () => {
     try {
       const VAPID = import.meta.env.VITE_VAPID_PUBLIC_KEY;
