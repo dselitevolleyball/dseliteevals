@@ -4641,43 +4641,71 @@ export default function App() {
     const set = (k, v) => setGearForm(f => ({ ...f, [k]: v }));
     const sel = { background:C.bg, border:"1px solid "+C.border, borderRadius:8, color:C.text, fontFamily:"inherit", fontSize:14, padding:"9px 10px", width:"100%" };
     const missing = !gearComplete({ ...gearForm });
+    // Name what's outstanding, so a coach isn't left guessing which control
+    // they skipped when the submit button stays greyed out.
+    const missingLabels = [
+      ...GEAR_FIELDS.flatMap(f => {
+        const out = [];
+        if (!String(gearForm[f.size] || "").trim()) out.push(f.label + " size");
+        if (f.styleKey && !String(gearForm[f.styleKey] || "").trim()) out.push(f.label + " style");
+        return out;
+      }),
+      ...(String(gearForm.backpack_name || "").trim() ? [] : ["backpack name"]),
+    ];
     return (
       <div onClick={()=>setGearOpen(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:3000,display:"flex",justifyContent:"center",alignItems:"flex-start",padding:"24px 14px",overflowY:"auto"}}>
         <div onClick={e=>e.stopPropagation()} style={{background:C.card,border:"1px solid "+C.border,borderRadius:16,padding:20,maxWidth:460,width:"100%"}}>
           <div style={{fontSize:17,fontWeight:800,color:C.gold,marginBottom:2}}>👕 Your coaches gear</div>
           <div style={{fontSize:12,color:C.mut,marginBottom:16}}>All five are needed to place the order.</div>
-          {GEAR_FIELDS.map(f => (
-            <div key={f.key} style={{marginBottom:14}}>
-              <div style={{fontSize:12,fontWeight:800,color:C.text,marginBottom:5}}>{f.label}</div>
-              <div style={{display:"flex",gap:8}}>
-                <select value={gearForm[f.size]||""} onChange={e=>set(f.size, e.target.value)} style={{...sel,flex:f.styleKey?"0 0 34%":"1"}}>
-                  <option value="">Size…</option>
-                  {f.sizes.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-                {f.styleKey && (
-                  <select value={gearForm[f.styleKey]||""} onChange={e=>set(f.styleKey, e.target.value)} style={{...sel,flex:1}}>
-                    <option value="">{f.styleLabel}…</option>
-                    {f.styles.map(s => <option key={s} value={s}>{s}</option>)}
+          {GEAR_FIELDS.map(f => {
+            // Highlight the exact control that's still empty. A single "all five
+            // needed" message left coaches hunting for the one dropdown they
+            // skipped — usually a style, since those sit beside a filled size.
+            const needSize = !String(gearForm[f.size] || "").trim();
+            const needStyle = f.styleKey && !String(gearForm[f.styleKey] || "").trim();
+            const flag = (bad) => bad ? { ...sel, borderColor: "#f59e0b" } : sel;
+            return (
+              <div key={f.key} style={{marginBottom:14}}>
+                <div style={{fontSize:12,fontWeight:800,color:C.text,marginBottom:5}}>
+                  {f.label}{(needSize || needStyle) && <span style={{color:"#f59e0b",fontWeight:700}}> — needed</span>}
+                </div>
+                <div style={{display:"flex",gap:8}}>
+                  <select value={gearForm[f.size]||""} onChange={e=>set(f.size, e.target.value)} style={{...flag(needSize),flex:f.styleKey?"0 0 34%":"1"}}>
+                    <option value="">Size…</option>
+                    {f.sizes.map(s => <option key={s} value={s}>{s}</option>)}
                   </select>
-                )}
+                  {f.styleKey && (
+                    <select value={gearForm[f.styleKey]||""} onChange={e=>set(f.styleKey, e.target.value)} style={{...flag(needStyle),flex:1}}>
+                      <option value="">{f.styleLabel}…</option>
+                      {f.styles.map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
           <div style={{marginBottom:16}}>
-            <div style={{fontSize:12,fontWeight:800,color:C.text,marginBottom:2}}>Name printed on your backpack</div>
+            <div style={{fontSize:12,fontWeight:800,color:C.text,marginBottom:2}}>
+              Name printed on your backpack
+              {!String(gearForm.backpack_name||"").trim() && <span style={{color:"#f59e0b",fontWeight:700}}> — needed</span>}
+            </div>
             <div style={{fontSize:11,color:C.mut,marginBottom:5}}>However you want it to read — e.g. "Coach Drew" or "Coach Rose".</div>
             <input value={gearForm.backpack_name||""} onChange={e=>set("backpack_name", e.target.value)} maxLength={28}
-              placeholder="Coach Drew" style={sel} />
+              placeholder="Coach Drew" style={String(gearForm.backpack_name||"").trim() ? sel : {...sel,borderColor:"#f59e0b"}} />
           </div>
-          <div style={{display:"flex",gap:10,alignItems:"center"}}>
+          <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
             <button onClick={saveGear} disabled={missing || gearSaving}
-              title={missing ? "Answer all five so we can order" : undefined}
+              title={missing ? "Still needed: " + missingLabels.join(", ") : undefined}
               style={{padding:"10px 20px",borderRadius:8,border:"none",background:(missing||gearSaving)?C.border:C.gold,color:(missing||gearSaving)?C.mut:"#000",fontSize:14,fontWeight:800,cursor:(missing||gearSaving)?"default":"pointer",fontFamily:"inherit"}}>
               {gearSaving ? "Saving…" : "Submit my sizes"}
             </button>
             <button onClick={()=>setGearOpen(false)} style={{padding:"10px 16px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Cancel</button>
-            {missing && <span style={{fontSize:11,color:C.mut}}>All five needed</span>}
           </div>
+          {missing && (
+            <div style={{marginTop:10,fontSize:12,color:"#f59e0b",fontWeight:700}}>
+              Still needed: {missingLabels.join(", ")}
+            </div>
+          )}
         </div>
       </div>
     );
