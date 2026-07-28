@@ -52,6 +52,39 @@ const isPlaceholderCoach = (c) => { const v = String(c || "").trim(); return !v 
 // team's coaches are all traveling). They're placeholders — excluded from the
 // away/conflict math above — but always offered as sub options on the boards.
 const COVERAGE_SUBS = ["Tournament Floater Coach", "13-1 Assistant Coach", "15-2 Assistant Coach"];
+// ── Player roster table ──────────────────────────────────────────────────
+// Every column the Players table can show. `get` returns the display value;
+// `num` marks columns that should sort numerically rather than alphabetically.
+const ROSTER_COLS = [
+  { key:"team",      label:"Team",          get:p => p.team_assignment || "" },
+  { key:"last",      label:"Last name",     get:p => p.last_name || "" },
+  { key:"first",     label:"First name",    get:p => p.first_name || "" },
+  { key:"age",       label:"Age",           get:p => p.age || "", num:true },
+  { key:"position",  label:"Position",      get:p => p.primary_position || (p.positions||[]).join("/") },
+  { key:"positions", label:"All positions", get:p => (p.positions||[]).join(", ") },
+  { key:"grad",      label:"School team",   get:p => p.school_team || "" },
+  { key:"city",      label:"City",          get:p => p.city || "" },
+  { key:"state",     label:"State",         get:p => p.state || "" },
+  { key:"dob",       label:"DOB",           get:p => p.dob || "" },
+  { key:"gender",    label:"Gender",        get:p => p.gender || "" },
+  { key:"hand",      label:"Hand",          get:p => p.dominant_hand || "" },
+  { key:"sports",    label:"Other sports",  get:p => p.other_sports || "" },
+  { key:"pemail",    label:"Player email",  get:p => p.player_email || "" },
+  { key:"pphone",    label:"Player phone",  get:p => p.player_phone || "" },
+  { key:"parent",    label:"Parent",        get:p => p.parent_name || "" },
+  { key:"pemail2",   label:"Parent email",  get:p => p.parent_email || "" },
+  { key:"pphone2",   label:"Parent phone",  get:p => p.parent_phone || "" },
+  { key:"usav",      label:"USAV div",      get:p => p.usav_div || "" },
+  { key:"lonestar",  label:"Lone Star",     get:p => p.lonestar_member ? "yes" : "" },
+  { key:"se",        label:"SportsEngine",  get:p => p.sportsengine_registered ? "yes" : "" },
+  { key:"sy",        label:"SportsYou",     get:p => p.sportsyou_registered ? "yes" : "" },
+  { key:"jersey",    label:"Jersey done",   get:p => p.jersey_tryout_complete ? "yes" : "" },
+  { key:"offer",     label:"Offer status",  get:p => p.offer_status || "" },
+  { key:"rostered",  label:"Rostered",      get:p => (p.rostered_at || "").slice(0,10) },
+  { key:"season",    label:"Season",        get:p => p.season || "" },
+];
+const ROSTER_COLS_DEFAULT = ["team","last","first","age","position","parent","pemail2","pphone2"];
+
 // ── Staff gear sizing ────────────────────────────────────────────────────
 // Sizes are collected once, per coach, to place the gear order. Style is kept
 // separate from size everywhere so the export hands a supplier clean columns.
@@ -1188,6 +1221,19 @@ export default function App() {
   const [slotMoves, setSlotMoves]                     = useState([]); // per-date team → block moves (Sunday 4-court planner)
   const [rosterQ, setRosterQ]                         = useState("");         // Players view search
   const [rosterSeason, setRosterSeason]               = useState("2026-27");  // which season's roster to show
+  const [rosterView, setRosterView]                   = useState("cards");    // cards | table
+  const [rosterSort, setRosterSort]                   = useState({ key:"team", dir:"asc" });
+  const [rosterColsOpen, setRosterColsOpen]           = useState(false);
+  // Chosen columns persist per browser — a roster you've set up for a phone-call
+  // list shouldn't reset every time you leave the page.
+  const [rosterCols, setRosterCols] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem("dse_roster_cols") || "null");
+      if (Array.isArray(saved) && saved.length) return saved.filter(k => ROSTER_COLS.some(c => c.key === k));
+    } catch { /* fall through to defaults */ }
+    return ROSTER_COLS_DEFAULT;
+  });
+  useEffect(() => { try { localStorage.setItem("dse_roster_cols", JSON.stringify(rosterCols)); } catch { /* private mode */ } }, [rosterCols]);
   const [coachGear, setCoachGear]                     = useState([]); // staff gear sizes, one row per coach
   const [gearOpen, setGearOpen]                       = useState(false);
   const [gearForm, setGearForm]                       = useState(null); // draft while the modal is open
@@ -6473,15 +6519,33 @@ export default function App() {
       return ag - bg || a.localeCompare(b);
     });
     const seasons = [...new Set(players.map(p => p.season || "2026-27"))].sort().reverse();
+    // Table rows honour the chosen columns and sort; the export follows suit,
+    // so what you download is what you were looking at.
+    const activeCols = rosterCols.map(k => ROSTER_COLS.find(c => c.key === k)).filter(Boolean);
+    const cmp = (a, b) => {
+      const col = ROSTER_COLS.find(c => c.key === rosterSort.key) || ROSTER_COLS[0];
+      const av = col.get(a), bv = col.get(b);
+      // Blanks always sink, in either direction — an empty cell isn't "first".
+      if (!av && bv) return 1;
+      if (av && !bv) return -1;
+      let r;
+      if (col.num) r = (parseFloat(av) || 0) - (parseFloat(bv) || 0);
+      else r = String(av).localeCompare(String(bv), undefined, { numeric:true, sensitivity:"base" });
+      if (r === 0) r = (a.last_name||"").localeCompare(b.last_name||"");
+      return rosterSort.dir === "asc" ? r : -r;
+    };
+    const sorted = shown.slice().sort(cmp);
     const exportCsv = () => {
-      const cols = ["Team","First","Last","Grade/Age","Position","Player email","Player phone","Parent","Parent email","Parent phone","City","School team","Season"];
       const esc = v => /[",\n]/.test(String(v??"")) ? '"'+String(v).replace(/"/g,'""')+'"' : String(v??"");
-      const rows = teams.flatMap(t => byTeam.get(t).map(p => [t, p.first_name, p.last_name, p.age, p.primary_position || (p.positions||[]).join("/"),
-        p.player_email, p.player_phone, p.parent_name, p.parent_email, p.parent_phone, p.city, p.school_team, p.season || rosterSeason]));
+      const cols = rosterView === "table" ? activeCols : ROSTER_COLS.filter(c => ROSTER_COLS_DEFAULT.includes(c.key));
+      const list = rosterView === "table" ? sorted : teams.flatMap(t => byTeam.get(t));
+      const csv = [cols.map(c => c.label).join(","), ...list.map(p => cols.map(c => esc(c.get(p))).join(","))].join("\n");
       const a = document.createElement("a");
-      a.href = URL.createObjectURL(new Blob([[cols.join(","), ...rows.map(r => r.map(esc).join(","))].join("\n")], { type:"text/csv" }));
+      a.href = URL.createObjectURL(new Blob([csv], { type:"text/csv" }));
       a.download = "roster_" + rosterSeason + ".csv"; a.click(); URL.revokeObjectURL(a.href);
     };
+    const toggleCol = (k) => setRosterCols(prev => prev.includes(k) ? prev.filter(x => x !== k) : [...prev, k]);
+    const sortBy = (k) => setRosterSort(s => s.key === k ? { key:k, dir: s.dir === "asc" ? "desc" : "asc" } : { key:k, dir:"asc" });
     const chip = { fontSize:10, fontWeight:700, color:C.mut, border:"1px solid "+C.border, borderRadius:5, padding:"1px 6px" };
     return (
       <div style={{maxWidth:1100,margin:"0 auto"}}>
@@ -6501,6 +6565,39 @@ export default function App() {
           )}
           <input value={rosterQ} onChange={e=>setRosterQ(e.target.value)} placeholder="Search name, team, position…"
             style={{...inpStyle,padding:"7px 11px",fontSize:12,minWidth:220}} />
+          <span style={{display:"inline-flex",border:"1px solid "+C.border,borderRadius:8,overflow:"hidden"}}>
+            {[["cards","▦ Cards"],["table","▤ Table"]].map(([v,label]) => (
+              <button key={v} onClick={()=>setRosterView(v)}
+                style={{padding:"7px 12px",border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:800,
+                  background:rosterView===v?C.acc:"transparent",color:rosterView===v?"#000":C.mut}}>{label}</button>
+            ))}
+          </span>
+          {rosterView === "table" && (
+            <span style={{position:"relative"}}>
+              <button onClick={()=>setRosterColsOpen(o=>!o)}
+                style={{padding:"7px 13px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.text,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+                ⚙ Columns ({activeCols.length})
+              </button>
+              {rosterColsOpen && (
+                <>
+                  <div onClick={()=>setRosterColsOpen(false)} style={{position:"fixed",inset:0,zIndex:40}} />
+                  <div style={{position:"absolute",top:"calc(100% + 6px)",right:0,zIndex:41,background:C.card,border:"1px solid "+C.border,
+                    borderRadius:10,padding:"10px 12px",width:240,maxHeight:340,overflowY:"auto",boxShadow:"0 8px 28px rgba(0,0,0,0.35)"}}>
+                    <div style={{display:"flex",gap:8,marginBottom:8,paddingBottom:8,borderBottom:"1px solid "+C.border}}>
+                      <button onClick={()=>setRosterCols(ROSTER_COLS.map(c=>c.key))} style={{flex:1,padding:"3px 6px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:10,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>All</button>
+                      <button onClick={()=>setRosterCols(ROSTER_COLS_DEFAULT)} style={{flex:1,padding:"3px 6px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:10,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>Reset</button>
+                    </div>
+                    {ROSTER_COLS.map(c => (
+                      <label key={c.key} style={{display:"flex",alignItems:"center",gap:8,padding:"3px 0",fontSize:12,color:C.text,cursor:"pointer"}}>
+                        <input type="checkbox" checked={rosterCols.includes(c.key)} onChange={()=>toggleCol(c.key)} style={{accentColor:C.gold,cursor:"pointer"}} />
+                        {c.label}
+                      </label>
+                    ))}
+                  </div>
+                </>
+              )}
+            </span>
+          )}
           <button onClick={exportCsv} style={{padding:"7px 13px",borderRadius:8,border:"1px solid "+C.grn,background:"transparent",color:C.grn,fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>⬇ Export</button>
         </div>
         {teams.length === 0 && (
@@ -6508,7 +6605,51 @@ export default function App() {
             {q ? "No players match “" + rosterQ + "”." : "No rostered players for " + rosterSeason + " yet."}
           </div>
         )}
-        <div style={{display:"grid",gridTemplateColumns:isNarrow?"1fr":"repeat(auto-fill,minmax(300px,1fr))",gap:12}}>
+        {rosterView === "table" && shown.length > 0 && (
+          <div style={{overflowX:"auto",background:C.card,border:"1px solid "+C.border,borderRadius:12}}>
+            <table style={{borderCollapse:"collapse",width:"100%",fontSize:12.5}}>
+              <thead>
+                <tr>
+                  {activeCols.map(c => {
+                    const on = rosterSort.key === c.key;
+                    return (
+                      <th key={c.key} onClick={()=>sortBy(c.key)} title={"Sort by " + c.label}
+                        style={{textAlign:"left",whiteSpace:"nowrap",cursor:"pointer",userSelect:"none",
+                          padding:"9px 12px",borderBottom:"1px solid "+C.border,position:"sticky",top:0,background:C.card,
+                          fontSize:10,fontWeight:800,letterSpacing:0.4,textTransform:"uppercase",color:on?C.gold:C.mut}}>
+                        {c.label}{on ? (rosterSort.dir === "asc" ? " ▲" : " ▼") : ""}
+                      </th>
+                    );
+                  })}
+                </tr>
+              </thead>
+              <tbody>
+                {sorted.map(p => (
+                  <tr key={p.id} onClick={()=>setProfileId(p.id)} title="Open player card"
+                    style={{cursor:"pointer"}}
+                    onMouseEnter={e=>e.currentTarget.style.background=C.bg}
+                    onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                    {activeCols.map(c => {
+                      const v = c.get(p);
+                      return (
+                        <td key={c.key} style={{padding:"7px 12px",borderBottom:"1px solid "+C.border,whiteSpace:"nowrap",
+                          color:v?C.text:C.mut,fontWeight:c.key==="last"||c.key==="team"?700:400}}>
+                          {v || "—"}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {rosterView === "table" && shown.length > 0 && (
+          <div style={{fontSize:11,color:C.mut,marginTop:8}}>
+            {sorted.length} row{sorted.length===1?"":"s"} · click a row to open the player card · click a heading to sort
+          </div>
+        )}
+        <div style={{display:rosterView==="table"?"none":"grid",gridTemplateColumns:isNarrow?"1fr":"repeat(auto-fill,minmax(300px,1fr))",gap:12}}>
           {teams.map(t => {
             const list = byTeam.get(t).slice().sort((a,b) => (a.last_name||"").localeCompare(b.last_name||"") || (a.first_name||"").localeCompare(b.first_name||""));
             const tm = practiceTeams.find(x => x.team_name === t);
