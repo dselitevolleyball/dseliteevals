@@ -1186,6 +1186,8 @@ export default function App() {
   const [practiceCoverage, setPracticeCoverage]       = useState([]); // per-date coach absences + subs (Daily view)
   const [practiceCancellations, setPracticeCancellations] = useState([]); // dates with practice cancelled (holidays)
   const [slotMoves, setSlotMoves]                     = useState([]); // per-date team → block moves (Sunday 4-court planner)
+  const [rosterQ, setRosterQ]                         = useState("");         // Players view search
+  const [rosterSeason, setRosterSeason]               = useState("2026-27");  // which season's roster to show
   const [coachGear, setCoachGear]                     = useState([]); // staff gear sizes, one row per coach
   const [gearOpen, setGearOpen]                       = useState(false);
   const [gearForm, setGearForm]                       = useState(null); // draft while the modal is open
@@ -1509,7 +1511,7 @@ export default function App() {
   // Operations are admin-only: the whole "Operations" nav group and the views
   // behind it are hidden and blocked for non-admin coaches. The owner (Drew)
   // always counts here so a bad DB flag can't lock him out.
-  const OPS_VIEWS = new Set(["tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","timecards","gear"]);
+  const OPS_VIEWS = new Set(["tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","timecards","gear","roster"]);
   const canOps    = isAdmin || isOwner;
   const opsDenied = <div style={{padding:24,color:C.mut,textAlign:"center"}}>This section is restricted to administrators. Ask the club administrator (Drew) for access.</div>;
   // Once a player has accepted (or is locked/signed) onto a team, they're
@@ -6448,6 +6450,95 @@ export default function App() {
           );
         })}
       </>
+    );
+  }
+
+  // ── Player database (roster) ───────────────────────────────────────────
+  // The club's players, separate from the tryout pool they came out of, so the
+  // tryout views can be archived per season without taking the roster with
+  // them. Same player card — this is a different way in, not different data.
+  function renderRoster() {
+    const q = rosterQ.trim().toLowerCase();
+    const all = players.filter(p => p.roster_status === "active" && (p.season || "2026-27") === rosterSeason);
+    const match = (p) => !q || ((p.first_name||"") + " " + (p.last_name||"") + " " + (p.team_assignment||"") + " " + (p.primary_position||"") + " " + (p.parent_name||"")).toLowerCase().includes(q);
+    const shown = all.filter(match);
+    const byTeam = new Map();
+    for (const p of shown) {
+      const t = p.team_assignment || "(no team)";
+      if (!byTeam.has(t)) byTeam.set(t, []);
+      byTeam.get(t).push(p);
+    }
+    const teams = [...byTeam.keys()].sort((a,b) => {
+      const ag = parseInt(a) || 99, bg = parseInt(b) || 99;
+      return ag - bg || a.localeCompare(b);
+    });
+    const seasons = [...new Set(players.map(p => p.season || "2026-27"))].sort().reverse();
+    const exportCsv = () => {
+      const cols = ["Team","First","Last","Grade/Age","Position","Player email","Player phone","Parent","Parent email","Parent phone","City","School team","Season"];
+      const esc = v => /[",\n]/.test(String(v??"")) ? '"'+String(v).replace(/"/g,'""')+'"' : String(v??"");
+      const rows = teams.flatMap(t => byTeam.get(t).map(p => [t, p.first_name, p.last_name, p.age, p.primary_position || (p.positions||[]).join("/"),
+        p.player_email, p.player_phone, p.parent_name, p.parent_email, p.parent_phone, p.city, p.school_team, p.season || rosterSeason]));
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([[cols.join(","), ...rows.map(r => r.map(esc).join(","))].join("\n")], { type:"text/csv" }));
+      a.download = "roster_" + rosterSeason + ".csv"; a.click(); URL.revokeObjectURL(a.href);
+    };
+    const chip = { fontSize:10, fontWeight:700, color:C.mut, border:"1px solid "+C.border, borderRadius:5, padding:"1px 6px" };
+    return (
+      <div style={{maxWidth:1100,margin:"0 auto"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:14}}>
+          <div>
+            <h2 style={{margin:0,fontSize:20,fontWeight:800,color:C.gold}}>🏐 Players</h2>
+            <div style={{fontSize:12,color:C.mut,marginTop:2}}>
+              <b style={{color:C.text}}>{all.length}</b> rostered across <b style={{color:C.text}}>{new Set(all.map(p=>p.team_assignment)).size}</b> teams
+              {q && <> · showing {shown.length}</>}
+            </div>
+          </div>
+          <div style={{flex:1}} />
+          {seasons.length > 1 && (
+            <select value={rosterSeason} onChange={e=>setRosterSeason(e.target.value)} style={{...inpStyle,padding:"6px 10px",fontSize:12,fontWeight:700,color:C.gold}}>
+              {seasons.map(s => <option key={s} value={s}>{s} season</option>)}
+            </select>
+          )}
+          <input value={rosterQ} onChange={e=>setRosterQ(e.target.value)} placeholder="Search name, team, position…"
+            style={{...inpStyle,padding:"7px 11px",fontSize:12,minWidth:220}} />
+          <button onClick={exportCsv} style={{padding:"7px 13px",borderRadius:8,border:"1px solid "+C.grn,background:"transparent",color:C.grn,fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>⬇ Export</button>
+        </div>
+        {teams.length === 0 && (
+          <div style={{padding:28,textAlign:"center",color:C.mut,fontSize:13,background:C.card,borderRadius:12,border:"1px solid "+C.border}}>
+            {q ? "No players match “" + rosterQ + "”." : "No rostered players for " + rosterSeason + " yet."}
+          </div>
+        )}
+        <div style={{display:"grid",gridTemplateColumns:isNarrow?"1fr":"repeat(auto-fill,minmax(300px,1fr))",gap:12}}>
+          {teams.map(t => {
+            const list = byTeam.get(t).slice().sort((a,b) => (a.last_name||"").localeCompare(b.last_name||"") || (a.first_name||"").localeCompare(b.first_name||""));
+            const tm = practiceTeams.find(x => x.team_name === t);
+            return (
+              <div key={t} style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:"12px 14px"}}>
+                <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:8,flexWrap:"wrap"}}>
+                  <span onClick={()=>setTeamCardName(t)} title="Open team card"
+                    style={{fontSize:14,fontWeight:800,color:C.gold,cursor:"pointer"}}>{t}</span>
+                  <span style={{fontSize:11,color:C.mut}}>{list.length} player{list.length===1?"":"s"}</span>
+                  {tm?.head_coach && <span style={{fontSize:10,color:C.mut,marginLeft:"auto"}}>{tm.head_coach}</span>}
+                </div>
+                <div style={{display:"flex",flexDirection:"column",gap:2}}>
+                  {list.map(p => (
+                    <div key={p.id} onClick={()=>setProfileId(p.id)} title="Open player card"
+                      style={{display:"flex",alignItems:"center",gap:8,padding:"4px 6px",borderRadius:6,cursor:"pointer",fontSize:12.5}}
+                      onMouseEnter={e=>e.currentTarget.style.background=C.bg}
+                      onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                      <span style={{fontWeight:700,color:C.text,flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                        {p.first_name} {p.last_name}
+                      </span>
+                      {p.primary_position && <span style={chip}>{p.primary_position}</span>}
+                      {!p.parent_email && !p.player_email && <span style={{...chip,color:"#f59e0b",borderColor:"#f59e0b"}} title="No email on file">no email</span>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
     );
   }
 
@@ -19755,7 +19846,8 @@ export default function App() {
               // Dropdown entries: ["hdr","Label"] renders a section header.
               const pendingReqs = coachRequests.filter(r=>r.status==="pending").length;
               const groups = [
-                { title:"Tryouts", items:[["dashboard","Dashboard"], ["evaluate","Evaluate"], ["favorites","My Favorites" + (favorites.length ? " (" + favorites.length + ")" : "")], ...(canViewTeams ? [["teams","Teams"]] : []), ["rankings","Rankings"], ["physical","Physical Testing"], ["tryouts","Coach Assignments"]] },
+                { title:"Players", items:[...(canViewTeams ? [["roster","Roster"]] : [])] },
+                { title:"Tryouts 2026-27", items:[["dashboard","Dashboard"], ["evaluate","Evaluate"], ["favorites","My Favorites" + (favorites.length ? " (" + favorites.length + ")" : "")], ...(canViewTeams ? [["teams","Teams"]] : []), ["rankings","Rankings"], ["physical","Physical Testing"], ["tryouts","Coach Assignments"]] },
                 ...(canOps ? [{ title:"Operations", items:[
                   ["hdr","Club"],
                   ["tracker","Tracker"], ["teamdir","All Teams"], ["practice","Practice"], ["sa","S&A Schedule"], ["clinics","DSSC Clinics"], ["scholarships","Scholarships"],
@@ -19977,6 +20069,7 @@ export default function App() {
         {view==="assignments" && renderAssignments()}
         {view==="coverage" && renderCoachCoverage()}
         {view==="timecards" && renderTimeCards()}
+        {view==="roster" && (canViewTeams ? renderRoster() : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Player lists are restricted. Ask Drew for access.</div>)}
         {view==="gear" && (canOps ? renderGearTracker() : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Gear ordering is admin-only.</div>)}
         {view==="faq" && renderFaq()}
         {view==="practiceplan" && renderPracticePlans()}
