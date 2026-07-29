@@ -57,6 +57,7 @@ const COVERAGE_SUBS = ["Tournament Floater Coach", "13-1 Assistant Coach", "15-2
 // `num` marks columns that should sort numerically rather than alphabetically.
 const ROSTER_COLS = [
   { key:"team",      label:"Team",          get:p => p.team_assignment || "" },
+  { key:"jerseynum", label:"Jersey #",      get:p => p.jersey_number ?? "", num:true },
   { key:"last",      label:"Last name",     get:p => p.last_name || "" },
   { key:"first",     label:"First name",    get:p => p.first_name || "" },
   { key:"age",       label:"Age",           get:p => p.age || "", num:true },
@@ -1492,7 +1493,7 @@ export default function App() {
   });
   const [addingTournament, setAddingTournament]             = useState(false);
   const [addingCoach, setAddingCoach]                       = useState(false);
-  const [newCoach, setNewCoach]                             = useState({ first_name:"", last_name:"", email:"", phone:"", tshirt_size:"", shoe_size:"", sweatshirt_size:"", notes:"" });
+  const [newCoach, setNewCoach]                             = useState({ first_name:"", last_name:"", email:"", phone:"", dob:"", tshirt_size:"", shoe_size:"", sweatshirt_size:"", notes:"" });
   const [guestPassword, setGuestPassword]                   = useState("");
   const [guestAgeGroups, setGuestAgeGroups]                 = useState([]);
   const [guestBusy, setGuestBusy]                           = useState(false);
@@ -4177,7 +4178,7 @@ export default function App() {
       else byEmail.set(k || ("acct-" + c.id), { roster: null, account: c });
     }
     const headers = [
-      "First Name","Last Name","Email","Phone",
+      "First Name","Last Name","Email","Phone","DOB",
       "T-shirt Size","Shoe Size","Sweatshirt Size",
       "Has Login","Approved","Admin","Can View Teams","Age Groups",
       "Display Name","Last Seen","Joined","Notes",
@@ -4193,7 +4194,7 @@ export default function App() {
         const first = r?.first_name || (c?.display_name || "").split(/\s+/)[0] || "";
         const last  = r?.last_name  || (c?.display_name || "").split(/\s+/).slice(1).join(" ") || "";
         rows.push([
-          first, last, (r?.email || c?.email || ""), r?.phone,
+          first, last, (r?.email || c?.email || ""), r?.phone, r?.dob,
           r?.tshirt_size, r?.shoe_size, r?.sweatshirt_size,
           c ? "Yes" : "No",
           c ? (c.is_approved ? "Yes":"No") : "",
@@ -7438,6 +7439,8 @@ export default function App() {
           {/* Division/Team/Roster/Prev/Status */}
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(110px,1fr))",gap:12,marginBottom:14}}>
             <div><span style={lbl}>Pinny #</span><DebouncedField style={editInp} placeholder="e.g. 12" value={p.tryout_number||""} onCommit={v=>upd(p.id,{tryout_number:v})} /></div>
+            {/* Season jersey number — distinct from the tryout pinny above. */}
+            <div><span style={lbl}>Jersey #</span><DebouncedField style={editInp} placeholder="e.g. 7" value={p.jersey_number ?? ""} onCommit={v=>{ const n=String(v).replace(/\D/g,""); upd(p.id,{jersey_number: n===""?null:parseInt(n,10)}); }} /></div>
             <div>
               <span style={lbl}>USAV Div</span>
               <select style={editInp} disabled={isRosterLocked(p)} title={isRosterLocked(p)?lockedMsg(p):undefined} value={p.usavDiv||p.usav_div||""}
@@ -8054,6 +8057,7 @@ export default function App() {
         last_name:  c.last_name.trim()  || "",
         email:      c.email.trim() || null,
         phone:      c.phone.trim() || null,
+        dob:        c.dob.trim() || null,
         tshirt_size: c.tshirt_size.trim() || null,
         shoe_size:   c.shoe_size.trim() || null,
         sweatshirt_size: c.sweatshirt_size.trim() || null,
@@ -8076,6 +8080,7 @@ export default function App() {
             <div><span style={lbl}>Last Name</span><input style={editInp} value={newCoach.last_name} onChange={e=>setF("last_name",e.target.value)} placeholder="Last" /></div>
             <div><span style={lbl}>Email</span><input type="email" style={editInp} value={newCoach.email} onChange={e=>setF("email",e.target.value)} placeholder="name@example.com" /></div>
             <div><span style={lbl}>Phone</span><input style={editInp} value={newCoach.phone} onChange={e=>setF("phone",e.target.value)} placeholder="555-555-5555" /></div>
+            <div><span style={lbl}>Date of Birth</span><input style={editInp} value={newCoach.dob} onChange={e=>setF("dob",e.target.value)} placeholder="1994-03-21" /></div>
             <div><span style={lbl}>T-shirt</span><input style={editInp} value={newCoach.tshirt_size} onChange={e=>setF("tshirt_size",e.target.value)} placeholder="M" /></div>
             <div><span style={lbl}>Shoe</span><input style={editInp} value={newCoach.shoe_size} onChange={e=>setF("shoe_size",e.target.value)} placeholder="9.5 W" /></div>
             <div><span style={lbl}>Sweatshirt</span><input style={editInp} value={newCoach.sweatshirt_size} onChange={e=>setF("sweatshirt_size",e.target.value)} placeholder="L" /></div>
@@ -8241,7 +8246,7 @@ export default function App() {
             <div style={{fontSize:11,color:C.mut,marginTop:2}}>{merged.length} total · {coachesList.length} with login · {pending.length} awaiting approval</div>
           </div>
           <div style={{display:"flex",gap:8}}>
-            <button onClick={() => { setNewCoach({ first_name:"", last_name:"", email:"", phone:"", tshirt_size:"", shoe_size:"", sweatshirt_size:"", notes:"" }); setAddingCoach(true); }}
+            <button onClick={() => { setNewCoach({ first_name:"", last_name:"", email:"", phone:"", dob:"", tshirt_size:"", shoe_size:"", sweatshirt_size:"", notes:"" }); setAddingCoach(true); }}
               style={{padding:"6px 14px",borderRadius:8,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>
               + Add Coach
             </button>
@@ -8269,6 +8274,7 @@ export default function App() {
                 <th style={th}>Last</th>
                 <th style={th}>Email</th>
                 <th style={th}>Phone</th>
+                <th style={th}>DOB</th>
                 <th style={th}>Approved</th>
                 <th style={th} title="Has the coach approved their team's practice schedule?">Sched ✓</th>
                 <th style={th} title="Floating coach — available to cover practice gaps in the regular season">☁ Float</th>
@@ -8348,6 +8354,7 @@ export default function App() {
                         )}
                       </td>
                       {rcell("phone","555-555-5555",130)}
+                      {rcell("dob","1994-03-21",110)}
                       {/* Approved */}
                       <td style={td}>
                         {hasAccount ? (
@@ -8447,6 +8454,15 @@ export default function App() {
                           }} title="Remove from roster"
                             style={{padding:"3px 9px",borderRadius:5,border:"1px solid "+C.red,background:"transparent",color:C.red,fontFamily:"inherit",fontSize:10,fontWeight:700,cursor:"pointer"}}>
                             Remove
+                          </button>
+                        )}
+                        {/* Login rows need their own delete. Without this a coach who
+                            signed up twice (two emails => two merge keys) has an
+                            account row with no roster row, and no way to remove it. */}
+                        {hasAccount && !isSelf && (
+                          <button onClick={() => removeCoach(c)} title="Delete this login account"
+                            style={{marginLeft:hasRoster?6:0,padding:"3px 9px",borderRadius:5,border:"1px solid "+C.red,background:"transparent",color:C.red,fontFamily:"inherit",fontSize:10,fontWeight:700,cursor:"pointer"}}>
+                            Delete login
                           </button>
                         )}
                       </td>
@@ -9086,6 +9102,7 @@ export default function App() {
                 <div><div style={cFieldLbl}>Last Name</div><DebouncedField style={cInp} placeholder="Last" value={roster.last_name||""} onCommit={v=>updateRoster({last_name:v})} /></div>
                 <div><div style={cFieldLbl}>Email</div><DebouncedField type="email" style={cInp} placeholder="email@example.com" value={roster.email||""} onCommit={v=>updateRoster({email:v})} /></div>
                 <div><div style={cFieldLbl}>Phone</div><DebouncedField style={cInp} placeholder="555-555-5555" value={roster.phone||""} onCommit={v=>updateRoster({phone:v})} /></div>
+                <div><div style={cFieldLbl}>Date of Birth</div><DebouncedField style={cInp} placeholder="1994-03-21" value={roster.dob||""} onCommit={v=>updateRoster({dob:v})} /></div>
                 <div><div style={cFieldLbl}>T-shirt</div><DebouncedField style={cInp} placeholder="M" value={roster.tshirt_size||""} onCommit={v=>updateRoster({tshirt_size:v})} /></div>
                 <div><div style={cFieldLbl}>Shoe</div><DebouncedField style={cInp} placeholder="9.5 W" value={roster.shoe_size||""} onCommit={v=>updateRoster({shoe_size:v})} /></div>
                 <div><div style={cFieldLbl}>Sweatshirt</div><DebouncedField style={cInp} placeholder="L" value={roster.sweatshirt_size||""} onCommit={v=>updateRoster({sweatshirt_size:v})} /></div>
@@ -15420,7 +15437,9 @@ export default function App() {
       .map(p => ({
         id: rid("p"),
         pid: p.id,
-        num: (p.tryout_number == null ? "" : String(p.tryout_number)).replace(/\D/g,"").slice(0,2),
+        // Real jersey number when we have one; the tryout pinny is the fallback
+        // for players whose season number hasn't been assigned yet.
+        num: String(p.jersey_number ?? p.tryout_number ?? "").replace(/\D/g,"").slice(0,2),
         name: ((p.first_name||"") + " " + (p.last_name||"")).trim(),
         pos: POS_FROM_APP[((p.positions||[])[0] || "").toUpperCase()] || "",
       }));
