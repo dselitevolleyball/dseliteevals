@@ -7971,6 +7971,71 @@ export default function App() {
     loadAllowedEmails();
   };
 
+  // New-coach onboarding: allowlist + a welcome email asking for what we still
+  // need. Both the gear form and the profile live behind the login, so the
+  // allowlist step is what makes the email's instructions actually work — an
+  // un-allowlisted coach signs up and parks on "Awaiting Approval" instead.
+  // Asks only for the fields the admin left blank, so nobody is asked to
+  // re-send something we already have.
+  const onboardNewCoach = async (row) => {
+    const email = String(row.email || "").trim().toLowerCase();
+    if (!email) return { ok: false, error: "no email address" };
+    const first = (row.first_name || "").trim() || "there";
+
+    // Allowlist first — this matters even if the email fails to send.
+    const { error: allowErr } = await supabase.from("allowed_signup_emails").upsert(
+      { email, added_by: coach.id, added_by_name: coach.display_name || coach.email, note: "Auto-added with coach roster entry" },
+      { onConflict: "email" }
+    );
+    if (allowErr) console.error("allowlist upsert failed:", allowErr);
+    loadAllowedEmails();
+
+    const missing = [];
+    if (!row.dob)   missing.push("your date of birth");
+    if (!row.phone) missing.push("your cell number");
+    const askLine = missing.length
+      ? "Just reply to this email with " + (missing.length === 2 ? missing[0] + " and " + missing[1] : missing[0]) + " and I'll add " + (missing.length === 2 ? "them" : "it") + " to your profile."
+      : "";
+
+    const steps = [
+      "Create your login at " + APP_URL + " using this email address (" + email + "). You'll be approved automatically — no waiting.",
+      "Once you're in, the gear sizing form is at the top of your dashboard. It takes about a minute: shoes, t-shirt, sweatshirt, long sleeve, and the name you want on your backpack. We can't order gear in your size without it.",
+    ];
+    if (askLine) steps.push(askLine);
+
+    const text = "Hi " + first + ",\n\nWelcome to DS Elite Volleyball! A couple of quick things to get you set up:\n\n"
+      + steps.map((s, i) => (i + 1) + ") " + s).join("\n\n")
+      + "\n\nIf anything looks wrong or you have questions, just reply here.\n\nThanks,\nDrew";
+    const bodyHtml = '<div style="font-family:sans-serif;font-size:14px;line-height:1.6">'
+      + "<p>Hi " + first + ",</p>"
+      + "<p>Welcome to DS Elite Volleyball! A couple of quick things to get you set up:</p>"
+      + "<ol>" + steps.map(s => "<li style=\"margin-bottom:10px\">" + s + "</li>").join("") + "</ol>"
+      + '<p><a href="' + APP_URL + '" style="background:#e91e8c;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:700">Set up my account &rarr;</a></p>'
+      + "<p>If anything looks wrong or you have questions, just reply here.</p>"
+      + "<p>Thanks,<br>Drew</p></div>";
+    const subject = "Welcome to DS Elite — a couple of things we need from you";
+
+    try {
+      const res = await fetch("/api/send-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ subject, body: text, bodyHtml, recipients: [email] }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Send failed");
+      await supabase.from("email_log").insert({
+        subject, body: text, recipient_count: 1, recipients: [email],
+        sent_count: typeof data.sent === "number" ? data.sent : 1,
+        failed_count: Array.isArray(data.failed) ? data.failed.length : 0,
+        sent_by: coach?.display_name || "", sent_by_email: coach?.email || "",
+      });
+      loadEmailLog();
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: e.message || "Send failed" };
+    }
+  };
+
   const updateCoach = async (id, patch) => {
     // Optimistic local update
     setCoachesList(prev => prev.map(c => c.id === id ? { ...c, ...patch } : c));
@@ -8065,6 +8130,19 @@ export default function App() {
       };
       const { error } = await supabase.from("coach_roster").insert(row);
       if (error) { window.alert("Add failed: " + error.message); return; }
+      // Onboard them: allowlist the address so signup auto-approves (otherwise
+      // they sit on the Awaiting Approval screen and can't reach the gear form),
+      // then ask for what we still need. Placeholder rows carry no email and
+      // are skipped entirely.
+      if (row.email) {
+        const onboard = await onboardNewCoach(row);
+        setAddingCoach(false);
+        await loadCoachRoster();
+        window.alert(onboard.ok
+          ? "Coach added. Welcome email sent to " + row.email + " and they'll be auto-approved when they sign up."
+          : "Coach added and allowlisted, but the welcome email didn't send: " + onboard.error + "\n\nYou can re-send it from the Coaches table.");
+        return;
+      }
       setAddingCoach(false);
       await loadCoachRoster();
     };
@@ -8454,6 +8532,20 @@ export default function App() {
                           }} title="Remove from roster"
                             style={{padding:"3px 9px",borderRadius:5,border:"1px solid "+C.red,background:"transparent",color:C.red,fontFamily:"inherit",fontSize:10,fontWeight:700,cursor:"pointer"}}>
                             Remove
+                          </button>
+                        )}
+                        {/* Re-send the onboarding email. Also the recovery path when
+                            the send fails on Add Coach — without it a failed welcome
+                            can only be retried by deleting and re-adding the coach. */}
+                        {(r?.email || c?.email) && (
+                          <button onClick={async () => {
+                            const to = r?.email || c?.email;
+                            if (!window.confirm("Send the welcome / info-request email to " + to + "?")) return;
+                            const out = await onboardNewCoach({ email: to, first_name: firstName, dob: r?.dob, phone: r?.phone });
+                            window.alert(out.ok ? "Sent to " + to + "." : "Didn't send: " + out.error);
+                          }} title="Send the welcome email asking for their info"
+                            style={{marginRight:6,padding:"3px 9px",borderRadius:5,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontFamily:"inherit",fontSize:10,fontWeight:700,cursor:"pointer"}}>
+                            Send welcome
                           </button>
                         )}
                         {/* Login rows need their own delete. Without this a coach who
