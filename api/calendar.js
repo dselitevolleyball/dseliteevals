@@ -10,7 +10,9 @@
 // excluded, per-date practice moves honored as one-off "time change" events,
 // tournament weekends suppressing that Sunday's practice + S&A), every
 // tournament assignment as an all-day event (planned ones tagged tentative),
-// and each team's DS Elite Orientation Night.
+// each team's DS Elite Orientation Night, and any one-off rows in team_events
+// (jersey tryouts, photo day) which sit alongside a practice rather than
+// replacing it.
 //
 // Env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY (read-only queries).
 
@@ -31,6 +33,10 @@ const slotTimes = (slot) => {
 };
 const pad = (n) => String(n).padStart(2, "0");
 const dt = (iso, hour) => iso.replace(/-/g, "") + "T" + pad(hour) + "0000";
+// team_events keep minute precision, which the "6-8" practice slot format can't
+// express — a jersey tryout at 4:15 needs more than the whole hours dt() emits.
+const hhmmToMin = (s) => { const m = /^(\d{1,2}):(\d{2})$/.exec(String(s || "").trim()); return m ? (+m[1]) * 60 + (+m[2]) : null; };
+const dtMin = (iso, mins) => iso.replace(/-/g, "") + "T" + pad(Math.floor(mins / 60) % 24) + pad(mins % 60) + "00";
 const icsEsc = (s) => String(s || "").replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\n/g, "\\n");
 const firstOnOrAfter = (iso, dow) => {
   const d = new Date(iso + "T12:00:00Z");
@@ -76,12 +82,13 @@ export default async function handler(req, res) {
   }
 
   const enc = encodeURIComponent(team);
-  const [assigns, saRows, cancels, moves, tnAssigns] = await Promise.all([
+  const [assigns, saRows, cancels, moves, tnAssigns, teamEvents] = await Promise.all([
     q("practice_assignments?team_name=eq." + enc + "&select=day,slot,phase,court"),
     q("sa_sessions?team_name=eq." + enc + "&select=session_date,slot,block"),
     q("practice_cancellations?select=practice_date,team_name"),
     q("practice_slot_moves?team_name=eq." + enc + "&select=practice_date,slot"),
     q("tournament_assignments?team_id=eq." + enc + "&select=tournament_id,status,division"),
+    q("team_events?team_name=eq." + enc + "&select=id,title,event_date,start_time,duration_min,location,description"),
   ]);
   // This team's tournaments (any status except a cancelled tournament).
   const tnIds = [...new Set((Array.isArray(tnAssigns) ? tnAssigns : []).map(a => a.tournament_id).filter(Boolean))];
@@ -186,6 +193,27 @@ export default async function handler(req, res) {
       "SUMMARY:" + icsEsc("DS Elite Orientation Night — " + team),
       "DESCRIPTION:" + icsEsc("Jersey tryout, parent orientation, player commitment, and team building. First hour with parents; remaining three hours are team-only."),
       "LOCATION:" + icsEsc(WAREHOUSE_LOC), "END:VEVENT"].join("\r\n"));
+  }
+
+  // One-off team events (jersey tryouts, photo day, meetings). Deliberately
+  // ADDITIVE: a team can have a Sunday practice and a jersey tryout the same
+  // afternoon, so these are never filtered by cancelled/goneSun/moveByDate and
+  // they never suppress anything. Distinct UID keeps both events on the
+  // SportsYou calendar side by side.
+  for (const e of (Array.isArray(teamEvents) ? teamEvents : [])) {
+    const startMin = hhmmToMin(e.start_time);
+    if (!e.event_date || startMin == null) continue;
+    const dur = Number(e.duration_min) > 0 ? Number(e.duration_min) : 30;
+    const endMin = startMin + dur;
+    const endDate = endMin >= 1440 ? addDays(e.event_date, Math.floor(endMin / 1440)) : e.event_date;
+    const lines = ["BEGIN:VEVENT", "UID:" + (team + "-ev-" + e.id).replace(/\s+/g, "_") + "@dseliteevals", "DTSTAMP:20260702T000000Z",
+      `DTSTART;TZID=${TZ}:` + dtMin(e.event_date, startMin),
+      `DTEND;TZID=${TZ}:` + dtMin(endDate, endMin),
+      "SUMMARY:" + icsEsc(team + " " + e.title)];
+    if (e.description) lines.push("DESCRIPTION:" + icsEsc(e.description));
+    lines.push("LOCATION:" + icsEsc(e.location || WAREHOUSE_LOC));
+    lines.push("END:VEVENT");
+    ev.push(lines.join("\r\n"));
   }
 
   // Tournaments — every assignment for this team (planned included; only a
