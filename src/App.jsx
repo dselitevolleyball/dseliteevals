@@ -6580,7 +6580,15 @@ export default function App() {
   // them. Same player card — this is a different way in, not different data.
   function renderRoster() {
     const q = rosterQ.trim().toLowerCase();
-    const all = players.filter(p => p.roster_status === "active" && (p.season || "2026-27") === rosterSeason);
+    // can_view_teams means club-wide visibility. Without it a coach still gets
+    // their OWN players — being unable to see your own roster is never useful,
+    // and the alternative was an all-or-nothing flag that left seven coaches
+    // with no access to the teams they run.
+    const scoped = !canViewTeams;
+    const mine = new Set(myTeamNames);
+    const all = players.filter(p => p.roster_status === "active"
+      && (p.season || "2026-27") === rosterSeason
+      && (!scoped || mine.has(p.team_assignment)));
     const match = (p) => !q || ((p.first_name||"") + " " + (p.last_name||"") + " " + (p.team_assignment||"") + " " + (p.primary_position||"") + " " + (p.parent_name||"")).toLowerCase().includes(q);
     const shown = all.filter(match);
     const byTeam = new Map();
@@ -6630,6 +6638,8 @@ export default function App() {
             <div style={{fontSize:12,color:C.mut,marginTop:2}}>
               <b style={{color:C.text}}>{all.length}</b> rostered across <b style={{color:C.text}}>{new Set(all.map(p=>p.team_assignment)).size}</b> teams
               {q && <> · showing {shown.length}</>}
+              {/* Say so explicitly — a short list should read as scoped, not broken. */}
+              {scoped && <> · <span style={{color:C.gold,fontWeight:700}}>your teams only</span></>}
             </div>
           </div>
           <div style={{flex:1}} />
@@ -20335,7 +20345,7 @@ export default function App() {
               // Dropdown entries: ["hdr","Label"] renders a section header.
               const pendingReqs = coachRequests.filter(r=>r.status==="pending").length;
               const groups = [
-                { title:"Players", items:[...(canViewTeams ? [["roster","Roster"]] : [])] },
+                { title:"Players", items:[...((canViewTeams || myTeamNames.length) ? [["roster","Roster"]] : [])] },
                 { title:"Tryouts 2026-27", items:[["dashboard","Dashboard"], ["evaluate","Evaluate"], ["favorites","My Favorites" + (favorites.length ? " (" + favorites.length + ")" : "")], ...(canViewTeams ? [["teams","Teams"]] : []), ["rankings","Rankings"], ["physical","Physical Testing"], ["tryouts","Coach Assignments"]] },
                 ...(canOps ? [{ title:"Operations", items:[
                   ["hdr","Club"],
@@ -20559,7 +20569,7 @@ export default function App() {
         {view==="assignments" && renderAssignments()}
         {view==="coverage" && renderCoachCoverage()}
         {view==="timecards" && renderTimeCards()}
-        {view==="roster" && (canViewTeams ? renderRoster() : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Player lists are restricted. Ask Drew for access.</div>)}
+        {view==="roster" && ((canViewTeams || myTeamNames.length) ? renderRoster() : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Player lists are restricted. Ask Drew for access.</div>)}
         {view==="gear" && (canOps ? renderGearTracker() : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Gear ordering is admin-only.</div>)}
         {view==="hawaii" && renderHawaii()}
         {view==="faq" && renderFaq()}
