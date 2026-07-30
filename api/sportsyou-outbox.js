@@ -88,9 +88,24 @@ export default async function handler(req, res) {
   const N = s => String(s || '').replace(/^DS Elite\\s+/i, '').replace(/[^\\x00-\\x7F]/g, '').replace(/\\s+/g, ' ').trim().toLowerCase();
   const AL = { '11 rise': '11 rise 1', '12-1 rise': '12 rise 1', '12-2 rise': '12 rise 2', '13-1 rise': '13 rise 1' };
   let t; try { t = JSON.parse(localStorage.getItem('sy-web::teams')); } catch (e) {}
-  const ar = Array.isArray(t) ? t : ((t && (t.teams || t.data)) || []);
-  const BY = {}; ar.forEach(x => { let n = N(x.name || x.teamName); n = AL[n] || n; if (x.id) BY[n] = x.id; });
-  if (!Object.keys(BY).length) { alert('Could not read your SportsYou teams - open the Teams page, then retry.'); return; }
+  // sy-web::teams isn't a bare array — the team list is nested under a key we
+  // shouldn't hardcode, since it moves between their releases. Walk the object
+  // and take anything that looks like a team (has both an id and a name).
+  const collect = (v, d) => {
+    if (!v || d > 4) return [];
+    if (Array.isArray(v)) {
+      const hits = v.filter(x => x && typeof x === 'object' && (x.id || x.teamId) && (x.name || x.teamName));
+      return hits.length ? hits : v.flatMap(x => collect(x, d + 1));
+    }
+    if (typeof v === 'object') return Object.values(v).flatMap(x => collect(x, d + 1));
+    return [];
+  };
+  const ar = collect(t, 0);
+  const BY = {}; ar.forEach(x => { let n = N(x.name || x.teamName); n = AL[n] || n; const id = x.id || x.teamId; if (id) BY[n] = id; });
+  if (!Object.keys(BY).length) {
+    alert('Could not read your SportsYou teams.\\n\\nOpen the Teams page so the app caches them, then retry.\\n\\nDebug: sy-web::teams top-level keys = ' + (t && typeof t === 'object' ? Object.keys(t).join(', ').slice(0, 200) : typeof t));
+    return;
+  }
   const o = await (await fetch(A)).json();
   const p = o.pending || [];
   if (!p.length) { alert('Nothing queued in DS HQ.'); return; }
