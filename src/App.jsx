@@ -1350,6 +1350,7 @@ export default function App() {
   const [syOutbox, setSyOutbox]         = useState([]);     // sportsyou_outbox rows (pending + recently posted)
   const [hawaiiInterest, setHawaiiInterest] = useState([]); // hawaii_interest rows, one per player who has answered
   const [travelOpen, setTravelOpen]         = useState(null); // tournament id whose travel table is expanded
+  const [travelPast, setTravelPast]         = useState(false); // include already-finished travel events
   const [coachTravel, setCoachTravel]       = useState([]); // coach_travel rows (RLS: admins all, coaches their own)
   const [travelRooms, setTravelRooms]       = useState([]); // coach_travel_rooms rows
   const [clinicBusy, setClinicBusy]     = useState("");     // key of clinic action in flight
@@ -1575,7 +1576,7 @@ export default function App() {
   // Operations are admin-only: the whole "Operations" nav group and the views
   // behind it are hidden and blocked for non-admin coaches. The owner (Drew)
   // always counts here so a bad DB flag can't lock him out.
-  const OPS_VIEWS = new Set(["tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","timecards","gear","roster","hawaii"]);
+  const OPS_VIEWS = new Set(["tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","timecards","gear","roster","hawaii","travel"]);
   const canOps    = isAdmin || isOwner;
   const opsDenied = <div style={{padding:24,color:C.mut,textAlign:"center"}}>This section is restricted to administrators. Ask the club administrator (Drew) for access.</div>;
   // Once a player has accepted (or is locked/signed) onto a team, they're
@@ -2144,7 +2145,7 @@ export default function App() {
     setTournamentAssignments(aRes.data || []);
     setTournamentsLoading(false);
   }, []);
-  useEffect(() => { if (isApproved && (view === "tournaments" || view === "teamdir" || view === "home" || view === "practice")) loadTournaments(); }, [isApproved, view, loadTournaments]);
+  useEffect(() => { if (isApproved && (view === "tournaments" || view === "teamdir" || view === "home" || view === "practice" || view === "travel")) loadTournaments(); }, [isApproved, view, loadTournaments]);
 
   // Practice tab loader
   const loadPractice = useCallback(async () => {
@@ -2169,7 +2170,7 @@ export default function App() {
     if (error) { console.error("Load practice_snapshots error:", error); return; }
     setSnapshots(data || []);
   }, []);
-  useEffect(() => { if (isApproved && (view === "practice" || view === "teamdir" || view === "home" || view === "coaches" || view === "tournaments")) loadPractice(); }, [isApproved, view, loadPractice]);
+  useEffect(() => { if (isApproved && (view === "practice" || view === "teamdir" || view === "home" || view === "coaches" || view === "tournaments" || view === "travel")) loadPractice(); }, [isApproved, view, loadPractice]);
   useEffect(() => { if (isApproved && view === "practice") loadSnapshots(); }, [isApproved, view, loadSnapshots]);
   useEffect(() => { if (isApproved && view === "sa") loadPractice(); }, [isApproved, view, loadPractice]);
   // Coach/team cards (openable from any view) need practice_teams loaded.
@@ -3513,7 +3514,7 @@ export default function App() {
     loadCoachTravel();
   }, [coach, loadCoachTravel]);
   useEffect(() => {
-    if (isApproved && (view === "tournaments" || view === "coaches" || view === "home")) loadCoachTravel();
+    if (isApproved && (view === "tournaments" || view === "coaches" || view === "home" || view === "travel")) loadCoachTravel();
   }, [isApproved, view, loadCoachTravel]);
 
   // Hawaii trip interest. Rows are created lazily, so a player with no row is
@@ -18254,6 +18255,168 @@ export default function App() {
     return p === "AES" ? "https://www.advancedeventsystems.com/" : p === "SportWrench" ? "https://events.sportwrench.com/" : "";
   };
 
+  // Money + booking totals for one tournament's travel.
+  const travelTotals = (tnId) => {
+    const rows = coachTravel.filter(t => t.tournament_id === tnId);
+    return {
+      rows,
+      flights: rows.reduce((s, r) => s + (Number(r.flight_cost) || 0), 0),
+      hotel:   rows.reduce((s, r) => s + (Number(r.hotel_cost) || 0), 0),
+      club:    rows.reduce((s, r) => s + (Number(r.hotel_club_pays) || 0), 0),
+      ticketed: rows.filter(r => String(r.ticket_number || "").trim()).length,
+    };
+  };
+  const travelMoney = (v) => (v == null || v === "" || Number(v) === 0) ? "" : "$" + Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 });
+
+  // The travel editor itself. Shared by the tournament card and the Travel
+  // screen so there's one implementation to keep correct, not two.
+  function renderTravelPlanner(tn) {
+    const staff = travelStaffFor(tn.id);
+    if (!staff.length) return <div style={{fontSize:11,color:C.mut,fontStyle:"italic",padding:"8px 2px"}}>No coaches resolved yet — assign teams to this tournament first.</div>;
+    const { rows } = travelTotals(tn.id);
+    const rowFor = (n) => rows.find(r => r.coach_name === n) || {};
+    const rooms = travelRooms.filter(r => r.tournament_id === tn.id);
+    const inp = {...inpStyle,padding:"4px 7px",fontSize:11,width:"100%"};
+    return (
+      <div style={{overflowX:"auto"}}>
+        <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0,minWidth:900,fontSize:11}}>
+          <thead><tr>{["Coach","Airline","Out","Back","Flight $","Ticket #","Room","Their $","Club pays"].map(h =>
+            <th key={h} style={{padding:"5px 7px",textAlign:"left",fontSize:9,fontWeight:700,textTransform:"uppercase",color:C.mut,borderBottom:"1px solid "+C.border,whiteSpace:"nowrap"}}>{h}</th>)}</tr></thead>
+          <tbody>
+            {staff.map(name => {
+              const r = rowFor(name);
+              const f = (k, ph, type) => (
+                <td style={{padding:"3px 5px",borderBottom:"1px solid "+C.border}}>
+                  <DebouncedField style={inp} type={type} placeholder={ph} value={r[k] ?? ""}
+                    onCommit={v => saveTravel(tn.id, name, { [k]: v === "" ? null : v })} />
+                </td>
+              );
+              return (
+                <tr key={name}>
+                  <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,fontWeight:700,whiteSpace:"nowrap"}}>{name}</td>
+                  {f("airline","Southwest")}
+                  {f("depart_date","","date")}
+                  {f("return_date","","date")}
+                  {f("flight_cost","0","number")}
+                  {f("ticket_number","ABC123")}
+                  <td style={{padding:"3px 5px",borderBottom:"1px solid "+C.border}}>
+                    <select style={inp} value={r.room_id ?? ""}
+                      onChange={e => saveTravel(tn.id, name, { room_id: e.target.value ? Number(e.target.value) : null })}>
+                      <option value="">— none —</option>
+                      {rooms.map(rm => <option key={rm.id} value={rm.id}>{rm.hotel_name || "Room " + rm.id}</option>)}
+                    </select>
+                  </td>
+                  {f("hotel_cost","0","number")}
+                  {f("hotel_club_pays","0","number")}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginTop:10}}>
+          <span style={{fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut}}>Rooms</span>
+          {rooms.map(rm => (
+            <span key={rm.id} style={{fontSize:11,border:"1px solid "+C.border,borderRadius:6,padding:"3px 8px",color:C.text}}>
+              {rm.hotel_name || "Room " + rm.id}
+              <span style={{color:C.mut}}> · {rows.filter(x => x.room_id === rm.id).length} in room</span>
+              <button onClick={async () => {
+                if (!window.confirm("Delete this room? Coaches in it will be unassigned.")) return;
+                const { error } = await supabase.from("coach_travel_rooms").delete().eq("id", rm.id);
+                if (error) { window.alert("Delete failed: " + error.message); return; }
+                loadCoachTravel();
+              }} style={{marginLeft:6,background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:11,fontWeight:800,padding:0}}>×</button>
+            </span>
+          ))}
+          <button onClick={async () => {
+            const nm = window.prompt("Hotel name for this room?", tn.venue || "");
+            if (nm === null) return;
+            const { error } = await supabase.from("coach_travel_rooms").insert({ tournament_id: tn.id, hotel_name: nm.trim() || null });
+            if (error) { window.alert("Add room failed: " + error.message); return; }
+            loadCoachTravel();
+          }} style={{padding:"3px 10px",borderRadius:6,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>+ Add room</button>
+        </div>
+        <div style={{fontSize:10,color:C.mut,marginTop:6,fontStyle:"italic"}}>
+          Two coaches sharing? Put them on the same room. "Their $" is that coach's share; "Club pays" is how much of it the club covers.
+        </div>
+      </div>
+    );
+  }
+
+  // Every travel tournament in one place, so a season's flights and hotels can
+  // be planned without opening cards one at a time.
+  function renderTravel() {
+    if (!isAdmin) return <div style={{padding:24,color:C.mut,textAlign:"center"}}>Travel planning is restricted to admins.</div>;
+    const today = localDateISO();
+    const all = tournaments
+      .filter(t => t.stay_over && !t.cancelled)
+      .map(t => ({ t, staff: travelStaffFor(t.id) }))
+      .filter(x => x.staff.length)
+      .sort((a, b) => (a.t.start_date || "").localeCompare(b.t.start_date || ""));
+    const list = travelPast ? all : all.filter(x => (x.t.end_date || x.t.start_date) >= today);
+    const grand = list.reduce((acc, x) => {
+      const v = travelTotals(x.t.id);
+      return { flights: acc.flights + v.flights, club: acc.club + v.club, coach: acc.coach + (v.hotel - v.club),
+               seats: acc.seats + x.staff.length, ticketed: acc.ticketed + v.ticketed };
+    }, { flights: 0, club: 0, coach: 0, seats: 0, ticketed: 0 });
+    const stat = (label, value, color) => (
+      <div style={{border:"1px solid "+C.border,borderLeft:"3px solid "+(color||C.gold),borderRadius:8,padding:"8px 14px",minWidth:110,background:C.card}}>
+        <div style={{fontSize:19,fontWeight:800,color:color||C.gold,lineHeight:1.15}}>{value}</div>
+        <div style={{fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut}}>{label}</div>
+      </div>
+    );
+    const fmtRange = (t) => {
+      const s = new Date(t.start_date + "T12:00:00"), e = new Date((t.end_date || t.start_date) + "T12:00:00");
+      const m = { month:"short", day:"numeric" };
+      return s.toLocaleDateString(undefined, m) + (t.end_date && t.end_date !== t.start_date ? "–" + e.toLocaleDateString(undefined, m) : "") + " " + s.getFullYear();
+    };
+    return (
+      <div style={{padding:"18px 16px",maxWidth:1200,margin:"0 auto"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:12}}>
+          <div>
+            <h2 style={{margin:0,fontSize:20,fontWeight:800,color:C.gold}}>✈ Tournament Travel</h2>
+            <div style={{fontSize:12,color:C.mut,marginTop:2}}>{list.length} travel event{list.length===1?"":"s"} · flights and hotels for every coach</div>
+          </div>
+          <div style={{flex:1}} />
+          <button onClick={()=>setTravelPast(p=>!p)}
+            style={{padding:"6px 12px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.text,fontFamily:"inherit",fontSize:12,fontWeight:700,cursor:"pointer"}}>
+            {travelPast ? "Hide past" : "Show past"}
+          </button>
+        </div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:16}}>
+          {stat("Coach trips", grand.seats)}
+          {stat("Ticketed", grand.ticketed + "/" + grand.seats, grand.ticketed === grand.seats && grand.seats ? C.grn : "#f59e0b")}
+          {stat("Flights", travelMoney(grand.flights) || "$0", "#38bdf8")}
+          {stat("Club hotel", travelMoney(grand.club) || "$0", "#38bdf8")}
+          {stat("Coach hotel", travelMoney(grand.coach) || "$0", C.mut)}
+        </div>
+        {list.map(({ t, staff }) => {
+          const v = travelTotals(t.id);
+          const open = travelOpen === t.id;
+          const done = v.ticketed === staff.length && staff.length > 0;
+          return (
+            <div key={t.id} style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,marginBottom:10,overflow:"hidden"}}>
+              <div onClick={()=>setTravelOpen(open ? null : t.id)}
+                style={{padding:"11px 14px",display:"flex",alignItems:"center",gap:12,flexWrap:"wrap",cursor:"pointer"}}>
+                <span style={{width:8,height:8,borderRadius:4,background:done?C.grn:"#f59e0b",flexShrink:0}} />
+                <div style={{minWidth:200,flex:1}}>
+                  <div style={{fontSize:13,fontWeight:800,color:C.text}}>{t.name}</div>
+                  <div style={{fontSize:11,color:C.mut}}>{fmtRange(t)}{t.location ? " · 📍" + t.location : ""}{t.stay_to_play ? " · stay-to-play" : ""}</div>
+                </div>
+                <span style={{fontSize:11,color:C.mut}}>{staff.length} coach{staff.length===1?"":"es"}</span>
+                <span style={{fontSize:11,fontWeight:700,color:done?C.grn:"#f59e0b"}}>{v.ticketed}/{staff.length} ticketed</span>
+                {v.flights>0 && <span style={{fontSize:11,color:C.mut}}>✈ {travelMoney(v.flights)}</span>}
+                {v.club>0 && <span style={{fontSize:11,color:C.mut}}>🏨 {travelMoney(v.club)}</span>}
+                <span style={{fontSize:11,color:C.gold,fontWeight:700}}>{open ? "hide" : "plan →"}</span>
+              </div>
+              {open && <div style={{padding:"0 14px 14px"}}>{renderTravelPlanner(t)}</div>}
+            </div>
+          );
+        })}
+        {!list.length && <div style={{padding:30,textAlign:"center",color:C.mut,fontSize:12}}>No {travelPast ? "" : "upcoming "}travel tournaments with teams assigned.</div>}
+      </div>
+    );
+  }
+
   function TournamentCard({ tn }) {
     // Assignments for this tournament with looked-up team.
     const teamById = new Map(teamsList.map(t => [t.id, t]));
@@ -18501,85 +18664,24 @@ export default function App() {
             </div>
           )}
         </div>
-        {/* Coach travel — only for stay-over events, and only once teams are
-            assigned, since the traveling staff is derived from those. */}
-        {tn.stay_over && !isCancelled && isAdmin && (() => {
+        {/* Coach travel — stay-over events only, and only once teams are
+            assigned, since the travelling staff is derived from those. Same
+            editor as the Travel screen. */}
+        {tn.stay_over && !isCancelled && isAdmin && travelStaffFor(tn.id).length > 0 && (() => {
+          const t = travelTotals(tn.id);
           const staff = travelStaffFor(tn.id);
-          if (!staff.length) return null;
-          const rows = coachTravel.filter(t => t.tournament_id === tn.id);
-          const rowFor = (n) => rows.find(r => r.coach_name === n) || {};
-          const rooms = travelRooms.filter(r => r.tournament_id === tn.id);
-          const money = (v) => (v == null || v === "") ? "" : "$" + Number(v).toLocaleString(undefined,{maximumFractionDigits:2});
-          const totFlights = rows.reduce((s,r) => s + (Number(r.flight_cost)||0), 0);
-          const totClub = rows.reduce((s,r) => s + (Number(r.hotel_club_pays)||0), 0);
-          const inp = {...inpStyle,padding:"4px 7px",fontSize:11,width:"100%"};
           const open = travelOpen === tn.id;
           return (
             <div style={{borderTop:"1px solid "+C.border,padding:"10px 14px"}}>
               <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",cursor:"pointer"}} onClick={()=>setTravelOpen(open ? null : tn.id)}>
                 <span style={{fontSize:11,fontWeight:800,textTransform:"uppercase",color:C.mut}}>✈ Coach travel</span>
                 <span style={{fontSize:11,color:C.text,fontWeight:700}}>{staff.length} traveling</span>
-                {totFlights > 0 && <span style={{fontSize:11,color:C.mut}}>flights {money(totFlights)}</span>}
-                {totClub > 0 && <span style={{fontSize:11,color:C.mut}}>club hotel {money(totClub)}</span>}
+                <span style={{fontSize:11,color:t.ticketed===staff.length?C.grn:C.mut}}>{t.ticketed}/{staff.length} ticketed</span>
+                {t.flights>0 && <span style={{fontSize:11,color:C.mut}}>flights {travelMoney(t.flights)}</span>}
+                {t.club>0 && <span style={{fontSize:11,color:C.mut}}>club hotel {travelMoney(t.club)}</span>}
                 <span style={{marginLeft:"auto",fontSize:11,color:C.gold,fontWeight:700}}>{open ? "hide" : "plan travel →"}</span>
               </div>
-              {open && (
-                <div style={{overflowX:"auto",marginTop:10}}>
-                  <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0,minWidth:900,fontSize:11}}>
-                    <thead><tr>{["Coach","Airline","Out","Back","Flight $","Ticket #","Room","Their $","Club pays"].map(h =>
-                      <th key={h} style={{padding:"5px 7px",textAlign:"left",fontSize:9,fontWeight:700,textTransform:"uppercase",color:C.mut,borderBottom:"1px solid "+C.border,whiteSpace:"nowrap"}}>{h}</th>)}</tr></thead>
-                    <tbody>
-                      {staff.map(name => {
-                        const r = rowFor(name);
-                        const f = (k, ph, type) => (
-                          <td style={{padding:"3px 5px",borderBottom:"1px solid "+C.border}}>
-                            <DebouncedField style={inp} type={type} placeholder={ph} value={r[k] ?? ""}
-                              onCommit={v => saveTravel(tn.id, name, { [k]: v === "" ? null : v })} />
-                          </td>
-                        );
-                        return (
-                          <tr key={name}>
-                            <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,fontWeight:700,whiteSpace:"nowrap"}}>{name}</td>
-                            {f("airline","Southwest")}
-                            {f("depart_date","","date")}
-                            {f("return_date","","date")}
-                            {f("flight_cost","0","number")}
-                            {f("ticket_number","ABC123")}
-                            <td style={{padding:"3px 5px",borderBottom:"1px solid "+C.border}}>
-                              <select style={inp} value={r.room_id ?? ""}
-                                onChange={e => saveTravel(tn.id, name, { room_id: e.target.value ? Number(e.target.value) : null })}>
-                                <option value="">— none —</option>
-                                {rooms.map(rm => <option key={rm.id} value={rm.id}>{rm.hotel_name || "Room " + rm.id}</option>)}
-                              </select>
-                            </td>
-                            {f("hotel_cost","0","number")}
-                            {f("hotel_club_pays","0","number")}
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                  <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginTop:10}}>
-                    <span style={{fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut}}>Rooms</span>
-                    {rooms.map(rm => (
-                      <span key={rm.id} style={{fontSize:11,border:"1px solid "+C.border,borderRadius:6,padding:"3px 8px",color:C.text}}>
-                        {rm.hotel_name || "Room " + rm.id}
-                        <span style={{color:C.mut}}> · {rows.filter(x => x.room_id === rm.id).length} in room</span>
-                      </span>
-                    ))}
-                    <button onClick={async () => {
-                      const nm = window.prompt("Hotel name for this room?", tn.venue || "");
-                      if (nm === null) return;
-                      const { error } = await supabase.from("coach_travel_rooms").insert({ tournament_id: tn.id, hotel_name: nm.trim() || null });
-                      if (error) { window.alert("Add room failed: " + error.message); return; }
-                      loadCoachTravel();
-                    }} style={{padding:"3px 10px",borderRadius:6,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>+ Add room</button>
-                  </div>
-                  <div style={{fontSize:10,color:C.mut,marginTop:6,fontStyle:"italic"}}>
-                    Two coaches sharing? Put them on the same room. "Their $" is that coach's share; "Club pays" is how much of it the club covers.
-                  </div>
-                </div>
-              )}
+              {open && <div style={{marginTop:10}}>{renderTravelPlanner(tn)}</div>}
             </div>
           );
         })()}
@@ -20520,7 +20622,7 @@ export default function App() {
                 ...(canOps ? [{ title:"Operations", items:[
                   ["hdr","Club"],
                   ["tracker","Tracker"], ["teamdir","All Teams"], ["practice","Practice"], ["sa","S&A Schedule"], ["clinics","DSSC Clinics"], ["scholarships","Scholarships"],
-                  ...(isAdmin ? [["hawaii","Hawaii"]] : []),
+                  ...(isAdmin ? [["hawaii","Hawaii"], ["travel","Travel"]] : []),
                   ["hdr","Coaches & Pay"],
                   ["coaches","Coaches"], ["coverage","Coach Coverage"], ["timecards","Time Cards"], ["gear","Gear Sizes" + (gearOutstanding ? " (" + gearOutstanding + ")" : "")], ["requests","Requests" + (pendingReqs ? " (" + pendingReqs + ")" : "")],
                   ["hdr","Communication"],
@@ -20742,6 +20844,7 @@ export default function App() {
         {view==="roster" && ((canViewTeams || myTeamNames.length) ? renderRoster() : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Player lists are restricted. Ask Drew for access.</div>)}
         {view==="gear" && (canOps ? renderGearTracker() : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Gear ordering is admin-only.</div>)}
         {view==="hawaii" && renderHawaii()}
+        {view==="travel" && renderTravel()}
         {view==="faq" && renderFaq()}
         {view==="practiceplan" && renderPracticePlans()}
         {view==="clinics" && renderClinics()}
