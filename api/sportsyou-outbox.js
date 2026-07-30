@@ -34,6 +34,12 @@ export default async function handler(req, res) {
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SPORTSYOU_OUTBOX_SECRET } = process.env;
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return res.status(500).json({ error: "Server not configured" });
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
+  // Strip ALL whitespace from the secret on both sides. A value pasted into
+  // Vercel with a stray newline percent-encodes as %0A in the bookmarklet URL,
+  // which makes Chrome encode the surrounding quotes too and the bookmarklet
+  // dies with "Invalid or unexpected token". Secrets never contain whitespace,
+  // so normalising is safe and beats debugging it a second time.
+  const SECRET = String(SPORTSYOU_OUTBOX_SECRET || "").replace(/\s+/g, "");
 
   // The bookmarklet runs on https://sportsyou.com, so it needs CORS to reach us.
   const origin = req.headers.origin || "";
@@ -61,14 +67,14 @@ export default async function handler(req, res) {
       ok = !!(c && c.is_approved && c.is_admin);
     }
     if (!ok) return res.status(403).json({ error: "Admins only" });
-    if (!SPORTSYOU_OUTBOX_SECRET) return res.status(200).json({ configured: false });
-    return res.status(200).json({ configured: true, secret: SPORTSYOU_OUTBOX_SECRET });
+    if (!SECRET) return res.status(200).json({ configured: false });
+    return res.status(200).json({ configured: true, secret: SECRET });
   }
 
   // ── Everything else is the bookmarklet, authenticated by the shared secret ──
   const token = url?.searchParams.get("token") || "";
-  if (!SPORTSYOU_OUTBOX_SECRET) return res.status(500).json({ error: "SPORTSYOU_OUTBOX_SECRET is not set in Vercel." });
-  if (!timingSafeEqual(token, SPORTSYOU_OUTBOX_SECRET)) return res.status(403).json({ error: "Forbidden" });
+  if (!SECRET) return res.status(500).json({ error: "SPORTSYOU_OUTBOX_SECRET is not set in Vercel." });
+  if (!timingSafeEqual(String(token).replace(/\s+/g, ""), SECRET)) return res.status(403).json({ error: "Forbidden" });
 
   // The poster itself, served as source. Chrome mangles long javascript: URLs
   // when a bookmark is pasted rather than dragged, so the bookmark stays a tiny
