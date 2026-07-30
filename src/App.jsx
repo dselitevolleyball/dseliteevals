@@ -27,6 +27,17 @@ const TN_STATUS = {
 };
 const TN_STATUS_ORDER = ["planned", "in_progress", "locked", "registered"];
 const tnStatusMeta = (s) => TN_STATUS[s] || TN_STATUS.planned;
+
+// ── Hawaii: an optional tournament, open to these three teams only ──────────
+const HAWAII_TEAMS = ["13 Diamond", "14 Diamond", "15 Diamond"];
+const HAWAII_STATUS = {
+  not_asked:  { label: "Not asked",  color: "#9ca3af" },
+  interested: { label: "Interested", color: "#eab308" },
+  committed:  { label: "Signed up",  color: "#22c55e" },
+  declined:   { label: "Not going",  color: "#ef4444" },
+};
+const HAWAII_ORDER = ["not_asked", "interested", "committed", "declined"];
+const hawaiiMeta = (s) => HAWAII_STATUS[s] || HAWAII_STATUS.not_asked;
 // A sub coach only clears a coach conflict when it's a REAL name — placeholders
 // like "TBD" mean a coach still needs to be found, so the conflict must remain.
 const TN_SUB_PLACEHOLDERS = new Set(["tbd", "tba", "t.b.d.", "?", "??", "???", "-", "--", "—", "n/a", "na", "none", "pending", "sub", "open", "needed", "?tbd"]);
@@ -1337,6 +1348,7 @@ export default function App() {
   const [swSyncTok, setSwSyncTok]       = useState(null);   // SportWrench sync bookmarklet {href} | {configured:false} | {error}
   const [syPostTok, setSyPostTok]       = useState(null);   // SportsYou post bookmarklet {href} | {configured:false} | {error}
   const [syOutbox, setSyOutbox]         = useState([]);     // sportsyou_outbox rows (pending + recently posted)
+  const [hawaiiInterest, setHawaiiInterest] = useState([]); // hawaii_interest rows, one per player who has answered
   const [clinicBusy, setClinicBusy]     = useState("");     // key of clinic action in flight
   const [drills, setDrills]     = useState([]);     // shared drill library
   const [drillFilter, setDrillFilter] = useState({ q:"", skill:"", phase:"" });
@@ -1560,7 +1572,7 @@ export default function App() {
   // Operations are admin-only: the whole "Operations" nav group and the views
   // behind it are hidden and blocked for non-admin coaches. The owner (Drew)
   // always counts here so a bad DB flag can't lock him out.
-  const OPS_VIEWS = new Set(["tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","timecards","gear","roster"]);
+  const OPS_VIEWS = new Set(["tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","timecards","gear","roster","hawaii"]);
   const canOps    = isAdmin || isOwner;
   const opsDenied = <div style={{padding:24,color:C.mut,textAlign:"center"}}>This section is restricted to administrators. Ask the club administrator (Drew) for access.</div>;
   // Once a player has accepted (or is locked/signed) onto a team, they're
@@ -3462,6 +3474,32 @@ export default function App() {
     if (error) { console.error("Load email_log error:", error); return; }
     setEmailLog(data || []);
   }, []);
+  // Hawaii trip interest. Rows are created lazily, so a player with no row is
+  // 'not_asked' — the table stays empty until someone actually answers.
+  const loadHawaii = useCallback(async () => {
+    const { data, error } = await supabase.from("hawaii_interest").select("*");
+    if (error) { console.error("Load hawaii_interest error:", error); return; }
+    setHawaiiInterest(data || []);
+  }, []);
+  const setHawaiiStatus = useCallback(async (playerId, status) => {
+    // Optimistic — the list is small and a stalled dropdown feels broken.
+    setHawaiiInterest(prev => {
+      const rest = prev.filter(r => r.player_id !== playerId);
+      return status === "not_asked" ? rest : [...rest, { player_id: playerId, status }];
+    });
+    if (status === "not_asked") {
+      const { error } = await supabase.from("hawaii_interest").delete().eq("player_id", playerId);
+      if (error) { window.alert("Save failed: " + error.message); loadHawaii(); }
+      return;
+    }
+    const { error } = await supabase.from("hawaii_interest").upsert(
+      { player_id: playerId, status, updated_by: coach?.display_name || coach?.email || null, updated_at: new Date().toISOString() },
+      { onConflict: "player_id" }
+    );
+    if (error) { window.alert("Save failed: " + error.message); loadHawaii(); }
+  }, [coach, loadHawaii]);
+  useEffect(() => { if (isApproved && view === "hawaii") loadHawaii(); }, [isApproved, view, loadHawaii]);
+
   // Messages waiting for the SportsYou bookmarklet to drain.
   const loadSyOutbox = useCallback(async () => {
     const { data, error } = await supabase.from("sportsyou_outbox").select("*").order("queued_at", { ascending: false }).limit(200);
@@ -8206,6 +8244,83 @@ export default function App() {
             <button onClick={save} style={{padding:"10px 18px",borderRadius:8,border:"none",background:C.gold,color:"#000",fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Save coach</button>
           </div>
         </div>
+      </div>
+    );
+  }
+
+  // Hawaii — optional tournament for the three Diamond teams. Tracks where each
+  // player is on the interest ladder; everything else about the trip is handled
+  // outside the app, so this deliberately stays a single question per player.
+  function renderHawaii() {
+    if (!isAdmin) return <div style={{padding:24,color:C.mut,textAlign:"center"}}>The Hawaii page is restricted to admins.</div>;
+    const byPlayer = new Map(hawaiiInterest.map(r => [r.player_id, r.status]));
+    const roster = players.filter(p => HAWAII_TEAMS.includes(p.team_assignment));
+    const statusOf = (p) => byPlayer.get(p.id) || "not_asked";
+    const counts = HAWAII_ORDER.reduce((a, s) => ({ ...a, [s]: roster.filter(p => statusOf(p) === s).length }), {});
+    const th = {padding:"8px 10px",textAlign:"left",fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut,borderBottom:"1px solid "+C.border,whiteSpace:"nowrap"};
+    const td = {padding:"7px 10px",borderBottom:"1px solid "+C.border,fontSize:13};
+    return (
+      <div style={{padding:"18px 16px",maxWidth:1100,margin:"0 auto"}}>
+        <h2 style={{margin:"0 0 2px",fontSize:20,fontWeight:800,color:C.gold}}>Hawaii</h2>
+        <div style={{fontSize:12,color:C.mut,marginBottom:14}}>Optional tournament · {HAWAII_TEAMS.join(" · ")} · {roster.length} players</div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:16}}>
+          {HAWAII_ORDER.map(s => {
+            const m = hawaiiMeta(s);
+            return (
+              <div key={s} style={{border:"1px solid "+C.border,borderLeft:"3px solid "+m.color,borderRadius:8,padding:"8px 14px",minWidth:104,background:C.card}}>
+                <div style={{fontSize:22,fontWeight:800,color:m.color,lineHeight:1.1}}>{counts[s]}</div>
+                <div style={{fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut}}>{m.label}</div>
+              </div>
+            );
+          })}
+        </div>
+        {HAWAII_TEAMS.map(tn => {
+          const tp = roster.filter(p => p.team_assignment === tn)
+            .sort((a,b) => (a.last_name||"").localeCompare(b.last_name||"") || (a.first_name||"").localeCompare(b.first_name||""));
+          const going = tp.filter(p => statusOf(p) === "committed").length;
+          if (!tp.length) return null;
+          return (
+            <div key={tn} style={{background:C.card,borderRadius:12,border:"1px solid "+C.border,marginBottom:14,overflow:"hidden"}}>
+              <div style={{padding:"10px 14px",borderBottom:"1px solid "+C.border,display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+                <span style={{fontSize:14,fontWeight:800,color:C.text}}>{tn}</span>
+                <span style={{fontSize:11,color:C.mut}}>{going} of {tp.length} signed up</span>
+              </div>
+              <div style={{overflowX:"auto"}}>
+                <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0,minWidth:620}}>
+                  <thead><tr><th style={th}>Player</th><th style={th}>Parent</th><th style={th}>Status</th></tr></thead>
+                  <tbody>
+                    {tp.map(p => {
+                      const cur = statusOf(p);
+                      return (
+                        <tr key={p.id}>
+                          <td style={{...td,fontWeight:600,whiteSpace:"nowrap"}}>{(p.first_name||"") + " " + (p.last_name||"")}</td>
+                          <td style={{...td,color:C.mut,fontSize:11}}>
+                            {p.parent_name || "—"}{p.parent_email ? <span style={{opacity:0.75}}> · {p.parent_email}</span> : null}
+                          </td>
+                          <td style={{...td,whiteSpace:"nowrap"}}>
+                            <div style={{display:"inline-flex",gap:4,flexWrap:"wrap"}}>
+                              {HAWAII_ORDER.map(s => {
+                                const m = hawaiiMeta(s); const on = cur === s;
+                                return (
+                                  <button key={s} onClick={() => setHawaiiStatus(p.id, s)}
+                                    style={{padding:"3px 9px",borderRadius:6,cursor:"pointer",fontFamily:"inherit",fontSize:10,fontWeight:700,
+                                      border:"1px solid "+(on ? m.color : C.border), background: on ? m.color : "transparent", color: on ? "#000" : C.mut}}>
+                                    {m.label}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          );
+        })}
+        {!roster.length && <div style={{padding:24,textAlign:"center",color:C.mut,fontSize:12}}>No players found on {HAWAII_TEAMS.join(", ")}.</div>}
       </div>
     );
   }
@@ -20225,6 +20340,7 @@ export default function App() {
                 ...(canOps ? [{ title:"Operations", items:[
                   ["hdr","Club"],
                   ["tracker","Tracker"], ["teamdir","All Teams"], ["practice","Practice"], ["sa","S&A Schedule"], ["clinics","DSSC Clinics"], ["scholarships","Scholarships"],
+                  ...(isAdmin ? [["hawaii","Hawaii"]] : []),
                   ["hdr","Coaches & Pay"],
                   ["coaches","Coaches"], ["coverage","Coach Coverage"], ["timecards","Time Cards"], ["gear","Gear Sizes" + (gearOutstanding ? " (" + gearOutstanding + ")" : "")], ["requests","Requests" + (pendingReqs ? " (" + pendingReqs + ")" : "")],
                   ["hdr","Communication"],
@@ -20445,6 +20561,7 @@ export default function App() {
         {view==="timecards" && renderTimeCards()}
         {view==="roster" && (canViewTeams ? renderRoster() : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Player lists are restricted. Ask Drew for access.</div>)}
         {view==="gear" && (canOps ? renderGearTracker() : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Gear ordering is admin-only.</div>)}
+        {view==="hawaii" && renderHawaii()}
         {view==="faq" && renderFaq()}
         {view==="practiceplan" && renderPracticePlans()}
         {view==="clinics" && renderClinics()}
