@@ -1349,6 +1349,9 @@ export default function App() {
   const [syPostTok, setSyPostTok]       = useState(null);   // SportsYou post bookmarklet {href} | {configured:false} | {error}
   const [syOutbox, setSyOutbox]         = useState([]);     // sportsyou_outbox rows (pending + recently posted)
   const [hawaiiInterest, setHawaiiInterest] = useState([]); // hawaii_interest rows, one per player who has answered
+  const [travelOpen, setTravelOpen]         = useState(null); // tournament id whose travel table is expanded
+  const [coachTravel, setCoachTravel]       = useState([]); // coach_travel rows (RLS: admins all, coaches their own)
+  const [travelRooms, setTravelRooms]       = useState([]); // coach_travel_rooms rows
   const [clinicBusy, setClinicBusy]     = useState("");     // key of clinic action in flight
   const [drills, setDrills]     = useState([]);     // shared drill library
   const [drillFilter, setDrillFilter] = useState({ q:"", skill:"", phase:"" });
@@ -3474,6 +3477,45 @@ export default function App() {
     if (error) { console.error("Load email_log error:", error); return; }
     setEmailLog(data || []);
   }, []);
+  // Who actually flies to a tournament: the effective head and assistant for
+  // every team assigned, plus any named sub. Placeholders like "TBD" are not
+  // people and are dropped — booking a flight for TBD helps nobody.
+  const travelStaffFor = useCallback((tournamentId) => {
+    const names = new Set();
+    for (const a of tournamentAssignments.filter(x => x.tournament_id === tournamentId)) {
+      const t = teamsList.find(x => x.id === a.team_id) || practiceTeams.find(x => x.team_name === a.team_id);
+      const eff = tnEffectiveStaff(a, t ? { head_coach: t.head_coach, assistant_coach: t.assistant_coach } : null);
+      [eff.head, eff.asst, a.sub_coach].forEach(n => {
+        const v = String(n || "").trim();
+        if (v && !tnIsPlaceholder(v)) names.add(v);
+      });
+    }
+    return [...names].sort((a, b) => a.localeCompare(b));
+  }, [tournamentAssignments, teamsList, practiceTeams]);
+
+  // Coach travel for stay-over tournaments. RLS returns every row to admins and
+  // only their own to a coach, so the same load works for both — no branching.
+  const loadCoachTravel = useCallback(async () => {
+    const [{ data: t, error: te }, { data: r, error: re }] = await Promise.all([
+      supabase.from("coach_travel").select("*"),
+      supabase.from("coach_travel_rooms").select("*"),
+    ]);
+    if (te) { console.error("Load coach_travel error:", te); return; }
+    if (re) console.error("Load coach_travel_rooms error:", re);
+    setCoachTravel(t || []);
+    setTravelRooms(r || []);
+  }, []);
+  const saveTravel = useCallback(async (tournamentId, coachName, patch) => {
+    const row = { tournament_id: tournamentId, coach_name: coachName, ...patch,
+      updated_by: coach?.display_name || coach?.email || null, updated_at: new Date().toISOString() };
+    const { error } = await supabase.from("coach_travel").upsert(row, { onConflict: "tournament_id,coach_name" });
+    if (error) { window.alert("Travel save failed: " + error.message); return; }
+    loadCoachTravel();
+  }, [coach, loadCoachTravel]);
+  useEffect(() => {
+    if (isApproved && (view === "tournaments" || view === "coaches" || view === "home")) loadCoachTravel();
+  }, [isApproved, view, loadCoachTravel]);
+
   // Hawaii trip interest. Rows are created lazily, so a player with no row is
   // 'not_asked' — the table stays empty until someone actually answers.
   const loadHawaii = useCallback(async () => {
@@ -5572,7 +5614,13 @@ export default function App() {
             const iso = isoOf(d);
             const evP = practicesOn(iso), evT = tnsOn(iso), evSA = saOn(iso), evSub = subsOn(iso), evFl = floatsOn(iso);
             const tnLabels = [...new Set(evT.map(x => tnAbbr(x.tn.name)))];
-            const events = [...tnLabels.map(l => ({ label: l, c: TNC })),
+            // Flight days for whoever this calendar belongs to. RLS already
+            // limits a non-admin to their own rows, and matches() is the same
+            // name test the rest of the calendar uses.
+            const evFlight = coachTravel.filter(t => matches(t.coach_name) && (t.depart_date === iso || t.return_date === iso))
+              .map(t => ({ out: t.depart_date === iso, airline: t.airline }));
+            const events = [...evFlight.map(x => ({ label: (x.out ? "✈ out" : "✈ home") + (x.airline ? " " + x.airline.slice(0,6) : ""), c: "#38bdf8" })),
+              ...tnLabels.map(l => ({ label: l, c: TNC })),
               ...evSub.map(x => ({ label: "🔁 " + abbr(x.team) + " " + shortTime(x.slot), c: SUBC })),
               ...evFl.map(sl => ({ label: "☁ " + shortTime(sl), c: FLT })),
               ...evSA.map(x => ({ label: abbr(x.team) + " S&A", c: SA })),
@@ -9366,6 +9414,46 @@ export default function App() {
           )}
 
           {/* This coach's calendar — teams, floating, and shifts they've picked up. */}
+          {/* Travel — flights and room for this coach's stay-over tournaments.
+              Read-only here; booking is entered on the tournament card. RLS
+              means a non-admin only ever receives their own rows. */}
+          {(() => {
+            const mine = coachTravel.filter(t => norm(t.coach_name) === target);
+            if (!mine.length) return null;
+            const tnById = new Map(tournaments.map(t => [t.id, t]));
+            const money = (v) => (v == null || v === "") ? null : "$" + Number(v).toLocaleString(undefined,{maximumFractionDigits:2});
+            const fmt = (d) => d ? new Date(d + "T12:00:00").toLocaleDateString(undefined,{month:"short",day:"numeric"}) : "—";
+            const rows = mine.map(t => ({ t, tn: tnById.get(t.tournament_id) }))
+              .filter(x => x.tn && !x.tn.cancelled)
+              .sort((a,b) => (a.tn.start_date||"").localeCompare(b.tn.start_date||""));
+            if (!rows.length) return null;
+            return (
+              <div style={sectionBox}>
+                <div style={lbl}>✈ Travel</div>
+                {rows.map(({ t, tn }) => {
+                  const room = travelRooms.find(r => r.id === t.room_id);
+                  const mates = coachTravel.filter(x => x.room_id && x.room_id === t.room_id && norm(x.coach_name) !== target).map(x => x.coach_name);
+                  return (
+                    <div key={t.id} style={{borderTop:"1px solid "+C.border,padding:"8px 0",fontSize:12}}>
+                      <div style={{fontWeight:700,color:C.text}}>{tn.name}</div>
+                      <div style={{color:C.mut,fontSize:11,marginTop:3,display:"flex",gap:12,flexWrap:"wrap"}}>
+                        <span>{t.airline || "Airline TBD"} · out {fmt(t.depart_date)} · back {fmt(t.return_date)}</span>
+                        {t.ticket_number && <span>ticket {t.ticket_number}</span>}
+                        {money(t.flight_cost) && <span>{money(t.flight_cost)}</span>}
+                      </div>
+                      {(room || t.hotel_cost != null) && (
+                        <div style={{color:C.mut,fontSize:11,marginTop:2,display:"flex",gap:12,flexWrap:"wrap"}}>
+                          <span>🏨 {room?.hotel_name || "Hotel TBD"}{room?.confirmation ? " · " + room.confirmation : ""}</span>
+                          {mates.length > 0 && <span>rooming with {mates.join(", ")}</span>}
+                          {money(t.hotel_cost) && <span>your share {money(t.hotel_cost)}{money(t.hotel_club_pays) ? " · club covers " + money(t.hotel_club_pays) : ""}</span>}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
           {renderCoachCalendar(matchesCoach, teamsForDisplay, coachCalOff, setCoachCalOff, coachCalSel, setCoachCalSel, { title: (displayName || "Coach") + "'s schedule" })}
 
           {/* Schedule changes + shift pickups for this coach. */}
@@ -18413,6 +18501,88 @@ export default function App() {
             </div>
           )}
         </div>
+        {/* Coach travel — only for stay-over events, and only once teams are
+            assigned, since the traveling staff is derived from those. */}
+        {tn.stay_over && !isCancelled && isAdmin && (() => {
+          const staff = travelStaffFor(tn.id);
+          if (!staff.length) return null;
+          const rows = coachTravel.filter(t => t.tournament_id === tn.id);
+          const rowFor = (n) => rows.find(r => r.coach_name === n) || {};
+          const rooms = travelRooms.filter(r => r.tournament_id === tn.id);
+          const money = (v) => (v == null || v === "") ? "" : "$" + Number(v).toLocaleString(undefined,{maximumFractionDigits:2});
+          const totFlights = rows.reduce((s,r) => s + (Number(r.flight_cost)||0), 0);
+          const totClub = rows.reduce((s,r) => s + (Number(r.hotel_club_pays)||0), 0);
+          const inp = {...inpStyle,padding:"4px 7px",fontSize:11,width:"100%"};
+          const open = travelOpen === tn.id;
+          return (
+            <div style={{borderTop:"1px solid "+C.border,padding:"10px 14px"}}>
+              <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",cursor:"pointer"}} onClick={()=>setTravelOpen(open ? null : tn.id)}>
+                <span style={{fontSize:11,fontWeight:800,textTransform:"uppercase",color:C.mut}}>✈ Coach travel</span>
+                <span style={{fontSize:11,color:C.text,fontWeight:700}}>{staff.length} traveling</span>
+                {totFlights > 0 && <span style={{fontSize:11,color:C.mut}}>flights {money(totFlights)}</span>}
+                {totClub > 0 && <span style={{fontSize:11,color:C.mut}}>club hotel {money(totClub)}</span>}
+                <span style={{marginLeft:"auto",fontSize:11,color:C.gold,fontWeight:700}}>{open ? "hide" : "plan travel →"}</span>
+              </div>
+              {open && (
+                <div style={{overflowX:"auto",marginTop:10}}>
+                  <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0,minWidth:900,fontSize:11}}>
+                    <thead><tr>{["Coach","Airline","Out","Back","Flight $","Ticket #","Room","Their $","Club pays"].map(h =>
+                      <th key={h} style={{padding:"5px 7px",textAlign:"left",fontSize:9,fontWeight:700,textTransform:"uppercase",color:C.mut,borderBottom:"1px solid "+C.border,whiteSpace:"nowrap"}}>{h}</th>)}</tr></thead>
+                    <tbody>
+                      {staff.map(name => {
+                        const r = rowFor(name);
+                        const f = (k, ph, type) => (
+                          <td style={{padding:"3px 5px",borderBottom:"1px solid "+C.border}}>
+                            <DebouncedField style={inp} type={type} placeholder={ph} value={r[k] ?? ""}
+                              onCommit={v => saveTravel(tn.id, name, { [k]: v === "" ? null : v })} />
+                          </td>
+                        );
+                        return (
+                          <tr key={name}>
+                            <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,fontWeight:700,whiteSpace:"nowrap"}}>{name}</td>
+                            {f("airline","Southwest")}
+                            {f("depart_date","","date")}
+                            {f("return_date","","date")}
+                            {f("flight_cost","0","number")}
+                            {f("ticket_number","ABC123")}
+                            <td style={{padding:"3px 5px",borderBottom:"1px solid "+C.border}}>
+                              <select style={inp} value={r.room_id ?? ""}
+                                onChange={e => saveTravel(tn.id, name, { room_id: e.target.value ? Number(e.target.value) : null })}>
+                                <option value="">— none —</option>
+                                {rooms.map(rm => <option key={rm.id} value={rm.id}>{rm.hotel_name || "Room " + rm.id}</option>)}
+                              </select>
+                            </td>
+                            {f("hotel_cost","0","number")}
+                            {f("hotel_club_pays","0","number")}
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                  <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginTop:10}}>
+                    <span style={{fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut}}>Rooms</span>
+                    {rooms.map(rm => (
+                      <span key={rm.id} style={{fontSize:11,border:"1px solid "+C.border,borderRadius:6,padding:"3px 8px",color:C.text}}>
+                        {rm.hotel_name || "Room " + rm.id}
+                        <span style={{color:C.mut}}> · {rows.filter(x => x.room_id === rm.id).length} in room</span>
+                      </span>
+                    ))}
+                    <button onClick={async () => {
+                      const nm = window.prompt("Hotel name for this room?", tn.venue || "");
+                      if (nm === null) return;
+                      const { error } = await supabase.from("coach_travel_rooms").insert({ tournament_id: tn.id, hotel_name: nm.trim() || null });
+                      if (error) { window.alert("Add room failed: " + error.message); return; }
+                      loadCoachTravel();
+                    }} style={{padding:"3px 10px",borderRadius:6,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>+ Add room</button>
+                  </div>
+                  <div style={{fontSize:10,color:C.mut,marginTop:6,fontStyle:"italic"}}>
+                    Two coaches sharing? Put them on the same room. "Their $" is that coach's share; "Club pays" is how much of it the club covers.
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })()}
       </div>
     );
   }
