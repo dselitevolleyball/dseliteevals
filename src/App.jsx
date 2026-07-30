@@ -12590,6 +12590,24 @@ export default function App() {
                 </span>
                 {failed.length > 0 && <span style={{fontSize:12,color:C.red,fontWeight:700}}>{failed.length} failed</span>}
                 {!t && <button onClick={fetchSyBookmarklet} style={{padding:"5px 11px",borderRadius:8,border:"none",background:C.gold,color:"#000",fontWeight:800,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>Set up the poster →</button>}
+                {/* The composer only lists DS HQ teams, and the SportsYou "Test"
+                    team isn't one — so a dry run needs its own button. */}
+                <button onClick={async () => {
+                  const body = emailBody.trim() || "Test post from DS Elite HQ. Safe to ignore.";
+                  const { error } = await supabase.from("sportsyou_outbox").insert({
+                    team_name: "Test",
+                    subject: emailSubject.trim() || "Test",
+                    message: emailMarkupToText(body),
+                    queued_by: coach?.display_name || coach?.email || null,
+                    batch_id: "test",
+                  });
+                  if (error) { window.alert("Queue failed: " + error.message); return; }
+                  loadSyOutbox();
+                  window.alert("Queued for the SportsYou team named \"Test\" only.\n\nNow open sportsyou.com and click the bookmark.");
+                }} title="Queue whatever is in the composer to your SportsYou Test team only — no real families"
+                  style={{padding:"5px 11px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.text,fontWeight:700,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>
+                  Queue a test post
+                </button>
                 {t?.loading && <span style={{fontSize:11,color:C.mut}}>building…</span>}
                 {t?.error && <span style={{fontSize:11,color:C.red}}>{t.error}</span>}
                 {t && t.configured === false && <span style={{fontSize:11,color:"#f59e0b"}}>Set SPORTSYOU_OUTBOX_SECRET in Vercel first.</span>}

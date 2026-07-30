@@ -138,20 +138,24 @@ export default async function handler(req, res) {
     const results = Array.isArray(body?.results) ? body.results : [];
     if (!results.length) return res.status(400).json({ error: "results[] required" });
 
-    let posted = 0, failed = 0;
+    let posted = 0, failed = 0; const skipped = [];
     for (const r of results) {
       const id = Number(r?.id);
       if (!Number.isFinite(id)) continue;
       const ok = !!r.ok;
-      const { error } = await supabase.from("sportsyou_outbox").update({
+      // .select() so we count rows ACTUALLY updated. Without it a no-match
+      // update returns error:null and we'd report success while the row stayed
+      // pending — which is exactly what happened on the first live run.
+      const { data, error } = await supabase.from("sportsyou_outbox").update({
         status: ok ? "posted" : "failed",
         posted_at: ok ? new Date().toISOString() : null,
         sy_response: ok ? null : String(r.error || "unknown error").slice(0, 2000),
-      }).eq("id", id);
-      if (error) continue;
+      }).eq("id", id).select("id");
+      if (error) { skipped.push({ id, error: error.message }); continue; }
+      if (!data || !data.length) { skipped.push({ id, error: "no such row" }); continue; }
       ok ? posted++ : failed++;
     }
-    return res.status(200).json({ ok: true, posted, failed });
+    return res.status(200).json({ ok: true, posted, failed, skipped });
   }
 
   res.setHeader("Allow", ["GET", "POST", "OPTIONS"]);
