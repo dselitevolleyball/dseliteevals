@@ -1335,6 +1335,8 @@ export default function App() {
   const [dsscSync, setDsscSync]         = useState(null);   // last Playbook→clinics sync {last_synced_at, summary}
   const [dsscSyncTok, setDsscSyncTok]   = useState(null);   // built sync bookmarklet {href, calendarUrl} | {configured:false} | {error}
   const [swSyncTok, setSwSyncTok]       = useState(null);   // SportWrench sync bookmarklet {href} | {configured:false} | {error}
+  const [syPostTok, setSyPostTok]       = useState(null);   // SportsYou post bookmarklet {href} | {configured:false} | {error}
+  const [syOutbox, setSyOutbox]         = useState([]);     // sportsyou_outbox rows (pending + recently posted)
   const [clinicBusy, setClinicBusy]     = useState("");     // key of clinic action in flight
   const [drills, setDrills]     = useState([]);     // shared drill library
   const [drillFilter, setDrillFilter] = useState({ q:"", skill:"", phase:"" });
@@ -2301,6 +2303,55 @@ export default function App() {
       const bm = "javascript:(function(){fetch('/api/esw/events',{headers:{Accept:'application/json'}}).then(function(r){return r.json();}).then(function(arr){if(!Array.isArray(arr)){alert('Open events.sportwrench.com first.');return;}var t=new Date().toISOString().slice(0,10);var q=function(e){return /qualifier|national championship/i.test((e.long_name||'')+' '+(e.name||''));};var ev=arr.filter(function(e){return (e.date_end||'').slice(0,10)>=t&&(q(e)||e.state==='TX');}).map(function(e){return{event_id:e.event_id,name:e.long_name||e.name,date_start:(e.date_start||'').slice(0,10),date_end:(e.date_end||'').slice(0,10),city:e.city,state:e.state,qualifier:q(e)};});if(!ev.length){alert('No qualifiers or Texas events found.');return;}fetch('" + endpoint + "',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({secret:'" + j.secret + "',events:ev})}).then(function(r){return r.json();}).then(function(o){alert(o.ok?('SportWrench synced \\u2713 +'+o.inserted+' new, '+o.updated+' updated'):('Sync error: '+(o.error||'unknown')));}).catch(function(e){alert('Sync failed: '+e);});}).catch(function(e){alert('Could not read SportWrench. Open events.sportwrench.com and try again. '+e);});})();";
       setSwSyncTok({ configured: true, href: bm });
     } catch (e) { setSwSyncTok({ error: String(e.message || e) }); }
+  }, []);
+
+  // Build the "Post queued to SportsYou" bookmarklet.
+  //
+  // SportsYou's GraphQL API pins CORS to https://sportsyou.com and authenticates
+  // with HttpOnly cookies, so this HAS to run in a logged-in sportsyou.com tab —
+  // no server can do it. The bookmarklet never reads the session; the browser
+  // attaches it. It drains our outbox, matches DS HQ team names to SportsYou
+  // team ids from the app's own localStorage (so a renamed team self-heals),
+  // groups identical message text into a single postCreate with many targetIds,
+  // and reports each row back so the queue clears itself.
+  const fetchSyBookmarklet = useCallback(async () => {
+    setSyPostTok({ loading: true });
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) throw new Error("Not signed in");
+      const r = await fetch("/api/sportsyou-outbox?action=secret", { headers: { Authorization: "Bearer " + session.access_token } });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || "Failed");
+      if (!j.configured) { setSyPostTok({ configured: false }); return; }
+      const API = "https://dseliteevals.vercel.app/api/sportsyou-outbox?token=" + encodeURIComponent(j.secret);
+      const bm = "javascript:(function(){"
+        + "var A='" + API + "';"
+        + "if(!/sportsyou\\.com$/.test(location.hostname)){alert('Open sportsyou.com and sign in first.');return;}"
+        // Strip the "DS Elite " prefix and emoji so SportsYou names match ours.
+        + "var N=function(s){return String(s||'').replace(/^DS Elite\\s+/i,'').replace(/[^\\x00-\\x7F]/g,'').replace(/\\s+/g,' ').trim().toLowerCase();};"
+        + "var AL={'11 rise':'11 rise 1','12-1 rise':'12 rise 1','12-2 rise':'12 rise 2','13-1 rise':'13 rise 1'};"
+        + "var t;try{t=JSON.parse(localStorage.getItem('sy-web::teams'));}catch(e){}"
+        + "var ar=Array.isArray(t)?t:((t&&(t.teams||t.data))||[]);var BY={};"
+        + "ar.forEach(function(x){var n=N(x.name||x.teamName);n=AL[n]||n;if(x.id)BY[n]=x.id;});"
+        + "if(!Object.keys(BY).length){alert('Could not read your SportsYou teams. Open the Teams page, then retry.');return;}"
+        + "fetch(A).then(function(r){return r.json();}).then(function(o){"
+        + "var p=(o&&o.pending)||[];if(!p.length){alert('Nothing queued in DS HQ.');return;}"
+        + "var G={};p.forEach(function(i){(G[i.message]=G[i.message]||[]).push(i);});"
+        + "var K=Object.keys(G),RS=[],MISS=[];"
+        + "var go=function(i){if(i>=K.length){"
+        + "fetch(A,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({results:RS})})"
+        + ".then(function(r){return r.json();}).then(function(x){alert('SportsYou \\u2713 posted '+(x.posted||0)+', failed '+(x.failed||0)+(MISS.length?('\\n\\nNo SportsYou team for: '+MISS.join(', ')):''));});return;}"
+        + "var m=K[i],it=G[m],ids=[],ok=[];"
+        + "it.forEach(function(x){var id=BY[N(x.team_name)];if(id){ids.push(id);ok.push(x);}else{MISS.push(x.team_name);RS.push({id:x.id,ok:false,error:'no SportsYou team match'});}});"
+        + "if(!ids.length){go(i+1);return;}"
+        + "var q='mutation {postCreate(allowComments:true, message:'+JSON.stringify(m)+', postTypes:['+ids.map(function(){return '\"team\"';}).join(', ')+'], scheduledTime:\"\", targetIds:['+ids.map(function(v){return JSON.stringify(v);}).join(', ')+'])}';"
+        + "fetch('https://api.prod.sportsyou.com/graphqlServices',{method:'POST',credentials:'include',headers:{'content-type':'application/json','sy-unique-id':localStorage.getItem('sy-unique-id')||''},body:JSON.stringify({query:q})})"
+        + ".then(function(r){return r.json();}).then(function(j){var bad=(j&&j.errors)?JSON.stringify(j.errors).slice(0,300):null;"
+        + "ok.forEach(function(x){RS.push({id:x.id,ok:!bad,error:bad});});go(i+1);})"
+        + ".catch(function(e){ok.forEach(function(x){RS.push({id:x.id,ok:false,error:String(e)});});go(i+1);});};go(0);"
+        + "}).catch(function(e){alert('Could not read the DS HQ queue: '+e);});})();";
+      setSyPostTok({ configured: true, href: bm });
+    } catch (e) { setSyPostTok({ error: String(e.message || e) }); }
   }, []);
   useEffect(() => { if (isApproved && (view === "clinics" || view === "home")) { loadClinics(); loadDsscCheckins(); } }, [isApproved, view, loadClinics, loadDsscCheckins]);
   useEffect(() => { if (isApproved && view === "clinics") { loadPlaybook(); loadDsscAvail(); loadDsscSync(); } }, [isApproved, view, loadPlaybook, loadDsscAvail, loadDsscSync]);
@@ -3432,7 +3483,13 @@ export default function App() {
     if (error) { console.error("Load email_log error:", error); return; }
     setEmailLog(data || []);
   }, []);
-  useEffect(() => { if (isApproved && view === "email") { loadEmailTemplates(); loadEmailLog(); loadTournaments(); loadSlotMoves(); loadPracticeCoverage(); loadPractice(); } }, [isApproved, view, loadEmailTemplates, loadEmailLog, loadTournaments, loadSlotMoves, loadPracticeCoverage, loadPractice]);
+  // Messages waiting for the SportsYou bookmarklet to drain.
+  const loadSyOutbox = useCallback(async () => {
+    const { data, error } = await supabase.from("sportsyou_outbox").select("*").order("queued_at", { ascending: false }).limit(200);
+    if (error) { console.error("Load sportsyou_outbox error:", error); return; }
+    setSyOutbox(data || []);
+  }, []);
+  useEffect(() => { if (isApproved && view === "email") { loadEmailTemplates(); loadEmailLog(); loadSyOutbox(); loadTournaments(); loadSlotMoves(); loadPracticeCoverage(); loadPractice(); } }, [isApproved, view, loadEmailTemplates, loadEmailLog, loadSyOutbox, loadTournaments, loadSlotMoves, loadPracticeCoverage, loadPractice]);
   // One-time: import any templates a device previously saved to localStorage
   // into the shared DB table, so existing templates aren't lost in the move.
   useEffect(() => {
@@ -12036,6 +12093,37 @@ export default function App() {
       setEmailResult({ sent, failed });
     };
 
+    // Queue the same message for the checked teams' SportsYou feeds. One row per
+    // team with its merge fields already resolved, so per-team text works; the
+    // bookmarklet re-groups identical text into a single multi-target post.
+    const queueForSportsYou = async () => {
+      const teams = [...emailTeams].sort();
+      if (!teams.length || !emailBody.trim()) return;
+      const batch = "b" + Date.now().toString(36);
+      const rows = teams.map(tn => {
+        const f = mergeFields(tn);
+        return {
+          team_name: tn,
+          subject: applyMerge(emailSubject, f).trim() || null,
+          message: emailMarkupToText(applyMerge(emailBody, f).trim()),
+          queued_by: coach?.display_name || coach?.email || null,
+          batch_id: batch,
+        };
+      });
+      const distinct = new Set(rows.map(r => r.message)).size;
+      if (!window.confirm(
+        "Queue this message for " + teams.length + " SportsYou team feed" + (teams.length === 1 ? "" : "s") + "?\n\n" +
+        teams.join(", ") + "\n\n" +
+        (distinct === 1
+          ? "All teams get identical text — the bookmarklet will post it in a single request."
+          : distinct + " different versions after merge fields — " + distinct + " requests.") +
+        "\n\nNothing posts until you click the SportsYou bookmarklet.")) return;
+      const { error } = await supabase.from("sportsyou_outbox").insert(rows);
+      if (error) { window.alert("Queue failed: " + error.message); return; }
+      loadSyOutbox();
+      window.alert("Queued for " + teams.length + " team" + (teams.length === 1 ? "" : "s") + ".\n\nNow open sportsyou.com and click the \"Post to SportsYou\" bookmarklet.");
+    };
+
     // One personalized email per COACH, using their own merge fields.
     const sendPerCoach = async () => {
       const picked = staffList.filter(s => emailStaff.has(s.name) && s.email);
@@ -12480,6 +12568,15 @@ export default function App() {
               </button>
             );
           })()}
+          {/* Same message onto the teams' SportsYou feeds. Queues only — the post
+              itself happens when the bookmarklet runs in a sportsyou.com tab. */}
+          {emailTeams.size > 0 && (
+            <button onClick={queueForSportsYou} disabled={!emailBody.trim()}
+              title="Queue this message for each checked team's SportsYou feed, with merge fields resolved. Posts when you click the SportsYou bookmarklet."
+              style={{padding:"10px 16px",borderRadius:8,border:"1px solid "+C.gold,background:"transparent",color:!emailBody.trim()?C.mut:C.gold,fontFamily:"inherit",fontSize:13,fontWeight:800,cursor:!emailBody.trim()?"default":"pointer"}}>
+              Queue for SportsYou ({emailTeams.size})
+            </button>
+          )}
           {emailStaff.size === 0 && emailTeams.size === 0 && (
             <button onClick={send} disabled={emailSending || !emailSubject.trim() || !emailBody.trim() || !recipients.length}
               style={{padding:"10px 20px",borderRadius:8,border:"none",background:(emailSending||!emailSubject.trim()||!emailBody.trim()||!recipients.length)?C.border:C.gold,color:(emailSending||!emailSubject.trim()||!emailBody.trim()||!recipients.length)?C.mut:"#000",fontFamily:"inherit",fontSize:14,fontWeight:800,cursor:(emailSending||!emailSubject.trim()||!emailBody.trim()||!recipients.length)?"default":"pointer"}}>
@@ -12498,6 +12595,34 @@ export default function App() {
             </span>
           )}
         </div>
+        {/* SportsYou queue status + the one-click poster. SportsYou pins CORS to
+            their own origin and uses HttpOnly cookies, so the post has to run in
+            a logged-in sportsyou.com tab — hence a bookmarklet, not a cron. */}
+        {isAdmin && (() => {
+          const pending = syOutbox.filter(r => r.status === "pending");
+          const failed  = syOutbox.filter(r => r.status === "failed");
+          const t = syPostTok;
+          return (
+            <div style={{marginTop:12,border:"1px solid "+C.border,borderRadius:10,padding:"10px 14px",background:"rgba(255,255,255,0.02)"}}>
+              <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+                <span style={{fontSize:11,fontWeight:800,textTransform:"uppercase",color:C.mut}}>SportsYou</span>
+                <span style={{fontSize:12,color:pending.length?C.gold:C.mut,fontWeight:700}}>
+                  {pending.length ? pending.length + " queued, waiting to post" : "nothing queued"}
+                </span>
+                {failed.length > 0 && <span style={{fontSize:12,color:C.red,fontWeight:700}}>{failed.length} failed</span>}
+                {!t && <button onClick={fetchSyBookmarklet} style={{padding:"5px 11px",borderRadius:8,border:"none",background:C.gold,color:"#000",fontWeight:800,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>Set up the poster →</button>}
+                {t?.loading && <span style={{fontSize:11,color:C.mut}}>building…</span>}
+                {t?.error && <span style={{fontSize:11,color:C.red}}>{t.error}</span>}
+                {t && t.configured === false && <span style={{fontSize:11,color:"#f59e0b"}}>Set SPORTSYOU_OUTBOX_SECRET in Vercel first.</span>}
+                {t?.href && <a href={t.href} onClick={e=>e.preventDefault()} draggable
+                  title="Drag this to your bookmarks bar. Then, on sportsyou.com, click it to post everything queued."
+                  style={{padding:"5px 11px",borderRadius:8,border:"1px dashed "+C.gold,color:C.gold,fontSize:11,fontWeight:800,textDecoration:"none",cursor:"grab"}}>⇱ Post to SportsYou (drag to bookmarks)</a>}
+              </div>
+              {t?.href && <div style={{fontSize:10,color:C.mut,marginTop:6,fontStyle:"italic"}}>Drag the button to your bookmarks bar once. After that: queue here, open sportsyou.com, click the bookmark. Teams with identical text post in a single request.</div>}
+              {failed.length > 0 && <div style={{fontSize:10,color:C.red,marginTop:6}}>{failed.slice(0,3).map(f => f.team_name + ": " + (f.sy_response||"").slice(0,80)).join(" · ")}</div>}
+            </div>
+          );
+        })()}
         {emailResult?.failed?.length > 0 && (
           <div style={{marginTop:10,fontSize:11,color:"#f59e0b",background:"rgba(245,158,11,0.08)",border:"1px solid rgba(245,158,11,0.4)",borderRadius:8,padding:"8px 12px"}}>
             Failed: {emailResult.failed.map(f => f.email + " (" + f.error + ")").join("; ")}
