@@ -70,6 +70,56 @@ export default async function handler(req, res) {
   if (!SPORTSYOU_OUTBOX_SECRET) return res.status(500).json({ error: "SPORTSYOU_OUTBOX_SECRET is not set in Vercel." });
   if (!timingSafeEqual(token, SPORTSYOU_OUTBOX_SECRET)) return res.status(403).json({ error: "Forbidden" });
 
+  // The poster itself, served as source. Chrome mangles long javascript: URLs
+  // when a bookmark is pasted rather than dragged, so the bookmark stays a tiny
+  // loader and the real logic lives here — which also means fixing a bug never
+  // requires re-dragging the bookmark.
+  if (action === "script") {
+    const self = "https://" + (req.headers["x-forwarded-host"] || req.headers.host) + "/api/sportsyou-outbox?token=" + encodeURIComponent(token);
+    const js = `(async () => {
+  const A = ${JSON.stringify(self)};
+  if (!/sportsyou\\.com$/.test(location.hostname)) { alert('Open a sportsyou.com tab first.'); return; }
+  const N = s => String(s || '').replace(/^DS Elite\\s+/i, '').replace(/[^\\x00-\\x7F]/g, '').replace(/\\s+/g, ' ').trim().toLowerCase();
+  const AL = { '11 rise': '11 rise 1', '12-1 rise': '12 rise 1', '12-2 rise': '12 rise 2', '13-1 rise': '13 rise 1' };
+  let t; try { t = JSON.parse(localStorage.getItem('sy-web::teams')); } catch (e) {}
+  const ar = Array.isArray(t) ? t : ((t && (t.teams || t.data)) || []);
+  const BY = {}; ar.forEach(x => { let n = N(x.name || x.teamName); n = AL[n] || n; if (x.id) BY[n] = x.id; });
+  if (!Object.keys(BY).length) { alert('Could not read your SportsYou teams - open the Teams page, then retry.'); return; }
+  const o = await (await fetch(A)).json();
+  const p = o.pending || [];
+  if (!p.length) { alert('Nothing queued in DS HQ.'); return; }
+  const G = {}; p.forEach(i => (G[i.message] = G[i.message] || []).push(i));
+  const RS = [], MISS = [];
+  for (const m of Object.keys(G)) {
+    const ids = [], ok = [];
+    for (const x of G[m]) {
+      const id = BY[N(x.team_name)];
+      if (id) { ids.push(id); ok.push(x); }
+      else { MISS.push(x.team_name); RS.push({ id: x.id, ok: false, error: 'no SportsYou team match' }); }
+    }
+    if (!ids.length) continue;
+    const q = 'mutation {postCreate(allowComments:true, message:' + JSON.stringify(m)
+      + ', postTypes:[' + ids.map(() => '"team"').join(', ')
+      + '], scheduledTime:"", targetIds:[' + ids.map(v => JSON.stringify(v)).join(', ') + '])}';
+    try {
+      const j = await (await fetch('https://api.prod.sportsyou.com/graphqlServices', {
+        method: 'POST', credentials: 'include',
+        headers: { 'content-type': 'application/json', 'sy-unique-id': localStorage.getItem('sy-unique-id') || '' },
+        body: JSON.stringify({ query: q })
+      })).json();
+      const bad = j && j.errors ? JSON.stringify(j.errors).slice(0, 300) : null;
+      ok.forEach(x => RS.push({ id: x.id, ok: !bad, error: bad }));
+    } catch (e) { ok.forEach(x => RS.push({ id: x.id, ok: false, error: String(e) })); }
+  }
+  const r = await (await fetch(A, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ results: RS }) })).json();
+  alert('SportsYou \\u2713 posted ' + (r.posted || 0) + ', failed ' + (r.failed || 0)
+    + (MISS.length ? '\\n\\nNo SportsYou team for: ' + MISS.join(', ') : ''));
+})();`;
+    res.setHeader("Content-Type", "application/javascript; charset=utf-8");
+    res.setHeader("Cache-Control", "no-store");
+    return res.status(200).send(js);
+  }
+
   if (req.method === "GET") {
     const { data, error } = await supabase
       .from("sportsyou_outbox")

@@ -2324,32 +2324,11 @@ export default function App() {
       if (!r.ok) throw new Error(j.error || "Failed");
       if (!j.configured) { setSyPostTok({ configured: false }); return; }
       const API = "https://dseliteevals.vercel.app/api/sportsyou-outbox?token=" + encodeURIComponent(j.secret);
-      const bm = "javascript:(function(){"
-        + "var A='" + API + "';"
-        + "if(!/sportsyou\\.com$/.test(location.hostname)){alert('Open sportsyou.com and sign in first.');return;}"
-        // Strip the "DS Elite " prefix and emoji so SportsYou names match ours.
-        + "var N=function(s){return String(s||'').replace(/^DS Elite\\s+/i,'').replace(/[^\\x00-\\x7F]/g,'').replace(/\\s+/g,' ').trim().toLowerCase();};"
-        + "var AL={'11 rise':'11 rise 1','12-1 rise':'12 rise 1','12-2 rise':'12 rise 2','13-1 rise':'13 rise 1'};"
-        + "var t;try{t=JSON.parse(localStorage.getItem('sy-web::teams'));}catch(e){}"
-        + "var ar=Array.isArray(t)?t:((t&&(t.teams||t.data))||[]);var BY={};"
-        + "ar.forEach(function(x){var n=N(x.name||x.teamName);n=AL[n]||n;if(x.id)BY[n]=x.id;});"
-        + "if(!Object.keys(BY).length){alert('Could not read your SportsYou teams. Open the Teams page, then retry.');return;}"
-        + "fetch(A).then(function(r){return r.json();}).then(function(o){"
-        + "var p=(o&&o.pending)||[];if(!p.length){alert('Nothing queued in DS HQ.');return;}"
-        + "var G={};p.forEach(function(i){(G[i.message]=G[i.message]||[]).push(i);});"
-        + "var K=Object.keys(G),RS=[],MISS=[];"
-        + "var go=function(i){if(i>=K.length){"
-        + "fetch(A,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({results:RS})})"
-        + ".then(function(r){return r.json();}).then(function(x){alert('SportsYou \\u2713 posted '+(x.posted||0)+', failed '+(x.failed||0)+(MISS.length?('\\n\\nNo SportsYou team for: '+MISS.join(', ')):''));});return;}"
-        + "var m=K[i],it=G[m],ids=[],ok=[];"
-        + "it.forEach(function(x){var id=BY[N(x.team_name)];if(id){ids.push(id);ok.push(x);}else{MISS.push(x.team_name);RS.push({id:x.id,ok:false,error:'no SportsYou team match'});}});"
-        + "if(!ids.length){go(i+1);return;}"
-        + "var q='mutation {postCreate(allowComments:true, message:'+JSON.stringify(m)+', postTypes:['+ids.map(function(){return '\"team\"';}).join(', ')+'], scheduledTime:\"\", targetIds:['+ids.map(function(v){return JSON.stringify(v);}).join(', ')+'])}';"
-        + "fetch('https://api.prod.sportsyou.com/graphqlServices',{method:'POST',credentials:'include',headers:{'content-type':'application/json','sy-unique-id':localStorage.getItem('sy-unique-id')||''},body:JSON.stringify({query:q})})"
-        + ".then(function(r){return r.json();}).then(function(j){var bad=(j&&j.errors)?JSON.stringify(j.errors).slice(0,300):null;"
-        + "ok.forEach(function(x){RS.push({id:x.id,ok:!bad,error:bad});});go(i+1);})"
-        + ".catch(function(e){ok.forEach(function(x){RS.push({id:x.id,ok:false,error:String(e)});});go(i+1);});};go(0);"
-        + "}).catch(function(e){alert('Could not read the DS HQ queue: '+e);});})();";
+      // Tiny loader. Chrome mangles long javascript: URLs when a bookmark is
+      // pasted instead of dragged, so the bookmark holds ~200 chars and the real
+      // poster is fetched from us at click time — which also means fixing the
+      // poster never requires re-dragging the bookmark.
+      const bm = "javascript:(function(){fetch('" + API + "&action=script').then(function(r){return r.text();}).then(function(t){(0,eval)(t);}).catch(function(e){alert('Could not load the poster: '+e);});})();";
       setSyPostTok({ configured: true, href: bm });
     } catch (e) { setSyPostTok({ error: String(e.message || e) }); }
   }, []);
