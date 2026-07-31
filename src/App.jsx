@@ -56,6 +56,9 @@ const tnStaysOver = (loc) => { const s = String(loc || "").trim(); return !!s &&
 // from the team's roster unless the assignment overrides them (a sub). A slot
 // is "sub" when its override differs from the team default.
 const tnIsPlaceholder = (s) => { const v = String(s || "").trim().toLowerCase(); return !!v && TN_SUB_PLACEHOLDERS.has(v); };
+// "Dallas, TX / Houston, TX" -> "Dallas". Two render functions each had their
+// own copy; hoisted so anything else can use it without redefining it.
+const shortCity = (loc) => { const s = String(loc||"").split("/")[0].trim(); return s.replace(/,\s*[A-Z]{2}\b.*$/,"").trim() || s; };
 // A coach name that isn't a real person yet (TBD, a hire placeholder, or the
 // tournament floater) — excluded from availability math.
 const isPlaceholderCoach = (c) => { const v = String(c || "").trim(); return !v || tnIsPlaceholder(v) || /new coach|floater coach|assistant coach$/i.test(v); };
@@ -1351,6 +1354,8 @@ export default function App() {
   const [hawaiiInterest, setHawaiiInterest] = useState([]); // hawaii_interest rows, one per player who has answered
   const [travelOpen, setTravelOpen]         = useState(null); // tournament id whose travel table is expanded
   const [travelPast, setTravelPast]         = useState(false); // include already-finished travel events
+  const [travelMode, setTravelMode]         = useState("trips"); // "trips" = flat booking list | "events" = per tournament
+  const [travelNeedsOnly, setTravelNeedsOnly] = useState(false); // flat list: only trips missing a ticket or room
   const [coachTravel, setCoachTravel]       = useState([]); // coach_travel rows (RLS: admins all, coaches their own)
   const [travelRooms, setTravelRooms]       = useState([]); // coach_travel_rooms rows
   const [clinicBusy, setClinicBusy]     = useState("");     // key of clinic action in flight
@@ -18267,6 +18272,16 @@ export default function App() {
     };
   };
   const travelMoney = (v) => (v == null || v === "" || Number(v) === 0) ? "" : "$" + Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 });
+  // One editable travel cell. Shared by the per-event planner and the flat
+  // booking list so both write through the same path.
+  const travelCell = (tnId, name, row, key, ph, type) => (
+    <td style={{padding:"3px 5px",borderBottom:"1px solid "+C.border}}>
+      <DebouncedField style={{...inpStyle,padding:"4px 7px",fontSize:11,width:"100%"}} type={type} placeholder={ph} value={row[key] ?? ""}
+        onCommit={v => saveTravel(tnId, name, { [key]: v === "" ? null : v })} />
+    </td>
+  );
+  // A trip still needs work if there's no ticket number or no room assigned.
+  const tripNeedsBooking = (r) => !String(r?.ticket_number || "").trim() || !r?.room_id;
 
   // The travel editor itself. Shared by the tournament card and the Travel
   // screen so there's one implementation to keep correct, not two.
@@ -18377,6 +18392,19 @@ export default function App() {
             <div style={{fontSize:12,color:C.mut,marginTop:2}}>{list.length} travel event{list.length===1?"":"s"} · flights and hotels for every coach</div>
           </div>
           <div style={{flex:1}} />
+          <span style={{display:"inline-flex",border:"1px solid "+C.border,borderRadius:8,overflow:"hidden"}}>
+            {[["trips","☰ All trips"],["events","▤ By event"]].map(([v,label]) => (
+              <button key={v} onClick={()=>setTravelMode(v)}
+                style={{padding:"6px 12px",border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700,background:travelMode===v?C.gold:"transparent",color:travelMode===v?"#000":C.mut}}>{label}</button>
+            ))}
+          </span>
+          {travelMode === "trips" && (
+            <button onClick={()=>setTravelNeedsOnly(p=>!p)}
+              title="Show only trips still missing a ticket number or a room"
+              style={{padding:"6px 12px",borderRadius:8,border:"1px solid "+(travelNeedsOnly?"#f59e0b":C.border),background:"transparent",color:travelNeedsOnly?"#f59e0b":C.text,fontFamily:"inherit",fontSize:12,fontWeight:700,cursor:"pointer"}}>
+              {travelNeedsOnly ? "● Needs booking" : "Needs booking"}
+            </button>
+          )}
           <button onClick={()=>setTravelPast(p=>!p)}
             style={{padding:"6px 12px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.text,fontFamily:"inherit",fontSize:12,fontWeight:700,cursor:"pointer"}}>
             {travelPast ? "Hide past" : "Show past"}
@@ -18389,7 +18417,65 @@ export default function App() {
           {stat("Club hotel", travelMoney(grand.club) || "$0", "#38bdf8")}
           {stat("Coach hotel", travelMoney(grand.coach) || "$0", C.mut)}
         </div>
-        {list.map(({ t, staff }) => {
+        {/* Flat booking list — every coach trip on one screen, nothing hidden
+            behind an expander. This is the view for actually sitting down and
+            booking; the per-event one is for reviewing a single trip. */}
+        {travelMode === "trips" && (() => {
+          const trips = list.flatMap(({ t, staff }) => staff.map(name => ({
+            t, name, row: coachTravel.find(r => r.tournament_id === t.id && r.coach_name === name) || {},
+          })));
+          const shown = travelNeedsOnly ? trips.filter(x => tripNeedsBooking(x.row)) : trips;
+          const rooms = (tnId) => travelRooms.filter(r => r.tournament_id === tnId);
+          const short = (s, n) => (s || "").length > n ? (s || "").slice(0, n - 1) + "…" : (s || "");
+          return (
+            <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,overflow:"hidden"}}>
+              <div style={{overflowX:"auto"}}>
+                <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0,minWidth:1120,fontSize:11}}>
+                  <thead><tr>{["","Tournament","Dates","Coach","Airline","Out","Back","Flight $","Ticket #","Hotel room","Their $","Club pays"].map((h,i) =>
+                    <th key={i} style={{padding:"6px 7px",textAlign:"left",fontSize:9,fontWeight:700,textTransform:"uppercase",color:C.mut,borderBottom:"1px solid "+C.border,whiteSpace:"nowrap",position:"sticky",top:0,background:C.card}}>{h}</th>)}</tr></thead>
+                  <tbody>
+                    {shown.map(({ t, name, row }, i) => {
+                      const need = tripNeedsBooking(row);
+                      const prevT = i > 0 ? shown[i-1].t.id : null;
+                      return (
+                        <tr key={t.id + "|" + name} style={{background: t.id !== prevT && i > 0 ? "rgba(255,255,255,0.02)" : undefined}}>
+                          <td style={{padding:"3px 6px",borderBottom:"1px solid "+C.border}}>
+                            <span title={need ? "Still needs a ticket or a room" : "Booked"} style={{display:"inline-block",width:7,height:7,borderRadius:4,background:need?"#f59e0b":C.grn}} />
+                          </td>
+                          <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,whiteSpace:"nowrap"}} title={t.name}>
+                            <span style={{fontWeight:700,color:C.text}}>{short(t.name, 34)}</span>
+                            {t.location && <span style={{color:C.mut}}> · {shortCity(t.location)}</span>}
+                          </td>
+                          <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,color:C.mut,whiteSpace:"nowrap"}}>{fmtRange(t)}</td>
+                          <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,fontWeight:700,whiteSpace:"nowrap"}}>{name}</td>
+                          {travelCell(t.id, name, row, "airline", "Southwest")}
+                          {travelCell(t.id, name, row, "depart_date", "", "date")}
+                          {travelCell(t.id, name, row, "return_date", "", "date")}
+                          {travelCell(t.id, name, row, "flight_cost", "0", "number")}
+                          {travelCell(t.id, name, row, "ticket_number", "ABC123")}
+                          <td style={{padding:"3px 5px",borderBottom:"1px solid "+C.border}}>
+                            <select style={{...inpStyle,padding:"4px 7px",fontSize:11,width:"100%"}} value={row.room_id ?? ""}
+                              onChange={e => saveTravel(t.id, name, { room_id: e.target.value ? Number(e.target.value) : null })}>
+                              <option value="">— none —</option>
+                              {rooms(t.id).map(rm => <option key={rm.id} value={rm.id}>{rm.hotel_name || "Room " + rm.id}</option>)}
+                            </select>
+                          </td>
+                          {travelCell(t.id, name, row, "hotel_cost", "0", "number")}
+                          {travelCell(t.id, name, row, "hotel_club_pays", "0", "number")}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              {!shown.length && <div style={{padding:26,textAlign:"center",color:C.mut,fontSize:12}}>{travelNeedsOnly ? "Everything is booked. 🎉" : "No coach trips yet."}</div>}
+              <div style={{fontSize:10,color:C.mut,padding:"8px 12px",borderTop:"1px solid "+C.border,fontStyle:"italic"}}>
+                Rooms are created per tournament — add them under "By event", then pick one here. Two coaches on the same room are sharing it.
+              </div>
+            </div>
+          );
+        })()}
+        {travelMode === "events" && list.map(({ t, staff }) => {
           const v = travelTotals(t.id);
           const open = travelOpen === t.id;
           const done = v.ticketed === staff.length && staff.length > 0;
