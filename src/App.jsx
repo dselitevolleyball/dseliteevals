@@ -9457,7 +9457,7 @@ export default function App() {
                       </div>
                       {(room || t.own_room) && (
                         <div style={{color:C.mut,fontSize:11,marginTop:2,display:"flex",gap:12,flexWrap:"wrap"}}>
-                          <span>🏨 {room?.hotel_name || "Hotel TBD"}{room?.room_no ? " · Room " + room.room_no : ""}{room?.confirmation ? " · " + room.confirmation : ""}</span>
+                          <span>🏨 {room?.hotel_name || "Hotel TBD"}{room?.room_no ? " · Room " + room.room_no : ""}{room?.check_in ? " · " + fmt(room.check_in) + "–" + fmt(room.check_out) : ""}{room?.confirmation ? " · " + room.confirmation : ""}</span>
                           {mates.length > 0 && <span>rooming with {mates.join(", ")}</span>}
                           {t.own_room && <span style={{color:"#f59e0b"}}>private room · {money(coachOwes(t)) || "TBD"} from payroll</span>}
                         </div>
@@ -18292,11 +18292,15 @@ export default function App() {
     const n = Math.max(0, Math.min(40, Math.floor(Number(want) || 0)));
     if (n === existing.length) return;
     if (n > existing.length) {
+      // Inherit from the block if it exists, otherwise default the stay to the
+      // tournament dates — right most of the time, and editable when it is not.
       const hotel = existing[0]?.hotel_name || null;
       const cost = existing[0]?.total_cost ?? null;
+      const cin = existing[0]?.check_in ?? tn.start_date ?? null;
+      const cout = existing[0]?.check_out ?? tn.end_date ?? tn.start_date ?? null;
       const rows = [];
       for (let i = existing.length; i < n; i++) {
-        rows.push({ tournament_id: tn.id, room_no: i + 1, hotel_name: hotel, total_cost: cost });
+        rows.push({ tournament_id: tn.id, room_no: i + 1, hotel_name: hotel, total_cost: cost, check_in: cin, check_out: cout });
       }
       const { error } = await supabase.from("coach_travel_rooms").insert(rows);
       if (error) { window.alert("Add rooms failed: " + error.message); return; }
@@ -18319,6 +18323,18 @@ export default function App() {
     if (error) { window.alert("Save failed: " + error.message); return; }
     loadCoachTravel();
   };
+
+  // Two to a room. The dropdown counts down remaining spots and disables a room
+  // once it's full, so you can see capacity while assigning instead of finding
+  // out afterwards. A coach's current room is never disabled for them.
+  const ROOM_CAPACITY = 2;
+  const roomOccupants = (roomId) => roomId ? coachTravel.filter(t => t.room_id === roomId) : [];
+  const roomSpotsLeft = (roomId) => Math.max(0, ROOM_CAPACITY - roomOccupants(roomId).length);
+  const roomOptionLabel = (rm) => {
+    const left = roomSpotsLeft(rm.id);
+    return "Room " + rm.room_no + (left <= 0 ? " — full" : " · " + left + " spot" + (left === 1 ? "" : "s"));
+  };
+  const roomIsFullFor = (rm, currentRoomId) => roomSpotsLeft(rm.id) <= 0 && rm.id !== currentRoomId;
 
   const roomMates = (row) => {
     if (!row?.room_id) return [];
@@ -18409,7 +18425,7 @@ export default function App() {
                     <select style={inp} value={r.room_id ?? ""}
                       onChange={e => saveTravel(tn.id, name, { room_id: e.target.value ? Number(e.target.value) : null })}>
                       <option value="">— none —</option>
-                      {rooms.map(rm => <option key={rm.id} value={rm.id}>{"Room " + rm.room_no}</option>)}
+                      {rooms.map(rm => <option key={rm.id} value={rm.id} disabled={roomIsFullFor(rm, r.room_id)}>{roomOptionLabel(rm)}</option>)}
                     </select>
                     {(() => { const n = roomNote({ ...r, coach_name: name }); return n ? (
                       <div style={{fontSize:9,marginTop:2,color:n.color,fontWeight:n.warn?700:500}}>{n.warn ? "⚠ " : ""}{n.text}</div>
@@ -18451,7 +18467,33 @@ export default function App() {
               value={rooms[0]?.total_cost ?? ""}
               onCommit={v => setRoomsField(tn.id, { total_cost: v === "" ? null : Number(v) })} />
           </label>
+          {/* Whole block shares check-in/out — it's one hotel reservation. */}
+          <label style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:11,color:C.mut}}>
+            in
+            <DebouncedField style={{...inpStyle,padding:"4px 6px",fontSize:11,width:130}} type="date"
+              value={rooms[0]?.check_in ?? ""}
+              onCommit={v => setRoomsField(tn.id, { check_in: v || null })} />
+          </label>
+          <label style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:11,color:C.mut}}>
+            out
+            <DebouncedField style={{...inpStyle,padding:"4px 6px",fontSize:11,width:130}} type="date"
+              value={rooms[0]?.check_out ?? ""}
+              onCommit={v => setRoomsField(tn.id, { check_out: v || null })} />
+          </label>
+          {rooms.length > 0 && (rooms[0]?.check_in !== tn.start_date || rooms[0]?.check_out !== (tn.end_date || tn.start_date)) && (
+            <button onClick={() => setRoomsField(tn.id, { check_in: tn.start_date, check_out: tn.end_date || tn.start_date })}
+              title="Set the block to this tournament's dates"
+              style={{padding:"3px 9px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+              use event dates
+            </button>
+          )}
         </div>
+        {rooms.length > 0 && rooms[0]?.check_in && rooms[0]?.check_out && (() => {
+          const nights = Math.round((new Date(rooms[0].check_out) - new Date(rooms[0].check_in)) / 86400000);
+          return <div style={{fontSize:10,color:nights > 0 ? C.mut : C.red,marginTop:4}}>
+            {nights > 0 ? nights + " night" + (nights===1?"":"s") + " × " + rooms.length + " room" + (rooms.length===1?"":"s") : "Check-out must be after check-in"}
+          </div>;
+        })()}
         {rooms.length > 0 && (
           <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:8}}>
             {rooms.map(rm => {
@@ -18459,6 +18501,7 @@ export default function App() {
               return (
                 <span key={rm.id} style={{fontSize:11,border:"1px solid "+(inRoom.length?C.border:"rgba(255,255,255,0.08)"),borderRadius:6,padding:"3px 9px",color:inRoom.length?C.text:C.mut}}>
                   <b>Room {rm.room_no}</b>
+                  <span style={{color:inRoom.length >= 2 ? C.grn : C.mut}}> {inRoom.length}/2</span>
                   <span style={{color:C.mut}}> · {inRoom.length ? inRoom.map(x => x.coach_name.split(" ")[0]).join(", ") : "empty"}</span>
                 </span>
               );
@@ -18573,7 +18616,7 @@ export default function App() {
                             <select style={{...inpStyle,padding:"4px 7px",fontSize:11,width:"100%"}} value={row.room_id ?? ""}
                               onChange={e => saveTravel(t.id, name, { room_id: e.target.value ? Number(e.target.value) : null })}>
                               <option value="">— none —</option>
-                              {rooms(t.id).map(rm => <option key={rm.id} value={rm.id}>{"Room " + rm.room_no}</option>)}
+                              {rooms(t.id).map(rm => <option key={rm.id} value={rm.id} disabled={roomIsFullFor(rm, row.room_id)}>{roomOptionLabel(rm)}</option>)}
                             </select>
                             {(() => { const n = roomNote({ ...row, coach_name: name }); return n ? (
                               <div style={{fontSize:9,marginTop:2,color:n.color,fontWeight:n.warn?700:500}}>{n.warn ? "⚠ " : ""}{n.text}</div>
