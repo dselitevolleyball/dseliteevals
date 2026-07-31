@@ -9457,7 +9457,7 @@ export default function App() {
                       </div>
                       {(room || t.own_room) && (
                         <div style={{color:C.mut,fontSize:11,marginTop:2,display:"flex",gap:12,flexWrap:"wrap"}}>
-                          <span>🏨 {room?.hotel_name || "Hotel TBD"}{room?.confirmation ? " · " + room.confirmation : ""}</span>
+                          <span>🏨 {room?.hotel_name || "Hotel TBD"}{room?.room_no ? " · Room " + room.room_no : ""}{room?.confirmation ? " · " + room.confirmation : ""}</span>
                           {mates.length > 0 && <span>rooming with {mates.join(", ")}</span>}
                           {t.own_room && <span style={{color:"#f59e0b"}}>private room · {money(coachOwes(t)) || "TBD"} from payroll</span>}
                         </div>
@@ -18280,6 +18280,43 @@ export default function App() {
   // Who else is in this coach's room. Assigning a private-room coach a roommate
   // is allowed on purpose — Rene coaches teams his daughters aren't on, so
   // whether he needs one varies by event. We surface the mismatch, never block it.
+  // Grow or shrink a tournament's room block to `want` rooms. Shrinking only
+  // removes empty rooms from the top — an occupied room is never silently
+  // deleted out from under the coach standing in it.
+  const setRoomCount = useCallback(async (tn, want) => {
+    const existing = travelRooms.filter(r => r.tournament_id === tn.id)
+      .sort((a, b) => (a.room_no || 0) - (b.room_no || 0));
+    const n = Math.max(0, Math.min(40, Math.floor(Number(want) || 0)));
+    if (n === existing.length) return;
+    if (n > existing.length) {
+      const hotel = existing[0]?.hotel_name || null;
+      const cost = existing[0]?.total_cost ?? null;
+      const rows = [];
+      for (let i = existing.length; i < n; i++) {
+        rows.push({ tournament_id: tn.id, room_no: i + 1, hotel_name: hotel, total_cost: cost });
+      }
+      const { error } = await supabase.from("coach_travel_rooms").insert(rows);
+      if (error) { window.alert("Add rooms failed: " + error.message); return; }
+    } else {
+      const occupied = new Set(coachTravel.filter(t => t.room_id).map(t => t.room_id));
+      const drop = existing.slice(n).filter(r => !occupied.has(r.id));
+      const kept = existing.slice(n).length - drop.length;
+      if (!drop.length) { window.alert("Those rooms still have coaches in them. Move them out first."); return; }
+      const { error } = await supabase.from("coach_travel_rooms").delete().in("id", drop.map(r => r.id));
+      if (error) { window.alert("Remove rooms failed: " + error.message); return; }
+      if (kept) window.alert("Removed " + drop.length + " empty room" + (drop.length===1?"":"s") + ". " + kept + " still had coaches assigned and were kept.");
+    }
+    loadCoachTravel();
+  }, [travelRooms, coachTravel, loadCoachTravel]);
+  // Apply a hotel name (or per-room cost) across every room in the block.
+  const setRoomsField = useCallback(async (tnId, patch) => {
+    const ids = travelRooms.filter(r => r.tournament_id === tnId).map(r => r.id);
+    if (!ids.length) return;
+    const { error } = await supabase.from("coach_travel_rooms").update({ ...patch, updated_at: new Date().toISOString() }).in("id", ids);
+    if (error) { window.alert("Save failed: " + error.message); return; }
+    loadCoachTravel();
+  }, [travelRooms, loadCoachTravel]);
+
   const roomMates = (row) => {
     if (!row?.room_id) return [];
     return coachTravel
@@ -18326,7 +18363,7 @@ export default function App() {
     if (!staff.length) return <div style={{fontSize:11,color:C.mut,fontStyle:"italic",padding:"8px 2px"}}>No coaches resolved yet — assign teams to this tournament first.</div>;
     const { rows } = travelTotals(tn.id);
     const rowFor = (n) => rows.find(r => r.coach_name === n) || {};
-    const rooms = travelRooms.filter(r => r.tournament_id === tn.id);
+    const rooms = travelRooms.filter(r => r.tournament_id === tn.id).sort((x, y) => (x.room_no || 0) - (y.room_no || 0));
     const inp = {...inpStyle,padding:"4px 7px",fontSize:11,width:"100%"};
     const air = tn.airfare_required !== false;   // NULL means not decided yet — assume flights
     const cols = air
@@ -18369,7 +18406,7 @@ export default function App() {
                     <select style={inp} value={r.room_id ?? ""}
                       onChange={e => saveTravel(tn.id, name, { room_id: e.target.value ? Number(e.target.value) : null })}>
                       <option value="">— none —</option>
-                      {rooms.map(rm => <option key={rm.id} value={rm.id}>{rm.hotel_name || "Room " + rm.id}</option>)}
+                      {rooms.map(rm => <option key={rm.id} value={rm.id}>{"Room " + rm.room_no}</option>)}
                     </select>
                     {(() => { const n = roomNote({ ...r, coach_name: name }); return n ? (
                       <div style={{fontSize:9,marginTop:2,color:n.color,fontWeight:n.warn?700:500}}>{n.warn ? "⚠ " : ""}{n.text}</div>
@@ -18390,39 +18427,43 @@ export default function App() {
             })}
           </tbody>
         </table>
-        <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginTop:10}}>
-          <span style={{fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut}}>Rooms</span>
-          {rooms.map(rm => (
-            <span key={rm.id} style={{fontSize:11,border:"1px solid "+C.border,borderRadius:6,padding:"3px 8px",color:C.text,display:"inline-flex",alignItems:"center",gap:6}}>
-              {rm.hotel_name || "Room " + rm.id}
-              <span style={{color:C.mut}}>· {rows.filter(x => x.room_id === rm.id).length} in room</span>
-              {/* Room total drives the 50% payroll deduction, so it lives here. */}
-              <DebouncedField style={{...inpStyle,padding:"2px 6px",fontSize:11,width:74}} type="number" placeholder="total $"
-                value={rm.total_cost ?? ""}
-                onCommit={async v => {
-                  const { error } = await supabase.from("coach_travel_rooms")
-                    .update({ total_cost: v === "" ? null : Number(v), updated_at: new Date().toISOString() }).eq("id", rm.id);
-                  if (error) { window.alert("Save failed: " + error.message); return; }
-                  loadCoachTravel();
-                }} />
-              <button onClick={async () => {
-                if (!window.confirm("Delete this room? Coaches in it will be unassigned.")) return;
-                const { error } = await supabase.from("coach_travel_rooms").delete().eq("id", rm.id);
-                if (error) { window.alert("Delete failed: " + error.message); return; }
-                loadCoachTravel();
-              }} style={{marginLeft:6,background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:11,fontWeight:800,padding:0}}>×</button>
-            </span>
-          ))}
-          <button onClick={async () => {
-            const nm = window.prompt("Hotel name for this room?", tn.venue || "");
-            if (nm === null) return;
-            const { error } = await supabase.from("coach_travel_rooms").insert({ tournament_id: tn.id, hotel_name: nm.trim() || null });
-            if (error) { window.alert("Add room failed: " + error.message); return; }
-            loadCoachTravel();
-          }} style={{padding:"3px 10px",borderRadius:6,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>+ Add room</button>
+        {/* Hotel block. The room COUNT is what Drew knows first — the hotel
+            name often comes later, so it is optional and rooms are numbered. */}
+        <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap",marginTop:12,paddingTop:10,borderTop:"1px solid "+C.border}}>
+          <span style={{fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut}}>Hotel block</span>
+          <DebouncedField style={{...inpStyle,padding:"4px 8px",fontSize:11,minWidth:210}}
+            placeholder="Hotel name — add it later if you don't know yet"
+            value={rooms[0]?.hotel_name ?? ""}
+            onCommit={v => setRoomsField(tn.id, { hotel_name: v.trim() || null })} />
+          <label style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:11,color:C.text,fontWeight:700}}>
+            Rooms
+            <input type="number" min="0" max="40" defaultValue={rooms.length} key={"rc-"+tn.id+"-"+rooms.length}
+              onBlur={e => setRoomCount(tn, e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
+              style={{...inpStyle,padding:"4px 6px",fontSize:11,width:56,textAlign:"center"}} />
+          </label>
+          <label style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:11,color:C.mut}}>
+            each
+            <DebouncedField style={{...inpStyle,padding:"4px 6px",fontSize:11,width:80}} type="number" placeholder="$ / room"
+              value={rooms[0]?.total_cost ?? ""}
+              onCommit={v => setRoomsField(tn.id, { total_cost: v === "" ? null : Number(v) })} />
+          </label>
         </div>
+        {rooms.length > 0 && (
+          <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:8}}>
+            {rooms.map(rm => {
+              const inRoom = rows.filter(x => x.room_id === rm.id);
+              return (
+                <span key={rm.id} style={{fontSize:11,border:"1px solid "+(inRoom.length?C.border:"rgba(255,255,255,0.08)"),borderRadius:6,padding:"3px 9px",color:inRoom.length?C.text:C.mut}}>
+                  <b>Room {rm.room_no}</b>
+                  <span style={{color:C.mut}}> · {inRoom.length ? inRoom.map(x => x.coach_name.split(" ")[0]).join(", ") : "empty"}</span>
+                </span>
+              );
+            })}
+          </div>
+        )}
         <div style={{fontSize:10,color:C.mut,marginTop:6,fontStyle:"italic"}}>
-          Two coaches sharing? Put them on the same room. "Their $" is that coach's share; "Club pays" is how much of it the club covers.
+          Set how many rooms you need, then pick a room per coach above. Two coaches on the same room are sharing it. "Own room" charges that coach 50% of the room via payroll.
         </div>
       </div>
     );
@@ -18497,7 +18538,7 @@ export default function App() {
             t, name, row: coachTravel.find(r => r.tournament_id === t.id && r.coach_name === name) || {},
           })));
           const shown = travelNeedsOnly ? trips.filter(x => tripNeedsBooking(x.row)) : trips;
-          const rooms = (tnId) => travelRooms.filter(r => r.tournament_id === tnId);
+          const rooms = (tnId) => travelRooms.filter(r => r.tournament_id === tnId).sort((x, y) => (x.room_no || 0) - (y.room_no || 0));
           const short = (s, n) => (s || "").length > n ? (s || "").slice(0, n - 1) + "…" : (s || "");
           return (
             <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,overflow:"hidden"}}>
@@ -18529,7 +18570,7 @@ export default function App() {
                             <select style={{...inpStyle,padding:"4px 7px",fontSize:11,width:"100%"}} value={row.room_id ?? ""}
                               onChange={e => saveTravel(t.id, name, { room_id: e.target.value ? Number(e.target.value) : null })}>
                               <option value="">— none —</option>
-                              {rooms(t.id).map(rm => <option key={rm.id} value={rm.id}>{rm.hotel_name || "Room " + rm.id}</option>)}
+                              {rooms(t.id).map(rm => <option key={rm.id} value={rm.id}>{"Room " + rm.room_no}</option>)}
                             </select>
                             {(() => { const n = roomNote({ ...row, coach_name: name }); return n ? (
                               <div style={{fontSize:9,marginTop:2,color:n.color,fontWeight:n.warn?700:500}}>{n.warn ? "⚠ " : ""}{n.text}</div>
