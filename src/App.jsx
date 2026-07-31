@@ -18283,7 +18283,10 @@ export default function App() {
   // Grow or shrink a tournament's room block to `want` rooms. Shrinking only
   // removes empty rooms from the top — an occupied room is never silently
   // deleted out from under the coach standing in it.
-  const setRoomCount = useCallback(async (tn, want) => {
+  // Plain functions, NOT useCallback: everything below here sits after the
+  // component's `if (!session)` / `if (!coach.is_approved)` early returns, so a
+  // hook here runs on some renders and not others — React error #310.
+  const setRoomCount = async (tn, want) => {
     const existing = travelRooms.filter(r => r.tournament_id === tn.id)
       .sort((a, b) => (a.room_no || 0) - (b.room_no || 0));
     const n = Math.max(0, Math.min(40, Math.floor(Number(want) || 0)));
@@ -18307,15 +18310,15 @@ export default function App() {
       if (kept) window.alert("Removed " + drop.length + " empty room" + (drop.length===1?"":"s") + ". " + kept + " still had coaches assigned and were kept.");
     }
     loadCoachTravel();
-  }, [travelRooms, coachTravel, loadCoachTravel]);
+  };
   // Apply a hotel name (or per-room cost) across every room in the block.
-  const setRoomsField = useCallback(async (tnId, patch) => {
+  const setRoomsField = async (tnId, patch) => {
     const ids = travelRooms.filter(r => r.tournament_id === tnId).map(r => r.id);
     if (!ids.length) return;
     const { error } = await supabase.from("coach_travel_rooms").update({ ...patch, updated_at: new Date().toISOString() }).in("id", ids);
     if (error) { window.alert("Save failed: " + error.message); return; }
     loadCoachTravel();
-  }, [travelRooms, loadCoachTravel]);
+  };
 
   const roomMates = (row) => {
     if (!row?.room_id) return [];
