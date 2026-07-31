@@ -42,6 +42,14 @@ const hawaiiMeta = (s) => HAWAII_STATUS[s] || HAWAII_STATUS.not_asked;
 // like "TBD" mean a coach still needs to be found, so the conflict must remain.
 const TN_SUB_PLACEHOLDERS = new Set(["tbd", "tba", "t.b.d.", "?", "??", "???", "-", "--", "—", "n/a", "na", "none", "pending", "sub", "open", "needed", "?tbd"]);
 const isRealSub = (s) => { const v = String(s || "").trim().toLowerCase(); return !!v && !TN_SUB_PLACEHOLDERS.has(v); };
+// Slot names that aren't people: "13-1 Assistant Coach", "Tournament Floater
+// Coach". The exact-match set above misses these, which is fine for the sub
+// warnings it was written for but not for anything that books a flight or a
+// hotel room. Mirrors the test in api/gear-reminders.js.
+const isPlaceholderPerson = (s) => {
+  const v = String(s || "").trim();
+  return !v || TN_SUB_PLACEHOLDERS.has(v.toLowerCase()) || /new coach|floater coach|assistant coach$/i.test(v);
+};
 // True only when a coach clash is genuinely handled: a real replacement is
 // named, OR it was explicitly overridden with no sub at all (not a placeholder).
 const tnConflictHandled = (a) => { const sub = String(a?.sub_coach || "").trim(); if (isRealSub(sub)) return true; return !!(a?.ignore_conflict && !sub); };
@@ -3493,7 +3501,7 @@ export default function App() {
       const eff = tnEffectiveStaff(a, t ? { head_coach: t.head_coach, assistant_coach: t.assistant_coach } : null);
       [eff.head, eff.asst, a.sub_coach].forEach(n => {
         const v = String(n || "").trim();
-        if (v && !tnIsPlaceholder(v)) names.add(v);
+        if (v && !isPlaceholderPerson(v)) names.add(v);
       });
     }
     return [...names].sort((a, b) => a.localeCompare(b));
@@ -9447,11 +9455,11 @@ export default function App() {
                         {t.ticket_number && <span>ticket {t.ticket_number}</span>}
                         {money(t.flight_cost) && <span>{money(t.flight_cost)}</span>}
                       </div>
-                      {(room || t.hotel_cost != null) && (
+                      {(room || t.own_room) && (
                         <div style={{color:C.mut,fontSize:11,marginTop:2,display:"flex",gap:12,flexWrap:"wrap"}}>
                           <span>🏨 {room?.hotel_name || "Hotel TBD"}{room?.confirmation ? " · " + room.confirmation : ""}</span>
                           {mates.length > 0 && <span>rooming with {mates.join(", ")}</span>}
-                          {money(t.hotel_cost) && <span>your share {money(t.hotel_cost)}{money(t.hotel_club_pays) ? " · club covers " + money(t.hotel_club_pays) : ""}</span>}
+                          {t.own_room && <span style={{color:"#f59e0b"}}>private room · {money(coachOwes(t)) || "TBD"} from payroll</span>}
                         </div>
                       )}
                     </div>
@@ -18260,14 +18268,42 @@ export default function App() {
     return p === "AES" ? "https://www.advancedeventsystems.com/" : p === "SportWrench" ? "https://events.sportwrench.com/" : "";
   };
 
+  // A coach who requires their own room pays half of it out of payroll; the
+  // club covers the rest. Derived from the room total rather than typed, so the
+  // split can't drift from what was actually booked.
+  const OWN_ROOM_SHARE = 0.5;
+  const coachOwes = (row) => {
+    if (!row?.own_room) return 0;
+    const room = travelRooms.find(r => r.id === row.room_id);
+    return (Number(room?.total_cost) || 0) * OWN_ROOM_SHARE;
+  };
+  // Who else is in this coach's room. Assigning a private-room coach a roommate
+  // is allowed on purpose — Rene coaches teams his daughters aren't on, so
+  // whether he needs one varies by event. We surface the mismatch, never block it.
+  const roomMates = (row) => {
+    if (!row?.room_id) return [];
+    return coachTravel
+      .filter(t => t.room_id === row.room_id && t.coach_name !== row.coach_name)
+      .map(t => t.coach_name);
+  };
+  const roomNote = (row) => {
+    if (!row?.room_id) return null;
+    const mates = roomMates(row);
+    if (!mates.length) return { text: "alone", color: C.mut, warn: false };
+    return { text: "with " + mates.join(", "), color: row.own_room ? "#f59e0b" : C.grn, warn: !!row.own_room };
+  };
   // Money + booking totals for one tournament's travel.
   const travelTotals = (tnId) => {
     const rows = coachTravel.filter(t => t.tournament_id === tnId);
+    const roomTotal = travelRooms.filter(r => r.tournament_id === tnId)
+      .reduce((s, r) => s + (Number(r.total_cost) || 0), 0);
+    const coach = rows.reduce((s, r) => s + coachOwes(r), 0);
     return {
       rows,
       flights: rows.reduce((s, r) => s + (Number(r.flight_cost) || 0), 0),
-      hotel:   rows.reduce((s, r) => s + (Number(r.hotel_cost) || 0), 0),
-      club:    rows.reduce((s, r) => s + (Number(r.hotel_club_pays) || 0), 0),
+      hotel:   roomTotal,
+      coach,
+      club:    Math.max(0, roomTotal - coach),
       ticketed: rows.filter(r => String(r.ticket_number || "").trim()).length,
     };
   };
@@ -18292,10 +18328,25 @@ export default function App() {
     const rowFor = (n) => rows.find(r => r.coach_name === n) || {};
     const rooms = travelRooms.filter(r => r.tournament_id === tn.id);
     const inp = {...inpStyle,padding:"4px 7px",fontSize:11,width:"100%"};
+    const air = tn.airfare_required !== false;   // NULL means not decided yet — assume flights
+    const cols = air
+      ? ["Coach","Airline","Out","Back","Flight $","Ticket #","Room","Own room","Payroll deduction"]
+      : ["Coach","Room","Own room","Payroll deduction"];
     return (
       <div style={{overflowX:"auto"}}>
-        <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0,minWidth:900,fontSize:11}}>
-          <thead><tr>{["Coach","Airline","Out","Back","Flight $","Ticket #","Room","Their $","Club pays"].map(h =>
+        {/* Drive-able events shouldn't ask for a flight number. Off = hotel only. */}
+        <label style={{display:"inline-flex",alignItems:"center",gap:6,cursor:"pointer",marginBottom:8,fontSize:11,fontWeight:700,color:air?C.text:C.mut}}>
+          <input type="checkbox" checked={air} style={{width:14,height:14,accentColor:C.gold,cursor:"pointer"}}
+            onChange={async e => {
+              const val = e.target.checked;
+              setTournaments(prev => prev.map(x => x.id === tn.id ? { ...x, airfare_required: val } : x));
+              const { error } = await supabase.from("tournaments").update({ airfare_required: val }).eq("id", tn.id);
+              if (error) { window.alert("Save failed: " + error.message); loadTournaments(); }
+            }} />
+          Airfare required {air ? "" : "— driving, hotel only"}
+        </label>
+        <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0,minWidth:air?900:460,fontSize:11}}>
+          <thead><tr>{cols.map(h =>
             <th key={h} style={{padding:"5px 7px",textAlign:"left",fontSize:9,fontWeight:700,textTransform:"uppercase",color:C.mut,borderBottom:"1px solid "+C.border,whiteSpace:"nowrap"}}>{h}</th>)}</tr></thead>
           <tbody>
             {staff.map(name => {
@@ -18309,20 +18360,31 @@ export default function App() {
               return (
                 <tr key={name}>
                   <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,fontWeight:700,whiteSpace:"nowrap"}}>{name}</td>
-                  {f("airline","Southwest")}
-                  {f("depart_date","","date")}
-                  {f("return_date","","date")}
-                  {f("flight_cost","0","number")}
-                  {f("ticket_number","ABC123")}
+                  {air && f("airline","Southwest")}
+                  {air && f("depart_date","","date")}
+                  {air && f("return_date","","date")}
+                  {air && f("flight_cost","0","number")}
+                  {air && f("ticket_number","ABC123")}
                   <td style={{padding:"3px 5px",borderBottom:"1px solid "+C.border}}>
                     <select style={inp} value={r.room_id ?? ""}
                       onChange={e => saveTravel(tn.id, name, { room_id: e.target.value ? Number(e.target.value) : null })}>
                       <option value="">— none —</option>
                       {rooms.map(rm => <option key={rm.id} value={rm.id}>{rm.hotel_name || "Room " + rm.id}</option>)}
                     </select>
+                    {(() => { const n = roomNote({ ...r, coach_name: name }); return n ? (
+                      <div style={{fontSize:9,marginTop:2,color:n.color,fontWeight:n.warn?700:500}}>{n.warn ? "⚠ " : ""}{n.text}</div>
+                    ) : null; })()}
                   </td>
-                  {f("hotel_cost","0","number")}
-                  {f("hotel_club_pays","0","number")}
+                  <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,textAlign:"center"}}>
+                    <input type="checkbox" checked={!!r.own_room} style={{width:14,height:14,accentColor:C.gold,cursor:"pointer"}}
+                      title="Private room — 50% of the room cost comes out of their paycheck. Can still be given a roommate if plans change."
+                      onChange={e => saveTravel(tn.id, name, { own_room: e.target.checked })} />
+                  </td>
+                  <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,whiteSpace:"nowrap",fontWeight:700,color:r.own_room?"#f59e0b":C.mut}}>
+                    {r.own_room
+                      ? (coachOwes(r) ? travelMoney(coachOwes(r)) : <span style={{fontWeight:500,fontStyle:"italic"}}>set room cost</span>)
+                      : "—"}
+                  </td>
                 </tr>
               );
             })}
@@ -18331,9 +18393,18 @@ export default function App() {
         <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginTop:10}}>
           <span style={{fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut}}>Rooms</span>
           {rooms.map(rm => (
-            <span key={rm.id} style={{fontSize:11,border:"1px solid "+C.border,borderRadius:6,padding:"3px 8px",color:C.text}}>
+            <span key={rm.id} style={{fontSize:11,border:"1px solid "+C.border,borderRadius:6,padding:"3px 8px",color:C.text,display:"inline-flex",alignItems:"center",gap:6}}>
               {rm.hotel_name || "Room " + rm.id}
-              <span style={{color:C.mut}}> · {rows.filter(x => x.room_id === rm.id).length} in room</span>
+              <span style={{color:C.mut}}>· {rows.filter(x => x.room_id === rm.id).length} in room</span>
+              {/* Room total drives the 50% payroll deduction, so it lives here. */}
+              <DebouncedField style={{...inpStyle,padding:"2px 6px",fontSize:11,width:74}} type="number" placeholder="total $"
+                value={rm.total_cost ?? ""}
+                onCommit={async v => {
+                  const { error } = await supabase.from("coach_travel_rooms")
+                    .update({ total_cost: v === "" ? null : Number(v), updated_at: new Date().toISOString() }).eq("id", rm.id);
+                  if (error) { window.alert("Save failed: " + error.message); return; }
+                  loadCoachTravel();
+                }} />
               <button onClick={async () => {
                 if (!window.confirm("Delete this room? Coaches in it will be unassigned.")) return;
                 const { error } = await supabase.from("coach_travel_rooms").delete().eq("id", rm.id);
@@ -18370,9 +18441,9 @@ export default function App() {
     const list = travelPast ? all : all.filter(x => (x.t.end_date || x.t.start_date) >= today);
     const grand = list.reduce((acc, x) => {
       const v = travelTotals(x.t.id);
-      return { flights: acc.flights + v.flights, club: acc.club + v.club, coach: acc.coach + (v.hotel - v.club),
+      return { flights: acc.flights + v.flights, hotel: acc.hotel + v.hotel, club: acc.club + v.club, coach: acc.coach + v.coach,
                seats: acc.seats + x.staff.length, ticketed: acc.ticketed + v.ticketed };
-    }, { flights: 0, club: 0, coach: 0, seats: 0, ticketed: 0 });
+    }, { flights: 0, hotel: 0, club: 0, coach: 0, seats: 0, ticketed: 0 });
     const stat = (label, value, color) => (
       <div style={{border:"1px solid "+C.border,borderLeft:"3px solid "+(color||C.gold),borderRadius:8,padding:"8px 14px",minWidth:110,background:C.card}}>
         <div style={{fontSize:19,fontWeight:800,color:color||C.gold,lineHeight:1.15}}>{value}</div>
@@ -18414,8 +18485,9 @@ export default function App() {
           {stat("Coach trips", grand.seats)}
           {stat("Ticketed", grand.ticketed + "/" + grand.seats, grand.ticketed === grand.seats && grand.seats ? C.grn : "#f59e0b")}
           {stat("Flights", travelMoney(grand.flights) || "$0", "#38bdf8")}
-          {stat("Club hotel", travelMoney(grand.club) || "$0", "#38bdf8")}
-          {stat("Coach hotel", travelMoney(grand.coach) || "$0", C.mut)}
+          {stat("Hotel total", travelMoney(grand.hotel) || "$0", "#38bdf8")}
+          {stat("Club pays", travelMoney(grand.club) || "$0", "#38bdf8")}
+          {stat("Payroll deducted", travelMoney(grand.coach) || "$0", "#f59e0b")}
         </div>
         {/* Flat booking list — every coach trip on one screen, nothing hidden
             behind an expander. This is the view for actually sitting down and
@@ -18431,7 +18503,7 @@ export default function App() {
             <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,overflow:"hidden"}}>
               <div style={{overflowX:"auto"}}>
                 <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0,minWidth:1120,fontSize:11}}>
-                  <thead><tr>{["","Tournament","Dates","Coach","Airline","Out","Back","Flight $","Ticket #","Hotel room","Their $","Club pays"].map((h,i) =>
+                  <thead><tr>{["","Tournament","Dates","Coach","Airline","Out","Back","Flight $","Ticket #","Hotel room","Own room","Payroll"].map((h,i) =>
                     <th key={i} style={{padding:"6px 7px",textAlign:"left",fontSize:9,fontWeight:700,textTransform:"uppercase",color:C.mut,borderBottom:"1px solid "+C.border,whiteSpace:"nowrap",position:"sticky",top:0,background:C.card}}>{h}</th>)}</tr></thead>
                   <tbody>
                     {shown.map(({ t, name, row }, i) => {
@@ -18459,9 +18531,18 @@ export default function App() {
                               <option value="">— none —</option>
                               {rooms(t.id).map(rm => <option key={rm.id} value={rm.id}>{rm.hotel_name || "Room " + rm.id}</option>)}
                             </select>
+                            {(() => { const n = roomNote({ ...row, coach_name: name }); return n ? (
+                              <div style={{fontSize:9,marginTop:2,color:n.color,fontWeight:n.warn?700:500}}>{n.warn ? "⚠ " : ""}{n.text}</div>
+                            ) : null; })()}
                           </td>
-                          {travelCell(t.id, name, row, "hotel_cost", "0", "number")}
-                          {travelCell(t.id, name, row, "hotel_club_pays", "0", "number")}
+                          <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,textAlign:"center"}}>
+                            <input type="checkbox" checked={!!row.own_room} style={{width:14,height:14,accentColor:C.gold,cursor:"pointer"}}
+                              title="Private room — 50% of the room cost comes out of their paycheck"
+                              onChange={e => saveTravel(t.id, name, { own_room: e.target.checked })} />
+                          </td>
+                          <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,whiteSpace:"nowrap",fontWeight:700,color:row.own_room?"#f59e0b":C.mut}}>
+                            {row.own_room ? (coachOwes(row) ? travelMoney(coachOwes(row)) : "set room $") : "—"}
+                          </td>
                         </tr>
                       );
                     })}
