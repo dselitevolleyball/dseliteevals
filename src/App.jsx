@@ -3523,13 +3523,35 @@ export default function App() {
     setCoachTravel(t || []);
     setTravelRooms(r || []);
   }, []);
-  const saveTravel = useCallback(async (tournamentId, coachName, patch) => {
-    const row = { tournament_id: tournamentId, coach_name: coachName, ...patch,
+  // owner = null for club travel, or a user id for a private (family) row. It's
+  // part of the unique key, so it has to be on every upsert or a private row
+  // would collide with the club row of the same name.
+  const saveTravel = useCallback(async (tournamentId, coachName, patch, owner = null) => {
+    const row = { tournament_id: tournamentId, coach_name: coachName, private_owner: owner, ...patch,
       updated_by: coach?.display_name || coach?.email || null, updated_at: new Date().toISOString() };
-    const { error } = await supabase.from("coach_travel").upsert(row, { onConflict: "tournament_id,coach_name" });
+    const { error } = await supabase.from("coach_travel").upsert(row, { onConflict: "tournament_id,coach_name,private_owner" });
     if (error) { window.alert("Travel save failed: " + error.message); return; }
     loadCoachTravel();
   }, [coach, loadCoachTravel]);
+  // Add someone to a tournament by hand: a coach whose team isn't going, or a
+  // family member (private, owner-only).
+  const addTraveler = useCallback(async (tournamentId, name, kind) => {
+    const clean = String(name || "").trim();
+    if (!clean) return;
+    const owner = kind === "family" ? (coach?.id || null) : null;
+    const { error } = await supabase.from("coach_travel").upsert(
+      { tournament_id: tournamentId, coach_name: clean, private_owner: owner, traveler_type: kind,
+        updated_by: coach?.display_name || coach?.email || null, updated_at: new Date().toISOString() },
+      { onConflict: "tournament_id,coach_name,private_owner" }
+    );
+    if (error) { window.alert("Add failed: " + error.message); return; }
+    loadCoachTravel();
+  }, [coach, loadCoachTravel]);
+  const removeTraveler = useCallback(async (rowId) => {
+    const { error } = await supabase.from("coach_travel").delete().eq("id", rowId);
+    if (error) { window.alert("Remove failed: " + error.message); return; }
+    loadCoachTravel();
+  }, [loadCoachTravel]);
   useEffect(() => {
     if (isApproved && (view === "tournaments" || view === "coaches" || view === "home" || view === "travel")) loadCoachTravel();
   }, [isApproved, view, loadCoachTravel]);
@@ -18454,9 +18476,14 @@ export default function App() {
     if (!mates.length) return { text: "alone", color: C.mut, warn: false };
     return { text: "with " + mates.join(", "), color: row.own_room ? "#f59e0b" : C.grn, warn: !!row.own_room };
   };
+  // Club travel only. Family rows are personal spend and never roll into the
+  // club's flight or hotel numbers.
+  const isFamilyRow = (r) => r?.traveler_type === "family" || !!r?.private_owner;
+  const clubRowsFor = (tnId) => coachTravel.filter(t => t.tournament_id === tnId && !isFamilyRow(t));
+  const familyRowsFor = (tnId) => coachTravel.filter(t => t.tournament_id === tnId && isFamilyRow(t));
   // Money + booking totals for one tournament's travel.
   const travelTotals = (tnId) => {
-    const rows = coachTravel.filter(t => t.tournament_id === tnId);
+    const rows = clubRowsFor(tnId);
     const roomTotal = travelRooms.filter(r => r.tournament_id === tnId)
       .reduce((s, r) => s + (Number(r.total_cost) || 0), 0);
     const coach = rows.reduce((s, r) => s + coachOwes(r), 0);
@@ -18484,9 +18511,15 @@ export default function App() {
   // The travel editor itself. Shared by the tournament card and the Travel
   // screen so there's one implementation to keep correct, not two.
   function renderTravelPlanner(tn) {
-    const staff = travelStaffFor(tn.id);
-    if (!staff.length) return <div style={{fontSize:11,color:C.mut,fontStyle:"italic",padding:"8px 2px"}}>No coaches resolved yet — assign teams to this tournament first.</div>;
+    // Derived staff, plus anyone added by hand — a coach whose team isn't going
+    // still needs flights booked, and the derivation can't know about them.
+    const derived = travelStaffFor(tn.id);
     const { rows } = travelTotals(tn.id);
+    const extraNames = rows.map(r => r.coach_name).filter(n => !derived.includes(n));
+    const staff = [...derived, ...extraNames];
+    const isExtra = (n) => extraNames.includes(n);
+    const family = isOwner ? familyRowsFor(tn.id) : [];
+    if (!staff.length && !family.length) return <div style={{fontSize:11,color:C.mut,fontStyle:"italic",padding:"8px 2px"}}>No coaches resolved yet — assign teams, or add someone by hand below.</div>;
     const rowFor = (n) => rows.find(r => r.coach_name === n) || {};
     const rooms = travelRooms.filter(r => r.tournament_id === tn.id).sort((x, y) => (x.room_no || 0) - (y.room_no || 0));
     const inp = {...inpStyle,padding:"4px 7px",fontSize:11,width:"100%"};
@@ -18521,7 +18554,17 @@ export default function App() {
               );
               return (
                 <tr key={name}>
-                  <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,fontWeight:700,whiteSpace:"nowrap"}}>{name}</td>
+                  <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,fontWeight:700,whiteSpace:"nowrap"}}>
+                    {name}
+                    {isExtra(name) && (
+                      <>
+                        <span title="Added by hand — their team isn't at this tournament"
+                          style={{marginLeft:6,padding:"1px 5px",borderRadius:4,fontSize:8,fontWeight:800,textTransform:"uppercase",border:"1px solid "+C.gold,color:C.gold}}>added</span>
+                        <button onClick={() => { const row = rowFor(name); if (row.id && window.confirm("Remove " + name + " from this tournament's travel?")) removeTraveler(row.id); }}
+                          style={{marginLeft:5,background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:11,fontWeight:800,padding:0}}>×</button>
+                      </>
+                    )}
+                  </td>
                   {air && f("airline","Southwest")}
                   {air && f("depart_date","","date")}
                   {air && f("return_date","","date")}
@@ -18617,6 +18660,73 @@ export default function App() {
         <div style={{fontSize:10,color:C.mut,marginTop:6,fontStyle:"italic"}}>
           Set how many rooms you need, then pick a room per coach above. Two coaches on the same room are sharing it. "Own room" charges that coach 50% of the room via payroll.
         </div>
+        {/* Add a coach whose team isn't going to this tournament. */}
+        <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",marginTop:10,paddingTop:10,borderTop:"1px solid "+C.border}}>
+          <span style={{fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut}}>Add a coach</span>
+          <input list={"tvl-coaches-"+tn.id} id={"tvl-add-"+tn.id} placeholder="Name…"
+            style={{...inpStyle,padding:"4px 8px",fontSize:11,minWidth:180}}
+            onKeyDown={e => { if (e.key === "Enter") { addTraveler(tn.id, e.currentTarget.value, "coach"); e.currentTarget.value = ""; } }} />
+          <datalist id={"tvl-coaches-"+tn.id}>
+            {coachRoster.map(r => {
+              const n = ((r.first_name||"") + " " + (r.last_name||"")).trim();
+              return n && !staff.includes(n) ? <option key={r.id} value={n} /> : null;
+            })}
+          </datalist>
+          <button onClick={() => { const el = document.getElementById("tvl-add-"+tn.id); if (el) { addTraveler(tn.id, el.value, "coach"); el.value = ""; } }}
+            style={{padding:"4px 11px",borderRadius:6,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Add</button>
+          <span style={{fontSize:10,color:C.mut,fontStyle:"italic"}}>for a coach going without their team</span>
+        </div>
+        {/* Private: only the owner sees this, enforced in RLS not just here. */}
+        {isOwner && (
+          <div style={{marginTop:10,paddingTop:10,borderTop:"1px dashed "+C.border}}>
+            <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",marginBottom:6}}>
+              <span style={{fontSize:10,fontWeight:800,textTransform:"uppercase",color:"#a855f7"}}>🔒 My family</span>
+              <span style={{fontSize:10,color:C.mut,fontStyle:"italic"}}>private — not visible to any other admin, and excluded from club totals</span>
+            </div>
+            {family.length > 0 && (
+              <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0,minWidth:air?820:400,fontSize:11,marginBottom:6}}>
+                <thead><tr>{(air ? ["Traveller","Airline","Out","Back","Flight $","Ticket #","Room"] : ["Traveller","Room"]).map(h =>
+                  <th key={h} style={{padding:"4px 7px",textAlign:"left",fontSize:9,fontWeight:700,textTransform:"uppercase",color:C.mut,borderBottom:"1px solid "+C.border,whiteSpace:"nowrap"}}>{h}</th>)}
+                  <th style={{borderBottom:"1px solid "+C.border}} /></tr></thead>
+                <tbody>
+                  {family.map(r => {
+                    const ff = (k, ph, type) => (
+                      <td style={{padding:"3px 5px",borderBottom:"1px solid "+C.border}}>
+                        <DebouncedField style={inp} type={type} placeholder={ph} value={r[k] ?? ""}
+                          onCommit={v => saveTravel(tn.id, r.coach_name, { [k]: v === "" ? null : v, traveler_type: "family" }, coach?.id || null)} />
+                      </td>
+                    );
+                    return (
+                      <tr key={r.id}>
+                        <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,fontWeight:700,whiteSpace:"nowrap",color:"#a855f7"}}>{r.coach_name}</td>
+                        {air && ff("airline","Southwest")}
+                        {air && ff("depart_date","","date")}
+                        {air && ff("return_date","","date")}
+                        {air && ff("flight_cost","0","number")}
+                        {air && ff("ticket_number","ABC123")}
+                        {ff("notes","hotel / room notes")}
+                        <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,textAlign:"right"}}>
+                          <button onClick={() => { if (window.confirm("Remove " + r.coach_name + " from this trip?")) removeTraveler(r.id); }}
+                            style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:12,fontWeight:800,padding:0}}>×</button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+            <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+              <input list={"tvl-fam-"+tn.id} id={"tvl-famadd-"+tn.id} placeholder="Ashley, Emilia…"
+                style={{...inpStyle,padding:"4px 8px",fontSize:11,minWidth:180}}
+                onKeyDown={e => { if (e.key === "Enter") { addTraveler(tn.id, e.currentTarget.value, "family"); e.currentTarget.value = ""; } }} />
+              <datalist id={"tvl-fam-"+tn.id}>
+                {[...new Set(coachTravel.filter(isFamilyRow).map(r => r.coach_name))].map(n => <option key={n} value={n} />)}
+              </datalist>
+              <button onClick={() => { const el = document.getElementById("tvl-famadd-"+tn.id); if (el) { addTraveler(tn.id, el.value, "family"); el.value = ""; } }}
+                style={{padding:"4px 11px",borderRadius:6,border:"1px solid #a855f7",background:"transparent",color:"#a855f7",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Add family traveller</button>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
