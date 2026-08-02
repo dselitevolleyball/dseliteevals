@@ -19093,6 +19093,31 @@ export default function App() {
             })}
           </div>
         )}
+        {/* Headline cost: what the club actually pays out — flights plus the
+            hotel after the own-room deductions coaches repay. Reflects whatever
+            filters are on, so a team or airfare selection re-totals with it. */}
+        {(() => {
+          const clubOut = grand.flights + grand.club;
+          const gross = grand.flights + grand.hotel;
+          return (
+            <div style={{border:"1px solid "+C.gold,borderLeft:"4px solid "+C.gold,borderRadius:10,padding:"12px 18px",marginBottom:10,
+              background:"rgba(212,175,55,0.06)",display:"flex",alignItems:"baseline",gap:14,flexWrap:"wrap"}}>
+              <div>
+                <div style={{fontSize:28,fontWeight:800,color:C.gold,lineHeight:1.05}}>{travelMoney(clubOut) || "$0"}</div>
+                <div style={{fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut}}>Total travel cost to the club</div>
+              </div>
+              <div style={{fontSize:11,color:C.mut,lineHeight:1.7}}>
+                {travelMoney(grand.flights) || "$0"} flights + {travelMoney(grand.club) || "$0"} hotel
+                {grand.coach > 0 && <> · {travelMoney(grand.coach)} of the {travelMoney(gross)} gross comes back via payroll</>}
+              </div>
+              <div style={{flex:1}} />
+              <div style={{fontSize:11,color:C.mut,textAlign:"right"}}>
+                across {list.length} event{list.length===1?"":"s"} · {grand.seats} coach trip{grand.seats===1?"":"s"}
+                {(travelAirOnly || travelTeams.size > 0 || !travelPast) && <div style={{fontSize:10,fontStyle:"italic"}}>filtered view</div>}
+              </div>
+            </div>
+          );
+        })()}
         <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:16}}>
           {stat("Coach trips", grand.seats)}
           {stat("Arranged", grand.ticketed + "/" + grand.seats, grand.ticketed === grand.seats && grand.seats ? C.grn : "#f59e0b")}
@@ -19188,6 +19213,13 @@ export default function App() {
                 </div>
                 <span style={{fontSize:11,color:C.mut}}>{staff.length} coach{staff.length===1?"":"es"}</span>
                 <span style={{fontSize:11,fontWeight:700,color:done?C.grn:"#f59e0b"}}>{v.ticketed}/{staff.length} arranged</span>
+                {(v.flights + v.club) > 0 && (
+                  <span style={{fontSize:12,fontWeight:800,color:C.gold,whiteSpace:"nowrap"}}
+                    title={"Flights " + (travelMoney(v.flights) || "$0") + " + hotel " + (travelMoney(v.club) || "$0")
+                      + (v.coach > 0 ? " (after " + travelMoney(v.coach) + " repaid via payroll)" : "")}>
+                    {travelMoney(v.flights + v.club)}
+                  </span>
+                )}
                 {v.flights>0 && <span style={{fontSize:11,color:C.mut}}>✈ {travelMoney(v.flights)}</span>}
                 {v.club>0 && <span style={{fontSize:11,color:C.mut}}>🏨 {travelMoney(v.club)}</span>}
                 <span style={{fontSize:11,color:C.gold,fontWeight:700}}>{open ? "hide" : "plan →"}</span>
@@ -19466,6 +19498,7 @@ export default function App() {
                 <span style={{fontSize:11,fontWeight:800,textTransform:"uppercase",color:C.mut}}>✈ Coach travel</span>
                 <span style={{fontSize:11,color:C.text,fontWeight:700}}>{staff.length} traveling</span>
                 <span style={{fontSize:11,color:t.ticketed===staff.length?C.grn:C.mut}}>{t.ticketed}/{staff.length} arranged</span>
+                {(t.flights + t.club) > 0 && <span style={{fontSize:11,fontWeight:800,color:C.gold}}>{travelMoney(t.flights + t.club)} total</span>}
                 {t.flights>0 && <span style={{fontSize:11,color:C.mut}}>flights {travelMoney(t.flights)}</span>}
                 {t.club>0 && <span style={{fontSize:11,color:C.mut}}>club hotel {travelMoney(t.club)}</span>}
                 <span style={{marginLeft:"auto",fontSize:11,color:C.gold,fontWeight:700}}>{open ? "hide" : "plan travel →"}</span>
