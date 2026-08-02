@@ -1370,6 +1370,7 @@ export default function App() {
   const [travelTeams, setTravelTeams]       = useState(() => new Set()); // team filter on Travel; empty = all teams
   const [coachTravel, setCoachTravel]       = useState([]); // coach_travel rows (RLS: admins all, coaches their own)
   const [travelRooms, setTravelRooms]       = useState([]); // coach_travel_rooms rows
+  const [masterFlights, setMasterFlights]   = useState([]); // travel_master_flights, one per tournament
   const [clinicBusy, setClinicBusy]     = useState("");     // key of clinic action in flight
   const [drills, setDrills]     = useState([]);     // shared drill library
   const [drillFilter, setDrillFilter] = useState({ q:"", skill:"", phase:"" });
@@ -3514,14 +3515,17 @@ export default function App() {
   // Coach travel for stay-over tournaments. RLS returns every row to admins and
   // only their own to a coach, so the same load works for both — no branching.
   const loadCoachTravel = useCallback(async () => {
-    const [{ data: t, error: te }, { data: r, error: re }] = await Promise.all([
+    const [{ data: t, error: te }, { data: r, error: re }, { data: m, error: me }] = await Promise.all([
       supabase.from("coach_travel").select("*"),
       supabase.from("coach_travel_rooms").select("*"),
+      supabase.from("travel_master_flights").select("*"),
     ]);
     if (te) { console.error("Load coach_travel error:", te); return; }
     if (re) console.error("Load coach_travel_rooms error:", re);
+    if (me) console.error("Load travel_master_flights error:", me);
     setCoachTravel(t || []);
     setTravelRooms(r || []);
+    setMasterFlights(m || []);
   }, []);
   // owner = null for club travel, or a user id for a private (family) row. It's
   // part of the unique key, so it has to be on every upsert or a private row
@@ -5678,8 +5682,10 @@ export default function App() {
             // Flight days for whoever this calendar belongs to. RLS already
             // limits a non-admin to their own rows, and matches() is the same
             // name test the rest of the calendar uses.
-            const evFlight = coachTravel.filter(t => matches(t.coach_name) && (t.depart_date === iso || t.return_date === iso))
-              .map(t => ({ out: t.depart_date === iso, airline: t.airline, time: t.depart_date === iso ? t.depart_time : t.return_time }));
+            const evFlight = coachTravel.filter(t => matches(t.coach_name))
+              .map(t => ({ t, e: effFlight(t, t.tournament_id) }))
+              .filter(x => x.e.depart_date === iso || x.e.return_date === iso)
+              .map(x => ({ out: x.e.depart_date === iso, airline: x.e.airline, time: x.e.depart_date === iso ? x.e.depart_time : x.e.return_time }));
             const events = [...evFlight.map(x => ({ label: (x.out ? "✈ out" : "✈ home") + (fmtFlightTime(x.time) ? " " + fmtFlightTime(x.time) : (x.airline ? " " + x.airline.slice(0,6) : "")), c: "#38bdf8" })),
               ...tnLabels.map(l => ({ label: l, c: TNC })),
               ...evSub.map(x => ({ label: "🔁 " + abbr(x.team) + " " + shortTime(x.slot), c: SUBC })),
@@ -9579,9 +9585,11 @@ export default function App() {
                     <div key={t.id} style={{borderTop:"1px solid "+C.border,padding:"8px 0",fontSize:12}}>
                       <div style={{fontWeight:700,color:C.text}}>{tn.name}</div>
                       <div style={{color:C.mut,fontSize:11,marginTop:3,display:"flex",gap:12,flexWrap:"wrap"}}>
-                        <span>{t.airline || "Airline TBD"} · out {fmt(t.depart_date)}{fmtFlightTime(t.depart_time) ? " " + fmtFlightTime(t.depart_time) : ""} · back {fmt(t.return_date)}{fmtFlightTime(t.return_time) ? " " + fmtFlightTime(t.return_time) : ""}</span>
+                        {(() => { const e = effFlight(t, t.tournament_id); return (
+                          <span>{e.airline || "Airline TBD"} · out {fmt(e.depart_date)}{fmtFlightTime(e.depart_time) ? " " + fmtFlightTime(e.depart_time) : ""} · back {fmt(e.return_date)}{fmtFlightTime(e.return_time) ? " " + fmtFlightTime(e.return_time) : ""}{e.onMaster ? "" : " · own booking"}</span>
+                        ); })()}
                         {t.ticket_number && <span>ticket {t.ticket_number}</span>}
-                        {money(t.flight_cost) && <span>{money(t.flight_cost)}</span>}
+                        {money(effFlight(t, t.tournament_id).cost) && <span>{money(effFlight(t, t.tournament_id).cost)}</span>}
                       </div>
                       {(room || t.own_room) && (
                         <div style={{color:C.mut,fontSize:11,marginTop:2,display:"flex",gap:12,flexWrap:"wrap"}}>
@@ -18476,6 +18484,27 @@ export default function App() {
     if (!mates.length) return { text: "alone", color: C.mut, warn: false };
     return { text: "with " + mates.join(", "), color: row.own_room ? "#f59e0b" : C.grn, warn: !!row.own_room };
   };
+  // The flight a coach is actually on: the tournament's master unless they've
+  // been flagged as deviating, in which case their own row wins. Their own
+  // columns are preserved either way, so toggling doesn't lose typed data.
+  const masterFor = (tnId) => masterFlights.find(m => m.tournament_id === tnId) || null;
+  const effFlight = (row, tnId) => {
+    const m = masterFor(tnId);
+    if (row?.flight_deviation || !m) {
+      return { airline: row?.airline, depart_date: row?.depart_date, depart_time: row?.depart_time,
+               return_date: row?.return_date, return_time: row?.return_time, cost: row?.flight_cost, onMaster: false };
+    }
+    return { airline: m.airline, depart_date: m.depart_date, depart_time: m.depart_time,
+             return_date: m.return_date, return_time: m.return_time, cost: m.cost, onMaster: true };
+  };
+  const saveMasterFlight = async (tnId, patch) => {
+    const { error } = await supabase.from("travel_master_flights").upsert(
+      { tournament_id: tnId, ...patch, updated_at: new Date().toISOString() },
+      { onConflict: "tournament_id" }
+    );
+    if (error) { window.alert("Master flight save failed: " + error.message); return; }
+    loadCoachTravel();
+  };
   // Club travel only. Family rows are personal spend and never roll into the
   // club's flight or hotel numbers.
   const isFamilyRow = (r) => r?.traveler_type === "family" || !!r?.private_owner;
@@ -18491,7 +18520,7 @@ export default function App() {
     const coach = rows.reduce((s, r) => s + coachOwes(r), 0);
     return {
       rows,
-      flights: rows.reduce((s, r) => s + (Number(r.flight_cost) || 0), 0),
+      flights: rows.reduce((s, r) => s + (Number(effFlight(r, tnId).cost) || 0), 0),
       hotel:   roomTotal,
       coach,
       club:    Math.max(0, roomTotal - coach),
@@ -18551,8 +18580,16 @@ export default function App() {
     const rooms = travelRooms.filter(r => r.tournament_id === tn.id).sort((x, y) => (x.room_no || 0) - (y.room_no || 0));
     const inp = {...inpStyle,padding:"4px 7px",fontSize:11,width:"100%"};
     const air = tn.airfare_required !== false;   // NULL means not decided yet — assume flights
+    const master = masterFor(tn.id);
+    const onMaster = (r) => !r?.flight_deviation && !!master;
+    const roTd = {padding:"3px 7px",borderBottom:"1px solid "+C.border,color:C.mut,fontSize:11,whiteSpace:"nowrap"};
+    const whenLabel = (d, t) => {
+      if (!d) return "—";
+      const day = new Date(d + "T12:00:00").toLocaleDateString(undefined, { month:"short", day:"numeric" });
+      return day + (fmtFlightTime(t) ? " " + fmtFlightTime(t) : "");
+    };
     const cols = air
-      ? ["Coach","Airline","Out","Back","Flight $","Bought","Ticket #","Room","Own room","Payroll deduction"]
+      ? ["Coach","Dev","Airline","Out","Back","Flight $","Bought","Ticket #","Room","Own room","Payroll deduction"]
       : ["Coach","Room","Own room","Payroll deduction"];
     return (
       <div style={{overflowX:"auto"}}>
@@ -18567,6 +18604,38 @@ export default function App() {
             }} />
           Airfare required {air ? "" : "— driving, hotel only"}
         </label>
+        {/* Master flight — the itinerary most of the staff are on. Coaches
+            inherit it unless flagged as deviating, so only the exceptions get
+            typed out. */}
+        {air && (
+          <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap",marginBottom:10,padding:"8px 10px",
+            border:"1px solid "+C.border,borderLeft:"3px solid #38bdf8",borderRadius:8,background:"rgba(56,189,248,0.05)"}}>
+            <span style={{fontSize:10,fontWeight:800,textTransform:"uppercase",color:"#38bdf8"}}>✈ Master flight</span>
+            <DebouncedField style={{...inpStyle,padding:"4px 8px",fontSize:11,width:130}} placeholder="Airline"
+              value={master?.airline ?? ""} onCommit={v => saveMasterFlight(tn.id, { airline: v.trim() || null })} />
+            <label style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:11,color:C.mut}}>out
+              <DebouncedField style={{...inpStyle,padding:"4px 6px",fontSize:11,width:126}} type="date"
+                value={master?.depart_date ?? ""} onCommit={v => saveMasterFlight(tn.id, { depart_date: v || null })} />
+              <DebouncedField style={{...inpStyle,padding:"4px 6px",fontSize:11,width:92}} type="time"
+                value={master?.depart_time ?? ""} onCommit={v => saveMasterFlight(tn.id, { depart_time: v || null })} />
+            </label>
+            <label style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:11,color:C.mut}}>back
+              <DebouncedField style={{...inpStyle,padding:"4px 6px",fontSize:11,width:126}} type="date"
+                value={master?.return_date ?? ""} onCommit={v => saveMasterFlight(tn.id, { return_date: v || null })} />
+              <DebouncedField style={{...inpStyle,padding:"4px 6px",fontSize:11,width:92}} type="time"
+                value={master?.return_time ?? ""} onCommit={v => saveMasterFlight(tn.id, { return_time: v || null })} />
+            </label>
+            <label style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:11,color:C.mut}}>each
+              <DebouncedField style={{...inpStyle,padding:"4px 6px",fontSize:11,width:80}} type="number" placeholder="$"
+                value={master?.cost ?? ""} onCommit={v => saveMasterFlight(tn.id, { cost: v === "" ? null : Number(v) })} />
+            </label>
+            <span style={{fontSize:10,color:C.mut,fontStyle:"italic",marginLeft:"auto"}}>
+              {master
+                ? staff.filter(nm => onMaster(rowFor(nm))).length + " on it · " + staff.filter(nm => rowFor(nm).flight_deviation).length + " deviating"
+                : "fill this in and everyone inherits it"}
+            </span>
+          </div>
+        )}
         <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0,minWidth:air?900:460,fontSize:11}}>
           <thead><tr>{cols.map(h =>
             <th key={h} style={{padding:"5px 7px",textAlign:"left",fontSize:9,fontWeight:700,textTransform:"uppercase",color:C.mut,borderBottom:"1px solid "+C.border,whiteSpace:"nowrap"}}>{h}</th>)}</tr></thead>
@@ -18592,10 +18661,25 @@ export default function App() {
                       </>
                     )}
                   </td>
-                  {air && f("airline","Southwest")}
-                  {air && travelWhenCell(tn.id, name, r, "depart_date", "depart_time")}
-                  {air && travelWhenCell(tn.id, name, r, "return_date", "return_time")}
-                  {air && f("flight_cost","0","number")}
+                  {air && (
+                    <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,textAlign:"center"}}>
+                      <input type="checkbox" checked={!!r.flight_deviation} style={{width:14,height:14,accentColor:"#f59e0b",cursor:"pointer"}}
+                        title="Not on the master flight — going early or staying late"
+                        onChange={ev => saveTravel(tn.id, name, { flight_deviation: ev.target.checked })} />
+                    </td>
+                  )}
+                  {air && (onMaster(r)
+                    ? <td style={roTd} title="On the master flight">{effFlight(r, tn.id).airline || "—"}</td>
+                    : f("airline","Southwest"))}
+                  {air && (onMaster(r)
+                    ? <td style={roTd}>{whenLabel(effFlight(r, tn.id).depart_date, effFlight(r, tn.id).depart_time)}</td>
+                    : travelWhenCell(tn.id, name, r, "depart_date", "depart_time"))}
+                  {air && (onMaster(r)
+                    ? <td style={roTd}>{whenLabel(effFlight(r, tn.id).return_date, effFlight(r, tn.id).return_time)}</td>
+                    : travelWhenCell(tn.id, name, r, "return_date", "return_time"))}
+                  {air && (onMaster(r)
+                    ? <td style={roTd}>{travelMoney(effFlight(r, tn.id).cost) || "—"}</td>
+                    : f("flight_cost","0","number"))}
                   {air && (
                     <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,textAlign:"center"}}>
                       <input type="checkbox" checked={!!r.flight_purchased} style={{width:14,height:14,accentColor:C.grn,cursor:"pointer"}}
