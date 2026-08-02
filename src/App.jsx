@@ -1366,6 +1366,7 @@ export default function App() {
   const [travelPast, setTravelPast]         = useState(false); // include already-finished travel events
   const [travelMode, setTravelMode]         = useState("trips"); // "trips" = flat booking list | "events" = per tournament
   const [travelNeedsOnly, setTravelNeedsOnly] = useState(false); // flat list: only trips missing a ticket or room
+  const [travelAirOnly, setTravelAirOnly]   = useState(false); // only tournaments that need flights
   const [coachTravel, setCoachTravel]       = useState([]); // coach_travel rows (RLS: admins all, coaches their own)
   const [travelRooms, setTravelRooms]       = useState([]); // coach_travel_rooms rows
   const [clinicBusy, setClinicBusy]     = useState("");     // key of clinic action in flight
@@ -18629,7 +18630,12 @@ export default function App() {
       .map(t => ({ t, staff: travelStaffFor(t.id) }))
       .filter(x => x.staff.length)
       .sort((a, b) => (a.t.start_date || "").localeCompare(b.t.start_date || ""));
-    const list = travelPast ? all : all.filter(x => (x.t.end_date || x.t.start_date) >= today);
+    const dated = travelPast ? all : all.filter(x => (x.t.end_date || x.t.start_date) >= today);
+    // Flights only. Matches the planner's convention that an undecided event
+    // (airfare_required NULL) is treated as needing air, so nothing that might
+    // need booking gets hidden behind the filter.
+    const list = travelAirOnly ? dated.filter(x => x.t.airfare_required !== false) : dated;
+    const airCount = dated.filter(x => x.t.airfare_required !== false).length;
     const grand = list.reduce((acc, x) => {
       const v = travelTotals(x.t.id);
       return { flights: acc.flights + v.flights, hotel: acc.hotel + v.hotel, club: acc.club + v.club, coach: acc.coach + v.coach,
@@ -18660,6 +18666,11 @@ export default function App() {
                 style={{padding:"6px 12px",border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700,background:travelMode===v?C.gold:"transparent",color:travelMode===v?"#000":C.mut}}>{label}</button>
             ))}
           </span>
+          <button onClick={()=>setTravelAirOnly(p=>!p)}
+            title="Only tournaments that need flights booked"
+            style={{padding:"6px 12px",borderRadius:8,border:"1px solid "+(travelAirOnly?"#38bdf8":C.border),background:"transparent",color:travelAirOnly?"#38bdf8":C.text,fontFamily:"inherit",fontSize:12,fontWeight:700,cursor:"pointer"}}>
+            ✈ Airfare only ({airCount})
+          </button>
           {travelMode === "trips" && (
             <button onClick={()=>setTravelNeedsOnly(p=>!p)}
               title="Show only trips still missing a ticket number or a room"
@@ -18770,7 +18781,12 @@ export default function App() {
             </div>
           );
         })}
-        {!list.length && <div style={{padding:30,textAlign:"center",color:C.mut,fontSize:12}}>No {travelPast ? "" : "upcoming "}travel tournaments with teams assigned.</div>}
+        {!list.length && (
+          <div style={{padding:30,textAlign:"center",color:C.mut,fontSize:12}}>
+            No {travelPast ? "" : "upcoming "}travel tournaments{travelAirOnly ? " need flights" : " with teams assigned"}.
+            {travelAirOnly && dated.length > 0 && <> {dated.length} {travelPast ? "" : "upcoming "}event{dated.length===1?" is":"s are"} drive-only — turn off the airfare filter to see {dated.length===1?"it":"them"}.</>}
+          </div>
+        )}
       </div>
     );
   }
