@@ -1360,6 +1360,8 @@ export default function App() {
   const [syPostTok, setSyPostTok]       = useState(null);   // SportsYou post bookmarklet {href} | {configured:false} | {error}
   const [syOutbox, setSyOutbox]         = useState([]);     // sportsyou_outbox rows (pending + recently posted)
   const [hawaiiInterest, setHawaiiInterest] = useState([]); // hawaii_interest rows, one per player who has answered
+  const [hawaiiAddTeam, setHawaiiAddTeam]   = useState(null); // which Hawaii team's "add player" search is open
+  const [hawaiiAddQ, setHawaiiAddQ]         = useState("");
   const [travelOpen, setTravelOpen]         = useState(null); // tournament id whose travel table is expanded
   const [travelPast, setTravelPast]         = useState(false); // include already-finished travel events
   const [travelMode, setTravelMode]         = useState("trips"); // "trips" = flat booking list | "events" = per tournament
@@ -3538,22 +3540,43 @@ export default function App() {
     setHawaiiInterest(data || []);
   }, []);
   const setHawaiiStatus = useCallback(async (playerId, status) => {
+    // A hand-added player keeps her row even at 'not_asked' — that row is the
+    // only thing putting her on the trip, so dropping it would remove her from
+    // the team entirely. Only "remove" does that.
+    const guestTeam = hawaiiInterest.find(r => r.player_id === playerId)?.hawaii_team || null;
     // Optimistic — the list is small and a stalled dropdown feels broken.
     setHawaiiInterest(prev => {
       const rest = prev.filter(r => r.player_id !== playerId);
-      return status === "not_asked" ? rest : [...rest, { player_id: playerId, status }];
+      return (status === "not_asked" && !guestTeam) ? rest : [...rest, { player_id: playerId, status, hawaii_team: guestTeam }];
     });
-    if (status === "not_asked") {
+    if (status === "not_asked" && !guestTeam) {
       const { error } = await supabase.from("hawaii_interest").delete().eq("player_id", playerId);
       if (error) { window.alert("Save failed: " + error.message); loadHawaii(); }
       return;
     }
     const { error } = await supabase.from("hawaii_interest").upsert(
-      { player_id: playerId, status, updated_by: coach?.display_name || coach?.email || null, updated_at: new Date().toISOString() },
+      { player_id: playerId, status, hawaii_team: guestTeam, updated_by: coach?.display_name || coach?.email || null, updated_at: new Date().toISOString() },
       { onConflict: "player_id" }
     );
     if (error) { window.alert("Save failed: " + error.message); loadHawaii(); }
-  }, [coach, loadHawaii]);
+  }, [coach, loadHawaii, hawaiiInterest]);
+  // Add a player who isn't on one of the three Diamond teams to a Hawaii team.
+  // Her real team_assignment is untouched — this only puts her on the trip.
+  const addHawaiiGuest = useCallback(async (playerId, team) => {
+    const status = hawaiiInterest.find(r => r.player_id === playerId)?.status || "not_asked";
+    setHawaiiInterest(prev => [...prev.filter(r => r.player_id !== playerId), { player_id: playerId, status, hawaii_team: team }]);
+    setHawaiiAddTeam(null); setHawaiiAddQ("");
+    const { error } = await supabase.from("hawaii_interest").upsert(
+      { player_id: playerId, status, hawaii_team: team, updated_by: coach?.display_name || coach?.email || null, updated_at: new Date().toISOString() },
+      { onConflict: "player_id" }
+    );
+    if (error) { window.alert("Add failed: " + error.message); loadHawaii(); }
+  }, [coach, loadHawaii, hawaiiInterest]);
+  const removeHawaiiGuest = useCallback(async (playerId) => {
+    setHawaiiInterest(prev => prev.filter(r => r.player_id !== playerId));
+    const { error } = await supabase.from("hawaii_interest").delete().eq("player_id", playerId);
+    if (error) { window.alert("Remove failed: " + error.message); loadHawaii(); }
+  }, [loadHawaii]);
   useEffect(() => { if (isApproved && view === "hawaii") loadHawaii(); }, [isApproved, view, loadHawaii]);
 
   // Messages waiting for the SportsYou bookmarklet to drain.
@@ -8325,16 +8348,32 @@ export default function App() {
   // outside the app, so this deliberately stays a single question per player.
   function renderHawaii() {
     if (!isAdmin) return <div style={{padding:24,color:C.mut,textAlign:"center"}}>The Hawaii page is restricted to admins.</div>;
-    const byPlayer = new Map(hawaiiInterest.map(r => [r.player_id, r.status]));
-    const roster = players.filter(p => HAWAII_TEAMS.includes(p.team_assignment));
-    const statusOf = (p) => byPlayer.get(p.id) || "not_asked";
+    const byPlayer = new Map(hawaiiInterest.map(r => [r.player_id, r]));
+    const statusOf = (p) => byPlayer.get(p.id)?.status || "not_asked";
+    // Hand-added players sit on a Hawaii team without their team_assignment
+    // changing, so the roster is "on the team" OR "added to the team".
+    const guestTeamOf = (p) => byPlayer.get(p.id)?.hawaii_team || null;
+    const rosterFor = (tn) => players
+      .filter(p => p.team_assignment === tn || (guestTeamOf(p) === tn && p.team_assignment !== tn))
+      .sort((a,b) => (a.last_name||"").localeCompare(b.last_name||"") || (a.first_name||"").localeCompare(b.first_name||""));
+    const roster = HAWAII_TEAMS.flatMap(rosterFor);
     const counts = HAWAII_ORDER.reduce((a, s) => ({ ...a, [s]: roster.filter(p => statusOf(p) === s).length }), {});
+    const onTrip = new Set(roster.map(p => p.id));
+    const addQ = hawaiiAddQ.trim().toLowerCase();
+    const addMatches = !addQ ? [] : players
+      .filter(p => !onTrip.has(p.id))
+      .filter(p => ((p.first_name||"") + " " + (p.last_name||"") + " " + (p.team_assignment||"")).toLowerCase().includes(addQ))
+      .sort((a,b) => (a.last_name||"").localeCompare(b.last_name||"") || (a.first_name||"").localeCompare(b.first_name||""))
+      .slice(0, 8);
     const th = {padding:"8px 10px",textAlign:"left",fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut,borderBottom:"1px solid "+C.border,whiteSpace:"nowrap"};
     const td = {padding:"7px 10px",borderBottom:"1px solid "+C.border,fontSize:13};
     return (
       <div style={{padding:"18px 16px",maxWidth:1100,margin:"0 auto"}}>
         <h2 style={{margin:"0 0 2px",fontSize:20,fontWeight:800,color:C.gold}}>Hawaii</h2>
-        <div style={{fontSize:12,color:C.mut,marginBottom:14}}>Optional tournament · {HAWAII_TEAMS.join(" · ")} · {roster.length} players</div>
+        <div style={{fontSize:12,color:C.mut,marginBottom:14}}>
+          Optional tournament · {HAWAII_TEAMS.join(" · ")} · {roster.length} players
+          {(() => { const g = roster.filter(p => guestTeamOf(p)).length; return g ? ` (${g} added by hand)` : ""; })()}
+        </div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:16}}>
           {HAWAII_ORDER.map(s => {
             const m = hawaiiMeta(s);
@@ -8347,25 +8386,67 @@ export default function App() {
           })}
         </div>
         {HAWAII_TEAMS.map(tn => {
-          const tp = roster.filter(p => p.team_assignment === tn)
-            .sort((a,b) => (a.last_name||"").localeCompare(b.last_name||"") || (a.first_name||"").localeCompare(b.first_name||""));
+          const tp = rosterFor(tn);
           const going = tp.filter(p => statusOf(p) === "committed").length;
-          if (!tp.length) return null;
+          const adding = hawaiiAddTeam === tn;
           return (
             <div key={tn} style={{background:C.card,borderRadius:12,border:"1px solid "+C.border,marginBottom:14,overflow:"hidden"}}>
               <div style={{padding:"10px 14px",borderBottom:"1px solid "+C.border,display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,flexWrap:"wrap"}}>
                 <span style={{fontSize:14,fontWeight:800,color:C.text}}>{tn}</span>
-                <span style={{fontSize:11,color:C.mut}}>{going} of {tp.length} signed up</span>
+                <span style={{display:"flex",alignItems:"center",gap:10}}>
+                  <span style={{fontSize:11,color:C.mut}}>{going} of {tp.length} signed up</span>
+                  <button onClick={() => { setHawaiiAddTeam(adding ? null : tn); setHawaiiAddQ(""); }}
+                    style={{padding:"4px 10px",borderRadius:6,cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:700,
+                      border:"1px solid "+(adding ? C.gold : C.border), background:"transparent", color: adding ? C.gold : C.mut}}>
+                    {adding ? "Cancel" : "+ Add player"}
+                  </button>
+                </span>
               </div>
+              {adding && (
+                <div style={{padding:"10px 14px",borderBottom:"1px solid "+C.border,background:C.bg}}>
+                  <input autoFocus value={hawaiiAddQ} onChange={e => setHawaiiAddQ(e.target.value)}
+                    placeholder={"Search any player to add to " + tn + "…"}
+                    style={{...inpStyle,width:"100%",maxWidth:380,padding:"7px 10px",fontSize:13}} />
+                  {addQ && !addMatches.length && (
+                    <div style={{fontSize:11,color:C.mut,marginTop:8}}>No players match “{hawaiiAddQ}”. Anyone already on the trip is hidden.</div>
+                  )}
+                  {!!addMatches.length && (
+                    <div style={{display:"flex",flexDirection:"column",gap:4,marginTop:8,maxWidth:380}}>
+                      {addMatches.map(p => (
+                        <button key={p.id} onClick={() => addHawaiiGuest(p.id, tn)}
+                          style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,padding:"7px 10px",borderRadius:6,
+                            cursor:"pointer",fontFamily:"inherit",fontSize:12,textAlign:"left",
+                            border:"1px solid "+C.border,background:C.card,color:C.text}}>
+                          <span style={{fontWeight:600}}>{(p.first_name||"") + " " + (p.last_name||"")}</span>
+                          <span style={{fontSize:11,color:C.mut}}>{p.team_assignment || "no team"}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+              {!tp.length ? (
+                <div style={{padding:"16px 14px",fontSize:12,color:C.mut}}>Nobody on {tn} yet.</div>
+              ) : (
               <div style={{overflowX:"auto"}}>
                 <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0,minWidth:620}}>
                   <thead><tr><th style={th}>Player</th><th style={th}>Parent</th><th style={th}>Status</th></tr></thead>
                   <tbody>
                     {tp.map(p => {
                       const cur = statusOf(p);
+                      const guest = guestTeamOf(p) === tn;
                       return (
                         <tr key={p.id}>
-                          <td style={{...td,fontWeight:600,whiteSpace:"nowrap"}}>{(p.first_name||"") + " " + (p.last_name||"")}</td>
+                          <td style={{...td,fontWeight:600,whiteSpace:"nowrap"}}>
+                            {(p.first_name||"") + " " + (p.last_name||"")}
+                            {guest && (
+                              <span title={"Added by hand · plays on " + (p.team_assignment || "no team")}
+                                style={{marginLeft:6,padding:"1px 6px",borderRadius:4,fontSize:9,fontWeight:800,textTransform:"uppercase",
+                                  border:"1px solid "+C.gold,color:C.gold}}>
+                                +{p.team_assignment || "no team"}
+                              </span>
+                            )}
+                          </td>
                           <td style={{...td,color:C.mut,fontSize:11}}>
                             {p.parent_name || "—"}{p.parent_email ? <span style={{opacity:0.75}}> · {p.parent_email}</span> : null}
                           </td>
@@ -8381,6 +8462,14 @@ export default function App() {
                                   </button>
                                 );
                               })}
+                              {guest && (
+                                <button onClick={() => { if (window.confirm(`Remove ${p.first_name} ${p.last_name} from ${tn} for Hawaii?`)) removeHawaiiGuest(p.id); }}
+                                  title={"Remove from " + tn}
+                                  style={{padding:"3px 8px",borderRadius:6,cursor:"pointer",fontFamily:"inherit",fontSize:10,fontWeight:700,
+                                    border:"1px solid "+C.border,background:"transparent",color:C.red}}>
+                                  Remove
+                                </button>
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -8389,6 +8478,7 @@ export default function App() {
                   </tbody>
                 </table>
               </div>
+              )}
             </div>
           );
         })}
