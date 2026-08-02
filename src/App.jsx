@@ -9734,7 +9734,9 @@ export default function App() {
                         <div style={{color:C.mut,fontSize:11,marginTop:2,display:"flex",gap:12,flexWrap:"wrap"}}>
                           <span>🏨 {room?.hotel_name || "Hotel TBD"}{room?.room_no ? " · Room " + room.room_no : ""}{room?.check_in ? " · " + fmt(room.check_in) + "–" + fmt(room.check_out) : ""}{room?.confirmation ? " · " + room.confirmation : ""}</span>
                           {mates.length > 0 && <span>rooming with {mates.join(", ")}</span>}
-                          {t.own_room && <span style={{color:"#f59e0b"}}>private room · {money(coachOwes(t)) || "TBD"} from payroll</span>}
+                          {t.own_room && (clubCoversOwnRoom(t)
+                            ? <span style={{color:C.grn}}>private room · covered by the club</span>
+                            : <span style={{color:"#f59e0b"}}>private room · {money(coachOwes(t)) || "TBD"} from payroll</span>)}
                         </div>
                       )}
                     </div>
@@ -18562,8 +18564,17 @@ export default function App() {
     const nights = roomNights(room);
     return (rate && nights) ? rate * nights : 0;
   };
+  // Who pays for a private room. Per-trip override wins; otherwise the coach's
+  // standing rule (Drew, Hunter and Kristen are covered in full); otherwise the
+  // default 50% split.
+  const clubCoversOwnRoom = (row) => {
+    if (row?.own_room_club_pays != null) return !!row.own_room_club_pays;
+    const nrm = s => String(s || "").trim().toLowerCase();
+    const r = coachRoster.find(x => nrm((x.first_name || "") + " " + (x.last_name || "")) === nrm(row?.coach_name));
+    return !!r?.own_room_club_paid;
+  };
   const coachOwes = (row) => {
-    if (!row?.own_room) return 0;
+    if (!row?.own_room || clubCoversOwnRoom(row)) return 0;
     return roomStayTotal(travelRooms.find(r => r.id === row.room_id)) * OWN_ROOM_SHARE;
   };
   // Who else is in this coach's room. Assigning a private-room coach a roommate
@@ -18856,11 +18867,22 @@ export default function App() {
                       title="Private room — 50% of the room cost comes out of their paycheck. Can still be given a roommate if plans change."
                       onChange={e => saveTravel(tn.id, name, { own_room: e.target.checked })} />
                   </td>
-                  <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,whiteSpace:"nowrap",fontWeight:700,color:r.own_room?"#f59e0b":C.mut}}>
-                    {r.own_room
-                      ? (coachOwes(r) ? travelMoney(coachOwes(r)) : <span style={{fontWeight:500,fontStyle:"italic"}}>set room cost</span>)
-                      : "—"}
-                  </td>
+                  {(() => {
+                    if (!r.own_room) return <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,color:C.mut}}>—</td>;
+                    const covered = clubCoversOwnRoom(r);
+                    const owed = coachOwes(r);
+                    return (
+                      <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,whiteSpace:"nowrap"}}>
+                        <button onClick={() => saveTravel(tn.id, name, { own_room_club_pays: !covered })}
+                          title={covered ? "Club is covering this room in full — click to charge 50% to payroll"
+                                         : "50% comes out of their paycheck — click to have the club cover it in full"}
+                          style={{background:"none",border:"none",padding:0,cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:700,
+                            color: covered ? C.grn : "#f59e0b"}}>
+                          {covered ? "club pays" : (owed ? travelMoney(owed) : "set room $")}
+                        </button>
+                      </td>
+                    );
+                  })()}
                 </tr>
               );
             })}
@@ -19192,9 +19214,21 @@ export default function App() {
                               title="Private room — 50% of the room cost comes out of their paycheck"
                               onChange={e => saveTravel(t.id, name, { own_room: e.target.checked })} />
                           </td>
-                          <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,whiteSpace:"nowrap",fontWeight:700,color:row.own_room?"#f59e0b":C.mut}}>
-                            {row.own_room ? (coachOwes(row) ? travelMoney(coachOwes(row)) : "set room $") : "—"}
-                          </td>
+                          {(() => {
+                            if (!row.own_room) return <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,color:C.mut}}>—</td>;
+                            const covered = clubCoversOwnRoom(row);
+                            const owed = coachOwes(row);
+                            return (
+                              <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,whiteSpace:"nowrap"}}>
+                                <button onClick={() => saveTravel(t.id, name, { own_room_club_pays: !covered })}
+                                  title={covered ? "Club covering in full — click to charge 50% to payroll" : "50% to payroll — click for the club to cover it"}
+                                  style={{background:"none",border:"none",padding:0,cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:700,
+                                    color: covered ? C.grn : "#f59e0b"}}>
+                                  {covered ? "club pays" : (owed ? travelMoney(owed) : "set room $")}
+                                </button>
+                              </td>
+                            );
+                          })()}
                         </tr>
                       );
                     })}
