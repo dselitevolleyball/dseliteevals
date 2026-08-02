@@ -2245,7 +2245,7 @@ export default function App() {
   }, []);
   useEffect(() => { if (isApproved && (view === "home" || view === "clockin")) { loadCheckins(); loadShiftIntents(); loadPractice(); loadCoachFloats(); loadPracticeCancellations(); loadPracticeCoverage(); loadSlotMoves(); } }, [isApproved, view, loadCheckins, loadShiftIntents, loadPractice, loadCoachFloats, loadPracticeCancellations, loadPracticeCoverage, loadSlotMoves]);
   // The coach card shows a coach's schedule changes + pickups — load the sources when it opens.
-  useEffect(() => { if (isApproved && coachCardName) { loadPractice(); loadPracticeCoverage(); loadSlotMoves(); loadPracticeCancellations(); loadTournaments(); loadCoachFloats(); loadCoachTravel(); setCoachCalOff(0); setCoachCalSel(null); } }, [isApproved, coachCardName, loadPractice, loadPracticeCoverage, loadSlotMoves, loadPracticeCancellations, loadTournaments, loadCoachFloats, loadCoachTravel]);
+  useEffect(() => { if (isApproved && coachCardName) { loadPractice(); loadPracticeCoverage(); loadSlotMoves(); loadPracticeCancellations(); loadTournaments(); loadCoachFloats(); setCoachCalOff(0); setCoachCalSel(null); } }, [isApproved, coachCardName, loadPractice, loadPracticeCoverage, loadSlotMoves, loadPracticeCancellations, loadTournaments, loadCoachFloats]);
   // The team card shows a per-team schedule calendar (practices, tournaments,
   // moves, subs) — load its sources when it opens, and reset its month.
   useEffect(() => { if (isApproved && teamCardName) { loadPractice(); loadTournaments(); loadPracticeCoverage(); loadSlotMoves(); loadPracticeCancellations(); setTeamCalOff(0); setTeamCalSel(null); } }, [isApproved, teamCardName, loadPractice, loadTournaments, loadPracticeCoverage, loadSlotMoves, loadPracticeCancellations]);
@@ -3584,6 +3584,13 @@ export default function App() {
   useEffect(() => {
     if (isApproved && (view === "tournaments" || view === "coaches" || view === "home" || view === "travel")) loadCoachTravel();
   }, [isApproved, view, loadCoachTravel]);
+  // An open coach card needs travel too. Kept separate from the other
+  // coach-card loaders, which live ~1300 lines above this declaration —
+  // naming loadCoachTravel up there reads the const before initialisation and
+  // takes the whole app down on load.
+  useEffect(() => {
+    if (isApproved && coachCardName) loadCoachTravel();
+  }, [isApproved, coachCardName, loadCoachTravel]);
 
   // Hawaii trip interest. Rows are created lazily, so a player with no row is
   // 'not_asked' — the table stays empty until someone actually answers.
