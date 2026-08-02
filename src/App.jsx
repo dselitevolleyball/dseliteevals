@@ -120,6 +120,19 @@ const GEAR_FIELDS = [
   { key: "sweatshirt", label: "Sweatshirt",                size: "sweatshirt_size", sizes: GEAR_TEE_SIZES,  styleKey: "sweatshirt_style", styles: ["crew neck", "hoodie"], styleLabel: "Crew neck or hoodie" },
   { key: "longsleeve", label: "Performance long sleeve",   size: "longsleeve_size", sizes: GEAR_TEE_SIZES,  styleKey: "longsleeve_style", styles: ["crew neck", "hooded tee"], styleLabel: "Crew neck or hooded tee" },
 ];
+// ── Compliance details we need on file for every coach ─────────────────────
+// Collected from the coach, same as gear sizes, rather than chased by hand.
+const COACH_DETAIL_FIELDS = [
+  { key: "phone",       label: "Cell phone",     ph: "512-555-0134" },
+  { key: "dob",         label: "Date of birth",  ph: "1994-03-21" },
+  { key: "address",     label: "Home address",   ph: "123 Main St, Dripping Springs, TX 78620", wide: true },
+  { key: "usav_number", label: "USAV member #",  ph: "e.g. 1234567" },
+  { key: "aau_number",  label: "AAU member #",   ph: "e.g. Y1A2B3C" },
+];
+const detailVal = (r, k) => String(r?.[k] ?? "").trim();
+const detailsMissing = (r) => COACH_DETAIL_FIELDS.filter(f => !detailVal(r, f.key));
+const detailsComplete = (r) => !!r && detailsMissing(r).length === 0;
+
 // Every answer is required — a half-filled row can't be ordered against.
 const gearComplete = (g) => !!g && GEAR_FIELDS.every(f => String(g[f.size] || "").trim() && (!f.styleKey || String(g[f.styleKey] || "").trim()))
   && !!String(g.backpack_name || "").trim();
@@ -1369,6 +1382,7 @@ export default function App() {
   const [travelAirOnly, setTravelAirOnly]   = useState(false); // only tournaments that need flights
   const [travelTeams, setTravelTeams]       = useState(() => new Set()); // team filter on Travel; empty = all teams
   const [coachTravel, setCoachTravel]       = useState([]); // coach_travel rows (RLS: admins all, coaches their own)
+  const [detailsOpen, setDetailsOpen]       = useState(false); // coach filling in their own compliance details
   const [travelRooms, setTravelRooms]       = useState([]); // coach_travel_rooms rows
   const [masterFlights, setMasterFlights]   = useState([]); // travel_master_flights, one per tournament
   const [clinicBusy, setClinicBusy]     = useState("");     // key of clinic action in flight
@@ -4359,7 +4373,7 @@ export default function App() {
       else byEmail.set(k || ("acct-" + c.id), { roster: null, account: c });
     }
     const headers = [
-      "First Name","Last Name","Email","Phone","DOB",
+      "First Name","Last Name","Email","Phone","DOB","Address","USAV #","AAU #",
       "T-shirt Size","Shoe Size","Sweatshirt Size",
       "Has Login","Approved","Admin","Can View Teams","Age Groups",
       "Display Name","Last Seen","Joined","Notes",
@@ -4375,7 +4389,7 @@ export default function App() {
         const first = r?.first_name || (c?.display_name || "").split(/\s+/)[0] || "";
         const last  = r?.last_name  || (c?.display_name || "").split(/\s+/).slice(1).join(" ") || "";
         rows.push([
-          first, last, (r?.email || c?.email || ""), r?.phone, r?.dob,
+          first, last, (r?.email || c?.email || ""), r?.phone, r?.dob, r?.address, r?.usav_number, r?.aau_number,
           r?.tshirt_size, r?.shoe_size, r?.sweatshirt_size,
           c ? "Yes" : "No",
           c ? (c.is_approved ? "Yes":"No") : "",
@@ -4837,6 +4851,74 @@ export default function App() {
   };
   // The ask, on the coach's dashboard. Turns into a quiet confirmation once
   // they're done, so it stops nagging the people who already answered.
+  // The logged-in coach's own roster row, matched the same way gear does.
+  const myRosterRow = coachRoster.find(x => {
+    const nrm = s => (s || "").toString().trim().toLowerCase();
+    return coach?.email && nrm(x.email) === nrm(coach.email);
+  }) || null;
+  const saveMyDetail = async (key, value) => {
+    if (!myRosterRow) { window.alert("We couldn't match your account to a coach record — tell Drew and he'll fix it."); return; }
+    const { error } = await supabase.from("coach_roster")
+      .update({ [key]: value.trim() || null, updated_at: new Date().toISOString() }).eq("id", myRosterRow.id);
+    if (error) { window.alert("Save failed: " + error.message); return; }
+    loadCoachRoster();
+  };
+  // Details panel — sits beside the gear panel on the coach's own dashboard.
+  const renderDetailsPanel = () => {
+    if (!myRosterRow) return null;
+    const missing = detailsMissing(myRosterRow);
+    if (!missing.length) return (
+      <div style={{background:C.card,border:"1px solid "+C.grn,borderRadius:12,padding:"10px 14px",marginBottom:10,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+        <span style={{fontSize:13,fontWeight:800,color:C.grn}}>✓ Your details are on file</span>
+        <span style={{fontSize:11,color:C.mut}}>address · DOB · USAV · AAU · phone</span>
+        <div style={{flex:1}} />
+        <button onClick={()=>setDetailsOpen(true)} style={{padding:"4px 12px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Change</button>
+      </div>
+    );
+    return (
+      <div style={{background:C.card,border:"1px solid #f59e0b",borderRadius:12,padding:"12px 14px",marginBottom:10}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+          <span style={{fontSize:13,fontWeight:800,color:"#f59e0b"}}>We still need {missing.length} thing{missing.length===1?"":"s"} from you</span>
+          <span style={{fontSize:11,color:C.mut}}>{missing.map(f=>f.label).join(" · ")}</span>
+          <div style={{flex:1}} />
+          <button onClick={()=>setDetailsOpen(true)}
+            style={{padding:"6px 14px",borderRadius:8,border:"none",background:C.gold,color:"#000",fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>
+            Fill these in — 1 min
+          </button>
+        </div>
+      </div>
+    );
+  };
+  const renderDetailsModal = () => {
+    if (!detailsOpen || !myRosterRow) return null;
+    const lbl = {fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut,marginBottom:4,display:"block"};
+    return (
+      <div onClick={()=>setDetailsOpen(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:1000,display:"flex",justifyContent:"center",padding:"30px 16px",overflowY:"auto"}}>
+        <div onClick={e=>e.stopPropagation()} style={{background:C.card,borderRadius:16,border:"1px solid "+C.border,maxWidth:540,width:"100%",height:"fit-content",padding:24}}>
+          <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
+            <h2 style={{margin:0,fontSize:18,fontWeight:800,color:C.gold}}>Your details</h2>
+            <button onClick={()=>setDetailsOpen(false)} style={{background:"none",border:"none",color:C.mut,fontSize:22,cursor:"pointer"}}>×</button>
+          </div>
+          <div style={{fontSize:11,color:C.mut,marginBottom:14}}>
+            The club needs these on file for insurance and membership. Only the directors can see them. Saves as you type.
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+            {COACH_DETAIL_FIELDS.map(f => (
+              <div key={f.key} style={f.wide ? {gridColumn:"1 / -1"} : undefined}>
+                <span style={lbl}>{f.label}{!detailVal(myRosterRow, f.key) && <span style={{color:"#f59e0b"}}> • needed</span>}</span>
+                <DebouncedField style={{...inpStyle,width:"100%",padding:"8px 10px",fontSize:13}} placeholder={f.ph}
+                  value={myRosterRow[f.key] || ""} onCommit={v => saveMyDetail(f.key, v)} />
+              </div>
+            ))}
+          </div>
+          <div style={{display:"flex",justifyContent:"flex-end",marginTop:16}}>
+            <button onClick={()=>setDetailsOpen(false)} style={{padding:"10px 18px",borderRadius:8,border:"none",background:C.gold,color:"#000",fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Done</button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const renderGearPanel = () => {
     const done = gearComplete(myGear);
     const today = localDateISO();
@@ -5971,6 +6053,7 @@ export default function App() {
         <div style={{minWidth:0}}>
         {/* ── Tier 1: quick + real-time ─────────────────────────────────── */}
         {sectionHdr("⚡ Right now", "clock in & things that need action")}
+        {renderDetailsPanel()}
         {renderGearPanel()}
         {renderCheckIn(true)}
         {renderOpenShiftsPanel(myRoster ? ((myRoster.first_name||"")+" "+(myRoster.last_name||"")).trim() : (coach?.display_name||""))}
@@ -8681,6 +8764,43 @@ export default function App() {
             <div style={{fontSize:11,color:C.mut,marginTop:2}}>{merged.length} total · {coachesList.length} with login · {pending.length} awaiting approval</div>
           </div>
           <div style={{display:"flex",gap:8}}>
+            {/* Chase the compliance details. Only coaches actually missing
+                something are contacted — nobody gets asked for what we have. */}
+            {(() => {
+              const pending = coachRoster.filter(r => detailVal(r, "email") && !detailsComplete(r));
+              if (!pending.length) return <span style={{fontSize:11,color:C.grn,fontWeight:700,alignSelf:"center"}}>✓ All details on file</span>;
+              return (
+                <button onClick={async () => {
+                  if (!window.confirm(
+                    "Ask " + pending.length + " coach" + (pending.length===1?"":"es") + " for their missing details?\n\n" +
+                    pending.slice(0,12).map(r => ((r.first_name||"")+" "+(r.last_name||"")).trim() + " — " + detailsMissing(r).map(f=>f.label).join(", ")).join("\n") +
+                    (pending.length>12 ? "\n…and " + (pending.length-12) + " more" : "") +
+                    "\n\nEach gets an email listing only what THEY are missing, plus a push if enabled.")) return;
+                  let emailed = 0, failed = 0;
+                  for (const r of pending) {
+                    const first = (r.first_name||"there").trim();
+                    const miss = detailsMissing(r).map(f => "• " + f.label).join("\n");
+                    const text = "Hi " + first + ",\n\nThe club needs a few details on file for insurance and membership, and we're still missing:\n\n"
+                      + miss + "\n\nOpen the DS Elite app and the form is at the top of your dashboard:\n" + APP_URL
+                      + "\n\nIt takes about a minute. Only the directors can see these.\n\nThanks,\nDrew";
+                    try {
+                      const res = await fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"},
+                        body: JSON.stringify({ subject: "Quick one — we need a few details from you", body: text, recipients: [r.email] }) });
+                      res.ok ? emailed++ : failed++;
+                    } catch { failed++; }
+                    try {
+                      await fetch("/api/send-push", { method:"POST", headers:{"Content-Type":"application/json"},
+                        body: JSON.stringify({ title:"DS Elite needs a few details", body: detailsMissing(r).map(f=>f.label).join(", "),
+                          url:"/?view=home", audience:{ type:"email", email:r.email } }) });
+                    } catch { /* push is best-effort */ }
+                  }
+                  window.alert("Emailed " + emailed + " coach" + (emailed===1?"":"es") + (failed ? ", " + failed + " failed" : "") + ".");
+                }}
+                  style={{padding:"6px 14px",borderRadius:8,border:"1px solid #f59e0b",background:"transparent",color:"#f59e0b",fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>
+                  Ask {pending.length} for missing details
+                </button>
+              );
+            })()}
             <button onClick={() => { setNewCoach({ first_name:"", last_name:"", email:"", phone:"", dob:"", tshirt_size:"", shoe_size:"", sweatshirt_size:"", notes:"" }); setAddingCoach(true); }}
               style={{padding:"6px 14px",borderRadius:8,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>
               + Add Coach
@@ -8710,6 +8830,9 @@ export default function App() {
                 <th style={th}>Email</th>
                 <th style={th}>Phone</th>
                 <th style={th}>DOB</th>
+                <th style={th}>Address</th>
+                <th style={th}>USAV #</th>
+                <th style={th}>AAU #</th>
                 <th style={th}>Approved</th>
                 <th style={th} title="Has the coach approved their team's practice schedule?">Sched ✓</th>
                 <th style={th} title="Floating coach — available to cover practice gaps in the regular season">☁ Float</th>
@@ -8790,6 +8913,9 @@ export default function App() {
                       </td>
                       {rcell("phone","555-555-5555",130)}
                       {rcell("dob","1994-03-21",110)}
+                      {rcell("address","123 Main St, Dripping Springs, TX",200)}
+                      {rcell("usav_number","1234567",100)}
+                      {rcell("aau_number","Y1A2B3C",100)}
                       {/* Approved */}
                       <td style={td}>
                         {hasAccount ? (
@@ -21496,6 +21622,7 @@ export default function App() {
       </div>
       {renderRequestOffModal()}
       {renderGearModal()}
+      {renderDetailsModal()}
       {profileId !== null && renderProfile()}
       {teamCardName && renderTeamCard()}
       {coachCardName && renderCoachCard()}
