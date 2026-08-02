@@ -122,15 +122,18 @@ const GEAR_FIELDS = [
 ];
 // ── Compliance details we need on file for every coach ─────────────────────
 // Collected from the coach, same as gear sizes, rather than chased by hand.
+// Membership numbers are collected but optional — plenty of coaches won't have
+// one, and chasing people for a number that may not exist just trains them to
+// ignore the reminder.
 const COACH_DETAIL_FIELDS = [
-  { key: "phone",       label: "Cell phone",     ph: "512-555-0134" },
-  { key: "dob",         label: "Date of birth",  ph: "1994-03-21" },
-  { key: "address",     label: "Home address",   ph: "123 Main St, Dripping Springs, TX 78620", wide: true },
-  { key: "usav_number", label: "USAV member #",  ph: "e.g. 1234567" },
-  { key: "aau_number",  label: "AAU member #",   ph: "e.g. Y1A2B3C" },
+  { key: "phone",       label: "Cell phone",     ph: "512-555-0134", required: true },
+  { key: "dob",         label: "Date of birth",  ph: "1994-03-21",   required: true },
+  { key: "address",     label: "Home address",   ph: "123 Main St, Dripping Springs, TX 78620", wide: true, required: true },
+  { key: "usav_number", label: "USAV member #",  ph: "if you have one" },
+  { key: "aau_number",  label: "AAU member #",   ph: "if you have one" },
 ];
 const detailVal = (r, k) => String(r?.[k] ?? "").trim();
-const detailsMissing = (r) => COACH_DETAIL_FIELDS.filter(f => !detailVal(r, f.key));
+const detailsMissing = (r) => COACH_DETAIL_FIELDS.filter(f => f.required && !detailVal(r, f.key));
 const detailsComplete = (r) => !!r && detailsMissing(r).length === 0;
 
 // Every answer is required — a half-filled row can't be ordered against.
@@ -4870,7 +4873,7 @@ export default function App() {
     if (!missing.length) return (
       <div style={{background:C.card,border:"1px solid "+C.grn,borderRadius:12,padding:"10px 14px",marginBottom:10,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
         <span style={{fontSize:13,fontWeight:800,color:C.grn}}>✓ Your details are on file</span>
-        <span style={{fontSize:11,color:C.mut}}>address · DOB · USAV · AAU · phone</span>
+        <span style={{fontSize:11,color:C.mut}}>phone · DOB · address</span>
         <div style={{flex:1}} />
         <button onClick={()=>setDetailsOpen(true)} style={{padding:"4px 12px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Change</button>
       </div>
@@ -4905,7 +4908,9 @@ export default function App() {
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
             {COACH_DETAIL_FIELDS.map(f => (
               <div key={f.key} style={f.wide ? {gridColumn:"1 / -1"} : undefined}>
-                <span style={lbl}>{f.label}{!detailVal(myRosterRow, f.key) && <span style={{color:"#f59e0b"}}> • needed</span>}</span>
+                <span style={lbl}>{f.label}{f.required
+                  ? (!detailVal(myRosterRow, f.key) && <span style={{color:"#f59e0b"}}> • needed</span>)
+                  : <span style={{color:C.mut,fontWeight:600}}> • optional</span>}</span>
                 <DebouncedField style={{...inpStyle,width:"100%",padding:"8px 10px",fontSize:13}} placeholder={f.ph}
                   value={myRosterRow[f.key] || ""} onCommit={v => saveMyDetail(f.key, v)} />
               </div>
