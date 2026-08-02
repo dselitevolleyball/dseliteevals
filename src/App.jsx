@@ -2245,7 +2245,7 @@ export default function App() {
   }, []);
   useEffect(() => { if (isApproved && (view === "home" || view === "clockin")) { loadCheckins(); loadShiftIntents(); loadPractice(); loadCoachFloats(); loadPracticeCancellations(); loadPracticeCoverage(); loadSlotMoves(); } }, [isApproved, view, loadCheckins, loadShiftIntents, loadPractice, loadCoachFloats, loadPracticeCancellations, loadPracticeCoverage, loadSlotMoves]);
   // The coach card shows a coach's schedule changes + pickups — load the sources when it opens.
-  useEffect(() => { if (isApproved && coachCardName) { loadPractice(); loadPracticeCoverage(); loadSlotMoves(); loadPracticeCancellations(); loadTournaments(); loadCoachFloats(); setCoachCalOff(0); setCoachCalSel(null); } }, [isApproved, coachCardName, loadPractice, loadPracticeCoverage, loadSlotMoves, loadPracticeCancellations, loadTournaments, loadCoachFloats]);
+  useEffect(() => { if (isApproved && coachCardName) { loadPractice(); loadPracticeCoverage(); loadSlotMoves(); loadPracticeCancellations(); loadTournaments(); loadCoachFloats(); loadCoachTravel(); setCoachCalOff(0); setCoachCalSel(null); } }, [isApproved, coachCardName, loadPractice, loadPracticeCoverage, loadSlotMoves, loadPracticeCancellations, loadTournaments, loadCoachFloats, loadCoachTravel]);
   // The team card shows a per-team schedule calendar (practices, tournaments,
   // moves, subs) — load its sources when it opens, and reset its month.
   useEffect(() => { if (isApproved && teamCardName) { loadPractice(); loadTournaments(); loadPracticeCoverage(); loadSlotMoves(); loadPracticeCancellations(); setTeamCalOff(0); setTeamCalSel(null); } }, [isApproved, teamCardName, loadPractice, loadTournaments, loadPracticeCoverage, loadSlotMoves, loadPracticeCancellations]);
@@ -5777,11 +5777,19 @@ export default function App() {
             // Flight days for whoever this calendar belongs to. RLS already
             // limits a non-admin to their own rows, and matches() is the same
             // name test the rest of the calendar uses.
-            const evFlight = coachTravel.filter(t => matches(t.coach_name))
+            const ownCal = isOwner && matches(coach?.display_name);
+            const evFlight = coachTravel.filter(t => matches(t.coach_name) || (ownCal && t.private_owner && t.private_owner === coach?.id))
               .map(t => ({ t, e: effFlight(t, t.tournament_id) }))
               .filter(x => x.e.depart_date === iso || x.e.return_date === iso)
-              .map(x => ({ out: x.e.depart_date === iso, airline: x.e.airline, time: x.e.depart_date === iso ? x.e.depart_time : x.e.return_time }));
-            const events = [...evFlight.map(x => ({ label: (x.out ? "✈ out" : "✈ home") + (fmtFlightTime(x.time) ? " " + fmtFlightTime(x.time) : (x.airline ? " " + x.airline.slice(0,6) : "")), c: "#38bdf8" })),
+              .map(x => ({ out: x.e.depart_date === iso, airline: x.e.airline,
+                time: x.e.depart_date === iso ? x.e.depart_time : x.e.return_time,
+                // Family flights sit on the same calendar, so name them or two
+                // chips on one day are indistinguishable.
+                who: x.t.private_owner ? String(x.t.coach_name || "").split(/\s+/)[0] : "" }));
+            const events = [...evFlight.map(x => ({
+              label: "✈ " + (x.who ? x.who + " " : "") + (x.out ? "out" : "home")
+                + (fmtFlightTime(x.time) ? " " + fmtFlightTime(x.time) : (x.airline && !x.who ? " " + x.airline.slice(0,6) : "")),
+              c: x.who ? "#a855f7" : "#38bdf8" })),
               ...tnLabels.map(l => ({ label: l, c: TNC })),
               ...evSub.map(x => ({ label: "🔁 " + abbr(x.team) + " " + shortTime(x.slot), c: SUBC })),
               ...evFl.map(sl => ({ label: "☁ " + shortTime(sl), c: FLT })),
@@ -9705,15 +9713,20 @@ export default function App() {
               Read-only here; booking is entered on the tournament card. RLS
               means a non-admin only ever receives their own rows. */}
           {(() => {
-            const mine = coachTravel.filter(t => norm(t.coach_name) === target);
-            if (!mine.length) return null;
+            const viewingSelf = isOwner && norm(coach?.display_name) === target;
+            const fam = viewingSelf ? coachTravel.filter(t => t.private_owner && t.private_owner === coach?.id) : [];
+            const mine = coachTravel.filter(t => norm(t.coach_name) === target && !t.private_owner);
+            if (!mine.length && !fam.length) return null;
             const tnById = new Map(tournaments.map(t => [t.id, t]));
             const money = (v) => (v == null || v === "") ? null : "$" + Number(v).toLocaleString(undefined,{maximumFractionDigits:2});
             const fmt = (d) => d ? new Date(d + "T12:00:00").toLocaleDateString(undefined,{month:"short",day:"numeric"}) : "—";
             const rows = mine.map(t => ({ t, tn: tnById.get(t.tournament_id) }))
               .filter(x => x.tn && !x.tn.cancelled)
               .sort((a,b) => (a.tn.start_date||"").localeCompare(b.tn.start_date||""));
-            if (!rows.length) return null;
+            const famRows = fam.map(t => ({ t, tn: tnById.get(t.tournament_id) }))
+              .filter(x => x.tn && !x.tn.cancelled)
+              .sort((a,b) => (a.tn.start_date||"").localeCompare(b.tn.start_date||"") || a.t.coach_name.localeCompare(b.t.coach_name));
+            if (!rows.length && !famRows.length) return null;
             return (
               <div style={sectionBox}>
                 <div style={lbl}>✈ Travel</div>
@@ -9742,6 +9755,24 @@ export default function App() {
                     </div>
                   );
                 })}
+                {famRows.length > 0 && (
+                  <>
+                    <div style={{...lbl, marginTop:12, color:"#a855f7"}}>🔒 Family travel <span style={{fontWeight:600,textTransform:"none",letterSpacing:0,color:C.mut}}>· private to you</span></div>
+                    {famRows.map(({ t, tn }) => {
+                      const e = effFlight(t, t.tournament_id);
+                      return (
+                        <div key={"fam-" + t.id} style={{borderTop:"1px solid "+C.border,padding:"8px 0",fontSize:12}}>
+                          <div style={{fontWeight:700,color:"#a855f7"}}>{t.coach_name}<span style={{color:C.mut,fontWeight:500}}> · {tn.name}</span></div>
+                          <div style={{color:C.mut,fontSize:11,marginTop:3,display:"flex",gap:12,flexWrap:"wrap"}}>
+                            <span>{e.airline || "Airline TBD"} · out {fmt(e.depart_date)}{fmtFlightTime(e.depart_time) ? " " + fmtFlightTime(e.depart_time) : ""} · back {fmt(e.return_date)}{fmtFlightTime(e.return_time) ? " " + fmtFlightTime(e.return_time) : ""}</span>
+                            {t.ticket_number && <span>ticket {t.ticket_number}</span>}
+                            {money(e.cost) && <span>{money(e.cost)}</span>}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </>
+                )}
               </div>
             );
           })()}
