@@ -5679,8 +5679,8 @@ export default function App() {
             // limits a non-admin to their own rows, and matches() is the same
             // name test the rest of the calendar uses.
             const evFlight = coachTravel.filter(t => matches(t.coach_name) && (t.depart_date === iso || t.return_date === iso))
-              .map(t => ({ out: t.depart_date === iso, airline: t.airline }));
-            const events = [...evFlight.map(x => ({ label: (x.out ? "✈ out" : "✈ home") + (x.airline ? " " + x.airline.slice(0,6) : ""), c: "#38bdf8" })),
+              .map(t => ({ out: t.depart_date === iso, airline: t.airline, time: t.depart_date === iso ? t.depart_time : t.return_time }));
+            const events = [...evFlight.map(x => ({ label: (x.out ? "✈ out" : "✈ home") + (fmtFlightTime(x.time) ? " " + fmtFlightTime(x.time) : (x.airline ? " " + x.airline.slice(0,6) : "")), c: "#38bdf8" })),
               ...tnLabels.map(l => ({ label: l, c: TNC })),
               ...evSub.map(x => ({ label: "🔁 " + abbr(x.team) + " " + shortTime(x.slot), c: SUBC })),
               ...evFl.map(sl => ({ label: "☁ " + shortTime(sl), c: FLT })),
@@ -9579,7 +9579,7 @@ export default function App() {
                     <div key={t.id} style={{borderTop:"1px solid "+C.border,padding:"8px 0",fontSize:12}}>
                       <div style={{fontWeight:700,color:C.text}}>{tn.name}</div>
                       <div style={{color:C.mut,fontSize:11,marginTop:3,display:"flex",gap:12,flexWrap:"wrap"}}>
-                        <span>{t.airline || "Airline TBD"} · out {fmt(t.depart_date)} · back {fmt(t.return_date)}</span>
+                        <span>{t.airline || "Airline TBD"} · out {fmt(t.depart_date)}{fmtFlightTime(t.depart_time) ? " " + fmtFlightTime(t.depart_time) : ""} · back {fmt(t.return_date)}{fmtFlightTime(t.return_time) ? " " + fmtFlightTime(t.return_time) : ""}</span>
                         {t.ticket_number && <span>ticket {t.ticket_number}</span>}
                         {money(t.flight_cost) && <span>{money(t.flight_cost)}</span>}
                       </div>
@@ -18505,6 +18505,26 @@ export default function App() {
         onCommit={v => saveTravel(tnId, name, { [key]: v === "" ? null : v })} />
     </td>
   );
+  // Date over time in one cell — a separate time column would push an already
+  // wide table further, and the two are always read together.
+  const travelWhenCell = (tnId, name, row, dateKey, timeKey, owner = null) => {
+    const st = {...inpStyle,padding:"4px 7px",fontSize:11,width:"100%"};
+    return (
+      <td style={{padding:"3px 5px",borderBottom:"1px solid "+C.border}}>
+        <DebouncedField style={st} type="date" value={row[dateKey] ?? ""}
+          onCommit={v => saveTravel(tnId, name, { [dateKey]: v || null }, owner)} />
+        <DebouncedField style={{...st,marginTop:2,color: row[timeKey] ? C.text : C.mut}} type="time" value={row[timeKey] ?? ""}
+          onCommit={v => saveTravel(tnId, name, { [timeKey]: v || null }, owner)} />
+      </td>
+    );
+  };
+  // "14:05" -> "2:05pm". Blank stays blank rather than becoming a fake midnight.
+  const fmtFlightTime = (t) => {
+    const m = /^(\d{1,2}):(\d{2})/.exec(String(t || "").trim());
+    if (!m) return "";
+    const h = +m[1], ap = h >= 12 ? "pm" : "am";
+    return ((h % 12) || 12) + ":" + m[2] + ap;
+  };
   // A trip still needs work if there's no ticket number or no room assigned.
   const tripNeedsBooking = (r) => !String(r?.ticket_number || "").trim() || !r?.room_id;
 
@@ -18566,8 +18586,8 @@ export default function App() {
                     )}
                   </td>
                   {air && f("airline","Southwest")}
-                  {air && f("depart_date","","date")}
-                  {air && f("return_date","","date")}
+                  {air && travelWhenCell(tn.id, name, r, "depart_date", "depart_time")}
+                  {air && travelWhenCell(tn.id, name, r, "return_date", "return_time")}
                   {air && f("flight_cost","0","number")}
                   {air && f("ticket_number","ABC123")}
                   <td style={{padding:"3px 5px",borderBottom:"1px solid "+C.border}}>
@@ -18700,8 +18720,8 @@ export default function App() {
                       <tr key={r.id}>
                         <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,fontWeight:700,whiteSpace:"nowrap",color:"#a855f7"}}>{r.coach_name}</td>
                         {air && ff("airline","Southwest")}
-                        {air && ff("depart_date","","date")}
-                        {air && ff("return_date","","date")}
+                        {air && travelWhenCell(tn.id, r.coach_name, r, "depart_date", "depart_time", coach?.id || null)}
+                        {air && travelWhenCell(tn.id, r.coach_name, r, "return_date", "return_time", coach?.id || null)}
                         {air && ff("flight_cost","0","number")}
                         {air && ff("ticket_number","ABC123")}
                         {ff("notes","hotel / room notes")}
@@ -18867,8 +18887,8 @@ export default function App() {
                           <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,color:C.mut,whiteSpace:"nowrap"}}>{fmtRange(t)}</td>
                           <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,fontWeight:700,whiteSpace:"nowrap"}}>{name}</td>
                           {travelCell(t.id, name, row, "airline", "Southwest")}
-                          {travelCell(t.id, name, row, "depart_date", "", "date")}
-                          {travelCell(t.id, name, row, "return_date", "", "date")}
+                          {travelWhenCell(t.id, name, row, "depart_date", "depart_time")}
+                          {travelWhenCell(t.id, name, row, "return_date", "return_time")}
                           {travelCell(t.id, name, row, "flight_cost", "0", "number")}
                           {travelCell(t.id, name, row, "ticket_number", "ABC123")}
                           <td style={{padding:"3px 5px",borderBottom:"1px solid "+C.border}}>
