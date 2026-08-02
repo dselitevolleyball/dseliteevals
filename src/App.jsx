@@ -18484,6 +18484,8 @@ export default function App() {
   // Money + booking totals for one tournament's travel.
   const travelTotals = (tnId) => {
     const rows = clubRowsFor(tnId);
+    // NULL airfare_required means undecided, which the planner treats as flying.
+    const air = tournaments.find(t => t.id === tnId)?.airfare_required !== false;
     const roomTotal = travelRooms.filter(r => r.tournament_id === tnId)
       .reduce((s, r) => s + (Number(r.total_cost) || 0), 0);
     const coach = rows.reduce((s, r) => s + coachOwes(r), 0);
@@ -18493,7 +18495,12 @@ export default function App() {
       hotel:   roomTotal,
       coach,
       club:    Math.max(0, roomTotal - coach),
-      ticketed: rows.filter(r => String(r.ticket_number || "").trim()).length,
+      // "Arranged" means everything that applies is done: a room, plus a bought
+      // flight when the event needs one. A drive event has no flight to buy, so
+      // requiring a ticket there would leave it permanently amber.
+      air,
+      purchased: rows.filter(r => r.flight_purchased).length,
+      ticketed: rows.filter(r => (!air || r.flight_purchased) && r.room_id).length,
     };
   };
   const travelMoney = (v) => (v == null || v === "" || Number(v) === 0) ? "" : "$" + Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 });
@@ -18526,7 +18533,7 @@ export default function App() {
     return ((h % 12) || 12) + ":" + m[2] + ap;
   };
   // A trip still needs work if there's no ticket number or no room assigned.
-  const tripNeedsBooking = (r) => !String(r?.ticket_number || "").trim() || !r?.room_id;
+  const tripNeedsBooking = (r, air = true) => (air && !r?.flight_purchased) || !r?.room_id;
 
   // The travel editor itself. Shared by the tournament card and the Travel
   // screen so there's one implementation to keep correct, not two.
@@ -18545,7 +18552,7 @@ export default function App() {
     const inp = {...inpStyle,padding:"4px 7px",fontSize:11,width:"100%"};
     const air = tn.airfare_required !== false;   // NULL means not decided yet — assume flights
     const cols = air
-      ? ["Coach","Airline","Out","Back","Flight $","Ticket #","Room","Own room","Payroll deduction"]
+      ? ["Coach","Airline","Out","Back","Flight $","Bought","Ticket #","Room","Own room","Payroll deduction"]
       : ["Coach","Room","Own room","Payroll deduction"];
     return (
       <div style={{overflowX:"auto"}}>
@@ -18589,6 +18596,13 @@ export default function App() {
                   {air && travelWhenCell(tn.id, name, r, "depart_date", "depart_time")}
                   {air && travelWhenCell(tn.id, name, r, "return_date", "return_time")}
                   {air && f("flight_cost","0","number")}
+                  {air && (
+                    <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,textAlign:"center"}}>
+                      <input type="checkbox" checked={!!r.flight_purchased} style={{width:14,height:14,accentColor:C.grn,cursor:"pointer"}}
+                        title="Flight has been bought"
+                        onChange={e => saveTravel(tn.id, name, { flight_purchased: e.target.checked })} />
+                    </td>
+                  )}
                   {air && f("ticket_number","ABC123")}
                   <td style={{padding:"3px 5px",borderBottom:"1px solid "+C.border}}>
                     <select style={inp} value={r.room_id ?? ""}
@@ -18849,7 +18863,7 @@ export default function App() {
         )}
         <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:16}}>
           {stat("Coach trips", grand.seats)}
-          {stat("Ticketed", grand.ticketed + "/" + grand.seats, grand.ticketed === grand.seats && grand.seats ? C.grn : "#f59e0b")}
+          {stat("Arranged", grand.ticketed + "/" + grand.seats, grand.ticketed === grand.seats && grand.seats ? C.grn : "#f59e0b")}
           {stat("Flights", travelMoney(grand.flights) || "$0", "#38bdf8")}
           {stat("Hotel total", travelMoney(grand.hotel) || "$0", "#38bdf8")}
           {stat("Club pays", travelMoney(grand.club) || "$0", "#38bdf8")}
@@ -18862,23 +18876,23 @@ export default function App() {
           const trips = list.flatMap(({ t, staff }) => staff.map(name => ({
             t, name, row: coachTravel.find(r => r.tournament_id === t.id && r.coach_name === name) || {},
           })));
-          const shown = travelNeedsOnly ? trips.filter(x => tripNeedsBooking(x.row)) : trips;
+          const shown = travelNeedsOnly ? trips.filter(x => tripNeedsBooking(x.row, x.t.airfare_required !== false)) : trips;
           const rooms = (tnId) => travelRooms.filter(r => r.tournament_id === tnId).sort((x, y) => (x.room_no || 0) - (y.room_no || 0));
           const short = (s, n) => (s || "").length > n ? (s || "").slice(0, n - 1) + "…" : (s || "");
           return (
             <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,overflow:"hidden"}}>
               <div style={{overflowX:"auto"}}>
                 <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0,minWidth:1120,fontSize:11}}>
-                  <thead><tr>{["","Tournament","Dates","Coach","Airline","Out","Back","Flight $","Ticket #","Hotel room","Own room","Payroll"].map((h,i) =>
+                  <thead><tr>{["","Tournament","Dates","Coach","Airline","Out","Back","Flight $","Bought","Ticket #","Hotel room","Own room","Payroll"].map((h,i) =>
                     <th key={i} style={{padding:"6px 7px",textAlign:"left",fontSize:9,fontWeight:700,textTransform:"uppercase",color:C.mut,borderBottom:"1px solid "+C.border,whiteSpace:"nowrap",position:"sticky",top:0,background:C.card}}>{h}</th>)}</tr></thead>
                   <tbody>
                     {shown.map(({ t, name, row }, i) => {
-                      const need = tripNeedsBooking(row);
+                      const need = tripNeedsBooking(row, t.airfare_required !== false);
                       const prevT = i > 0 ? shown[i-1].t.id : null;
                       return (
                         <tr key={t.id + "|" + name} style={{background: t.id !== prevT && i > 0 ? "rgba(255,255,255,0.02)" : undefined}}>
                           <td style={{padding:"3px 6px",borderBottom:"1px solid "+C.border}}>
-                            <span title={need ? "Still needs a ticket or a room" : "Booked"} style={{display:"inline-block",width:7,height:7,borderRadius:4,background:need?"#f59e0b":C.grn}} />
+                            <span title={need ? "Still needs a flight bought or a room" : "Arranged"} style={{display:"inline-block",width:7,height:7,borderRadius:4,background:need?"#f59e0b":C.grn}} />
                           </td>
                           <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,whiteSpace:"nowrap"}} title={t.name}>
                             <span style={{fontWeight:700,color:C.text}}>{short(t.name, 34)}</span>
@@ -18890,6 +18904,11 @@ export default function App() {
                           {travelWhenCell(t.id, name, row, "depart_date", "depart_time")}
                           {travelWhenCell(t.id, name, row, "return_date", "return_time")}
                           {travelCell(t.id, name, row, "flight_cost", "0", "number")}
+                          <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,textAlign:"center"}}>
+                            <input type="checkbox" checked={!!row.flight_purchased} style={{width:14,height:14,accentColor:C.grn,cursor:"pointer"}}
+                              title="Flight has been bought"
+                              onChange={e => saveTravel(t.id, name, { flight_purchased: e.target.checked })} />
+                          </td>
                           {travelCell(t.id, name, row, "ticket_number", "ABC123")}
                           <td style={{padding:"3px 5px",borderBottom:"1px solid "+C.border}}>
                             <select style={{...inpStyle,padding:"4px 7px",fontSize:11,width:"100%"}} value={row.room_id ?? ""}
@@ -18936,7 +18955,7 @@ export default function App() {
                   <div style={{fontSize:11,color:C.mut}}>{fmtRange(t)}{t.location ? " · 📍" + t.location : ""}{t.stay_to_play ? " · stay-to-play" : ""}</div>
                 </div>
                 <span style={{fontSize:11,color:C.mut}}>{staff.length} coach{staff.length===1?"":"es"}</span>
-                <span style={{fontSize:11,fontWeight:700,color:done?C.grn:"#f59e0b"}}>{v.ticketed}/{staff.length} ticketed</span>
+                <span style={{fontSize:11,fontWeight:700,color:done?C.grn:"#f59e0b"}}>{v.ticketed}/{staff.length} arranged</span>
                 {v.flights>0 && <span style={{fontSize:11,color:C.mut}}>✈ {travelMoney(v.flights)}</span>}
                 {v.club>0 && <span style={{fontSize:11,color:C.mut}}>🏨 {travelMoney(v.club)}</span>}
                 <span style={{fontSize:11,color:C.gold,fontWeight:700}}>{open ? "hide" : "plan →"}</span>
@@ -19214,7 +19233,7 @@ export default function App() {
               <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",cursor:"pointer"}} onClick={()=>setTravelOpen(open ? null : tn.id)}>
                 <span style={{fontSize:11,fontWeight:800,textTransform:"uppercase",color:C.mut}}>✈ Coach travel</span>
                 <span style={{fontSize:11,color:C.text,fontWeight:700}}>{staff.length} traveling</span>
-                <span style={{fontSize:11,color:t.ticketed===staff.length?C.grn:C.mut}}>{t.ticketed}/{staff.length} ticketed</span>
+                <span style={{fontSize:11,color:t.ticketed===staff.length?C.grn:C.mut}}>{t.ticketed}/{staff.length} arranged</span>
                 {t.flights>0 && <span style={{fontSize:11,color:C.mut}}>flights {travelMoney(t.flights)}</span>}
                 {t.club>0 && <span style={{fontSize:11,color:C.mut}}>club hotel {travelMoney(t.club)}</span>}
                 <span style={{marginLeft:"auto",fontSize:11,color:C.gold,fontWeight:700}}>{open ? "hide" : "plan travel →"}</span>
