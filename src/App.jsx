@@ -20,13 +20,21 @@ const ROSTER_GROUPS = [{label:"Setters",pos:["S1","S2"]},{label:"Pins",pos:["Pin
 // tournament card, the team calendar, and each team's schedule so a team's
 // status color follows it everywhere.
 const TN_STATUS = {
-  planned:     { label: "Planned",     color: "#9ca3af" },
-  in_progress: { label: "In Progress", color: "#eab308" }, // yellow
-  locked:      { label: "Locked",      color: "#f97316" }, // orange
-  registered:  { label: "Registered",  color: "#22c55e" }, // green
+  planned:      { label: "Planned",      color: "#9ca3af" },
+  in_progress:  { label: "In Progress",  color: "#eab308" }, // yellow
+  locked:       { label: "Locked",       color: "#f97316" }, // orange
+  registered:   { label: "Registered",   color: "#22c55e" }, // green
+  need_to_drop: { label: "Need to Drop", color: "#a855f7" }, // purple — still entered, action needed
+  dropped:      { label: "Dropped",      color: "#ef4444" }, // red — no longer attending
 };
-const TN_STATUS_ORDER = ["planned", "in_progress", "locked", "registered"];
+const TN_STATUS_ORDER = ["planned", "in_progress", "locked", "registered", "need_to_drop", "dropped"];
 const tnStatusMeta = (s) => TN_STATUS[s] || TN_STATUS.planned;
+// A dropped team is not going. Everything derived from attendance — the ICS
+// feed, practice suppression, coach travel, conflict checks — has to honour
+// that, otherwise "dropped" is only a label and the team still shows as away.
+// "Need to drop" is still entered, so it counts as attending until it isn't.
+const TN_DROPPED = "dropped";
+const tnIsDropped = (a) => a?.status === TN_DROPPED;
 
 // ── Hawaii: an optional tournament, open to these three teams only ──────────
 const HAWAII_TEAMS = ["13 Diamond", "14 Diamond", "15 Diamond"];
@@ -3518,7 +3526,7 @@ export default function App() {
   // people and are dropped — booking a flight for TBD helps nobody.
   const travelStaffFor = useCallback((tournamentId) => {
     const names = new Set();
-    for (const a of tournamentAssignments.filter(x => x.tournament_id === tournamentId)) {
+    for (const a of tournamentAssignments.filter(x => x.tournament_id === tournamentId && !tnIsDropped(x))) {
       const t = teamsList.find(x => x.id === a.team_id) || practiceTeams.find(x => x.team_name === a.team_id);
       const eff = tnEffectiveStaff(a, t ? { head_coach: t.head_coach, assistant_coach: t.assistant_coach } : null);
       [eff.head, eff.asst, a.sub_coach].forEach(n => {
@@ -10139,7 +10147,7 @@ export default function App() {
         const tnById2 = new Map(tournaments.map(t => [t.id, t]));
         for (const a of tournamentAssignments) {
           const tn = tnById2.get(a.tournament_id); if (!tn) continue;
-          if (tn.start_date <= sun && tn.end_date >= fri && (tn.end_date > tn.start_date || a.status === "locked")) noPracticeTeams.set(a.team_id, tn.name);
+          if (!tnIsDropped(a) && tn.start_date <= sun && tn.end_date >= fri && (tn.end_date > tn.start_date || a.status === "locked")) noPracticeTeams.set(a.team_id, tn.name);
         }
       }
       // Coaches unavailable this day because they're at a tournament happening on
@@ -11201,7 +11209,7 @@ export default function App() {
             const friS = fri.toISOString().slice(0, 10), sunS = sun.toISOString().slice(0, 10);
             const practicing = sunByPhase[phaseForDate(sat)] || new Set();
             const competing = new Set(), away = new Set();
-            for (const a of tournamentAssignments) { const tn = tnById.get(a.tournament_id); if (!tn) continue; if (tn.start_date <= sunS && tn.end_date >= friS) { if (tn.end_date > tn.start_date || a.status === "locked") competing.add(a.team_id); if (tn.stay_over) effReal(a).forEach(c => away.add(c)); } }
+            for (const a of tournamentAssignments) { const tn = tnById.get(a.tournament_id); if (!tn || tnIsDropped(a)) continue; if (tn.start_date <= sunS && tn.end_date >= friS) { if (tn.end_date > tn.start_date || a.status === "locked") competing.add(a.team_id); if (tn.stay_over) effReal(a).forEach(c => away.add(c)); } }
             for (const teamName of practicing) {
               if (competing.has(teamName)) continue;
               const tm = teamById.get(teamName); if (!tm || tm.active === false) continue;
@@ -12311,7 +12319,7 @@ export default function App() {
       // {{TOURNAMENTS}} — this team's schedule; ✓ = locked, everything else tentative.
       const tnById = new Map((tournaments || []).map(x => [x.id, x]));
       const tnsTxt = (tournamentAssignments || [])
-        .filter(a => a.team_id === tn)
+        .filter(a => a.team_id === tn && !tnIsDropped(a))
         .map(a => ({ a, x: tnById.get(a.tournament_id) }))
         .filter(({ x }) => x && !x.cancelled && x.start_date)
         .sort((p, r) => p.x.start_date.localeCompare(r.x.start_date))
@@ -18277,6 +18285,7 @@ export default function App() {
   // Coach clashes if teamId were sent to `tournament`: any other team sharing
   // one of its coaches already assigned to a date-overlapping tournament.
   const coachClashesFor = (teamId, tournament) => {
+    // A dropped assignment isn't a commitment and never causes a clash.
     if (!tournament) return [];
     const mine = new Set(coachesOfTeam(teamId).map(c => c.trim().toLowerCase()));
     if (!mine.size) return [];
@@ -18284,6 +18293,7 @@ export default function App() {
     const out = [];
     for (const a of tournamentAssignments) {
       if (a.team_id === teamId) continue;
+      if (tnIsDropped(a)) continue;       // pulled out — that coach is free
       if (tnConflictHandled(a)) continue; // the other team has a REAL sub / explicit override — no clash ("TBD" still clashes)
       const tn = tById.get(a.tournament_id);
       if (!tn || tn.cancelled) continue; // same tournament, different team still clashes (one coach, two teams)

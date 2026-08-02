@@ -112,6 +112,7 @@ export default async function handler(req, res) {
   for (const a of (Array.isArray(tnAssigns) ? tnAssigns : [])) {
     const tn = tnById.get(a.tournament_id);
     if (!tn || tn.cancelled || !tn.start_date) continue;
+    if (a.status === "dropped") continue;               // not going — practice stays
     const end = tn.end_date || tn.start_date;
     if (!(end > tn.start_date || a.status === "locked")) continue;
     let s = firstOnOrAfter(tn.start_date, 0);           // first Sunday on/after start
@@ -222,6 +223,7 @@ export default async function handler(req, res) {
   for (const a of (Array.isArray(tnAssigns) ? tnAssigns : [])) {
     const tn = tnById.get(a.tournament_id);
     if (!tn || tn.cancelled || !tn.start_date) continue;
+    if (a.status === "dropped") continue;               // no event for a team that pulled out
     const end = tn.end_date || tn.start_date;
     const summary = team + " Tournament — " + tn.name + (a.status === "planned" ? " (tentative)" : "");
     const desc = ["Status: " + (a.status || "planned"), a.division ? "Division: " + a.division : "", tn.stay_over ? "Travel tournament — overnight stay." : ""].filter(Boolean).join("\n");
