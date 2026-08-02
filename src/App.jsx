@@ -8365,6 +8365,7 @@ export default function App() {
       .filter(p => ((p.first_name||"") + " " + (p.last_name||"") + " " + (p.team_assignment||"")).toLowerCase().includes(addQ))
       .sort((a,b) => (a.last_name||"").localeCompare(b.last_name||"") || (a.first_name||"").localeCompare(b.first_name||""))
       .slice(0, 8);
+    const hawaiiPos = (p) => p.primary_position || (Array.isArray(p.positions) ? p.positions.join("/") : "");
     const th = {padding:"8px 10px",textAlign:"left",fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut,borderBottom:"1px solid "+C.border,whiteSpace:"nowrap"};
     const td = {padding:"7px 10px",borderBottom:"1px solid "+C.border,fontSize:13};
     return (
@@ -8417,7 +8418,10 @@ export default function App() {
                           style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,padding:"7px 10px",borderRadius:6,
                             cursor:"pointer",fontFamily:"inherit",fontSize:12,textAlign:"left",
                             border:"1px solid "+C.border,background:C.card,color:C.text}}>
-                          <span style={{fontWeight:600}}>{(p.first_name||"") + " " + (p.last_name||"")}</span>
+                          <span style={{fontWeight:600}}>
+                            {(p.first_name||"") + " " + (p.last_name||"")}
+                            {hawaiiPos(p) && <span style={{marginLeft:7,fontSize:10,fontWeight:800,color:C.acc}}>{hawaiiPos(p)}</span>}
+                          </span>
                           <span style={{fontSize:11,color:C.mut}}>{p.team_assignment || "no team"}</span>
                         </button>
                       ))}
@@ -8430,7 +8434,7 @@ export default function App() {
               ) : (
               <div style={{overflowX:"auto"}}>
                 <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0,minWidth:620}}>
-                  <thead><tr><th style={th}>Player</th><th style={th}>Parent</th><th style={th}>Status</th></tr></thead>
+                  <thead><tr><th style={th}>Player</th><th style={th}>Pos</th><th style={th}>Parent</th><th style={th}>Status</th></tr></thead>
                   <tbody>
                     {tp.map(p => {
                       const cur = statusOf(p);
@@ -8446,6 +8450,11 @@ export default function App() {
                                 +{p.team_assignment || "no team"}
                               </span>
                             )}
+                          </td>
+                          {/* Same fallback the roster table uses: primary if set,
+                              otherwise whatever positions were recorded. */}
+                          <td style={{...td,whiteSpace:"nowrap",fontWeight:700,color:hawaiiPos(p) ? C.text : C.mut,fontSize:12}}>
+                            {hawaiiPos(p) || "—"}
                           </td>
                           <td style={{...td,color:C.mut,fontSize:11}}>
                             {p.parent_name || "—"}{p.parent_email ? <span style={{opacity:0.75}}> · {p.parent_email}</span> : null}
