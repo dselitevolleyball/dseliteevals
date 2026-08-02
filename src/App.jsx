@@ -18539,10 +18539,22 @@ export default function App() {
   // club covers the rest. Derived from the room total rather than typed, so the
   // split can't drift from what was actually booked.
   const OWN_ROOM_SHARE = 0.5;
+  // A room is priced per night. Nights come from the block's dates; without
+  // them there is no stay total, and returning 0 would quietly understate the
+  // bill — so null means "dates needed" and the UI says so.
+  const roomNights = (room) => {
+    if (!room?.check_in || !room?.check_out) return null;
+    const n = Math.round((new Date(room.check_out) - new Date(room.check_in)) / 86400000);
+    return n > 0 ? n : null;
+  };
+  const roomStayTotal = (room) => {
+    const rate = Number(room?.nightly_rate);
+    const nights = roomNights(room);
+    return (rate && nights) ? rate * nights : 0;
+  };
   const coachOwes = (row) => {
     if (!row?.own_room) return 0;
-    const room = travelRooms.find(r => r.id === row.room_id);
-    return (Number(room?.total_cost) || 0) * OWN_ROOM_SHARE;
+    return roomStayTotal(travelRooms.find(r => r.id === row.room_id)) * OWN_ROOM_SHARE;
   };
   // Who else is in this coach's room. Assigning a private-room coach a roommate
   // is allowed on purpose — Rene coaches teams his daughters aren't on, so
@@ -18562,12 +18574,12 @@ export default function App() {
       // Inherit from the block if it exists, otherwise default the stay to the
       // tournament dates — right most of the time, and editable when it is not.
       const hotel = existing[0]?.hotel_name || null;
-      const cost = existing[0]?.total_cost ?? null;
+      const cost = existing[0]?.nightly_rate ?? null;
       const cin = existing[0]?.check_in ?? tn.start_date ?? null;
       const cout = existing[0]?.check_out ?? tn.end_date ?? tn.start_date ?? null;
       const rows = [];
       for (let i = existing.length; i < n; i++) {
-        rows.push({ tournament_id: tn.id, room_no: i + 1, hotel_name: hotel, total_cost: cost, check_in: cin, check_out: cout });
+        rows.push({ tournament_id: tn.id, room_no: i + 1, hotel_name: hotel, nightly_rate: cost, check_in: cin, check_out: cout });
       }
       const { error } = await supabase.from("coach_travel_rooms").insert(rows);
       if (error) { window.alert("Add rooms failed: " + error.message); return; }
@@ -18647,7 +18659,7 @@ export default function App() {
     // NULL airfare_required means undecided, which the planner treats as flying.
     const air = tournaments.find(t => t.id === tnId)?.airfare_required !== false;
     const roomTotal = travelRooms.filter(r => r.tournament_id === tnId)
-      .reduce((s, r) => s + (Number(r.total_cost) || 0), 0);
+      .reduce((s, r) => s + roomStayTotal(r), 0);
     const coach = rows.reduce((s, r) => s + coachOwes(r), 0);
     return {
       rows,
@@ -18859,11 +18871,11 @@ export default function App() {
               onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
               style={{...inpStyle,padding:"4px 6px",fontSize:11,width:56,textAlign:"center"}} />
           </label>
-          <label style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:11,color:C.mut}}>
-            each
-            <DebouncedField style={{...inpStyle,padding:"4px 6px",fontSize:11,width:80}} type="number" placeholder="$ / room"
-              value={rooms[0]?.total_cost ?? ""}
-              onCommit={v => setRoomsField(tn.id, { total_cost: v === "" ? null : Number(v) })} />
+          <label style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:11,color:C.mut}} title="Rate per room PER NIGHT — the stay total is this times the number of nights">
+            $/night
+            <DebouncedField style={{...inpStyle,padding:"4px 6px",fontSize:11,width:80}} type="number" placeholder="rate"
+              value={rooms[0]?.nightly_rate ?? ""}
+              onCommit={v => setRoomsField(tn.id, { nightly_rate: v === "" ? null : Number(v) })} />
           </label>
           {/* Whole block shares check-in/out — it's one hotel reservation. */}
           <label style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:11,color:C.mut}}>
@@ -18887,9 +18899,14 @@ export default function App() {
           )}
         </div>
         {rooms.length > 0 && rooms[0]?.check_in && rooms[0]?.check_out && (() => {
-          const nights = Math.round((new Date(rooms[0].check_out) - new Date(rooms[0].check_in)) / 86400000);
-          return <div style={{fontSize:10,color:nights > 0 ? C.mut : C.red,marginTop:4}}>
-            {nights > 0 ? nights + " night" + (nights===1?"":"s") + " × " + rooms.length + " room" + (rooms.length===1?"":"s") : "Check-out must be after check-in"}
+          const nights = roomNights(rooms[0]);
+          const rate = Number(rooms[0].nightly_rate) || 0;
+          const total = rooms.reduce((sum, r) => sum + roomStayTotal(r), 0);
+          return <div style={{fontSize:10,color:nights ? C.mut : C.red,marginTop:4}}>
+            {nights
+              ? rooms.length + " room" + (rooms.length===1?"":"s") + " × " + nights + " night" + (nights===1?"":"s")
+                + (rate ? " × " + travelMoney(rate) + " = " + travelMoney(total) : " — set the nightly rate")
+              : "Check-out must be after check-in, or the stay total can't be worked out"}
           </div>;
         })()}
         {rooms.length > 0 && (
