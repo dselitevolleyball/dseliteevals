@@ -8353,9 +8353,14 @@ export default function App() {
     // Hand-added players sit on a Hawaii team without their team_assignment
     // changing, so the roster is "on the team" OR "added to the team".
     const guestTeamOf = (p) => byPlayer.get(p.id)?.hawaii_team || null;
+    // Anyone who's said no sinks to the bottom, so the top of each list is the
+    // roster that's actually going. Alphabetical within each group.
     const rosterFor = (tn) => players
       .filter(p => p.team_assignment === tn || (guestTeamOf(p) === tn && p.team_assignment !== tn))
-      .sort((a,b) => (a.last_name||"").localeCompare(b.last_name||"") || (a.first_name||"").localeCompare(b.first_name||""));
+      .sort((a,b) =>
+        ((statusOf(a) === "declined") - (statusOf(b) === "declined")) ||
+        (a.last_name||"").localeCompare(b.last_name||"") ||
+        (a.first_name||"").localeCompare(b.first_name||""));
     const roster = HAWAII_TEAMS.flatMap(rosterFor);
     const counts = HAWAII_ORDER.reduce((a, s) => ({ ...a, [s]: roster.filter(p => statusOf(p) === s).length }), {});
     const onTrip = new Set(roster.map(p => p.id));
@@ -8440,7 +8445,7 @@ export default function App() {
                       const cur = statusOf(p);
                       const guest = guestTeamOf(p) === tn;
                       return (
-                        <tr key={p.id}>
+                        <tr key={p.id} style={cur === "declined" ? {opacity:0.45} : undefined}>
                           <td style={{...td,fontWeight:600,whiteSpace:"nowrap"}}>
                             {(p.first_name||"") + " " + (p.last_name||"")}
                             {guest && (
