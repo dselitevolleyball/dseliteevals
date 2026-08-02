@@ -1367,6 +1367,7 @@ export default function App() {
   const [travelMode, setTravelMode]         = useState("trips"); // "trips" = flat booking list | "events" = per tournament
   const [travelNeedsOnly, setTravelNeedsOnly] = useState(false); // flat list: only trips missing a ticket or room
   const [travelAirOnly, setTravelAirOnly]   = useState(false); // only tournaments that need flights
+  const [travelTeams, setTravelTeams]       = useState(() => new Set()); // team filter on Travel; empty = all teams
   const [coachTravel, setCoachTravel]       = useState([]); // coach_travel rows (RLS: admins all, coaches their own)
   const [travelRooms, setTravelRooms]       = useState([]); // coach_travel_rooms rows
   const [clinicBusy, setClinicBusy]     = useState("");     // key of clinic action in flight
@@ -18634,8 +18635,21 @@ export default function App() {
     // Flights only. Matches the planner's convention that an undecided event
     // (airfare_required NULL) is treated as needing air, so nothing that might
     // need booking gets hidden behind the filter.
-    const list = travelAirOnly ? dated.filter(x => x.t.airfare_required !== false) : dated;
+    const afterAir = travelAirOnly ? dated.filter(x => x.t.airfare_required !== false) : dated;
     const airCount = dated.filter(x => x.t.airfare_required !== false).length;
+    // Team filter. Empty set = every team, which is the common case, so the
+    // chips act as a narrowing tool rather than something to configure first.
+    const teamsAt = (tnId) => tournamentAssignments.filter(a => a.tournament_id === tnId).map(a => a.team_id);
+    const travelTeamOptions = [...new Set(dated.flatMap(x => teamsAt(x.t.id)))]
+      .sort((a, b) => (parseInt(a) || 99) - (parseInt(b) || 99) || a.localeCompare(b));
+    const list = travelTeams.size
+      ? afterAir.filter(x => teamsAt(x.t.id).some(t => travelTeams.has(t)))
+      : afterAir;
+    const toggleTravelTeam = (t) => setTravelTeams(prev => {
+      const next = new Set(prev);
+      next.has(t) ? next.delete(t) : next.add(t);
+      return next;
+    });
     const grand = list.reduce((acc, x) => {
       const v = travelTotals(x.t.id);
       return { flights: acc.flights + v.flights, hotel: acc.hotel + v.hotel, club: acc.club + v.club, coach: acc.coach + v.coach,
@@ -18683,6 +18697,26 @@ export default function App() {
             {travelPast ? "Hide past" : "Show past"}
           </button>
         </div>
+        {travelTeamOptions.length > 1 && (
+          <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",marginBottom:12}}>
+            <span style={{fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut,marginRight:2}}>Teams</span>
+            <button onClick={()=>setTravelTeams(new Set())}
+              style={{padding:"3px 10px",borderRadius:6,cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:700,
+                border:"1px solid "+(travelTeams.size ? C.border : C.gold), background: travelTeams.size ? "transparent" : C.gold, color: travelTeams.size ? C.mut : "#000"}}>
+              All
+            </button>
+            {travelTeamOptions.map(t => {
+              const on = travelTeams.has(t);
+              return (
+                <button key={t} onClick={()=>toggleTravelTeam(t)}
+                  style={{padding:"3px 10px",borderRadius:6,cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:700,
+                    border:"1px solid "+(on ? C.acc : C.border), background: on ? C.acc : "transparent", color: on ? "#000" : C.mut}}>
+                  {t}
+                </button>
+              );
+            })}
+          </div>
+        )}
         <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:16}}>
           {stat("Coach trips", grand.seats)}
           {stat("Ticketed", grand.ticketed + "/" + grand.seats, grand.ticketed === grand.seats && grand.seats ? C.grn : "#f59e0b")}
