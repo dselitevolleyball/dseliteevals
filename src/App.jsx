@@ -3632,6 +3632,15 @@ export default function App() {
     if (error) { window.alert("Delete failed: " + error.message); return; }
     loadDsysa();
   }, [loadDsysa]);
+  const setDsysaLead = useCallback(async (clinicId, signupId) => {
+    const clear = await supabase.from("dsysa_signups").update({ is_lead: false }).eq("clinic_id", clinicId).eq("is_lead", true);
+    if (clear.error) { window.alert("Couldn't clear the current lead: " + clear.error.message); return; }
+    if (signupId) {
+      const { error } = await supabase.from("dsysa_signups").update({ is_lead: true }).eq("id", signupId);
+      if (error) { window.alert("Couldn't set the lead: " + error.message); loadDsysa(); return; }
+    }
+    loadDsysa();
+  }, [loadDsysa]);
   const saveDsysaClinic = useCallback(async (id, patch) => {
     const { error } = await supabase.from("dsysa_clinics").update({ ...patch, updated_at: new Date().toISOString() }).eq("id", id);
     if (error) { window.alert("Save failed: " + error.message); return; }
@@ -8636,7 +8645,7 @@ export default function App() {
             <input type="date" id="dsysa-new-date" style={{...inpStyle,padding:"5px 9px",fontSize:12,width:170}} />
             <button onClick={() => { const el = document.getElementById("dsysa-new-date"); if (el) { addDsysaClinic(el.value); el.value = ""; } }}
               style={{padding:"5px 13px",borderRadius:8,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Add</button>
-            <span style={{fontSize:10,color:C.mut,fontStyle:"italic"}}>cancel keeps the sign-ups · × removes the date entirely</span>
+            <span style={{fontSize:10,color:C.mut,fontStyle:"italic"}}>☆ next to a name makes them session lead · cancel keeps the sign-ups · × removes the date entirely</span>
           </div>
         )}
         {dsysaClinics.filter(c => isAdmin || !c.cancelled).map(c => {
@@ -8658,6 +8667,13 @@ export default function App() {
                 <span style={{fontSize:12,fontWeight:800,color:ok?C.grn:"#f59e0b"}}>
                   {mine.length} of {min}–{max}
                 </span>
+                {(() => {
+                  const lead = mine.find(g => g.is_lead);
+                  if (lead) return <span style={{fontSize:11,fontWeight:700,color:C.gold,whiteSpace:"nowrap"}}>★ {lead.coach_name}</span>;
+                  return mine.length > 0
+                    ? <span style={{fontSize:11,fontWeight:700,color:"#f59e0b",whiteSpace:"nowrap"}}>no lead yet</span>
+                    : null;
+                })()}
                 {!past && !iAmIn && !full && myName && (
                   <button onClick={() => dsysaSignUp(c.id, myName)}
                     style={{padding:"5px 13px",borderRadius:8,border:"none",background:C.gold,color:"#000",fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>
@@ -8694,7 +8710,17 @@ export default function App() {
               <div style={{padding:"9px 14px",display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
                 {mine.length === 0 && <span style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>Nobody signed up yet.</span>}
                 {mine.map(g => (
-                  <span key={g.id} style={{fontSize:11,border:"1px solid "+C.border,borderRadius:6,padding:"3px 9px",color:C.text}}>
+                  <span key={g.id} style={{fontSize:11,border:"1px solid "+(g.is_lead?C.gold:C.border),borderRadius:6,padding:"3px 9px",
+                    color:g.is_lead?C.gold:C.text,fontWeight:g.is_lead?800:400}}>
+                    {isAdmin && (
+                      <button onClick={() => setDsysaLead(c.id, g.is_lead ? null : g.id)}
+                        title={g.is_lead ? "Remove as lead for this session" : "Make " + g.coach_name + " the lead for this session"}
+                        style={{background:"none",border:"none",padding:0,marginRight:5,cursor:"pointer",fontSize:11,
+                          color:g.is_lead?C.gold:C.mut,fontFamily:"inherit"}}>
+                        {g.is_lead ? "★" : "☆"}
+                      </button>
+                    )}
+                    {!isAdmin && g.is_lead && <span style={{marginRight:4}}>★</span>}
                     {g.coach_name}
                     {(isAdmin || (g.coach_name||"").trim().toLowerCase() === myName.toLowerCase()) && (
                       <button onClick={() => { if (window.confirm("Remove " + g.coach_name + " from " + shortDay(c.clinic_date) + "?")) dsysaDrop(g.id); }}
