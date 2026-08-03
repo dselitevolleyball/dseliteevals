@@ -14,22 +14,30 @@ export function parseRegistrationEmail(text) {
   // These emails are label-then-value blocks, often with a blank line between
   // and sometimes "Label: value" inline. Walk the lines rather than regexing
   // across them — the blank line is what defeats the single-pattern approach.
-  const lines = body.split("\n").map(l => l.trim());
+  // The plain-text body of these emails collapses the whole purchase summary
+  // onto ONE line with no separators:
+  //   "Event2027 ATX ShowcaseTeam NameDS Elite 15 Diamond, …Purchase status"
+  // so neither "label on its own line" nor "line starts with label" works.
+  // Instead: find the label anywhere, and read to whichever known label comes
+  // next. The labels themselves are the delimiters.
+  const LABELS = ["Team Name", "Total amount", "Amount paid", "Date paid",
+                  "Payment method", "Purchase status", "Event", "Name", "Email"];
+  const lower = body.toLowerCase();
   const after = (label) => {
     const want = label.toLowerCase();
-    for (let i = 0; i < lines.length; i++) {
-      const l = lines[i];
-      const low = l.toLowerCase();
-      if (low === want || low === want + ":") {
-        for (let j = i + 1; j < lines.length; j++) if (lines[j]) return lines[j];
-        return "";
-      }
-      if (low.startsWith(want + ":")) {
-        const v = l.slice(label.length + 1).trim();
-        if (v) return v;
-      }
+    const start = lower.indexOf(want);
+    if (start < 0) return "";
+    const from = start + want.length;
+    let end = body.length;
+    for (const other of LABELS) {
+      const o = other.toLowerCase();
+      // Skip labels that overlap this one ("Name" inside "Team Name"), or they
+      // truncate the value to nothing.
+      if (o === want || want.includes(o) || o.includes(want)) continue;
+      const i = lower.indexOf(o, from);
+      if (i >= 0 && i < end) end = i;
     }
-    return "";
+    return body.slice(from, end).replace(/^[:\s]+/, "").trim();
   };
 
   const event = after("Event") || (body.split("\n").map(s => s.trim()).find(Boolean) || "");
@@ -38,7 +46,11 @@ export function parseRegistrationEmail(text) {
   const paidRaw = after("Date paid") || after("Payment date");
   const method = after("Payment method");
 
-  const total = Number(String(totalRaw).replace(/[$,\s]/g, ""));
+  // The value often runs straight into the following prose ("4377.24 If you
+  // have any questions…"), so take the first number rather than demanding the
+  // whole string parse. The guards stop it starting mid-number.
+  const totalHit = /(?<![\d.,])([\d,]+(?:\.\d{2})?)(?![\d])/.exec(String(totalRaw || ""));
+  const total = totalHit ? Number(totalHit[1].replace(/,/g, "")) : NaN;
   const teams = teamsRaw
     .split(/\s*,\s*/)
     .map(t => t.trim())

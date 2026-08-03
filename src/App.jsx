@@ -3618,7 +3618,8 @@ export default function App() {
     const { error } = await supabase.from("expenses").update({ ...patch, updated_at: new Date().toISOString() }).eq("id", id);
     if (error) { window.alert("Save failed: " + error.message); loadExpenses(); }
   }, [loadExpenses]);
-  useEffect(() => { if (isApproved && view === "finance") loadExpenses(); }, [isApproved, view, loadExpenses]);
+  useEffect(() => { if (isApproved && view === "finance") { loadExpenses(); loadCoachRates(); loadCheckins(); loadPractice(); } },
+    [isApproved, view, loadExpenses, loadCoachRates, loadCheckins, loadPractice]);
 
   // DSYSA clinic help — Monday nights at the middle school.
   const loadDsysa = useCallback(async () => {
@@ -8634,7 +8635,7 @@ export default function App() {
         </div>
 
         <div style={{display:"flex",gap:0,marginBottom:12,border:"1px solid "+C.border,borderRadius:8,overflow:"hidden",width:"fit-content"}}>
-          {[["team","By team"],["category","By category"],["pending","Review" + (pending.length ? " (" + pending.length + ")" : "")],["all","All entries"]].map(([k,label]) => (
+          {[["team","By team"],["coaches","Coaches"],["category","By category"],["pending","Review" + (pending.length ? " (" + pending.length + ")" : "")],["all","All entries"]].map(([k,label]) => (
             <button key={k} onClick={()=>setFinTab(k)}
               style={{padding:"6px 14px",border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700,
                 background: finTab===k ? C.gold : "transparent", color: finTab===k ? "#000" : C.mut}}>{label}</button>
@@ -8672,6 +8673,76 @@ export default function App() {
           </div>
         )}
 
+
+        {finTab === "coaches" && (() => {
+          const nrm = (x) => String(x || "").trim().toLowerCase();
+          const rateOf = (name) => {
+            const r = coachRates.find(x => nrm(x.coach_name) === nrm(name));
+            return r ? Number(r.hourly_rate || 0) : null;
+          };
+          // Hours actually logged, from check-ins, priced at each coach's rate.
+          // An estimate from a practices-per-week model would look equally
+          // precise and be wrong the moment a session is covered or cancelled.
+          const rows = practiceTeams.map(t => {
+            const staff = [
+              { role: "Head",  name: t.head_coach },
+              { role: "Asst",  name: t.assistant_coach },
+              { role: "Third", name: t.third_coach },
+            ].filter(x => x.name && !isPlaceholderPerson(x.name))
+             .map(x => ({ ...x, rate: rateOf(x.name) }));
+            const mine = checkins.filter(c => c.team_name === t.team_name);
+            const hours = mine.reduce((a, c) => a + Number(c.hours || 0), 0);
+            const cost = mine.reduce((a, c) => a + Number(c.hours || 0) * (rateOf(c.coach_name) || 0), 0);
+            const unrated = [...new Set(mine.filter(c => rateOf(c.coach_name) == null).map(c => c.coach_name))];
+            return { team: t.team_name, staff, hours, cost, unrated };
+          }).filter(r => r.staff.length || r.hours)
+            .sort((a, b) => b.cost - a.cost);
+          const totCost = rows.reduce((a, r) => a + r.cost, 0);
+          const totHours = rows.reduce((a, r) => a + r.hours, 0);
+          const anyUnrated = [...new Set(rows.flatMap(r => r.unrated))];
+          return (
+            <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,overflow:"hidden"}}>
+              <div style={{padding:"10px 14px",borderBottom:"1px solid "+C.border,display:"flex",gap:14,flexWrap:"wrap",alignItems:"baseline"}}>
+                <span style={{fontSize:16,fontWeight:800,color:C.gold}}>{usd2(totCost)}</span>
+                <span style={{fontSize:11,color:C.mut}}>coach pay logged so far · {totHours.toFixed(1)} hours across {rows.filter(r=>r.hours).length} teams</span>
+              </div>
+              <div style={{overflowX:"auto"}}>
+                <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0,minWidth:640}}>
+                  <thead><tr><th style={th}>Team</th><th style={th}>Coaches</th><th style={th}>Hours logged</th><th style={th}>Coach cost</th></tr></thead>
+                  <tbody>
+                    {rows.map(r => (
+                      <tr key={r.team}>
+                        <td style={{...td,fontWeight:700,whiteSpace:"nowrap"}}>{r.team}</td>
+                        <td style={td}>
+                          {r.staff.length === 0 && <span style={{color:C.mut,fontStyle:"italic"}}>none assigned</span>}
+                          {r.staff.map(x => (
+                            <span key={x.role + x.name} style={{display:"inline-block",marginRight:8,fontSize:11,whiteSpace:"nowrap"}}>
+                              <span style={{color:C.mut}}>{x.role}</span>{" "}
+                              <span style={{color:C.text,fontWeight:600}}>{x.name}</span>
+                              <span style={{color: x.rate == null ? "#f59e0b" : C.mut}}>
+                                {x.rate == null ? " · no rate" : " · $" + x.rate + "/hr"}
+                              </span>
+                            </span>
+                          ))}
+                        </td>
+                        <td style={{...td,whiteSpace:"nowrap",color:r.hours?C.text:C.mut}}>{r.hours ? r.hours.toFixed(1) : "—"}</td>
+                        <td style={{...td,fontWeight:700,whiteSpace:"nowrap"}}>{r.cost ? usd2(r.cost) : "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div style={{padding:"10px 14px",borderTop:"1px solid "+C.border,fontSize:11,color:C.mut,lineHeight:1.6}}>
+                Cost is hours actually checked in, priced at each coach's rate — not a projection.
+                {anyUnrated.length > 0 && (
+                  <div style={{color:"#f59e0b",marginTop:4}}>
+                    ⚠ No hourly rate on file for {anyUnrated.join(", ")} — their hours are counted but costed at $0.
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })()}
         {finTab === "category" && (
           <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,overflow:"hidden"}}>
             <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0}}>

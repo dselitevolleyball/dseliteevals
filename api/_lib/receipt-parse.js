@@ -31,13 +31,22 @@ const money = (s) => {
 
 // Largest currency figure near a total-ish label, else the largest overall.
 // Receipts list line items and tax; the total is almost always the biggest.
+//
+// The (?<![\d.,]) guard is load-bearing. Without it the gap-matcher between the
+// label and the number backtracks INTO the number and returns its tail —
+// $4,377.24 came back as $7.24, which looks like a plausible small charge and
+// would never be caught by eye in a list. The guard means a match can only
+// begin at a real number boundary.
+const NUM = String.raw`(?<![\d.,])([\d,]+\.\d{2})(?![\d])`;
 function findAmount(body) {
   const labelled = [];
-  const re = /(total|amount (?:paid|charged|due)|order total|grand total|charged|payment)[^\n$]{0,40}\$?\s*([\d,]+\.\d{2})/gi;
+  const re = new RegExp(
+    String.raw`(total amount|amount (?:paid|charged|due)|order total|grand total|total|charged|payment)\s*:?\s*\$?\s*` + NUM,
+    "gi");
   let m;
   while ((m = re.exec(body))) { const v = money(m[2]); if (v) labelled.push(v); }
   if (labelled.length) return Math.max(...labelled);
-  const all = [...body.matchAll(/\$\s*([\d,]+\.\d{2})/g)].map(x => money(x[1])).filter(Boolean);
+  const all = [...body.matchAll(new RegExp(String.raw`\$\s*` + NUM, "g"))].map(x => money(x[1])).filter(Boolean);
   return all.length ? Math.max(...all) : null;
 }
 
