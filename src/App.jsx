@@ -1384,6 +1384,9 @@ export default function App() {
   const [syPostTok, setSyPostTok]       = useState(null);   // SportsYou post bookmarklet {href} | {configured:false} | {error}
   const [syOutbox, setSyOutbox]         = useState([]);     // sportsyou_outbox rows (pending + recently posted)
   const [hawaiiInterest, setHawaiiInterest] = useState([]); // hawaii_interest rows, one per player who has answered
+  const [expenses, setExpenses]             = useState([]); // expense ledger
+  const [finSeason, setFinSeason]           = useState("2026-27");
+  const [finTab, setFinTab]                 = useState("team"); // team | category | pending | all
   const [dsysaClinics, setDsysaClinics]     = useState([]); // DSYSA clinic dates
   const [dsysaSignups, setDsysaSignups]     = useState([]); // which coaches are covering each
   const [hawaiiAddTeam, setHawaiiAddTeam]   = useState(null); // which Hawaii team's "add player" search is open
@@ -1621,7 +1624,7 @@ export default function App() {
   // Operations are admin-only: the whole "Operations" nav group and the views
   // behind it are hidden and blocked for non-admin coaches. The owner (Drew)
   // always counts here so a bad DB flag can't lock him out.
-  const OPS_VIEWS = new Set(["tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","timecards","gear","roster","hawaii","travel","dsysa"]);
+  const OPS_VIEWS = new Set(["tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","timecards","gear","roster","hawaii","travel","dsysa","finance"]);
   const canOps    = isAdmin || isOwner;
   const opsDenied = <div style={{padding:24,color:C.mut,textAlign:"center"}}>This section is restricted to administrators. Ask the club administrator (Drew) for access.</div>;
   // Once a player has accepted (or is locked/signed) onto a team, they're
@@ -3596,6 +3599,27 @@ export default function App() {
 
   // Hawaii trip interest. Rows are created lazily, so a player with no row is
   // 'not_asked' — the table stays empty until someone actually answers.
+  // Expense ledger. Pending rows are captured from email and excluded from
+  // totals until approved.
+  const loadExpenses = useCallback(async () => {
+    const { data, error } = await supabase.from("expenses").select("*").order("expense_date", { ascending: false, nullsFirst: false });
+    if (error) { console.error("Load expenses error:", error); return; }
+    setExpenses(data || []);
+  }, []);
+  const setExpenseStatus = useCallback(async (id, status) => {
+    const patch = { status, updated_at: new Date().toISOString() };
+    if (status === "approved") { patch.approved_by = coach?.display_name || coach?.email || null; patch.approved_at = new Date().toISOString(); }
+    setExpenses(prev => prev.map(e => e.id === id ? { ...e, ...patch } : e));
+    const { error } = await supabase.from("expenses").update(patch).eq("id", id);
+    if (error) { window.alert("Save failed: " + error.message); loadExpenses(); }
+  }, [coach, loadExpenses]);
+  const updateExpense = useCallback(async (id, patch) => {
+    setExpenses(prev => prev.map(e => e.id === id ? { ...e, ...patch } : e));
+    const { error } = await supabase.from("expenses").update({ ...patch, updated_at: new Date().toISOString() }).eq("id", id);
+    if (error) { window.alert("Save failed: " + error.message); loadExpenses(); }
+  }, [loadExpenses]);
+  useEffect(() => { if (isApproved && view === "finance") loadExpenses(); }, [isApproved, view, loadExpenses]);
+
   // DSYSA clinic help — Monday nights at the middle school.
   const loadDsysa = useCallback(async () => {
     const [{ data: c, error: ce }, { data: g, error: ge }] = await Promise.all([
@@ -8552,6 +8576,194 @@ export default function App() {
   // DSYSA clinic help. Monday evenings at Dripping Springs Middle School,
   // 3rd-6th grade, 90 minutes run as a tournament. Brand exposure and the
   // recruiting channel for the 11s and 12s while those teams are still filling.
+
+  // Finance — the ledger, per-team roll-up, and the approval queue for anything
+  // captured from email.
+  function renderFinance() {
+    if (!isAdmin) return <div style={{padding:24,color:C.mut,textAlign:"center"}}>Finance is restricted to admins.</div>;
+    const usd = (v) => (v == null ? "—" : (v < 0 ? "-$" : "$") + Math.abs(Number(v)).toLocaleString(undefined, { maximumFractionDigits: 0 }));
+    const usd2 = (v) => "$" + Number(v || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const seasons = [...new Set(expenses.map(e => e.season).filter(Boolean))].sort().reverse();
+    const inSeason = expenses.filter(e => e.season === finSeason);
+    const live = inSeason.filter(e => e.status === "approved");
+    const pending = expenses.filter(e => e.status === "pending");
+
+    const sum = (rows) => rows.reduce((a, e) => a + Number(e.amount || 0), 0);
+    const total = sum(live);
+    const teamRows = [...new Set(live.filter(e => e.team_name).map(e => e.team_name))]
+      .map(t => ({ team: t, spend: sum(live.filter(e => e.team_name === t)) }))
+      .sort((a, b) => b.spend - a.spend);
+    const teamed = sum(live.filter(e => e.team_name));
+    const club = total - teamed;
+    const catRows = [...new Set(live.map(e => e.category))]
+      .map(c => ({ cat: c, spend: sum(live.filter(e => e.category === c)), rows: live.filter(e => e.category === c).length }))
+      .sort((a, b) => b.spend - a.spend);
+    const unpaid = sum(live.filter(e => !e.paid));
+
+    const th = {padding:"7px 9px",textAlign:"left",fontSize:9,fontWeight:700,textTransform:"uppercase",color:C.mut,borderBottom:"1px solid "+C.border,whiteSpace:"nowrap"};
+    const td = {padding:"6px 9px",borderBottom:"1px solid "+C.border,fontSize:12};
+    const stat = (label, value, color, sub) => (
+      <div style={{border:"1px solid "+C.border,borderLeft:"3px solid "+(color||C.gold),borderRadius:8,padding:"9px 14px",minWidth:132,background:C.card}}>
+        <div style={{fontSize:20,fontWeight:800,color:color||C.gold,lineHeight:1.1}}>{value}</div>
+        <div style={{fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut}}>{label}</div>
+        {sub && <div style={{fontSize:10,color:C.mut,marginTop:2}}>{sub}</div>}
+      </div>
+    );
+
+    return (
+      <div style={{padding:"18px 16px",maxWidth:1180,margin:"0 auto"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:12}}>
+          <div>
+            <h2 style={{margin:0,fontSize:20,fontWeight:800,color:C.gold}}>Finance</h2>
+            <div style={{fontSize:12,color:C.mut,marginTop:2}}>{live.length} approved entries · {finSeason}</div>
+          </div>
+          <div style={{flex:1}} />
+          {seasons.length > 1 && (
+            <select value={finSeason} onChange={e=>setFinSeason(e.target.value)} style={{...inpStyle,padding:"6px 10px",fontSize:12,fontWeight:700,color:C.gold}}>
+              {seasons.map(x => <option key={x} value={x}>{x}</option>)}
+            </select>
+          )}
+        </div>
+
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:14}}>
+          {stat("Total spend", usd(total), C.gold)}
+          {stat("Allocated to teams", usd(teamed), "#38bdf8", total ? Math.round(teamed / total * 100) + "% of spend" : null)}
+          {stat("Club / overhead", usd(club), C.mut, total ? Math.round(club / total * 100) + "% unallocated" : null)}
+          {unpaid > 0 && stat("Not yet paid", usd(unpaid), "#f59e0b")}
+          {pending.length > 0 && stat("Awaiting review", pending.length, "#a855f7", usd(sum(pending)) + " from email")}
+        </div>
+
+        <div style={{display:"flex",gap:0,marginBottom:12,border:"1px solid "+C.border,borderRadius:8,overflow:"hidden",width:"fit-content"}}>
+          {[["team","By team"],["category","By category"],["pending","Review" + (pending.length ? " (" + pending.length + ")" : "")],["all","All entries"]].map(([k,label]) => (
+            <button key={k} onClick={()=>setFinTab(k)}
+              style={{padding:"6px 14px",border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700,
+                background: finTab===k ? C.gold : "transparent", color: finTab===k ? "#000" : C.mut}}>{label}</button>
+          ))}
+        </div>
+
+        {finTab === "team" && (
+          <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,overflow:"hidden"}}>
+            <div style={{overflowX:"auto"}}>
+              <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0,minWidth:520}}>
+                <thead><tr><th style={th}>Team</th><th style={th}>Direct spend</th><th style={th}>Share of allocated</th></tr></thead>
+                <tbody>
+                  {teamRows.map(r => (
+                    <tr key={r.team}>
+                      <td style={{...td,fontWeight:700,whiteSpace:"nowrap"}}>{r.team}</td>
+                      <td style={{...td,fontWeight:700}}>{usd2(r.spend)}</td>
+                      <td style={td}>
+                        <div style={{display:"flex",alignItems:"center",gap:8}}>
+                          <div style={{flex:1,height:6,background:C.bg,borderRadius:3,overflow:"hidden",minWidth:80}}>
+                            <div style={{width:(teamed ? (r.spend/teamed*100) : 0)+"%",height:"100%",background:C.acc}} />
+                          </div>
+                          <span style={{fontSize:11,color:C.mut,minWidth:34}}>{teamed ? Math.round(r.spend/teamed*100) : 0}%</span>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                  {!teamRows.length && <tr><td style={{...td,color:C.mut}} colSpan={3}>No team-allocated spend this season yet.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+            <div style={{padding:"10px 14px",borderTop:"1px solid "+C.border,fontSize:11,color:C.mut,lineHeight:1.6}}>
+              Direct spend only — the <b style={{color:C.text}}>{usd(club)}</b> of club and overhead cost above isn't shared out.
+              A per-team P&amp;L needs dues per tier and an allocation rule for that, neither of which is set yet.
+            </div>
+          </div>
+        )}
+
+        {finTab === "category" && (
+          <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,overflow:"hidden"}}>
+            <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0}}>
+              <thead><tr><th style={th}>Category</th><th style={th}>Entries</th><th style={th}>Spend</th><th style={th}>Share</th></tr></thead>
+              <tbody>
+                {catRows.map(r => (
+                  <tr key={r.cat}>
+                    <td style={{...td,fontWeight:700}}>{r.cat}</td>
+                    <td style={{...td,color:C.mut}}>{r.rows}</td>
+                    <td style={{...td,fontWeight:700}}>{usd2(r.spend)}</td>
+                    <td style={{...td,color:C.mut}}>{total ? Math.round(r.spend/total*100) : 0}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {finTab === "pending" && (
+          <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,overflow:"hidden"}}>
+            {!pending.length && <div style={{padding:26,textAlign:"center",color:C.mut,fontSize:12}}>Nothing waiting. Receipts captured from email land here first.</div>}
+            {pending.length > 0 && (
+              <div style={{overflowX:"auto"}}>
+                <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0,minWidth:900}}>
+                  <thead><tr>{["Vendor","What","Date","Amount","Category","Team / bucket",""].map(h =>
+                    <th key={h} style={th}>{h}</th>)}</tr></thead>
+                  <tbody>
+                    {pending.map(e => (
+                      <tr key={e.id}>
+                        <td style={{...td,fontWeight:700,whiteSpace:"nowrap"}}>{e.vendor || "—"}</td>
+                        <td style={{...td,color:C.mut,maxWidth:240,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={e.email_subject || e.item}>{e.item}</td>
+                        <td style={{...td,whiteSpace:"nowrap"}}>
+                          <DebouncedField style={{...inpStyle,padding:"3px 6px",fontSize:11,width:130}} type="date"
+                            value={e.expense_date || ""} onCommit={v => updateExpense(e.id, { expense_date: v || null })} />
+                        </td>
+                        <td style={{...td,fontWeight:800,whiteSpace:"nowrap"}}>
+                          <DebouncedField style={{...inpStyle,padding:"3px 6px",fontSize:11,width:92}} type="number"
+                            value={e.amount ?? ""} onCommit={v => updateExpense(e.id, { amount: v === "" ? 0 : Number(v) })} />
+                        </td>
+                        <td style={td}>
+                          <DebouncedField style={{...inpStyle,padding:"3px 6px",fontSize:11,width:120}}
+                            value={e.category || ""} onCommit={v => updateExpense(e.id, { category: v.trim() || "Club Expenses" })} />
+                        </td>
+                        <td style={td}>
+                          <select style={{...inpStyle,padding:"3px 6px",fontSize:11,width:150}} value={e.team_name || ""}
+                            onChange={ev => updateExpense(e.id, { team_name: ev.target.value || null, allocation: ev.target.value || e.allocation })}>
+                            <option value="">{e.allocation || "— club / overhead —"}</option>
+                            {teamsList.filter(t => t.active).map(t => <option key={t.id} value={t.id}>{t.id}</option>)}
+                          </select>
+                        </td>
+                        <td style={{...td,whiteSpace:"nowrap",textAlign:"right"}}>
+                          <button onClick={() => setExpenseStatus(e.id, "approved")}
+                            style={{padding:"3px 10px",borderRadius:6,border:"none",background:C.grn,color:"#000",fontSize:10,fontWeight:800,cursor:"pointer",fontFamily:"inherit",marginRight:5}}>approve</button>
+                          <button onClick={() => { if (window.confirm("Reject this receipt? It stays on record but never counts.")) setExpenseStatus(e.id, "rejected"); }}
+                            style={{padding:"3px 9px",borderRadius:6,border:"1px solid "+C.red,background:"transparent",color:C.red,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>reject</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {finTab === "all" && (
+          <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,overflow:"hidden"}}>
+            <div style={{overflowX:"auto",maxHeight:560,overflowY:"auto"}}>
+              <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0,minWidth:820}}>
+                <thead><tr>{["Date","Category","Team / bucket","Item","Amount","Paid"].map(h =>
+                  <th key={h} style={{...th,position:"sticky",top:0,background:C.card}}>{h}</th>)}</tr></thead>
+                <tbody>
+                  {live.slice(0, 400).map(e => (
+                    <tr key={e.id}>
+                      <td style={{...td,color:C.mut,whiteSpace:"nowrap"}}>{e.expense_date || "—"}</td>
+                      <td style={{...td,whiteSpace:"nowrap"}}>{e.category}</td>
+                      <td style={{...td,color:e.team_name?C.text:C.mut,whiteSpace:"nowrap"}}>{e.team_name || e.allocation || "—"}</td>
+                      <td style={{...td,color:C.mut,maxWidth:280,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={e.item}>{e.item}</td>
+                      <td style={{...td,fontWeight:700,whiteSpace:"nowrap"}}>{usd2(e.amount)}</td>
+                      <td style={{...td,color:e.paid?C.grn:"#f59e0b",fontWeight:700}}>{e.paid ? "yes" : "no"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {live.length > 400 && <div style={{padding:"8px 14px",fontSize:11,color:C.mut,borderTop:"1px solid "+C.border}}>Showing the 400 most recent of {live.length}.</div>}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   function renderDsysa() {
     const myName = (() => {
       const nrm = s2 => String(s2 || "").trim().toLowerCase();
@@ -21787,7 +21999,7 @@ export default function App() {
                 ...(canOps ? [{ title:"Operations", items:[
                   ["hdr","Club"],
                   ["tracker","Tracker"], ["teamdir","All Teams"], ["practice","Practice"], ["sa","S&A Schedule"], ["clinics","DSSC Clinics"], ["dsysa","DSYSA Clinics"], ["scholarships","Scholarships"],
-                  ...(isAdmin ? [["hawaii","Hawaii"], ["travel","Travel"]] : []),
+                  ...(isAdmin ? [["hawaii","Hawaii"], ["travel","Travel"], ["finance","Finance"]] : []),
                   ["hdr","Coaches & Pay"],
                   ["coaches","Coaches"], ["coverage","Coach Coverage"], ["timecards","Time Cards"], ["gear","Gear Sizes" + (gearOutstanding ? " (" + gearOutstanding + ")" : "")], ["requests","Requests" + (pendingReqs ? " (" + pendingReqs + ")" : "")],
                   ["hdr","Communication"],
@@ -22010,6 +22222,7 @@ export default function App() {
         {view==="gear" && (canOps ? renderGearTracker() : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Gear ordering is admin-only.</div>)}
         {view==="hawaii" && renderHawaii()}
         {view==="dsysa" && renderDsysa()}
+        {view==="finance" && renderFinance()}
         {view==="travel" && renderTravel()}
         {view==="faq" && renderFaq()}
         {view==="practiceplan" && renderPracticePlans()}
