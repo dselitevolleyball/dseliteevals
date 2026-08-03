@@ -14,6 +14,7 @@
 import { createClient } from "@supabase/supabase-js";
 import crypto from "node:crypto";
 import { parseReceiptEmail } from "./_lib/receipt-parse.js";
+import { matchTournament } from "./_lib/tournament-match.js";
 
 const safeEqual = (a, b) => {
   const ba = Buffer.from(String(a || "")), bb = Buffer.from(String(b || ""));
@@ -65,8 +66,32 @@ export default async function handler(req, res) {
     return res.status(200).json({ ok: true, skipped: parsed.reason || "nothing to record", messageId, confidence: parsed.confidence });
   }
 
+  // Resolve the allocation label to a real team, and the event name to a
+  // tournament, so the row arrives usable instead of needing both filled in by
+  // hand. A tournament is only linked on a confident match — a wrong one would
+  // put the cost on the wrong event and flip the wrong teams to registered.
+  const [{ data: teamRows }, { data: tnRows }] = await Promise.all([
+    supabase.from("teams").select("id"),
+    supabase.from("tournaments").select("id, name").eq("cancelled", false),
+  ]);
+  const known = new Map((teamRows || []).map(t => [String(t.id).toLowerCase(), t.id]));
+  const ALIAS = { "11 rise": "11 Rise 1", "12-1 rise": "12 Rise 1", "12-2 rise": "12 Rise 2", "13 rise": "13 Rise 1" };
+  const eventName = parsed.event || String(body?.subject || "").replace(/^Purchase with successful payment\s*/i, "").trim();
+  const match = parsed.kind === "registration" ? matchTournament(eventName, tnRows || []) : null;
+
   const now = new Date().toISOString();
-  const rows = parsed.rows.map(r => ({ ...r, captured_at: now, raw_email: String(body?.text || "").slice(0, 20000) }));
+  const rows = parsed.rows.map(r => {
+    const key = String(r.allocation || "").toLowerCase();
+    return {
+      ...r,
+      team_name: known.get(key) || ALIAS[key] || null,
+      tournament_id: match ? match.id : null,
+      captured_at: now,
+      raw_email: String(body?.text || "").slice(0, 20000),
+      notes: [r.notes, match ? null : (parsed.kind === "registration" ? "Tournament not matched automatically — pick it in review" : null)]
+        .filter(Boolean).join(" · ") || null,
+    };
+  });
   const { error } = await supabase.from("expenses").insert(rows);
   if (error) {
     // The unique index is the backstop when two runs race on one message.

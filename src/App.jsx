@@ -3607,12 +3607,24 @@ export default function App() {
     setExpenses(data || []);
   }, []);
   const setExpenseStatus = useCallback(async (id, status) => {
+    const row = expenses.find(e => e.id === id);
     const patch = { status, updated_at: new Date().toISOString() };
     if (status === "approved") { patch.approved_by = coach?.display_name || coach?.email || null; patch.approved_at = new Date().toISOString(); }
     setExpenses(prev => prev.map(e => e.id === id ? { ...e, ...patch } : e));
     const { error } = await supabase.from("expenses").update(patch).eq("id", id);
-    if (error) { window.alert("Save failed: " + error.message); loadExpenses(); }
-  }, [coach, loadExpenses]);
+    if (error) { window.alert("Save failed: " + error.message); loadExpenses(); return; }
+
+    // Paying for an entry IS the registration, so approving one says so on the
+    // tournament board. Only ever moves a team forward — an assignment already
+    // marked need_to_drop or dropped is a later decision and stays put.
+    if (status === "approved" && row?.tournament_id && row?.team_name && row?.category === "Tournament") {
+      const a = tournamentAssignments.find(x => x.tournament_id === row.tournament_id && x.team_id === row.team_name);
+      if (a && !["registered", "need_to_drop", "dropped"].includes(a.status)) {
+        const up = await supabase.from("tournament_assignments").update({ status: "registered" }).eq("id", a.id);
+        if (!up.error) loadTournaments();
+      }
+    }
+  }, [coach, loadExpenses, expenses, tournamentAssignments, loadTournaments]);
   const updateExpense = useCallback(async (id, patch) => {
     setExpenses(prev => prev.map(e => e.id === id ? { ...e, ...patch } : e));
     const { error } = await supabase.from("expenses").update({ ...patch, updated_at: new Date().toISOString() }).eq("id", id);
@@ -3620,6 +3632,9 @@ export default function App() {
   }, [loadExpenses]);
   useEffect(() => { if (isApproved && view === "finance") { loadExpenses(); loadCoachRates(); loadCheckins(); loadPractice(); } },
     [isApproved, view, loadExpenses, loadCoachRates, loadCheckins, loadPractice]);
+  // The tournament card shows what the entry cost, so it needs the ledger too.
+  useEffect(() => { if (isApproved && (view === "tournaments" || view === "travel")) loadExpenses(); },
+    [isApproved, view, loadExpenses]);
 
   // DSYSA clinic help — Monday nights at the middle school.
   const loadDsysa = useCallback(async () => {
@@ -8767,7 +8782,7 @@ export default function App() {
             {pending.length > 0 && (
               <div style={{overflowX:"auto"}}>
                 <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0,minWidth:900}}>
-                  <thead><tr>{["Vendor","What","Date","Amount","Category","Team / bucket",""].map(h =>
+                  <thead><tr>{["Vendor","What","Date","Amount","Category","Team / bucket","Tournament",""].map(h =>
                     <th key={h} style={th}>{h}</th>)}</tr></thead>
                   <tbody>
                     {pending.map(e => (
@@ -8791,6 +8806,18 @@ export default function App() {
                             onChange={ev => updateExpense(e.id, { team_name: ev.target.value || null, allocation: ev.target.value || e.allocation })}>
                             <option value="">{e.allocation || "— club / overhead —"}</option>
                             {teamsList.filter(t => t.active).map(t => <option key={t.id} value={t.id}>{t.id}</option>)}
+                          </select>
+                        </td>
+                        <td style={td}>
+                          <select style={{...inpStyle,padding:"3px 6px",fontSize:11,width:210,
+                              borderColor: e.category === "Tournament" && !e.tournament_id ? "#f59e0b" : undefined}}
+                            value={e.tournament_id ?? ""}
+                            title={e.tournament_id ? "Approving will mark this team registered" : "Unmatched — pick the event to link the cost and mark the team registered"}
+                            onChange={ev => updateExpense(e.id, { tournament_id: ev.target.value ? Number(ev.target.value) : null })}>
+                            <option value="">{e.category === "Tournament" ? "— pick the event —" : "— not a tournament —"}</option>
+                            {[...tournaments].filter(t => !t.cancelled)
+                              .sort((a, b) => (a.start_date || "").localeCompare(b.start_date || ""))
+                              .map(t => <option key={t.id} value={t.id}>{(t.start_date || "").slice(5)} {t.name.slice(0, 44)}</option>)}
                           </select>
                         </td>
                         <td style={{...td,whiteSpace:"nowrap",textAlign:"right"}}>
@@ -19256,6 +19283,17 @@ export default function App() {
   const isFamilyRow = (r) => r?.traveler_type === "family" || !!r?.private_owner;
   const clubRowsFor = (tnId) => coachTravel.filter(t => t.tournament_id === tnId && !isFamilyRow(t));
   const familyRowsFor = (tnId) => coachTravel.filter(t => t.tournament_id === tnId && isFamilyRow(t));
+  // What this tournament's entry actually cost, by team, from approved ledger
+  // rows. Pending captures are excluded — they haven't been eyeballed yet.
+  const regCostFor = (tnId) => {
+    const rows = expenses.filter(e => e.tournament_id === tnId && e.status === "approved" && e.category === "Tournament");
+    return {
+      total: rows.reduce((a, e) => a + Number(e.amount || 0), 0),
+      byTeam: rows.filter(e => e.team_name).map(e => ({ team: e.team_name, amount: Number(e.amount || 0) }))
+        .sort((a, b) => a.team.localeCompare(b.team)),
+      rows: rows.length,
+    };
+  };
   // Money + booking totals for one tournament's travel.
   const travelTotals = (tnId) => {
     const rows = clubRowsFor(tnId);
@@ -20111,6 +20149,23 @@ export default function App() {
             </div>
           )}
         </div>
+        {(() => {
+          const rc = regCostFor(tn.id);
+          if (!rc.rows) return null;
+          return (
+            <div style={{borderTop:"1px solid "+C.border,padding:"8px 14px",display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+              <span style={{fontSize:11,fontWeight:800,textTransform:"uppercase",color:C.mut}}>Entry paid</span>
+              <span style={{fontSize:12,fontWeight:800,color:C.gold}}>{travelMoney(rc.total)}</span>
+              <span style={{fontSize:11,color:C.mut}}>
+                {rc.byTeam.length ? rc.byTeam.length + " team" + (rc.byTeam.length===1?"":"s") : "unallocated"}
+                {rc.byTeam.length ? " · " + travelMoney(rc.byTeam[0].amount) + " each" : ""}
+              </span>
+              <span style={{fontSize:10,color:C.mut,fontStyle:"italic"}} title={rc.byTeam.map(x => x.team + " " + travelMoney(x.amount)).join(", ")}>
+                {rc.byTeam.slice(0,6).map(x => x.team).join(", ")}{rc.byTeam.length > 6 ? " +" + (rc.byTeam.length-6) : ""}
+              </span>
+            </div>
+          );
+        })()}
         {/* Coach travel — stay-over events only, and only once teams are
             assigned, since the travelling staff is derived from those. Same
             editor as the Travel screen. */}
