@@ -3620,6 +3620,18 @@ export default function App() {
     if (error) { window.alert("Remove failed: " + error.message); return; }
     loadDsysa();
   }, [loadDsysa]);
+  const addDsysaClinic = useCallback(async (dateIso) => {
+    const d = String(dateIso || "").trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) { window.alert("Pick a date first."); return; }
+    const { error } = await supabase.from("dsysa_clinics").insert({ clinic_date: d });
+    if (error) { window.alert(/duplicate|unique/i.test(error.message) ? "That date is already on the list." : "Add failed: " + error.message); return; }
+    loadDsysa();
+  }, [loadDsysa]);
+  const deleteDsysaClinic = useCallback(async (id) => {
+    const { error } = await supabase.from("dsysa_clinics").delete().eq("id", id);
+    if (error) { window.alert("Delete failed: " + error.message); return; }
+    loadDsysa();
+  }, [loadDsysa]);
   const saveDsysaClinic = useCallback(async (id, patch) => {
     const { error } = await supabase.from("dsysa_clinics").update({ ...patch, updated_at: new Date().toISOString() }).eq("id", id);
     if (error) { window.alert("Save failed: " + error.message); return; }
@@ -8616,9 +8628,18 @@ export default function App() {
           </div>
         )}
         {dsysaClinics.length === 0 && (
-          <div style={{padding:26,textAlign:"center",color:C.mut,fontSize:12}}>No clinic dates loaded yet.</div>
+          <div style={{padding:26,textAlign:"center",color:C.mut,fontSize:12}}>No clinic dates yet.{isAdmin ? " Add one below." : ""}</div>
         )}
-        {dsysaClinics.map(c => {
+        {isAdmin && (
+          <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginTop:12,paddingTop:12,borderTop:"1px solid "+C.border}}>
+            <span style={{fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut}}>Add a date</span>
+            <input type="date" id="dsysa-new-date" style={{...inpStyle,padding:"5px 9px",fontSize:12,width:170}} />
+            <button onClick={() => { const el = document.getElementById("dsysa-new-date"); if (el) { addDsysaClinic(el.value); el.value = ""; } }}
+              style={{padding:"5px 13px",borderRadius:8,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Add</button>
+            <span style={{fontSize:10,color:C.mut,fontStyle:"italic"}}>cancel keeps the sign-ups · × removes the date entirely</span>
+          </div>
+        )}
+        {dsysaClinics.filter(c => isAdmin || !c.cancelled).map(c => {
           const mine = signupsFor(c.id);
           const min = c.min_coaches || 4, max = c.max_coaches || 6;
           const full = mine.length >= max;
@@ -8626,9 +8647,10 @@ export default function App() {
           const past = c.clinic_date < today;
           const iAmIn = mine.some(g => (g.coach_name || "").trim().toLowerCase() === myName.toLowerCase());
           return (
-            <div key={c.id} style={{background:C.card,border:"1px solid "+(past?C.border:ok?C.grn:"#f59e0b"),borderRadius:12,marginBottom:10,overflow:"hidden",opacity:past?0.5:1}}>
+            <div key={c.id} style={{background:C.card,border:"1px solid "+(c.cancelled?C.red:past?C.border:ok?C.grn:"#f59e0b"),borderRadius:12,marginBottom:10,overflow:"hidden",opacity:(past||c.cancelled)?0.5:1}}>
               <div style={{padding:"11px 14px",display:"flex",alignItems:"center",gap:12,flexWrap:"wrap",borderBottom:"1px solid "+C.border}}>
-                <span style={{fontSize:14,fontWeight:800,color:C.text}}>{shortDay(c.clinic_date)}</span>
+                <span style={{fontSize:14,fontWeight:800,color:C.text,textDecoration:c.cancelled?"line-through":"none"}}>{shortDay(c.clinic_date)}</span>
+                {c.cancelled && <span style={{fontSize:10,fontWeight:800,textTransform:"uppercase",color:C.red,border:"1px solid "+C.red,borderRadius:4,padding:"1px 6px"}}>cancelled</span>}
                 <span style={{fontSize:11,color:C.mut}}>
                   {hhmm(c.start_time)}–{hhmm(c.end_time)}{c.time_tbc ? " (usually, not confirmed)" : ""} · {c.location}
                 </span>
@@ -8649,6 +8671,25 @@ export default function App() {
                   </button>
                 )}
                 {!past && full && !iAmIn && <span style={{fontSize:11,color:C.grn,fontWeight:700}}>full</span>}
+                {isAdmin && (
+                  <>
+                    <button onClick={() => saveDsysaClinic(c.id, { cancelled: !c.cancelled })}
+                      title={c.cancelled ? "Put this date back on" : "Call this one off but keep who signed up"}
+                      style={{padding:"3px 9px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+                      {c.cancelled ? "restore" : "cancel"}
+                    </button>
+                    <button onClick={() => {
+                      const who = mine.length;
+                      const msg = who
+                        ? "Delete " + shortDay(c.clinic_date) + "?\n\n" + who + " coach" + (who===1?" is":"es are") + " signed up and will be removed too.\n\nUse \"cancel\" instead if the date might come back."
+                        : "Delete " + shortDay(c.clinic_date) + " from the list?";
+                      if (window.confirm(msg)) deleteDsysaClinic(c.id);
+                    }} title="Remove this date entirely"
+                      style={{padding:"3px 8px",borderRadius:6,border:"1px solid "+C.red,background:"transparent",color:C.red,fontSize:10,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>
+                      ×
+                    </button>
+                  </>
+                )}
               </div>
               <div style={{padding:"9px 14px",display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
                 {mine.length === 0 && <span style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>Nobody signed up yet.</span>}
