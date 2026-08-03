@@ -3625,7 +3625,7 @@ export default function App() {
     if (error) { window.alert("Save failed: " + error.message); return; }
     loadDsysa();
   }, [loadDsysa]);
-  useEffect(() => { if (isApproved && (view === "dsysa" || view === "home")) loadDsysa(); }, [isApproved, view, loadDsysa]);
+  useEffect(() => { if (isApproved && (view === "dsysa" || view === "home" || coachCardName)) loadDsysa(); }, [isApproved, view, coachCardName, loadDsysa]);
 
   const loadHawaii = useCallback(async () => {
     const { data, error } = await supabase.from("hawaii_interest").select("*");
@@ -5826,7 +5826,14 @@ export default function App() {
                 // Family flights sit on the same calendar, so name them or two
                 // chips on one day are indistinguishable.
                 who: x.t.private_owner ? String(x.t.coach_name || "").split(/\s+/)[0] : "" }));
-            const events = [...evFlight.map(x => ({
+            const evClinic = dsysaSignups
+              .filter(g => matches(g.coach_name))
+              .map(g => dsysaClinics.find(c => c.id === g.clinic_id))
+              .filter(c => c && !c.cancelled && c.clinic_date === iso);
+            const events = [...evClinic.map(c => ({
+              label: "🏐 DSYSA" + (c.start_time ? " " + (fmtFlightTime(c.start_time) || c.start_time) : ""),
+              c: "#0ea5e9" })),
+              ...evFlight.map(x => ({
               label: "✈ " + (x.who ? x.who + " " : "") + (x.out ? "out" : "home")
                 + (fmtFlightTime(x.time) ? " " + fmtFlightTime(x.time) : (x.airline && !x.who ? " " + x.airline.slice(0,6) : "")),
               c: x.who ? "#a855f7" : "#38bdf8" })),
@@ -8553,6 +8560,61 @@ export default function App() {
           and recruit for the <b style={{color:C.text}}>11s and 12s</b>, which are still filling. Each date needs <b style={{color:C.text}}>4–6 coaches</b>.
           {shortfall > 0 && <div style={{color:"#f59e0b",fontWeight:700,marginTop:6}}>⚠ {shortfall} more coach{shortfall===1?"":"es"} needed across the upcoming dates.</div>}
         </div>
+        {isAdmin && upcoming.length > 0 && (
+          <div style={{marginBottom:14}}>
+            <button onClick={async () => {
+              // Only the dates that still need people, and only coaches who
+              // haven't already put their hand up for all of them.
+              const needing = upcoming.filter(c => signupsFor(c.id).length < (c.min_coaches || 4));
+              if (!needing.length) { window.alert("Every upcoming date already has its minimum. Nothing to ask for."); return; }
+              const targets = coachRoster.filter(r => {
+                const nm = ((r.first_name||"") + " " + (r.last_name||"")).trim();
+                if (!String(r.email||"").trim() || isPlaceholderPerson(nm)) return false;
+                return needing.some(c => !signupsFor(c.id).some(g => (g.coach_name||"").trim().toLowerCase() === nm.toLowerCase()));
+              });
+              const seen = new Set(); const list = [];
+              for (const r of targets) { const e = String(r.email).trim().toLowerCase(); if (!seen.has(e)) { seen.add(e); list.push(r); } }
+              if (!list.length) { window.alert("Everyone with an email is already signed up for the dates that need help."); return; }
+              const dateLines = needing.map(c => {
+                const have = signupsFor(c.id).length, min = c.min_coaches || 4;
+                return "• " + new Date(c.clinic_date + "T12:00:00").toLocaleDateString(undefined,{weekday:"long",month:"long",day:"numeric"})
+                  + " — " + have + " of " + min + " signed up, needs " + (min - have) + " more";
+              }).join("\n");
+              if (!window.confirm("Ask " + list.length + " coach" + (list.length===1?"":"es") + " to sign up for DSYSA clinics?\n\n"
+                + needing.length + " date" + (needing.length===1?"":"s") + " still short:\n" + dateLines
+                + "\n\nThey get an email, plus a push if they've enabled notifications.")) return;
+              const body = "Hi {{FIRST}},\n\n"
+                + "We're helping run the DSYSA clinics at Dripping Springs Middle School on Monday nights — 3rd to 6th grade, 90 minutes, run as a tournament. "
+                + "It's a good session for the kids, it puts DS Elite in front of local families, and it's how we're recruiting for the 11s and 12s.\n\n"
+                + "Wear DS Elite gear. Usually 6-8pm, though times can shift.\n\n"
+                + "These dates still need coaches:\n" + dateLines + "\n\n"
+                + "Open the app and hit \"I'll help\" on any date you can make:\n" + APP_URL + "/?view=dsysa\n\n"
+                + "Thanks,\nDrew";
+              let sent = 0, failed = 0;
+              for (const r of list) {
+                const first = (r.first_name || "there").trim();
+                try {
+                  const res = await fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"},
+                    body: JSON.stringify({ subject: "Can you help with a DSYSA clinic?", body: body.replace("{{FIRST}}", first), recipients: [r.email] }) });
+                  res.ok ? sent++ : failed++;
+                } catch { failed++; }
+                try {
+                  await fetch("/api/send-push", { method:"POST", headers:{"Content-Type":"application/json"},
+                    body: JSON.stringify({ title: "DSYSA clinics need coaches",
+                      body: needing.length + " Monday date" + (needing.length===1?"":"s") + " still short — tap to sign up.",
+                      url: "/?view=dsysa", audience: { type:"email", email: r.email } }) });
+                } catch { /* push is best-effort */ }
+              }
+              window.alert("Emailed " + sent + " coach" + (sent===1?"":"es") + (failed ? ", " + failed + " failed" : "") + ".");
+            }}
+              style={{padding:"7px 15px",borderRadius:8,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontWeight:800,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>
+              ✉ Ask coaches to sign up
+            </button>
+            <span style={{fontSize:10,color:C.mut,fontStyle:"italic",marginLeft:10}}>
+              emails only the dates still short, and skips anyone already signed up for all of them
+            </span>
+          </div>
+        )}
         {dsysaClinics.length === 0 && (
           <div style={{padding:26,textAlign:"center",color:C.mut,fontSize:12}}>No clinic dates loaded yet.</div>
         )}
