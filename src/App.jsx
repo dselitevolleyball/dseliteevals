@@ -1384,6 +1384,8 @@ export default function App() {
   const [syPostTok, setSyPostTok]       = useState(null);   // SportsYou post bookmarklet {href} | {configured:false} | {error}
   const [syOutbox, setSyOutbox]         = useState([]);     // sportsyou_outbox rows (pending + recently posted)
   const [hawaiiInterest, setHawaiiInterest] = useState([]); // hawaii_interest rows, one per player who has answered
+  const [dsysaClinics, setDsysaClinics]     = useState([]); // DSYSA clinic dates
+  const [dsysaSignups, setDsysaSignups]     = useState([]); // which coaches are covering each
   const [hawaiiAddTeam, setHawaiiAddTeam]   = useState(null); // which Hawaii team's "add player" search is open
   const [hawaiiAddQ, setHawaiiAddQ]         = useState("");
   const [travelOpen, setTravelOpen]         = useState(null); // tournament id whose travel table is expanded
@@ -1619,7 +1621,7 @@ export default function App() {
   // Operations are admin-only: the whole "Operations" nav group and the views
   // behind it are hidden and blocked for non-admin coaches. The owner (Drew)
   // always counts here so a bad DB flag can't lock him out.
-  const OPS_VIEWS = new Set(["tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","timecards","gear","roster","hawaii","travel"]);
+  const OPS_VIEWS = new Set(["tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","timecards","gear","roster","hawaii","travel","dsysa"]);
   const canOps    = isAdmin || isOwner;
   const opsDenied = <div style={{padding:24,color:C.mut,textAlign:"center"}}>This section is restricted to administrators. Ask the club administrator (Drew) for access.</div>;
   // Once a player has accepted (or is locked/signed) onto a team, they're
@@ -3594,6 +3596,37 @@ export default function App() {
 
   // Hawaii trip interest. Rows are created lazily, so a player with no row is
   // 'not_asked' — the table stays empty until someone actually answers.
+  // DSYSA clinic help — Monday nights at the middle school.
+  const loadDsysa = useCallback(async () => {
+    const [{ data: c, error: ce }, { data: g, error: ge }] = await Promise.all([
+      supabase.from("dsysa_clinics").select("*").order("clinic_date"),
+      supabase.from("dsysa_signups").select("*"),
+    ]);
+    if (ce) { console.error("Load dsysa_clinics error:", ce); return; }
+    if (ge) console.error("Load dsysa_signups error:", ge);
+    setDsysaClinics(c || []);
+    setDsysaSignups(g || []);
+  }, []);
+  const dsysaSignUp = useCallback(async (clinicId, name) => {
+    const clean = String(name || "").trim();
+    if (!clean) return;
+    const { error } = await supabase.from("dsysa_signups").insert({
+      clinic_id: clinicId, coach_name: clean, signed_by: coach?.display_name || coach?.email || null });
+    if (error) { window.alert(/duplicate/i.test(error.message) ? clean + " is already signed up for that date." : "Sign-up failed: " + error.message); return; }
+    loadDsysa();
+  }, [coach, loadDsysa]);
+  const dsysaDrop = useCallback(async (rowId) => {
+    const { error } = await supabase.from("dsysa_signups").delete().eq("id", rowId);
+    if (error) { window.alert("Remove failed: " + error.message); return; }
+    loadDsysa();
+  }, [loadDsysa]);
+  const saveDsysaClinic = useCallback(async (id, patch) => {
+    const { error } = await supabase.from("dsysa_clinics").update({ ...patch, updated_at: new Date().toISOString() }).eq("id", id);
+    if (error) { window.alert("Save failed: " + error.message); return; }
+    loadDsysa();
+  }, [loadDsysa]);
+  useEffect(() => { if (isApproved && (view === "dsysa" || view === "home")) loadDsysa(); }, [isApproved, view, loadDsysa]);
+
   const loadHawaii = useCallback(async () => {
     const { data, error } = await supabase.from("hawaii_interest").select("*");
     if (error) { console.error("Load hawaii_interest error:", error); return; }
@@ -8487,6 +8520,105 @@ export default function App() {
   // Hawaii — optional tournament for the three Diamond teams. Tracks where each
   // player is on the interest ladder; everything else about the trip is handled
   // outside the app, so this deliberately stays a single question per player.
+
+  // DSYSA clinic help. Monday evenings at Dripping Springs Middle School,
+  // 3rd-6th grade, 90 minutes run as a tournament. Brand exposure and the
+  // recruiting channel for the 11s and 12s while those teams are still filling.
+  function renderDsysa() {
+    const myName = (() => {
+      const nrm = s2 => String(s2 || "").trim().toLowerCase();
+      const r = coachRoster.find(x => coach?.email && nrm(x.email) === nrm(coach.email));
+      return r ? ((r.first_name || "") + " " + (r.last_name || "")).trim() : (coach?.display_name || "").trim();
+    })();
+    const today = localDateISO();
+    const upcoming = dsysaClinics.filter(c => c.clinic_date >= today && !c.cancelled);
+    const signupsFor = (id) => dsysaSignups.filter(g => g.clinic_id === id)
+      .sort((a, b) => (a.coach_name || "").localeCompare(b.coach_name || ""));
+    const shortDay = (d) => new Date(d + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+    const hhmm = (t) => fmtFlightTime(t) || t || "";
+    const shortfall = upcoming.reduce((sum, c) => sum + Math.max(0, (c.min_coaches || 4) - signupsFor(c.id).length), 0);
+    const eligible = coachRoster
+      .map(r => ((r.first_name || "") + " " + (r.last_name || "")).trim())
+      .filter(nm => nm && !isPlaceholderPerson(nm))
+      .sort((a, b) => a.localeCompare(b));
+
+    return (
+      <div style={{padding:"18px 16px",maxWidth:1000,margin:"0 auto"}}>
+        <h2 style={{margin:"0 0 2px",fontSize:20,fontWeight:800,color:C.gold}}>DSYSA Clinic Help</h2>
+        <div style={{fontSize:12,color:C.mut,marginBottom:12}}>
+          Monday nights at Dripping Springs Middle School · 3rd–6th grade · 90 minutes, run as a tournament · wear DS Elite gear
+        </div>
+        <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:10,padding:"10px 14px",marginBottom:14,fontSize:12,color:C.mut,lineHeight:1.6}}>
+          We run these to get the brand in front of local families, give the kids a better session than volunteer coaching usually delivers,
+          and recruit for the <b style={{color:C.text}}>11s and 12s</b>, which are still filling. Each date needs <b style={{color:C.text}}>4–6 coaches</b>.
+          {shortfall > 0 && <div style={{color:"#f59e0b",fontWeight:700,marginTop:6}}>⚠ {shortfall} more coach{shortfall===1?"":"es"} needed across the upcoming dates.</div>}
+        </div>
+        {dsysaClinics.length === 0 && (
+          <div style={{padding:26,textAlign:"center",color:C.mut,fontSize:12}}>No clinic dates loaded yet.</div>
+        )}
+        {dsysaClinics.map(c => {
+          const mine = signupsFor(c.id);
+          const min = c.min_coaches || 4, max = c.max_coaches || 6;
+          const full = mine.length >= max;
+          const ok = mine.length >= min;
+          const past = c.clinic_date < today;
+          const iAmIn = mine.some(g => (g.coach_name || "").trim().toLowerCase() === myName.toLowerCase());
+          return (
+            <div key={c.id} style={{background:C.card,border:"1px solid "+(past?C.border:ok?C.grn:"#f59e0b"),borderRadius:12,marginBottom:10,overflow:"hidden",opacity:past?0.5:1}}>
+              <div style={{padding:"11px 14px",display:"flex",alignItems:"center",gap:12,flexWrap:"wrap",borderBottom:"1px solid "+C.border}}>
+                <span style={{fontSize:14,fontWeight:800,color:C.text}}>{shortDay(c.clinic_date)}</span>
+                <span style={{fontSize:11,color:C.mut}}>
+                  {hhmm(c.start_time)}–{hhmm(c.end_time)}{c.time_tbc ? " (usually, not confirmed)" : ""} · {c.location}
+                </span>
+                <div style={{flex:1}} />
+                <span style={{fontSize:12,fontWeight:800,color:ok?C.grn:"#f59e0b"}}>
+                  {mine.length} of {min}–{max}
+                </span>
+                {!past && !iAmIn && !full && myName && (
+                  <button onClick={() => dsysaSignUp(c.id, myName)}
+                    style={{padding:"5px 13px",borderRadius:8,border:"none",background:C.gold,color:"#000",fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>
+                    I'll help
+                  </button>
+                )}
+                {!past && iAmIn && (
+                  <button onClick={() => { const row = mine.find(g => (g.coach_name||"").trim().toLowerCase() === myName.toLowerCase()); if (row && window.confirm("Take yourself off " + shortDay(c.clinic_date) + "?")) dsysaDrop(row.id); }}
+                    style={{padding:"5px 13px",borderRadius:8,border:"1px solid "+C.grn,background:"transparent",color:C.grn,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+                    ✓ You're in
+                  </button>
+                )}
+                {!past && full && !iAmIn && <span style={{fontSize:11,color:C.grn,fontWeight:700}}>full</span>}
+              </div>
+              <div style={{padding:"9px 14px",display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+                {mine.length === 0 && <span style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>Nobody signed up yet.</span>}
+                {mine.map(g => (
+                  <span key={g.id} style={{fontSize:11,border:"1px solid "+C.border,borderRadius:6,padding:"3px 9px",color:C.text}}>
+                    {g.coach_name}
+                    {(isAdmin || (g.coach_name||"").trim().toLowerCase() === myName.toLowerCase()) && (
+                      <button onClick={() => { if (window.confirm("Remove " + g.coach_name + " from " + shortDay(c.clinic_date) + "?")) dsysaDrop(g.id); }}
+                        style={{marginLeft:6,background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:11,fontWeight:800,padding:0}}>×</button>
+                    )}
+                  </span>
+                ))}
+                {isAdmin && !past && (
+                  <>
+                    <select id={"dsysa-add-" + c.id} defaultValue="" style={{...inpStyle,padding:"3px 8px",fontSize:11,marginLeft:4}}
+                      onChange={e => { if (e.target.value) { dsysaSignUp(c.id, e.target.value); e.target.value = ""; } }}>
+                      <option value="">+ add a coach…</option>
+                      {eligible.filter(nm => !mine.some(g => (g.coach_name||"").trim().toLowerCase() === nm.toLowerCase()))
+                        .map(nm => <option key={nm} value={nm}>{nm}</option>)}
+                    </select>
+                    <DebouncedField style={{...inpStyle,padding:"3px 8px",fontSize:11,width:150}} placeholder="notes for this date"
+                      value={c.notes || ""} onCommit={v => saveDsysaClinic(c.id, { notes: v.trim() || null })} />
+                  </>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
   function renderHawaii() {
     if (!isAdmin) return <div style={{padding:24,color:C.mut,textAlign:"center"}}>The Hawaii page is restricted to admins.</div>;
     const byPlayer = new Map(hawaiiInterest.map(r => [r.player_id, r]));
@@ -21525,7 +21657,7 @@ export default function App() {
                 { title:"Tryouts 2026-27", items:[["dashboard","Dashboard"], ["evaluate","Evaluate"], ["favorites","My Favorites" + (favorites.length ? " (" + favorites.length + ")" : "")], ...(canViewTeams ? [["teams","Teams"]] : []), ["rankings","Rankings"], ["physical","Physical Testing"], ["tryouts","Coach Assignments"]] },
                 ...(canOps ? [{ title:"Operations", items:[
                   ["hdr","Club"],
-                  ["tracker","Tracker"], ["teamdir","All Teams"], ["practice","Practice"], ["sa","S&A Schedule"], ["clinics","DSSC Clinics"], ["scholarships","Scholarships"],
+                  ["tracker","Tracker"], ["teamdir","All Teams"], ["practice","Practice"], ["sa","S&A Schedule"], ["clinics","DSSC Clinics"], ["dsysa","DSYSA Clinics"], ["scholarships","Scholarships"],
                   ...(isAdmin ? [["hawaii","Hawaii"], ["travel","Travel"]] : []),
                   ["hdr","Coaches & Pay"],
                   ["coaches","Coaches"], ["coverage","Coach Coverage"], ["timecards","Time Cards"], ["gear","Gear Sizes" + (gearOutstanding ? " (" + gearOutstanding + ")" : "")], ["requests","Requests" + (pendingReqs ? " (" + pendingReqs + ")" : "")],
@@ -21748,6 +21880,7 @@ export default function App() {
         {view==="roster" && ((canViewTeams || myTeamNames.length) ? renderRoster() : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Player lists are restricted. Ask Drew for access.</div>)}
         {view==="gear" && (canOps ? renderGearTracker() : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Gear ordering is admin-only.</div>)}
         {view==="hawaii" && renderHawaii()}
+        {view==="dsysa" && renderDsysa()}
         {view==="travel" && renderTravel()}
         {view==="faq" && renderFaq()}
         {view==="practiceplan" && renderPracticePlans()}
