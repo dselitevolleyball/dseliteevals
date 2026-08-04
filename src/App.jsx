@@ -154,6 +154,22 @@ const detailVal = (r, k) => String(r?.[k] ?? "").trim();
 const detailsMissing = (r) => COACH_DETAIL_FIELDS.filter(f => f.required && !detailVal(r, f.key));
 const detailsComplete = (r) => !!r && detailsMissing(r).length === 0;
 
+// How a coach gets to a tournament. The club's default is that we book the
+// ticket; the other two exist so nobody is forced onto a flight they don't want.
+const TRAVEL_MODES = [
+  { key: "fly_club", label: "Fly — the club books my ticket",
+    blurb: "We book it in your legal name. Change the times later if you need to, for any reason." },
+  { key: "drive",    label: "Drive myself",
+    blurb: "Reimbursed per mile at the current IRS standard mileage rate." },
+  { key: "fly_own",  label: "Fly — I'll book my own",
+    blurb: "Submit for reimbursement up to what we paid for everyone else's ticket on this trip." },
+];
+const TRAVEL_MODE_LABEL = Object.fromEntries(TRAVEL_MODES.map(m => [m.key, m.label]));
+// A trip is settled once they've picked a mode — and, if we're the ones buying,
+// explicitly agreed we may book in their name.
+const tripAnswered = (t) => !!t?.travel_mode && (t.travel_mode !== "fly_club" || t.booking_ok === true);
+const legalNameOk = (r) => !!detailVal(r, "legal_name") && !!r?.legal_name_confirmed_at;
+
 // Every answer is required — a half-filled row can't be ordered against.
 const gearComplete = (g) => !!g && GEAR_FIELDS.every(f => String(g[f.size] || "").trim() && (!f.styleKey || String(g[f.styleKey] || "").trim()))
   && !!String(g.backpack_name || "").trim();
@@ -5065,44 +5081,142 @@ export default function App() {
     loadCoachRoster();
   };
   // Details panel — sits beside the gear panel on the coach's own dashboard.
+  // Everything we still need from THIS coach, in one place: the legal name that
+  // has to match a plane ticket, the compliance details, and a fly/drive answer
+  // per upcoming trip. Three separate asks would get three separate ignorings.
+  const myConfirmTasks = () => {
+    if (!myRosterRow) return { missing: [], trips: [], nameOk: true, total: 0 };
+    const nrm = s => String(s || "").trim().toLowerCase();
+    const me = coach?.display_name || "";
+    const mine = nm => nrm(nm) === nrm(me) || (myRosterRow && nrm(nm) === nrm(((myRosterRow.first_name||"")+" "+(myRosterRow.last_name||"")).trim()));
+    const today = localDateISO();
+    const tnById = new Map((tournaments || []).map(t => [t.id, t]));
+    const trips = (coachTravel || [])
+      .filter(t => !t.private_owner && mine(t.coach_name))
+      .map(t => ({ t, tn: tnById.get(t.tournament_id) }))
+      .filter(x => x.tn && x.tn.airfare_required && !x.tn.cancelled && String(x.tn.start_date || "") >= today)
+      .sort((a, b) => String(a.tn.start_date).localeCompare(String(b.tn.start_date)));
+    const missing = detailsMissing(myRosterRow);
+    const nameOk = legalNameOk(myRosterRow);
+    const openTrips = trips.filter(x => !tripAnswered(x.t));
+    return { missing, trips, openTrips, nameOk, total: missing.length + openTrips.length + (nameOk ? 0 : 1) };
+  };
+
   const renderDetailsPanel = () => {
     if (!myRosterRow) return null;
-    const missing = detailsMissing(myRosterRow);
-    if (!missing.length) return (
+    const { missing, openTrips = [], nameOk, total } = myConfirmTasks();
+    if (total === 0) return (
       <div style={{background:C.card,border:"1px solid "+C.grn,borderRadius:12,padding:"10px 14px",marginBottom:10,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
-        <span style={{fontSize:13,fontWeight:800,color:C.grn}}>✓ Your details are on file</span>
-        <span style={{fontSize:11,color:C.mut}}>phone · DOB · address</span>
+        <span style={{fontSize:13,fontWeight:800,color:C.grn}}>✓ You're all set</span>
+        <span style={{fontSize:11,color:C.mut}}>legal name · details · travel</span>
         <div style={{flex:1}} />
         <button onClick={()=>setDetailsOpen(true)} style={{padding:"4px 12px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Change</button>
       </div>
     );
+    const bits = [];
+    if (!nameOk) bits.push("confirm your legal name");
+    if (missing.length) bits.push(missing.map(f => f.label.toLowerCase()).join(" · "));
+    if (openTrips.length) bits.push(openTrips.length + " trip" + (openTrips.length===1?"":"s") + " to confirm");
     return (
       <div style={{background:C.card,border:"1px solid #f59e0b",borderRadius:12,padding:"12px 14px",marginBottom:10}}>
         <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
-          <span style={{fontSize:13,fontWeight:800,color:"#f59e0b"}}>We still need {missing.length} thing{missing.length===1?"":"s"} from you</span>
-          <span style={{fontSize:11,color:C.mut}}>{missing.map(f=>f.label).join(" · ")}</span>
+          <span style={{fontSize:13,fontWeight:800,color:"#f59e0b"}}>
+            {total} thing{total===1?"":"s"} we need from you{openTrips.length ? " before we can book" : ""}
+          </span>
+          <span style={{fontSize:11,color:C.mut}}>{bits.join(" · ")}</span>
           <div style={{flex:1}} />
           <button onClick={()=>setDetailsOpen(true)}
             style={{padding:"6px 14px",borderRadius:8,border:"none",background:C.gold,color:"#000",fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>
-            Fill these in — 1 min
+            Confirm — 2 min
           </button>
         </div>
       </div>
     );
   };
+
+  // Through an RPC, not a direct update: coach_travel's read-own policy is
+  // SELECT-only, so a plain .update() from a non-admin coach matches zero rows
+  // and reports success. confirm_travel() writes only the answer columns.
+  const saveTripAnswer = async (id, patch) => {
+    const cur = (coachTravel || []).find(t => t.id === id) || {};
+    const next = { ...cur, ...patch };
+    setCoachTravel(prev => prev.map(t => t.id === id ? { ...t, ...patch } : t));
+    const { error } = await supabase.rpc("confirm_travel", {
+      p_id: id,
+      p_mode: next.travel_mode ?? null,
+      p_booking_ok: next.booking_ok ?? null,
+      p_note: next.travel_note ?? null,
+    });
+    if (error) { window.alert("Save failed: " + error.message); loadCoachTravel(); }
+  };
+
   const renderDetailsModal = () => {
     if (!detailsOpen || !myRosterRow) return null;
+    const { trips = [], nameOk } = myConfirmTasks();
     const lbl = {fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut,marginBottom:4,display:"block"};
+    const fmtTrip = (tn) => { try { return new Date(tn.start_date + "T12:00:00").toLocaleDateString(undefined,{month:"short",day:"numeric",year:"numeric"}); } catch { return tn.start_date; } };
+    const suggested = ((myRosterRow.first_name||"") + " " + (myRosterRow.last_name||"")).trim();
     return (
       <div onClick={()=>setDetailsOpen(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:1000,display:"flex",justifyContent:"center",padding:"30px 16px",overflowY:"auto"}}>
-        <div onClick={e=>e.stopPropagation()} style={{background:C.card,borderRadius:16,border:"1px solid "+C.border,maxWidth:540,width:"100%",height:"fit-content",padding:24}}>
+        <div onClick={e=>e.stopPropagation()} style={{background:C.card,borderRadius:16,border:"1px solid "+C.border,maxWidth:600,width:"100%",height:"fit-content",padding:24}}>
           <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
-            <h2 style={{margin:0,fontSize:18,fontWeight:800,color:C.gold}}>Your details</h2>
+            <h2 style={{margin:0,fontSize:18,fontWeight:800,color:C.gold}}>Confirm your details</h2>
             <button onClick={()=>setDetailsOpen(false)} style={{background:"none",border:"none",color:C.mut,fontSize:22,cursor:"pointer"}}>×</button>
           </div>
-          <div style={{fontSize:11,color:C.mut,marginBottom:14}}>
-            The club needs these on file for insurance and membership. Only the directors can see them. Saves as you type.
+          <div style={{fontSize:11,color:C.mut,marginBottom:16}}>
+            Only the directors can see these. Saves as you type.
           </div>
+
+          {/* Legal name — first, because a wrong one is the expensive mistake */}
+          <div style={{border:"1px solid "+(nameOk?C.grn:"#f59e0b"),borderRadius:12,padding:"12px 14px",marginBottom:16}}>
+            <div style={{fontSize:13,fontWeight:800,color:nameOk?C.grn:"#f59e0b",marginBottom:2}}>
+              {nameOk ? "✓ Legal name confirmed" : "Confirm your legal name"}
+            </div>
+            <div style={{fontSize:11,color:C.mut,marginBottom:10}}>
+              Exactly as it appears on the ID you'll fly with — including middle name if your ID shows one.
+              A ticket that doesn't match your ID can't be boarded, and airlines charge to correct it.
+            </div>
+            <DebouncedField style={{...inpStyle,width:"100%",padding:"8px 10px",fontSize:13}}
+              placeholder={suggested || "Full legal name"}
+              value={myRosterRow.legal_name || ""} onCommit={v => saveMyDetail("legal_name", v)} />
+            <div style={{display:"flex",alignItems:"center",gap:10,marginTop:10,flexWrap:"wrap"}}>
+              {!nameOk && (
+                <>
+                  {!detailVal(myRosterRow,"legal_name") && suggested && (
+                    <button onClick={()=>saveMyDetail("legal_name", suggested)}
+                      style={{padding:"5px 12px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+                      Use "{suggested}"
+                    </button>
+                  )}
+                  <button disabled={!detailVal(myRosterRow,"legal_name")}
+                    onClick={async () => {
+                      const { error } = await supabase.from("coach_roster")
+                        .update({ legal_name_confirmed_at: new Date().toISOString() }).eq("id", myRosterRow.id);
+                      if (error) { window.alert("Save failed: " + error.message); return; }
+                      loadCoachRoster();
+                    }}
+                    style={{padding:"6px 14px",borderRadius:8,border:"none",fontFamily:"inherit",fontSize:12,fontWeight:800,
+                      background:detailVal(myRosterRow,"legal_name")?C.grn:C.border,
+                      color:detailVal(myRosterRow,"legal_name")?"#000":C.mut,
+                      cursor:detailVal(myRosterRow,"legal_name")?"pointer":"default"}}>
+                    That's my legal name
+                  </button>
+                </>
+              )}
+              {nameOk && (
+                <button onClick={async () => {
+                    await supabase.from("coach_roster").update({ legal_name_confirmed_at: null }).eq("id", myRosterRow.id);
+                    loadCoachRoster();
+                  }}
+                  style={{padding:"4px 12px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+                  It changed — let me update it
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Compliance details */}
+          <div style={{fontSize:12,fontWeight:800,color:C.text,marginBottom:8}}>Your details</div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
             {COACH_DETAIL_FIELDS.map(f => (
               <div key={f.key} style={f.wide ? {gridColumn:"1 / -1"} : undefined}>
@@ -5114,6 +5228,62 @@ export default function App() {
               </div>
             ))}
           </div>
+
+          {/* Travel, one block per upcoming trip */}
+          {trips.length > 0 && (
+            <>
+              <div style={{fontSize:12,fontWeight:800,color:C.text,margin:"20px 0 4px"}}>Your travel</div>
+              <div style={{fontSize:11,color:C.mut,marginBottom:10}}>
+                Tell us how you want to get to each one. If you fly and we book it, you can still change your
+                flight times afterwards — business or personal, no reason needed.
+              </div>
+              {trips.map(({ t, tn }) => {
+                const done = tripAnswered(t);
+                return (
+                  <div key={t.id} style={{border:"1px solid "+(done?C.grn:"#f59e0b"),borderRadius:12,padding:"12px 14px",marginBottom:10}}>
+                    <div style={{display:"flex",alignItems:"baseline",gap:8,flexWrap:"wrap",marginBottom:8}}>
+                      <span style={{fontSize:13,fontWeight:800,color:C.text}}>{tn.location || tn.name}</span>
+                      <span style={{fontSize:11,color:C.mut}}>{fmtTrip(tn)} · {tn.name}</span>
+                      {done && <span style={{fontSize:10,fontWeight:800,color:C.grn}}>✓ CONFIRMED</span>}
+                    </div>
+                    {(t.depart_date || t.return_date) && (
+                      <div style={{fontSize:11,color:C.mut,marginBottom:8}}>
+                        Planned: {t.depart_date ? "out " + t.depart_date : ""}{t.return_date ? " · back " + t.return_date : ""}
+                        {t.airline ? " · " + t.airline : ""}
+                      </div>
+                    )}
+                    <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                      {TRAVEL_MODES.map(m => {
+                        const on = t.travel_mode === m.key;
+                        return (
+                          <button key={m.key} onClick={()=>saveTripAnswer(t.id, { travel_mode: m.key, booking_ok: m.key === "fly_club" ? t.booking_ok : null })}
+                            style={{textAlign:"left",padding:"8px 10px",borderRadius:9,cursor:"pointer",fontFamily:"inherit",
+                              border:"1px solid "+(on?C.gold:C.border),background:on?"rgba(233,30,140,0.10)":"transparent"}}>
+                            <div style={{fontSize:12,fontWeight:700,color:on?C.gold:C.text}}>{on ? "◉ " : "○ "}{m.label}</div>
+                            <div style={{fontSize:10.5,color:C.mut,marginLeft:16}}>{m.blurb}</div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {t.travel_mode === "fly_club" && (
+                      <label style={{display:"flex",alignItems:"flex-start",gap:8,marginTop:10,cursor:"pointer"}}>
+                        <input type="checkbox" checked={t.booking_ok === true}
+                          onChange={ev => saveTripAnswer(t.id, { booking_ok: ev.target.checked })}
+                          style={{marginTop:2,accentColor:C.gold,width:16,height:16,flexShrink:0}} />
+                        <span style={{fontSize:11.5,color:t.booking_ok?C.text:"#f59e0b",fontWeight:t.booking_ok?500:700}}>
+                          Yes — book my ticket to {tn.location || "this tournament"} in my legal name, and I want to fly there.
+                        </span>
+                      </label>
+                    )}
+                    <DebouncedField style={{...inpStyle,width:"100%",padding:"6px 9px",fontSize:12,marginTop:9}}
+                      placeholder="Anything we should know? (preferred airport, staying extra days, seat needs…)"
+                      value={t.travel_note || ""} onCommit={v => saveTripAnswer(t.id, { travel_note: v.trim() || null })} />
+                  </div>
+                );
+              })}
+            </>
+          )}
+
           <div style={{display:"flex",justifyContent:"flex-end",marginTop:16}}>
             <button onClick={()=>setDetailsOpen(false)} style={{padding:"10px 18px",borderRadius:8,border:"none",background:C.gold,color:"#000",fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Done</button>
           </div>
@@ -10083,40 +10253,101 @@ export default function App() {
             <div style={{fontSize:11,color:C.mut,marginTop:2}}>{merged.length} total · {coachesList.length} with login · {pending.length} awaiting approval</div>
           </div>
           <div style={{display:"flex",gap:8}}>
-            {/* Chase the compliance details. Only coaches actually missing
-                something are contacted — nobody gets asked for what we have. */}
+            {/* One ask covering all three things we're waiting on: the legal
+                name that has to match a ticket, the compliance details, and a
+                fly/drive answer per trip. Each coach's email contains ONLY the
+                sections that apply to them — nobody is asked for what we have. */}
             {(() => {
-              const pending = coachRoster.filter(r => detailVal(r, "email") && !detailsComplete(r));
-              if (!pending.length) return <span style={{fontSize:11,color:C.grn,fontWeight:700,alignSelf:"center"}}>✓ All details on file</span>;
+              const nrm = s => String(s || "").trim().toLowerCase();
+              const today = localDateISO();
+              const tnById = new Map((tournaments || []).map(t => [t.id, t]));
+              // Air trips per coach, upcoming, club rows only. Private family
+              // rows are Drew's own and are never part of a club-wide ask.
+              const tripsFor = (r) => {
+                const full = ((r.first_name||"") + " " + (r.last_name||"")).trim();
+                return (coachTravel || [])
+                  .filter(t => !t.private_owner && nrm(t.coach_name) === nrm(full))
+                  .map(t => ({ t, tn: tnById.get(t.tournament_id) }))
+                  .filter(x => x.tn && x.tn.airfare_required && !x.tn.cancelled && String(x.tn.start_date||"") >= today)
+                  .sort((a,b) => String(a.tn.start_date).localeCompare(String(b.tn.start_date)));
+              };
+              const task = (r) => {
+                const trips = tripsFor(r);
+                return { r, missing: detailsMissing(r), nameOk: legalNameOk(r),
+                         openTrips: trips.filter(x => !tripAnswered(x.t)), trips };
+              };
+              const all = coachRoster.filter(r => detailVal(r, "email") && !isPlaceholderPerson(((r.first_name||"")+" "+(r.last_name||"")).trim())).map(task);
+              const pending = all.filter(x => !x.nameOk || x.missing.length || x.openTrips.length);
+              const nameGap = all.filter(x => !x.nameOk).length;
+              const tripGap = all.reduce((n, x) => n + x.openTrips.length, 0);
+              if (!pending.length) return <span style={{fontSize:11,color:C.grn,fontWeight:700,alignSelf:"center"}}>✓ Names, details and travel all confirmed</span>;
+
+              const fmtT = (tn) => { try { return new Date(tn.start_date+"T12:00:00").toLocaleDateString(undefined,{month:"short",day:"numeric"}); } catch { return tn.start_date; } };
+              const esc = s => String(s??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+
+              const build = (x) => {
+                const first = (x.r.first_name || "there").trim();
+                const parts = [], hParts = [];
+                let n = 0;
+                if (!x.nameOk) {
+                  n++;
+                  parts.push(`${n}. CONFIRM YOUR LEGAL NAME\n   We book flights in the name on your government ID. Confirm it exactly as it appears there — middle name included if your ID shows one. A ticket that doesn't match can't be boarded, and airlines charge to fix it.`);
+                  hParts.push(`<li><b>Confirm your legal name.</b> We book flights in the name on your government ID — confirm it exactly as it appears there, middle name included if your ID shows one. A ticket that doesn't match your ID can't be boarded, and airlines charge to correct it.</li>`);
+                }
+                if (x.missing.length) {
+                  n++;
+                  parts.push(`${n}. FINISH YOUR DETAILS\n   Still missing: ${x.missing.map(f=>f.label).join(", ")}.\n   These are for insurance and membership. Only the directors see them.`);
+                  hParts.push(`<li><b>Finish your details.</b> Still missing: ${esc(x.missing.map(f=>f.label).join(", "))}. These are for insurance and membership — only the directors see them.</li>`);
+                }
+                if (x.openTrips.length) {
+                  n++;
+                  const list = x.openTrips.map(v => `      • ${v.tn.location || v.tn.name} — ${fmtT(v.tn)}`).join("\n");
+                  parts.push(`${n}. CONFIRM HOW YOU'RE GETTING THERE (${x.openTrips.length} trip${x.openTrips.length===1?"":"s"})\n${list}\n
+   For each one, pick:
+      • Fly, club books it — we buy the ticket in your legal name. You'll be asked to confirm you're happy for us to book it and that you do want to fly.
+      • Drive yourself — we reimburse mileage at the current IRS standard mileage rate.
+      • Fly, book your own — submit for reimbursement, up to what we paid for everyone else's ticket on that trip.
+
+   Either way: if you need to change your flight times afterwards, for work or personal reasons, you can. Just tell us.`);
+                  hParts.push(`<li><b>Confirm how you're getting to ${x.openTrips.length} tournament${x.openTrips.length===1?"":"s"}:</b><ul>${x.openTrips.map(v=>`<li>${esc(v.tn.location||v.tn.name)} — ${fmtT(v.tn)}</li>`).join("")}</ul>For each, choose one:<ul><li><b>Fly, club books it</b> — we buy the ticket in your legal name.</li><li><b>Drive yourself</b> — reimbursed at the current IRS standard mileage rate.</li><li><b>Fly, book your own</b> — reimbursed up to what we paid for everyone else's ticket on that trip.</li></ul>If you need to change your flight times afterwards, for work or personal reasons, you can — just tell us.</li>`);
+                }
+                const text = `Hi ${first},\n\nBefore we can book flights and hotels for this season we need ${n === 1 ? "one thing" : n + " things"} from you:\n\n${parts.join("\n\n")}\n\nIt's all one form at the top of your dashboard:\n${APP_URL}\n\nTakes about two minutes. Only the directors can see any of it.\n\nThanks,\nDrew`;
+                const html = `<div style="font-family:sans-serif;font-size:14px;line-height:1.5"><p>Hi ${esc(first)},</p><p>Before we can book flights and hotels for this season we need ${n===1?"one thing":n+" things"} from you:</p><ol>${hParts.join("")}</ol><p><a href="${APP_URL}" style="color:#e91e8c;font-weight:700">Open the form in DS Elite HQ →</a> — it's at the top of your dashboard, about two minutes.</p><p style="color:#777;font-size:12px">Only the directors can see any of this.</p><p>Thanks,<br>Drew</p></div>`;
+                const push = [!x.nameOk && "legal name", x.missing.length && "details", x.openTrips.length && (x.openTrips.length + " trip" + (x.openTrips.length===1?"":"s"))].filter(Boolean).join(" · ");
+                return { text, html, push, n };
+              };
+
               return (
                 <button onClick={async () => {
+                  const preview = pending.slice(0, 10).map(x => {
+                    const nm = ((x.r.first_name||"")+" "+(x.r.last_name||"")).trim();
+                    return "• " + nm + " — " + build(x).push;
+                  }).join("\n");
                   if (!window.confirm(
-                    "Ask " + pending.length + " coach" + (pending.length===1?"":"es") + " for their missing details?\n\n" +
-                    pending.slice(0,12).map(r => ((r.first_name||"")+" "+(r.last_name||"")).trim() + " — " + detailsMissing(r).map(f=>f.label).join(", ")).join("\n") +
-                    (pending.length>12 ? "\n…and " + (pending.length-12) + " more" : "") +
-                    "\n\nEach gets an email listing only what THEY are missing, plus a push if enabled.")) return;
+                    "Send the travel & details confirmation to " + pending.length + " coach" + (pending.length===1?"":"es") + "?\n\n" +
+                    preview + (pending.length>10 ? "\n…and " + (pending.length-10) + " more" : "") +
+                    "\n\nOutstanding: " + nameGap + " legal name" + (nameGap===1?"":"s") + " · " +
+                    pending.filter(x=>x.missing.length).length + " missing details · " + tripGap + " trip" + (tripGap===1?"":"s") +
+                    "\n\nEach coach gets only the sections that apply to them.")) return;
                   let emailed = 0, failed = 0;
-                  for (const r of pending) {
-                    const first = (r.first_name||"there").trim();
-                    const miss = detailsMissing(r).map(f => "• " + f.label).join("\n");
-                    const text = "Hi " + first + ",\n\nThe club needs a few details on file for insurance and membership, and we're still missing:\n\n"
-                      + miss + "\n\nOpen the DS Elite app and the form is at the top of your dashboard:\n" + APP_URL
-                      + "\n\nIt takes about a minute. Only the directors can see these.\n\nThanks,\nDrew";
+                  for (const x of pending) {
+                    const { text, html, push } = build(x);
                     try {
                       const res = await fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"},
-                        body: JSON.stringify({ subject: "Quick one — we need a few details from you", body: text, recipients: [r.email] }) });
+                        body: JSON.stringify({ subject: "Before we book your travel — a couple of things we need", body: text, bodyHtml: html, recipients: [x.r.email] }) });
                       res.ok ? emailed++ : failed++;
                     } catch { failed++; }
                     try {
                       await fetch("/api/send-push", { method:"POST", headers:{"Content-Type":"application/json"},
-                        body: JSON.stringify({ title:"DS Elite needs a few details", body: detailsMissing(r).map(f=>f.label).join(", "),
-                          url:"/?view=home", audience:{ type:"email", email:r.email } }) });
+                        body: JSON.stringify({ title:"Confirm your travel details", body: push,
+                          url:"/?view=home", audience:{ type:"email", email:x.r.email } }) });
                     } catch { /* push is best-effort */ }
                   }
                   window.alert("Emailed " + emailed + " coach" + (emailed===1?"":"es") + (failed ? ", " + failed + " failed" : "") + ".");
                 }}
-                  style={{padding:"6px 14px",borderRadius:8,border:"1px solid #f59e0b",background:"transparent",color:"#f59e0b",fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>
-                  Ask {pending.length} for missing details
+                  style={{padding:"6px 14px",borderRadius:8,border:"1px solid #f59e0b",background:"transparent",color:"#f59e0b",fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}
+                  title={nameGap + " need to confirm a legal name · " + tripGap + " trips unanswered"}>
+                  Ask {pending.length} to confirm name, details &amp; travel
                 </button>
               );
             })()}
@@ -20093,7 +20324,7 @@ export default function App() {
       return day + (fmtFlightTime(t) ? " " + fmtFlightTime(t) : "");
     };
     const cols = air
-      ? ["Coach","Dev","Airline","Out","Back","Flight $","Bought","Ticket #","Room","Own room","Payroll deduction"]
+      ? ["Coach","Dev","Airline","Out","Back","Flight $","Bought","OK?","Ticket #","Room","Own room","Payroll deduction"]
       : ["Coach","Room","Own room","Payroll deduction"];
     return (
       <div style={{overflowX:"auto"}}>
@@ -20187,10 +20418,34 @@ export default function App() {
                   {air && (
                     <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,textAlign:"center"}}>
                       <input type="checkbox" checked={!!r.flight_purchased} style={{width:14,height:14,accentColor:C.grn,cursor:"pointer"}}
-                        title="Flight has been bought"
-                        onChange={e => saveTravel(tn.id, name, { flight_purchased: e.target.checked })} />
+                        title={r.booking_ok === true ? "Flight has been bought" : "This coach hasn't agreed to us booking yet"}
+                        onChange={e => {
+                          // Buying a ticket in someone's name before they've said
+                          // yes — or before we know the name matches their ID — is
+                          // the mistake that costs a change fee.
+                          if (e.target.checked && r.travel_mode !== "fly_club") {
+                            const who = r.travel_mode ? "chose to " + (r.travel_mode === "drive" ? "drive" : "book their own flight") : "hasn't confirmed how they're travelling";
+                            if (!window.confirm(name + " " + who + ".\n\nMark the flight purchased anyway?")) return;
+                          } else if (e.target.checked && r.booking_ok !== true) {
+                            if (!window.confirm(name + " hasn't agreed to us booking their ticket yet.\n\nMark it purchased anyway?")) return;
+                          }
+                          saveTravel(tn.id, name, { flight_purchased: e.target.checked });
+                        }} />
                     </td>
                   )}
+                  {air && (() => {
+                    // Where booking actually happens, so the answer is visible at
+                    // the moment it matters rather than on a separate screen.
+                    const rr = coachRoster.find(x => { const nm = ((x.first_name||"")+" "+(x.last_name||"")).trim(); return nm.toLowerCase() === String(name).toLowerCase(); });
+                    const nameOk = legalNameOk(rr);
+                    const st = !r.travel_mode ? { t:"—", c:"#f59e0b", tip:"Hasn't answered yet" }
+                      : r.travel_mode === "drive" ? { t:"drive", c:C.mut, tip:"Driving — mileage at the IRS rate" }
+                      : r.travel_mode === "fly_own" ? { t:"own", c:"#8b5cf6", tip:"Booking their own; reimburse up to our fare" }
+                      : r.booking_ok === true ? { t: nameOk ? "OK" : "OK*", c: nameOk ? C.grn : "#f59e0b",
+                          tip: nameOk ? "Confirmed — safe to book" : "Agreed to booking, but legal name not confirmed" }
+                      : { t:"?", c:"#f59e0b", tip:"Wants to fly but hasn't agreed to us booking" };
+                    return <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,textAlign:"center",fontSize:10,fontWeight:800,color:st.c}} title={st.tip + (rr?.legal_name ? " · ID name: " + rr.legal_name : "")}>{st.t}</td>;
+                  })()}
                   {air && f("ticket_number","ABC123")}
                   <td style={{padding:"3px 5px",borderBottom:"1px solid "+C.border}}>
                     <select style={inp} value={r.room_id ?? ""}
