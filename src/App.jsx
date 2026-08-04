@@ -3640,8 +3640,11 @@ export default function App() {
     const { error } = await supabase.from("expenses").update({ ...patch, updated_at: new Date().toISOString() }).eq("id", id);
     if (error) { window.alert("Save failed: " + error.message); loadExpenses(); }
   }, [loadExpenses]);
-  useEffect(() => { if (isApproved && view === "finance") { loadExpenses(); loadCoachRates(); loadCheckins(); loadPractice(); } },
-    [isApproved, view, loadExpenses, loadCoachRates, loadCheckins, loadPractice]);
+  // loadTournaments matters here too: the review screen's event picker is built
+  // from tournament_assignments, so landing straight on Finance without it left
+  // the dropdown empty.
+  useEffect(() => { if (isApproved && view === "finance") { loadExpenses(); loadCoachRates(); loadCheckins(); loadPractice(); loadTournaments(); } },
+    [isApproved, view, loadExpenses, loadCoachRates, loadCheckins, loadPractice, loadTournaments]);
   // The tournament card shows what the entry cost, so it needs the ledger too.
   useEffect(() => { if (isApproved && (view === "tournaments" || view === "travel")) loadExpenses(); },
     [isApproved, view, loadExpenses]);
@@ -8626,6 +8629,11 @@ export default function App() {
       .sort((a, b) => b.spend - a.spend);
     const unpaid = sum(live.filter(e => !e.paid));
 
+    // Events we're committed to: at least one team locked in or registered.
+    const committedTnIds = new Set(tournamentAssignments
+      .filter(a => a.status === "locked" || a.status === "registered")
+      .map(a => a.tournament_id));
+    const teamsPerTn = tournamentAssignments.reduce((m, a) => m.set(a.tournament_id, (m.get(a.tournament_id) || 0) + 1), new Map());
     const th = {padding:"7px 9px",textAlign:"left",fontSize:9,fontWeight:700,textTransform:"uppercase",color:C.mut,borderBottom:"1px solid "+C.border,whiteSpace:"nowrap"};
     const td = {padding:"6px 9px",borderBottom:"1px solid "+C.border,fontSize:12};
     const stat = (label, value, color, sub) => (
@@ -8637,7 +8645,7 @@ export default function App() {
     );
 
     return (
-      <div style={{padding:"18px 16px",maxWidth:1180,margin:"0 auto"}}>
+      <div style={{padding:"18px 16px",maxWidth:finTab === "review" || finTab === "pending" || finTab === "all" ? "100%" : 1180,margin:"0 auto"}}>
         <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:12}}>
           <div>
             <h2 style={{margin:0,fontSize:20,fontWeight:800,color:C.gold}}>Finance</h2>
@@ -8842,7 +8850,7 @@ export default function App() {
             })()}
             {pending.length > 0 && (
               <div style={{overflowX:"auto"}}>
-                <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0,minWidth:900}}>
+                <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0,minWidth:1080}}>
                   <thead><tr>{["Vendor","What","Date","Season","Amount","Category","Team / bucket","Tournament",""].map((h, i, arr) =>
                     <th key={h || "act"} style={i === arr.length - 1
                       ? {...th, position:"sticky", right:0, background:C.card, borderLeft:"1px solid "+C.border}
@@ -8850,8 +8858,9 @@ export default function App() {
                   <tbody>
                     {pending.map(e => (
                       <tr key={e.id}>
-                        <td style={{...td,fontWeight:700,whiteSpace:"nowrap"}}>{e.vendor || "—"}</td>
-                        <td style={{...td,color:C.mut,maxWidth:240,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={e.email_subject || e.item}>{e.item}</td>
+                        <td style={{...td,fontWeight:700,whiteSpace:"nowrap",maxWidth:130,overflow:"hidden",textOverflow:"ellipsis"}}
+                          title={e.vendor || ""}>{e.vendor || "—"}</td>
+                        <td style={{...td,color:C.mut,maxWidth:200,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={e.email_subject || e.item}>{e.item}</td>
                         {(() => {
                           // A date after today, or absurdly old, means the parser grabbed the
                           // wrong one (a due date, a travel date) — say so rather than let it
@@ -8860,7 +8869,7 @@ export default function App() {
                           const odd = e.expense_date && (e.expense_date > today || e.expense_date < "2025-08-01");
                           return (
                             <td style={{...td,whiteSpace:"nowrap"}}>
-                              <DebouncedField style={{...inpStyle,padding:"3px 6px",fontSize:11,width:130,
+                              <DebouncedField style={{...inpStyle,padding:"3px 6px",fontSize:11,width:118,
                                   borderColor: odd ? "#f59e0b" : undefined}}
                                 type="date" value={e.expense_date || ""}
                                 title={odd ? "That date looks wrong — probably picked up from the wrong line" : undefined}
@@ -8870,18 +8879,18 @@ export default function App() {
                           );
                         })()}
                         <td style={td}>
-                          <select style={{...inpStyle,padding:"3px 6px",fontSize:11,width:96}} value={e.season || ""}
+                          <select style={{...inpStyle,padding:"3px 6px",fontSize:11,width:78}} value={e.season || ""}
                             title="Season runs 1 Aug to 31 Jul. Set by the linked event when there is one, otherwise the purchase date."
                             onChange={ev => updateExpense(e.id, { season: ev.target.value })}>
                             {["2025-26","2026-27","2027-28"].map(x => <option key={x} value={x}>{x}</option>)}
                           </select>
                         </td>
                         <td style={{...td,fontWeight:800,whiteSpace:"nowrap"}}>
-                          <DebouncedField style={{...inpStyle,padding:"3px 6px",fontSize:11,width:92}} type="number"
+                          <DebouncedField style={{...inpStyle,padding:"3px 6px",fontSize:11,width:84}} type="number"
                             value={e.amount ?? ""} onCommit={v => updateExpense(e.id, { amount: v === "" ? 0 : Number(v) })} />
                         </td>
                         <td style={td}>
-                          <DebouncedField style={{...inpStyle,padding:"3px 6px",fontSize:11,width:120}}
+                          <DebouncedField style={{...inpStyle,padding:"3px 6px",fontSize:11,width:104}}
                             value={e.category || ""} onCommit={v => updateExpense(e.id, { category: v.trim() || "Club Expenses" })} />
                         </td>
                         <td style={td}>
@@ -8930,9 +8939,15 @@ export default function App() {
                             title={e.tournament_id ? "Approving will mark this team registered" : "Unmatched — pick the event to link the cost and mark the team registered"}
                             onChange={ev => updateExpense(e.id, { tournament_id: ev.target.value ? Number(ev.target.value) : null })}>
                             <option value="">{e.category === "Tournament" ? "— pick the event —" : "— n/a —"}</option>
-                            {[...tournaments].filter(t => !t.cancelled)
+                            {[...tournaments]
+                              // Keep whatever is already linked visible, even if
+                              // its teams later drop — otherwise the row would
+                              // silently appear unassigned.
+                              .filter(t => !t.cancelled && (committedTnIds.has(t.id) || t.id === e.tournament_id))
                               .sort((a, b) => (a.start_date || "").localeCompare(b.start_date || ""))
-                              .map(t => <option key={t.id} value={t.id}>{(t.start_date || "").slice(5)} {t.name.slice(0, 44)}</option>)}
+                              .map(t => <option key={t.id} value={t.id}>
+                                {(t.start_date || "").slice(5)} {t.name.slice(0, 40)} ({teamsPerTn.get(t.id) || 0})
+                              </option>)}
                           </select>
                         </td>
                         <td style={{...td,whiteSpace:"nowrap",textAlign:"right",position:"sticky",right:0,
