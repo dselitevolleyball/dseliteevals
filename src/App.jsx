@@ -8635,7 +8635,7 @@ export default function App() {
       .map(a => a.tournament_id));
     const teamsPerTn = tournamentAssignments.reduce((m, a) => m.set(a.tournament_id, (m.get(a.tournament_id) || 0) + 1), new Map());
     const th = {padding:"7px 9px",textAlign:"left",fontSize:9,fontWeight:700,textTransform:"uppercase",color:C.mut,borderBottom:"1px solid "+C.border,whiteSpace:"nowrap"};
-    const td = {padding:"6px 9px",borderBottom:"1px solid "+C.border,fontSize:12};
+    const td = {padding:"6px 9px",borderBottom:"1px solid "+C.border,fontSize:12,verticalAlign:"top"};
     const stat = (label, value, color, sub) => (
       <div style={{border:"1px solid "+C.border,borderLeft:"3px solid "+(color||C.gold),borderRadius:8,padding:"9px 14px",minWidth:132,background:C.card}}>
         <div style={{fontSize:20,fontWeight:800,color:color||C.gold,lineHeight:1.1}}>{value}</div>
@@ -8858,9 +8858,10 @@ export default function App() {
                   <tbody>
                     {pending.map(e => (
                       <tr key={e.id}>
-                        <td style={{...td,fontWeight:700,whiteSpace:"nowrap",maxWidth:130,overflow:"hidden",textOverflow:"ellipsis"}}
-                          title={e.vendor || ""}>{e.vendor || "—"}</td>
-                        <td style={{...td,color:C.mut,maxWidth:200,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={e.email_subject || e.item}>{e.item}</td>
+                        <td style={{...td,fontWeight:700,width:150,maxWidth:150,whiteSpace:"normal",
+                          overflowWrap:"anywhere",lineHeight:1.35}}>{e.vendor || "—"}</td>
+                        <td style={{...td,color:C.mut,width:260,maxWidth:260,whiteSpace:"normal",
+                          overflowWrap:"anywhere",lineHeight:1.35}} title={e.email_subject || e.item}>{e.item}</td>
                         {(() => {
                           // A date after today, or absurdly old, means the parser grabbed the
                           // wrong one (a due date, a travel date) — say so rather than let it

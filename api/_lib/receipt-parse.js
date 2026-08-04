@@ -65,12 +65,31 @@ function findDate(body) {
   return null;
 }
 
-const vendorFrom = (from, subject) => {
-  const disp = /^\s*"?([^"<]+?)"?\s*</.exec(String(from || ""));
-  if (disp && disp[1].trim()) return disp[1].trim();
-  const dom = /@([\w.-]+)/.exec(String(from || ""));
-  if (dom) return dom[1].replace(/\.(com|net|org|io|co)$/i, "");
-  return String(subject || "").slice(0, 40) || "Unknown";
+// Platforms that send on an event's behalf. Their From line is often the event
+// name, so "2027 ATX Showcase" ends up looking like the vendor — the body is
+// where the actual issuer is named ("...by SportWrench Inc").
+const ISSUERS = [
+  [/sportwrench/i, "SportWrench"],
+  [/advanced ?event ?systems|\bAES\b/i, "Advanced Event Systems"],
+  [/sportsengine/i, "SportsEngine"],
+  [/usa ?volleyball|\bUSAV\b/i, "USA Volleyball"],
+  [/\bAAU\b/i, "AAU"],
+];
+
+const vendorFrom = (from, subject, body = "") => {
+  const f = String(from || "");
+  // A display name that's really the event ("2027 ATX Showcase") is worse than
+  // useless, so check the known issuers first.
+  const hay = f + " " + String(subject || "") + " " + String(body).slice(0, 1200);
+  const issuer = ISSUERS.find(([re]) => re.test(hay));
+  if (issuer) return issuer[1];
+  const disp = /^\s*"?([^"<]+?)"?\s*</.exec(f);
+  if (disp && disp[1].trim() && !/^\d{4}\b/.test(disp[1].trim())) return disp[1].trim();
+  const dom = /@([\w.-]+)/.exec(f);
+  if (dom) return dom[1].replace(/^(mail|email|no-?reply|notifications?)\./i, "").replace(/\.(com|net|org|io|co)$/i, "");
+  // Falling back to the subject gives every receipt from one sender the same
+  // name, so say plainly that it's unknown instead.
+  return "Unknown sender";
 };
 
 // Mail that discusses money without any having moved. A failure notice or an
@@ -100,7 +119,7 @@ export function parseReceiptEmail({ from = "", subject = "", text = "", messageI
       rows: reg.perTeam.map(p => ({
         season: seasonOf(reg.paidDate || findDate(body)), category: "Tournament", allocation: p.team, team_name: null,
         item: reg.event + " registration", expense_date: reg.paidDate || findDate(body),
-        amount: p.amount, payment_method: reg.method, vendor: vendorFrom(from, subject),
+        amount: p.amount, payment_method: reg.method, vendor: vendorFrom(from, subject, body),
         status: "pending", source: "email", message_id: messageId, email_subject: subject,
         notes: `Split from $${reg.total.toFixed(2)} across ${reg.teams.length} teams`,
       })),
@@ -111,7 +130,7 @@ export function parseReceiptEmail({ from = "", subject = "", text = "", messageI
   // Tier 2 — best effort. One row, flagged for review.
   const amount = findAmount(body);
   if (!amount) return { confidence: "none", kind: "unparsed", rows: [], reason: "no amount found" };
-  const vendor = vendorFrom(from, subject);
+  const vendor = vendorFrom(from, subject, body);
   const hay = vendor + " " + subject + " " + body.slice(0, 400);
   const rule = VENDOR_RULES.find(([re]) => re.test(hay));
   return {
