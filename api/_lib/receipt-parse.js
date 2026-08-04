@@ -10,6 +10,7 @@
 // every field is editable before approval.
 
 import { parseRegistrationEmail } from "./registration-parse.js";
+import { seasonForDate } from "./season.js";
 
 // vendor pattern -> [category, allocation]. First match wins.
 const VENDOR_RULES = [
@@ -72,8 +73,12 @@ const vendorFrom = (from, subject) => {
   return String(subject || "").slice(0, 40) || "Unknown";
 };
 
-export function parseReceiptEmail({ from = "", subject = "", text = "", messageId = null, season = "2026-27" } = {}) {
+export function parseReceiptEmail({ from = "", subject = "", text = "", messageId = null, season = null } = {}) {
   const body = String(text || "").replace(/\r/g, "");
+  // The season comes from the receipt's own date. This used to default to the
+  // literal "2026-27", which would have quietly mislabelled everything captured
+  // after 31 July 2027 and shown up only as a season total that looked wrong.
+  const seasonOf = (d) => season || seasonForDate(d) || seasonForDate(new Date().toISOString().slice(0, 10));
 
   // Tier 1 — a registration with a stated team list splits exactly.
   const reg = parseRegistrationEmail(body);
@@ -82,7 +87,7 @@ export function parseReceiptEmail({ from = "", subject = "", text = "", messageI
       confidence: "high",
       kind: "registration",
       rows: reg.perTeam.map(p => ({
-        season, category: "Tournament", allocation: p.team, team_name: null,
+        season: seasonOf(reg.paidDate || findDate(body)), category: "Tournament", allocation: p.team, team_name: null,
         item: reg.event + " registration", expense_date: reg.paidDate || findDate(body),
         amount: p.amount, payment_method: reg.method, vendor: vendorFrom(from, subject),
         status: "pending", source: "email", message_id: messageId, email_subject: subject,
@@ -103,7 +108,7 @@ export function parseReceiptEmail({ from = "", subject = "", text = "", messageI
     kind: "receipt",
     total: amount,
     rows: [{
-      season, category: rule ? rule[1] : "Club Expenses", allocation: rule ? rule[2] : null, team_name: null,
+      season: seasonOf(findDate(body)), category: rule ? rule[1] : "Club Expenses", allocation: rule ? rule[2] : null, team_name: null,
       item: String(subject || "Receipt").slice(0, 120), expense_date: findDate(body),
       amount, payment_method: null, vendor,
       status: "pending", source: "email", message_id: messageId, email_subject: subject,

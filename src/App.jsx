@@ -8782,16 +8782,36 @@ export default function App() {
             {pending.length > 0 && (
               <div style={{overflowX:"auto"}}>
                 <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0,minWidth:900}}>
-                  <thead><tr>{["Vendor","What","Date","Amount","Category","Team / bucket","Tournament",""].map(h =>
+                  <thead><tr>{["Vendor","What","Date","Season","Amount","Category","Team / bucket","Tournament",""].map(h =>
                     <th key={h} style={th}>{h}</th>)}</tr></thead>
                   <tbody>
                     {pending.map(e => (
                       <tr key={e.id}>
                         <td style={{...td,fontWeight:700,whiteSpace:"nowrap"}}>{e.vendor || "—"}</td>
                         <td style={{...td,color:C.mut,maxWidth:240,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={e.email_subject || e.item}>{e.item}</td>
-                        <td style={{...td,whiteSpace:"nowrap"}}>
-                          <DebouncedField style={{...inpStyle,padding:"3px 6px",fontSize:11,width:130}} type="date"
-                            value={e.expense_date || ""} onCommit={v => updateExpense(e.id, { expense_date: v || null })} />
+                        {(() => {
+                          // A date after today, or absurdly old, means the parser grabbed the
+                          // wrong one (a due date, a travel date) — say so rather than let it
+                          // quietly decide the season.
+                          const today = localDateISO();
+                          const odd = e.expense_date && (e.expense_date > today || e.expense_date < "2025-08-01");
+                          return (
+                            <td style={{...td,whiteSpace:"nowrap"}}>
+                              <DebouncedField style={{...inpStyle,padding:"3px 6px",fontSize:11,width:130,
+                                  borderColor: odd ? "#f59e0b" : undefined}}
+                                type="date" value={e.expense_date || ""}
+                                title={odd ? "That date looks wrong — probably picked up from the wrong line" : undefined}
+                                onCommit={v => updateExpense(e.id, { expense_date: v || null })} />
+                              {odd && <div style={{fontSize:9,color:"#f59e0b",marginTop:1}}>check this date</div>}
+                            </td>
+                          );
+                        })()}
+                        <td style={td}>
+                          <select style={{...inpStyle,padding:"3px 6px",fontSize:11,width:96}} value={e.season || ""}
+                            title="Season runs 1 Aug to 31 Jul. Set by the linked event when there is one, otherwise the purchase date."
+                            onChange={ev => updateExpense(e.id, { season: ev.target.value })}>
+                            {["2025-26","2026-27","2027-28"].map(x => <option key={x} value={x}>{x}</option>)}
+                          </select>
                         </td>
                         <td style={{...td,fontWeight:800,whiteSpace:"nowrap"}}>
                           <DebouncedField style={{...inpStyle,padding:"3px 6px",fontSize:11,width:92}} type="number"

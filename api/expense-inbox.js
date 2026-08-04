@@ -15,6 +15,7 @@ import { createClient } from "@supabase/supabase-js";
 import crypto from "node:crypto";
 import { parseReceiptEmail } from "./_lib/receipt-parse.js";
 import { matchTournament } from "./_lib/tournament-match.js";
+import { seasonForExpense } from "./_lib/season.js";
 
 const safeEqual = (a, b) => {
   const ba = Buffer.from(String(a || "")), bb = Buffer.from(String(b || ""));
@@ -72,7 +73,7 @@ export default async function handler(req, res) {
   // put the cost on the wrong event and flip the wrong teams to registered.
   const [{ data: teamRows }, { data: tnRows }] = await Promise.all([
     supabase.from("teams").select("id"),
-    supabase.from("tournaments").select("id, name").eq("cancelled", false),
+    supabase.from("tournaments").select("id, name, start_date").eq("cancelled", false),
   ]);
   const known = new Map((teamRows || []).map(t => [String(t.id).toLowerCase(), t.id]));
   const ALIAS = { "11 rise": "11 Rise 1", "12-1 rise": "12 Rise 1", "12-2 rise": "12 Rise 2", "13 rise": "13 Rise 1" };
@@ -86,6 +87,10 @@ export default async function handler(req, res) {
       ...r,
       team_name: known.get(key) || ALIAS[key] || null,
       tournament_id: match ? match.id : null,
+      season: seasonForExpense({
+        expenseDate: r.expense_date,
+        tournamentStart: match ? (tnRows || []).find(t => t.id === match.id)?.start_date : null,
+      }),
       captured_at: now,
       raw_email: String(body?.text || "").slice(0, 20000),
       notes: [r.notes, match ? null : (parsed.kind === "registration" ? "Tournament not matched automatically — pick it in review" : null)]
