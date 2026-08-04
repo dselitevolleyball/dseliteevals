@@ -5112,11 +5112,15 @@ export default function App() {
     const me = coach?.display_name || "";
     const mine = nm => nrm(nm) === nrm(me) || (myRosterRow && nrm(nm) === nrm(((myRosterRow.first_name||"")+" "+(myRosterRow.last_name||"")).trim()));
     const today = localDateISO();
-    const tnById = new Map((tournaments || []).map(t => [t.id, t]));
-    const trips = (coachTravel || [])
-      .filter(t => !t.private_owner && mine(t.coach_name))
-      .map(t => ({ t, tn: tnById.get(t.tournament_id) }))
-      .filter(x => x.tn && x.tn.airfare_required && !x.tn.cancelled && String(x.tn.start_date || "") >= today)
+    const myName = ((myRosterRow.first_name || "") + " " + (myRosterRow.last_name || "")).trim();
+    // Derived from the tournament assignments, not from coach_travel — a row
+    // there only exists once somebody has edited travel, so reading it meant
+    // never being asked about a trip nobody had touched yet.
+    const trips = (tournaments || [])
+      .filter(t => t.airfare_required && !t.cancelled && String(t.start_date || "") >= today)
+      .filter(t => travelStaffFor(t.id).some(v => mine(v) || nrm(v) === nrm(myName)))
+      .map(t => ({ tn: t, t: (coachTravel || []).find(r => !r.private_owner && r.tournament_id === t.id
+        && (mine(r.coach_name) || nrm(r.coach_name) === nrm(myName))) || { tournament_id: t.id, coach_name: myName } }))
       .sort((a, b) => String(a.tn.start_date).localeCompare(String(b.tn.start_date)));
     const missing = detailsMissing(myRosterRow);
     const nameOk = legalNameOk(myRosterRow);
@@ -5132,11 +5136,13 @@ export default function App() {
     const today = localDateISO();
     const tnById = new Map((tournaments || []).map(t => [t.id, t]));
     const full = ((r.first_name || "") + " " + (r.last_name || "")).trim();
-    const trips = (coachTravel || [])
-      .filter(t => !t.private_owner && nrm(t.coach_name) === nrm(full))
-      .map(t => ({ t, tn: tnById.get(t.tournament_id) }))
-      .filter(x => x.tn && x.tn.airfare_required && !x.tn.cancelled && String(x.tn.start_date || "") >= today)
-      .sort((a, b) => String(a.tn.start_date).localeCompare(String(b.tn.start_date)));
+      const tripsForName = (full) => (tournaments || [])
+        .filter(t => t.airfare_required && !t.cancelled && String(t.start_date || "") >= today)
+        .filter(t => travelStaffFor(t.id).some(nm => nrm(nm) === nrm(full)))
+        .map(t => ({ tn: t, t: (coachTravel || []).find(r => !r.private_owner
+          && r.tournament_id === t.id && nrm(r.coach_name) === nrm(full)) || { tournament_id: t.id, coach_name: full } }))
+        .sort((a, b) => String(a.tn.start_date).localeCompare(String(b.tn.start_date)));
+      const trips = tripsForName(full);
     const missing = detailsMissing(r);
     const nameOk = legalNameOk(r);
     const openTrips = trips.filter(x => !tripAnswered(x.t));
@@ -5331,17 +5337,24 @@ export default function App() {
   // Through an RPC, not a direct update: coach_travel's read-own policy is
   // SELECT-only, so a plain .update() from a non-admin coach matches zero rows
   // and reports success. confirm_travel() writes only the answer columns.
-  const saveTripAnswer = async (id, patch) => {
-    const cur = (coachTravel || []).find(t => t.id === id) || {};
-    const next = { ...cur, ...patch };
-    setCoachTravel(prev => prev.map(t => t.id === id ? { ...t, ...patch } : t));
-    const { error } = await supabase.rpc("confirm_travel", {
-      p_id: id,
+  // Keyed by tournament + coach rather than row id: a derived trip may have no
+  // coach_travel row yet, and confirm_travel_for creates it. Writing straight to
+  // the table isn't an option — the read-own policy is SELECT-only.
+  const saveTripAnswer = async (row, patch) => {
+    const next = { ...row, ...patch };
+    setCoachTravel(prev => {
+      const hit = prev.some(t => t.id != null && t.id === row.id);
+      return hit ? prev.map(t => t.id === row.id ? { ...t, ...patch } : t) : [...prev, next];
+    });
+    const { error } = await supabase.rpc("confirm_travel_for", {
+      p_tournament_id: row.tournament_id,
+      p_coach_name: row.coach_name,
       p_mode: next.travel_mode ?? null,
       p_booking_ok: next.booking_ok ?? null,
       p_note: next.travel_note ?? null,
     });
-    if (error) { window.alert("Save failed: " + error.message); loadCoachTravel(); }
+    if (error) { window.alert("Save failed: " + error.message); }
+    loadCoachTravel();
   };
 
   const renderDetailsModal = () => {
@@ -5450,7 +5463,7 @@ export default function App() {
                       {TRAVEL_MODES.map(m => {
                         const on = t.travel_mode === m.key;
                         return (
-                          <button key={m.key} onClick={()=>saveTripAnswer(t.id, { travel_mode: m.key, booking_ok: m.key === "fly_club" ? t.booking_ok : null })}
+                          <button key={m.key} onClick={()=>saveTripAnswer(t, { travel_mode: m.key, booking_ok: m.key === "fly_club" ? t.booking_ok : null })}
                             style={{textAlign:"left",padding:"8px 10px",borderRadius:9,cursor:"pointer",fontFamily:"inherit",
                               border:"1px solid "+(on?C.gold:C.border),background:on?"rgba(233,30,140,0.10)":"transparent"}}>
                             <div style={{fontSize:12,fontWeight:700,color:on?C.gold:C.text}}>{on ? "◉ " : "○ "}{m.label}</div>
@@ -5462,7 +5475,7 @@ export default function App() {
                     {t.travel_mode === "fly_club" && (
                       <label style={{display:"flex",alignItems:"flex-start",gap:8,marginTop:10,cursor:"pointer"}}>
                         <input type="checkbox" checked={t.booking_ok === true}
-                          onChange={ev => saveTripAnswer(t.id, { booking_ok: ev.target.checked })}
+                          onChange={ev => saveTripAnswer(t, { booking_ok: ev.target.checked })}
                           style={{marginTop:2,accentColor:C.gold,width:16,height:16,flexShrink:0}} />
                         <span style={{fontSize:11.5,color:t.booking_ok?C.text:"#f59e0b",fontWeight:t.booking_ok?500:700}}>
                           Yes — book my ticket to {tn.location || "this tournament"} in my legal name, and I want to fly there.
@@ -5471,7 +5484,7 @@ export default function App() {
                     )}
                     <DebouncedField style={{...inpStyle,width:"100%",padding:"6px 9px",fontSize:12,marginTop:9}}
                       placeholder="Anything we should know? (preferred airport, staying extra days, seat needs…)"
-                      value={t.travel_note || ""} onCommit={v => saveTripAnswer(t.id, { travel_note: v.trim() || null })} />
+                      value={t.travel_note || ""} onCommit={v => saveTripAnswer(t, { travel_note: v.trim() || null })} />
                   </div>
                 );
               })}
