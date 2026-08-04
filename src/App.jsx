@@ -1092,6 +1092,20 @@ function vbPlayingTime(sets){
 // Local calendar date as YYYY-MM-DD (avoids the UTC off-by-one that toISOString
 // gives in the evening in Central time).
 function localDateISO(d){ const x = d ? new Date(d) : new Date(); return new Date(x.getTime() - x.getTimezoneOffset()*60000).toISOString().slice(0,10); }
+// --- DSSC clinic staffing -------------------------------------------------
+// A session's crew lives in dssc_clinics.sessions[].staff. Sessions written
+// before staffing existed only carry coach_name, so read that as an approved
+// lead rather than showing them as unstaffed — 31 real assignments depend on it.
+function sessionStaff(s) {
+  if (Array.isArray(s?.staff)) return s.staff;
+  const nm = String(s?.coach_name || "").trim();
+  return nm ? [{ name: nm, role: "lead", status: "approved" }] : [];
+}
+function staffNeeded(s, clinic) { return Math.max(1, Number(s?.coaches_needed ?? clinic?.coaches_needed ?? 1) || 1); }
+const staffApproved = (s) => sessionStaff(s).filter(x => x.status === "approved");
+const staffPending  = (s) => sessionStaff(s).filter(x => x.status === "pending");
+const sessionShort  = (s, clinic) => Math.max(0, staffNeeded(s, clinic) - staffApproved(s).length);
+const onStaff = (s, matches) => sessionStaff(s).some(x => x.status !== "declined" && matches(x.name));
 // Hours in a practice slot label like "5-7pm" (=2) or "1-2pm" (=1). Practice
 // times are afternoon/evening, so both ends read as PM.
 function slotHours(slot){
@@ -1388,6 +1402,12 @@ export default function App() {
   const [clinicMonth, setClinicMonth]   = useState(null);   // "YYYY-MM" calendar anchor
   const [dsscCheckins, setDsscCheckins] = useState([]);     // DSSC clinic clock-ins (separate from DS Elite)
   const [dsscAvail, setDsscAvail]       = useState([]);     // coach availability/interest for clinics
+  const [dsscCalOff, setDsscCalOff]     = useState(0);      // months from now on the DSSC coaches calendar
+  const [dsscCalSel, setDsscCalSel]     = useState(null);   // selected day
+  const [dsscOnlyOpen, setDsscOnlyOpen] = useState(false);  // show only sessions still short a coach
+  const [dsscCoachFilter, setDsscCoachFilter] = useState(""); // "" = every coach
+  const [dsscCalMode, setDsscCalMode]   = useState("cal");  // cal | list
+  const [dsscWeekOff, setDsscWeekOff]   = useState(0);      // weeks from this one on the DSSC approval table
   const [dsscSync, setDsscSync]         = useState(null);   // last Playbook→clinics sync {last_synced_at, summary}
   const [dsscSyncTok, setDsscSyncTok]   = useState(null);   // built sync bookmarklet {href, calendarUrl} | {configured:false} | {error}
   const [swSyncTok, setSwSyncTok]       = useState(null);   // SportWrench sync bookmarklet {href} | {configured:false} | {error}
@@ -1634,7 +1654,7 @@ export default function App() {
   // Operations are admin-only: the whole "Operations" nav group and the views
   // behind it are hidden and blocked for non-admin coaches. The owner (Drew)
   // always counts here so a bad DB flag can't lock him out.
-  const OPS_VIEWS = new Set(["tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","timecards","gear","roster","hawaii","travel","dsysa","finance"]);
+  const OPS_VIEWS = new Set(["tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","timecards","gear","roster","hawaii","travel","dsysa","finance","dssccal"]);
   const canOps    = isAdmin || isOwner;
   const opsDenied = <div style={{padding:24,color:C.mut,textAlign:"center"}}>This section is restricted to administrators. Ask the club administrator (Drew) for access.</div>;
   // Once a player has accepted (or is locked/signed) onto a team, they're
@@ -2336,6 +2356,60 @@ export default function App() {
     if (error) { console.error("Load dssc_checkins error:", error); return; }
     setDsscCheckins(data || []);
   }, []);
+  // Coaches are staffed per SESSION, not per clinic — each entry in the clinic's
+  // sessions array carries its own date, court and crew. So any change means
+  // rewriting one element and putting the whole array back.
+  const updateDsscSession = useCallback(async (clinicId, sessionId, patch) => {
+    const clinic = clinics.find(c => c.id === clinicId);
+    if (!clinic) return;
+    const next = (clinic.sessions || []).map(x => {
+      if (String(x.id) !== String(sessionId)) return x;
+      const merged = { ...x, staff: sessionStaff(x), ...patch };
+      // coach_name stays the approved lead, mirrored. The ICS feed, the payroll
+      // report and the older clinic screens all read that one field, and none of
+      // them should have to learn about the staff array.
+      const lead = (merged.staff || []).find(s => s.role === "lead" && s.status === "approved");
+      merged.coach_name = lead ? lead.name : null;
+      merged.needsCoverage = sessionShort(merged, clinic) > 0;
+      return merged;
+    });
+    setClinics(prev => prev.map(c => c.id === clinicId ? { ...c, sessions: next } : c));
+    const { error } = await supabase.from("dssc_clinics")
+      .update({ sessions: next, updated_by: coach?.display_name || coach?.email || null, updated_at: new Date().toISOString() })
+      .eq("id", clinicId);
+    if (error) { window.alert("Couldn't save: " + error.message); loadClinics(); }
+  }, [clinics, coach, loadClinics]);
+  // Put someone on a session. Admins staffing directly land approved; a coach
+  // picking up their own shift lands pending, because not everyone is cleared
+  // to lead and Hunter is the one who decides.
+  const staffDsscSession = useCallback((clinicId, sessionId, name, role = "assist", status = "approved") => {
+    const clinic = clinics.find(c => c.id === clinicId);
+    const s = (clinic?.sessions || []).find(x => String(x.id) === String(sessionId));
+    if (!s || !name) return;
+    const nrm = v => String(v || "").trim().toLowerCase();
+    const staff = sessionStaff(s).filter(x => nrm(x.name) !== nrm(name));
+    // One lead per session — promoting someone demotes the incumbent rather
+    // than leaving two people both believing they're running it.
+    const kept = role === "lead" ? staff.map(x => x.role === "lead" ? { ...x, role: "assist" } : x) : staff;
+    kept.push({ name, role, status, picked: status === "pending", by: coach?.display_name || coach?.email || null, at: new Date().toISOString() });
+    return updateDsscSession(clinicId, sessionId, { staff: kept });
+  }, [clinics, coach, updateDsscSession]);
+  const unstaffDsscSession = useCallback((clinicId, sessionId, name) => {
+    const clinic = clinics.find(c => c.id === clinicId);
+    const s = (clinic?.sessions || []).find(x => String(x.id) === String(sessionId));
+    if (!s) return;
+    const nrm = v => String(v || "").trim().toLowerCase();
+    return updateDsscSession(clinicId, sessionId, { staff: sessionStaff(s).filter(x => nrm(x.name) !== nrm(name)) });
+  }, [clinics, updateDsscSession]);
+  const decideDsscPickup = useCallback((clinicId, sessionId, name, ok) => {
+    const clinic = clinics.find(c => c.id === clinicId);
+    const s = (clinic?.sessions || []).find(x => String(x.id) === String(sessionId));
+    if (!s) return;
+    const nrm = v => String(v || "").trim().toLowerCase();
+    const staff = sessionStaff(s).map(x => nrm(x.name) === nrm(name)
+      ? { ...x, status: ok ? "approved" : "declined", by: coach?.display_name || coach?.email || null, at: new Date().toISOString() } : x);
+    return updateDsscSession(clinicId, sessionId, { staff });
+  }, [clinics, coach, updateDsscSession]);
   const loadDsscAvail = useCallback(async () => {
     const { data, error } = await supabase.from("dssc_availability").select("*");
     if (error) { console.error("Load dssc_availability error:", error); return; }
@@ -2406,8 +2480,10 @@ export default function App() {
       setSyPostTok({ configured: true, href: bm });
     } catch (e) { setSyPostTok({ error: String(e.message || e) }); }
   }, []);
-  useEffect(() => { if (isApproved && (view === "clinics" || view === "home")) { loadClinics(); loadDsscCheckins(); } }, [isApproved, view, loadClinics, loadDsscCheckins]);
-  useEffect(() => { if (isApproved && view === "clinics") { loadPlaybook(); loadDsscAvail(); loadDsscSync(); } }, [isApproved, view, loadPlaybook, loadDsscAvail, loadDsscSync]);
+  // "coaches" is here because the coach card draws the same calendar, and a
+  // DSSC session has to appear on it like any other commitment.
+  useEffect(() => { if (isApproved && (view === "clinics" || view === "home" || view === "dssccal" || view === "dssctime" || view === "coaches")) { loadClinics(); loadDsscCheckins(); } }, [isApproved, view, loadClinics, loadDsscCheckins]);
+  useEffect(() => { if (isApproved && (view === "clinics" || view === "dssccal")) { loadPlaybook(); loadDsscAvail(); loadDsscSync(); } }, [isApproved, view, loadPlaybook, loadDsscAvail, loadDsscSync]);
   const saveCharter = useCallback(async (team, data) => {
     if (!team) return;
     const row = { team_name: team, data, updated_by: coach?.display_name || coach?.email || null, updated_at: new Date().toISOString() };
@@ -3372,7 +3448,7 @@ export default function App() {
   useEffect(() => {
     // Roster also drives the Tryout coach picker / Text Coaches lookup,
     // so make sure it's loaded whenever either tab opens.
-    if (isApproved && (view === "coaches" || view === "tryouts" || view === "home" || view === "clockin" || view === "teamdir" || view === "practice" || view === "timecards" || view === "clinics" || view === "tournaments")) loadCoachRoster();
+    if (isApproved && (view === "coaches" || view === "tryouts" || view === "home" || view === "clockin" || view === "teamdir" || view === "practice" || view === "timecards" || view === "clinics" || view === "dssccal" || view === "tournaments")) loadCoachRoster();
   }, [isApproved, view, loadCoachRoster]);
   // The coach card edits coach_roster, so make sure it's loaded when one opens.
   useEffect(() => { if (isApproved && coachCardName) loadCoachRoster(); }, [isApproved, coachCardName, loadCoachRoster]);
@@ -5862,10 +5938,23 @@ export default function App() {
     // Floating availability (coach_floats): slots this coach signed up to float.
     const myFloats = (coachFloats || []).filter(f => f.coach_name && matches(f.coach_name));
     const floatsOn = (iso) => { const phase = phaseForDate(iso); if (!phase) return []; const dow = DOW[new Date(iso + "T00:00").getDay()]; const picked = new Set(subsOn(iso).map(x => x.slot)); return [...new Set(myFloats.filter(f => (f.phase||"season") === phase && f.day === dow).map(f => f.slot))].filter(sl => !picked.has(sl)); };
+    // DSSC clinic sessions this coach is on. Pending pickups show too — a shift
+    // you asked for and haven't been cleared on still needs to be on your radar.
+    const myDssc = [];
+    for (const c of (clinics || [])) {
+      for (const x of (c.sessions || [])) {
+        if (!x?.date || !onStaff(x, matches)) continue;
+        const me = sessionStaff(x).find(v => matches(v.name)) || {};
+        myDssc.push({ date: String(x.date).slice(0,10), name: c.name, start: x.start_time || c.start_time,
+                      end: x.end_time || c.end_time, court: x.court || c.location,
+                      pending: me.status === "pending", lead: me.role === "lead" });
+      }
+    }
+    const dsscOn = (iso) => myDssc.filter(x => x.date === iso);
     // Nothing to show for this coach → skip.
-    if (!teamNames.length && !myTns.length && !mySubs.length && !myFloats.length) return null;
+    if (!teamNames.length && !myTns.length && !mySubs.length && !myFloats.length && !myDssc.length) return null;
     const sel = (calSel && calSel.slice(0,7) === monthKey) ? calSel : (todayISO.slice(0,7) === monthKey ? todayISO : null);
-    const selP = sel ? practicesOn(sel) : [], selT = sel ? tnsOn(sel) : [], selSA = sel ? saOn(sel) : [], selSub = sel ? subsOn(sel) : [], selFl = sel ? floatsOn(sel) : [];
+    const selP = sel ? practicesOn(sel) : [], selT = sel ? tnsOn(sel) : [], selSA = sel ? saOn(sel) : [], selSub = sel ? subsOn(sel) : [], selFl = sel ? floatsOn(sel) : [], selDssc = sel ? dsscOn(sel) : [];
     const fmtLong = (iso) => new Date(iso + "T12:00:00").toLocaleDateString(undefined, { weekday:"long", month:"short", day:"numeric" });
     const cells = []; for (let i = 0; i < leadPad; i++) cells.push(null); for (let d = 1; d <= daysInMonth; d++) cells.push(d);
     const chip = (color) => ({fontSize:7.5,fontWeight:800,lineHeight:"11px",height:11,borderRadius:2,padding:"0 2px",background:color+"33",color,overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis",letterSpacing:0.2});
@@ -5904,7 +5993,11 @@ export default function App() {
               .filter(g => matches(g.coach_name))
               .map(g => dsysaClinics.find(c => c.id === g.clinic_id))
               .filter(c => c && !c.cancelled && c.clinic_date === iso);
-            const events = [...evClinic.map(c => ({
+            const evDssc = dsscOn(iso);
+            const events = [...evDssc.map(x => ({
+              label: (x.pending ? "◷" : "🏆") + " DSSC" + (x.start ? " " + shortTime(x.start) : ""),
+              c: x.pending ? "#f59e0b" : "#8b5cf6" })),
+              ...evClinic.map(c => ({
               label: "🏐 DSYSA" + (c.start_time ? " " + (fmtFlightTime(c.start_time) || c.start_time) : ""),
               c: "#0ea5e9" })),
               ...evFlight.map(x => ({
@@ -5932,14 +6025,27 @@ export default function App() {
           {myFloats.length>0 && <span style={{display:"flex",alignItems:"center",gap:4}}><span style={{width:10,height:8,borderRadius:2,background:FLT+"33",border:"1px solid "+FLT}} />☁ Floating</span>}
           <span style={{display:"flex",alignItems:"center",gap:4}}><span style={{width:10,height:8,borderRadius:2,background:SA+"33",border:"1px solid "+SA}} />S&amp;A</span>
           <span style={{display:"flex",alignItems:"center",gap:4}}><span style={{width:10,height:8,borderRadius:2,background:TNC+"33",border:"1px solid "+TNC}} />Tourn.</span>
+          {myDssc.length>0 && <span style={{display:"flex",alignItems:"center",gap:4}}><span style={{width:10,height:8,borderRadius:2,background:"#8b5cf633",border:"1px solid #8b5cf6"}} />🏆 DSSC</span>}
         </div>
         {sel && (
           <div style={{marginTop:10,borderTop:"1px solid "+C.border,paddingTop:10}}>
             <div style={{fontSize:11,fontWeight:800,color:C.text,marginBottom:6}}>{fmtLong(sel)}{sel===todayISO?" · Today":""}</div>
-            {(selP.length===0 && selT.length===0 && selSA.length===0 && selSub.length===0 && selFl.length===0) ? (
+            {(selP.length===0 && selT.length===0 && selSA.length===0 && selSub.length===0 && selFl.length===0 && selDssc.length===0) ? (
               <div style={{fontSize:12,color:C.mut}}>Nothing scheduled.</div>
             ) : (
               <div style={{display:"flex",flexDirection:"column",gap:5}}>
+                {selDssc.map((x,i) => (
+                  <div key={"dssc"+i} style={{display:"flex",alignItems:"center",gap:8,fontSize:13}}>
+                    <span style={{width:6,height:6,borderRadius:3,background:x.pending?"#f59e0b":"#8b5cf6",flexShrink:0}} />
+                    <span style={{flex:1,color:C.text,fontWeight:600}}>
+                      🏆 DSSC <b>{x.name}</b>
+                      {x.lead && <span style={{color:"#8b5cf6",fontWeight:800,fontSize:10}}> LEAD</span>}
+                      {x.pending && <span style={{color:"#f59e0b",fontWeight:800,fontSize:10}}> AWAITING APPROVAL</span>}
+                      {x.court && <span style={{color:C.mut,fontWeight:500,fontSize:11}}> · {x.court}</span>}
+                    </span>
+                    <span style={{fontSize:11,color:C.mut}}>{x.start}{x.end?"–"+x.end:""}</span>
+                  </div>
+                ))}
                 {selSub.map((x,i) => (
                   <div key={"sub"+i} style={{display:"flex",alignItems:"center",gap:8,fontSize:13}}>
                     <span style={{width:6,height:6,borderRadius:3,background:SUBC,flexShrink:0}} />
@@ -8608,6 +8714,488 @@ export default function App() {
 
   // Finance — the ledger, per-team roll-up, and the approval queue for anything
   // captured from email.
+
+  // DSSC coaches calendar. Every clinic session on a month grid or a flat list,
+  // coloured by whether it is fully crewed — a list of clinics never made it
+  // visible that 136 of 167 sessions had nobody on them.
+  function renderDsscCal() {
+    if (!canOps) return <div style={{padding:24,color:C.mut,textAlign:"center"}}>The DSSC coaches calendar is admin-only.</div>;
+    const nrm = (v) => String(v || "").trim().toLowerCase();
+
+    // Flatten every clinic's sessions into dated rows.
+    const all = [];
+    for (const c of clinics) {
+      for (const x of (c.sessions || [])) {
+        if (!x?.date) continue;
+        all.push({
+          clinicId: c.id, clinicName: c.name, ageGroup: c.age_group, clinic: c, s: x,
+          id: x.id, date: String(x.date).slice(0, 10),
+          start: x.start_time || c.start_time, end: x.end_time || c.end_time,
+          court: x.court || c.location,
+          staff: sessionStaff(x), need: staffNeeded(x, c), short: sessionShort(x, c),
+        });
+      }
+    }
+    all.sort((a, b) => a.date.localeCompare(b.date) || String(a.start).localeCompare(String(b.start)));
+
+    const hasCoach = (r) => !dsscCoachFilter || r.staff.some(v => v.status !== "declined" && nrm(v.name) === nrm(dsscCoachFilter));
+    const shown = all.filter(r => hasCoach(r) && (!dsscOnlyOpen || r.short > 0));
+    const openTotal = all.filter(r => r.short > 0).length;
+    const pendingTotal = all.reduce((n, r) => n + staffPending(r.s).length, 0);
+
+    // Who can be put on a session: everyone who said they're available, then the
+    // rest of the roster. Availability first because that is the actual pool.
+    const availRows = dsscAvail.filter(a => a.available && (a.coach_name || "").trim());
+    const availNames = availRows.map(a => a.coach_name.trim()).sort((a, b) => a.localeCompare(b));
+    const rosterNames = coachRoster.map(r => ((r.first_name || "") + " " + (r.last_name || "")).trim())
+      .filter(x => x && !isPlaceholderPerson(x));
+    const others = [...new Set(rosterNames.filter(x => !availNames.some(a => nrm(a) === nrm(x))))].sort((a, b) => a.localeCompare(b));
+    const canLead = new Set(dsscAvail.filter(a => a.can_lead).map(a => nrm(a.coach_name)));
+    // Everyone who appears anywhere, for the filter — including people staffed
+    // on a session who never filled in an availability row.
+    const filterNames = [...new Set([...availNames, ...all.flatMap(r => r.staff.map(v => v.name))].filter(Boolean))]
+      .sort((a, b) => a.localeCompare(b));
+
+    const coachEmailFor = (nm) => {
+      const a = dsscAvail.find(x => nrm(x.coach_name) === nrm(nm) && x.coach_email);
+      if (a) return a.coach_email;
+      const r = coachRoster.find(x => x.email && nrm((x.first_name || "") + " " + (x.last_name || "")) === nrm(nm));
+      return r?.email || null;
+    };
+
+    // Month grid
+    const today = localDateISO();
+    const base = new Date(today + "T12:00:00");
+    base.setMonth(base.getMonth() + dsscCalOff, 1);
+    const y = base.getFullYear(), mo = base.getMonth();
+    const daysIn = new Date(Date.UTC(y, mo + 1, 0)).getUTCDate();
+    const lead = new Date(Date.UTC(y, mo, 1)).getUTCDay();
+    const cells = [...Array(lead).fill(null), ...Array.from({ length: daysIn }, (_, i) => i + 1)];
+    const isoOf = (d) => y + "-" + String(mo + 1).padStart(2, "0") + "-" + String(d).padStart(2, "0");
+    const onDay = (iso) => shown.filter(x => x.date === iso);
+    const sel = dsscCalSel || today;
+    const monthLabel = base.toLocaleString(undefined, { month: "long", year: "numeric" });
+    const fmtDay = (iso) => new Date(iso + "T12:00:00").toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
+
+    const notifyStaff = (r, name) => {
+      const email = coachEmailFor(name);
+      const when = new Date(r.date + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+      const body = "You're on the DSSC clinic \"" + r.clinicName + "\" on " + when + " at " + r.start
+        + (r.court ? " (" + r.court + ")" : "") + ".\n\nOpen DS Elite HQ → DSSC Hours to clock in.";
+      fetch("/api/send-push", { method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ title:"DSSC session — " + when, body: r.clinicName + " · " + r.start, url:"/?view=dssctime",
+          audience: email ? { type:"emails", emails:[email] } : { type:"all" } }) }).catch(()=>{});
+      if (email) fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ subject:"DSSC session — " + when, body, recipients:[email] }) }).catch(()=>{});
+    };
+
+    // One session row, used by both the day panel and the list view.
+    const sessionRow = (r, withDate) => (
+      <div key={r.clinicId + "-" + r.id} style={{padding:"10px 14px",borderTop:"1px solid "+C.border}}>
+        <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+          <span style={{fontSize:11,color:C.mut,minWidth:withDate?150:104,whiteSpace:"nowrap"}}>
+            {withDate ? new Date(r.date+"T12:00:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"}) + " · " : ""}{r.start}–{r.end}
+          </span>
+          <div style={{minWidth:180,flex:1}}>
+            <div style={{fontSize:12,fontWeight:700,color:C.text}}>{r.clinicName}</div>
+            <div style={{fontSize:10,color:C.mut}}>{[r.ageGroup, r.court].filter(Boolean).join(" · ")}</div>
+          </div>
+          <span title="Coaches on this session vs. needed"
+            style={{fontSize:11,fontWeight:800,padding:"2px 8px",borderRadius:999,whiteSpace:"nowrap",
+              background:(r.short?"#f59e0b":C.grn)+"22",color:r.short?"#f59e0b":C.grn}}>
+            {staffApproved(r.s).length}/{r.need} coach{r.need===1?"":"es"}
+          </span>
+          <label style={{fontSize:10,color:C.mut,display:"flex",alignItems:"center",gap:4}}>
+            need
+            <input type="number" min={1} max={12} value={r.need}
+              onChange={ev => updateDsscSession(r.clinicId, r.id, { coaches_needed: Math.max(1, Number(ev.target.value)||1) })}
+              style={{...inpStyle,width:44,padding:"3px 5px",fontSize:11}} />
+          </label>
+        </div>
+        <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",marginTop:7}}>
+          {r.staff.filter(v => v.status !== "declined").map(v => {
+            const pend = v.status === "pending";
+            return (
+              <span key={v.name} style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:11,fontWeight:600,padding:"3px 7px",borderRadius:7,
+                background:pend?"#f59e0b22":C.bg,border:"1px solid "+(pend?"#f59e0b":C.border),color:pend?"#f59e0b":C.text}}>
+                {v.role === "lead" && <span title="Lead coach" style={{fontSize:10}}>★</span>}
+                {v.name}
+                {pend && <span style={{fontSize:9,fontWeight:800}}>picked up · needs OK</span>}
+                {pend ? (
+                  <>
+                    <button onClick={()=>decideDsscPickup(r.clinicId, r.id, v.name, true)} title="Approve"
+                      style={{background:"none",border:"none",color:C.grn,cursor:"pointer",fontFamily:"inherit",fontWeight:800,fontSize:12,padding:0}}>✓</button>
+                    <button onClick={()=>decideDsscPickup(r.clinicId, r.id, v.name, false)} title="Decline"
+                      style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontFamily:"inherit",fontWeight:800,fontSize:12,padding:0}}>✕</button>
+                  </>
+                ) : (
+                  <>
+                    {v.role !== "lead" && canLead.has(nrm(v.name)) && (
+                      <button onClick={()=>staffDsscSession(r.clinicId, r.id, v.name, "lead", "approved")} title="Make lead"
+                        style={{background:"none",border:"none",color:C.mut,cursor:"pointer",fontFamily:"inherit",fontWeight:800,fontSize:11,padding:0}}>★</button>
+                    )}
+                    <button onClick={()=>notifyStaff(r, v.name)} title="Notify this coach"
+                      style={{background:"none",border:"none",color:C.mut,cursor:"pointer",fontFamily:"inherit",fontSize:11,padding:0}}>✉</button>
+                    <button onClick={()=>unstaffDsscSession(r.clinicId, r.id, v.name)} title="Remove"
+                      style={{background:"none",border:"none",color:C.mut,cursor:"pointer",fontFamily:"inherit",fontWeight:800,fontSize:12,padding:0}}>×</button>
+                  </>
+                )}
+              </span>
+            );
+          })}
+          <select value="" onChange={ev => { const [nm, role] = ev.target.value.split("|"); if (nm) staffDsscSession(r.clinicId, r.id, nm, role, "approved"); }}
+            style={{...inpStyle,padding:"4px 8px",fontSize:11,minWidth:150,borderColor:r.short?"#f59e0b":C.border,color:r.short?"#f59e0b":C.mut}}>
+            <option value="">{r.short ? "+ add " + r.short + " more" : "+ add a coach"}</option>
+            {availNames.length > 0 && (
+              <optgroup label="Available">
+                {availNames.map(nm => <option key={"a"+nm} value={nm+"|"+(canLead.has(nrm(nm))?"lead":"assist")}>{nm}{canLead.has(nrm(nm))?" ★ can lead":""}</option>)}
+              </optgroup>
+            )}
+            <optgroup label="Other coaches">
+              {others.map(nm => <option key={"o"+nm} value={nm+"|"+(canLead.has(nrm(nm))?"lead":"assist")}>{nm}{canLead.has(nrm(nm))?" ★ can lead":""}</option>)}
+            </optgroup>
+          </select>
+        </div>
+      </div>
+    );
+
+    return (
+      <div style={{padding:"18px 16px",maxWidth:1100,margin:"0 auto"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:12}}>
+          <div>
+            <h2 style={{margin:0,fontSize:20,fontWeight:800,color:C.gold}}>DSSC Coaches</h2>
+            <div style={{fontSize:12,color:C.mut,marginTop:2}}>
+              {all.length} sessions · <b style={{color:openTotal?"#f59e0b":C.grn}}>{openTotal} short a coach</b>
+              {pendingTotal > 0 && <> · <b style={{color:"#f59e0b"}}>{pendingTotal} pickup{pendingTotal===1?"":"s"} awaiting approval</b></>}
+            </div>
+          </div>
+          <div style={{flex:1}} />
+          <select value={dsscCoachFilter} onChange={ev=>setDsscCoachFilter(ev.target.value)}
+            style={{...inpStyle,padding:"6px 10px",fontSize:12,minWidth:160,borderColor:dsscCoachFilter?C.gold:C.border}}>
+            <option value="">All coaches</option>
+            {filterNames.map(nm => <option key={nm} value={nm}>{nm}</option>)}
+          </select>
+          <button onClick={()=>setDsscOnlyOpen(v=>!v)}
+            style={{padding:"6px 12px",borderRadius:8,border:"1px solid "+(dsscOnlyOpen?"#f59e0b":C.border),background:"transparent",
+              color:dsscOnlyOpen?"#f59e0b":C.text,fontFamily:"inherit",fontSize:12,fontWeight:700,cursor:"pointer"}}>
+            {dsscOnlyOpen ? "● Short-staffed only" : "Short-staffed only"}
+          </button>
+          <div style={{display:"flex",border:"1px solid "+C.border,borderRadius:8,overflow:"hidden"}}>
+            {[["cal","Calendar"],["list","List"]].map(([k,label]) => (
+              <button key={k} onClick={()=>setDsscCalMode(k)}
+                style={{padding:"6px 12px",border:"none",background:dsscCalMode===k?C.gold:"transparent",
+                  color:dsscCalMode===k?"#fff":C.mut,fontFamily:"inherit",fontSize:12,fontWeight:700,cursor:"pointer"}}>{label}</button>
+            ))}
+          </div>
+        </div>
+
+        {/* Who is cleared to run a clinic alone. Everything else on this screen
+            keys off it, so it lives here rather than buried in a coach profile. */}
+        <details style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,marginBottom:12}}>
+          <summary style={{padding:"10px 14px",cursor:"pointer",fontSize:12,fontWeight:800,color:C.text}}>
+            Who can lead a clinic <span style={{color:C.mut,fontWeight:500}}>· {canLead.size} of {availRows.length} available coaches</span>
+          </summary>
+          <div style={{padding:"4px 14px 12px",display:"flex",flexWrap:"wrap",gap:8}}>
+            {availRows.length === 0 && <span style={{fontSize:12,color:C.mut}}>No coach has flagged availability for DSSC clinics yet.</span>}
+            {availRows.sort((a,b)=>String(a.coach_name).localeCompare(String(b.coach_name))).map(a => {
+              const on = !!a.can_lead;
+              return (
+                <button key={a.coach_name} onClick={async () => {
+                    setDsscAvail(prev => prev.map(x => x.coach_name === a.coach_name ? { ...x, can_lead: !on } : x));
+                    const { error } = await supabase.from("dssc_availability").update({ can_lead: !on }).eq("coach_name", a.coach_name);
+                    if (error) { window.alert("Couldn't save: " + error.message); loadDsscAvail(); }
+                  }}
+                  style={{padding:"5px 10px",borderRadius:999,cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:700,
+                    border:"1px solid "+(on?C.grn:C.border),background:on?C.grn+"22":"transparent",color:on?C.grn:C.mut}}>
+                  {on ? "★ " : ""}{a.coach_name}
+                </button>
+              );
+            })}
+          </div>
+        </details>
+
+        {dsscCalMode === "cal" ? (
+          <>
+            <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:12,marginBottom:12}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+                <button onClick={()=>setDsscCalOff(o=>o-1)} style={{background:"none",border:"1px solid "+C.border,borderRadius:6,color:C.text,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:800,width:26,height:26,padding:0}}>‹</button>
+                <span style={{fontSize:13,fontWeight:800,color:C.text,minWidth:150,textAlign:"center"}}>{monthLabel}</span>
+                <button onClick={()=>setDsscCalOff(o=>o+1)} style={{background:"none",border:"1px solid "+C.border,borderRadius:6,color:C.text,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:800,width:26,height:26,padding:0}}>›</button>
+                {dsscCalOff !== 0 && <button onClick={()=>{setDsscCalOff(0);setDsscCalSel(today);}} style={{background:"none",border:"none",color:C.acc,cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:700}}>Today</button>}
+                <div style={{flex:1}} />
+                <span style={{fontSize:10,color:C.mut}}>
+                  <span style={{color:C.grn,fontWeight:800}}>■</span> fully staffed&nbsp;&nbsp;
+                  <span style={{color:"#f59e0b",fontWeight:800}}>■</span> short
+                </span>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3,marginBottom:3}}>
+                {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(d => <div key={d} style={{textAlign:"center",fontSize:9,fontWeight:800,color:C.mut}}>{d}</div>)}
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:3}}>
+                {cells.map((d, i) => {
+                  if (d === null) return <div key={"b"+i} />;
+                  const iso = isoOf(d);
+                  const rows = onDay(iso);
+                  const shortHere = rows.reduce((n, x) => n + x.short, 0);
+                  const isSel = iso === sel, isToday = iso === today;
+                  return (
+                    <button key={iso} onClick={()=>setDsscCalSel(iso)}
+                      style={{minHeight:56,textAlign:"left",padding:"3px 4px",borderRadius:7,cursor:"pointer",fontFamily:"inherit",
+                        background:isSel?"rgba(233,30,140,0.14)":rows.length?C.bg:"transparent",
+                        border:"1px solid "+(isSel?C.gold:isToday?C.acc:"transparent"),overflow:"hidden"}}>
+                      <div style={{fontSize:9,fontWeight:isToday?800:600,color:isToday?C.gold:C.mut}}>{d}</div>
+                      {rows.length > 0 && (
+                        <div style={{marginTop:2,display:"flex",flexDirection:"column",gap:1}}>
+                          <span style={{fontSize:9,fontWeight:800,color:shortHere?"#f59e0b":C.grn}}>
+                            {shortHere ? "need " + shortHere : "staffed"}
+                          </span>
+                          <span style={{fontSize:8,color:C.mut}}>{rows.length} session{rows.length===1?"":"s"}</span>
+                        </div>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,overflow:"hidden"}}>
+              <div style={{padding:"10px 14px",borderBottom:"1px solid "+C.border,fontSize:13,fontWeight:800,color:C.text}}>
+                {fmtDay(sel)}
+                <span style={{fontSize:11,fontWeight:500,color:C.mut}}> · {onDay(sel).length} session{onDay(sel).length===1?"":"s"}</span>
+              </div>
+              {onDay(sel).length === 0 && <div style={{padding:22,textAlign:"center",color:C.mut,fontSize:12}}>Nothing scheduled{dsscCoachFilter ? " for " + dsscCoachFilter : ""}{dsscOnlyOpen ? " that is still short" : ""}.</div>}
+              {onDay(sel).map(r => sessionRow(r, false))}
+            </div>
+          </>
+        ) : (
+          <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,overflow:"hidden"}}>
+            <div style={{padding:"10px 14px",borderBottom:"1px solid "+C.border,fontSize:13,fontWeight:800,color:C.text}}>
+              {shown.length} session{shown.length===1?"":"s"}{dsscCoachFilter ? " · " + dsscCoachFilter : ""}
+            </div>
+            {shown.length === 0 && <div style={{padding:22,textAlign:"center",color:C.mut,fontSize:12}}>Nothing matches that filter.</div>}
+            {shown.map(r => sessionRow(r, true))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // DSSC hours — a timesheet that is deliberately NOT the DS Elite one. DSSC is
+  // a separate company with separate payroll, so these hours never mix with
+  // coach_checkins. A coach clocks in for sessions they're approved on; Hunter
+  // approves the week; only approved hours go to the accountant.
+  function renderDsscTime() {
+    const nrm = v => String(v || "").trim().toLowerCase();
+    const meName = coach?.display_name || coach?.email || "";
+    const matchesMe = nm => !!nm && (nrm(nm) === nrm(meName) || (coach?.email && nrm(nm) === nrm(coach.email)));
+    const isDirector = canOps || DSSC_DIRECTOR_EMAILS.includes(nrm(coach?.email || ""));
+    const RATE = 25;
+    const today = localDateISO();
+    const money = n => "$" + Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const parseTime = t => { const m = /(\d+)(?::(\d+))?\s*(am|pm)/i.exec(t || ""); if (!m) return null; let h = +m[1] % 12; if (/pm/i.test(m[3])) h += 12; return h + (m[2] ? +m[2] / 60 : 0); };
+    const hoursOf = s => { const a = parseTime(s.start), b = parseTime(s.end); return (a != null && b != null) ? Math.max(0.5, Math.round((b - a) * 4) / 4) : 1; };
+    const fmtD = iso => new Date(iso + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+    const addDays = (iso, n) => { const d = new Date(iso + "T12:00:00"); d.setDate(d.getDate() + n); return localDateISO(d); };
+    const mondayOf = iso => { const d = new Date(iso + "T12:00:00"); return addDays(iso, -((d.getDay() + 6) % 7)); };
+
+    // Every session, flattened, with its clinic alongside.
+    const rows = [];
+    for (const c of clinics) {
+      for (const x of (c.sessions || [])) {
+        if (!x?.date) continue;
+        rows.push({ clinicId: c.id, clinicName: c.name, clinic: c, s: x, id: x.id,
+          date: String(x.date).slice(0, 10), start: x.start_time || c.start_time,
+          end: x.end_time || c.end_time, court: x.court || c.location });
+      }
+    }
+    rows.sort((a, b) => a.date.localeCompare(b.date) || String(a.start).localeCompare(String(b.start)));
+
+    const myEntry = r => sessionStaff(r.s).find(v => matchesMe(v.name));
+    const mine = rows.filter(r => { const e = myEntry(r); return e && e.status !== "declined"; });
+    const upcoming = mine.filter(r => r.date >= today).slice(0, 12);
+    const openShifts = rows.filter(r => r.date >= today && sessionShort(r.s, r.clinic) > 0 && !myEntry(r)).slice(0, 25);
+    const checkinFor = r => dsscCheckins.find(c => matchesMe(c.coach_name) && String(c.session_id) === String(r.id));
+
+    const clockIn = async (r) => {
+      const e = myEntry(r);
+      if (e?.status !== "approved") { window.alert("Hunter hasn't approved you for this session yet."); return; }
+      setClinicBusy("dt|" + r.id);
+      const { error } = await supabase.from("dssc_checkins").insert({
+        coach_name: meName, coach_email: coach?.email || null, clinic_id: r.clinicId, session_id: r.id,
+        session_date: r.date, clinic_name: r.clinicName, hours: hoursOf(r), status: "present",
+        source: r.date < today ? "app-late" : "app", created_by: meName,
+        approved: false,   // Hunter approves the week before anything is paid
+      });
+      if (error && !/duplicate|unique/i.test(error.message || "")) window.alert("Couldn't clock in: " + error.message);
+      await loadDsscCheckins(); setClinicBusy("");
+    };
+
+    // Picking up a shift lands PENDING — not every coach is cleared to lead, so
+    // Hunter decides. He is notified immediately because an unapproved pickup
+    // that nobody looks at is the same as an unstaffed session.
+    const pickUp = async (r) => {
+      const canLead = dsscAvail.some(a => a.can_lead && matchesMe(a.coach_name));
+      const needLead = !sessionStaff(r.s).some(v => v.role === "lead" && v.status === "approved");
+      const role = (needLead && canLead) ? "lead" : "assist";
+      if (!window.confirm("Ask to pick up " + r.clinicName + " on " + fmtD(r.date) + " at " + r.start + "?\n\nHunter has to approve it before it's yours.")) return;
+      await staffDsscSession(r.clinicId, r.id, meName, role, "pending");
+      const to = [...new Set([...DSSC_DIRECTOR_EMAILS, ...OWNER_EMAILS])];
+      const body = meName + " asked to pick up the DSSC session \"" + r.clinicName + "\" on " + fmtD(r.date)
+        + " at " + r.start + (r.court ? " (" + r.court + ")" : "") + " as " + (role === "lead" ? "LEAD" : "an assistant") + "."
+        + "\n\nApprove or decline in DS Elite HQ → DSSC Coaches.";
+      fetch("/api/send-push", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: "DSSC shift pickup — approve?", body: meName + " · " + r.clinicName + " · " + fmtD(r.date),
+          url: "/?view=dssccal", audience: { type: "emails", emails: to } }) }).catch(()=>{});
+      fetch("/api/send-email", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ subject: "DSSC shift pickup needs approval — " + meName, body, recipients: to }) }).catch(()=>{});
+    };
+
+    // --- Director: the week under review -----------------------------------
+    const weekStart = addDays(mondayOf(today), dsscWeekOff * 7);
+    const weekEnd = addDays(weekStart, 6);
+    const weekRows = dsscCheckins.filter(c => c.session_date >= weekStart && c.session_date <= weekEnd)
+      .sort((a, b) => String(a.session_date).localeCompare(String(b.session_date)) || String(a.coach_name).localeCompare(String(b.coach_name)));
+    const waiting = weekRows.filter(c => !c.approved && !c.rejected);
+    const okRows = weekRows.filter(c => c.approved && !c.rejected);
+    const weekHours = okRows.reduce((s, c) => s + Number(c.hours || 0), 0);
+
+    const decide = async (ids, ok) => {
+      if (!ids.length) return;
+      const patch = ok
+        ? { approved: true, rejected: false, approved_by: meName, approved_at: new Date().toISOString(), reject_note: null }
+        : { approved: false, rejected: true, approved_by: meName, approved_at: new Date().toISOString() };
+      const { error } = await supabase.from("dssc_checkins").update(patch).in("id", ids);
+      if (error) window.alert("Couldn't save: " + error.message);
+      await loadDsscCheckins();
+    };
+    const sendToAccountant = async () => {
+      if (!okRows.length) { window.alert("Nothing approved for this week yet."); return; }
+      if (!window.confirm("Send " + weekHours + "h (" + money(weekHours * RATE) + ") for " + fmtD(weekStart) + " – " + fmtD(weekEnd) + " to the accountant team?")) return;
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.access_token) throw new Error("Not signed in");
+        const r = await fetch("/api/dssc-payroll-report?week=" + weekStart, { method: "POST", headers: { Authorization: "Bearer " + session.access_token } });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.error || ("HTTP " + r.status));
+        await supabase.from("dssc_checkins").update({ sent_at: new Date().toISOString() }).in("id", okRows.map(c => c.id));
+        await loadDsscCheckins();
+        window.alert("Sent ✓ — " + (d.hours ?? 0) + "h · " + money(d.amount ?? 0) + "\nTo: " + ((d.to || []).join(", ")));
+      } catch (e) { window.alert("Couldn't send: " + (e.message || "error")); }
+    };
+
+    const card = { background: C.card, border: "1px solid " + C.border, borderRadius: 12, marginBottom: 14, overflow: "hidden" };
+    const head = { padding: "10px 14px", borderBottom: "1px solid " + C.border, fontSize: 13, fontWeight: 800, color: C.text, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" };
+
+    return (
+      <div style={{padding:"18px 16px",maxWidth:1000,margin:"0 auto"}}>
+        <h2 style={{margin:"0 0 2px",fontSize:20,fontWeight:800,color:C.gold}}>DSSC Hours</h2>
+        <div style={{fontSize:12,color:C.mut,marginBottom:14}}>Dripping Springs Sports Club clinic hours — separate from DS Elite pay. ${RATE}/hr.</div>
+
+        {/* Mine */}
+        <div style={card}>
+          <div style={head}>My upcoming sessions
+            <span style={{fontSize:11,fontWeight:500,color:C.mut}}>{upcoming.length ? "next " + upcoming.length : "none scheduled"}</span>
+          </div>
+          {upcoming.length === 0 && <div style={{padding:20,textAlign:"center",color:C.mut,fontSize:12}}>You're not on any upcoming DSSC sessions. Pick one up below.</div>}
+          {upcoming.map(r => {
+            const e = myEntry(r), ci = checkinFor(r), pend = e.status === "pending";
+            const soon = r.date <= addDays(today, 1);
+            return (
+              <div key={r.clinicId+"-"+r.id} style={{padding:"9px 14px",borderTop:"1px solid "+C.border,display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+                <span style={{fontSize:11,color:soon?C.gold:C.mut,fontWeight:soon?800:400,minWidth:150,whiteSpace:"nowrap"}}>{fmtD(r.date)} · {r.start}–{r.end}</span>
+                <div style={{minWidth:170,flex:1}}>
+                  <div style={{fontSize:12,fontWeight:700,color:C.text}}>{r.clinicName}{e.role==="lead" && <span style={{color:"#8b5cf6",fontSize:10,fontWeight:800}}> ★ LEAD</span>}</div>
+                  <div style={{fontSize:10,color:C.mut}}>{[r.court, hoursOf(r)+"h · "+money(hoursOf(r)*RATE)].filter(Boolean).join(" · ")}</div>
+                </div>
+                {pend ? <span style={{fontSize:11,fontWeight:800,color:"#f59e0b"}}>Awaiting Hunter's OK</span>
+                  : ci ? <span style={{fontSize:11,fontWeight:800,color:ci.rejected?C.red:ci.approved?C.grn:C.mut}}>
+                      {ci.rejected ? "Not approved" : ci.approved ? "✓ Approved" : "✓ Clocked in · pending"}
+                    </span>
+                  : r.date <= today ? (
+                    <button onClick={()=>clockIn(r)} disabled={clinicBusy==="dt|"+r.id}
+                      style={{padding:"5px 14px",borderRadius:8,border:"none",background:C.grn,color:"#000",fontFamily:"inherit",fontSize:12,fontWeight:800,cursor:"pointer"}}>
+                      {clinicBusy==="dt|"+r.id ? "…" : "Clock in"}
+                    </button>
+                  ) : <span style={{fontSize:11,color:C.mut}}>Clock in on the day</span>}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Open shifts */}
+        <div style={card}>
+          <div style={head}>Open shifts
+            <span style={{fontSize:11,fontWeight:500,color:C.mut}}>{openShifts.length} session{openShifts.length===1?"":"s"} still need a coach</span>
+          </div>
+          {openShifts.length === 0 && <div style={{padding:20,textAlign:"center",color:C.mut,fontSize:12}}>Every upcoming session is fully staffed.</div>}
+          {openShifts.map(r => (
+            <div key={r.clinicId+"-"+r.id} style={{padding:"9px 14px",borderTop:"1px solid "+C.border,display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+              <span style={{fontSize:11,color:C.mut,minWidth:150,whiteSpace:"nowrap"}}>{fmtD(r.date)} · {r.start}–{r.end}</span>
+              <div style={{minWidth:170,flex:1}}>
+                <div style={{fontSize:12,fontWeight:700,color:C.text}}>{r.clinicName}</div>
+                <div style={{fontSize:10,color:C.mut}}>{[r.court, hoursOf(r)+"h"].filter(Boolean).join(" · ")}</div>
+              </div>
+              <span style={{fontSize:11,fontWeight:800,color:"#f59e0b",whiteSpace:"nowrap"}}>needs {sessionShort(r.s, r.clinic)}</span>
+              <button onClick={()=>pickUp(r)}
+                style={{padding:"5px 12px",borderRadius:8,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontFamily:"inherit",fontSize:12,fontWeight:700,cursor:"pointer"}}>
+                Pick up
+              </button>
+            </div>
+          ))}
+        </div>
+
+        {/* Director: weekly approval, then delivery */}
+        {isDirector && (
+          <div style={card}>
+            <div style={head}>
+              Weekly approval
+              <button onClick={()=>setDsscWeekOff(o=>o-1)} style={{background:"none",border:"1px solid "+C.border,borderRadius:6,color:C.text,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:800,width:22,height:22,padding:0}}>‹</button>
+              <span style={{fontSize:11,fontWeight:700,color:C.mut,minWidth:130,textAlign:"center"}}>{fmtD(weekStart)} – {fmtD(weekEnd)}</span>
+              <button onClick={()=>setDsscWeekOff(o=>o+1)} style={{background:"none",border:"1px solid "+C.border,borderRadius:6,color:C.text,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:800,width:22,height:22,padding:0}}>›</button>
+              {dsscWeekOff !== 0 && <button onClick={()=>setDsscWeekOff(0)} style={{background:"none",border:"none",color:C.acc,cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:700}}>This week</button>}
+              <div style={{flex:1}} />
+              {waiting.length > 0 && (
+                <button onClick={()=>decide(waiting.map(c=>c.id), true)}
+                  style={{padding:"5px 12px",borderRadius:8,border:"none",background:C.grn,color:"#000",fontFamily:"inherit",fontSize:12,fontWeight:800,cursor:"pointer"}}>
+                  Approve all {waiting.length}
+                </button>
+              )}
+              <button onClick={sendToAccountant} disabled={!okRows.length}
+                style={{padding:"5px 12px",borderRadius:8,border:"1px solid "+(okRows.length?C.gold:C.border),background:"transparent",
+                  color:okRows.length?C.gold:C.mut,fontFamily:"inherit",fontSize:12,fontWeight:700,cursor:okRows.length?"pointer":"default"}}>
+                Send to accountant
+              </button>
+            </div>
+            <div style={{padding:"8px 14px",fontSize:12,color:C.mut,borderBottom:weekRows.length?"1px solid "+C.border:"none"}}>
+              <b style={{color:C.text}}>{weekHours}h approved</b> · {money(weekHours*RATE)}
+              {waiting.length > 0 && <> · <b style={{color:"#f59e0b"}}>{waiting.length} awaiting you</b></>}
+            </div>
+            {weekRows.length === 0 && <div style={{padding:20,textAlign:"center",color:C.mut,fontSize:12}}>No hours logged this week.</div>}
+            {weekRows.map(c => (
+              <div key={c.id} style={{padding:"8px 14px",borderTop:"1px solid "+C.border,display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+                <span style={{fontSize:11,color:C.mut,minWidth:88,whiteSpace:"nowrap"}}>{fmtD(c.session_date)}</span>
+                <span style={{fontSize:12,fontWeight:700,color:C.text,minWidth:130}}>{c.coach_name}</span>
+                <span style={{fontSize:11,color:C.mut,flex:1,minWidth:130}}>{c.clinic_name}</span>
+                <span style={{fontSize:11,fontWeight:700,color:C.text,whiteSpace:"nowrap"}}>{Number(c.hours||0)}h · {money(Number(c.hours||0)*RATE)}</span>
+                {c.sent_at && <span style={{fontSize:10,fontWeight:800,color:C.grn}}>SENT</span>}
+                {c.rejected ? (
+                  <button onClick={()=>decide([c.id], true)} style={{padding:"3px 10px",borderRadius:7,border:"1px solid "+C.red,background:"transparent",color:C.red,fontFamily:"inherit",fontSize:11,fontWeight:700,cursor:"pointer"}}>Rejected — undo</button>
+                ) : c.approved ? (
+                  <button onClick={()=>decide([c.id], false)} title="Take approval back" style={{padding:"3px 10px",borderRadius:7,border:"1px solid "+C.grn,background:C.grn+"22",color:C.grn,fontFamily:"inherit",fontSize:11,fontWeight:700,cursor:"pointer"}}>✓ Approved</button>
+                ) : (
+                  <span style={{display:"flex",gap:5}}>
+                    <button onClick={()=>decide([c.id], true)} style={{padding:"3px 10px",borderRadius:7,border:"none",background:C.grn,color:"#000",fontFamily:"inherit",fontSize:11,fontWeight:800,cursor:"pointer"}}>Approve</button>
+                    <button onClick={()=>decide([c.id], false)} style={{padding:"3px 8px",borderRadius:7,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontFamily:"inherit",fontSize:11,fontWeight:700,cursor:"pointer"}}>Reject</button>
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   function renderFinance() {
     if (!isAdmin) return <div style={{padding:24,color:C.mut,textAlign:"center"}}>Finance is restricted to admins.</div>;
     const usd = (v) => (v == null ? "—" : (v < 0 ? "-$" : "$") + Math.abs(Number(v)).toLocaleString(undefined, { maximumFractionDigits: 0 }));
@@ -22256,14 +22844,14 @@ export default function App() {
                 { title:"Tryouts 2026-27", items:[["dashboard","Dashboard"], ["evaluate","Evaluate"], ["favorites","My Favorites" + (favorites.length ? " (" + favorites.length + ")" : "")], ...(canViewTeams ? [["teams","Teams"]] : []), ["rankings","Rankings"], ["physical","Physical Testing"], ["tryouts","Coach Assignments"]] },
                 ...(canOps ? [{ title:"Operations", items:[
                   ["hdr","Club"],
-                  ["tracker","Tracker"], ["teamdir","All Teams"], ["practice","Practice"], ["sa","S&A Schedule"], ["clinics","DSSC Clinics"], ["dsysa","DSYSA Clinics"], ["scholarships","Scholarships"],
+                  ["tracker","Tracker"], ["teamdir","All Teams"], ["practice","Practice"], ["sa","S&A Schedule"], ["clinics","DSSC Clinics"], ["dssccal","DSSC Coaches"], ["dsysa","DSYSA Clinics"], ["scholarships","Scholarships"],
                   ...(isAdmin ? [["hawaii","Hawaii"], ["travel","Travel"], ["finance","Finance"]] : []),
                   ["hdr","Coaches & Pay"],
-                  ["coaches","Coaches"], ["coverage","Coach Coverage"], ["timecards","Time Cards"], ["gear","Gear Sizes" + (gearOutstanding ? " (" + gearOutstanding + ")" : "")], ["requests","Requests" + (pendingReqs ? " (" + pendingReqs + ")" : "")],
+                  ["coaches","Coaches"], ["coverage","Coach Coverage"], ["timecards","Time Cards"], ["dssctime","DSSC Hours"], ["gear","Gear Sizes" + (gearOutstanding ? " (" + gearOutstanding + ")" : "")], ["requests","Requests" + (pendingReqs ? " (" + pendingReqs + ")" : "")],
                   ["hdr","Communication"],
                   ["email","Email"], ["messages","Messages (SMS)" + (totalUnread > 0 ? " (" + totalUnread + ")" : "")], ["notifications","Notifications"], ["coachcomms","Coach Comms"], ["assignments","Assignments"],
                 ] }] : []),
-                { title:"More", items:[["activity","Activity"], ["faq","FAQ"], ["games","Games"], ...(isOwner ? [["askai","Ask AI"]] : [])] },
+                { title:"More", items:[...(canOps ? [] : [["dssctime","DSSC Hours"]]), ["activity","Activity"], ["faq","FAQ"], ["games","Games"], ...(isOwner ? [["askai","Ask AI"]] : [])] },
               ];
               // Mobile: one hamburger opening a full-height grouped menu.
               if (isNarrow) {
@@ -22481,6 +23069,8 @@ export default function App() {
         {view==="hawaii" && renderHawaii()}
         {view==="dsysa" && renderDsysa()}
         {view==="finance" && renderFinance()}
+        {view==="dssccal" && renderDsscCal()}
+        {view==="dssctime" && renderDsscTime()}
         {view==="travel" && renderTravel()}
         {view==="faq" && renderFaq()}
         {view==="practiceplan" && renderPracticePlans()}

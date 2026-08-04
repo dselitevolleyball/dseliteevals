@@ -46,7 +46,14 @@ export default async function handler(req, res) {
   const weekStart = anchor ? mondayOf(anchor) : addDays(mondayOf(chicagoToday), -7);
   const weekEnd = addDays(weekStart, 6);
 
-  const { data: checks } = await supabase.from("dssc_checkins").select("*").gte("session_date", weekStart).lte("session_date", weekEnd);
+  // Only APPROVED hours leave the building. Hunter reviews the week in
+  // DS Elite HQ → DSSC Hours; anything he hasn't got to yet is held back and
+  // reported at the top of the email rather than silently paid or silently
+  // dropped — either one loses a coach's hours.
+  const { data: allChecks } = await supabase.from("dssc_checkins").select("*").gte("session_date", weekStart).lte("session_date", weekEnd);
+  const checks = (allChecks || []).filter(c => c.approved && !c.rejected);
+  const held = (allChecks || []).filter(c => !c.approved && !c.rejected);
+  const heldHours = held.reduce((s, c) => s + Number(c.hours || 0), 0);
   const byCoach = new Map();
   for (const c of (checks || [])) {
     const g = byCoach.get(c.coach_name) || { coach: c.coach_name, hours: 0, unpaid: 0, shifts: [] };
@@ -65,14 +72,15 @@ export default async function handler(req, res) {
   const summary = rows.map(g => `<tr><td ${td}><b>${esc(g.coach)}</b></td><td ${tdR}>${g.hours}</td><td ${tdR}>${money(g.hours * RATE)}</td><td ${tdR}>${money(g.unpaid * RATE)}</td></tr>`).join("");
   const badge = `<span style="display:inline-block;background:#16a34a;color:#fff;font-size:12px;font-weight:700;border-radius:5px;padding:2px 9px">✓ APPROVED</span>`;
   const html = rows.length === 0
-    ? `<div style="font-family:sans-serif;font-size:14px"><h2>DSSC clinic pay — ${rangeLabel} ${badge}</h2><p>No clinic hours logged this week.</p></div>`
+    ? `<div style="font-family:sans-serif;font-size:14px"><h2>DSSC clinic pay — ${rangeLabel} ${badge}</h2><p>No <b>approved</b> clinic hours for this week.${heldHours ? ` ${heldHours}h are still waiting on Hunter's approval.` : ""}</p></div>`
     : `<div style="font-family:sans-serif;font-size:14px">
         <h2 style="margin:0 0 6px">DSSC clinic pay — ${rangeLabel} ${badge}</h2>
-        <p style="margin:0 0 12px;color:#555">${badge} Approved${approvedBy ? " by " + esc(approvedBy) : ""} · All clinic coaching paid <b>${money(RATE)}/hr</b> · ${rows.length} coach${rows.length === 1 ? "" : "es"} · <b>${totH} hours</b> · <b>${money(totAmt)}</b> (${money(totUnpaid)} unpaid). Separate from DS Elite payroll.</p>
+        <p style="margin:0 0 12px;color:#555">${badge} Approved${approvedBy ? " by " + esc(approvedBy) : ""} · All clinic coaching paid <b>${money(RATE)}/hr</b> · ${rows.length} coach${rows.length === 1 ? "" : "es"} · <b>${totH} hours</b> · <b>${money(totAmt)}</b> (${money(totUnpaid)} unpaid). Separate from DS Elite payroll.</p>${heldHours ? `<p style="margin:0 0 12px;padding:8px 10px;background:#fff4e5;border-left:3px solid #f59e0b;color:#7a4b00"><b>${heldHours}h held back</b> — logged but not yet approved, so not included above.</p>` : ""}
         <table style="border-collapse:collapse"><thead><tr><th ${th}>Coach</th><th ${th}>Hours</th><th ${th}>Amount</th><th ${th}>Unpaid</th></tr></thead>
         <tbody>${summary}</tbody>
         <tfoot><tr><td ${td}><b>Total</b></td><td ${tdR}><b>${totH}</b></td><td ${tdR}><b>${money(totAmt)}</b></td><td ${tdR}><b>${money(totUnpaid)}</b></td></tr></tfoot></table></div>`;
-  const text = `DSSC clinic pay — ${rangeLabel} (APPROVED${approvedBy ? " by " + approvedBy : ""})\n$${RATE}/hr\n` + rows.map(g => `${g.coach}: ${g.hours}h · ${money(g.hours * RATE)}`).join("\n") + `\nTOTAL: ${totH}h · ${money(totAmt)}`;
+  const text = `DSSC clinic pay — ${rangeLabel} (APPROVED${approvedBy ? " by " + approvedBy : ""})\n$${RATE}/hr\n` + rows.map(g => `${g.coach}: ${g.hours}h · ${money(g.hours * RATE)}`).join("\n") + `\nTOTAL: ${totH}h · ${money(totAmt)}`
+    + (heldHours ? `\n(${heldHours}h logged but not yet approved — held back)` : "");
 
   const csvEsc = (v) => { const s = v == null ? "" : String(v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
   const csv = [["Date", "Coach", "Clinic", "Hours", "Rate", "Amount", "Paid"].join(",")]
@@ -85,5 +93,5 @@ export default async function handler(req, res) {
     body: JSON.stringify({ from: DSE_FROM_EMAIL, to, reply_to: (DSE_REPLY_TO || DSE_FROM_EMAIL).trim(), subject: `APPROVED — DSSC clinic pay ${rangeLabel} (${totH}h · ${money(totAmt)})`, html, text, attachments: [{ filename: `dssc_clinic_hours_${weekStart}.csv`, content: Buffer.from(csv, "utf8").toString("base64") }] }),
   });
   if (!resp.ok) return res.status(502).json({ error: "Email send failed", detail: (await resp.text().catch(() => "")).slice(0, 300) });
-  return res.status(200).json({ ok: true, weekStart, weekEnd, coaches: rows.length, hours: totH, amount: totAmt, to });
+  return res.status(200).json({ ok: true, weekStart, weekEnd, coaches: rows.length, hours: totH, amount: totAmt, heldHours, to });
 }
