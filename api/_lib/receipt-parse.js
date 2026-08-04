@@ -73,8 +73,19 @@ const vendorFrom = (from, subject) => {
   return String(subject || "").slice(0, 40) || "Unknown";
 };
 
+// Mail that discusses money without any having moved. A failure notice or an
+// overdue reminder quotes the same figures a receipt does, so without this they
+// book as real spend — and a chased invoice books once per chase. "Payment
+// Failed for DS Elite Volleyball" alone produced nine rows worth $9,071.
+const NOT_A_PAYMENT = /payment failed|failed payment|declined|past due|overdue|reminder:|action required|unable to process|will be charged|upcoming (?:payment|invoice)|statement (?:is )?ready|autopay|cancell?ed/i;
+
 export function parseReceiptEmail({ from = "", subject = "", text = "", messageId = null, season = null } = {}) {
   const body = String(text || "").replace(/\r/g, "");
+  const subj = String(subject || "");
+  if (NOT_A_PAYMENT.test(subj)) {
+    return { confidence: "none", kind: "not-a-payment", rows: [],
+             reason: "no payment was made: " + subj.slice(0, 60) };
+  }
   // The season comes from the receipt's own date. This used to default to the
   // literal "2026-27", which would have quietly mislabelled everything captured
   // after 31 July 2027 and shown up only as a season total that looked wrong.

@@ -21,6 +21,7 @@ var MAX_PER_RUN = 25;
 
 var SEARCH = [
   '-label:' + LABEL,
+  '-subject:(Re: OR Fwd:)',
   'newer_than:30d',
   '(',
     'subject:(receipt OR invoice OR "order confirmation" OR "payment" OR "purchase" OR "itinerary" OR "confirmation")',
@@ -37,7 +38,11 @@ function captureReceipts() {
   var sent = 0, skipped = 0, failed = 0;
 
   for (var t = 0; t < threads.length; t++) {
-    var msgs = threads[t].getMessages();
+    // ONE message per thread. A chased invoice or a failed-payment notice runs
+    // to nine replies, each quoting the same amount — posting every message
+    // booked the same spend nine times. The first message is the original
+    // receipt; the rest are conversation about it.
+    var msgs = [threads[t].getMessages()[0]];
     for (var m = 0; m < msgs.length; m++) {
       var msg = msgs[m];
       var payload = {

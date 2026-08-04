@@ -8779,11 +8779,42 @@ export default function App() {
         {finTab === "pending" && (
           <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,overflow:"hidden"}}>
             {!pending.length && <div style={{padding:26,textAlign:"center",color:C.mut,fontSize:12}}>Nothing waiting. Receipts captured from email land here first.</div>}
+            {pending.length > 0 && (() => {
+              const ready = pending.filter(e => e.team_name && e.tournament_id && e.category === "Tournament" && Number(e.amount) > 0);
+              const noAmount = pending.filter(e => !(Number(e.amount) > 0));
+              const bulk = async (rows, status) => {
+                if (!rows.length) return;
+                if (!window.confirm((status === "approved" ? "Approve " : "Reject ") + rows.length + " entr" + (rows.length===1?"y":"ies") + "?")) return;
+                for (const r of rows) await setExpenseStatus(r.id, status);
+              };
+              return (
+                <div style={{padding:"9px 14px",borderBottom:"1px solid "+C.border,display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+                  <span style={{fontSize:11,color:C.mut}}>{pending.length} awaiting review</span>
+                  {ready.length > 0 && (
+                    <button onClick={() => bulk(ready, "approved")}
+                      title="Every one of these has a team, a linked tournament and an amount"
+                      style={{padding:"5px 12px",borderRadius:8,border:"none",background:C.grn,color:"#000",fontSize:11,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>
+                      Approve {ready.length} fully matched
+                    </button>
+                  )}
+                  {noAmount.length > 0 && (
+                    <button onClick={() => bulk(noAmount, "rejected")}
+                      title="Nothing parsed as an amount, so there is nothing to record"
+                      style={{padding:"5px 12px",borderRadius:8,border:"1px solid "+C.red,background:"transparent",color:C.red,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+                      Reject {noAmount.length} with no amount
+                    </button>
+                  )}
+                  <span style={{fontSize:10,color:C.mut,fontStyle:"italic"}}>anything unmatched stays for you to check by hand</span>
+                </div>
+              );
+            })()}
             {pending.length > 0 && (
               <div style={{overflowX:"auto"}}>
                 <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0,minWidth:900}}>
-                  <thead><tr>{["Vendor","What","Date","Season","Amount","Category","Team / bucket","Tournament",""].map(h =>
-                    <th key={h} style={th}>{h}</th>)}</tr></thead>
+                  <thead><tr>{["Vendor","What","Date","Season","Amount","Category","Team / bucket","Tournament",""].map((h, i, arr) =>
+                    <th key={h || "act"} style={i === arr.length - 1
+                      ? {...th, position:"sticky", right:0, background:C.card, borderLeft:"1px solid "+C.border}
+                      : th}>{h}</th>)}</tr></thead>
                   <tbody>
                     {pending.map(e => (
                       <tr key={e.id}>
@@ -8829,18 +8860,19 @@ export default function App() {
                           </select>
                         </td>
                         <td style={td}>
-                          <select style={{...inpStyle,padding:"3px 6px",fontSize:11,width:210,
+                          <select style={{...inpStyle,padding:"3px 6px",fontSize:11,width:160,
                               borderColor: e.category === "Tournament" && !e.tournament_id ? "#f59e0b" : undefined}}
                             value={e.tournament_id ?? ""}
                             title={e.tournament_id ? "Approving will mark this team registered" : "Unmatched — pick the event to link the cost and mark the team registered"}
                             onChange={ev => updateExpense(e.id, { tournament_id: ev.target.value ? Number(ev.target.value) : null })}>
-                            <option value="">{e.category === "Tournament" ? "— pick the event —" : "— not a tournament —"}</option>
+                            <option value="">{e.category === "Tournament" ? "— pick the event —" : "— n/a —"}</option>
                             {[...tournaments].filter(t => !t.cancelled)
                               .sort((a, b) => (a.start_date || "").localeCompare(b.start_date || ""))
                               .map(t => <option key={t.id} value={t.id}>{(t.start_date || "").slice(5)} {t.name.slice(0, 44)}</option>)}
                           </select>
                         </td>
-                        <td style={{...td,whiteSpace:"nowrap",textAlign:"right"}}>
+                        <td style={{...td,whiteSpace:"nowrap",textAlign:"right",position:"sticky",right:0,
+                          background:C.card,borderLeft:"1px solid "+C.border,boxShadow:"-6px 0 8px -6px rgba(0,0,0,0.6)"}}>
                           <button onClick={() => setExpenseStatus(e.id, "approved")}
                             style={{padding:"3px 10px",borderRadius:6,border:"none",background:C.grn,color:"#000",fontSize:10,fontWeight:800,cursor:"pointer",fontFamily:"inherit",marginRight:5}}>approve</button>
                           <button onClick={() => { if (window.confirm("Reject this receipt? It stays on record but never counts.")) setExpenseStatus(e.id, "rejected"); }}
