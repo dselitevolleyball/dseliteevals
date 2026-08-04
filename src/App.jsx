@@ -8889,6 +8889,10 @@ export default function App() {
                               unassigned team cost looked identical — both just
                               an empty team box — so there was no way to tell
                               "this is overhead" from "nobody has said yet". */}
+                          <div style={{fontSize:12,fontWeight:800,marginBottom:3,whiteSpace:"nowrap",
+                            color: e.team_name ? C.acc : (e.allocation ? C.text : "#f59e0b")}}>
+                            {e.team_name || e.allocation || "not assigned"}
+                          </div>
                           <select style={{...inpStyle,padding:"3px 6px",fontSize:11,width:92,marginBottom:2}}
                             value={e.team_name ? "team" : "club"}
                             onChange={ev => updateExpense(e.id, ev.target.value === "team"
