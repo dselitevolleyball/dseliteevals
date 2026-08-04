@@ -128,6 +128,16 @@ const GEAR_FIELDS = [
   { key: "sweatshirt", label: "Sweatshirt",                size: "sweatshirt_size", sizes: GEAR_TEE_SIZES,  styleKey: "sweatshirt_style", styles: ["crew neck", "hoodie"], styleLabel: "Crew neck or hoodie" },
   { key: "longsleeve", label: "Performance long sleeve",   size: "longsleeve_size", sizes: GEAR_TEE_SIZES,  styleKey: "longsleeve_style", styles: ["crew neck", "hooded tee"], styleLabel: "Crew neck or hooded tee" },
 ];
+// Where a cost lands when it isn't a team's: the buckets already in use across
+// the 2025-26 ledger. Kept as a list so the picker offers what the books say
+// rather than inventing a parallel vocabulary.
+const CLUB_BUCKETS = [
+  "All Teams", "Club Teams", "Overhead",
+  "Accounting Services", "Coach Memberships", "Equipment and Supplies", "Insurance",
+  "Legal", "Legal Services", "Marketing", "Meals", "Operations",
+  "Software", "Team Shirts", "Technology", "Training", "Utilities",
+];
+
 // ── Compliance details we need on file for every coach ─────────────────────
 // Collected from the coach, same as gear sizes, rather than chased by hand.
 // Membership numbers are collected but optional — plenty of coaches won't have
@@ -8780,8 +8790,18 @@ export default function App() {
           <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,overflow:"hidden"}}>
             {!pending.length && <div style={{padding:26,textAlign:"center",color:C.mut,fontSize:12}}>Nothing waiting. Receipts captured from email land here first.</div>}
             {pending.length > 0 && (() => {
-              const ready = pending.filter(e => e.team_name && e.tournament_id && e.category === "Tournament" && Number(e.amount) > 0);
+              // "Ready" means nothing is left to decide. For a tournament cost
+              // that's a team AND the event; for a club cost it's a bucket.
+              // Requiring a tournament of everything would have left every
+              // overhead row stuck in review forever.
+              const isReady = (e) => Number(e.amount) > 0 && (
+                e.category === "Tournament" ? (e.team_name && e.tournament_id) : (e.team_name || e.allocation)
+              );
+              const ready = pending.filter(isReady);
+              const readyTn = ready.filter(e => e.category === "Tournament");
+              const readyClub = ready.filter(e => e.category !== "Tournament");
               const noAmount = pending.filter(e => !(Number(e.amount) > 0));
+              const unassigned = pending.filter(e => Number(e.amount) > 0 && !e.team_name && !e.allocation);
               const bulk = async (rows, status) => {
                 if (!rows.length) return;
                 if (!window.confirm((status === "approved" ? "Approve " : "Reject ") + rows.length + " entr" + (rows.length===1?"y":"ies") + "?")) return;
@@ -8790,12 +8810,24 @@ export default function App() {
               return (
                 <div style={{padding:"9px 14px",borderBottom:"1px solid "+C.border,display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
                   <span style={{fontSize:11,color:C.mut}}>{pending.length} awaiting review</span>
-                  {ready.length > 0 && (
-                    <button onClick={() => bulk(ready, "approved")}
-                      title="Every one of these has a team, a linked tournament and an amount"
+                  {readyTn.length > 0 && (
+                    <button onClick={() => bulk(readyTn, "approved")}
+                      title="Each has a team, a linked event and an amount — approving also marks the team registered"
                       style={{padding:"5px 12px",borderRadius:8,border:"none",background:C.grn,color:"#000",fontSize:11,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>
-                      Approve {ready.length} fully matched
+                      Approve {readyTn.length} tournament
                     </button>
+                  )}
+                  {readyClub.length > 0 && (
+                    <button onClick={() => bulk(readyClub, "approved")}
+                      title="Club and team costs that already have somewhere to land"
+                      style={{padding:"5px 12px",borderRadius:8,border:"1px solid "+C.grn,background:"transparent",color:C.grn,fontSize:11,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>
+                      Approve {readyClub.length} other
+                    </button>
+                  )}
+                  {unassigned.length > 0 && (
+                    <span style={{fontSize:11,color:"#f59e0b",fontWeight:700}}>
+                      {unassigned.length} need a team or a bucket
+                    </span>
                   )}
                   {noAmount.length > 0 && (
                     <button onClick={() => bulk(noAmount, "rejected")}
@@ -8853,11 +8885,39 @@ export default function App() {
                             value={e.category || ""} onCommit={v => updateExpense(e.id, { category: v.trim() || "Club Expenses" })} />
                         </td>
                         <td style={td}>
-                          <select style={{...inpStyle,padding:"3px 6px",fontSize:11,width:150}} value={e.team_name || ""}
-                            onChange={ev => updateExpense(e.id, { team_name: ev.target.value || null, allocation: ev.target.value || e.allocation })}>
-                            <option value="">{e.allocation || "— club / overhead —"}</option>
-                            {teamsList.filter(t => t.active).map(t => <option key={t.id} value={t.id}>{t.id}</option>)}
+                          {/* Two steps on purpose. Before, a club cost and an
+                              unassigned team cost looked identical — both just
+                              an empty team box — so there was no way to tell
+                              "this is overhead" from "nobody has said yet". */}
+                          <select style={{...inpStyle,padding:"3px 6px",fontSize:11,width:92,marginBottom:2}}
+                            value={e.team_name ? "team" : "club"}
+                            onChange={ev => updateExpense(e.id, ev.target.value === "team"
+                              ? { team_name: null, allocation: null }
+                              : { team_name: null, allocation: e.allocation && !teamsList.some(t => t.id === e.allocation) ? e.allocation : "Club Teams" })}>
+                            <option value="team">Team</option>
+                            <option value="club">Club</option>
                           </select>
+                          {e.team_name ? (
+                            <select style={{...inpStyle,padding:"3px 6px",fontSize:11,width:150}} value={e.team_name}
+                              onChange={ev => updateExpense(e.id, { team_name: ev.target.value, allocation: ev.target.value })}>
+                              {teamsList.filter(t => t.active).map(t => <option key={t.id} value={t.id}>{t.id}</option>)}
+                            </select>
+                          ) : (
+                            <select style={{...inpStyle,padding:"3px 6px",fontSize:11,width:150,
+                                borderColor: e.allocation ? undefined : "#f59e0b"}}
+                              value={teamsList.some(t => t.id === e.allocation) ? "" : (e.allocation || "")}
+                              onChange={ev => {
+                                const v = ev.target.value;
+                                if (teamsList.some(t => t.id === v)) updateExpense(e.id, { team_name: v, allocation: v });
+                                else updateExpense(e.id, { team_name: null, allocation: v || null });
+                              }}>
+                              <option value="">— pick a bucket —</option>
+                              {CLUB_BUCKETS.map(b => <option key={b} value={b}>{b}</option>)}
+                              <optgroup label="…or assign to a team">
+                                {teamsList.filter(t => t.active).map(t => <option key={t.id} value={t.id}>{t.id}</option>)}
+                              </optgroup>
+                            </select>
+                          )}
                         </td>
                         <td style={td}>
                           <select style={{...inpStyle,padding:"3px 6px",fontSize:11,width:160,
