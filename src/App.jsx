@@ -1715,10 +1715,15 @@ export default function App() {
     if (!isApproved || deepLinkDone.current) return;
     try {
       const p = new URLSearchParams(window.location.search);
-      const v = p.get("view"), tab = p.get("tab");
+      const v = p.get("view"), tab = p.get("tab"), open = p.get("open");
       if (v) setView(v);
       if (tab) setPpTab(tab);
-      if (v || tab) { deepLinkDone.current = true; window.history.replaceState({}, "", window.location.pathname); }
+      // "Open the form" has to actually open the form. Landing on the dashboard
+      // and expecting someone to spot a panel and press a button is why this
+      // read as broken. detailsOpen sticks, so if the roster hasn't loaded yet
+      // the modal appears the moment it does.
+      if (open === "confirm") setDetailsOpen(true);
+      if (v || tab || open) { deepLinkDone.current = true; window.history.replaceState({}, "", window.location.pathname); }
     } catch { /* ignore */ }
   }, [isApproved]); // eslint-disable-line react-hooks/exhaustive-deps
   // Physical Testing tab — dot-plot of a physical metric per player. Age group
@@ -5163,8 +5168,8 @@ export default function App() {
       hParts.push(`<li><b>Confirm how you're getting to ${openTrips.length} tournament${openTrips.length===1?"":"s"}:</b><ul>${openTrips.map(v=>`<li>${esc(v.tn.location||v.tn.name)} — ${fmtT(v.tn)}</li>`).join("")}</ul>For each, choose one:<ul><li><b>Fly, club books it</b> — we buy the ticket in your legal name.</li><li><b>Drive yourself</b> — reimbursed at the current IRS standard mileage rate.</li><li><b>Fly, book your own</b> — reimbursed up to what we paid for everyone else's ticket on that trip.</li></ul>If you need to change your flight times afterwards, for work or personal reasons, you can — just tell us.</li>`);
     }
     const subject = "Before we book your travel — a couple of things we need";
-    const text = n === 0 ? "" : `Hi ${first},\n\nBefore we can book flights and hotels for this season we need ${n === 1 ? "one thing" : n + " things"} from you:\n\n${parts.join("\n\n")}\n\nIt's all one form at the top of your dashboard:\n${APP_URL}\n\nTakes about two minutes. Only the directors can see any of it.\n\nThanks,\nDrew`;
-    const html = n === 0 ? "" : `<div style="font-family:sans-serif;font-size:14px;line-height:1.5"><p>Hi ${esc(first)},</p><p>Before we can book flights and hotels for this season we need ${n===1?"one thing":n+" things"} from you:</p><ol>${hParts.join("")}</ol><p><a href="${APP_URL}" style="color:#e91e8c;font-weight:700">Open the form in DS Elite HQ →</a> — it's at the top of your dashboard, about two minutes.</p><p style="color:#777;font-size:12px">Only the directors can see any of this.</p><p>Thanks,<br>Drew</p></div>`;
+    const text = n === 0 ? "" : `Hi ${first},\n\nBefore we can book flights and hotels for this season we need ${n === 1 ? "one thing" : n + " things"} from you:\n\n${parts.join("\n\n")}\n\nIt's all one form — this link opens it:\n${APP_URL}/?view=home&open=confirm\n\n(If it asks you to sign in, the form opens straight after.) Takes about two minutes. Only the directors can see any of it.\n\nThanks,\nDrew`;
+    const html = n === 0 ? "" : `<div style="font-family:sans-serif;font-size:14px;line-height:1.5"><p>Hi ${esc(first)},</p><p>Before we can book flights and hotels for this season we need ${n===1?"one thing":n+" things"} from you:</p><ol>${hParts.join("")}</ol><p><a href="${APP_URL}/?view=home&amp;open=confirm" style="display:inline-block;background:#e91e8c;color:#fff;padding:11px 20px;border-radius:8px;text-decoration:none;font-weight:700">Open the form →</a></p><p style="color:#777;font-size:12px">Takes about two minutes. If it asks you to sign in, the form opens straight after.</p><p style="color:#777;font-size:12px">Only the directors can see any of this.</p><p>Thanks,<br>Drew</p></div>`;
     const push = [!nameOk && "legal name", missing.length && "details", openTrips.length && (openTrips.length + " trip" + (openTrips.length===1?"":"s"))].filter(Boolean).join(" · ");
     return { r, name: full, missing, nameOk, trips, openTrips, subject, text, html, push, n };
   };
