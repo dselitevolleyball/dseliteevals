@@ -16,6 +16,13 @@
 
 import { createClient } from "@supabase/supabase-js";
 import webpush from "web-push";
+import crypto from "node:crypto";
+
+// Same signing scheme as dssc-approve.js, so the digest's buttons are the same
+// one-tap links as the instant notification. A digest that only says "go and
+// look" is the thing that leaves pickups sitting for days.
+const b64url = (buf) => Buffer.from(buf).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+const signLink = (obj, secret) => { const p = b64url(JSON.stringify(obj)); return p + "." + b64url(crypto.createHmac("sha256", secret).update(p).digest()); };
 
 const APPROVERS_DEFAULT = ["hunterhaleysc10@gmail.com", "drew@dselitevolleyball.com"];
 const addDays = (iso, n) => { const d = new Date(iso + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
@@ -73,7 +80,7 @@ export default async function handler(req, res) {
       for (const v of staffOf(s)) {
         if (v.status === "declined" || !v.name) continue;
         if (v.status === "pending") {
-          pending.push({ coach: v.name, clinic: c.name, date, start, role: v.role || "assist" });
+          pending.push({ coach: v.name, clinic: c.name, date, start, role: v.role || "assist", clinicId: c.id, sessionId: s.id });
           continue;
         }
         if (date === tomorrow) (remind[v.name] = remind[v.name] || []).push({ clinic: c.name, date, start, court });
@@ -137,11 +144,16 @@ export default async function handler(req, res) {
 
   // 2 — pickups awaiting approval
   if (pending.length) {
-    const lines = pending.map(p => `• ${p.coach} → ${p.clinic}, ${fmtD(p.date)} at ${p.start} (as ${p.role})`);
+    const TTL = 30 * 24 * 3600 * 1000;
+    const link = (p, a) => origin + "/api/dssc-approve?token=" +
+      encodeURIComponent(signLink({ c: p.clinicId, s: p.sessionId, n: p.coach, a, exp: Date.now() + TTL }, SUPABASE_SERVICE_ROLE_KEY));
+    const lines = pending.map(p => `• ${p.coach} → ${p.clinic}, ${fmtD(p.date)} at ${p.start} (as ${p.role})
+    Approve: ${link(p,"approve")}
+    Decline: ${link(p,"decline")}`);
     await push(approvers, "DSSC pickups need approval", `${pending.length} coach${pending.length === 1 ? "" : "es"} waiting. Tap to review.`, origin + "/?view=dssccal");
     await mail(approvers, `${pending.length} DSSC shift pickup${pending.length === 1 ? "" : "s"} waiting on you`,
       `Coaches asked to pick these up and are waiting:\n${lines.join("\n")}\n\nApprove or decline in DS Elite HQ → DSSC Coaches.`,
-      `<div style="font-family:sans-serif;font-size:14px"><p><b>${pending.length}</b> shift pickup${pending.length === 1 ? "" : "s"} waiting on approval:</p><ul>${pending.map(p => `<li><b>${esc(p.coach)}</b> → ${esc(p.clinic)}, ${fmtD(p.date)} at ${esc(p.start)} <i>(as ${esc(p.role)})</i></li>`).join("")}</ul><p><a href="${origin}/?view=dssccal" style="color:#e91e8c;font-weight:700">Review in DS Elite HQ →</a></p></div>`);
+      `<div style="font-family:sans-serif;font-size:14px"><p><b>${pending.length}</b> shift pickup${pending.length === 1 ? "" : "s"} waiting on approval:</p><ul>${pending.map(p => `<li style="margin-bottom:10px"><b>${esc(p.coach)}</b> → ${esc(p.clinic)}, ${fmtD(p.date)} at ${esc(p.start)} <i>(as ${esc(p.role)})</i><br><a href="${link(p,'approve')}" style="display:inline-block;background:#22c55e;color:#06210f;font-weight:800;padding:7px 16px;border-radius:7px;text-decoration:none;margin-top:5px">Approve</a> <a href="${link(p,'decline')}" style="display:inline-block;border:1px solid #ef4444;color:#ef4444;font-weight:700;padding:6px 13px;border-radius:7px;text-decoration:none;margin-top:5px">Decline</a></li>`).join("")}</ul><p><a href="${origin}/?view=dssccal" style="color:#e91e8c;font-weight:700">Review in DS Elite HQ →</a></p></div>`);
   }
 
   // 3 — Monday: last week's hours still unapproved

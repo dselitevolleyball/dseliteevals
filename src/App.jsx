@@ -9234,6 +9234,60 @@ export default function App() {
           </div>
         </div>
 
+        {/* Every waiting pickup in one list. Finding these meant opening the
+            right day and spotting an amber chip; they're the thing most likely
+            to be time-sensitive, so they go at the top. */}
+        {(() => {
+          const waiting = [];
+          for (const r of all) for (const v of staffPending(r.s)) waiting.push({ r, v });
+          if (!waiting.length) return null;
+          waiting.sort((a, b) => a.r.date.localeCompare(b.r.date));
+          const approveAll = async () => {
+            if (!window.confirm("Approve all " + waiting.length + " pickup" + (waiting.length===1?"":"s") + "?\n\n"
+              + waiting.slice(0,10).map(x => "• " + x.v.name + " → " + x.r.clinicName + ", " + new Date(x.r.date+"T12:00:00").toLocaleDateString(undefined,{month:"short",day:"numeric"})).join("\n")
+              + (waiting.length>10 ? "\n…and " + (waiting.length-10) + " more" : ""))) return;
+            for (const x of waiting) await decideDsscPickup(x.r.clinicId, x.r.id, x.v.name, true);
+          };
+          return (
+            <div style={{background:C.card,border:"1px solid #f59e0b",borderRadius:12,marginBottom:12,overflow:"hidden"}}>
+              <div style={{padding:"10px 14px",borderBottom:"1px solid "+C.border,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+                <span style={{fontSize:13,fontWeight:800,color:"#f59e0b"}}>
+                  {waiting.length} pickup{waiting.length===1?"":"s"} waiting on you
+                </span>
+                <div style={{flex:1}} />
+                <button onClick={approveAll}
+                  style={{padding:"5px 14px",borderRadius:8,border:"none",background:C.grn,color:"#000",fontFamily:"inherit",fontSize:12,fontWeight:800,cursor:"pointer"}}>
+                  Approve all {waiting.length}
+                </button>
+              </div>
+              {waiting.map(({ r, v }) => (
+                <div key={r.clinicId+"-"+r.id+"-"+v.name} style={{padding:"8px 14px",borderTop:"1px solid "+C.border,display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+                  <span style={{fontSize:12,fontWeight:800,color:C.text,minWidth:140}}>{v.name}</span>
+                  <span style={{fontSize:10,fontWeight:800,color:v.role==="lead"?"#8b5cf6":C.mut,minWidth:56}}>
+                    {v.role === "lead" ? "★ LEAD" : "assist"}
+                  </span>
+                  <div style={{flex:1,minWidth:170}}>
+                    <div style={{fontSize:12,color:C.text}}>{r.clinicName}</div>
+                    <div style={{fontSize:10,color:C.mut}}>
+                      {new Date(r.date+"T12:00:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"})} · {r.start}
+                      {r.court ? " · " + r.court : ""}
+                      {" · "}{staffApproved(r.s).length}/{r.need} staffed
+                    </div>
+                  </div>
+                  {v.role === "lead" && !canLead.has(nrm(v.name)) && (
+                    <span title="Not marked as cleared to lead a clinic"
+                      style={{fontSize:9,fontWeight:800,color:"#f59e0b",border:"1px solid #f59e0b",borderRadius:999,padding:"1px 7px"}}>NOT CLEARED TO LEAD</span>
+                  )}
+                  <button onClick={()=>decideDsscPickup(r.clinicId, r.id, v.name, true)}
+                    style={{padding:"4px 14px",borderRadius:7,border:"none",background:C.grn,color:"#000",fontFamily:"inherit",fontSize:12,fontWeight:800,cursor:"pointer"}}>Approve</button>
+                  <button onClick={()=>decideDsscPickup(r.clinicId, r.id, v.name, false)}
+                    style={{padding:"4px 10px",borderRadius:7,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontFamily:"inherit",fontSize:12,fontWeight:700,cursor:"pointer"}}>Decline</button>
+                </div>
+              ))}
+            </div>
+          );
+        })()}
+
         {/* Who is cleared to run a clinic alone. Everything else on this screen
             keys off it, so it lives here rather than buried in a coach profile. */}
         <details style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,marginBottom:12}}>
@@ -9385,14 +9439,13 @@ export default function App() {
       if (!window.confirm("Ask to pick up " + r.clinicName + " on " + fmtD(r.date) + " at " + r.start + "?\n\nHunter has to approve it before it's yours.")) return;
       await staffDsscSession(r.clinicId, r.id, meName, role, "pending");
       const to = [...new Set([...DSSC_DIRECTOR_EMAILS, ...OWNER_EMAILS])];
-      const body = meName + " asked to pick up the DSSC session \"" + r.clinicName + "\" on " + fmtD(r.date)
-        + " at " + r.start + (r.court ? " (" + r.court + ")" : "") + " as " + (role === "lead" ? "LEAD" : "an assistant") + "."
-        + "\n\nApprove or decline in DS Elite HQ → DSSC Coaches.";
       fetch("/api/send-push", { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title: "DSSC shift pickup — approve?", body: meName + " · " + r.clinicName + " · " + fmtD(r.date),
           url: "/?view=dssccal", audience: { type: "emails", emails: to } }) }).catch(()=>{});
-      fetch("/api/send-email", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ subject: "DSSC shift pickup needs approval — " + meName, body, recipients: to }) }).catch(()=>{});
+      // The email carries signed one-tap Approve/Decline links. Only the server
+      // can sign them, so it composes the message too.
+      fetch("/api/dssc-approve?action=notify", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clinicId: r.clinicId, sessionId: r.id, coachName: meName }) }).catch(()=>{});
     };
 
     // --- Director: the week under review -----------------------------------
