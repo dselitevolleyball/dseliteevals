@@ -150,6 +150,25 @@ const COACH_DETAIL_FIELDS = [
   { key: "usav_number", label: "USAV member #",  ph: "if you have one" },
   { key: "aau_number",  label: "AAU member #",   ph: "if you have one" },
 ];
+// Frequent-flyer numbers, so miles and status follow a coach onto a ticket the
+// club books. Kept out of COACH_DETAIL_FIELDS and rendered as their own block:
+// they're only meaningful to someone who flies, and five more boxes in the
+// compliance grid buries the three that actually hold up a booking.
+const AIRLINE_FIELDS = [
+  { key: "ff_southwest", label: "Southwest",        sub: "Rapid Rewards" },
+  { key: "ff_american",  label: "American Airlines", sub: "AAdvantage" },
+  { key: "ff_delta",     label: "Delta",             sub: "SkyMiles" },
+  { key: "ff_united",    label: "United",            sub: "MileagePlus" },
+];
+// Which airline a booked flight is on, mapped to the number to quote for it.
+const airlineFieldFor = (airline) => {
+  const a = String(airline || "").toLowerCase();
+  if (/southwest|\bswa\b/.test(a)) return AIRLINE_FIELDS[0];
+  if (/american|\baa\b/.test(a))   return AIRLINE_FIELDS[1];
+  if (/delta|\bdl\b/.test(a))      return AIRLINE_FIELDS[2];
+  if (/united|\bua\b/.test(a))     return AIRLINE_FIELDS[3];
+  return null;
+};
 const detailVal = (r, k) => String(r?.[k] ?? "").trim();
 const detailsMissing = (r) => COACH_DETAIL_FIELDS.filter(f => f.required && !detailVal(r, f.key));
 const detailsComplete = (r) => !!r && detailsMissing(r).length === 0;
@@ -5170,8 +5189,10 @@ export default function App() {
       • Drive yourself — we reimburse mileage at the current IRS standard mileage rate.
       • Fly, book your own — submit for reimbursement, up to what we paid for everyone else's ticket on that trip.
 
-   Either way: if you need to change your flight times afterwards, for work or personal reasons, you can. Just tell us.`);
-      hParts.push(`<li><b>Confirm how you're getting to ${openTrips.length} tournament${openTrips.length===1?"":"s"}:</b><ul>${openTrips.map(v=>`<li>${esc(v.tn.location||v.tn.name)} — ${fmtT(v.tn)}</li>`).join("")}</ul>For each, choose one:<ul><li><b>Fly, club books it</b> — we buy the ticket in your legal name.</li><li><b>Drive yourself</b> — reimbursed at the current IRS standard mileage rate.</li><li><b>Fly, book your own</b> — reimbursed up to what we paid for everyone else's ticket on that trip.</li></ul>If you need to change your flight times afterwards, for work or personal reasons, you can — just tell us.</li>`);
+   Either way: if you need to change your flight times afterwards, for work or personal reasons, you can. Just tell us.
+
+   While you're there: add your Southwest / American / Delta / United rewards numbers and the miles on flights we book come to you. Optional.`);
+      hParts.push(`<li><b>Confirm how you're getting to ${openTrips.length} tournament${openTrips.length===1?"":"s"}:</b><ul>${openTrips.map(v=>`<li>${esc(v.tn.location||v.tn.name)} — ${fmtT(v.tn)}</li>`).join("")}</ul>For each, choose one:<ul><li><b>Fly, club books it</b> — we buy the ticket in your legal name.</li><li><b>Drive yourself</b> — reimbursed at the current IRS standard mileage rate.</li><li><b>Fly, book your own</b> — reimbursed up to what we paid for everyone else's ticket on that trip.</li></ul>If you need to change your flight times afterwards, for work or personal reasons, you can — just tell us.<br><br><i>While you're there:</i> add your Southwest / American / Delta / United rewards numbers and the miles on flights we book come to you. Optional.</li>`);
     }
     const subject = "Before we book your travel — a couple of things we need";
     const text = n === 0 ? "" : `Hi ${first},\n\nBefore we can book flights and hotels for this season we need ${n === 1 ? "one thing" : n + " things"} from you:\n\n${parts.join("\n\n")}\n\nIt's all one form — this link opens it:\n${APP_URL}/?view=home&open=confirm\n\n(If it asks you to sign in, the form opens straight after.) Takes about two minutes. Only the directors can see any of it.\n\nThanks,\nDrew`;
@@ -5431,6 +5452,22 @@ export default function App() {
                   ? (!detailVal(myRosterRow, f.key) && <span style={{color:"#f59e0b"}}> • needed</span>)
                   : <span style={{color:C.mut,fontWeight:600}}> • optional</span>}</span>
                 <DebouncedField style={{...inpStyle,width:"100%",padding:"8px 10px",fontSize:13}} placeholder={f.ph}
+                  value={myRosterRow[f.key] || ""} onCommit={v => saveMyDetail(f.key, v)} />
+              </div>
+            ))}
+          </div>
+
+          {/* Airline rewards. Optional, and never chased — but if we book a
+              ticket without the number, the miles are simply lost. */}
+          <div style={{fontSize:12,fontWeight:800,color:C.text,margin:"20px 0 2px"}}>Airline rewards numbers</div>
+          <div style={{fontSize:11,color:C.mut,marginBottom:10}}>
+            Optional — but if you give us these, the miles and any status go to you on flights we book.
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+            {AIRLINE_FIELDS.map(f => (
+              <div key={f.key}>
+                <span style={lbl}>{f.label} <span style={{color:C.mut,fontWeight:600,textTransform:"none"}}>· {f.sub}</span></span>
+                <DebouncedField style={{...inpStyle,width:"100%",padding:"8px 10px",fontSize:13}} placeholder="if you have one"
                   value={myRosterRow[f.key] || ""} onCommit={v => saveMyDetail(f.key, v)} />
               </div>
             ))}
@@ -20714,7 +20751,16 @@ export default function App() {
                       : r.booking_ok === true ? { t: nameOk ? "OK" : "OK*", c: nameOk ? C.grn : "#f59e0b",
                           tip: nameOk ? "Confirmed — safe to book" : "Agreed to booking, but legal name not confirmed" }
                       : { t:"?", c:"#f59e0b", tip:"Wants to fly but hasn't agreed to us booking" };
-                    return <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,textAlign:"center",fontSize:10,fontWeight:800,color:st.c}} title={st.tip + (rr?.legal_name ? " · ID name: " + rr.legal_name : "")}>{st.t}</td>;
+                    // Whatever airline this trip is actually on, show the
+                    // number to quote for it — miles are lost silently otherwise.
+                    const af = airlineFieldFor(effFlight(r, tn.id).airline);
+                    const ffNum = af ? String(rr?.[af.key] || "").trim() : "";
+                    const tip = st.tip
+                      + (rr?.legal_name ? " · ID name: " + rr.legal_name : "")
+                      + (af ? " · " + af.label + " " + af.sub + ": " + (ffNum || "not on file") : "");
+                    return <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,textAlign:"center",fontSize:10,fontWeight:800,color:st.c}} title={tip}>
+                      {st.t}{af && ffNum ? <span title={af.label + " " + af.sub + ": " + ffNum} style={{color:C.mut,fontWeight:700}}> ✦</span> : null}
+                    </td>;
                   })()}
                   {air && (isDriving(r)
                     ? <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,color:C.mut}}>—</td>
