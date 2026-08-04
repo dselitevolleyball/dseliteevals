@@ -1414,6 +1414,7 @@ export default function App() {
   const [ppThoughtShuffle, setPpThoughtShuffle] = useState(0); // "thought before practice" — cycle offset
   const [clinics, setClinics]           = useState([]);     // DSSC clinics & camps
   const [clinicOpenId, setClinicOpenId] = useState(null);   // open clinic detail
+  const [clinicFrom, setClinicFrom]     = useState(null);   // view to return to after opening one
   const [clinicViewMode, setClinicViewMode] = useState("list"); // list | calendar
   const [clinicMonth, setClinicMonth]   = useState(null);   // "YYYY-MM" calendar anchor
   const [dsscCheckins, setDsscCheckins] = useState([]);     // DSSC clinic clock-ins (separate from DS Elite)
@@ -2375,6 +2376,19 @@ export default function App() {
     if (error) { console.error("Load dssc_checkins error:", error); return; }
     setDsscCheckins(data || []);
   }, []);
+  // Open a clinic's full detail from anywhere — the DSSC calendar, the list,
+  // DSSC Hours, or a coach's own schedule. It reuses the existing detail inside
+  // renderClinics rather than growing a second, thinner copy of it; "clinics"
+  // isn't an ops-only view, so a coach following one of these lands on it too.
+  const openClinic = (id, from) => {
+    if (!id) return;
+    // Remember where they were so "back" returns there. Landing on the full
+    // clinic list instead is disorienting when you came from your own shifts.
+    setClinicFrom(from || view);
+    setClinicOpenId(id);
+    setView("clinics");
+  };
+
   // Coaches are staffed per SESSION, not per clinic — each entry in the clinic's
   // sessions array carries its own date, court and crew. So any change means
   // rewriting one element and putting the whole array back.
@@ -6290,7 +6304,7 @@ export default function App() {
       for (const x of (c.sessions || [])) {
         if (!x?.date || !onStaff(x, matches)) continue;
         const me = sessionStaff(x).find(v => matches(v.name)) || {};
-        myDssc.push({ date: String(x.date).slice(0,10), name: c.name, start: x.start_time || c.start_time,
+        myDssc.push({ clinicId: c.id, date: String(x.date).slice(0,10), name: c.name, start: x.start_time || c.start_time,
                       end: x.end_time || c.end_time, court: x.court || c.location,
                       pending: me.status === "pending", lead: me.role === "lead" });
       }
@@ -6380,7 +6394,8 @@ export default function App() {
             ) : (
               <div style={{display:"flex",flexDirection:"column",gap:5}}>
                 {selDssc.map((x,i) => (
-                  <div key={"dssc"+i} style={{display:"flex",alignItems:"center",gap:8,fontSize:13}}>
+                  <div key={"dssc"+i} onClick={()=>openClinic(x.clinicId)} title="Open this clinic"
+                    style={{display:"flex",alignItems:"center",gap:8,fontSize:13,cursor:"pointer"}}>
                     <span style={{width:6,height:6,borderRadius:3,background:x.pending?"#f59e0b":"#8b5cf6",flexShrink:0}} />
                     <span style={{flex:1,color:C.text,fontWeight:600}}>
                       🏆 DSSC <b>{x.name}</b>
@@ -9142,7 +9157,11 @@ export default function App() {
             {withDate ? new Date(r.date+"T12:00:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"}) + " · " : ""}{r.start}–{r.end}
           </span>
           <div style={{minWidth:180,flex:1}}>
-            <div style={{fontSize:12,fontWeight:700,color:C.text}}>{r.clinicName}</div>
+            <button onClick={()=>openClinic(r.clinicId)} title="Open this clinic"
+                  style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",padding:0,cursor:"pointer",fontFamily:"inherit"}}>
+                  <span style={{fontSize:12,fontWeight:700,color:C.text,borderBottom:"1px dotted "+C.mut}}>{r.clinicName}</span>
+                  <span style={{color:C.mut,fontSize:11,fontWeight:700}}> ›</span>
+                </button>
             <div style={{fontSize:10,color:C.mut}}>{[r.ageGroup, r.court].filter(Boolean).join(" · ")}</div>
           </div>
           <span title="Coaches on this session vs. needed"
@@ -9267,7 +9286,10 @@ export default function App() {
                     {v.role === "lead" ? "★ LEAD" : "assist"}
                   </span>
                   <div style={{flex:1,minWidth:170}}>
-                    <div style={{fontSize:12,color:C.text}}>{r.clinicName}</div>
+                    <button onClick={()=>openClinic(r.clinicId)} title="Open this clinic"
+                      style={{display:"block",textAlign:"left",background:"none",border:"none",padding:0,cursor:"pointer",fontFamily:"inherit",fontSize:12,color:C.text}}>
+                      <span style={{borderBottom:"1px dotted "+C.mut}}>{r.clinicName}</span><span style={{color:C.mut,fontWeight:700}}> ›</span>
+                    </button>
                     <div style={{fontSize:10,color:C.mut}}>
                       {new Date(r.date+"T12:00:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"})} · {r.start}
                       {r.court ? " · " + r.court : ""}
@@ -9502,7 +9524,11 @@ export default function App() {
               <div key={r.clinicId+"-"+r.id} style={{padding:"9px 14px",borderTop:"1px solid "+C.border,display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
                 <span style={{fontSize:11,color:soon?C.gold:C.mut,fontWeight:soon?800:400,minWidth:150,whiteSpace:"nowrap"}}>{fmtD(r.date)} · {r.start}–{r.end}</span>
                 <div style={{minWidth:170,flex:1}}>
-                  <div style={{fontSize:12,fontWeight:700,color:C.text}}>{r.clinicName}{e.role==="lead" && <span style={{color:"#8b5cf6",fontSize:10,fontWeight:800}}> ★ LEAD</span>}</div>
+                  <button onClick={()=>openClinic(r.clinicId)} title="Open this clinic"
+                  style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",padding:0,cursor:"pointer",fontFamily:"inherit"}}>
+                  <span style={{fontSize:12,fontWeight:700,color:C.text,borderBottom:"1px dotted "+C.mut}}>{r.clinicName}</span>
+                  <span style={{color:C.mut,fontSize:11,fontWeight:700}}> ›</span>{e.role==="lead" && <span style={{color:"#8b5cf6",fontSize:10,fontWeight:800}}> ★ LEAD</span>}
+                </button>
                   <div style={{fontSize:10,color:C.mut}}>{[r.court, hoursOf(r)+"h · "+money(hoursOf(r)*RATE)].filter(Boolean).join(" · ")}</div>
                 </div>
                 {pend ? <span style={{fontSize:11,fontWeight:800,color:"#f59e0b"}}>Awaiting Hunter's OK</span>
@@ -9530,7 +9556,11 @@ export default function App() {
             <div key={r.clinicId+"-"+r.id} style={{padding:"9px 14px",borderTop:"1px solid "+C.border,display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
               <span style={{fontSize:11,color:C.mut,minWidth:150,whiteSpace:"nowrap"}}>{fmtD(r.date)} · {r.start}–{r.end}</span>
               <div style={{minWidth:170,flex:1}}>
-                <div style={{fontSize:12,fontWeight:700,color:C.text}}>{r.clinicName}</div>
+                <button onClick={()=>openClinic(r.clinicId)} title="Open this clinic"
+                  style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",padding:0,cursor:"pointer",fontFamily:"inherit"}}>
+                  <span style={{fontSize:12,fontWeight:700,color:C.text,borderBottom:"1px dotted "+C.mut}}>{r.clinicName}</span>
+                  <span style={{color:C.mut,fontSize:11,fontWeight:700}}> ›</span>
+                </button>
                 <div style={{fontSize:10,color:C.mut}}>{[r.court, hoursOf(r)+"h"].filter(Boolean).join(" · ")}</div>
               </div>
               <span style={{fontSize:11,fontWeight:800,color:"#f59e0b",whiteSpace:"nowrap"}}>needs {sessionShort(r.s, r.clinic)}</span>
@@ -11452,6 +11482,55 @@ export default function App() {
             );
           })()}
           {renderCoachCalendar(matchesCoach, teamsForDisplay, coachCalOff, setCoachCalOff, coachCalSel, setCoachCalSel, { title: (displayName || "Coach") + "'s schedule" })}
+
+          {/* This coach's DSSC clinics, listed rather than only on the calendar —
+              finding them there means already knowing which day to click. */}
+          {(() => {
+            const today = localDateISO();
+            const mine = [];
+            for (const c of (clinics || [])) {
+              for (const x of (c.sessions || [])) {
+                if (!x?.date || !onStaff(x, matchesCoach)) continue;
+                const me = sessionStaff(x).find(v => matchesCoach(v.name)) || {};
+                const date = String(x.date).slice(0, 10);
+                mine.push({ clinicId: c.id, name: c.name, date, start: x.start_time || c.start_time,
+                            court: x.court || c.location, pending: me.status === "pending", lead: me.role === "lead" });
+              }
+            }
+            if (!mine.length) return null;
+            const upcoming = mine.filter(x => x.date >= today).sort((a,b) => a.date.localeCompare(b.date));
+            const past = mine.filter(x => x.date < today).length;
+            return (
+              <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:"10px 12px",marginBottom:14}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+                  <span style={{fontSize:10,fontWeight:800,letterSpacing:0.4,textTransform:"uppercase",color:C.mut}}>DSSC clinics</span>
+                  <div style={{flex:1}} />
+                  <span style={{fontSize:10,color:C.mut}}>
+                    {upcoming.length} upcoming{past ? " · " + past + " done" : ""}
+                  </span>
+                </div>
+                {upcoming.length === 0 && <div style={{fontSize:12,color:C.mut}}>Nothing upcoming.</div>}
+                {upcoming.slice(0, 8).map((x, i) => (
+                  <button key={i} onClick={()=>openClinic(x.clinicId)} title="Open this clinic"
+                    style={{display:"flex",alignItems:"center",gap:8,width:"100%",textAlign:"left",padding:"5px 0",
+                      background:"none",border:"none",borderTop:i?"1px solid "+C.border:"none",cursor:"pointer",fontFamily:"inherit"}}>
+                    <span style={{width:6,height:6,borderRadius:3,background:x.pending?"#f59e0b":"#8b5cf6",flexShrink:0}} />
+                    <span style={{fontSize:11,color:C.mut,minWidth:104,whiteSpace:"nowrap"}}>
+                      {new Date(x.date+"T12:00:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"})}
+                    </span>
+                    <span style={{flex:1,fontSize:12,color:C.text,fontWeight:600}}>
+                      <span style={{borderBottom:"1px dotted "+C.mut}}>{x.name}</span>
+                      {x.lead && <span style={{color:"#8b5cf6",fontSize:9,fontWeight:800}}> ★ LEAD</span>}
+                      {x.pending && <span style={{color:"#f59e0b",fontSize:9,fontWeight:800}}> AWAITING OK</span>}
+                      <span style={{color:C.mut,fontWeight:700}}> ›</span>
+                    </span>
+                    <span style={{fontSize:10,color:C.mut,whiteSpace:"nowrap"}}>{x.start}</span>
+                  </button>
+                ))}
+                {upcoming.length > 8 && <div style={{fontSize:10,color:C.mut,marginTop:4}}>+{upcoming.length-8} more</div>}
+              </div>
+            );
+          })()}
 
           {/* Schedule changes + shift pickups for this coach. */}
           {renderCoachScheduleAlerts(matchesCoach, teamsForDisplay)}
@@ -17292,7 +17371,13 @@ export default function App() {
       return (
         <div style={{maxWidth:820,margin:"0 auto"}}>
           <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12,flexWrap:"wrap"}}>
-            <button style={S.ghost} onClick={()=>setClinicOpenId(null)}>← All clinics</button>
+            <button style={S.ghost} onClick={()=>{
+              const back = clinicFrom && clinicFrom !== "clinics" ? clinicFrom : null;
+              setClinicOpenId(null); setClinicFrom(null);
+              if (back) setView(back);
+            }}>{clinicFrom && clinicFrom !== "clinics"
+              ? "← Back to " + ({ dssccal:"DSSC Coaches", dssctime:"DSSC Hours", coaches:"Coaches", home:"Home" }[clinicFrom] || "where you were")
+              : "← All clinics"}</button>
             <div style={{flex:1}} />
             {canManage && <button style={S.gold} onClick={()=>notifyAssigned(open)} title="Push + email each assigned coach their sessions">📣 Notify coaches</button>}
             {canManage && <button style={{...S.ghost,color:C.red,borderColor:"rgba(239,68,68,0.4)"}} onClick={()=>delClinic(open.id)}>Delete</button>}
