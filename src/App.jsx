@@ -1445,6 +1445,9 @@ export default function App() {
   const [travelTeams, setTravelTeams]       = useState(() => new Set()); // team filter on Travel; empty = all teams
   const [coachTravel, setCoachTravel]       = useState([]); // coach_travel rows (RLS: admins all, coaches their own)
   const [detailsOpen, setDetailsOpen]       = useState(false); // coach filling in their own compliance details
+  const [confirmPreview, setConfirmPreview] = useState(null);  // {id} — travel/details request preview
+  const [confirmSending, setConfirmSending] = useState("");    // roster id currently being emailed
+  const [confirmSent, setConfirmSent]       = useState([]);    // roster ids sent this session
   const [travelRooms, setTravelRooms]       = useState([]); // coach_travel_rooms rows
   const [masterFlights, setMasterFlights]   = useState([]); // travel_master_flights, one per tournament
   const [clinicBusy, setClinicBusy]     = useState("");     // key of clinic action in flight
@@ -5101,6 +5104,178 @@ export default function App() {
     const openTrips = trips.filter(x => !tripAnswered(x.t));
     return { missing, trips, openTrips, nameOk, total: missing.length + openTrips.length + (nameOk ? 0 : 1) };
   };
+
+  // The exact email one coach would receive. Shared by the preview and the
+  // send, so what you read on screen is byte-for-byte what goes out — a preview
+  // built by different code is a preview of nothing.
+  const confirmRequestFor = (r) => {
+    const nrm = s => String(s || "").trim().toLowerCase();
+    const today = localDateISO();
+    const tnById = new Map((tournaments || []).map(t => [t.id, t]));
+    const full = ((r.first_name || "") + " " + (r.last_name || "")).trim();
+    const trips = (coachTravel || [])
+      .filter(t => !t.private_owner && nrm(t.coach_name) === nrm(full))
+      .map(t => ({ t, tn: tnById.get(t.tournament_id) }))
+      .filter(x => x.tn && x.tn.airfare_required && !x.tn.cancelled && String(x.tn.start_date || "") >= today)
+      .sort((a, b) => String(a.tn.start_date).localeCompare(String(b.tn.start_date)));
+    const missing = detailsMissing(r);
+    const nameOk = legalNameOk(r);
+    const openTrips = trips.filter(x => !tripAnswered(x.t));
+    const fmtT = (tn) => { try { return new Date(tn.start_date + "T12:00:00").toLocaleDateString(undefined, { month:"short", day:"numeric" }); } catch { return tn.start_date; } };
+    const esc = s => String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    const first = (r.first_name || "there").trim();
+    const parts = [], hParts = [];
+    let n = 0;
+    if (!nameOk) {
+      n++;
+      parts.push(`${n}. CONFIRM YOUR LEGAL NAME\n   We book flights in the name on your government ID. Confirm it exactly as it appears there — middle name included if your ID shows one. A ticket that doesn't match can't be boarded, and airlines charge to fix it.`);
+      hParts.push(`<li><b>Confirm your legal name.</b> We book flights in the name on your government ID — confirm it exactly as it appears there, middle name included if your ID shows one. A ticket that doesn't match your ID can't be boarded, and airlines charge to correct it.</li>`);
+    }
+    if (missing.length) {
+      n++;
+      parts.push(`${n}. FINISH YOUR DETAILS\n   Still missing: ${missing.map(f=>f.label).join(", ")}.\n   These are for insurance and membership. Only the directors see them.`);
+      hParts.push(`<li><b>Finish your details.</b> Still missing: ${esc(missing.map(f=>f.label).join(", "))}. These are for insurance and membership — only the directors see them.</li>`);
+    }
+    if (openTrips.length) {
+      n++;
+      const list = openTrips.map(v => `      • ${v.tn.location || v.tn.name} — ${fmtT(v.tn)}`).join("\n");
+      parts.push(`${n}. CONFIRM HOW YOU'RE GETTING THERE (${openTrips.length} trip${openTrips.length===1?"":"s"})\n${list}\n
+   For each one, pick:
+      • Fly, club books it — we buy the ticket in your legal name. You'll be asked to confirm you're happy for us to book it and that you do want to fly.
+      • Drive yourself — we reimburse mileage at the current IRS standard mileage rate.
+      • Fly, book your own — submit for reimbursement, up to what we paid for everyone else's ticket on that trip.
+
+   Either way: if you need to change your flight times afterwards, for work or personal reasons, you can. Just tell us.`);
+      hParts.push(`<li><b>Confirm how you're getting to ${openTrips.length} tournament${openTrips.length===1?"":"s"}:</b><ul>${openTrips.map(v=>`<li>${esc(v.tn.location||v.tn.name)} — ${fmtT(v.tn)}</li>`).join("")}</ul>For each, choose one:<ul><li><b>Fly, club books it</b> — we buy the ticket in your legal name.</li><li><b>Drive yourself</b> — reimbursed at the current IRS standard mileage rate.</li><li><b>Fly, book your own</b> — reimbursed up to what we paid for everyone else's ticket on that trip.</li></ul>If you need to change your flight times afterwards, for work or personal reasons, you can — just tell us.</li>`);
+    }
+    const subject = "Before we book your travel — a couple of things we need";
+    const text = n === 0 ? "" : `Hi ${first},\n\nBefore we can book flights and hotels for this season we need ${n === 1 ? "one thing" : n + " things"} from you:\n\n${parts.join("\n\n")}\n\nIt's all one form at the top of your dashboard:\n${APP_URL}\n\nTakes about two minutes. Only the directors can see any of it.\n\nThanks,\nDrew`;
+    const html = n === 0 ? "" : `<div style="font-family:sans-serif;font-size:14px;line-height:1.5"><p>Hi ${esc(first)},</p><p>Before we can book flights and hotels for this season we need ${n===1?"one thing":n+" things"} from you:</p><ol>${hParts.join("")}</ol><p><a href="${APP_URL}" style="color:#e91e8c;font-weight:700">Open the form in DS Elite HQ →</a> — it's at the top of your dashboard, about two minutes.</p><p style="color:#777;font-size:12px">Only the directors can see any of this.</p><p>Thanks,<br>Drew</p></div>`;
+    const push = [!nameOk && "legal name", missing.length && "details", openTrips.length && (openTrips.length + " trip" + (openTrips.length===1?"":"s"))].filter(Boolean).join(" · ");
+    return { r, name: full, missing, nameOk, trips, openTrips, subject, text, html, push, n };
+  };
+
+  // Everyone we're still waiting on, most-outstanding first.
+  const confirmPending = () => coachRoster
+    .filter(r => detailVal(r, "email") && !isPlaceholderPerson(((r.first_name||"")+" "+(r.last_name||"")).trim()))
+    .map(confirmRequestFor)
+    .filter(x => x.n > 0)
+    .sort((a, b) => b.n - a.n || a.name.localeCompare(b.name));
+
+  const sendConfirmRequest = async (x) => {
+    let ok = false;
+    try {
+      const res = await fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ subject: x.subject, body: x.text, bodyHtml: x.html, recipients: [x.r.email] }) });
+      ok = res.ok;
+    } catch { ok = false; }
+    try {
+      await fetch("/api/send-push", { method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ title:"Confirm your travel details", body: x.push, url:"/?view=home",
+          audience:{ type:"email", email:x.r.email } }) });
+    } catch { /* push is best-effort */ }
+    return ok;
+  };
+
+  // Preview before sending. Pick a coach on the left, read exactly what lands in
+  // their inbox on the right, then send to that one person or to everybody.
+  function renderConfirmPreview() {
+    if (!confirmPreview) return null;
+    const list = confirmPending();
+    const sel = list.find(x => x.r.id === confirmPreview.id) || list[0] || null;
+    const close = () => setConfirmPreview(null);
+    const sendOne = async (x) => {
+      if (!window.confirm("Send to " + x.name + " <" + x.r.email + ">?")) return;
+      setConfirmSending(x.r.id);
+      const ok = await sendConfirmRequest(x);
+      setConfirmSending("");
+      setConfirmSent(prev => ok ? [...prev, x.r.id] : prev);
+      if (!ok) window.alert("Couldn't send to " + x.name + ".");
+    };
+    const sendAll = async () => {
+      const todo = list.filter(x => !confirmSent.includes(x.r.id));
+      if (!todo.length) { window.alert("Everyone in this list has already been sent to."); return; }
+      if (!window.confirm("Send to all " + todo.length + " coach" + (todo.length===1?"":"es") + "?\n\nEach gets only the sections that apply to them.")) return;
+      let done = 0, failed = 0;
+      for (const x of todo) {
+        setConfirmSending(x.r.id);
+        const ok = await sendConfirmRequest(x);
+        if (ok) { done++; setConfirmSent(prev => [...prev, x.r.id]); } else failed++;
+      }
+      setConfirmSending("");
+      window.alert("Sent " + done + (failed ? ", " + failed + " failed" : "") + ".");
+    };
+
+    return (
+      <div onClick={close} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:1200,display:"flex",justifyContent:"center",padding:"24px 14px",overflowY:"auto"}}>
+        <div onClick={e=>e.stopPropagation()} style={{background:C.card,borderRadius:16,border:"1px solid "+C.border,maxWidth:1000,width:"100%",height:"fit-content",padding:20}}>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:4,flexWrap:"wrap"}}>
+            <h2 style={{margin:0,fontSize:18,fontWeight:800,color:C.gold}}>Travel & details request</h2>
+            <span style={{fontSize:12,color:C.mut}}>{list.length} coach{list.length===1?"":"es"} outstanding</span>
+            <div style={{flex:1}} />
+            <button onClick={sendAll} disabled={!!confirmSending}
+              style={{padding:"7px 16px",borderRadius:8,border:"none",background:confirmSending?C.border:C.gold,color:confirmSending?C.mut:"#000",fontFamily:"inherit",fontSize:12,fontWeight:800,cursor:confirmSending?"default":"pointer"}}>
+              {confirmSending ? "Sending…" : "Send to all " + list.filter(x=>!confirmSent.includes(x.r.id)).length}
+            </button>
+            <button onClick={close} style={{background:"none",border:"none",color:C.mut,fontSize:22,cursor:"pointer",lineHeight:1}}>×</button>
+          </div>
+          <div style={{fontSize:11,color:C.mut,marginBottom:14}}>
+            Each coach gets only the sections that apply to them. Pick a name to read exactly what they'll receive.
+          </div>
+
+          {list.length === 0 ? (
+            <div style={{padding:30,textAlign:"center",color:C.grn,fontSize:13,fontWeight:700}}>✓ Nothing outstanding — everyone has confirmed.</div>
+          ) : (
+            <div style={{display:"flex",gap:14,alignItems:"flex-start",flexWrap:"wrap"}}>
+              {/* Who */}
+              <div style={{flex:"1 1 260px",minWidth:240,maxHeight:520,overflowY:"auto",border:"1px solid "+C.border,borderRadius:10}}>
+                {list.map(x => {
+                  const on = sel && x.r.id === sel.r.id;
+                  const sent = confirmSent.includes(x.r.id);
+                  return (
+                    <button key={x.r.id} onClick={()=>setConfirmPreview({ id: x.r.id })}
+                      style={{display:"block",width:"100%",textAlign:"left",padding:"8px 11px",cursor:"pointer",fontFamily:"inherit",
+                        border:"none",borderBottom:"1px solid "+C.border,background:on?"rgba(233,30,140,0.12)":"transparent"}}>
+                      <div style={{fontSize:12,fontWeight:700,color:on?C.gold:C.text,display:"flex",alignItems:"center",gap:6}}>
+                        {x.name}
+                        {sent && <span style={{fontSize:9,fontWeight:800,color:C.grn}}>SENT</span>}
+                        {confirmSending === x.r.id && <span style={{fontSize:9,fontWeight:800,color:C.mut}}>sending…</span>}
+                      </div>
+                      <div style={{fontSize:10,color:C.mut}}>{x.push}</div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* What they get */}
+              {sel && (
+                <div style={{flex:"2 1 420px",minWidth:300,border:"1px solid "+C.border,borderRadius:10,overflow:"hidden"}}>
+                  <div style={{padding:"9px 12px",borderBottom:"1px solid "+C.border,background:C.bg}}>
+                    <div style={{fontSize:10,color:C.mut}}>To</div>
+                    <div style={{fontSize:12,fontWeight:700,color:C.text,wordBreak:"break-all"}}>{sel.name} &lt;{sel.r.email}&gt;</div>
+                    <div style={{fontSize:10,color:C.mut,marginTop:6}}>Subject</div>
+                    <div style={{fontSize:12,fontWeight:700,color:C.text}}>{sel.subject}</div>
+                  </div>
+                  {/* The real HTML, rendered on white the way an inbox shows it */}
+                  <div style={{background:"#fff",padding:"14px 16px",maxHeight:360,overflowY:"auto"}}>
+                    <div style={{color:"#111"}} dangerouslySetInnerHTML={{ __html: sel.html }} />
+                  </div>
+                  <div style={{padding:"9px 12px",borderTop:"1px solid "+C.border,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                    <span style={{fontSize:10,color:C.mut}}>Push: “{sel.push}”</span>
+                    <div style={{flex:1}} />
+                    <button onClick={()=>sendOne(sel)} disabled={!!confirmSending}
+                      style={{padding:"6px 14px",borderRadius:8,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontFamily:"inherit",fontSize:12,fontWeight:700,cursor:confirmSending?"default":"pointer"}}>
+                      {confirmSent.includes(sel.r.id) ? "Send again to " + (sel.r.first_name||"them") : "Send to " + (sel.r.first_name||"them") + " only"}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   const renderDetailsPanel = () => {
     if (!myRosterRow) return null;
@@ -10253,101 +10428,19 @@ export default function App() {
             <div style={{fontSize:11,color:C.mut,marginTop:2}}>{merged.length} total · {coachesList.length} with login · {pending.length} awaiting approval</div>
           </div>
           <div style={{display:"flex",gap:8}}>
-            {/* One ask covering all three things we're waiting on: the legal
-                name that has to match a ticket, the compliance details, and a
-                fly/drive answer per trip. Each coach's email contains ONLY the
-                sections that apply to them — nobody is asked for what we have. */}
+            {/* One ask covering the three things blocking bookings. Opens a
+                preview so you can read exactly what each coach receives before
+                any of it goes out. */}
             {(() => {
-              const nrm = s => String(s || "").trim().toLowerCase();
-              const today = localDateISO();
-              const tnById = new Map((tournaments || []).map(t => [t.id, t]));
-              // Air trips per coach, upcoming, club rows only. Private family
-              // rows are Drew's own and are never part of a club-wide ask.
-              const tripsFor = (r) => {
-                const full = ((r.first_name||"") + " " + (r.last_name||"")).trim();
-                return (coachTravel || [])
-                  .filter(t => !t.private_owner && nrm(t.coach_name) === nrm(full))
-                  .map(t => ({ t, tn: tnById.get(t.tournament_id) }))
-                  .filter(x => x.tn && x.tn.airfare_required && !x.tn.cancelled && String(x.tn.start_date||"") >= today)
-                  .sort((a,b) => String(a.tn.start_date).localeCompare(String(b.tn.start_date)));
-              };
-              const task = (r) => {
-                const trips = tripsFor(r);
-                return { r, missing: detailsMissing(r), nameOk: legalNameOk(r),
-                         openTrips: trips.filter(x => !tripAnswered(x.t)), trips };
-              };
-              const all = coachRoster.filter(r => detailVal(r, "email") && !isPlaceholderPerson(((r.first_name||"")+" "+(r.last_name||"")).trim())).map(task);
-              const pending = all.filter(x => !x.nameOk || x.missing.length || x.openTrips.length);
-              const nameGap = all.filter(x => !x.nameOk).length;
-              const tripGap = all.reduce((n, x) => n + x.openTrips.length, 0);
-              if (!pending.length) return <span style={{fontSize:11,color:C.grn,fontWeight:700,alignSelf:"center"}}>✓ Names, details and travel all confirmed</span>;
-
-              const fmtT = (tn) => { try { return new Date(tn.start_date+"T12:00:00").toLocaleDateString(undefined,{month:"short",day:"numeric"}); } catch { return tn.start_date; } };
-              const esc = s => String(s??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
-
-              const build = (x) => {
-                const first = (x.r.first_name || "there").trim();
-                const parts = [], hParts = [];
-                let n = 0;
-                if (!x.nameOk) {
-                  n++;
-                  parts.push(`${n}. CONFIRM YOUR LEGAL NAME\n   We book flights in the name on your government ID. Confirm it exactly as it appears there — middle name included if your ID shows one. A ticket that doesn't match can't be boarded, and airlines charge to fix it.`);
-                  hParts.push(`<li><b>Confirm your legal name.</b> We book flights in the name on your government ID — confirm it exactly as it appears there, middle name included if your ID shows one. A ticket that doesn't match your ID can't be boarded, and airlines charge to correct it.</li>`);
-                }
-                if (x.missing.length) {
-                  n++;
-                  parts.push(`${n}. FINISH YOUR DETAILS\n   Still missing: ${x.missing.map(f=>f.label).join(", ")}.\n   These are for insurance and membership. Only the directors see them.`);
-                  hParts.push(`<li><b>Finish your details.</b> Still missing: ${esc(x.missing.map(f=>f.label).join(", "))}. These are for insurance and membership — only the directors see them.</li>`);
-                }
-                if (x.openTrips.length) {
-                  n++;
-                  const list = x.openTrips.map(v => `      • ${v.tn.location || v.tn.name} — ${fmtT(v.tn)}`).join("\n");
-                  parts.push(`${n}. CONFIRM HOW YOU'RE GETTING THERE (${x.openTrips.length} trip${x.openTrips.length===1?"":"s"})\n${list}\n
-   For each one, pick:
-      • Fly, club books it — we buy the ticket in your legal name. You'll be asked to confirm you're happy for us to book it and that you do want to fly.
-      • Drive yourself — we reimburse mileage at the current IRS standard mileage rate.
-      • Fly, book your own — submit for reimbursement, up to what we paid for everyone else's ticket on that trip.
-
-   Either way: if you need to change your flight times afterwards, for work or personal reasons, you can. Just tell us.`);
-                  hParts.push(`<li><b>Confirm how you're getting to ${x.openTrips.length} tournament${x.openTrips.length===1?"":"s"}:</b><ul>${x.openTrips.map(v=>`<li>${esc(v.tn.location||v.tn.name)} — ${fmtT(v.tn)}</li>`).join("")}</ul>For each, choose one:<ul><li><b>Fly, club books it</b> — we buy the ticket in your legal name.</li><li><b>Drive yourself</b> — reimbursed at the current IRS standard mileage rate.</li><li><b>Fly, book your own</b> — reimbursed up to what we paid for everyone else's ticket on that trip.</li></ul>If you need to change your flight times afterwards, for work or personal reasons, you can — just tell us.</li>`);
-                }
-                const text = `Hi ${first},\n\nBefore we can book flights and hotels for this season we need ${n === 1 ? "one thing" : n + " things"} from you:\n\n${parts.join("\n\n")}\n\nIt's all one form at the top of your dashboard:\n${APP_URL}\n\nTakes about two minutes. Only the directors can see any of it.\n\nThanks,\nDrew`;
-                const html = `<div style="font-family:sans-serif;font-size:14px;line-height:1.5"><p>Hi ${esc(first)},</p><p>Before we can book flights and hotels for this season we need ${n===1?"one thing":n+" things"} from you:</p><ol>${hParts.join("")}</ol><p><a href="${APP_URL}" style="color:#e91e8c;font-weight:700">Open the form in DS Elite HQ →</a> — it's at the top of your dashboard, about two minutes.</p><p style="color:#777;font-size:12px">Only the directors can see any of this.</p><p>Thanks,<br>Drew</p></div>`;
-                const push = [!x.nameOk && "legal name", x.missing.length && "details", x.openTrips.length && (x.openTrips.length + " trip" + (x.openTrips.length===1?"":"s"))].filter(Boolean).join(" · ");
-                return { text, html, push, n };
-              };
-
+              const list = confirmPending();
+              if (!list.length) return <span style={{fontSize:11,color:C.grn,fontWeight:700,alignSelf:"center"}}>✓ Names, details and travel all confirmed</span>;
+              const nameGap = list.filter(x => !x.nameOk).length;
+              const tripGap = list.reduce((n, x) => n + x.openTrips.length, 0);
               return (
-                <button onClick={async () => {
-                  const preview = pending.slice(0, 10).map(x => {
-                    const nm = ((x.r.first_name||"")+" "+(x.r.last_name||"")).trim();
-                    return "• " + nm + " — " + build(x).push;
-                  }).join("\n");
-                  if (!window.confirm(
-                    "Send the travel & details confirmation to " + pending.length + " coach" + (pending.length===1?"":"es") + "?\n\n" +
-                    preview + (pending.length>10 ? "\n…and " + (pending.length-10) + " more" : "") +
-                    "\n\nOutstanding: " + nameGap + " legal name" + (nameGap===1?"":"s") + " · " +
-                    pending.filter(x=>x.missing.length).length + " missing details · " + tripGap + " trip" + (tripGap===1?"":"s") +
-                    "\n\nEach coach gets only the sections that apply to them.")) return;
-                  let emailed = 0, failed = 0;
-                  for (const x of pending) {
-                    const { text, html, push } = build(x);
-                    try {
-                      const res = await fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"},
-                        body: JSON.stringify({ subject: "Before we book your travel — a couple of things we need", body: text, bodyHtml: html, recipients: [x.r.email] }) });
-                      res.ok ? emailed++ : failed++;
-                    } catch { failed++; }
-                    try {
-                      await fetch("/api/send-push", { method:"POST", headers:{"Content-Type":"application/json"},
-                        body: JSON.stringify({ title:"Confirm your travel details", body: push,
-                          url:"/?view=home", audience:{ type:"email", email:x.r.email } }) });
-                    } catch { /* push is best-effort */ }
-                  }
-                  window.alert("Emailed " + emailed + " coach" + (emailed===1?"":"es") + (failed ? ", " + failed + " failed" : "") + ".");
-                }}
+                <button onClick={() => setConfirmPreview({ id: list[0].r.id })}
                   style={{padding:"6px 14px",borderRadius:8,border:"1px solid #f59e0b",background:"transparent",color:"#f59e0b",fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}
                   title={nameGap + " need to confirm a legal name · " + tripGap + " trips unanswered"}>
-                  Ask {pending.length} to confirm name, details &amp; travel
+                  Review &amp; send to {list.length} — name, details &amp; travel
                 </button>
               );
             })()}
@@ -20264,7 +20357,9 @@ export default function App() {
       // requiring a ticket there would leave it permanently amber.
       air,
       purchased: rows.filter(r => r.flight_purchased).length,
-      ticketed: rows.filter(r => (!air || r.flight_purchased) && r.room_id).length,
+      driving:  rows.filter(r => isDriving(r)).length,
+      ownFlight: rows.filter(r => booksOwn(r)).length,
+      ticketed: rows.filter(r => (!air || !weBookFor(r) || r.flight_purchased) && r.room_id).length,
     };
   };
   const travelMoney = (v) => (v == null || v === "" || Number(v) === 0) ? "" : "$" + Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 });
@@ -20296,8 +20391,14 @@ export default function App() {
     const h = +m[1], ap = h >= 12 ? "pm" : "am";
     return ((h % 12) || 12) + ":" + m[2] + ap;
   };
+  // Who we are buying a seat for. A coach who told us they're driving has no
+  // flight to book, and one booking their own is reimbursed rather than booked —
+  // counting either as an outstanding ticket leaves the event permanently amber.
+  const isDriving  = (r) => r?.travel_mode === "drive";
+  const booksOwn   = (r) => r?.travel_mode === "fly_own";
+  const weBookFor  = (r) => !isDriving(r) && !booksOwn(r);
   // A trip still needs work if there's no ticket number or no room assigned.
-  const tripNeedsBooking = (r, air = true) => (air && !r?.flight_purchased) || !r?.room_id;
+  const tripNeedsBooking = (r, air = true) => (air && weBookFor(r) && !r?.flight_purchased) || !r?.room_id;
 
   // The travel editor itself. Shared by the tournament card and the Travel
   // screen so there's one implementation to keep correct, not two.
@@ -20316,7 +20417,7 @@ export default function App() {
     const inp = {...inpStyle,padding:"4px 7px",fontSize:11,width:"100%"};
     const air = tn.airfare_required !== false;   // NULL means not decided yet — assume flights
     const master = masterFor(tn.id);
-    const onMaster = (r) => !r?.flight_deviation && !!master;
+    const onMaster = (r) => !r?.flight_deviation && !!master && weBookFor(r);
     const roTd = {padding:"3px 7px",borderBottom:"1px solid "+C.border,color:C.mut,fontSize:11,whiteSpace:"nowrap"};
     const whenLabel = (d, t) => {
       if (!d) return "—";
@@ -20403,6 +20504,17 @@ export default function App() {
                         onChange={ev => saveTravel(tn.id, name, { flight_deviation: ev.target.checked })} />
                     </td>
                   )}
+                  {air && isDriving(r) ? (
+                    <td colSpan={4} style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,color:C.mut,fontSize:10,fontStyle:"italic"}}
+                        title="Told us they're driving. Reimbursed per mile at the IRS standard rate — no ticket to buy.">
+                      🚗 driving — mileage, no flight to book
+                    </td>
+                  ) : air && booksOwn(r) ? (
+                    <td colSpan={4} style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,color:"#8b5cf6",fontSize:10,fontStyle:"italic"}}
+                        title="Booking their own flight. Reimbursed up to what we paid for everyone else's ticket on this trip.">
+                      ✈ booking their own — reimburse up to our fare
+                    </td>
+                  ) : <>
                   {air && (onMaster(r)
                     ? <td style={roTd} title="On the master flight">{effFlight(r, tn.id).airline || "—"}</td>
                     : f("airline","Southwest"))}
@@ -20415,8 +20527,10 @@ export default function App() {
                   {air && (onMaster(r)
                     ? <td style={roTd}>{travelMoney(effFlight(r, tn.id).cost) || "—"}</td>
                     : f("flight_cost","0","number"))}
+                  </>}
                   {air && (
                     <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,textAlign:"center"}}>
+                      {isDriving(r) ? <span style={{color:C.mut,fontSize:10}}>n/a</span> :
                       <input type="checkbox" checked={!!r.flight_purchased} style={{width:14,height:14,accentColor:C.grn,cursor:"pointer"}}
                         title={r.booking_ok === true ? "Flight has been bought" : "This coach hasn't agreed to us booking yet"}
                         onChange={e => {
@@ -20430,7 +20544,7 @@ export default function App() {
                             if (!window.confirm(name + " hasn't agreed to us booking their ticket yet.\n\nMark it purchased anyway?")) return;
                           }
                           saveTravel(tn.id, name, { flight_purchased: e.target.checked });
-                        }} />
+                        }} />}
                     </td>
                   )}
                   {air && (() => {
@@ -20446,7 +20560,9 @@ export default function App() {
                       : { t:"?", c:"#f59e0b", tip:"Wants to fly but hasn't agreed to us booking" };
                     return <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,textAlign:"center",fontSize:10,fontWeight:800,color:st.c}} title={st.tip + (rr?.legal_name ? " · ID name: " + rr.legal_name : "")}>{st.t}</td>;
                   })()}
-                  {air && f("ticket_number","ABC123")}
+                  {air && (isDriving(r)
+                    ? <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,color:C.mut}}>—</td>
+                    : f("ticket_number","ABC123"))}
                   <td style={{padding:"3px 5px",borderBottom:"1px solid "+C.border}}>
                     <select style={inp} value={r.room_id ?? ""}
                       onChange={e => saveTravel(tn.id, name, { room_id: e.target.value ? Number(e.target.value) : null })}>
@@ -20852,6 +20968,8 @@ export default function App() {
                 </div>
                 <span style={{fontSize:11,color:C.mut}}>{staff.length} coach{staff.length===1?"":"es"}</span>
                 <span style={{fontSize:11,fontWeight:700,color:done?C.grn:"#f59e0b"}}>{v.ticketed}/{staff.length} arranged</span>
+                {v.driving > 0 && <span style={{fontSize:10,fontWeight:700,color:C.mut}} title="Told us they're driving — mileage, no flight to book">🚗 {v.driving} driving</span>}
+                {v.ownFlight > 0 && <span style={{fontSize:10,fontWeight:700,color:"#8b5cf6"}} title="Booking their own flight — reimbursed up to our fare">✈ {v.ownFlight} own</span>}
                 {(v.flights + v.club) > 0 && (
                   <span style={{fontSize:12,fontWeight:800,color:C.gold,whiteSpace:"nowrap"}}
                     title={"Flights " + (travelMoney(v.flights) || "$0") + " + hotel " + (travelMoney(v.club) || "$0")
@@ -21154,6 +21272,8 @@ export default function App() {
                 <span style={{fontSize:11,fontWeight:800,textTransform:"uppercase",color:C.mut}}>✈ Coach travel</span>
                 <span style={{fontSize:11,color:C.text,fontWeight:700}}>{staff.length} traveling</span>
                 <span style={{fontSize:11,color:t.ticketed===staff.length?C.grn:C.mut}}>{t.ticketed}/{staff.length} arranged</span>
+                {t.driving > 0 && <span style={{fontSize:10,fontWeight:700,color:C.mut}} title="Told us they're driving — mileage, no flight to book">🚗 {t.driving} driving</span>}
+                {t.ownFlight > 0 && <span style={{fontSize:10,fontWeight:700,color:"#8b5cf6"}} title="Booking their own flight — reimbursed up to our fare">✈ {t.ownFlight} own</span>}
                 {(t.flights + t.club) > 0 && <span style={{fontSize:11,fontWeight:800,color:C.gold}}>{travelMoney(t.flights + t.club)} total</span>}
                 {t.flights>0 && <span style={{fontSize:11,color:C.mut}}>flights {travelMoney(t.flights)}</span>}
                 {t.club>0 && <span style={{fontSize:11,color:C.mut}}>club hotel {travelMoney(t.club)}</span>}
@@ -23338,6 +23458,7 @@ export default function App() {
       {renderRequestOffModal()}
       {renderGearModal()}
       {renderDetailsModal()}
+      {renderConfirmPreview()}
       {profileId !== null && renderProfile()}
       {teamCardName && renderTeamCard()}
       {coachCardName && renderCoachCard()}
