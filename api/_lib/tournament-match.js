@@ -51,3 +51,32 @@ export function matchTournament(eventName, tournaments) {
   if (next && best.score - next.score < 0.12) return null;
   return { id: best.t.id, name: best.t.name, score: Number(best.score.toFixed(2)) };
 }
+
+// Second pass, used when the name alone is ambiguous. An email covering exactly
+// the teams assigned to one tournament IS that tournament — "Lone Star
+// Regionals (12s-14s)" never says which weekend, but the thirteen teams on it
+// are precisely Weekend 1s roster.
+//
+// Name agreement is still required. Regionals Weekend 1 happens to cover the
+// same five teams as a Lone Star Classic entry and would otherwise claim it.
+const TEAM_NOISE = new Set(["2027","2026","the","and","of","a","an","at","in","for",
+  "girls","boys","adidas","national","qualifier","registration","tournament","lone","star"]);
+const nameWords = (x) => new Set(String(x || "").toLowerCase()
+  .replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter(w => w && !TEAM_NOISE.has(w)));
+
+export function matchTournamentByTeams(eventName, teams, tournaments, assignmentsByTournament) {
+  const want = new Set((teams || []).filter(Boolean));
+  if (!want.size) return null;
+  const ew = nameWords(eventName);
+  const agrees = (t) => { const tw = nameWords(t.name); for (const w of ew) if (tw.has(w)) return true; return false; };
+
+  const exact = (tournaments || []).filter(agrees).filter(t => {
+    const have = assignmentsByTournament.get(t.id);
+    if (!have || have.size !== want.size) return false;
+    for (const x of want) if (!have.has(x)) return false;
+    return true;
+  });
+  // Only an exact roster match, and only when it is unambiguous. A superset is
+  // a guess, and a wrong link puts the cost on the wrong event.
+  return exact.length === 1 ? { id: exact[0].id, name: exact[0].name, via: "teams" } : null;
+}

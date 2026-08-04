@@ -14,7 +14,7 @@
 import { createClient } from "@supabase/supabase-js";
 import crypto from "node:crypto";
 import { parseReceiptEmail } from "./_lib/receipt-parse.js";
-import { matchTournament } from "./_lib/tournament-match.js";
+import { matchTournament, matchTournamentByTeams } from "./_lib/tournament-match.js";
 import { seasonForExpense } from "./_lib/season.js";
 
 const safeEqual = (a, b) => {
@@ -71,14 +71,28 @@ export default async function handler(req, res) {
   // tournament, so the row arrives usable instead of needing both filled in by
   // hand. A tournament is only linked on a confident match — a wrong one would
   // put the cost on the wrong event and flip the wrong teams to registered.
-  const [{ data: teamRows }, { data: tnRows }] = await Promise.all([
+  const [{ data: teamRows }, { data: tnRows }, { data: asgRows }] = await Promise.all([
     supabase.from("teams").select("id"),
     supabase.from("tournaments").select("id, name, start_date").eq("cancelled", false),
+    supabase.from("tournament_assignments").select("tournament_id, team_id"),
   ]);
   const known = new Map((teamRows || []).map(t => [String(t.id).toLowerCase(), t.id]));
   const ALIAS = { "11 rise": "11 Rise 1", "12-1 rise": "12 Rise 1", "12-2 rise": "12 Rise 2", "13 rise": "13 Rise 1" };
   const eventName = parsed.event || String(body?.subject || "").replace(/^Purchase with successful payment\s*/i, "").trim();
-  const match = parsed.kind === "registration" ? matchTournament(eventName, tnRows || []) : null;
+  // Name first. When the name is ambiguous — "Lone Star Regionals (12s-14s)"
+  // never says which weekend — fall back to the roster: an email covering
+  // exactly one tournament's assigned teams IS that tournament.
+  const byTn = new Map();
+  for (const a of (asgRows || [])) {
+    if (!byTn.has(a.tournament_id)) byTn.set(a.tournament_id, new Set());
+    byTn.get(a.tournament_id).add(a.team_id);
+  }
+  const emailTeams = parsed.rows
+    .map(r => { const k = String(r.allocation || "").toLowerCase(); return known.get(k) || ALIAS[k] || null; })
+    .filter(Boolean);
+  const match = parsed.kind !== "registration" ? null
+    : (matchTournament(eventName, tnRows || [])
+       || matchTournamentByTeams(eventName, emailTeams, tnRows || [], byTn));
 
   const now = new Date().toISOString();
   const rows = parsed.rows.map(r => {
