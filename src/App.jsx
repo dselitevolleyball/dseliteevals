@@ -1620,6 +1620,8 @@ export default function App() {
   const [notifOpen, setNotifOpen]                           = useState(false); // notification bell dropdown
   const [notifSeenAt, setNotifSeenAt]                       = useState("1970-01-01T00:00:00.000Z"); // last time notifications were viewed
   const [openMsgId, setOpenMsgId]                           = useState(null); // message being read
+  const [emailFiles, setEmailFiles]                         = useState([]); // composer attachments
+  const [emailAttBusy, setEmailAttBusy]                     = useState(false);
   const [pushState, setPushState]                          = useState("loading"); // unsupported | off | on | denied
   const [blackoutDates, setBlackoutDates]                   = useState([]);
   const [tnFilters, setTnFilters]                           = useState({ search: "", ageFor: "", qualifierOnly: false, dateFrom: "", dateTo: "", hideClosed: false, hideCancelled: true, startsOn: [], state: "", numDays: "", divisions: [], tags: [], sourceScope: "ours", ourStatus: [] });
@@ -5853,6 +5855,13 @@ export default function App() {
                 background:C.bg,border:"1px solid "+C.border,borderRadius:10,padding:"13px 15px",maxHeight:"58vh",overflowY:"auto"}}>
                 {m.body || "(no text)"}
               </div>
+              {Array.isArray(m.attachment_names) && m.attachment_names.length > 0 && (
+                <div style={{marginTop:12,fontSize:11.5,color:C.mut}}>
+                  📎 Sent with {m.attachment_names.length} attachment{m.attachment_names.length===1?"":"s"}:
+                  {" "}<span style={{color:C.text}}>{m.attachment_names.join(", ")}</span>
+                  <div style={{fontSize:10.5,marginTop:3,fontStyle:"italic"}}>The files are on the email itself — check your inbox for them.</div>
+                </div>
+              )}
               <div style={{display:"flex",justifyContent:"flex-end",marginTop:14}}>
                 <button onClick={close} style={{padding:"9px 18px",borderRadius:8,border:"none",background:C.gold,color:"#000",fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Done</button>
               </div>
@@ -14866,11 +14875,15 @@ export default function App() {
         const res = await fetch("/api/send-email", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ skipLog: true, subject: subj, body: emailMarkupToText(bod), bodyHtml: emailMarkupToHtml(bod), recipients: to }),
+          body: JSON.stringify({ skipLog: true, subject: subj, body: emailMarkupToText(bod), bodyHtml: emailMarkupToHtml(bod), recipients: to,
+            attachments: emailFiles.map(f => ({ filename: f.name, content: f.b64, contentType: f.type })) }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Send failed");
         setEmailResult({ ...data, test: !!isTest });
+        // A test keeps them (you're about to send for real); a real send clears,
+        // so the next message doesn't quietly carry the last one's files.
+        if (!isTest) setEmailFiles([]);
         // Log real sends to the shared history (test sends are not recorded).
         if (!isTest) {
           const { error: logErr } = await supabase.from("email_log").insert({
@@ -14878,6 +14891,7 @@ export default function App() {
             body: bod,
             recipient_count: to.length,
             recipients: to,
+            attachment_names: emailFiles.length ? emailFiles.map(f => f.name) : null,
             sent_count: (data && typeof data.sent === "number") ? data.sent : to.length,
             failed_count: (data && Array.isArray(data.failed)) ? data.failed.length : 0,
             sent_by: coach?.display_name || "",
@@ -15293,7 +15307,8 @@ export default function App() {
         try {
           const res = await fetch("/api/send-email", {
             method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ skipLog: true, subject: subj, body: emailMarkupToText(bod), bodyHtml: emailMarkupToHtml(bod), recipients: recips }),
+            body: JSON.stringify({ skipLog: true, subject: subj, body: emailMarkupToText(bod), bodyHtml: emailMarkupToHtml(bod), recipients: recips,
+              attachments: emailFiles.map(a => ({ filename: a.name, content: a.b64, contentType: a.type })) }),
           });
           const d = await res.json().catch(() => ({}));
           if (!res.ok) throw new Error(d.error || "Send failed");
@@ -15358,7 +15373,8 @@ export default function App() {
         try {
           const res = await fetch("/api/send-email", {
             method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ skipLog: true, subject: subj, body: emailMarkupToText(bod), bodyHtml: emailMarkupToHtml(bod), recipients: [s.email] }),
+            body: JSON.stringify({ skipLog: true, subject: subj, body: emailMarkupToText(bod), bodyHtml: emailMarkupToHtml(bod), recipients: [s.email],
+              attachments: emailFiles.map(a => ({ filename: a.name, content: a.b64, contentType: a.type })) }),
           });
           const d = await res.json().catch(() => ({}));
           if (!res.ok) throw new Error(d.error || "Send failed");
@@ -15633,6 +15649,56 @@ export default function App() {
         {/* Compose */}
         <input value={emailSubject} onChange={e=>setEmailSubject(e.target.value)} placeholder="Subject"
           style={{...inpStyle,width:"100%",padding:"10px 12px",fontSize:14,marginBottom:8}} />
+        {/* Attachments. Read to base64 on pick so the send is a single call and
+            a half-attached file can't go out. 15MB total is the practical
+            ceiling for Gmail and Outlook. */}
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,flexWrap:"wrap"}}>
+          <label style={{padding:"5px 12px",borderRadius:8,border:"1px solid "+C.border,color:C.text,
+            fontSize:12,fontWeight:700,cursor:emailAttBusy?"default":"pointer",opacity:emailAttBusy?0.6:1}}>
+            {emailAttBusy ? "Reading…" : "📎 Attach a file"}
+            <input type="file" multiple style={{display:"none"}} disabled={emailAttBusy}
+              onChange={async (ev) => {
+                const picked = [...(ev.target.files || [])]; ev.target.value = "";
+                if (!picked.length) return;
+                setEmailAttBusy(true);
+                const read = [];
+                for (const f of picked) {
+                  try {
+                    const b64 = await new Promise((res, rej) => {
+                      const r = new FileReader();
+                      r.onload = () => res(String(r.result).replace(/^data:[^;]*;base64,/, ""));
+                      r.onerror = rej; r.readAsDataURL(f);
+                    });
+                    read.push({ name: f.name, size: f.size, type: f.type, b64 });
+                  } catch { window.alert("Couldn't read " + f.name + "."); }
+                }
+                setEmailFiles(prev => {
+                  const next = [...prev, ...read];
+                  const total = next.reduce((n, x) => n + x.size, 0);
+                  if (total > 15 * 1024 * 1024) {
+                    window.alert("That's " + (total / 1048576).toFixed(1) + "MB of attachments. Most mail servers reject over 15MB — remove something or send a link instead.");
+                    return prev;
+                  }
+                  return next;
+                });
+                setEmailAttBusy(false);
+              }} />
+          </label>
+          {emailFiles.map((f, i) => (
+            <span key={i} style={{display:"inline-flex",alignItems:"center",gap:6,fontSize:11,fontWeight:600,
+              padding:"4px 9px",borderRadius:7,background:C.bg,border:"1px solid "+C.border,color:C.text}}>
+              {f.name} <span style={{color:C.mut}}>{(f.size/1024).toFixed(0)}KB</span>
+              <button onClick={()=>setEmailFiles(p => p.filter((_, j) => j !== i))} title="Remove"
+                style={{background:"none",border:"none",color:C.mut,cursor:"pointer",fontFamily:"inherit",fontWeight:800,fontSize:12,padding:0}}>×</button>
+            </span>
+          ))}
+          {emailFiles.length > 0 && (
+            <span style={{fontSize:10.5,color:C.mut}}>
+              {(emailFiles.reduce((n,x)=>n+x.size,0)/1048576).toFixed(1)}MB total · goes to every recipient
+            </span>
+          )}
+        </div>
+
         {/* Quick-insert buttons — append scoped content to the message body. */}
         <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,flexWrap:"wrap"}}>
           <span style={{fontSize:11,fontWeight:700,color:C.mut}}>Insert:</span>

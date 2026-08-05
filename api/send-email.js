@@ -78,6 +78,24 @@ export default async function handler(req, res) {
     : asHtml ? text
     : "<div style=\"white-space:pre-wrap;font-family:sans-serif;font-size:15px;line-height:1.5\">" + escapeHtml(text) + "</div>";
 
+  // Attachments: [{ filename, content (base64, no data: prefix), contentType }].
+  // Resend caps a message at ~40MB, but the practical ceiling is the recipient's
+  // mail server — 15MB total keeps us inside what Gmail and Outlook accept, and
+  // failing here is far better than every send bouncing later.
+  const rawAtt = Array.isArray(body && body.attachments) ? body.attachments : [];
+  const attachments = [];
+  let attBytes = 0;
+  for (const a of rawAtt) {
+    const filename = String(a?.filename || "").trim();
+    const content = String(a?.content || "").replace(/^data:[^;]*;base64,/, "");
+    if (!filename || !content) continue;
+    attBytes += Math.ceil(content.length * 3 / 4);
+    attachments.push({ filename, content, ...(a?.contentType ? { content_type: String(a.contentType) } : {}) });
+  }
+  if (attBytes > 15 * 1024 * 1024) {
+    return res.status(400).json({ error: "Attachments total " + (attBytes / 1048576).toFixed(1) + "MB. Keep them under 15MB — most mail servers reject more." });
+  }
+
   let sent = 0;
   // Resend batch endpoint accepts up to 100 messages per request.
   for (const group of chunk(valid, 100)) {
@@ -88,6 +106,7 @@ export default async function handler(req, res) {
       subject,
       html: htmlBody,
       text,
+      ...(attachments.length ? { attachments } : {}),
     }));
     try {
       const r = await fetch(RESEND_BATCH, {
@@ -138,6 +157,7 @@ export default async function handler(req, res) {
           sent_count: sent, failed_count: failed.length,
           sent_by: who || (src ? "(" + src + ")" : "(unattributed)"),
           sent_by_email: whoEmail,
+          attachment_names: attachments.length ? attachments.map(a => a.filename) : null,
         }),
       });
       const rows = await logRes.json().catch(() => null);
