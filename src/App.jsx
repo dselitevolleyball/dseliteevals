@@ -1619,6 +1619,7 @@ export default function App() {
   const [reqForm, setReqForm]                               = useState({ type:"weekend", date:"", team:"", details:"" });
   const [notifOpen, setNotifOpen]                           = useState(false); // notification bell dropdown
   const [notifSeenAt, setNotifSeenAt]                       = useState("1970-01-01T00:00:00.000Z"); // last time notifications were viewed
+  const [openMsgId, setOpenMsgId]                           = useState(null); // message being read
   const [pushState, setPushState]                          = useState("loading"); // unsupported | off | on | denied
   const [blackoutDates, setBlackoutDates]                   = useState([]);
   const [tnFilters, setTnFilters]                           = useState({ search: "", ageFor: "", qualifierOnly: false, dateFrom: "", dateTo: "", hideClosed: false, hideCancelled: true, startsOn: [], state: "", numDays: "", divisions: [], tags: [], sourceScope: "ours", ourStatus: [] });
@@ -1761,7 +1762,11 @@ export default function App() {
       // the modal appears the moment it does.
       if (open === "confirm") setDetailsOpen(true);
       if (open === "gear") setGearOpen(true);   // seeded by the effect below
-      if (v || tab || open) { deepLinkDone.current = true; window.history.replaceState({}, "", window.location.pathname); }
+      // A push about a message links to that message, so the tap lands on the
+      // thing itself rather than on a list the reader still has to search.
+      const msg = p.get("msg");
+      if (msg) { setOpenMsgId(Number(msg) || null); if (!v) setView("notifications"); }
+      if (v || tab || open || p.get("msg")) { deepLinkDone.current = true; window.history.replaceState({}, "", window.location.pathname); }
     } catch { /* ignore */ }
   }, [isApproved]); // eslint-disable-line react-hooks/exhaustive-deps
   // The gear modal renders nothing without a draft form, and only openGear()
@@ -3367,8 +3372,15 @@ export default function App() {
       // Coaches have no assignments view, so route them home; admins to Assignments.
       out.push({ id: "rem" + r.id, ts: r.created_at, label: "Reminder", text: "[" + r.team_name + "] " + (r.subject || "Reminder sent"), view: canOps ? "assignments" : "home" });
     });
+    // Messages sent from DS HQ. RLS hands a coach only what was addressed to
+    // them, so this doubles as their inbox — previously a message arrived as a
+    // push and then existed nowhere in the app, so tapping it led nowhere.
+    (emailLog || []).forEach(e => {
+      out.push({ id: "m" + e.id, ts: e.created_at, label: "Message",
+                 text: e.subject || "(no subject)", msgId: e.id });
+    });
     return out.sort((a, b) => (b.ts || "").localeCompare(a.ts || ""));
-  }, [updates, teamQuestions, commReminderLog, myTeamNames, canOps, coach]);
+  }, [updates, teamQuestions, commReminderLog, emailLog, myTeamNames, canOps, coach]);
 
   // Persisted (per device) "last viewed" marker drives the unread badge.
   const notifKey = coach?.id ? "dse_notif_seen_" + coach.id : "dse_notif_seen";
@@ -3947,6 +3959,7 @@ export default function App() {
     if (error) { console.error("Load sportsyou_outbox error:", error); return; }
     setSyOutbox(data || []);
   }, []);
+  useEffect(() => { if (isApproved) loadEmailLog(); }, [isApproved, loadEmailLog]);
   useEffect(() => { if (isApproved && view === "email") { loadEmailTemplates(); loadEmailLog(); loadSyOutbox(); loadTournaments(); loadSlotMoves(); loadPracticeCoverage(); loadPractice(); } }, [isApproved, view, loadEmailTemplates, loadEmailLog, loadSyOutbox, loadTournaments, loadSlotMoves, loadPracticeCoverage, loadPractice]);
   // One-time: import any templates a device previously saved to localStorage
   // into the shared DB table, so existing templates aren't lost in the move.
@@ -5809,6 +5822,47 @@ export default function App() {
     );
   }
 
+  // Read one message in the app. Everything here already passed RLS — a coach
+  // only ever receives rows addressed to them.
+  function renderMessageModal() {
+    if (!openMsgId) return null;
+    const m = (emailLog || []).find(x => x.id === openMsgId);
+    const close = () => setOpenMsgId(null);
+    return (
+      <div onClick={close} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.82)",zIndex:1100,display:"flex",justifyContent:"center",padding:"28px 16px",overflowY:"auto"}}>
+        <div onClick={e=>e.stopPropagation()} style={{background:C.card,borderRadius:16,border:"1px solid "+C.border,maxWidth:620,width:"100%",height:"fit-content",padding:22}}>
+          {!m ? (
+            <>
+              <div style={{fontSize:14,fontWeight:800,color:"#f59e0b",marginBottom:6}}>Message not available</div>
+              <div style={{fontSize:12,color:C.mut,lineHeight:1.6}}>
+                It may have been sent before messages were kept in the app, or it wasn't addressed to you.
+              </div>
+            </>
+          ) : (
+            <>
+              <div style={{display:"flex",justifyContent:"space-between",gap:10,marginBottom:4}}>
+                <h2 style={{margin:0,fontSize:17,fontWeight:800,color:C.gold,lineHeight:1.3}}>{m.subject}</h2>
+                <button onClick={close} style={{background:"none",border:"none",color:C.mut,fontSize:22,cursor:"pointer",lineHeight:1}}>×</button>
+              </div>
+              <div style={{fontSize:11,color:C.mut,marginBottom:14}}>
+                {m.sent_by ? "From " + m.sent_by + " · " : ""}
+                {m.created_at ? new Date(m.created_at).toLocaleString(undefined,{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}) : ""}
+                {canOps && m.recipient_count ? " · " + m.recipient_count + " recipient" + (m.recipient_count===1?"":"s") : ""}
+              </div>
+              <div style={{fontSize:13.5,color:C.text,lineHeight:1.65,whiteSpace:"pre-wrap",wordBreak:"break-word",
+                background:C.bg,border:"1px solid "+C.border,borderRadius:10,padding:"13px 15px",maxHeight:"58vh",overflowY:"auto"}}>
+                {m.body || "(no text)"}
+              </div>
+              <div style={{display:"flex",justifyContent:"flex-end",marginTop:14}}>
+                <button onClick={close} style={{padding:"9px 18px",borderRadius:8,border:"none",background:C.gold,color:"#000",fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Done</button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   const renderDetailsPanel = () => {
     if (!myRosterRow) return null;
     const { missing, openTrips = [], nameOk, total } = myConfirmTasks();
@@ -6434,7 +6488,7 @@ export default function App() {
                 const when = d ? d.toLocaleString(undefined,{weekday:"short",month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}) : "";
                 const unread = !n.hidden && (n.ts || "") > notifSeenAt;
                 return (
-                  <button key={n.id} onClick={()=>{ setView(n.view||"home"); }}
+                  <button key={n.id} onClick={()=>{ if (n.msgId) { setOpenMsgId(n.msgId); return; } setView(n.view||"home"); }}
                     style={{display:"block",width:"100%",textAlign:"left",background:C.card,border:"1px solid "+(unread?C.gold:C.border),borderRadius:12,padding:"12px 14px",cursor:"pointer",fontFamily:"inherit",opacity:n.hidden?0.65:1}}>
                     <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:5,flexWrap:"wrap"}}>
                       <span style={{fontSize:10,fontWeight:800,letterSpacing:0.4,textTransform:"uppercase",color:labelColor(n.label),border:"1px solid "+labelColor(n.label),borderRadius:6,padding:"1px 7px"}}>{n.label}</span>
@@ -24618,6 +24672,7 @@ export default function App() {
       {renderGearModal()}
       {renderDetailsModal()}
       {renderConfirmPreview()}
+      {renderMessageModal()}
       {profileId !== null && renderProfile()}
       {teamCardName && renderTeamCard()}
       {coachCardName && renderCoachCard()}

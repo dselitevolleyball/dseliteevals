@@ -114,22 +114,23 @@ export default async function handler(req, res) {
   // one door every message goes through means no future feature can forget.
   //
   // Best-effort: a logging failure must never fail a send that already left.
+  let loggedId = null;
   try {
     const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = process.env;
     // The four composer paths write their own richer row (they know the
-      // audience and the sender); they pass skipLog so we don't duplicate it.
-      if (!body?.skipLog && SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY && (sent > 0 || failed.length)) {
+    // audience and the sender); they pass skipLog so we do not duplicate it.
+    if (!body?.skipLog && SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY && (sent > 0 || failed.length)) {
       const who = (body && typeof body.sentBy === "string" && body.sentBy.trim()) || null;
       const whoEmail = (body && typeof body.sentByEmail === "string" && body.sentByEmail.trim()) || null;
       // Which feature sent it, so an unattributed message is still traceable.
       const src = (body && typeof body.source === "string" && body.source.trim()) || null;
-      await fetch(SUPABASE_URL + "/rest/v1/email_log", {
+      const logRes = await fetch(SUPABASE_URL + "/rest/v1/email_log", {
         method: "POST",
         headers: {
           apikey: SUPABASE_SERVICE_ROLE_KEY,
           Authorization: "Bearer " + SUPABASE_SERVICE_ROLE_KEY,
           "Content-Type": "application/json",
-          Prefer: "return=minimal",
+          Prefer: "return=representation",
         },
         body: JSON.stringify({
           subject, body: text.slice(0, 20000),
@@ -139,6 +140,8 @@ export default async function handler(req, res) {
           sent_by_email: whoEmail,
         }),
       });
+      const rows = await logRes.json().catch(() => null);
+      if (Array.isArray(rows) && rows[0]?.id) loggedId = rows[0].id;
     }
   } catch (e) { console.error("email_log write failed (send already went out):", e?.message); }
 
@@ -154,7 +157,10 @@ export default async function handler(req, res) {
         body: JSON.stringify({
           title: subject,
           body: text.replace(/\s+/g, " ").slice(0, 160),
-          url: (body && typeof body.url === "string" && body.url) || "/?view=home",
+          // Deep link to the message itself. Tapping the push then opens what
+          // it is about, instead of a dashboard the reader has to search.
+          url: (body && typeof body.url === "string" && body.url)
+            || (loggedId ? "/?view=notifications&msg=" + loggedId : "/?view=notifications"),
           audience: { type: "emails", emails: valid },
           skipEmail: true,
         }),
