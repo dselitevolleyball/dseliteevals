@@ -10428,6 +10428,85 @@ export default function App() {
         {finTab === "pending" && (
           <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,overflow:"hidden"}}>
             {!pending.length && <div style={{padding:26,textAlign:"center",color:C.mut,fontSize:12}}>Nothing waiting. Receipts captured from email land here first.</div>}
+        {/* Reimbursements owed — approved coach claims the club hasn't paid
+            back yet. Kept separate from the review queue because these are
+            already decided; what's left is paying them. */}
+        {(() => {
+          const owed = expenses.filter(e => e.submitted_by && e.status === "approved" && !e.reimbursed);
+          if (!owed.length) return null;
+          const by = new Map();
+          for (const e of owed) {
+            const who = e.reimburse_to || e.submitted_by;
+            if (!by.has(who)) by.set(who, { who, total: 0, rows: [] });
+            const g = by.get(who); g.total += Number(e.amount || 0); g.rows.push(e);
+          }
+          const groups = [...by.values()].sort((a, b) => b.total - a.total);
+          const grand = groups.reduce((s, g) => s + g.total, 0);
+          const noReceipt = owed.filter(e => !e.receipt_path).length;
+          const markPaid = async (ids) => {
+            if (!ids.length) return;
+            if (!window.confirm("Mark " + ids.length + " claim" + (ids.length===1?"":"s") + " as reimbursed?\n\nThey'll drop off this list and off the accountant's weekly report.")) return;
+            const { error } = await supabase.from("expenses")
+              .update({ reimbursed: true, updated_at: new Date().toISOString() }).in("id", ids);
+            if (error) { window.alert("Couldn't save: " + error.message); return; }
+            await loadExpenses();
+          };
+          const sendNow = async () => {
+            if (!window.confirm("Email the reimbursement report to the accountant now?\n\n"
+              + usd2(grand) + " across " + groups.length + " coach" + (groups.length===1?"":"es") + ".")) return;
+            try {
+              const { data: { session } } = await supabase.auth.getSession();
+              if (!session?.access_token) throw new Error("Not signed in");
+              const r = await fetch("/api/reimbursement-report", { method:"POST", headers:{ Authorization:"Bearer " + session.access_token } });
+              const d = await r.json().catch(()=>({}));
+              if (!r.ok) throw new Error(d.error || ("HTTP " + r.status));
+              window.alert("Sent ✓ — " + usd2(d.total ?? 0) + " to " + ((d.to||[]).join(", ")));
+            } catch (e) { window.alert("Couldn't send: " + (e.message || "error")); }
+          };
+          return (
+            <div style={{background:C.card,border:"1px solid "+C.gold,borderRadius:12,marginBottom:14,overflow:"hidden"}}>
+              <div style={{padding:"10px 14px",borderBottom:"1px solid "+C.border,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+                <span style={{fontSize:13,fontWeight:800,color:C.gold}}>Reimbursements owed to coaches</span>
+                <span style={{fontSize:16,fontWeight:800,color:C.text}}>{usd2(grand)}</span>
+                <span style={{fontSize:11,color:C.mut}}>{owed.length} claim{owed.length===1?"":"s"} · {groups.length} coach{groups.length===1?"":"es"}</span>
+                <div style={{flex:1}} />
+                <button onClick={sendNow}
+                  style={{padding:"5px 12px",borderRadius:8,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontFamily:"inherit",fontSize:12,fontWeight:700,cursor:"pointer"}}>
+                  Send to accountant
+                </button>
+              </div>
+              {noReceipt > 0 && (
+                <div style={{padding:"7px 14px",fontSize:11,color:C.red,borderBottom:"1px solid "+C.border}}>
+                  ⚠ {noReceipt} approved claim{noReceipt===1?"":"s"} {noReceipt===1?"has":"have"} no receipt attached — the report flags {noReceipt===1?"it":"them"} as not payable.
+                </div>
+              )}
+              {groups.map(g => (
+                <div key={g.who} style={{padding:"9px 14px",borderTop:"1px solid "+C.border}}>
+                  <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:5}}>
+                    <span style={{fontSize:12.5,fontWeight:800,color:C.text}}>{g.who}</span>
+                    <span style={{fontSize:12,fontWeight:800,color:C.gold}}>{usd2(g.total)}</span>
+                    <div style={{flex:1}} />
+                    <button onClick={()=>markPaid(g.rows.map(r=>r.id))}
+                      style={{padding:"3px 11px",borderRadius:7,border:"none",background:C.grn,color:"#000",fontFamily:"inherit",fontSize:11,fontWeight:800,cursor:"pointer"}}>
+                      Mark paid
+                    </button>
+                  </div>
+                  {g.rows.map(e => (
+                    <div key={e.id} style={{display:"flex",alignItems:"center",gap:8,fontSize:11,color:C.mut,padding:"2px 0",flexWrap:"wrap"}}>
+                      <span style={{minWidth:60}}>{e.expense_date || "—"}</span>
+                      <span style={{flex:1,minWidth:140,color:C.text}}>{e.item}</span>
+                      {e.receipt_path
+                        ? <button onClick={()=>openReceiptFor(e)} style={{background:"none",border:"none",color:C.acc,cursor:"pointer",fontFamily:"inherit",fontSize:10.5,fontWeight:700,padding:0}}>receipt</button>
+                        : <span style={{fontSize:10,color:C.red,fontWeight:700}}>no receipt</span>}
+                      <span style={{minWidth:64,textAlign:"right",color:C.text,fontWeight:700}}>{usd2(e.amount)}</span>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          );
+        })()}
+
             {pending.length > 0 && (() => {
               // "Ready" means nothing is left to decide. For a tournament cost
               // that's a team AND the event; for a club cost it's a bucket.
