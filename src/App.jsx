@@ -15838,7 +15838,7 @@ export default function App() {
 
         <div style={{display:"flex",alignItems:"center",gap:12,marginTop:12,flexWrap:"wrap"}}>
           {emailStaff.size > 0 && (
-            <button onClick={sendPerCoach} disabled={emailSending || !emailSubject.trim() || !emailBody.trim()}
+            <button onClick={sendPerCoach} disabled={emailSending || emailAttBusy || !emailSubject.trim() || !emailBody.trim()}
               title="Sends a separate email to each selected coach with {{COACH}}, {{MY_ROLES}}, {{MY_PRACTICES}}, {{MY_TOURNAMENTS}}, {{MY_TOURNAMENT_GAPS}}, {{MY_SUB_SHIFTS}}, {{MY_COVERED}}, {{MY_SCHEDULE_CHANGES}} and {{MY_SA}} filled in with that coach's own data"
               style={{padding:"10px 20px",borderRadius:8,border:"none",background:(emailSending||!emailSubject.trim()||!emailBody.trim())?C.border:C.acc,color:(emailSending||!emailSubject.trim()||!emailBody.trim())?C.mut:"#000",fontFamily:"inherit",fontSize:14,fontWeight:800,cursor:(emailSending||!emailSubject.trim()||!emailBody.trim())?"default":"pointer"}}>
               {emailSending ? "Sending…" : "Send to " + emailStaff.size + " coach" + (emailStaff.size===1?"":"es") + " (personalized)"}
@@ -15854,7 +15854,7 @@ export default function App() {
             }, 0);
             const audWord = emailAudience === "both" ? "parents + coaches" : emailAudience === "coaches" ? "coaches only" : "parents";
             return (
-              <button onClick={sendPerTeam} disabled={emailSending || !emailSubject.trim() || !emailBody.trim() || audTotal === 0}
+              <button onClick={sendPerTeam} disabled={emailSending || emailAttBusy || !emailSubject.trim() || !emailBody.trim() || audTotal === 0}
                 title="Sends a separate email to each checked team with {{TEAM}}, {{PLAYERS}}, {{COACHES}}, {{PRACTICES}}, {{FLEX}}, {{SPORTSYOU}}, {{ORIENTATION}}, {{TOURNAMENTS}}, {{SEASON_PRACTICES}}, {{SCHEDULE_CHANGES}}, {{COACH_COVERAGE}} and {{SA_SCHEDULE}} filled in with that team's data"
                 style={{padding:"10px 20px",borderRadius:8,border:"none",background:(emailSending||!emailSubject.trim()||!emailBody.trim()||audTotal===0)?C.border:C.acc,color:(emailSending||!emailSubject.trim()||!emailBody.trim()||audTotal===0)?C.mut:"#000",fontFamily:"inherit",fontSize:14,fontWeight:800,cursor:(emailSending||!emailSubject.trim()||!emailBody.trim()||audTotal===0)?"default":"pointer"}}>
                 {emailSending ? "Sending…" : "Send to " + emailTeams.size + " team" + (emailTeams.size===1?"":"s") + " — " + audTotal + " address" + (audTotal===1?"":"es") + " (" + audWord + ")"}
@@ -15871,12 +15871,12 @@ export default function App() {
             </button>
           )}
           {emailStaff.size === 0 && emailTeams.size === 0 && (
-            <button onClick={send} disabled={emailSending || !emailSubject.trim() || !emailBody.trim() || !recipients.length}
+            <button onClick={send} disabled={emailSending || emailAttBusy || !emailSubject.trim() || !emailBody.trim() || !recipients.length}
               style={{padding:"10px 20px",borderRadius:8,border:"none",background:(emailSending||!emailSubject.trim()||!emailBody.trim()||!recipients.length)?C.border:C.gold,color:(emailSending||!emailSubject.trim()||!emailBody.trim()||!recipients.length)?C.mut:"#000",fontFamily:"inherit",fontSize:14,fontWeight:800,cursor:(emailSending||!emailSubject.trim()||!emailBody.trim()||!recipients.length)?"default":"pointer"}}>
               {emailSending ? "Sending…" : "Send to " + recipients.length}
             </button>
           )}
-          <button onClick={sendTest} disabled={emailSending || !emailSubject.trim() || !emailBody.trim()}
+          <button onClick={sendTest} disabled={emailSending || emailAttBusy || !emailSubject.trim() || !emailBody.trim()}
             title={"Send only to " + TEST_EMAIL + " so you can preview it"}
             style={{padding:"10px 16px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:(emailSending||!emailSubject.trim()||!emailBody.trim())?C.mut:C.text,fontFamily:"inherit",fontSize:13,fontWeight:700,cursor:(emailSending||!emailSubject.trim()||!emailBody.trim())?"default":"pointer"}}>
             Send test to me
