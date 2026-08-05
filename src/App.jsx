@@ -1628,7 +1628,7 @@ export default function App() {
   });
   const [addingTournament, setAddingTournament]             = useState(false);
   const [addingCoach, setAddingCoach]                       = useState(false);
-  const [newCoach, setNewCoach]                             = useState({ first_name:"", last_name:"", email:"", phone:"", dob:"", tshirt_size:"", shoe_size:"", sweatshirt_size:"", notes:"" });
+  const [newCoach, setNewCoach]                             = useState({ first_name:"", last_name:"", email:"", phone:"", dob:"", tshirt_size:"", shoe_size:"", sweatshirt_size:"", notes:"", team:"", position:"" });
   const [guestPassword, setGuestPassword]                   = useState("");
   const [guestAgeGroups, setGuestAgeGroups]                 = useState([]);
   const [guestBusy, setGuestBusy]                           = useState(false);
@@ -1742,9 +1742,28 @@ export default function App() {
       // read as broken. detailsOpen sticks, so if the roster hasn't loaded yet
       // the modal appears the moment it does.
       if (open === "confirm") setDetailsOpen(true);
+      if (open === "gear") setGearOpen(true);   // seeded by the effect below
       if (v || tab || open) { deepLinkDone.current = true; window.history.replaceState({}, "", window.location.pathname); }
     } catch { /* ignore */ }
   }, [isApproved]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The gear modal renders nothing without a draft form, and only openGear()
+  // builds one — but openGear lives after the early return, so the deep-link
+  // effect above can't call it. Seed the draft here instead, from state that is
+  // all declared above the boundary. Without this ?open=gear opens a blank.
+  useEffect(() => {
+    if (!gearOpen || gearForm) return;
+    const nrm = v => String(v || "").trim().toLowerCase().replace(/\s+/g, " ");
+    const r = coachRoster.find(x => coach?.email && nrm(x.email) === nrm(coach.email));
+    const nm = r ? ((r.first_name || "") + " " + (r.last_name || "")).trim() : String(coach?.display_name || "").trim();
+    const g = coachGear.find(x => nrm(x.coach_name) === nrm(nm)) || null;
+    setGearForm({
+      shoe_size: g?.shoe_size || "", shoe_gender: g?.shoe_gender || "",
+      tshirt_size: g?.tshirt_size || "",
+      sweatshirt_size: g?.sweatshirt_size || "", sweatshirt_style: g?.sweatshirt_style || "",
+      longsleeve_size: g?.longsleeve_size || "", longsleeve_style: g?.longsleeve_style || "",
+      backpack_name: g?.backpack_name || (nm ? "Coach " + nm.split(/\s+/)[0] : ""),
+    });
+  }, [gearOpen, gearForm, coachRoster, coachGear, coach]);
   // Physical Testing tab — dot-plot of a physical metric per player. Age group
   // comes from the global selectedDivs chips; these add team/position filters
   // and pick which metric drives the horizontal axis.
@@ -8916,16 +8935,15 @@ export default function App() {
     loadAllowedEmails();
   };
 
-  // New-coach onboarding: allowlist + a welcome email asking for what we still
-  // need. Both the gear form and the profile live behind the login, so the
-  // allowlist step is what makes the email's instructions actually work — an
-  // un-allowlisted coach signs up and parks on "Awaiting Approval" instead.
-  // Asks only for the fields the admin left blank, so nobody is asked to
-  // re-send something we already have.
-  const onboardNewCoach = async (row) => {
+  // Everything a new coach has to do, in one email, in the order they'll do it.
+  // Previously this covered signup and gear only — the compliance details, the
+  // legal name and the airline numbers were each chased separately afterwards,
+  // which is three emails to a person who has been at the club for a week.
+  const onboardNewCoach = async (row, placement) => {
     const email = String(row.email || "").trim().toLowerCase();
     if (!email) return { ok: false, error: "no email address" };
     const first = (row.first_name || "").trim() || "there";
+    const esc = s => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
     // Allowlist first — this matters even if the email fails to send.
     const { error: allowErr } = await supabase.from("allowed_signup_emails").upsert(
@@ -8935,30 +8953,56 @@ export default function App() {
     if (allowErr) console.error("allowlist upsert failed:", allowErr);
     loadAllowedEmails();
 
-    const missing = [];
-    if (!row.dob)   missing.push("your date of birth");
-    if (!row.phone) missing.push("your cell number");
-    const askLine = missing.length
-      ? "Just reply to this email with " + (missing.length === 2 ? missing[0] + " and " + missing[1] : missing[0]) + " and I'll add " + (missing.length === 2 ? "them" : "it") + " to your profile."
-      : "";
+    const roleWord = placement?.position === "head" ? "head coach" : placement?.position === "assistant" ? "assistant coach" : null;
+    const placeLine = placement?.team && roleWord
+      ? "You're down as <b>" + esc(roleWord) + "</b> for <b>" + esc(placement.team) + "</b>. If that's not right, tell me before you fill anything in."
+      : null;
+    const placeText = placement?.team && roleWord
+      ? "You're down as " + roleWord + " for " + placement.team + ". If that's not right, tell me before you fill anything in."
+      : null;
+
+    // Only ask for what we don't already have from the add form.
+    const stillNeed = [];
+    if (!row.phone) stillNeed.push("cell number");
+    if (!row.dob) stillNeed.push("date of birth");
+    stillNeed.push("home address", "legal name as it appears on your ID");
+    const needList = stillNeed.join(", ");
 
     const steps = [
-      "Create your login at " + APP_URL + " using this email address (" + email + "). You'll be approved automatically — no waiting.",
-      "Once you're in, the gear sizing form is at the top of your dashboard. It takes about a minute: shoes, t-shirt, sweatshirt, long sleeve, and the name you want on your backpack. We can't order gear in your size without it.",
+      { h: "Create your login",
+        t: "Go to " + APP_URL + " and sign up with this exact address (" + email + "). You'll be approved automatically — no waiting on anyone.",
+        b: '<a href="' + APP_URL + '" style="background:#e91e8c;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:700">Create my login &rarr;</a>' },
+      { h: "Install the app and turn notifications on",
+        t: "iPhone: open " + APP_URL + " in Safari, tap Share, then \"Add to Home Screen\". Android: open it in Chrome, tap the menu, then \"Install app\". Open it from your home screen and say Allow when it asks about notifications — that's how you get practice changes, schedule updates and shift offers. Notifications do NOT work until you install it to the home screen.",
+        b: null },
+      { h: "Fill in your details (about two minutes)",
+        t: "One form: " + needList + ", plus your USAV/AAU numbers if you have them, and any airline rewards numbers so the miles on flights we book come to you. Only the directors ever see these. Link: " + APP_URL + "/?view=home&open=confirm",
+        b: '<a href="' + APP_URL + '/?view=home&amp;open=confirm" style="background:#e91e8c;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:700">Open the details form &rarr;</a>' },
+      { h: "Give us your gear sizes",
+        t: "Shoes, t-shirt, sweatshirt, long sleeve, and the name you want on your backpack. We can't order in your size without it. Link: " + APP_URL + "/?view=home&open=gear",
+        b: '<a href="' + APP_URL + '/?view=home&amp;open=gear" style="background:transparent;border:1px solid #e91e8c;color:#e91e8c;padding:9px 17px;border-radius:8px;text-decoration:none;font-weight:700">Open the gear form &rarr;</a>' },
     ];
-    if (askLine) steps.push(askLine);
 
-    const text = "Hi " + first + ",\n\nWelcome to DS Elite Volleyball! A couple of quick things to get you set up:\n\n"
-      + steps.map((s, i) => (i + 1) + ") " + s).join("\n\n")
-      + "\n\nIf anything looks wrong or you have questions, just reply here.\n\nThanks,\nDrew";
+    const text = "Hi " + first + ",\n\nWelcome to DS Elite Volleyball!"
+      + (placeText ? " " + placeText : "")
+      + "\n\nFour things to get you set up — about five minutes all in:\n\n"
+      + steps.map((s, i) => (i + 1) + ") " + s.h.toUpperCase() + "\n   " + s.t).join("\n\n")
+      + "\n\nWhy the legal name matters: we book flights in the name on your government ID. A ticket that doesn't match can't be boarded, and airlines charge to fix it.\n\n"
+      + "If anything looks wrong or you have questions, just reply here.\n\nThanks,\nDrew";
+
     const bodyHtml = '<div style="font-family:sans-serif;font-size:14px;line-height:1.6">'
-      + "<p>Hi " + first + ",</p>"
-      + "<p>Welcome to DS Elite Volleyball! A couple of quick things to get you set up:</p>"
-      + "<ol>" + steps.map(s => "<li style=\"margin-bottom:10px\">" + s + "</li>").join("") + "</ol>"
-      + '<p><a href="' + APP_URL + '" style="background:#e91e8c;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:700">Set up my account &rarr;</a></p>'
+      + "<p>Hi " + esc(first) + ",</p>"
+      + "<p>Welcome to DS Elite Volleyball!" + (placeLine ? " " + placeLine : "") + "</p>"
+      + "<p>Four things to get you set up — about five minutes all in:</p>"
+      + '<ol style="padding-left:18px">'
+      + steps.map(s => '<li style="margin-bottom:16px"><b>' + esc(s.h) + "</b><br>" + esc(s.t).replace(/(https?:\/\/[^\s]+)/g, '<a href="$1">$1</a>')
+          + (s.b ? '<div style="margin-top:8px">' + s.b + "</div>" : "") + "</li>").join("")
+      + "</ol>"
+      + '<p style="background:#fdecef;border-left:3px solid #e91e8c;padding:9px 12px;font-size:13px">'
+      + "<b>Why the legal name matters:</b> we book flights in the name on your government ID. A ticket that doesn't match can't be boarded, and airlines charge to correct it.</p>"
       + "<p>If anything looks wrong or you have questions, just reply here.</p>"
       + "<p>Thanks,<br>Drew</p></div>";
-    const subject = "Welcome to DS Elite — a couple of things we need from you";
+    const subject = "Welcome to DS Elite — four things to get you set up";
 
     try {
       const res = await fetch("/api/send-email", {
@@ -9075,16 +9119,32 @@ export default function App() {
       };
       const { error } = await supabase.from("coach_roster").insert(row);
       if (error) { window.alert("Add failed: " + error.message); return; }
+      // Put them on the team straight away. teams.head_coach/assistant_coach is
+      // what travelStaffFor and the tournament staffing read, so a coach who
+      // isn't on it there is invisible to both no matter what else we record.
+      const fullName = (row.first_name + " " + row.last_name).trim();
+      const placement = { team: c.team.trim(), position: c.position };
+      if (placement.team && placement.position) {
+        const col = placement.position === "head" ? "head_coach" : "assistant_coach";
+        const patch = { [col]: fullName, updated_at: new Date().toISOString() };
+        const [t1, t2] = await Promise.all([
+          supabase.from("teams").update(patch).eq("id", placement.team),
+          supabase.from("practice_teams").update({ [col]: fullName }).eq("team_name", placement.team),
+        ]);
+        if (t1.error) window.alert("Coach saved, but assigning them to " + placement.team + " failed: " + t1.error.message);
+        loadTeamsList();
+      }
       // Onboard them: allowlist the address so signup auto-approves (otherwise
       // they sit on the Awaiting Approval screen and can't reach the gear form),
       // then ask for what we still need. Placeholder rows carry no email and
       // are skipped entirely.
       if (row.email) {
-        const onboard = await onboardNewCoach(row);
+        const onboard = await onboardNewCoach(row, placement);
         setAddingCoach(false);
         await loadCoachRoster();
         window.alert(onboard.ok
-          ? "Coach added. Welcome email sent to " + row.email + " and they'll be auto-approved when they sign up."
+          ? "Coach added" + (placement.team ? " as " + (placement.position === "head" ? "head" : "assistant") + " coach for " + placement.team : "")
+            + ". Welcome email sent to " + row.email + " — signup, app install + notifications, details form and gear form. They'll be auto-approved when they sign up."
           : "Coach added and allowlisted, but the welcome email didn't send: " + onboard.error + "\n\nYou can re-send it from the Coaches table.");
         return;
       }
@@ -9107,8 +9167,32 @@ export default function App() {
             <div><span style={lbl}>T-shirt</span><input style={editInp} value={newCoach.tshirt_size} onChange={e=>setF("tshirt_size",e.target.value)} placeholder="M" /></div>
             <div><span style={lbl}>Shoe</span><input style={editInp} value={newCoach.shoe_size} onChange={e=>setF("shoe_size",e.target.value)} placeholder="9.5 W" /></div>
             <div><span style={lbl}>Sweatshirt</span><input style={editInp} value={newCoach.sweatshirt_size} onChange={e=>setF("sweatshirt_size",e.target.value)} placeholder="L" /></div>
+            <div>
+              <span style={lbl}>Team</span>
+              <select style={editInp} value={newCoach.team} onChange={e=>setF("team",e.target.value)}>
+                <option value="">— not yet —</option>
+                {teamsList.filter(t=>t.active).map(t => <option key={t.id} value={t.id}>{t.id}</option>)}
+              </select>
+            </div>
+            <div>
+              <span style={lbl}>Position</span>
+              <select style={editInp} value={newCoach.position} onChange={e=>setF("position",e.target.value)}>
+                <option value="">— not yet —</option>
+                <option value="head">Head coach</option>
+                <option value="assistant">Assistant coach</option>
+              </select>
+            </div>
             <div style={{gridColumn:"1 / -1"}}><span style={lbl}>Notes</span><textarea style={{...editInp,minHeight:60,resize:"vertical"}} value={newCoach.notes} onChange={e=>setF("notes",e.target.value)} /></div>
           </div>
+          {newCoach.email.trim() && (
+            <div style={{background:C.bg,border:"1px solid "+C.border,borderRadius:9,padding:"9px 12px",marginBottom:12,fontSize:11,color:C.mut,lineHeight:1.6}}>
+              <b style={{color:C.text}}>On save they get one welcome email:</b><br />
+              1 · create their login (auto-approved) &nbsp; 2 · install the app + turn notifications on<br />
+              3 · details form — legal name, DOB, address, phone, USAV/AAU, airline rewards<br />
+              4 · gear sizes
+              {newCoach.team && newCoach.position ? <><br /><span style={{color:C.gold}}>It'll say they're {newCoach.position === "head" ? "head" : "assistant"} coach for {newCoach.team}.</span></> : null}
+            </div>
+          )}
           <div style={{fontSize:11,color:C.mut,marginBottom:12}}>Account-only settings (Approved, Admin, Teams access, Age groups) appear once the coach signs up with this email, or you can set them in the table after saving.</div>
           <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
             <button onClick={close} style={{padding:"10px 18px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Cancel</button>
@@ -10582,7 +10666,7 @@ export default function App() {
                 </button>
               );
             })()}
-            <button onClick={() => { setNewCoach({ first_name:"", last_name:"", email:"", phone:"", dob:"", tshirt_size:"", shoe_size:"", sweatshirt_size:"", notes:"" }); setAddingCoach(true); }}
+            <button onClick={() => { setNewCoach({ first_name:"", last_name:"", email:"", phone:"", dob:"", tshirt_size:"", shoe_size:"", sweatshirt_size:"", notes:"", team:"", position:"" }); setAddingCoach(true); }}
               style={{padding:"6px 14px",borderRadius:8,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>
               + Add Coach
             </button>
