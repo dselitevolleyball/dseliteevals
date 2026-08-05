@@ -90,10 +90,18 @@ export default async function handler(req, res) {
     try {
       const emails = [...new Set(targets.map(s => s.email).filter(Boolean))];
       if (emails.length) {
+        // Match on the BODY, not the subject. Callers decorate subjects
+        // ("… — DS Elite HQ") while the text stays identical, so a subject
+        // match missed a real duplicate: a coach with a stale bundle sent a
+        // push without skipEmail, we mirrored it, and 22 people got Kristen's
+        // registration note twice. The body is what actually repeats.
+        const probe = String(text || "").replace(/\s+/g, " ").trim().slice(0, 120);
         const { data: recent } = await supabase.from("email_log")
-          .select("id").eq("subject", title)
-          .gte("created_at", new Date(Date.now() - 120000).toISOString()).limit(1);
-        if (!recent?.length) {
+          .select("id, body")
+          .gte("created_at", new Date(Date.now() - 300000).toISOString()).limit(30);
+        const dup = probe.length > 20 && (recent || []).some(r =>
+          String(r.body || "").replace(/\s+/g, " ").trim().slice(0, 120) === probe);
+        if (!dup) {
           const origin = process.env.APP_URL || ("https://" + (req.headers["x-forwarded-host"] || req.headers.host));
           const r = await fetch(origin + "/api/send-email", {
             method: "POST", headers: { "Content-Type": "application/json" },

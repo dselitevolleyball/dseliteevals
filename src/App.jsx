@@ -6462,8 +6462,34 @@ export default function App() {
 
   // Admin-only sent-notification log: every update, its audience, and when.
   function renderNotifications() {
-    // Coaches see their own received-notification history (the same feed that
-    // drives the 🔔 bell, shown in full). Admins see the sent-log below.
+    // Everyone gets the received feed — it is what the bell shows, and an admin
+    // is a recipient too. Admins previously saw only the sent-log, so a message
+    // addressed to them was in the bell but absent from this page.
+    const receivedFeed = (
+      <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,marginBottom:16,overflow:"hidden"}}>
+        <div style={{padding:"10px 14px",borderBottom:"1px solid "+C.border,fontSize:12,fontWeight:800,color:C.text}}>
+          Sent to me <span style={{color:C.mut,fontWeight:500}}>· {notifications.filter(n=>!n.hidden).length}</span>
+        </div>
+        {notifications.filter(n=>!n.hidden).length === 0 && (
+          <div style={{padding:18,textAlign:"center",fontSize:12,color:C.mut}}>Nothing yet.</div>
+        )}
+        {notifications.filter(n=>!n.hidden).slice(0,60).map(n => {
+          const d = n.ts ? new Date(n.ts) : null;
+          return (
+            <button key={n.id} onClick={()=>{ if (n.msgId) { setOpenMsgId(n.msgId); return; } setView(n.view||"home"); }}
+              style={{display:"block",width:"100%",textAlign:"left",background:"transparent",border:"none",
+                borderTop:"1px solid "+C.border,padding:"9px 14px",cursor:"pointer",fontFamily:"inherit"}}>
+              <div style={{fontSize:9,fontWeight:800,letterSpacing:0.4,textTransform:"uppercase",
+                color:n.label==="Question"?"#f59e0b":n.label==="Answered"?C.grn:n.label==="Message"?C.gold:C.acc}}>
+                {n.label} · {d ? d.toLocaleDateString(undefined,{month:"short",day:"numeric"}) + " " + d.toLocaleTimeString(undefined,{hour:"numeric",minute:"2-digit"}) : ""}
+                {n.msgId ? " · tap to read" : ""}
+              </div>
+              <div style={{fontSize:12.5,color:C.text,marginTop:2,lineHeight:1.45,whiteSpace:"pre-wrap"}}>{n.text}</div>
+            </button>
+          );
+        })}
+      </div>
+    );
     if (!canOps) {
       const list = notifications;
       const labelColor = (l) => l === "Question" ? "#f59e0b" : l === "Answered" ? C.grn : C.acc;
@@ -6605,7 +6631,14 @@ export default function App() {
       <div style={{maxWidth:820}}>
         <div style={{marginBottom:14}}>
           <h2 style={{margin:0,fontSize:18,fontWeight:800,color:C.gold}}>Notifications</h2>
-          <div style={{fontSize:12,color:C.mut,marginTop:4}}>Send a targeted push + email to any slice of your staff, and review what's gone out.</div>
+          <div style={{fontSize:12,color:C.mut,marginTop:4}}>What's been sent to you, and the tools to send to your staff.</div>
+        </div>
+        {/* An admin receives messages too — this page used to show only the
+            outbound side, so anything addressed to them was in the bell but
+            nowhere on the page it links to. */}
+        {receivedFeed}
+        <div style={{marginBottom:14}}>
+          <div style={{fontSize:12,color:C.mut}}>Send a targeted push + email to any slice of your staff, and review what's gone out.</div>
         </div>
 
         {/* Changelog digest — approve before it goes to coaches */}
@@ -24535,7 +24568,11 @@ export default function App() {
                   const when = d ? d.toLocaleDateString(undefined,{month:"short",day:"numeric"}) + " " + d.toLocaleTimeString(undefined,{hour:"numeric",minute:"2-digit"}) : "";
                   const text = (n.text||"").length>110 ? (n.text||"").slice(0,110)+"…" : (n.text||"");
                   return (
-                    <button key={n.id} onClick={()=>{ setView(n.view||"home"); setOpenMenu(null); setNotifOpen(false); }}
+                    <button key={n.id} onClick={()=>{
+                        setOpenMenu(null); setNotifOpen(false);
+                        if (n.msgId) { setOpenMsgId(n.msgId); return; }
+                        setView(n.view||"home");
+                      }}
                       style={{display:"block",width:"100%",textAlign:"left",background:"transparent",border:"none",borderTop:"1px solid "+C.border,padding:"8px",cursor:"pointer",fontFamily:"inherit"}}>
                       <div style={{fontSize:9,fontWeight:800,letterSpacing:0.4,textTransform:"uppercase",color:n.label==="Question"?"#f59e0b":n.label==="Answered"?C.grn:C.acc}}>{n.label} · {when}</div>
                       <div style={{fontSize:12,color:C.text,marginTop:2,lineHeight:1.4,whiteSpace:"pre-wrap"}}>{text}</div>
