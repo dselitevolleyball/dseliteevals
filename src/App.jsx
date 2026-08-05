@@ -11793,7 +11793,10 @@ export default function App() {
             );
           })()}
 
-          {/* Contact info — editable */}
+          {/* Contact info — editable. Driven off the same field definitions the
+              coach's own form uses, so a column added there shows up here too.
+              Hand-listing them is why address, USAV/AAU, legal name and the
+              airline numbers were all collected but invisible on this card. */}
           {roster && (
             <div style={sectionBox}>
               <div style={lbl}>Contact <span style={{color:C.mut,fontWeight:600,textTransform:"none",letterSpacing:0}}>· edit any field</span></div>
@@ -11801,14 +11804,90 @@ export default function App() {
                 <div><div style={cFieldLbl}>First Name</div><DebouncedField style={cInp} placeholder="First" value={roster.first_name||""} onCommit={v=>updateRoster({first_name:v})} /></div>
                 <div><div style={cFieldLbl}>Last Name</div><DebouncedField style={cInp} placeholder="Last" value={roster.last_name||""} onCommit={v=>updateRoster({last_name:v})} /></div>
                 <div><div style={cFieldLbl}>Email</div><DebouncedField type="email" style={cInp} placeholder="email@example.com" value={roster.email||""} onCommit={v=>updateRoster({email:v})} /></div>
-                <div><div style={cFieldLbl}>Phone</div><DebouncedField style={cInp} placeholder="555-555-5555" value={roster.phone||""} onCommit={v=>updateRoster({phone:v})} /></div>
-                <div><div style={cFieldLbl}>Date of Birth</div><DebouncedField style={cInp} placeholder="1994-03-21" value={roster.dob||""} onCommit={v=>updateRoster({dob:v})} /></div>
+                {COACH_DETAIL_FIELDS.map(f => (
+                  <div key={f.key} style={f.wide ? {gridColumn:"1 / -1"} : undefined}>
+                    <div style={cFieldLbl}>
+                      {f.label}
+                      {f.required && !detailVal(roster, f.key) && <span style={{color:"#f59e0b"}}> · missing</span>}
+                    </div>
+                    <DebouncedField style={cInp} placeholder={f.ph} value={roster[f.key]||""} onCommit={v=>updateRoster({[f.key]:v})} />
+                  </div>
+                ))}
+              </div>
+
+              {/* Legal name carries a confirmation, not just a value — an
+                  unconfirmed one must not be treated as safe to book against. */}
+              <div style={{marginTop:12,padding:"10px 12px",borderRadius:9,
+                border:"1px solid "+(legalNameOk(roster)?C.grn:"#f59e0b"),
+                background:(legalNameOk(roster)?C.grn:"#f59e0b")+"11"}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:5}}>
+                  <span style={{...cFieldLbl,margin:0}}>Legal name — as on their ID</span>
+                  <span style={{fontSize:9,fontWeight:800,color:legalNameOk(roster)?C.grn:"#f59e0b"}}>
+                    {legalNameOk(roster) ? "✓ CONFIRMED BY THEM" : detailVal(roster,"legal_name") ? "NOT CONFIRMED" : "MISSING"}
+                  </span>
+                  <div style={{flex:1}} />
+                  {roster.legal_name_confirmed_at && (
+                    <span style={{fontSize:9.5,color:C.mut}}>
+                      {new Date(roster.legal_name_confirmed_at).toLocaleDateString(undefined,{month:"short",day:"numeric"})}
+                    </span>
+                  )}
+                </div>
+                <DebouncedField style={cInp} placeholder="Full name exactly as on the government ID"
+                  value={roster.legal_name||""} onCommit={v=>updateRoster({legal_name:v})} />
+                {!legalNameOk(roster) && (
+                  <div style={{fontSize:10,color:C.mut,marginTop:5,fontStyle:"italic"}}>
+                    Editing this here doesn't count as confirmation — only the coach can confirm it, from their dashboard.
+                  </div>
+                )}
+              </div>
+
+              <div style={{...cFieldLbl,marginTop:14,marginBottom:6}}>Airline rewards</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                {AIRLINE_FIELDS.map(f => (
+                  <div key={f.key}>
+                    <div style={cFieldLbl}>{f.label} <span style={{color:C.mut,fontWeight:500,textTransform:"none",letterSpacing:0}}>· {f.sub}</span></div>
+                    <DebouncedField style={cInp} placeholder="—" value={roster[f.key]||""} onCommit={v=>updateRoster({[f.key]:v})} />
+                  </div>
+                ))}
+              </div>
+
+              <div style={{...cFieldLbl,marginTop:14,marginBottom:6}}>Gear sizes</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
                 <div><div style={cFieldLbl}>T-shirt</div><DebouncedField style={cInp} placeholder="M" value={roster.tshirt_size||""} onCommit={v=>updateRoster({tshirt_size:v})} /></div>
                 <div><div style={cFieldLbl}>Shoe</div><DebouncedField style={cInp} placeholder="9.5 W" value={roster.shoe_size||""} onCommit={v=>updateRoster({shoe_size:v})} /></div>
                 <div><div style={cFieldLbl}>Sweatshirt</div><DebouncedField style={cInp} placeholder="L" value={roster.sweatshirt_size||""} onCommit={v=>updateRoster({sweatshirt_size:v})} /></div>
+                <div style={{display:"flex",alignItems:"center",gap:8,alignSelf:"end",paddingBottom:6}}>
+                  <input type="checkbox" checked={!!roster.own_room_club_paid} style={{width:15,height:15,accentColor:C.gold,cursor:"pointer"}}
+                    onChange={e=>updateRoster({own_room_club_paid:e.target.checked})} />
+                  <span style={{fontSize:11,color:C.text}}>Club pays their private room in full</span>
+                </div>
                 <div style={{gridColumn:"1 / -1"}}><div style={cFieldLbl}>Notes</div><DebouncedField multiline style={{...cInp,minHeight:54,resize:"vertical"}} placeholder="Notes…" value={roster.notes||""} onCommit={v=>updateRoster({notes:v})} /></div>
               </div>
               <div style={{fontSize:10,color:C.mut,marginTop:6,fontStyle:"italic"}}>Changing the name here won't rename their team assignments — if you rename a coach, re-pick their teams below (or update the team's HC/AC).</div>
+            </div>
+          )}
+
+          {/* No roster row at all — the coach exists as a login but nothing that
+              holds their details, so every form and chase silently skips them. */}
+          {!roster && (
+            <div style={{...sectionBox,border:"1px solid #f59e0b"}}>
+              <div style={{fontSize:13,fontWeight:800,color:"#f59e0b",marginBottom:4}}>No coach record for this login</div>
+              <div style={{fontSize:12,color:C.mut,lineHeight:1.6,marginBottom:10}}>
+                They can sign in, but there's nothing to hold their phone, date of birth, address or
+                legal name — so the details form never appears for them and every chase email skips
+                them. Their hours, gear and travel are keyed by name and are unaffected.
+              </div>
+              <button onClick={async () => {
+                  const nm = String(displayName || "").trim();
+                  const first = nm.split(/\s+/)[0] || nm, last = nm.split(/\s+/).slice(1).join(" ");
+                  if (!nm || !window.confirm("Create a coach record for " + nm + "?\n\nThey'll then get the details form and be included in the chases.")) return;
+                  const { error } = await supabase.from("coach_roster").insert({ first_name: first, last_name: last, email: coachesList.find(c => norm(c.display_name) === target)?.email || null });
+                  if (error) { window.alert("Couldn't create it: " + error.message); return; }
+                  await loadCoachRoster();
+                }}
+                style={{padding:"8px 16px",borderRadius:8,border:"none",background:C.gold,color:"#000",fontFamily:"inherit",fontSize:12,fontWeight:800,cursor:"pointer"}}>
+                Create their coach record
+              </button>
             </div>
           )}
 
