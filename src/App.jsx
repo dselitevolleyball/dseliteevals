@@ -14899,9 +14899,12 @@ export default function App() {
         }
         if (!res.ok) throw new Error(data.error || "Send failed");
         setEmailResult({ ...data, test: !!isTest });
-        // A test keeps them (you're about to send for real); a real send clears,
-        // so the next message doesn't quietly carry the last one's files.
-        if (!isTest) setEmailFiles([]);
+        // Attachments deliberately SURVIVE a send. Clearing them here meant a
+        // second send to another audience minutes later went out with nothing
+        // attached and no warning — 66 people got the deck, the next 161 did
+        // not. Carrying a file into a message you didn't intend is visible and
+        // recoverable; silently dropping one is neither. Remove them with the ×
+        // when you're done with them.
         // Log real sends to the shared history (test sends are not recorded).
         if (!isTest) {
           const { error: logErr } = await supabase.from("email_log").insert({
@@ -14928,6 +14931,11 @@ export default function App() {
         "Send this email to " + recipients.length + " email address" + (recipients.length === 1 ? "" : "es") + "?",
         "",
         "Covers " + recipientPlayers.length + " player" + (recipientPlayers.length === 1 ? "" : "s") + " in scope.",
+        // State the attachments here. A second send that quietly went without
+        // the file is exactly what this line is for.
+        emailFiles.length
+          ? "Attached: " + emailFiles.map(f => f.name).join(", ")
+          : "No attachments.",
       ];
       if (twoEmailCount > 0) {
         lines.push(twoEmailCount + " of them have two parent emails — both addresses will be emailed.");
