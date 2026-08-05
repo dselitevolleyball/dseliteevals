@@ -15,7 +15,8 @@
 //                 html?: boolean }   // body is plain text unless html=true
 // Response: { ok, sent, failed: [{ email, error }] }
 
-const RESEND_BATCH = "https://api.resend.com/emails/batch";
+const RESEND_BATCH  = "https://api.resend.com/emails/batch";
+const RESEND_SINGLE = "https://api.resend.com/emails";
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const chunk = (arr, n) => {
@@ -28,6 +29,10 @@ const extractAddress = (from) => {
   return m ? m[1] : String(from || "").trim();
 };
 const escapeHtml = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+// Sending with attachments is one request per recipient, so a large list needs
+// more than the default function timeout.
+export const config = { maxDuration: 300 };
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -129,32 +134,67 @@ export default async function handler(req, res) {
   }
 
   let sent = 0;
-  // Resend batch endpoint accepts up to 100 messages per request.
-  for (const group of chunk(valid, 100)) {
-    const payload = group.map(email => ({
-      from: DSE_FROM_EMAIL,
-      to: [email],
-      reply_to: replyTo,
-      subject,
-      html: htmlBody,
-      text,
-      ...(attachments.length ? { attachments } : {}),
-    }));
-    try {
-      const r = await fetch(RESEND_BATCH, {
-        method: "POST",
-        headers: { Authorization: "Bearer " + RESEND_API_KEY, "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const data = await r.json().catch(() => ({}));
-      if (!r.ok) {
-        const msg = (data && (data.message || data.error)) || ("Resend error " + r.status);
-        group.forEach(email => failed.push({ email, error: msg }));
-      } else {
-        sent += group.length;
+  const msgFor = (email) => ({
+    from: DSE_FROM_EMAIL, to: [email], reply_to: replyTo, subject, html: htmlBody, text,
+    ...(attachments.length ? { attachments } : {}),
+  });
+
+  if (attachments.length) {
+    // Resend's BATCH endpoint does not support attachments — it accepts the
+    // request, returns 200, and drops them. A deck went to 224 people that way.
+    // With attachments we must post one message at a time to /emails, which is
+    // the endpoint the payroll and reimbursement reports have always used.
+    // Bounded concurrency keeps us inside Resend's rate limit without taking
+    // one round-trip per recipient serially.
+    const LANES = 5;
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < valid.length) {
+        const email = valid[cursor++];
+        try {
+          const r = await fetch(RESEND_SINGLE, {
+            method: "POST",
+            headers: { Authorization: "Bearer " + RESEND_API_KEY, "Content-Type": "application/json" },
+            body: JSON.stringify(msgFor(email)),
+          });
+          if (r.ok) { sent++; continue; }
+          // 429 = rate limited. One backoff and retry before giving up on it.
+          if (r.status === 429) {
+            await new Promise(res => setTimeout(res, 1100));
+            const again = await fetch(RESEND_SINGLE, {
+              method: "POST",
+              headers: { Authorization: "Bearer " + RESEND_API_KEY, "Content-Type": "application/json" },
+              body: JSON.stringify(msgFor(email)),
+            });
+            if (again.ok) { sent++; continue; }
+          }
+          const data = await r.json().catch(() => ({}));
+          failed.push({ email, error: (data && (data.message || data.error)) || ("Resend error " + r.status) });
+        } catch (err) {
+          failed.push({ email, error: (err && err.message) || "request failed" });
+        }
       }
-    } catch (err) {
-      group.forEach(email => failed.push({ email, error: (err && err.message) || "request failed" }));
+    };
+    await Promise.all(Array.from({ length: Math.min(LANES, valid.length) }, worker));
+  } else {
+    // No attachments — batch is faster and unchanged.
+    for (const group of chunk(valid, 100)) {
+      try {
+        const r = await fetch(RESEND_BATCH, {
+          method: "POST",
+          headers: { Authorization: "Bearer " + RESEND_API_KEY, "Content-Type": "application/json" },
+          body: JSON.stringify(group.map(msgFor)),
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          const msg = (data && (data.message || data.error)) || ("Resend error " + r.status);
+          group.forEach(email => failed.push({ email, error: msg }));
+        } else {
+          sent += group.length;
+        }
+      } catch (err) {
+        group.forEach(email => failed.push({ email, error: (err && err.message) || "request failed" }));
+      }
     }
   }
 
