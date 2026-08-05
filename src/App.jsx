@@ -9476,7 +9476,7 @@ export default function App() {
       const res = await fetch("/api/send-email", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ subject, body: text, bodyHtml, recipients: [email] }),
+        body: JSON.stringify({ skipLog: true, subject, body: text, bodyHtml, recipients: [email] }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Send failed");
@@ -14708,7 +14708,7 @@ export default function App() {
         const res = await fetch("/api/send-email", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ subject: subj, body: emailMarkupToText(bod), bodyHtml: emailMarkupToHtml(bod), recipients: to }),
+          body: JSON.stringify({ skipLog: true, subject: subj, body: emailMarkupToText(bod), bodyHtml: emailMarkupToHtml(bod), recipients: to }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Send failed");
@@ -15135,7 +15135,7 @@ export default function App() {
         try {
           const res = await fetch("/api/send-email", {
             method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ subject: subj, body: emailMarkupToText(bod), bodyHtml: emailMarkupToHtml(bod), recipients: recips }),
+            body: JSON.stringify({ skipLog: true, subject: subj, body: emailMarkupToText(bod), bodyHtml: emailMarkupToHtml(bod), recipients: recips }),
           });
           const d = await res.json().catch(() => ({}));
           if (!res.ok) throw new Error(d.error || "Send failed");
@@ -15200,7 +15200,7 @@ export default function App() {
         try {
           const res = await fetch("/api/send-email", {
             method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ subject: subj, body: emailMarkupToText(bod), bodyHtml: emailMarkupToHtml(bod), recipients: [s.email] }),
+            body: JSON.stringify({ skipLog: true, subject: subj, body: emailMarkupToText(bod), bodyHtml: emailMarkupToHtml(bod), recipients: [s.email] }),
           });
           const d = await res.json().catch(() => ({}));
           if (!res.ok) throw new Error(d.error || "Send failed");

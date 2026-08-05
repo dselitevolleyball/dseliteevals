@@ -107,5 +107,40 @@ export default async function handler(req, res) {
     }
   }
 
+  // Log EVERY send, here, rather than trusting each caller to remember.
+  // The app sends mail from 25 places and only 4 of them were writing to
+  // email_log — so Kristen's USAV/Lone Star note went out with no record of it
+  // anywhere, and neither she nor Drew could find it afterwards. Logging at the
+  // one door every message goes through means no future feature can forget.
+  //
+  // Best-effort: a logging failure must never fail a send that already left.
+  try {
+    const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = process.env;
+    // The four composer paths write their own richer row (they know the
+      // audience and the sender); they pass skipLog so we don't duplicate it.
+      if (!body?.skipLog && SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY && (sent > 0 || failed.length)) {
+      const who = (body && typeof body.sentBy === "string" && body.sentBy.trim()) || null;
+      const whoEmail = (body && typeof body.sentByEmail === "string" && body.sentByEmail.trim()) || null;
+      // Which feature sent it, so an unattributed message is still traceable.
+      const src = (body && typeof body.source === "string" && body.source.trim()) || null;
+      await fetch(SUPABASE_URL + "/rest/v1/email_log", {
+        method: "POST",
+        headers: {
+          apikey: SUPABASE_SERVICE_ROLE_KEY,
+          Authorization: "Bearer " + SUPABASE_SERVICE_ROLE_KEY,
+          "Content-Type": "application/json",
+          Prefer: "return=minimal",
+        },
+        body: JSON.stringify({
+          subject, body: text.slice(0, 20000),
+          recipient_count: valid.length, recipients: valid.slice(0, 200),
+          sent_count: sent, failed_count: failed.length,
+          sent_by: who || (src ? "(" + src + ")" : "(unattributed)"),
+          sent_by_email: whoEmail,
+        }),
+      });
+    }
+  } catch (e) { console.error("email_log write failed (send already went out):", e?.message); }
+
   return res.status(200).json({ ok: failed.length === 0, sent, failed });
 }
