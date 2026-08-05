@@ -169,6 +169,15 @@ const airlineFieldFor = (airline) => {
   if (/united|\bua\b/.test(a))     return AIRLINE_FIELDS[3];
   return null;
 };
+// The club season runs 1 August to 31 July. Same rule as api/_lib/season.js;
+// duplicated rather than imported because that file is server-only.
+function clubSeasonFor(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || "").slice(0, 10));
+  if (!m) return null;
+  const year = +m[1], month = +m[2];
+  const start = month >= 8 ? year : year - 1;
+  return year ? start + "-" + String((start + 1) % 100).padStart(2, "0") : null;
+}
 const detailVal = (r, k) => String(r?.[k] ?? "").trim();
 const detailsMissing = (r) => COACH_DETAIL_FIELDS.filter(f => f.required && !detailVal(r, f.key));
 const detailsComplete = (r) => !!r && detailsMissing(r).length === 0;
@@ -1725,6 +1734,9 @@ export default function App() {
 
   const [players, setPlayers] = useState([]);
   const [playerEvals, setPlayerEvals] = useState([]);  // in-season evaluations
+  const [myClaims, setMyClaims]       = useState([]);  // coach expense claims
+  const [expClaim, setExpClaim]       = useState(null);// the claim being written
+  const [expBusy, setExpBusy]         = useState(false);
   const [evalTeam, setEvalTeam]       = useState("");  // which of my teams
   const [evalOpen, setEvalOpen]       = useState(null);// player id being evaluated
   const [evalDraft, setEvalDraft]     = useState(null);// the evaluation being written
@@ -1963,6 +1975,12 @@ export default function App() {
   // Load all players from Supabase
   // RLS returns a coach only their own teams' evaluations, so one query serves
   // both a coach and a director without branching.
+  const loadMyClaims = useCallback(async () => {
+    const { data, error } = await supabase.from("expenses").select("*")
+      .not("submitted_by", "is", null).order("submitted_at", { ascending: false });
+    if (error) { console.error("Load claims error:", error); return; }
+    setMyClaims(data || []);
+  }, []);
   const loadPlayerEvals = useCallback(async () => {
     const { data, error } = await supabase.from("player_evaluations").select("*").order("eval_date", { ascending: false });
     if (error) { console.error("Load player_evaluations error:", error); return; }
@@ -1986,6 +2004,7 @@ export default function App() {
   // crash on load; the evaluations view picks the roster up from the effect
   // that already loads it alongside the other team data.
   useEffect(() => { if (isApproved && (view === "playereval" || view === "roster")) loadPlayerEvals(); }, [isApproved, view, loadPlayerEvals]);
+  useEffect(() => { if (isApproved && (view === "myexpenses" || view === "finance")) loadMyClaims(); }, [isApproved, view, loadMyClaims]);
 
   // Per-coach favorites. RLS scopes rows to the signed-in coach, so a plain
   // select returns only this coach's shortlist.
@@ -5602,6 +5621,186 @@ export default function App() {
                 </span>
                 <span style={{color:C.mut,fontWeight:800,fontSize:12}}>›</span>
               </button>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  // Coach expense claims. Files into the same expenses table as club spend —
+  // RLS returns a coach only their own rows — so an approved claim is already
+  // in the finance totals and the accountant report with nothing to re-enter.
+  const EXPENSE_CATS = ["Travel","Tournament","Meals","Uniforms","Equipment and Supplies","Other"];
+
+
+  function renderMyExpenses() {
+    const clbl = {fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut,marginBottom:4,display:"block"};
+    const nrm = s => String(s || "").trim().toLowerCase();
+    const meName = coach?.display_name || "";
+    const rosterName = myRosterRow ? ((myRosterRow.first_name||"")+" "+(myRosterRow.last_name||"")).trim() : "";
+    const isMine = v => nrm(v) === nrm(meName) || (rosterName && nrm(v) === nrm(rosterName));
+    const mine = (myClaims || []).filter(c => isMine(c.submitted_by));
+    const money = n => "$" + Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const today = localDateISO();
+    const fmtD = iso => { try { return new Date(iso + "T12:00:00").toLocaleDateString(undefined,{month:"short",day:"numeric"}); } catch { return iso; } };
+    // Only tournaments this coach is actually on — a claim has to attach to one.
+    const myTns = (tournaments || []).filter(t => !t.cancelled && travelStaffFor(t.id).some(isMine))
+      .sort((a,b) => String(b.start_date).localeCompare(String(a.start_date)));
+
+    const d = expClaim;
+    const setF = (k, v) => setExpClaim(p => ({ ...p, [k]: v }));
+    const start = () => setExpClaim({ tournament_id:"", category:"Travel", amount:"", expense_date:today, item:"", file:null });
+
+    const submit = async () => {
+      if (!d) return;
+      if (!d.item.trim())            { window.alert("Say what the expense was for."); return; }
+      if (!(Number(d.amount) > 0))   { window.alert("Enter an amount."); return; }
+      if (!d.file)                   { window.alert("A receipt is required — attach a photo or PDF."); return; }
+      setExpBusy(true);
+      // Filed under the submitter's uid; the storage policy keys on that folder.
+      const safe = d.file.name.replace(/[^\w.\-]+/g, "_").slice(-60);
+      const path = `${coach.id}/${Date.now()}-${safe}`;
+      const up = await supabase.storage.from("receipts").upload(path, d.file, { contentType: d.file.type || undefined });
+      if (up.error) { setExpBusy(false); window.alert("Receipt upload failed: " + up.error.message); return; }
+      const tn = myTns.find(t => String(t.id) === String(d.tournament_id));
+      const { error } = await supabase.from("expenses").insert({
+        submitted_by: rosterName || meName, submitted_by_email: coach?.email || null,
+        submitted_at: new Date().toISOString(), reimburse_to: rosterName || meName,
+        status: "pending", source: "coach-claim",
+        tournament_id: d.tournament_id ? Number(d.tournament_id) : null,
+        category: d.category, allocation: null,
+        item: d.item.trim(), amount: Number(d.amount),
+        expense_date: d.expense_date || today,
+        season: clubSeasonFor(d.expense_date || today),
+        vendor: null, receipt_path: path, receipt_name: d.file.name,
+        notes: tn ? "Coach claim · " + tn.name : "Coach claim",
+      });
+      setExpBusy(false);
+      if (error) {
+        await supabase.storage.from("receipts").remove([path]);   // don't orphan the file
+        window.alert("Couldn't submit: " + error.message); return;
+      }
+      setExpClaim(null);
+      await loadMyClaims();
+    };
+
+    const openReceipt = async (c) => {
+      if (!c.receipt_path) return;
+      const { data, error } = await supabase.storage.from("receipts").createSignedUrl(c.receipt_path, 3600);
+      if (error) { window.alert("Couldn't open the receipt: " + error.message); return; }
+      window.open(data.signedUrl, "_blank", "noopener");
+    };
+
+    const owed = mine.filter(c => c.status === "approved" && !c.reimbursed).reduce((s,c)=>s+Number(c.amount||0),0);
+    const waiting = mine.filter(c => c.status === "pending").reduce((s,c)=>s+Number(c.amount||0),0);
+    const ST = { pending:["Waiting on approval","#f59e0b"], approved:["Approved","#22c55e"], rejected:["Not approved",C.red] };
+
+    return (
+      <div style={{padding:"18px 16px",maxWidth:820,margin:"0 auto"}}>
+        <h2 style={{margin:"0 0 2px",fontSize:20,fontWeight:800,color:C.gold}}>Expenses</h2>
+        <div style={{fontSize:12,color:C.mut,marginBottom:14}}>
+          Claim back what you spent at a tournament. A receipt is required — it's what the club's books are audited on.
+        </div>
+
+        <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:14}}>
+          <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:11,padding:"10px 14px",minWidth:150}}>
+            <div style={{fontSize:10,fontWeight:800,textTransform:"uppercase",color:C.mut}}>Owed to you</div>
+            <div style={{fontSize:19,fontWeight:800,color:owed?C.grn:C.text}}>{money(owed)}</div>
+            <div style={{fontSize:10,color:C.mut}}>approved, not yet paid</div>
+          </div>
+          <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:11,padding:"10px 14px",minWidth:150}}>
+            <div style={{fontSize:10,fontWeight:800,textTransform:"uppercase",color:C.mut}}>Waiting</div>
+            <div style={{fontSize:19,fontWeight:800,color:waiting?"#f59e0b":C.text}}>{money(waiting)}</div>
+            <div style={{fontSize:10,color:C.mut}}>still to be reviewed</div>
+          </div>
+          <div style={{flex:1}} />
+          {!d && (
+            <button onClick={start} style={{alignSelf:"center",padding:"9px 18px",borderRadius:8,border:"none",background:C.gold,color:"#000",fontFamily:"inherit",fontSize:13,fontWeight:800,cursor:"pointer"}}>
+              + Claim an expense
+            </button>
+          )}
+        </div>
+
+        {d && (
+          <div style={{background:C.card,border:"1px solid "+C.gold,borderRadius:12,padding:"14px 16px",marginBottom:16}}>
+            <div style={{fontSize:13,fontWeight:800,color:C.gold,marginBottom:12}}>New expense claim</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:11}}>
+              <div style={{gridColumn:"1 / -1"}}>
+                <div style={clbl}>Which tournament</div>
+                <select value={d.tournament_id} onChange={e=>setF("tournament_id", e.target.value)} style={{...inpStyle,width:"100%",padding:"8px 10px",fontSize:13}}>
+                  <option value="">— not tournament-related —</option>
+                  {myTns.map(t => <option key={t.id} value={t.id}>{t.start_date} · {t.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <div style={clbl}>What was it for</div>
+                <input value={d.item} onChange={e=>setF("item", e.target.value)} placeholder="Parking at the venue"
+                  style={{...inpStyle,width:"100%",padding:"8px 10px",fontSize:13}} />
+              </div>
+              <div>
+                <div style={clbl}>Category</div>
+                <select value={d.category} onChange={e=>setF("category", e.target.value)} style={{...inpStyle,width:"100%",padding:"8px 10px",fontSize:13}}>
+                  {EXPENSE_CATS.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+              <div>
+                <div style={clbl}>Amount</div>
+                <input type="number" step="0.01" min="0" value={d.amount} onChange={e=>setF("amount", e.target.value)} placeholder="0.00"
+                  style={{...inpStyle,width:"100%",padding:"8px 10px",fontSize:13}} />
+              </div>
+              <div>
+                <div style={clbl}>Date on the receipt</div>
+                <input type="date" value={d.expense_date} onChange={e=>setF("expense_date", e.target.value)}
+                  style={{...inpStyle,width:"100%",padding:"8px 10px",fontSize:13}} />
+              </div>
+              <div style={{gridColumn:"1 / -1"}}>
+                <div style={clbl}>Receipt — photo or PDF, required</div>
+                <input type="file" accept="image/*,application/pdf" onChange={e=>setF("file", e.target.files?.[0] || null)}
+                  style={{...inpStyle,width:"100%",padding:"7px 9px",fontSize:12}} />
+                {d.file && <div style={{fontSize:11,color:C.grn,marginTop:4}}>✓ {d.file.name} ({Math.round(d.file.size/1024)} KB)</div>}
+              </div>
+            </div>
+            <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:14}}>
+              <button onClick={()=>setExpClaim(null)} disabled={expBusy}
+                style={{padding:"9px 16px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontFamily:"inherit",fontSize:12,fontWeight:700,cursor:"pointer"}}>Cancel</button>
+              <button onClick={submit} disabled={expBusy}
+                style={{padding:"9px 20px",borderRadius:8,border:"none",background:C.grn,color:"#000",fontFamily:"inherit",fontSize:12,fontWeight:800,cursor:"pointer"}}>
+                {expBusy ? "Submitting…" : "Submit claim"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div style={{fontSize:11,fontWeight:800,textTransform:"uppercase",letterSpacing:0.4,color:C.mut,marginBottom:8}}>
+          My claims · {mine.length}
+        </div>
+        {mine.length === 0 && <div style={{fontSize:12,color:C.mut}}>Nothing claimed yet.</div>}
+        <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,overflow:"hidden"}}>
+          {mine.map((c, i) => {
+            const st = ST[c.status] || [c.status, C.mut];
+            const tn = (tournaments || []).find(t => t.id === c.tournament_id);
+            return (
+              <div key={c.id} style={{padding:"10px 14px",borderTop:i?"1px solid "+C.border:"none",display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+                <div style={{minWidth:190,flex:1}}>
+                  <div style={{fontSize:12.5,fontWeight:700,color:C.text}}>{c.item}</div>
+                  <div style={{fontSize:10.5,color:C.mut}}>
+                    {[fmtD(c.expense_date), c.category, tn?.name].filter(Boolean).join(" · ")}
+                  </div>
+                  {c.status === "rejected" && c.reject_note && (
+                    <div style={{fontSize:11,color:C.red,marginTop:3}}>{c.reject_note}</div>
+                  )}
+                </div>
+                {c.receipt_path && (
+                  <button onClick={()=>openReceipt(c)}
+                    style={{background:"none",border:"none",color:C.acc,cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:700,padding:0}}>Receipt</button>
+                )}
+                <span style={{fontSize:13,fontWeight:800,color:C.text,minWidth:74,textAlign:"right"}}>{money(c.amount)}</span>
+                <span style={{fontSize:9,fontWeight:800,padding:"2px 9px",borderRadius:999,whiteSpace:"nowrap",
+                  background:st[1]+"22",color:st[1],minWidth:110,textAlign:"center"}}>
+                  {c.reimbursed ? "PAID" : st[0]}
+                </span>
+              </div>
             );
           })}
         </div>
@@ -10031,6 +10230,15 @@ export default function App() {
     );
   }
 
+  // Receipts live in a private bucket, so viewing one means minting a
+  // short-lived signed URL rather than linking to a public path.
+  const openReceiptFor = async (e) => {
+    if (!e?.receipt_path) return;
+    const { data, error } = await supabase.storage.from("receipts").createSignedUrl(e.receipt_path, 3600);
+    if (error) { window.alert("Couldn't open the receipt: " + error.message); return; }
+    window.open(data.signedUrl, "_blank", "noopener");
+  };
+
   function renderFinance() {
     if (!isAdmin) return <div style={{padding:24,color:C.mut,textAlign:"center"}}>Finance is restricted to admins.</div>;
     const usd = (v) => (v == null ? "—" : (v < 0 ? "-$" : "$") + Math.abs(Number(v)).toLocaleString(undefined, { maximumFractionDigits: 0 }));
@@ -10282,7 +10490,19 @@ export default function App() {
                     {pending.map(e => (
                       <tr key={e.id}>
                         <td style={{...td,fontWeight:700,width:150,maxWidth:150,whiteSpace:"normal",
-                          overflowWrap:"anywhere",lineHeight:1.35}}>{e.vendor || "—"}</td>
+                          overflowWrap:"anywhere",lineHeight:1.35}}>
+                          {e.submitted_by ? (
+                            <>
+                              <span style={{color:C.gold}}>{e.submitted_by}</span>
+                              <div style={{fontSize:9,fontWeight:800,color:C.gold,letterSpacing:0.3}}>COACH CLAIM · REIMBURSE</div>
+                              {e.receipt_path
+                                ? <button onClick={()=>openReceiptFor(e)}
+                                    style={{marginTop:3,padding:"2px 8px",borderRadius:6,border:"1px solid "+C.acc,background:"transparent",
+                                      color:C.acc,fontFamily:"inherit",fontSize:10,fontWeight:700,cursor:"pointer"}}>View receipt</button>
+                                : <div style={{fontSize:9,color:C.red,fontWeight:700,marginTop:2}}>no receipt</div>}
+                            </>
+                          ) : (e.vendor || "—")}
+                        </td>
                         <td style={{...td,color:C.mut,width:260,maxWidth:260,whiteSpace:"normal",
                           overflowWrap:"anywhere",lineHeight:1.35}} title={e.email_subject || e.item}>{e.item}</td>
                         {(() => {
@@ -23861,11 +24081,11 @@ export default function App() {
                   ["tracker","Tracker"], ["teamdir","All Teams"], ["playereval","Player Evaluations"], ["practice","Practice"], ["sa","S&A Schedule"], ["clinics","DSSC Clinics"], ["dssccal","DSSC Coaches"], ["dsysa","DSYSA Clinics"], ["scholarships","Scholarships"],
                   ...(isAdmin ? [["hawaii","Hawaii"], ["travel","Travel"], ["finance","Finance"]] : []),
                   ["hdr","Coaches & Pay"],
-                  ["coaches","Coaches"], ["coverage","Coach Coverage"], ["timecards","Time Cards"], ["dssctime","DSSC Hours"], ["gear","Gear Sizes" + (gearOutstanding ? " (" + gearOutstanding + ")" : "")], ["requests","Requests" + (pendingReqs ? " (" + pendingReqs + ")" : "")],
+                  ["coaches","Coaches"], ["coverage","Coach Coverage"], ["timecards","Time Cards"], ["dssctime","DSSC Hours"], ["myexpenses","My Expenses"], ["gear","Gear Sizes" + (gearOutstanding ? " (" + gearOutstanding + ")" : "")], ["requests","Requests" + (pendingReqs ? " (" + pendingReqs + ")" : "")],
                   ["hdr","Communication"],
                   ["email","Email"], ["messages","Messages (SMS)" + (totalUnread > 0 ? " (" + totalUnread + ")" : "")], ["notifications","Notifications"], ["coachcomms","Coach Comms"], ["assignments","Assignments"],
                 ] }] : []),
-                { title:"More", items:[...(canOps ? [] : [["dssctime","DSSC Hours"]]), ["activity","Activity"], ["faq","FAQ"], ["games","Games"], ...(isOwner ? [["askai","Ask AI"]] : [])] },
+                { title:"More", items:[...(canOps ? [] : [["dssctime","DSSC Hours"],["myexpenses","My Expenses"]]), ["activity","Activity"], ["faq","FAQ"], ["games","Games"], ...(isOwner ? [["askai","Ask AI"]] : [])] },
               ];
               // Mobile: one hamburger opening a full-height grouped menu.
               if (isNarrow) {
@@ -24086,6 +24306,7 @@ export default function App() {
         {view==="dssccal" && renderDsscCal()}
         {view==="dssctime" && renderDsscTime()}
         {view==="playereval" && renderPlayerEvals()}
+        {view==="myexpenses" && renderMyExpenses()}
         {view==="travel" && renderTravel()}
         {view==="faq" && renderFaq()}
         {view==="practiceplan" && renderPracticePlans()}
