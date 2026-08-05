@@ -2439,6 +2439,13 @@ export default function App() {
   // DSSC Hours, or a coach's own schedule. It reuses the existing detail inside
   // renderClinics rather than growing a second, thinner copy of it; "clinics"
   // isn't an ops-only view, so a coach following one of these lands on it too.
+  const openTournament = (id) => {
+    const tn = (tournaments || []).find(t => t.id === id);
+    if (!tn) return;
+    if (!canOps) { setCoachCardName(null); setTeamCardName(null); setView("tournaments"); return; }
+    setCoachCardName(null);
+    openEditTournament(tn);
+  };
   const openClinic = (id, from) => {
     if (!id) return;
     // Remember where they were so "back" returns there. Landing on the full
@@ -6748,7 +6755,8 @@ export default function App() {
                   </div>
                 ))}
                 {selT.map((x,i) => (
-                  <div key={"t"+i} style={{display:"flex",alignItems:"center",gap:8,fontSize:13}}>
+                  <div key={"t"+i} onClick={()=>openTournament(x.tn.id)} title="Open this tournament"
+                    style={{display:"flex",alignItems:"center",gap:8,fontSize:13,cursor:"pointer"}}>
                     <span style={{width:6,height:6,borderRadius:3,background:TNC,flexShrink:0}} />
                     <span style={{flex:1,color:C.text,fontWeight:600}} title={x.tn.name}><b style={{color:TNC}}>{tnAbbr(x.tn.name)}</b> <span style={{fontWeight:500}}>{x.tn.name}</span> <span style={{color:C.mut,fontWeight:500}}>· {x.team}</span>{x.tn.location && <span style={{color:C.mut,fontWeight:500}}> · 📍{shortCity(x.tn.location)}</span>}{x.sub && <span style={{color:"#a855f7",fontWeight:800,marginLeft:4,fontSize:9}}>SHIFT</span>}{x.tn.is_qualifier && <span style={{color:"#a855f7",fontWeight:800,marginLeft:4,fontSize:9}}>QUAL</span>}</span>
                     <span style={{fontSize:10,fontWeight:800,color:TNC,textTransform:"uppercase"}}>Tourn.</span>
@@ -11918,7 +11926,10 @@ export default function App() {
                   const mates = coachTravel.filter(x => x.room_id && x.room_id === t.room_id && norm(x.coach_name) !== target).map(x => x.coach_name);
                   return (
                     <div key={t.id} style={{borderTop:"1px solid "+C.border,padding:"8px 0",fontSize:12}}>
-                      <div style={{fontWeight:700,color:C.text}}>{tn.name}</div>
+                      <button onClick={()=>openTournament(tn.id)} title="Open this tournament"
+                        style={{display:"block",textAlign:"left",background:"none",border:"none",padding:0,cursor:"pointer",fontFamily:"inherit",fontWeight:700,fontSize:12,color:C.text}}>
+                        <span style={{borderBottom:"1px dotted "+C.mut}}>{tn.name}</span><span style={{color:C.mut}}> ›</span>
+                      </button>
                       <div style={{color:C.mut,fontSize:11,marginTop:3,display:"flex",gap:12,flexWrap:"wrap"}}>
                         {(() => { const e = effFlight(t, t.tournament_id); return (
                           <span>{e.airline || "Airline TBD"} · out {fmt(e.depart_date)}{fmtFlightTime(e.depart_time) ? " " + fmtFlightTime(e.depart_time) : ""} · back {fmt(e.return_date)}{fmtFlightTime(e.return_time) ? " " + fmtFlightTime(e.return_time) : ""}{e.onMaster ? "" : " · own booking"}</span>
@@ -12170,7 +12181,10 @@ export default function App() {
                 {coachTournaments.map(({tournament:tn, team, ...a}, i) => { const st = tnStatusMeta(a.status); return (
                   <div key={i} style={{padding:"6px 10px",background:C.card,borderRadius:6,border:"1px solid "+C.border,borderLeft:"4px solid "+st.color,fontSize:12}}>
                     <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                      <span style={{fontWeight:700,color:C.text,flex:1}}>{tn.name}</span>
+                      <button onClick={()=>openTournament(tn.id)} title="Open this tournament"
+                        style={{flex:1,textAlign:"left",background:"none",border:"none",padding:0,cursor:"pointer",fontFamily:"inherit",fontWeight:700,fontSize:12,color:C.text}}>
+                        <span style={{borderBottom:"1px dotted "+C.mut}}>{tn.name}</span><span style={{color:C.mut}}> ›</span>
+                      </button>
                       <span style={{fontSize:9,fontWeight:800,textTransform:"uppercase",letterSpacing:0.3,color:st.color,background:st.color+"22",border:"1px solid "+st.color,borderRadius:999,padding:"1px 8px"}}>{st.label}</span>
                       <span onClick={()=>{ setCoachCardName(null); setTeamCardName(team); }} style={{fontSize:11,fontWeight:700,color:C.gold,cursor:"pointer",textDecoration:"underline",textDecorationColor:"transparent"}}
                         onMouseEnter={e=>e.currentTarget.style.textDecorationColor=C.gold}
