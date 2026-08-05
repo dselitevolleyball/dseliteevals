@@ -82,18 +82,45 @@ export default async function handler(req, res) {
   // Resend caps a message at ~40MB, but the practical ceiling is the recipient's
   // mail server — 15MB total keeps us inside what Gmail and Outlook accept, and
   // failing here is far better than every send bouncing later.
-  const rawAtt = Array.isArray(body && body.attachments) ? body.attachments : [];
+  // Attachments arrive as STORAGE PATHS, not bytes. Posting base64 in the body
+  // hit Vercel's 4.5MB request cap the moment a file passed ~3MB, and Vercel
+  // answers that with a plain-text 413 — which the client then failed to parse
+  // as JSON ("Unexpected token 'R'"). Fetching from storage here keeps the
+  // request tiny whatever the file size.
+  //
+  // Legacy inline attachments are still accepted so nothing half-deployed breaks.
   const attachments = [];
   let attBytes = 0;
-  for (const a of rawAtt) {
+  for (const a of (Array.isArray(body?.attachments) ? body.attachments : [])) {
     const filename = String(a?.filename || "").trim();
     const content = String(a?.content || "").replace(/^data:[^;]*;base64,/, "");
     if (!filename || !content) continue;
     attBytes += Math.ceil(content.length * 3 / 4);
     attachments.push({ filename, content, ...(a?.contentType ? { content_type: String(a.contentType) } : {}) });
   }
-  if (attBytes > 15 * 1024 * 1024) {
-    return res.status(400).json({ error: "Attachments total " + (attBytes / 1048576).toFixed(1) + "MB. Keep them under 15MB — most mail servers reject more." });
+  const paths = Array.isArray(body?.attachmentPaths) ? body.attachmentPaths : [];
+  if (paths.length) {
+    const { SUPABASE_URL: SU, SUPABASE_SERVICE_ROLE_KEY: SK } = process.env;
+    if (!SU || !SK) return res.status(500).json({ error: "Storage is not configured, so attachments can't be sent." });
+    for (const p of paths) {
+      const path = String(p?.path || "").trim();
+      const filename = String(p?.filename || path.split("/").pop() || "attachment").trim();
+      if (!path) continue;
+      try {
+        const r = await fetch(SU + "/storage/v1/object/email-attachments/" + path.split("/").map(encodeURIComponent).join("/"),
+          { headers: { apikey: SK, Authorization: "Bearer " + SK } });
+        if (!r.ok) return res.status(400).json({ error: "Couldn't read the attachment " + filename + " (" + r.status + ")." });
+        const buf = Buffer.from(await r.arrayBuffer());
+        attBytes += buf.length;
+        attachments.push({ filename, content: buf.toString("base64") });
+      } catch (e) {
+        return res.status(400).json({ error: "Couldn't read the attachment " + filename + ": " + (e?.message || "unknown") });
+      }
+    }
+  }
+  // Resend allows ~40MB but recipients' mail servers are the real ceiling.
+  if (attBytes > 20 * 1024 * 1024) {
+    return res.status(400).json({ error: "Attachments total " + (attBytes / 1048576).toFixed(1) + "MB. Keep them under 20MB — most mail servers reject more." });
   }
 
   let sent = 0;

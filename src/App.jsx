@@ -14876,9 +14876,18 @@ export default function App() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ skipLog: true, subject: subj, body: emailMarkupToText(bod), bodyHtml: emailMarkupToHtml(bod), recipients: to,
-            attachments: emailFiles.map(f => ({ filename: f.name, content: f.b64, contentType: f.type })) }),
+            attachmentPaths: emailFiles.map(f => ({ filename: f.name, path: f.path })) }),
         });
-        const data = await res.json();
+        // Vercel answers an oversized or timed-out request with plain text, so
+        // parsing blind turned a real error into "Unexpected token 'R'".
+        const raw = await res.text();
+        let data = {};
+        try { data = raw ? JSON.parse(raw) : {}; }
+        catch {
+          throw new Error(res.status === 413
+            ? "That request was too large for the server. Attach the file again — it should upload to storage now rather than being sent inline."
+            : "Server error " + res.status + ": " + raw.slice(0, 120));
+        }
         if (!res.ok) throw new Error(data.error || "Send failed");
         setEmailResult({ ...data, test: !!isTest });
         // A test keeps them (you're about to send for real); a real send clears,
@@ -15308,7 +15317,7 @@ export default function App() {
           const res = await fetch("/api/send-email", {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ skipLog: true, subject: subj, body: emailMarkupToText(bod), bodyHtml: emailMarkupToHtml(bod), recipients: recips,
-              attachments: emailFiles.map(a => ({ filename: a.name, content: a.b64, contentType: a.type })) }),
+              attachmentPaths: emailFiles.map(a => ({ filename: a.name, path: a.path })) }),
           });
           const d = await res.json().catch(() => ({}));
           if (!res.ok) throw new Error(d.error || "Send failed");
@@ -15374,7 +15383,7 @@ export default function App() {
           const res = await fetch("/api/send-email", {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ skipLog: true, subject: subj, body: emailMarkupToText(bod), bodyHtml: emailMarkupToHtml(bod), recipients: [s.email],
-              attachments: emailFiles.map(a => ({ filename: a.name, content: a.b64, contentType: a.type })) }),
+              attachmentPaths: emailFiles.map(a => ({ filename: a.name, path: a.path })) }),
           });
           const d = await res.json().catch(() => ({}));
           if (!res.ok) throw new Error(d.error || "Send failed");
@@ -15661,22 +15670,22 @@ export default function App() {
                 const picked = [...(ev.target.files || [])]; ev.target.value = "";
                 if (!picked.length) return;
                 setEmailAttBusy(true);
+                // Uploaded to storage, not embedded in the send. A base64 file
+                // in the request body hits Vercel's 4.5MB cap at about 3MB and
+                // comes back as a plain-text 413.
                 const read = [];
                 for (const f of picked) {
-                  try {
-                    const b64 = await new Promise((res, rej) => {
-                      const r = new FileReader();
-                      r.onload = () => res(String(r.result).replace(/^data:[^;]*;base64,/, ""));
-                      r.onerror = rej; r.readAsDataURL(f);
-                    });
-                    read.push({ name: f.name, size: f.size, type: f.type, b64 });
-                  } catch { window.alert("Couldn't read " + f.name + "."); }
+                  const safe = f.name.replace(/[^\w.\-]+/g, "_").slice(-70);
+                  const path = coach.id + "/" + Date.now() + "-" + safe;
+                  const up = await supabase.storage.from("email-attachments").upload(path, f, { contentType: f.type || undefined });
+                  if (up.error) { window.alert("Couldn't upload " + f.name + ": " + up.error.message); continue; }
+                  read.push({ name: f.name, size: f.size, type: f.type, path });
                 }
                 setEmailFiles(prev => {
                   const next = [...prev, ...read];
                   const total = next.reduce((n, x) => n + x.size, 0);
-                  if (total > 15 * 1024 * 1024) {
-                    window.alert("That's " + (total / 1048576).toFixed(1) + "MB of attachments. Most mail servers reject over 15MB — remove something or send a link instead.");
+                  if (total > 20 * 1024 * 1024) {
+                    window.alert("That's " + (total / 1048576).toFixed(1) + "MB of attachments. Most mail servers reject over 20MB — remove something or send a link instead.");
                     return prev;
                   }
                   return next;
