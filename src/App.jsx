@@ -1429,6 +1429,7 @@ export default function App() {
 
   // Practice Plans (per scheduled practice date — see renderPracticePlans).
   const [ppPlans, setPpPlans]   = useState([]);   // saved practice_plans rows
+  const [ppDocBusy, setPpDocBusy] = useState(false); // uploading/parsing a plan doc
   const [ppTeam, setPpTeam]     = useState("");   // selected team
   const [ppOpenId, setPpOpenId] = useState(null); // open plan row id
   const [ppDraft, setPpDraft]   = useState(null); // working copy of the open plan
@@ -16838,6 +16839,152 @@ export default function App() {
         </div>
       </div>
     );
+    // ── Send a plan to Coach T for a quick review ────────────────────────
+    // Same flow as the DSSC clinic plans that already work: draft → submitted →
+    // approved or changes. The uploaded original is kept next to the parsed
+    // blocks, because reading a plan means seeing what the coach wrote, not
+    // only what the parser made of it.
+    const planRow = ppOpenId ? ppPlans.find(p => p.id === ppOpenId) : null;
+    const PLAN_REVIEWERS = ["tionne@drippingsportsclub.com", "drew@dselitevolleyball.com"];
+    const patchPlan = async (patch) => {
+      if (!ppOpenId) return;
+      const { error } = await supabase.from("practice_plans").update(patch).eq("id", ppOpenId);
+      if (error) { window.alert("Couldn't save: " + error.message); return false; }
+      setPpPlans(prev => prev.map(p => p.id === ppOpenId ? { ...p, ...patch } : p));
+      return true;
+    };
+    const submitForReview = async () => {
+      if (!planRow) return;
+      const blocks = Array.isArray(ppDraft?.blocks) ? ppDraft.blocks : [];
+      if (!blocks.some(b => String(b.name || "").trim())) { window.alert("Add at least one block before sending it for review."); return; }
+      const who = coach?.display_name || coach?.email || "";
+      if (!await patchPlan({ plan_status:"submitted", submitted_by:who, submitted_at:new Date().toISOString(), review_notes:null })) return;
+      const when = planRow.practice_date;
+      const body = who + " sent a practice plan for review.\n\n" + planRow.team_name + " · " + when
+        + (planRow.slot ? " · " + planRow.slot : "") + "\n" + blocks.length + " blocks"
+        + (planRow.source_file_name ? "\nUploaded: " + planRow.source_file_name : "")
+        + "\n\nOpen DS Elite HQ → Practice to approve it or ask for changes.";
+      fetch("/api/send-push", { method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ title:"Practice plan to review — " + planRow.team_name,
+          body: who + " · " + when, url:"/?view=practiceplan", audience:{ type:"emails", emails: PLAN_REVIEWERS } }) }).catch(()=>{});
+      fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ subject:"Practice plan for review — " + planRow.team_name + " " + when,
+          body, recipients: PLAN_REVIEWERS }) }).catch(()=>{});
+      window.alert("Sent to Coach T for review.");
+    };
+    const decidePlan = async (ok) => {
+      if (!planRow) return;
+      const who = coach?.display_name || coach?.email || "";
+      let note = null;
+      if (!ok) {
+        note = window.prompt("What needs changing? This goes to " + (planRow.submitted_by || "the coach") + ".");
+        if (note === null) return;
+      }
+      if (!await patchPlan({ plan_status: ok ? "approved" : "changes", reviewed_by: who,
+                             reviewed_at: new Date().toISOString(), review_notes: note })) return;
+      const r = coachRoster.find(x => norm(((x.first_name||"")+" "+(x.last_name||"")).trim()) === norm(planRow.submitted_by));
+      const em = r?.email || null;
+      if (em) {
+        const subject = ok ? "Practice plan approved — " + planRow.team_name : "Practice plan — changes requested";
+        const body = ok
+          ? "Your " + planRow.team_name + " plan for " + planRow.practice_date + " is approved. Nothing else needed."
+          : "Your " + planRow.team_name + " plan for " + planRow.practice_date + " needs a change before it's approved:\n\n"
+            + note + "\n\nOpen DS Elite HQ → Practice to revise and resend.";
+        fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({ subject, body, recipients:[em] }) }).catch(()=>{});
+        fetch("/api/send-push", { method:"POST", headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({ title: subject, body: ok ? "Approved ✓" : note.slice(0,90),
+            url:"/?view=practiceplan", audience:{ type:"email", email: em } }) }).catch(()=>{});
+      }
+    };
+    const openPlanDoc = async () => {
+      if (!planRow?.source_file_path) return;
+      const { data, error } = await supabase.storage.from("plan-docs").createSignedUrl(planRow.source_file_path, 3600);
+      if (error) { window.alert("Couldn't open it: " + error.message); return; }
+      window.open(data.signedUrl, "_blank", "noopener");
+    };
+    const uploadPlanDoc = async (file) => {
+      if (!file || !ppOpenId) return;
+      setPpDocBusy(true);
+      const safe = file.name.replace(/[^\w.\-]+/g, "_").slice(-70);
+      const path = `${coach.id}/${Date.now()}-${safe}`;
+      const up = await supabase.storage.from("plan-docs").upload(path, file, { contentType: file.type || undefined });
+      if (up.error) { setPpDocBusy(false); window.alert("Upload failed: " + up.error.message); return; }
+      await patchPlan({ source_file_path: path, source_file_name: file.name });
+      // Hand it to the parser so the blocks fill in — the coach can still edit
+      // afterwards, and the original stays attached either way.
+      try {
+        const b64 = await new Promise((res, rej) => { const r = new FileReader(); r.onload=()=>res(String(r.result)); r.onerror=rej; r.readAsDataURL(file); });
+        const resp = await fetch("/api/read-practice-plan", { method:"POST", headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({ file: b64, filename: file.name, mediaType: file.type,
+            library: drills.map(d => ({ name:d.name, skill:d.skill, phase:d.phase, minutes:d.minutes, level:d.level })) }) });
+        const d = await resp.json();
+        if (resp.ok && Array.isArray(d?.plan?.blocks) && d.plan.blocks.length) {
+          const blocks = d.plan.blocks.map((b,i) => ({ id:"b"+Date.now()+i, name:b.name||"", skill:b.skill||"", phase:b.phase||"", minutes:Number(b.minutes)||10, desc:b.desc||"" }));
+          setPpDraft(p => ({ ...p, blocks: [...(p?.blocks||[]).filter(x=>String(x.name||"").trim()), ...blocks] }));
+          window.alert("Read " + blocks.length + " blocks from " + file.name + ".\n\nCheck them over — it's an interpretation, not gospel."
+            + (d.plan.unreadable?.length ? "\n\nCouldn't read: " + d.plan.unreadable.join(", ") : ""));
+        } else {
+          window.alert("Attached " + file.name + ", but couldn't read blocks out of it. Add them by hand — the file stays attached for the reviewer.");
+        }
+      } catch { window.alert("Attached, but the parser didn't respond. Add the blocks by hand."); }
+      setPpDocBusy(false);
+    };
+
+    const PLANST = { draft:["Draft",C.mut], submitted:["Waiting on Coach T","#f59e0b"],
+                     approved:["✓ Approved",C.grn], changes:["Changes requested",C.red] };
+    const reviewBar = planRow && (() => {
+      const st = PLANST[planRow.plan_status || "draft"];
+      const canReview = canOps;
+      const mine = !planRow.submitted_by || norm(planRow.submitted_by) === norm(coach?.display_name);
+      return (
+        <div style={{background:C.card,border:"1px solid "+st[1],borderRadius:11,padding:"10px 13px",marginBottom:12,
+          display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+          <span style={{fontSize:11,fontWeight:800,color:st[1]}}>{st[0]}</span>
+          {planRow.submitted_by && planRow.plan_status !== "draft" && (
+            <span style={{fontSize:11,color:C.mut}}>from {planRow.submitted_by}</span>
+          )}
+          {planRow.reviewed_by && (planRow.plan_status === "approved" || planRow.plan_status === "changes") && (
+            <span style={{fontSize:11,color:C.mut}}>· reviewed by {planRow.reviewed_by}</span>
+          )}
+          <div style={{flex:1}} />
+          {planRow.source_file_path && (
+            <button onClick={openPlanDoc}
+              style={{padding:"4px 11px",borderRadius:7,border:"1px solid "+C.acc,background:"transparent",color:C.acc,fontFamily:"inherit",fontSize:11,fontWeight:700,cursor:"pointer"}}>
+              {planRow.source_file_name?.slice(0,26) || "Uploaded plan"}
+            </button>
+          )}
+          <label style={{padding:"4px 11px",borderRadius:7,border:"1px solid "+C.border,color:C.mut,fontSize:11,fontWeight:700,cursor:"pointer"}}>
+            {ppDocBusy ? "Reading…" : planRow.source_file_path ? "Replace file" : "Upload a plan"}
+            <input type="file" accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.csv" style={{display:"none"}}
+              disabled={ppDocBusy} onChange={e => { const f = e.target.files?.[0]; e.target.value=""; uploadPlanDoc(f); }} />
+          </label>
+          {(planRow.plan_status === "draft" || planRow.plan_status === "changes") && (
+            <button onClick={submitForReview}
+              style={{padding:"5px 14px",borderRadius:8,border:"none",background:C.gold,color:"#000",fontFamily:"inherit",fontSize:12,fontWeight:800,cursor:"pointer"}}>
+              Send to Coach T
+            </button>
+          )}
+          {planRow.plan_status === "submitted" && canReview && (
+            <>
+              <button onClick={()=>decidePlan(false)}
+                style={{padding:"5px 12px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontFamily:"inherit",fontSize:12,fontWeight:700,cursor:"pointer"}}>Ask for changes</button>
+              <button onClick={()=>decidePlan(true)}
+                style={{padding:"5px 14px",borderRadius:8,border:"none",background:C.grn,color:"#000",fontFamily:"inherit",fontSize:12,fontWeight:800,cursor:"pointer"}}>Approve</button>
+            </>
+          )}
+          {planRow.plan_status === "submitted" && !canReview && mine && (
+            <span style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>Sent — you'll hear back by email.</span>
+          )}
+          {planRow.plan_status === "changes" && planRow.review_notes && (
+            <div style={{width:"100%",fontSize:12,color:C.red,marginTop:4}}>
+              <b>Coach T asked for:</b> {planRow.review_notes}
+            </div>
+          )}
+        </div>
+      );
+    })();
+
     const teamBar = (<>
       {tabBar}
       <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:14}}>
@@ -16847,6 +16994,7 @@ export default function App() {
         </select>
         {ppDraft && <span style={{fontSize:11,color:ppSaved==="err"?C.red:C.mut}}>{ppSaved==="saving"?"Saving…":ppSaved==="saved"?"Saved ✓":ppSaved==="err"?"Save failed":""}</span>}
       </div>
+      {reviewBar}
     </>);
 
     // ── Drills tab — the shared library, browse + add ─────────────────────
