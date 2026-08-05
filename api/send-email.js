@@ -142,5 +142,27 @@ export default async function handler(req, res) {
     }
   } catch (e) { console.error("email_log write failed (send already went out):", e?.message); }
 
-  return res.status(200).json({ ok: failed.length === 0, sent, failed });
+  // …and the same rule the other way: an email is also a notification.
+  // Callers that already push pass skipPush. Mirrored pushes carry skipEmail so
+  // send-push does not bounce a second email straight back.
+  let pushed = 0;
+  if (!body?.skipPush && valid.length) {
+    try {
+      const origin = process.env.APP_URL || ("https://" + (req.headers["x-forwarded-host"] || req.headers.host));
+      const r = await fetch(origin + "/api/send-push", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: subject,
+          body: text.replace(/\s+/g, " ").slice(0, 160),
+          url: (body && typeof body.url === "string" && body.url) || "/?view=home",
+          audience: { type: "emails", emails: valid },
+          skipEmail: true,
+        }),
+      });
+      const d = await r.json().catch(() => ({}));
+      pushed = Number(d?.sent) || 0;
+    } catch (e) { console.error("email→push mirror failed (email already sent):", e?.message); }
+  }
+
+  return res.status(200).json({ ok: failed.length === 0, sent, failed, pushed });
 }

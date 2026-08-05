@@ -2837,7 +2837,7 @@ export default function App() {
     await loadUpdates();
     const tn = (teamName || "").trim();
     fetch("/api/send-push", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: tn ? "DS Elite · " + tn : "DS Elite Update", body: b, url: "/", audience: tn ? { type: "team", team: tn } : { type: "all" } }) }).catch(() => {});
+      body: JSON.stringify({ skipEmail: true, title: tn ? "DS Elite · " + tn : "DS Elite Update", body: b, url: "/", audience: tn ? { type: "team", team: tn } : { type: "all" } }) }).catch(() => {});
     // Also email the update — and invite people into the app with a login link.
     const approvedCoaches = (coachesList || []).filter(c => c.is_approved && c.email);
     let recipients = approvedCoaches.map(c => c.email);
@@ -2856,7 +2856,7 @@ export default function App() {
     if (recipients.length) {
       const emailBody = b + "\n\n—\nOpen DS Elite HQ to see practices, schedules, tournaments, and your to-do list:\n" + APP_URL + "\n\nLog in with your coach email. Need access? Contact Drew.";
       fetch("/api/send-email", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ subject: "DS Elite HQ" + (tn ? " · " + tn : "") + " — New Update", body: emailBody, recipients }) }).catch(() => {});
+        body: JSON.stringify({ skipPush: true, subject: "DS Elite HQ" + (tn ? " · " + tn : "") + " — New Update", body: emailBody, recipients }) }).catch(() => {});
     }
   }, [coach, loadUpdates, coachesList, practiceTeams]);
   const deleteUpdate = useCallback(async (id) => {
@@ -3096,10 +3096,10 @@ export default function App() {
       : `Hi ${firstName},\n\nYour request to be off on ${date} is approved (${teamList})${covWho ? ` — ${covWho} will cover` : ""}. Nothing else you need to do.\n\nThanks!\nDS Elite`;
     try {
       if (email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-        await fetch("/api/send-email", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ subject, body, recipients: [email] }) });
+        await fetch("/api/send-email", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ skipPush: true, subject, body, recipients: [email] }) });
       }
       await fetch("/api/send-push", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: subject, body: anyNeedsCoverage ? "Please arrange your own sub." : "You're covered — nothing to do.", url: "/", audience: email ? { type: "email", email } : { type: "admins" } }) });
+        body: JSON.stringify({ skipEmail: true, title: subject, body: anyNeedsCoverage ? "Please arrange your own sub." : "You're covered — nothing to do.", url: "/", audience: email ? { type: "email", email } : { type: "admins" } }) });
     } catch (e) { console.error("notify coach failed", e); }
 
     return { anyNeedsCoverage, coveredBy: [...new Set(coveredBy)], teams: teamsCovered, emailed: !!email };
@@ -3251,8 +3251,8 @@ export default function App() {
         bodyText = "All DS Elite practices on " + prettyDate + " are CANCELLED" + (row.reason ? " (" + row.reason + ")" : "") + ". If this is a mistake, reach out to a director right away.";
         audience = { type: "all" };
       }
-      fetch("/api/send-push", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title, body: bodyText, url: "/?view=practice", audience }) }).catch(() => {});
-      if (emails.length) fetch("/api/send-email", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ subject: title + " — DS Elite HQ", body: bodyText, recipients: emails }) }).catch(() => {});
+      fetch("/api/send-push", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ skipEmail: true, title, body: bodyText, url: "/?view=practice", audience }) }).catch(() => {});
+      if (emails.length) fetch("/api/send-email", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ skipPush: true, subject: title + " — DS Elite HQ", body: bodyText, recipients: emails }) }).catch(() => {});
     }
   }, [practiceCancellations, coach, coachRoster, practiceTeams, loadPracticeCancellations]);
   // Coach emails the director a potential practice-schedule change request.
@@ -3274,7 +3274,7 @@ export default function App() {
       const res = await fetch("/api/send-email", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ subject, body: lines.join("\n"), recipients: [DIRECTOR_EMAIL], replyTo: coach?.email || "" }),
+        body: JSON.stringify({ skipPush: true, subject, body: lines.join("\n"), recipients: [DIRECTOR_EMAIL], replyTo: coach?.email || "" }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || "Send failed");
@@ -3651,8 +3651,8 @@ export default function App() {
     const subject = fill(tmpl?.subject) || `Reminder: post to your ${statusRow.team_name} team`;
     const body = fill(tmpl?.body) || `Please post an update to your ${statusRow.team_name} team on SportsYou.`;
     try {
-      if (emails.length) await fetch("/api/send-email", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ subject, body, recipients: emails }) });
-      await fetch("/api/send-push", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: `Post to your ${statusRow.team_name} team`, body: body.slice(0, 120), url: "/", audience: { type: "team", team: statusRow.team_name, excludeAdmins: true } }) });
+      if (emails.length) await fetch("/api/send-email", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ skipPush: true, subject, body, recipients: emails }) });
+      await fetch("/api/send-push", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ skipEmail: true, title: `Post to your ${statusRow.team_name} team`, body: body.slice(0, 120), url: "/", audience: { type: "team", team: statusRow.team_name, excludeAdmins: true } }) });
     } catch (e) { console.error("remind failed", e); }
     // Log what was sent so it can be read back later.
     await supabase.from("comm_reminder_log").insert({
@@ -5274,12 +5274,12 @@ export default function App() {
     let ok = false;
     try {
       const res = await fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ subject: x.subject, body: x.text, bodyHtml: x.html, recipients: [x.r.email] }) });
+        body: JSON.stringify({ skipPush: true, subject: x.subject, body: x.text, bodyHtml: x.html, recipients: [x.r.email] }) });
       ok = res.ok;
     } catch { ok = false; }
     try {
       await fetch("/api/send-push", { method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ title:"Confirm your travel details", body: x.push, url:"/?view=home",
+        body: JSON.stringify({ skipEmail: true, title:"Confirm your travel details", body: x.push, url:"/?view=home",
           audience:{ type:"email", email:x.r.email } }) });
     } catch { /* push is best-effort */ }
     return ok;
@@ -6168,12 +6168,12 @@ export default function App() {
       for (const r of withEmail) {
         try {
           const res = await fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"},
-            body: JSON.stringify({ subject, body: bodyFor(r.name), recipients: [r.email] }) });
+            body: JSON.stringify({ skipPush: true, subject, body: bodyFor(r.name), recipients: [r.email] }) });
           if (res.ok) emailed++;
         } catch { /* keep going — one bad address shouldn't stop the rest */ }
         try {
           const res = await fetch("/api/send-push", { method:"POST", headers:{"Content-Type":"application/json"},
-            body: JSON.stringify({ title:"Gear sizes needed by " + dlShort, body:"One minute — shoes, tee, sweatshirt, long sleeve, backpack name.",
+            body: JSON.stringify({ skipEmail: true, title:"Gear sizes needed by " + dlShort, body:"One minute — shoes, tee, sweatshirt, long sleeve, backpack name.",
               url:"/?view=home", audience:{ type:"email", email:r.email } }) });
           const d = await res.json().catch(()=>({}));
           if (res.ok) pushed += (d.sent || 0);
@@ -6500,8 +6500,8 @@ export default function App() {
       const emailBody = notif.msg.trim() + "\n\n—\nOpen DS Elite HQ: " + APP_URL + "\nLog in with your coach email.";
       try {
         await Promise.all([
-          fetch("/api/send-push", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ title, body: notif.msg.trim(), url:"/", audience:{ type:"emails", emails: recipEmails } }) }),
-          fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ subject: title + " — DS Elite HQ", body: emailBody, recipients: recipEmails }) }),
+          fetch("/api/send-push", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ skipEmail: true, title, body: notif.msg.trim(), url:"/", audience:{ type:"emails", emails: recipEmails } }) }),
+          fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ skipPush: true, subject: title + " — DS Elite HQ", body: emailBody, recipients: recipEmails }) }),
         ]);
         setNotif(n => ({ ...n, sending:false, sent: recipEmails.length, msg:"", subject:"" }));
       } catch (e) { window.alert("Send failed: " + (e.message||e)); setNotif(n => ({ ...n, sending:false })); }
@@ -6536,8 +6536,8 @@ export default function App() {
       if (!window.confirm("Send this changelog to all coaches (push + email)?")) return;
       const short = bodyText.length > 280 ? bodyText.slice(0,277)+"…" : bodyText;
       await Promise.all([
-        fetch("/api/send-push", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ title: bc.title, body: short, url:"/", audience:{ type:"all" } }) }),
-        emails.length ? fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ subject: bc.title, body: bodyText + "\n\n" + APP_URL, recipients: emails }) }) : Promise.resolve(),
+        fetch("/api/send-push", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ skipEmail: true, title: bc.title, body: short, url:"/", audience:{ type:"all" } }) }),
+        emails.length ? fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ skipPush: true, subject: bc.title, body: bodyText + "\n\n" + APP_URL, recipients: emails }) }) : Promise.resolve(),
       ]).catch(()=>{});
       await supabase.from("changelog_broadcasts").update({ status:"sent", body: bodyText, approved_by: coach?.display_name||coach?.email||null, sent_at: new Date().toISOString(), sent_count: emails.length }).eq("id", bc.id);
       const ids = bc.entry_ids || [];
@@ -9750,10 +9750,10 @@ export default function App() {
       const body = "You're on the DSSC clinic \"" + r.clinicName + "\" on " + when + " at " + r.start
         + (r.court ? " (" + r.court + ")" : "") + ".\n\nOpen DS Elite HQ → DSSC Hours to clock in.";
       fetch("/api/send-push", { method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ title:"DSSC session — " + when, body: r.clinicName + " · " + r.start, url:"/?view=dssctime",
+        body: JSON.stringify({ skipEmail: true, title:"DSSC session — " + when, body: r.clinicName + " · " + r.start, url:"/?view=dssctime",
           audience: email ? { type:"emails", emails:[email] } : { type:"all" } }) }).catch(()=>{});
       if (email) fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ subject:"DSSC session — " + when, body, recipients:[email] }) }).catch(()=>{});
+        body: JSON.stringify({ skipPush: true, subject:"DSSC session — " + when, body, recipients:[email] }) }).catch(()=>{});
     };
 
     // One session row, used by both the day panel and the list view.
@@ -10781,12 +10781,12 @@ export default function App() {
                 const first = (r.first_name || "there").trim();
                 try {
                   const res = await fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"},
-                    body: JSON.stringify({ subject: "Can you help with a DSYSA clinic?", body: body.replace("{{FIRST}}", first), recipients: [r.email] }) });
+                    body: JSON.stringify({ skipPush: true, subject: "Can you help with a DSYSA clinic?", body: body.replace("{{FIRST}}", first), recipients: [r.email] }) });
                   res.ok ? sent++ : failed++;
                 } catch { failed++; }
                 try {
                   await fetch("/api/send-push", { method:"POST", headers:{"Content-Type":"application/json"},
-                    body: JSON.stringify({ title: "DSYSA clinics need coaches",
+                    body: JSON.stringify({ skipEmail: true, title: "DSYSA clinics need coaches",
                       body: needing.length + " Monday date" + (needing.length===1?"":"s") + " still short — tap to sign up.",
                       url: "/?view=dsysa", audience: { type:"email", email: r.email } }) });
                 } catch { /* push is best-effort */ }
@@ -11217,6 +11217,77 @@ export default function App() {
             <h2 style={{margin:0,fontSize:18,fontWeight:800,color:C.gold}}>Coaches</h2>
             <div style={{fontSize:11,color:C.mut,marginTop:2}}>{merged.length} total · {coachesList.length} with login · {pending.length} awaiting approval</div>
           </div>
+        {/* Legal names — who has confirmed the name that goes on a ticket.
+            A value someone typed is not the same as a coach confirming it, so
+            these are counted separately: only a confirmation is safe to book
+            against. */}
+        {(() => {
+          const people = coachRoster
+            .filter(r => detailVal(r, "email") && !isPlaceholderPerson(((r.first_name||"")+" "+(r.last_name||"")).trim()))
+            .map(r => ({ r, name: ((r.first_name||"")+" "+(r.last_name||"")).trim(),
+                         legal: detailVal(r, "legal_name"), ok: legalNameOk(r) }))
+            .sort((a, b) => (a.ok === b.ok ? a.name.localeCompare(b.name) : a.ok ? 1 : -1));
+          if (!people.length) return null;
+          const done = people.filter(p => p.ok);
+          const typedNotConfirmed = people.filter(p => !p.ok && p.legal);
+          const missing = people.filter(p => !p.ok && !p.legal);
+          // Anyone the club is actually buying a ticket for.
+          const flying = new Set((coachTravel || []).filter(t => !t.private_owner && t.travel_mode === "fly_club")
+            .map(t => String(t.coach_name || "").trim().toLowerCase()));
+          const blocking = people.filter(p => !p.ok && flying.has(p.name.toLowerCase()));
+          const fmt = ts => { try { return new Date(ts).toLocaleDateString(undefined,{month:"short",day:"numeric"}); } catch { return ""; } };
+          return (
+            <details style={{background:C.card,border:"1px solid "+(blocking.length ? C.red : C.border),borderRadius:12,marginBottom:12}}>
+              <summary style={{padding:"10px 14px",cursor:"pointer",fontSize:12,fontWeight:800,color:C.text,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+                <span>Legal names confirmed</span>
+                <span style={{fontSize:13,fontWeight:800,color:done.length===people.length?C.grn:"#f59e0b"}}>
+                  {done.length}/{people.length}
+                </span>
+                {blocking.length > 0 && (
+                  <span style={{fontSize:10,fontWeight:800,color:C.red,border:"1px solid "+C.red,borderRadius:999,padding:"1px 8px"}}>
+                    {blocking.length} we're booking flights for
+                  </span>
+                )}
+              </summary>
+              <div style={{padding:"0 14px 12px"}}>
+                <div style={{fontSize:11,color:C.mut,lineHeight:1.6,marginBottom:10,maxWidth:640}}>
+                  Only the coach can confirm their own legal name, from their dashboard. A name an admin
+                  typed in still counts as unconfirmed — the point is that <i>they</i> checked it against the ID
+                  they'll actually fly with.
+                </div>
+                {[["Not confirmed — we're booking their flight", blocking, C.red],
+                  ["Typed in, but not confirmed by them", typedNotConfirmed.filter(p => !blocking.includes(p)), "#f59e0b"],
+                  ["No legal name at all", missing.filter(p => !blocking.includes(p)), "#f59e0b"],
+                  ["Confirmed", done, C.grn]].map(([label, group, color]) => group.length ? (
+                  <div key={label} style={{marginBottom:10}}>
+                    <div style={{fontSize:10,fontWeight:800,textTransform:"uppercase",letterSpacing:0.4,color,marginBottom:4}}>
+                      {label} · {group.length}
+                    </div>
+                    {group.map(p => (
+                      <div key={p.r.id} style={{display:"flex",alignItems:"center",gap:8,padding:"3px 0",fontSize:12,flexWrap:"wrap"}}>
+                        <button onClick={()=>setCoachCardName(p.name)}
+                          style={{background:"none",border:"none",padding:0,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700,color:C.text,minWidth:150,textAlign:"left"}}>
+                          <span style={{borderBottom:"1px dotted "+C.mut}}>{p.name}</span>
+                        </button>
+                        <span style={{flex:1,minWidth:150,color:p.legal?C.text:C.mut,fontStyle:p.legal?"normal":"italic"}}>
+                          {p.legal || "— none on file —"}
+                        </span>
+                        {p.legal && p.legal.toLowerCase() !== p.name.toLowerCase() && (
+                          <span title="Differs from the name we know them by — this is the one that goes on the ticket"
+                            style={{fontSize:9,fontWeight:800,color:C.acc}}>DIFFERS</span>
+                        )}
+                        <span style={{fontSize:10,color:C.mut,minWidth:52,textAlign:"right"}}>
+                          {p.ok ? fmt(p.r.legal_name_confirmed_at) : ""}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : null)}
+              </div>
+            </details>
+          );
+        })()}
+
           <div style={{display:"flex",gap:8}}>
             {/* One ask covering the three things blocking bookings. Opens a
                 preview so you can read exactly what each coach receives before
@@ -16397,8 +16468,8 @@ export default function App() {
       const emails = [...new Set((coachesList||[]).filter(c=>c.is_approved && c.email).map(c=>c.email))];
       const title = "Playbook — for review: " + en.title;
       const body = (en.author_name?en.author_name+" shared: ":"For review: ") + en.title + (en.body?"\n\n"+en.body:"") + (en.cues?"\n\nCues: "+en.cues:"") + "\n\nOpen Practice → Playbook: " + APP_URL;
-      fetch("/api/send-push", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ title:"Playbook: review “"+en.title+"”", body: en.body||"Tap to review.", url:"/?view=practiceplan&tab=playbook", audience:{ type:"all" } }) }).catch(()=>{});
-      if (emails.length) fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ subject:title, body, recipients: emails }) }).catch(()=>{});
+      fetch("/api/send-push", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ skipEmail: true, title:"Playbook: review “"+en.title+"”", body: en.body||"Tap to review.", url:"/?view=practiceplan&tab=playbook", audience:{ type:"all" } }) }).catch(()=>{});
+      if (emails.length) fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ skipPush: true, subject:title, body, recipients: emails }) }).catch(()=>{});
       window.alert("Sent to " + emails.length + " coaches for review.");
     };
     // Admin elevates a contribution to a golden standard.
@@ -16426,8 +16497,8 @@ export default function App() {
       // Notify coaches to re-read + re-affirm.
       const emails = [...new Set((coachesList||[]).filter(c=>c.is_approved && c.email).map(c=>c.email))];
       const body = "The DS Elite Coaching Playbook was updated to v" + (ver+1) + (note.trim()?": " + note.trim():".") + "\n\nOpen the Practice > Playbook tab to read and affirm it.\n" + APP_URL;
-      fetch("/api/send-push", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ title:"Coaching Playbook updated — v"+(ver+1), body: note.trim()||"Please read and affirm.", url:"/?view=practiceplan&tab=playbook", audience:{ type:"all" } }) }).catch(()=>{});
-      if (emails.length) fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ subject:"Coaching Playbook updated — please affirm", body, recipients: emails }) }).catch(()=>{});
+      fetch("/api/send-push", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ skipEmail: true, title:"Coaching Playbook updated — v"+(ver+1), body: note.trim()||"Please read and affirm.", url:"/?view=practiceplan&tab=playbook", audience:{ type:"all" } }) }).catch(()=>{});
+      if (emails.length) fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ skipPush: true, subject:"Coaching Playbook updated — please affirm", body, recipients: emails }) }).catch(()=>{});
       await loadPlaybook();
       window.alert("Published v" + (ver+1) + " and notified coaches.");
     };
@@ -16445,9 +16516,9 @@ export default function App() {
       const targets = onlyUnsigned ? outstanding : approved;
       const emails = [...new Set(targets.filter(c => c.email).map(c => c.email))];
       const link = "?view=practiceplan&tab=playbook";
-      fetch("/api/send-push", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ title:"Review the Coaching Playbook", body:"Please read & affirm the DS Elite Manifesto (v"+ver+"). Tap to open it.", url:"/"+link, audience: onlyUnsigned ? { type:"emails", emails } : { type:"all" } }) }).catch(()=>{});
+      fetch("/api/send-push", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ skipEmail: true, title:"Review the Coaching Playbook", body:"Please read & affirm the DS Elite Manifesto (v"+ver+"). Tap to open it.", url:"/"+link, audience: onlyUnsigned ? { type:"emails", emails } : { type:"all" } }) }).catch(()=>{});
       const emailBody = "Please take a few minutes to read and affirm the DS Elite Coaching Playbook / Manifesto (v" + ver + ").\n\nOpen it here: " + APP_URL + link + "\n(or go to Practice → Playbook → Manifesto in the app.)";
-      if (emails.length) fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ subject:"Please review the Coaching Playbook", body: emailBody, recipients: emails }) }).catch(()=>{});
+      if (emails.length) fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ skipPush: true, subject:"Please review the Coaching Playbook", body: emailBody, recipients: emails }) }).catch(()=>{});
       window.alert("Reminder sent" + (onlyUnsigned ? " to " + emails.length + " coach" + (emails.length===1?"":"es") + " who haven't affirmed" : " to all coaches") + ".");
     };
 
@@ -16865,10 +16936,10 @@ export default function App() {
         + (planRow.source_file_name ? "\nUploaded: " + planRow.source_file_name : "")
         + "\n\nOpen DS Elite HQ → Practice to approve it or ask for changes.";
       fetch("/api/send-push", { method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ title:"Practice plan to review — " + planRow.team_name,
+        body: JSON.stringify({ skipEmail: true, title:"Practice plan to review — " + planRow.team_name,
           body: who + " · " + when, url:"/?view=practiceplan", audience:{ type:"emails", emails: PLAN_REVIEWERS } }) }).catch(()=>{});
       fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ subject:"Practice plan for review — " + planRow.team_name + " " + when,
+        body: JSON.stringify({ skipPush: true, subject:"Practice plan for review — " + planRow.team_name + " " + when,
           body, recipients: PLAN_REVIEWERS }) }).catch(()=>{});
       window.alert("Sent to Coach T for review.");
     };
@@ -16891,9 +16962,9 @@ export default function App() {
           : "Your " + planRow.team_name + " plan for " + planRow.practice_date + " needs a change before it's approved:\n\n"
             + note + "\n\nOpen DS Elite HQ → Practice to revise and resend.";
         fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"},
-          body: JSON.stringify({ subject, body, recipients:[em] }) }).catch(()=>{});
+          body: JSON.stringify({ skipPush: true, subject, body, recipients:[em] }) }).catch(()=>{});
         fetch("/api/send-push", { method:"POST", headers:{"Content-Type":"application/json"},
-          body: JSON.stringify({ title: subject, body: ok ? "Approved ✓" : note.slice(0,90),
+          body: JSON.stringify({ skipEmail: true, title: subject, body: ok ? "Approved ✓" : note.slice(0,90),
             url:"/?view=practiceplan", audience:{ type:"email", email: em } }) }).catch(()=>{});
       }
     };
@@ -18174,8 +18245,8 @@ export default function App() {
         const email = coachEmail(nm);
         const list = byCoach[nm].sort((a,b)=>(a.date||"").localeCompare(b.date||"")).map(s => new Date(s.date+"T12:00:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"})+" · "+s.start_time+(s.court?" · "+s.court:"")).join("\n");
         const body = "You're assigned to coach the DSSC clinic \""+c.name+"\" ("+byCoach[nm].length+" session"+(byCoach[nm].length===1?"":"s")+"):\n"+list+"\n\nOpen DS Elite HQ → DSSC to see the plan and clock in for each session.";
-        fetch("/api/send-push", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ title:"DSSC clinic assignment — "+c.name, body: byCoach[nm].length+" session"+(byCoach[nm].length===1?"":"s")+". Tap to view.", url:"/?view=clinics", audience: email ? { type:"emails", emails:[email] } : { type:"all" } }) }).catch(()=>{});
-        if (email) fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ subject:"DSSC clinic assignment — "+c.name, body, recipients:[email] }) }).catch(()=>{});
+        fetch("/api/send-push", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ skipEmail: true, title:"DSSC clinic assignment — "+c.name, body: byCoach[nm].length+" session"+(byCoach[nm].length===1?"":"s")+". Tap to view.", url:"/?view=clinics", audience: email ? { type:"emails", emails:[email] } : { type:"all" } }) }).catch(()=>{});
+        if (email) fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ skipPush: true, subject:"DSSC clinic assignment — "+c.name, body, recipients:[email] }) }).catch(()=>{});
       });
       if ((c.status||"planned")==="planned") saveClinic(c.id, { status:"assigned" });
       window.alert("Notified "+names.length+" coach"+(names.length===1?"":"es")+".");
@@ -18190,8 +18261,8 @@ export default function App() {
     };
     const directorList = [...new Set([...DSSC_DIRECTOR_EMAILS, ...OWNER_EMAILS])];
     const notifyDirectors = (title, body) => {
-      fetch("/api/send-push", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ title, body, url:"/?view=clinics", audience:{ type:"emails", emails: directorList } }) }).catch(()=>{});
-      fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ subject: title, body, recipients: directorList }) }).catch(()=>{});
+      fetch("/api/send-push", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ skipEmail: true, title, body, url:"/?view=clinics", audience:{ type:"emails", emails: directorList } }) }).catch(()=>{});
+      fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ skipPush: true, subject: title, body, recipients: directorList }) }).catch(()=>{});
     };
     // Planning status helper.
     const clinicPlanned = c => { const p=c.plan||{}; const hasBlocks=Array.isArray(p.blocks)&&p.blocks.some(b=>(b.name||"").trim()||(b.desc||"").trim()); return !!((c.goals||"").trim()||(c.focus||"").trim()||(c.expectations||"").trim()||hasBlocks); };
@@ -18203,8 +18274,8 @@ export default function App() {
       if (!window.confirm("Remind Hunter to plan "+need.length+" upcoming clinic"+(need.length===1?"":"s")+"?")) return;
       const list = need.map(c => "• "+c.name).join("\n");
       const emails = [...new Set(DSSC_DIRECTOR_EMAILS)];
-      fetch("/api/send-push", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ title:"Plan your DSSC clinics", body: need.length+" clinic"+(need.length===1?"":"s")+" need a plan & notes. Tap to plan.", url:"/?view=clinics", audience:{ type:"emails", emails } }) }).catch(()=>{});
-      fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ subject:"Plan your DSSC clinics — "+need.length+" upcoming", body:"These upcoming DSSC clinics still need a plan & notes:\n"+list+"\n\nOpen DS Elite HQ → DSSC to add goals, session focus and a plan (light or detailed).", recipients: emails }) }).catch(()=>{});
+      fetch("/api/send-push", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ skipEmail: true, title:"Plan your DSSC clinics", body: need.length+" clinic"+(need.length===1?"":"s")+" need a plan & notes. Tap to plan.", url:"/?view=clinics", audience:{ type:"emails", emails } }) }).catch(()=>{});
+      fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ skipPush: true, subject:"Plan your DSSC clinics — "+need.length+" upcoming", body:"These upcoming DSSC clinics still need a plan & notes:\n"+list+"\n\nOpen DS Elite HQ → DSSC to add goals, session focus and a plan (light or detailed).", recipients: emails }) }).catch(()=>{});
       window.alert("Reminded Hunter about "+need.length+" clinic"+(need.length===1?"":"s")+".");
     };
     // Coach gives up a session and asks for coverage; anyone can claim it.
@@ -18242,8 +18313,8 @@ export default function App() {
       if (!emails.length) { window.alert("No coach emails on file to invite."); return; }
       if (!window.confirm("Ask all "+emails.length+" coaches if they're interested in coaching DSSC clinics? (push + email)")) return;
       const body = "We're building out the DSSC clinic coaching pool. Interested in picking up clinic sessions? All clinic coaching pays $25/hr and is separate from DS Elite.\n\nOpen DS Elite HQ → DSSC and tap \"Yes, I'm interested\" — then add what you can coach and when you're free so we can match you to sessions.";
-      fetch("/api/send-push", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ title:"Interested in coaching DSSC clinics?", body:"Tap to join the clinic coach pool — $25/hr, flexible sessions.", url:"/?view=clinics", audience:{ type:"emails", emails } }) }).catch(()=>{});
-      fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ subject:"Interested in coaching DSSC clinics? ($25/hr)", body, recipients: emails }) }).catch(()=>{});
+      fetch("/api/send-push", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ skipEmail: true, title:"Interested in coaching DSSC clinics?", body:"Tap to join the clinic coach pool — $25/hr, flexible sessions.", url:"/?view=clinics", audience:{ type:"emails", emails } }) }).catch(()=>{});
+      fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ skipPush: true, subject:"Interested in coaching DSSC clinics? ($25/hr)", body, recipients: emails }) }).catch(()=>{});
       window.alert("Invited "+emails.length+" coaches to join the DSSC clinic pool.");
     };
     // Staffing suggestions: who's available + skilled, preferring back-to-back.
@@ -18287,7 +18358,7 @@ export default function App() {
       const planStatus = open.plan_status || "draft";
       const submitPlan = () => { saveClinic(open.id, { plan_status:"submitted" }); notifyDirectors("DSSC plan submitted — "+open.name, coachName+" submitted a plan for "+open.name+" for your review. Open DSSC to approve or request changes."); };
       const approvePlan = () => saveClinic(open.id, { plan_status:"approved", plan_approved_by: coachName, plan_approved_at: new Date().toISOString() });
-      const requestChanges = () => { const em = open.coach_name ? coachEmail(open.coach_name) : null; saveClinic(open.id, { plan_status:"draft" }); if (em) { fetch("/api/send-push",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({title:"DSSC plan — changes requested",body:open.name+": please revise the plan (see director notes).",url:"/?view=clinics",audience:{type:"emails",emails:[em]}})}).catch(()=>{}); fetch("/api/send-email",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({subject:"DSSC plan — changes requested for "+open.name,body:"Please revise the "+open.name+" plan. Director notes:\n"+(open.director_notes||"(see the clinic)"),recipients:[em]})}).catch(()=>{}); } };
+      const requestChanges = () => { const em = open.coach_name ? coachEmail(open.coach_name) : null; saveClinic(open.id, { plan_status:"draft" }); if (em) { fetch("/api/send-push",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({skipEmail:true,title:"DSSC plan — changes requested",body:open.name+": please revise the plan (see director notes).",url:"/?view=clinics",audience:{type:"emails",emails:[em]}})}).catch(()=>{}); fetch("/api/send-email",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({skipPush:true,subject:"DSSC plan — changes requested for "+open.name,body:"Please revise the "+open.name+" plan. Director notes:\n"+(open.director_notes||"(see the clinic)"),recipients:[em]})}).catch(()=>{}); } };
       const PLANST = { draft:["Draft",C.mut], submitted:["Submitted for review","#f59e0b"], approved:["✓ Approved",C.grn] };
       const plan = open.plan || {};
       const blocks = Array.isArray(plan.blocks) ? plan.blocks : [];

@@ -78,5 +78,37 @@ export default async function handler(req, res) {
   }));
   if (stale.length) await supabase.from("push_subscriptions").delete().in("endpoint", stale);
 
-  return res.status(200).json({ ok: true, sent, removed: stale.length });
+  // A notification and an email are the same message on two channels — Drew's
+  // rule. Mirroring here rather than at 26 call sites means a new feature gets
+  // both for free and cannot drift back apart.
+  //
+  // Callers that already send their own email pass skipEmail. As a second
+  // guard, we check email_log for the same subject in the last two minutes, so
+  // a caller that forgets the flag still doesn't double-mail anyone.
+  let mailed = 0;
+  if (!body?.skipEmail) {
+    try {
+      const emails = [...new Set(targets.map(s => s.email).filter(Boolean))];
+      if (emails.length) {
+        const { data: recent } = await supabase.from("email_log")
+          .select("id").eq("subject", title)
+          .gte("created_at", new Date(Date.now() - 120000).toISOString()).limit(1);
+        if (!recent?.length) {
+          const origin = process.env.APP_URL || ("https://" + (req.headers["x-forwarded-host"] || req.headers.host));
+          const r = await fetch(origin + "/api/send-email", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              subject: title,
+              body: text + "\n\n" + origin + (url.startsWith("/") ? url : "/" + url),
+              recipients: emails,
+              sentBy: body?.sentBy || null, source: "notification",
+            }),
+          });
+          if (r.ok) mailed = emails.length;
+        }
+      }
+    } catch (e) { console.error("push→email mirror failed (push already sent):", e?.message); }
+  }
+
+  return res.status(200).json({ ok: true, sent, removed: stale.length, mailed });
 }
