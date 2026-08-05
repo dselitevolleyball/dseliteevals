@@ -92,6 +92,17 @@ export const isInvitationEmail = (subject, body) => {
 
 // Match the message against the club's real team names. Longest match wins
 // (so "14 Diamond" beats a stray "14"). Doubles as name normalization.
+// The subject — "<Name> posted in DS Elite <Team>" — says which channel the
+// post was actually made in, and it is the only authoritative signal. Matching
+// the body as well loses whenever a post MENTIONS other teams: Kristen's gear
+// sizing schedule listed a dozen of them, and longest-match-wins filed it under
+// "15 Sapphire" (11 chars) instead of the subject's "13 Diamond" (10). The post
+// then vanished from the channel the notification pointed at.
+export const teamFromSubject = (subject, teamNames) => {
+  const m = String(subject || "").match(/posted in\s+(?:DS Elite\s+)?(.+)$/i);
+  return m ? matchTeam(m[1], teamNames) : null;
+};
+
 export const matchTeam = (haystack, teamNames) => {
   const hay = " " + haystack.toLowerCase() + " ";
   let best = null;
@@ -137,7 +148,9 @@ export function parseSportsYouEmail(input, teamNames) {
   }
 
   const haystack = subj + "\n" + cleanBody;
-  const team = matchTeam(haystack, teamNames);
+  // Subject first — it names the channel. Body only as a fallback, for the
+  // odd forwarded message whose subject doesn't carry the team.
+  const team = teamFromSubject(subj, teamNames) || matchTeam(haystack, teamNames);
   const author = parseAuthor(subj, cleanBody);
 
   return {
