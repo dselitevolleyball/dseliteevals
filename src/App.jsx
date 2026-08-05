@@ -1724,6 +1724,11 @@ export default function App() {
   const allowedDivSet = new Set(allowedDivs);
 
   const [players, setPlayers] = useState([]);
+  const [playerEvals, setPlayerEvals] = useState([]);  // in-season evaluations
+  const [evalTeam, setEvalTeam]       = useState("");  // which of my teams
+  const [evalOpen, setEvalOpen]       = useState(null);// player id being evaluated
+  const [evalDraft, setEvalDraft]     = useState(null);// the evaluation being written
+  const [evalBusy, setEvalBusy]       = useState(false);
   const [favorites, setFavorites] = useState([]); // player_ids the current coach favorited
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState("home");
@@ -1956,6 +1961,13 @@ export default function App() {
   }, []);
 
   // Load all players from Supabase
+  // RLS returns a coach only their own teams' evaluations, so one query serves
+  // both a coach and a director without branching.
+  const loadPlayerEvals = useCallback(async () => {
+    const { data, error } = await supabase.from("player_evaluations").select("*").order("eval_date", { ascending: false });
+    if (error) { console.error("Load player_evaluations error:", error); return; }
+    setPlayerEvals(data || []);
+  }, []);
   const loadPlayers = useCallback(async () => {
     const { data, error } = await supabase.from("players").select("*").order("last_name");
     if (error) { console.error(error); return; }
@@ -1970,6 +1982,10 @@ export default function App() {
   }, []);
 
   useEffect(() => { if (isApproved) { loadPlayers(); loadRankings(); } }, [isApproved, loadPlayers, loadRankings]);
+  // loadTeamsList is declared further down, so naming it here would be a TDZ
+  // crash on load; the evaluations view picks the roster up from the effect
+  // that already loads it alongside the other team data.
+  useEffect(() => { if (isApproved && (view === "playereval" || view === "roster")) loadPlayerEvals(); }, [isApproved, view, loadPlayerEvals]);
 
   // Per-coach favorites. RLS scopes rows to the signed-in coach, so a plain
   // select returns only this coach's shortlist.
@@ -5337,6 +5353,250 @@ export default function App() {
               )}
             </div>
           )}
+        </div>
+      </div>
+    );
+  }
+
+  // Player evaluations. A dated series, not a single record — the point is
+  // being able to see whether passing actually improved between November and
+  // March, and to compare either against the tryout score from May.
+  function renderPlayerEvals() {
+    const nrm = s => String(s || "").trim().toLowerCase();
+    const meName = coach?.display_name || "";
+    const today = localDateISO();
+
+    // Teams this coach can evaluate. Directors get everyone.
+    const myTeams = canOps
+      ? teamsList.filter(t => t.active).map(t => t.id)
+      : teamsList.filter(t => t.active && (nrm(t.head_coach) === nrm(meName) || nrm(t.assistant_coach) === nrm(meName))).map(t => t.id);
+    const team = myTeams.includes(evalTeam) ? evalTeam : myTeams[0] || "";
+    const roster = players.filter(p => nrm(p.team_assignment) === nrm(team))
+      .sort((a, b) => String(a.last_name || "").localeCompare(String(b.last_name || "")));
+
+    const evalsFor = id => playerEvals.filter(e => e.player_id === id)
+      .sort((a, b) => String(b.eval_date).localeCompare(String(a.eval_date)));
+    const avg = (sc) => { const v = SKILLS.map(k => Number(sc?.[k])).filter(n => n >= 1); return v.length ? (v.reduce((a, b) => a + b, 0) / v.length) : null; };
+    const fmtD = iso => { try { return new Date(iso + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }); } catch { return iso; } };
+
+    if (!myTeams.length) return (
+      <div style={{padding:30,textAlign:"center",color:C.mut,fontSize:13}}>
+        You're not listed as head or assistant coach on a team yet, so there's nobody to evaluate.
+        <div style={{marginTop:6,fontSize:12}}>Ask Drew to add you to your team and this fills in.</div>
+      </div>
+    );
+
+    const openPlayer = evalOpen ? roster.find(p => p.id === evalOpen) : null;
+
+    // ── One player's evaluation history + the form ──────────────────────────
+    if (openPlayer) {
+      const history = evalsFor(openPlayer.id);
+      const draft = evalDraft && evalDraft.player_id === openPlayer.id ? evalDraft : null;
+      const tryout = openPlayer.scores && Object.keys(openPlayer.scores).length ? openPlayer.scores : null;
+      const setScore = (k, v) => setEvalDraft(d => ({ ...d, scores: { ...(d.scores || {}), [k]: v } }));
+      const setF = (k, v) => setEvalDraft(d => ({ ...d, [k]: v }));
+
+      const save = async (status) => {
+        if (!draft) return;
+        const row = {
+          player_id: openPlayer.id, team_name: team, season: rosterSeason,
+          eval_date: draft.eval_date || today, scores: draft.scores || {},
+          strengths: (draft.strengths || "").trim() || null,
+          focus: (draft.focus || "").trim() || null,
+          goal: (draft.goal || "").trim() || null,
+          status, coach_name: meName, coach_email: coach?.email || null,
+          updated_at: new Date().toISOString(),
+        };
+        setEvalBusy(true);
+        const { error } = draft.id
+          ? await supabase.from("player_evaluations").update(row).eq("id", draft.id)
+          : await supabase.from("player_evaluations").insert(row);
+        setEvalBusy(false);
+        if (error) { window.alert("Couldn't save: " + error.message); return; }
+        setEvalDraft(null);
+        await loadPlayerEvals();
+      };
+
+      return (
+        <div style={{padding:"18px 16px",maxWidth:860,margin:"0 auto"}}>
+          <button onClick={()=>{ setEvalOpen(null); setEvalDraft(null); }}
+            style={{background:"none",border:"none",color:C.acc,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700,padding:0,marginBottom:10}}>
+            ← {team}
+          </button>
+          <h2 style={{margin:"0 0 2px",fontSize:22,fontWeight:800,color:C.gold}}>
+            {(openPlayer.first_name || "") + " " + (openPlayer.last_name || "")}
+          </h2>
+          <div style={{fontSize:12,color:C.mut,marginBottom:16}}>
+            {[openPlayer.primary_position, openPlayer.jersey_number ? "#" + openPlayer.jersey_number : null, team].filter(Boolean).join(" · ")}
+          </div>
+
+          {!draft && (
+            <button onClick={()=>setEvalDraft({ player_id: openPlayer.id, eval_date: today, scores: {}, strengths:"", focus:"", goal:"" })}
+              style={{padding:"9px 18px",borderRadius:8,border:"none",background:C.gold,color:"#000",fontFamily:"inherit",fontSize:13,fontWeight:800,cursor:"pointer",marginBottom:18}}>
+              + New evaluation
+            </button>
+          )}
+
+          {draft && (
+            <div style={{background:C.card,border:"1px solid "+C.gold,borderRadius:12,padding:"14px 16px",marginBottom:18}}>
+              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12,flexWrap:"wrap"}}>
+                <span style={{fontSize:13,fontWeight:800,color:C.gold}}>{draft.id ? "Editing evaluation" : "New evaluation"}</span>
+                <input type="date" value={draft.eval_date} onChange={e=>setF("eval_date", e.target.value)}
+                  style={{...inpStyle,padding:"4px 8px",fontSize:12}} />
+                <div style={{flex:1}} />
+                <span style={{fontSize:11,color:C.mut}}>
+                  {SKILLS.filter(k => draft.scores?.[k]).length}/{SKILLS.length} scored
+                </span>
+              </div>
+
+              {/* 1-5 per skill. Tryout score shown alongside so the comparison
+                  is right there rather than on another screen. */}
+              <div style={{display:"flex",flexDirection:"column",gap:5,marginBottom:14}}>
+                {SKILLS.map(k => {
+                  const cur = Number(draft.scores?.[k]) || 0;
+                  const was = tryout ? Number(tryout[k]) || 0 : 0;
+                  return (
+                    <div key={k} style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                      <span style={{fontSize:12,color:C.text,minWidth:118}}>{k}</span>
+                      <div style={{display:"flex",gap:3}}>
+                        {[1,2,3,4,5].map(v => (
+                          <button key={v} onClick={()=>setScore(k, cur === v ? null : v)}
+                            style={{width:28,height:26,borderRadius:6,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:800,
+                              border:"1px solid "+(cur===v?C.gold:C.border), background:cur===v?C.gold:"transparent", color:cur===v?"#000":C.mut}}>
+                            {v}
+                          </button>
+                        ))}
+                      </div>
+                      {was > 0 && (
+                        <span style={{fontSize:10,color:C.mut}} title="Tryout score, May 2026">
+                          tryout {was}{cur ? (cur > was ? " ▲" : cur < was ? " ▼" : " =") : ""}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {[["strengths","What they're doing well","Where this player is genuinely strong right now"],
+                ["focus","What to work on","One or two things — specific enough to practise"],
+                ["goal","Goal for the next stretch","What good looks like by the next evaluation"]].map(([k,label,ph]) => (
+                <div key={k} style={{marginBottom:10}}>
+                  <span style={{fontSize:10,fontWeight:700,textTransform:"uppercase",color:C.mut,marginBottom:4,display:"block"}}>{label}</span>
+                  <AutoTextarea value={draft[k] || ""} onChange={e=>setF(k, e.target.value)} minRows={2} placeholder={ph}
+                    style={{...inpStyle,width:"100%",fontSize:13,lineHeight:1.5,padding:"8px 10px",boxSizing:"border-box"}} />
+                </div>
+              ))}
+
+              <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:12,flexWrap:"wrap"}}>
+                <button onClick={()=>setEvalDraft(null)} disabled={evalBusy}
+                  style={{padding:"8px 16px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontFamily:"inherit",fontSize:12,fontWeight:700,cursor:"pointer"}}>Cancel</button>
+                <button onClick={()=>save("draft")} disabled={evalBusy}
+                  style={{padding:"8px 16px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.text,fontFamily:"inherit",fontSize:12,fontWeight:700,cursor:"pointer"}}>Save draft</button>
+                <button onClick={()=>save("final")} disabled={evalBusy}
+                  style={{padding:"8px 18px",borderRadius:8,border:"none",background:C.grn,color:"#000",fontFamily:"inherit",fontSize:12,fontWeight:800,cursor:"pointer"}}>
+                  {evalBusy ? "Saving…" : "Mark complete"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* History, newest first */}
+          <div style={{fontSize:11,fontWeight:800,textTransform:"uppercase",letterSpacing:0.4,color:C.mut,marginBottom:8}}>
+            History · {history.length} evaluation{history.length===1?"":"s"}
+          </div>
+          {history.length === 0 && !draft && <div style={{fontSize:12,color:C.mut}}>Nothing yet — the first evaluation sets the baseline.</div>}
+          {history.map(e => {
+            const a = avg(e.scores);
+            return (
+              <div key={e.id} style={{background:C.card,border:"1px solid "+C.border,borderRadius:11,padding:"11px 14px",marginBottom:8}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:6}}>
+                  <span style={{fontSize:13,fontWeight:800,color:C.text}}>{fmtD(e.eval_date)}</span>
+                  {a != null && <span style={{fontSize:11,fontWeight:800,color:C.gold}}>avg {a.toFixed(1)}</span>}
+                  <span style={{fontSize:9,fontWeight:800,padding:"1px 8px",borderRadius:999,
+                    background:(e.status==="final"?C.grn:C.mut)+"22", color:e.status==="final"?C.grn:C.mut}}>
+                    {e.status === "final" ? "COMPLETE" : "DRAFT"}
+                  </span>
+                  <div style={{flex:1}} />
+                  <span style={{fontSize:10,color:C.mut}}>{e.coach_name}</span>
+                  <button onClick={()=>setEvalDraft({ ...e, scores: e.scores || {} })}
+                    style={{background:"none",border:"none",color:C.acc,cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:700,padding:0}}>Edit</button>
+                </div>
+                <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:6}}>
+                  {SKILLS.filter(k => e.scores?.[k]).map(k => (
+                    <span key={k} style={{fontSize:9.5,fontWeight:700,padding:"1px 6px",borderRadius:5,background:C.bg,color:C.mut}}>
+                      {SKILL_ABBR[k] || k} <b style={{color:C.text}}>{e.scores[k]}</b>
+                    </span>
+                  ))}
+                </div>
+                {[["strengths","Doing well"],["focus","Working on"],["goal","Goal"]].map(([k,l]) => e[k] ? (
+                  <div key={k} style={{fontSize:12,color:C.mut,marginTop:3}}>
+                    <b style={{color:C.text}}>{l}:</b> {e[k]}
+                  </div>
+                ) : null)}
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
+
+    // ── Team roster: who's been evaluated and who hasn't ────────────────────
+    const done = roster.filter(p => evalsFor(p.id).some(e => e.status === "final")).length;
+    return (
+      <div style={{padding:"18px 16px",maxWidth:920,margin:"0 auto"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:14}}>
+          <div>
+            <h2 style={{margin:0,fontSize:20,fontWeight:800,color:C.gold}}>Player evaluations</h2>
+            <div style={{fontSize:12,color:C.mut,marginTop:2}}>
+              {roster.length} player{roster.length===1?"":"s"} · <b style={{color:done===roster.length&&roster.length?C.grn:"#f59e0b"}}>{done} evaluated</b>
+            </div>
+          </div>
+          <div style={{flex:1}} />
+          {myTeams.length > 1 && (
+            <select value={team} onChange={e=>{ setEvalTeam(e.target.value); setEvalOpen(null); }}
+              style={{...inpStyle,padding:"6px 10px",fontSize:12,minWidth:150}}>
+              {myTeams.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+          )}
+        </div>
+
+        <div style={{fontSize:11.5,color:C.mut,marginBottom:14,lineHeight:1.6,maxWidth:640}}>
+          Score the same nine skills we use at tryouts, so you can see movement against where a
+          player started. Add an evaluation whenever you want one — there's no window to hit.
+          Only the directors and this team's coaches can see them.
+        </div>
+
+        {roster.length === 0 && <div style={{padding:26,textAlign:"center",color:C.mut,fontSize:12}}>No players assigned to {team} yet.</div>}
+
+        <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,overflow:"hidden"}}>
+          {roster.map((p, i) => {
+            const hist = evalsFor(p.id);
+            const last = hist[0] || null;
+            const a = last ? avg(last.scores) : null;
+            const isFinal = hist.some(e => e.status === "final");
+            return (
+              <button key={p.id} onClick={()=>{ setEvalOpen(p.id); setEvalDraft(null); }}
+                style={{display:"flex",alignItems:"center",gap:10,width:"100%",textAlign:"left",padding:"10px 14px",
+                  background:"transparent",border:"none",borderTop:i?"1px solid "+C.border:"none",cursor:"pointer",fontFamily:"inherit",flexWrap:"wrap"}}>
+                <span style={{fontSize:13,fontWeight:700,color:C.text,minWidth:150}}>
+                  {(p.first_name || "") + " " + (p.last_name || "")}
+                </span>
+                <span style={{fontSize:10.5,color:C.mut,minWidth:80}}>
+                  {[p.jersey_number ? "#" + p.jersey_number : null, p.primary_position].filter(Boolean).join(" · ")}
+                </span>
+                <div style={{flex:1}} />
+                {a != null && <span style={{fontSize:11,fontWeight:800,color:C.gold}}>avg {a.toFixed(1)}</span>}
+                <span style={{fontSize:10.5,color:C.mut,minWidth:82,textAlign:"right"}}>
+                  {last ? fmtD(last.eval_date) : "never"}
+                </span>
+                <span style={{fontSize:9,fontWeight:800,padding:"1px 8px",borderRadius:999,minWidth:66,textAlign:"center",
+                  background:(isFinal?C.grn:last?C.mut:"#f59e0b")+"22", color:isFinal?C.grn:last?C.mut:"#f59e0b"}}>
+                  {isFinal ? "DONE" : last ? "DRAFT" : "TO DO"}
+                </span>
+                <span style={{color:C.mut,fontWeight:800,fontSize:12}}>›</span>
+              </button>
+            );
+          })}
         </div>
       </div>
     );
@@ -23501,11 +23761,11 @@ export default function App() {
               // Dropdown entries: ["hdr","Label"] renders a section header.
               const pendingReqs = coachRequests.filter(r=>r.status==="pending").length;
               const groups = [
-                { title:"Players", items:[...((canViewTeams || myTeamNames.length) ? [["roster","Roster"]] : [])] },
+                { title:"Players", items:[...((canViewTeams || myTeamNames.length) ? [["roster","Roster"]] : []), ...(canOps ? [] : [["playereval","Evaluations"]])] },
                 { title:"Tryouts 2026-27", items:[["dashboard","Dashboard"], ["evaluate","Evaluate"], ["favorites","My Favorites" + (favorites.length ? " (" + favorites.length + ")" : "")], ...(canViewTeams ? [["teams","Teams"]] : []), ["rankings","Rankings"], ["physical","Physical Testing"], ["tryouts","Coach Assignments"]] },
                 ...(canOps ? [{ title:"Operations", items:[
                   ["hdr","Club"],
-                  ["tracker","Tracker"], ["teamdir","All Teams"], ["practice","Practice"], ["sa","S&A Schedule"], ["clinics","DSSC Clinics"], ["dssccal","DSSC Coaches"], ["dsysa","DSYSA Clinics"], ["scholarships","Scholarships"],
+                  ["tracker","Tracker"], ["teamdir","All Teams"], ["playereval","Player Evaluations"], ["practice","Practice"], ["sa","S&A Schedule"], ["clinics","DSSC Clinics"], ["dssccal","DSSC Coaches"], ["dsysa","DSYSA Clinics"], ["scholarships","Scholarships"],
                   ...(isAdmin ? [["hawaii","Hawaii"], ["travel","Travel"], ["finance","Finance"]] : []),
                   ["hdr","Coaches & Pay"],
                   ["coaches","Coaches"], ["coverage","Coach Coverage"], ["timecards","Time Cards"], ["dssctime","DSSC Hours"], ["gear","Gear Sizes" + (gearOutstanding ? " (" + gearOutstanding + ")" : "")], ["requests","Requests" + (pendingReqs ? " (" + pendingReqs + ")" : "")],
@@ -23732,6 +23992,7 @@ export default function App() {
         {view==="finance" && renderFinance()}
         {view==="dssccal" && renderDsscCal()}
         {view==="dssctime" && renderDsscTime()}
+        {view==="playereval" && renderPlayerEvals()}
         {view==="travel" && renderTravel()}
         {view==="faq" && renderFaq()}
         {view==="practiceplan" && renderPracticePlans()}
