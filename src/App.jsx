@@ -14868,6 +14868,15 @@ export default function App() {
     const TEST_EMAIL = "drew@dselitevolleyball.com";
     const postEmail = async (to, isTest, subjOverride, bodyOverride) => {
       if (!emailSubject.trim() || !emailBody.trim() || !to.length) return;
+      // An entry with no storage path never uploaded — usually a tab that was
+      // open across a deploy. Sending would drop it silently, which is how a
+      // deck went to 224 people without the deck.
+      const notUploaded = emailFiles.filter(f => !f.path);
+      if (notUploaded.length) {
+        window.alert("These attachments haven't uploaded: " + notUploaded.map(f => f.name).join(", ")
+          + "\n\nRemove them and attach again (reload the page first if it keeps happening). Nothing has been sent.");
+        return;
+      }
       const subj = (subjOverride != null ? subjOverride : emailSubject).trim();
       const bod = (bodyOverride != null ? bodyOverride : emailBody).trim();
       setEmailSending(true); setEmailErr(""); setEmailResult(null);

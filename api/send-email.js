@@ -105,7 +105,12 @@ export default async function handler(req, res) {
     for (const p of paths) {
       const path = String(p?.path || "").trim();
       const filename = String(p?.filename || path.split("/").pop() || "attachment").trim();
-      if (!path) continue;
+      // A missing path used to be skipped silently, so an email went to 224
+      // people with the attachment quietly absent and a success response. If
+      // the caller says there's an attachment, it either goes or the send fails.
+      if (!path) {
+        return res.status(400).json({ error: "The attachment \"" + filename + "\" wasn't uploaded. Remove it and attach it again — nothing has been sent." });
+      }
       try {
         const r = await fetch(SU + "/storage/v1/object/email-attachments/" + path.split("/").map(encodeURIComponent).join("/"),
           { headers: { apikey: SK, Authorization: "Bearer " + SK } });
