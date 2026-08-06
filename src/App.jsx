@@ -1590,6 +1590,8 @@ export default function App() {
   const [teamsList, setTeamsList]                           = useState([]);
   const [teamStatus, setTeamStatus]                         = useState({}); // { [team_name]: { status, looking_positions } }
   const [teamTasks, setTeamTasks]                           = useState({}); // { `${team}|${item}`: { status, notes } }
+  const [teamVolunteers, setTeamVolunteers]                 = useState([]); // team parents + other volunteers, one row per person
+  const [volDraft, setVolDraft]                             = useState({ name:"", role:"team_parent", email:"", player_name:"" });
   const [teamQuestions, setTeamQuestions]                   = useState([]); // coach→director questions
   const [faq, setFaq]                                       = useState([]); // curated coach FAQ
   const [faqSearch, setFaqSearch]                           = useState("");
@@ -2102,6 +2104,14 @@ export default function App() {
     const map = {};
     (data || []).forEach(r => { map[r.team_name] = { status: r.status || "in_progress", looking_positions: r.looking_positions || [] }; });
     setTeamStatus(map);
+  }, []);
+  // Team parents (team moms/dads) and the other volunteers each team's families
+  // signed up for at the kickoff meeting. Defined above the effects that list it
+  // in their deps.
+  const loadTeamVolunteers = useCallback(async () => {
+    const { data, error } = await supabase.from("team_volunteers").select("*").order("team_name").order("name");
+    if (error) { console.error("Load team_volunteers error:", error); return; }
+    setTeamVolunteers(data || []);
   }, []);
   // Per-team operational checklist (Coach + Ops To-Do) and the coach→director
   // questions. Defined above the realtime effect that lists them in its deps.
@@ -2706,6 +2716,9 @@ export default function App() {
   useEffect(() => { if (isApproved && view === "tryouts") loadTryouts(); }, [isApproved, view, loadTryouts]);
 
   useEffect(() => { if (isApproved && (view === "teams" || view === "teamdir" || view === "home" || view === "dashboard")) loadTeamStatus(); }, [isApproved, view, loadTeamStatus]);
+  // Team parents render on the team card, which opens from any view — load once
+  // on approval rather than per-view.
+  useEffect(() => { if (isApproved) loadTeamVolunteers(); }, [isApproved, loadTeamVolunteers]);
   // Operational checklist + questions load on the Home (coaches) and All Teams (admins) views.
   useEffect(() => { if (isApproved && (view === "home" || view === "teamdir")) { loadTeamTasks(); loadTeamQuestions(); } }, [isApproved, view, loadTeamTasks, loadTeamQuestions]);
   // Item descriptions are needed wherever the checklists render; updates show on Home.
@@ -2733,6 +2746,26 @@ export default function App() {
     );
     if (error) console.error("Save team_status error:", error);
   }, [teamStatus]);
+
+  // Team parent / volunteer add + remove. Both reload rather than patch local
+  // state so the id assigned by the DB is what the delete button later uses.
+  const addTeamVolunteer = useCallback(async (team, { name, role, email, player_name, note }) => {
+    const clean = (name || "").trim();
+    if (!clean) return;
+    const { error } = await supabase.from("team_volunteers").upsert({
+      team_name: team, name: clean, role: role || "team_parent",
+      email: (email || "").trim() || null, player_name: (player_name || "").trim() || null,
+      note: (note || "").trim(), updated_at: new Date().toISOString(),
+    }, { onConflict: "team_name,name" });
+    if (error) { console.error("Save team_volunteers error:", error); alert("Could not save: " + error.message); return; }
+    loadTeamVolunteers();
+  }, [loadTeamVolunteers]);
+
+  const removeTeamVolunteer = useCallback(async (id) => {
+    const { error } = await supabase.from("team_volunteers").delete().eq("id", id);
+    if (error) { console.error("Delete team_volunteers error:", error); alert("Could not remove: " + error.message); return; }
+    loadTeamVolunteers();
+  }, [loadTeamVolunteers]);
 
   // Checklist item status/notes. merged computed synchronously from state.
   const updateTeamTask = useCallback(async (team, itemKey, patch) => {
@@ -11738,6 +11771,10 @@ export default function App() {
                     <div style={{fontSize:11,color:C.mut,marginTop:6,lineHeight:1.5}}>
                       <div><span style={{color:C.mut}}>HC:</span> <span style={{color:t.head_coach?C.text:C.mut}}>{t.head_coach||"—"}</span></div>
                       <div><span style={{color:C.mut}}>AC:</span> <span style={{color:t.assistant_coach?C.text:C.mut}}>{t.assistant_coach||"—"}</span></div>
+                      {(() => {
+                        const tp = teamVolunteers.filter(v => v.team_name === t.team_name && v.role === "team_parent");
+                        return <div><span style={{color:C.mut}}>TP:</span> <span style={{color:tp.length?C.text:C.mut}}>{tp.length ? tp.map(v=>v.name).join(", ") : "—"}</span></div>;
+                      })()}
                     </div>
                     <div style={{display:"flex",gap:6,marginTop:10,flexWrap:"wrap",alignItems:"center"}}>
                       <button onClick={(e)=>{ e.stopPropagation(); updateTeamStatus(t.team_name, { status: { in_progress:"looking", looking:"completed", completed:"in_progress" }[tStatus] }); }}
@@ -11854,6 +11891,60 @@ export default function App() {
               )}
               </>
             )}
+          </div>
+
+          {/* Team parents + other volunteers, from the kickoff-meeting signups. */}
+          <div style={sectionBox}>
+            {(() => {
+              const mine = teamVolunteers.filter(v => v.team_name === teamCardName);
+              const parents = mine.filter(v => v.role === "team_parent");
+              const others  = mine.filter(v => v.role !== "team_parent");
+              const row = (v) => (
+                <div key={v.id} style={{display:"flex",alignItems:"baseline",gap:8,fontSize:13,padding:"3px 0"}}>
+                  <span style={{color:C.text,fontWeight:700}}>{v.name}</span>
+                  {v.player_name && <span style={{fontSize:11,color:C.mut}}>({v.player_name})</span>}
+                  {v.note && <span style={{fontSize:11,color:C.acc,fontWeight:700}}>{v.note}</span>}
+                  <span style={{flex:1}} />
+                  {v.email
+                    ? <a href={"mailto:"+v.email.split(",")[0].trim()} style={{fontSize:11,color:"#06b6d4",textDecoration:"none"}}>{v.email.split(",")[0].trim()}</a>
+                    : <span style={{fontSize:11,color:"#f59e0b",fontWeight:700}}>no contact on file</span>}
+                  {canOps && <button onClick={()=>{ if (window.confirm("Remove "+v.name+" from "+teamCardName+"?")) removeTeamVolunteer(v.id); }}
+                    title="Remove" style={{background:"none",border:"none",color:C.mut,cursor:"pointer",fontSize:13,lineHeight:1,padding:"0 2px"}}>✕</button>}
+                </div>
+              );
+              return (
+                <>
+                  <div style={lbl}>Team Parents{parents.length ? " · " + parents.length : ""}</div>
+                  {parents.length
+                    ? parents.map(row)
+                    : <div style={{fontSize:12,color:"#f59e0b",fontStyle:"italic"}}>No team parent yet — ask at the next practice.</div>}
+                  {others.length > 0 && (
+                    <>
+                      <div style={{...lbl,marginTop:14}}>Other Volunteers · {others.length}</div>
+                      {others.map(row)}
+                    </>
+                  )}
+                  {canOps && (
+                    <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:12,borderTop:"1px solid "+C.border,paddingTop:10}}>
+                      <input value={volDraft.name} onChange={e=>setVolDraft(d=>({...d,name:e.target.value}))} placeholder="Name"
+                        style={{...inpStyle,padding:"6px 9px",fontSize:12,flex:"1 1 130px",minWidth:110}} />
+                      <input value={volDraft.player_name} onChange={e=>setVolDraft(d=>({...d,player_name:e.target.value}))} placeholder="Player"
+                        style={{...inpStyle,padding:"6px 9px",fontSize:12,flex:"1 1 110px",minWidth:90}} />
+                      <input value={volDraft.email} onChange={e=>setVolDraft(d=>({...d,email:e.target.value}))} placeholder="Email"
+                        style={{...inpStyle,padding:"6px 9px",fontSize:12,flex:"1 1 150px",minWidth:120}} />
+                      <select value={volDraft.role} onChange={e=>setVolDraft(d=>({...d,role:e.target.value}))}
+                        style={{...inpStyle,padding:"6px 9px",fontSize:12,flex:"0 0 auto"}}>
+                        <option value="team_parent">Team parent</option>
+                        <option value="volunteer">Volunteer</option>
+                      </select>
+                      <button onClick={()=>{ addTeamVolunteer(teamCardName, volDraft); setVolDraft({ name:"", role:"team_parent", email:"", player_name:"" }); }}
+                        disabled={!volDraft.name.trim()}
+                        style={{padding:"6px 12px",borderRadius:8,border:"1px solid "+C.gold,background:volDraft.name.trim()?C.gold:"transparent",color:volDraft.name.trim()?"#fff":C.mut,fontSize:12,fontWeight:800,cursor:volDraft.name.trim()?"pointer":"default",fontFamily:"inherit"}}>Add</button>
+                    </div>
+                  )}
+                </>
+              );
+            })()}
           </div>
 
           {/* Schedule calendar — practices, tournaments, moves, subs, cancellations. */}

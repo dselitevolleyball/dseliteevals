@@ -180,6 +180,29 @@ CREATE POLICY team_tasks_all_approved ON team_tasks
   USING      (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved))
   WITH CHECK (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved));
 
+-- ───── Team parents / volunteers (added 20260806) ────────────────────
+-- Who signed up as team mom/dad, and who offered to help with GameChanger,
+-- events, photos. See migrations/20260806_team_volunteers.sql
+CREATE TABLE team_volunteers (
+  id          BIGSERIAL    PRIMARY KEY,
+  team_name   TEXT         NOT NULL,
+  name        TEXT         NOT NULL,
+  role        TEXT         NOT NULL DEFAULT 'team_parent',  -- team_parent | volunteer
+  email       TEXT,
+  phone       TEXT,
+  player_name TEXT,
+  note        TEXT         NOT NULL DEFAULT '',
+  created_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+  updated_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX team_volunteers_team_name_uniq ON team_volunteers (team_name, name);
+CREATE INDEX team_volunteers_team_idx ON team_volunteers (team_name);
+ALTER TABLE team_volunteers ENABLE ROW LEVEL SECURITY;
+CREATE POLICY team_volunteers_all_approved ON team_volunteers
+  FOR ALL
+  USING      (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved))
+  WITH CHECK (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved));
+
 CREATE TABLE team_questions (
   id               BIGSERIAL    PRIMARY KEY,
   team_name        TEXT         NOT NULL,
