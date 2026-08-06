@@ -1740,6 +1740,12 @@ export default function App() {
 
   const [players, setPlayers] = useState([]);
   const [playerEvals, setPlayerEvals] = useState([]);  // in-season evaluations
+  const [passSessions, setPassSessions] = useState([]); // passer rating sessions
+  const [passRatings, setPassRatings]   = useState([]);
+  const [passTeam, setPassTeam]         = useState("");
+  const [passPlayer, setPassPlayer]     = useState(null);
+  const [passDraft, setPassDraft]       = useState(null);
+  const [passBusy, setPassBusy]         = useState(false);
   const [myClaims, setMyClaims]       = useState([]);  // coach expense claims
   const [expClaim, setExpClaim]       = useState(null);// the claim being written
   const [expBusy, setExpBusy]         = useState(false);
@@ -1991,6 +1997,19 @@ export default function App() {
     if (error) { console.error("Load claims error:", error); return; }
     setMyClaims(data || []);
   }, []);
+  // Passer ratings. Logged for the whole team in one sitting during a drill,
+  // then read back two ways: the team on a date, and one player across the
+  // season. The season view is the point — a single rating settles nothing, a
+  // trend is what a playing-time conversation actually rests on.
+  const loadPassing = useCallback(async () => {
+    const [{ data: ses, error: e1 }, { data: rat, error: e2 }] = await Promise.all([
+      supabase.from("passing_sessions").select("*").order("session_date", { ascending: false }),
+      supabase.from("passing_ratings").select("*"),
+    ]);
+    if (e1 || e2) { console.error("Load passing error:", e1 || e2); return; }
+    setPassSessions(ses || []);
+    setPassRatings(rat || []);
+  }, []);
   const loadPlayerEvals = useCallback(async () => {
     const { data, error } = await supabase.from("player_evaluations").select("*").order("eval_date", { ascending: false });
     if (error) { console.error("Load player_evaluations error:", error); return; }
@@ -2014,6 +2033,7 @@ export default function App() {
   // crash on load; the evaluations view picks the roster up from the effect
   // that already loads it alongside the other team data.
   useEffect(() => { if (isApproved && (view === "playereval" || view === "roster")) loadPlayerEvals(); }, [isApproved, view, loadPlayerEvals]);
+  useEffect(() => { if (isApproved && view === "passing") loadPassing(); }, [isApproved, view, loadPassing]);
   useEffect(() => { if (isApproved && (view === "myexpenses" || view === "finance")) loadMyClaims(); }, [isApproved, view, loadMyClaims]);
 
   // Per-coach favorites. RLS scopes rows to the signed-in coach, so a plain
@@ -5901,6 +5921,249 @@ export default function App() {
             </>
           )}
         </div>
+      </div>
+    );
+  }
+
+  function renderPassing() {
+    const nrm = s => String(s || "").trim().toLowerCase();
+    const meName = coach?.display_name || "";
+    const today = localDateISO();
+    const myTeams = canOps
+      ? teamsList.filter(t => t.active).map(t => t.id)
+      : teamsList.filter(t => t.active && (nrm(t.head_coach) === nrm(meName) || nrm(t.assistant_coach) === nrm(meName))).map(t => t.id);
+    const team = myTeams.includes(passTeam) ? passTeam : myTeams[0] || "";
+    const roster = players.filter(p => nrm(p.team_assignment) === nrm(team))
+      .sort((a, b) => String(a.last_name || "").localeCompare(String(b.last_name || "")));
+    const nameOf = id => { const p = players.find(x => x.id === id); return p ? ((p.first_name||"")+" "+(p.last_name||"")).trim() : "—"; };
+
+    const sessions = passSessions.filter(s => nrm(s.team_name) === nrm(team));
+    const ratingsFor = sid => passRatings.filter(r => r.session_id === sid);
+    const forPlayer = pid => sessions
+      .map(s => ({ s, r: passRatings.find(r => r.session_id === s.id && r.player_id === pid) }))
+      .filter(x => x.r && x.r.rating != null)
+      .sort((a, b) => String(a.s.session_date).localeCompare(String(b.s.session_date)));
+    const fmtD = iso => { try { return new Date(iso + "T12:00:00").toLocaleDateString(undefined,{month:"short",day:"numeric"}); } catch { return iso; } };
+    // Normalised so a 0-3 session and a 0-4 session sit on the same axis.
+    const pct = (rating, max) => Math.max(0, Math.min(1, Number(rating) / (Number(max) || 3)));
+    const tone = p => p >= 0.75 ? C.grn : p >= 0.5 ? "#f59e0b" : C.red;
+
+    if (!myTeams.length) return (
+      <div style={{padding:30,textAlign:"center",color:C.mut,fontSize:13}}>
+        You're not listed as head or assistant coach on a team, so there's nobody to rate.
+      </div>
+    );
+
+    const d = passDraft;
+    const startLog = () => setPassDraft({
+      team_name: team, session_date: today, label: "", scale_max: 3, notes: "",
+      rows: roster.map(p => ({ player_id: p.id, rating: "", attempts: "" })),
+    });
+    const setRow = (pid, k, v) => setPassDraft(p => ({ ...p, rows: p.rows.map(r => r.player_id === pid ? { ...r, [k]: v } : r) }));
+
+    const saveLog = async () => {
+      if (!d) return;
+      const filled = d.rows.filter(r => String(r.rating).trim() !== "" && Number.isFinite(Number(r.rating)));
+      if (!filled.length) { window.alert("Enter a rating for at least one player."); return; }
+      const bad = filled.find(r => Number(r.rating) < 0 || Number(r.rating) > Number(d.scale_max));
+      if (bad) { window.alert(nameOf(bad.player_id) + "'s rating is outside 0–" + d.scale_max + "."); return; }
+      setPassBusy(true);
+      const { data: ses, error } = await supabase.from("passing_sessions").insert({
+        team_name: d.team_name, session_date: d.session_date, label: d.label.trim() || null,
+        scale_max: Number(d.scale_max), season: clubSeasonFor(d.session_date),
+        logged_by: meName, notes: d.notes.trim() || null,
+      }).select().single();
+      if (error) { setPassBusy(false); window.alert("Couldn't save: " + error.message); return; }
+      const { error: e2 } = await supabase.from("passing_ratings").insert(filled.map(r => ({
+        session_id: ses.id, player_id: r.player_id, rating: Number(r.rating),
+        attempts: String(r.attempts).trim() ? Number(r.attempts) : null,
+      })));
+      setPassBusy(false);
+      if (e2) {
+        await supabase.from("passing_sessions").delete().eq("id", ses.id);   // don't leave a session with no ratings
+        window.alert("Couldn't save the ratings: " + e2.message); return;
+      }
+      setPassDraft(null);
+      await loadPassing();
+    };
+
+    // ── One player across the season ────────────────────────────────────────
+    if (passPlayer) {
+      const hist = forPlayer(passPlayer);
+      const vals = hist.map(x => pct(x.r.rating, x.s.scale_max));
+      const avg = vals.length ? vals.reduce((a,b)=>a+b,0)/vals.length : null;
+      const first = vals[0], last = vals[vals.length-1];
+      const move = (vals.length > 1) ? (last - first) : null;
+      return (
+        <div style={{padding:"18px 16px",maxWidth:860,margin:"0 auto"}}>
+          <button onClick={()=>setPassPlayer(null)} style={{background:"none",border:"none",color:C.acc,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700,padding:0,marginBottom:10}}>← {team}</button>
+          <h2 style={{margin:"0 0 2px",fontSize:22,fontWeight:800,color:C.gold}}>{nameOf(passPlayer)}</h2>
+          <div style={{fontSize:12,color:C.mut,marginBottom:16}}>
+            {hist.length} rating{hist.length===1?"":"s"} this season
+            {avg != null && <> · season average <b style={{color:tone(avg)}}>{(avg*3).toFixed(2)}</b> on a 0–3 scale</>}
+            {move != null && <> · <span style={{color:move>=0?C.grn:C.red,fontWeight:700}}>{move>=0?"▲":"▼"} {(Math.abs(move)*3).toFixed(2)}</span> since the first</>}
+          </div>
+          {hist.length === 0 && <div style={{fontSize:12,color:C.mut}}>No ratings logged yet.</div>}
+          {hist.length > 0 && (
+            <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:"14px 16px",marginBottom:14}}>
+              {/* Simple bar-per-session trend. Height encodes the normalised
+                  rating so mixed 0-3 and 0-4 sessions stay comparable. */}
+              <div style={{display:"flex",alignItems:"flex-end",gap:6,height:130,marginBottom:6}}>
+                {hist.map((x,i) => {
+                  const p = pct(x.r.rating, x.s.scale_max);
+                  return (
+                    <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:3,minWidth:26}}
+                      title={fmtD(x.s.session_date) + " · " + x.r.rating + "/" + x.s.scale_max + (x.s.label ? " · " + x.s.label : "")}>
+                      <span style={{fontSize:10,fontWeight:800,color:tone(p)}}>{Number(x.r.rating).toFixed(1)}</span>
+                      <div style={{width:"100%",height:Math.max(4, p*96),background:tone(p),borderRadius:"3px 3px 0 0"}} />
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={{display:"flex",gap:6}}>
+                {hist.map((x,i) => (
+                  <div key={i} style={{flex:1,minWidth:26,textAlign:"center",fontSize:8.5,color:C.mut}}>{fmtD(x.s.session_date)}</div>
+                ))}
+              </div>
+            </div>
+          )}
+          {hist.slice().reverse().map((x,i) => (
+            <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 0",borderTop:i?"1px solid "+C.border:"none",fontSize:12,flexWrap:"wrap"}}>
+              <span style={{minWidth:70,color:C.mut}}>{fmtD(x.s.session_date)}</span>
+              <span style={{flex:1,minWidth:130,color:C.text}}>{x.s.label || "—"}</span>
+              {x.r.attempts ? <span style={{fontSize:10.5,color:C.mut}}>{x.r.attempts} balls</span> : null}
+              <span style={{fontWeight:800,color:tone(pct(x.r.rating,x.s.scale_max))}}>{Number(x.r.rating).toFixed(2)}<span style={{color:C.mut,fontWeight:500,fontSize:10}}>/{x.s.scale_max}</span></span>
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    // ── Team view: latest ranking + season averages ─────────────────────────
+    const latest = sessions[0] || null;
+    const board = roster.map(p => {
+      const hist = forPlayer(p.id);
+      const vals = hist.map(x => pct(x.r.rating, x.s.scale_max));
+      const avg = vals.length ? vals.reduce((a,b)=>a+b,0)/vals.length : null;
+      const lastRow = latest ? passRatings.find(r => r.session_id === latest.id && r.player_id === p.id) : null;
+      const lastPct = lastRow?.rating != null ? pct(lastRow.rating, latest.scale_max) : null;
+      const prev = vals.length > 1 ? vals[vals.length-2] : null;
+      return { p, hist, avg, lastRow, lastPct, move: (lastPct != null && prev != null) ? lastPct - prev : null };
+    }).sort((a,b) => (b.lastPct ?? b.avg ?? -1) - (a.lastPct ?? a.avg ?? -1));
+
+    return (
+      <div style={{padding:"18px 16px",maxWidth:940,margin:"0 auto"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:14}}>
+          <div>
+            <h2 style={{margin:0,fontSize:20,fontWeight:800,color:C.gold}}>Passer ratings</h2>
+            <div style={{fontSize:12,color:C.mut,marginTop:2}}>
+              {team} · {sessions.length} session{sessions.length===1?"":"s"} this season
+            </div>
+          </div>
+          <div style={{flex:1}} />
+          {myTeams.length > 1 && (
+            <select value={team} onChange={e=>{ setPassTeam(e.target.value); setPassPlayer(null); setPassDraft(null); }}
+              style={{...inpStyle,padding:"6px 10px",fontSize:12,minWidth:150}}>
+              {myTeams.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+          )}
+          {!d && (
+            <button onClick={startLog} disabled={!roster.length}
+              style={{padding:"9px 18px",borderRadius:8,border:"none",background:roster.length?C.gold:C.border,color:roster.length?"#000":C.mut,fontFamily:"inherit",fontSize:13,fontWeight:800,cursor:roster.length?"pointer":"default"}}>
+              Log passer rating
+            </button>
+          )}
+        </div>
+
+        {d && (
+          <div style={{background:C.card,border:"1px solid "+C.gold,borderRadius:12,padding:"14px 16px",marginBottom:16}}>
+            <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:12}}>
+              <span style={{fontSize:13,fontWeight:800,color:C.gold}}>New passing log · {team}</span>
+              <input type="date" value={d.session_date} onChange={e=>setPassDraft(p=>({...p,session_date:e.target.value}))}
+                style={{...inpStyle,padding:"4px 8px",fontSize:12}} />
+              <input value={d.label} onChange={e=>setPassDraft(p=>({...p,label:e.target.value}))}
+                placeholder="What drill? e.g. pre-CTPL serve receive"
+                style={{...inpStyle,padding:"4px 9px",fontSize:12,flex:1,minWidth:180}} />
+              <span style={{fontSize:11,color:C.mut}}>Scale</span>
+              <select value={d.scale_max} onChange={e=>setPassDraft(p=>({...p,scale_max:Number(e.target.value)}))}
+                style={{...inpStyle,padding:"4px 8px",fontSize:12}}>
+                <option value={3}>0–3</option>
+                <option value={4}>0–4</option>
+              </select>
+            </div>
+            <div style={{fontSize:11,color:C.mut,marginBottom:10}}>
+              Enter each passer's average for the drill. Leave anyone blank who didn't pass —
+              a missing rating is different from a zero, and only the ones you fill in are saved.
+            </div>
+            {d.rows.map(r => (
+              <div key={r.player_id} style={{display:"flex",alignItems:"center",gap:10,padding:"5px 0",borderTop:"1px solid "+C.border,flexWrap:"wrap"}}>
+                <span style={{fontSize:12.5,color:C.text,flex:1,minWidth:150}}>{nameOf(r.player_id)}</span>
+                <input type="number" step="0.01" min="0" max={d.scale_max} value={r.rating}
+                  onChange={e=>setRow(r.player_id,"rating",e.target.value)} placeholder={"0–"+d.scale_max}
+                  style={{...inpStyle,width:78,padding:"5px 8px",fontSize:13,textAlign:"center"}} />
+                <input type="number" min="0" value={r.attempts}
+                  onChange={e=>setRow(r.player_id,"attempts",e.target.value)} placeholder="balls"
+                  style={{...inpStyle,width:70,padding:"5px 8px",fontSize:12,textAlign:"center"}} />
+              </div>
+            ))}
+            <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:12}}>
+              <button onClick={()=>setPassDraft(null)} disabled={passBusy}
+                style={{padding:"8px 16px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontFamily:"inherit",fontSize:12,fontWeight:700,cursor:"pointer"}}>Cancel</button>
+              <button onClick={saveLog} disabled={passBusy}
+                style={{padding:"8px 18px",borderRadius:8,border:"none",background:C.grn,color:"#000",fontFamily:"inherit",fontSize:12,fontWeight:800,cursor:"pointer"}}>
+                {passBusy ? "Saving…" : "Save ratings"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {sessions.length === 0 && !d && (
+          <div style={{padding:26,textAlign:"center",color:C.mut,fontSize:12.5}}>
+            Nothing logged for {team} yet. Run a passing drill and hit <b style={{color:C.text}}>Log passer rating</b>.
+          </div>
+        )}
+
+        {sessions.length > 0 && (
+          <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,overflow:"hidden"}}>
+            <div style={{padding:"10px 14px",borderBottom:"1px solid "+C.border,fontSize:12,fontWeight:800,color:C.text,display:"flex",gap:10,flexWrap:"wrap"}}>
+              <span>Ranked{latest ? " · " + fmtD(latest.session_date) : ""}</span>
+              {latest?.label && <span style={{color:C.mut,fontWeight:500}}>{latest.label}</span>}
+              <div style={{flex:1}} />
+              <span style={{fontSize:10.5,color:C.mut}}>latest · season avg · trend</span>
+            </div>
+            {board.map((b, i) => (
+              <button key={b.p.id} onClick={()=>setPassPlayer(b.p.id)}
+                style={{display:"flex",alignItems:"center",gap:10,width:"100%",textAlign:"left",padding:"9px 14px",
+                  background:"transparent",border:"none",borderTop:i?"1px solid "+C.border:"none",cursor:"pointer",fontFamily:"inherit",flexWrap:"wrap"}}>
+                <span style={{fontSize:11,fontWeight:800,color:C.mut,minWidth:20}}>{b.lastPct != null || b.avg != null ? i+1 : "–"}</span>
+                <span style={{fontSize:13,fontWeight:700,color:C.text,flex:1,minWidth:140}}>
+                  {(b.p.first_name||"")+" "+(b.p.last_name||"")}
+                  {b.p.primary_position && <span style={{fontSize:10,color:C.mut,fontWeight:500}}> · {b.p.primary_position}</span>}
+                </span>
+                <span style={{fontSize:14,fontWeight:800,minWidth:52,textAlign:"right",color:b.lastPct!=null?tone(b.lastPct):C.mut}}>
+                  {b.lastRow?.rating != null ? Number(b.lastRow.rating).toFixed(2) : "—"}
+                </span>
+                <span style={{fontSize:11,minWidth:64,textAlign:"right",color:C.mut}}>
+                  {b.avg != null ? "avg " + (b.avg*3).toFixed(2) : ""}
+                </span>
+                <span style={{fontSize:11,fontWeight:800,minWidth:52,textAlign:"right",
+                  color:b.move==null?C.mut:b.move>0?C.grn:b.move<0?C.red:C.mut}}>
+                  {b.move==null ? "" : (b.move>0?"▲":b.move<0?"▼":"=") + " " + (Math.abs(b.move)*3).toFixed(2)}
+                </span>
+                <span style={{fontSize:10,color:C.mut,minWidth:34,textAlign:"right"}}>{b.hist.length}×</span>
+                <span style={{color:C.mut,fontWeight:800}}>›</span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {sessions.length > 0 && (
+          <div style={{fontSize:10.5,color:C.mut,marginTop:10,lineHeight:1.6,maxWidth:640}}>
+            Ranked on the most recent session, falling back to the season average for anyone who
+            missed it. Averages and trends are shown on a 0–3 scale even where a session was logged
+            0–4, so the numbers stay comparable. Tap a player for their season.
+          </div>
+        )}
       </div>
     );
   }
@@ -24642,11 +24905,11 @@ export default function App() {
               // Dropdown entries: ["hdr","Label"] renders a section header.
               const pendingReqs = coachRequests.filter(r=>r.status==="pending").length;
               const groups = [
-                { title:"Players", items:[...((canViewTeams || myTeamNames.length) ? [["roster","Roster"]] : []), ...(canOps ? [] : [["playereval","Evaluations"]])] },
+                { title:"Players", items:[...((canViewTeams || myTeamNames.length) ? [["roster","Roster"]] : []), ...(canOps ? [] : [["playereval","Evaluations"],["passing","Passer Ratings"]])] },
                 { title:"Tryouts 2026-27", items:[["dashboard","Dashboard"], ["evaluate","Evaluate"], ["favorites","My Favorites" + (favorites.length ? " (" + favorites.length + ")" : "")], ...(canViewTeams ? [["teams","Teams"]] : []), ["rankings","Rankings"], ["physical","Physical Testing"], ["tryouts","Coach Assignments"]] },
                 ...(canOps ? [{ title:"Operations", items:[
                   ["hdr","Club"],
-                  ["tracker","Tracker"], ["teamdir","All Teams"], ["playereval","Player Evaluations"], ["practice","Practice"], ["sa","S&A Schedule"], ["clinics","DSSC Clinics"], ["dssccal","DSSC Coaches"], ["dsysa","DSYSA Clinics"], ["scholarships","Scholarships"],
+                  ["tracker","Tracker"], ["teamdir","All Teams"], ["playereval","Player Evaluations"], ["passing","Passer Ratings"], ["practice","Practice"], ["sa","S&A Schedule"], ["clinics","DSSC Clinics"], ["dssccal","DSSC Coaches"], ["dsysa","DSYSA Clinics"], ["scholarships","Scholarships"],
                   ...(isAdmin ? [["hawaii","Hawaii"], ["travel","Travel"], ["finance","Finance"]] : []),
                   ["hdr","Coaches & Pay"],
                   ["coaches","Coaches"], ["coverage","Coach Coverage"], ["timecards","Time Cards"], ["dssctime","DSSC Hours"], ["myexpenses","My Expenses"], ["gear","Gear Sizes" + (gearOutstanding ? " (" + gearOutstanding + ")" : "")], ["requests","Requests" + (pendingReqs ? " (" + pendingReqs + ")" : "")],
@@ -24878,6 +25141,7 @@ export default function App() {
         {view==="dssccal" && renderDsscCal()}
         {view==="dssctime" && renderDsscTime()}
         {view==="playereval" && renderPlayerEvals()}
+        {view==="passing" && renderPassing()}
         {view==="myexpenses" && renderMyExpenses()}
         {view==="travel" && renderTravel()}
         {view==="faq" && renderFaq()}
