@@ -797,17 +797,29 @@ const NO_SUMMER_TEAMS = ["11 Rise 1", "12 Rise 1", "13 Rise 1"];
 // Teams being phased out — never flag them for practice-count, in any phase.
 // (12 Rise 2 and 16 Ruby were fully removed from the platform.)
 const INACTIVE_TEAMS = [];
-// Slots look like "12-1pm", "5-7pm" — all afternoon/evening. Parse to 24h ordinals
-// (12=noon, 1pm=13 … 9pm=21) so we can detect + merge adjacent ranges.
-function parsePracticeSlot(slot) {
-  const m = (slot || "").match(/^\s*(\d{1,2})\s*-\s*(\d{1,2})\s*pm\s*$/i);
+// Slots look like "12-1pm", "5-7pm" — all afternoon/evening. Some teams practise
+// on the half hour ("5:30-7:30pm"), so parse to minutes since midnight
+// (12=noon, 1pm=13:00 … 9pm=21:00) rather than whole-hour ordinals.
+function parseSlotClock(part) {
+  const m = String(part || "").trim().match(/^(\d{1,2})(?::(\d{2}))?$/);
   if (!m) return null;
-  const to24 = h => (h === 12 ? 12 : h + 12);
-  return { start: to24(parseInt(m[1], 10)), end: to24(parseInt(m[2], 10)) };
+  const h = parseInt(m[1], 10), min = m[2] ? parseInt(m[2], 10) : 0;
+  if (h < 1 || h > 12 || min > 59) return null;
+  return (h === 12 ? 12 : h + 12) * 60 + min;
+}
+function parsePracticeSlot(slot) {
+  const m = String(slot || "").match(/^\s*(\d{1,2}(?::\d{2})?)\s*-\s*(\d{1,2}(?::\d{2})?)\s*pm\s*$/i);
+  if (!m) return null;
+  const start = parseSlotClock(m[1]), end = parseSlotClock(m[2]);
+  if (start == null || end == null || end <= start) return null;
+  return { start, end };
+}
+function fmtSlotClock(mins) {
+  const h = Math.floor(mins / 60), m = mins % 60;
+  return (h === 12 ? 12 : h - 12) + (m ? ":" + String(m).padStart(2, "0") : "");
 }
 function fmtPracticeRange(start, end) {
-  const to12 = h => (h === 12 ? 12 : h - 12);
-  return to12(start) + "-" + to12(end) + "pm";
+  return fmtSlotClock(start) + "-" + fmtSlotClock(end) + "pm";
 }
 // Merge adjacent/overlapping hour slots into single ranges (12-1pm + 1-2pm → 12-2pm).
 function mergeAdjacentSlots(slots) {
@@ -1152,11 +1164,14 @@ const sessionShort  = (s, clinic) => Math.max(0, staffNeeded(s, clinic) - staffA
 const onStaff = (s, matches) => sessionStaff(s).some(x => x.status !== "declined" && matches(x.name));
 // Hours in a practice slot label like "5-7pm" (=2) or "1-2pm" (=1). Practice
 // times are afternoon/evening, so both ends read as PM.
+// Hours a slot is worth — this sets timesheet hours when a coach clocks in, so a
+// slot it can't parse costs someone real money. Handles half hours ("5:30-7:30pm").
 function slotHours(slot){
-  const m = /^\s*(\d{1,2})\s*-\s*(\d{1,2})\s*(?:am|pm)?\s*$/i.exec(slot||"");
+  const m = /^\s*(\d{1,2}(?::\d{2})?)\s*-\s*(\d{1,2}(?::\d{2})?)\s*(?:am|pm)?\s*$/i.exec(slot||"");
   if(!m) return 0;
-  const to24 = h => (h===12 ? 12 : h+12);
-  return Math.max(0, to24(+m[2]) - to24(+m[1]));
+  const start = parseSlotClock(m[1]), end = parseSlotClock(m[2]);
+  if (start == null || end == null) return 0;
+  return Math.max(0, Math.round((end - start) / 6) / 10);
 }
 // Monday (week start) for a date, as YYYY-MM-DD.
 function weekMondayISO(d){ const x = d ? new Date(d) : new Date(); const back = (x.getDay()+6)%7; x.setDate(x.getDate()-back); return localDateISO(x); }
@@ -14065,11 +14080,8 @@ export default function App() {
     // Duration of a slot from its label ("5-7pm" → 2h, "5-6pm" → 1h, "12-1pm" → 1h),
     // so it's correct whether Sunday uses 1-hour cells (preseason) or 2-hour blocks (season).
     const hoursOf = (a) => {
-      const m = (a.slot || "").match(/^(\d+)\s*-\s*(\d+)/);
-      if (!m) return a.day === "Sun" ? 1 : 2;
-      const s = parseInt(m[1], 10), e = parseInt(m[2], 10);
-      const dur = e > s ? e - s : (e + 12) - s; // handle the 12→1 wrap
-      return dur > 0 ? dur : (a.day === "Sun" ? 1 : 2);
+      const h = slotHours(a.slot);            // understands half hours too
+      return h > 0 ? h : (a.day === "Sun" ? 1 : 2);
     };
 
     // Each distinct (team, S&A slot) in this block = 1 hour/week of strength & conditioning.
