@@ -1723,7 +1723,12 @@ export default function App() {
   // Operations are admin-only: the whole "Operations" nav group and the views
   // behind it are hidden and blocked for non-admin coaches. The owner (Drew)
   // always counts here so a bad DB flag can't lock him out.
-  const OPS_VIEWS = new Set(["tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","timecards","gear","roster","hawaii","travel","dsysa","finance","dssccal"]);
+  // "dsysa" is deliberately NOT here: coaches sign themselves up for DSYSA
+  // clinics from that view ("I'll help"), which is the whole point of the ask
+  // email we send them. Every admin control inside renderDsysa — add/cancel a
+  // date, set the lead, remove someone else's signup — is separately gated on
+  // isAdmin, so opening the view exposes no admin action.
+  const OPS_VIEWS = new Set(["tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","timecards","gear","roster","hawaii","travel","finance","dssccal"]);
   const canOps    = isAdmin || isOwner;
   const opsDenied = <div style={{padding:24,color:C.mut,textAlign:"center"}}>This section is restricted to administrators. Ask the club administrator (Drew) for access.</div>;
   // Once a player has accepted (or is locked/signed) onto a team, they're
@@ -24933,7 +24938,10 @@ export default function App() {
                   ["hdr","Communication"],
                   ["email","Email"], ["messages","Messages (SMS)" + (totalUnread > 0 ? " (" + totalUnread + ")" : "")], ["notifications","Notifications"], ["coachcomms","Coach Comms"], ["assignments","Assignments"],
                 ] }] : []),
-                { title:"More", items:[...(canOps ? [] : [["dssctime","DSSC Hours"],["myexpenses","My Expenses"]]), ["activity","Activity"], ["faq","FAQ"], ["games","Games"], ...(isOwner ? [["askai","Ask AI"]] : [])] },
+                // DSYSA sits under Operations for admins; coaches reach the same
+                // view from here, otherwise the "hit I'll help" ask email links
+                // them somewhere they have no menu entry for.
+                { title:"More", items:[...(canOps ? [] : [["dssctime","DSSC Hours"],["myexpenses","My Expenses"],["dsysa","DSYSA Clinics"]]), ["activity","Activity"], ["faq","FAQ"], ["games","Games"], ...(isOwner ? [["askai","Ask AI"]] : [])] },
               ];
               // Mobile: one hamburger opening a full-height grouped menu.
               if (isNarrow) {
