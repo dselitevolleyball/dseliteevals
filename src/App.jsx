@@ -24908,7 +24908,12 @@ export default function App() {
           <span style={{fontSize:22}}>◆</span> DS ELITE
           <span style={{fontSize:11,fontWeight:400,color:C.mut,marginLeft:6}}>HQ</span>
         </div>
-        <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+        {/* Right cluster. flex:1 + justifyContent:flex-end keeps Add Player, the
+            bell and the user chip pinned to the right edge once this block wraps
+            onto its own line — below ~1600px the nav is wide enough to force that
+            wrap, and space-between on the header alone would strand them at the
+            left. minWidth:0 lets it shrink instead of overflowing the header. */}
+        <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",flex:"1 1 auto",minWidth:0,justifyContent:"flex-end"}}>
           <nav style={{display:"flex",gap:3,flexWrap:"wrap",position:"relative",zIndex:50}}>
             {(() => {
               const btn = (active) => ({padding:"6px 14px",borderRadius:8,border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600,background:active?C.gold:"transparent",color:active?"#000":C.mut});
