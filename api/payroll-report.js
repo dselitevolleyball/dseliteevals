@@ -98,7 +98,12 @@ export default async function handler(req, res) {
 
   const rateRow = (nm) => (rates || []).find(r => norm(r.coach_name) === norm(nm));
   const isHeadOf = (nm, team) => !!team && (teams || []).some(t => t.team_name === team && norm(t.head_coach) === norm(nm));
-  const rateFor = (nm, team) => {
+  // A per-shift rate_override beats the standing rate for that row only — it is
+  // how a one-off event (a club-wide coach training) pays a rate that has
+  // nothing to do with whose team the coach normally covers. It also stands in
+  // for a missing coach_rates row, so an override alone is enough to pay someone.
+  const rateFor = (nm, team, override) => {
+    if (override != null && override !== "") return Number(override);
     const r = rateRow(nm);
     if (!r) return null;
     if (r.head_rate != null && isHeadOf(nm, team)) return Number(r.head_rate);
@@ -111,7 +116,7 @@ export default async function handler(req, res) {
     const coach = canonicalName(c.coach_name, c.coach_email);
     const g = byCoach.get(coach) || { coach, hours: 0, amount: 0, unpaidAmount: 0, missingRate: false, lateCount: 0, shifts: [] };
     const hrs = Number(c.hours || 0);
-    const rate = rateFor(coach, c.team_name);
+    const rate = rateFor(coach, c.team_name, c.rate_override);
     const amt = rate != null ? hrs * rate : null;
     const late = c.source === "app-late";
     g.hours += hrs;

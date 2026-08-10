@@ -18333,7 +18333,11 @@ export default function App() {
     const rateRow = nm => coachRates.find(x => norm(x.coach_name)===norm(nm));
     const rateOf = nm => { const r = rateRow(nm); return r && r.hourly_rate!=null ? Number(r.hourly_rate) : null; };
     const headRateOf = nm => { const r = rateRow(nm); return r && r.head_rate!=null ? Number(r.head_rate) : null; };
-    const rateFor = (nm, team) => {
+    // A per-shift rate_override wins outright — see migrations/20260810. Keep this
+    // in step with rateFor() in api/payroll-report.js or Time Cards and the Monday
+    // payroll email will quote different numbers for the same shift.
+    const rateFor = (nm, team, override) => {
+      if (override!=null && override!=="") return Number(override);
       const hr = headRateOf(nm);
       if (hr!=null && team && practiceTeams.some(t => t.team_name===team && norm(t.head_coach)===norm(nm))) return hr;
       return rateOf(nm);
@@ -18411,11 +18415,14 @@ export default function App() {
       g.rate = rateOf(g.coach);
       g.headRate = headRateOf(g.coach);
       // Amount sums per check-in so head-coach shifts price at head_rate.
-      if (g.rate==null) { g.amount = null; g.unpaidAmount = null; }
+      // An override pays even with no coach_rates row, so "no standing rate" only
+      // blanks the money when none of the shifts carry one.
+      const anyOverride = g.checks.some(c => c.rate_override != null && c.rate_override !== "");
+      if (g.rate==null && !anyOverride) { g.amount = null; g.unpaidAmount = null; }
       else {
         g.amount = 0; g.unpaidAmount = 0;
         g.checks.forEach(c => {
-          const a = Number(c.hours||0) * (rateFor(g.coach, c.team_name) ?? g.rate);
+          const a = Number(c.hours||0) * (rateFor(g.coach, c.team_name, c.rate_override) ?? g.rate ?? 0);
           g.amount += a; if (!c.paid) g.unpaidAmount += a;
         });
       }
