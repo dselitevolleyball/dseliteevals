@@ -1580,6 +1580,10 @@ export default function App() {
   const [emailTeam, setEmailTeam]                     = useState("");    // "" any | "__has" | "__none"
   const [emailTeams, setEmailTeams]                   = useState(() => new Set()); // specific teams (multi-select); overrides emailTeam when non-empty
   const [emailBuckets, setEmailBuckets]               = useState(() => new Set()); // status buckets: unassigned | declined | not_invited | opted_out
+  // Hawaii trip audience: any of HAWAII_ORDER. Non-empty REPLACES the age-group
+  // pool — the trip spans three teams and its own opt-in, so intersecting it
+  // with the age tabs just silently drops families who already said yes.
+  const [emailHawaii, setEmailHawaii]                 = useState(() => new Set());
   const [emailStaff, setEmailStaff]                   = useState(() => new Set()); // per-COACH staff send (own merge fields; independent of the team chips)
   const [emailStatus, setEmailStatus]                 = useState("");    // "" any | a STATUS_OPTS value
   const [emailSubject, setEmailSubject]               = useState("");
@@ -4026,7 +4030,8 @@ export default function App() {
     const { error } = await supabase.from("hawaii_interest").delete().eq("player_id", playerId);
     if (error) { window.alert("Remove failed: " + error.message); loadHawaii(); }
   }, [loadHawaii]);
-  useEffect(() => { if (isApproved && view === "hawaii") loadHawaii(); }, [isApproved, view, loadHawaii]);
+  // The Email view needs these rows too — its Hawaii audience chips filter on them.
+  useEffect(() => { if (isApproved && (view === "hawaii" || view === "email")) loadHawaii(); }, [isApproved, view, loadHawaii]);
 
   // Messages waiting for the SportsYou bookmarklet to drain.
   const loadSyOutbox = useCallback(async () => {
@@ -11359,6 +11364,23 @@ export default function App() {
           Optional tournament · {HAWAII_TEAMS.join(" · ")} · {roster.length} players
           {(() => { const g = roster.filter(p => guestTeamOf(p)).length; return g ? ` (${g} added by hand)` : ""; })()}
         </div>
+        {/* Jump straight to the composer with the trip audience already picked. */}
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:14}}>
+          {[["Email interested + signed up", ["interested","committed"]],
+            ["Email signed up only",         ["committed"]],
+            ["Email who hasn't answered",    ["not_asked"]]].map(([label, statuses]) => {
+            const n = roster.filter(p => statuses.includes(statusOf(p))).length;
+            return (
+              <button key={label} disabled={!n}
+                onClick={() => { setEmailHawaii(new Set(statuses)); setView("email"); }}
+                title={n ? "Opens the Email tab with these families already selected" : "Nobody in this group yet"}
+                style={{padding:"6px 12px",borderRadius:8,border:"1px solid "+(n?C.gold:C.border),background:"transparent",
+                  color:n?C.gold:C.mut,cursor:n?"pointer":"not-allowed",fontFamily:"inherit",fontSize:11,fontWeight:700,opacity:n?1:0.5}}>
+                {label} ({n})
+              </button>
+            );
+          })}
+        </div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:16}}>
           {HAWAII_ORDER.map(s => {
             const m = hawaiiMeta(s);
@@ -15190,6 +15212,20 @@ export default function App() {
       if (scope === "none") return;
       pool.push(...applySubset(divPlayersOf(div), scope));
     });
+    // Hawaii audience. The trip has its own opt-in across three teams (plus
+    // hand-added guests from any team), so when these chips are on they REPLACE
+    // the pool outright rather than narrowing it — otherwise a committed family
+    // whose age tab happened to be off would be dropped from the send with no
+    // warning. Every other filter below is skipped for the same reason.
+    const hawaiiSel = emailHawaii.size > 0;
+    if (hawaiiSel) {
+      const hStatus = new Map(hawaiiInterest.map(r => [r.player_id, r.status || "not_asked"]));
+      const hTeam   = new Map(hawaiiInterest.map(r => [r.player_id, r.hawaii_team || null]));
+      // "not_asked" has no row of its own — it's the absence of an answer — so
+      // it means anyone on a Hawaii team (or added to one) who hasn't replied.
+      const onTrip = (p) => HAWAII_TEAMS.includes(p.team_assignment) || !!hTeam.get(p.id);
+      pool = players.filter(p => onTrip(p) && emailHawaii.has(hStatus.get(p.id) || "not_asked"));
+    }
     // Cross-cutting filters.
     // Status buckets mirror the Tracker's Unassigned / Declined / Not Invited /
     // Opted Out columns. Teams + buckets combine as a UNION: a player is in scope
@@ -15202,7 +15238,9 @@ export default function App() {
       opted_out:   p => (p.offer_status || "") === "opted_out",
     };
     const teamSel = emailTeams.size > 0, bucketSel = emailBuckets.size > 0;
-    if (teamSel || bucketSel) {
+    if (hawaiiSel) {
+      // Hawaii owns the pool — see above.
+    } else if (teamSel || bucketSel) {
       pool = pool.filter(p =>
         (teamSel && emailTeams.has(p.team_assignment)) ||
         (bucketSel && [...emailBuckets].some(b => bucketPred[b] && bucketPred[b](p)))
@@ -15218,7 +15256,7 @@ export default function App() {
       const o = p.offer_status || "";
       return (o && OFFER_TO_STATUS[o]) ? OFFER_TO_STATUS[o] : (p.status || "In Progress");
     };
-    if (emailStatus)                 pool = pool.filter(p => effStatus(p) === emailStatus);
+    if (emailStatus && !hawaiiSel)   pool = pool.filter(p => effStatus(p) === emailStatus);
     // Teams available for the team dropdown (within the selected ages).
     const teamOptions = [...new Set(players.filter(p => divSet.has(p.usavDiv || p.usav_div)).map(p => p.team_assignment).filter(Boolean))].sort();
     // A player may have up to two parent/guardian emails; both receive messages.
@@ -15870,8 +15908,8 @@ export default function App() {
               {STATUS_OPTS.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
           </label>
-          {(emailTeam || emailTeams.size > 0 || emailBuckets.size > 0 || emailStatus || Object.keys(emailGroupScope).length > 0 || emailExcluded.size > 0) && (
-            <button onClick={()=>{ setEmailGroupScope({}); setEmailTeam(""); setEmailTeams(new Set()); setEmailBuckets(new Set()); setEmailStatus(""); setEmailExcluded(new Set()); }} style={{padding:"5px 10px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Clear filters</button>
+          {(emailTeam || emailTeams.size > 0 || emailBuckets.size > 0 || emailHawaii.size > 0 || emailStatus || Object.keys(emailGroupScope).length > 0 || emailExcluded.size > 0) && (
+            <button onClick={()=>{ setEmailGroupScope({}); setEmailTeam(""); setEmailTeams(new Set()); setEmailBuckets(new Set()); setEmailHawaii(new Set()); setEmailStatus(""); setEmailExcluded(new Set()); }} style={{padding:"5px 10px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Clear filters</button>
           )}
         </div>
         {/* Status buckets — email everyone in Unassigned / Declined / Not Invited / Opted Out. */}
@@ -15894,6 +15932,32 @@ export default function App() {
             </button>
           )}
         </div>
+        {/* Hawaii trip audience — its own opt-in list, so these chips take over
+            the whole send (age tabs, teams and status are ignored while on). */}
+        <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center",marginBottom:12}}>
+          <span style={{fontSize:11,fontWeight:700,color:C.mut}}>Hawaii trip:</span>
+          {HAWAII_ORDER.map(s => {
+            const m = hawaiiMeta(s); const on = emailHawaii.has(s);
+            return (
+              <button key={s} onClick={()=>setEmailHawaii(prev => { const n = new Set(prev); n.has(s) ? n.delete(s) : n.add(s); return n; })}
+                title={on ? "Emailing Hawaii — " + m.label + " — click to remove" : "Add Hawaii “" + m.label + "” families to this send"}
+                style={{padding:"4px 12px",borderRadius:16,border:"1px solid "+(on?m.color:C.border),background:on?m.color+"22":"transparent",color:on?m.color:C.mut,cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:700}}>
+                {m.label}
+              </button>
+            );
+          })}
+          {emailHawaii.size > 0 && (
+            <button onClick={()=>setEmailHawaii(new Set())} title="Clear the Hawaii audience and go back to the normal filters"
+              style={{padding:"4px 10px",borderRadius:16,border:"1px solid "+C.border,background:"transparent",color:C.mut,cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:700}}>
+              Clear ({emailHawaii.size})
+            </button>
+          )}
+        </div>
+        {emailHawaii.size > 0 && (
+          <div style={{marginBottom:12,padding:"8px 12px",borderRadius:8,border:"1px solid "+C.gold,background:"rgba(233,30,140,0.08)",fontSize:11,color:C.gold,fontWeight:700}}>
+            Hawaii audience is on — sending to {[...HAWAII_ORDER.filter(s=>emailHawaii.has(s))].map(s=>hawaiiMeta(s).label).join(" + ")} across {HAWAII_TEAMS.join(", ")} plus any hand-added players. Age group, team and status filters are ignored.
+          </div>
+        )}
         {/* Multi-select specific teams — email one or several teams at once. */}
         {teamOptions.length > 0 && (
           <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center",marginBottom:12}}>
