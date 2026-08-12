@@ -201,7 +201,46 @@ export default async function handler(req, res) {
   // afternoon, so these are never filtered by cancelled/goneSun/moveByDate and
   // they never suppress anything. Distinct UID keeps both events on the
   // SportsYou calendar side by side.
+  // In-house tournament rows are stored one-per-match (plus a WORK row) so the
+  // app can draw a court grid, but a parent doesn't want five hour-long blocks
+  // on their calendar — they want "we're at the gym 7-1". Collapse each team's
+  // tournament day into ONE session block and put the match list in the body.
+  // Session windows are fixed (07:00-13:00 morning, 13:00-19:00 afternoon) so
+  // the invite includes arrival and warmup, not just first serve.
+  const isTourn = e => /^Tournament/i.test(e.title || "");
+  const tourn = (Array.isArray(teamEvents) ? teamEvents : []).filter(isTourn);
+  const tournByDate = new Map();
+  for (const e of tourn) {
+    if (!e.event_date || hhmmToMin(e.start_time) == null) continue;
+    if (!tournByDate.has(e.event_date)) tournByDate.set(e.event_date, []);
+    tournByDate.get(e.event_date).push(e);
+  }
+  for (const [date, rows] of tournByDate) {
+    rows.sort((a, b) => hhmmToMin(a.start_time) - hhmmToMin(b.start_time));
+    const morning = hhmmToMin(rows[0].start_time) < 13 * 60;
+    const startMin = morning ? 7 * 60 : 13 * 60;
+    const endMin   = morning ? 13 * 60 : 19 * 60;
+    const fmt = m => { const h = Math.floor(m / 60), mm = m % 60, ap = h >= 12 ? "pm" : "am", hh = h % 12 === 0 ? 12 : h % 12; return hh + (mm ? ":" + String(mm).padStart(2, "0") : "") + ap; };
+    const body = rows.map(r => {
+      const t = fmt(hhmmToMin(r.start_time));
+      const work = /WORK/i.test(r.title);
+      const what = work ? "WORK " + (r.location || "") : r.title.replace(/^Tournament — /, "");
+      return t + "  " + what + (work ? "" : "  (" + (r.location || "") + ")");
+    }).join("\n");
+    const arrive = morning ? "Arrive by 7:00am. First match 8:00am." : "Arrive by 1:00pm. First match 2:00pm.";
+    ev.push(["BEGIN:VEVENT",
+      "UID:" + (team + "-tourn-" + date).replace(/\s+/g, "_") + "@dseliteevals",
+      "DTSTAMP:20260702T000000Z",
+      `DTSTART;TZID=${TZ}:` + dtMin(date, startMin),
+      `DTEND;TZID=${TZ}:` + dtMin(date, endMin),
+      "SUMMARY:" + icsEsc(team + " — DS Elite In-House Tournament"),
+      "DESCRIPTION:" + icsEsc(arrive + "\n\nYour schedule:\n" + body + "\n\nWhen you are not playing you are working a court. Stay for the full session."),
+      "LOCATION:" + icsEsc(WAREHOUSE_LOC),
+      "END:VEVENT"].join("\r\n"));
+  }
+
   for (const e of (Array.isArray(teamEvents) ? teamEvents : [])) {
+    if (isTourn(e)) continue;   // already emitted as a single session block above
     const startMin = hhmmToMin(e.start_time);
     if (!e.event_date || startMin == null) continue;
     const dur = Number(e.duration_min) > 0 ? Number(e.duration_min) : 30;
