@@ -1344,6 +1344,11 @@ export default function App() {
   const [practiceTeams, setPracticeTeams]             = useState([]);
   const [practiceAssignments, setPracticeAssignments] = useState([]);
   const [saSessions, setSaSessions]                   = useState([]);
+  // One-off per-team calendar rows (jersey tryouts, the in-house tournament).
+  // Until now only api/calendar.js read these, so they reached SportsYou but were
+  // invisible inside the app — the coach calendar and the Tournament view both
+  // read them from here.
+  const [teamEvents, setTeamEvents]                   = useState([]);
   const [floatingCoaches, setFloatingCoaches]         = useState([]);
   const [coachFloats, setCoachFloats]                 = useState([]); // per (coach,day,slot,phase) floater availability
   const [practiceCoverage, setPracticeCoverage]       = useState([]); // per-date coach absences + subs (Daily view)
@@ -1522,6 +1527,9 @@ export default function App() {
   const [saBlock, setSaBlock]                         = useState(
     () => (typeof localStorage !== "undefined" && localStorage.getItem("dse_sa_block")) || "fall_b1"
   );
+  // Which tournament date the Tournament view is showing. Null = the earliest
+  // one on file, so a second tournament next season needs no code change.
+  const [tournDate, setTournDate]                     = useState(null);
   useEffect(() => {
     if (typeof localStorage !== "undefined") localStorage.setItem("dse_sa_block", saBlock);
   }, [saBlock]);
@@ -2387,20 +2395,23 @@ export default function App() {
 
   // Practice tab loader
   const loadPractice = useCallback(async () => {
-    const [tRes, aRes, sRes, fRes] = await Promise.all([
+    const [tRes, aRes, sRes, fRes, eRes] = await Promise.all([
       supabase.from("practice_teams").select("*").order("team_name"),
       supabase.from("practice_assignments").select("*"),
       supabase.from("sa_sessions").select("*").order("session_date").order("slot"),
       supabase.from("floating_coaches").select("name"),
+      supabase.from("team_events").select("*").order("event_date").order("start_time"),
     ]);
     if (tRes.error) console.error("Load practice_teams error:", tRes.error);
     if (aRes.error) console.error("Load practice_assignments error:", aRes.error);
     if (sRes.error) console.error("Load sa_sessions error:", sRes.error);
     if (fRes.error) console.error("Load floating_coaches error:", fRes.error);
+    if (eRes.error) console.error("Load team_events error:", eRes.error);
     setPracticeTeams(tRes.data || []);
     setPracticeAssignments(aRes.data || []);
     setSaSessions(sRes.data || []);
     setFloatingCoaches((fRes.data || []).map(r => r.name));
+    setTeamEvents(eRes.data || []);
   }, []);
   const loadSnapshots = useCallback(async () => {
     const { data, error } = await supabase.from("practice_snapshots")
@@ -7310,6 +7321,10 @@ export default function App() {
               .filter(g => matches(g.coach_name))
               .map(g => dsysaClinics.find(c => c.id === g.clinic_id))
               .filter(c => c && !c.cancelled && c.clinic_date === iso);
+            // One-off team events (tournament matches, work shifts, jersey
+            // tryouts) for the teams this calendar belongs to. WORK rows get a
+            // different colour so a coach can see duty vs play at a glance.
+            const evTeam = (teamEvents || []).filter(e => myTeamSet.has(e.team_name) && e.event_date === iso);
             const evDssc = dsscOn(iso);
             const events = [...evDssc.map(x => ({
               label: (x.pending ? "◷" : "🏆") + " DSSC" + (x.start ? " " + shortTime(x.start) : ""),
@@ -7317,6 +7332,12 @@ export default function App() {
               ...evClinic.map(c => ({
               label: "🏐 DSYSA" + (c.start_time ? " " + (fmtFlightTime(c.start_time) || c.start_time) : ""),
               c: "#0ea5e9" })),
+              ...evTeam.map(e => {
+                const work = /WORK/i.test(e.title);
+                const t = fmtFlightTime(e.start_time) || e.start_time || "";
+                return { label: (work ? "🦺 " : "🏆 ") + abbr(e.team_name) + (t ? " " + t : ""),
+                         c: work ? "#f97316" : "#e11d48" };
+              }),
               ...evFlight.map(x => ({
               label: "✈ " + (x.who ? x.who + " " : "") + (x.out ? "out" : "home")
                 + (fmtFlightTime(x.time) ? " " + fmtFlightTime(x.time) : (x.airline && !x.who ? " " + x.airline.slice(0,6) : "")),
@@ -14719,6 +14740,100 @@ export default function App() {
   // The whole Speed & Agility program on one page: every date, every trainer
   // hour, which team (open hours visible), block badges, and a copy-as-text
   // button to send the trainer. Tabs: Regular Season (season1+season2) / Fall.
+  // ── In-house tournament ────────────────────────────────────────────────────
+  // Reads team_events rather than a hardcoded grid, so moving a match is a row
+  // edit that reaches SportsYou on its next refresh with no deploy. Every match
+  // is stored twice (once per playing team) plus a WORK row for the officiating
+  // team, so the court grid rebuilds a match by pairing the two "vs" rows.
+  function renderTournament() {
+    const evs = (teamEvents || []).filter(e => /^Tournament/i.test(e.title));
+    if (!evs.length) return <div style={{padding:24,color:C.mut,textAlign:"center"}}>No tournament scheduled.</div>;
+    const dates = [...new Set(evs.map(e => e.event_date))].sort();
+    const date = tournDate && dates.includes(tournDate) ? tournDate : dates[0];
+    const day = evs.filter(e => e.event_date === date);
+    const fmtT = t => { const [h,m] = String(t||"").split(":").map(Number); const ap = h>=12?"pm":"am"; const hh = h%12===0?12:h%12; return hh + (m?":"+String(m).padStart(2,"0"):"") + ap; };
+    const times = [...new Set(day.map(e => e.start_time))].sort();
+    const courts = [...new Set(day.map(e => e.location).filter(Boolean))].sort();
+    // pair the two "vs" rows for a (time, court) into one match
+    const matchAt = (t, court) => {
+      const rows = day.filter(e => e.start_time === t && e.location === court && !/WORK/i.test(e.title));
+      if (rows.length < 2) return null;
+      const work = day.find(e => e.start_time === t && e.location === court && /WORK/i.test(e.title));
+      return { a: rows[0].team_name, b: rows[1].team_name, work: work ? work.team_name : null };
+    };
+    const teams = [...new Set(day.map(e => e.team_name))].sort();
+    const th = {padding:"7px 9px",fontSize:10,fontWeight:800,letterSpacing:0.4,textTransform:"uppercase",color:C.mut,borderBottom:"1px solid "+C.border,background:C.bg,position:"sticky",top:0,whiteSpace:"nowrap"};
+    const td = {padding:"7px 9px",fontSize:12,borderBottom:"1px solid "+C.border,verticalAlign:"top"};
+    return (
+      <div style={{maxWidth:1200,margin:"0 auto"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:4}}>
+          <h2 style={{margin:0,fontSize:20,fontWeight:800,color:"#e11d48"}}>🏆 In-House Tournament</h2>
+          <div style={{flex:1}} />
+          {dates.length > 1 && (
+            <select value={date} onChange={e=>setTournDate(e.target.value)}
+              style={{background:C.bg,border:"1px solid "+C.border,borderRadius:6,color:C.text,fontFamily:"inherit",fontSize:13,padding:"6px 8px"}}>
+              {dates.map(d => <option key={d} value={d}>{new Date(d+"T12:00:00").toLocaleDateString(undefined,{weekday:"long",month:"long",day:"numeric"})}</option>)}
+            </select>
+          )}
+        </div>
+        <div style={{fontSize:11,color:C.mut,marginBottom:12}}>
+          {new Date(date+"T12:00:00").toLocaleDateString(undefined,{weekday:"long",month:"long",day:"numeric",year:"numeric"})}
+          {" · "}{day.filter(e=>!/WORK/i.test(e.title)).length/2} matches · {teams.length} teams · every team also works. Edits here reach SportsYou on its next refresh.
+        </div>
+
+        <div style={{overflowX:"auto",marginBottom:18}}>
+          <table style={{borderCollapse:"collapse",width:"100%",minWidth:640}}>
+            <thead><tr><th style={th}>Time</th>{courts.map(c => <th key={c} style={th}>{c}</th>)}</tr></thead>
+            <tbody>
+              {times.map(t => (
+                <tr key={t}>
+                  <td style={{...td,fontWeight:800,color:C.gold,whiteSpace:"nowrap"}}>{fmtT(t)}</td>
+                  {courts.map(c => {
+                    const m = matchAt(t, c);
+                    return <td key={c} style={td}>
+                      {m ? <>
+                        <div style={{fontWeight:700}}>{m.a} <span style={{color:C.mut,fontWeight:400}}>vs</span> {m.b}</div>
+                        {m.work && <div style={{fontSize:10,color:"#f97316",marginTop:2}}>🦺 work: {m.work}</div>}
+                      </> : <span style={{color:C.mut}}>—</span>}
+                    </td>;
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <h3 style={{margin:"0 0 8px",fontSize:14,fontWeight:800,color:C.text}}>By team</h3>
+        <div style={{overflowX:"auto"}}>
+          <table style={{borderCollapse:"collapse",width:"100%",minWidth:640}}>
+            <thead><tr><th style={th}>Team</th><th style={th}>Matches</th><th style={th}>Works</th></tr></thead>
+            <tbody>
+              {teams.map(t => {
+                const mine = day.filter(e => e.team_name === t);
+                const plays = mine.filter(e => !/WORK/i.test(e.title));
+                const works = mine.filter(e => /WORK/i.test(e.title));
+                return (
+                  <tr key={t}>
+                    <td style={{...td,fontWeight:700,whiteSpace:"nowrap"}}>{t}</td>
+                    <td style={td}>
+                      {plays.sort((x,y)=>x.start_time.localeCompare(y.start_time)).map(e =>
+                        <div key={e.id}>{fmtT(e.start_time)} · {e.title.replace(/^Tournament — /,"")} <span style={{color:C.mut}}>({e.location})</span></div>)}
+                      {plays.length !== 3 && <div style={{fontSize:10,color:plays.length<3?C.red:"#f59e0b",fontWeight:700,marginTop:2}}>{plays.length} matches</div>}
+                    </td>
+                    <td style={{...td,color:"#f97316"}}>
+                      {works.length ? works.sort((x,y)=>x.start_time.localeCompare(y.start_time)).map(e =>
+                        <div key={e.id}>{fmtT(e.start_time)} · {e.location}</div>) : <span style={{color:C.mut}}>—</span>}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  }
+
   function renderSASchedule() {
     const HOURS = ["12-1pm","1-2pm","2-3pm","3-4pm","4-5pm","5-6pm","6-7pm","7-8pm","8-9pm"];
     const tab = (saBlock === "fall1" || saBlock === "fall2") ? saBlock : "season";
@@ -25012,7 +25127,10 @@ export default function App() {
                 // DSYSA sits under Operations for admins; coaches reach the same
                 // view from here, otherwise the "hit I'll help" ask email links
                 // them somewhere they have no menu entry for.
-                { title:"More", items:[...(canOps ? [] : [["dssctime","DSSC Hours"],["myexpenses","My Expenses"],["dsysa","DSYSA Clinics"]]), ["activity","Activity"], ["faq","FAQ"], ["games","Games"], ...(isOwner ? [["askai","Ask AI"]] : [])] },
+                // In-House Tournament sits here for EVERY coach, ops or not —
+                // all 20 teams play it, so gating it to admins would repeat the
+                // DSYSA mistake of linking people to a page they can't open.
+                { title:"More", items:[["tournament","In-House Tournament"], ...(canOps ? [] : [["dssctime","DSSC Hours"],["myexpenses","My Expenses"],["dsysa","DSYSA Clinics"]]), ["activity","Activity"], ["faq","FAQ"], ["games","Games"], ...(isOwner ? [["askai","Ask AI"]] : [])] },
               ];
               // Mobile: one hamburger opening a full-height grouped menu.
               if (isNarrow) {
@@ -25221,6 +25339,7 @@ export default function App() {
         {view==="tournaments" && renderTournaments()}
         {view==="practice" && renderPractice()}
         {view==="sa" && renderSASchedule()}
+        {view==="tournament" && renderTournament()}
         {view==="physical" && renderPhysicalTesting()}
         {view==="tryouts" && renderTryouts()}
         {view==="email" && renderEmailBlast()}
