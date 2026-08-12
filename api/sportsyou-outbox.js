@@ -111,7 +111,19 @@ export default async function handler(req, res) {
   if (!p.length) { alert('Nothing queued in DS HQ.'); return; }
   const G = {}; p.forEach(i => (G[i.message] = G[i.message] || []).push(i));
   const RS = [], MISS = [];
-  for (const m of Object.keys(G)) {
+  // SportsYou rate-limits createPost: fired back to back, roughly the fourth
+  // call starts returning code 207 "Too many requests". Identical text for many
+  // teams is ONE call so it never showed up, but per-team text (a personalised
+  // schedule) is one call each. Pace them, and back off and retry rather than
+  // burning a message on a limit that clears in seconds.
+  const SLEEP = ms => new Promise(r => setTimeout(r, ms));
+  const RATE = s => /too many requests/i.test(String(s || ""));
+  const KEYS = Object.keys(G);
+  let sent = 0;
+  for (const m of KEYS) {
+    if (sent) await SLEEP(4000);            // gap between posts
+    sent++;
+    document.title = "Posting " + sent + "/" + KEYS.length + " to SportsYou...";
     const ids = [], ok = [];
     for (const x of G[m]) {
       const id = BY[N(x.team_name)];
@@ -123,12 +135,17 @@ export default async function handler(req, res) {
       + ', postTypes:[' + ids.map(() => '"team"').join(', ')
       + '], scheduledTime:"", targetIds:[' + ids.map(v => JSON.stringify(v)).join(', ') + '])}';
     try {
-      const j = await (await fetch('https://api.prod.sportsyou.com/graphqlServices', {
-        method: 'POST', credentials: 'include',
-        headers: { 'content-type': 'application/json', 'sy-unique-id': localStorage.getItem('sy-unique-id') || '' },
-        body: JSON.stringify({ query: q })
-      })).json();
-      const bad = j && j.errors ? JSON.stringify(j.errors).slice(0, 300) : null;
+      let bad = null;
+      for (let att = 0; att < 4; att++) {
+        if (att) { document.title = "Rate limited - waiting " + (10 * att) + "s..."; await SLEEP(10000 * att); }
+        const j = await (await fetch('https://api.prod.sportsyou.com/graphqlServices', {
+          method: 'POST', credentials: 'include',
+          headers: { 'content-type': 'application/json', 'sy-unique-id': localStorage.getItem('sy-unique-id') || '' },
+          body: JSON.stringify({ query: q })
+        })).json();
+        bad = j && j.errors ? JSON.stringify(j.errors).slice(0, 300) : null;
+        if (!bad || !RATE(bad)) break;      // only a rate limit is worth retrying
+      }
       ok.forEach(x => RS.push({ id: x.id, ok: !bad, error: bad }));
     } catch (e) { ok.forEach(x => RS.push({ id: x.id, ok: false, error: String(e) })); }
   }
