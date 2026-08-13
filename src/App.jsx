@@ -756,6 +756,23 @@ const normalizeUrl = (u) => {
 // newline) would never match the per-line renderer — collapse it first.
 const repairSplitLinks = (t) => String(t || "").replace(/\[([^\]]*)\]\(([^)\s]+)\)/g,
   (_, label, url) => "[" + label.replace(/\s+/g, " ").trim() + "](" + url + ")");
+// Sent history stores whatever was sent. Most sends are the composer's plain
+// text, but anything sent with html:true (e.g. a roster table) lands here as raw
+// markup — which then rendered as "<div style=..." in the preview and, worse,
+// loaded raw tags back into a plain-text composer when clicked. Flatten it.
+const looksLikeHtml = (s) => /<\/?(div|table|tr|td|th|p|br|span|a|strong|ul|li)\b/i.test(String(s || ""));
+function emailHtmlToText(html) {
+  return String(html || "")
+    .replace(/<\s*(br|\/p|\/div|\/tr|\/h[1-6])\s*\/?>/gi, "\n")
+    .replace(/<\s*\/(td|th)\s*>/gi, "  ")
+    .replace(/<\s*li[^>]*>/gi, "• ")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+    .replace(/[ \t]{2,}/g, "  ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
 function emailMarkupToHtml(text) {
   text = repairSplitLinks(text);
   const inline = (raw) => {
@@ -15963,10 +15980,14 @@ export default function App() {
                 {emailLog.map(e => {
                   const when = e.created_at ? new Date(e.created_at).toLocaleString(undefined,{weekday:"short",month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}) : "";
                   const failed = e.failed_count || 0;
-                  const preview = (e.body || "").length > 140 ? (e.body||"").slice(0,140) + "…" : (e.body || "");
+                  const isHtml = looksLikeHtml(e.body);
+                  const plain = isHtml ? emailHtmlToText(e.body) : (e.body || "");
+                  const preview = plain.length > 140 ? plain.slice(0,140) + "…" : plain;
                   return (
-                    <button key={e.id} onClick={()=>{ setEmailSubject(e.subject||""); setEmailBody(e.body||""); }}
-                      title="Click to load this subject + message back into the composer"
+                    <button key={e.id} onClick={()=>{ setEmailSubject(e.subject||""); setEmailBody(plain); }}
+                      title={isHtml
+                        ? "Sent as HTML. Clicking loads a plain-text version into the composer — the original formatting is not recreated."
+                        : "Click to load this subject + message back into the composer"}
                       style={{textAlign:"left",background:C.bg,border:"1px solid "+C.border,borderRadius:8,padding:"8px 10px",cursor:"pointer",fontFamily:"inherit"}}>
                       <div style={{display:"flex",justifyContent:"space-between",gap:8,flexWrap:"wrap",alignItems:"center"}}>
                         <span style={{fontSize:13,fontWeight:700,color:C.text}}>{e.subject || "(no subject)"}</span>
@@ -15975,6 +15996,7 @@ export default function App() {
                       <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center",margin:"3px 0"}}>
                         <span style={{fontSize:9,fontWeight:800,color:C.grn,border:"1px solid "+C.grn,borderRadius:5,padding:"1px 6px"}}>{(e.sent_count ?? e.recipient_count) || 0} sent</span>
                         {failed > 0 && <span style={{fontSize:9,fontWeight:800,color:C.red,border:"1px solid "+C.red,borderRadius:5,padding:"1px 6px"}}>{failed} failed</span>}
+                        {isHtml && <span style={{fontSize:9,fontWeight:800,color:C.acc,border:"1px solid "+C.acc,borderRadius:5,padding:"1px 6px"}}>HTML</span>}
                         {e.sent_by && <span style={{fontSize:10,color:C.mut}}>by {e.sent_by}</span>}
                       </div>
                       {preview && <div style={{fontSize:11,color:C.mut,whiteSpace:"pre-wrap",lineHeight:1.4}}>{preview}</div>}
