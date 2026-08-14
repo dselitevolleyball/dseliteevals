@@ -1386,6 +1386,11 @@ export default function App() {
     return ROSTER_COLS_DEFAULT;
   });
   useEffect(() => { try { localStorage.setItem("dse_roster_cols", JSON.stringify(rosterCols)); } catch { /* private mode */ } }, [rosterCols]);
+  const [staffNeeds, setStaffNeeds]                   = useState([]); // staffing board: open roles
+  const [staffCandidates, setStaffCandidates]         = useState([]); // staffing board: people who could fill them
+  const [staffMatches, setStaffMatches]               = useState([]); // staffing board: who's being considered for what
+  const [staffNewNeed, setStaffNewNeed]               = useState({ team_name: "", role: "assistant", title: "", priority: "normal" });
+  const [staffNewCand, setStaffNewCand]               = useState({ name: "", contact: "", wants: "", notes: "" });
   const [coachGear, setCoachGear]                     = useState([]); // staff gear sizes, one row per coach
   const [gearOpen, setGearOpen]                       = useState(false);
   const [gearForm, setGearForm]                       = useState(null); // draft while the modal is open
@@ -1757,7 +1762,7 @@ export default function App() {
   // email we send them. Every admin control inside renderDsysa — add/cancel a
   // date, set the lead, remove someone else's signup — is separately gated on
   // isAdmin, so opening the view exposes no admin action.
-  const OPS_VIEWS = new Set(["tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","timecards","gear","roster","hawaii","travel","finance","dssccal"]);
+  const OPS_VIEWS = new Set(["tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","timecards","gear","staffing","roster","hawaii","travel","finance","dssccal"]);
   const canOps    = isAdmin || isOwner;
   const opsDenied = <div style={{padding:24,color:C.mut,textAlign:"center"}}>This section is restricted to administrators. Ask the club administrator (Drew) for access.</div>;
   // Once a player has accepted (or is locked/signed) onto a team, they're
@@ -2256,6 +2261,22 @@ export default function App() {
     const { data, error } = await supabase.from("coach_gear").select("*");
     if (error) { console.error("Load coach_gear error:", error); return; }
     setCoachGear(data || []);
+  }, []);
+  // Staffing board: open roles, the people who could fill them, and who is
+  // being weighed for what. Loaded together — a need with no candidates and a
+  // candidate with no needs are both half a picture.
+  const loadStaffing = useCallback(async () => {
+    const [nRes, cRes, mRes] = await Promise.all([
+      supabase.from("staffing_needs").select("*"),
+      supabase.from("staffing_candidates").select("*"),
+      supabase.from("staffing_matches").select("*"),
+    ]);
+    if (nRes.error) { console.error("Load staffing_needs error:", nRes.error); return; }
+    if (cRes.error) { console.error("Load staffing_candidates error:", cRes.error); return; }
+    if (mRes.error) { console.error("Load staffing_matches error:", mRes.error); return; }
+    setStaffNeeds(nRes.data || []);
+    setStaffCandidates(cRes.data || []);
+    setStaffMatches(mRes.data || []);
   }, []);
   // Move a team to a different Sunday block for ONE date (or clear it → normal slot).
   const setSlotMove = useCallback(async (practice_date, team_name, slot, phase) => {
@@ -2803,6 +2824,10 @@ export default function App() {
   useEffect(() => { if (isApproved && view === "practice") loadCoachFloats(); }, [isApproved, view, loadCoachFloats]);
   useEffect(() => { if (isApproved && (view === "practice" || view === "home" || view === "clockin")) loadPracticeCoverage(); }, [isApproved, view, loadPracticeCoverage]);
   useEffect(() => { if (isApproved && (view === "home" || view === "coaches" || view === "gear")) loadCoachGear(); }, [isApproved, view, loadCoachGear]);
+  // The board reads the real schedule to find gaps, so it pulls teams and
+  // coverage too — otherwise "13 Rise 1 has no coaches" would depend on having
+  // visited the Practice view first.
+  useEffect(() => { if (isApproved && view === "staffing") { loadStaffing(); loadPractice(); loadPracticeCoverage(); } }, [isApproved, view, loadStaffing, loadPractice, loadPracticeCoverage]);
   useEffect(() => { if (isApproved && view === "coverage") { loadPracticeCoverage(); loadPractice(); } }, [isApproved, view, loadPracticeCoverage, loadPractice]);
   useEffect(() => { if (isApproved && view === "practice") { loadPracticeCancellations(); loadSlotMoves(); } }, [isApproved, view, loadPracticeCancellations, loadSlotMoves]);
   // Optimistically patch local state, then upsert the merged row. `merged` is
@@ -6665,6 +6690,252 @@ export default function App() {
           </table>
         </div>
         {!rows.length && <div style={{padding:24,textAlign:"center",color:C.mut,fontSize:13}}>No active coaches found.</div>}
+      </div>
+    );
+  }
+
+  // ── Staffing board ───────────────────────────────────────────────────────
+  // Open roles on one side, people with capacity on the other, and the pairings
+  // being weighed in between. Deliberately does NOT write to practice_teams:
+  // thinking out loud here must never turn into a team's real assistant coach.
+  const STAFF_ROLES  = [["head","Head coach"],["assistant","Assistant"],["third","Third coach"],["floater","Tournament floater"],["other","Other"]];
+  const roleLabel    = (r) => (STAFF_ROLES.find(x => x[0] === r) || [null, r])[1];
+  const needLabel    = (n) => n.team_name ? n.team_name + " · " + roleLabel(n.role) : (n.title || roleLabel(n.role));
+  const FIT_COLOR    = { strong: C.grn, maybe: C.gold, stretch: C.mut };
+  const MSTATUS_COLOR= { idea: C.mut, asked: "#a78bfa", accepted: C.grn, declined: C.red };
+
+  const saveStaff = async (table, patch, match) => {
+    const q = supabase.from(table);
+    const { error } = match ? await q.update({ ...patch, updated_at: new Date().toISOString() }).match(match) : await q.insert(patch);
+    if (error) { window.alert("Save failed: " + error.message); return false; }
+    await loadStaffing();
+    return true;
+  };
+  const delStaff = async (table, id) => {
+    const { error } = await supabase.from(table).delete().eq("id", id);
+    if (error) { window.alert("Delete failed: " + error.message); return; }
+    loadStaffing();
+  };
+
+  function renderStaffing() {
+    const nrm = s => (s || "").toString().trim().toLowerCase().replace(/\s+/g, " ");
+    const today = localDateISO();
+
+    // Gaps the schedule itself shows — an empty seat or a placeholder standing
+    // in for a person ("15-2 Assistant Coach"). Derived, never typed, so the
+    // board can't drift from what the teams actually look like.
+    const gaps = [];
+    (practiceTeams || []).forEach(t => {
+      [["head", t.head_coach], ["assistant", t.assistant_coach]].forEach(([role, who]) => {
+        if (isPlaceholderCoach(who)) gaps.push({ team_name: t.team_name, role, current: (who || "").trim(), level: t.level });
+      });
+    });
+    const tracked = new Set((staffNeeds || []).map(n => nrm(n.team_name) + "|" + n.role));
+    const untracked = gaps.filter(g => !tracked.has(nrm(g.team_name) + "|" + g.role));
+
+    // What the floater placeholder is actually booked into, so "we need another
+    // floater" carries a number instead of a feeling.
+    const floaterShifts = (practiceCoverage || []).filter(c => /floater/i.test(c.sub_name || "") && (c.practice_date || "") >= today).length;
+
+    // How loaded a candidate already is — the first question about anyone here.
+    const loadOf = (name) => {
+      const k = nrm(name);
+      const teams = (practiceTeams || []).filter(t => [t.head_coach, t.assistant_coach, t.third_coach].some(c => nrm(c) === k)).map(t => t.team_name);
+      const subs = (practiceCoverage || []).filter(c => nrm(c.sub_name) === k && (c.practice_date || "") >= today).length;
+      return { teams, subs };
+    };
+
+    const matchesFor = (needId) => (staffMatches || []).filter(m => m.need_id === needId);
+    const candById = new Map((staffCandidates || []).map(c => [c.id, c]));
+    const openNeeds = (staffNeeds || []).filter(n => n.status === "open" || n.status === "considering");
+    const inPlay = new Set((staffMatches || []).filter(m => m.status === "asked" || m.status === "accepted").map(m => m.candidate_id));
+    const free = (staffCandidates || []).filter(c => c.status === "available" || c.status === "considering");
+
+    const addNeed = async () => {
+      const f = staffNewNeed;
+      if (!f.team_name && !f.title.trim()) { window.alert("Pick a team, or give the need a title."); return; }
+      const ok = await saveStaff("staffing_needs", { team_name: f.team_name || null, role: f.role, title: f.title.trim(), priority: f.priority });
+      if (ok) setStaffNewNeed({ team_name: "", role: "assistant", title: "", priority: "normal" });
+    };
+    const addCandidate = async () => {
+      const f = staffNewCand;
+      if (!f.name.trim()) { window.alert("Name?"); return; }
+      const onRoster = (coachRoster || []).some(r => nrm((r.first_name || "") + " " + (r.last_name || "")) === nrm(f.name));
+      const ok = await saveStaff("staffing_candidates", { name: f.name.trim(), contact: f.contact.trim(), wants: f.wants.trim(), notes: f.notes.trim(), on_roster: onRoster });
+      if (ok) setStaffNewCand({ name: "", contact: "", wants: "", notes: "" });
+    };
+
+    const card  = { background:C.card, border:"1px solid "+C.border, borderRadius:12, padding:"12px 14px" };
+    const sel   = { padding:"3px 6px", borderRadius:6, border:"1px solid "+C.border, background:C.bg, color:C.text, fontSize:11, fontWeight:700, fontFamily:"inherit", cursor:"pointer" };
+    const inp   = { padding:"6px 9px", borderRadius:7, border:"1px solid "+C.border, background:C.bg, color:C.text, fontSize:12, fontFamily:"inherit" };
+    const stat  = (label, value, color) => (
+      <div style={{...card, padding:"10px 16px", minWidth:120}}>
+        <div style={{fontSize:10,color:C.mut,fontWeight:800,textTransform:"uppercase",letterSpacing:0.4}}>{label}</div>
+        <div style={{fontSize:22,fontWeight:800,color}}>{value}</div>
+      </div>
+    );
+
+    return (
+      <div style={{maxWidth:1300,margin:"0 auto"}}>
+        <h2 style={{margin:"0 0 4px",fontSize:20,fontWeight:800,color:C.gold}}>🧩 Staffing board</h2>
+        <div style={{fontSize:12,color:C.mut,marginBottom:14}}>
+          Open roles, who could fill them, and where each conversation stands. Nothing here changes a team —
+          when you land on someone, make it real in the Practice view.
+        </div>
+
+        <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:16}}>
+          {stat("Open needs", openNeeds.length, openNeeds.length ? C.gold : C.grn)}
+          {stat("People available", free.length, free.length ? C.grn : C.mut)}
+          {stat("In conversation", inPlay.size, inPlay.size ? "#a78bfa" : C.mut)}
+          {stat("Floater shifts booked", floaterShifts, floaterShifts ? C.gold : C.mut)}
+        </div>
+
+        {!!untracked.length && (
+          <div style={{...card, borderColor:C.gold, marginBottom:16}}>
+            <div style={{fontSize:13,fontWeight:800,color:C.gold,marginBottom:2}}>⚠ {untracked.length} gap{untracked.length===1?"":"s"} in the schedule aren't on the board</div>
+            <div style={{fontSize:11,color:C.mut,marginBottom:10}}>Empty seats and placeholder names found in the practice teams.</div>
+            <div style={{display:"flex",flexDirection:"column",gap:6}}>
+              {untracked.map(g => (
+                <div key={g.team_name+g.role} style={{background:C.bg,border:"1px solid "+C.border,borderRadius:8,padding:"7px 10px",display:"flex",gap:10,alignItems:"center",justifyContent:"space-between",flexWrap:"wrap"}}>
+                  <div style={{fontSize:12,color:C.text,fontWeight:700}}>
+                    {g.team_name} <span style={{color:C.mut,fontWeight:600}}>· {roleLabel(g.role)} · {g.current ? "currently “" + g.current + "”" : "empty"}</span>
+                  </div>
+                  <button onClick={() => saveStaff("staffing_needs", { team_name:g.team_name, role:g.role, priority:"high" })}
+                    style={{padding:"4px 12px",borderRadius:7,border:"none",background:C.gold,color:"#000",fontSize:11,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>Track it</button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div style={{display:"grid",gridTemplateColumns:isNarrow?"1fr":"1.35fr 1fr",gap:16,alignItems:"start"}}>
+          <div>
+            <div style={{fontSize:11,fontWeight:800,color:C.mut,textTransform:"uppercase",letterSpacing:0.5,marginBottom:8}}>Needs</div>
+            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+              {(staffNeeds || []).slice().sort((a,b) =>
+                (a.status === "filled" || a.status === "dropped" ? 1 : 0) - (b.status === "filled" || b.status === "dropped" ? 1 : 0) ||
+                ({high:0,normal:1,low:2}[a.priority] ?? 1) - ({high:0,normal:1,low:2}[b.priority] ?? 1) ||
+                needLabel(a).localeCompare(needLabel(b))
+              ).map(n => {
+                const ms = matchesFor(n.id);
+                const done = n.status === "filled" || n.status === "dropped";
+                return (
+                  <div key={n.id} style={{...card, opacity:done?0.55:1, borderColor:n.priority==="high"&&!done?C.gold:C.border}}>
+                    <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginBottom:6}}>
+                      <div style={{fontSize:14,fontWeight:800,color:C.text,flex:"1 1 auto"}}>{needLabel(n)}</div>
+                      <select value={n.priority} onChange={e=>saveStaff("staffing_needs",{priority:e.target.value},{id:n.id})} style={sel}>
+                        <option value="high">High</option><option value="normal">Normal</option><option value="low">Low</option>
+                      </select>
+                      <select value={n.status} onChange={e=>saveStaff("staffing_needs",{status:e.target.value},{id:n.id})} style={sel}>
+                        <option value="open">Open</option><option value="considering">Considering</option><option value="filled">Filled</option><option value="dropped">Dropped</option>
+                      </select>
+                      <button onClick={()=>{ if (window.confirm("Remove this need from the board?")) delStaff("staffing_needs", n.id); }}
+                        style={{padding:"3px 8px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>✕</button>
+                    </div>
+                    <input defaultValue={n.notes} placeholder="What this role needs — schedule, level, who it works alongside"
+                      onBlur={e => { if (e.target.value !== n.notes) saveStaff("staffing_needs",{notes:e.target.value},{id:n.id}); }}
+                      style={{...inp, width:"100%", marginBottom:8}} />
+                    <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                      {ms.map(m => {
+                        const c = candById.get(m.candidate_id);
+                        if (!c) return null;
+                        const l = loadOf(c.name);
+                        return (
+                          <div key={m.id} style={{background:C.bg,border:"1px solid "+C.border,borderRadius:8,padding:"7px 9px",display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+                            <div style={{flex:"1 1 auto",minWidth:120}}>
+                              <div style={{fontSize:12,fontWeight:700,color:C.text}}>{c.name}</div>
+                              <div style={{fontSize:10,color:C.mut}}>{l.teams.length ? l.teams.join(", ") : "no team"}{l.subs ? " · " + l.subs + " sub shift" + (l.subs===1?"":"s") : ""}</div>
+                            </div>
+                            <select value={m.fit} onChange={e=>saveStaff("staffing_matches",{fit:e.target.value},{id:m.id})} style={{...sel,color:FIT_COLOR[m.fit]||C.text}}>
+                              <option value="strong">Strong fit</option><option value="maybe">Maybe</option><option value="stretch">Stretch</option>
+                            </select>
+                            <select value={m.status} onChange={e=>saveStaff("staffing_matches",{status:e.target.value},{id:m.id})} style={{...sel,color:MSTATUS_COLOR[m.status]||C.text}}>
+                              <option value="idea">Idea</option><option value="asked">Asked</option><option value="accepted">Accepted</option><option value="declined">Declined</option>
+                            </select>
+                            <button onClick={()=>delStaff("staffing_matches", m.id)}
+                              style={{padding:"2px 7px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:10,cursor:"pointer",fontFamily:"inherit"}}>✕</button>
+                          </div>
+                        );
+                      })}
+                      <select value="" onChange={e => { if (e.target.value) saveStaff("staffing_matches", { need_id:n.id, candidate_id:Number(e.target.value) }); }} style={{...sel, alignSelf:"flex-start"}}>
+                        <option value="">+ Consider someone…</option>
+                        {(staffCandidates || []).filter(c => !ms.some(m => m.candidate_id === c.id)).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                );
+              })}
+              {!(staffNeeds || []).length && <div style={{...card, color:C.mut, fontSize:12, textAlign:"center"}}>No needs on the board yet.</div>}
+            </div>
+
+            <div style={{...card, marginTop:12}}>
+              <div style={{fontSize:11,fontWeight:800,color:C.mut,textTransform:"uppercase",letterSpacing:0.5,marginBottom:8}}>Add a need</div>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+                <select value={staffNewNeed.team_name} onChange={e=>setStaffNewNeed(f=>({...f,team_name:e.target.value}))} style={{...sel,padding:"6px 8px",fontSize:12}}>
+                  <option value="">No team (club-wide)</option>
+                  {(practiceTeams || []).map(t => <option key={t.team_name} value={t.team_name}>{t.team_name}</option>)}
+                </select>
+                <select value={staffNewNeed.role} onChange={e=>setStaffNewNeed(f=>({...f,role:e.target.value}))} style={{...sel,padding:"6px 8px",fontSize:12}}>
+                  {STAFF_ROLES.map(([v,l]) => <option key={v} value={v}>{l}</option>)}
+                </select>
+                {!staffNewNeed.team_name && (
+                  <input value={staffNewNeed.title} onChange={e=>setStaffNewNeed(f=>({...f,title:e.target.value}))} placeholder="Title, e.g. Second tournament floater" style={{...inp,flex:"1 1 200px"}} />
+                )}
+                <select value={staffNewNeed.priority} onChange={e=>setStaffNewNeed(f=>({...f,priority:e.target.value}))} style={{...sel,padding:"6px 8px",fontSize:12}}>
+                  <option value="high">High</option><option value="normal">Normal</option><option value="low">Low</option>
+                </select>
+                <button onClick={addNeed} style={{padding:"7px 15px",borderRadius:8,border:"none",background:C.gold,color:"#000",fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>Add</button>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <div style={{fontSize:11,fontWeight:800,color:C.mut,textTransform:"uppercase",letterSpacing:0.5,marginBottom:8}}>People</div>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {(staffCandidates || []).slice().sort((a,b) => a.name.localeCompare(b.name)).map(c => {
+                const l = loadOf(c.name);
+                const on = (staffMatches || []).filter(m => m.candidate_id === c.id).map(m => (staffNeeds || []).find(n => n.id === m.need_id)).filter(Boolean);
+                return (
+                  <div key={c.id} style={{...card, opacity:c.status==="unavailable"?0.55:1}}>
+                    <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginBottom:3}}>
+                      <div style={{fontSize:13,fontWeight:800,color:C.text,flex:"1 1 auto"}}>
+                        {c.name} {!c.on_roster && <span style={{fontSize:10,fontWeight:700,color:"#a78bfa"}}>· not on roster</span>}
+                      </div>
+                      <select value={c.status} onChange={e=>saveStaff("staffing_candidates",{status:e.target.value},{id:c.id})} style={sel}>
+                        <option value="available">Available</option><option value="considering">Considering</option><option value="placed">Placed</option><option value="unavailable">Unavailable</option>
+                      </select>
+                      <button onClick={()=>{ if (window.confirm("Remove " + c.name + " from the board?")) delStaff("staffing_candidates", c.id); }}
+                        style={{padding:"3px 8px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>✕</button>
+                    </div>
+                    <div style={{fontSize:11,color:C.mut,marginBottom:6}}>
+                      {l.teams.length ? "Coaches " + l.teams.join(", ") : "No team"}{l.subs ? " · " + l.subs + " upcoming sub shift" + (l.subs===1?"":"s") : ""}
+                      {c.contact ? " · " + c.contact : ""}
+                      {on.length ? " · up for " + on.map(needLabel).join(", ") : ""}
+                    </div>
+                    <input defaultValue={c.wants} placeholder="What they're open to"
+                      onBlur={e => { if (e.target.value !== c.wants) saveStaff("staffing_candidates",{wants:e.target.value},{id:c.id}); }}
+                      style={{...inp, width:"100%", marginBottom:5}} />
+                    <input defaultValue={c.notes} placeholder="Notes"
+                      onBlur={e => { if (e.target.value !== c.notes) saveStaff("staffing_candidates",{notes:e.target.value},{id:c.id}); }}
+                      style={{...inp, width:"100%"}} />
+                  </div>
+                );
+              })}
+              {!(staffCandidates || []).length && <div style={{...card, color:C.mut, fontSize:12, textAlign:"center"}}>Nobody on the board yet.</div>}
+            </div>
+
+            <div style={{...card, marginTop:12}}>
+              <div style={{fontSize:11,fontWeight:800,color:C.mut,textTransform:"uppercase",letterSpacing:0.5,marginBottom:8}}>Add someone</div>
+              <div style={{display:"flex",flexDirection:"column",gap:7}}>
+                <input value={staffNewCand.name} onChange={e=>setStaffNewCand(f=>({...f,name:e.target.value}))} placeholder="Name" style={inp} />
+                <input value={staffNewCand.contact} onChange={e=>setStaffNewCand(f=>({...f,contact:e.target.value}))} placeholder="Email or phone (for people not on the roster)" style={inp} />
+                <input value={staffNewCand.wants} onChange={e=>setStaffNewCand(f=>({...f,wants:e.target.value}))} placeholder="What they're open to" style={inp} />
+                <input value={staffNewCand.notes} onChange={e=>setStaffNewCand(f=>({...f,notes:e.target.value}))} placeholder="Notes" style={inp} />
+                <button onClick={addCandidate} style={{padding:"7px 15px",borderRadius:8,border:"none",background:C.gold,color:"#000",fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:"inherit",alignSelf:"flex-start"}}>Add</button>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     );
   }
@@ -25163,7 +25434,7 @@ export default function App() {
                   ["tracker","Tracker"], ["teamdir","All Teams"], ["playereval","Player Evaluations"], ["passing","Passer Ratings"], ["practice","Practice"], ["sa","S&A Schedule"], ["clinics","DSSC Clinics"], ["dssccal","DSSC Coaches"], ["dsysa","DSYSA Clinics"], ["scholarships","Scholarships"],
                   ...(isAdmin ? [["hawaii","Hawaii"], ["travel","Travel"], ["finance","Finance"]] : []),
                   ["hdr","Coaches & Pay"],
-                  ["coaches","Coaches"], ["coverage","Coach Coverage"], ["timecards","Time Cards"], ["dssctime","DSSC Hours"], ["myexpenses","My Expenses"], ["gear","Gear Sizes" + (gearOutstanding ? " (" + gearOutstanding + ")" : "")], ["requests","Requests" + (pendingReqs ? " (" + pendingReqs + ")" : "")],
+                  ["coaches","Coaches"], ...(isAdmin ? [["staffing","Staffing Board"]] : []), ["coverage","Coach Coverage"], ["timecards","Time Cards"], ["dssctime","DSSC Hours"], ["myexpenses","My Expenses"], ["gear","Gear Sizes" + (gearOutstanding ? " (" + gearOutstanding + ")" : "")], ["requests","Requests" + (pendingReqs ? " (" + pendingReqs + ")" : "")],
                   ["hdr","Communication"],
                   ["email","Email"], ["messages","Messages (SMS)" + (totalUnread > 0 ? " (" + totalUnread + ")" : "")], ["notifications","Notifications"], ["coachcomms","Coach Comms"], ["assignments","Assignments"],
                 ] }] : []),
@@ -25393,6 +25664,7 @@ export default function App() {
         {view==="timecards" && renderTimeCards()}
         {view==="roster" && ((canViewTeams || myTeamNames.length) ? renderRoster() : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Player lists are restricted. Ask Drew for access.</div>)}
         {view==="gear" && (canOps ? renderGearTracker() : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Gear ordering is admin-only.</div>)}
+        {view==="staffing" && (isAdmin ? renderStaffing() : <div style={{padding:24,color:C.mut,textAlign:"center"}}>The staffing board is admin-only.</div>)}
         {view==="hawaii" && renderHawaii()}
         {view==="dsysa" && renderDsysa()}
         {view==="finance" && renderFinance()}
