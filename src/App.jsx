@@ -3447,12 +3447,33 @@ export default function App() {
     (coachRoster || []).forEach(r => put(((r.first_name || "") + " " + (r.last_name || "")).trim(), r.email, true));
     return [...byName.values()].filter(s => s.name).sort((a, b) => a.name.localeCompare(b.name));
   }, [practiceTeams, practiceCoverage, coachesList, coachRoster]);
+  // Who the gear order covers: every active coach, PLUS anyone who has already
+  // answered the form. A coach can fill out sizes before they're on a practice
+  // team (Alexa Sandoval submitted on 7/29 with no assignment) — staffRoster
+  // alone would drop her answers from the tracker and the supplier CSV.
+  const gearPeople = useMemo(() => {
+    const nrm = s => (s || "").toString().trim().toLowerCase().replace(/\s+/g, " ");
+    const out = [...staffRoster];
+    const have = new Set(out.map(s => nrm(s.name)));
+    const emailFor = (k) => {
+      const acct = (coachesList || []).find(c => nrm(c.display_name) === k);
+      const r = (coachRoster || []).find(x => nrm(((x.first_name || "") + " " + (x.last_name || "")).trim()) === k);
+      return ((r?.email || acct?.email) || "").trim().toLowerCase();
+    };
+    (coachGear || []).forEach(g => {
+      const k = nrm(g.coach_name);
+      if (!k || have.has(k)) return;
+      have.add(k);
+      out.push({ name: String(g.coach_name).trim(), email: emailFor(k) || (g.coach_email || "").trim().toLowerCase() });
+    });
+    return out.sort((a, b) => a.name.localeCompare(b.name));
+  }, [staffRoster, coachGear, coachesList, coachRoster]);
   // Coaches who still owe gear sizes — drives the nav badge.
   const gearOutstanding = useMemo(() => {
     const nrm = s => (s || "").toString().trim().toLowerCase().replace(/\s+/g, " ");
     const by = new Map((coachGear || []).map(g => [nrm(g.coach_name), g]));
-    return staffRoster.filter(s => !gearComplete(by.get(nrm(s.name)))).length;
-  }, [staffRoster, coachGear]);
+    return gearPeople.filter(s => !gearComplete(by.get(nrm(s.name)))).length;
+  }, [gearPeople, coachGear]);
 
   // Build the per-user notification list from existing data (updates + Q&A).
   const notifications = useMemo(() => {
@@ -6542,7 +6563,7 @@ export default function App() {
   function renderGearTracker() {
     const nrm = s => (s || "").toString().trim().toLowerCase().replace(/\s+/g, " ");
     const gearBy = new Map(coachGear.map(g => [nrm(g.coach_name), g]));
-    const rows = staffRoster.map(s => ({ ...s, gear: gearBy.get(nrm(s.name)) || null }))
+    const rows = gearPeople.map(s => ({ ...s, gear: gearBy.get(nrm(s.name)) || null }))
       .map(r => ({ ...r, done: gearComplete(r.gear) }));
     const done = rows.filter(r => r.done), pending = rows.filter(r => !r.done);
     const today = localDateISO();
