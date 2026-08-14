@@ -24,11 +24,19 @@ const TN_STATUS = {
   in_progress:  { label: "In Progress",  color: "#eab308" }, // yellow
   locked:       { label: "Locked",       color: "#f97316" }, // orange
   registered:   { label: "Registered",   color: "#22c55e" }, // green
+  accepted:     { label: "Accepted",     color: "#14b8a6" }, // teal — the host took the entry
+  rostered:     { label: "Rostered",     color: "#3b82f6" }, // blue — roster submitted to the host
   need_to_drop: { label: "Need to Drop", color: "#a855f7" }, // purple — still entered, action needed
   dropped:      { label: "Dropped",      color: "#ef4444" }, // red — no longer attending
 };
-const TN_STATUS_ORDER = ["planned", "in_progress", "locked", "registered", "need_to_drop", "dropped"];
+const TN_STATUS_ORDER = ["planned", "in_progress", "locked", "registered", "accepted", "rostered", "need_to_drop", "dropped"];
 const tnStatusMeta = (s) => TN_STATUS[s] || TN_STATUS.planned;
+// Registered is no longer the end of the line. Accepted and rostered are what
+// comes AFTER registering, so everything that asks "is this entry in?" has to
+// count all three — otherwise moving a team forward to Accepted would drop it
+// back onto the "still needs registering" list.
+const TN_IN = new Set(["registered", "accepted", "rostered"]);
+const tnIsIn = (s) => TN_IN.has(s);
 // A dropped team is not going. Everything derived from attendance — the ICS
 // feed, practice suppression, coach travel, conflict checks — has to honour
 // that, otherwise "dropped" is only a label and the team still shows as away.
@@ -3989,7 +3997,7 @@ export default function App() {
     // marked need_to_drop or dropped is a later decision and stays put.
     if (status === "approved" && row?.tournament_id && row?.team_name && row?.category === "Tournament") {
       const a = tournamentAssignments.find(x => x.tournament_id === row.tournament_id && x.team_id === row.team_name);
-      if (a && !["registered", "need_to_drop", "dropped"].includes(a.status)) {
+      if (a && !tnIsIn(a.status) && !["need_to_drop", "dropped"].includes(a.status)) {
         const up = await supabase.from("tournament_assignments").update({ status: "registered" }).eq("id", a.id);
         if (!up.error) loadTournaments();
       }
@@ -11010,7 +11018,7 @@ export default function App() {
 
     // Events we're committed to: at least one team locked in or registered.
     const committedTnIds = new Set(tournamentAssignments
-      .filter(a => a.status === "locked" || a.status === "registered")
+      .filter(a => a.status === "locked" || tnIsIn(a.status))
       .map(a => a.tournament_id));
     const teamsPerTn = tournamentAssignments.reduce((m, a) => m.set(a.tournament_id, (m.get(a.tournament_id) || 0) + 1), new Map());
     const th = {padding:"7px 9px",textAlign:"left",fontSize:9,fontWeight:700,textTransform:"uppercase",color:C.mut,borderBottom:"1px solid "+C.border,whiteSpace:"nowrap"};
@@ -23852,7 +23860,7 @@ export default function App() {
     let all = [...byTn.values()].map(g => ({
       ...g,
       teams: g.teams.slice().sort((x, y) => (x.team_id || "").localeCompare(y.team_id || "")),
-      done: g.teams.every(a => a.status === "registered"),
+      done: g.teams.every(a => tnIsIn(a.status)),
       opens: g.tn.registration_opens || null,
       closes: g.tn.registration_deadline || null,
     }));
@@ -23869,7 +23877,7 @@ export default function App() {
     const byOpens = (a, b) => (a.opens || "9999").localeCompare(b.opens || "9999") || (a.tn.start_date || "").localeCompare(b.tn.start_date || "");
     const byCloses = (a, b) => (a.closes || "9999").localeCompare(b.closes || "9999");
     overdue.sort(byCloses); openNow.sort(byCloses); soon.sort(byOpens); noDate.sort((a,b)=>(a.tn.start_date||"").localeCompare(b.tn.start_date||"")); doneList.sort(byOpens);
-    const teamCount = (list) => list.reduce((s, g) => s + g.teams.filter(a => a.status !== "registered").length, 0);
+    const teamCount = (list) => list.reduce((s, g) => s + g.teams.filter(a => !tnIsIn(a.status)).length, 0);
     const copyList = () => {
       const lines = ["DS Elite — Registration to-do", ""];
       for (const [label, list] of [["OPEN NOW", openNow], ["PAST DEADLINE", overdue], ["OPENS SOON", soon], ["NO OPEN DATE", noDate]]) {
@@ -23882,7 +23890,7 @@ export default function App() {
             const h = g.tn.housing_opens ? "housing opens " + fmt(g.tn.housing_opens) + ((g.tn.housing_opens_time||"").trim() ? " at " + g.tn.housing_opens_time.trim() : "") : "housing date TBD";
             lines.push("     🏨 " + (g.tn.stay_to_play ? "STAY TO PLAY — " : "") + h);
           }
-          g.teams.filter(a => a.status !== "registered").forEach(a => lines.push("     • " + a.team_id + (a.division ? " — " + a.division : " — (division TBD)")));
+          g.teams.filter(a => !tnIsIn(a.status)).forEach(a => lines.push("     • " + a.team_id + (a.division ? " — " + a.division : " — (division TBD)")));
         });
         lines.push("");
       }
@@ -23968,7 +23976,7 @@ export default function App() {
           <div style={{display:"flex",flexDirection:"column",gap:3}}>
             {g.teams.map(a => {
               const meta = tnStatusMeta(a.status);
-              const isDone = a.status === "registered";
+              const isDone = tnIsIn(a.status);
               return (
                 <div key={a.id} style={{display:"flex",alignItems:"center",gap:8,fontSize:12,opacity:isDone?0.55:1}}>
                   <span onClick={()=>setTeamCardName(a.team_id)} title="Open team card"
@@ -24014,7 +24022,7 @@ export default function App() {
       </div>
     );
     const totalNeeded = teamCount([...overdue, ...openNow, ...soon, ...noDate]);
-    const noDiv = [...overdue, ...openNow, ...soon, ...noDate].reduce((s,g)=>s+g.teams.filter(a=>a.status!=="registered"&&!a.division).length,0);
+    const noDiv = [...overdue, ...openNow, ...soon, ...noDate].reduce((s,g)=>s+g.teams.filter(a=>!tnIsIn(a.status)&&!a.division).length,0);
     return (
       <div>
         <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:12,padding:"10px 14px",background:C.card,border:"1px solid "+C.border,borderRadius:12}}>
@@ -24448,7 +24456,7 @@ export default function App() {
         {/* Legend */}
         <div style={{display:"flex",gap:14,flexWrap:"wrap",marginBottom:8,fontSize:10,color:C.mut,alignItems:"center"}}>
           <span style={{fontWeight:800,color:C.text,textTransform:"uppercase",letterSpacing:0.4}}>Status:</span>
-          {["in_progress","locked","registered"].map(s => (
+          {["in_progress","locked","registered","accepted","rostered"].map(s => (
             <span key={s} style={{display:"inline-flex",alignItems:"center",gap:4}}><span style={{width:10,height:10,borderRadius:"50%",background:TN_STATUS[s].color,display:"inline-block"}} /> {TN_STATUS[s].label}</span>
           ))}
           {canOps && <span style={{color:C.mut,fontStyle:"italic"}}>· click a tournament's dot to change it</span>}
