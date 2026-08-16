@@ -3166,7 +3166,7 @@ export default function App() {
     const [fRes, cRes, ptRes, rRes, taRes, tnRes] = await Promise.all([
       supabase.from("coach_floats").select("coach_name, day, slot, phase"),
       supabase.from("practice_coverage").select("practice_date, team_name, slot, phase, sub_name, coach_out").eq("practice_date", date),
-      supabase.from("practice_teams").select("team_name, head_coach, assistant_coach"),
+      supabase.from("practice_teams").select("team_name, head_coach, assistant_coach, third_coach"),
       supabase.from("coach_requests").select("coach_name, request_date, status").eq("request_date", date).eq("status", "approved"),
       supabase.from("tournament_assignments").select("team_id, tournament_id, head_override, asst_override"),
       supabase.from("tournaments").select("id, start_date, end_date, cancelled"),
@@ -3180,7 +3180,7 @@ export default function App() {
     // (they're not counted away); rostered tournament staff are away.
     const tnById = new Map((tnRes.data || []).map(t => [t.id, t]));
     const teamByNameCov = new Map(allTeams.map(t => [t.team_name, t]));
-    const rosteredLowCov = new Set(allTeams.flatMap(t => [t.head_coach, t.assistant_coach]).filter(Boolean).map(c => nrm(c)));
+    const rosteredLowCov = new Set(allTeams.flatMap(t => [t.head_coach, t.assistant_coach, t.third_coach]).filter(Boolean).map(c => nrm(c)));
     const awaySet = new Set();
     for (const a of (taRes.data || [])) {
       const tn = tnById.get(a.tournament_id); if (!tn || tn.cancelled) continue;
@@ -3195,7 +3195,7 @@ export default function App() {
     // coach coaches (a weekend request has no team → they're out of all of them).
     const targetTeams = req.team_name
       ? allTeams.filter(t => t.team_name === req.team_name)
-      : allTeams.filter(t => [t.head_coach, t.assistant_coach].some(coachMatches));
+      : allTeams.filter(t => [t.head_coach, t.assistant_coach, t.third_coach].some(coachMatches));
     if (!targetTeams.length) return { noPractice: true };
 
     const aRes = await supabase.from("practice_assignments").select("team_name, day, slot, phase").in("team_name", targetTeams.map(t => t.team_name));
@@ -3209,11 +3209,24 @@ export default function App() {
     for (const t of targetTeams) {
       // Canonicalize the absent coach to the exact name on THIS team (request may
       // store "Karissa" while the team shows "Karissa Lee"; the board keys off it).
-      const canonical = [t.head_coach, t.assistant_coach].filter(Boolean).find(coachMatches) || coachRaw;
+      const canonical = [t.head_coach, t.assistant_coach, t.third_coach].filter(Boolean).find(coachMatches) || coachRaw;
       const slots = [...new Set(assigns.filter(a => a.team_name === t.team_name && a.day === weekday && (a.phase || "fall1") === phase).map(a => a.slot))];
       if (!slots.length) continue;
       teamsCovered.push(t.team_name);
+      // A team carrying a third coach is over-staffed by one, so this absence
+      // still leaves two on the floor. Record it, but don't burn a floating
+      // coach on a practice that is already staffed.
+      const teamRoster = [t.head_coach, t.assistant_coach, t.third_coach].filter(c => c && !isPlaceholderCoach(c));
       for (const slot of slots) {
+        const othersOut = new Set(cov
+          .filter(c => c.team_name === t.team_name && c.slot === slot && (c.phase || "season") === phase
+                       && !isRealSub(c.sub_name) && nrm(c.coach_out) !== nrm(canonical))
+          .map(c => nrm(c.coach_out)));
+        const stillOn = teamRoster.filter(c => nrm(c) !== nrm(canonical) && !othersOut.has(nrm(c))).length;
+        if (stillOn >= 2) {
+          rows.push({ practice_date: date, team_name: t.team_name, slot, phase, coach_out: canonical, sub_name: null, combine_with_team: null });
+          continue;
+        }
         const alreadySubbed = new Set(cov.filter(c => c.slot === slot && (c.phase || "season") === phase && c.sub_name).map(c => (c.sub_name || "").trim().toLowerCase()));
         const candidates = [...new Set(floats.filter(f => (f.phase || "season") === phase && f.day === weekday && f.slot === slot).map(f => (f.coach_name || "").trim()).filter(Boolean))]
           .filter(n => !coachMatches(n) && !outSet.has(nrm(n)) && !awaySet.has(nrm(n)));
@@ -3451,6 +3464,43 @@ export default function App() {
     // per-tournament overrides handle.)
     return practiceTeams.filter(t => isMine(t.head_coach) || isMine(t.assistant_coach) || isMine(t.third_coach)).map(t => t.team_name);
   }, [coach, coachRoster, practiceTeams]);
+
+  // ── Self-covering teams ─────────────────────────────────────────────
+  // A practice runs on two coaches. A team carrying a third is over-staffed by
+  // one, so a single absence still leaves two on the floor and no sub is
+  // needed. This is derived rather than stored on the coverage row, so it stays
+  // right when circumstances change: if a second coach on the same team calls
+  // out for the same practice, the team drops under strength and both absences
+  // start asking for cover again.
+  const MIN_PRACTICE_STAFF = 2;
+  const teamCoachNames = useCallback((teamName) => {
+    const t = (practiceTeams || []).find(x => x.team_name === teamName);
+    return [t?.head_coach, t?.assistant_coach, t?.third_coach]
+      .filter(c => c && !isPlaceholderCoach(c));
+  }, [practiceTeams]);
+
+  // How many of a team's own coaches are still on the floor for one practice.
+  const staffOnFloor = useCallback((teamName, dateISO, slot, phase) => {
+    const nrm = s => (s || "").toString().trim().toLowerCase().replace(/\s+/g, " ");
+    const roster = teamCoachNames(teamName);
+    if (!roster.length) return 0;
+    const ph = phase || "season";
+    const out = new Set((practiceCoverage || [])
+      .filter(c => c.team_name === teamName
+        && c.practice_date === dateISO
+        && c.slot === slot
+        && (c.phase || "season") === ph
+        // Someone with a real sub or a combined practice is handled already;
+        // only an unfilled absence takes a coach off the floor.
+        && !isRealSub(c.sub_name) && !c.combine_with_team)
+      .map(c => nrm(c.coach_out)));
+    return roster.filter(c => !out.has(nrm(c))).length;
+  }, [teamCoachNames, practiceCoverage]);
+
+  // True when an absence needs no sub because the team still fields two.
+  const selfCovered = useCallback((c) => c && !isRealSub(c.sub_name) && !c.combine_with_team
+    && staffOnFloor(c.team_name, c.practice_date, c.slot, c.phase) >= MIN_PRACTICE_STAFF,
+  [staffOnFloor]);
 
   // Every active coach — coaches a team, or was assigned practice coverage —
   // with the address to reach them. Names come from BOTH the roster and app
@@ -6951,7 +7001,8 @@ export default function App() {
   const renderOpenShiftsPanel = (myName) => {
     const today = new Date().toISOString().slice(0,10);
     const open = practiceCoverage
-      .filter(c => !c.sub_name && !c.combine_with_team && (c.practice_date||"") >= today)
+      .filter(c => !c.sub_name && !c.combine_with_team && (c.practice_date||"") >= today
+                   && !selfCovered(c))   // a team with a third coach still fields two
       .slice()
       .sort((a,b) => (a.practice_date||"").localeCompare(b.practice_date||"") || (a.slot||"").localeCompare(b.slot||""));
     if (!open.length) return null;
@@ -13852,8 +13903,12 @@ export default function App() {
                   if (v === "__other") { const n = window.prompt("Sub's name:", cov.sub_name || ""); if (n != null && n.trim()) setCoverage(dailyDate, team, label, dayPhase, coachName, n.trim()); }
                   else setCoverage(dailyDate, team, label, dayPhase, coachName, v);
                 }}
-                style={{...inpStyle,padding:"3px 6px",fontSize:11,color:cov.sub_name?"#06b6d4":"#f59e0b",fontWeight:700}}>
-                <option value="">⚠ needs coverage</option>
+                style={{...inpStyle,padding:"3px 6px",fontSize:11,
+                        color:cov.sub_name?"#06b6d4":(selfCovered(cov)?"#22c55e":"#f59e0b"),fontWeight:700}}>
+                {/* A third coach on the team means two are still on the floor, so
+                    this absence is covered without a sub. A sub can still be
+                    picked if someone wants the hours. */}
+                <option value="">{selfCovered(cov) ? "✓ covered by team" : "⚠ needs coverage"}</option>
                 {floaters.map(f => <option key={f} value={f}>{f} (floating)</option>)}
                 {(() => { const cs = coverageSubsFree(label); return cs.length>0 && <optgroup label="Coverage staff">{cs.map(f => <option key={f} value={f}>{f}</option>)}</optgroup>; })()}
                 {cov.sub_name && !floaters.includes(cov.sub_name) && !COVERAGE_SUBS.includes(cov.sub_name) && <option value={cov.sub_name}>{cov.sub_name}</option>}
@@ -13931,12 +13986,15 @@ export default function App() {
           ) : (
             <>
             {(() => {
-              // Count open spots (a coach away with no real sub yet).
+              // Count open spots (a coach away with no real sub yet). A team
+              // carrying a third coach still fields two when one is away, so
+              // that absence is not an open spot.
               let openCount = 0;
               for (const s of daySlots) for (const a of teamsFor(s.label)) {
                 if (teamCancelled(dailyDate, a.team_name)) continue;
                 const tm = teamByName2.get(a.team_name) || {};
-                for (const c of [tm.head_coach, tm.assistant_coach]) {
+                if (staffOnFloor(a.team_name, dailyDate, s.label, dayPhase) >= MIN_PRACTICE_STAFF) continue;
+                for (const c of [tm.head_coach, tm.assistant_coach, tm.third_coach]) {
                   if (c && awayCoachSet.has(c)) { const ex = covFor(a.team_name, s.label, c); if (!(ex && isRealSub(ex.sub_name))) openCount++; }
                 }
               }
