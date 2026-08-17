@@ -10600,6 +10600,17 @@ export default function App() {
         + ", " + b.getFullYear();
     })();
 
+    // Playbook clock ("5:00pm", "7:30pm", occasionally "12:00pm") to minutes past
+    // midnight, for placing a session in its hour row. No meridiem means evening:
+    // DSSC clinics run after school, and reading a bare "6" as 6am would file the
+    // session hours before the gym opens.
+    const clockMin = (t) => {
+      const m = /^\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*$/i.exec(String(t || ""));
+      if (!m) return null;
+      let h = Number(m[1]) % 12;
+      if (!m[3] || /p/i.test(m[3])) h += 12;
+      return h * 60 + (m[2] ? Number(m[2]) : 0);
+    };
     // DSSC runs at most three programs at once, one per court, so court is the
     // axis a day actually splits along. Playbook writes the court as a long
     // label ("Volleyball Court 2"), and a booking that takes the gym lists all
@@ -10951,24 +10962,55 @@ export default function App() {
                             </div>
                           );
                         })}
-                        <div style={{display:"flex",gap:6,alignItems:"flex-start"}}>
-                          {perCourt.map(c => {
-                            const items = rows.filter(r => courtOf(r.court).key === c.key);
-                            const cShort = items.reduce((n,x)=>n+x.short,0);
-                            return (
-                              <div key={c.key} style={{flex:"0 0 200px",width:200,display:"flex",flexDirection:"column",gap:4}}>
-                                <div style={{display:"flex",alignItems:"center",gap:4,borderBottom:"1px solid "+C.border,paddingBottom:3}}>
-                                  <span style={{fontSize:9,fontWeight:800,letterSpacing:0.4,textTransform:"uppercase",color:C.mut}}>{c.label}</span>
-                                  <div style={{flex:1}} />
-                                  {cShort > 0 && <span style={{fontSize:9,fontWeight:800,color:"#f59e0b"}}>need {cShort}</span>}
-                                </div>
-                                {items.length === 0
-                                  ? <div style={{fontSize:9,color:C.mut,textAlign:"center",padding:"8px 0"}}>—</div>
-                                  : items.map(weekCard)}
+                        {/* Hour rows, scoped to THIS day's own range — Monday runs
+                            4pm-9pm, Tuesday only 6pm-9pm, so neither day carries
+                            empty rows for hours the gym isn't running. A session
+                            sits in the row its start time falls in; the card
+                            still shows the true range, so a 6:00-7:30 reads as
+                            such under the 6pm row. */}
+                        {(() => {
+                          const courtRows = rows.filter(r => courtOf(r.court).order !== 0);
+                          if (!courtRows.length) return null;
+                          const starts = courtRows.map(r => clockMin(r.start)).filter(v => v != null);
+                          const ends   = courtRows.map(r => clockMin(r.end) ?? clockMin(r.start)).filter(v => v != null);
+                          if (!starts.length) return null;
+                          const h0 = Math.floor(Math.min(...starts) / 60);
+                          const h1 = Math.max(h0 + 1, Math.ceil(Math.max(...ends) / 60));
+                          const hours = Array.from({ length: h1 - h0 }, (_, i) => h0 + i);
+                          const hLabel = (h) => { const ap = h >= 12 ? "pm" : "am"; const h12 = h % 12 === 0 ? 12 : h % 12; return h12 + ap; };
+                          const inHour = (r, h) => { const s = clockMin(r.start); return s != null && s >= h * 60 && s < (h + 1) * 60; };
+                          return (
+                            <div>
+                              {/* court header row, aligned over the columns below */}
+                              <div style={{display:"flex",gap:6,alignItems:"flex-end",paddingBottom:3}}>
+                                <div style={{flex:"0 0 38px",width:38}} />
+                                {perCourt.map(c => {
+                                  const cShort = courtRows.filter(r => courtOf(r.court).key === c.key).reduce((n,x)=>n+x.short,0);
+                                  return (
+                                    <div key={c.key} style={{flex:"0 0 200px",width:200,display:"flex",alignItems:"center",gap:4}}>
+                                      <span style={{fontSize:9,fontWeight:800,letterSpacing:0.4,textTransform:"uppercase",color:C.mut}}>{c.label}</span>
+                                      <div style={{flex:1}} />
+                                      {cShort > 0 && <span style={{fontSize:9,fontWeight:800,color:"#f59e0b"}}>need {cShort}</span>}
+                                    </div>
+                                  );
+                                })}
                               </div>
-                            );
-                          })}
-                        </div>
+                              {hours.map(h => (
+                                <div key={h} style={{display:"flex",gap:6,alignItems:"stretch",borderTop:"1px solid "+C.border,paddingTop:4,paddingBottom:4}}>
+                                  <div style={{flex:"0 0 38px",width:38,fontSize:9,fontWeight:800,color:C.mut,paddingTop:2}}>{hLabel(h)}</div>
+                                  {perCourt.map(c => {
+                                    const items = courtRows.filter(r => courtOf(r.court).key === c.key && inHour(r, h));
+                                    return (
+                                      <div key={c.key} style={{flex:"0 0 200px",width:200,display:"flex",flexDirection:"column",gap:4}}>
+                                        {items.map(weekCard)}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              ))}
+                            </div>
+                          );
+                        })()}
                       </div>
                     )}
                   </div>
