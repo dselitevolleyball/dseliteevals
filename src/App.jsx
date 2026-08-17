@@ -10591,18 +10591,14 @@ export default function App() {
       if (nums.length === 1) return { key: "court-" + nums[0], label: "Court " + nums[0], order: Number(nums[0]) };
       return { key: "other-" + s.toLowerCase(), label: s, order: 97 };
     };
-    // Rows arrive already sorted by date then start time, so each group keeps
-    // its running order without re-sorting.
-    const courtGroups = (rows) => {
-      const out = [];
-      rows.forEach(r => {
-        const c = courtOf(r.court);
-        let g = out.find(x => x.key === c.key);
-        if (!g) { g = { ...c, items: [] }; out.push(g); }
-        g.items.push(r);
-      });
-      return out.sort((a, b) => a.order - b.order || a.label.localeCompare(b.label));
-    };
+    // The court columns are derived once for the whole week, not per day, so
+    // Court 2 sits under Court 2 as you scan across days even when a given day
+    // has nothing on it.
+    const weekCourts = (() => {
+      const seen = new Map();
+      weekRows.forEach(r => { const c = courtOf(r.court); if (!seen.has(c.key)) seen.set(c.key, c); });
+      return [...seen.values()].sort((a, b) => a.order - b.order || a.label.localeCompare(b.label));
+    })();
 
     // One session as a compact card in a day column: when, what, who.
     const weekCard = (r) => {
@@ -10854,17 +10850,24 @@ export default function App() {
                 <b style={{color:weekShort?"#f59e0b":C.grn}}>{weekShort ? weekShort + " coach spot" + (weekShort===1?"":"s") + " open" : "fully staffed"}</b>
               </span>
             </div>
-            {/* Fixed-width day columns that scroll sideways, same as the practice
-                Daily board — a week of clinics is too wide to squeeze into the
-                viewport without the coach names becoming unreadable. */}
-            <div style={{display:"flex",gap:8,overflowX:"auto",paddingBottom:6,alignItems:"flex-start"}}>
+            {/* Courts run SIDE BY SIDE inside each day. Stacking them meant the
+                first court's four sessions filled the column and courts 2 and 3
+                fell below the fold — you could only ever see one court at a
+                time, which is the opposite of the point. Three programs at once
+                should read as three columns at once. The board scrolls
+                sideways; one whole day fits without scrolling. */}
+            <div style={{display:"flex",gap:10,overflowX:"auto",paddingBottom:6,alignItems:"flex-start"}}>
               {weekDays.map(iso => {
                 const rows = weekRows.filter(r => r.date === iso);
                 const dayShort = rows.reduce((n, r) => n + r.short, 0);
                 const isToday = iso === today;
                 const dt = new Date(iso + "T12:00:00");
+                // A booking that takes the gym isn't "on a court" — it runs
+                // full width above the court columns, since nothing else can go.
+                const wholeGym = rows.filter(r => courtOf(r.court).order === 0);
+                const perCourt = weekCourts.filter(c => c.order !== 0);
                 return (
-                  <div key={iso} style={{flex:"0 0 210px",width:210,background:C.bg,border:"1px solid "+(isToday?C.acc:C.border),borderRadius:10,overflow:"hidden"}}>
+                  <div key={iso} style={{flex:"0 0 auto",background:C.bg,border:"1px solid "+(isToday?C.acc:C.border),borderRadius:10,overflow:"hidden"}}>
                     <div style={{padding:"6px 9px",borderBottom:"1px solid "+C.border,background:isToday?"rgba(6,182,212,0.10)":"transparent"}}>
                       <div style={{fontSize:11,fontWeight:800,color:isToday?C.acc:C.text}}>
                         {dt.toLocaleDateString(undefined,{weekday:"short"})} {dt.getDate()}
@@ -10873,21 +10876,41 @@ export default function App() {
                         {rows.length ? rows.length + " session" + (rows.length===1?"":"s") + (dayShort ? " · need " + dayShort : "") : "—"}
                       </div>
                     </div>
-                    <div style={{display:"flex",flexDirection:"column",gap:5,padding:6}}>
-                      {rows.length === 0
-                        ? <div style={{fontSize:10,color:C.mut,textAlign:"center",padding:"10px 0"}}>Nothing on</div>
-                        : courtGroups(rows).map(g => (
-                            <div key={g.key} style={{display:"flex",flexDirection:"column",gap:4}}>
-                              <div style={{display:"flex",alignItems:"center",gap:5}}>
-                                <span style={{fontSize:9,fontWeight:800,letterSpacing:0.4,textTransform:"uppercase",color:g.order===0?"#a78bfa":C.mut}}>{g.label}</span>
-                                <div style={{flex:1,height:1,background:C.border}} />
-                                {g.items.some(x=>x.short>0) &&
-                                  <span style={{fontSize:9,fontWeight:800,color:"#f59e0b"}}>need {g.items.reduce((n,x)=>n+x.short,0)}</span>}
-                              </div>
-                              {g.items.map(weekCard)}
+                    {rows.length === 0 ? (
+                      <div style={{width:170,fontSize:10,color:C.mut,textAlign:"center",padding:"16px 0"}}>Nothing on</div>
+                    ) : (
+                      <div style={{padding:6,display:"flex",flexDirection:"column",gap:6}}>
+                        {[...new Set(wholeGym.map(r => courtOf(r.court).key))].map(k => {
+                          const items = wholeGym.filter(r => courtOf(r.court).key === k);
+                          return (
+                            <div key={k} style={{display:"flex",flexDirection:"column",gap:4}}>
+                              <span style={{fontSize:9,fontWeight:800,letterSpacing:0.4,textTransform:"uppercase",color:"#a78bfa"}}>
+                                {courtOf(items[0].court).label}
+                              </span>
+                              {items.map(weekCard)}
                             </div>
-                          ))}
-                    </div>
+                          );
+                        })}
+                        <div style={{display:"flex",gap:6,alignItems:"flex-start"}}>
+                          {perCourt.map(c => {
+                            const items = rows.filter(r => courtOf(r.court).key === c.key);
+                            const cShort = items.reduce((n,x)=>n+x.short,0);
+                            return (
+                              <div key={c.key} style={{flex:"0 0 168px",width:168,display:"flex",flexDirection:"column",gap:4}}>
+                                <div style={{display:"flex",alignItems:"center",gap:4,borderBottom:"1px solid "+C.border,paddingBottom:3}}>
+                                  <span style={{fontSize:9,fontWeight:800,letterSpacing:0.4,textTransform:"uppercase",color:C.mut}}>{c.label}</span>
+                                  <div style={{flex:1}} />
+                                  {cShort > 0 && <span style={{fontSize:9,fontWeight:800,color:"#f59e0b"}}>need {cShort}</span>}
+                                </div>
+                                {items.length === 0
+                                  ? <div style={{fontSize:9,color:C.mut,textAlign:"center",padding:"8px 0"}}>—</div>
+                                  : items.map(weekCard)}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })}
