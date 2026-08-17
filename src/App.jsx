@@ -314,6 +314,19 @@ const DSSC_TIERS = {
   master:      { key:"master",      label:"Master",      base90:85, perPlayer90:15, capPlayers:6, cap90:160, privateRate:180, dropIn:125 },
 };
 const DSSC_TIER_KEYS = ["competitive", "elite", "master"];
+// The Skill Pod product itself — position-specific small-group training, the
+// core DS Elite offering at DSSC. Kept here so the in-app reference page and
+// anything that later needs to name a pod read from one list.
+const SKILL_PODS = [
+  { name:"Libero Skill Pod",          focus:"Platform mastery, defensive reads, serve receive patterns, pancake technique" },
+  { name:"Setter-Hitter Connection",  focus:"Timing, tempo sets, route running, live reps building setter-hitter chemistry" },
+  { name:"Middle Skill Pod",          focus:"Quick attack footwork, slide approach, blocking reads, transition speed" },
+  { name:"Pin Hitter Skill Pod",      focus:"Approach mechanics, shot selection, out-of-system attacking, back row attack" },
+  { name:"Setter Skill Pod",          focus:"Hand setting technique, decision-making, dump timing, running a fast offense" },
+  { name:"Serve Receive Skill Pod",   focus:"First-contact accuracy, platform angles, movement patterns, transition to attack" },
+];
+const POD_LEVELS = ["National", "Regional", "Developmental"];
+const POD_AGES = ["11-12s", "13-14s", "15-16s"];
 // A pod is a small-group session; everything else (camps, beginner clinics)
 // stays on the flat hourly rate.
 const isPodClinic = (c) => /pod/i.test(String(c?.category || "") + " " + String(c?.name || ""));
@@ -1846,7 +1859,7 @@ export default function App() {
   // email we send them. Every admin control inside renderDsysa — add/cancel a
   // date, set the lead, remove someone else's signup — is separately gated on
   // isAdmin, so opening the view exposes no admin action.
-  const OPS_VIEWS = new Set(["tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","timecards","gear","staffing","roster","hawaii","travel","finance","dssccal"]);
+  const OPS_VIEWS = new Set(["tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","timecards","gear","staffing","roster","hawaii","travel","finance","dssccal","pods"]);
   const canOps    = isAdmin || isOwner;
   const opsDenied = <div style={{padding:24,color:C.mut,textAlign:"center"}}>This section is restricted to administrators. Ask the club administrator (Drew) for access.</div>;
   // Once a player has accepted (or is locked/signed) onto a team, they're
@@ -10889,6 +10902,28 @@ export default function App() {
               onChange={ev => updateDsscSession(r.clinicId, r.id, { coaches_needed: Math.max(1, Number(ev.target.value)||1) })}
               style={{...inpStyle,width:44,padding:"3px 5px",fontSize:11}} />
           </label>
+          {/* Player count sits on this row too, not only on the week cards — the
+              month day-panel and the list use this renderer, and a control that
+              exists in one view out of three may as well not exist. */}
+          {isPodClinic(r.clinic) && (() => {
+            const att = podAttendance.find(a => a.clinic_id === r.clinicId && String(a.session_id) === String(r.id));
+            const paid = att ? dsscPodPay(podTierFor(r), att.players, podMinutes(r)) : null;
+            return (
+              <label style={{fontSize:10,color:C.mut,display:"flex",alignItems:"center",gap:4}}
+                title="How many players showed — sets the coach's pod pay">
+                players
+                <select value={att ? String(att.players) : ""}
+                  onChange={ev => setPodPlayers(r.clinicId, r.id, r.date, ev.target.value, coach?.display_name || coach?.email)}
+                  style={{...inpStyle,width:52,padding:"3px 5px",fontSize:11,fontWeight:800,
+                          color:att?C.grn:"#f59e0b",borderColor:att?C.border:"#f59e0b"}}>
+                  <option value="">—</option>
+                  {[0,1,2,3,4,5,6].map(n => <option key={n} value={n}>{n}</option>)}
+                </select>
+                {paid != null && <span style={{fontSize:11,fontWeight:800,color:C.grn}}>${paid}</span>}
+                {att && paid == null && <span style={{fontSize:10,fontWeight:700,color:"#f59e0b"}}>no tier</span>}
+              </label>
+            );
+          })()}
         </div>
         <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap",marginTop:7}}>
           {r.staff.filter(v => v.status !== "declined").map(v => {
@@ -11297,6 +11332,116 @@ export default function App() {
   // a separate company with separate payroll, so these hours never mix with
   // coach_checkins. A coach clocks in for sessions they're approved on; Hunter
   // approves the week; only approved hours go to the accountant.
+  // Skill Pods reference — the product, what players pay, and what coaches earn.
+  // The pay ladder and prices are read from DSSC_TIERS rather than retyped, so
+  // this page can't drift from what payroll actually computes.
+  function renderPods() {
+    const money = n => "$" + Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 });
+    const tiers = DSSC_TIER_KEYS.map(k => DSSC_TIERS[k]);
+    const counts = [1, 2, 3, 4, 5, 6];
+    const card = { background:C.card, border:"1px solid "+C.border, borderRadius:12, marginBottom:14, overflow:"hidden" };
+    const head = { padding:"10px 14px", borderBottom:"1px solid "+C.border, fontSize:13, fontWeight:800, color:C.text };
+    const th = { textAlign:"left", padding:"7px 12px", fontSize:10, fontWeight:800, letterSpacing:0.4,
+                 textTransform:"uppercase", color:C.mut, borderBottom:"1px solid "+C.border, whiteSpace:"nowrap" };
+    const td = { padding:"7px 12px", fontSize:12, color:C.text, borderBottom:"1px solid "+C.border };
+    const tdR = { ...td, textAlign:"right", whiteSpace:"nowrap", fontWeight:700 };
+    return (
+      <div style={{padding:"18px 16px",maxWidth:1100,margin:"0 auto"}}>
+        <h2 style={{margin:"0 0 2px",fontSize:20,fontWeight:800,color:C.gold}}>Skill Pods</h2>
+        <div style={{fontSize:12,color:C.mut,marginBottom:14}}>
+          Position-specific small group training, {DSSC_TIERS.competitive.capPlayers} players max — the core DS Elite training product at Dripping Springs Sports Club.
+        </div>
+
+        <div style={card}>
+          <div style={head}>The pods</div>
+          <table style={{width:"100%",borderCollapse:"collapse"}}>
+            <thead><tr><th style={th}>Skill pod</th><th style={th}>Focus areas</th></tr></thead>
+            <tbody>{SKILL_PODS.map(p => (
+              <tr key={p.name}><td style={{...td,fontWeight:700,whiteSpace:"nowrap"}}>{p.name}</td><td style={{...td,color:C.mut}}>{p.focus}</td></tr>
+            ))}</tbody>
+          </table>
+          <div style={{padding:"10px 14px",fontSize:12,color:C.mut}}>
+            Offered at <b style={{color:C.text}}>{POD_LEVELS.join(" · ")}</b> across <b style={{color:C.text}}>{POD_AGES.join(" · ")}</b>.
+            Group size is 2–{DSSC_TIERS.competitive.capPlayers} players; a single player is a private.
+          </div>
+        </div>
+
+        <div style={card}>
+          <div style={head}>What players pay <span style={{fontWeight:500,color:C.mut}}>· customer-facing</span></div>
+          <table style={{width:"100%",borderCollapse:"collapse"}}>
+            <thead><tr>
+              <th style={th}>Coach tier</th><th style={{...th,textAlign:"right"}}>Private (60 min)</th>
+              <th style={{...th,textAlign:"right"}}>Pod drop-in</th><th style={{...th,textAlign:"right"}}>6-week package</th>
+              <th style={{...th,textAlign:"right"}}>Effective rate</th>
+            </tr></thead>
+            <tbody>{tiers.map(t => (
+              <tr key={t.key}>
+                <td style={{...td,fontWeight:700}}>{t.label}</td>
+                <td style={tdR}>{money(t.privateRate)}</td>
+                <td style={tdR}>{money(t.dropIn)}</td>
+                <td style={tdR}>{money(t.dropIn * 6)}</td>
+                <td style={{...tdR,color:C.grn}}>{money(t.dropIn * 6 / 9)}/hr</td>
+              </tr>
+            ))}</tbody>
+          </table>
+          <div style={{padding:"10px 14px",fontSize:12,color:C.mut}}>
+            Drop-in is a single 60-minute session, no commitment. The 6-week package is the same per-session price but
+            sessions run 90 minutes — 9 hours of training for the price of 6, a 33% saving on the effective hourly rate.
+            Privates are premium: no packages, no discounts.
+          </div>
+        </div>
+
+        {isAdmin && (
+          <div style={{...card, borderColor:C.gold}}>
+            <div style={{...head, color:C.gold}}>Coach pay &amp; margin <span style={{fontWeight:500,color:C.mut}}>· internal — do not share</span></div>
+            <div style={{padding:"10px 14px",fontSize:12,color:C.mut}}>
+              Pay is per <b style={{color:C.text}}>90-minute session</b>: a base plus a bonus for every player past the first,
+              stopping at {DSSC_TIERS.competitive.capPlayers} players. Shorter sessions pro-rate. Every extra player pays
+              the coach more, so filling a pod is worth doing — and margin still improves as it fills, because what the
+              club bills keeps scaling after the coach's pay caps.
+            </div>
+            <div style={{overflowX:"auto"}}>
+              <table style={{width:"100%",borderCollapse:"collapse",minWidth:640}}>
+                <thead><tr>
+                  <th style={th}>Tier</th><th style={th}>Ladder</th>
+                  {counts.map(n => <th key={n} style={{...th,textAlign:"right"}}>{n} player{n===1?"":"s"}</th>)}
+                </tr></thead>
+                <tbody>
+                  {tiers.map(t => (
+                    <tr key={t.key}>
+                      <td style={{...td,fontWeight:700}}>{t.label}</td>
+                      <td style={{...td,color:C.mut,whiteSpace:"nowrap"}}>{money(t.base90)} + {money(t.perPlayer90)}/extra</td>
+                      {counts.map(n => {
+                        const pay = dsscPodPay(t.key, n, 90), capped = n >= t.capPlayers;
+                        return <td key={n} style={{...tdR,color:capped?C.gold:C.text}}>{money(pay)}</td>;
+                      })}
+                    </tr>
+                  ))}
+                  <tr><td colSpan={2 + counts.length} style={{...td,padding:"4px 12px",background:C.bg}} /></tr>
+                  {tiers.map(t => (
+                    <tr key={t.key+"m"}>
+                      <td style={{...td,fontWeight:700,color:C.mut}}>{t.label}</td>
+                      <td style={{...td,color:C.mut}}>club margin</td>
+                      {counts.map(n => {
+                        const rev = dsscPodRevenue(t.key, n), pay = dsscPodPay(t.key, n, 90);
+                        return <td key={n} style={{...tdR,color:C.grn,fontWeight:600}}>{Math.round((rev-pay)/rev*100)}%</td>;
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div style={{padding:"10px 14px",fontSize:12,color:C.mut}}>
+              Gold figures are at the cap — a 7th player pays the same as the {DSSC_TIERS.competitive.capPlayers}th.
+              Margin is against pod drop-in revenue (a single player bills the private rate).
+              A coach with no tier falls back to the flat $25/hr, and a pod nobody counted does too.
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   function renderDsscTime() {
     const nrm = v => String(v || "").trim().toLowerCase();
     const meName = coach?.display_name || coach?.email || "";
@@ -11657,12 +11802,31 @@ export default function App() {
                 <span style={{fontSize:11,color:C.mut,minWidth:88,whiteSpace:"nowrap"}}>{fmtD(c.session_date)}</span>
                 <span style={{fontSize:12,fontWeight:700,color:C.text,minWidth:130}}>{c.coach_name}</span>
                 <span style={{fontSize:11,color:C.mut,flex:1,minWidth:130}}>{c.clinic_name}</span>
+                {/* Pod shifts carry the player count right here, editable, because
+                    the count IS the pay and this is the screen where Hunter signs
+                    it off. Correcting it before approving beats discovering a bad
+                    number after the accountant has the CSV. */}
+                {(() => { const p = payFor(c); if (p.kind === "hourly") return null;
+                  const att = podAttendance.find(a => a.clinic_id === c.clinic_id && String(a.session_id) === String(c.session_id));
+                  return (
+                    <label style={{fontSize:10,color:C.mut,display:"flex",alignItems:"center",gap:4,whiteSpace:"nowrap"}}
+                      title={att ? "Players in this pod — sets the coach's pay. Change it to correct." : "Nobody has counted this pod yet — it's paying the flat hourly rate."}>
+                      players
+                      <select value={att ? String(att.players) : ""}
+                        onChange={ev => setPodPlayers(c.clinic_id, c.session_id, c.session_date, ev.target.value, meName)}
+                        style={{...inpStyle,width:50,padding:"2px 4px",fontSize:11,fontWeight:800,
+                                color:att?C.grn:"#f59e0b",borderColor:att?C.border:"#f59e0b"}}>
+                        <option value="">—</option>
+                        {[0,1,2,3,4,5,6].map(n => <option key={n} value={n}>{n}</option>)}
+                      </select>
+                    </label>
+                  ); })()}
                 {(() => { const p = payFor(c); return (
                   <span style={{fontSize:11,fontWeight:700,color:C.text,whiteSpace:"nowrap"}}
-                    title={p.kind==="pod" ? DSSC_TIERS[p.tier].label+" tier · "+p.players+" player"+(p.players===1?"":"s") : p.kind==="uncounted" ? "Pod with no player count yet — flat rate" : p.kind==="untiered" ? "Coach has no tier — flat rate" : "Flat hourly"}>
+                    title={p.kind==="pod" ? DSSC_TIERS[p.tier].label+" tier · "+p.players+" player"+(p.players===1?"":"s")+" · 90-min pod" : p.kind==="uncounted" ? "Pod with no player count yet — flat rate" : p.kind==="untiered" ? "Coach has no tier — flat rate" : "Flat hourly"}>
                     {Number(c.hours||0)}h · {money(p.amount)}
-                    {p.kind==="pod" && <span style={{color:C.grn,fontWeight:800}}> · {p.players}p</span>}
-                    {(p.kind==="uncounted"||p.kind==="untiered") && <span style={{color:"#f59e0b",fontWeight:800}}> · ?</span>}
+                    {p.kind==="pod" && <span style={{color:C.grn,fontWeight:800}}> · {DSSC_TIERS[p.tier].label}</span>}
+                    {(p.kind==="uncounted"||p.kind==="untiered") && <span style={{color:"#f59e0b",fontWeight:800}}> · {p.kind==="untiered"?"no tier":"not counted"}</span>}
                   </span>); })()}
                 {c.sent_at && <span style={{fontSize:10,fontWeight:800,color:C.grn}}>SENT</span>}
                 {c.rejected ? (
@@ -26221,7 +26385,7 @@ export default function App() {
                   ["hdr","DS Elite · Coaches & Pay"],
                   ["coaches","Coaches"], ...(isAdmin ? [["staffing","Staffing Board"]] : []), ["coverage","Coach Coverage"], ["timecards","Time Cards"], ["myexpenses","My Expenses"], ["gear","Gear Sizes" + (gearOutstanding ? " (" + gearOutstanding + ")" : "")], ["requests","Requests" + (pendingReqs ? " (" + pendingReqs + ")" : "")],
                   ["hdr","DSSC"],
-                  ["clinics","Clinics & Camps"], ["dssccal","Coverage Calendar"], ["dssctime","DSSC Time Cards"],
+                  ["clinics","Clinics & Camps"], ["dssccal","Coverage Calendar"], ["dssctime","DSSC Time Cards"], ["pods","Skill Pods"],
                   ["hdr","Communication"],
                   ["email","Email"], ["messages","Messages (SMS)" + (totalUnread > 0 ? " (" + totalUnread + ")" : "")], ["notifications","Notifications"], ["coachcomms","Coach Comms"], ["assignments","Assignments"], ["dsysa","DSYSA Clinics"],
                 ] }] : []),
@@ -26459,6 +26623,7 @@ export default function App() {
         {view==="finance" && renderFinance()}
         {view==="dssccal" && renderDsscCal()}
         {view==="dssctime" && renderDsscTime()}
+        {view==="pods" && renderPods()}
         {view==="playereval" && renderPlayerEvals()}
         {view==="passing" && renderPassing()}
         {view==="myexpenses" && renderMyExpenses()}
