@@ -3351,6 +3351,17 @@ export default function App() {
       .match({ team_name, day, slot, phase });
     if (error) { window.alert("Couldn't set court: " + error.message); loadPractice(); }
   }, [loadPractice]);
+  // Daily view: add / change / clear a team's 2nd assistant (the third_coach
+  // slot on practice_teams). This is the team's staff, not a one-day patch — a
+  // 3rd coach runs every practice, which is what lets a single absence stay
+  // self-covered without pulling in a sub.
+  const setTeamThirdCoach = useCallback(async (team_name, coach) => {
+    const name = (coach || "").trim() || null;
+    setPracticeTeams(prev => prev.map(t => t.team_name === team_name ? { ...t, third_coach: name } : t));
+    const { error } = await supabase.from("practice_teams")
+      .update({ third_coach: name, updated_at: new Date().toISOString() }).eq("team_name", team_name);
+    if (error) { window.alert("Couldn't set the 2nd assistant: " + error.message); loadPractice(); }
+  }, [loadPractice]);
   // Daily view: mark a coach out (and optionally who's subbing) for one date.
   // Keyed on (date, team, coach_out) regardless of slot — a team practices once
   // a day, so its coverage follows it even if the team is moved to another block
@@ -13795,6 +13806,19 @@ export default function App() {
       const slotCoachSet = (lbl) => { const set = new Set(); dayAssignments.filter(x => x.day===weekday && x.slot===lbl && !noPracticeTeams.has(x.team_name)).forEach(x => { if (teamCancelled(dailyDate, x.team_name)) return; const tm = teamByName2.get(x.team_name) || {}; [tm.head_coach, tm.assistant_coach, tm.third_coach].forEach(cc => { if (cc && !isPlaceholderCoach(cc)) set.add(cc); }); }); return set; };
       const beforeAfterFor = (label) => { const here = slotCoachSet(label); return [...new Set(daySlots.flatMap(ss => ss.label===label ? [] : [...slotCoachSet(ss.label)]))]
         .filter(cc => !here.has(cc) && !awayLow.has(nrmName(cc)) && !outTodaySet.has(nrmName(cc))).sort(); };
+      // Everyone who could be added to a team as its 2nd assistant: the coach
+      // roster, app accounts, floating coaches, and anyone already staffing a
+      // team. Placeholder bodies are kept out of this list — they're offered
+      // separately as coverage staff.
+      const addableCoaches = (() => {
+        const seen = new Map();
+        const put = (n) => { const v = (n || "").trim(); if (!v || isPlaceholderCoach(v)) return; const k = v.toLowerCase(); if (!seen.has(k)) seen.set(k, v); };
+        (coachRoster || []).forEach(r => put(((r.first_name || "") + " " + (r.last_name || "")).trim()));
+        (coachesList || []).forEach(c => put(c.display_name));
+        (floatingCoaches || []).forEach(n => put(n));
+        (practiceTeams || []).forEach(t => { put(t.head_coach); put(t.assistant_coach); put(t.third_coach); });
+        return [...seen.values()].sort((a, b) => a.localeCompare(b));
+      })();
       // Build a fair auto-fill proposal for every OPEN spot today (a coach away at
       // a tournament with no real sub yet). Nothing is written — returned for review.
       const buildAutoFill = () => {
@@ -13883,7 +13907,7 @@ export default function App() {
         if (!cov) {
           return (
             <div style={{display:"flex",alignItems:"center",gap:5,flexWrap:"wrap"}}>
-              <span style={{fontSize:9,fontWeight:800,color:C.mut,textTransform:"uppercase",width:30}}>{role}</span>
+              <span style={{fontSize:9,fontWeight:800,color:C.mut,textTransform:"uppercase",width:44,flexShrink:0}}>{role}</span>
               <span style={{fontSize:12,fontWeight:600,color:C.text}}>{coachName}</span>
               <button onClick={()=>setCoverage(dailyDate, team, label, dayPhase, coachName, null)}
                 title="Mark this coach out for this date and assign a sub"
@@ -13893,7 +13917,7 @@ export default function App() {
         }
         return (
           <div style={{display:"flex",alignItems:"center",gap:5,flexWrap:"wrap"}}>
-            <span style={{fontSize:9,fontWeight:800,color:C.mut,textTransform:"uppercase",width:30}}>{role}</span>
+            <span style={{fontSize:9,fontWeight:800,color:C.mut,textTransform:"uppercase",width:44,flexShrink:0}}>{role}</span>
             <span style={{fontSize:12,fontWeight:600,color:C.red,textDecoration:"line-through"}}>{coachName}</span>
             {combined ? (
               <span style={{fontSize:11,fontWeight:700,color:"#a78bfa"}}>out · combined</span>
@@ -14245,7 +14269,7 @@ export default function App() {
                                         const sub = cov?.sub_name || "";
                                         return (
                                           <div key={role} style={{display:"flex",alignItems:"center",gap:5,flexWrap:"wrap"}}>
-                                            <span style={{fontSize:9,fontWeight:800,color:C.mut,textTransform:"uppercase",width:30}}>{role}</span>
+                                            <span style={{fontSize:9,fontWeight:800,color:C.mut,textTransform:"uppercase",width:44,flexShrink:0}}>{role}</span>
                                             <span style={{fontSize:11,color:"#22d3ee",fontWeight:600}} title={c + " is at a tournament"}>🏐 {c}</span>
                                             <select value={sub} onChange={e=>{ const v=e.target.value;
                                                 if (v==="__other") { const n=window.prompt("Sub's name:", sub||""); if (n!=null && n.trim()) setCoverage(dailyDate, a.team_name, s.label, dayPhase, c, n.trim()); }
@@ -14262,6 +14286,30 @@ export default function App() {
                                     </div>
                                   );
                                 })()}
+                                {/* Staff a 2nd assistant onto this team without leaving the
+                                    board. It writes the team's roster (every practice), not
+                                    just this date — a 3rd coach is what keeps the team at
+                                    strength when one coach calls out. */}
+                                <div style={{display:"flex",alignItems:"center",gap:5,marginTop:1}}>
+                                  <span style={{fontSize:9,fontWeight:800,color:C.mut,textTransform:"uppercase",width:44,flexShrink:0}} />
+                                  <select value="" title={t.third_coach ? "Change or remove this team's 2nd assistant (all practices)" : "Add a 2nd assistant to this team's staff (all practices)"}
+                                    onChange={e=>{
+                                      const v = e.target.value; if (!v) return;
+                                      if (v === "__clear") { if (window.confirm("Remove " + t.third_coach + " as " + a.team_name + "'s 2nd assistant?")) setTeamThirdCoach(a.team_name, null); return; }
+                                      let name = v;
+                                      if (v === "__other") { const n = window.prompt("2nd assistant's name:", ""); if (n == null || !n.trim()) return; name = n.trim(); }
+                                      if (t.third_coach && !window.confirm(a.team_name + "'s 2nd assistant is " + t.third_coach + ". Replace with " + name + "?")) return;
+                                      setTeamThirdCoach(a.team_name, name);
+                                    }}
+                                    style={{...inpStyle,padding:"2px 6px",fontSize:10,color:C.mut,fontWeight:700,maxWidth:170}}>
+                                    <option value="">{t.third_coach ? "✎ change 2nd assistant…" : "＋ add 2nd assistant…"}</option>
+                                    {(() => { const opts = addableCoaches.filter(n => ![t.head_coach,t.assistant_coach,t.third_coach].some(c => nrmName(c) === nrmName(n)));
+                                      return opts.length>0 && <optgroup label="Coaches">{opts.map(n => <option key={n} value={n}>{n}</option>)}</optgroup>; })()}
+                                    <optgroup label="Coverage staff">{COVERAGE_SUBS.map(n => <option key={n} value={n}>{n}</option>)}</optgroup>
+                                    <option value="__other">＋ Other…</option>
+                                    {t.third_coach && <option value="__clear">✕ Remove {t.third_coach}</option>}
+                                  </select>
+                                </div>
                               </div>
                               {bothOut && (
                                 <div style={{marginTop:6,paddingTop:6,borderTop:"1px dashed "+C.border,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
