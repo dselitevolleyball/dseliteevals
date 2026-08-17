@@ -17,10 +17,12 @@ const RATE = 25;
 // Must stay identical to DSSC_TIERS / dsscPodPay in src/App.jsx. Pay is
 // base + perPlayer x (players - 1): the base IS the 1-player private rate, and
 // each additional player adds the bonus.
+// Competitive -> Elite -> Master, lowest to highest. "Competitive" is the entry
+// tier on $30 here; an earlier naming had it as the $50 middle tier.
 const TIERS = {
-  development: { label: "Development", base: 30, perPlayer: 15 },
-  competitive: { label: "Competitive", base: 50, perPlayer: 20 },
-  elite:       { label: "Elite",       base: 80, perPlayer: 30 },
+  competitive: { label: "Competitive", base: 30, perPlayer: 15 },
+  elite:       { label: "Elite",       base: 50, perPlayer: 20 },
+  master:      { label: "Master",      base: 80, perPlayer: 30 },
 };
 const DEFAULT_TO = ["bpounds@generalledgerpartners.com", "rparker@generalledgerpartners.com", "hunterhaleysc10@gmail.com", "hunter@drippingsportsclub.com", "drew@dselitevolleyball.com"];
 const OWNER_EMAILS = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"];

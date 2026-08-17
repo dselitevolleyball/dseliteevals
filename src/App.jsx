@@ -287,22 +287,27 @@ const DSSC_DIRECTOR_EMAILS = ["hunterhaleysc10@gmail.com", "hunter@drippingsport
 // A pod is position-specific small-group training, 2-4 players. Coaches are
 // tiered, and pod pay is a base for the session plus a bonus for every player
 // BEYOND the first — so the base is exactly the 1-player (private) rate and each
-// extra body adds the bonus. That is what makes filling a pod pay: an Elite
+// extra body adds the bonus. That is what makes filling a pod pay: a Master
 // coach at 4 players earns $170 against an $80 private.
 //
 // Worth knowing: the spec's prose says "base + per-player bonus for each player
-// in the pod", which would make a 2-player Development pod $60. Every rate table
+// in the pod", which would make a 2-player entry-tier pod $60. Every rate table
 // in the same spec says $45, and the quoted "coach raise" percentages agree with
 // the tables. The tables are implemented here.
 //
 // 90-minute package sessions pay pro-rata, i.e. 1.5x — which reproduces the
 // 6-week totals exactly ($675 / $990 / $1,530 at 4 players).
+// Tiers run Competitive → Elite → Master, lowest to highest. Note the ladder was
+// renamed upward from an earlier Development/Competitive/Elite: today's
+// "Competitive" is the entry tier on $30, not the old middle one on $50. Nothing
+// about the money changed, so the stored keys were rewritten to match the new
+// names rather than left as aliases that would read a tier too high.
 const DSSC_TIERS = {
-  development: { key:"development", label:"Development", base:30, perPlayer:15, privateRate:120, dropIn:75 },
-  competitive: { key:"competitive", label:"Competitive", base:50, perPlayer:20, privateRate:150, dropIn:100 },
-  elite:       { key:"elite",       label:"Elite",       base:80, perPlayer:30, privateRate:180, dropIn:125 },
+  competitive: { key:"competitive", label:"Competitive", base:30, perPlayer:15, privateRate:120, dropIn:75 },
+  elite:       { key:"elite",       label:"Elite",       base:50, perPlayer:20, privateRate:150, dropIn:100 },
+  master:      { key:"master",      label:"Master",      base:80, perPlayer:30, privateRate:180, dropIn:125 },
 };
-const DSSC_TIER_KEYS = ["development", "competitive", "elite"];
+const DSSC_TIER_KEYS = ["competitive", "elite", "master"];
 // A pod is a small-group session; everything else (camps, beginner clinics)
 // stays on the flat hourly rate.
 const isPodClinic = (c) => /pod/i.test(String(c?.category || "") + " " + String(c?.name || ""));

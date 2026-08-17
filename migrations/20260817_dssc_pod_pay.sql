@@ -12,10 +12,10 @@
 --    those coaches keep falling back to the flat hourly rate.
 alter table public.dssc_availability
   add column if not exists tier text
-  check (tier is null or tier in ('development', 'competitive', 'elite'));
+  check (tier is null or tier in ('competitive', 'elite', 'master'));
 
 comment on column public.dssc_availability.tier is
-  'Development / Competitive / Elite. Sets pod pay: base + per-player bonus.';
+  'Competitive / Elite / Master, lowest to highest. Sets pod pay: base + per-player bonus ($30+$15, $50+$20, $80+$30).';
 
 -- 2. Attendance, PODS ONLY. A separate table rather than a field on the session
 --    JSONB: this is payroll input, so it wants its own audit trail (who counted,
