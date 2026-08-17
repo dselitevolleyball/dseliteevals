@@ -10639,6 +10639,10 @@ export default function App() {
       .filter(x => x && !isPlaceholderPerson(x));
     const others = [...new Set(rosterNames.filter(x => !availNames.some(a => nrm(a) === nrm(x))))].sort((a, b) => a.localeCompare(b));
     const canLead = new Set(dsscAvail.filter(a => a.can_lead).map(a => nrm(a.coach_name)));
+    // Tier is a pay rate, not an availability statement, so this panel lists
+    // every coach on the DSSC books — availRows only holds people who ticked
+    // "available", which excluded the busiest pod coaches.
+    const tierRows = (dsscAvail || []).slice().sort((a, b) => String(a.coach_name).localeCompare(String(b.coach_name)));
     // Everyone who appears anywhere, for the filter — including people staffed
     // on a session who never filled in an availability row.
     const filterNames = [...new Set([...availNames, ...all.flatMap(r => r.staff.map(v => v.name))].filter(Boolean))]
@@ -11046,7 +11050,7 @@ export default function App() {
             so this is the switch that turns the pod model on for someone. */}
         <details style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,marginBottom:12}}>
           <summary style={{padding:"10px 14px",cursor:"pointer",fontSize:12,fontWeight:800,color:C.text}}>
-            Coach tiers &amp; pod pay <span style={{color:C.mut,fontWeight:500}}>· {availRows.filter(a=>a.tier).length} of {availRows.length} tiered</span>
+            Coach tiers &amp; pod pay <span style={{color:C.mut,fontWeight:500}}>· {tierRows.filter(a=>a.tier).length} of {tierRows.length} tiered</span>
           </summary>
           <div style={{padding:"0 14px 6px",fontSize:11,color:C.mut}}>
             {DSSC_TIER_KEYS.map(k => DSSC_TIERS[k]).map(t => (
@@ -11058,8 +11062,8 @@ export default function App() {
             <div style={{marginTop:4}}>A 90-minute package session pays 1.5x. Coaches with no tier fall back to the flat $25/hr.</div>
           </div>
           <div style={{padding:"4px 14px 12px",display:"flex",flexDirection:"column",gap:5}}>
-            {availRows.length === 0 && <span style={{fontSize:12,color:C.mut}}>No coach has flagged availability for DSSC clinics yet.</span>}
-            {availRows.slice().sort((a,b)=>String(a.coach_name).localeCompare(String(b.coach_name))).map(a => (
+            {tierRows.length === 0 && <span style={{fontSize:12,color:C.mut}}>No DSSC coaches on record yet.</span>}
+            {tierRows.map(a => (
               <div key={"tier"+a.coach_name} style={{display:"flex",alignItems:"center",gap:8}}>
                 <span style={{fontSize:12,fontWeight:700,color:C.text,minWidth:170}}>{a.coach_name}</span>
                 <select value={a.tier || ""} onChange={ev => setCoachTier(a.coach_name, ev.target.value || null)}
