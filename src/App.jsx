@@ -2654,7 +2654,12 @@ export default function App() {
     const s = (clinic?.sessions || []).find(x => String(x.id) === String(sessionId));
     if (!s) return;
     const nrm = v => String(v || "").trim().toLowerCase();
-    return updateDsscSession(clinicId, sessionId, { staff: sessionStaff(s).filter(x => nrm(x.name) !== nrm(name)) });
+    const patch = { staff: sessionStaff(s).filter(x => nrm(x.name) !== nrm(name)) };
+    // Removing the coach Playbook named has to clear coach_name too. sessionStaff
+    // reads that field back in as the lead, so dropping them from staff[] alone
+    // would leave them on the session and they'd reappear on the next render.
+    if (nrm(s.coach_name) === nrm(name)) patch.coach_name = null;
+    return updateDsscSession(clinicId, sessionId, patch);
   }, [clinics, updateDsscSession]);
   const decideDsscPickup = useCallback((clinicId, sessionId, name, ok) => {
     const clinic = clinics.find(c => c.id === clinicId);
@@ -10637,21 +10642,56 @@ export default function App() {
           </button>
           {/* Court lives on the group header now, so only the age group here. */}
           {r.ageGroup && <div style={{fontSize:9,color:C.mut}}>{r.ageGroup}</div>}
+          {/* Staffing is editable right here. Sending someone to the clinic page
+              to swap one coach was the slow path, and this board is where the
+              gaps are actually spotted. */}
           <div style={{display:"flex",flexWrap:"wrap",gap:3}}>
             {r.staff.filter(v => v.status !== "declined")
               .sort((a,b) => (a.role==="lead"?0:1) - (b.role==="lead"?0:1))
-              .map(v => (
-                <span key={v.name} style={{fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:5,
-                        background:v.status==="pending"?"#f59e0b22":C.card,
-                        border:"1px solid "+(v.status==="pending"?"#f59e0b":C.border),
-                        color:v.status==="pending"?"#f59e0b":C.text}}
-                  title={v.role==="lead" ? "Lead coach" : v.status==="pending" ? "Picked up — needs your OK" : "On this session"}>
-                  {v.role==="lead" ? "★ " : ""}{v.name}{v.status==="pending" ? " ?" : ""}
-                </span>
-              ))}
-            {r.short > 0 && <span style={{fontSize:9,fontWeight:800,color:"#f59e0b"}}>need {r.short} more</span>}
-            {r.staff.length === 0 && r.short === 0 && <span style={{fontSize:9,color:C.mut}}>nobody assigned</span>}
+              .map(v => {
+                const pend = v.status === "pending";
+                return (
+                  <span key={v.name} style={{display:"inline-flex",alignItems:"center",gap:3,fontSize:9,fontWeight:700,padding:"1px 4px",borderRadius:5,
+                          background:pend?"#f59e0b22":C.card,
+                          border:"1px solid "+(pend?"#f59e0b":C.border),
+                          color:pend?"#f59e0b":C.text}}
+                    title={v.role==="lead" ? "Lead coach" : pend ? "Picked up — needs your OK" : "On this session"}>
+                    {v.role==="lead" ? "★ " : ""}{v.name}
+                    {pend ? (
+                      <>
+                        <button onClick={()=>decideDsscPickup(r.clinicId, r.id, v.name, true)} title="Approve"
+                          style={{background:"none",border:"none",color:C.grn,cursor:"pointer",fontFamily:"inherit",fontWeight:800,fontSize:11,padding:0,lineHeight:1}}>✓</button>
+                        <button onClick={()=>decideDsscPickup(r.clinicId, r.id, v.name, false)} title="Decline"
+                          style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontFamily:"inherit",fontWeight:800,fontSize:11,padding:0,lineHeight:1}}>✕</button>
+                      </>
+                    ) : (
+                      <>
+                        {v.role !== "lead" && canLead.has(nrm(v.name)) && (
+                          <button onClick={()=>staffDsscSession(r.clinicId, r.id, v.name, "lead", "approved")} title="Make lead"
+                            style={{background:"none",border:"none",color:C.mut,cursor:"pointer",fontFamily:"inherit",fontWeight:800,fontSize:10,padding:0,lineHeight:1}}>★</button>
+                        )}
+                        <button onClick={()=>unstaffDsscSession(r.clinicId, r.id, v.name)} title={"Remove " + v.name + " from this session"}
+                          style={{background:"none",border:"none",color:C.mut,cursor:"pointer",fontFamily:"inherit",fontWeight:800,fontSize:11,padding:0,lineHeight:1}}>×</button>
+                      </>
+                    )}
+                  </span>
+                );
+              })}
+            {r.staff.filter(v=>v.status!=="declined").length === 0 && <span style={{fontSize:9,color:C.mut}}>nobody assigned</span>}
           </div>
+          <select value="" onChange={ev => { const [nm, role] = ev.target.value.split("|"); if (nm) staffDsscSession(r.clinicId, r.id, nm, role, "approved"); }}
+            style={{...inpStyle,padding:"2px 4px",fontSize:9,fontWeight:700,width:"100%",
+                    borderColor:r.short?"#f59e0b":C.border,color:r.short?"#f59e0b":C.mut}}>
+            <option value="">{r.short ? "+ add " + r.short + " more" : "+ add a coach"}</option>
+            {availNames.length > 0 && (
+              <optgroup label="Available">
+                {availNames.map(nm => <option key={"a"+nm} value={nm+"|"+(canLead.has(nrm(nm))?"lead":"assist")}>{nm}{canLead.has(nrm(nm))?" ★":""}</option>)}
+              </optgroup>
+            )}
+            <optgroup label="Other coaches">
+              {others.map(nm => <option key={"o"+nm} value={nm+"|"+(canLead.has(nrm(nm))?"lead":"assist")}>{nm}{canLead.has(nrm(nm))?" ★":""}</option>)}
+            </optgroup>
+          </select>
         </div>
       );
     };
@@ -10916,7 +10956,7 @@ export default function App() {
                             const items = rows.filter(r => courtOf(r.court).key === c.key);
                             const cShort = items.reduce((n,x)=>n+x.short,0);
                             return (
-                              <div key={c.key} style={{flex:"0 0 168px",width:168,display:"flex",flexDirection:"column",gap:4}}>
+                              <div key={c.key} style={{flex:"0 0 200px",width:200,display:"flex",flexDirection:"column",gap:4}}>
                                 <div style={{display:"flex",alignItems:"center",gap:4,borderBottom:"1px solid "+C.border,paddingBottom:3}}>
                                   <span style={{fontSize:9,fontWeight:800,letterSpacing:0.4,textTransform:"uppercase",color:C.mut}}>{c.label}</span>
                                   <div style={{flex:1}} />
