@@ -12,7 +12,7 @@
 import { createClient } from "@supabase/supabase-js";
 import webpush from "web-push";
 
-const PLANNERS_DEFAULT = ["hunterhaleysc10@gmail.com", "drew@dselitevolleyball.com"];
+const PLANNERS_DEFAULT = ["hunterhaleysc10@gmail.com", "hunter@drippingsportsclub.com", "drew@dselitevolleyball.com"];
 const LEAD_DAYS = 6;
 const addDays = (iso, n) => { const d = new Date(iso + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 const isPlanned = (c) => {

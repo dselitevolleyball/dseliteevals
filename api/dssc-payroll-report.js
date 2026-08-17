@@ -12,12 +12,20 @@
 import { createClient } from "@supabase/supabase-js";
 
 const RATE = 25;
-const DEFAULT_TO = ["bpounds@generalledgerpartners.com", "rparker@generalledgerpartners.com", "hunterhaleysc10@gmail.com", "drew@dselitevolleyball.com"];
+const DEFAULT_TO = ["bpounds@generalledgerpartners.com", "rparker@generalledgerpartners.com", "hunterhaleysc10@gmail.com", "hunter@drippingsportsclub.com", "drew@dselitevolleyball.com"];
 const OWNER_EMAILS = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"];
 const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const money = (n) => "$" + Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtD = (iso) => { try { return new Date(iso + "T00:00:00Z").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" }); } catch { return iso; } };
 const addDays = (iso, n) => { const d = new Date(iso + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+
+// The approver can name recipients for a given send, so the body has to be read.
+async function readBody(req) {
+  if (req.body && typeof req.body === "object") return req.body;
+  let raw = "";
+  await new Promise((resolve) => { req.on("data", (c) => (raw += c)); req.on("end", resolve); req.on("error", resolve); });
+  try { return JSON.parse(raw || "{}"); } catch { return {}; }
+}
 
 export default async function handler(req, res) {
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, CRON_SECRET, DSE_FROM_EMAIL, DSE_REPLY_TO, DSSC_PAYROLL_TO } = process.env;
@@ -39,6 +47,7 @@ export default async function handler(req, res) {
     }
   }
   if (!authed) return res.status(403).json({ error: "Forbidden" });
+  const body = await readBody(req);
 
   const chicagoToday = new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
   const anchor = url?.searchParams.get("week") || null;
@@ -87,7 +96,20 @@ export default async function handler(req, res) {
     .concat(rows.flatMap(g => g.shifts.sort((a, b) => a.date.localeCompare(b.date)).map(s => [s.date, csvEsc(g.coach), csvEsc(s.clinic), s.hours, RATE, (s.hours * RATE).toFixed(2), s.paid ? "yes" : "no"].join(","))))
     .concat([["", "TOTAL", "", totH, "", totAmt.toFixed(2), ""].join(",")]).join("\n");
 
-  const to = (DSSC_PAYROLL_TO ? DSSC_PAYROLL_TO.split(",").map(s => s.trim()).filter(Boolean) : DEFAULT_TO);
+  // Recipients: an explicit list from the approver wins, then the env override,
+  // then the default. Passing them at send time is what lets Hunter add or drop
+  // the General Ledger Partners addresses for a given week without a redeploy.
+  // Only a signed-in admin can name recipients — the cron path always uses the
+  // configured list, so a leaked cron token can't redirect payroll anywhere.
+  const asked = (() => {
+    if (!approvedBy) return null;                       // cron, not a person
+    const raw = body?.to;
+    const list = (Array.isArray(raw) ? raw : String(raw || "").split(","))
+      .map(s => String(s || "").trim().toLowerCase())
+      .filter(s => /^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(s));
+    return list.length ? [...new Set(list)] : null;
+  })();
+  const to = asked || (DSSC_PAYROLL_TO ? DSSC_PAYROLL_TO.split(",").map(s => s.trim()).filter(Boolean) : DEFAULT_TO);
   const resp = await fetch("https://api.resend.com/emails", {
     method: "POST", headers: { Authorization: `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
     body: JSON.stringify({ from: DSE_FROM_EMAIL, to, reply_to: (DSE_REPLY_TO || DSE_FROM_EMAIL).trim(), subject: `APPROVED — DSSC clinic pay ${rangeLabel} (${totH}h · ${money(totAmt)})`, html, text, attachments: [{ filename: `dssc_clinic_hours_${weekStart}.csv`, content: Buffer.from(csv, "utf8").toString("base64") }] }),

@@ -281,7 +281,7 @@ const C = {bg:"#0a0a0a",card:"#141414",border:"#2a2a2a",gold:"#e91e8c",text:"#ff
 // Only these owner emails may open the Coaches management screen. UI-level gate.
 const OWNER_EMAILS = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"];
 // DSSC clinic directors — schedule/assign/oversee clinics alongside admins.
-const DSSC_DIRECTOR_EMAILS = ["hunterhaleysc10@gmail.com"];
+const DSSC_DIRECTOR_EMAILS = ["hunterhaleysc10@gmail.com", "hunter@drippingsportsclub.com"];
 // Convert a base64url VAPID key to the Uint8Array the Push API expects.
 function urlBase64ToUint8Array(base64String) {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
@@ -11194,6 +11194,38 @@ export default function App() {
     const okRows = weekRows.filter(c => c.approved && !c.rejected);
     const weekHours = okRows.reduce((s, c) => s + Number(c.hours || 0), 0);
 
+    // Approved on a session that has already run, with no check-in against it.
+    // Sessions still to come are not "missed" — only ones whose day has passed.
+    const missedShifts = (() => {
+      const out = [];
+      for (const r of rows) {
+        if (r.date < weekStart || r.date > weekEnd || r.date >= today) continue;
+        for (const v of sessionStaff(r.s)) {
+          if (v.status !== "approved" || isPlaceholderPerson(v.name)) continue;
+          const logged = dsscCheckins.some(c => String(c.session_id) === String(r.id) && nrm(c.coach_name) === nrm(v.name));
+          if (!logged) out.push({ r, name: v.name });
+        }
+      }
+      return out.sort((a, b) => a.r.date.localeCompare(b.r.date) || a.name.localeCompare(b.name));
+    })();
+    // File the shift on the coach's behalf. Unapproved, like any clock-in, so it
+    // still passes through the same weekly review before it can be paid.
+    const logMissed = async (items) => {
+      if (!items.length) return;
+      const total = items.reduce((s, m) => s + hoursOf(m.r), 0);
+      if (!window.confirm("Log " + items.length + " missed shift" + (items.length === 1 ? "" : "s") + " (" + total + "h · " + money(total * RATE) + ")?\n\n"
+        + items.slice(0, 8).map(m => "• " + m.name + " — " + m.r.clinicName + ", " + fmtD(m.r.date)).join("\n")
+        + (items.length > 8 ? "\n…and " + (items.length - 8) + " more" : "")
+        + "\n\nThey land unapproved and still need your approval below.")) return;
+      const { error } = await supabase.from("dssc_checkins").insert(items.map(m => ({
+        coach_name: m.name, clinic_id: m.r.clinicId, session_id: m.r.id, session_date: m.r.date,
+        clinic_name: m.r.clinicName, hours: hoursOf(m.r), status: "present", source: "admin",
+        created_by: meName, approved: false,
+      })));
+      if (error) { window.alert("Couldn't log: " + error.message); return; }
+      await loadDsscCheckins();
+    };
+
     const decide = async (ids, ok) => {
       if (!ids.length) return;
       const patch = ok
@@ -11203,13 +11235,26 @@ export default function App() {
       if (error) window.alert("Couldn't save: " + error.message);
       await loadDsscCheckins();
     };
+    // Who the approved week goes to. The General Ledger Partners pair are the
+    // accountants who actually run the pay, so they lead the list; it's editable
+    // per send because a given week sometimes needs someone else copied.
+    const PAYROLL_TO = ["bpounds@generalledgerpartners.com", "rparker@generalledgerpartners.com",
+                        "hunter@drippingsportsclub.com", "drew@dselitevolleyball.com"];
     const sendToAccountant = async () => {
       if (!okRows.length) { window.alert("Nothing approved for this week yet."); return; }
-      if (!window.confirm("Send " + weekHours + "h (" + money(weekHours * RATE) + ") for " + fmtD(weekStart) + " – " + fmtD(weekEnd) + " to the accountant team?")) return;
+      const typed = window.prompt(
+        "Send " + weekHours + "h (" + money(weekHours * RATE) + ") for " + fmtD(weekStart) + " – " + fmtD(weekEnd) + ".\n\n"
+        + "Recipients (comma-separated — edit to add or remove anyone):",
+        PAYROLL_TO.join(", "));
+      if (typed === null) return;
+      const to = typed.split(",").map(s => s.trim()).filter(Boolean);
+      if (!to.length) { window.alert("No recipients — nothing sent."); return; }
       try {
         const { data: { session } } = await supabase.auth.getSession();
         if (!session?.access_token) throw new Error("Not signed in");
-        const r = await fetch("/api/dssc-payroll-report?week=" + weekStart, { method: "POST", headers: { Authorization: "Bearer " + session.access_token } });
+        const r = await fetch("/api/dssc-payroll-report?week=" + weekStart, { method: "POST",
+          headers: { Authorization: "Bearer " + session.access_token, "Content-Type": "application/json" },
+          body: JSON.stringify({ to }) });
         const d = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(d.error || ("HTTP " + r.status));
         await supabase.from("dssc_checkins").update({ sent_at: new Date().toISOString() }).in("id", okRows.map(c => c.id));
@@ -11286,6 +11331,43 @@ export default function App() {
             </div>
           ))}
         </div>
+
+        {/* Staffed on a session that has already happened, but never clocked in.
+            Same idea as DS Elite Time Cards' "didn't clock in" list: the shift
+            is real and owed, and without this the only trace is an absence, so
+            it gets found at pay time or not at all. Logging it here files the
+            hours unapproved, exactly as a coach's own clock-in would. */}
+        {isDirector && missedShifts.length > 0 && (
+          <div style={{...card, borderColor:"#f59e0b"}}>
+            <div style={head}>
+              <span style={{color:"#f59e0b"}}>Expected but didn't clock in · {missedShifts.length}</span>
+              <span style={{fontSize:11,fontWeight:500,color:C.mut}}>{fmtD(weekStart)} – {fmtD(weekEnd)}</span>
+              <div style={{flex:1}} />
+              <button onClick={()=>logMissed(missedShifts)}
+                style={{padding:"5px 12px",borderRadius:8,border:"1px solid "+C.grn,background:"transparent",color:C.grn,fontFamily:"inherit",fontSize:12,fontWeight:800,cursor:"pointer"}}>
+                Log all {missedShifts.length}
+              </button>
+            </div>
+            {missedShifts.map(m => (
+              <div key={m.r.id + "|" + m.name} style={{padding:"9px 14px",borderTop:"1px solid "+C.border,display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
+                <span style={{fontSize:11,color:C.mut,minWidth:150,whiteSpace:"nowrap"}}>{fmtD(m.r.date)} · {m.r.start}–{m.r.end}</span>
+                <span style={{fontSize:12,fontWeight:800,color:C.text,minWidth:130}}>{m.name}</span>
+                <div style={{minWidth:150,flex:1}}>
+                  <button onClick={()=>openClinic(m.r.clinicId)} title="Open this clinic"
+                    style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",padding:0,cursor:"pointer",fontFamily:"inherit"}}>
+                    <span style={{fontSize:12,fontWeight:700,color:C.text,borderBottom:"1px dotted "+C.mut}}>{m.r.clinicName}</span>
+                    <span style={{color:C.mut,fontSize:11,fontWeight:700}}> ›</span>
+                  </button>
+                  <div style={{fontSize:10,color:C.mut}}>{hoursOf(m.r)}h · {money(hoursOf(m.r) * RATE)}</div>
+                </div>
+                <button onClick={()=>logMissed([m])}
+                  style={{padding:"5px 12px",borderRadius:8,border:"1px solid "+C.grn,background:"transparent",color:C.grn,fontFamily:"inherit",fontSize:12,fontWeight:700,cursor:"pointer"}}>
+                  Log {hoursOf(m.r)}h
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* Director: weekly approval, then delivery */}
         {isDirector && (

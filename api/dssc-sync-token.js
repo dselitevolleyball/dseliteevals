@@ -8,7 +8,7 @@
 import { createClient } from "@supabase/supabase-js";
 
 const OWNER_EMAILS = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"];
-const DIRECTOR_EMAILS = ["hunterhaleysc10@gmail.com"];
+const DIRECTOR_EMAILS = ["hunterhaleysc10@gmail.com", "hunter@drippingsportsclub.com"];
 
 export default async function handler(req, res) {
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, DSSC_SYNC_SECRET, CRON_SECRET } = process.env;

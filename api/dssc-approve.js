@@ -21,7 +21,7 @@
 import crypto from "crypto";
 import { createClient } from "@supabase/supabase-js";
 
-const APPROVERS_DEFAULT = ["hunterhaleysc10@gmail.com", "drew@dselitevolleyball.com"];
+const APPROVERS_DEFAULT = ["hunterhaleysc10@gmail.com", "hunter@drippingsportsclub.com", "drew@dselitevolleyball.com"];
 const TTL_MS = 30 * 24 * 3600 * 1000;   // a month — clinics are planned that far out
 
 const b64url = (buf) => Buffer.from(buf).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
