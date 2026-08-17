@@ -10795,19 +10795,25 @@ export default function App() {
           {/* Pods only: how many players showed. This is what the coach is paid
               on — base plus a bonus per player past the first — so it's captured
               on the session rather than reconstructed at pay time. */}
-          {isPodClinic(r.clinic) && r.date <= today && (() => {
+          {isPodClinic(r.clinic) && (() => {
             const att = podAttendance.find(a => a.clinic_id === r.clinicId && String(a.session_id) === String(r.id));
             const tierKey = podTierFor(r);
             const mins = podMinutes(r);
             const paid = att ? dsscPodPay(tierKey, att.players, mins) : null;
+            // Shown on every pod, not just ones that have run. Hiding it until
+            // the day made the control impossible to find — most of the week's
+            // pods are in the future, so most pod cards simply had nowhere to
+            // put the number. A pod still to come is muted rather than absent.
+            const future = r.date > today;
             return (
-              <div style={{display:"flex",alignItems:"center",gap:4}}>
+              <div style={{display:"flex",alignItems:"center",gap:4,opacity:future && !att ? 0.55 : 1}}>
                 <span style={{fontSize:9,fontWeight:800,color:C.mut,whiteSpace:"nowrap"}}>players</span>
                 <select value={att ? String(att.players) : ""}
                   onChange={ev => setPodPlayers(r.clinicId, r.id, r.date, ev.target.value, coach?.display_name || coach?.email)}
-                  title="How many players showed — sets the coach's pod pay"
+                  title={future ? "How many players are expected — sets the coach's pod pay once it runs"
+                                : "How many players showed — sets the coach's pod pay"}
                   style={{...inpStyle,padding:"1px 3px",fontSize:9,fontWeight:800,width:42,
-                          color:att?C.grn:"#f59e0b",borderColor:att?C.border:"#f59e0b"}}>
+                          color:att?C.grn:(future?C.mut:"#f59e0b"),borderColor:att?C.border:(future?C.border:"#f59e0b")}}>
                   <option value="">—</option>
                   {[0,1,2,3,4,5,6].map(n => <option key={n} value={n}>{n}</option>)}
                 </select>
