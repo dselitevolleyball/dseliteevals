@@ -10715,7 +10715,7 @@ export default function App() {
       const email = coachEmailFor(name);
       const when = new Date(r.date + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
       const body = "You're on the DSSC clinic \"" + r.clinicName + "\" on " + when + " at " + r.start
-        + (r.court ? " (" + r.court + ")" : "") + ".\n\nOpen DS Elite HQ → DSSC Hours to clock in.";
+        + (r.court ? " (" + r.court + ")" : "") + ".\n\nOpen DS Elite HQ → DSSC Time Cards to clock in.";
       fetch("/api/send-push", { method:"POST", headers:{"Content-Type":"application/json"},
         body: JSON.stringify({ skipEmail: true, title:"DSSC session — " + when, body: r.clinicName + " · " + r.start, url:"/?view=dssctime",
           audience: email ? { type:"emails", emails:[email] } : { type:"all" } }) }).catch(()=>{});
@@ -10804,7 +10804,7 @@ export default function App() {
       <div style={{padding:"18px 16px",maxWidth:"none",margin:0}}>
         <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:12}}>
           <div>
-            <h2 style={{margin:0,fontSize:20,fontWeight:800,color:C.gold}}>DSSC Coaches</h2>
+            <h2 style={{margin:0,fontSize:20,fontWeight:800,color:C.gold}}>DSSC Coverage</h2>
             <div style={{fontSize:12,color:C.mut,marginTop:2}}>
               {all.length} sessions · <b style={{color:openTotal?"#f59e0b":C.grn}}>{openTotal} short a coach</b>
               {pendingTotal > 0 && <> · <b style={{color:"#f59e0b"}}>{pendingTotal} pickup{pendingTotal===1?"":"s"} awaiting approval</b></>}
@@ -11226,6 +11226,34 @@ export default function App() {
       await loadDsscCheckins();
     };
 
+    // The week rolled up per person — approved hours are what gets paid, pending
+    // is flagged separately so a coach short on the run is obvious before send.
+    const byCoach = (() => {
+      const m = new Map();
+      for (const c of weekRows) {
+        const k = nrm(c.coach_name); if (!k) continue;
+        const g = m.get(k) || { coach: String(c.coach_name).trim(), approvedH: 0, pendingH: 0 };
+        const h = Number(c.hours || 0);
+        if (c.rejected) { /* rejected hours are not owed */ }
+        else if (c.approved) g.approvedH += h;
+        else g.pendingH += h;
+        m.set(k, g);
+      }
+      return [...m.values()].sort((a, b) => a.coach.localeCompare(b.coach));
+    })();
+    const exportWeekCsv = () => {
+      const esc = v => { const s = v == null ? "" : String(v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+      const lines = [["Date","Coach","Clinic","Hours","Rate","Amount","Status","Sent"].join(",")];
+      weekRows.forEach(c => lines.push([c.session_date, esc(c.coach_name), esc(c.clinic_name), Number(c.hours||0), RATE,
+        (Number(c.hours||0)*RATE).toFixed(2), c.rejected ? "rejected" : c.approved ? "approved" : "pending",
+        c.sent_at ? "yes" : "no"].join(",")));
+      lines.push(["","TOTAL APPROVED","",weekHours,"",(weekHours*RATE).toFixed(2),"",""].join(","));
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([lines.join("\n")], { type:"text/csv" }));
+      a.download = "dssc_timecards_" + weekStart + ".csv";
+      a.click(); URL.revokeObjectURL(a.href);
+    };
+
     const decide = async (ids, ok) => {
       if (!ids.length) return;
       const patch = ok
@@ -11268,7 +11296,7 @@ export default function App() {
 
     return (
       <div style={{padding:"18px 16px",maxWidth:1000,margin:"0 auto"}}>
-        <h2 style={{margin:"0 0 2px",fontSize:20,fontWeight:800,color:C.gold}}>DSSC Hours</h2>
+        <h2 style={{margin:"0 0 2px",fontSize:20,fontWeight:800,color:C.gold}}>DSSC Time Cards</h2>
         <div style={{fontSize:12,color:C.mut,marginBottom:14}}>Dripping Springs Sports Club clinic hours — separate from DS Elite pay. ${RATE}/hr.</div>
 
         {/* Mine */}
@@ -11391,10 +11419,34 @@ export default function App() {
                 Send to accountant
               </button>
             </div>
-            <div style={{padding:"8px 14px",fontSize:12,color:C.mut,borderBottom:weekRows.length?"1px solid "+C.border:"none"}}>
+            <div style={{padding:"8px 14px",fontSize:12,color:C.mut,borderBottom:weekRows.length?"1px solid "+C.border:"none",display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
               <b style={{color:C.text}}>{weekHours}h approved</b> · {money(weekHours*RATE)}
               {waiting.length > 0 && <> · <b style={{color:"#f59e0b"}}>{waiting.length} awaiting you</b></>}
+              <div style={{flex:1}} />
+              {weekRows.length > 0 && (
+                <button onClick={exportWeekCsv}
+                  style={{padding:"3px 10px",borderRadius:7,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontFamily:"inherit",fontSize:11,fontWeight:700,cursor:"pointer"}}>
+                  ⬇ CSV
+                </button>
+              )}
             </div>
+            {/* Per-coach roll-up. The rows below are one line per session, which
+                is what you approve against, but what gets paid is a person and a
+                number — the same shape DS Elite Time Cards lands on. */}
+            {byCoach.length > 0 && (
+              <div style={{padding:"8px 14px",borderBottom:"1px solid "+C.border,display:"flex",gap:6,flexWrap:"wrap"}}>
+                {byCoach.map(g => (
+                  <span key={g.coach} title={g.approvedH + "h approved" + (g.pendingH ? ", " + g.pendingH + "h awaiting approval" : "")}
+                    style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:11,fontWeight:700,padding:"3px 8px",borderRadius:7,
+                            background:C.bg,border:"1px solid "+(g.pendingH?"#f59e0b":C.border),color:C.text}}>
+                    {g.coach}
+                    <b style={{color:g.pendingH?"#f59e0b":C.grn}}>{g.approvedH}h</b>
+                    <span style={{color:C.mut}}>{money(g.approvedH*RATE)}</span>
+                    {g.pendingH > 0 && <span style={{fontSize:9,fontWeight:800,color:"#f59e0b"}}>+{g.pendingH}h pending</span>}
+                  </span>
+                ))}
+              </div>
+            )}
             {weekRows.length === 0 && <div style={{padding:20,textAlign:"center",color:C.mut,fontSize:12}}>No hours logged this week.</div>}
             {weekRows.map(c => (
               <div key={c.id} style={{padding:"8px 14px",borderTop:"1px solid "+C.border,display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
@@ -19953,7 +20005,7 @@ export default function App() {
               setClinicOpenId(null); setClinicFrom(null);
               if (back) setView(back);
             }}>{clinicFrom && clinicFrom !== "clinics"
-              ? "← Back to " + ({ dssccal:"DSSC Coaches", dssctime:"DSSC Hours", coaches:"Coaches", home:"Home" }[clinicFrom] || "where you were")
+              ? "← Back to " + ({ dssccal:"DSSC Coverage", dssctime:"DSSC Time Cards", coaches:"Coaches", home:"Home" }[clinicFrom] || "where you were")
               : "← All clinics"}</button>
             <div style={{flex:1}} />
             {canManage && <button style={S.gold} onClick={()=>notifyAssigned(open)} title="Push + email each assigned coach their sessions">📣 Notify coaches</button>}
@@ -25946,14 +25998,22 @@ export default function App() {
               const groups = [
                 { title:"Players", items:[...((canViewTeams || myTeamNames.length) ? [["roster","Roster"]] : []), ...(canOps ? [] : [["playereval","Evaluations"],["passing","Passer Ratings"]])] },
                 { title:"Tryouts 2026-27", items:[["dashboard","Dashboard"], ["evaluate","Evaluate"], ["favorites","My Favorites" + (favorites.length ? " (" + favorites.length + ")" : "")], ...(canViewTeams ? [["teams","Teams"]] : []), ["rankings","Rankings"], ["physical","Physical Testing"], ["tryouts","Coach Assignments"]] },
+                // Operations is grouped by WHICH BUSINESS a screen belongs to,
+                // not by what it does. DSSC is a separate company with its own
+                // clinics, coaches, pay rate and payroll run, and its three
+                // screens used to sit scattered across the DS Elite sections —
+                // two under Club, hours under Coaches & Pay — which read as if
+                // they were the same operation. They now have their own block.
                 ...(canOps ? [{ title:"Operations", items:[
-                  ["hdr","Club"],
-                  ["tracker","Tracker"], ["teamdir","All Teams"], ["playereval","Player Evaluations"], ["passing","Passer Ratings"], ["practice","Practice"], ["sa","S&A Schedule"], ["clinics","DSSC Clinics"], ["dssccal","DSSC Coaches"], ["dsysa","DSYSA Clinics"], ["scholarships","Scholarships"],
+                  ["hdr","DS Elite · Club"],
+                  ["tracker","Tracker"], ["teamdir","All Teams"], ["playereval","Player Evaluations"], ["passing","Passer Ratings"], ["practice","Practice"], ["sa","S&A Schedule"], ["scholarships","Scholarships"],
                   ...(isAdmin ? [["hawaii","Hawaii"], ["travel","Travel"], ["finance","Finance"]] : []),
-                  ["hdr","Coaches & Pay"],
-                  ["coaches","Coaches"], ...(isAdmin ? [["staffing","Staffing Board"]] : []), ["coverage","Coach Coverage"], ["timecards","Time Cards"], ["dssctime","DSSC Hours"], ["myexpenses","My Expenses"], ["gear","Gear Sizes" + (gearOutstanding ? " (" + gearOutstanding + ")" : "")], ["requests","Requests" + (pendingReqs ? " (" + pendingReqs + ")" : "")],
+                  ["hdr","DS Elite · Coaches & Pay"],
+                  ["coaches","Coaches"], ...(isAdmin ? [["staffing","Staffing Board"]] : []), ["coverage","Coach Coverage"], ["timecards","Time Cards"], ["myexpenses","My Expenses"], ["gear","Gear Sizes" + (gearOutstanding ? " (" + gearOutstanding + ")" : "")], ["requests","Requests" + (pendingReqs ? " (" + pendingReqs + ")" : "")],
+                  ["hdr","DSSC"],
+                  ["clinics","Clinics & Camps"], ["dssccal","Coverage Calendar"], ["dssctime","DSSC Time Cards"],
                   ["hdr","Communication"],
-                  ["email","Email"], ["messages","Messages (SMS)" + (totalUnread > 0 ? " (" + totalUnread + ")" : "")], ["notifications","Notifications"], ["coachcomms","Coach Comms"], ["assignments","Assignments"],
+                  ["email","Email"], ["messages","Messages (SMS)" + (totalUnread > 0 ? " (" + totalUnread + ")" : "")], ["notifications","Notifications"], ["coachcomms","Coach Comms"], ["assignments","Assignments"], ["dsysa","DSYSA Clinics"],
                 ] }] : []),
                 // DSYSA sits under Operations for admins; coaches reach the same
                 // view from here, otherwise the "hit I'll help" ask email links
@@ -25961,7 +26021,7 @@ export default function App() {
                 // In-House Tournament sits here for EVERY coach, ops or not —
                 // all 20 teams play it, so gating it to admins would repeat the
                 // DSYSA mistake of linking people to a page they can't open.
-                { title:"More", items:[["tournament","In-House Tournament"], ...(canOps ? [] : [["dssctime","DSSC Hours"],["myexpenses","My Expenses"],["dsysa","DSYSA Clinics"]]), ["activity","Activity"], ["faq","FAQ"], ["games","Games"], ...(isOwner ? [["askai","Ask AI"]] : [])] },
+                { title:"More", items:[["tournament","In-House Tournament"], ...(canOps ? [] : [["dssctime","DSSC Time Cards"],["myexpenses","My Expenses"],["dsysa","DSYSA Clinics"]]), ["activity","Activity"], ["faq","FAQ"], ["games","Games"], ...(isOwner ? [["askai","Ask AI"]] : [])] },
               ];
               // Mobile: one hamburger opening a full-height grouped menu.
               if (isNarrow) {
