@@ -10639,7 +10639,11 @@ export default function App() {
       return (
         <div key={r.clinicId + "-" + r.id}
           style={{background:C.bg,border:"1px solid "+C.border,borderLeft:"3px solid "+(r.short?"#f59e0b":C.grn),
-                  borderRadius:8,padding:"6px 8px",display:"flex",flexDirection:"column",gap:3}}>
+                  borderRadius:8,padding:"6px 8px",display:"flex",flexDirection:"column",gap:3,
+                  // Fills the timetable block it's positioned in; height:100%
+                  // resolves to auto in the whole-gym band, which has no fixed
+                  // height, so that band is unaffected.
+                  height:"100%",boxSizing:"border-box",overflow:"hidden"}}>
           <div style={{display:"flex",alignItems:"center",gap:5}}>
             <span style={{fontSize:10,fontWeight:800,color:C.text,whiteSpace:"nowrap"}}>{r.start}–{r.end}</span>
             <div style={{flex:1}} />
@@ -10978,7 +10982,17 @@ export default function App() {
                           const h1 = Math.max(h0 + 1, Math.ceil(Math.max(...ends) / 60));
                           const hours = Array.from({ length: h1 - h0 }, (_, i) => h0 + i);
                           const hLabel = (h) => { const ap = h >= 12 ? "pm" : "am"; const h12 = h % 12 === 0 ? 12 : h % 12; return h12 + ap; };
-                          const inHour = (r, h) => { const s = clockMin(r.start); return s != null && s >= h * 60 && s < (h + 1) * 60; };
+                          // True to the clock: a block is positioned at its start
+                          // minute and sized by its duration, so a 6:00-7:30 is
+                          // visibly half again as tall as a 5:00-6:00 and the
+                          // 7:30 start sits half a row down from the 7pm line.
+                          // Marks run through the closing hour, so a day ending at
+                          // 9pm shows a 9pm line rather than trailing off at 8.
+                          const PPM = 2.2;                       // pixels per minute
+                          const dayStart = h0 * 60, dayEnd = h1 * 60;
+                          const gridH = (dayEnd - dayStart) * PPM;
+                          const marks = Array.from({ length: hours.length + 1 }, (_, i) => h0 + i);
+                          const topOf = (min) => (min - dayStart) * PPM;
                           return (
                             <div>
                               {/* court header row, aligned over the columns below */}
@@ -10995,19 +11009,37 @@ export default function App() {
                                   );
                                 })}
                               </div>
-                              {hours.map(h => (
-                                <div key={h} style={{display:"flex",gap:6,alignItems:"stretch",borderTop:"1px solid "+C.border,paddingTop:4,paddingBottom:4}}>
-                                  <div style={{flex:"0 0 38px",width:38,fontSize:9,fontWeight:800,color:C.mut,paddingTop:2}}>{hLabel(h)}</div>
-                                  {perCourt.map(c => {
-                                    const items = courtRows.filter(r => courtOf(r.court).key === c.key && inHour(r, h));
-                                    return (
-                                      <div key={c.key} style={{flex:"0 0 200px",width:200,display:"flex",flexDirection:"column",gap:4}}>
-                                        {items.map(weekCard)}
-                                      </div>
-                                    );
-                                  })}
+                              <div style={{display:"flex",gap:6,alignItems:"flex-start"}}>
+                                <div style={{flex:"0 0 38px",width:38,position:"relative",height:gridH}}>
+                                  {marks.map(h => (
+                                    <span key={h} style={{position:"absolute",top:topOf(h*60)-5,left:0,fontSize:9,fontWeight:800,color:C.mut}}>{hLabel(h)}</span>
+                                  ))}
                                 </div>
-                              ))}
+                                {perCourt.map(c => {
+                                  const items = courtRows.filter(r => courtOf(r.court).key === c.key);
+                                  return (
+                                    <div key={c.key} style={{flex:"0 0 200px",width:200,position:"relative",height:gridH}}>
+                                      {marks.map(h => (
+                                        <div key={"h"+h} style={{position:"absolute",top:topOf(h*60),left:0,right:0,borderTop:"1px solid "+C.border}} />
+                                      ))}
+                                      {hours.map(h => (
+                                        <div key={"hh"+h} style={{position:"absolute",top:topOf(h*60+30),left:0,right:0,borderTop:"1px dotted "+C.border,opacity:0.45}} />
+                                      ))}
+                                      {items.map(r => {
+                                        const s = clockMin(r.start), e = clockMin(r.end);
+                                        if (s == null) return null;
+                                        const end = (e != null && e > s) ? e : s + 60;
+                                        return (
+                                          <div key={r.clinicId + "-" + r.id}
+                                            style={{position:"absolute",top:topOf(s)+1,height:Math.max(30,(end-s)*PPM)-3,left:0,right:0}}>
+                                            {weekCard(r)}
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  );
+                                })}
+                              </div>
                             </div>
                           );
                         })()}
