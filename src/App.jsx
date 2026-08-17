@@ -10578,6 +10578,32 @@ export default function App() {
         + ", " + b.getFullYear();
     })();
 
+    // DSSC runs at most three programs at once, one per court, so court is the
+    // axis a day actually splits along. Playbook writes the court as a long
+    // label ("Volleyball Court 2"), and a booking that takes the gym lists all
+    // three comma-separated — those sort to the top of the day, because nothing
+    // else can be on while they run.
+    const courtOf = (raw) => {
+      const s = String(raw || "").trim();
+      if (!s) return { key: "zz-none", label: "Court TBD", order: 98 };
+      const nums = [...s.matchAll(/(\d+)/g)].map(m => m[1]);
+      if (nums.length > 1) return { key: "multi-" + nums.join("-"), label: nums.length >= 3 ? "All courts" : "Courts " + nums.join(" + "), order: 0 };
+      if (nums.length === 1) return { key: "court-" + nums[0], label: "Court " + nums[0], order: Number(nums[0]) };
+      return { key: "other-" + s.toLowerCase(), label: s, order: 97 };
+    };
+    // Rows arrive already sorted by date then start time, so each group keeps
+    // its running order without re-sorting.
+    const courtGroups = (rows) => {
+      const out = [];
+      rows.forEach(r => {
+        const c = courtOf(r.court);
+        let g = out.find(x => x.key === c.key);
+        if (!g) { g = { ...c, items: [] }; out.push(g); }
+        g.items.push(r);
+      });
+      return out.sort((a, b) => a.order - b.order || a.label.localeCompare(b.label));
+    };
+
     // One session as a compact card in a day column: when, what, who.
     const weekCard = (r) => {
       const on = staffApproved(r.s), pend = staffPending(r.s);
@@ -10596,7 +10622,8 @@ export default function App() {
             style={{textAlign:"left",background:"none",border:"none",padding:0,cursor:"pointer",fontFamily:"inherit"}}>
             <span style={{fontSize:11,fontWeight:700,color:C.text,lineHeight:1.25,borderBottom:"1px dotted "+C.mut}}>{r.clinicName}</span>
           </button>
-          {(r.ageGroup || r.court) && <div style={{fontSize:9,color:C.mut}}>{[r.ageGroup, r.court].filter(Boolean).join(" · ")}</div>}
+          {/* Court lives on the group header now, so only the age group here. */}
+          {r.ageGroup && <div style={{fontSize:9,color:C.mut}}>{r.ageGroup}</div>}
           <div style={{display:"flex",flexWrap:"wrap",gap:3}}>
             {r.staff.filter(v => v.status !== "declined")
               .sort((a,b) => (a.role==="lead"?0:1) - (b.role==="lead"?0:1))
@@ -10837,7 +10864,7 @@ export default function App() {
                 const isToday = iso === today;
                 const dt = new Date(iso + "T12:00:00");
                 return (
-                  <div key={iso} style={{flex:"0 0 190px",width:190,background:C.bg,border:"1px solid "+(isToday?C.acc:C.border),borderRadius:10,overflow:"hidden"}}>
+                  <div key={iso} style={{flex:"0 0 210px",width:210,background:C.bg,border:"1px solid "+(isToday?C.acc:C.border),borderRadius:10,overflow:"hidden"}}>
                     <div style={{padding:"6px 9px",borderBottom:"1px solid "+C.border,background:isToday?"rgba(6,182,212,0.10)":"transparent"}}>
                       <div style={{fontSize:11,fontWeight:800,color:isToday?C.acc:C.text}}>
                         {dt.toLocaleDateString(undefined,{weekday:"short"})} {dt.getDate()}
@@ -10849,7 +10876,17 @@ export default function App() {
                     <div style={{display:"flex",flexDirection:"column",gap:5,padding:6}}>
                       {rows.length === 0
                         ? <div style={{fontSize:10,color:C.mut,textAlign:"center",padding:"10px 0"}}>Nothing on</div>
-                        : rows.map(weekCard)}
+                        : courtGroups(rows).map(g => (
+                            <div key={g.key} style={{display:"flex",flexDirection:"column",gap:4}}>
+                              <div style={{display:"flex",alignItems:"center",gap:5}}>
+                                <span style={{fontSize:9,fontWeight:800,letterSpacing:0.4,textTransform:"uppercase",color:g.order===0?"#a78bfa":C.mut}}>{g.label}</span>
+                                <div style={{flex:1,height:1,background:C.border}} />
+                                {g.items.some(x=>x.short>0) &&
+                                  <span style={{fontSize:9,fontWeight:800,color:"#f59e0b"}}>need {g.items.reduce((n,x)=>n+x.short,0)}</span>}
+                              </div>
+                              {g.items.map(weekCard)}
+                            </div>
+                          ))}
                     </div>
                   </div>
                 );
