@@ -36,9 +36,16 @@ export function parsePlaybookEvents(events) {
     const ext = e.ext || e.extendedProps || {};
     const html = ext.contents || "";
     const category = field(html, "Category");
-    if (!/volleyball/i.test(category)) continue;            // volleyball clinics only
     const program = String(ext.event_program || "").trim();
     if (!program) continue;
+    // Volleyball only — DSSC runs other sports out of the same calendar. Matched
+    // on the category OR the program/package name, because the adult programs
+    // are filed under categories that don't carry the word (an "Adult League"
+    // category, say), and category-only silently dropped the Womens Adult
+    // Volleyball Academy — it never reached the app no matter how often the
+    // sync was run.
+    const pkg = field(html, "Program Package");
+    if (!/volleyball/i.test(category + " " + pkg)) continue;
     const start = e.start || e.startStr, end = e.end || e.endStr;
     const date = String(start || "").slice(0, 10);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
