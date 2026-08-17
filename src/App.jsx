@@ -1205,6 +1205,12 @@ function weekMondayISO(d){ const x = d ? new Date(d) : new Date(); const back = 
 // attendance must not trust the Practice tab's toggle — that's a planning
 // view). Gaps between phases (and before summer starts) have NO practices:
 // weekday practices don't begin until the regular season in December.
+// Screens that are wide grids rather than columns of text, and so run to the
+// full window instead of the centered 1500px reading width: the DSSC coaches
+// week board (7 days x 3 courts) and the practice Daily board (a card per
+// block). Both already scroll sideways; the cap only made them scroll sooner.
+const WIDE_VIEWS = new Set(["dssccal", "practice"]);
+
 const PHASE_DATES = [
   { id:"summer",     from:"2026-07-12", to:"2026-09-12" },
   { id:"fall1",      from:"2026-09-13", to:"2026-10-11" },
@@ -10725,8 +10731,11 @@ export default function App() {
       </div>
     );
 
+    // No column cap on this screen. The week board is a wide grid — seven days
+    // x three courts — and every pixel spent on centering margin is a court
+    // column you have to scroll for.
     return (
-      <div style={{padding:"18px 16px",maxWidth:1100,margin:"0 auto"}}>
+      <div style={{padding:"18px 16px",maxWidth:"none",margin:0}}>
         <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:12}}>
           <div>
             <h2 style={{margin:0,fontSize:20,fontWeight:800,color:C.gold}}>DSSC Coaches</h2>
@@ -25930,7 +25939,9 @@ export default function App() {
           })}
         </div>
       )}
-      <div style={{padding:"14px 18px",maxWidth:1500,margin:"0 auto"}}>
+      {/* 1500 keeps text screens readable, but the wide boards are grids, not
+          prose — capping them just buys empty margin and costs a column. */}
+      <div style={{padding:"14px 18px",maxWidth:WIDE_VIEWS.has(view)?"none":1500,margin:"0 auto"}}>
         {OPS_VIEWS.has(view) && view !== "notifications" && !canOps ? opsDenied : <>
         {view==="home" && renderHome()}
         {view==="clockin" && (
