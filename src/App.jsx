@@ -1177,10 +1177,21 @@ function localDateISO(d){ const x = d ? new Date(d) : new Date(); return new Dat
 // A session's crew lives in dssc_clinics.sessions[].staff. Sessions written
 // before staffing existed only carry coach_name, so read that as an approved
 // lead rather than showing them as unstaffed — 31 real assignments depend on it.
+// The crew is Playbook's own instructor (coach_name) PLUS whoever the director
+// added in the app (staff[]) — not one or the other. This used to return staff[]
+// whenever it existed, so the moment anyone was added as an assistant the lead
+// vanished from the board and stopped counting toward staffing: "Guaranteed to
+// Serve" listed Bree and Ambria while Tara, the coach actually signed up to run
+// it, was invisible. The lead is listed first and counts as approved, unless
+// they already appear in staff[] — in which case that entry wins, so a lead who
+// declined or is pending stays declined or pending.
 function sessionStaff(s) {
-  if (Array.isArray(s?.staff)) return s.staff;
+  const list = Array.isArray(s?.staff) ? s.staff : [];
   const nm = String(s?.coach_name || "").trim();
-  return nm ? [{ name: nm, role: "lead", status: "approved" }] : [];
+  if (!nm || isPlaceholderPerson(nm)) return list;
+  const k = (v) => String(v || "").trim().toLowerCase().replace(/\s+/g, " ");
+  if (list.some(x => k(x?.name) === k(nm))) return list;
+  return [{ name: nm, role: "lead", status: "approved" }, ...list];
 }
 function staffNeeded(s, clinic) { return Math.max(1, Number(s?.coaches_needed ?? clinic?.coaches_needed ?? 1) || 1); }
 const staffApproved = (s) => sessionStaff(s).filter(x => x.status === "approved");
