@@ -1502,7 +1502,7 @@ export default function App() {
   const [dsscCalSel, setDsscCalSel]     = useState(null);   // selected day
   const [dsscOnlyOpen, setDsscOnlyOpen] = useState(false);  // show only sessions still short a coach
   const [dsscCoachFilter, setDsscCoachFilter] = useState(""); // "" = every coach
-  const [dsscCalMode, setDsscCalMode]   = useState("cal");  // cal | week | list
+  const [dsscCalMode, setDsscCalMode]   = useState("week"); // week | cal | list — the week board is what gets planned against
   const [dsscCalWeek, setDsscCalWeek]   = useState(0);      // weeks from this one on the DSSC coverage week board
   const [dsscWeekOff, setDsscWeekOff]   = useState(0);      // weeks from this one on the DSSC approval table
   const [dsscSync, setDsscSync]         = useState(null);   // last Playbook→clinics sync {last_synced_at, summary}
@@ -10724,7 +10724,7 @@ export default function App() {
             {dsscOnlyOpen ? "● Short-staffed only" : "Short-staffed only"}
           </button>
           <div style={{display:"flex",border:"1px solid "+C.border,borderRadius:8,overflow:"hidden"}}>
-            {[["cal","Month"],["week","Week"],["list","List"]].map(([k,label]) => (
+            {[["week","Week"],["cal","Month"],["list","List"]].map(([k,label]) => (
               <button key={k} onClick={()=>setDsscCalMode(k)}
                 style={{padding:"6px 12px",border:"none",background:dsscCalMode===k?C.gold:"transparent",
                   color:dsscCalMode===k?"#fff":C.mut,fontFamily:"inherit",fontSize:12,fontWeight:700,cursor:"pointer"}}>{label}</button>
@@ -17088,17 +17088,37 @@ export default function App() {
       const teamCanceled = tn => practiceCancellations.some(c => c.practice_date === iso && c.team_name === tn);
       const wd = WD_OF(iso);
       const seen2 = new Set();
-      const scheduled = practiceAssignments.filter(a => (a.phase||"season")===ph && a.day===wd && myTeamNames.includes(a.team_name) && !teamCanceled(a.team_name)).map(a => ({ team:a.team_name, slot:a.slot, role:"scheduled" }));
-      // Dedupe OVERLAPPING float assignments — some coaches have both a 1-hour
-      // and an overlapping 2-hour float for the same window (data entry). Keep
-      // the widest coverage so we don't offer/double-count overlapping shifts.
+      // My own team's practice. Dropped if I called out — checked here rather
+      // than at the end, so calling out frees the hour for a sub/float shift
+      // instead of letting the dead scheduled row suppress it below.
+      const scheduled = practiceAssignments
+        .filter(a => (a.phase||"season")===ph && a.day===wd && myTeamNames.includes(a.team_name) && !teamCanceled(a.team_name))
+        .map(a => ({ team:a.team_name, slot:a.slot, role:"scheduled" }))
+        .filter(x => !iAmOut(iso, x.team));
+      // Practices I was assigned to cover. These are real, payable shifts, and
+      // until now the board never showed them — a sub had to hand-enter the
+      // slot, which is what let the same hour be logged twice.
+      const subs = practiceCoverage
+        .filter(c => c.practice_date===iso && isRealSub(c.sub_name) && isMe(c.sub_name)
+                     && c.team_name && !teamCanceled(c.team_name))
+        .map(c => ({ team:c.team_name, slot:c.slot, role:"sub" }));
       const floats = coachFloats.filter(f => (f.phase||"season")===ph && f.day===wd && isMe(f.coach_name)).map(f => ({ team:"", slot:f.slot, role:"float" }));
-      floats.sort((a,b)=> startH(a.slot)-startH(b.slot) || (endH(b.slot)-startH(b.slot))-(endH(a.slot)-startH(a.slot)));
-      const keptFloats = [];
-      floats.forEach(f => { const s=startH(f.slot), e=endH(f.slot); if(!keptFloats.some(k => s < endH(k.slot) && startH(k.slot) < e)) keptFloats.push(f); });
-      return [...scheduled, ...keptFloats]
+      // ONE payable shift per stretch of wall-clock time. Priority is scheduled
+      // → sub → float: a coach covering a team at the hour they'd otherwise
+      // float is working that team, and the float is the same two hours, so
+      // offering both is offering to be paid twice for one stretch of work.
+      // Within a tier, earliest first and widest wins — some coaches carry both
+      // a 1-hour and an overlapping 2-hour float from data entry.
+      const byStart = (a,b) => startH(a.slot)-startH(b.slot) || (endH(b.slot)-startH(b.slot))-(endH(a.slot)-startH(a.slot));
+      const kept = [];
+      const consider = (list) => list.slice().sort(byStart).forEach(x => {
+        const s = startH(x.slot), e = endH(x.slot);
+        if (kept.some(k => s < endH(k.slot) && startH(k.slot) < e)) return;
+        kept.push(x);
+      });
+      consider(scheduled); consider(subs); consider(floats);
+      return kept
        .filter(x => { const k = x.role+"|"+x.team+"|"+x.slot; if(seen2.has(k)) return false; seen2.add(k); return true; })
-       .filter(x => !iAmOut(iso, x.team || null))
        .sort((a,b)=> startH(a.slot)-startH(b.slot) || (a.team||"").localeCompare(b.team||""));
     };
     const todayPhase = phaseForDate(today);
@@ -17129,10 +17149,20 @@ export default function App() {
     const doCheckin = async ({ team, slot, role, dateISO, force }) => {
       const d = dateISO || today;
       if (!force && windowState(slot) !== "open") { window.alert("Check-in opens 30 minutes before the practice starts."); return; }
-      // Guard against overlapping check-ins (e.g. a 1-hr and a 2-hr float that
-      // cover the same window) so hours aren't double-counted.
+      // One payment per stretch of wall-clock time. This used to be a confirm,
+      // which meant a coach holding both a float and a sub assignment for the
+      // same two hours could tap through and be paid for both — it happened
+      // twice in the week of Aug 10. There is no version of two shifts at one
+      // time that is honestly payable, so this refuses rather than asks; an
+      // admin can still add or edit a shift from Time Cards if it's wrong.
       const clash = checkins.find(c => c.check_date===d && norm(c.coach_name)===norm(coachName) && startH(slot) < endH(c.slot) && startH(c.slot) < endH(slot));
-      if (clash && !window.confirm("This overlaps a shift you already logged that day (" + (clash.team_name||"Floating") + " · " + clash.slot + " · " + Number(clash.hours||0) + "h). Log it anyway?")) return;
+      if (clash) {
+        window.alert("You're already logged for " + (clash.team_name || "Floating") + " · " + clash.slot
+          + " (" + Number(clash.hours||0) + "h), which covers this same time.\n\n"
+          + "You can only be paid once for a given stretch of time. If this one is the shift you actually worked, "
+          + "undo the other from \"Your check-ins today\" first, or ask an admin to fix it in Time Cards.");
+        return;
+      }
       const key = (dateISO?dateISO+"|":"")+(team||"float")+"|"+(slot||"")+"|"+role;
       setCheckinBusy(key);
       const row = {
