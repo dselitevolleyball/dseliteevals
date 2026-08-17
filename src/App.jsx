@@ -309,10 +309,18 @@ const DSSC_DIRECTOR_EMAILS = ["hunterhaleysc10@gmail.com", "hunter@drippingsport
 // flatlined a Master coach at 2 players and an Elite at 3, killing the reason to
 // fill a pod at all. A 7th player pays the same as the 6th.
 const DSSC_TIERS = {
-  competitive: { key:"competitive", label:"Competitive", base90:50, perPlayer90:10, capPlayers:6, cap90:100, privateRate:120, dropIn:75 },
-  elite:       { key:"elite",       label:"Elite",       base90:70, perPlayer90:10, capPlayers:6, cap90:120, privateRate:150, dropIn:100 },
-  master:      { key:"master",      label:"Master",      base90:85, perPlayer90:15, capPlayers:6, cap90:160, privateRate:180, dropIn:125 },
+  competitive: { key:"competitive", label:"Competitive", base90:50, perPlayer90:10, capPlayers:6, cap90:100 },
+  elite:       { key:"elite",       label:"Elite",       base90:70, perPlayer90:10, capPlayers:6, cap90:120 },
+  master:      { key:"master",      label:"Master",      base90:85, perPlayer90:15, capPlayers:6, cap90:160 },
 };
+// What a player pays. FLAT — the same for any pod regardless of the coach's
+// tier, so tier moves what the coach earns, not what the customer is charged.
+// Booking the whole block of 5 takes $50 off the total.
+const POD_PRICE = 100;              // per player, per session
+const POD_BLOCK_SESSIONS = 5;       // sessions in a block
+const POD_BLOCK_DISCOUNT = 50;      // off the block total
+const POD_BLOCK_PRICE = POD_PRICE * POD_BLOCK_SESSIONS - POD_BLOCK_DISCOUNT;      // $450
+const POD_BLOCK_PER_SESSION = POD_BLOCK_PRICE / POD_BLOCK_SESSIONS;               // $90
 const DSSC_TIER_KEYS = ["competitive", "elite", "master"];
 // The Skill Pod product itself — position-specific small-group training, the
 // core DS Elite offering at DSSC. Kept here so the in-app reference page and
@@ -343,14 +351,13 @@ function dsscPodPay(tierKey, players, minutes) {
   return Math.round(per90 * share * 100) / 100;
 }
 // What the club bills for that same session, so margin is visible internally.
-function dsscPodRevenue(tierKey, players, minutes) {
-  const t = DSSC_TIERS[tierKey];
-  if (!t) return null;
-  const n = Math.max(1, Math.floor(Number(players) || 1));
-  // A 1-player pod is a private at the private rate; 2+ bill per player at the
-  // drop-in rate. The 90-minute package is the same per-session price, so the
-  // longer session does NOT bill more — only the coach is paid more.
-  return n === 1 ? t.privateRate : t.dropIn * n;
+function dsscPodRevenue(players, { block = false } = {}) {
+  // Flat per player and the SAME for every tier, so the coach's tier moves what
+  // we pay, not what the customer is charged — which means the identical pod
+  // earns the club less with a more expensive coach on it. Revenue keeps
+  // scaling past 6 players even though coach pay caps there.
+  const n = Math.max(0, Math.floor(Number(players) || 0));
+  return n * (block ? POD_BLOCK_PER_SESSION : POD_PRICE);
 }
 // Convert a base64url VAPID key to the Uint8Array the Push API expects.
 function urlBase64ToUint8Array(base64String) {
@@ -11370,24 +11377,27 @@ export default function App() {
           <div style={head}>What players pay <span style={{fontWeight:500,color:C.mut}}>· customer-facing</span></div>
           <table style={{width:"100%",borderCollapse:"collapse"}}>
             <thead><tr>
-              <th style={th}>Coach tier</th><th style={{...th,textAlign:"right"}}>Private (60 min)</th>
-              <th style={{...th,textAlign:"right"}}>Pod drop-in</th><th style={{...th,textAlign:"right"}}>6-week package</th>
-              <th style={{...th,textAlign:"right"}}>Effective rate</th>
+              <th style={th}>Option</th><th style={{...th,textAlign:"right"}}>Price</th>
+              <th style={{...th,textAlign:"right"}}>Per session</th><th style={th}>&nbsp;</th>
             </tr></thead>
-            <tbody>{tiers.map(t => (
-              <tr key={t.key}>
-                <td style={{...td,fontWeight:700}}>{t.label}</td>
-                <td style={tdR}>{money(t.privateRate)}</td>
-                <td style={tdR}>{money(t.dropIn)}</td>
-                <td style={tdR}>{money(t.dropIn * 6)}</td>
-                <td style={{...tdR,color:C.grn}}>{money(t.dropIn * 6 / 9)}/hr</td>
+            <tbody>
+              <tr>
+                <td style={{...td,fontWeight:700}}>Single pod session</td>
+                <td style={tdR}>{money(POD_PRICE)}</td>
+                <td style={tdR}>{money(POD_PRICE)}</td>
+                <td style={{...td,color:C.mut}}>Drop in on any pod, no commitment</td>
               </tr>
-            ))}</tbody>
+              <tr>
+                <td style={{...td,fontWeight:700}}>All {POD_BLOCK_SESSIONS} sessions</td>
+                <td style={tdR}>{money(POD_BLOCK_PRICE)}</td>
+                <td style={{...tdR,color:C.grn}}>{money(POD_BLOCK_PER_SESSION)}</td>
+                <td style={{...td,color:C.grn}}>{money(POD_BLOCK_DISCOUNT)} off the block</td>
+              </tr>
+            </tbody>
           </table>
           <div style={{padding:"10px 14px",fontSize:12,color:C.mut}}>
-            Drop-in is a single 60-minute session, no commitment. The 6-week package is the same per-session price but
-            sessions run 90 minutes — 9 hours of training for the price of 6, a 33% saving on the effective hourly rate.
-            Privates are premium: no packages, no discounts.
+            One price for every pod — it does not change with the coach's tier, the position or the age group.
+            Booking the full block of {POD_BLOCK_SESSIONS} saves {money(POD_BLOCK_DISCOUNT)}, bringing each session to {money(POD_BLOCK_PER_SESSION)}.
           </div>
         </div>
 
@@ -11421,10 +11431,13 @@ export default function App() {
                   {tiers.map(t => (
                     <tr key={t.key+"m"}>
                       <td style={{...td,fontWeight:700,color:C.mut}}>{t.label}</td>
-                      <td style={{...td,color:C.mut}}>club margin</td>
+                      <td style={{...td,color:C.mut}}>margin at {money(POD_BLOCK_PER_SESSION)}/player</td>
                       {counts.map(n => {
-                        const rev = dsscPodRevenue(t.key, n), pay = dsscPodPay(t.key, n, 90);
-                        return <td key={n} style={{...tdR,color:C.grn,fontWeight:600}}>{Math.round((rev-pay)/rev*100)}%</td>;
+                        // Block rate is the honest one to judge against: most
+                        // players buy the block, so it's what a seat usually earns.
+                        const rev = dsscPodRevenue(n, { block:true }), pay = dsscPodPay(t.key, n, 90);
+                        const pct = rev > 0 ? Math.round((rev - pay) / rev * 100) : 0;
+                        return <td key={n} style={{...tdR,color:pct < 40 ? "#f59e0b" : C.grn,fontWeight:600}}>{pct}%</td>;
                       })}
                     </tr>
                   ))}
@@ -11433,8 +11446,10 @@ export default function App() {
             </div>
             <div style={{padding:"10px 14px",fontSize:12,color:C.mut}}>
               Gold figures are at the cap — a 7th player pays the same as the {DSSC_TIERS.competitive.capPlayers}th.
-              Margin is against pod drop-in revenue (a single player bills the private rate).
-              A coach with no tier falls back to the flat $25/hr, and a pod nobody counted does too.
+              Because the price is flat, tier is pure cost: the same pod earns less with a more expensive coach on it,
+              and a thinly-attended pod with a Master coach is the one combination that stops making money —
+              amber marks anything under 40%. A coach with no tier falls back to the flat $25/hr, and so does a pod
+              nobody counted.
             </div>
           </div>
         )}
