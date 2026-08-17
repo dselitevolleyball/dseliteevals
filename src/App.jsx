@@ -1502,7 +1502,8 @@ export default function App() {
   const [dsscCalSel, setDsscCalSel]     = useState(null);   // selected day
   const [dsscOnlyOpen, setDsscOnlyOpen] = useState(false);  // show only sessions still short a coach
   const [dsscCoachFilter, setDsscCoachFilter] = useState(""); // "" = every coach
-  const [dsscCalMode, setDsscCalMode]   = useState("cal");  // cal | list
+  const [dsscCalMode, setDsscCalMode]   = useState("cal");  // cal | week | list
+  const [dsscCalWeek, setDsscCalWeek]   = useState(0);      // weeks from this one on the DSSC coverage week board
   const [dsscWeekOff, setDsscWeekOff]   = useState(0);      // weeks from this one on the DSSC approval table
   const [dsscSync, setDsscSync]         = useState(null);   // last Playbook→clinics sync {last_synced_at, summary}
   const [dsscSyncTok, setDsscSyncTok]   = useState(null);   // built sync bookmarklet {href, calendarUrl} | {configured:false} | {error}
@@ -10561,6 +10562,60 @@ export default function App() {
     const monthLabel = base.toLocaleString(undefined, { month: "long", year: "numeric" });
     const fmtDay = (iso) => new Date(iso + "T12:00:00").toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
 
+    // Week board — one column per day, Sun→Sat like the month grid above it.
+    // Built from local date parts rather than toISOString so a session never
+    // slides into the neighbouring day on a UTC-offset timezone.
+    const isoOfDate = (dt) => dt.getFullYear() + "-" + String(dt.getMonth()+1).padStart(2,"0") + "-" + String(dt.getDate()).padStart(2,"0");
+    const wkStart = (() => { const dt = new Date(today + "T12:00:00"); dt.setDate(dt.getDate() - dt.getDay() + dsscCalWeek*7); return dt; })();
+    const weekDays = Array.from({ length: 7 }, (_, i) => { const dt = new Date(wkStart); dt.setDate(dt.getDate() + i); return isoOfDate(dt); });
+    const weekRows = shown.filter(r => r.date >= weekDays[0] && r.date <= weekDays[6]);
+    const weekShort = weekRows.reduce((n, r) => n + r.short, 0);
+    const weekLabel = (() => {
+      const a = new Date(weekDays[0] + "T12:00:00"), b = new Date(weekDays[6] + "T12:00:00");
+      const sameMonth = a.getMonth() === b.getMonth();
+      return a.toLocaleDateString(undefined,{month:"short",day:"numeric"}) + " – "
+        + b.toLocaleDateString(undefined, sameMonth ? {day:"numeric"} : {month:"short",day:"numeric"})
+        + ", " + b.getFullYear();
+    })();
+
+    // One session as a compact card in a day column: when, what, who.
+    const weekCard = (r) => {
+      const on = staffApproved(r.s), pend = staffPending(r.s);
+      return (
+        <div key={r.clinicId + "-" + r.id}
+          style={{background:C.bg,border:"1px solid "+C.border,borderLeft:"3px solid "+(r.short?"#f59e0b":C.grn),
+                  borderRadius:8,padding:"6px 8px",display:"flex",flexDirection:"column",gap:3}}>
+          <div style={{display:"flex",alignItems:"center",gap:5}}>
+            <span style={{fontSize:10,fontWeight:800,color:C.text,whiteSpace:"nowrap"}}>{r.start}–{r.end}</span>
+            <div style={{flex:1}} />
+            <span title="Coaches on this session vs. needed"
+              style={{fontSize:9,fontWeight:800,padding:"1px 6px",borderRadius:999,whiteSpace:"nowrap",
+                      background:(r.short?"#f59e0b":C.grn)+"22",color:r.short?"#f59e0b":C.grn}}>{on.length}/{r.need}</span>
+          </div>
+          <button onClick={()=>openClinic(r.clinicId)} title="Open this clinic"
+            style={{textAlign:"left",background:"none",border:"none",padding:0,cursor:"pointer",fontFamily:"inherit"}}>
+            <span style={{fontSize:11,fontWeight:700,color:C.text,lineHeight:1.25,borderBottom:"1px dotted "+C.mut}}>{r.clinicName}</span>
+          </button>
+          {(r.ageGroup || r.court) && <div style={{fontSize:9,color:C.mut}}>{[r.ageGroup, r.court].filter(Boolean).join(" · ")}</div>}
+          <div style={{display:"flex",flexWrap:"wrap",gap:3}}>
+            {r.staff.filter(v => v.status !== "declined")
+              .sort((a,b) => (a.role==="lead"?0:1) - (b.role==="lead"?0:1))
+              .map(v => (
+                <span key={v.name} style={{fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:5,
+                        background:v.status==="pending"?"#f59e0b22":C.card,
+                        border:"1px solid "+(v.status==="pending"?"#f59e0b":C.border),
+                        color:v.status==="pending"?"#f59e0b":C.text}}
+                  title={v.role==="lead" ? "Lead coach" : v.status==="pending" ? "Picked up — needs your OK" : "On this session"}>
+                  {v.role==="lead" ? "★ " : ""}{v.name}{v.status==="pending" ? " ?" : ""}
+                </span>
+              ))}
+            {r.short > 0 && <span style={{fontSize:9,fontWeight:800,color:"#f59e0b"}}>need {r.short} more</span>}
+            {r.staff.length === 0 && r.short === 0 && <span style={{fontSize:9,color:C.mut}}>nobody assigned</span>}
+          </div>
+        </div>
+      );
+    };
+
     const notifyStaff = (r, name) => {
       const email = coachEmailFor(name);
       const when = new Date(r.date + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
@@ -10669,7 +10724,7 @@ export default function App() {
             {dsscOnlyOpen ? "● Short-staffed only" : "Short-staffed only"}
           </button>
           <div style={{display:"flex",border:"1px solid "+C.border,borderRadius:8,overflow:"hidden"}}>
-            {[["cal","Calendar"],["list","List"]].map(([k,label]) => (
+            {[["cal","Month"],["week","Week"],["list","List"]].map(([k,label]) => (
               <button key={k} onClick={()=>setDsscCalMode(k)}
                 style={{padding:"6px 12px",border:"none",background:dsscCalMode===k?C.gold:"transparent",
                   color:dsscCalMode===k?"#fff":C.mut,fontFamily:"inherit",fontSize:12,fontWeight:700,cursor:"pointer"}}>{label}</button>
@@ -10759,7 +10814,49 @@ export default function App() {
           </div>
         </details>
 
-        {dsscCalMode === "cal" ? (
+        {dsscCalMode === "week" ? (
+          <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:12}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,flexWrap:"wrap"}}>
+              <button onClick={()=>setDsscCalWeek(o=>o-1)} style={{background:"none",border:"1px solid "+C.border,borderRadius:6,color:C.text,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:800,width:26,height:26,padding:0}}>‹</button>
+              <span style={{fontSize:13,fontWeight:800,color:C.text,minWidth:150,textAlign:"center"}}>{weekLabel}</span>
+              <button onClick={()=>setDsscCalWeek(o=>o+1)} style={{background:"none",border:"1px solid "+C.border,borderRadius:6,color:C.text,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:800,width:26,height:26,padding:0}}>›</button>
+              {dsscCalWeek !== 0 && <button onClick={()=>setDsscCalWeek(0)} style={{background:"none",border:"none",color:C.acc,cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:700}}>This week</button>}
+              <div style={{flex:1}} />
+              <span style={{fontSize:11,color:C.mut,fontWeight:700}}>
+                {weekRows.length} session{weekRows.length===1?"":"s"} ·{" "}
+                <b style={{color:weekShort?"#f59e0b":C.grn}}>{weekShort ? weekShort + " coach spot" + (weekShort===1?"":"s") + " open" : "fully staffed"}</b>
+              </span>
+            </div>
+            {/* Fixed-width day columns that scroll sideways, same as the practice
+                Daily board — a week of clinics is too wide to squeeze into the
+                viewport without the coach names becoming unreadable. */}
+            <div style={{display:"flex",gap:8,overflowX:"auto",paddingBottom:6,alignItems:"flex-start"}}>
+              {weekDays.map(iso => {
+                const rows = weekRows.filter(r => r.date === iso);
+                const dayShort = rows.reduce((n, r) => n + r.short, 0);
+                const isToday = iso === today;
+                const dt = new Date(iso + "T12:00:00");
+                return (
+                  <div key={iso} style={{flex:"0 0 190px",width:190,background:C.bg,border:"1px solid "+(isToday?C.acc:C.border),borderRadius:10,overflow:"hidden"}}>
+                    <div style={{padding:"6px 9px",borderBottom:"1px solid "+C.border,background:isToday?"rgba(6,182,212,0.10)":"transparent"}}>
+                      <div style={{fontSize:11,fontWeight:800,color:isToday?C.acc:C.text}}>
+                        {dt.toLocaleDateString(undefined,{weekday:"short"})} {dt.getDate()}
+                      </div>
+                      <div style={{fontSize:9,fontWeight:700,color:rows.length ? (dayShort?"#f59e0b":C.grn) : C.mut}}>
+                        {rows.length ? rows.length + " session" + (rows.length===1?"":"s") + (dayShort ? " · need " + dayShort : "") : "—"}
+                      </div>
+                    </div>
+                    <div style={{display:"flex",flexDirection:"column",gap:5,padding:6}}>
+                      {rows.length === 0
+                        ? <div style={{fontSize:10,color:C.mut,textAlign:"center",padding:"10px 0"}}>Nothing on</div>
+                        : rows.map(weekCard)}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : dsscCalMode === "cal" ? (
           <>
             <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:12,marginBottom:12}}>
               <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
