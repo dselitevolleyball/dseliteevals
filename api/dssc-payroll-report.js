@@ -19,10 +19,13 @@ const RATE = 25;
 // each additional player adds the bonus.
 // Competitive -> Elite -> Master, lowest to highest. "Competitive" is the entry
 // tier on $30 here; an earlier naming had it as the $50 middle tier.
+// Per 90-MINUTE session, capping at 6 players so a full pod lands exactly on
+// $100 / $120 / $160. Must stay identical to DSSC_TIERS / dsscPodPay in
+// src/App.jsx — two answers for one shift is the thing payroll can't have.
 const TIERS = {
-  competitive: { label: "Competitive", base: 30, perPlayer: 15 },
-  elite:       { label: "Elite",       base: 50, perPlayer: 20 },
-  master:      { label: "Master",      base: 80, perPlayer: 30 },
+  competitive: { label: "Competitive", base90: 50, perPlayer90: 10, capPlayers: 6 },
+  elite:       { label: "Elite",       base90: 70, perPlayer90: 10, capPlayers: 6 },
+  master:      { label: "Master",      base90: 85, perPlayer90: 15, capPlayers: 6 },
 };
 const DEFAULT_TO = ["bpounds@generalledgerpartners.com", "rparker@generalledgerpartners.com", "hunterhaleysc10@gmail.com", "hunter@drippingsportsclub.com", "drew@dselitevolleyball.com"];
 const OWNER_EMAILS = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"];
@@ -96,8 +99,9 @@ export default async function handler(req, res) {
     if (players == null) return { amount: h * RATE, basis: "pod — not counted" };
     const t = TIERS[tierOf.get(nrm(c.coach_name))];
     if (!t) return { amount: h * RATE, basis: "pod — no tier" };
-    const n = Math.max(1, Math.floor(Number(players) || 1));
-    const amount = Math.round((t.base + t.perPlayer * (n - 1)) * Math.max(0, h) * 100) / 100;
+    const n = Math.min(t.capPlayers, Math.max(1, Math.floor(Number(players) || 1)));
+    // h is the logged session length in hours; the ladder is priced per 90 min.
+    const amount = Math.round((t.base90 + t.perPlayer90 * (n - 1)) * (Math.max(0, h) / 1.5) * 100) / 100;
     return { amount, basis: `${t.label} pod · ${n}p`, players: n };
   };
 

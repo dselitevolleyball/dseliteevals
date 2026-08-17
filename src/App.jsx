@@ -302,10 +302,16 @@ const DSSC_DIRECTOR_EMAILS = ["hunterhaleysc10@gmail.com", "hunter@drippingsport
 // "Competitive" is the entry tier on $30, not the old middle one on $50. Nothing
 // about the money changed, so the stored keys were rewritten to match the new
 // names rather than left as aliases that would read a tier too high.
+// Rates are per 90-MINUTE session, which is what every pod actually runs and
+// what the caps are set against. A pod tops out at 6 players and the ladder is
+// built so 6 lands exactly on the cap — $100 / $120 / $160 — while every extra
+// player up to that still adds pay. Capping the old ladder instead would have
+// flatlined a Master coach at 2 players and an Elite at 3, killing the reason to
+// fill a pod at all. A 7th player pays the same as the 6th.
 const DSSC_TIERS = {
-  competitive: { key:"competitive", label:"Competitive", base:30, perPlayer:15, privateRate:120, dropIn:75 },
-  elite:       { key:"elite",       label:"Elite",       base:50, perPlayer:20, privateRate:150, dropIn:100 },
-  master:      { key:"master",      label:"Master",      base:80, perPlayer:30, privateRate:180, dropIn:125 },
+  competitive: { key:"competitive", label:"Competitive", base90:50, perPlayer90:10, capPlayers:6, cap90:100, privateRate:120, dropIn:75 },
+  elite:       { key:"elite",       label:"Elite",       base90:70, perPlayer90:10, capPlayers:6, cap90:120, privateRate:150, dropIn:100 },
+  master:      { key:"master",      label:"Master",      base90:85, perPlayer90:15, capPlayers:6, cap90:160, privateRate:180, dropIn:125 },
 };
 const DSSC_TIER_KEYS = ["competitive", "elite", "master"];
 // A pod is a small-group session; everything else (camps, beginner clinics)
@@ -317,10 +323,11 @@ const isPodClinic = (c) => /pod/i.test(String(c?.category || "") + " " + String(
 function dsscPodPay(tierKey, players, minutes) {
   const t = DSSC_TIERS[tierKey];
   if (!t) return null;
-  const n = Math.max(1, Math.floor(Number(players) || 1));
-  const perHour = t.base + t.perPlayer * (n - 1);
-  const hours = Math.max(0, Number(minutes) || 60) / 60;
-  return Math.round(perHour * hours * 100) / 100;
+  // Clamped at the cap, so a 7th player never pushes pay past the ceiling.
+  const n = Math.min(t.capPlayers, Math.max(1, Math.floor(Number(players) || 1)));
+  const per90 = t.base90 + t.perPlayer90 * (n - 1);
+  const share = Math.max(0, Number(minutes) || 90) / 90;   // pods run 90; a short one pays pro-rata
+  return Math.round(per90 * share * 100) / 100;
 }
 // What the club bills for that same session, so margin is visible internally.
 function dsscPodRevenue(tierKey, players, minutes) {
@@ -11055,11 +11062,11 @@ export default function App() {
           <div style={{padding:"0 14px 6px",fontSize:11,color:C.mut}}>
             {DSSC_TIER_KEYS.map(k => DSSC_TIERS[k]).map(t => (
               <span key={t.key} style={{marginRight:14,whiteSpace:"nowrap"}}>
-                <b style={{color:C.text}}>{t.label}</b> ${t.base} + ${t.perPlayer}/extra player
-                <span style={{color:C.mut}}> → ${t.base + t.perPlayer*3} at 4</span>
+                <b style={{color:C.text}}>{t.label}</b> ${t.base90} + ${t.perPlayer90}/extra player
+                <span style={{color:C.mut}}> → ${t.cap90} at {t.capPlayers}</span>
               </span>
             ))}
-            <div style={{marginTop:4}}>A 90-minute package session pays 1.5x. Coaches with no tier fall back to the flat $25/hr.</div>
+            <div style={{marginTop:4}}>Rates are per 90-minute session and stop rising past {DSSC_TIERS.competitive.capPlayers} players. Coaches with no tier fall back to the flat $25/hr.</div>
           </div>
           <div style={{padding:"4px 14px 12px",display:"flex",flexDirection:"column",gap:5}}>
             {tierRows.length === 0 && <span style={{fontSize:12,color:C.mut}}>No DSSC coaches on record yet.</span>}
@@ -11074,7 +11081,7 @@ export default function App() {
                 </select>
                 {a.tier && (
                   <span style={{fontSize:10,color:C.mut}}>
-                    private ${DSSC_TIERS[a.tier].base} · 4-player pod <b style={{color:C.grn}}>${DSSC_TIERS[a.tier].base + DSSC_TIERS[a.tier].perPlayer*3}</b>
+                    1 player ${DSSC_TIERS[a.tier].base90} · full pod <b style={{color:C.grn}}>${DSSC_TIERS[a.tier].cap90}</b>
                   </span>
                 )}
               </div>
