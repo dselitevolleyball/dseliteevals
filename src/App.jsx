@@ -282,6 +282,51 @@ const C = {bg:"#0a0a0a",card:"#141414",border:"#2a2a2a",gold:"#e91e8c",text:"#ff
 const OWNER_EMAILS = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"];
 // DSSC clinic directors — schedule/assign/oversee clinics alongside admins.
 const DSSC_DIRECTOR_EMAILS = ["hunterhaleysc10@gmail.com", "hunter@drippingsportsclub.com"];
+
+// ── DSSC Skill Pod economics ────────────────────────────────────────────────
+// A pod is position-specific small-group training, 2-4 players. Coaches are
+// tiered, and pod pay is a base for the session plus a bonus for every player
+// BEYOND the first — so the base is exactly the 1-player (private) rate and each
+// extra body adds the bonus. That is what makes filling a pod pay: an Elite
+// coach at 4 players earns $170 against an $80 private.
+//
+// Worth knowing: the spec's prose says "base + per-player bonus for each player
+// in the pod", which would make a 2-player Development pod $60. Every rate table
+// in the same spec says $45, and the quoted "coach raise" percentages agree with
+// the tables. The tables are implemented here.
+//
+// 90-minute package sessions pay pro-rata, i.e. 1.5x — which reproduces the
+// 6-week totals exactly ($675 / $990 / $1,530 at 4 players).
+const DSSC_TIERS = {
+  development: { key:"development", label:"Development", base:30, perPlayer:15, privateRate:120, dropIn:75 },
+  competitive: { key:"competitive", label:"Competitive", base:50, perPlayer:20, privateRate:150, dropIn:100 },
+  elite:       { key:"elite",       label:"Elite",       base:80, perPlayer:30, privateRate:180, dropIn:125 },
+};
+const DSSC_TIER_KEYS = ["development", "competitive", "elite"];
+// A pod is a small-group session; everything else (camps, beginner clinics)
+// stays on the flat hourly rate.
+const isPodClinic = (c) => /pod/i.test(String(c?.category || "") + " " + String(c?.name || ""));
+// Coach pay for one pod session. players is who actually showed; minutes lets a
+// 90-minute package session pay 1.5x. Returns null when the coach has no tier,
+// so the caller can fall back to the flat rate rather than silently paying zero.
+function dsscPodPay(tierKey, players, minutes) {
+  const t = DSSC_TIERS[tierKey];
+  if (!t) return null;
+  const n = Math.max(1, Math.floor(Number(players) || 1));
+  const perHour = t.base + t.perPlayer * (n - 1);
+  const hours = Math.max(0, Number(minutes) || 60) / 60;
+  return Math.round(perHour * hours * 100) / 100;
+}
+// What the club bills for that same session, so margin is visible internally.
+function dsscPodRevenue(tierKey, players, minutes) {
+  const t = DSSC_TIERS[tierKey];
+  if (!t) return null;
+  const n = Math.max(1, Math.floor(Number(players) || 1));
+  // A 1-player pod is a private at the private rate; 2+ bill per player at the
+  // drop-in rate. The 90-minute package is the same per-session price, so the
+  // longer session does NOT bill more — only the coach is paid more.
+  return n === 1 ? t.privateRate : t.dropIn * n;
+}
 // Convert a base64url VAPID key to the Uint8Array the Push API expects.
 function urlBase64ToUint8Array(base64String) {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
@@ -1515,6 +1560,7 @@ export default function App() {
   const [clinicMonth, setClinicMonth]   = useState(null);   // "YYYY-MM" calendar anchor
   const [dsscCheckins, setDsscCheckins] = useState([]);     // DSSC clinic clock-ins (separate from DS Elite)
   const [dsscAvail, setDsscAvail]       = useState([]);     // coach availability/interest for clinics
+  const [podAttendance, setPodAttendance] = useState([]);   // players who showed, pods only
   const [dsscCalOff, setDsscCalOff]     = useState(0);      // months from now on the DSSC coaches calendar
   const [dsscCalSel, setDsscCalSel]     = useState(null);   // selected day
   const [dsscOnlyOpen, setDsscOnlyOpen] = useState(false);  // show only sessions still short a coach
@@ -2675,6 +2721,36 @@ export default function App() {
     if (error) { console.error("Load dssc_availability error:", error); return; }
     setDsscAvail(data || []);
   }, []);
+  // Pod attendance — how many players actually showed. Payroll input, so it has
+  // its own table rather than riding on the session JSONB. Until the migration
+  // is run this errors and leaves the list empty, which reads as "not counted
+  // yet" and falls the session back to the flat hourly rate.
+  const loadPodAttendance = useCallback(async () => {
+    const { data, error } = await supabase.from("dssc_pod_attendance").select("*");
+    if (error) { console.error("Load dssc_pod_attendance error:", error); return; }
+    setPodAttendance(data || []);
+  }, []);
+  const setPodPlayers = useCallback(async (clinicId, sessionId, sessionDate, players, by) => {
+    const n = players === "" || players == null ? null : Math.max(0, Math.min(12, Math.floor(Number(players) || 0)));
+    if (n == null) {
+      setPodAttendance(prev => prev.filter(a => !(a.clinic_id === clinicId && String(a.session_id) === String(sessionId))));
+      const { error } = await supabase.from("dssc_pod_attendance").delete().eq("clinic_id", clinicId).eq("session_id", String(sessionId));
+      if (error) { window.alert("Couldn't clear attendance: " + error.message); loadPodAttendance(); }
+      return;
+    }
+    const row = { clinic_id: clinicId, session_id: String(sessionId), session_date: sessionDate, players: n,
+                  recorded_by: by || null, recorded_at: new Date().toISOString() };
+    setPodAttendance(prev => [...prev.filter(a => !(a.clinic_id === clinicId && String(a.session_id) === String(sessionId))), row]);
+    const { error } = await supabase.from("dssc_pod_attendance").upsert(row, { onConflict: "clinic_id,session_id" });
+    if (error) { window.alert("Couldn't save attendance: " + error.message); loadPodAttendance(); }
+  }, [loadPodAttendance]);
+  const setCoachTier = useCallback(async (coachName, tier) => {
+    const t = tier || null;
+    setDsscAvail(prev => prev.map(a => (a.coach_name || "").trim().toLowerCase() === (coachName || "").trim().toLowerCase() ? { ...a, tier: t } : a));
+    const { error } = await supabase.from("dssc_availability")
+      .upsert({ coach_name: coachName, tier: t, updated_at: new Date().toISOString() }, { onConflict: "coach_name" });
+    if (error) { window.alert("Couldn't set tier: " + error.message); loadDsscAvail(); }
+  }, [loadDsscAvail]);
   const loadDsscSync = useCallback(async () => {
     const { data } = await supabase.from("dssc_sync").select("*").eq("id", 1).maybeSingle();
     setDsscSync(data || null);
@@ -2743,7 +2819,7 @@ export default function App() {
   // "coaches" is here because the coach card draws the same calendar, and a
   // DSSC session has to appear on it like any other commitment.
   useEffect(() => { if (isApproved && (view === "clinics" || view === "home" || view === "dssccal" || view === "dssctime" || view === "coaches")) { loadClinics(); loadDsscCheckins(); } }, [isApproved, view, loadClinics, loadDsscCheckins]);
-  useEffect(() => { if (isApproved && (view === "clinics" || view === "dssccal")) { loadPlaybook(); loadDsscAvail(); loadDsscSync(); } }, [isApproved, view, loadPlaybook, loadDsscAvail, loadDsscSync]);
+    useEffect(() => { if (isApproved && (view === "clinics" || view === "dssccal" || view === "dssctime")) { loadPlaybook(); loadDsscAvail(); loadDsscSync(); loadPodAttendance(); } }, [isApproved, view, loadPlaybook, loadDsscAvail, loadDsscSync, loadPodAttendance]);
   const saveCharter = useCallback(async (team, data) => {
     if (!team) return;
     const row = { team_name: team, data, updated_by: coach?.display_name || coach?.email || null, updated_at: new Date().toISOString() };
@@ -10633,6 +10709,23 @@ export default function App() {
       return [...seen.values()].sort((a, b) => a.order - b.order || a.label.localeCompare(b.label));
     })();
 
+    // Pod pay follows the LEAD coach's tier — the person running the pod. Falls
+    // back to whoever is approved on it when nobody is starred.
+    const tierOfCoach = (nm) => {
+      const a = dsscAvail.find(x => nrm(x.coach_name) === nrm(nm));
+      return a?.tier || null;
+    };
+    const podTierFor = (r) => {
+      const on = sessionStaff(r.s).filter(v => v.status === "approved");
+      const lead = on.find(v => v.role === "lead") || on[0];
+      return lead ? tierOfCoach(lead.name) : null;
+    };
+    // 60 by default; a 6-week package session runs 90 and pays 1.5x.
+    const podMinutes = (r) => {
+      const a = clockMin(r.start), b = clockMin(r.end);
+      return (a != null && b != null && b > a) ? b - a : 60;
+    };
+
     // One session as a compact card in a day column: when, what, who.
     const weekCard = (r) => {
       const on = staffApproved(r.s), pend = staffPending(r.s);
@@ -10694,6 +10787,31 @@ export default function App() {
               })}
             {r.staff.filter(v=>v.status!=="declined").length === 0 && <span style={{fontSize:9,color:C.mut}}>nobody assigned</span>}
           </div>
+          {/* Pods only: how many players showed. This is what the coach is paid
+              on — base plus a bonus per player past the first — so it's captured
+              on the session rather than reconstructed at pay time. */}
+          {isPodClinic(r.clinic) && r.date <= today && (() => {
+            const att = podAttendance.find(a => a.clinic_id === r.clinicId && String(a.session_id) === String(r.id));
+            const tierKey = podTierFor(r);
+            const mins = podMinutes(r);
+            const paid = att ? dsscPodPay(tierKey, att.players, mins) : null;
+            return (
+              <div style={{display:"flex",alignItems:"center",gap:4}}>
+                <span style={{fontSize:9,fontWeight:800,color:C.mut,whiteSpace:"nowrap"}}>players</span>
+                <select value={att ? String(att.players) : ""}
+                  onChange={ev => setPodPlayers(r.clinicId, r.id, r.date, ev.target.value, coach?.display_name || coach?.email)}
+                  title="How many players showed — sets the coach's pod pay"
+                  style={{...inpStyle,padding:"1px 3px",fontSize:9,fontWeight:800,width:42,
+                          color:att?C.grn:"#f59e0b",borderColor:att?C.border:"#f59e0b"}}>
+                  <option value="">—</option>
+                  {[0,1,2,3,4,5,6].map(n => <option key={n} value={n}>{n}</option>)}
+                </select>
+                {paid != null
+                  ? <span style={{fontSize:9,fontWeight:800,color:C.grn}}>${paid}</span>
+                  : att && <span title="Coach has no tier set yet" style={{fontSize:9,fontWeight:700,color:"#f59e0b"}}>no tier</span>}
+              </div>
+            );
+          })()}
           <select value="" onChange={ev => { const [nm, role] = ev.target.value.split("|"); if (nm) staffDsscSession(r.clinicId, r.id, nm, role, "approved"); }}
             style={{...inpStyle,padding:"2px 4px",fontSize:9,fontWeight:700,width:"100%",
                     borderColor:r.short?"#f59e0b":C.border,color:r.short?"#f59e0b":C.mut}}>
@@ -10909,6 +11027,43 @@ export default function App() {
                 </button>
               );
             })}
+          </div>
+        </details>
+
+        {/* Coach tier sets pod pay: base for the session plus a bonus for every
+            player past the first. Untiered coaches stay on the flat hourly rate,
+            so this is the switch that turns the pod model on for someone. */}
+        <details style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,marginBottom:12}}>
+          <summary style={{padding:"10px 14px",cursor:"pointer",fontSize:12,fontWeight:800,color:C.text}}>
+            Coach tiers &amp; pod pay <span style={{color:C.mut,fontWeight:500}}>· {availRows.filter(a=>a.tier).length} of {availRows.length} tiered</span>
+          </summary>
+          <div style={{padding:"0 14px 6px",fontSize:11,color:C.mut}}>
+            {DSSC_TIER_KEYS.map(k => DSSC_TIERS[k]).map(t => (
+              <span key={t.key} style={{marginRight:14,whiteSpace:"nowrap"}}>
+                <b style={{color:C.text}}>{t.label}</b> ${t.base} + ${t.perPlayer}/extra player
+                <span style={{color:C.mut}}> → ${t.base + t.perPlayer*3} at 4</span>
+              </span>
+            ))}
+            <div style={{marginTop:4}}>A 90-minute package session pays 1.5x. Coaches with no tier fall back to the flat $25/hr.</div>
+          </div>
+          <div style={{padding:"4px 14px 12px",display:"flex",flexDirection:"column",gap:5}}>
+            {availRows.length === 0 && <span style={{fontSize:12,color:C.mut}}>No coach has flagged availability for DSSC clinics yet.</span>}
+            {availRows.slice().sort((a,b)=>String(a.coach_name).localeCompare(String(b.coach_name))).map(a => (
+              <div key={"tier"+a.coach_name} style={{display:"flex",alignItems:"center",gap:8}}>
+                <span style={{fontSize:12,fontWeight:700,color:C.text,minWidth:170}}>{a.coach_name}</span>
+                <select value={a.tier || ""} onChange={ev => setCoachTier(a.coach_name, ev.target.value || null)}
+                  style={{...inpStyle,padding:"3px 8px",fontSize:11,fontWeight:700,minWidth:150,
+                          color:a.tier?C.grn:C.mut,borderColor:a.tier?C.border:"#f59e0b"}}>
+                  <option value="">— no tier (flat $25/hr) —</option>
+                  {DSSC_TIER_KEYS.map(k => <option key={k} value={k}>{DSSC_TIERS[k].label}</option>)}
+                </select>
+                {a.tier && (
+                  <span style={{fontSize:10,color:C.mut}}>
+                    private ${DSSC_TIERS[a.tier].base} · 4-player pod <b style={{color:C.grn}}>${DSSC_TIERS[a.tier].base + DSSC_TIERS[a.tier].perPlayer*3}</b>
+                  </span>
+                )}
+              </div>
+            ))}
           </div>
         </details>
 
@@ -11226,16 +11381,38 @@ export default function App() {
       await loadDsscCheckins();
     };
 
+    // What a logged shift is worth. A pod pays the coach's tier rate — base plus
+    // a bonus per player past the first, pro-rated for a 90-minute package
+    // session. Everything else, and any pod whose coach has no tier or whose
+    // attendance hasn't been counted, stays on the flat hourly rate.
+    const clinicById = new Map(clinics.map(c => [c.id, c]));
+    const payFor = (c) => {
+      const flat = Number(c.hours || 0) * RATE;
+      const clinic = clinicById.get(c.clinic_id);
+      if (!clinic || !isPodClinic(clinic)) return { amount: flat, kind: "hourly" };
+      const att = podAttendance.find(a => a.clinic_id === c.clinic_id && String(a.session_id) === String(c.session_id));
+      if (!att) return { amount: flat, kind: "uncounted" };
+      const tier = (dsscAvail.find(a => nrm(a.coach_name) === nrm(c.coach_name)) || {}).tier;
+      const pod = dsscPodPay(tier, att.players, Number(c.hours || 1) * 60);
+      if (pod == null) return { amount: flat, kind: "untiered" };
+      return { amount: pod, kind: "pod", players: att.players, tier };
+    };
+    const weekPay = okRows.reduce((s, c) => s + payFor(c).amount, 0);
+    // Pods that ran but have no attendance count are paying the wrong rate until
+    // someone counts them, so they're worth surfacing rather than leaving silent.
+    const uncounted = weekRows.filter(c => payFor(c).kind === "uncounted").length;
+    const untiered = weekRows.filter(c => payFor(c).kind === "untiered").length;
+
     // The week rolled up per person — approved hours are what gets paid, pending
     // is flagged separately so a coach short on the run is obvious before send.
     const byCoach = (() => {
       const m = new Map();
       for (const c of weekRows) {
         const k = nrm(c.coach_name); if (!k) continue;
-        const g = m.get(k) || { coach: String(c.coach_name).trim(), approvedH: 0, pendingH: 0 };
+        const g = m.get(k) || { coach: String(c.coach_name).trim(), approvedH: 0, pendingH: 0, approvedPay: 0 };
         const h = Number(c.hours || 0);
         if (c.rejected) { /* rejected hours are not owed */ }
-        else if (c.approved) g.approvedH += h;
+        else if (c.approved) { g.approvedH += h; g.approvedPay += payFor(c).amount; }
         else g.pendingH += h;
         m.set(k, g);
       }
@@ -11243,11 +11420,14 @@ export default function App() {
     })();
     const exportWeekCsv = () => {
       const esc = v => { const s = v == null ? "" : String(v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
-      const lines = [["Date","Coach","Clinic","Hours","Rate","Amount","Status","Sent"].join(",")];
-      weekRows.forEach(c => lines.push([c.session_date, esc(c.coach_name), esc(c.clinic_name), Number(c.hours||0), RATE,
-        (Number(c.hours||0)*RATE).toFixed(2), c.rejected ? "rejected" : c.approved ? "approved" : "pending",
-        c.sent_at ? "yes" : "no"].join(",")));
-      lines.push(["","TOTAL APPROVED","",weekHours,"",(weekHours*RATE).toFixed(2),"",""].join(","));
+      const lines = [["Date","Coach","Clinic","Hours","Basis","Players","Amount","Status","Sent"].join(",")];
+      weekRows.forEach(c => { const p = payFor(c);
+        lines.push([c.session_date, esc(c.coach_name), esc(c.clinic_name), Number(c.hours||0),
+          p.kind==="pod" ? DSSC_TIERS[p.tier].label+" pod" : p.kind==="uncounted" ? "pod (not counted)" : p.kind==="untiered" ? "pod (no tier)" : "$"+RATE+"/hr",
+          p.kind==="pod" ? p.players : "", p.amount.toFixed(2),
+          c.rejected ? "rejected" : c.approved ? "approved" : "pending", c.sent_at ? "yes" : "no"].join(","));
+      });
+      lines.push(["","TOTAL APPROVED","",weekHours,"","",weekPay.toFixed(2),"",""].join(","));
       const a = document.createElement("a");
       a.href = URL.createObjectURL(new Blob([lines.join("\n")], { type:"text/csv" }));
       a.download = "dssc_timecards_" + weekStart + ".csv";
@@ -11420,8 +11600,10 @@ export default function App() {
               </button>
             </div>
             <div style={{padding:"8px 14px",fontSize:12,color:C.mut,borderBottom:weekRows.length?"1px solid "+C.border:"none",display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-              <b style={{color:C.text}}>{weekHours}h approved</b> · {money(weekHours*RATE)}
+              <b style={{color:C.text}}>{weekHours}h approved</b> · {money(weekPay)}
               {waiting.length > 0 && <> · <b style={{color:"#f59e0b"}}>{waiting.length} awaiting you</b></>}
+              {uncounted > 0 && <> · <b style={{color:"#f59e0b"}} title="Pod sessions with no player count — paying the flat rate until counted">{uncounted} pod{uncounted===1?"":"s"} not counted</b></>}
+              {untiered > 0 && <> · <b style={{color:"#f59e0b"}} title="Pod sessions whose coach has no tier set">{untiered} untiered</b></>}
               <div style={{flex:1}} />
               {weekRows.length > 0 && (
                 <button onClick={exportWeekCsv}
@@ -11441,7 +11623,7 @@ export default function App() {
                             background:C.bg,border:"1px solid "+(g.pendingH?"#f59e0b":C.border),color:C.text}}>
                     {g.coach}
                     <b style={{color:g.pendingH?"#f59e0b":C.grn}}>{g.approvedH}h</b>
-                    <span style={{color:C.mut}}>{money(g.approvedH*RATE)}</span>
+                    <span style={{color:C.mut}}>{money(g.approvedPay)}</span>
                     {g.pendingH > 0 && <span style={{fontSize:9,fontWeight:800,color:"#f59e0b"}}>+{g.pendingH}h pending</span>}
                   </span>
                 ))}
@@ -11453,7 +11635,13 @@ export default function App() {
                 <span style={{fontSize:11,color:C.mut,minWidth:88,whiteSpace:"nowrap"}}>{fmtD(c.session_date)}</span>
                 <span style={{fontSize:12,fontWeight:700,color:C.text,minWidth:130}}>{c.coach_name}</span>
                 <span style={{fontSize:11,color:C.mut,flex:1,minWidth:130}}>{c.clinic_name}</span>
-                <span style={{fontSize:11,fontWeight:700,color:C.text,whiteSpace:"nowrap"}}>{Number(c.hours||0)}h · {money(Number(c.hours||0)*RATE)}</span>
+                {(() => { const p = payFor(c); return (
+                  <span style={{fontSize:11,fontWeight:700,color:C.text,whiteSpace:"nowrap"}}
+                    title={p.kind==="pod" ? DSSC_TIERS[p.tier].label+" tier · "+p.players+" player"+(p.players===1?"":"s") : p.kind==="uncounted" ? "Pod with no player count yet — flat rate" : p.kind==="untiered" ? "Coach has no tier — flat rate" : "Flat hourly"}>
+                    {Number(c.hours||0)}h · {money(p.amount)}
+                    {p.kind==="pod" && <span style={{color:C.grn,fontWeight:800}}> · {p.players}p</span>}
+                    {(p.kind==="uncounted"||p.kind==="untiered") && <span style={{color:"#f59e0b",fontWeight:800}}> · ?</span>}
+                  </span>); })()}
                 {c.sent_at && <span style={{fontSize:10,fontWeight:800,color:C.grn}}>SENT</span>}
                 {c.rejected ? (
                   <button onClick={()=>decide([c.id], true)} style={{padding:"3px 10px",borderRadius:7,border:"1px solid "+C.red,background:"transparent",color:C.red,fontFamily:"inherit",fontSize:11,fontWeight:700,cursor:"pointer"}}>Rejected — undo</button>
