@@ -214,6 +214,21 @@ const TRAVEL_MODE_LABEL = Object.fromEntries(TRAVEL_MODES.map(m => [m.key, m.lab
 const tripAnswered = (t) => !!t?.travel_mode && (t.travel_mode !== "fly_club" || t.booking_ok === true);
 const legalNameOk = (r) => !!detailVal(r, "legal_name") && !!r?.legal_name_confirmed_at;
 
+// A finished task is worth confirming for a few days - then it is just clutter
+// on a screen whose whole job is showing what still needs doing. Completed
+// panels drop off Home once this many days have passed since they were done.
+// Nothing is deleted: each one is still editable from its own screen.
+const DONE_VISIBLE_DAYS = 5;
+const doneOn = (...stamps) => {
+  const t = stamps.map(x => (x ? new Date(x).getTime() : 0)).filter(n => n > 0);
+  return t.length ? Math.max(...t) : 0;
+};
+const doneRecently = (...stamps) => {
+  const at = doneOn(...stamps);
+  return at > 0 && Date.now() - at < DONE_VISIBLE_DAYS * 86400000;
+};
+const fmtDoneOn = (ms) => { try { return new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric" }); } catch { return ""; } };
+
 // Every answer is required — a half-filled row can't be ordered against.
 const gearComplete = (g) => !!g && GEAR_FIELDS.every(f => String(g[f.size] || "").trim() && (!f.styleKey || String(g[f.styleKey] || "").trim()))
   && !!String(g.backpack_name || "").trim();
@@ -6477,15 +6492,23 @@ export default function App() {
 
   const renderDetailsPanel = () => {
     if (!myRosterRow) return null;
-    const { missing, openTrips = [], nameOk, total } = myConfirmTasks();
-    if (total === 0) return (
-      <div style={{background:C.card,border:"1px solid "+C.grn,borderRadius:12,padding:"10px 14px",marginBottom:10,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
-        <span style={{fontSize:13,fontWeight:800,color:C.grn}}>✓ You're all set</span>
-        <span style={{fontSize:11,color:C.mut}}>legal name · details · travel</span>
-        <div style={{flex:1}} />
-        <button onClick={()=>setDetailsOpen(true)} style={{padding:"4px 12px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Change</button>
-      </div>
-    );
+    const { missing, trips = [], openTrips = [], nameOk, total } = myConfirmTasks();
+    // Nothing outstanding: say so for a few days, then let it go. Editing stays
+    // available from Details on the menu — this only stops a finished task
+    // sitting under "Right now" for the rest of the season.
+    if (total === 0) {
+      const at = doneOn(myRosterRow.legal_name_confirmed_at, myRosterRow.updated_at,
+        ...trips.map(x => x.t?.travel_confirmed_at || x.t?.updated_at));
+      if (!doneRecently(at)) return null;
+      return (
+        <div style={{background:C.card,border:"1px solid "+C.grn,borderRadius:12,padding:"10px 14px",marginBottom:10,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+          <span style={{fontSize:13,fontWeight:800,color:C.grn}}>✓ You're all set</span>
+          <span style={{fontSize:11,color:C.mut}}>legal name · details · travel{at ? " · " + fmtDoneOn(at) : ""}</span>
+          <div style={{flex:1}} />
+          <button onClick={()=>setDetailsOpen(true)} style={{padding:"4px 12px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Change</button>
+        </div>
+      );
+    }
     const bits = [];
     if (!nameOk) bits.push("confirm your legal name");
     if (missing.length) bits.push(missing.map(f => f.label.toLowerCase()).join(" · "));
@@ -6694,14 +6717,20 @@ export default function App() {
     const past = today > GEAR_DEADLINE;
     const dl = new Date(GEAR_DEADLINE + "T12:00:00").toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
     const daysLeft = Math.round((new Date(GEAR_DEADLINE + "T00:00") - new Date(today + "T00:00")) / 86400000);
-    if (done) return (
-      <div style={{background:C.card,border:"1px solid "+C.grn,borderRadius:12,padding:"10px 14px",marginBottom:10,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
-        <span style={{fontSize:13,fontWeight:800,color:C.grn}}>✓ Gear sizes submitted</span>
-        <span style={{fontSize:11,color:C.mut}}>{myGear.tshirt_size} tee · {myGear.shoe_gender} {myGear.shoe_size} shoe · "{myGear.backpack_name}"</span>
-        <div style={{flex:1}} />
-        <button onClick={openGear} style={{padding:"4px 12px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Change</button>
-      </div>
-    );
+    // Same rule as the details panel: confirm it for a few days, then drop off.
+    // Sizes stay changeable from Gear Sizes on the menu until the order goes in.
+    if (done) {
+      const at = doneOn(myGear.submitted_at, myGear.updated_at);
+      if (!doneRecently(at)) return null;
+      return (
+        <div style={{background:C.card,border:"1px solid "+C.grn,borderRadius:12,padding:"10px 14px",marginBottom:10,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+          <span style={{fontSize:13,fontWeight:800,color:C.grn}}>✓ Gear sizes submitted</span>
+          <span style={{fontSize:11,color:C.mut}}>{myGear.tshirt_size} tee · {myGear.shoe_gender} {myGear.shoe_size} shoe · "{myGear.backpack_name}"{at ? " · " + fmtDoneOn(at) : ""}</span>
+          <div style={{flex:1}} />
+          <button onClick={openGear} style={{padding:"4px 12px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Change</button>
+        </div>
+      );
+    }
     return (
       <div style={{background:C.card,border:"2px solid "+(past?C.red:C.gold),borderRadius:12,padding:"14px 16px",marginBottom:10}}>
         <div style={{fontSize:14,fontWeight:800,color:past?C.red:C.gold,marginBottom:4}}>👕 We need your gear sizes</div>
@@ -8194,6 +8223,16 @@ export default function App() {
             await loadDsscAvail();
           };
           const sfmt = d => d===todayISO ? "Today" : new Date(d+"T12:00:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"});
+          // Opted in, nothing assigned yet, and the opting-in was a while ago:
+          // the full card is a standing advert for a decision already made. Drop
+          // to one line that still carries the way back out.
+          if (inPool && !mine.length && !doneRecently(myAvail?.updated_at)) return (
+            <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",fontSize:11,color:C.mut,marginBottom:12}}>
+              <span style={{color:C.grn,fontWeight:700}}>✓ In the DSSC clinic pool</span>
+              <span>— nothing assigned yet.</span>
+              <button onClick={()=>setView("clinics")} style={{background:"none",border:"none",color:"#22d3ee",cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:700,padding:0}}>Open DSSC →</button>
+            </div>
+          );
           return (
             <div style={{background:"rgba(6,182,212,0.06)",border:"1px solid #06b6d4",borderRadius:12,padding:"12px 14px",marginBottom:14}}>
               <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:8}}>
