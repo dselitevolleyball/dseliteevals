@@ -11493,9 +11493,19 @@ export default function App() {
 
     const myEntry = r => sessionStaff(r.s).find(v => matchesMe(v.name));
     const mine = rows.filter(r => { const e = myEntry(r); return e && e.status !== "declined"; });
-    const upcoming = mine.filter(r => r.date >= today).slice(0, 12);
-    const openShifts = rows.filter(r => r.date >= today && sessionShort(r.s, r.clinic) > 0 && !myEntry(r)).slice(0, 25);
     const checkinFor = r => dsscCheckins.find(c => matchesMe(c.coach_name) && String(c.session_id) === String(r.id));
+    // A session she was approved for but never clocked in stays on her list for a
+    // fortnight. clockIn already stamps a late one "app-late", but the list only
+    // ever showed today and later — so a shift forgotten on the night vanished by
+    // morning and the only way to log it was to ask a director. Two pay weeks is
+    // wide enough to cover a missed Sunday noticed the following weekend.
+    const LATE_DAYS = 14;
+    const isLate = r => r.date < today && !checkinFor(r);
+    const upcoming = mine
+      .filter(r => r.date >= today || (r.date >= addDays(today, -LATE_DAYS) && !checkinFor(r)))
+      .slice(0, 12);
+    const lateCount = upcoming.filter(isLate).length;
+    const openShifts = rows.filter(r => r.date >= today && sessionShort(r.s, r.clinic) > 0 && !myEntry(r)).slice(0, 25);
 
     const clockIn = async (r) => {
       const e = myEntry(r);
@@ -11678,16 +11688,20 @@ export default function App() {
 
         {/* Mine */}
         <div style={card}>
-          <div style={head}>My upcoming sessions
+          <div style={head}>My sessions
             <span style={{fontSize:11,fontWeight:500,color:C.mut}}>{upcoming.length ? "next " + upcoming.length : "none scheduled"}</span>
+            {lateCount > 0 && <span style={{fontSize:11,fontWeight:800,color:"#f59e0b"}}>
+              · {lateCount} still to clock in</span>}
           </div>
           {upcoming.length === 0 && <div style={{padding:20,textAlign:"center",color:C.mut,fontSize:12}}>You're not on any upcoming DSSC sessions. Pick one up below.</div>}
           {upcoming.map(r => {
             const e = myEntry(r), ci = checkinFor(r), pend = e.status === "pending";
             const soon = r.date <= addDays(today, 1);
+            const late = isLate(r);
             return (
               <div key={r.clinicId+"-"+r.id} style={{padding:"9px 14px",borderTop:"1px solid "+C.border,display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
-                <span style={{fontSize:11,color:soon?C.gold:C.mut,fontWeight:soon?800:400,minWidth:150,whiteSpace:"nowrap"}}>{fmtD(r.date)} · {r.start}–{r.end}</span>
+                <span style={{fontSize:11,color:late?"#f59e0b":soon?C.gold:C.mut,fontWeight:(soon||late)?800:400,minWidth:150,whiteSpace:"nowrap"}}>
+                  {fmtD(r.date)} · {r.start}–{r.end}{late && " · late"}</span>
                 <div style={{minWidth:170,flex:1}}>
                   <button onClick={()=>openClinic(r.clinicId)} title="Open this clinic"
                   style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",padding:0,cursor:"pointer",fontFamily:"inherit"}}>
@@ -11703,7 +11717,7 @@ export default function App() {
                   : r.date <= today ? (
                     <button onClick={()=>clockIn(r)} disabled={clinicBusy==="dt|"+r.id}
                       style={{padding:"5px 14px",borderRadius:8,border:"none",background:C.grn,color:"#000",fontFamily:"inherit",fontSize:12,fontWeight:800,cursor:"pointer"}}>
-                      {clinicBusy==="dt|"+r.id ? "…" : "Clock in"}
+                      {clinicBusy==="dt|"+r.id ? "…" : late ? "Log it now" : "Clock in"}
                     </button>
                   ) : <span style={{fontSize:11,color:C.mut}}>Clock in on the day</span>}
               </div>
