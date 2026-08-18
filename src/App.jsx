@@ -89,11 +89,15 @@ const isPlaceholderCoach = (c) => { const v = String(c || "").trim(); return !v 
 // Generic "coverage bodies" that can be assigned to cover a practice (e.g. when a
 // team's coaches are all traveling). They're placeholders — excluded from the
 // away/conflict math above — but always offered as sub options on the boards.
-// "Tournament Floater Coach" was dropped once Jillian Beck took that seat: a
-// placeholder standing next to the real person who fills it just invites someone
-// to book the placeholder by mistake. isPlaceholderCoach still matches the old
-// string so any legacy row keeps being treated as unfilled rather than as staff.
-const COVERAGE_SUBS = ["13-1 Assistant Coach", "15-2 Assistant Coach"];
+// Placeholders are removed as their seats fill: the tournament floater once
+// Jillian Beck took it, and 13-1 once 13 Diamond had both Sam Robinson and
+// Dillyn Austin. A placeholder sitting next to the real person who fills it just
+// invites someone to book the placeholder by mistake, which is how the floater
+// ended up carrying nineteen practice shifts with nobody attached. 15-2 stays
+// because 15 Ruby's assistant_coach is still literally that string.
+// isPlaceholderCoach continues to match the retired names, so any legacy row
+// keeps reading as unfilled rather than as staff.
+const COVERAGE_SUBS = ["15-2 Assistant Coach"];
 // ── Player roster table ──────────────────────────────────────────────────
 // Every column the Players table can show. `get` returns the display value;
 // `num` marks columns that should sort numerically rather than alphabetically.
