@@ -11579,6 +11579,13 @@ export default function App() {
       if (pod == null) return { amount: flat, kind: "untiered" };
       return { amount: pod, kind: "pod", players: att.players, tier };
     };
+    // A shift that was worked but never clocked in is priced the same way, so
+    // the number on the "didn't clock in" row is the number that gets paid once
+    // it is logged — not a flat-rate placeholder that changes after the fact.
+    const missedPay = (m) => payFor({
+      clinic_id: m.r.clinicId, session_id: m.r.id,
+      coach_name: m.name, hours: hoursOf(m.r),
+    });
     const weekPay = okRows.reduce((s, c) => s + payFor(c).amount, 0);
     // Pods that ran but have no attendance count are paying the wrong rate until
     // someone counts them, so they're worth surfacing rather than leaving silent.
@@ -11748,8 +11755,32 @@ export default function App() {
                     <span style={{fontSize:12,fontWeight:700,color:C.text,borderBottom:"1px dotted "+C.mut}}>{m.r.clinicName}</span>
                     <span style={{color:C.mut,fontSize:11,fontWeight:700}}> ›</span>
                   </button>
-                  <div style={{fontSize:10,color:C.mut}}>{hoursOf(m.r)}h · {money(hoursOf(m.r) * RATE)}</div>
+                  <div style={{fontSize:10,color:C.mut}}>{hoursOf(m.r)}h · {money(missedPay(m).amount)}
+                    {missedPay(m).kind === "uncounted" && <span style={{color:"#f59e0b",fontWeight:700}}> · flat rate until counted</span>}
+                  </div>
                 </div>
+                {/* Pods pay on player count, and this list is often where a pod
+                    is first noticed. Without the count here it would have to be
+                    entered on another screen before the shift could be logged at
+                    the right rate — so it sits on the row that acts on it. */}
+                {isPodClinic(m.r.clinic) && (() => {
+                  const att = podAttendance.find(a => a.clinic_id === m.r.clinicId && String(a.session_id) === String(m.r.id));
+                  const kind = missedPay(m).kind;
+                  return (
+                    <label style={{fontSize:10,color:C.mut,display:"flex",alignItems:"center",gap:4}}
+                      title="How many players showed — sets the coach's pod pay">
+                      players
+                      <select value={att ? String(att.players) : ""}
+                        onChange={ev => setPodPlayers(m.r.clinicId, m.r.id, m.r.date, ev.target.value, coach?.display_name || coach?.email)}
+                        style={{...inpStyle,width:52,padding:"3px 5px",fontSize:11,fontWeight:800,
+                                color:att?C.grn:"#f59e0b",borderColor:att?C.border:"#f59e0b"}}>
+                        <option value="">—</option>
+                        {[0,1,2,3,4,5,6].map(n => <option key={n} value={n}>{n}</option>)}
+                      </select>
+                      {kind === "untiered" && <span style={{fontSize:10,fontWeight:700,color:"#f59e0b"}}>no tier</span>}
+                    </label>
+                  );
+                })()}
                 <button onClick={()=>logMissed([m])}
                   style={{padding:"5px 12px",borderRadius:8,border:"1px solid "+C.grn,background:"transparent",color:C.grn,fontFamily:"inherit",fontSize:12,fontWeight:700,cursor:"pointer"}}>
                   Log {hoursOf(m.r)}h
