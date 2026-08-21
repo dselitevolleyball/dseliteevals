@@ -130,7 +130,7 @@ const ROSTER_COLS = [
   { key:"rostered",  label:"Rostered",      get:p => (p.rostered_at || "").slice(0,10) },
   { key:"season",    label:"Season",        get:p => p.season || "" },
 ];
-const ROSTER_COLS_DEFAULT = ["team","last","first","age","position","parent","pemail2","pphone2"];
+const ROSTER_COLS_DEFAULT = ["team","jerseynum","last","first","age","position","parent","pemail2","pphone2"];
 
 // ── Staff gear sizing ────────────────────────────────────────────────────
 // Sizes are collected once, per coach, to place the gear order. Style is kept
@@ -1506,7 +1506,13 @@ export default function App() {
   const [rosterCols, setRosterCols] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem("dse_roster_cols") || "null");
-      if (Array.isArray(saved) && saved.length) return saved.filter(k => ROSTER_COLS.some(c => c.key === k));
+      if (Array.isArray(saved) && saved.length) {
+        const keep = saved.filter(k => ROSTER_COLS.some(c => c.key === k));
+        // Jersey # was added after this preference started saving — fold it into
+        // older column sets once, next to the team, rather than leave it hidden.
+        if (!keep.includes("jerseynum")) keep.splice(keep.indexOf("team") + 1 || keep.length, 0, "jerseynum");
+        return keep;
+      }
     } catch { /* fall through to defaults */ }
     return ROSTER_COLS_DEFAULT;
   });
@@ -8932,7 +8938,7 @@ export default function App() {
     const all = players.filter(p => p.roster_status === "active"
       && (p.season || "2026-27") === rosterSeason
       && (!scoped || mine.has(p.team_assignment)));
-    const match = (p) => !q || ((p.first_name||"") + " " + (p.last_name||"") + " " + (p.team_assignment||"") + " " + (p.primary_position||"") + " " + (p.parent_name||"")).toLowerCase().includes(q);
+    const match = (p) => !q || ((p.first_name||"") + " " + (p.last_name||"") + " " + (p.team_assignment||"") + " " + (p.primary_position||"") + " " + (p.parent_name||"") + " " + (p.jersey_number != null ? "#" + p.jersey_number : "")).toLowerCase().includes(q);
     const shown = all.filter(match);
     const byTeam = new Map();
     for (const p of shown) {
@@ -9095,6 +9101,13 @@ export default function App() {
                       style={{display:"flex",alignItems:"center",gap:8,padding:"4px 6px",borderRadius:6,cursor:"pointer",fontSize:12.5}}
                       onMouseEnter={e=>e.currentTarget.style.background=C.bg}
                       onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                      {/* Fixed-width slot so the names stay in a column whether or
+                          not a number is assigned yet. */}
+                      <span style={{width:26,flexShrink:0,textAlign:"right",fontSize:11.5,fontWeight:800,fontVariantNumeric:"tabular-nums",
+                        color:p.jersey_number != null ? C.gold : C.border}}
+                        title={p.jersey_number != null ? "Jersey #" + p.jersey_number : "No jersey number yet"}>
+                        {p.jersey_number != null ? "#" + p.jersey_number : "–"}
+                      </span>
                       <span style={{fontWeight:700,color:C.text,flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
                         {p.first_name} {p.last_name}
                       </span>
