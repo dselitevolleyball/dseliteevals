@@ -746,6 +746,20 @@ function calcUSAV(dob) {
   const y = parseInt(parts[0]); const m = parseInt(parts[1]);
   return 2026 - (m >= 7 ? y : y - 1);
 }
+// One shape for a player row wherever it enters the app — the initial fetch and
+// the realtime change events alike. Realtime hands back a bare database row, so
+// without this a player who arrived over the wire had no usavDiv and null JSON
+// columns, and every division filter quietly skipped her until a reload.
+function normalizePlayer(p) {
+  return {
+    ...p,
+    scores: p.scores || {},
+    positions: p.positions || [],
+    eval_dates: p.eval_dates || [],
+    usavDiv: p.usav_div || "U" + calcUSAV(p.dob),
+  };
+}
+
 // Total = sum of stat-skill scores only (Blocking is excluded).
 function tot(p) {
   const s = p.scores || {};
@@ -2205,13 +2219,7 @@ export default function App() {
   const loadPlayers = useCallback(async () => {
     const { data, error } = await supabase.from("players").select("*").order("last_name");
     if (error) { console.error(error); return; }
-    setPlayers(data.map(p => ({
-      ...p,
-      scores: p.scores || {},
-      positions: p.positions || [],
-      eval_dates: p.eval_dates || [],
-      usavDiv: p.usav_div || "U" + calcUSAV(p.dob),
-    })));
+    setPlayers(data.map(normalizePlayer));
     setLoading(false);
   }, []);
 
@@ -2445,12 +2453,15 @@ export default function App() {
         if (payload.eventType === "INSERT") {
           setPlayers(prev => {
             if (prev.some(p => p.id === payload.new.id)) return prev;
-            const next = [...prev, payload.new];
+            const next = [...prev, normalizePlayer(payload.new)];
             next.sort((a, b) => (a.last_name || "").localeCompare(b.last_name || ""));
             return next;
           });
         } else if (payload.eventType === "UPDATE") {
-          setPlayers(prev => prev.map(p => p.id === payload.new.id ? { ...p, ...payload.new } : p));
+          // Re-normalise rather than shallow-merging: a change to dob or
+          // usav_div has to recompute usavDiv, and the incoming row can carry a
+          // null where the app expects an object.
+          setPlayers(prev => prev.map(p => p.id === payload.new.id ? normalizePlayer({ ...p, ...payload.new }) : p));
         } else if (payload.eventType === "DELETE") {
           setPlayers(prev => prev.filter(p => p.id !== payload.old.id));
         }
