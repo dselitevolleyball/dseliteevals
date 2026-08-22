@@ -14130,7 +14130,10 @@ export default function App() {
                         {t.ticket_number && <span>ticket {t.ticket_number}</span>}
                         {money(effFlight(t, t.tournament_id).cost) && <span>{money(effFlight(t, t.tournament_id).cost)}</span>}
                       </div>
-                      {(room || t.own_room) && (
+                      {t.no_room_needed && (
+                        <div style={{color:C.mut,fontSize:11,marginTop:2}}>🏠 no room — driving in each day</div>
+                      )}
+                      {!t.no_room_needed && (room || t.own_room) && (
                         <div style={{color:C.mut,fontSize:11,marginTop:2,display:"flex",gap:12,flexWrap:"wrap"}}>
                           <span>🏨 {room?.hotel_name || "Hotel TBD"}{room?.room_no ? " · Room " + room.room_no : ""}{room?.check_in ? " · " + fmt(room.check_in) + "–" + fmt(room.check_out) : ""}{room?.confirmation ? " · " + room.confirmation : ""}</span>
                           {mates.length > 0 && <span>rooming with {mates.join(", ")}</span>}
@@ -23631,7 +23634,7 @@ export default function App() {
       purchased: rows.filter(r => r.flight_purchased).length,
       driving:  rows.filter(r => isDriving(r)).length,
       ownFlight: rows.filter(r => booksOwn(r)).length,
-      ticketed: rows.filter(r => (!air || !weBookFor(r) || r.flight_purchased) && r.room_id).length,
+      ticketed: rows.filter(r => (!air || !weBookFor(r) || r.flight_purchased) && (!needsRoom(r) || r.room_id)).length,
     };
   };
   const travelMoney = (v) => (v == null || v === "" || Number(v) === 0) ? "" : "$" + Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 });
@@ -23669,8 +23672,11 @@ export default function App() {
   const isDriving  = (r) => r?.travel_mode === "drive";
   const booksOwn   = (r) => r?.travel_mode === "fly_own";
   const weBookFor  = (r) => !isDriving(r) && !booksOwn(r);
+  // The room-side twin of the above. A coach commuting from home has no bed to
+  // assign, so counting one as missing leaves the event permanently amber.
+  const needsRoom  = (r) => !r?.no_room_needed;
   // A trip still needs work if there's no ticket number or no room assigned.
-  const tripNeedsBooking = (r, air = true) => (air && weBookFor(r) && !r?.flight_purchased) || !r?.room_id;
+  const tripNeedsBooking = (r, air = true) => (air && weBookFor(r) && !r?.flight_purchased) || (needsRoom(r) && !r?.room_id);
 
   // The travel editor itself. Shared by the tournament card and the Travel
   // screen so there's one implementation to keep correct, not two.
@@ -23845,22 +23851,40 @@ export default function App() {
                     ? <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,color:C.mut}}>—</td>
                     : f("ticket_number","ABC123"))}
                   <td style={{padding:"3px 5px",borderBottom:"1px solid "+C.border}}>
-                    <select style={inp} value={r.room_id ?? ""}
-                      onChange={e => saveTravel(tn.id, name, { room_id: e.target.value ? Number(e.target.value) : null })}>
-                      <option value="">— none —</option>
-                      {rooms.map(rm => <option key={rm.id} value={rm.id} disabled={roomIsFullFor(rm, r.room_id)}>{roomOptionLabel(rm)}</option>)}
-                    </select>
-                    {(() => { const n = roomNote({ ...r, coach_name: name }); return n ? (
-                      <div style={{fontSize:9,marginTop:2,color:n.color,fontWeight:n.warn?700:500}}>{n.warn ? "⚠ " : ""}{n.text}</div>
-                    ) : null; })()}
+                    {/* Commuting from home: no bed to pick, so the selector goes
+                        away rather than sitting there inviting a stray booking. */}
+                    {r.no_room_needed ? (
+                      <div style={{fontSize:10,color:C.mut,fontStyle:"italic",padding:"4px 0"}} title="Driving in each day — no overnight room for this event.">🏠 home each night</div>
+                    ) : (
+                      <>
+                        <select style={inp} value={r.room_id ?? ""}
+                          onChange={e => saveTravel(tn.id, name, { room_id: e.target.value ? Number(e.target.value) : null })}>
+                          <option value="">— none —</option>
+                          {rooms.map(rm => <option key={rm.id} value={rm.id} disabled={roomIsFullFor(rm, r.room_id)}>{roomOptionLabel(rm)}</option>)}
+                        </select>
+                        {(() => { const n = roomNote({ ...r, coach_name: name }); return n ? (
+                          <div style={{fontSize:9,marginTop:2,color:n.color,fontWeight:n.warn?700:500}}>{n.warn ? "⚠ " : ""}{n.text}</div>
+                        ) : null; })()}
+                      </>
+                    )}
+                    <label style={{display:"flex",alignItems:"center",gap:4,marginTop:3,fontSize:9,color:r.no_room_needed?C.gold:C.mut,cursor:"pointer",userSelect:"none"}}
+                      title="No overnight accommodation needed — they're commuting to this one. Takes the trip off the Needs booking list.">
+                      <input type="checkbox" checked={!!r.no_room_needed} style={{width:12,height:12,accentColor:C.gold,cursor:"pointer"}}
+                        onChange={e => saveTravel(tn.id, name, e.target.checked
+                          ? { no_room_needed: true, room_id: null, own_room: false }
+                          : { no_room_needed: false })} />
+                      no room needed
+                    </label>
                   </td>
                   <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,textAlign:"center"}}>
-                    <input type="checkbox" checked={!!r.own_room} style={{width:14,height:14,accentColor:C.gold,cursor:"pointer"}}
-                      title="Private room — 50% of the room cost comes out of their paycheck. Can still be given a roommate if plans change."
-                      onChange={e => saveTravel(tn.id, name, { own_room: e.target.checked })} />
+                    {r.no_room_needed ? <span style={{color:C.mut}}>—</span> : (
+                      <input type="checkbox" checked={!!r.own_room} style={{width:14,height:14,accentColor:C.gold,cursor:"pointer"}}
+                        title="Private room — 50% of the room cost comes out of their paycheck. Can still be given a roommate if plans change."
+                        onChange={e => saveTravel(tn.id, name, { own_room: e.target.checked })} />
+                    )}
                   </td>
                   {(() => {
-                    if (!r.own_room) return <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,color:C.mut}}>—</td>;
+                    if (!r.own_room || r.no_room_needed) return <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,color:C.mut}}>—</td>;
                     const covered = clubCoversOwnRoom(r);
                     const owed = coachOwes(r);
                     return (
@@ -24192,22 +24216,38 @@ export default function App() {
                           </td>
                           {travelCell(t.id, name, row, "ticket_number", "ABC123")}
                           <td style={{padding:"3px 5px",borderBottom:"1px solid "+C.border}}>
-                            <select style={{...inpStyle,padding:"4px 7px",fontSize:11,width:"100%"}} value={row.room_id ?? ""}
-                              onChange={e => saveTravel(t.id, name, { room_id: e.target.value ? Number(e.target.value) : null })}>
-                              <option value="">— none —</option>
-                              {rooms(t.id).map(rm => <option key={rm.id} value={rm.id} disabled={roomIsFullFor(rm, row.room_id)}>{roomOptionLabel(rm)}</option>)}
-                            </select>
-                            {(() => { const n = roomNote({ ...row, coach_name: name }); return n ? (
-                              <div style={{fontSize:9,marginTop:2,color:n.color,fontWeight:n.warn?700:500}}>{n.warn ? "⚠ " : ""}{n.text}</div>
-                            ) : null; })()}
+                            {row.no_room_needed ? (
+                              <div style={{fontSize:10,color:C.mut,fontStyle:"italic",padding:"4px 0"}} title="Driving in each day — no overnight room for this event.">🏠 home each night</div>
+                            ) : (
+                              <>
+                                <select style={{...inpStyle,padding:"4px 7px",fontSize:11,width:"100%"}} value={row.room_id ?? ""}
+                                  onChange={e => saveTravel(t.id, name, { room_id: e.target.value ? Number(e.target.value) : null })}>
+                                  <option value="">— none —</option>
+                                  {rooms(t.id).map(rm => <option key={rm.id} value={rm.id} disabled={roomIsFullFor(rm, row.room_id)}>{roomOptionLabel(rm)}</option>)}
+                                </select>
+                                {(() => { const n = roomNote({ ...row, coach_name: name }); return n ? (
+                                  <div style={{fontSize:9,marginTop:2,color:n.color,fontWeight:n.warn?700:500}}>{n.warn ? "⚠ " : ""}{n.text}</div>
+                                ) : null; })()}
+                              </>
+                            )}
+                            <label style={{display:"flex",alignItems:"center",gap:4,marginTop:3,fontSize:9,color:row.no_room_needed?C.gold:C.mut,cursor:"pointer",userSelect:"none"}}
+                              title="No overnight accommodation needed — they're commuting to this one. Takes the trip off the Needs booking list.">
+                              <input type="checkbox" checked={!!row.no_room_needed} style={{width:12,height:12,accentColor:C.gold,cursor:"pointer"}}
+                                onChange={e => saveTravel(t.id, name, e.target.checked
+                                  ? { no_room_needed: true, room_id: null, own_room: false }
+                                  : { no_room_needed: false })} />
+                              no room needed
+                            </label>
                           </td>
                           <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,textAlign:"center"}}>
-                            <input type="checkbox" checked={!!row.own_room} style={{width:14,height:14,accentColor:C.gold,cursor:"pointer"}}
-                              title="Private room — 50% of the room cost comes out of their paycheck"
-                              onChange={e => saveTravel(t.id, name, { own_room: e.target.checked })} />
+                            {row.no_room_needed ? <span style={{color:C.mut}}>—</span> : (
+                              <input type="checkbox" checked={!!row.own_room} style={{width:14,height:14,accentColor:C.gold,cursor:"pointer"}}
+                                title="Private room — 50% of the room cost comes out of their paycheck"
+                                onChange={e => saveTravel(t.id, name, { own_room: e.target.checked })} />
+                            )}
                           </td>
                           {(() => {
-                            if (!row.own_room) return <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,color:C.mut}}>—</td>;
+                            if (!row.own_room || row.no_room_needed) return <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,color:C.mut}}>—</td>;
                             const covered = clubCoversOwnRoom(row);
                             const owed = coachOwes(row);
                             return (
