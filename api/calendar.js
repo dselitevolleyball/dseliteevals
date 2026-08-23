@@ -83,7 +83,7 @@ export default async function handler(req, res) {
 
   const enc = encodeURIComponent(team);
   const [assigns, saRows, cancels, moves, tnAssigns, teamEvents] = await Promise.all([
-    q("practice_assignments?team_name=eq." + enc + "&select=day,slot,phase,court"),
+    q("practice_assignments?team_name=eq." + enc + "&select=day,slot,phase,court,venue,venue_start,venue_end"),
     q("sa_sessions?team_name=eq." + enc + "&select=session_date,slot,block"),
     q("practice_cancellations?select=practice_date,team_name"),
     q("practice_slot_moves?team_name=eq." + enc + "&select=practice_date,slot"),
@@ -145,9 +145,26 @@ export default async function handler(req, res) {
   const WAREHOUSE_ADDR = "15113 Fitzhugh Rd, Suite 1400, Dripping Springs, TX";
   const FLEX_ADDR      = "13673 Fitzhugh Rd, Suite 200, Dripping Springs, TX";
   const courtLabel = (c) => (c != null && c !== "") ? ("Court " + c) : "";
-  const locFor = (a) => {
-    const flex = (a.phase || "season") === "summer" && Number(a.court) === 5;
-    const cl = courtLabel(a.court);
+  // An explicit venue on the assignment wins, but only across the dates it
+  // covers. Phases straddle month boundaries — summer ends 9/6 and fall1 runs
+  // into October — so "this team is at Flex for August and September" cannot be
+  // expressed as a phase-level flag.
+  const venueOn = (a, date) => {
+    if (!a.venue || !date) return null;
+    if (a.venue_start && date < a.venue_start) return null;
+    if (a.venue_end   && date > a.venue_end)   return null;
+    return a.venue;
+  };
+  // Undated callers are the weekly RRULE phases: one LOCATION covers the whole
+  // recurrence, so a windowed override cannot apply and is ignored there.
+  const locFor = (a, date) => {
+    const derivedFlex = (a.phase || "season") === "summer" && Number(a.court) === 5;
+    const override = venueOn(a, date);
+    const flex = override ? override === "flex" : derivedFlex;
+    // Court numbers belong to the building that has them — summer runs 5 courts
+    // and fall runs 6, so carrying one across to the other venue would point
+    // people at a court that doesn't exist there.
+    const cl = (override && flex !== derivedFlex) ? "" : courtLabel(a.court);
     return (flex ? FLEX : WAREHOUSE) + (cl ? ", " + cl : "") + ", " + (flex ? FLEX_ADDR : WAREHOUSE_ADDR);
   };
   const WAREHOUSE_LOC = WAREHOUSE + ", " + WAREHOUSE_ADDR; // S&A / orientation (no court)
@@ -158,7 +175,7 @@ export default async function handler(req, res) {
       const t = slotTimes(a.slot); if (!t) continue;
       for (const d of dates) {
         if (cancelled.has(d) || moveByDate.has(d) || goneSun.has(d)) continue;
-        push(`${team}-${phase}-${d}-${a.slot}`.replace(/\s+/g, "_"), team + " Practice", d, t[0], t[1], { location: locFor(a) });
+        push(`${team}-${phase}-${d}-${a.slot}`.replace(/\s+/g, "_"), team + " Practice", d, t[0], t[1], { location: locFor(a, d) });
       }
     }
   }
