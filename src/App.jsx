@@ -1550,6 +1550,8 @@ export default function App() {
   const [incidentStatusFilter, setIncidentStatusFilter] = useState("live"); // live = open + monitoring
   const [incidentKindFilter, setIncidentKindFilter]   = useState("");
   const [incidentTeamFilter, setIncidentTeamFilter]   = useState("");
+  const [passSheetBoxes, setPassSheetBoxes]           = useState(40);         // reps per row on the printed sheet
+  const [passSheetScale, setPassSheetScale]           = useState(3);          // 0–3 or 0–4
   const [rosterQ, setRosterQ]                         = useState("");         // Players view search
   const [rosterSeason, setRosterSeason]               = useState("2026-27");  // which season's roster to show
   const [rosterView, setRosterView]                   = useState("cards");    // cards | table
@@ -6383,6 +6385,107 @@ export default function App() {
     );
   }
 
+
+  // ── Printable passer rating sheet ───────────────────────────────────────
+  // Opens as its own document rather than printing the app. The app is dark,
+  // full of controls that mean nothing on paper, and laid out for a screen;
+  // trying to print it through a print stylesheet fights every one of those.
+  // A clean document also means what you see in the preview is what comes out.
+  function printPasserSheet(team, roster, { boxes = 40, scaleMax = 3 } = {}) {
+    const esc = (v) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    // Scale wording, so the sheet can be handed to someone who hasn't been
+    // told what a 2 means. These are the standard definitions.
+    const LEGEND = scaleMax === 4
+      ? [["4", "Perfect — setter has every option"], ["3", "Good — setter can run most of the offense"],
+         ["2", "Playable — one option, usually outside"], ["1", "Poor — off the net, no attack"], ["0", "Ace or shank — no play"]]
+      : [["3", "Perfect — setter has every option"], ["2", "Playable — setter is off the net or limited"],
+         ["1", "Poor — free ball back, no attack"], ["0", "Ace or shank — no play"]];
+
+    // A heavier rule every fifth box: counting 37 identical cells to find your
+    // place is how a tally sheet gets abandoned halfway through a drill.
+    const cells = Array.from({ length: boxes }, (_, i) =>
+      `<td class="bx${(i + 1) % 5 === 0 && i + 1 !== boxes ? " five" : ""}"></td>`).join("");
+    const headCells = Array.from({ length: boxes }, (_, i) =>
+      `<th class="bxh${(i + 1) % 5 === 0 && i + 1 !== boxes ? " five" : ""}">${(i + 1) % 5 === 0 ? i + 1 : ""}</th>`).join("");
+
+    const row = (label, jersey) => `<tr>
+      <td class="jer">${esc(jersey ?? "")}</td>
+      <td class="nm">${esc(label)}</td>
+      ${cells}
+      <td class="tot"></td><td class="tot"></td><td class="avg"></td>
+    </tr>`;
+
+    const rows = roster.map(p => row(((p.first_name || "") + " " + (p.last_name || "")).trim(), p.jersey_number ?? ""))
+      // A couple of spare lines: guests, a player who moved up for the night,
+      // someone whose name isn't on the roster yet.
+      .concat([row("", ""), row("", "")]).join("");
+
+    const html = `<!doctype html><html><head><meta charset="utf-8">
+<title>Passer ratings — ${esc(team)}</title>
+<style>
+  @page { size: letter landscape; margin: 0.4in; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: "Helvetica Neue", Arial, sans-serif; color:#000; background:#fff; }
+  .head { display:flex; align-items:flex-end; gap:16px; border-bottom:2.5px solid #000; padding-bottom:6px; margin-bottom:9px; }
+  .club { font-size:8.5pt; letter-spacing:.18em; text-transform:uppercase; font-weight:700; color:#555; }
+  h1 { margin:1px 0 0; font-size:19pt; line-height:1; letter-spacing:-.01em; }
+  h1 span { font-weight:400; color:#555; font-size:12pt; }
+  .fills { display:flex; gap:15px; margin-left:auto; font-size:8.5pt; }
+  .fill { border-bottom:1px solid #000; min-width:112px; padding-bottom:1px; }
+  .fill i { font-style:normal; color:#777; font-size:7.5pt; letter-spacing:.05em; text-transform:uppercase; }
+  table { border-collapse:collapse; width:100%; table-layout:fixed; }
+  th, td { border:0.5px solid #999; }
+  thead th { font-size:6.5pt; font-weight:700; color:#666; height:13px; padding:0; text-align:center; }
+  .jer  { width:26px; }
+  .nm   { width:158px; }
+  thead .nm, thead .jer { text-align:left; padding-left:4px; font-size:7pt; }
+  .tot  { width:34px; background:#f2f2f2; }
+  .avg  { width:44px; background:#e4e4e4; }
+  tbody td { height:25px; padding:0; }
+  tbody .nm { font-size:9pt; padding-left:4px; white-space:nowrap; overflow:hidden; text-overflow:clip; }
+  tbody .jer { font-size:8.5pt; text-align:center; color:#555; }
+  .bx, .bxh { padding:0; }
+  .five { border-right-width:1.6px; border-right-color:#000; }
+  tbody tr:nth-child(even) td { background:#fafafa; }
+  tbody tr:nth-child(even) .tot { background:#eee; }
+  tbody tr:nth-child(even) .avg { background:#dedede; }
+  .legend { display:flex; gap:18px; align-items:center; margin-top:9px; font-size:8pt; color:#333; }
+  .legend b { display:inline-block; border:1px solid #000; width:14px; height:14px; line-height:13px; text-align:center; margin-right:4px; font-size:8pt; }
+  .legend div { display:flex; align-items:center; }
+  .foot { margin-top:7px; font-size:7.5pt; color:#666; display:flex; justify-content:space-between; }
+  @media screen { body { padding:22px; } }
+</style></head><body>
+  <div class="head">
+    <div>
+      <div class="club">DS Elite Volleyball · Passer rating</div>
+      <h1>${esc(team)} <span>0–${scaleMax} scale</span></h1>
+    </div>
+    <div class="fills">
+      <div class="fill"><i>Date</i><br>&nbsp;</div>
+      <div class="fill"><i>Drill</i><br>&nbsp;</div>
+      <div class="fill"><i>Coach</i><br>&nbsp;</div>
+    </div>
+  </div>
+  <table>
+    <thead><tr><th class="jer">#</th><th class="nm">Player</th>${headCells}<th>Pts</th><th>Reps</th><th>Avg</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>
+  <div class="legend">
+    ${LEGEND.map(([n, t]) => `<div><b>${n}</b>${esc(t)}</div>`).join("")}
+  </div>
+  <div class="foot">
+    <span>Average = total points ÷ reps. Leave a box blank for a rep she didn't take — a blank is not a zero.</span>
+    <span>Enter the average in DS Elite HQ → Passer Ratings</span>
+  </div>
+<script>window.addEventListener("load", function () { setTimeout(function () { window.print(); }, 250); });<\/script>
+</body></html>`;
+
+    const w = window.open("", "_blank");
+    if (!w) { window.alert("Your browser blocked the print window. Allow pop-ups for this site and try again."); return; }
+    w.document.write(html);
+    w.document.close();
+  }
+
   function renderPassing() {
     const nrm = s => String(s || "").trim().toLowerCase();
     const meName = coach?.display_name || "";
@@ -6524,6 +6627,28 @@ export default function App() {
               style={{...inpStyle,padding:"6px 10px",fontSize:12,minWidth:150}}>
               {myTeams.map(t => <option key={t} value={t}>{t}</option>)}
             </select>
+          )}
+          {!d && (
+            <span style={{display:"inline-flex",alignItems:"center",gap:6}}>
+              <select value={passSheetBoxes} onChange={e=>setPassSheetBoxes(Number(e.target.value))}
+                title="How many reps the printed sheet has room for. Fewer boxes means roomier ones."
+                style={{...inpStyle,padding:"6px 8px",fontSize:11.5}}>
+                <option value={30}>30 reps</option>
+                <option value={40}>40 reps</option>
+              </select>
+              <select value={passSheetScale} onChange={e=>setPassSheetScale(Number(e.target.value))}
+                title="Scale printed on the sheet"
+                style={{...inpStyle,padding:"6px 8px",fontSize:11.5}}>
+                <option value={3}>0–3</option>
+                <option value={4}>0–4</option>
+              </select>
+              <button onClick={()=>printPasserSheet(team, roster, { boxes: passSheetBoxes, scaleMax: passSheetScale })}
+                disabled={!roster.length} title={roster.length ? "Print a blank tally sheet for " + team : "No players on this team yet"}
+                style={{padding:"9px 15px",borderRadius:8,border:"1px solid "+(roster.length?C.gold:C.border),background:"transparent",
+                  color:roster.length?C.gold:C.mut,fontFamily:"inherit",fontSize:12.5,fontWeight:800,cursor:roster.length?"pointer":"default"}}>
+                🖨 Print sheet
+              </button>
+            </span>
           )}
           {!d && (
             <button onClick={startLog} disabled={!roster.length}
