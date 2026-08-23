@@ -216,12 +216,16 @@ const INCIDENT_KINDS = [
   { key:"other",           label:"Something else",   icon:"•",  color:"#94a3b8", hint:"" },
 ];
 const INCIDENT_KIND = Object.fromEntries(INCIDENT_KINDS.map(k => [k.key, k]));
-// Three states, because "monitoring" is the true answer for a healing ankle or
-// a family being watched. Without it everything stays open and the list rots.
+// The stages a report moves through. "New" is separated from "In review"
+// because an untouched report is the only kind that is genuinely urgent, and
+// one shared 'open' bucket hides that. "Monitoring" is the true answer for a
+// healing ankle or a family being watched; without it everything stays open and
+// the list rots. Nothing is forced to walk these in order.
 const INCIDENT_STATUSES = [
-  { key:"open",       label:"Open",       color:"#ef4444" },
-  { key:"monitoring", label:"Monitoring", color:"#f59e0b" },
-  { key:"resolved",   label:"Resolved",   color:"#22c55e" },
+  { key:"open",         label:"New",       color:"#ef4444", blurb:"Nobody has picked this up yet" },
+  { key:"acknowledged", label:"In review", color:"#38bdf8", blurb:"Someone is on it" },
+  { key:"monitoring",   label:"Monitoring", color:"#f59e0b", blurb:"Ongoing — being watched" },
+  { key:"resolved",     label:"Resolved",  color:"#22c55e", blurb:"Closed out" },
 ];
 const INCIDENT_STATUS = Object.fromEntries(INCIDENT_STATUSES.map(x => [x.key, x]));
 
@@ -1538,6 +1542,9 @@ export default function App() {
   // Incident log. `incidentDraft` non-null means the report dialog is open;
   // it carries whatever we could prefill from where the coach opened it.
   const [incidents, setIncidents]                     = useState([]);
+  const [incidentNotes, setIncidentNotes]             = useState([]);
+  const [incidentOpenId, setIncidentOpenId]           = useState(null); // board detail drawer
+  const [incidentNoteDraft, setIncidentNoteDraft]     = useState("");
   const [incidentDraft, setIncidentDraft]             = useState(null);
   const [incidentSaving, setIncidentSaving]           = useState(false);
   const [incidentStatusFilter, setIncidentStatusFilter] = useState("live"); // live = open + monitoring
@@ -1942,7 +1949,7 @@ export default function App() {
   // email we send them. Every admin control inside renderDsysa — add/cancel a
   // date, set the lead, remove someone else's signup — is separately gated on
   // isAdmin, so opening the view exposes no admin action.
-  const OPS_VIEWS = new Set(["tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","timecards","gear","staffing","roster","hawaii","travel","finance","dssccal","pods"]);
+  const OPS_VIEWS = new Set(["incidentboard","tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","timecards","gear","staffing","roster","hawaii","travel","finance","dssccal","pods"]);
   const canOps    = isAdmin || isOwner;
   const opsDenied = <div style={{padding:24,color:C.mut,textAlign:"center"}}>This section is restricted to administrators. Ask the club administrator (Drew) for access.</div>;
   // Once a player has accepted (or is locked/signed) onto a team, they're
@@ -2262,6 +2269,23 @@ export default function App() {
     if (error) { console.error("Load player_incidents error:", error); return; }
     setIncidents(data || []);
   }, []);
+  const loadIncidentNotes = useCallback(async () => {
+    const { data, error } = await supabase.from("player_incident_notes").select("*")
+      .order("created_at", { ascending: true });
+    if (error) { console.error("Load player_incident_notes error:", error); return; }
+    setIncidentNotes(data || []);
+  }, []);
+  const addIncidentNote = useCallback(async (incidentId, note, stageFrom, stageTo) => {
+    const row = {
+      incident_id: incidentId, note: (note || "").trim(),
+      stage_from: stageFrom || null, stage_to: stageTo || null,
+      author: coach?.display_name || coach?.email || null, author_email: coach?.email || null,
+    };
+    if (!row.note && !row.stage_to) return;
+    const { data, error } = await supabase.from("player_incident_notes").insert(row).select().single();
+    if (error) { window.alert("Couldn't save that note: " + error.message); return; }
+    setIncidentNotes(prev => [...prev.filter(x => x.id !== data.id), data]);
+  }, [coach]);
   const saveIncident = useCallback(async (draft) => {
     const row = {
       player_id: draft.player_id, team_name: draft.team_name, kind: draft.kind,
@@ -2273,8 +2297,31 @@ export default function App() {
     const { data, error } = await supabase.from("player_incidents").insert(row).select().single();
     if (error) { window.alert("Couldn't save that report: " + error.message); return null; }
     setIncidents(prev => [data, ...prev.filter(x => x.id !== data.id)]);
+    // Server-side so the alert doesn't depend on this tab staying open, and so
+    // the admin list is read with the service role rather than trusted from here.
+    fetch("/api/incident-alert", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ incidentId: data.id }),
+    }).catch(() => { /* the report is saved either way; notified_at shows it didn't go */ });
     return data;
   }, [coach]);
+  const setIncidentStage = useCallback(async (row, next, note) => {
+    if (!row || row.status === next) return;
+    const patch = { status: next };
+    if (next === "acknowledged" && !row.acknowledged_at) {
+      patch.acknowledged_at = new Date().toISOString();
+      patch.acknowledged_by = coach?.display_name || coach?.email || null;
+    }
+    if (next === "resolved") {
+      patch.resolved_by = coach?.display_name || coach?.email || null;
+      patch.resolved_at = new Date().toISOString();
+      if (note) patch.resolution = note;
+    }
+    setIncidents(prev => prev.map(x => x.id === row.id ? { ...x, ...patch } : x));
+    const { error } = await supabase.from("player_incidents").update(patch).eq("id", row.id);
+    if (error) { window.alert("Couldn't update: " + error.message); loadIncidents(); return; }
+    addIncidentNote(row.id, note || "", row.status, next);
+  }, [coach, loadIncidents, addIncidentNote]);
   const updateIncident = useCallback(async (id, patch) => {
     // Optimistic: the status pills are the main interaction on the list and a
     // round-trip per click makes triaging a season's backlog feel broken.
@@ -2288,7 +2335,7 @@ export default function App() {
     if (error) { window.alert("Couldn't delete: " + error.message); loadIncidents(); }
   }, [loadIncidents]);
 
-  useEffect(() => { if (isApproved) { loadPlayers(); loadRankings(); loadIncidents(); } }, [isApproved, loadPlayers, loadRankings, loadIncidents]);
+  useEffect(() => { if (isApproved) { loadPlayers(); loadRankings(); loadIncidents(); loadIncidentNotes(); } }, [isApproved, loadPlayers, loadRankings, loadIncidents, loadIncidentNotes]);
   // loadTeamsList is declared further down, so naming it here would be a TDZ
   // crash on load; the evaluations view picks the roster up from the effect
   // that already loads it alongside the other team data.
@@ -2535,6 +2582,7 @@ export default function App() {
     const incidentChannel = supabase
       .channel("realtime-incidents")
       .on("postgres_changes", { event: "*", schema: "public", table: "player_incidents" }, () => { loadIncidents(); })
+      .on("postgres_changes", { event: "*", schema: "public", table: "player_incident_notes" }, () => { loadIncidentNotes(); })
       .subscribe();
     const coachChannel = supabase
       .channel("realtime-coaches")
@@ -2596,7 +2644,7 @@ export default function App() {
       supabase.removeChannel(coachFloatsChannel);
       supabase.removeChannel(coverageChannel);
     };
-  }, [isApproved, loadIncidents, loadCoaches, loadRankings, loadTeamStatus, loadTeamTasks, loadTeamQuestions, loadTaskMeta, loadUpdates, loadPracticeApprovals, loadCoachRequests, loadCoachFloats, loadPracticeCoverage, loadPracticeCancellations]);
+  }, [isApproved, loadIncidents, loadIncidentNotes, loadCoaches, loadRankings, loadTeamStatus, loadTeamTasks, loadTeamQuestions, loadTaskMeta, loadUpdates, loadPracticeApprovals, loadCoachRequests, loadCoachFloats, loadPracticeCoverage, loadPracticeCancellations]);
 
   // Activity feed live updates — only subscribe while that tab is open, since
   // change_log INSERTs fire on every player write and the feed is otherwise
@@ -9159,16 +9207,15 @@ export default function App() {
           {INCIDENT_STATUSES.map(x => {
             const on = r.status === x.key;
             return (
-              <button key={x.key} disabled={!mayEdit}
+              <button key={x.key} disabled={!mayEdit} title={x.blurb}
                 onClick={() => {
                   if (x.key === "resolved" && !r.resolution) {
                     const note = window.prompt("How did this end? (optional — it's the part people read later)");
                     if (note === null) return;
-                    updateIncident(r.id, { status:"resolved", resolution: note.trim() || null,
-                      resolved_by: coach?.display_name || coach?.email || null, resolved_at: new Date().toISOString() });
+                    setIncidentStage(r, "resolved", note.trim() || "");
                     return;
                   }
-                  updateIncident(r.id, { status:x.key });
+                  setIncidentStage(r, x.key, "");
                 }}
                 style={{padding:"2px 9px",borderRadius:20,fontFamily:"inherit",fontSize:10,fontWeight:800,
                   cursor:mayEdit?"pointer":"default",border:"1px solid "+(on?x.color:C.border),
@@ -9183,6 +9230,186 @@ export default function App() {
             )}
           </span>
         </div>
+      </div>
+    );
+  }
+
+
+  // ── Issue board (admins) ────────────────────────────────────────────────
+  // A queue, not a list: the columns are the stages, and the only number that
+  // matters at a glance is how much is sitting in New.
+  function renderIncidentBoard() {
+    const rows = incidents.filter(incidentVisible);
+    const open = incidentOpenId ? rows.find(r => r.id === incidentOpenId) : null;
+    const notesFor = (id) => incidentNotes.filter(n => n.incident_id === id);
+    const dayAge = (r) => Math.floor((Date.now() - new Date(r.created_at).getTime()) / 86400000);
+    const playerOf = (r) => players.find(p => p.id === r.player_id);
+    const adminNames = [...new Set((coachesList || []).filter(c => c.is_admin && c.is_approved)
+      .map(c => (c.display_name || c.email || "").trim()).filter(Boolean))].sort();
+
+    const card = (r) => {
+      const k = INCIDENT_KIND[r.kind] || INCIDENT_KIND.other;
+      const p = playerOf(r);
+      const age = dayAge(r);
+      const stale = r.status === "open" && age >= 2;
+      return (
+        <button key={r.id} onClick={()=>{ setIncidentOpenId(r.id); setIncidentNoteDraft(""); }}
+          style={{display:"block",width:"100%",textAlign:"left",cursor:"pointer",fontFamily:"inherit",
+            background:C.bg,border:"1px solid "+(stale?"#ef4444":C.border),borderLeft:"3px solid "+k.color,
+            borderRadius:8,padding:"9px 11px",marginBottom:7}}>
+          <div style={{display:"flex",alignItems:"baseline",gap:7,marginBottom:3}}>
+            <span style={{fontSize:12.5,fontWeight:800,color:C.text}}>{p ? p.first_name + " " + p.last_name : "Player #" + r.player_id}</span>
+            <span style={{fontSize:10,color:C.mut,marginLeft:"auto",whiteSpace:"nowrap"}}>{age === 0 ? "today" : age + "d"}</span>
+          </div>
+          <div style={{fontSize:10.5,color:k.color,fontWeight:700,marginBottom:4}}>{k.icon} {k.label} · <span style={{color:C.mut,fontWeight:600}}>{r.team_name}</span></div>
+          <div style={{fontSize:11.5,color:C.mut,lineHeight:1.45,display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",overflow:"hidden"}}>{r.summary}</div>
+          <div style={{display:"flex",alignItems:"center",gap:6,marginTop:6,flexWrap:"wrap"}}>
+            {r.assigned_to
+              ? <span style={{fontSize:9.5,fontWeight:800,color:C.gold,border:"1px solid "+C.gold,borderRadius:4,padding:"1px 6px"}}>{r.assigned_to}</span>
+              : <span style={{fontSize:9.5,fontWeight:700,color:C.mut,border:"1px dashed "+C.border,borderRadius:4,padding:"1px 6px"}}>unassigned</span>}
+            {notesFor(r.id).length > 0 && <span style={{fontSize:9.5,color:C.mut}}>💬 {notesFor(r.id).length}</span>}
+            {/* An alert that never fired is worth seeing — otherwise this looks
+                like something everyone has already been told about. */}
+            {!r.notified_at && <span title="The admin alert never went out for this one" style={{fontSize:9.5,fontWeight:800,color:"#f59e0b"}}>⚠ not alerted</span>}
+          </div>
+        </button>
+      );
+    };
+
+    return (
+      <div style={{maxWidth:1250,margin:"0 auto"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:16}}>
+          <div>
+            <h2 style={{margin:0,fontSize:20,fontWeight:800,color:C.gold}}>⚠ Issue board</h2>
+            <div style={{fontSize:12,color:C.mut,marginTop:2}}>
+              Everything coaches have reported, by stage. Click a card to work it.
+            </div>
+          </div>
+          <div style={{flex:1}} />
+          <button onClick={()=>openIncident(null)}
+            style={{padding:"9px 16px",borderRadius:9,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontFamily:"inherit",fontSize:12.5,fontWeight:800,cursor:"pointer"}}>
+            ＋ Report an issue
+          </button>
+        </div>
+
+        <div style={{display:"grid",gridTemplateColumns:isNarrow?"1fr":"repeat(4,1fr)",gap:11,alignItems:"start"}}>
+          {INCIDENT_STATUSES.map(st => {
+            const col = rows.filter(r => r.status === st.key)
+              .sort((a,b) => (a.occurred_on||"").localeCompare(b.occurred_on||"") * -1);
+            return (
+              <div key={st.key} style={{background:C.card,border:"1px solid "+C.border,borderTop:"3px solid "+st.color,borderRadius:11,padding:"11px 11px 6px"}}>
+                <div style={{display:"flex",alignItems:"baseline",gap:7,marginBottom:3}}>
+                  <span style={{fontSize:12,fontWeight:800,color:st.color,textTransform:"uppercase",letterSpacing:0.5}}>{st.label}</span>
+                  <span style={{fontSize:12,fontWeight:800,color:col.length?C.text:C.mut,marginLeft:"auto"}}>{col.length}</span>
+                </div>
+                <div style={{fontSize:9.5,color:C.mut,marginBottom:9}}>{st.blurb}</div>
+                {!col.length && <div style={{fontSize:11,color:C.mut,fontStyle:"italic",padding:"10px 0 14px"}}>Empty</div>}
+                {col.map(card)}
+              </div>
+            );
+          })}
+        </div>
+
+        {open && (() => {
+          const k = INCIDENT_KIND[open.kind] || INCIDENT_KIND.other;
+          const p = playerOf(open);
+          const thread = notesFor(open.id);
+          const close = () => { setIncidentOpenId(null); setIncidentNoteDraft(""); };
+          const lbl = { fontSize:10, fontWeight:800, textTransform:"uppercase", letterSpacing:0.6, color:C.mut, marginBottom:4, display:"block" };
+          return (
+            <div onClick={close} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.82)",zIndex:1500,display:"flex",justifyContent:"center",alignItems:"flex-start",padding:"28px 16px",overflowY:"auto"}}>
+              <div onClick={e=>e.stopPropagation()} style={{background:C.card,borderRadius:16,border:"1px solid "+C.border,borderTop:"4px solid "+k.color,maxWidth:640,width:"100%",height:"fit-content",padding:22}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10}}>
+                  <div>
+                    <div style={{fontSize:11.5,fontWeight:800,color:k.color}}>{k.icon} {k.label}</div>
+                    <h2 style={{margin:"3px 0 0",fontSize:19,fontWeight:800,color:C.text}}>
+                      {p ? (
+                        <button onClick={()=>{ close(); setProfileId(p.id); }} title="Open her player card"
+                          style={{background:"none",border:"none",padding:0,cursor:"pointer",fontFamily:"inherit",fontSize:19,fontWeight:800,color:C.text,borderBottom:"1px dotted "+C.mut}}>
+                          {p.first_name} {p.last_name}
+                        </button>
+                      ) : "Player #" + open.player_id}
+                    </h2>
+                    <div style={{fontSize:11.5,color:C.mut,marginTop:3}}>
+                      {open.team_name} · happened {open.occurred_on || "—"} · filed by {open.reported_by || "unattributed"}
+                    </div>
+                  </div>
+                  <button onClick={close} style={{background:"none",border:"none",color:C.mut,fontSize:22,cursor:"pointer",lineHeight:1}}>×</button>
+                </div>
+
+                <div style={{fontSize:13,color:C.text,lineHeight:1.6,whiteSpace:"pre-wrap",margin:"15px 0",padding:"12px 14px",background:C.bg,borderRadius:9}}>{open.summary}</div>
+
+                <div style={{display:"flex",gap:14,flexWrap:"wrap",marginBottom:15}}>
+                  <div style={{flex:"1 1 210px"}}>
+                    <span style={lbl}>Stage</span>
+                    <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                      {INCIDENT_STATUSES.map(x => {
+                        const on = open.status === x.key;
+                        return (
+                          <button key={x.key} title={x.blurb}
+                            onClick={() => {
+                              if (x.key === "resolved" && !open.resolution) {
+                                const note = window.prompt("How did this end? (optional)");
+                                if (note === null) return;
+                                setIncidentStage(open, "resolved", note.trim() || "");
+                                return;
+                              }
+                              setIncidentStage(open, x.key, "");
+                            }}
+                            style={{padding:"5px 11px",borderRadius:20,fontFamily:"inherit",fontSize:10.5,fontWeight:800,cursor:"pointer",
+                              border:"1px solid "+(on?x.color:C.border),background:on?x.color+"22":"transparent",color:on?x.color:C.mut}}>{x.label}</button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div style={{flex:"0 1 190px"}}>
+                    <span style={lbl}>Owner</span>
+                    <select value={open.assigned_to || ""} onChange={e=>updateIncident(open.id, { assigned_to: e.target.value || null })}
+                      style={{...inpStyle,padding:"6px 9px",fontSize:12,width:"100%"}}>
+                      <option value="">— nobody yet —</option>
+                      {adminNames.map(n => <option key={n} value={n}>{n}</option>)}
+                    </select>
+                  </div>
+                </div>
+
+                {open.resolution && (
+                  <div style={{fontSize:12,color:C.grn,lineHeight:1.5,marginBottom:14,paddingLeft:10,borderLeft:"2px solid "+C.grn}}>
+                    <b>Outcome:</b> {open.resolution}
+                  </div>
+                )}
+
+                <span style={lbl}>History</span>
+                {!thread.length && <div style={{fontSize:11.5,color:C.mut,fontStyle:"italic",marginBottom:10}}>Nothing added yet.</div>}
+                {thread.length > 0 && (
+                  <div style={{display:"flex",flexDirection:"column",gap:7,maxHeight:250,overflowY:"auto",marginBottom:11}}>
+                    {thread.map(n => {
+                      const to = n.stage_to ? INCIDENT_STATUS[n.stage_to] : null;
+                      const when = new Date(n.created_at).toLocaleString(undefined,{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"});
+                      return (
+                        <div key={n.id} style={{fontSize:11.5,color:C.text,lineHeight:1.5,padding:"7px 10px",background:C.bg,borderRadius:7}}>
+                          {to && <span style={{fontWeight:800,color:to.color}}>→ {to.label}{" "}</span>}
+                          {n.note}
+                          <div style={{fontSize:9.5,color:C.mut,marginTop:3}}>{n.author || "unattributed"} · {when}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                <textarea value={incidentNoteDraft} onChange={e=>setIncidentNoteDraft(e.target.value)} rows={2}
+                  placeholder="Add what you did, who you spoke to, what happens next…"
+                  style={{...inpStyle,padding:"8px 11px",fontSize:12,width:"100%",resize:"vertical",fontFamily:"inherit",lineHeight:1.5}} />
+                <div style={{display:"flex",justifyContent:"flex-end",marginTop:8}}>
+                  <button disabled={!incidentNoteDraft.trim()}
+                    onClick={()=>{ addIncidentNote(open.id, incidentNoteDraft, null, null); setIncidentNoteDraft(""); }}
+                    style={{padding:"7px 15px",borderRadius:8,border:"none",fontFamily:"inherit",fontSize:12,fontWeight:800,
+                      background:incidentNoteDraft.trim()?C.gold:C.border,color:incidentNoteDraft.trim()?"#000":C.mut,
+                      cursor:incidentNoteDraft.trim()?"pointer":"not-allowed"}}>Add note</button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
       </div>
     );
   }
@@ -26888,6 +27115,7 @@ export default function App() {
                 // they were the same operation. They now have their own block.
                 ...(canOps ? [{ title:"Operations", items:[
                   ["hdr","DS Elite · Club"],
+                  ["incidentboard","Issue Board" + (incidents.filter(r => r.status === "open").length ? " (" + incidents.filter(r => r.status === "open").length + ")" : "")],
                   ["tracker","Tracker"], ["teamdir","All Teams"], ["playereval","Player Evaluations"], ["passing","Passer Ratings"], ["practice","Practice"], ["sa","S&A Schedule"], ["scholarships","Scholarships"],
                   ...(isAdmin ? [["hawaii","Hawaii"], ["travel","Travel"], ["finance","Finance"]] : []),
                   ["hdr","DS Elite · Coaches & Pay"],
@@ -27120,6 +27348,7 @@ export default function App() {
         {view==="email" && renderEmailBlast()}
         {view==="messages" && renderMessages()}
         {view==="incidents" && renderIncidents()}
+        {view==="incidentboard" && (canOps ? renderIncidentBoard() : opsDenied)}
         {view==="coachcomms" && renderCoachComms()}
         {view==="assignments" && renderAssignments()}
         {view==="coverage" && renderCoachCoverage()}
