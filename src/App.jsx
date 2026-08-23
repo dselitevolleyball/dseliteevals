@@ -2290,6 +2290,7 @@ export default function App() {
     const row = {
       player_id: draft.player_id, team_name: draft.team_name, kind: draft.kind,
       summary: (draft.summary || "").trim(), occurred_on: draft.occurred_on || null,
+      urgency: draft.urgency === "emergency" ? "emergency" : "log",
       status: "open",
       reported_by: coach?.display_name || coach?.email || null,
       reported_by_email: coach?.email || null,
@@ -9073,7 +9074,7 @@ export default function App() {
   const openIncident = (player) => setIncidentDraft({
     player_id: player?.id ?? "",
     team_name: player?.team_assignment || "",
-    kind: "", summary: "",
+    kind: "", summary: "", urgency: "log",
     occurred_on: new Date().toISOString().slice(0, 10),
   });
 
@@ -9155,6 +9156,48 @@ export default function App() {
               </div>
             </div>
 
+            <div>
+              <span style={lbl}>How urgent is this?</span>
+              <div style={{display:"grid",gridTemplateColumns:isNarrow?"1fr":"1fr 1fr",gap:8}}>
+                {[
+                  { key:"log", title:"Logging a concern", sub:"On the record. A director will pick it up in the normal course.", color:C.gold },
+                  { key:"emergency", title:"Emergency — need a director now", sub:"Alerts every director immediately.", color:"#ef4444" },
+                ].map(o => {
+                  const on = d.urgency === o.key;
+                  return (
+                    <button key={o.key} type="button" onClick={()=>set({ urgency:o.key })}
+                      style={{padding:"11px 12px",borderRadius:10,cursor:"pointer",fontFamily:"inherit",textAlign:"left",
+                        border:"1px solid "+(on?o.color:C.border), background:on?o.color+"1c":"transparent"}}>
+                      <div style={{fontSize:12,fontWeight:800,color:on?o.color:C.text,marginBottom:2}}>{o.title}</div>
+                      <div style={{fontSize:10.5,color:C.mut,lineHeight:1.4}}>{o.sub}</div>
+                    </button>
+                  );
+                })}
+              </div>
+              {/* An app alert is not an emergency channel. If someone is hurt
+                  right now, a phone in a hand beats a notification nobody has
+                  looked at yet — so put the actual numbers in front of them. */}
+              {d.urgency === "emergency" && (
+                <div style={{marginTop:10,padding:"11px 13px",borderRadius:9,border:"1px solid #ef4444",background:"rgba(239,68,68,0.10)"}}>
+                  <div style={{fontSize:11.5,fontWeight:800,color:"#ef4444",marginBottom:5}}>If someone is hurt right now, call — don't type.</div>
+                  <div style={{fontSize:11,color:C.text,lineHeight:1.55}}>
+                    Emergency services first if it's serious. Then get a director on the phone — this form wakes up their email and their phone, but nobody is guaranteed to be looking at it this second.
+                  </div>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:9,marginTop:8}}>
+                    {(coachRoster || [])
+                      .filter(cr => (coachesList || []).some(c => c.is_admin && c.is_approved && (c.email || "").trim().toLowerCase() === (cr.email || "").trim().toLowerCase()))
+                      .filter(cr => (cr.phone || "").trim())
+                      .map(cr => (
+                        <a key={cr.email} href={"tel:" + String(cr.phone).replace(/[^0-9+]/g, "")}
+                          style={{fontSize:11.5,fontWeight:800,color:"#ef4444",textDecoration:"none",border:"1px solid #ef4444",borderRadius:7,padding:"4px 10px"}}>
+                          📞 {cr.first_name} {cr.phone}
+                        </a>
+                      ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
             <div style={{maxWidth:200}}>
               <span style={lbl}>When did it happen?</span>
               <input type="date" style={field} value={d.occurred_on || ""} max={new Date().toISOString().slice(0,10)}
@@ -9168,8 +9211,9 @@ export default function App() {
             <button onClick={submit} disabled={!ready || incidentSaving}
               title={ready ? "" : "Pick a team, a player, a type, and describe what happened"}
               style={{padding:"9px 18px",borderRadius:9,border:"none",fontFamily:"inherit",fontSize:12.5,fontWeight:800,
-                background:ready?C.gold:C.border, color:ready?"#000":C.mut, cursor:ready&&!incidentSaving?"pointer":"not-allowed"}}>
-              {incidentSaving ? "Saving…" : "File report"}
+                background:ready?(d.urgency==="emergency"?"#ef4444":C.gold):C.border,
+                color:ready?(d.urgency==="emergency"?"#fff":"#000"):C.mut, cursor:ready&&!incidentSaving?"pointer":"not-allowed"}}>
+              {incidentSaving ? "Saving…" : d.urgency === "emergency" ? "Alert the directors" : "File report"}
             </button>
           </div>
         </div>
@@ -9187,6 +9231,10 @@ export default function App() {
     return (
       <div key={r.id} style={{background:C.card,border:"1px solid "+C.border,borderLeft:"3px solid "+k.color,borderRadius:9,padding:"11px 13px"}}>
         <div style={{display:"flex",alignItems:"baseline",gap:9,flexWrap:"wrap",marginBottom:5}}>
+          {r.urgency === "emergency" && (
+            <span title="Filed as an emergency — the directors were alerted immediately"
+              style={{fontSize:9.5,fontWeight:800,color:"#fff",background:"#ef4444",borderRadius:4,padding:"1px 6px",letterSpacing:0.4}}>EMERGENCY</span>
+          )}
           <span style={{fontSize:11.5,fontWeight:800,color:k.color}}>{k.icon} {k.label}</span>
           {showPlayer && p && (
             <button onClick={()=>setProfileId(p.id)} title="Open player card"
@@ -9255,9 +9303,10 @@ export default function App() {
       return (
         <button key={r.id} onClick={()=>{ setIncidentOpenId(r.id); setIncidentNoteDraft(""); }}
           style={{display:"block",width:"100%",textAlign:"left",cursor:"pointer",fontFamily:"inherit",
-            background:C.bg,border:"1px solid "+(stale?"#ef4444":C.border),borderLeft:"3px solid "+k.color,
+            background:C.bg,border:"1px solid "+(stale||(r.urgency==="emergency"&&r.status==="open")?"#ef4444":C.border),borderLeft:"3px solid "+k.color,
             borderRadius:8,padding:"9px 11px",marginBottom:7}}>
           <div style={{display:"flex",alignItems:"baseline",gap:7,marginBottom:3}}>
+            {r.urgency === "emergency" && <span style={{fontSize:9,fontWeight:800,color:"#fff",background:"#ef4444",borderRadius:3,padding:"1px 5px"}}>SOS</span>}
             <span style={{fontSize:12.5,fontWeight:800,color:C.text}}>{p ? p.first_name + " " + p.last_name : "Player #" + r.player_id}</span>
             <span style={{fontSize:10,color:C.mut,marginLeft:"auto",whiteSpace:"nowrap"}}>{age === 0 ? "today" : age + "d"}</span>
           </div>
@@ -9295,7 +9344,10 @@ export default function App() {
         <div style={{display:"grid",gridTemplateColumns:isNarrow?"1fr":"repeat(4,1fr)",gap:11,alignItems:"start"}}>
           {INCIDENT_STATUSES.map(st => {
             const col = rows.filter(r => r.status === st.key)
-              .sort((a,b) => (a.occurred_on||"").localeCompare(b.occurred_on||"") * -1);
+              .sort((a,b) => {
+                const ea = a.urgency === "emergency" ? 0 : 1, eb = b.urgency === "emergency" ? 0 : 1;
+                return ea - eb || (b.occurred_on || "").localeCompare(a.occurred_on || "");
+              });
             return (
               <div key={st.key} style={{background:C.card,border:"1px solid "+C.border,borderTop:"3px solid "+st.color,borderRadius:11,padding:"11px 11px 6px"}}>
                 <div style={{display:"flex",alignItems:"baseline",gap:7,marginBottom:3}}>

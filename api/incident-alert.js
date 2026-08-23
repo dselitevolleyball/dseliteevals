@@ -56,13 +56,17 @@ export default async function handler(req, res) {
   const emails = [...new Set((admins || []).map(a => (a.email || "").trim().toLowerCase()).filter(Boolean))];
 
   const kind = KIND_LABEL[inc.kind] || inc.kind;
-  const subject = `${kind} — ${who} (${inc.team_name})`;
+  // An emergency has to be legible from a lock screen, before anyone opens
+  // anything — so it leads the subject rather than being a field inside.
+  const sos = inc.urgency === "emergency";
+  const subject = (sos ? "EMERGENCY — " : "") + `${kind} — ${who} (${inc.team_name})`;
   const text =
+    (sos ? "** Filed as an EMERGENCY. A coach is asking for a director now. **\n\n" : "") +
     `${inc.reported_by || "A coach"} filed a report on ${who}, ${inc.team_name}.\n\n` +
     `Type: ${kind}\n` +
     `When it happened: ${inc.occurred_on || "not given"}\n\n` +
     `${inc.summary}\n\n—\n` +
-    `Open the board to pick it up:\n${(process.env.APP_URL || "https://dseliteevals.vercel.app")}/?view=incidents\n\n` +
+    `Open the board to pick it up:\n${(process.env.APP_URL || "https://dseliteevals.vercel.app")}/?view=incidentboard\n\n` +
     `You're getting this because you're an administrator.`;
 
   const origin = process.env.APP_URL || ("https://" + (req.headers["x-forwarded-host"] || req.headers.host));
@@ -72,9 +76,9 @@ export default async function handler(req, res) {
       const r = await fetch(origin + "/api/send-email", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          subject: "DS Elite HQ — " + subject, body: text, recipients: emails,
+          subject: (sos ? "" : "DS Elite HQ — ") + subject, body: text, recipients: emails,
           skipPush: true, sentBy: inc.reported_by || null, source: "incident-alert",
-          url: "/?view=incidents",
+          url: "/?view=incidentboard",
         }),
       });
       const d = await r.json().catch(() => ({}));
@@ -85,9 +89,9 @@ export default async function handler(req, res) {
     const r2 = await fetch(origin + "/api/send-push", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        title: "New report · " + inc.team_name,
-        body: `${kind} — ${who}`,
-        url: "/?view=incidents",
+        title: (sos ? "🚨 EMERGENCY · " : "New report · ") + inc.team_name,
+        body: (sos ? "A director is needed now. " : "") + `${kind} — ${who}`,
+        url: "/?view=incidentboard",
         audience: { type: "admins" },
         skipEmail: true,
       }),
