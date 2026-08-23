@@ -1550,7 +1550,7 @@ export default function App() {
   const [incidentStatusFilter, setIncidentStatusFilter] = useState("live"); // live = open + monitoring
   const [incidentKindFilter, setIncidentKindFilter]   = useState("");
   const [incidentTeamFilter, setIncidentTeamFilter]   = useState("");
-  const [passSheetBoxes, setPassSheetBoxes]           = useState(40);         // reps per row on the printed sheet
+  const [passSheetBoxes, setPassSheetBoxes]           = useState(30);         // reps per row on the printed sheet
   const [passSheetScale, setPassSheetScale]           = useState(3);          // 0–3 or 0–4
   const [rosterQ, setRosterQ]                         = useState("");         // Players view search
   const [rosterSeason, setRosterSeason]               = useState("2026-27");  // which season's roster to show
@@ -6391,7 +6391,7 @@ export default function App() {
   // full of controls that mean nothing on paper, and laid out for a screen;
   // trying to print it through a print stylesheet fights every one of those.
   // A clean document also means what you see in the preview is what comes out.
-  function printPasserSheet(team, roster, { boxes = 40, scaleMax = 3 } = {}) {
+  function printPasserSheet(team, roster, { boxes = 30, scaleMax = 3 } = {}) {
     const esc = (v) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     // Scale wording, so the sheet can be handed to someone who hasn't been
     // told what a 2 means. These are the standard definitions.
