@@ -200,6 +200,31 @@ const detailsComplete = (r) => !!r && detailsMissing(r).length === 0;
 
 // How a coach gets to a tournament. The club's default is that we book the
 // ticket; the other two exist so nobody is forced onto a flight they don't want.
+// What a coach can log against a player. Deliberately short: a list long
+// enough to need scrolling gets answered with "other" every time.
+const INCIDENT_KINDS = [
+  { key:"injury",          label:"Injury or health", icon:"🩹", color:"#ef4444",
+    hint:"What happened, what she can and can't do, and whether she's seen anyone about it." },
+  { key:"playing_time",    label:"Playing time",     icon:"⏱", color:"#f59e0b",
+    hint:"Who raised it, what was asked, and what you told them." },
+  { key:"player_conflict", label:"Between players",  icon:"⚡", color:"#a855f7",
+    hint:"Who's involved and what you saw — not what you were told second-hand, where you can help it." },
+  { key:"parent_concern",  label:"Parent concern",   icon:"📣", color:"#38bdf8",
+    hint:"What the concern is and whether it needs someone above you." },
+  { key:"behavior",        label:"Behavior",         icon:"⚑", color:"#eab308",
+    hint:"What happened, and whether you've already spoken to her about it." },
+  { key:"other",           label:"Something else",   icon:"•",  color:"#94a3b8", hint:"" },
+];
+const INCIDENT_KIND = Object.fromEntries(INCIDENT_KINDS.map(k => [k.key, k]));
+// Three states, because "monitoring" is the true answer for a healing ankle or
+// a family being watched. Without it everything stays open and the list rots.
+const INCIDENT_STATUSES = [
+  { key:"open",       label:"Open",       color:"#ef4444" },
+  { key:"monitoring", label:"Monitoring", color:"#f59e0b" },
+  { key:"resolved",   label:"Resolved",   color:"#22c55e" },
+];
+const INCIDENT_STATUS = Object.fromEntries(INCIDENT_STATUSES.map(x => [x.key, x]));
+
 const TRAVEL_MODES = [
   { key: "fly_club", label: "Fly — the club books my ticket",
     blurb: "We book it in your legal name. Change the times later if you need to, for any reason." },
@@ -1510,6 +1535,14 @@ export default function App() {
   const [practiceCoverage, setPracticeCoverage]       = useState([]); // per-date coach absences + subs (Daily view)
   const [practiceCancellations, setPracticeCancellations] = useState([]); // dates with practice cancelled (holidays)
   const [slotMoves, setSlotMoves]                     = useState([]); // per-date team → block moves (Sunday 4-court planner)
+  // Incident log. `incidentDraft` non-null means the report dialog is open;
+  // it carries whatever we could prefill from where the coach opened it.
+  const [incidents, setIncidents]                     = useState([]);
+  const [incidentDraft, setIncidentDraft]             = useState(null);
+  const [incidentSaving, setIncidentSaving]           = useState(false);
+  const [incidentStatusFilter, setIncidentStatusFilter] = useState("live"); // live = open + monitoring
+  const [incidentKindFilter, setIncidentKindFilter]   = useState("");
+  const [incidentTeamFilter, setIncidentTeamFilter]   = useState("");
   const [rosterQ, setRosterQ]                         = useState("");         // Players view search
   const [rosterSeason, setRosterSeason]               = useState("2026-27");  // which season's roster to show
   const [rosterView, setRosterView]                   = useState("cards");    // cards | table
@@ -2223,7 +2256,39 @@ export default function App() {
     setLoading(false);
   }, []);
 
-  useEffect(() => { if (isApproved) { loadPlayers(); loadRankings(); } }, [isApproved, loadPlayers, loadRankings]);
+  const loadIncidents = useCallback(async () => {
+    const { data, error } = await supabase.from("player_incidents").select("*")
+      .order("occurred_on", { ascending: false }).order("created_at", { ascending: false });
+    if (error) { console.error("Load player_incidents error:", error); return; }
+    setIncidents(data || []);
+  }, []);
+  const saveIncident = useCallback(async (draft) => {
+    const row = {
+      player_id: draft.player_id, team_name: draft.team_name, kind: draft.kind,
+      summary: (draft.summary || "").trim(), occurred_on: draft.occurred_on || null,
+      status: "open",
+      reported_by: coach?.display_name || coach?.email || null,
+      reported_by_email: coach?.email || null,
+    };
+    const { data, error } = await supabase.from("player_incidents").insert(row).select().single();
+    if (error) { window.alert("Couldn't save that report: " + error.message); return null; }
+    setIncidents(prev => [data, ...prev.filter(x => x.id !== data.id)]);
+    return data;
+  }, [coach]);
+  const updateIncident = useCallback(async (id, patch) => {
+    // Optimistic: the status pills are the main interaction on the list and a
+    // round-trip per click makes triaging a season's backlog feel broken.
+    setIncidents(prev => prev.map(x => x.id === id ? { ...x, ...patch } : x));
+    const { error } = await supabase.from("player_incidents").update(patch).eq("id", id);
+    if (error) { window.alert("Couldn't update: " + error.message); loadIncidents(); }
+  }, [loadIncidents]);
+  const deleteIncident = useCallback(async (id) => {
+    setIncidents(prev => prev.filter(x => x.id !== id));
+    const { error } = await supabase.from("player_incidents").delete().eq("id", id);
+    if (error) { window.alert("Couldn't delete: " + error.message); loadIncidents(); }
+  }, [loadIncidents]);
+
+  useEffect(() => { if (isApproved) { loadPlayers(); loadRankings(); loadIncidents(); } }, [isApproved, loadPlayers, loadRankings, loadIncidents]);
   // loadTeamsList is declared further down, so naming it here would be a TDZ
   // crash on load; the evaluations view picks the roster up from the effect
   // that already loads it alongside the other team data.
@@ -2467,6 +2532,10 @@ export default function App() {
         }
       })
       .subscribe();
+    const incidentChannel = supabase
+      .channel("realtime-incidents")
+      .on("postgres_changes", { event: "*", schema: "public", table: "player_incidents" }, () => { loadIncidents(); })
+      .subscribe();
     const coachChannel = supabase
       .channel("realtime-coaches")
       .on("postgres_changes", { event: "*", schema: "public", table: "coaches" }, () => { loadCoaches(); })
@@ -2514,6 +2583,7 @@ export default function App() {
       .subscribe();
     return () => {
       supabase.removeChannel(playerChannel);
+      supabase.removeChannel(incidentChannel);
       supabase.removeChannel(coachChannel);
       supabase.removeChannel(rankingsChannel);
       supabase.removeChannel(teamStatusChannel);
@@ -2526,7 +2596,7 @@ export default function App() {
       supabase.removeChannel(coachFloatsChannel);
       supabase.removeChannel(coverageChannel);
     };
-  }, [isApproved, loadCoaches, loadRankings, loadTeamStatus, loadTeamTasks, loadTeamQuestions, loadTaskMeta, loadUpdates, loadPracticeApprovals, loadCoachRequests, loadCoachFloats, loadPracticeCoverage, loadPracticeCancellations]);
+  }, [isApproved, loadIncidents, loadCoaches, loadRankings, loadTeamStatus, loadTeamTasks, loadTeamQuestions, loadTaskMeta, loadUpdates, loadPracticeApprovals, loadCoachRequests, loadCoachFloats, loadPracticeCoverage, loadPracticeCancellations]);
 
   // Activity feed live updates — only subscribe while that tab is open, since
   // change_log INSERTs fire on every player write and the feed is otherwise
@@ -8934,6 +9004,251 @@ export default function App() {
     );
   }
 
+
+  // ── Incident log ────────────────────────────────────────────────────────
+  // Which teams this coach may file against. Admins get everything; a coach
+  // gets the teams they actually run, which is also the scope of the list.
+  function incidentTeams() {
+    const all = [...new Set(players.map(p => p.team_assignment).filter(Boolean))].sort((a, b) => {
+      const ag = parseInt(a) || 99, bg = parseInt(b) || 99;
+      return ag - bg || a.localeCompare(b);
+    });
+    if (canViewTeams) return all;
+    const mine = new Set(myTeamNames);
+    return all.filter(t => mine.has(t));
+  }
+  const incidentVisible = (r) => canViewTeams || myTeamNames.includes(r.team_name);
+
+  // Open the dialog. Anything we already know — the player, and therefore the
+  // team — is filled in, so reporting from a player card is one field and a
+  // sentence rather than a form.
+  const openIncident = (player) => setIncidentDraft({
+    player_id: player?.id ?? "",
+    team_name: player?.team_assignment || "",
+    kind: "", summary: "",
+    occurred_on: new Date().toISOString().slice(0, 10),
+  });
+
+  function renderIncidentDialog() {
+    if (!incidentDraft) return null;
+    const d = incidentDraft;
+    const set = (patch) => setIncidentDraft(prev => ({ ...prev, ...patch }));
+    const teams = incidentTeams();
+    const roster = players
+      .filter(p => p.team_assignment === d.team_name && p.roster_status === "active")
+      .sort((a, b) => (a.last_name || "").localeCompare(b.last_name || ""));
+    const kind = INCIDENT_KIND[d.kind];
+    const ready = d.player_id && d.team_name && d.kind && (d.summary || "").trim().length > 3;
+    const close = () => { if (!incidentSaving) setIncidentDraft(null); };
+    const submit = async () => {
+      if (!ready || incidentSaving) return;
+      setIncidentSaving(true);
+      const saved = await saveIncident(d);
+      setIncidentSaving(false);
+      if (saved) setIncidentDraft(null);
+    };
+    const field = { ...inpStyle, padding:"9px 11px", fontSize:13, width:"100%" };
+    const lbl = { fontSize:10, fontWeight:800, textTransform:"uppercase", letterSpacing:0.6, color:C.mut, marginBottom:5, display:"block" };
+    return (
+      <div onClick={close} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.82)",zIndex:2000,display:"flex",justifyContent:"center",alignItems:"flex-start",padding:"28px 16px",overflowY:"auto"}}>
+        <div onClick={e=>e.stopPropagation()} style={{background:C.card,borderRadius:16,border:"1px solid "+C.border,maxWidth:560,width:"100%",height:"fit-content",padding:24}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
+            <h2 style={{margin:0,fontSize:18,fontWeight:800,color:C.gold}}>Report an issue</h2>
+            <button onClick={close} style={{background:"none",border:"none",color:C.mut,fontSize:22,cursor:"pointer",lineHeight:1}}>×</button>
+          </div>
+          <div style={{fontSize:11,color:C.mut,marginBottom:18,lineHeight:1.5}}>
+            Goes on the player's record so the next coach — and next season — can see it. Directors and the coaches on her team can read this.
+          </div>
+
+          <div style={{display:"flex",flexDirection:"column",gap:14}}>
+            <div>
+              <span style={lbl}>Team</span>
+              <select style={field} value={d.team_name}
+                onChange={e => set({ team_name: e.target.value, player_id: "" })}>
+                <option value="">— pick a team —</option>
+                {teams.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+              {!teams.length && <div style={{fontSize:11,color:"#f59e0b",marginTop:5}}>You aren't listed as a coach on any team yet — ask Drew to add you.</div>}
+            </div>
+
+            <div>
+              <span style={lbl}>Player</span>
+              <select style={field} value={d.player_id} disabled={!d.team_name}
+                onChange={e => set({ player_id: e.target.value ? Number(e.target.value) : "" })}>
+                <option value="">{d.team_name ? "— pick a player —" : "pick a team first"}</option>
+                {roster.map(p => <option key={p.id} value={p.id}>{p.first_name} {p.last_name}</option>)}
+              </select>
+            </div>
+
+            <div>
+              <span style={lbl}>What kind of thing is this?</span>
+              <div style={{display:"grid",gridTemplateColumns:isNarrow?"1fr 1fr":"1fr 1fr 1fr",gap:7}}>
+                {INCIDENT_KINDS.map(k => {
+                  const on = d.kind === k.key;
+                  return (
+                    <button key={k.key} type="button" onClick={()=>set({ kind:k.key })}
+                      style={{padding:"9px 8px",borderRadius:9,cursor:"pointer",fontFamily:"inherit",fontSize:11.5,fontWeight:700,
+                        textAlign:"left",lineHeight:1.3,border:"1px solid "+(on?k.color:C.border),
+                        background:on?k.color+"22":"transparent",color:on?k.color:C.text}}>
+                      <span style={{marginRight:5}}>{k.icon}</span>{k.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div>
+              <span style={lbl}>What happened?</span>
+              <textarea value={d.summary} onChange={e=>set({ summary:e.target.value })} rows={5}
+                placeholder={kind?.hint || "Describe it in your own words."}
+                style={{...field, resize:"vertical", lineHeight:1.55, fontFamily:"inherit"}} />
+              <div style={{fontSize:10,color:C.mut,marginTop:5,lineHeight:1.5}}>
+                Write it the way you'd say it out loud. Dates, names and what was actually said are what make this useful in three months.
+              </div>
+            </div>
+
+            <div style={{maxWidth:200}}>
+              <span style={lbl}>When did it happen?</span>
+              <input type="date" style={field} value={d.occurred_on || ""} max={new Date().toISOString().slice(0,10)}
+                onChange={e=>set({ occurred_on:e.target.value })} />
+            </div>
+          </div>
+
+          <div style={{display:"flex",gap:9,justifyContent:"flex-end",marginTop:20}}>
+            <button onClick={close} disabled={incidentSaving}
+              style={{padding:"9px 16px",borderRadius:9,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontFamily:"inherit",fontSize:12.5,fontWeight:700,cursor:"pointer"}}>Cancel</button>
+            <button onClick={submit} disabled={!ready || incidentSaving}
+              title={ready ? "" : "Pick a team, a player, a type, and describe what happened"}
+              style={{padding:"9px 18px",borderRadius:9,border:"none",fontFamily:"inherit",fontSize:12.5,fontWeight:800,
+                background:ready?C.gold:C.border, color:ready?"#000":C.mut, cursor:ready&&!incidentSaving?"pointer":"not-allowed"}}>
+              {incidentSaving ? "Saving…" : "File report"}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // One incident, rendered the same on the list and on a player card.
+  function incidentRow(r, { showPlayer = true } = {}) {
+    const k = INCIDENT_KIND[r.kind] || INCIDENT_KIND.other;
+    const st = INCIDENT_STATUS[r.status] || INCIDENT_STATUS.open;
+    const p = players.find(x => x.id === r.player_id);
+    const when = r.occurred_on ? new Date(r.occurred_on + "T12:00:00").toLocaleDateString(undefined,{month:"short",day:"numeric",year:"numeric"}) : "";
+    const mayEdit = canViewTeams || myTeamNames.includes(r.team_name);
+    return (
+      <div key={r.id} style={{background:C.card,border:"1px solid "+C.border,borderLeft:"3px solid "+k.color,borderRadius:9,padding:"11px 13px"}}>
+        <div style={{display:"flex",alignItems:"baseline",gap:9,flexWrap:"wrap",marginBottom:5}}>
+          <span style={{fontSize:11.5,fontWeight:800,color:k.color}}>{k.icon} {k.label}</span>
+          {showPlayer && p && (
+            <button onClick={()=>setProfileId(p.id)} title="Open player card"
+              style={{background:"none",border:"none",padding:0,cursor:"pointer",fontFamily:"inherit",fontSize:12.5,fontWeight:700,color:C.text,borderBottom:"1px dotted "+C.mut}}>
+              {p.first_name} {p.last_name}
+            </button>
+          )}
+          {showPlayer && <span style={{fontSize:11,color:C.mut}}>{r.team_name}</span>}
+          <span style={{fontSize:11,color:C.mut,marginLeft:"auto"}}>{when}</span>
+        </div>
+        <div style={{fontSize:12.5,color:C.text,lineHeight:1.55,whiteSpace:"pre-wrap"}}>{r.summary}</div>
+        {r.resolution && (
+          <div style={{fontSize:11.5,color:C.grn,lineHeight:1.5,marginTop:7,paddingLeft:9,borderLeft:"2px solid "+C.grn}}>
+            <b>Outcome:</b> {r.resolution}
+          </div>
+        )}
+        <div style={{display:"flex",alignItems:"center",gap:7,flexWrap:"wrap",marginTop:9}}>
+          {INCIDENT_STATUSES.map(x => {
+            const on = r.status === x.key;
+            return (
+              <button key={x.key} disabled={!mayEdit}
+                onClick={() => {
+                  if (x.key === "resolved" && !r.resolution) {
+                    const note = window.prompt("How did this end? (optional — it's the part people read later)");
+                    if (note === null) return;
+                    updateIncident(r.id, { status:"resolved", resolution: note.trim() || null,
+                      resolved_by: coach?.display_name || coach?.email || null, resolved_at: new Date().toISOString() });
+                    return;
+                  }
+                  updateIncident(r.id, { status:x.key });
+                }}
+                style={{padding:"2px 9px",borderRadius:20,fontFamily:"inherit",fontSize:10,fontWeight:800,
+                  cursor:mayEdit?"pointer":"default",border:"1px solid "+(on?x.color:C.border),
+                  background:on?x.color+"22":"transparent",color:on?x.color:C.mut}}>{x.label}</button>
+            );
+          })}
+          <span style={{fontSize:10,color:C.mut,marginLeft:"auto"}}>
+            {r.reported_by || "unattributed"}
+            {isOwner && (
+              <button onClick={()=>{ if (window.confirm("Delete this report? It won't be recoverable.")) deleteIncident(r.id); }}
+                style={{marginLeft:8,background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:11,fontWeight:800,padding:0}}>×</button>
+            )}
+          </span>
+        </div>
+      </div>
+    );
+  }
+
+  function renderIncidents() {
+    const mine = incidents.filter(incidentVisible);
+    const live = (r) => r.status === "open" || r.status === "monitoring";
+    const byStatus = incidentStatusFilter === "live" ? mine.filter(live)
+                   : incidentStatusFilter === "all" ? mine
+                   : mine.filter(r => r.status === incidentStatusFilter);
+    const shown = byStatus
+      .filter(r => !incidentKindFilter || r.kind === incidentKindFilter)
+      .filter(r => !incidentTeamFilter || r.team_name === incidentTeamFilter);
+    const teams = [...new Set(mine.map(r => r.team_name))].sort();
+    const pill = (on, color) => ({padding:"6px 12px",borderRadius:8,cursor:"pointer",fontFamily:"inherit",fontSize:11.5,fontWeight:700,
+      border:"1px solid "+(on?color:C.border), background:on?color+"1e":"transparent", color:on?color:C.mut});
+    return (
+      <div style={{maxWidth:900,margin:"0 auto"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:6}}>
+          <div>
+            <h2 style={{margin:0,fontSize:20,fontWeight:800,color:C.gold}}>⚠ Issues & injuries</h2>
+            <div style={{fontSize:12,color:C.mut,marginTop:2}}>
+              <b style={{color:C.text}}>{mine.filter(live).length}</b> needing attention · {mine.length} logged
+              {!canViewTeams && <> · <span style={{color:C.gold,fontWeight:700}}>your teams only</span></>}
+            </div>
+          </div>
+          <div style={{flex:1}} />
+          <button onClick={()=>openIncident(null)}
+            style={{padding:"9px 16px",borderRadius:9,border:"none",background:C.gold,color:"#000",fontFamily:"inherit",fontSize:12.5,fontWeight:800,cursor:"pointer"}}>
+            ＋ Report an issue
+          </button>
+        </div>
+
+        <div style={{display:"flex",gap:7,flexWrap:"wrap",margin:"14px 0"}}>
+          <button onClick={()=>setIncidentStatusFilter("live")} style={pill(incidentStatusFilter==="live", C.gold)}>Needs attention</button>
+          {INCIDENT_STATUSES.map(x => (
+            <button key={x.key} onClick={()=>setIncidentStatusFilter(x.key)} style={pill(incidentStatusFilter===x.key, x.color)}>{x.label}</button>
+          ))}
+          <button onClick={()=>setIncidentStatusFilter("all")} style={pill(incidentStatusFilter==="all", C.mut)}>All</button>
+          <span style={{flex:1,minWidth:8}} />
+          <select value={incidentKindFilter} onChange={e=>setIncidentKindFilter(e.target.value)}
+            style={{...inpStyle,padding:"6px 10px",fontSize:11.5}}>
+            <option value="">Every kind</option>
+            {INCIDENT_KINDS.map(k => <option key={k.key} value={k.key}>{k.label}</option>)}
+          </select>
+          {teams.length > 1 && (
+            <select value={incidentTeamFilter} onChange={e=>setIncidentTeamFilter(e.target.value)}
+              style={{...inpStyle,padding:"6px 10px",fontSize:11.5}}>
+              <option value="">Every team</option>
+              {teams.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+          )}
+        </div>
+
+        {!shown.length && (
+          <div style={{padding:30,textAlign:"center",color:C.mut,fontSize:13,background:C.card,borderRadius:12,border:"1px solid "+C.border}}>
+            {mine.length ? "Nothing matches those filters." : "Nothing logged yet. Use “Report an issue” the next time something comes up — an injury, a playing-time conversation, friction between players."}
+          </div>
+        )}
+        <div style={{display:"flex",flexDirection:"column",gap:9}}>
+          {shown.map(r => incidentRow(r))}
+        </div>
+      </div>
+    );
+  }
+
   // ── Player database (roster) ───────────────────────────────────────────
   // The club's players, separate from the tryout pool they came out of, so the
   // tryout views can be archived per season without taking the roster with
@@ -10298,6 +10613,27 @@ export default function App() {
                         })}
                       </div>
                     )}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+          {/* Issues & injuries — this athlete's running record. Sits above
+              Messages because it's the thing a coach opens the card to check. */}
+          {(() => {
+            const mine = incidents.filter(r => r.player_id === p.id).filter(incidentVisible);
+            const openN = mine.filter(r => r.status !== "resolved").length;
+            return (
+              <div style={{marginTop:24,paddingTop:16,borderTop:"1px solid "+C.border}}>
+                <div style={{display:"flex",alignItems:"center",gap:9,flexWrap:"wrap",marginBottom:10}}>
+                  <span style={{color:C.gold,fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5}}>Issues & injuries</span>
+                  {mine.length > 0 && <span style={{fontSize:11,color:openN?"#f59e0b":C.mut,fontWeight:700}}>{openN ? openN + " needing attention" : "all resolved"}</span>}
+                  <button onClick={()=>openIncident(p)} style={{marginLeft:"auto",padding:"4px 11px",borderRadius:7,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontFamily:"inherit",fontSize:11,fontWeight:800,cursor:"pointer"}}>＋ Report</button>
+                </div>
+                {!mine.length && <div style={{fontSize:12,color:C.mut}}>Nothing logged for her yet.</div>}
+                {mine.length > 0 && (
+                  <div style={{display:"flex",flexDirection:"column",gap:8,maxHeight:360,overflowY:"auto"}}>
+                    {mine.map(r => incidentRow(r, { showPlayer:false }))}
                   </div>
                 )}
               </div>
@@ -26541,7 +26877,8 @@ export default function App() {
               // Dropdown entries: ["hdr","Label"] renders a section header.
               const pendingReqs = coachRequests.filter(r=>r.status==="pending").length;
               const groups = [
-                { title:"Players", items:[...((canViewTeams || myTeamNames.length) ? [["roster","Roster"]] : []), ...(canOps ? [] : [["playereval","Evaluations"],["passing","Passer Ratings"]])] },
+                { title:"Players", items:[...((canViewTeams || myTeamNames.length) ? [["roster","Roster"]] : []),
+                  ...((canViewTeams || myTeamNames.length) ? [["incidents","Issues & Injuries" + (incidents.filter(r => incidentVisible(r) && r.status !== "resolved").length ? " (" + incidents.filter(r => incidentVisible(r) && r.status !== "resolved").length + ")" : "")]] : []), ...(canOps ? [] : [["playereval","Evaluations"],["passing","Passer Ratings"]])] },
                 { title:"Tryouts 2026-27", items:[["dashboard","Dashboard"], ["evaluate","Evaluate"], ["favorites","My Favorites" + (favorites.length ? " (" + favorites.length + ")" : "")], ...(canViewTeams ? [["teams","Teams"]] : []), ["rankings","Rankings"], ["physical","Physical Testing"], ["tryouts","Coach Assignments"]] },
                 // Operations is grouped by WHICH BUSINESS a screen belongs to,
                 // not by what it does. DSSC is a separate company with its own
@@ -26782,6 +27119,7 @@ export default function App() {
         {view==="tryouts" && renderTryouts()}
         {view==="email" && renderEmailBlast()}
         {view==="messages" && renderMessages()}
+        {view==="incidents" && renderIncidents()}
         {view==="coachcomms" && renderCoachComms()}
         {view==="assignments" && renderAssignments()}
         {view==="coverage" && renderCoachCoverage()}
@@ -26813,6 +27151,8 @@ export default function App() {
       {renderConfirmPreview()}
       {renderMessageModal()}
       {profileId !== null && renderProfile()}
+      {/* Above the player card in z-order: reporting is often started from it. */}
+      {renderIncidentDialog()}
       {teamCardName && renderTeamCard()}
       {coachCardName && renderCoachCard()}
       {addingPlayer && renderAddPlayer()}
