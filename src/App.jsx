@@ -1543,6 +1543,7 @@ export default function App() {
   // it carries whatever we could prefill from where the coach opened it.
   const [schoolReports, setSchoolReports]             = useState([]);
   const [schoolFilter, setSchoolFilter]               = useState("all"); // all | in | waiting | none
+  const [schoolGroup, setSchoolGroup]                 = useState("school"); // school | team | flat
   const [incidents, setIncidents]                     = useState([]);
   const [incidentNotes, setIncidentNotes]             = useState([]);
   const [incidentOpenId, setIncidentOpenId]           = useState(null); // board detail drawer
@@ -2347,7 +2348,7 @@ export default function App() {
   }, [loadIncidents]);
 
   useEffect(() => { if (isApproved) { loadPlayers(); loadRankings(); loadIncidents(); loadIncidentNotes(); } }, [isApproved, loadPlayers, loadRankings, loadIncidents, loadIncidentNotes]);
-  useEffect(() => { if (isApproved && view === "school") loadSchoolReports(); }, [isApproved, view, loadSchoolReports]);
+  useEffect(() => { if (isApproved) loadSchoolReports(); }, [isApproved, loadSchoolReports]);
   // loadTeamsList is declared further down, so naming it here would be a TDZ
   // crash on load; the evaluations view picks the roster up from the effect
   // that already loads it alongside the other team data.
@@ -2595,6 +2596,7 @@ export default function App() {
       .channel("realtime-incidents")
       .on("postgres_changes", { event: "*", schema: "public", table: "player_incidents" }, () => { loadIncidents(); })
       .on("postgres_changes", { event: "*", schema: "public", table: "player_incident_notes" }, () => { loadIncidentNotes(); })
+      .on("postgres_changes", { event: "*", schema: "public", table: "school_team_reports" }, () => { loadSchoolReports(); })
       .subscribe();
     const coachChannel = supabase
       .channel("realtime-coaches")
@@ -2656,7 +2658,7 @@ export default function App() {
       supabase.removeChannel(coachFloatsChannel);
       supabase.removeChannel(coverageChannel);
     };
-  }, [isApproved, loadIncidents, loadIncidentNotes, loadCoaches, loadRankings, loadTeamStatus, loadTeamTasks, loadTeamQuestions, loadTaskMeta, loadUpdates, loadPracticeApprovals, loadCoachRequests, loadCoachFloats, loadPracticeCoverage, loadPracticeCancellations]);
+  }, [isApproved, loadIncidents, loadIncidentNotes, loadSchoolReports, loadCoaches, loadRankings, loadTeamStatus, loadTeamTasks, loadTeamQuestions, loadTaskMeta, loadUpdates, loadPracticeApprovals, loadCoachRequests, loadCoachFloats, loadPracticeCoverage, loadPracticeCancellations]);
 
   // Activity feed live updates — only subscribe while that tab is open, since
   // change_log INSERTs fire on every player write and the feed is otherwise
@@ -9666,7 +9668,111 @@ export default function App() {
           {pill("waiting","No answer yet",waiting.length,C.red)}
         </div>
 
-        <div style={{overflowX:"auto",background:C.card,border:"1px solid "+C.border,borderRadius:12}}>
+        <div style={{display:"flex",gap:7,flexWrap:"wrap",marginBottom:14}}>
+          <span style={{fontSize:11,color:C.mut,alignSelf:"center",marginRight:2}}>Group by</span>
+          {[["school","School"],["team","Our team"],["flat","No grouping"]].map(([k,label]) => (
+            <button key={k} onClick={()=>setSchoolGroup(k)}
+              style={{padding:"5px 11px",borderRadius:7,cursor:"pointer",fontFamily:"inherit",fontSize:11.5,fontWeight:700,
+                border:"1px solid "+(schoolGroup===k?C.gold:C.border),
+                background:schoolGroup===k?"rgba(224,180,85,0.14)":"transparent",
+                color:schoolGroup===k?C.gold:C.mut}}>{label}</button>
+          ))}
+        </div>
+
+        {schoolGroup !== "flat" && (() => {
+          // Group on the answers only — an unanswered player has no school to
+          // file her under, so she stays in the "no answer yet" filter instead
+          // of inventing an "Unknown school" bucket that reads like a real one.
+          const withAnswer = shown.filter(x => x.r);
+          const noAnswer = shown.filter(x => !x.r);
+          const keyOf = (x) => schoolGroup === "school"
+            ? (String(x.r.school || "").trim() || "(school not given)")
+            : (x.p.team_assignment || "(no team)");
+          const groups = new Map();
+          for (const x of withAnswer) {
+            const k = keyOf(x);
+            if (!groups.has(k)) groups.set(k, []);
+            groups.get(k).push(x);
+          }
+          const ordered = [...groups.entries()].sort((a, b) => {
+            if (schoolGroup === "team") {
+              const ag = parseInt(a[0]) || 99, bg = parseInt(b[0]) || 99;
+              return ag - bg || a[0].localeCompare(b[0]);
+            }
+            // Schools by headcount: the ones with the most of our players are
+            // the ones whose season actually collides with ours.
+            return b[1].length - a[1].length || a[0].localeCompare(b[0]);
+          });
+          const LEVEL_ORDER = ["Varsity","JV","Freshman","Flex","8th A","8th B","7th A","7th B","Other"];
+          return (
+            <div style={{display:"grid",gridTemplateColumns:isNarrow?"1fr":"repeat(auto-fill,minmax(330px,1fr))",gap:12}}>
+              {ordered.map(([k, list]) => {
+                const made = list.filter(x => x.r.made_team !== false);
+                const not = list.filter(x => x.r.made_team === false);
+                // Within a group, order by school-team level so Varsity reads first.
+                const sorted = list.slice().sort((a, b) => {
+                  const ai = LEVEL_ORDER.indexOf(a.r.team_level || ""), bi = LEVEL_ORDER.indexOf(b.r.team_level || "");
+                  return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi)
+                    || (a.p.last_name || "").localeCompare(b.p.last_name || "");
+                });
+                return (
+                  <div key={k} style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:"12px 14px"}}>
+                    <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:9,flexWrap:"wrap"}}>
+                      <span style={{fontSize:13.5,fontWeight:800,color:C.gold}}>{k}</span>
+                      <span style={{fontSize:11,color:C.mut}}>{list.length} player{list.length===1?"":"s"}</span>
+                      {not.length > 0 && <span style={{fontSize:10.5,color:"#f59e0b",marginLeft:"auto"}}>{not.length} not playing</span>}
+                    </div>
+                    <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                      {sorted.map(({ p, r }) => (
+                        <div key={p.id} onClick={()=>setProfileId(p.id)} title="Open player card"
+                          style={{display:"flex",alignItems:"center",gap:8,padding:"4px 6px",borderRadius:6,cursor:"pointer",fontSize:12.5}}
+                          onMouseEnter={e=>e.currentTarget.style.background=C.bg}
+                          onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                          <span style={{fontWeight:700,color:C.text,flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                            {p.first_name} {p.last_name}
+                          </span>
+                          {schoolGroup === "school"
+                            ? <span style={{fontSize:10,color:C.mut,whiteSpace:"nowrap"}}>{p.team_assignment}</span>
+                            : <span style={{fontSize:10,color:C.mut,maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.school || ""}</span>}
+                          <span style={{fontSize:10,fontWeight:800,whiteSpace:"nowrap",
+                            color: r.made_team === false ? "#f59e0b" : C.grn}}>
+                            {r.made_team === false ? "not this yr" : (r.team_level || "yes")}
+                          </span>
+                          {r.schedule && <span title="Schedule provided" style={{fontSize:10,color:C.grn}}>📅</span>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+              {noAnswer.length > 0 && (
+                <div style={{background:C.card,border:"1px dashed "+C.border,borderRadius:12,padding:"12px 14px"}}>
+                  <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:9}}>
+                    <span style={{fontSize:13.5,fontWeight:800,color:C.mut}}>No answer yet</span>
+                    <span style={{fontSize:11,color:C.mut}}>{noAnswer.length}</span>
+                  </div>
+                  <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                    {noAnswer.slice().sort((a,b)=>(a.p.team_assignment||"").localeCompare(b.p.team_assignment||"")||(a.p.last_name||"").localeCompare(b.p.last_name||""))
+                      .map(({ p }) => (
+                      <div key={p.id} onClick={()=>setProfileId(p.id)} title="Open player card"
+                        style={{display:"flex",alignItems:"center",gap:8,padding:"4px 6px",borderRadius:6,cursor:"pointer",fontSize:12.5}}
+                        onMouseEnter={e=>e.currentTarget.style.background=C.bg}
+                        onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                        <span style={{color:C.mut,flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.first_name} {p.last_name}</span>
+                        <span style={{fontSize:10,color:C.mut}}>{p.team_assignment}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {!ordered.length && !noAnswer.length && (
+                <div style={{padding:26,textAlign:"center",color:C.mut,fontSize:12.5}}>Nothing in that group.</div>
+              )}
+            </div>
+          );
+        })()}
+
+        {schoolGroup === "flat" && <div style={{overflowX:"auto",background:C.card,border:"1px solid "+C.border,borderRadius:12}}>
           <table style={{borderCollapse:"collapse",width:"100%",fontSize:12.5}}>
             <thead><tr>{["Player","DS team","School","Grade","School team","Schedule","Answered"].map(h => (
               <th key={h} style={{textAlign:"left",whiteSpace:"nowrap",padding:"9px 12px",borderBottom:"1px solid "+C.border,
@@ -9694,8 +9800,8 @@ export default function App() {
               ))}
             </tbody>
           </table>
-        </div>
-        {!shown.length && (
+        </div>}
+        {schoolGroup === "flat" && !shown.length && (
           <div style={{padding:26,textAlign:"center",color:C.mut,fontSize:12.5}}>Nothing in that group.</div>
         )}
         <div style={{fontSize:11,color:C.mut,marginTop:8,fontStyle:"italic"}}>
@@ -11132,6 +11238,59 @@ export default function App() {
                       </div>
                     )}
                   </div>
+                )}
+              </div>
+            );
+          })()}
+          {/* School volleyball — what the family sent back on their own form.
+              Read-only here: it is theirs to correct, through their link. */}
+          {(() => {
+            const r = schoolReports.find(x => x.player_id === p.id);
+            const div = p.usavDiv || p.usav_div;
+            const asked = ["U13","U14","U15","U16"].includes(div);
+            if (!asked && !r) return null;
+            const link = p.school_form_token ? (APP_URL.replace(/\/$/, "") + "/school?t=" + p.school_form_token) : null;
+            const cell = (k, v) => (
+              <div key={k}><div style={{fontSize:10,fontWeight:800,textTransform:"uppercase",letterSpacing:0.5,color:C.mut}}>{k}</div>
+                <div style={{fontSize:12.5,color:v?C.text:C.mut,marginTop:1}}>{v || "—"}</div></div>
+            );
+            return (
+              <div style={{marginTop:24,paddingTop:16,borderTop:"1px solid "+C.border}}>
+                <div style={{display:"flex",alignItems:"center",gap:9,flexWrap:"wrap",marginBottom:10}}>
+                  <span style={{color:C.gold,fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5}}>School volleyball</span>
+                  {r && <span style={{fontSize:11,fontWeight:700,color:r.made_team===false?"#f59e0b":C.grn}}>
+                    {r.made_team===false ? "not playing this year" : "made a team"}</span>}
+                  {!r && <span style={{fontSize:11,color:C.mut}}>no answer yet</span>}
+                  {link && (
+                    <button onClick={()=>{ navigator.clipboard?.writeText(link)
+                        .then(()=>window.alert("Her form link copied — send it to the family."))
+                        .catch(()=>window.prompt("Her form link:", link)); }}
+                      title="Copy this player's own form link"
+                      style={{marginLeft:"auto",padding:"3px 10px",borderRadius:7,border:"1px solid "+C.border,background:"transparent",
+                        color:C.mut,fontFamily:"inherit",fontSize:10.5,fontWeight:700,cursor:"pointer"}}>copy her link</button>
+                  )}
+                </div>
+                {!r && <div style={{fontSize:12,color:C.mut}}>She hasn't sent hers back yet.</div>}
+                {r && (
+                  <>
+                    <div style={{display:"grid",gridTemplateColumns:isNarrow?"1fr 1fr":"repeat(3,1fr)",gap:10}}>
+                      {cell("School", r.school)}
+                      {cell("Grade", r.grade)}
+                      {cell("Team", r.made_team===false ? "—" : r.team_level)}
+                    </div>
+                    {r.schedule && (
+                      <div style={{marginTop:10}}>
+                        <div style={{fontSize:10,fontWeight:800,textTransform:"uppercase",letterSpacing:0.5,color:C.mut}}>Schedule</div>
+                        <div style={{fontSize:12,color:C.text,marginTop:2,whiteSpace:"pre-wrap",lineHeight:1.5}}>{r.schedule}</div>
+                      </div>
+                    )}
+                    {r.notes && (
+                      <div style={{marginTop:8,fontSize:11.5,color:C.mut,fontStyle:"italic",whiteSpace:"pre-wrap"}}>{r.notes}</div>
+                    )}
+                    <div style={{fontSize:10,color:C.mut,marginTop:8}}>
+                      Answered {new Date(r.updated_at).toLocaleDateString(undefined,{month:"short",day:"numeric"})} — the family can update it any time from their link.
+                    </div>
+                  </>
                 )}
               </div>
             );
