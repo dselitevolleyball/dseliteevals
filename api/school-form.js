@@ -21,7 +21,9 @@ const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;")
   .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
 const GRADES = ["6th", "7th", "8th", "9th", "10th", "11th", "12th"];
-const LEVELS = ["Varsity", "JV", "Freshman", "8th A", "8th B", "7th A", "7th B", "Other"];
+// High school levels first, then the middle school grade teams. Flex sits with
+// the high school group because that is where schools run it.
+const LEVELS = ["Varsity", "JV", "Freshman", "Flex", "8th A", "8th B", "7th A", "7th B", "Other"];
 
 const page = (inner, { title = "School team — DS Elite" } = {}) => `<!doctype html>
 <html lang="en"><head>
