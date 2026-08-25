@@ -108,6 +108,10 @@ export default async function handler(req, res) {
       team_level: String(body?.team_level || "").trim().slice(0, 80) || null,
       schedule: String(body?.schedule || "").trim().slice(0, 4000) || null,
       notes: String(body?.notes || "").trim().slice(0, 2000) || null,
+      // The family speaking for themselves clears any correction we made on
+      // their behalf, so the card stops crediting us for words that are theirs.
+      edited_by: null,
+      edited_at: null,
     };
     // Not-made-the-team is a real answer worth keeping, so only the school-team
     // fields are cleared — the note stays either way.

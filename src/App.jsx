@@ -98,6 +98,13 @@ const isPlaceholderCoach = (c) => { const v = String(c || "").trim(); return !v 
 // isPlaceholderCoach continues to match the retired names, so any legacy row
 // keeps reading as unfilled rather than as staff.
 const COVERAGE_SUBS = ["15-2 Assistant Coach"];
+// ── School team form ─────────────────────────────────────────────────────
+// The grade and level lists the public form offers (api/school-form.js),
+// repeated here so a staff correction can only produce a value the form itself
+// could have produced. Two lists drifting apart would split one school team
+// into two groups on the board.
+const SCHOOL_GRADES = ["6th", "7th", "8th", "9th", "10th", "11th", "12th"];
+const SCHOOL_LEVELS = ["Varsity", "JV", "Freshman", "Flex", "8th A", "8th B", "7th A", "7th B", "Other"];
 // ── Player roster table ──────────────────────────────────────────────────
 // Every column the Players table can show. `get` returns the display value;
 // `num` marks columns that should sort numerically rather than alphabetically.
@@ -1544,6 +1551,9 @@ export default function App() {
   const [schoolReports, setSchoolReports]             = useState([]);
   const [schoolFilter, setSchoolFilter]               = useState("all"); // all | in | waiting | none
   const [schoolGroup, setSchoolGroup]                 = useState("school"); // school | team | flat
+  const [schoolEditId, setSchoolEditId]               = useState(null);    // player card: whose answer staff is correcting
+  const [schoolRenaming, setSchoolRenaming]          = useState(null);    // school board: which group's name is being retyped
+  const [schoolRenameText, setSchoolRenameText]      = useState("");
   const [incidents, setIncidents]                     = useState([]);
   const [incidentNotes, setIncidentNotes]             = useState([]);
   const [incidentOpenId, setIncidentOpenId]           = useState(null); // board detail drawer
@@ -2274,6 +2284,52 @@ export default function App() {
     if (error) { console.error("Load school_team_reports error:", error); return; }
     setSchoolReports(data || []);
   }, []);
+  // Every school name already on the board, most common first. Offered as the
+  // autocomplete list wherever staff types one, so the second correction lands
+  // on the same string as the first instead of inventing a fourth spelling.
+  const schoolNameOptions = useMemo(() => {
+    const counts = new Map();
+    for (const r of schoolReports) {
+      const nm = String(r.school || "").trim();
+      if (nm) counts.set(nm, (counts.get(nm) || 0) + 1);
+    }
+    return [...counts.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([nm]) => nm);
+  }, [schoolReports]);
+  const schoolEditStamp = () => ({
+    edited_by: coach?.display_name || coach?.email || "staff",
+    edited_at: new Date().toISOString(),
+  });
+  // Staff correction of a school-team answer. Writes the same one-row-per-player
+  // record the public form writes, so the family's link still edits it
+  // afterwards — they know their own season best. edited_by marks the row as
+  // ours, so a value we filled in never reads as something a parent typed.
+  const saveSchoolReport = useCallback(async (playerId, patch) => {
+    const stamp = schoolEditStamp();
+    const row = { player_id: playerId, ...patch, ...stamp };
+    setSchoolReports(prev => prev.some(r => r.player_id === playerId)
+      ? prev.map(r => r.player_id === playerId ? { ...r, ...patch, ...stamp } : r)
+      : [{ id: "pending-" + playerId, updated_at: stamp.edited_at, ...row }, ...prev]);
+    const { error } = await supabase.from("school_team_reports").upsert(row, { onConflict: "player_id" });
+    if (error) window.alert("Couldn't save that answer: " + error.message);
+    loadSchoolReports();
+  }, [coach, loadSchoolReports]);
+  // Rename a school across every row carrying it — the fix for one school
+  // arriving under three spellings. Takes the ids of the rows on screen rather
+  // than re-matching the old string, so the "school not given" group can be
+  // named in one go too.
+  const renameSchoolOn = useCallback(async (ids, name) => {
+    const to = String(name || "").trim();
+    const real = ids.filter(id => typeof id === "number");
+    if (!to || !real.length) return;
+    const stamp = schoolEditStamp();
+    setSchoolReports(prev => prev.map(r => real.includes(r.id) ? { ...r, school: to, ...stamp } : r));
+    const { error } = await supabase.from("school_team_reports")
+      .update({ school: to, ...stamp }).in("id", real);
+    if (error) window.alert("Couldn't rename that school: " + error.message);
+    loadSchoolReports();
+  }, [coach, loadSchoolReports]);
   const loadIncidents = useCallback(async () => {
     const { data, error } = await supabase.from("player_incidents").select("*")
       .order("occurred_on", { ascending: false }).order("created_at", { ascending: false });
@@ -9607,8 +9663,13 @@ export default function App() {
   // Who made a school team, from the public form the families fill in. The
   // point of the screen is the gap: who has not answered yet.
   function renderSchoolTeams() {
+    // Only girls actually on a team this season. roster_status stays "active"
+    // on a family that declined their offer, so filtering on that alone sweeps
+    // up players who left — and this list is the one we email.
+    const TERMINAL_OFFER = ["declined", "not_invited", "opted_out"];
     const eligible = players
       .filter(p => p.roster_status === "active" && (p.season || "2026-27") === "2026-27")
+      .filter(p => (p.team_assignment || "").trim() && !TERMINAL_OFFER.includes(p.offer_status || ""))
       .filter(p => ["U13","U14","U15","U16"].includes(p.usavDiv || p.usav_div))
       .filter(p => canViewTeams || myTeamNames.includes(p.team_assignment));
     const byPlayer = new Map(schoolReports.map(r => [r.player_id, r]));
@@ -9679,6 +9740,10 @@ export default function App() {
           ))}
         </div>
 
+        <datalist id="school-names-board">
+          {schoolNameOptions.map(nm => <option key={nm} value={nm} />)}
+        </datalist>
+
         {schoolGroup !== "flat" && (() => {
           // Group on the answers only — an unanswered player has no school to
           // file her under, so she stays in the "no answer yet" filter instead
@@ -9703,7 +9768,7 @@ export default function App() {
             // the ones whose season actually collides with ours.
             return b[1].length - a[1].length || a[0].localeCompare(b[0]);
           });
-          const LEVEL_ORDER = ["Varsity","JV","Freshman","Flex","8th A","8th B","7th A","7th B","Other"];
+          const LEVEL_ORDER = SCHOOL_LEVELS;
           return (
             <div style={{display:"grid",gridTemplateColumns:isNarrow?"1fr":"repeat(auto-fill,minmax(330px,1fr))",gap:12}}>
               {ordered.map(([k, list]) => {
@@ -9715,13 +9780,45 @@ export default function App() {
                   return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi)
                     || (a.p.last_name || "").localeCompare(b.p.last_name || "");
                 });
+                // Renaming a heading rewrites the school on every row under it,
+                // which is also how two spellings get merged: type the name the
+                // other group already uses and they land together.
+                const canRename = canOps && schoolGroup === "school";
+                const renaming = canRename && schoolRenaming === k;
+                const commitRename = () => {
+                  renameSchoolOn(list.map(x => x.r.id), schoolRenameText);
+                  setSchoolRenaming(null);
+                };
                 return (
                   <div key={k} style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:"12px 14px"}}>
+                    {renaming ? (
+                      <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:9}}>
+                        <input autoFocus list="school-names-board" value={schoolRenameText}
+                          onChange={e=>setSchoolRenameText(e.target.value)}
+                          onKeyDown={e=>{ if(e.key==="Enter") commitRename(); if(e.key==="Escape") setSchoolRenaming(null); }}
+                          placeholder="Spell it the way it should be filed"
+                          style={{flex:1,minWidth:140,padding:"6px 9px",borderRadius:7,border:"1px solid "+C.gold,
+                            background:C.bg,color:C.text,fontFamily:"inherit",fontSize:12.5}} />
+                        <button onClick={commitRename}
+                          style={{padding:"6px 11px",borderRadius:7,border:"none",background:C.gold,color:"#1a1613",
+                            fontFamily:"inherit",fontSize:11.5,fontWeight:800,cursor:"pointer"}}>Save</button>
+                        <button onClick={()=>setSchoolRenaming(null)}
+                          style={{padding:"6px 11px",borderRadius:7,border:"1px solid "+C.border,background:"transparent",
+                            color:C.mut,fontFamily:"inherit",fontSize:11.5,fontWeight:700,cursor:"pointer"}}>Cancel</button>
+                      </div>
+                    ) : (
                     <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:9,flexWrap:"wrap"}}>
                       <span style={{fontSize:13.5,fontWeight:800,color:C.gold}}>{k}</span>
                       <span style={{fontSize:11,color:C.mut}}>{list.length} player{list.length===1?"":"s"}</span>
+                      {canRename && (
+                        <button onClick={()=>{ setSchoolRenaming(k); setSchoolRenameText(String(list[0].r.school || "").trim()); }}
+                          title={"Fix or merge this name — rewrites all " + list.length + " row" + (list.length===1?"":"s")}
+                          style={{padding:"1px 6px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",
+                            color:C.mut,fontFamily:"inherit",fontSize:10.5,fontWeight:700,cursor:"pointer"}}>✎</button>
+                      )}
                       {not.length > 0 && <span style={{fontSize:10.5,color:"#f59e0b",marginLeft:"auto"}}>{not.length} not playing</span>}
                     </div>
+                    )}
                     <div style={{display:"flex",flexDirection:"column",gap:3}}>
                       {sorted.map(({ p, r }) => (
                         <div key={p.id} onClick={()=>setProfileId(p.id)} title="Open player card"
@@ -9735,8 +9832,8 @@ export default function App() {
                             ? <span style={{fontSize:10,color:C.mut,whiteSpace:"nowrap"}}>{p.team_assignment}</span>
                             : <span style={{fontSize:10,color:C.mut,maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.school || ""}</span>}
                           <span style={{fontSize:10,fontWeight:800,whiteSpace:"nowrap",
-                            color: r.made_team === false ? "#f59e0b" : C.grn}}>
-                            {r.made_team === false ? "not this yr" : (r.team_level || "yes")}
+                            color: r.made_team === false ? "#f59e0b" : r.made_team === true ? C.grn : C.mut}}>
+                            {r.made_team === false ? "not this yr" : (r.team_level || (r.made_team === true ? "yes" : "unknown"))}
                           </span>
                           {r.schedule && <span title="Schedule provided" style={{fontSize:10,color:C.grn}}>📅</span>}
                         </div>
@@ -9785,11 +9882,19 @@ export default function App() {
                   onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
                   <td style={{padding:"7px 12px",borderBottom:"1px solid "+C.border,fontWeight:700,color:C.text,whiteSpace:"nowrap"}}>{p.first_name} {p.last_name}</td>
                   <td style={{padding:"7px 12px",borderBottom:"1px solid "+C.border,color:C.mut,whiteSpace:"nowrap"}}>{p.team_assignment || "—"}</td>
-                  <td style={{padding:"7px 12px",borderBottom:"1px solid "+C.border,color:r?.school?C.text:C.mut}}>{r?.school || "—"}</td>
+                  <td style={{padding:"7px 12px",borderBottom:"1px solid "+C.border,color:r?.school?C.text:C.mut,whiteSpace:"nowrap"}}>
+                    {r?.school || "—"}
+                    {canOps && (
+                      <button onClick={e=>{ e.stopPropagation(); setProfileId(p.id); setSchoolEditId(p.id); }}
+                        title="Correct this answer on her card"
+                        style={{marginLeft:6,padding:"0 5px",borderRadius:5,border:"1px solid "+C.border,background:"transparent",
+                          color:C.mut,fontFamily:"inherit",fontSize:10,fontWeight:700,cursor:"pointer"}}>✎</button>
+                    )}
+                  </td>
                   <td style={{padding:"7px 12px",borderBottom:"1px solid "+C.border,color:C.mut,whiteSpace:"nowrap"}}>{r?.grade || "—"}</td>
                   <td style={{padding:"7px 12px",borderBottom:"1px solid "+C.border,whiteSpace:"nowrap",
-                    color: !r ? C.mut : r.made_team === false ? "#f59e0b" : C.grn, fontWeight:700}}>
-                    {!r ? "—" : r.made_team === false ? "not this year" : (r.team_level || "yes")}
+                    color: !r ? C.mut : r.made_team === false ? "#f59e0b" : r.made_team === true ? C.grn : C.mut, fontWeight:700}}>
+                    {!r ? "—" : r.made_team === false ? "not this year" : (r.team_level || (r.made_team === true ? "yes" : "unknown"))}
                   </td>
                   <td style={{padding:"7px 12px",borderBottom:"1px solid "+C.border,color:C.mut,maxWidth:280,
                     overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={r?.schedule || ""}>{r?.schedule || "—"}</td>
@@ -9806,6 +9911,7 @@ export default function App() {
         )}
         <div style={{fontSize:11,color:C.mut,marginTop:8,fontStyle:"italic"}}>
           Families answer through their own link — the same link edits their answer later, so a girl moving up from JV can correct it herself.
+          {canOps && <> Spelled wrong, or the same school under two names? Group by School and hit ✎ on a heading to rename every row under it at once. A blank or missing answer you already know is fixable from her card.</>}
         </div>
       </div>
     );
@@ -11243,35 +11349,105 @@ export default function App() {
             );
           })()}
           {/* School volleyball — what the family sent back on their own form.
-              Read-only here: it is theirs to correct, through their link. */}
+              Theirs to correct through their link, and ours to correct here:
+              one school shows up under three spellings, some rows come back
+              with it blank, and some families never reply at all when we
+              already know the answer. */}
           {(() => {
             const r = schoolReports.find(x => x.player_id === p.id);
             const div = p.usavDiv || p.usav_div;
-            const asked = ["U13","U14","U15","U16"].includes(div);
+            // Same rule as the school board: we only ask girls who are on a team
+            // this season. A family that declined shouldn't be chased for a
+            // school schedule we have no use for.
+            const asked = ["U13","U14","U15","U16"].includes(div)
+              && !!(p.team_assignment || "").trim()
+              && !["declined","not_invited","opted_out"].includes(p.offer_status || "");
             if (!asked && !r) return null;
             const link = p.school_form_token ? (APP_URL.replace(/\/$/, "") + "/school?t=" + p.school_form_token) : null;
+            const editing = canOps && schoolEditId === p.id;
+            const save = (patch) => saveSchoolReport(p.id, patch);
+            const madeNow = r ? (r.made_team ?? null) : undefined;
             const cell = (k, v) => (
               <div key={k}><div style={{fontSize:10,fontWeight:800,textTransform:"uppercase",letterSpacing:0.5,color:C.mut}}>{k}</div>
                 <div style={{fontSize:12.5,color:v?C.text:C.mut,marginTop:1}}>{v || "—"}</div></div>
             );
+            const eLbl = {fontSize:10,fontWeight:800,textTransform:"uppercase",letterSpacing:0.5,color:C.mut,display:"block",marginBottom:3};
+            const eInp = {width:"100%",padding:"7px 9px",borderRadius:8,border:"1px solid "+C.border,background:C.bg,
+              color:C.text,fontFamily:"inherit",fontSize:12.5,boxSizing:"border-box"};
             return (
               <div style={{marginTop:24,paddingTop:16,borderTop:"1px solid "+C.border}}>
                 <div style={{display:"flex",alignItems:"center",gap:9,flexWrap:"wrap",marginBottom:10}}>
                   <span style={{color:C.gold,fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5}}>School volleyball</span>
-                  {r && <span style={{fontSize:11,fontWeight:700,color:r.made_team===false?"#f59e0b":C.grn}}>
-                    {r.made_team===false ? "not playing this year" : "made a team"}</span>}
+                  {r && <span style={{fontSize:11,fontWeight:700,color:r.made_team===false?"#f59e0b":r.made_team===true?C.grn:C.mut}}>
+                    {r.made_team===false ? "not playing this year" : r.made_team===true ? "made a team" : "answer incomplete"}</span>}
                   {!r && <span style={{fontSize:11,color:C.mut}}>no answer yet</span>}
+                  <div style={{flex:1}} />
+                  {canOps && (
+                    <button onClick={()=>setSchoolEditId(editing ? null : p.id)}
+                      title={r ? "Fix what's recorded here" : "Fill this in yourself"}
+                      style={{padding:"3px 10px",borderRadius:7,border:"1px solid "+(editing?C.gold:C.border),background:"transparent",
+                        color:editing?C.gold:C.mut,fontFamily:"inherit",fontSize:10.5,fontWeight:700,cursor:"pointer"}}>
+                      {editing ? "done" : r ? "✎ correct" : "＋ fill in"}</button>
+                  )}
                   {link && (
                     <button onClick={()=>{ navigator.clipboard?.writeText(link)
                         .then(()=>window.alert("Her form link copied — send it to the family."))
                         .catch(()=>window.prompt("Her form link:", link)); }}
                       title="Copy this player's own form link"
-                      style={{marginLeft:"auto",padding:"3px 10px",borderRadius:7,border:"1px solid "+C.border,background:"transparent",
+                      style={{padding:"3px 10px",borderRadius:7,border:"1px solid "+C.border,background:"transparent",
                         color:C.mut,fontFamily:"inherit",fontSize:10.5,fontWeight:700,cursor:"pointer"}}>copy her link</button>
                   )}
                 </div>
-                {!r && <div style={{fontSize:12,color:C.mut}}>She hasn't sent hers back yet.</div>}
-                {r && (
+                {!r && !editing && <div style={{fontSize:12,color:C.mut}}>
+                  She hasn't sent hers back yet.{canOps ? " Fill it in above if you already know it." : ""}</div>}
+                {editing && (
+                  <>
+                    <datalist id="school-names-card">
+                      {schoolNameOptions.map(nm => <option key={nm} value={nm} />)}
+                    </datalist>
+                    <div style={{display:"flex",gap:7,flexWrap:"wrap",marginBottom:12}}>
+                      {[["Made a team", true], ["Didn't make one", false], ["Not known yet", null]].map(([label, val]) => (
+                        <button key={String(val)}
+                          onClick={()=>save(val === false ? {made_team:false, team_level:null, schedule:null} : {made_team:val})}
+                          style={{padding:"6px 11px",borderRadius:8,cursor:"pointer",fontFamily:"inherit",fontSize:11.5,fontWeight:700,
+                            border:"1px solid "+(madeNow===val?C.gold:C.border),
+                            background:madeNow===val?"rgba(224,180,85,0.14)":"transparent",
+                            color:madeNow===val?C.gold:C.mut}}>{label}</button>
+                      ))}
+                    </div>
+                    <div style={{display:"grid",gridTemplateColumns:isNarrow?"1fr":"repeat(3,1fr)",gap:10}}>
+                      <label><span style={eLbl}>School</span>
+                        <DebouncedField list="school-names-card" style={eInp} value={r?.school || ""}
+                          placeholder="e.g. Dripping Springs High School"
+                          onCommit={v=>save({school:v.trim()||null})} />
+                      </label>
+                      <label><span style={eLbl}>Grade</span>
+                        <select style={eInp} value={r?.grade || ""} onChange={e=>save({grade:e.target.value||null})}>
+                          <option value="">—</option>
+                          {SCHOOL_GRADES.map(g => <option key={g} value={g}>{g}</option>)}
+                        </select>
+                      </label>
+                      <label><span style={eLbl}>School team</span>
+                        <select style={{...eInp,opacity:madeNow===false?0.5:1}} disabled={madeNow===false}
+                          value={r?.team_level || ""} onChange={e=>save({team_level:e.target.value||null})}>
+                          <option value="">—</option>
+                          {SCHOOL_LEVELS.map(l => <option key={l} value={l}>{l}</option>)}
+                        </select>
+                      </label>
+                    </div>
+                    {madeNow !== false && (
+                      <label style={{display:"block",marginTop:10}}><span style={eLbl}>Schedule</span>
+                        <DebouncedField multiline style={{...eInp,minHeight:60,lineHeight:1.5}} value={r?.schedule || ""}
+                          placeholder="Match dates and times, however the family sent them"
+                          onCommit={v=>save({schedule:v.trim()||null})} />
+                      </label>
+                    )}
+                    <div style={{fontSize:10.5,color:C.mut,marginTop:8,fontStyle:"italic"}}>
+                      Saves as you type. The family's link still edits this same answer, so a correction they send later wins.
+                    </div>
+                  </>
+                )}
+                {r && !editing && (
                   <>
                     <div style={{display:"grid",gridTemplateColumns:isNarrow?"1fr 1fr":"repeat(3,1fr)",gap:10}}>
                       {cell("School", r.school)}
@@ -11289,6 +11465,7 @@ export default function App() {
                     )}
                     <div style={{fontSize:10,color:C.mut,marginTop:8}}>
                       Answered {new Date(r.updated_at).toLocaleDateString(undefined,{month:"short",day:"numeric"})} — the family can update it any time from their link.
+                      {r.edited_by ? " Last corrected here by " + r.edited_by + "." : ""}
                     </div>
                   </>
                 )}
