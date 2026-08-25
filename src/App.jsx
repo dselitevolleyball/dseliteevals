@@ -1541,6 +1541,8 @@ export default function App() {
   const [slotMoves, setSlotMoves]                     = useState([]); // per-date team → block moves (Sunday 4-court planner)
   // Incident log. `incidentDraft` non-null means the report dialog is open;
   // it carries whatever we could prefill from where the coach opened it.
+  const [schoolReports, setSchoolReports]             = useState([]);
+  const [schoolFilter, setSchoolFilter]               = useState("all"); // all | in | waiting | none
   const [incidents, setIncidents]                     = useState([]);
   const [incidentNotes, setIncidentNotes]             = useState([]);
   const [incidentOpenId, setIncidentOpenId]           = useState(null); // board detail drawer
@@ -1951,7 +1953,7 @@ export default function App() {
   // email we send them. Every admin control inside renderDsysa — add/cancel a
   // date, set the lead, remove someone else's signup — is separately gated on
   // isAdmin, so opening the view exposes no admin action.
-  const OPS_VIEWS = new Set(["incidentboard","tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","timecards","gear","staffing","roster","hawaii","travel","finance","dssccal","pods"]);
+  const OPS_VIEWS = new Set(["school","incidentboard","tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","timecards","gear","staffing","roster","hawaii","travel","finance","dssccal","pods"]);
   const canOps    = isAdmin || isOwner;
   const opsDenied = <div style={{padding:24,color:C.mut,textAlign:"center"}}>This section is restricted to administrators. Ask the club administrator (Drew) for access.</div>;
   // Once a player has accepted (or is locked/signed) onto a team, they're
@@ -2265,6 +2267,12 @@ export default function App() {
     setLoading(false);
   }, []);
 
+  const loadSchoolReports = useCallback(async () => {
+    const { data, error } = await supabase.from("school_team_reports").select("*")
+      .order("updated_at", { ascending: false });
+    if (error) { console.error("Load school_team_reports error:", error); return; }
+    setSchoolReports(data || []);
+  }, []);
   const loadIncidents = useCallback(async () => {
     const { data, error } = await supabase.from("player_incidents").select("*")
       .order("occurred_on", { ascending: false }).order("created_at", { ascending: false });
@@ -2339,6 +2347,7 @@ export default function App() {
   }, [loadIncidents]);
 
   useEffect(() => { if (isApproved) { loadPlayers(); loadRankings(); loadIncidents(); loadIncidentNotes(); } }, [isApproved, loadPlayers, loadRankings, loadIncidents, loadIncidentNotes]);
+  useEffect(() => { if (isApproved && view === "school") loadSchoolReports(); }, [isApproved, view, loadSchoolReports]);
   // loadTeamsList is declared further down, so naming it here would be a TDZ
   // crash on load; the evaluations view picks the roster up from the effect
   // that already loads it alongside the other team data.
@@ -9587,6 +9596,111 @@ export default function App() {
             </div>
           );
         })()}
+      </div>
+    );
+  }
+
+
+  // ── School teams ────────────────────────────────────────────────────────
+  // Who made a school team, from the public form the families fill in. The
+  // point of the screen is the gap: who has not answered yet.
+  function renderSchoolTeams() {
+    const eligible = players
+      .filter(p => p.roster_status === "active" && (p.season || "2026-27") === "2026-27")
+      .filter(p => ["U13","U14","U15","U16"].includes(p.usavDiv || p.usav_div))
+      .filter(p => canViewTeams || myTeamNames.includes(p.team_assignment));
+    const byPlayer = new Map(schoolReports.map(r => [r.player_id, r]));
+    const rows = eligible.map(p => ({ p, r: byPlayer.get(p.id) }));
+    const answered = rows.filter(x => x.r);
+    const made = answered.filter(x => x.r.made_team === true);
+    const notMade = answered.filter(x => x.r.made_team === false);
+    const waiting = rows.filter(x => !x.r);
+
+    const shown = (schoolFilter === "in" ? made
+                : schoolFilter === "none" ? notMade
+                : schoolFilter === "waiting" ? waiting
+                : rows)
+      .slice().sort((a,b) => (a.p.team_assignment||"").localeCompare(b.p.team_assignment||"")
+        || (a.p.last_name||"").localeCompare(b.p.last_name||""));
+
+    const pill = (k, label, n, color) => (
+      <button key={k} onClick={()=>setSchoolFilter(k)}
+        style={{padding:"6px 12px",borderRadius:8,cursor:"pointer",fontFamily:"inherit",fontSize:11.5,fontWeight:700,
+          border:"1px solid "+(schoolFilter===k?color:C.border),
+          background:schoolFilter===k?color+"1e":"transparent", color:schoolFilter===k?color:C.mut}}>
+        {label} <b style={{color:schoolFilter===k?color:C.text}}>{n}</b>
+      </button>
+    );
+    const copyChasers = () => {
+      const em = [...new Set(waiting.flatMap(x => [x.p.parent_email, x.p.parent_email2]
+        .map(e => (e||"").trim()).filter(Boolean)))];
+      if (!em.length) { window.alert("Everyone has answered."); return; }
+      navigator.clipboard?.writeText(em.join(", "))
+        .then(() => window.alert(em.length + " addresses copied — the families who haven't answered."))
+        .catch(() => window.prompt("Copy these:", em.join(", ")));
+    };
+
+    return (
+      <div style={{maxWidth:1050,margin:"0 auto"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:6}}>
+          <div>
+            <h2 style={{margin:0,fontSize:20,fontWeight:800,color:C.gold}}>🏫 School teams</h2>
+            <div style={{fontSize:12,color:C.mut,marginTop:2}}>
+              <b style={{color:C.text}}>{answered.length}</b> of {eligible.length} answered · U13–U16
+              {!canViewTeams && <> · <span style={{color:C.gold,fontWeight:700}}>your teams only</span></>}
+            </div>
+          </div>
+          <div style={{flex:1}} />
+          {waiting.length > 0 && (
+            <button onClick={copyChasers}
+              style={{padding:"8px 14px",borderRadius:8,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontFamily:"inherit",fontSize:12,fontWeight:800,cursor:"pointer"}}>
+              Copy emails of the {waiting.length} who haven't answered
+            </button>
+          )}
+        </div>
+
+        <div style={{display:"flex",gap:7,flexWrap:"wrap",margin:"14px 0"}}>
+          {pill("all","Everyone",rows.length,C.mut)}
+          {pill("in","Made a team",made.length,C.grn)}
+          {pill("none","Didn't make one",notMade.length,"#f59e0b")}
+          {pill("waiting","No answer yet",waiting.length,C.red)}
+        </div>
+
+        <div style={{overflowX:"auto",background:C.card,border:"1px solid "+C.border,borderRadius:12}}>
+          <table style={{borderCollapse:"collapse",width:"100%",fontSize:12.5}}>
+            <thead><tr>{["Player","DS team","School","Grade","School team","Schedule","Answered"].map(h => (
+              <th key={h} style={{textAlign:"left",whiteSpace:"nowrap",padding:"9px 12px",borderBottom:"1px solid "+C.border,
+                fontSize:10,fontWeight:800,letterSpacing:0.4,textTransform:"uppercase",color:C.mut}}>{h}</th>
+            ))}</tr></thead>
+            <tbody>
+              {shown.map(({ p, r }) => (
+                <tr key={p.id} onClick={()=>setProfileId(p.id)} style={{cursor:"pointer"}}
+                  onMouseEnter={e=>e.currentTarget.style.background=C.bg}
+                  onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                  <td style={{padding:"7px 12px",borderBottom:"1px solid "+C.border,fontWeight:700,color:C.text,whiteSpace:"nowrap"}}>{p.first_name} {p.last_name}</td>
+                  <td style={{padding:"7px 12px",borderBottom:"1px solid "+C.border,color:C.mut,whiteSpace:"nowrap"}}>{p.team_assignment || "—"}</td>
+                  <td style={{padding:"7px 12px",borderBottom:"1px solid "+C.border,color:r?.school?C.text:C.mut}}>{r?.school || "—"}</td>
+                  <td style={{padding:"7px 12px",borderBottom:"1px solid "+C.border,color:C.mut,whiteSpace:"nowrap"}}>{r?.grade || "—"}</td>
+                  <td style={{padding:"7px 12px",borderBottom:"1px solid "+C.border,whiteSpace:"nowrap",
+                    color: !r ? C.mut : r.made_team === false ? "#f59e0b" : C.grn, fontWeight:700}}>
+                    {!r ? "—" : r.made_team === false ? "not this year" : (r.team_level || "yes")}
+                  </td>
+                  <td style={{padding:"7px 12px",borderBottom:"1px solid "+C.border,color:C.mut,maxWidth:280,
+                    overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={r?.schedule || ""}>{r?.schedule || "—"}</td>
+                  <td style={{padding:"7px 12px",borderBottom:"1px solid "+C.border,color:C.mut,whiteSpace:"nowrap",fontSize:11}}>
+                    {r ? new Date(r.updated_at).toLocaleDateString(undefined,{month:"short",day:"numeric"}) : ""}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {!shown.length && (
+          <div style={{padding:26,textAlign:"center",color:C.mut,fontSize:12.5}}>Nothing in that group.</div>
+        )}
+        <div style={{fontSize:11,color:C.mut,marginTop:8,fontStyle:"italic"}}>
+          Families answer through their own link — the same link edits their answer later, so a girl moving up from JV can correct it herself.
+        </div>
       </div>
     );
   }
@@ -27292,6 +27406,7 @@ export default function App() {
                 // they were the same operation. They now have their own block.
                 ...(canOps ? [{ title:"Operations", items:[
                   ["hdr","DS Elite · Club"],
+                  ["school","School Teams"],
                   ["incidentboard","Issue Board" + (incidents.filter(r => r.status === "open").length ? " (" + incidents.filter(r => r.status === "open").length + ")" : "")],
                   ["tracker","Tracker"], ["teamdir","All Teams"], ["playereval","Player Evaluations"], ["passing","Passer Ratings"], ["practice","Practice"], ["sa","S&A Schedule"], ["scholarships","Scholarships"],
                   ...(isAdmin ? [["hawaii","Hawaii"], ["travel","Travel"], ["finance","Finance"]] : []),
@@ -27524,6 +27639,7 @@ export default function App() {
         {view==="tryouts" && renderTryouts()}
         {view==="email" && renderEmailBlast()}
         {view==="messages" && renderMessages()}
+        {view==="school" && renderSchoolTeams()}
         {view==="incidents" && renderIncidents()}
         {view==="incidentboard" && (canOps ? renderIncidentBoard() : opsDenied)}
         {view==="coachcomms" && renderCoachComms()}

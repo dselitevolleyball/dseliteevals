@@ -6,6 +6,10 @@
     {
       "source": "/practice",
       "destination": "/practice-planner.html"
+    },
+    {
+      "source": "/school",
+      "destination": "/api/school-form"
     }
   ],
   "crons": [
