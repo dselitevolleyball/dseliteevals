@@ -26,21 +26,11 @@
 // Env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY.
 
 import { createClient } from "@supabase/supabase-js";
+import { GEAR_TEAMS as TEAMS } from "../shared/gear-teams.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;")
   .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-
-// Every team that orders gear, in roster order (oldest first) so a parent scans
-// down to their age group the way the club talks about them.
-export const TEAMS = [
-  "16 Diamond",
-  "15 Diamond", "15 Ruby", "15 Sapphire", "15 Emerald",
-  "14 Diamond", "14 Ruby", "14 Sapphire", "14 Emerald", "14 Topaz",
-  "13 Diamond", "13 Ruby", "13 Sapphire", "13 Emerald",
-  "12 Diamond", "12 Ruby",
-  "11 Diamond",
-];
 
 const SIZES_JERSEY  = ["Youth M", "Youth L", "XXXS", "XXS", "XS", "S", "M", "L", "XL", "XXL", "XXXL"];
 const SIZES_TEE     = ["Youth M", "Youth L", "Youth XL", "Adult S", "Adult M", "Adult L", "Adult XL"];

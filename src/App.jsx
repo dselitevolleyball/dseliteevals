@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from "rea
 import { supabase } from "./supabase";
 import Papa from "papaparse";
 import { DndContext, useDraggable, useDroppable, PointerSensor, TouchSensor, useSensor, useSensors } from "@dnd-kit/core";
+import { GEAR_TEAMS } from "../shared/gear-teams.js";
 
 const POSITIONS = ["S","OH","MB","RS","L","DS","U"];
 const POS_LABELS = {S:"Setter",OH:"Outside Hitter",MB:"Middle Blocker",RS:"Right Side",L:"Libero",DS:"Def Specialist",U:"Utility"};
@@ -1586,6 +1587,7 @@ export default function App() {
   const [gearOrders, setGearOrders]                  = useState([]);
   const [gearOrderFilter, setGearOrderFilter]        = useState("all");  // all | in | waiting | flagged
   const [gearOrderGroup, setGearOrderGroup]          = useState("team"); // team | flat
+  const [gearFillId, setGearFillId]                  = useState(null);   // whose form is open on this device
   const [incidents, setIncidents]                     = useState([]);
   const [incidentNotes, setIncidentNotes]             = useState([]);
   const [incidentOpenId, setIncidentOpenId]           = useState(null); // board detail drawer
@@ -9965,7 +9967,7 @@ export default function App() {
     const TERMINAL_OFFER = ["declined", "not_invited", "opted_out"];
     const eligible = players
       .filter(p => p.roster_status === "active" && (p.season || "2026-27") === "2026-27")
-      .filter(p => (p.team_assignment || "").trim() && !TERMINAL_OFFER.includes(p.offer_status || ""))
+      .filter(p => GEAR_TEAMS.includes(p.team_assignment) && !TERMINAL_OFFER.includes(p.offer_status || ""))
       .filter(p => canViewTeams || myTeamNames.includes(p.team_assignment));
     const byPlayer = new Map(gearOrders.map(r => [r.player_id, r]));
     // A family may correct the name, number or team we pre-filled. That is the
@@ -10002,6 +10004,12 @@ export default function App() {
     );
     const gearLink = (p) => p.gear_form_token
       ? (APP_URL.replace(/\/$/, "") + "/gear?t=" + p.gear_form_token) : null;
+    // Handing the tablet to a parent at the try-on table beats copying a link
+    // into a text message and hoping they open it before they leave the gym.
+    const fillHere = (p) => {
+      if (!p.gear_form_token) { window.alert("She has no form link yet — reload the page and try again."); return; }
+      setGearFillId(p.id);
+    };
     const copyLink = (p) => {
       const link = gearLink(p);
       if (!link) { window.alert("She has no form link yet — reload the page and try again."); return; }
@@ -10125,7 +10133,7 @@ export default function App() {
                           background:r?"transparent":C.bg}}>
                           <div style={{flex:1,minWidth:0}}>
                             <div style={{display:"flex",alignItems:"center",gap:6}}>
-                              <span onClick={()=>setProfileId(p.id)} title="Open player card"
+                              <span onClick={()=>fillHere(p)} title="Open her form on this device"
                                 style={{fontWeight:700,color:r?C.text:C.mut,fontSize:12.5,cursor:"pointer"}}>
                                 {p.first_name} {p.last_name}
                               </span>
@@ -10136,9 +10144,16 @@ export default function App() {
                             {r ? <div style={{marginTop:3}}>{sizeChips(r)}</div>
                                : <div style={{fontSize:11,color:C.mut,marginTop:1}}>no order yet</div>}
                           </div>
+                          <button onClick={()=>fillHere(p)} title="Fill her form in here, on this device"
+                            style={{padding:"2px 7px",borderRadius:6,border:"1px solid "+C.gold,background:"transparent",
+                              color:C.gold,fontFamily:"inherit",fontSize:10,fontWeight:800,cursor:"pointer",whiteSpace:"nowrap"}}>
+                            {r ? "edit" : "fill in"}</button>
                           <button onClick={()=>copyLink(p)} title="Copy her order link"
                             style={{padding:"2px 7px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",
                               color:C.mut,fontFamily:"inherit",fontSize:10,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>link</button>
+                          <button onClick={()=>setProfileId(p.id)} title="Open her player card"
+                            style={{padding:"2px 7px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",
+                              color:C.mut,fontFamily:"inherit",fontSize:10,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>card</button>
                         </div>
                       ))}
                     </div>
@@ -10151,7 +10166,7 @@ export default function App() {
 
         {gearOrderGroup === "flat" && <div style={{overflowX:"auto",background:C.card,border:"1px solid "+C.border,borderRadius:12}}>
           <table style={{borderCollapse:"collapse",width:"100%",fontSize:12}}>
-            <thead><tr>{["Player","#","Team",...GEAR_ITEMS.map(([,l]) => l),"Ordered"].map(h => (
+            <thead><tr>{["Player","#","Team",...GEAR_ITEMS.map(([,l]) => l),"Ordered",""].map(h => (
               <th key={h} style={{textAlign:"left",whiteSpace:"nowrap",padding:"9px 10px",borderBottom:"1px solid "+C.border,
                 fontSize:10,fontWeight:800,letterSpacing:0.4,textTransform:"uppercase",color:C.mut}}>{h}</th>
             ))}</tr></thead>
@@ -10173,6 +10188,11 @@ export default function App() {
                   <td style={{padding:"6px 10px",borderBottom:"1px solid "+C.border,color:C.mut,whiteSpace:"nowrap",fontSize:11}}>
                     {r ? new Date(r.updated_at).toLocaleDateString(undefined,{month:"short",day:"numeric"}) : ""}
                   </td>
+                  <td style={{padding:"6px 10px",borderBottom:"1px solid "+C.border,whiteSpace:"nowrap"}}>
+                    <button onClick={e=>{ e.stopPropagation(); fillHere(p); }} title="Fill her form in here, on this device"
+                      style={{padding:"2px 8px",borderRadius:6,border:"1px solid "+C.gold,background:"transparent",
+                        color:C.gold,fontFamily:"inherit",fontSize:10,fontWeight:800,cursor:"pointer"}}>{r ? "edit" : "fill in"}</button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -10181,8 +10201,42 @@ export default function App() {
         {gearOrderGroup === "flat" && !shown.length && (
           <div style={{padding:26,textAlign:"center",color:C.mut,fontSize:12.5}}>Nothing in that group.</div>
         )}
+        {gearFillId != null && (() => {
+          const fp = players.find(x => x.id === gearFillId);
+          if (!fp) return null;
+          const src = APP_URL.replace(/\/$/, "") + "/gear?t=" + fp.gear_form_token;
+          return (
+            <div onClick={()=>setGearFillId(null)}
+              style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.72)",zIndex:9000,
+                display:"flex",alignItems:"center",justifyContent:"center",padding:isNarrow?0:18}}>
+              <div onClick={e=>e.stopPropagation()}
+                style={{background:C.card,border:"1px solid "+C.border,borderRadius:isNarrow?0:14,
+                  width:"100%",maxWidth:680,height:isNarrow?"100%":"92vh",display:"flex",flexDirection:"column",overflow:"hidden"}}>
+                <div style={{display:"flex",alignItems:"center",gap:10,padding:"11px 14px",borderBottom:"1px solid "+C.border}}>
+                  <div style={{minWidth:0}}>
+                    <div style={{fontSize:14,fontWeight:800,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                      {fp.first_name} {fp.last_name}
+                    </div>
+                    <div style={{fontSize:11,color:C.mut}}>{fp.team_assignment} · her own order form</div>
+                  </div>
+                  <div style={{flex:1}} />
+                  <a href={src} target="_blank" rel="noreferrer" title="Open in a full tab instead"
+                    style={{padding:"5px 10px",borderRadius:7,border:"1px solid "+C.border,background:"transparent",
+                      color:C.mut,fontFamily:"inherit",fontSize:11,fontWeight:700,textDecoration:"none"}}>↗ tab</a>
+                  <button onClick={()=>setGearFillId(null)}
+                    style={{padding:"5px 12px",borderRadius:7,border:"1px solid "+C.gold,background:"transparent",
+                      color:C.gold,fontFamily:"inherit",fontSize:11,fontWeight:800,cursor:"pointer"}}>Done</button>
+                </div>
+                {/* The real form, not a copy of it — whatever a parent would see
+                    at home is what gets filled in here, and it saves the same way. */}
+                <iframe key={fp.id} src={src} title="Gear order form"
+                  style={{flex:1,width:"100%",border:"none",background:"#12100f"}} />
+              </div>
+            </div>
+          );
+        })()}
         <div style={{fontSize:11,color:C.mut,marginTop:8,fontStyle:"italic"}}>
-          Each family has their own link — the same link edits their order later, so a size change before we place the order fixes itself.
+          Tap a player to fill her form in right here — handy at the try-on table. Each family also has their own link, and it edits the same order, so a size change before we place the order fixes itself.
           “Changed something” is where a family corrected the name, number or team we pre-filled: worth a look before ordering.
         </div>
       </div>
@@ -11764,6 +11818,13 @@ export default function App() {
                   <span style={{color:C.gold,fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5}}>Jersey &amp; gear</span>
                   <span style={{fontSize:11,fontWeight:700,color:g?C.grn:C.mut}}>{g ? "ordered" : "no order yet"}</span>
                   <div style={{flex:1}} />
+                  {canOps && link && (
+                    <a href={link} target="_blank" rel="noreferrer"
+                      title="Open her order form — fill it in on this device"
+                      style={{padding:"3px 10px",borderRadius:7,border:"1px solid "+C.gold,background:"transparent",
+                        color:C.gold,fontFamily:"inherit",fontSize:10.5,fontWeight:800,textDecoration:"none"}}>
+                      {g ? "edit her order" : "fill it in"}</a>
+                  )}
                   {canOps && link && (
                     <button onClick={()=>{ navigator.clipboard?.writeText(link)
                         .then(()=>window.alert("Her order link copied — send it to the family."))

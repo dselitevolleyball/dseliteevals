@@ -25,7 +25,7 @@ import { createClient } from "@supabase/supabase-js";
 // The exact team list the form offers. Imported rather than repeated: a player
 // whose team is missing from the dropdown cannot submit the form at all, so the
 // send has to know the same list the page knows.
-import { TEAMS as FORM_TEAMS } from "../api/gear-form.js";
+import { GEAR_TEAMS as FORM_TEAMS } from "../shared/gear-teams.js";
 
 const APP_URL = "https://dseliteevals.vercel.app";
 const SENDER = { name: "Drew Rose", email: "drew@dselitevolleyball.com" };
@@ -76,8 +76,7 @@ const targets = players.filter(p =>
 
 // A player whose team isn't in the form's dropdown can't submit it at all —
 // team is a required field — so she is held back and named instead of being
-// sent to a dead end. Today that's the Rise teams, which the gear order list
-// doesn't include.
+// sent to a dead end. Today that's the Rise teams, which don't order this gear.
 const offForm = targets.filter(p => !FORM_TEAMS.includes(p.team_assignment));
 const sendable = targets.filter(p => FORM_TEAMS.includes(p.team_assignment));
 
@@ -138,8 +137,8 @@ console.log(`${jobs.length} emails, ${new Set(jobs.flatMap(j => j.recipients)).s
 if (offForm.length) {
   const teams = [...new Set(offForm.map(p => p.team_assignment))].sort();
   console.log(`
-⚠ ${offForm.length} held back — their team isn't on the form: ${teams.join(", ")}`);
-  console.log("   Add the team to TEAMS in api/gear-form.js, or leave them out on purpose.");
+${offForm.length} held back — not on the gear order list: ${teams.join(", ")}`);
+  console.log("   Rise is excluded on purpose. Any OTHER team here needs adding to shared/gear-teams.js.");
 }
 if (noEmail.length) {
   console.log(`\n⚠ ${noEmail.length} with NO email on file — these need chasing another way:`);
