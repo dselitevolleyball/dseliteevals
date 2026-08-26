@@ -15,6 +15,10 @@
 // Sizes are validated against the same lists the form offers, so the order that
 // reaches the vendor can't contain a value nobody sells.
 //
+// GET /gear?preview=1 renders the same page with no player and no saving, so
+// staff can look at what families get without opening a real family's order and
+// risking a submission in their name.
+//
 // Product photos are optional files under public/gear/<key>.jpg. A missing one
 // removes itself rather than showing a broken image, so the form works before
 // the photos are dropped in.
@@ -143,6 +147,21 @@ export default async function handler(req, res) {
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("X-Robots-Tag", "noindex");
 
+  // Staff preview. No token, no player, no write — the page and nothing else.
+  if (String((req.query && req.query.preview) || "") === "1") {
+    if (req.method === "POST") {
+      return res.status(200).send(page(`
+        <span class="eyebrow">DS Elite Volleyball</span>
+        <h1>Nothing saved</h1>
+        <div class="card">
+          <div class="note">This is the staff preview, so submitting does nothing. A family opening their own link would have their order recorded.</div>
+          <p style="margin:16px 0 0"><a href="/gear?preview=1" style="color:var(--gold)">Back to the preview</a></p>
+        </div>`, { title: "Preview — gear order — DS Elite" }));
+    }
+    return res.status(200).send(renderForm(
+      { first_name: "", last_name: "", team_assignment: "", jersey_number: "" }, {}, { preview: true }));
+  }
+
   if (!UUID_RE.test(token)) return res.status(400).send(notFound("That link is missing its code, or it was cut in half by the email app."));
 
   const { data: player } = await supabase
@@ -224,7 +243,7 @@ export default async function handler(req, res) {
   return res.status(200).send(renderForm(player, prev || {}, {}));
 }
 
-function renderForm(player, v, { error } = {}) {
+function renderForm(player, v, { error, preview } = {}) {
   const sel = (val, cur) => val === cur ? " selected" : "";
   const has = (k) => v && v[k] != null && v[k] !== "";
   // Roster values are the default; anything the family already submitted wins,
@@ -252,10 +271,12 @@ function renderForm(player, v, { error } = {}) {
   return page(`
   <span class="eyebrow">DS Elite Volleyball</span>
   <h1>Jersey &amp; gear order</h1>
-  <p class="sub">For <b style="color:var(--ink)">${esc(player.first_name)} ${esc(player.last_name)}</b>${player.team_assignment ? " · " + esc(player.team_assignment) : ""}.
-  ${submitted
-    ? `<span style="color:var(--gold)">You've already sent this in — this is your saved order. Change anything and send it again.</span>`
-    : "Use the worksheet you were given at try-ons."}</p>
+  <p class="sub">${preview
+    ? `<span style="color:var(--gold)">Preview — this is exactly what a family sees, except theirs arrives with her name, number and team already filled in. Nothing you enter here is saved.</span>`
+    : `For <b style="color:var(--ink)">${esc(player.first_name)} ${esc(player.last_name)}</b>${player.team_assignment ? " · " + esc(player.team_assignment) : ""}.
+       ${submitted
+         ? `<span style="color:var(--gold)">You've already sent this in — this is your saved order. Change anything and send it again.</span>`
+         : "Use the worksheet you were given at try-ons."}`}</p>
 
   <form method="POST" id="f">
     ${error ? `<div class="err">${esc(error)}</div>` : ""}
@@ -307,5 +328,5 @@ function renderForm(player, v, { error } = {}) {
     <p class="hint" style="text-align:center">All gear is provided by DS Elite except shoes.</p>
   </form>
   <div class="foot">Questions? Coach Kristen — kristen@dselitevolleyball.com</div>`,
-  { title: player.first_name + " — gear order — DS Elite" });
+  { title: preview ? "Preview — gear order — DS Elite" : player.first_name + " — gear order — DS Elite" });
 }

@@ -10062,6 +10062,12 @@ export default function App() {
             </div>
           </div>
           <div style={{flex:1}} />
+          {/* Opens the form with no player attached, so looking at it can't
+              submit an order in some family's name. */}
+          <a href={APP_URL.replace(/\/$/, "") + "/gear?preview=1"} target="_blank" rel="noreferrer"
+            title="Open the order form exactly as families see it — nothing you do there is saved"
+            style={{padding:"8px 14px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",
+              color:C.mut,fontFamily:"inherit",fontSize:12,fontWeight:800,cursor:"pointer",textDecoration:"none"}}>👁 Show me the form</a>
           <button onClick={exportOrder}
             style={{padding:"8px 14px",borderRadius:8,border:"none",background:C.gold,color:"#1a1613",
               fontFamily:"inherit",fontSize:12,fontWeight:800,cursor:"pointer"}}>⬇ Order sheet (CSV)</button>
