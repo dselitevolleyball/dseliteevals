@@ -15,7 +15,7 @@
 // Sizes are validated against the same lists the form offers, so the order that
 // reaches the vendor can't contain a value nobody sells.
 //
-// Product photos are optional files under public/gear/<key>.png. A missing one
+// Product photos are optional files under public/gear/<key>.jpg. A missing one
 // removes itself rather than showing a broken image, so the form works before
 // the photos are dropped in.
 //
@@ -238,7 +238,7 @@ function renderForm(player, v, { error } = {}) {
 
   const itemHtml = (it) => `
     <div class="item">
-      <div class="pic"><img src="/gear/${it.img}.png" alt="" loading="lazy" onerror="this.parentNode.remove()"></div>
+      <div class="pic"><img src="/gear/${it.img}.jpg" alt="" loading="lazy" onerror="this.parentNode.remove()"></div>
       <div class="fields">
         <label><span class="lb">${esc(it.label)} <span class="req">*</span></span>
           <select name="${it.key}" required>
