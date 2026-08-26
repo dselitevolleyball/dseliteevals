@@ -10033,13 +10033,13 @@ export default function App() {
       const rowsOut = [[
         "Team","Jersey #","First Name","Last Name",
         ...GEAR_ITEMS.map(([,label]) => label),
-        "Confirmed worksheet","Shoe invoice OK","Notes","Differs from roster","Submitted",
+        "Details confirmed","Shoe invoice OK","Notes","Differs from roster","Submitted",
       ]];
       list.forEach(({ p, r, flags }) => {
         rowsOut.push([
           r.team_name || p.team_assignment || "", r.jersey_number ?? "", r.first_name || "", r.last_name || "",
           ...GEAR_ITEMS.map(([k]) => r[k] || ""),
-          r.worksheet_confirmed ? "Yes" : "No", r.shoe_invoice_ack ? "Yes" : "No",
+          r.details_confirmed ? "Yes" : "No", r.shoe_invoice_ack ? "Yes" : "No",
           r.notes || "", flags.join("; "),
           r.updated_at ? new Date(r.updated_at).toLocaleDateString() : "",
         ]);
@@ -11860,7 +11860,7 @@ export default function App() {
                     )}
                     <div style={{fontSize:10,color:C.mut,marginTop:8}}>
                       Sent {new Date(g.updated_at).toLocaleDateString(undefined,{month:"short",day:"numeric"})}
-                      {g.worksheet_confirmed ? " · worksheet confirmed" : " · worksheet NOT confirmed"}
+                      {g.details_confirmed ? " · name, number and team confirmed" : " · NOT confirmed"}
                     </div>
                   </>
                 )}

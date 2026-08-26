@@ -6,8 +6,8 @@
 //
 // Replaces the Google Form. The three fields that ruin an order — last-name
 // spelling, jersey number, team — come pre-filled from our own roster, so the
-// parent confirms instead of transcribing a paper worksheet, and anything they
-// change is visible to us as a change rather than as a mystery.
+// parent checks our details instead of retyping them, and anything they change
+// is visible to us as a change rather than as a mystery.
 //
 // Deliberately NOT part of the React app: the app is behind a login, and this
 // has to open from an email on a phone with no account and no install.
@@ -178,7 +178,7 @@ export default async function handler(req, res) {
       last_name: String(body?.last_name || "").trim().slice(0, 80) || null,
       jersey_number: String(body?.jersey_number || "").trim().slice(0, 10) || null,
       team_name: pick("team_name", TEAMS),
-      worksheet_confirmed: !!body?.worksheet_confirmed,
+      details_confirmed: !!body?.details_confirmed,
       shoe_invoice_ack: !!body?.shoe_invoice_ack,
       notes: String(body?.notes || "").trim().slice(0, 2000) || null,
       // A family filling in their own order clears any correction we made on
@@ -194,7 +194,7 @@ export default async function handler(req, res) {
     if (!row.jersey_number) missing.push("jersey number");
     if (!row.team_name) missing.push("team");
     for (const it of ITEMS) if (!row[it.key]) missing.push(it.label.toLowerCase());
-    if (!row.worksheet_confirmed) missing.push("the confirmation box");
+    if (!row.details_confirmed) missing.push("the confirmation box");
 
     if (missing.length) {
       return res.status(200).send(renderForm(player, { ...prev, ...row }, {
@@ -237,7 +237,7 @@ function renderForm(player, v, { error, preview } = {}) {
   const sel = (val, cur) => val === cur ? " selected" : "";
   const has = (k) => v && v[k] != null && v[k] !== "";
   // Roster values are the default; anything the family already submitted wins,
-  // because they were looking at the worksheet and we were not.
+  // because they know how her name is spelled and we only think we do.
   const firstName = has("first_name") ? v.first_name : (player.first_name || "");
   const lastName = has("last_name") ? v.last_name : (player.last_name || "");
   const jersey = has("jersey_number") ? v.jersey_number
@@ -266,15 +266,16 @@ function renderForm(player, v, { error, preview } = {}) {
     : `For <b style="color:var(--ink)">${esc(player.first_name)} ${esc(player.last_name)}</b>${player.team_assignment ? " · " + esc(player.team_assignment) : ""}.
        ${submitted
          ? `<span style="color:var(--gold)">You've already sent this in — this is your saved order. Change anything and send it again.</span>`
-         : "Use the worksheet you were given at try-ons."}`}</p>
+         : "Takes a couple of minutes."}`}</p>
 
   <form method="POST" id="f">
     ${error ? `<div class="err">${esc(error)}</div>` : ""}
 
     <div class="card">
-      <p class="sect">Check these three against your worksheet</p>
+      <p class="sect">Check these three before you send</p>
       <div class="note">
-        We order from exactly what's below, so it has to match your worksheet:
+        These come from our roster. We order from exactly what's below, so if any of it
+        is wrong, fix it here:
         <ul>
           <li>spelling of the player's last name</li>
           <li>jersey number</li>
@@ -294,8 +295,8 @@ function renderForm(player, v, { error, preview } = {}) {
           ${TEAMS.map(t => `<option${sel(t, team)}>${esc(t)}</option>`).join("")}
         </select></label>
       <label class="chk" style="margin-bottom:0">
-        <input type="checkbox" name="worksheet_confirmed" value="1" required${v.worksheet_confirmed ? " checked" : ""}>
-        <span>I've checked the last name spelling, jersey number, and team above against our worksheet. <span class="req">*</span></span>
+        <input type="checkbox" name="details_confirmed" value="1" required${v.details_confirmed ? " checked" : ""}>
+        <span>I've checked her last name spelling, jersey number, and team above, and they're right. <span class="req">*</span></span>
       </label>
     </div>
 

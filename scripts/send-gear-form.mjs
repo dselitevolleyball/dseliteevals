@@ -94,13 +94,13 @@ const bodyFor = (p) => `${greeting(p)}
 
 Gear try-ons are done, so here's ${p.first_name}'s order form. It should take a couple of minutes.
 
-Use the worksheet you were given at try-ons. We order from exactly what you enter, so please check these three against it before you send:
+We order from exactly what you send us, so before you hit submit, please check these three:
 
   1. spelling of her last name
   2. her jersey number
   3. her team
 
-Her name, number and team are already filled in from our roster — if any of it doesn't match your worksheet, change it on the form and we'll sort it out.
+All three come pre-filled from our roster, so most families just need to glance at them. If any of it is wrong — a misspelling, the wrong number — change it on the form and we'll sort it out.
 
 Here's her form. The link is hers, so there's nothing to log into:
 
