@@ -105,6 +105,25 @@ const COVERAGE_SUBS = ["15-2 Assistant Coach"];
 // into two groups on the board.
 const SCHOOL_GRADES = ["6th", "7th", "8th", "9th", "10th", "11th", "12th"];
 const SCHOOL_LEVELS = ["Varsity", "JV", "Freshman", "Flex", "8th A", "8th B", "7th A", "7th B", "Other"];
+// ── Jersey & gear order ──────────────────────────────────────────────────
+// The items the public order form asks about (api/gear-form.js), in the same
+// order, keyed to the columns they're saved in. One list drives the board, the
+// player card, and the CSV the order is placed from — so an item can never
+// appear on the form and quietly go missing from the sheet we hand the vendor.
+const GEAR_ITEMS = [
+  ["jersey_size",       "Jersey"],
+  ["warmup_tee_size",   "Warm-Up Tee"],
+  ["practice_tee_size", "Practice Tee"],
+  ["hoodie_size",       "Hoodie"],
+  ["spandex_size",      "Spandex"],
+  ["spandex_length",    "Inseam"],
+  ["jogger_size",       "Joggers"],
+  ["kneepad_size",      "Kneepads"],
+  ["sock_size",         "Socks"],
+  ["arm_sleeve_size",   "Arm Sleeves"],
+  ["shoe_size",         "Shoe"],
+];
+
 // ── Parent contacts ──────────────────────────────────────────────────────
 // A player carries up to three parent/guardian addresses, and every one of them
 // gets everything: a household that splits shouldn't cost somebody the schedule.
@@ -1564,6 +1583,9 @@ export default function App() {
   const [schoolEditId, setSchoolEditId]               = useState(null);    // player card: whose answer staff is correcting
   const [schoolRenaming, setSchoolRenaming]          = useState(null);    // school board: which group's name is being retyped
   const [schoolRenameText, setSchoolRenameText]      = useState("");
+  const [gearOrders, setGearOrders]                  = useState([]);
+  const [gearOrderFilter, setGearOrderFilter]        = useState("all");  // all | in | waiting | flagged
+  const [gearOrderGroup, setGearOrderGroup]          = useState("team"); // team | flat
   const [incidents, setIncidents]                     = useState([]);
   const [incidentNotes, setIncidentNotes]             = useState([]);
   const [incidentOpenId, setIncidentOpenId]           = useState(null); // board detail drawer
@@ -1974,7 +1996,7 @@ export default function App() {
   // email we send them. Every admin control inside renderDsysa — add/cancel a
   // date, set the lead, remove someone else's signup — is separately gated on
   // isAdmin, so opening the view exposes no admin action.
-  const OPS_VIEWS = new Set(["school","incidentboard","tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","timecards","gear","staffing","roster","hawaii","travel","finance","dssccal","pods"]);
+  const OPS_VIEWS = new Set(["school","playergear","incidentboard","tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","timecards","gear","staffing","roster","hawaii","travel","finance","dssccal","pods"]);
   const canOps    = isAdmin || isOwner;
   const opsDenied = <div style={{padding:24,color:C.mut,textAlign:"center"}}>This section is restricted to administrators. Ask the club administrator (Drew) for access.</div>;
   // Once a player has accepted (or is locked/signed) onto a team, they're
@@ -2294,6 +2316,12 @@ export default function App() {
     if (error) { console.error("Load school_team_reports error:", error); return; }
     setSchoolReports(data || []);
   }, []);
+  const loadGearOrders = useCallback(async () => {
+    const { data, error } = await supabase.from("player_gear_orders").select("*")
+      .order("updated_at", { ascending: false });
+    if (error) { console.error("Load player_gear_orders error:", error); return; }
+    setGearOrders(data || []);
+  }, []);
   // Every school name already on the board, most common first. Offered as the
   // autocomplete list wherever staff types one, so the second correction lands
   // on the same string as the first instead of inventing a fourth spelling.
@@ -2415,6 +2443,7 @@ export default function App() {
 
   useEffect(() => { if (isApproved) { loadPlayers(); loadRankings(); loadIncidents(); loadIncidentNotes(); } }, [isApproved, loadPlayers, loadRankings, loadIncidents, loadIncidentNotes]);
   useEffect(() => { if (isApproved) loadSchoolReports(); }, [isApproved, loadSchoolReports]);
+  useEffect(() => { if (isApproved) loadGearOrders(); }, [isApproved, loadGearOrders]);
   // loadTeamsList is declared further down, so naming it here would be a TDZ
   // crash on load; the evaluations view picks the roster up from the effect
   // that already loads it alongside the other team data.
@@ -2663,6 +2692,7 @@ export default function App() {
       .on("postgres_changes", { event: "*", schema: "public", table: "player_incidents" }, () => { loadIncidents(); })
       .on("postgres_changes", { event: "*", schema: "public", table: "player_incident_notes" }, () => { loadIncidentNotes(); })
       .on("postgres_changes", { event: "*", schema: "public", table: "school_team_reports" }, () => { loadSchoolReports(); })
+      .on("postgres_changes", { event: "*", schema: "public", table: "player_gear_orders" }, () => { loadGearOrders(); })
       .subscribe();
     const coachChannel = supabase
       .channel("realtime-coaches")
@@ -2724,7 +2754,7 @@ export default function App() {
       supabase.removeChannel(coachFloatsChannel);
       supabase.removeChannel(coverageChannel);
     };
-  }, [isApproved, loadIncidents, loadIncidentNotes, loadSchoolReports, loadCoaches, loadRankings, loadTeamStatus, loadTeamTasks, loadTeamQuestions, loadTaskMeta, loadUpdates, loadPracticeApprovals, loadCoachRequests, loadCoachFloats, loadPracticeCoverage, loadPracticeCancellations]);
+  }, [isApproved, loadIncidents, loadIncidentNotes, loadSchoolReports, loadGearOrders, loadCoaches, loadRankings, loadTeamStatus, loadTeamTasks, loadTeamQuestions, loadTaskMeta, loadUpdates, loadPracticeApprovals, loadCoachRequests, loadCoachFloats, loadPracticeCoverage, loadPracticeCancellations]);
 
   // Activity feed live updates — only subscribe while that tab is open, since
   // change_log INSERTs fire on every player write and the feed is otherwise
@@ -9928,6 +9958,231 @@ export default function App() {
     );
   }
 
+  // ── Jersey & gear orders ────────────────────────────────────────────────
+  // What came back from the public order form. The screen exists for two
+  // questions: who hasn't ordered yet, and what do we hand the vendor.
+  function renderPlayerGear() {
+    const TERMINAL_OFFER = ["declined", "not_invited", "opted_out"];
+    const eligible = players
+      .filter(p => p.roster_status === "active" && (p.season || "2026-27") === "2026-27")
+      .filter(p => (p.team_assignment || "").trim() && !TERMINAL_OFFER.includes(p.offer_status || ""))
+      .filter(p => canViewTeams || myTeamNames.includes(p.team_assignment));
+    const byPlayer = new Map(gearOrders.map(r => [r.player_id, r]));
+    // A family may correct the name, number or team we pre-filled. That is the
+    // point of the form — but it's also the thing to look at before ordering,
+    // so it's called out rather than silently accepted.
+    const nrm = (x) => String(x ?? "").trim().toLowerCase();
+    const flagsFor = (p, r) => {
+      if (!r) return [];
+      const out = [];
+      if (nrm(r.last_name) !== nrm(p.last_name)) out.push("last name → " + (r.last_name || "(blank)"));
+      if (nrm(r.jersey_number) !== nrm(p.jersey_number)) out.push("number → " + (r.jersey_number || "(blank)"));
+      if (nrm(r.team_name) !== nrm(p.team_assignment)) out.push("team → " + (r.team_name || "(blank)"));
+      return out;
+    };
+    const rows = eligible.map(p => { const r = byPlayer.get(p.id); return { p, r, flags: flagsFor(p, r) }; });
+    const ordered = rows.filter(x => x.r);
+    const waiting = rows.filter(x => !x.r);
+    const flagged = ordered.filter(x => x.flags.length);
+
+    const shown = (gearOrderFilter === "in" ? ordered
+                : gearOrderFilter === "waiting" ? waiting
+                : gearOrderFilter === "flagged" ? flagged
+                : rows)
+      .slice().sort((a,b) => (a.p.team_assignment||"").localeCompare(b.p.team_assignment||"")
+        || (a.p.last_name||"").localeCompare(b.p.last_name||""));
+
+    const pill = (k, label, n, color) => (
+      <button key={k} onClick={()=>setGearOrderFilter(k)}
+        style={{padding:"6px 12px",borderRadius:8,cursor:"pointer",fontFamily:"inherit",fontSize:11.5,fontWeight:700,
+          border:"1px solid "+(gearOrderFilter===k?color:C.border),
+          background:gearOrderFilter===k?color+"1e":"transparent", color:gearOrderFilter===k?color:C.mut}}>
+        {label} <b style={{color:gearOrderFilter===k?color:C.text}}>{n}</b>
+      </button>
+    );
+    const gearLink = (p) => p.gear_form_token
+      ? (APP_URL.replace(/\/$/, "") + "/gear?t=" + p.gear_form_token) : null;
+    const copyLink = (p) => {
+      const link = gearLink(p);
+      if (!link) { window.alert("She has no form link yet — reload the page and try again."); return; }
+      navigator.clipboard?.writeText(link)
+        .then(()=>window.alert("Her order link copied — send it to the family."))
+        .catch(()=>window.prompt("Her order link:", link));
+    };
+    const copyChasers = () => {
+      const em = [...new Set(waiting.flatMap(x => parentEmailsOf(x.p)))];
+      if (!em.length) { window.alert("Everyone has ordered."); return; }
+      navigator.clipboard?.writeText(em.join(", "))
+        .then(() => window.alert(em.length + " addresses copied — the families who haven't ordered."))
+        .catch(() => window.prompt("Copy these:", em.join(", ")));
+    };
+    // The sheet the order is actually placed from: only families who answered,
+    // and the values THEY confirmed, not the roster's.
+    const exportOrder = () => {
+      const list = ordered.slice().sort((a,b) => (a.r.team_name||"").localeCompare(b.r.team_name||"")
+        || (a.r.last_name||"").localeCompare(b.r.last_name||""));
+      if (!list.length) { window.alert("No orders in yet."); return; }
+      const rowsOut = [[
+        "Team","Jersey #","First Name","Last Name",
+        ...GEAR_ITEMS.map(([,label]) => label),
+        "Confirmed worksheet","Shoe invoice OK","Notes","Differs from roster","Submitted",
+      ]];
+      list.forEach(({ p, r, flags }) => {
+        rowsOut.push([
+          r.team_name || p.team_assignment || "", r.jersey_number ?? "", r.first_name || "", r.last_name || "",
+          ...GEAR_ITEMS.map(([k]) => r[k] || ""),
+          r.worksheet_confirmed ? "Yes" : "No", r.shoe_invoice_ack ? "Yes" : "No",
+          r.notes || "", flags.join("; "),
+          r.updated_at ? new Date(r.updated_at).toLocaleDateString() : "",
+        ]);
+      });
+      downloadCSV("dselite-gear-order.csv", rowsOut);
+    };
+
+    const sizeChips = (r) => (
+      <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+        {GEAR_ITEMS.map(([k, label]) => (
+          <span key={k} title={label}
+            style={{fontSize:9.5,fontWeight:700,padding:"1px 5px",borderRadius:5,
+              border:"1px solid "+C.border,color:r[k]?C.text:C.mut}}>
+            {label.split(" ")[0]} <b style={{color:r[k]?C.gold:C.mut}}>{r[k] || "—"}</b>
+          </span>
+        ))}
+      </div>
+    );
+
+    return (
+      <div style={{maxWidth:1100,margin:"0 auto"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:6}}>
+          <div>
+            <h2 style={{margin:0,fontSize:20,fontWeight:800,color:C.gold}}>👕 Jersey &amp; gear orders</h2>
+            <div style={{fontSize:12,color:C.mut,marginTop:2}}>
+              <b style={{color:C.text}}>{ordered.length}</b> of {eligible.length} ordered
+              {!canViewTeams && <> · <span style={{color:C.gold,fontWeight:700}}>your teams only</span></>}
+            </div>
+          </div>
+          <div style={{flex:1}} />
+          <button onClick={exportOrder}
+            style={{padding:"8px 14px",borderRadius:8,border:"none",background:C.gold,color:"#1a1613",
+              fontFamily:"inherit",fontSize:12,fontWeight:800,cursor:"pointer"}}>⬇ Order sheet (CSV)</button>
+          {waiting.length > 0 && (
+            <button onClick={copyChasers}
+              style={{padding:"8px 14px",borderRadius:8,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontFamily:"inherit",fontSize:12,fontWeight:800,cursor:"pointer"}}>
+              Copy emails of the {waiting.length} who haven't
+            </button>
+          )}
+        </div>
+
+        <div style={{display:"flex",gap:7,flexWrap:"wrap",margin:"14px 0"}}>
+          {pill("all","Everyone",rows.length,C.mut)}
+          {pill("in","Ordered",ordered.length,C.grn)}
+          {pill("waiting","Not yet",waiting.length,C.red)}
+          {pill("flagged","Changed something",flagged.length,"#f59e0b")}
+        </div>
+
+        <div style={{display:"flex",gap:7,flexWrap:"wrap",marginBottom:14}}>
+          <span style={{fontSize:11,color:C.mut,alignSelf:"center",marginRight:2}}>Group by</span>
+          {[["team","Team"],["flat","No grouping"]].map(([k,label]) => (
+            <button key={k} onClick={()=>setGearOrderGroup(k)}
+              style={{padding:"5px 11px",borderRadius:7,cursor:"pointer",fontFamily:"inherit",fontSize:11.5,fontWeight:700,
+                border:"1px solid "+(gearOrderGroup===k?C.gold:C.border),
+                background:gearOrderGroup===k?"rgba(224,180,85,0.14)":"transparent",
+                color:gearOrderGroup===k?C.gold:C.mut}}>{label}</button>
+          ))}
+        </div>
+
+        {gearOrderGroup === "team" && (() => {
+          const groups = new Map();
+          for (const x of shown) {
+            const k = x.p.team_assignment || "(no team)";
+            if (!groups.has(k)) groups.set(k, []);
+            groups.get(k).push(x);
+          }
+          const ordered2 = [...groups.entries()].sort((a,b) => {
+            const ag = parseInt(a[0]) || 99, bg = parseInt(b[0]) || 99;
+            return ag - bg || a[0].localeCompare(b[0]);
+          });
+          if (!ordered2.length) return <div style={{padding:26,textAlign:"center",color:C.mut,fontSize:12.5}}>Nothing in that group.</div>;
+          return (
+            <div style={{display:"grid",gridTemplateColumns:isNarrow?"1fr":"repeat(auto-fill,minmax(430px,1fr))",gap:12}}>
+              {ordered2.map(([team, list]) => {
+                const inN = list.filter(x => x.r).length;
+                return (
+                  <div key={team} style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:"12px 14px"}}>
+                    <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:9,flexWrap:"wrap"}}>
+                      <span style={{fontSize:13.5,fontWeight:800,color:C.gold}}>{team}</span>
+                      <span style={{fontSize:11,color:inN===list.length?C.grn:C.mut}}>{inN} of {list.length} in</span>
+                    </div>
+                    <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                      {list.map(({ p, r, flags }) => (
+                        <div key={p.id} style={{display:"flex",gap:8,alignItems:"flex-start",padding:"5px 6px",borderRadius:6,
+                          background:r?"transparent":C.bg}}>
+                          <div style={{flex:1,minWidth:0}}>
+                            <div style={{display:"flex",alignItems:"center",gap:6}}>
+                              <span onClick={()=>setProfileId(p.id)} title="Open player card"
+                                style={{fontWeight:700,color:r?C.text:C.mut,fontSize:12.5,cursor:"pointer"}}>
+                                {p.first_name} {p.last_name}
+                              </span>
+                              {r?.jersey_number && <span style={{fontSize:10.5,color:C.mut}}>#{r.jersey_number}</span>}
+                              {!!flags.length && <span title={"Differs from the roster: " + flags.join(", ")}
+                                style={{fontSize:10,fontWeight:800,color:"#f59e0b"}}>⚠ changed</span>}
+                            </div>
+                            {r ? <div style={{marginTop:3}}>{sizeChips(r)}</div>
+                               : <div style={{fontSize:11,color:C.mut,marginTop:1}}>no order yet</div>}
+                          </div>
+                          <button onClick={()=>copyLink(p)} title="Copy her order link"
+                            style={{padding:"2px 7px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",
+                              color:C.mut,fontFamily:"inherit",fontSize:10,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>link</button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
+
+        {gearOrderGroup === "flat" && <div style={{overflowX:"auto",background:C.card,border:"1px solid "+C.border,borderRadius:12}}>
+          <table style={{borderCollapse:"collapse",width:"100%",fontSize:12}}>
+            <thead><tr>{["Player","#","Team",...GEAR_ITEMS.map(([,l]) => l),"Ordered"].map(h => (
+              <th key={h} style={{textAlign:"left",whiteSpace:"nowrap",padding:"9px 10px",borderBottom:"1px solid "+C.border,
+                fontSize:10,fontWeight:800,letterSpacing:0.4,textTransform:"uppercase",color:C.mut}}>{h}</th>
+            ))}</tr></thead>
+            <tbody>
+              {shown.map(({ p, r, flags }) => (
+                <tr key={p.id} onClick={()=>setProfileId(p.id)} style={{cursor:"pointer"}}
+                  onMouseEnter={e=>e.currentTarget.style.background=C.bg}
+                  onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                  <td style={{padding:"6px 10px",borderBottom:"1px solid "+C.border,fontWeight:700,color:C.text,whiteSpace:"nowrap"}}>
+                    {r?.first_name || p.first_name} {r?.last_name || p.last_name}
+                    {!!flags.length && <span title={"Differs from the roster: " + flags.join(", ")} style={{marginLeft:5,color:"#f59e0b"}}>⚠</span>}
+                  </td>
+                  <td style={{padding:"6px 10px",borderBottom:"1px solid "+C.border,color:C.mut,whiteSpace:"nowrap"}}>{r?.jersey_number ?? p.jersey_number ?? "—"}</td>
+                  <td style={{padding:"6px 10px",borderBottom:"1px solid "+C.border,color:C.mut,whiteSpace:"nowrap"}}>{r?.team_name || p.team_assignment || "—"}</td>
+                  {GEAR_ITEMS.map(([k]) => (
+                    <td key={k} style={{padding:"6px 10px",borderBottom:"1px solid "+C.border,whiteSpace:"nowrap",
+                      color:r?.[k]?C.text:C.mut}}>{r?.[k] || "—"}</td>
+                  ))}
+                  <td style={{padding:"6px 10px",borderBottom:"1px solid "+C.border,color:C.mut,whiteSpace:"nowrap",fontSize:11}}>
+                    {r ? new Date(r.updated_at).toLocaleDateString(undefined,{month:"short",day:"numeric"}) : ""}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>}
+        {gearOrderGroup === "flat" && !shown.length && (
+          <div style={{padding:26,textAlign:"center",color:C.mut,fontSize:12.5}}>Nothing in that group.</div>
+        )}
+        <div style={{fontSize:11,color:C.mut,marginTop:8,fontStyle:"italic"}}>
+          Each family has their own link — the same link edits their order later, so a size change before we place the order fixes itself.
+          “Changed something” is where a family corrected the name, number or team we pre-filled: worth a look before ordering.
+        </div>
+      </div>
+    );
+  }
+
   function renderIncidents() {
     const mine = incidents.filter(incidentVisible);
     const live = (r) => r.status === "open" || r.status === "monitoring";
@@ -11478,6 +11733,67 @@ export default function App() {
                     <div style={{fontSize:10,color:C.mut,marginTop:8}}>
                       Answered {new Date(r.updated_at).toLocaleDateString(undefined,{month:"short",day:"numeric"})} — the family can update it any time from their link.
                       {r.edited_by ? " Last corrected here by " + r.edited_by + "." : ""}
+                    </div>
+                  </>
+                )}
+              </div>
+            );
+          })()}
+          {/* Jersey & gear — the order the family sent in. Read-only here: the
+              same link they used still edits it, and until we place the order
+              their answer is the order. */}
+          {(() => {
+            const g = gearOrders.find(x => x.player_id === p.id);
+            const link = p.gear_form_token ? (APP_URL.replace(/\/$/, "") + "/gear?t=" + p.gear_form_token) : null;
+            if (!g && !canOps) return null;
+            const nrm = (x) => String(x ?? "").trim().toLowerCase();
+            const flags = !g ? [] : [
+              nrm(g.last_name) !== nrm(p.last_name) ? "last name → " + (g.last_name || "(blank)") : null,
+              nrm(g.jersey_number) !== nrm(p.jersey_number) ? "number → " + (g.jersey_number || "(blank)") : null,
+              nrm(g.team_name) !== nrm(p.team_assignment) ? "team → " + (g.team_name || "(blank)") : null,
+            ].filter(Boolean);
+            return (
+              <div style={{marginTop:24,paddingTop:16,borderTop:"1px solid "+C.border}}>
+                <div style={{display:"flex",alignItems:"center",gap:9,flexWrap:"wrap",marginBottom:10}}>
+                  <span style={{color:C.gold,fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5}}>Jersey &amp; gear</span>
+                  <span style={{fontSize:11,fontWeight:700,color:g?C.grn:C.mut}}>{g ? "ordered" : "no order yet"}</span>
+                  <div style={{flex:1}} />
+                  {canOps && link && (
+                    <button onClick={()=>{ navigator.clipboard?.writeText(link)
+                        .then(()=>window.alert("Her order link copied — send it to the family."))
+                        .catch(()=>window.prompt("Her order link:", link)); }}
+                      title="Copy this player's own gear order link"
+                      style={{padding:"3px 10px",borderRadius:7,border:"1px solid "+C.border,background:"transparent",
+                        color:C.mut,fontFamily:"inherit",fontSize:10.5,fontWeight:700,cursor:"pointer"}}>copy her link</button>
+                  )}
+                </div>
+                {!g && <div style={{fontSize:12,color:C.mut}}>Her family hasn't sent the order form back yet.</div>}
+                {g && (
+                  <>
+                    {!!flags.length && (
+                      <div style={{fontSize:11,color:"#f59e0b",marginBottom:8}}>
+                        ⚠ The family changed what we pre-filled: {flags.join(" · ")}
+                      </div>
+                    )}
+                    <div style={{fontSize:12,color:C.mut,marginBottom:8}}>
+                      Ordering as <b style={{color:C.text}}>{g.first_name} {g.last_name}</b>
+                      {g.jersey_number ? <> · #<b style={{color:C.text}}>{g.jersey_number}</b></> : null}
+                      {g.team_name ? <> · {g.team_name}</> : null}
+                    </div>
+                    <div style={{display:"grid",gridTemplateColumns:isNarrow?"1fr 1fr":"repeat(4,1fr)",gap:9}}>
+                      {GEAR_ITEMS.map(([k, label]) => (
+                        <div key={k}>
+                          <div style={{fontSize:9.5,fontWeight:800,textTransform:"uppercase",letterSpacing:0.4,color:C.mut}}>{label}</div>
+                          <div style={{fontSize:12.5,color:g[k]?C.text:C.mut,marginTop:1}}>{g[k] || "—"}</div>
+                        </div>
+                      ))}
+                    </div>
+                    {g.notes && (
+                      <div style={{marginTop:9,fontSize:11.5,color:C.mut,fontStyle:"italic",whiteSpace:"pre-wrap"}}>{g.notes}</div>
+                    )}
+                    <div style={{fontSize:10,color:C.mut,marginTop:8}}>
+                      Sent {new Date(g.updated_at).toLocaleDateString(undefined,{month:"short",day:"numeric"})}
+                      {g.worksheet_confirmed ? " · worksheet confirmed" : " · worksheet NOT confirmed"}
                     </div>
                   </>
                 )}
@@ -27757,6 +28073,7 @@ export default function App() {
                 ...(canOps ? [{ title:"Operations", items:[
                   ["hdr","DS Elite · Club"],
                   ["school","School Teams"],
+                  ["playergear","Gear Orders"],
                   ["incidentboard","Issue Board" + (incidents.filter(r => r.status === "open").length ? " (" + incidents.filter(r => r.status === "open").length + ")" : "")],
                   ["tracker","Tracker"], ["teamdir","All Teams"], ["playereval","Player Evaluations"], ["passing","Passer Ratings"], ["practice","Practice"], ["sa","S&A Schedule"], ["scholarships","Scholarships"],
                   ...(isAdmin ? [["hawaii","Hawaii"], ["travel","Travel"], ["finance","Finance"]] : []),
@@ -27990,6 +28307,7 @@ export default function App() {
         {view==="email" && renderEmailBlast()}
         {view==="messages" && renderMessages()}
         {view==="school" && renderSchoolTeams()}
+        {view==="playergear" && renderPlayerGear()}
         {view==="incidents" && renderIncidents()}
         {view==="incidentboard" && (canOps ? renderIncidentBoard() : opsDenied)}
         {view==="coachcomms" && renderCoachComms()}

@@ -10,6 +10,10 @@
     {
       "source": "/school",
       "destination": "/api/school-form"
+    },
+    {
+      "source": "/gear",
+      "destination": "/api/gear-form"
     }
   ],
   "crons": [
