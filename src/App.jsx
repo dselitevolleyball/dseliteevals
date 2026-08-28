@@ -15408,6 +15408,43 @@ export default function App() {
       .filter(x => x.tournament)
       .sort((a, b) => (a.tournament.start_date || "").localeCompare(b.tournament.start_date || ""));
 
+    // School volleyball for this team's girls. Games belong to a school, so a
+    // player is on one if her school is playing — either side of it, since two of
+    // ours end up across the net from each other often enough to matter.
+    const teamSchoolGames = (() => {
+      const reportBy = new Map(schoolReports.map(r => [r.player_id, r]));
+      const bySchool = new Map();
+      for (const pl of teamPlayers) {
+        const r = reportBy.get(pl.id);
+        const nm = String(r?.school || "").trim();
+        if (!nm || r?.made_team === false) continue;
+        const k = schoolKey(nm);
+        if (!bySchool.has(k)) bySchool.set(k, []);
+        bySchool.get(k).push({ p: pl, level: r.team_level || null, school: nm });
+      }
+      if (!bySchool.size) return [];
+      const todayISO2 = localDateISO();
+      return (schoolGames || [])
+        .filter(g => g.game_date >= todayISO2)
+        .map(g => {
+          const side = (arr) => (arr || []).filter(x => !g.level || !x.level || x.level === g.level);
+          const who = [...side(bySchool.get(g.school_key)), ...side(g.opponent_key ? bySchool.get(g.opponent_key) : [])];
+          // Same player twice if her school somehow plays itself.
+          const seen = new Set();
+          return { g, who: who.filter(x => !seen.has(x.p.id) && seen.add(x.p.id)) };
+        })
+        .filter(x => x.who.length)
+        .sort((a, b) => a.g.game_date.localeCompare(b.g.game_date));
+    })();
+    // Does this team train that evening? The reason a coach opens this section.
+    const WD_SCHOOL = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+    const practiceClash = (iso) => {
+      const ph = phaseForDate(iso); if (!ph) return null;
+      const wd = WD_SCHOOL[new Date(iso + "T00:00").getDay()];
+      const as = practiceAssignments.filter(a => a.team_name === teamCardName && a.day === wd && (a.phase || "fall1") === ph);
+      return as.length ? [...new Set(as.map(a => a.slot))].join(", ") : null;
+    };
+
     const lbl = {fontSize:10,fontWeight:800,letterSpacing:0.5,textTransform:"uppercase",color:C.mut,marginBottom:6};
     const sectionBox = {background:C.bg,borderRadius:10,padding:14,marginBottom:14};
     const levelColor = !team ? C.gold :
@@ -15522,6 +15559,66 @@ export default function App() {
                 </>
               );
             })()}
+          </div>
+
+          {/* School volleyball — when this team's girls are playing for their
+              schools, and which of those nights we also train. Read-only: it
+              comes from what families sent in. */}
+          <div style={sectionBox}>
+            <div style={{display:"flex",alignItems:"baseline",gap:8,flexWrap:"wrap"}}>
+              <div style={{...lbl, marginBottom:6}}>School volleyball</div>
+              {teamSchoolGames.length > 0 && (
+                <span style={{fontSize:10.5,color:C.mut,marginTop:-4}}>
+                  next {Math.min(teamSchoolGames.length, 8)} of {teamSchoolGames.length}
+                </span>
+              )}
+            </div>
+            {!teamSchoolGames.length && (
+              <div style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>
+                Nothing coming up that we know about. Dates appear as families send their school schedules in.
+              </div>
+            )}
+            {teamSchoolGames.slice(0, 8).map(({ g, who }) => {
+              const clash = practiceClash(g.game_date);
+              const isTourney = /tournament|tourney|classic|invitational|showcase/i.test(g.opponent || "");
+              return (
+                <div key={g.id} style={{padding:"6px 0",borderTop:"1px solid "+C.border}}>
+                  <div style={{display:"flex",gap:7,alignItems:"baseline",flexWrap:"wrap"}}>
+                    <span style={{fontSize:11.5,fontWeight:800,color:C.text,whiteSpace:"nowrap"}}>
+                      {new Date(g.game_date + "T12:00:00Z").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric",timeZone:"UTC"})}
+                    </span>
+                    {isTourney && <span style={{fontSize:9,fontWeight:800,color:"#f59e0b",border:"1px solid #f59e0b",borderRadius:3,padding:"0 4px"}}>TOURNAMENT</span>}
+                    <span style={{fontSize:11.5,color:C.mut}}>
+                      {g.school_name}{g.level ? " " + g.level : ""}
+                      {g.is_game
+                        ? <> vs <b style={{color:C.text}}>{g.opponent || "TBD"}</b></>
+                        : <> — {g.note}</>}
+                    </span>
+                    {g.home === true && <span style={{fontSize:9.5,color:C.grn}}>home</span>}
+                    {g.home === false && <span style={{fontSize:9.5,color:"#f59e0b"}}>away</span>}
+                    {(g.times || []).length > 0 && <span style={{fontSize:10.5,color:C.mut}}>{g.times.join(" / ")}</span>}
+                    {clash && (
+                      <span title={"We train " + clash + " that day"}
+                        style={{fontSize:9.5,fontWeight:800,color:C.red,border:"1px solid "+C.red,borderRadius:3,padding:"0 4px",whiteSpace:"nowrap"}}>
+                        ⚠ we practise {clash}
+                      </span>
+                    )}
+                  </div>
+                  {/* A girl at the OTHER school is on this row too — she's
+                      playing, just from the other bench. Naming her school stops
+                      it reading as if she plays for the one on the left. */}
+                  <div style={{fontSize:10.5,color:C.mut,marginTop:2}}>
+                    {who.map(x => x.p.first_name + " " + (x.p.last_name || "").slice(0, 1) + "."
+                      + (schoolKey(x.school) === g.school_key ? "" : " (" + x.school + ")")).join(" · ")}
+                  </div>
+                </div>
+              );
+            })}
+            {teamSchoolGames.length > 0 && (
+              <div style={{fontSize:9.5,color:C.mut,marginTop:8,fontStyle:"italic"}}>
+                From the schedules families sent in, so it is only as complete as they were.
+              </div>
+            )}
           </div>
 
           {/* Schedule calendar — practices, tournaments, moves, subs, cancellations. */}
