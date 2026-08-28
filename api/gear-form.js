@@ -15,6 +15,11 @@
 // Sizes are validated against the same lists the form offers, so the order that
 // reaches the vendor can't contain a value nobody sells.
 //
+// Families who never answered the school-team form get those questions tacked
+// on the end of this one. They're already filling a form for us; asking again
+// in a separate email is how you get 45 non-answers a second time. Anyone who
+// already answered doesn't see the section at all.
+//
 // GET /gear?preview=1 renders the same page with no player and no saving, so
 // staff can look at what families get without opening a real family's order and
 // risking a submission in their name.
@@ -41,6 +46,13 @@ const SOCKS         = ["M (shoe size 5-10)", "L (shoe size 10-13)"];
 const SLEEVES       = ["Youth", "Adult S", "Adult M", "Adult L"];
 const SHOES         = ["5.5", "6", "6.5", "7", "7.5", "8", "8.5", "9", "9.5",
                        "10", "10.5", "11", "11.5", "12", "12.5", "13"];
+
+// School-team questions, only asked of girls old enough to be on one. Same
+// options as api/school-form.js — two lists that drift apart would file one
+// school team under two names on the board.
+const SCHOOL_DIVS   = ["U13", "U14", "U15", "U16"];
+const SCHOOL_GRADES = ["6th", "7th", "8th", "9th", "10th", "11th", "12th"];
+const SCHOOL_LEVELS = ["Varsity", "JV", "Freshman", "Flex", "8th A", "8th B", "7th A", "7th B", "Other"];
 
 // One list drives the form, the validation, and the saved row, so a new item is
 // a single edit and can't be added to the page without being saved.
@@ -101,6 +113,11 @@ const page = (inner, { title = "Gear order — DS Elite" } = {}) => `<!doctype h
   .item .fields { flex:1; min-width:0; }
   .item label { margin-bottom:0; }
   .hint { color:var(--mut); font-size:.83rem; margin:6px 0 0; }
+  .seg { display:flex; gap:9px; }
+  .seg button { flex:1; padding:14px 8px; font:inherit; font-weight:700; font-size:15px; cursor:pointer;
+    background:transparent; color:var(--body); border:1px solid var(--rule); border-radius:10px; }
+  .seg button[aria-pressed="true"] { background:rgba(224,180,85,.16); border-color:var(--gold); color:var(--gold); }
+  .hide { display:none; }
   .chk { display:flex; gap:11px; align-items:flex-start; margin-bottom:14px; cursor:pointer; }
   .chk input { flex:0 0 22px; width:22px; height:22px; margin:1px 0 0; accent-color:var(--gold); }
   .chk span { font-size:.93rem; line-height:1.45; }
@@ -149,18 +166,24 @@ export default async function handler(req, res) {
         </div>`, { title: "Preview — gear order — DS Elite" }));
     }
     return res.status(200).send(renderForm(
-      { first_name: "", last_name: "", team_assignment: "", jersey_number: "" }, {}, { preview: true }));
+      { first_name: "", last_name: "", team_assignment: "", jersey_number: "" }, {},
+      { preview: true, askSchool: true }));
   }
 
   if (!UUID_RE.test(token)) return res.status(400).send(notFound("That link is missing its code, or it was cut in half by the email app."));
 
   const { data: player } = await supabase
-    .from("players").select("id,first_name,last_name,team_assignment,jersey_number")
+    .from("players").select("id,first_name,last_name,team_assignment,jersey_number,usav_div")
     .eq("gear_form_token", token).maybeSingle();
   if (!player) return res.status(404).send(notFound("We can't find that link. It may have been re-issued."));
 
-  const { data: prev } = await supabase
-    .from("player_gear_orders").select("*").eq("player_id", player.id).maybeSingle();
+  const [{ data: prev }, { data: school }] = await Promise.all([
+    supabase.from("player_gear_orders").select("*").eq("player_id", player.id).maybeSingle(),
+    supabase.from("school_team_reports").select("*").eq("player_id", player.id).maybeSingle(),
+  ]);
+  // Only ask the girls old enough for a school team, and only the ones who
+  // haven't already told us.
+  const askSchool = !school && SCHOOL_DIVS.includes(player.usav_div);
 
   if (req.method === "POST") {
     let body = req.body;
@@ -188,6 +211,21 @@ export default async function handler(req, res) {
     };
     for (const it of ITEMS) row[it.key] = pick(it.key, it.opts);
 
+    // The school answer rides along, but it must never block a gear order: the
+    // only required part is the one-tap yes/no, and "not sure yet" is a real
+    // answer. School/grade/level are required only once she says yes, because
+    // that's the point at which they exist.
+    const madeRaw = String(body?.made_team || "").trim();
+    const schoolRow = askSchool ? {
+      player_id: player.id,
+      made_team: madeRaw === "yes" ? true : madeRaw === "no" ? false : null,
+      school: String(body?.school || "").trim().slice(0, 200) || null,
+      grade: pick("grade", SCHOOL_GRADES),
+      team_level: pick("team_level", SCHOOL_LEVELS),
+      schedule: String(body?.schedule || "").trim().slice(0, 4000) || null,
+    } : null;
+    if (schoolRow && schoolRow.made_team === false) { schoolRow.team_level = null; schoolRow.schedule = null; }
+
     const missing = [];
     if (!row.first_name) missing.push("player first name");
     if (!row.last_name) missing.push("player last name");
@@ -195,10 +233,19 @@ export default async function handler(req, res) {
     if (!row.team_name) missing.push("team");
     for (const it of ITEMS) if (!row[it.key]) missing.push(it.label.toLowerCase());
     if (!row.details_confirmed) missing.push("the confirmation box");
+    if (askSchool) {
+      if (!madeRaw) missing.push("whether she made a school team");
+      if (madeRaw === "yes") {
+        if (!schoolRow.school) missing.push("her school");
+        if (!schoolRow.grade) missing.push("her grade");
+        if (!schoolRow.team_level) missing.push("which school team");
+      }
+    }
 
     if (missing.length) {
       return res.status(200).send(renderForm(player, { ...prev, ...row }, {
         error: "Still needs: " + missing.join(", ") + ".",
+        askSchool, school: { ...(school || {}), ...(schoolRow || {}), made_raw: madeRaw },
       }));
     }
 
@@ -210,11 +257,28 @@ export default async function handler(req, res) {
         <div class="card"><div class="err">Something went wrong saving that order. Please try again, or reply to the email and we'll take it down by hand.</div></div>`));
     }
 
+    // Saved after the order, and never allowed to fail the whole submission —
+    // the family did the work either way, and a lost gear order is the more
+    // expensive thing to lose.
+    // "Don't know yet" deliberately writes NOTHING. A row — even an empty one —
+    // would count her as answered on the school board and drop her off the chase
+    // list, when the whole point of that answer is "ask me again".
+    let schoolSaved = false;
+    if (schoolRow && (madeRaw === "yes" || madeRaw === "no")) {
+      const { error: sErr } = await supabase.from("school_team_reports")
+        .upsert(schoolRow, { onConflict: "player_id" });
+      schoolSaved = !sErr;
+    }
+
     const recap = [
       ["Player", (row.first_name || "") + " " + (row.last_name || "")],
       ["Jersey number", row.jersey_number],
       ["Team", row.team_name],
       ...ITEMS.map(it => [it.label, row[it.key]]),
+      ...(schoolSaved ? [
+        ["School team", schoolRow.made_team === false ? "not playing this year"
+          : [schoolRow.school, schoolRow.team_level].filter(Boolean).join(" · ") || "yes"],
+      ] : []),
     ];
     return res.status(200).send(page(`
       <span class="eyebrow">DS Elite Volleyball</span>
@@ -230,10 +294,48 @@ export default async function handler(req, res) {
       { title: "Order received — DS Elite" }));
   }
 
-  return res.status(200).send(renderForm(player, prev || {}, {}));
+  return res.status(200).send(renderForm(player, prev || {}, { askSchool, school: school || {} }));
 }
 
-function renderForm(player, v, { error, preview } = {}) {
+// The school-team questions, for families who never filled in the separate
+// form. Written to be skippable in one tap ("not sure yet") so a girl whose
+// school hasn't finished tryouts can still order her gear.
+function schoolSection(s) {
+  const sel = (val, cur) => val === cur ? " selected" : "";
+  const made = s.made_raw != null ? s.made_raw
+    : s.made_team === true ? "yes" : s.made_team === false ? "no" : "";
+  const opt = (val, label) => `<button type="button" data-v="${val}" aria-pressed="${made === val}">${label}</button>`;
+  return `
+    <div class="card">
+      <p class="sect">School volleyball</p>
+      <p class="hint" style="margin:-6px 0 14px">We never got this one from you. It's how we avoid putting a practice
+      or a tournament on top of her school matches.</p>
+      <label><span class="lb">Did she make a school team? <span class="req">*</span></span>
+        <div class="seg">
+          ${opt("yes", "Made a team")}
+          ${opt("no", "Not this year")}
+          ${opt("unknown", "Don't know yet")}
+        </div>
+        <input type="hidden" name="made_team" id="made" value="${esc(made)}">
+      </label>
+      <div id="schoolonly" class="${made === "yes" ? "" : "hide"}">
+        <label><span class="lb">School <span class="req">*</span></span>
+          <input type="text" name="school" value="${esc(s.school)}" placeholder="e.g. Dripping Springs Middle School" autocomplete="off"></label>
+        <label><span class="lb">Her grade <span class="req">*</span></span>
+          <select name="grade"><option value="">— choose —</option>
+            ${SCHOOL_GRADES.map(g => `<option${sel(g, s.grade)}>${g}</option>`).join("")}
+          </select></label>
+        <label><span class="lb">Which team <span class="req">*</span></span>
+          <select name="team_level"><option value="">— choose —</option>
+            ${SCHOOL_LEVELS.map(l => `<option${sel(l, s.team_level)}>${l}</option>`).join("")}
+          </select></label>
+        <label style="margin-bottom:0"><span class="lb">Her schedule <span style="text-transform:none;letter-spacing:0">(optional)</span></span>
+          <textarea name="schedule" placeholder="Paste the dates, or a link to the school's schedule page. Rough is fine.">${esc(s.schedule)}</textarea></label>
+      </div>
+    </div>`;
+}
+
+function renderForm(player, v, { error, preview, askSchool, school } = {}) {
   const sel = (val, cur) => val === cur ? " selected" : "";
   const has = (k) => v && v[k] != null && v[k] !== "";
   // Roster values are the default; anything the family already submitted wins,
@@ -309,6 +411,8 @@ function renderForm(player, v, { error, preview } = {}) {
       </label>
     </div>
 
+    ${askSchool ? schoolSection(school || {}) : ""}
+
     <div class="card">
       <p class="sect">Anything else</p>
       <label style="margin-bottom:0"><span class="lb">Notes <span style="text-transform:none;letter-spacing:0">(optional)</span></span>
@@ -318,6 +422,20 @@ function renderForm(player, v, { error, preview } = {}) {
     <button class="go" type="submit">${submitted ? "Update our order" : "Send our order"}</button>
     <p class="hint" style="text-align:center">All gear is provided by DS Elite except shoes.</p>
   </form>
-  <div class="foot">Questions? Coach Kristen — kristen@dselitevolleyball.com</div>`,
+  <div class="foot">Questions? Coach Kristen — kristen@dselitevolleyball.com</div>
+  ${askSchool ? `<script>
+    var made = document.getElementById('made');
+    var only = document.getElementById('schoolonly');
+    document.querySelectorAll('.seg button').forEach(function (b) {
+      b.addEventListener('click', function () {
+        document.querySelectorAll('.seg button').forEach(function (x) { x.setAttribute('aria-pressed', 'false'); });
+        b.setAttribute('aria-pressed', 'true');
+        made.value = b.dataset.v;
+        // Asking a family that didn't make a team which team they made is a
+        // small thing that reads as not listening, so those fields go away.
+        only.classList.toggle('hide', b.dataset.v !== 'yes');
+      });
+    });
+  </script>` : ""}`,
   { title: preview ? "Preview — gear order — DS Elite" : player.first_name + " — gear order — DS Elite" });
 }
