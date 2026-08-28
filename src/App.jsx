@@ -1592,6 +1592,8 @@ export default function App() {
   const [schoolGames, setSchoolGames]                = useState([]);
   const [gamesTeam, setGamesTeam]                    = useState("all");   // "all" or a DS Elite team
   const [gamesOnlyH2H, setGamesOnlyH2H]              = useState(false);
+  const [teamSchoolPage, setTeamSchoolPage]          = useState(0);  // team card, 6 fixtures a page
+  const [homeSchoolPage, setHomeSchoolPage]          = useState(0);  // same list on the landing screen
   const [incidents, setIncidents]                     = useState([]);
   const [incidentNotes, setIncidentNotes]             = useState([]);
   const [incidentOpenId, setIncidentOpenId]           = useState(null); // board detail drawer
@@ -1798,7 +1800,10 @@ export default function App() {
   const [practiceCoachFilter, setPracticeCoachFilter] = useState("");
   const [practiceFloatOnly, setPracticeFloatOnly]     = useState(false); // By Coach view: show only coaches with a floating assignment
   const [ignoredWarnings, setIgnoredWarnings]         = useState(() => new Set()); // dismissed practice warning signatures (shared)
-  const [teamCardName, setTeamCardName]               = useState(null); // unified team-detail modal
+  const [teamCardName, setTeamCardNameRaw]               = useState(null); // unified team-detail modal
+  // Opening a different team card starts its fixture list at the beginning —
+  // otherwise page 3 of one team greets you on a team with one game.
+  const setTeamCardName = (v) => { setTeamSchoolPage(0); setTeamCardNameRaw(v); };
   const [coachCardName, setCoachCardName]             = useState(null); // unified coach-detail modal
   const [teamDirSearch, setTeamDirSearch]             = useState("");   // All Teams directory search
   // 'season' (regular full-week 2–3×/week practices), 'summer' (Jul–Sep, Sunday
@@ -8819,9 +8824,163 @@ export default function App() {
             })}
           </div>
         )}
+
+        {/* School volleyball, at the bottom: everything the girls on my teams
+            have coming up for their schools. Admins see the whole club, because
+            the practice clashes they need to plan around are not only on the
+            teams they coach. */}
+        {(() => {
+          const scope = canOps
+            ? players.filter(pl => (pl.team_assignment || "").trim())
+            : players.filter(pl => myTeams.some(t => t.team_name === pl.team_assignment));
+          // The whole club's season is 300 fixtures — fifty pages of six, which is
+          // not a landing screen. Three weeks is what "coming up" means here;
+          // the full board and the team cards carry the rest.
+          const horizon = localDateISO(new Date(Date.now() + 21 * 86400000));
+          const all = schoolGamesForPlayers(scope);
+          const rows = all.filter(x => x.g.game_date <= horizon);
+          const later = all.length - rows.length;
+          return (
+            <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:"14px 16px",marginTop:16}}>
+              <div style={{display:"flex",alignItems:"baseline",gap:9,flexWrap:"wrap",marginBottom:8}}>
+                <span style={{fontSize:14,fontWeight:800,color:C.gold}}>🏫 School volleyball</span>
+                <span style={{fontSize:11,color:C.mut}}>
+                  {rows.length
+                    ? <>next 3 weeks for {canOps ? "the club" : "your teams"}{later > 0 ? " · " + later + " more after that" : ""}</>
+                    : (all.length ? "nothing in the next 3 weeks · " + all.length + " later in the season" : "nothing coming up that we know about")}
+                </span>
+                {canOps && (
+                  <button onClick={()=>setView("schoolgames")}
+                    style={{marginLeft:"auto",padding:"3px 10px",borderRadius:7,border:"1px solid "+C.border,
+                      background:"transparent",color:C.mut,fontFamily:"inherit",fontSize:10.5,fontWeight:700,cursor:"pointer"}}>
+                    full board
+                  </button>
+                )}
+              </div>
+              {!rows.length && (
+                <div style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>
+                  Dates appear here as families send their school schedules in.
+                </div>
+              )}
+              {schoolPageOf(rows, homeSchoolPage).map(row => schoolGameRow(row, { showTeam: true }))}
+              {schoolPager(rows, homeSchoolPage, setHomeSchoolPage)}
+            </div>
+          );
+        })()}
       </div>
     );
   }
+
+  // ── School volleyball, for a given set of players ───────────────────────
+  // Games belong to a SCHOOL, so a player is on a fixture when her school is
+  // playing — either side of it, because two of ours end up across the net from
+  // each other often enough to matter. Used by the team card and the landing
+  // screen, from one place so the two can't drift apart.
+  const SCHOOL_WD = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+  const schoolGamesForPlayers = (list) => {
+    const reportBy = new Map(schoolReports.map(r => [r.player_id, r]));
+    const bySchool = new Map();
+    for (const pl of list || []) {
+      const r = reportBy.get(pl.id);
+      const nm = String(r?.school || "").trim();
+      if (!nm || r?.made_team === false) continue;
+      const k = schoolKey(nm);
+      if (!bySchool.has(k)) bySchool.set(k, []);
+      bySchool.get(k).push({ p: pl, level: r.team_level || null, school: nm });
+    }
+    if (!bySchool.size) return [];
+    const from = localDateISO();
+    return (schoolGames || [])
+      .filter(g => g.game_date >= from)
+      .map(g => {
+        const side = (arr) => (arr || []).filter(x => !g.level || !x.level || x.level === g.level);
+        const seen = new Set();
+        const who = [...side(bySchool.get(g.school_key)), ...side(g.opponent_key ? bySchool.get(g.opponent_key) : [])]
+          .filter(x => !seen.has(x.p.id) && seen.add(x.p.id));
+        return { g, who };
+      })
+      .filter(x => x.who.length)
+      .sort((a, b) => a.g.game_date.localeCompare(b.g.game_date));
+  };
+  // Does that team train that evening? The reason a coach reads this at all.
+  const practiceClashOn = (teamName, iso) => {
+    const ph = phaseForDate(iso); if (!ph || !teamName) return null;
+    const wd = SCHOOL_WD[new Date(iso + "T00:00").getDay()];
+    const as = practiceAssignments.filter(a => a.team_name === teamName && a.day === wd && (a.phase || "fall1") === ph);
+    return as.length ? [...new Set(as.map(a => a.slot))].join(", ") : null;
+  };
+  // One fixture, rendered the same on both screens. showTeam adds the DS Elite
+  // team, which matters on the landing screen where several teams are mixed.
+  const schoolGameRow = ({ g, who }, { showTeam = false } = {}) => {
+    const isTourney = /tournament|tourney|classic|invitational|showcase/i.test(g.opponent || "");
+    return (
+      <div key={g.id} style={{padding:"7px 0",borderTop:"1px solid "+C.border}}>
+        <div style={{display:"flex",gap:7,alignItems:"baseline",flexWrap:"wrap"}}>
+          <span style={{fontSize:11.5,fontWeight:800,color:C.text,whiteSpace:"nowrap"}}>
+            {new Date(g.game_date + "T12:00:00Z").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric",timeZone:"UTC"})}
+          </span>
+          {isTourney && <span style={{fontSize:9,fontWeight:800,color:"#f59e0b",border:"1px solid #f59e0b",borderRadius:3,padding:"0 4px"}}>TOURNAMENT</span>}
+          <span style={{fontSize:11.5,color:C.mut}}>
+            {g.school_name}{g.level ? " " + g.level : ""}
+            {g.is_game ? <> vs <b style={{color:C.text}}>{g.opponent || "TBD"}</b></> : <> — {g.note}</>}
+          </span>
+          {g.home === true && <span style={{fontSize:9.5,color:C.grn}}>home</span>}
+          {g.home === false && <span style={{fontSize:9.5,color:"#f59e0b"}}>away</span>}
+          {(g.times || []).length > 0 && <span style={{fontSize:10.5,color:C.mut}}>{g.times.join(" / ")}</span>}
+        </div>
+        {/* One line per girl: who she is, who she plays for at school, and —
+            when the list spans teams — which of ours she's on. A name on its own
+            reads as if she plays for whichever school is on the left. */}
+        <div style={{display:"flex",flexDirection:"column",gap:2,marginTop:4}}>
+          {who.map(x => {
+            const clash = practiceClashOn(x.p.team_assignment, g.game_date);
+            return (
+              <div key={x.p.id} style={{display:"flex",gap:6,alignItems:"baseline",flexWrap:"wrap",fontSize:10.5}}>
+                <span style={{color:C.text,fontWeight:700,minWidth:110}}>{x.p.first_name} {x.p.last_name}</span>
+                <span style={{color:C.mut}}>{x.school}{x.level ? " · " + x.level : ""}</span>
+                {showTeam && x.p.team_assignment && (
+                  <span style={{color:C.gold,fontWeight:700}}>{x.p.team_assignment}</span>
+                )}
+                {clash && (
+                  <span title={"We train " + clash + " that day"}
+                    style={{fontSize:9.5,fontWeight:800,color:C.red,border:"1px solid "+C.red,borderRadius:3,padding:"0 4px",whiteSpace:"nowrap"}}>
+                    ⚠ {x.p.team_assignment} practises {clash}
+                  </span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+  // Prev / next through a long fixture list, so a card shows a page rather than
+  // the first six and a dead end.
+  const schoolPager = (rows, page, setPage, perPage = 6) => {
+    const pages = Math.max(1, Math.ceil(rows.length / perPage));
+    const cur = Math.min(page, pages - 1);
+    if (rows.length <= perPage) return null;
+    const btn = (label, to, on) => (
+      <button onClick={() => setPage(to)} disabled={!on}
+        style={{padding:"3px 10px",borderRadius:6,border:"1px solid "+(on?C.border:"transparent"),
+          background:"transparent",color:on?C.text:C.mut,fontFamily:"inherit",fontSize:11,
+          fontWeight:700,cursor:on?"pointer":"default",opacity:on?1:0.4}}>{label}</button>
+    );
+    return (
+      <div style={{display:"flex",alignItems:"center",gap:6,marginTop:8,paddingTop:8,borderTop:"1px solid "+C.border}}>
+        {btn("‹ Prev", cur - 1, cur > 0)}
+        <span style={{fontSize:10.5,color:C.mut}}>
+          {cur * perPage + 1}–{Math.min((cur + 1) * perPage, rows.length)} of {rows.length}
+        </span>
+        {btn("Next ›", cur + 1, cur < pages - 1)}
+      </div>
+    );
+  };
+  const schoolPageOf = (rows, page, perPage = 6) => {
+    const pages = Math.max(1, Math.ceil(rows.length / perPage));
+    const cur = Math.min(page, pages - 1);
+    return rows.slice(cur * perPage, (cur + 1) * perPage);
+  };
 
   // ─── DASHBOARD ───
   // Per-team tournament timing: days since the last tournament and days until
@@ -15408,42 +15567,7 @@ export default function App() {
       .filter(x => x.tournament)
       .sort((a, b) => (a.tournament.start_date || "").localeCompare(b.tournament.start_date || ""));
 
-    // School volleyball for this team's girls. Games belong to a school, so a
-    // player is on one if her school is playing — either side of it, since two of
-    // ours end up across the net from each other often enough to matter.
-    const teamSchoolGames = (() => {
-      const reportBy = new Map(schoolReports.map(r => [r.player_id, r]));
-      const bySchool = new Map();
-      for (const pl of teamPlayers) {
-        const r = reportBy.get(pl.id);
-        const nm = String(r?.school || "").trim();
-        if (!nm || r?.made_team === false) continue;
-        const k = schoolKey(nm);
-        if (!bySchool.has(k)) bySchool.set(k, []);
-        bySchool.get(k).push({ p: pl, level: r.team_level || null, school: nm });
-      }
-      if (!bySchool.size) return [];
-      const todayISO2 = localDateISO();
-      return (schoolGames || [])
-        .filter(g => g.game_date >= todayISO2)
-        .map(g => {
-          const side = (arr) => (arr || []).filter(x => !g.level || !x.level || x.level === g.level);
-          const who = [...side(bySchool.get(g.school_key)), ...side(g.opponent_key ? bySchool.get(g.opponent_key) : [])];
-          // Same player twice if her school somehow plays itself.
-          const seen = new Set();
-          return { g, who: who.filter(x => !seen.has(x.p.id) && seen.add(x.p.id)) };
-        })
-        .filter(x => x.who.length)
-        .sort((a, b) => a.g.game_date.localeCompare(b.g.game_date));
-    })();
-    // Does this team train that evening? The reason a coach opens this section.
-    const WD_SCHOOL = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
-    const practiceClash = (iso) => {
-      const ph = phaseForDate(iso); if (!ph) return null;
-      const wd = WD_SCHOOL[new Date(iso + "T00:00").getDay()];
-      const as = practiceAssignments.filter(a => a.team_name === teamCardName && a.day === wd && (a.phase || "fall1") === ph);
-      return as.length ? [...new Set(as.map(a => a.slot))].join(", ") : null;
-    };
+    const teamSchoolGames = schoolGamesForPlayers(teamPlayers);
 
     const lbl = {fontSize:10,fontWeight:800,letterSpacing:0.5,textTransform:"uppercase",color:C.mut,marginBottom:6};
     const sectionBox = {background:C.bg,borderRadius:10,padding:14,marginBottom:14};
@@ -15568,9 +15692,7 @@ export default function App() {
             <div style={{display:"flex",alignItems:"baseline",gap:8,flexWrap:"wrap"}}>
               <div style={{...lbl, marginBottom:6}}>School volleyball</div>
               {teamSchoolGames.length > 0 && (
-                <span style={{fontSize:10.5,color:C.mut,marginTop:-4}}>
-                  next {Math.min(teamSchoolGames.length, 8)} of {teamSchoolGames.length}
-                </span>
+                <span style={{fontSize:10.5,color:C.mut,marginTop:-4}}>{teamSchoolGames.length} upcoming</span>
               )}
             </div>
             {!teamSchoolGames.length && (
@@ -15578,42 +15700,8 @@ export default function App() {
                 Nothing coming up that we know about. Dates appear as families send their school schedules in.
               </div>
             )}
-            {teamSchoolGames.slice(0, 8).map(({ g, who }) => {
-              const clash = practiceClash(g.game_date);
-              const isTourney = /tournament|tourney|classic|invitational|showcase/i.test(g.opponent || "");
-              return (
-                <div key={g.id} style={{padding:"6px 0",borderTop:"1px solid "+C.border}}>
-                  <div style={{display:"flex",gap:7,alignItems:"baseline",flexWrap:"wrap"}}>
-                    <span style={{fontSize:11.5,fontWeight:800,color:C.text,whiteSpace:"nowrap"}}>
-                      {new Date(g.game_date + "T12:00:00Z").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric",timeZone:"UTC"})}
-                    </span>
-                    {isTourney && <span style={{fontSize:9,fontWeight:800,color:"#f59e0b",border:"1px solid #f59e0b",borderRadius:3,padding:"0 4px"}}>TOURNAMENT</span>}
-                    <span style={{fontSize:11.5,color:C.mut}}>
-                      {g.school_name}{g.level ? " " + g.level : ""}
-                      {g.is_game
-                        ? <> vs <b style={{color:C.text}}>{g.opponent || "TBD"}</b></>
-                        : <> — {g.note}</>}
-                    </span>
-                    {g.home === true && <span style={{fontSize:9.5,color:C.grn}}>home</span>}
-                    {g.home === false && <span style={{fontSize:9.5,color:"#f59e0b"}}>away</span>}
-                    {(g.times || []).length > 0 && <span style={{fontSize:10.5,color:C.mut}}>{g.times.join(" / ")}</span>}
-                    {clash && (
-                      <span title={"We train " + clash + " that day"}
-                        style={{fontSize:9.5,fontWeight:800,color:C.red,border:"1px solid "+C.red,borderRadius:3,padding:"0 4px",whiteSpace:"nowrap"}}>
-                        ⚠ we practise {clash}
-                      </span>
-                    )}
-                  </div>
-                  {/* A girl at the OTHER school is on this row too — she's
-                      playing, just from the other bench. Naming her school stops
-                      it reading as if she plays for the one on the left. */}
-                  <div style={{fontSize:10.5,color:C.mut,marginTop:2}}>
-                    {who.map(x => x.p.first_name + " " + (x.p.last_name || "").slice(0, 1) + "."
-                      + (schoolKey(x.school) === g.school_key ? "" : " (" + x.school + ")")).join(" · ")}
-                  </div>
-                </div>
-              );
-            })}
+            {schoolPageOf(teamSchoolGames, teamSchoolPage).map(row => schoolGameRow(row))}
+            {schoolPager(teamSchoolGames, teamSchoolPage, setTeamSchoolPage)}
             {teamSchoolGames.length > 0 && (
               <div style={{fontSize:9.5,color:C.mut,marginTop:8,fontStyle:"italic"}}>
                 From the schedules families sent in, so it is only as complete as they were.
