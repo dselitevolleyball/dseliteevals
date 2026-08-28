@@ -109,11 +109,12 @@ for (const r of reports || []) {
   addGames((r.school || "").trim() || "(school not given)", games, r.id);
 }
 
-// The links we fetched ourselves. No level: a school-wide schedule off the
-// district's own page belongs to every team at that school.
+// What we fetched, plus anything copied out by hand. A school-wide schedule
+// carries no level and belongs to every team there; a source that names one
+// (Westlake publishes Flex and Freshman as separate columns) keeps it.
 for (const src of sources || []) {
   if (!src.text) continue;
-  const { games } = parseSchedule(src.text, { level: null });
+  const { games } = parseSchedule(src.text, { level: src.level || null });
   const keep = games.filter(g => g.opponent || (g.times || []).length);
   if (!keep.length) continue;
   sourceCount++;
@@ -138,6 +139,20 @@ const levelled = new Set(deduped.filter(r => r.level)
   .map(r => [r.school_key, r.game_date, r.opponent || ""].join("|")));
 deduped = deduped.filter(r =>
   r.level || !levelled.has([r.school_key, r.game_date, r.opponent || ""].join("|")));
+
+// When both schools sent us their schedule, the same fixture arrives twice —
+// once from each side. Keep one, by whichever name sorts first, so the board
+// shows the game rather than the paperwork. Both sides' players are listed on
+// whichever row survives, so nothing is lost.
+const pairSeen = new Set();
+deduped = deduped.filter(r => {
+  if (!r.opponent_key || !r.is_game) return true;
+  const pair = [r.school_key, r.opponent_key].sort().join("|");
+  const k = [pair, r.game_date, r.level || ""].join("|");
+  if (pairSeen.has(k)) return false;
+  pairSeen.add(k);
+  return true;
+});
 
 const schools = new Set(deduped.map(r => r.school_key));
 const coveredPlayers = new Set();
