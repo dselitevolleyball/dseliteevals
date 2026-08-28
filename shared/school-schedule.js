@@ -35,6 +35,12 @@ const URL_RE = /https?:\/\/\S+/gi;
 
 const iso = (y, m, d) => `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 const valid = (m, d) => m >= 1 && m <= 12 && d >= 1 && d <= 31;
+// Anything outside the season isn't a game this season. A practice calendar
+// grid produced "2017-08-01" out of two adjacent cells; a copyright footer
+// produces worse. Cheap guard, and it costs nothing real.
+const SEASON_FROM = `${SEASON_START_YEAR}-07-01`;
+const SEASON_TO   = `${SEASON_START_YEAR + 1}-06-30`;
+const inSeason = (isoDate) => isoDate >= SEASON_FROM && isoDate <= SEASON_TO;
 
 // School names arrive spelled every possible way — "Wimberly High School",
 // "Westlake high school", "Gorzycki", "@DSMS". Compare on this.
@@ -128,7 +134,7 @@ function siteOf(text) {
 
 // Lines that are a schedule's furniture, not a game.
 const NOISE_RE = /^(date|day|opponent|site|time|location|week|\s*$)/i;
-const NOT_A_GAME_RE = /\b(parent meeting|team pictures?|picture day|bye week|no school|practice|banquet|meet the|pep rally|updated|head coach|assistant coach|athletic coordinator)\b/i;
+const NOT_A_GAME_RE = /\b(parent meeting|team pictures?|picture day|bye week|no school|practice|banquet|meet the|pep rally|updated|head coach|assistant coach|athletic coordinator|try\s?outs?|cuts|team selections|1st day of school|first day of school)\b/i;
 
 function cleanOpponent(text) {
   let s = String(text || "")
@@ -170,6 +176,7 @@ export function parseSchedule(text, { level = null } = {}) {
   const push = (g) => {
     // "Updated 5/8/26" in a footer is a date, but it isn't anything to attend.
     if (!g.is_game && !g.note) return;
+    if (!inSeason(g.game_date)) return;
     const k = g.game_date + "|" + (g.opponent || "") + "|" + (g.note || "");
     if (seen.has(k)) return;
     seen.add(k);
