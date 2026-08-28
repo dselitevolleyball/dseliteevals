@@ -16,8 +16,9 @@
 //   node scripts/send-school-form.mjs --send             # actually send
 //
 // Sending goes through the deployed /api/send-email (the Resend key lives in
-// Vercel, not here), and each send is written to email_log so the player card's
-// message history stays complete.
+// Vercel, not here). That endpoint logs every send itself, so the sender is
+// passed through to it rather than logged again here — doing both put two rows
+// in the history for one email.
 //
 // Env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY in .env.
 
@@ -139,7 +140,12 @@ for (const job of jobs) {
   const res = await fetch(APP_URL + "/api/send-email", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ subject: job.subject, body: job.body, recipients: job.recipients }),
+    body: JSON.stringify({
+      subject: job.subject, body: job.body, recipients: job.recipients,
+      // /api/send-email writes email_log itself. Passing the sender through
+      // means one attributed row instead of two rows for one email.
+      sentBy: SENDER.name, sentByEmail: SENDER.email, source: "script",
+    }),
   });
   const out = await res.json().catch(() => ({}));
   if (!res.ok || out.error) {
@@ -148,16 +154,6 @@ for (const job of jobs) {
     continue;
   }
   sent++;
-  await supabase.from("email_log").insert({
-    subject: job.subject,
-    body: job.body,
-    recipient_count: job.recipients.length,
-    recipients: job.recipients,
-    sent_count: out.sent ?? job.recipients.length,
-    failed_count: Array.isArray(out.failed) ? out.failed.length : 0,
-    sent_by: SENDER.name,
-    sent_by_email: SENDER.email,
-  });
   console.log("sent " + job.player.first_name + " " + job.player.last_name + " → " + job.recipients.join(", "));
 }
 console.log(`\nDone. ${sent} sent, ${failed} failed.`);
