@@ -135,10 +135,14 @@ let deduped = rows.filter(r => {
 // game pasted by a 7th B parent — and the board showed one fixture four times.
 // Where a levelled row already exists for that school, date and opponent, the
 // unlevelled copy is the same game with less information.
-const levelled = new Set(deduped.filter(r => r.level)
-  .map(r => [r.school_key, r.game_date, r.opponent || ""].join("|")));
-deduped = deduped.filter(r =>
-  r.level || !levelled.has([r.school_key, r.game_date, r.opponent || ""].join("|")));
+// Keyed on the PAIR of schools, not on who published it: Sycamore sent their
+// 7th A, 7th B and 8th B rows for Oct 1, and Bee Cave sent the same evening as
+// one unlevelled row. Those are the same three games described twice.
+const pairKey = (r) => r.opponent_key
+  ? [[r.school_key, r.opponent_key].sort().join("~"), r.game_date].join("|")
+  : [r.school_key, r.game_date, r.opponent || ""].join("|");
+const levelled = new Set(deduped.filter(r => r.level).map(pairKey));
+deduped = deduped.filter(r => r.level || !levelled.has(pairKey(r)));
 
 // When both schools sent us their schedule, the same fixture arrives twice —
 // once from each side. Keep one, by whichever name sorts first, so the board
