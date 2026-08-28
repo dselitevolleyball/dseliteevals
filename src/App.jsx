@@ -14343,6 +14343,19 @@ export default function App() {
           and recruit for the <b style={{color:C.text}}>11s and 12s</b>, which are still filling. Each date needs <b style={{color:C.text}}>4–6 coaches</b>.
           {shortfall > 0 && <div style={{color:"#f59e0b",fontWeight:700,marginTop:6}}>⚠ {shortfall} more coach{shortfall===1?"":"es"} needed across the upcoming dates.</div>}
         </div>
+        {canOps && (() => {
+          const owed = dsysaClinics.filter(c => !c.cancelled && c.clinic_date <= today
+            && signupsFor(c.id).length > 0 && checksFor(c).length === 0);
+          if (!owed.length) return null;
+          return (
+            <div style={{background:"rgba(224,180,85,0.10)",border:"1px solid "+C.gold,borderRadius:10,
+              padding:"10px 14px",marginBottom:14,fontSize:12,color:C.text}}>
+              <b style={{color:C.gold}}>{owed.length} finished clinic{owed.length===1?"":"s"} still need check-ins</b>
+              <span style={{color:C.mut}}> — {owed.map(c => shortDay(c.clinic_date)).join(", ")}.
+              Tick who actually worked it on the card below and the hours go onto their DS Elite time cards.</span>
+            </div>
+          );
+        })()}
         {isAdmin && upcoming.length > 0 && (
           <div style={{marginBottom:14}}>
             <button onClick={async () => {
@@ -14416,12 +14429,22 @@ export default function App() {
           const full = mine.length >= max;
           const ok = mine.length >= min;
           const past = c.clinic_date < today;
+          const done = c.clinic_date <= today && !c.cancelled;
+          const needsCheckin = done && canOps && checksFor(c).length === 0 && mine.length > 0;
           const iAmIn = mine.some(g => (g.coach_name || "").trim().toLowerCase() === myName.toLowerCase());
           return (
-            <div key={c.id} style={{background:C.card,border:"1px solid "+(c.cancelled?C.red:past?C.border:ok?C.grn:"#f59e0b"),borderRadius:12,marginBottom:10,overflow:"hidden",opacity:(past||c.cancelled)?0.5:1}}>
+            <div key={c.id} style={{background:C.card,
+              border:"1px solid "+(c.cancelled?C.red:needsCheckin?C.gold:past?C.border:ok?C.grn:"#f59e0b"),
+              borderRadius:12,marginBottom:10,overflow:"hidden",
+              // A finished night whose coaches still need checking in is the
+              // work on this screen, so it stays at full strength.
+              opacity:(c.cancelled || (past && !needsCheckin))?0.5:1}}>
               <div style={{padding:"11px 14px",display:"flex",alignItems:"center",gap:12,flexWrap:"wrap",borderBottom:"1px solid "+C.border}}>
                 <span style={{fontSize:14,fontWeight:800,color:C.text,textDecoration:c.cancelled?"line-through":"none"}}>{shortDay(c.clinic_date)}</span>
                 {c.cancelled && <span style={{fontSize:10,fontWeight:800,textTransform:"uppercase",color:C.red,border:"1px solid "+C.red,borderRadius:4,padding:"1px 6px"}}>cancelled</span>}
+                {needsCheckin && <span style={{fontSize:10,fontWeight:800,textTransform:"uppercase",color:C.gold,border:"1px solid "+C.gold,borderRadius:4,padding:"1px 6px"}}>needs check-in</span>}
+                {done && !needsCheckin && !c.cancelled && checksFor(c).length > 0 &&
+                  <span style={{fontSize:10,fontWeight:800,textTransform:"uppercase",color:C.grn,border:"1px solid "+C.grn,borderRadius:4,padding:"1px 6px"}}>{checksFor(c).length} checked in</span>}
                 <span style={{fontSize:11,color:C.mut}}>
                   {hhmm(c.start_time)}–{hhmm(c.end_time)}{c.time_tbc ? " (usually, not confirmed)" : ""} · {c.location}
                 </span>
@@ -14507,7 +14530,7 @@ export default function App() {
               {/* Who actually worked it. Only once the night has happened —
                   checking someone in for a clinic that hasn't run yet is how a
                   no-show gets paid. */}
-              {isAdmin && !c.cancelled && c.clinic_date <= today && (() => {
+              {canOps && !c.cancelled && c.clinic_date <= today && (() => {
                 const done = checksFor(c);
                 const names = [...new Set([
                   ...mine.map(g => g.coach_name),
