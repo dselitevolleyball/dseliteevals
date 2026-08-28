@@ -31,6 +31,7 @@
 // Env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY.
 
 import { createClient } from "@supabase/supabase-js";
+import { saveSchoolGames } from "./_lib/school-games.js";
 import { GEAR_TEAMS as TEAMS } from "../shared/gear-teams.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -268,6 +269,7 @@ export default async function handler(req, res) {
       const { error: sErr } = await supabase.from("school_team_reports")
         .upsert(schoolRow, { onConflict: "player_id" });
       schoolSaved = !sErr;
+      if (schoolSaved) await saveSchoolGames(supabase, { ...schoolRow, id: null });
     }
 
     const recap = [

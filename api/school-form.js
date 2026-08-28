@@ -15,6 +15,7 @@
 // Env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY.
 
 import { createClient } from "@supabase/supabase-js";
+import { saveSchoolGames } from "./_lib/school-games.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;")
@@ -118,6 +119,9 @@ export default async function handler(req, res) {
     if (row.made_team === false) { row.team_level = null; row.schedule = null; }
     const { error } = await supabase.from("school_team_reports")
       .upsert(row, { onConflict: "player_id" });
+    // The schedule they just pasted becomes dates on the master schedule now,
+    // rather than the next time somebody runs the rebuild.
+    if (!error) await saveSchoolGames(supabase, { ...row, id: null });
     if (error) {
       return res.status(500).send(page(`
         <span class="eyebrow">DS Elite Volleyball</span><h1>Didn't save</h1>

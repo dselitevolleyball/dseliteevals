@@ -3,6 +3,7 @@ import { supabase } from "./supabase";
 import Papa from "papaparse";
 import { DndContext, useDraggable, useDroppable, PointerSensor, TouchSensor, useSensor, useSensors } from "@dnd-kit/core";
 import { GEAR_TEAMS } from "../shared/gear-teams.js";
+import { schoolKey } from "../shared/school-schedule.js";
 
 const POSITIONS = ["S","OH","MB","RS","L","DS","U"];
 const POS_LABELS = {S:"Setter",OH:"Outside Hitter",MB:"Middle Blocker",RS:"Right Side",L:"Libero",DS:"Def Specialist",U:"Utility"};
@@ -1588,6 +1589,9 @@ export default function App() {
   const [gearOrderFilter, setGearOrderFilter]        = useState("all");  // all | in | waiting | flagged
   const [gearOrderGroup, setGearOrderGroup]          = useState("team"); // team | flat
   const [gearFillId, setGearFillId]                  = useState(null);   // whose form is open on this device
+  const [schoolGames, setSchoolGames]                = useState([]);
+  const [gamesTeam, setGamesTeam]                    = useState("all");   // "all" or a DS Elite team
+  const [gamesOnlyH2H, setGamesOnlyH2H]              = useState(false);
   const [incidents, setIncidents]                     = useState([]);
   const [incidentNotes, setIncidentNotes]             = useState([]);
   const [incidentOpenId, setIncidentOpenId]           = useState(null); // board detail drawer
@@ -1998,7 +2002,7 @@ export default function App() {
   // email we send them. Every admin control inside renderDsysa — add/cancel a
   // date, set the lead, remove someone else's signup — is separately gated on
   // isAdmin, so opening the view exposes no admin action.
-  const OPS_VIEWS = new Set(["school","playergear","incidentboard","tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","timecards","gear","staffing","roster","hawaii","travel","finance","dssccal","pods"]);
+  const OPS_VIEWS = new Set(["school","schoolgames","playergear","incidentboard","tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","timecards","gear","staffing","roster","hawaii","travel","finance","dssccal","pods"]);
   const canOps    = isAdmin || isOwner;
   const opsDenied = <div style={{padding:24,color:C.mut,textAlign:"center"}}>This section is restricted to administrators. Ask the club administrator (Drew) for access.</div>;
   // Once a player has accepted (or is locked/signed) onto a team, they're
@@ -2318,6 +2322,11 @@ export default function App() {
     if (error) { console.error("Load school_team_reports error:", error); return; }
     setSchoolReports(data || []);
   }, []);
+  const loadSchoolGames = useCallback(async () => {
+    const { data, error } = await supabase.from("school_games").select("*").order("game_date");
+    if (error) { console.error("Load school_games error:", error); return; }
+    setSchoolGames(data || []);
+  }, []);
   const loadGearOrders = useCallback(async () => {
     const { data, error } = await supabase.from("player_gear_orders").select("*")
       .order("updated_at", { ascending: false });
@@ -2446,6 +2455,7 @@ export default function App() {
   useEffect(() => { if (isApproved) { loadPlayers(); loadRankings(); loadIncidents(); loadIncidentNotes(); } }, [isApproved, loadPlayers, loadRankings, loadIncidents, loadIncidentNotes]);
   useEffect(() => { if (isApproved) loadSchoolReports(); }, [isApproved, loadSchoolReports]);
   useEffect(() => { if (isApproved) loadGearOrders(); }, [isApproved, loadGearOrders]);
+  useEffect(() => { if (isApproved) loadSchoolGames(); }, [isApproved, loadSchoolGames]);
   // loadTeamsList is declared further down, so naming it here would be a TDZ
   // crash on load; the evaluations view picks the roster up from the effect
   // that already loads it alongside the other team data.
@@ -2695,6 +2705,7 @@ export default function App() {
       .on("postgres_changes", { event: "*", schema: "public", table: "player_incident_notes" }, () => { loadIncidentNotes(); })
       .on("postgres_changes", { event: "*", schema: "public", table: "school_team_reports" }, () => { loadSchoolReports(); })
       .on("postgres_changes", { event: "*", schema: "public", table: "player_gear_orders" }, () => { loadGearOrders(); })
+      .on("postgres_changes", { event: "*", schema: "public", table: "school_games" }, () => { loadSchoolGames(); })
       .subscribe();
     const coachChannel = supabase
       .channel("realtime-coaches")
@@ -2756,7 +2767,7 @@ export default function App() {
       supabase.removeChannel(coachFloatsChannel);
       supabase.removeChannel(coverageChannel);
     };
-  }, [isApproved, loadIncidents, loadIncidentNotes, loadSchoolReports, loadGearOrders, loadCoaches, loadRankings, loadTeamStatus, loadTeamTasks, loadTeamQuestions, loadTaskMeta, loadUpdates, loadPracticeApprovals, loadCoachRequests, loadCoachFloats, loadPracticeCoverage, loadPracticeCancellations]);
+  }, [isApproved, loadIncidents, loadIncidentNotes, loadSchoolReports, loadGearOrders, loadSchoolGames, loadCoaches, loadRankings, loadTeamStatus, loadTeamTasks, loadTeamQuestions, loadTaskMeta, loadUpdates, loadPracticeApprovals, loadCoachRequests, loadCoachFloats, loadPracticeCoverage, loadPracticeCancellations]);
 
   // Activity feed live updates — only subscribe while that tab is open, since
   // change_log INSERTs fire on every player write and the feed is otherwise
@@ -10238,6 +10249,205 @@ export default function App() {
         <div style={{fontSize:11,color:C.mut,marginTop:8,fontStyle:"italic"}}>
           Tap a player to fill her form in right here — handy at the try-on table. Each family also has their own link, and it edits the same order, so a size change before we place the order fixes itself.
           “Changed something” is where a family corrected the name, number or team we pre-filled: worth a look before ordering.
+        </div>
+      </div>
+    );
+  }
+
+  // ── School games ────────────────────────────────────────────────────────
+  // The master schedule, built out of what families pasted into the school-team
+  // form and parsed by scripts/parse-school-schedules.mjs.
+  //
+  // Games belong to a SCHOOL, not a player: one parent's paste covers every girl
+  // at that school. The thing worth opening the screen for is the ⚔ rows —
+  // where a school we have players at is playing another school we have players
+  // at, so two of ours are across the net from each other.
+  function renderSchoolGames() {
+    const TERMINAL_OFFER = ["declined", "not_invited", "opted_out"];
+    const eligible = players
+      .filter(p => p.roster_status === "active" && (p.season || "2026-27") === "2026-27")
+      .filter(p => (p.team_assignment || "").trim() && !TERMINAL_OFFER.includes(p.offer_status || ""))
+      .filter(p => canViewTeams || myTeamNames.includes(p.team_assignment));
+    const reportByPlayer = new Map(schoolReports.map(r => [r.player_id, r]));
+
+    // Which of our girls are at which school.
+    const bySchool = new Map();
+    for (const p of eligible) {
+      const r = reportByPlayer.get(p.id);
+      const name = String(r?.school || "").trim();
+      if (!name || r?.made_team === false) continue;
+      const k = schoolKey(name);
+      if (!bySchool.has(k)) bySchool.set(k, { name, players: [] });
+      bySchool.get(k).players.push({ p, level: r.team_level || null });
+    }
+
+    const todayISO = localDateISO();
+    const rows = schoolGames
+      .filter(g => bySchool.has(g.school_key))
+      .map(g => {
+        const home = bySchool.get(g.school_key);
+        const away = g.opponent_key ? bySchool.get(g.opponent_key) : null;
+        // Level tells us which of a school's girls this row is actually about;
+        // without one, everybody at the school is a maybe.
+        const side = (grp) => !grp ? [] : grp.players.filter(x => !g.level || !x.level || x.level === g.level);
+        return { g, home, away, ourHome: side(home), ourAway: side(away), h2h: !!(away && g.is_game) };
+      })
+      .filter(r => r.ourHome.length || r.ourAway.length)
+      .filter(r => gamesTeam === "all"
+        || r.ourHome.some(x => x.p.team_assignment === gamesTeam)
+        || r.ourAway.some(x => x.p.team_assignment === gamesTeam))
+      .filter(r => !gamesOnlyH2H || r.h2h);
+
+    const upcoming = rows.filter(r => r.g.game_date >= todayISO);
+    const past = rows.filter(r => r.g.game_date < todayISO);
+    const h2hCount = rows.filter(r => r.h2h).length;
+
+    // Schools where we have girls but not one readable date — the work list.
+    const uncovered = [...bySchool.entries()]
+      .filter(([k]) => !schoolGames.some(g => g.school_key === k))
+      .map(([k, v]) => ({ k, ...v, links: [...new Set(v.players
+        .map(x => reportByPlayer.get(x.p.id)?.schedule || "")
+        .flatMap(t => t.match(/https?:\/\/\S+/g) || []))] }))
+      .sort((a, b) => b.players.length - a.players.length);
+
+    const teamOptions = [...new Set(eligible.map(p => p.team_assignment))].sort();
+    const fmtDay = (iso) => new Date(iso + "T12:00:00Z")
+      .toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
+
+    const chip = (x, tone) => (
+      <span key={x.p.id} onClick={() => setProfileId(x.p.id)} title={"Open " + x.p.first_name + "'s card"}
+        style={{fontSize:10.5,fontWeight:700,padding:"1px 6px",borderRadius:5,cursor:"pointer",
+          border:"1px solid "+(tone||C.border), color:tone||C.mut, whiteSpace:"nowrap"}}>
+        {x.p.first_name} {x.p.last_name?.[0]}. <span style={{opacity:0.7,fontWeight:600}}>{x.p.team_assignment}</span>
+      </span>
+    );
+
+    const dayGroups = (list) => {
+      const m = new Map();
+      list.forEach(r => { if (!m.has(r.g.game_date)) m.set(r.g.game_date, []); m.get(r.g.game_date).push(r); });
+      return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+    };
+
+    const gameRow = (r) => (
+      <div key={r.g.id} style={{padding:"7px 9px",borderRadius:8,marginBottom:5,
+        background: r.h2h ? "rgba(224,180,85,0.10)" : C.bg,
+        border: "1px solid " + (r.h2h ? C.gold : C.border)}}>
+        <div style={{display:"flex",alignItems:"baseline",gap:7,flexWrap:"wrap"}}>
+          {r.h2h && <span title="Two DS Elite players on opposite sides" style={{fontSize:11,fontWeight:800,color:C.gold}}>⚔ ours vs ours</span>}
+          <span style={{fontSize:12.5,fontWeight:700,color:C.text}}>{r.home.name}</span>
+          {r.g.level && <span style={{fontSize:10,color:C.mut}}>{r.g.level}</span>}
+          {r.g.is_game
+            ? <span style={{fontSize:12,color:C.mut}}>vs <b style={{color: r.away ? C.gold : C.text}}>{r.g.opponent || "opponent not given"}</b></span>
+            : <span style={{fontSize:12,color:C.mut,fontStyle:"italic"}}>{r.g.note}</span>}
+          {r.g.home === true && <span style={{fontSize:10,color:C.grn}}>home</span>}
+          {r.g.home === false && <span style={{fontSize:10,color:"#f59e0b"}}>away</span>}
+          {r.g.venue && <span style={{fontSize:10,color:C.mut}}>@{r.g.venue}</span>}
+          {(r.g.times || []).length > 0 && <span style={{fontSize:10.5,color:C.mut}}>{r.g.times.join(" / ")}</span>}
+        </div>
+        <div style={{display:"flex",gap:4,flexWrap:"wrap",marginTop:5}}>
+          {r.ourHome.map(x => chip(x, r.h2h ? C.gold : null))}
+          {r.ourAway.length > 0 && <span style={{fontSize:10,color:C.mut,alignSelf:"center"}}>vs</span>}
+          {r.ourAway.map(x => chip(x, r.h2h ? C.gold : null))}
+        </div>
+        {r.g.raw && <div title={r.g.raw} style={{fontSize:9.5,color:C.mut,marginTop:4,overflow:"hidden",
+          textOverflow:"ellipsis",whiteSpace:"nowrap",opacity:0.65}}>read from: {r.g.raw}</div>}
+      </div>
+    );
+
+    return (
+      <div style={{maxWidth:1050,margin:"0 auto"}}>
+        <div style={{marginBottom:12}}>
+          <h2 style={{margin:0,fontSize:20,fontWeight:800,color:C.gold}}>🗓 School games</h2>
+          <div style={{fontSize:12,color:C.mut,marginTop:2}}>
+            {upcoming.length} upcoming · <b style={{color:C.gold}}>{h2hCount}</b> where ours play each other ·
+            built from {schoolGames.length} dates families sent in
+          </div>
+        </div>
+
+        <div style={{display:"flex",gap:7,flexWrap:"wrap",marginBottom:14,alignItems:"center"}}>
+          <select value={gamesTeam} onChange={e=>setGamesTeam(e.target.value)}
+            style={{padding:"6px 10px",borderRadius:8,border:"1px solid "+C.border,background:C.card,
+              color:C.text,fontFamily:"inherit",fontSize:12}}>
+            <option value="all">Whole club</option>
+            {teamOptions.map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
+          <button onClick={()=>setGamesOnlyH2H(v=>!v)}
+            style={{padding:"6px 12px",borderRadius:8,cursor:"pointer",fontFamily:"inherit",fontSize:11.5,fontWeight:700,
+              border:"1px solid "+(gamesOnlyH2H?C.gold:C.border),
+              background:gamesOnlyH2H?"rgba(224,180,85,0.14)":"transparent",
+              color:gamesOnlyH2H?C.gold:C.mut}}>⚔ Only ours vs ours</button>
+        </div>
+
+        {!upcoming.length && !past.length && (
+          <div style={{padding:26,textAlign:"center",color:C.mut,fontSize:12.5,background:C.card,
+            border:"1px solid "+C.border,borderRadius:12}}>
+            Nothing to show yet. Games appear as families paste schedules into their school form.
+          </div>
+        )}
+
+        {dayGroups(upcoming).map(([date, list]) => (
+          <div key={date} style={{marginBottom:14}}>
+            <div style={{fontSize:12,fontWeight:800,color:C.text,marginBottom:5}}>
+              {fmtDay(date)}
+              <span style={{fontSize:10.5,color:C.mut,fontWeight:600,marginLeft:7}}>
+                {new Set(list.flatMap(r => [...r.ourHome, ...r.ourAway].map(x => x.p.id))).size} of ours playing
+              </span>
+            </div>
+            {list.map(gameRow)}
+          </div>
+        ))}
+
+        {past.length > 0 && (
+          <details style={{marginTop:8}}>
+            <summary style={{cursor:"pointer",fontSize:12,color:C.mut,fontWeight:700}}>
+              {past.length} already played
+            </summary>
+            <div style={{marginTop:10,opacity:0.7}}>
+              {dayGroups(past).map(([date, list]) => (
+                <div key={date} style={{marginBottom:12}}>
+                  <div style={{fontSize:11.5,fontWeight:800,color:C.mut,marginBottom:4}}>{fmtDay(date)}</div>
+                  {list.map(gameRow)}
+                </div>
+              ))}
+            </div>
+          </details>
+        )}
+
+        {uncovered.length > 0 && (
+          <div style={{marginTop:20,background:C.card,border:"1px dashed "+C.border,borderRadius:12,padding:"12px 14px"}}>
+            <div style={{fontSize:12.5,fontWeight:800,color:C.text,marginBottom:3}}>
+              {uncovered.length} school{uncovered.length===1?"":"s"} with no dates yet
+            </div>
+            <div style={{fontSize:11,color:C.mut,marginBottom:9}}>
+              These families sent a link rather than the dates — a PDF or a Google Sheet nothing here can read.
+              Open one, paste the dates into her school form, and everyone at that school gets covered.
+            </div>
+            {uncovered.map(u => (
+              <div key={u.k} style={{padding:"6px 0",borderTop:"1px solid "+C.border}}>
+                <div style={{display:"flex",gap:8,alignItems:"baseline",flexWrap:"wrap"}}>
+                  <span style={{fontSize:12,fontWeight:700,color:C.text}}>{u.name}</span>
+                  <span style={{fontSize:10.5,color:C.mut}}>{u.players.length} player{u.players.length===1?"":"s"}</span>
+                  {u.players.slice(0,6).map(x => (
+                    <span key={x.p.id} onClick={()=>setProfileId(x.p.id)}
+                      style={{fontSize:10,color:C.mut,cursor:"pointer",textDecoration:"underline dotted"}}>
+                      {x.p.first_name} {x.p.last_name?.[0]}.
+                    </span>
+                  ))}
+                </div>
+                {u.links.slice(0,2).map(l => (
+                  <a key={l} href={l} target="_blank" rel="noreferrer"
+                    style={{display:"block",fontSize:10,color:C.gold,marginTop:2,overflow:"hidden",
+                      textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{l}</a>
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div style={{fontSize:11,color:C.mut,marginTop:10,fontStyle:"italic"}}>
+          Read out of what families pasted, so it is only as complete as they were — each row shows the line it came
+          from. Fix a wrong one by correcting her answer on the School Teams screen, then re-run
+          scripts/parse-school-schedules.mjs.
         </div>
       </div>
     );
@@ -28140,6 +28350,7 @@ export default function App() {
                 ...(canOps ? [{ title:"Operations", items:[
                   ["hdr","DS Elite · Club"],
                   ["school","School Teams"],
+                  ["schoolgames","School Games"],
                   ["playergear","Gear Orders"],
                   ["incidentboard","Issue Board" + (incidents.filter(r => r.status === "open").length ? " (" + incidents.filter(r => r.status === "open").length + ")" : "")],
                   ["tracker","Tracker"], ["teamdir","All Teams"], ["playereval","Player Evaluations"], ["passing","Passer Ratings"], ["practice","Practice"], ["sa","S&A Schedule"], ["scholarships","Scholarships"],
@@ -28374,6 +28585,7 @@ export default function App() {
         {view==="email" && renderEmailBlast()}
         {view==="messages" && renderMessages()}
         {view==="school" && renderSchoolTeams()}
+        {view==="schoolgames" && renderSchoolGames()}
         {view==="playergear" && renderPlayerGear()}
         {view==="incidents" && renderIncidents()}
         {view==="incidentboard" && (canOps ? renderIncidentBoard() : opsDenied)}
