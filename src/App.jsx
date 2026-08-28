@@ -14272,6 +14272,61 @@ export default function App() {
     const shortDay = (d) => new Date(d + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
     const hhmm = (t) => fmtFlightTime(t) || t || "";
     const shortfall = upcoming.reduce((sum, c) => sum + Math.max(0, (c.min_coaches || 4) - signupsFor(c.id).length), 0);
+
+    // ── Check-ins ────────────────────────────────────────────────────────
+    // DSYSA is DS Elite work, not DSSC work, so a night here is a row in
+    // coach_checkins like any practice — same table, same rate, same Monday
+    // payroll email. team_name "DSYSA" is what makes it legible on the ledger,
+    // and role "dsysa" is what makes it filterable there.
+    const DSYSA_TEAM = "DSYSA";
+    const nrmName = (x) => String(x || "").trim().toLowerCase();
+    const clinicHours = (c) => {
+      const mins = (t) => { const m = /^(\d{1,2}):(\d{2})/.exec(String(t || "")); return m ? +m[1] * 60 + +m[2] : null; };
+      const a = mins(c.start_time), b = mins(c.end_time);
+      // 90 minutes on the court, but they're there for the whole block; when the
+      // times are missing, two hours is what these nights have always been.
+      return a != null && b != null && b > a ? Math.round(((b - a) / 60) * 100) / 100 : 2;
+    };
+    const clinicSlot = (c) => (hhmm(c.start_time) && hhmm(c.end_time))
+      ? hhmm(c.start_time) + "-" + hhmm(c.end_time) : "6-8pm";
+    const checksFor = (c) => checkins.filter(x =>
+      x.check_date === c.clinic_date && x.team_name === DSYSA_TEAM);
+    const checkFor = (c, name) => checksFor(c).find(x => nrmName(x.coach_name) === nrmName(name));
+    const emailForCoach = (name) => {
+      const r = coachRoster.find(x => nrmName((x.first_name || "") + " " + (x.last_name || "")) === nrmName(name));
+      return r?.email || null;
+    };
+    const dsysaCheckIn = async (c, name) => {
+      if (checkFor(c, name)) return;
+      const { error } = await supabase.from("coach_checkins").insert({
+        coach_name: name,
+        coach_email: emailForCoach(name),
+        check_date: c.clinic_date,
+        team_name: DSYSA_TEAM,
+        slot: clinicSlot(c),
+        phase: phaseForDate(c.clinic_date) || "none",
+        hours: clinicHours(c),
+        role: "dsysa",
+        status: "present",
+        source: "admin",
+        paid: false,
+        created_by: coach?.display_name || coach?.email || "admin",
+      });
+      if (error) { window.alert("Couldn't check " + name + " in: " + error.message); return; }
+      await loadCheckins();
+    };
+    const dsysaUncheck = async (id) => {
+      const { error } = await supabase.from("coach_checkins").delete().eq("id", id);
+      if (error) { window.alert("Couldn't undo that: " + error.message); return; }
+      await loadCheckins();
+    };
+    const setCheckHours = async (id, v) => {
+      const h = Number(v);
+      if (!Number.isFinite(h) || h <= 0 || h > 12) return;
+      const { error } = await supabase.from("coach_checkins").update({ hours: h }).eq("id", id);
+      if (error) { window.alert("Couldn't save hours: " + error.message); return; }
+      await loadCheckins();
+    };
     const eligible = coachRoster
       .map(r => ((r.first_name || "") + " " + (r.last_name || "")).trim())
       .filter(nm => nm && !isPlaceholderPerson(nm))
@@ -14448,6 +14503,75 @@ export default function App() {
                   </>
                 )}
               </div>
+
+              {/* Who actually worked it. Only once the night has happened —
+                  checking someone in for a clinic that hasn't run yet is how a
+                  no-show gets paid. */}
+              {isAdmin && !c.cancelled && c.clinic_date <= today && (() => {
+                const done = checksFor(c);
+                const names = [...new Set([
+                  ...mine.map(g => g.coach_name),
+                  ...done.map(x => x.coach_name),
+                ].map(x => String(x || "").trim()).filter(Boolean))]
+                  .sort((a, b) => a.localeCompare(b));
+                const totalH = done.reduce((t, x) => t + Number(x.hours || 0), 0);
+                return (
+                  <div style={{padding:"9px 14px",borderTop:"1px solid "+C.border,background:C.bg}}>
+                    <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:7}}>
+                      <span style={{fontSize:10,fontWeight:800,textTransform:"uppercase",letterSpacing:0.4,color:C.gold}}>
+                        Time cards
+                      </span>
+                      <span style={{fontSize:11,color:C.mut}}>
+                        {done.length
+                          ? <><b style={{color:C.grn}}>{done.length}</b> checked in · {totalH}h onto DS Elite payroll</>
+                          : "Nobody checked in yet"}
+                      </span>
+                      {done.some(x => x.paid) && <span style={{fontSize:10,color:C.mut}}>· some already paid</span>}
+                    </div>
+                    <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+                      {!names.length && <span style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>Nobody was signed up for this one.</span>}
+                      {names.map(nm => {
+                        const row = checkFor(c, nm);
+                        const signedUp = mine.some(g => nrmName(g.coach_name) === nrmName(nm));
+                        return (
+                          <span key={nm} style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:11,
+                            border:"1px solid "+(row?C.grn:C.border),borderRadius:6,padding:"3px 8px",
+                            background: row ? "rgba(74,222,128,0.08)" : "transparent"}}>
+                            <button onClick={() => row ? dsysaUncheck(row.id) : dsysaCheckIn(c, nm)}
+                              disabled={!!row?.paid}
+                              title={row ? (row.paid ? "Already paid — undo it on the Time Cards screen" : "Undo this check-in") : "Check " + nm + " in for " + clinicHours(c) + "h"}
+                              style={{background:"none",border:"none",padding:0,cursor:row?.paid?"default":"pointer",
+                                color:row?C.grn:C.mut,fontWeight:800,fontSize:11,fontFamily:"inherit"}}>
+                              {row ? "✓" : "○"}
+                            </button>
+                            <span style={{color:row?C.text:C.mut,fontWeight:row?700:400}}>{nm}</span>
+                            {!signedUp && <span title="Wasn't signed up, but worked it" style={{fontSize:9,color:C.mut}}>walk-up</span>}
+                            {row && (
+                              <input type="number" step="0.25" min="0.25" max="12" defaultValue={Number(row.hours || 0)}
+                                disabled={!!row.paid}
+                                onBlur={e => { const v = Number(e.target.value); if (v !== Number(row.hours)) setCheckHours(row.id, v); }}
+                                title="Hours onto her time card"
+                                style={{width:46,padding:"1px 4px",borderRadius:4,border:"1px solid "+C.border,
+                                  background:C.card,color:C.text,fontFamily:"inherit",fontSize:10.5}} />
+                            )}
+                            {row?.paid && <span style={{fontSize:9,color:C.gold,fontWeight:800}}>PAID</span>}
+                          </span>
+                        );
+                      })}
+                      <select defaultValue="" onChange={e => { if (e.target.value) { dsysaCheckIn(c, e.target.value); e.target.value = ""; } }}
+                        style={{...inpStyle,padding:"3px 8px",fontSize:11}}>
+                        <option value="">+ someone else who worked it…</option>
+                        {eligible.filter(nm => !names.some(x => nrmName(x) === nrmName(nm)))
+                          .map(nm => <option key={nm} value={nm}>{nm}</option>)}
+                      </select>
+                    </div>
+                    <div style={{fontSize:10,color:C.mut,marginTop:6,fontStyle:"italic"}}>
+                      These hours go onto the DS Elite ledger at each coach's normal rate — same place as practice hours,
+                      and they show on Monday's payroll email as “DSYSA”.
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           );
         })}
@@ -21874,7 +21998,10 @@ export default function App() {
     const weekdayOf = iso => ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][new Date(iso+"T12:00:00").getDay()];
     const excludedSet = new Set(hoursExcludes.map(x => norm(x.coach_name)));
     const clockedByDate = {};
-    checkins.filter(c => c.check_date>=wkStart && c.check_date<=wkEnd).forEach(c => {
+    // A DSYSA night is not evidence she clocked in for her own team's practice.
+    // These land on Mondays, when plenty of teams also train, and counting them
+    // here would quietly stop flagging the practice shift she actually missed.
+    checkins.filter(c => c.role !== "dsysa").filter(c => c.check_date>=wkStart && c.check_date<=wkEnd).forEach(c => {
       const cn = norm(canonicalName(c.coach_name, c.coach_email));
       (clockedByDate[c.check_date] = clockedByDate[c.check_date] || new Set()).add(cn);
     });
@@ -21935,7 +22062,7 @@ export default function App() {
         <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:12}}>
           <input value={f.coach} onChange={e=>setTcFilters(x=>({...x,coach:e.target.value}))} placeholder="Search coach…" style={{...St.sel,width:150}} />
           <select value={f.role} onChange={e=>setTcFilters(x=>({...x,role:e.target.value}))} style={St.sel} title="Filter by role">
-            <option value="">All roles</option><option value="scheduled">Scheduled</option><option value="sub">Subs</option><option value="float">Floats</option>
+            <option value="">All roles</option><option value="scheduled">Scheduled</option><option value="sub">Subs</option><option value="float">Floats</option><option value="dsysa">DSYSA</option>
           </select>
           <select value={f.team} onChange={e=>setTcFilters(x=>({...x,team:e.target.value}))} style={St.sel} title="Filter by team">
             <option value="">All teams</option>
@@ -22080,7 +22207,7 @@ export default function App() {
                                 <div key={c.id} style={{display:"flex",alignItems:"center",gap:8,fontSize:12,color:C.text,flexWrap:"wrap"}}>
                                   <input type="date" value={c.check_date} onChange={e=>editCheck(c.id,{ check_date:e.target.value, phase:phaseForDate(e.target.value)||c.phase })} style={{...St.sel,width:135,padding:"4px 6px"}} title="Shift date" />
                                   <select value={c.role} onChange={e=>editCheck(c.id,{ role:e.target.value })} style={{...St.sel,padding:"4px 6px"}} title="Role">
-                                    <option value="scheduled">Scheduled</option><option value="sub">Sub</option><option value="float">Float</option>
+                                    <option value="scheduled">Scheduled</option><option value="sub">Sub</option><option value="float">Float</option><option value="dsysa">DSYSA</option>
                                   </select>
                                   <select value={c.team_name||""} onChange={e=>editCheck(c.id,{ team_name:e.target.value||null })} style={{...St.sel,padding:"4px 6px",minWidth:120}} title="Team">
                                     <option value="">Floating</option>
