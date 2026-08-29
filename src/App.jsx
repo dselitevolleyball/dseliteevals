@@ -15882,15 +15882,32 @@ export default function App() {
               const parents = mine.filter(v => v.role === "team_parent");
               const others  = mine.filter(v => v.role !== "team_parent");
               const kick = teamKickoffs.find(k => k.team_name === teamCardName) || null;
+              const kTeam = practiceTeams.find(t => t.team_name === teamCardName) || null;
+              // The head coach's answers, annotated here so the team card is one
+              // place to look. Everything below is read-only: a correction goes
+              // back through the coach's own check-in link, so this card and the
+              // Kickoffs board can never end up saying different things.
+              const dayFmt = (iso) => { if (!iso) return "—";
+                try { return new Date(iso + "T12:00:00Z").toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric",timeZone:"UTC"}); }
+                catch { return iso; } };
+              const stamp = (ts) => { try { return new Date(ts).toLocaleDateString("en-US",{month:"short",day:"numeric"}); } catch { return ""; } };
+              // Confirmed parents are pulled out of the signup list rather than
+              // ticked in place: with seven names on a team, the one actually
+              // doing the job is the thing you opened the card to find.
+              const confirmed = mine.filter(v => v.confirmed);
+              const unconfirmedParents = parents.filter(v => !v.confirmed);
+              const unconfirmedOthers  = others.filter(v => !v.confirmed);
+              const overdue = kick?.kickoff_status === "not_scheduled" && kick.plan_by && kick.plan_by < localDateISO();
               const row = (v) => (
                 <div key={v.id} style={{display:"flex",alignItems:"baseline",gap:8,fontSize:13,padding:"3px 0"}}>
                   {/* A tick means the head coach confirmed this is the one
                       doing the job, not just a name off the signup sheet. */}
-                  {v.confirmed && <span title={"Confirmed by " + (v.confirmed_by || "their head coach")}
+                  {v.confirmed && <span title={"Confirmed by " + (v.confirmed_by || "their head coach") + (v.confirmed_at ? " on " + stamp(v.confirmed_at) : "")}
                     style={{color:C.grn,fontWeight:800,fontSize:12}}>✓</span>}
                   <span style={{color:C.text,fontWeight:700}}>{v.name}</span>
                   {v.player_name && <span style={{fontSize:11,color:C.mut}}>({v.player_name})</span>}
                   {v.note && <span style={{fontSize:11,color:C.acc,fontWeight:700}}>{v.note}</span>}
+                  {v.confirmed && v.phone && <span style={{fontSize:11,color:C.mut}}>{v.phone}</span>}
                   <span style={{flex:1}} />
                   {v.email
                     ? <a href={"mailto:"+v.email.split(",")[0].trim()} style={{fontSize:11,color:"#06b6d4",textDecoration:"none"}}>{v.email.split(",")[0].trim()}</a>
@@ -15901,29 +15918,61 @@ export default function App() {
               );
               return (
                 <>
-                  <div style={lbl}>Team Parents{parents.length ? " · " + parents.length : ""}</div>
-                  {parents.length
-                    ? parents.map(row)
-                    : <div style={{fontSize:12,color:"#f59e0b",fontStyle:"italic"}}>No team parent yet — ask at the next practice.</div>}
-                  {others.length > 0 && (
+                  <div style={lbl}>
+                    Team Parent
+                    {confirmed.length
+                      ? <span style={{color:C.grn,marginLeft:6}}>confirmed by {confirmed[0].confirmed_by || "their coach"}{confirmed[0].confirmed_at ? " · " + stamp(confirmed[0].confirmed_at) : ""}</span>
+                      : <span style={{color:C.mut,marginLeft:6}}>not confirmed</span>}
+                  </div>
+                  {confirmed.length
+                    ? confirmed.map(row)
+                    : kick?.no_team_parent
+                      ? <div style={{fontSize:12,color:"#f59e0b",fontStyle:"italic"}}>
+                          Coach says they don't have one yet and has asked for help finding one.</div>
+                      : <div style={{fontSize:12,color:"#f59e0b",fontStyle:"italic"}}>
+                          {parents.length
+                            ? "Nobody confirmed yet — " + parents.length + " signed up at the kickoff meeting, below."
+                            : "No team parent yet — ask at the next practice."}</div>}
+
+                  {(unconfirmedParents.length > 0 || unconfirmedOthers.length > 0) && (
                     <>
-                      <div style={{...lbl,marginTop:14}}>Other Volunteers · {others.length}</div>
-                      {others.map(row)}
+                      <div style={{...lbl,marginTop:14}}>
+                        Signed Up At The Meeting · {unconfirmedParents.length + unconfirmedOthers.length}
+                      </div>
+                      {unconfirmedParents.map(row)}
+                      {unconfirmedOthers.map(row)}
                     </>
                   )}
-                  {/* The kickoff party, as the head coach reported it on their
-                      own check-in link. Read-only here for the same reason the
-                      school block is: a correction goes back through the form
-                      so both screens can't end up saying different things. */}
-                  <div style={{...lbl,marginTop:14}}>Kickoff Party</div>
+
+                  <div style={{...lbl,marginTop:14}}>
+                    Kickoff Party
+                    {kick?.submitted_at && <span style={{color:C.mut,marginLeft:6}}>answered {stamp(kick.submitted_at)}{kick.submitted_by ? " by " + kick.submitted_by : ""}</span>}
+                  </div>
                   <div style={{fontSize:12.5}}>
                     {!kick ? <span style={{color:C.mut,fontStyle:"italic"}}>Coach hasn't answered the check-in yet.</span>
                       : kick.kickoff_status === "held"
-                        ? <span style={{color:C.grn,fontWeight:700}}>Held {kick.kickoff_date}{kick.kickoff_where ? <span style={{color:C.mut,fontWeight:400}}> · {kick.kickoff_where}</span> : null}</span>
+                        ? <span style={{color:C.grn,fontWeight:700}}>Held {dayFmt(kick.kickoff_date)}{kick.kickoff_where ? <span style={{color:C.mut,fontWeight:400}}> · {kick.kickoff_where}</span> : null}</span>
                       : kick.kickoff_status === "scheduled"
-                        ? <span style={{color:C.gold,fontWeight:700}}>Booked for {kick.kickoff_date}{kick.kickoff_where ? <span style={{color:C.mut,fontWeight:400}}> · {kick.kickoff_where}</span> : null}</span>
-                        : <span style={{color:"#f59e0b",fontWeight:700}}>Not scheduled — coach is booking it by {kick.plan_by || "—"}</span>}
+                        ? <span style={{color:C.gold,fontWeight:700}}>Booked for {dayFmt(kick.kickoff_date)}{kick.kickoff_where ? <span style={{color:C.mut,fontWeight:400}}> · {kick.kickoff_where}</span> : null}</span>
+                      : overdue
+                        ? <span style={{color:C.red,fontWeight:700}}>Not scheduled — said they'd book it by {dayFmt(kick.plan_by)}, now past</span>
+                        : <span style={{color:"#f59e0b",fontWeight:700}}>Not scheduled — coach is booking it by {dayFmt(kick.plan_by)}</span>}
                     {kick?.notes && <div style={{color:C.mut,fontStyle:"italic",marginTop:4}}>“{kick.notes}”</div>}
+                    {canOps && kTeam?.kickoff_form_token && (
+                      <div style={{marginTop:7,display:"flex",gap:6,flexWrap:"wrap"}}>
+                        <button onClick={()=>{
+                            const l = APP_URL.replace(/\/$/, "") + "/kickoff?t=" + kTeam.kickoff_form_token;
+                            navigator.clipboard?.writeText(l)
+                              .then(()=>window.alert(teamCardName + "'s check-in link copied — send it to " + (kTeam.head_coach || "their coach") + "."))
+                              .catch(()=>window.prompt(teamCardName + "'s check-in link:", l));
+                          }}
+                          style={{padding:"2px 7px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",
+                            color:C.mut,fontFamily:"inherit",fontSize:10,fontWeight:700,cursor:"pointer"}}>copy coach's link</button>
+                        <button onClick={()=>{ setTeamCardName(null); setView("kickoff"); }}
+                          style={{padding:"2px 7px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",
+                            color:C.mut,fontFamily:"inherit",fontSize:10,fontWeight:700,cursor:"pointer"}}>kickoff board</button>
+                      </div>
+                    )}
                   </div>
                   {canOps && (
                     <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:12,borderTop:"1px solid "+C.border,paddingTop:10}}>
