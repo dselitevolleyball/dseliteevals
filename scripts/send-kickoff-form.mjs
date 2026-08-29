@@ -11,10 +11,13 @@
 // DRY RUN BY DEFAULT. It prints who would be written to and what the first
 // message says, and sends nothing until --send is passed.
 //
+// Rise teams are held back by default — they don't run a kickoff party.
+//
 // Usage:
 //   node scripts/send-kickoff-form.mjs                     # dry run, teams that haven't answered
-//   node scripts/send-kickoff-form.mjs --team "14 Diamond" # dry run, one team
+//   node scripts/send-kickoff-form.mjs --team "14 Diamond" # dry run, one team (Rise rule doesn't apply)
 //   node scripts/send-kickoff-form.mjs --all               # include teams that already answered
+//   node scripts/send-kickoff-form.mjs --rise              # include the Rise teams too
 //   node scripts/send-kickoff-form.mjs --send              # actually send
 //
 // Sending goes through the deployed /api/send-email and /api/send-push (the
@@ -38,6 +41,11 @@ const isPlaceholder = (c) => {
 };
 const norm = (s) => String(s || "").trim().toLowerCase().replace(/\s+/g, " ");
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// Rise is the developmental line and doesn't run a kickoff party, so its
+// coaches are held back by default rather than asked a question that doesn't
+// apply to them. Same call the gear order makes by excluding Rise from
+// shared/gear-teams.js. --rise sends to them anyway.
+const isRise = (team) => /\brise\b/i.test(String(team || ""));
 
 function loadEnv() {
   let raw = "";
@@ -57,6 +65,7 @@ const value = (name) => { const i = args.indexOf("--" + name); return i >= 0 ? a
 const doSend = flag("send");
 const includeDone = flag("all");
 const onlyTeam = value("team");
+const withRise = flag("rise");
 
 const env = loadEnv();
 const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
@@ -91,8 +100,13 @@ for (const v of (vols || [])) {
   parentsByTeam.set(v.team_name, cur);
 }
 
+// Naming a team explicitly overrides the Rise rule: --team "11 Rise 1" means
+// you meant that team, not that you forgot it's Rise.
+const rise = (teams || []).filter(t => isRise(t.team_name) && !withRise && !onlyTeam &&
+  (includeDone || !answeredTeams.has(t.team_name)));
 const inScope = (teams || []).filter(t =>
   (!onlyTeam || t.team_name === onlyTeam) &&
+  (withRise || onlyTeam || !isRise(t.team_name)) &&
   (includeDone || !answeredTeams.has(t.team_name))
 );
 // Two things stop a team being asked, and they need different fixes: no head
@@ -156,6 +170,11 @@ console.log(`${inScope.length} team${inScope.length === 1 ? "" : "s"} in scope` 
   (onlyTeam ? ` (${onlyTeam})` : "") +
   (includeDone ? " (including teams that already answered)" : " (teams that haven't answered)"));
 console.log(`${jobs.length} to send — notification + email to each head coach`);
+if (rise.length) {
+  console.log(`
+${rise.length} Rise team${rise.length === 1 ? "" : "s"} held back — they don't run a kickoff party. --rise sends to them anyway:`);
+  rise.forEach(t => console.log("   " + t.team_name.padEnd(14) + (t.head_coach || "no head coach")));
+}
 if (noCoach.length) {
   console.log(`\n⚠ ${noCoach.length} with NO head coach — nobody to ask until one is assigned:`);
   noCoach.forEach(t => console.log("   " + t.team_name));
