@@ -14,6 +14,10 @@
     {
       "source": "/gear",
       "destination": "/api/gear-form"
+    },
+    {
+      "source": "/kickoff",
+      "destination": "/api/kickoff-form"
     }
   ],
   "crons": [

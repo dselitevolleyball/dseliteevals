@@ -1886,6 +1886,9 @@ export default function App() {
   const [teamTasks, setTeamTasks]                           = useState({}); // { `${team}|${item}`: { status, notes } }
   const [teamVolunteers, setTeamVolunteers]                 = useState([]); // team parents + other volunteers, one row per person
   const [volDraft, setVolDraft]                             = useState({ name:"", role:"team_parent", email:"", player_name:"" });
+  const [teamKickoffs, setTeamKickoffs]                     = useState([]); // head coaches' kickoff check-in answers, one row per team
+  const [kickoffRequests, setKickoffRequests]               = useState([]); // when each team was last asked
+  const [kickoffFilter, setKickoffFilter]                   = useState("all");
   const [teamQuestions, setTeamQuestions]                   = useState([]); // coach→director questions
   const [faq, setFaq]                                       = useState([]); // curated coach FAQ
   const [faqSearch, setFaqSearch]                           = useState("");
@@ -2007,7 +2010,7 @@ export default function App() {
   // email we send them. Every admin control inside renderDsysa — add/cancel a
   // date, set the lead, remove someone else's signup — is separately gated on
   // isAdmin, so opening the view exposes no admin action.
-  const OPS_VIEWS = new Set(["school","schoolgames","playergear","incidentboard","tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","timecards","gear","staffing","roster","hawaii","travel","finance","dssccal","pods"]);
+  const OPS_VIEWS = new Set(["school","schoolgames","playergear","kickoff","incidentboard","tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","timecards","gear","staffing","roster","hawaii","travel","finance","dssccal","pods"]);
   const canOps    = isAdmin || isOwner;
   const opsDenied = <div style={{padding:24,color:C.mut,textAlign:"center"}}>This section is restricted to administrators. Ask the club administrator (Drew) for access.</div>;
   // Once a player has accepted (or is locked/signed) onto a team, they're
@@ -2564,6 +2567,19 @@ export default function App() {
     const { data, error } = await supabase.from("team_volunteers").select("*").order("team_name").order("name");
     if (error) { console.error("Load team_volunteers error:", error); return; }
     setTeamVolunteers(data || []);
+  }, []);
+  // The kickoff check-in: what each head coach answered, and when we last asked.
+  // A team with no answer row has not replied — that's the whole unanswered
+  // state, so nothing needs a status of its own to mean "not yet".
+  const loadTeamKickoffs = useCallback(async () => {
+    const [kRes, rRes] = await Promise.all([
+      supabase.from("team_kickoffs").select("*").order("team_name"),
+      supabase.from("team_kickoff_requests").select("team_name, sent_at").order("sent_at", { ascending: false }),
+    ]);
+    if (kRes.error) { console.error("Load team_kickoffs error:", kRes.error); return; }
+    if (rRes.error) console.error("Load team_kickoff_requests error:", rRes.error);
+    setTeamKickoffs(kRes.data || []);
+    setKickoffRequests(rRes.data || []);
   }, []);
   // Per-team operational checklist (Coach + Ops To-Do) and the coach→director
   // questions. Defined above the realtime effect that lists them in its deps.
@@ -3237,6 +3253,12 @@ export default function App() {
   // Team parents render on the team card, which opens from any view — load once
   // on approval rather than per-view.
   useEffect(() => { if (isApproved) loadTeamVolunteers(); }, [isApproved, loadTeamVolunteers]);
+  // Loaded once on approval, like the volunteers it sits beside: it's 21 rows,
+  // and the menu badge counts unanswered teams from every view, so loading it
+  // per-view would make that count blink to zero everywhere else.
+  useEffect(() => { if (isApproved) loadTeamKickoffs(); }, [isApproved, loadTeamKickoffs]);
+  // The board hands out the per-team form link, which lives on practice_teams.
+  useEffect(() => { if (isApproved && view === "kickoff") loadPractice(); }, [isApproved, view, loadPractice]);
   // Operational checklist + questions load on the Home (coaches) and All Teams (admins) views.
   useEffect(() => { if (isApproved && (view === "home" || view === "teamdir")) { loadTeamTasks(); loadTeamQuestions(); } }, [isApproved, view, loadTeamTasks, loadTeamQuestions]);
   // Item descriptions are needed wherever the checklists render; updates show on Home.
@@ -3985,6 +4007,16 @@ export default function App() {
     const by = new Map((coachGear || []).map(g => [nrm(g.coach_name), g]));
     return gearPeople.filter(s => !gearComplete(by.get(nrm(s.name)))).length;
   }, [gearPeople, coachGear]);
+  // Teams the kickoff board still wants something from — drives the nav badge.
+  // A booked or held party is done; everything else is either an unanswered
+  // coach or a party nobody has scheduled, and both need chasing.
+  const kickoffOutstanding = useMemo(() => {
+    const by = new Map(teamKickoffs.map(k => [k.team_name, k]));
+    return practiceTeams.filter(t => {
+      const k = by.get(t.team_name);
+      return !k || k.kickoff_status === "not_scheduled";
+    }).length;
+  }, [practiceTeams, teamKickoffs]);
 
   // Build the per-user notification list from existing data (updates + Q&A).
   const notifications = useMemo(() => {
@@ -4218,7 +4250,7 @@ export default function App() {
   useEffect(() => {
     // Roster also drives the Tryout coach picker / Text Coaches lookup,
     // so make sure it's loaded whenever either tab opens.
-    if (isApproved && (view === "coaches" || view === "tryouts" || view === "home" || view === "clockin" || view === "teamdir" || view === "practice" || view === "timecards" || view === "clinics" || view === "dssccal" || view === "tournaments")) loadCoachRoster();
+    if (isApproved && (view === "coaches" || view === "tryouts" || view === "home" || view === "clockin" || view === "teamdir" || view === "practice" || view === "timecards" || view === "clinics" || view === "dssccal" || view === "tournaments" || view === "kickoff")) loadCoachRoster();
   }, [isApproved, view, loadCoachRoster]);
   // The coach card edits coach_roster, so make sure it's loaded when one opens.
   useEffect(() => { if (isApproved && coachCardName) loadCoachRoster(); }, [isApproved, coachCardName, loadCoachRoster]);
@@ -10413,6 +10445,218 @@ export default function App() {
     );
   }
 
+  // ── Kickoff check-in ────────────────────────────────────────────────────
+  // What every head coach said about their team parent and their kickoff party,
+  // from the per-team form at /kickoff?t=… (api/kickoff-form.js).
+  //
+  // The board is sorted by what needs doing, not alphabetically. "Not scheduled"
+  // sits at the top with the date the coach promised, then the teams that never
+  // answered, then the ones with a booking, then the ones that are done — so
+  // the screen empties from the bottom as the season gets going.
+  //
+  // Nothing here is editable. A coach's answer is a thing they told us; a
+  // correction goes back through their own link so their board and ours can't
+  // say two different things.
+  function renderKickoffs() {
+    const norm = (s) => String(s || "").trim().toLowerCase().replace(/\s+/g, " ");
+    const kickBy = new Map(teamKickoffs.map(k => [k.team_name, k]));
+    const askedBy = new Map();               // requests are newest-first, so first seen wins
+    for (const r of kickoffRequests) if (!askedBy.has(r.team_name)) askedBy.set(r.team_name, r.sent_at);
+
+    const todayISO = localDateISO();
+    const rows = practiceTeams
+      .filter(t => canViewTeams || myTeamNames.includes(t.team_name))
+      .map(t => {
+        const k = kickBy.get(t.team_name) || null;
+        const mine = teamVolunteers.filter(v => v.team_name === t.team_name);
+        const confirmed = mine.filter(v => v.confirmed);
+        const signups = mine.filter(v => v.role === "team_parent");
+        // Five states, and they're what the sort and the pills both run on.
+        // "overdue" is a promised booking date that has come and gone — the one
+        // row that needs a phone call rather than another email.
+        const state = !k ? "waiting"
+          : k.kickoff_status === "held" ? "held"
+          : k.kickoff_status === "scheduled" ? "scheduled"
+          : (k.plan_by && k.plan_by < todayISO) ? "overdue" : "unscheduled";
+        return { t, k, state, confirmed, signups, asked: askedBy.get(t.team_name) || null };
+      });
+
+    const ORDER = { overdue: 0, unscheduled: 1, waiting: 2, scheduled: 3, held: 4 };
+    const count = (s) => rows.filter(r => r.state === s).length;
+    const noParent = rows.filter(r => !r.confirmed.length);
+    const shown = (kickoffFilter === "all" ? rows
+                : kickoffFilter === "noparent" ? noParent
+                : rows.filter(r => r.state === kickoffFilter))
+      .slice().sort((a, b) =>
+        ORDER[a.state] - ORDER[b.state] ||
+        (a.k?.plan_by || a.k?.kickoff_date || "").localeCompare(b.k?.plan_by || b.k?.kickoff_date || "") ||
+        a.t.team_name.localeCompare(b.t.team_name));
+
+    const link = (t) => t.kickoff_form_token
+      ? APP_URL.replace(/\/$/, "") + "/kickoff?t=" + t.kickoff_form_token : null;
+    const copyLink = (t) => {
+      const l = link(t);
+      if (!l) { window.alert("That team has no form link yet — run the 20260829 migration."); return; }
+      navigator.clipboard?.writeText(l)
+        .then(() => window.alert(t.team_name + "'s check-in link copied — send it to " + (t.head_coach || "their coach") + "."))
+        .catch(() => window.prompt(t.team_name + "'s check-in link:", l));
+    };
+    const copyChasers = () => {
+      const names = rows.filter(r => r.state === "waiting").map(r => r.t.head_coach).filter(Boolean);
+      const em = [...new Set(names.map(n => {
+        const c = coachRoster.find(x => norm(`${x.first_name || ""} ${x.last_name || ""}`) === norm(n));
+        return c?.email || null;
+      }).filter(Boolean))];
+      if (!em.length) { window.alert("Everybody has answered."); return; }
+      navigator.clipboard?.writeText(em.join(", "))
+        .then(() => window.alert(em.length + " addresses copied — the coaches who haven't answered."))
+        .catch(() => window.prompt("Copy these:", em.join(", ")));
+    };
+    const exportBoard = () => {
+      const out = [["Team", "Head coach", "Team parent", "Their email", "Their phone",
+                    "Kickoff", "Date", "Where", "Booked by", "Signups on file", "Notes", "Answered"]];
+      rows.slice().sort((a, b) => a.t.team_name.localeCompare(b.t.team_name)).forEach(r => {
+        out.push([
+          r.t.team_name, r.t.head_coach || "",
+          r.confirmed.map(v => v.name).join("; "),
+          r.confirmed.map(v => v.email || "").filter(Boolean).join("; "),
+          r.confirmed.map(v => v.phone || "").filter(Boolean).join("; "),
+          !r.k ? "no answer" : r.k.kickoff_status,
+          r.k?.kickoff_date || "", r.k?.kickoff_where || "", r.k?.plan_by || "",
+          r.signups.length, r.k?.notes || "",
+          r.k?.submitted_at ? new Date(r.k.submitted_at).toLocaleDateString() : "",
+        ]);
+      });
+      downloadCSV("dselite-kickoffs.csv", out);
+    };
+
+    const TONE = { overdue: C.red, unscheduled: "#f59e0b", waiting: C.mut, scheduled: C.gold, held: C.grn };
+    const LABEL = { overdue: "Past their own date", unscheduled: "Not scheduled",
+                    waiting: "No answer yet", scheduled: "On the calendar", held: "Had it" };
+    const pill = (k, label, n, color) => (
+      <button key={k} onClick={() => setKickoffFilter(k)}
+        style={{padding:"6px 12px",borderRadius:8,cursor:"pointer",fontFamily:"inherit",fontSize:11.5,fontWeight:700,
+          border:"1px solid "+(kickoffFilter===k?color:C.border),
+          background:kickoffFilter===k?color+"1e":"transparent", color:kickoffFilter===k?color:C.mut}}>
+        {label} <b style={{color:kickoffFilter===k?color:C.text}}>{n}</b>
+      </button>
+    );
+    const fmt = (iso) => { try { return new Date(iso + "T12:00:00Z").toLocaleDateString("en-US",{month:"short",day:"numeric",timeZone:"UTC"}); } catch { return iso; } };
+    const daysAgo = (ts) => Math.floor((Date.now() - new Date(ts).getTime()) / 86400000);
+
+    return (
+      <div style={{maxWidth:1100,margin:"0 auto"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:6}}>
+          <div>
+            <h2 style={{margin:0,fontSize:20,fontWeight:800,color:C.gold}}>🎉 Kickoff check-in</h2>
+            <div style={{fontSize:12,color:C.mut,marginTop:2}}>
+              <b style={{color:C.text}}>{rows.length - count("waiting")}</b> of {rows.length} coaches answered
+              {!canViewTeams && <> · <span style={{color:C.gold,fontWeight:700}}>your teams only</span></>}
+            </div>
+          </div>
+          <div style={{flex:1}} />
+          <a href={APP_URL.replace(/\/$/, "") + "/kickoff?preview=1"} target="_blank" rel="noreferrer"
+            title="Open the check-in exactly as coaches see it — nothing you do there is saved"
+            style={{padding:"8px 14px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",
+              color:C.mut,fontFamily:"inherit",fontSize:12,fontWeight:800,cursor:"pointer",textDecoration:"none"}}>👁 Show me the form</a>
+          <button onClick={exportBoard}
+            style={{padding:"8px 14px",borderRadius:8,border:"none",background:C.gold,color:"#fff",
+              fontFamily:"inherit",fontSize:12,fontWeight:800,cursor:"pointer"}}>⬇ Board (CSV)</button>
+          {count("waiting") > 0 && (
+            <button onClick={copyChasers}
+              style={{padding:"8px 14px",borderRadius:8,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontFamily:"inherit",fontSize:12,fontWeight:800,cursor:"pointer"}}>
+              Copy emails of the {count("waiting")} who haven't
+            </button>
+          )}
+        </div>
+
+        {/* The send itself is a script, not a button: it goes to 19 coaches at
+            once and gets a dry run first. Naming it here means the person
+            looking at the board knows how the asks get out. */}
+        <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:10,padding:"10px 13px",margin:"12px 0 4px",
+          fontSize:11.5,color:C.mut,lineHeight:1.6}}>
+          Every coach gets an HQ notification and an email carrying their own team's link.
+          To send (or chase the ones who haven't answered):
+          <code style={{color:C.gold,marginLeft:6}}>node scripts/send-kickoff-form.mjs</code>
+          <span style={{marginLeft:6}}>— dry run by default, add <code style={{color:C.gold}}>--send</code>.</span>
+        </div>
+
+        <div style={{display:"flex",gap:7,flexWrap:"wrap",margin:"14px 0"}}>
+          {pill("all","Every team",rows.length,C.mut)}
+          {pill("overdue",LABEL.overdue,count("overdue"),TONE.overdue)}
+          {pill("unscheduled",LABEL.unscheduled,count("unscheduled"),TONE.unscheduled)}
+          {pill("waiting",LABEL.waiting,count("waiting"),C.mut)}
+          {pill("scheduled",LABEL.scheduled,count("scheduled"),TONE.scheduled)}
+          {pill("held",LABEL.held,count("held"),TONE.held)}
+          {pill("noparent","No team parent",noParent.length,"#f59e0b")}
+        </div>
+
+        {!shown.length && <div style={{padding:26,textAlign:"center",color:C.mut,fontSize:12.5}}>Nothing in that group.</div>}
+
+        <div style={{display:"grid",gridTemplateColumns:isNarrow?"1fr":"repeat(auto-fill,minmax(430px,1fr))",gap:12}}>
+          {shown.map(({ t, k, state, confirmed, signups, asked }) => (
+            <div key={t.team_name} style={{background:C.card,border:"1px solid "+C.border,borderLeft:"3px solid "+TONE[state],
+              borderRadius:12,padding:"12px 14px"}}>
+              <div style={{display:"flex",alignItems:"baseline",gap:8,flexWrap:"wrap",marginBottom:8}}>
+                <span onClick={()=>setTeamCardName(t.team_name)}
+                  style={{fontSize:13.5,fontWeight:800,color:C.gold,cursor:"pointer"}}>{t.team_name}</span>
+                <span style={{fontSize:11,color:C.mut}}>{t.head_coach || "no head coach"}</span>
+                <div style={{flex:1}} />
+                <span style={{fontSize:10,fontWeight:800,color:TONE[state]}}>{LABEL[state]}</span>
+              </div>
+
+              <div style={{fontSize:11.5,marginBottom:7}}>
+                <span style={{color:C.mut}}>Team parent </span>
+                {confirmed.length
+                  ? confirmed.map(v => (
+                      <span key={v.id} style={{color:C.text,fontWeight:700,marginRight:8}}>
+                        ✓ {v.name}
+                        {v.player_name && <span style={{color:C.mut,fontWeight:400}}> ({v.player_name})</span>}
+                        {v.email && <span style={{color:C.mut,fontWeight:400}}> · {v.email}</span>}
+                      </span>
+                    ))
+                  : k?.no_team_parent
+                    ? <span style={{color:"#f59e0b",fontWeight:700}}>none yet — coach asked for help finding one</span>
+                    : <span style={{color:C.mut,fontStyle:"italic"}}>
+                        not confirmed{signups.length ? ` — ${signups.length} signed up at the meeting` : " — nobody signed up"}
+                      </span>}
+              </div>
+
+              <div style={{fontSize:11.5,marginBottom:8}}>
+                <span style={{color:C.mut}}>Kickoff </span>
+                {!k ? <span style={{color:C.mut,fontStyle:"italic"}}>
+                        no answer{asked ? ` — asked ${daysAgo(asked)} day${daysAgo(asked)===1?"":"s"} ago` : " — never asked"}
+                      </span>
+                  : k.kickoff_status === "held" ? <span style={{color:C.grn,fontWeight:700}}>held {fmt(k.kickoff_date)}{k.kickoff_where ? <span style={{color:C.mut,fontWeight:400}}> · {k.kickoff_where}</span> : null}</span>
+                  : k.kickoff_status === "scheduled" ? <span style={{color:C.gold,fontWeight:700}}>{fmt(k.kickoff_date)}{k.kickoff_where ? <span style={{color:C.mut,fontWeight:400}}> · {k.kickoff_where}</span> : null}</span>
+                  : <span style={{color:TONE[state],fontWeight:700}}>
+                      not scheduled — {state === "overdue" ? "said " : "booking it by "}{fmt(k.plan_by)}{state === "overdue" ? ", now past" : ""}
+                    </span>}
+              </div>
+
+              {k?.notes && <div style={{fontSize:11,color:C.mut,fontStyle:"italic",marginBottom:8,
+                borderLeft:"2px solid "+C.border,paddingLeft:8}}>“{k.notes}”</div>}
+
+              <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                <button onClick={()=>copyLink(t)} title="Copy this team's check-in link"
+                  style={{padding:"2px 7px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",
+                    color:C.mut,fontFamily:"inherit",fontSize:10,fontWeight:700,cursor:"pointer"}}>copy link</button>
+                {link(t) && <a href={link(t)} target="_blank" rel="noreferrer" title="Open their form"
+                  style={{padding:"2px 7px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",
+                    color:C.mut,fontFamily:"inherit",fontSize:10,fontWeight:700,textDecoration:"none"}}>open</a>}
+                <button onClick={()=>setTeamCardName(t.team_name)} title="Open the team card"
+                  style={{padding:"2px 7px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",
+                    color:C.mut,fontFamily:"inherit",fontSize:10,fontWeight:700,cursor:"pointer"}}>team card</button>
+                {k?.submitted_at && <span style={{fontSize:10,color:C.mut,alignSelf:"center"}}>
+                  answered {new Date(k.submitted_at).toLocaleDateString()}</span>}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   // ── School games ────────────────────────────────────────────────────────
   // The master schedule, built out of what families pasted into the school-team
   // form and parsed by scripts/parse-school-schedules.mjs.
@@ -15637,8 +15881,13 @@ export default function App() {
               const mine = teamVolunteers.filter(v => v.team_name === teamCardName);
               const parents = mine.filter(v => v.role === "team_parent");
               const others  = mine.filter(v => v.role !== "team_parent");
+              const kick = teamKickoffs.find(k => k.team_name === teamCardName) || null;
               const row = (v) => (
                 <div key={v.id} style={{display:"flex",alignItems:"baseline",gap:8,fontSize:13,padding:"3px 0"}}>
+                  {/* A tick means the head coach confirmed this is the one
+                      doing the job, not just a name off the signup sheet. */}
+                  {v.confirmed && <span title={"Confirmed by " + (v.confirmed_by || "their head coach")}
+                    style={{color:C.grn,fontWeight:800,fontSize:12}}>✓</span>}
                   <span style={{color:C.text,fontWeight:700}}>{v.name}</span>
                   {v.player_name && <span style={{fontSize:11,color:C.mut}}>({v.player_name})</span>}
                   {v.note && <span style={{fontSize:11,color:C.acc,fontWeight:700}}>{v.note}</span>}
@@ -15662,6 +15911,20 @@ export default function App() {
                       {others.map(row)}
                     </>
                   )}
+                  {/* The kickoff party, as the head coach reported it on their
+                      own check-in link. Read-only here for the same reason the
+                      school block is: a correction goes back through the form
+                      so both screens can't end up saying different things. */}
+                  <div style={{...lbl,marginTop:14}}>Kickoff Party</div>
+                  <div style={{fontSize:12.5}}>
+                    {!kick ? <span style={{color:C.mut,fontStyle:"italic"}}>Coach hasn't answered the check-in yet.</span>
+                      : kick.kickoff_status === "held"
+                        ? <span style={{color:C.grn,fontWeight:700}}>Held {kick.kickoff_date}{kick.kickoff_where ? <span style={{color:C.mut,fontWeight:400}}> · {kick.kickoff_where}</span> : null}</span>
+                      : kick.kickoff_status === "scheduled"
+                        ? <span style={{color:C.gold,fontWeight:700}}>Booked for {kick.kickoff_date}{kick.kickoff_where ? <span style={{color:C.mut,fontWeight:400}}> · {kick.kickoff_where}</span> : null}</span>
+                        : <span style={{color:"#f59e0b",fontWeight:700}}>Not scheduled — coach is booking it by {kick.plan_by || "—"}</span>}
+                    {kick?.notes && <div style={{color:C.mut,fontStyle:"italic",marginTop:4}}>“{kick.notes}”</div>}
+                  </div>
                   {canOps && (
                     <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:12,borderTop:"1px solid "+C.border,paddingTop:10}}>
                       <input value={volDraft.name} onChange={e=>setVolDraft(d=>({...d,name:e.target.value}))} placeholder="Name"
@@ -28687,6 +28950,7 @@ export default function App() {
                   ["school","School Teams"],
                   ["schoolgames","School Games"],
                   ["playergear","Gear Orders"],
+                  ["kickoff","Kickoffs" + (kickoffOutstanding ? " (" + kickoffOutstanding + ")" : "")],
                   ["incidentboard","Issue Board" + (incidents.filter(r => r.status === "open").length ? " (" + incidents.filter(r => r.status === "open").length + ")" : "")],
                   ["tracker","Tracker"], ["teamdir","All Teams"], ["playereval","Player Evaluations"], ["passing","Passer Ratings"], ["practice","Practice"], ["sa","S&A Schedule"], ["scholarships","Scholarships"],
                   ...(isAdmin ? [["hawaii","Hawaii"], ["travel","Travel"], ["finance","Finance"]] : []),
@@ -28922,6 +29186,7 @@ export default function App() {
         {view==="school" && renderSchoolTeams()}
         {view==="schoolgames" && renderSchoolGames()}
         {view==="playergear" && renderPlayerGear()}
+        {view==="kickoff" && renderKickoffs()}
         {view==="incidents" && renderIncidents()}
         {view==="incidentboard" && (canOps ? renderIncidentBoard() : opsDenied)}
         {view==="coachcomms" && renderCoachComms()}

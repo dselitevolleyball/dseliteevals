@@ -192,6 +192,11 @@ CREATE TABLE team_volunteers (
   phone       TEXT,
   player_name TEXT,
   note        TEXT         NOT NULL DEFAULT '',
+  -- Ticked by the head coach at the kickoff check-in: this is the one actually
+  -- doing the job, not just a name off the signup sheet (added 20260829).
+  confirmed    BOOLEAN     NOT NULL DEFAULT FALSE,
+  confirmed_by TEXT,
+  confirmed_at TIMESTAMPTZ,
   created_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
   updated_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
@@ -202,6 +207,43 @@ CREATE POLICY team_volunteers_all_approved ON team_volunteers
   FOR ALL
   USING      (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved))
   WITH CHECK (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved));
+
+-- ───── Kickoff check-in (added 20260829) ─────────────────────────────
+-- The head coach's answer to "who is your team parent, and have you had your
+-- kickoff party yet". No row means they haven't answered.
+-- See migrations/20260829_team_kickoff_checkin.sql
+CREATE TABLE team_kickoffs (
+  team_name       TEXT        PRIMARY KEY,
+  kickoff_status  TEXT        NOT NULL,     -- held | scheduled | not_scheduled
+  kickoff_date    DATE,
+  kickoff_where   TEXT,
+  plan_by         DATE,                     -- not_scheduled only: booked-by date the coach committed to
+  no_team_parent  BOOLEAN     NOT NULL DEFAULT FALSE,
+  notes           TEXT        NOT NULL DEFAULT '',
+  submitted_by    TEXT,
+  submitted_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+ALTER TABLE team_kickoffs ENABLE ROW LEVEL SECURITY;
+CREATE POLICY team_kickoffs_all_approved ON team_kickoffs
+  FOR ALL
+  USING      (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved))
+  WITH CHECK (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved));
+
+-- Who we asked and when — the answers say who hasn't replied, this says
+-- whether that's because nobody ever asked them.
+CREATE TABLE team_kickoff_requests (
+  id          BIGSERIAL   PRIMARY KEY,
+  team_name   TEXT        NOT NULL,
+  coach_name  TEXT,
+  channel     TEXT        NOT NULL DEFAULT 'email',   -- email | push
+  sent_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX team_kickoff_requests_team_idx ON team_kickoff_requests (team_name, sent_at DESC);
+ALTER TABLE team_kickoff_requests ENABLE ROW LEVEL SECURITY;
+CREATE POLICY team_kickoff_requests_read_approved ON team_kickoff_requests
+  FOR SELECT
+  USING (EXISTS (SELECT 1 FROM coaches c WHERE c.id = auth.uid() AND c.is_approved));
 
 CREATE TABLE team_questions (
   id               BIGSERIAL    PRIMARY KEY,
