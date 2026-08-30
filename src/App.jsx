@@ -10184,14 +10184,29 @@ export default function App() {
       if (nrm(r.team_name) !== nrm(p.team_assignment)) out.push("team → " + (r.team_name || "(blank)"));
       return out;
     };
-    const rows = eligible.map(p => { const r = byPlayer.get(p.id); return { p, r, flags: flagsFor(p, r) }; });
+    // The contacts a try-on table actually needs. A family that told us there
+    // is only one guardian is complete with one — chasing them for a second is
+    // asking a single parent to invent a spouse.
+    const contactGaps = (r) => {
+      if (!r) return [];
+      const out = [];
+      if (!r.parent1_name || !r.parent1_phone || !r.parent1_email) out.push("first parent");
+      if (!r.single_parent && !(r.parent2_name && r.parent2_phone && r.parent2_email)) out.push("second parent");
+      return out;
+    };
+    const rows = eligible.map(p => {
+      const r = byPlayer.get(p.id);
+      return { p, r, flags: flagsFor(p, r), gaps: contactGaps(r) };
+    });
     const ordered = rows.filter(x => x.r);
     const waiting = rows.filter(x => !x.r);
     const flagged = ordered.filter(x => x.flags.length);
+    const nocontact = ordered.filter(x => x.gaps.length);
 
     const shown = (gearOrderFilter === "in" ? ordered
                 : gearOrderFilter === "waiting" ? waiting
                 : gearOrderFilter === "flagged" ? flagged
+                : gearOrderFilter === "nocontact" ? nocontact
                 : rows)
       .slice().sort((a,b) => (a.p.team_assignment||"").localeCompare(b.p.team_assignment||"")
         || (a.p.last_name||"").localeCompare(b.p.last_name||""));
@@ -10234,15 +10249,23 @@ export default function App() {
       if (!list.length) { window.alert("No orders in yet."); return; }
       const rowsOut = [[
         "Team","Jersey #","First Name","Last Name",
+        // Contacts sit next to the name, not at the far end past eleven size
+        // columns: at a try-on table this sheet gets read left to right on a
+        // phone, and the number you need is the one you can't scroll to.
+        "Parent 1","Parent 1 phone","Parent 1 email",
+        "Parent 2","Parent 2 phone","Parent 2 email","Only one parent","Player phone",
         ...GEAR_ITEMS.map(([,label]) => label),
-        "Details confirmed","Shoe invoice OK","Notes","Differs from roster","Submitted",
+        "Details confirmed","Shoe invoice OK","Notes","Differs from roster","Missing contacts","Submitted",
       ]];
-      list.forEach(({ p, r, flags }) => {
+      list.forEach(({ p, r, flags, gaps }) => {
         rowsOut.push([
           r.team_name || p.team_assignment || "", r.jersey_number ?? "", r.first_name || "", r.last_name || "",
+          r.parent1_name || "", r.parent1_phone || "", r.parent1_email || "",
+          r.parent2_name || "", r.parent2_phone || "", r.parent2_email || "",
+          r.single_parent ? "Yes" : "", r.player_phone || "",
           ...GEAR_ITEMS.map(([k]) => r[k] || ""),
           r.details_confirmed ? "Yes" : "No", r.shoe_invoice_ack ? "Yes" : "No",
-          r.notes || "", flags.join("; "),
+          r.notes || "", flags.join("; "), gaps.join("; "),
           r.updated_at ? new Date(r.updated_at).toLocaleDateString() : "",
         ]);
       });
@@ -10294,6 +10317,7 @@ export default function App() {
           {pill("in","Ordered",ordered.length,C.grn)}
           {pill("waiting","Not yet",waiting.length,C.red)}
           {pill("flagged","Changed something",flagged.length,"#f59e0b")}
+          {pill("nocontact","Missing a contact",nocontact.length,"#f59e0b")}
         </div>
 
         <div style={{display:"flex",gap:7,flexWrap:"wrap",marginBottom:14}}>
@@ -10330,7 +10354,7 @@ export default function App() {
                       <span style={{fontSize:11,color:inN===list.length?C.grn:C.mut}}>{inN} of {list.length} in</span>
                     </div>
                     <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                      {list.map(({ p, r, flags }) => (
+                      {list.map(({ p, r, flags, gaps }) => (
                         <div key={p.id} style={{display:"flex",gap:8,alignItems:"flex-start",padding:"5px 6px",borderRadius:6,
                           background:r?"transparent":C.bg}}>
                           <div style={{flex:1,minWidth:0}}>
@@ -10342,7 +10366,20 @@ export default function App() {
                               {r?.jersey_number && <span style={{fontSize:10.5,color:C.mut}}>#{r.jersey_number}</span>}
                               {!!flags.length && <span title={"Differs from the roster: " + flags.join(", ")}
                                 style={{fontSize:10,fontWeight:800,color:"#f59e0b"}}>⚠ changed</span>}
+                              {!!gaps?.length && <span title={"Still missing: " + gaps.join(", ")}
+                                style={{fontSize:10,fontWeight:800,color:"#f59e0b"}}>☎ {gaps.join(" + ")}</span>}
                             </div>
+                            {/* Contacts above the sizes: this is the line you
+                                read when you need to find somebody's parent. */}
+                            {r && (r.parent1_name || r.parent2_name) && (
+                              <div style={{fontSize:10.5,color:C.mut,marginTop:2}}>
+                                {[r.parent1_name && r.parent1_name + (r.parent1_phone ? " " + r.parent1_phone : ""),
+                                  r.parent2_name && r.parent2_name + (r.parent2_phone ? " " + r.parent2_phone : ""),
+                                  r.single_parent && !r.parent2_name ? "one guardian" : "",
+                                  r.player_phone && "her " + r.player_phone,
+                                ].filter(Boolean).join(" · ")}
+                              </div>
+                            )}
                             {r ? <div style={{marginTop:3}}>{sizeChips(r)}</div>
                                : <div style={{fontSize:11,color:C.mut,marginTop:1}}>no order yet</div>}
                           </div>
@@ -10368,21 +10405,33 @@ export default function App() {
 
         {gearOrderGroup === "flat" && <div style={{overflowX:"auto",background:C.card,border:"1px solid "+C.border,borderRadius:12}}>
           <table style={{borderCollapse:"collapse",width:"100%",fontSize:12}}>
-            <thead><tr>{["Player","#","Team",...GEAR_ITEMS.map(([,l]) => l),"Ordered",""].map(h => (
+            <thead><tr>{["Player","#","Team","Parent 1","Parent 2","Her phone",...GEAR_ITEMS.map(([,l]) => l),"Ordered",""].map(h => (
               <th key={h} style={{textAlign:"left",whiteSpace:"nowrap",padding:"9px 10px",borderBottom:"1px solid "+C.border,
                 fontSize:10,fontWeight:800,letterSpacing:0.4,textTransform:"uppercase",color:C.mut}}>{h}</th>
             ))}</tr></thead>
             <tbody>
-              {shown.map(({ p, r, flags }) => (
+              {shown.map(({ p, r, flags, gaps }) => (
                 <tr key={p.id} onClick={()=>setProfileId(p.id)} style={{cursor:"pointer"}}
                   onMouseEnter={e=>e.currentTarget.style.background=C.bg}
                   onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
                   <td style={{padding:"6px 10px",borderBottom:"1px solid "+C.border,fontWeight:700,color:C.text,whiteSpace:"nowrap"}}>
                     {r?.first_name || p.first_name} {r?.last_name || p.last_name}
                     {!!flags.length && <span title={"Differs from the roster: " + flags.join(", ")} style={{marginLeft:5,color:"#f59e0b"}}>⚠</span>}
+                    {!!gaps?.length && <span title={"Still missing: " + gaps.join(", ")} style={{marginLeft:5,color:"#f59e0b"}}>☎</span>}
                   </td>
                   <td style={{padding:"6px 10px",borderBottom:"1px solid "+C.border,color:C.mut,whiteSpace:"nowrap"}}>{r?.jersey_number ?? p.jersey_number ?? "—"}</td>
                   <td style={{padding:"6px 10px",borderBottom:"1px solid "+C.border,color:C.mut,whiteSpace:"nowrap"}}>{r?.team_name || p.team_assignment || "—"}</td>
+                  {/* Name over number: the name is what you match to the parent
+                      standing at the table, and the number is what you dial once
+                      you have. Both fit on one line at this size. */}
+                  <td style={{padding:"6px 10px",borderBottom:"1px solid "+C.border,whiteSpace:"nowrap",color:r?.parent1_name?C.text:C.mut}}>
+                    {r?.parent1_name || "—"}{r?.parent1_phone && <span style={{color:C.mut}}> · {r.parent1_phone}</span>}
+                  </td>
+                  <td style={{padding:"6px 10px",borderBottom:"1px solid "+C.border,whiteSpace:"nowrap",color:r?.parent2_name?C.text:C.mut}}>
+                    {r?.parent2_name || (r?.single_parent ? "one guardian" : "—")}
+                    {r?.parent2_phone && <span style={{color:C.mut}}> · {r.parent2_phone}</span>}
+                  </td>
+                  <td style={{padding:"6px 10px",borderBottom:"1px solid "+C.border,whiteSpace:"nowrap",color:r?.player_phone?C.text:C.mut}}>{r?.player_phone || "—"}</td>
                   {GEAR_ITEMS.map(([k]) => (
                     <td key={k} style={{padding:"6px 10px",borderBottom:"1px solid "+C.border,whiteSpace:"nowrap",
                       color:r?.[k]?C.text:C.mut}}>{r?.[k] || "—"}</td>

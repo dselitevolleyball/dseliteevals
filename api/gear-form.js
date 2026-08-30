@@ -20,6 +20,15 @@
 // in a separate email is how you get 45 non-answers a second time. Anyone who
 // already answered doesn't see the section at all.
 //
+// The contacts block is here for the same reason. The roster holds one parent
+// for every girl and a second for barely a fifth of them, which is fine right
+// up until a try-on table where the parent in front of you is the one we don't
+// have, and the girl herself is reachable only through a phone we never asked
+// for. Pre-filled with what we hold, and stored on the ORDER rather than
+// written back over the roster: a form anyone holding the link can open must
+// not be able to silently rewrite how we reach a family. The board shows what
+// came in against what we hold, and the roster is corrected from there.
+//
 // GET /gear?preview=1 renders the same page with no player and no saving, so
 // staff can look at what families get without opening a real family's order and
 // risking a submission in their name.
@@ -174,7 +183,8 @@ export default async function handler(req, res) {
   if (!UUID_RE.test(token)) return res.status(400).send(notFound("That link is missing its code, or it was cut in half by the email app."));
 
   const { data: player } = await supabase
-    .from("players").select("id,first_name,last_name,team_assignment,jersey_number,usav_div")
+    .from("players").select("id,first_name,last_name,team_assignment,jersey_number,usav_div," +
+      "parent_name,parent_phone,parent_email,parent_email2,player_phone")
     .eq("gear_form_token", token).maybeSingle();
   if (!player) return res.status(404).send(notFound("We can't find that link. It may have been re-issued."));
 
@@ -196,12 +206,21 @@ export default async function handler(req, res) {
       const v = String(body?.[key] || "").trim();
       return opts.includes(v) ? v : null;
     };
+    const text = (key, max) => String(body?.[key] || "").trim().slice(0, max) || null;
     const row = {
       player_id: player.id,
       first_name: String(body?.first_name || "").trim().slice(0, 80) || null,
       last_name: String(body?.last_name || "").trim().slice(0, 80) || null,
       jersey_number: String(body?.jersey_number || "").trim().slice(0, 10) || null,
       team_name: pick("team_name", TEAMS),
+      parent1_name: text("parent1_name", 120),
+      parent1_phone: text("parent1_phone", 40),
+      parent1_email: text("parent1_email", 200),
+      parent2_name: text("parent2_name", 120),
+      parent2_phone: text("parent2_phone", 40),
+      parent2_email: text("parent2_email", 200),
+      single_parent: !!body?.single_parent,
+      player_phone: text("player_phone", 40),
       details_confirmed: !!body?.details_confirmed,
       shoe_invoice_ack: !!body?.shoe_invoice_ack,
       notes: String(body?.notes || "").trim().slice(0, 2000) || null,
@@ -227,11 +246,25 @@ export default async function handler(req, res) {
     } : null;
     if (schoolRow && schoolRow.made_team === false) { schoolRow.team_level = null; schoolRow.schedule = null; }
 
+    // A single parent is a normal family, so the second contact can't just be
+    // required — but a blank one has to be a stated answer rather than a
+    // skipped section, or nobody can tell it apart from a form filled in at a
+    // red light. Name is what makes the second contact "given": a phone with
+    // nobody attached to it is not a person we can ask for.
+    const hasParent2 = !!(row.parent2_name || row.parent2_phone || row.parent2_email);
+
     const missing = [];
     if (!row.first_name) missing.push("player first name");
     if (!row.last_name) missing.push("player last name");
     if (!row.jersey_number) missing.push("jersey number");
     if (!row.team_name) missing.push("team");
+    if (!row.parent1_name) missing.push("first parent's name");
+    if (!row.parent1_phone) missing.push("first parent's phone");
+    if (!row.parent1_email) missing.push("first parent's email");
+    if (!hasParent2 && !row.single_parent) missing.push("the second parent — fill them in, or tick that there's only one");
+    if (hasParent2 && !row.parent2_name) missing.push("second parent's name");
+    if (hasParent2 && !row.parent2_phone) missing.push("second parent's phone");
+    if (hasParent2 && !row.parent2_email) missing.push("second parent's email");
     for (const it of ITEMS) if (!row[it.key]) missing.push(it.label.toLowerCase());
     if (!row.details_confirmed) missing.push("the confirmation box");
     if (askSchool) {
@@ -249,6 +282,11 @@ export default async function handler(req, res) {
         askSchool, school: { ...(school || {}), ...(schoolRow || {}), made_raw: madeRaw },
       }));
     }
+
+    // Ticking "only one parent" and then filling one in is a family changing
+    // their mind halfway down the section, not a contradiction to argue with.
+    // The details they typed are the later answer, so they win.
+    if (hasParent2) row.single_parent = false;
 
     const { error } = await supabase.from("player_gear_orders")
       .upsert(row, { onConflict: "player_id" });
@@ -276,6 +314,11 @@ export default async function handler(req, res) {
       ["Player", (row.first_name || "") + " " + (row.last_name || "")],
       ["Jersey number", row.jersey_number],
       ["Team", row.team_name],
+      ["Parent 1", [row.parent1_name, row.parent1_phone, row.parent1_email].filter(Boolean).join(" · ")],
+      ["Parent 2", hasParent2
+        ? [row.parent2_name, row.parent2_phone, row.parent2_email].filter(Boolean).join(" · ")
+        : "one parent/guardian"],
+      ...(row.player_phone ? [["Her phone", row.player_phone]] : []),
       ...ITEMS.map(it => [it.label, row[it.key]]),
       ...(schoolSaved ? [
         ["School team", schoolRow.made_team === false ? "not playing this year"
@@ -349,6 +392,22 @@ function renderForm(player, v, { error, preview, askSchool, school } = {}) {
   const team = has("team_name") ? v.team_name : (player.team_assignment || "");
   const submitted = !!v.updated_at;
 
+  // Parent 1 is pre-filled from the roster; parent 2 starts blank except for
+  // the spare email we happen to hold, because guessing a name to go with it
+  // would present our guess back to the family as something they told us.
+  const pre = (k, fallback) => has(k) ? v[k] : (fallback || "");
+  const p1 = {
+    name: pre("parent1_name", player.parent_name),
+    phone: pre("parent1_phone", player.parent_phone),
+    email: pre("parent1_email", player.parent_email),
+  };
+  const p2 = {
+    name: pre("parent2_name", ""),
+    phone: pre("parent2_phone", ""),
+    email: pre("parent2_email", player.parent_email2),
+  };
+  const playerPhone = pre("player_phone", player.player_phone);
+
   const itemHtml = (it) => `
     <div class="item">
       <div class="pic"><img src="/gear/${it.img}.jpg" alt="" loading="lazy" onerror="this.parentNode.remove()"></div>
@@ -402,6 +461,40 @@ function renderForm(player, v, { error, preview, askSchool, school } = {}) {
         <input type="checkbox" name="details_confirmed" value="1" required${v.details_confirmed ? " checked" : ""}>
         <span>I've checked her last name spelling, jersey number, and team above, and they're right. <span class="req">*</span></span>
       </label>
+    </div>
+
+    <div class="card">
+      <p class="sect">Who we contact</p>
+      <div class="note">
+        We hold one parent for most families and nothing for the second, which is
+        how a girl ends up at a try-on with nobody we can call. Both, please —
+        and her own number if she has one.
+      </div>
+      <div style="height:16px"></div>
+
+      <p class="lb" style="color:var(--ink);font-size:13px;letter-spacing:.04em">Parent / guardian 1</p>
+      <label><span class="lb">Name <span class="req">*</span></span>
+        <input type="text" name="parent1_name" value="${esc(p1.name)}" required autocomplete="off"></label>
+      <label><span class="lb">Mobile <span class="req">*</span></span>
+        <input type="tel" name="parent1_phone" value="${esc(p1.phone)}" required autocomplete="off"></label>
+      <label><span class="lb">Email <span class="req">*</span></span>
+        <input type="email" name="parent1_email" value="${esc(p1.email)}" required autocomplete="off"></label>
+
+      <p class="lb" style="color:var(--ink);font-size:13px;letter-spacing:.04em;margin-top:22px">Parent / guardian 2</p>
+      <label><span class="lb">Name</span>
+        <input type="text" name="parent2_name" value="${esc(p2.name)}" autocomplete="off"></label>
+      <label><span class="lb">Mobile</span>
+        <input type="tel" name="parent2_phone" value="${esc(p2.phone)}" autocomplete="off"></label>
+      <label><span class="lb">Email</span>
+        <input type="email" name="parent2_email" value="${esc(p2.email)}" autocomplete="off"></label>
+      <label class="chk">
+        <input type="checkbox" name="single_parent" value="1"${v.single_parent ? " checked" : ""}>
+        <span>There's only one parent or guardian for her — nothing to add here.</span>
+      </label>
+
+      <label style="margin-bottom:0"><span class="lb">Her own mobile <span style="text-transform:none;letter-spacing:0">(if she has one)</span></span>
+        <input type="tel" name="player_phone" value="${esc(playerPhone)}" autocomplete="off">
+        <p class="hint">Only used to reach her at a tournament or a try-on — she won't be added to any list.</p></label>
     </div>
 
     <div class="card">
