@@ -5301,7 +5301,7 @@ export default function App() {
       "Pinny #","Eval Complete","Feedback Session Complete",
       "Supplemental (Eval as Tryout)","Tryout Registered","Eval Registered",
       "SportsEngine","SportsYou","Lone Star","Jersey Tryout",
-      "Player Email","Player Phone","Parent Name","Parent Email","Parent Email 2","Parent Email 3","Parent Phone",
+      "Player Email","Player Phone","Parent Name","Parent Email","Parent Email 2","Parent Email 3","Parent Phone","Parent 2 Name","Parent 2 Phone",
       "Address Line 1","Address Line 2","City","State","Zip",
       "Primary Position","Secondary Position","Positions",
       "Dominant Hand","School Team","Other Sports","Previous Club/Team",
@@ -5319,7 +5319,7 @@ export default function App() {
         p.supplemental === 1 ? "Yes":"No", p.tryout_registered ? "Yes":"No", p.eval_registered ? "Yes":"No",
         p.sportsengine_registered ? "Yes":"No", p.sportsyou_registered ? "Yes":"No",
         p.lonestar_member ? "Yes":"No", p.jersey_tryout_complete ? "Yes":"No",
-        p.player_email, p.player_phone, p.parent_name, p.parent_email, p.parent_email2, p.parent_email3, p.parent_phone,
+        p.player_email, p.player_phone, p.parent_name, p.parent_email, p.parent_email2, p.parent_email3, p.parent_phone, p.parent2_name, p.parent2_phone,
         p.address_line1, p.address_line2, p.city, p.state, p.zip,
         p.primary_position, p.secondary_position, (p.positions||[]).join("/"),
         p.dominant_hand, p.school_team, p.other_sports, p.current_team,
@@ -11996,6 +11996,12 @@ export default function App() {
             <div style={{fontSize:11,fontWeight:700,color:C.gold,marginBottom:10}}>REGISTRATION INFO & INTAKE</div>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:10}}>
               <div><span style={lbl}>Parent Name</span><DebouncedField style={editInp} placeholder="Parent name" value={p.parent_name||""} onCommit={v=>upd(p.id,{parent_name:v})} /></div>
+              {/* The second parent, imported from the 26-27 master workbooks.
+                  Their EMAIL is Parent Email 2 rather than a field of its own,
+                  because that is one of the three addresses every parent blast
+                  actually reads. */}
+              <div><span style={lbl}>Parent 2 Name</span><DebouncedField style={editInp} placeholder="Second parent/guardian" value={p.parent2_name||""} onCommit={v=>upd(p.id,{parent2_name:v})} /></div>
+              <div><span style={lbl}>Parent 2 Phone</span><DebouncedField style={editInp} placeholder="555-555-5555" value={p.parent2_phone||""} onCommit={v=>upd(p.id,{parent2_phone:v})} /></div>
               <div><span style={lbl}>Parent Email</span><DebouncedField type="email" style={editInp} placeholder="email@example.com" value={p.parent_email||""} onCommit={v=>upd(p.id,{parent_email:v})} /></div>
               <div><span style={lbl}>Parent Email 2</span><DebouncedField type="email" style={editInp} placeholder="email@example.com" value={p.parent_email2||""} onCommit={v=>upd(p.id,{parent_email2:v})} /></div>
               <div><span style={lbl}>Parent Email 3</span><DebouncedField type="email" style={editInp} placeholder="email@example.com" value={p.parent_email3||""} onCommit={v=>upd(p.id,{parent_email3:v})} /></div>

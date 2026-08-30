@@ -33,3 +33,6 @@ Thumbs.db
 
 # Claude Code personal settings
 .claude/settings.local.json
+
+# Contact-import backup — holds parent names, phones and email addresses
+.contact-import-backup.json

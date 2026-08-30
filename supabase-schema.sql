@@ -14,8 +14,15 @@ CREATE TABLE players (
   min_level TEXT,
   parent_name TEXT,
   parent_email TEXT,
-  parent_email2 TEXT,                  -- optional second parent/guardian email; see migrations/20260627
+  parent_email2 TEXT,                  -- second parent/guardian email; see migrations/20260627
   parent_phone TEXT,
+  -- The second parent/guardian, imported from the 26-27 master team workbooks
+  -- (migrations/20260830, scripts/import-master-contacts.mjs). Their EMAIL is
+  -- parent_email2 rather than a parent2_email column, because parent_email/2/3
+  -- are the three fields every parent blast reads — see PARENT_EMAIL_FIELDS in
+  -- src/App.jsx. An address anywhere else is an address nobody mails.
+  parent2_name TEXT,
+  parent2_phone TEXT,
   scholarship_amount TEXT,             -- scholarship offer ($ or %), admin-only; see migrations/20260629
   city TEXT,
   strength_weakness TEXT,

@@ -184,7 +184,7 @@ export default async function handler(req, res) {
 
   const { data: player } = await supabase
     .from("players").select("id,first_name,last_name,team_assignment,jersey_number,usav_div," +
-      "parent_name,parent_phone,parent_email,parent_email2,player_phone")
+      "parent_name,parent_phone,parent_email,parent_email2,parent2_name,parent2_phone,player_phone")
     .eq("gear_form_token", token).maybeSingle();
   if (!player) return res.status(404).send(notFound("We can't find that link. It may have been re-issued."));
 
@@ -392,9 +392,10 @@ function renderForm(player, v, { error, preview, askSchool, school } = {}) {
   const team = has("team_name") ? v.team_name : (player.team_assignment || "");
   const submitted = !!v.updated_at;
 
-  // Parent 1 is pre-filled from the roster; parent 2 starts blank except for
-  // the spare email we happen to hold, because guessing a name to go with it
-  // would present our guess back to the family as something they told us.
+  // Both parents are pre-filled from the roster now that it holds them — the
+  // 26-27 master workbooks were imported into parent2_name/parent2_phone (see
+  // scripts/import-master-contacts.mjs), so most families are confirming what
+  // we already have rather than typing it in on a phone.
   const pre = (k, fallback) => has(k) ? v[k] : (fallback || "");
   const p1 = {
     name: pre("parent1_name", player.parent_name),
@@ -402,8 +403,8 @@ function renderForm(player, v, { error, preview, askSchool, school } = {}) {
     email: pre("parent1_email", player.parent_email),
   };
   const p2 = {
-    name: pre("parent2_name", ""),
-    phone: pre("parent2_phone", ""),
+    name: pre("parent2_name", player.parent2_name),
+    phone: pre("parent2_phone", player.parent2_phone),
     email: pre("parent2_email", player.parent_email2),
   };
   const playerPhone = pre("player_phone", player.player_phone);
