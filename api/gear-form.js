@@ -54,7 +54,9 @@ const SIZES_APPAREL = ["XS", "S", "M", "L", "XL", "XXL"];
 const SPANDEX_LEN   = ['3"', '4"', '5"'];
 const KNEEPADS      = ["XS/S", "M/L", "XL"];
 const SOCKS         = ["M (shoe size 5-10)", "L (shoe size 10-13)"];
-const SLEEVES       = ["Youth", "Adult S", "Adult M", "Adult L"];
+// The smallest sleeve is XS, not a youth size — that's what the sample on the
+// table is labelled, and the form has to offer the size a parent is holding.
+const SLEEVES       = ["XS", "Adult S", "Adult M", "Adult L"];
 const SHOES         = ["5.5", "6", "6.5", "7", "7.5", "8", "8.5", "9", "9.5",
                        "10", "10.5", "11", "11.5", "12", "12.5", "13"];
 
