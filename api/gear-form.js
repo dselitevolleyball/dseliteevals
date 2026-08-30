@@ -211,7 +211,11 @@ export default async function handler(req, res) {
       player_id: player.id,
       first_name: String(body?.first_name || "").trim().slice(0, 80) || null,
       last_name: String(body?.last_name || "").trim().slice(0, 80) || null,
-      jersey_number: String(body?.jersey_number || "").trim().slice(0, 10) || null,
+      // The number is ours to assign, not theirs to type. Taken from the
+      // roster rather than the request body, so a changed field, a stale
+      // form, or devtools all save the same thing: what we assigned. Two
+      // girls on one team answering #5 is a problem no vendor can fix.
+      jersey_number: player.jersey_number == null ? null : String(player.jersey_number),
       team_name: pick("team_name", TEAMS),
       parent1_name: text("parent1_name", 120),
       parent1_phone: text("parent1_phone", 40),
@@ -256,7 +260,7 @@ export default async function handler(req, res) {
     const missing = [];
     if (!row.first_name) missing.push("player first name");
     if (!row.last_name) missing.push("player last name");
-    if (!row.jersey_number) missing.push("jersey number");
+
     if (!row.team_name) missing.push("team");
     if (!row.parent1_name) missing.push("first parent's name");
     if (!row.parent1_phone) missing.push("first parent's phone");
@@ -436,14 +440,14 @@ function renderForm(player, v, { error, preview, askSchool, school } = {}) {
     ${error ? `<div class="err">${esc(error)}</div>` : ""}
 
     <div class="card">
-      <p class="sect">Check these three before you send</p>
+      <p class="sect">Check this before you send</p>
       <div class="note">
-        These come from our roster. We order from exactly what's below, so if any of it
-        is wrong, fix it here:
+        These come from our roster and we order from exactly what's below.
         <ul>
-          <li>spelling of the player's last name</li>
-          <li>jersey number</li>
-          <li>team</li>
+          <li>Fix the <b>spelling of her last name</b> here if it's wrong — that's what gets printed.</li>
+          <li>Her <b>number and team</b> are set by the club and can't be changed on this form.
+              If either looks wrong, tell us in the notes at the bottom or grab a coach —
+              don't work around it, because two girls can't wear the same number.</li>
         </ul>
       </div>
       <div style="height:16px"></div>
@@ -451,8 +455,10 @@ function renderForm(player, v, { error, preview, askSchool, school } = {}) {
         <input type="text" name="first_name" value="${esc(firstName)}" required autocomplete="off"></label>
       <label><span class="lb">Player last name <span class="req">*</span></span>
         <input type="text" name="last_name" value="${esc(lastName)}" required autocomplete="off"></label>
-      <label><span class="lb">Assigned jersey number <span class="req">*</span></span>
-        <input type="text" name="jersey_number" value="${esc(jersey)}" required inputmode="numeric" autocomplete="off"></label>
+      <label><span class="lb">Assigned jersey number</span>
+        <input type="text" value="${esc(jersey) || "not assigned yet"}" readonly disabled
+          style="opacity:.72;cursor:not-allowed" autocomplete="off">
+        <p class="hint">Set by the club. ${esc(jersey) ? "" : "We'll assign hers before the order goes in."}</p></label>
       <label><span class="lb">Team <span class="req">*</span></span>
         <select name="team_name" required>
           <option value="">— choose —</option>
@@ -460,7 +466,7 @@ function renderForm(player, v, { error, preview, askSchool, school } = {}) {
         </select></label>
       <label class="chk" style="margin-bottom:0">
         <input type="checkbox" name="details_confirmed" value="1" required${v.details_confirmed ? " checked" : ""}>
-        <span>I've checked her last name spelling, jersey number, and team above, and they're right. <span class="req">*</span></span>
+        <span>I've checked her last name spelling above, and the number and team we've assigned her are right. <span class="req">*</span></span>
       </label>
     </div>
 
