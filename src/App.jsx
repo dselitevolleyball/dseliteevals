@@ -10210,7 +10210,12 @@ export default function App() {
       const r = byPlayer.get(p.id);
       return { p, r, flags: flagsFor(p, r), gaps: contactGaps(r), school: !owesSchool(p) };
     });
-    const ordered = rows.filter(x => x.r);
+    // A draft is a form still being filled in on somebody's phone, not an
+    // order. Counting it as one would drop her off the chase list with her
+    // sizes still blank — which is the exact failure autosave was added to
+    // prevent, arriving by a different door.
+    const ordered = rows.filter(x => x.r && !x.r.is_draft);
+    const started = rows.filter(x => x.r && x.r.is_draft);
     const waiting = rows.filter(x => !x.r);
     const flagged = ordered.filter(x => x.flags.length);
     const nocontact = ordered.filter(x => x.gaps.length);
@@ -10223,6 +10228,7 @@ export default function App() {
                 : gearOrderFilter === "flagged" ? flagged
                 : gearOrderFilter === "nocontact" ? nocontact
                 : gearOrderFilter === "noschool" ? noschool
+                : gearOrderFilter === "started" ? started
                 : rows)
       .slice().sort((a,b) => (a.p.team_assignment||"").localeCompare(b.p.team_assignment||"")
         || (a.p.last_name||"").localeCompare(b.p.last_name||""));
@@ -10307,6 +10313,7 @@ export default function App() {
             <h2 style={{margin:0,fontSize:20,fontWeight:800,color:C.gold}}>👕 Jersey &amp; gear orders</h2>
             <div style={{fontSize:12,color:C.mut,marginTop:2}}>
               <b style={{color:C.text}}>{ordered.length}</b> of {eligible.length} ordered
+              {started.length > 0 && <> · <span style={{color:"#a78bfa",fontWeight:700}}>{started.length} part-filled</span></>}
               {!canViewTeams && <> · <span style={{color:C.gold,fontWeight:700}}>your teams only</span></>}
             </div>
           </div>
@@ -10331,6 +10338,7 @@ export default function App() {
         <div style={{display:"flex",gap:7,flexWrap:"wrap",margin:"14px 0"}}>
           {pill("all","Everyone",rows.length,C.mut)}
           {pill("in","Ordered",ordered.length,C.grn)}
+          {pill("started","Started, not sent",started.length,"#a78bfa")}
           {pill("waiting","Not yet",waiting.length,C.red)}
           {pill("flagged","Changed something",flagged.length,"#f59e0b")}
           {pill("nocontact","Missing a contact",nocontact.length,"#f59e0b")}
@@ -10399,7 +10407,11 @@ export default function App() {
                                 ].filter(Boolean).join(" · ")}
                               </div>
                             )}
-                            {r ? <div style={{marginTop:3}}>{sizeChips(r)}</div>
+                            {r ? <div style={{marginTop:3}}>
+                                   {r.is_draft && <div style={{fontSize:10,fontWeight:800,color:"#a78bfa",marginBottom:2}}>
+                                     ✎ still filling this in</div>}
+                                   {sizeChips(r)}
+                                 </div>
                                : <div style={{fontSize:11,color:C.mut,marginTop:1}}>no order yet</div>}
                           </div>
                           <button onClick={()=>fillHere(p)} title="Fill her form in here, on this device"

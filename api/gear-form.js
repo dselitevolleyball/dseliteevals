@@ -204,6 +204,12 @@ export default async function handler(req, res) {
     let body = req.body;
     if (typeof body === "string") body = Object.fromEntries(new URLSearchParams(body));
 
+    // An autosave, fired as the family types. It stores whatever exists so far
+    // and answers with JSON, so a half-filled form survives a phone locking, a
+    // toddler, or a parent walking off to find a size — none of which are rare
+    // at a fitting table.
+    const isDraft = String((req.query && req.query.draft) || body?.__draft || "") === "1";
+
     // Only ever store a value the form itself offered. A size nobody sells is
     // worse than a blank: blanks get chased, junk gets ordered.
     const pick = (key, opts) => {
@@ -261,6 +267,16 @@ export default async function handler(req, res) {
     // nobody attached to it is not a person we can ask for.
     const hasParent2 = !!(row.parent2_name || row.parent2_phone || row.parent2_email);
 
+    // Drafts skip validation entirely — the whole point is to keep an answer
+    // that isn't finished yet. is_draft keeps it off the order board until the
+    // family presses Send.
+    if (isDraft) {
+      const { error: dErr } = await supabase.from("player_gear_orders")
+        .upsert({ ...row, is_draft: true }, { onConflict: "player_id" });
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      return res.status(dErr ? 500 : 200).send(JSON.stringify(dErr ? { ok: false, error: dErr.message } : { ok: true }));
+    }
+
     const missing = [];
     if (!row.first_name) missing.push("player first name");
     if (!row.last_name) missing.push("player last name");
@@ -295,6 +311,8 @@ export default async function handler(req, res) {
     // their mind halfway down the section, not a contradiction to argue with.
     // The details they typed are the later answer, so they win.
     if (hasParent2) row.single_parent = false;
+    // Pressing Send is what turns a draft into an order.
+    row.is_draft = false;
 
     const { error } = await supabase.from("player_gear_orders")
       .upsert(row, { onConflict: "player_id" });
@@ -343,7 +361,8 @@ export default async function handler(req, res) {
           ${recap.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join("")}
         </table>
       </div>
-      <div class="foot">Questions? Coach Kristen — kristen@dselitevolleyball.com</div>`,
+      <div class="foot">Questions? Coach Kristen — kristen@dselitevolleyball.com</div>
+`,
       { title: "Order received — DS Elite" }));
   }
 
@@ -398,7 +417,9 @@ function renderForm(player, v, { error, preview, askSchool, school } = {}) {
   const jersey = has("jersey_number") ? v.jersey_number
     : (player.jersey_number == null ? "" : String(player.jersey_number));
   const team = has("team_name") ? v.team_name : (player.team_assignment || "");
-  const submitted = !!v.updated_at;
+  // A draft is not a submission. Without this, a parent who typed two letters
+  // and came back would be told they had already sent their order in.
+  const submitted = !!v.updated_at && v.is_draft === false;
 
   // Both parents are pre-filled from the roster now that it holds them — the
   // 26-27 master workbooks were imported into parent2_name/parent2_phone (see
@@ -526,9 +547,93 @@ function renderForm(player, v, { error, preview, askSchool, school } = {}) {
     </div>
 
     <button class="go" type="submit">${submitted ? "Update our order" : "Send our order"}</button>
+    <p class="hint" style="text-align:center" id="savemsg">Your answers save as you go — you can close this and come back.</p>
     <p class="hint" style="text-align:center">All gear is provided by DS Elite except shoes.</p>
   </form>
   <div class="foot">Questions? Coach Kristen — kristen@dselitevolleyball.com</div>
+  ${preview ? "" : `<script>
+  (function () {
+    // Autosave. Families fill this in on a phone in a gym, and get interrupted
+    // — a child needing a different size, a sibling, a phone locking itself.
+    // Every answer goes to the server as it is given, so an interruption costs
+    // nothing. Nothing here is required for the form to work: if all of it
+    // fails, the Send button still submits the page the normal way.
+    var form = document.getElementById('f');
+    var msg = document.getElementById('savemsg');
+    if (!form || !window.fetch) return;
+    var KEY = 'dse_gear_${esc(String(player.id))}';
+    var timer = null, inFlight = false, dirty = false, everSaved = false;
+
+    var say = function (t, colour) {
+      if (!msg) return;
+      msg.textContent = t;
+      msg.style.color = colour || '';
+    };
+
+    var collect = function () {
+      var fd = new FormData(form);
+      var p = new URLSearchParams();
+      fd.forEach(function (v, k) { p.append(k, v); });
+      p.append('__draft', '1');
+      return p;
+    };
+
+    // The phone's own copy, written first and always. It costs nothing and it
+    // is the only thing that survives a dead signal in a metal warehouse.
+    var stash = function (body) {
+      try { localStorage.setItem(KEY, body); } catch (e) {}
+    };
+
+    var save = function () {
+      if (inFlight) { dirty = true; return; }
+      inFlight = true;
+      var body = collect().toString();
+      stash(body);
+      fetch(window.location.pathname + window.location.search + (window.location.search ? '&' : '?') + 'draft=1', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body,
+      }).then(function (r) { return r.json(); }).then(function (o) {
+        inFlight = false;
+        if (o && o.ok) {
+          everSaved = true;
+          try { localStorage.removeItem(KEY); } catch (e) {}
+          say('Saved. You can close this and come back — nothing is ordered until you press the button above.', '');
+        } else {
+          say('Saved on this phone. We will store it when your signal comes back.', '#e0b455');
+        }
+        if (dirty) { dirty = false; save(); }
+      }).catch(function () {
+        inFlight = false;
+        say('Saved on this phone. We will store it when your signal comes back.', '#e0b455');
+        if (dirty) { dirty = false; save(); }
+      });
+    };
+
+    var schedule = function () {
+      clearTimeout(timer);
+      say('Saving…', '');
+      timer = setTimeout(save, 700);
+    };
+
+    form.addEventListener('input', schedule);
+    form.addEventListener('change', schedule);
+    // A phone being locked or the tab being switched away is the most likely
+    // moment to lose an answer, and it is too late for fetch by then.
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState !== 'hidden') return;
+      var body = collect().toString();
+      stash(body);
+      if (navigator.sendBeacon) {
+        navigator.sendBeacon(window.location.pathname + window.location.search +
+          (window.location.search ? '&' : '?') + 'draft=1',
+          new Blob([body], { type: 'application/x-www-form-urlencoded' }));
+      }
+    });
+    // Submitting for real is not a draft — let the normal POST carry it.
+    form.addEventListener('submit', function () { clearTimeout(timer); });
+  })();
+  </script>`}
   ${askSchool ? `<script>
     var made = document.getElementById('made');
     var only = document.getElementById('schoolonly');
