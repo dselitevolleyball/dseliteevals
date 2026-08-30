@@ -42,6 +42,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { saveSchoolGames } from "./_lib/school-games.js";
 import { GEAR_TEAMS as TEAMS } from "../shared/gear-teams.js";
+import { SCHOOL_DIVS } from "../shared/school-divs.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;")
@@ -59,8 +60,8 @@ const SHOES         = ["5.5", "6", "6.5", "7", "7.5", "8", "8.5", "9", "9.5",
 
 // School-team questions, only asked of girls old enough to be on one. Same
 // options as api/school-form.js — two lists that drift apart would file one
-// school team under two names on the board.
-const SCHOOL_DIVS   = ["U13", "U14", "U15", "U16"];
+// school team under two names on the board. The age list is shared with the
+// board that chases the missing answers.
 const SCHOOL_GRADES = ["6th", "7th", "8th", "9th", "10th", "11th", "12th"];
 const SCHOOL_LEVELS = ["Varsity", "JV", "Freshman", "Flex", "8th A", "8th B", "7th A", "7th B", "Other"];
 

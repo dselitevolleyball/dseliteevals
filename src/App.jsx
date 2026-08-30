@@ -3,6 +3,7 @@ import { supabase } from "./supabase";
 import Papa from "papaparse";
 import { DndContext, useDraggable, useDroppable, PointerSensor, TouchSensor, useSensor, useSensors } from "@dnd-kit/core";
 import { GEAR_TEAMS } from "../shared/gear-teams.js";
+import { SCHOOL_DIVS } from "../shared/school-divs.js";
 import { schoolKey } from "../shared/school-schedule.js";
 
 const POSITIONS = ["S","OH","MB","RS","L","DS","U"];
@@ -10200,19 +10201,28 @@ export default function App() {
       if (!r.single_parent && !(r.parent2_name && r.parent2_phone && r.parent2_email)) out.push("second parent");
       return out;
     };
+    // Whether she still owes us a school-team answer. Only the age groups the
+    // gear form actually asks — chasing a U12 for an answer no field ever
+    // requested is the board inventing work for the table.
+    const schoolBy = new Set(schoolReports.map(r => r.player_id));
+    const owesSchool = (p) => SCHOOL_DIVS.includes(p.usav_div) && !schoolBy.has(p.id);
     const rows = eligible.map(p => {
       const r = byPlayer.get(p.id);
-      return { p, r, flags: flagsFor(p, r), gaps: contactGaps(r) };
+      return { p, r, flags: flagsFor(p, r), gaps: contactGaps(r), school: !owesSchool(p) };
     });
     const ordered = rows.filter(x => x.r);
     const waiting = rows.filter(x => !x.r);
     const flagged = ordered.filter(x => x.flags.length);
     const nocontact = ordered.filter(x => x.gaps.length);
+    // Not gated on having ordered: the point is to catch her at the table, and
+    // a girl who hasn't ordered yet is exactly who is still standing there.
+    const noschool = rows.filter(x => !x.school);
 
     const shown = (gearOrderFilter === "in" ? ordered
                 : gearOrderFilter === "waiting" ? waiting
                 : gearOrderFilter === "flagged" ? flagged
                 : gearOrderFilter === "nocontact" ? nocontact
+                : gearOrderFilter === "noschool" ? noschool
                 : rows)
       .slice().sort((a,b) => (a.p.team_assignment||"").localeCompare(b.p.team_assignment||"")
         || (a.p.last_name||"").localeCompare(b.p.last_name||""));
@@ -10261,9 +10271,9 @@ export default function App() {
         "Parent 1","Parent 1 phone","Parent 1 email",
         "Parent 2","Parent 2 phone","Parent 2 email","Only one parent","Player phone",
         ...GEAR_ITEMS.map(([,label]) => label),
-        "Details confirmed","Shoe invoice OK","Notes","Differs from roster","Missing contacts","Submitted",
+        "Details confirmed","Shoe invoice OK","Notes","Differs from roster","Missing contacts","School team answered","Submitted",
       ]];
-      list.forEach(({ p, r, flags, gaps }) => {
+      list.forEach(({ p, r, flags, gaps, school }) => {
         rowsOut.push([
           r.team_name || p.team_assignment || "", r.jersey_number ?? "", r.first_name || "", r.last_name || "",
           r.parent1_name || "", r.parent1_phone || "", r.parent1_email || "",
@@ -10271,7 +10281,7 @@ export default function App() {
           r.single_parent ? "Yes" : "", r.player_phone || "",
           ...GEAR_ITEMS.map(([k]) => r[k] || ""),
           r.details_confirmed ? "Yes" : "No", r.shoe_invoice_ack ? "Yes" : "No",
-          r.notes || "", flags.join("; "), gaps.join("; "),
+          r.notes || "", flags.join("; "), gaps.join("; "), school ? "" : "no",
           r.updated_at ? new Date(r.updated_at).toLocaleDateString() : "",
         ]);
       });
@@ -10324,6 +10334,7 @@ export default function App() {
           {pill("waiting","Not yet",waiting.length,C.red)}
           {pill("flagged","Changed something",flagged.length,"#f59e0b")}
           {pill("nocontact","Missing a contact",nocontact.length,"#f59e0b")}
+          {pill("noschool","No school answer",noschool.length,"#38bdf8")}
         </div>
 
         <div style={{display:"flex",gap:7,flexWrap:"wrap",marginBottom:14}}>
@@ -10360,7 +10371,7 @@ export default function App() {
                       <span style={{fontSize:11,color:inN===list.length?C.grn:C.mut}}>{inN} of {list.length} in</span>
                     </div>
                     <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                      {list.map(({ p, r, flags, gaps }) => (
+                      {list.map(({ p, r, flags, gaps, school }) => (
                         <div key={p.id} style={{display:"flex",gap:8,alignItems:"flex-start",padding:"5px 6px",borderRadius:6,
                           background:r?"transparent":C.bg}}>
                           <div style={{flex:1,minWidth:0}}>
@@ -10374,6 +10385,8 @@ export default function App() {
                                 style={{fontSize:10,fontWeight:800,color:"#f59e0b"}}>⚠ changed</span>}
                               {!!gaps?.length && <span title={"Still missing: " + gaps.join(", ")}
                                 style={{fontSize:10,fontWeight:800,color:"#f59e0b"}}>☎ {gaps.join(" + ")}</span>}
+                              {school === false && <span title="Hasn't told us about her school team — the gear form asks at the end"
+                                style={{fontSize:10,fontWeight:800,color:"#38bdf8"}}>🏫 school</span>}
                             </div>
                             {/* Contacts above the sizes: this is the line you
                                 read when you need to find somebody's parent. */}
@@ -10416,7 +10429,7 @@ export default function App() {
                 fontSize:10,fontWeight:800,letterSpacing:0.4,textTransform:"uppercase",color:C.mut}}>{h}</th>
             ))}</tr></thead>
             <tbody>
-              {shown.map(({ p, r, flags, gaps }) => (
+              {shown.map(({ p, r, flags, gaps, school }) => (
                 <tr key={p.id} onClick={()=>setProfileId(p.id)} style={{cursor:"pointer"}}
                   onMouseEnter={e=>e.currentTarget.style.background=C.bg}
                   onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
@@ -10424,6 +10437,7 @@ export default function App() {
                     {r?.first_name || p.first_name} {r?.last_name || p.last_name}
                     {!!flags.length && <span title={"Differs from the roster: " + flags.join(", ")} style={{marginLeft:5,color:"#f59e0b"}}>⚠</span>}
                     {!!gaps?.length && <span title={"Still missing: " + gaps.join(", ")} style={{marginLeft:5,color:"#f59e0b"}}>☎</span>}
+                    {school === false && <span title="No school-team answer yet" style={{marginLeft:5,color:"#38bdf8"}}>🏫</span>}
                   </td>
                   <td style={{padding:"6px 10px",borderBottom:"1px solid "+C.border,color:C.mut,whiteSpace:"nowrap"}}>{r?.jersey_number ?? p.jersey_number ?? "—"}</td>
                   <td style={{padding:"6px 10px",borderBottom:"1px solid "+C.border,color:C.mut,whiteSpace:"nowrap"}}>{r?.team_name || p.team_assignment || "—"}</td>
