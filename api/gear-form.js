@@ -70,7 +70,8 @@ const SCHOOL_LEVELS = ["Varsity", "JV", "Freshman", "Flex", "8th A", "8th B", "7
 const ITEMS = [
   { key: "jersey_size",       label: "Sleeveless Jersey",        img: "jersey",       opts: SIZES_JERSEY },
   { key: "warmup_tee_size",   label: "Long Sleeve Warm-Up Tee",  img: "warmup-tee",   opts: SIZES_JERSEY },
-  { key: "practice_tee_size", label: "Practice T-shirt",         img: "practice-tee", opts: SIZES_TEE },
+  { key: "practice_tee_size", label: "Practice T-shirt",         img: "practice-tee", opts: SIZES_TEE,
+    hint: "There's no sample of this one to try on — go by the size of her pink practice shirt from tryouts." },
   { key: "hoodie_size",       label: "Hooded Sweatshirt",        img: "hoodie",       opts: SIZES_APPAREL },
   { key: "spandex_size",      label: "Adidas Spandex Shorts",    img: "spandex",      opts: SIZES_APPAREL },
   { key: "spandex_length",    label: "Spandex Shorts — inseam",  img: "spandex",      opts: SPANDEX_LEN },
