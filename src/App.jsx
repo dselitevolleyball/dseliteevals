@@ -10204,11 +10204,15 @@ export default function App() {
     // Whether she still owes us a school-team answer. Only the age groups the
     // gear form actually asks — chasing a U12 for an answer no field ever
     // requested is the board inventing work for the table.
+    // A family who said the biggest kneepad doesn't fit. It arrives as a size
+    // value, which would sit unread in a chip among eleven others — but it is
+    // the one answer on the form that needs somebody to go and buy something.
+    const needsBigPad = (r) => /too small/i.test(String(r?.kneepad_size || ""));
     const schoolBy = new Set(schoolReports.map(r => r.player_id));
     const owesSchool = (p) => SCHOOL_DIVS.includes(p.usav_div) && !schoolBy.has(p.id);
     const rows = eligible.map(p => {
       const r = byPlayer.get(p.id);
-      return { p, r, flags: flagsFor(p, r), gaps: contactGaps(r), school: !owesSchool(p) };
+      return { p, r, flags: flagsFor(p, r), gaps: contactGaps(r), school: !owesSchool(p), bigpad: needsBigPad(r) };
     });
     // A draft is a form still being filled in on somebody's phone, not an
     // order. Counting it as one would drop her off the chase list with her
@@ -10222,6 +10226,7 @@ export default function App() {
     // Not gated on having ordered: the point is to catch her at the table, and
     // a girl who hasn't ordered yet is exactly who is still standing there.
     const noschool = rows.filter(x => !x.school);
+    const bigpads = rows.filter(x => x.bigpad);
 
     const shown = (gearOrderFilter === "in" ? ordered
                 : gearOrderFilter === "waiting" ? waiting
@@ -10229,6 +10234,7 @@ export default function App() {
                 : gearOrderFilter === "nocontact" ? nocontact
                 : gearOrderFilter === "noschool" ? noschool
                 : gearOrderFilter === "started" ? started
+                : gearOrderFilter === "bigpad" ? bigpads
                 : rows)
       .slice().sort((a,b) => (a.p.team_assignment||"").localeCompare(b.p.team_assignment||"")
         || (a.p.last_name||"").localeCompare(b.p.last_name||""));
@@ -10343,6 +10349,7 @@ export default function App() {
           {pill("flagged","Changed something",flagged.length,"#f59e0b")}
           {pill("nocontact","Missing a contact",nocontact.length,"#f59e0b")}
           {pill("noschool","No school answer",noschool.length,"#38bdf8")}
+          {bigpads.length > 0 && pill("bigpad","Needs a bigger kneepad",bigpads.length,C.red)}
         </div>
 
         <div style={{display:"flex",gap:7,flexWrap:"wrap",marginBottom:14}}>
@@ -10379,7 +10386,7 @@ export default function App() {
                       <span style={{fontSize:11,color:inN===list.length?C.grn:C.mut}}>{inN} of {list.length} in</span>
                     </div>
                     <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                      {list.map(({ p, r, flags, gaps, school }) => (
+                      {list.map(({ p, r, flags, gaps, school, bigpad }) => (
                         <div key={p.id} style={{display:"flex",gap:8,alignItems:"flex-start",padding:"5px 6px",borderRadius:6,
                           background:r?"transparent":C.bg}}>
                           <div style={{flex:1,minWidth:0}}>
@@ -10395,6 +10402,8 @@ export default function App() {
                                 style={{fontSize:10,fontWeight:800,color:"#f59e0b"}}>☎ {gaps.join(" + ")}</span>}
                               {school === false && <span title="Hasn't told us about her school team — the gear form asks at the end"
                                 style={{fontSize:10,fontWeight:800,color:"#38bdf8"}}>🏫 school</span>}
+                              {bigpad && <span title="XL kneepads are too small for her — she needs a size we don't stock on the table"
+                                style={{fontSize:10,fontWeight:800,color:C.red}}>⚠ bigger kneepad</span>}
                             </div>
                             {/* Contacts above the sizes: this is the line you
                                 read when you need to find somebody's parent. */}
@@ -10441,7 +10450,7 @@ export default function App() {
                 fontSize:10,fontWeight:800,letterSpacing:0.4,textTransform:"uppercase",color:C.mut}}>{h}</th>
             ))}</tr></thead>
             <tbody>
-              {shown.map(({ p, r, flags, gaps, school }) => (
+              {shown.map(({ p, r, flags, gaps, school, bigpad }) => (
                 <tr key={p.id} onClick={()=>setProfileId(p.id)} style={{cursor:"pointer"}}
                   onMouseEnter={e=>e.currentTarget.style.background=C.bg}
                   onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
@@ -10450,6 +10459,7 @@ export default function App() {
                     {!!flags.length && <span title={"Differs from the roster: " + flags.join(", ")} style={{marginLeft:5,color:"#f59e0b"}}>⚠</span>}
                     {!!gaps?.length && <span title={"Still missing: " + gaps.join(", ")} style={{marginLeft:5,color:"#f59e0b"}}>☎</span>}
                     {school === false && <span title="No school-team answer yet" style={{marginLeft:5,color:"#38bdf8"}}>🏫</span>}
+                    {bigpad && <span title="Needs a kneepad bigger than XL" style={{marginLeft:5,color:C.red}}>⚠</span>}
                   </td>
                   <td style={{padding:"6px 10px",borderBottom:"1px solid "+C.border,color:C.mut,whiteSpace:"nowrap"}}>{r?.jersey_number ?? p.jersey_number ?? "—"}</td>
                   <td style={{padding:"6px 10px",borderBottom:"1px solid "+C.border,color:C.mut,whiteSpace:"nowrap"}}>{r?.team_name || p.team_assignment || "—"}</td>

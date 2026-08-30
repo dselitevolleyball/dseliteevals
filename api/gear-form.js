@@ -52,7 +52,11 @@ const SIZES_JERSEY  = ["Youth M", "Youth L", "XXXS", "XXS", "XS", "S", "M", "L",
 const SIZES_TEE     = ["Youth M", "Youth L", "Youth XL", "Adult S", "Adult M", "Adult L", "Adult XL"];
 const SIZES_APPAREL = ["XS", "S", "M", "L", "XL", "XXL"];
 const SPANDEX_LEN   = ['3"', '4"', '5"'];
-const KNEEPADS      = ["XS/S", "M/L", "XL"];
+// XL is the biggest pad on the try-on table, and it doesn't fit everyone. The
+// last option is an answer, not a size: it's how a family says so without
+// picking something they know is wrong, and it puts the girl on a list to
+// source a bigger pad for rather than into an order that won't fit her.
+const KNEEPADS      = ["XS/S", "M/L", "XL", "XL is too small — I need a larger size"];
 const SOCKS         = ["M (shoe size 5-10)", "L (shoe size 10-13)"];
 // The smallest sleeve is XS, not a youth size — that's what the sample on the
 // table is labelled, and the form has to offer the size a parent is holding.
