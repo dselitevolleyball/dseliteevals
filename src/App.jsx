@@ -10204,15 +10204,23 @@ export default function App() {
     // Whether she still owes us a school-team answer. Only the age groups the
     // gear form actually asks — chasing a U12 for an answer no field ever
     // requested is the board inventing work for the table.
-    // A family who said the biggest kneepad doesn't fit. It arrives as a size
-    // value, which would sit unread in a chip among eleven others — but it is
-    // the one answer on the form that needs somebody to go and buy something.
-    const needsBigPad = (r) => /too small/i.test(String(r?.kneepad_size || ""));
+    // Families who told us the stock sizes don't reach them — the biggest
+    // kneepad, or either end of the shoe range. These arrive as size values,
+    // which would sit unread among eleven chips, but they are the answers that
+    // need somebody to go and source something rather than place an order.
+    const OUT_OF_RANGE = /too small|don't come|dont come/i;
+    const sizeGapsOf = (r) => {
+      if (!r) return [];
+      const out = [];
+      if (OUT_OF_RANGE.test(String(r.kneepad_size || ""))) out.push("kneepads");
+      if (OUT_OF_RANGE.test(String(r.shoe_size || ""))) out.push("shoes");
+      return out;
+    };
     const schoolBy = new Set(schoolReports.map(r => r.player_id));
     const owesSchool = (p) => SCHOOL_DIVS.includes(p.usav_div) && !schoolBy.has(p.id);
     const rows = eligible.map(p => {
       const r = byPlayer.get(p.id);
-      return { p, r, flags: flagsFor(p, r), gaps: contactGaps(r), school: !owesSchool(p), bigpad: needsBigPad(r) };
+      return { p, r, flags: flagsFor(p, r), gaps: contactGaps(r), school: !owesSchool(p), sizeGaps: sizeGapsOf(r) };
     });
     // A draft is a form still being filled in on somebody's phone, not an
     // order. Counting it as one would drop her off the chase list with her
@@ -10226,7 +10234,7 @@ export default function App() {
     // Not gated on having ordered: the point is to catch her at the table, and
     // a girl who hasn't ordered yet is exactly who is still standing there.
     const noschool = rows.filter(x => !x.school);
-    const bigpads = rows.filter(x => x.bigpad);
+    const sizegap = rows.filter(x => x.sizeGaps.length);
 
     const shown = (gearOrderFilter === "in" ? ordered
                 : gearOrderFilter === "waiting" ? waiting
@@ -10234,7 +10242,7 @@ export default function App() {
                 : gearOrderFilter === "nocontact" ? nocontact
                 : gearOrderFilter === "noschool" ? noschool
                 : gearOrderFilter === "started" ? started
-                : gearOrderFilter === "bigpad" ? bigpads
+                : gearOrderFilter === "sizegap" ? sizegap
                 : rows)
       .slice().sort((a,b) => (a.p.team_assignment||"").localeCompare(b.p.team_assignment||"")
         || (a.p.last_name||"").localeCompare(b.p.last_name||""));
@@ -10283,9 +10291,9 @@ export default function App() {
         "Parent 1","Parent 1 phone","Parent 1 email",
         "Parent 2","Parent 2 phone","Parent 2 email","Only one parent","Player phone",
         ...GEAR_ITEMS.map(([,label]) => label),
-        "Details confirmed","Shoe invoice OK","Notes","Differs from roster","Missing contacts","School team answered","Submitted",
+        "Details confirmed","Shoe invoice OK","Notes","Differs from roster","Missing contacts","School team answered","Needs sourcing","Submitted",
       ]];
-      list.forEach(({ p, r, flags, gaps, school }) => {
+      list.forEach(({ p, r, flags, gaps, school, sizeGaps }) => {
         rowsOut.push([
           r.team_name || p.team_assignment || "", r.jersey_number ?? "", r.first_name || "", r.last_name || "",
           r.parent1_name || "", r.parent1_phone || "", r.parent1_email || "",
@@ -10293,7 +10301,7 @@ export default function App() {
           r.single_parent ? "Yes" : "", r.player_phone || "",
           ...GEAR_ITEMS.map(([k]) => r[k] || ""),
           r.details_confirmed ? "Yes" : "No", r.shoe_invoice_ack ? "Yes" : "No",
-          r.notes || "", flags.join("; "), gaps.join("; "), school ? "" : "no",
+          r.notes || "", flags.join("; "), gaps.join("; "), school ? "" : "no", sizeGaps.join("; "),
           r.updated_at ? new Date(r.updated_at).toLocaleDateString() : "",
         ]);
       });
@@ -10349,7 +10357,7 @@ export default function App() {
           {pill("flagged","Changed something",flagged.length,"#f59e0b")}
           {pill("nocontact","Missing a contact",nocontact.length,"#f59e0b")}
           {pill("noschool","No school answer",noschool.length,"#38bdf8")}
-          {bigpads.length > 0 && pill("bigpad","Needs a bigger kneepad",bigpads.length,C.red)}
+          {sizegap.length > 0 && pill("sizegap","Size we don't stock",sizegap.length,C.red)}
         </div>
 
         <div style={{display:"flex",gap:7,flexWrap:"wrap",marginBottom:14}}>
@@ -10386,7 +10394,7 @@ export default function App() {
                       <span style={{fontSize:11,color:inN===list.length?C.grn:C.mut}}>{inN} of {list.length} in</span>
                     </div>
                     <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                      {list.map(({ p, r, flags, gaps, school, bigpad }) => (
+                      {list.map(({ p, r, flags, gaps, school, sizeGaps }) => (
                         <div key={p.id} style={{display:"flex",gap:8,alignItems:"flex-start",padding:"5px 6px",borderRadius:6,
                           background:r?"transparent":C.bg}}>
                           <div style={{flex:1,minWidth:0}}>
@@ -10402,8 +10410,8 @@ export default function App() {
                                 style={{fontSize:10,fontWeight:800,color:"#f59e0b"}}>☎ {gaps.join(" + ")}</span>}
                               {school === false && <span title="Hasn't told us about her school team — the gear form asks at the end"
                                 style={{fontSize:10,fontWeight:800,color:"#38bdf8"}}>🏫 school</span>}
-                              {bigpad && <span title="XL kneepads are too small for her — she needs a size we don't stock on the table"
-                                style={{fontSize:10,fontWeight:800,color:C.red}}>⚠ bigger kneepad</span>}
+                              {!!sizeGaps?.length && <span title={"Outside the sizes we stock: " + sizeGaps.join(" and ") + ". Someone has to source these."}
+                                style={{fontSize:10,fontWeight:800,color:C.red}}>⚠ {sizeGaps.join(" + ")} to source</span>}
                             </div>
                             {/* Contacts above the sizes: this is the line you
                                 read when you need to find somebody's parent. */}
@@ -10450,7 +10458,7 @@ export default function App() {
                 fontSize:10,fontWeight:800,letterSpacing:0.4,textTransform:"uppercase",color:C.mut}}>{h}</th>
             ))}</tr></thead>
             <tbody>
-              {shown.map(({ p, r, flags, gaps, school, bigpad }) => (
+              {shown.map(({ p, r, flags, gaps, school, sizeGaps }) => (
                 <tr key={p.id} onClick={()=>setProfileId(p.id)} style={{cursor:"pointer"}}
                   onMouseEnter={e=>e.currentTarget.style.background=C.bg}
                   onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
@@ -10459,7 +10467,7 @@ export default function App() {
                     {!!flags.length && <span title={"Differs from the roster: " + flags.join(", ")} style={{marginLeft:5,color:"#f59e0b"}}>⚠</span>}
                     {!!gaps?.length && <span title={"Still missing: " + gaps.join(", ")} style={{marginLeft:5,color:"#f59e0b"}}>☎</span>}
                     {school === false && <span title="No school-team answer yet" style={{marginLeft:5,color:"#38bdf8"}}>🏫</span>}
-                    {bigpad && <span title="Needs a kneepad bigger than XL" style={{marginLeft:5,color:C.red}}>⚠</span>}
+                    {!!sizeGaps?.length && <span title={"Outside our stocked sizes: " + sizeGaps.join(" and ")} style={{marginLeft:5,color:C.red}}>⚠</span>}
                   </td>
                   <td style={{padding:"6px 10px",borderBottom:"1px solid "+C.border,color:C.mut,whiteSpace:"nowrap"}}>{r?.jersey_number ?? p.jersey_number ?? "—"}</td>
                   <td style={{padding:"6px 10px",borderBottom:"1px solid "+C.border,color:C.mut,whiteSpace:"nowrap"}}>{r?.team_name || p.team_assignment || "—"}</td>
