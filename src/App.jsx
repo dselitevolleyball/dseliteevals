@@ -1855,6 +1855,12 @@ export default function App() {
   const [emailTeam, setEmailTeam]                     = useState("");    // "" any | "__has" | "__none"
   const [emailTeams, setEmailTeams]                   = useState(() => new Set()); // specific teams (multi-select); overrides emailTeam when non-empty
   const [emailBuckets, setEmailBuckets]               = useState(() => new Set()); // status buckets: unassigned | declined | not_invited | opted_out
+  // Hold back families who have left the club. ON by default and reset to ON
+  // for every new message, because the failure it prevents is silent: nobody
+  // notices the extra addresses until a girl who quit in July gets an email
+  // about her jersey fitting.
+  const [emailCurrentOnly, setEmailCurrentOnly]       = useState(true);
+  const [emailShowDeparted, setEmailShowDeparted]     = useState(false);
   // Hawaii trip audience: any of HAWAII_ORDER. Non-empty REPLACES the age-group
   // pool — the trip spans three teams and its own opt-in, so intersecting it
   // with the age tabs just silently drops families who already said yes.
@@ -19222,6 +19228,28 @@ export default function App() {
       return (o && OFFER_TO_STATUS[o]) ? OFFER_TO_STATUS[o] : (p.status || "In Progress");
     };
     if (emailStatus && !hawaiiSel)   pool = pool.filter(p => effStatus(p) === emailStatus);
+
+    // ── Everyone who has left the club, held out by default ─────────────────
+    // The age-group subsets are tryout/eval SIGNUP flags, and those stay true
+    // for ever. So "All" in an age group has always meant every girl who ever
+    // tried out — including the 100-odd who declined, opted out, or were never
+    // invited. That is how a shoe-requirements email went to 221 addresses
+    // against a roster of 214, and it is the kind of mistake families notice.
+    //
+    // The bar for "still with us" is the club's own rule: on a team, and not in
+    // a terminal offer state. roster_status is deliberately NOT part of it —
+    // it stays "active" after a decline, so it proves nothing.
+    //
+    // Off automatically the moment the send is AIMED at those families — a
+    // Declined bucket or a Declined status filter — because a filter that
+    // silently returned nobody would be worse than no filter at all.
+    const aimedAtDeparted = (bucketSel && [...emailBuckets].some(b => TERMINAL.includes(b))) ||
+      ["Declined", "Not Invited", "Opted Out"].includes(emailStatus);
+    const currentOnly = emailCurrentOnly && !aimedAtDeparted && !hawaiiSel;
+    const isCurrent = (p) => !!(p.team_assignment || "").trim() && !TERMINAL.includes(p.offer_status || "");
+    const departed = currentOnly ? pool.filter(p => !isCurrent(p)) : [];
+    if (currentOnly) pool = pool.filter(isCurrent);
+
     // Teams available for the team dropdown (within the selected ages).
     const teamOptions = [...new Set(players.filter(p => divSet.has(p.usavDiv || p.usav_div)).map(p => p.team_assignment).filter(Boolean))].sort();
     // A player may have up to three parent/guardian emails; all of them receive
@@ -19317,6 +19345,15 @@ export default function App() {
       }
       if (excludedPlayers.length > 0) {
         lines.push(excludedPlayers.length + " player" + (excludedPlayers.length === 1 ? "" : "s") + " you removed will NOT be emailed.");
+      }
+      // Said at the moment of sending, both ways round. The guard being ON is
+      // worth one line; the guard being OFF is worth a warning, because that's
+      // the send that reaches a family who left the club in July.
+      if (currentOnly && departed.length > 0) {
+        lines.push(departed.length + " who left the club are held back and will NOT be emailed.");
+      } else if (!currentOnly && !aimedAtDeparted) {
+        const gone = pool.filter(p => !isCurrent(p) && emailsOf(p).length && !emailExcluded.has(p.id)).length;
+        if (gone > 0) lines.push("⚠ " + gone + " of these have LEFT the club (declined, opted out, or never invited) and WILL be emailed.");
       }
       if (!window.confirm(lines.join("\n"))) return;
       postEmail(recipients, false);
@@ -20018,6 +20055,46 @@ export default function App() {
           {excludedPlayers.length > 0 && <button onClick={()=>setEmailShowExcluded(v=>!v)} title="Players you removed from this send"
             style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700,textDecoration:"underline",padding:0}}>· {excludedPlayers.length} excluded</button>}
         </div>
+
+        {/* Left-the-club guard. Always visible, never a filter working silently
+            in the background: a send that quietly drops people is as hard to
+            trust as one that quietly adds them. */}
+        <div style={{display:"flex",alignItems:"center",gap:9,flexWrap:"wrap",marginBottom:12,padding:"9px 12px",
+          borderRadius:8,border:"1px solid "+(currentOnly?"rgba(34,197,94,0.35)":"rgba(245,158,11,0.5)"),
+          background:currentOnly?"rgba(34,197,94,0.07)":"rgba(245,158,11,0.09)"}}>
+          <label style={{display:"flex",alignItems:"center",gap:8,cursor:aimedAtDeparted?"default":"pointer",fontSize:12}}>
+            <input type="checkbox" checked={emailCurrentOnly} disabled={aimedAtDeparted}
+              onChange={e=>setEmailCurrentOnly(e.target.checked)}
+              style={{width:16,height:16,accentColor:C.grn,cursor:aimedAtDeparted?"default":"pointer"}} />
+            <span style={{fontWeight:700,color:currentOnly?C.grn:"#f59e0b"}}>Current club players only</span>
+          </label>
+          <span style={{fontSize:11.5,color:C.mut}}>
+            {aimedAtDeparted
+              ? "Off — this send is aimed at players who left, so they're back in scope."
+              : currentOnly
+                ? (departed.length
+                    ? <>Holding back <b style={{color:C.text}}>{departed.length}</b> who declined, opted out, or were never invited.</>
+                    : "Nobody in scope has left the club.")
+                : "OFF — girls who declined or left the club WILL be emailed."}
+          </span>
+          {currentOnly && departed.length > 0 && (
+            <button onClick={()=>setEmailShowDeparted(v=>!v)}
+              style={{background:"none",border:"none",color:C.gold,cursor:"pointer",fontFamily:"inherit",fontSize:11.5,fontWeight:700,textDecoration:"underline",padding:0}}>
+              {emailShowDeparted?"hide":"show"} who</button>
+          )}
+        </div>
+        {emailShowDeparted && currentOnly && departed.length > 0 && (
+          <div style={{maxHeight:180,overflowY:"auto",background:C.bg,border:"1px solid "+C.border,borderRadius:8,padding:"8px 10px",marginBottom:12}}>
+            <div style={{fontSize:10,color:C.mut,fontWeight:700,marginBottom:6}}>Held back — not on a team, or in a terminal status:</div>
+            {departed.slice().sort(byName).map(p => (
+              <div key={p.id} onClick={()=>setProfileId(p.id)}
+                style={{fontSize:11.5,padding:"2px 0",cursor:"pointer",color:C.mut}}>
+                {p.first_name} {p.last_name}
+                <span style={{color:C.red,marginLeft:6}}>{(p.offer_status || "no team").replace(/_/g," ")}</span>
+              </div>
+            ))}
+          </div>
+        )}
         {emailShowMissing && missing > 0 && (
           <div style={{maxHeight:180,overflowY:"auto",background:C.bg,border:"1px solid rgba(245,158,11,0.4)",borderRadius:8,padding:"8px 10px",marginBottom:12}}>
             <div style={{fontSize:10,color:"#f59e0b",fontWeight:700,marginBottom:6}}>Click a player to open their card and add a parent email:</div>
