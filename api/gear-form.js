@@ -136,6 +136,10 @@ const page = (inner, { title = "Gear order — DS Elite" } = {}) => `<!doctype h
   .item .pic img { width:100%; height:100%; object-fit:contain; }
   .item .fields { flex:1; min-width:0; }
   .item label { margin-bottom:0; }
+  .fitchk { border:1px solid var(--gold); background:rgba(224,180,85,.09); border-radius:10px; padding:12px 13px; margin-bottom:16px; }
+  .fitchk b { color:var(--ink); }
+  .fitnote { border-left:2px solid var(--gold); padding-left:10px; }
+  .hide { display:none; }
   .hint { color:var(--mut); font-size:.83rem; margin:6px 0 0; }
   .seg { display:flex; gap:9px; }
   .seg button { flex:1; padding:14px 8px; font:inherit; font-weight:700; font-size:15px; cursor:pointer;
@@ -253,6 +257,9 @@ export default async function handler(req, res) {
       player_phone: text("player_phone", 40),
       details_confirmed: !!body?.details_confirmed,
       shoe_invoice_ack: !!body?.shoe_invoice_ack,
+      // She wasn't measured. Sizes stop being required and she joins the list
+      // to be measured in person.
+      needs_fitting: !!body?.needs_fitting,
       notes: String(body?.notes || "").trim().slice(0, 2000) || null,
       // A family filling in their own order clears any correction we made on
       // their behalf — from here on the row is theirs.
@@ -314,7 +321,12 @@ export default async function handler(req, res) {
     if (hasParent2 && !row.parent2_name) missing.push("second parent's name");
     if (hasParent2 && !row.parent2_phone) missing.push("second parent's phone");
     if (hasParent2 && !row.parent2_email) missing.push("second parent's email");
-    for (const it of ITEMS) if (!row[it.key]) missing.push(it.label.toLowerCase());
+    // A family asking to be measured cannot be asked for the measurements. The
+    // contact details are still required — those are how we tell her when to
+    // come in.
+    if (!row.needs_fitting) {
+      for (const it of ITEMS) if (!row[it.key]) missing.push(it.label.toLowerCase());
+    }
     if (!row.details_confirmed) missing.push("the confirmation box");
     if (askSchool) {
       if (!madeRaw) missing.push("whether she made a school team");
@@ -608,11 +620,23 @@ function renderForm(player, v, { error, preview, askSchool, school, askIntake } 
 
     <div class="card">
       <p class="sect">Sizes</p>
-      ${ITEMS.map(itemHtml).join("")}
-      <label class="chk" style="margin-bottom:0">
-        <input type="checkbox" name="shoe_invoice_ack" value="1"${v.shoe_invoice_ack ? " checked" : ""}>
-        <span>I understand shoes are ordered as a group at a discount and will be invoiced separately by email.</span>
+      <label class="chk fitchk" id="fitwrap">
+        <input type="checkbox" name="needs_fitting" id="needsfit" value="1"${v.needs_fitting ? " checked" : ""}>
+        <span><b>She wasn't measured — we need to come to the next fitting.</b><br>
+        Tick this if she couldn't make the fitting. We'll measure her in person and you can skip the sizes below —
+        a guessed size gets ordered, so we would rather measure her than have you estimate.</span>
       </label>
+      <div id="sizeblock"${v.needs_fitting ? ' class="hide"' : ""}>
+        ${ITEMS.map(itemHtml).join("")}
+        <label class="chk" style="margin-bottom:0">
+          <input type="checkbox" name="shoe_invoice_ack" value="1"${v.shoe_invoice_ack ? " checked" : ""}>
+          <span>I understand shoes are ordered as a group at a discount and will be invoiced separately by email.</span>
+        </label>
+      </div>
+      <p class="hint fitnote${v.needs_fitting ? "" : " hide"}" id="fitnote" style="margin-bottom:0">
+        We'll be in touch with the next fitting time. Everything else on this form still needs filling in —
+        we just won't ask for her sizes.
+      </p>
     </div>
 
     ${askSchool ? schoolSection(school || {}) : ""}
@@ -629,6 +653,18 @@ function renderForm(player, v, { error, preview, askSchool, school, askIntake } 
   </form>
   <div class="foot">Questions? Coach Kristen — kristen@dselitevolleyball.com</div>
   ${preview ? "" : `<script>
+  (function () {
+    var fit = document.getElementById('needsfit');
+    var sizeblock = document.getElementById('sizeblock');
+    var fitnote = document.getElementById('fitnote');
+    if (fit && sizeblock) {
+      fit.addEventListener('change', function () {
+        sizeblock.classList.toggle('hide', fit.checked);
+        if (fitnote) fitnote.classList.toggle('hide', !fit.checked);
+        if (fit.checked) document.getElementById('fitwrap').scrollIntoView({ block: 'center', behavior: 'smooth' });
+      });
+    }
+  })();
   (function () {
     // Autosave. Families fill this in on a phone in a gym, and get interrupted
     // — a child needing a different size, a sibling, a phone locking itself.
