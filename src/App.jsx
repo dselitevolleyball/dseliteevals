@@ -12532,7 +12532,9 @@ export default function App() {
             const nrm = (x) => String(x ?? "").trim().toLowerCase();
             const flags = !g ? [] : [
               nrm(g.last_name) !== nrm(p.last_name) ? "last name → " + (g.last_name || "(blank)") : null,
-              nrm(g.jersey_number) !== nrm(p.jersey_number) ? "number → " + (g.jersey_number || "(blank)") : null,
+              // Not the jersey number — see flagsFor in the Gear Orders board.
+              // Families cannot set it, so a difference is us renumbering her
+              // after she ordered, which is not a discrepancy to chase.
               nrm(g.team_name) !== nrm(p.team_assignment) ? "team → " + (g.team_name || "(blank)") : null,
             ].filter(Boolean);
             return (
