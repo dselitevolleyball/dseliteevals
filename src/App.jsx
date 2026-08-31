@@ -4879,6 +4879,12 @@ export default function App() {
     } else {
       const patch = { team_assignment: value, roster_pos: "" };
       if (value && (p.offer_status === "declined" || p.offer_status === "not_invited" || p.offer_status === "opted_out")) patch.offer_status = "";
+      // Putting a girl on a team IS making her a rostered player, but this
+      // never said so, and roster_status is half of what every roster filter
+      // tests for. Two players sat on teams all season with it unset: invisible
+      // to the player count, the gear board, and every parent email — assigned
+      // and unreachable at the same time.
+      if (value && p.roster_status !== "active") patch.roster_status = "active";
       upd(p.id, patch);
     }
   }, [upd]);
