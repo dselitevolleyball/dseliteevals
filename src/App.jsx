@@ -1893,6 +1893,10 @@ export default function App() {
   const [teamTasks, setTeamTasks]                           = useState({}); // { `${team}|${item}`: { status, notes } }
   const [teamVolunteers, setTeamVolunteers]                 = useState([]); // team parents + other volunteers, one row per person
   const [volDraft, setVolDraft]                             = useState({ name:"", role:"team_parent", email:"", player_name:"" });
+  const [teamPhotos, setTeamPhotos]                         = useState([]); // family photo uploads
+  const [photoFilter, setPhotoFilter]                       = useState("all");
+  const [photoUrls, setPhotoUrls]                           = useState({});   // id -> signed url
+  const [photoOpen, setPhotoOpen]                           = useState(null); // id being viewed full size
   const [teamKickoffs, setTeamKickoffs]                     = useState([]); // head coaches' kickoff check-in answers, one row per team
   const [kickoffRequests, setKickoffRequests]               = useState([]); // when each team was last asked
   const [kickoffFilter, setKickoffFilter]                   = useState("all");
@@ -2017,7 +2021,7 @@ export default function App() {
   // email we send them. Every admin control inside renderDsysa — add/cancel a
   // date, set the lead, remove someone else's signup — is separately gated on
   // isAdmin, so opening the view exposes no admin action.
-  const OPS_VIEWS = new Set(["school","schoolgames","playergear","kickoff","incidentboard","tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","timecards","gear","staffing","roster","hawaii","travel","finance","dssccal","pods"]);
+  const OPS_VIEWS = new Set(["school","schoolgames","playergear","kickoff","photos","incidentboard","tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","timecards","gear","staffing","roster","hawaii","travel","finance","dssccal","pods"]);
   const canOps    = isAdmin || isOwner;
   const opsDenied = <div style={{padding:24,color:C.mut,textAlign:"center"}}>This section is restricted to administrators. Ask the club administrator (Drew) for access.</div>;
   // Once a player has accepted (or is locked/signed) onto a team, they're
@@ -2578,6 +2582,16 @@ export default function App() {
   // The kickoff check-in: what each head coach answered, and when we last asked.
   // A team with no answer row has not replied — that's the whole unanswered
   // state, so nothing needs a status of its own to mean "not yet".
+  // Photos families have sent in. The rows are metadata only — the files sit in
+  // a private bucket and are fetched as short-lived signed URLs when the
+  // library is opened, never as public links, because these are photographs of
+  // children.
+  const loadTeamPhotos = useCallback(async () => {
+    const { data, error } = await supabase.from("player_photos").select("*")
+      .order("created_at", { ascending: false }).limit(600);
+    if (error) { console.error("Load player_photos error:", error); return; }
+    setTeamPhotos(data || []);
+  }, []);
   const loadTeamKickoffs = useCallback(async () => {
     const [kRes, rRes] = await Promise.all([
       supabase.from("team_kickoffs").select("*").order("team_name"),
@@ -3266,6 +3280,7 @@ export default function App() {
   useEffect(() => { if (isApproved) loadTeamKickoffs(); }, [isApproved, loadTeamKickoffs]);
   // The board hands out the per-team form link, which lives on practice_teams.
   useEffect(() => { if (isApproved && view === "kickoff") loadPractice(); }, [isApproved, view, loadPractice]);
+  useEffect(() => { if (isApproved && view === "photos") loadTeamPhotos(); }, [isApproved, view, loadTeamPhotos]);
   // Operational checklist + questions load on the Home (coaches) and All Teams (admins) views.
   useEffect(() => { if (isApproved && (view === "home" || view === "teamdir")) { loadTeamTasks(); loadTeamQuestions(); } }, [isApproved, view, loadTeamTasks, loadTeamQuestions]);
   // Item descriptions are needed wherever the checklists render; updates show on Home.
@@ -10597,6 +10612,148 @@ export default function App() {
     );
   }
 
+  // ── Team photos ─────────────────────────────────────────────────────────
+  // What families have sent in, grouped by the event it came from — which is
+  // the only thing that makes a photo findable three weeks later.
+  //
+  // The bucket is private. Thumbnails are signed an hour at a time and only for
+  // the photos actually on screen, because these are photographs of children
+  // and a public URL is forever.
+  function renderTeamPhotos() {
+    const mine = canViewTeams ? teamPhotos : teamPhotos.filter(p => myTeamNames.includes(p.team_name));
+    const groups = new Map();
+    for (const p of mine) {
+      const k = (p.team_name || "No team") + " · " + (p.event_label || "Other");
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(p);
+    }
+    const events = [...groups.entries()]
+      .map(([k, list]) => ({ k, list, at: list[0]?.created_at || "" }))
+      .sort((a, b) => String(b.at).localeCompare(String(a.at)));
+    const shown = photoFilter === "all" ? events : events.filter(e => e.k === photoFilter);
+    const isVideo = (p) => /^video\//.test(String(p.content_type || ""));
+
+    const sign = async (p) => {
+      if (photoUrls[p.id]) return;
+      const { data, error } = await supabase.storage.from("team-photos").createSignedUrl(p.storage_path, 3600);
+      if (error) { console.error("Sign photo error:", error.message); return; }
+      setPhotoUrls(prev => ({ ...prev, [p.id]: data.signedUrl }));
+    };
+    const openFull = async (p) => { await sign(p); setPhotoOpen(p.id); };
+    const download = async (p) => {
+      const { data, error } = await supabase.storage.from("team-photos")
+        .createSignedUrl(p.storage_path, 3600, { download: p.original_name || true });
+      if (error) { window.alert("Couldn't fetch that file: " + error.message); return; }
+      window.open(data.signedUrl, "_blank", "noreferrer");
+    };
+    const openPhoto = photoOpen != null ? mine.find(p => p.id === photoOpen) : null;
+    const pill = (k, label, n) => (
+      <button key={k} onClick={()=>setPhotoFilter(k)}
+        style={{padding:"6px 12px",borderRadius:8,cursor:"pointer",fontFamily:"inherit",fontSize:11.5,fontWeight:700,
+          border:"1px solid "+(photoFilter===k?C.gold:C.border),
+          background:photoFilter===k?"rgba(224,180,85,0.14)":"transparent",
+          color:photoFilter===k?C.gold:C.mut}}>{label} <b style={{color:C.text}}>{n}</b></button>
+    );
+
+    return (
+      <div style={{maxWidth:1100,margin:"0 auto"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:6}}>
+          <div>
+            <h2 style={{margin:0,fontSize:20,fontWeight:800,color:C.gold}}>📷 Team photos</h2>
+            <div style={{fontSize:12,color:C.mut,marginTop:2}}>
+              <b style={{color:C.text}}>{mine.length}</b> sent in by families
+              {!canViewTeams && <> · <span style={{color:C.gold,fontWeight:700}}>your teams only</span></>}
+            </div>
+          </div>
+          <div style={{flex:1}} />
+          <a href={APP_URL.replace(/\/$/, "") + "/photos?preview=1"} target="_blank" rel="noreferrer"
+            title="See the page families use"
+            style={{padding:"8px 14px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",
+              color:C.mut,fontFamily:"inherit",fontSize:12,fontWeight:800,textDecoration:"none"}}>👁 Show me their page</a>
+        </div>
+
+        {mine.length === 0 ? (
+          <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,padding:26,marginTop:14,
+            fontSize:13,color:C.mut,lineHeight:1.7}}>
+            Nothing yet. Every family has a photo link on their player card — send it once and they can
+            bookmark it for the season, then send photos after every tournament without asking anyone.
+          </div>
+        ) : (
+          <>
+            <div style={{display:"flex",gap:7,flexWrap:"wrap",margin:"14px 0"}}>
+              {pill("all","Everything",mine.length)}
+              {events.map(e => pill(e.k, e.k, e.list.length))}
+            </div>
+
+            {shown.map(({ k, list }) => (
+              <div key={k} style={{marginBottom:22}}>
+                <div style={{display:"flex",alignItems:"baseline",gap:9,marginBottom:9,flexWrap:"wrap"}}>
+                  <span style={{fontSize:13.5,fontWeight:800,color:C.gold}}>{k}</span>
+                  <span style={{fontSize:11,color:C.mut}}>{list.length} photo{list.length===1?"":"s"}</span>
+                  <span style={{fontSize:11,color:C.mut}}>
+                    · from {[...new Set(list.map(p => p.uploaded_by).filter(Boolean))].join(", ") || "a family"}
+                  </span>
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))",gap:8}}>
+                  {list.map(p => {
+                    const url = photoUrls[p.id];
+                    if (!url && !isVideo(p)) sign(p);
+                    return (
+                      <div key={p.id} onClick={()=>openFull(p)}
+                        title={[p.caption, p.original_name, p.taken_on].filter(Boolean).join(" · ")}
+                        style={{position:"relative",aspectRatio:"1",borderRadius:8,overflow:"hidden",cursor:"pointer",
+                          background:C.bg,border:"1px solid "+C.border}}>
+                        {url && !isVideo(p) && <img src={url} alt={p.caption || p.original_name || "Team photo"} loading="lazy"
+                          style={{width:"100%",height:"100%",objectFit:"cover",display:"block"}} />}
+                        {isVideo(p) && <div style={{display:"flex",alignItems:"center",justifyContent:"center",
+                          height:"100%",fontSize:26,color:C.mut}}>▶</div>}
+                        {!url && !isVideo(p) && <div style={{display:"flex",alignItems:"center",justifyContent:"center",
+                          height:"100%",fontSize:11,color:C.mut}}>…</div>}
+                        {p.caption && <div style={{position:"absolute",left:0,right:0,bottom:0,padding:"4px 6px",
+                          background:"linear-gradient(transparent,rgba(0,0,0,0.8))",fontSize:10,color:"#fff",
+                          overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.caption}</div>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </>
+        )}
+
+        {openPhoto && (
+          <div onClick={()=>setPhotoOpen(null)}
+            style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.9)",zIndex:9000,display:"flex",
+              alignItems:"center",justifyContent:"center",padding:18,flexDirection:"column",gap:12}}>
+            {photoUrls[openPhoto.id] && !isVideo(openPhoto) && (
+              <img src={photoUrls[openPhoto.id]} alt={openPhoto.caption || "Team photo"}
+                onClick={e=>e.stopPropagation()}
+                style={{maxWidth:"100%",maxHeight:"76vh",objectFit:"contain",borderRadius:8}} />
+            )}
+            {isVideo(openPhoto) && (
+              <video src={photoUrls[openPhoto.id]} controls onClick={e=>e.stopPropagation()}
+                style={{maxWidth:"100%",maxHeight:"76vh",borderRadius:8}} />
+            )}
+            <div onClick={e=>e.stopPropagation()} style={{textAlign:"center",color:C.mut,fontSize:12,maxWidth:640}}>
+              {openPhoto.caption && <div style={{color:C.text,fontSize:14,marginBottom:4}}>{openPhoto.caption}</div>}
+              <div>{[openPhoto.event_label, openPhoto.team_name,
+                openPhoto.uploaded_by && "sent by " + openPhoto.uploaded_by, openPhoto.taken_on]
+                .filter(Boolean).join(" · ")}</div>
+              <div style={{display:"flex",gap:8,justifyContent:"center",marginTop:10}}>
+                <button onClick={()=>download(openPhoto)}
+                  style={{padding:"8px 16px",borderRadius:8,border:"none",background:C.gold,color:"#fff",
+                    fontFamily:"inherit",fontSize:12,fontWeight:800,cursor:"pointer"}}>⬇ Download original</button>
+                <button onClick={()=>setPhotoOpen(null)}
+                  style={{padding:"8px 16px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",
+                    color:C.text,fontFamily:"inherit",fontSize:12,fontWeight:700,cursor:"pointer"}}>Close</button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   // ── Kickoff check-in ────────────────────────────────────────────────────
   // What every head coach said about their team parent and their kickoff party,
   // from the per-team form at /kickoff?t=… (api/kickoff-form.js).
@@ -12570,6 +12727,26 @@ export default function App() {
               </div>
             );
           })()}
+          {/* The family's photo link. Meant to be handed over once and
+              bookmarked for the season, so it is a copy button rather than
+              something staff open — opening it here helps nobody. */}
+          {canOps && p.photo_upload_token && (
+            <div style={{marginTop:16,paddingTop:14,borderTop:"1px solid "+C.border,
+              display:"flex",alignItems:"center",gap:9,flexWrap:"wrap"}}>
+              <span style={{color:C.gold,fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5}}>Photos</span>
+              <span style={{fontSize:11.5,color:C.mut,flex:1,minWidth:140}}>
+                Their own upload link — send it once, they keep it all season.
+              </span>
+              <button onClick={()=>{
+                  const l = APP_URL.replace(/\/$/, "") + "/photos?t=" + p.photo_upload_token;
+                  navigator.clipboard?.writeText(l)
+                    .then(()=>window.alert("Photo link copied — send it to " + p.first_name + "'s family."))
+                    .catch(()=>window.prompt("Their photo link:", l));
+                }}
+                style={{padding:"5px 11px",borderRadius:7,border:"1px solid "+C.gold,background:"transparent",
+                  color:C.gold,fontFamily:"inherit",fontSize:11,fontWeight:800,cursor:"pointer"}}>Copy photo link</button>
+            </div>
+          )}
           {/* Jersey & gear — the order the family sent in. Read-only here: the
               same link they used still edits it, and until we place the order
               their answer is the order. */}
@@ -29242,6 +29419,7 @@ export default function App() {
                   ["schoolgames","School Games"],
                   ["playergear","Gear Orders"],
                   ["kickoff","Kickoffs" + (kickoffOutstanding ? " (" + kickoffOutstanding + ")" : "")],
+                  ["photos","Team Photos"],
                   ["incidentboard","Issue Board" + (incidents.filter(r => r.status === "open").length ? " (" + incidents.filter(r => r.status === "open").length + ")" : "")],
                   ["tracker","Tracker"], ["teamdir","All Teams"], ["playereval","Player Evaluations"], ["passing","Passer Ratings"], ["practice","Practice"], ["sa","S&A Schedule"], ["scholarships","Scholarships"],
                   ...(isAdmin ? [["hawaii","Hawaii"], ["travel","Travel"], ["finance","Finance"]] : []),
@@ -29478,6 +29656,7 @@ export default function App() {
         {view==="schoolgames" && renderSchoolGames()}
         {view==="playergear" && renderPlayerGear()}
         {view==="kickoff" && renderKickoffs()}
+        {view==="photos" && renderTeamPhotos()}
         {view==="incidents" && renderIncidents()}
         {view==="incidentboard" && (canOps ? renderIncidentBoard() : opsDenied)}
         {view==="coachcomms" && renderCoachComms()}

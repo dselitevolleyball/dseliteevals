@@ -18,6 +18,10 @@
     {
       "source": "/kickoff",
       "destination": "/api/kickoff-form"
+    },
+    {
+      "source": "/photos",
+      "destination": "/api/photo-form"
     }
   ],
   "crons": [
