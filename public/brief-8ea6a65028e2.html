@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow, noarchive">
+</head>
+<body>
+<title>Season Graphics Brief</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Source+Sans+3:wght@400;600;700&display=swap">
+<style>
+  :root {
+    --ground:#f7f5f8; --surface:#fff; --sunk:#efebf1; --ink:#1a151d; --body:#4a4351;
+    --mut:#7d7486; --rule:#e2dce6; --accent:#c2186f; --accent-soft:#fbe8f1;
+    --urgent:#b62d2d; --urgent-bg:#fbe9e9; --ok:#1f7a52;
+    --shadow:0 1px 2px rgba(26,21,29,.05), 0 4px 16px rgba(26,21,29,.045);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:#131017; --surface:#1c1721; --sunk:#241d2a; --ink:#f4eff6; --body:#cdc3d4;
+      --mut:#948a9d; --rule:#322a39; --accent:#f472b6; --accent-soft:#33162a;
+      --urgent:#fb8080; --urgent-bg:#3a1a1a; --ok:#6ee7a8;
+      --shadow:0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground:#131017; --surface:#1c1721; --sunk:#241d2a; --ink:#f4eff6; --body:#cdc3d4;
+    --mut:#948a9d; --rule:#322a39; --accent:#f472b6; --accent-soft:#33162a;
+    --urgent:#fb8080; --urgent-bg:#3a1a1a; --ok:#6ee7a8;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--ground); color:var(--body);
+    font-family:"Source Sans 3",ui-sans-serif,system-ui,sans-serif; font-size:16.5px; line-height:1.6; }
+  .wrap { max-width:900px; margin:0 auto; padding:40px 22px 80px; }
+  h1,h2,h3 { font-family:"Barlow Condensed","Source Sans 3",sans-serif; color:var(--ink); margin:0; text-wrap:balance; }
+  h1 { font-size:clamp(2.3rem,6.5vw,3.4rem); font-weight:700; line-height:.98; text-transform:uppercase; }
+  h2 { font-size:clamp(1.45rem,3.4vw,1.9rem); font-weight:700; text-transform:uppercase; }
+  h3 { font-size:1.12rem; font-weight:700; }
+  p { margin:0; max-width:66ch; }
+  .eyebrow { font-family:"IBM Plex Mono",monospace; font-size:.68rem; letter-spacing:.18em;
+    text-transform:uppercase; color:var(--accent); font-weight:600; }
+  header { border-bottom:2px solid var(--ink); padding-bottom:24px; display:flex; flex-direction:column; gap:11px; }
+  header .lede { font-size:1.1rem; }
+  section { padding-top:42px; display:flex; flex-direction:column; gap:16px; }
+  .sechead { display:flex; flex-direction:column; gap:6px; }
+
+  .counts { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; }
+  .cbox { background:var(--surface); border:1px solid var(--rule); border-top:3px solid var(--tone,var(--accent));
+    border-radius:3px; padding:16px; box-shadow:var(--shadow); display:flex; flex-direction:column; gap:3px; }
+  .cbox b { font-family:"Barlow Condensed",sans-serif; font-size:2.5rem; line-height:.9; color:var(--tone,var(--ink)); }
+  .cbox span { font-family:"IBM Plex Mono",monospace; font-size:.65rem; letter-spacing:.11em;
+    text-transform:uppercase; color:var(--mut); font-weight:600; }
+  .cbox em { font-style:normal; font-size:.86rem; color:var(--body); }
+
+  .asset { background:var(--surface); border:1px solid var(--rule); border-left:3px solid var(--accent);
+    border-radius:3px; padding:19px 21px; display:flex; flex-direction:column; gap:10px; box-shadow:var(--shadow); }
+  .asset .tag { font-family:"IBM Plex Mono",monospace; font-size:.66rem; letter-spacing:.1em;
+    text-transform:uppercase; color:var(--mut); font-weight:600; }
+  .asset ul { margin:0; padding-left:19px; display:flex; flex-direction:column; gap:6px; max-width:66ch; }
+  .asset li::marker { color:var(--accent); }
+
+  .tablewrap { overflow-x:auto; border:1px solid var(--rule); border-radius:3px; background:var(--surface); }
+  table { border-collapse:collapse; width:100%; min-width:640px; font-size:.9rem; }
+  thead th { text-align:left; padding:10px 12px; background:var(--sunk); font-family:"IBM Plex Mono",monospace;
+    font-size:.64rem; letter-spacing:.12em; text-transform:uppercase; color:var(--mut); font-weight:600;
+    border-bottom:1px solid var(--rule); white-space:nowrap; }
+  tbody td { padding:9px 12px; border-bottom:1px solid var(--rule); vertical-align:middle; }
+  tbody tr:last-child td { border-bottom:none; }
+  tbody tr.soon { background:var(--urgent-bg); }
+  .num { font-family:"IBM Plex Mono",monospace; color:var(--mut); font-size:.8rem; }
+  .date { font-family:"IBM Plex Mono",monospace; font-weight:600; color:var(--ink); white-space:nowrap; }
+  .fx { color:var(--ink); font-weight:600; }
+  .v { color:var(--mut); font-size:.78rem; }
+  .lvl { font-family:"IBM Plex Mono",monospace; font-size:.72rem; color:var(--mut); white-space:nowrap; }
+  .cnt { text-align:right; }
+  .cnt b { font-family:"Barlow Condensed",sans-serif; font-size:1.35rem; color:var(--accent); }
+
+  .swatches { display:flex; flex-wrap:wrap; gap:10px; }
+  .sw { display:flex; flex-direction:column; gap:5px; align-items:flex-start; }
+  .chipc { width:64px; height:44px; border-radius:3px; border:1px solid var(--rule); }
+  .sw code { font-family:"IBM Plex Mono",monospace; font-size:.68rem; color:var(--mut); }
+
+  .need { background:var(--surface); border:1px solid var(--rule); border-left:3px solid var(--urgent);
+    border-radius:3px; padding:19px 21px; display:flex; flex-direction:column; gap:9px; }
+  .need h3 { color:var(--urgent); }
+  ul.plain { margin:0; padding-left:19px; display:flex; flex-direction:column; gap:7px; max-width:66ch; }
+  ul.plain li::marker { color:var(--urgent); }
+  a { color:var(--accent); }
+  strong { color:var(--ink); }
+  .link { display:inline-block; background:var(--accent); color:#fff; text-decoration:none; font-weight:700;
+    padding:12px 20px; border-radius:3px; font-size:.95rem; }
+  footer { margin-top:52px; padding-top:18px; border-top:1px solid var(--rule);
+    font-family:"IBM Plex Mono",monospace; font-size:.74rem; color:var(--mut); }
+</style>
+
+<div class="wrap">
+  <header>
+    <span class="eyebrow">DS Elite Volleyball &middot; 2026–27 season</span>
+    <h1>Season Graphics Brief</h1>
+    <p class="lede">We need a set of social graphics for the club season — <strong>45 images</strong> across three templates. All the content (names, numbers, dates, schools, coaches) is already compiled and linked below, so this is a design and production job, not a research one.</p>
+  </header>
+
+  <section>
+    <div class="counts">
+      <div class="cbox" style="--tone:var(--urgent)"><b>12</b><span>Game-day graphics</span><em>First one is needed for <strong>Tue 1 Sept</strong>.</em></div>
+      <div class="cbox"><b>20</b><span>Team cards</span><em>Roster, numbers and coaches.</em></div>
+      <div class="cbox"><b>13</b><span>School spotlights</span><em>Schools with 3+ of our players.</em></div>
+      <div class="cbox" style="--tone:var(--ok)"><b>45</b><span>Total images</span><em>Three templates, repeated.</em></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sechead">
+      <span class="eyebrow">Template 1 &middot; the priority</span>
+      <h2>Game-day graphics &mdash; 12</h2>
+      <p>Our players end up on opposite sides of the net when their schools meet. Each graphic celebrates one of those fixtures: two schools, the DS Elite players on each side, and the date.</p>
+    </div>
+
+    <div class="asset">
+      <span class="tag">What goes on each</span>
+      <ul>
+        <li>Both <strong>school names</strong>, treated as a head-to-head.</li>
+        <li>The <strong>DS Elite player names</strong> on each side — up to 22 on one side, so the layout has to hold a long list without shrinking to nothing.</li>
+        <li>The <strong>date</strong>, and the level where one is given ("8th B", "Freshman"). Where no level is shown, every team at both schools plays that day.</li>
+        <li>A count is worth featuring on the big ones — <strong>"31 DS Elite players"</strong> carries the post on its own.</li>
+      </ul>
+    </div>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th></th><th>Post on</th><th>Fixture</th><th>Level</th><th>Ours</th></tr></thead>
+        <tbody><tr class="soon">
+    <td class="num">1</td>
+    <td class="date">Tue, Sep 1</td>
+    <td><span class="fx">Dripping Springs High School</span> <span class="v">vs</span> <span class="fx">Westlake High School</span></td>
+    <td class="lvl">Freshman</td>
+    <td class="cnt"><b>12</b></td>
+  </tr><tr class="soon">
+    <td class="num">2</td>
+    <td class="date">Thu, Sep 3</td>
+    <td><span class="fx">Bee Cave Middle School</span> <span class="v">vs</span> <span class="fx">Hill Country Middle School</span></td>
+    <td class="lvl">all levels</td>
+    <td class="cnt"><b>11</b></td>
+  </tr><tr class="soon">
+    <td class="num">3</td>
+    <td class="date">Thu, Sep 10</td>
+    <td><span class="fx">Dripping Springs Middle School</span> <span class="v">vs</span> <span class="fx">Lake Travis Middle School</span></td>
+    <td class="lvl">all levels</td>
+    <td class="cnt"><b>25</b></td>
+  </tr><tr class="soon">
+    <td class="num">4</td>
+    <td class="date">Thu, Sep 10</td>
+    <td><span class="fx">West Ridge Middle School</span> <span class="v">vs</span> <span class="fx">Bee Cave Middle School</span></td>
+    <td class="lvl">all levels</td>
+    <td class="cnt"><b>16</b></td>
+  </tr><tr class="soon">
+    <td class="num">5</td>
+    <td class="date">Thu, Sep 17</td>
+    <td><span class="fx">Dripping Springs Middle School</span> <span class="v">vs</span> <span class="fx">Hill Country Middle School</span></td>
+    <td class="lvl">all levels</td>
+    <td class="cnt"><b>24</b></td>
+  </tr><tr class="soon">
+    <td class="num">6</td>
+    <td class="date">Thu, Sep 17</td>
+    <td><span class="fx">Bee Cave Middle School</span> <span class="v">vs</span> <span class="fx">Hudson Bend Middle School</span></td>
+    <td class="lvl">all levels</td>
+    <td class="cnt"><b>11</b></td>
+  </tr><tr>
+    <td class="num">7</td>
+    <td class="date">Thu, Sep 24</td>
+    <td><span class="fx">Dripping Springs Middle School</span> <span class="v">vs</span> <span class="fx">Bee Cave Middle School</span></td>
+    <td class="lvl">all levels</td>
+    <td class="cnt"><b>31</b></td>
+  </tr><tr>
+    <td class="num">8</td>
+    <td class="date">Thu, Oct 1</td>
+    <td><span class="fx">Dripping Springs Middle School</span> <span class="v">vs</span> <span class="fx">West Ridge Middle School</span></td>
+    <td class="lvl">all levels</td>
+    <td class="cnt"><b>29</b></td>
+  </tr><tr>
+    <td class="num">9</td>
+    <td class="date">Thu, Oct 8</td>
+    <td><span class="fx">Dripping Springs Middle School</span> <span class="v">vs</span> <span class="fx">Hudson Bend Middle School</span></td>
+    <td class="lvl">all levels</td>
+    <td class="cnt"><b>24</b></td>
+  </tr><tr>
+    <td class="num">10</td>
+    <td class="date">Thu, Oct 8</td>
+    <td><span class="fx">Bee Cave Middle School</span> <span class="v">vs</span> <span class="fx">Lake Travis Middle School</span></td>
+    <td class="lvl">all levels</td>
+    <td class="cnt"><b>12</b></td>
+  </tr><tr>
+    <td class="num">11</td>
+    <td class="date">Thu, Oct 15</td>
+    <td><span class="fx">Bee Cave Middle School</span> <span class="v">vs</span> <span class="fx">Hill Country Middle School</span></td>
+    <td class="lvl">all levels</td>
+    <td class="cnt"><b>11</b></td>
+  </tr><tr>
+    <td class="num">12</td>
+    <td class="date">Mon, Oct 19</td>
+    <td><span class="fx">Sycamore Springs Middle School</span> <span class="v">vs</span> <span class="fx">Dripping Springs Middle School</span></td>
+    <td class="lvl">8th B</td>
+    <td class="cnt"><b>12</b></td>
+  </tr></tbody>
+      </table>
+    </div>
+    <p style="font-size:.9rem;color:var(--mut)">Shaded rows are within the next two weeks. Player names for every fixture are in the content kit.</p>
+  </section>
+
+  <section>
+    <div class="sechead">
+      <span class="eyebrow">Template 2</span>
+      <h2>Team cards &mdash; 20</h2>
+      <p>One per club team, 215 players and 28 coaches in total. Squads run 4–13 players, so the template has to cope with both ends.</p>
+    </div>
+    <div class="asset">
+      <span class="tag">What goes on each</span>
+      <ul>
+        <li>Team name (e.g. <strong>14 Diamond</strong>), roster with jersey numbers, and the coaching staff.</li>
+        <li>Age group and level if it helps the hierarchy — the club runs Diamond, Ruby, Sapphire, Emerald, Topaz and Rise lines.</li>
+        <li>Optional second version per team carrying the tournament schedule — 27 tournament weekends across the club.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <div class="sechead">
+      <span class="eyebrow">Template 3</span>
+      <h2>School spotlights &mdash; 13</h2>
+      <p>One per school where we have three or more players, showing who represents DS Elite there and which school team each made. Dripping Springs Middle alone has 22.</p>
+    </div>
+    <div class="asset">
+      <span class="tag">What goes on each</span>
+      <ul>
+        <li>School name, our players grouped by their school team (7th A, 8th B, Freshman, Varsity…).</li>
+        <li>Each player's club team beside her name.</li>
+        <li>Schools with one or two players are in the data too, if you'd rather do a combined graphic than skip them.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <div class="sechead">
+      <span class="eyebrow">Starting point, not a brand guide</span>
+      <h2>Colours &amp; type we use now</h2>
+      <p>These are what the club's own app and parent-facing forms use. Treat them as the existing look rather than an approved brand kit — <strong>confirm against whatever official assets exist before building on them.</strong></p>
+    </div>
+    <div class="swatches">
+      <span class="sw"><i class="chipc" style="background:#e91e8c"></i><code>#e91e8c</code><code>pink</code></span>
+      <span class="sw"><i class="chipc" style="background:#e0b455"></i><code>#e0b455</code><code>gold</code></span>
+      <span class="sw"><i class="chipc" style="background:#12100f"></i><code>#12100f</code><code>near-black</code></span>
+      <span class="sw"><i class="chipc" style="background:#f6f2ec"></i><code>#f6f2ec</code><code>off-white</code></span>
+    </div>
+    <p>Type in use: <strong>Barlow Condensed</strong> for headings, <strong>Source Sans 3</strong> for body. Both are free on Google Fonts.</p>
+  </section>
+
+  <section>
+    <div class="sechead">
+      <span class="eyebrow">Before you can start</span>
+      <h2>What we still owe you</h2>
+    </div>
+    <div class="need">
+      <h3>From DS Elite</h3>
+      <ul class="plain">
+        <li><strong>Logo files</strong> — vector if they exist, and any existing templates or past posts worth matching.</li>
+        <li><strong>Sizes and platforms.</strong> Assume Instagram feed and story unless told otherwise, and say what you need.</li>
+        <li><strong>Player photos.</strong> We have none compiled — these are name-led graphics unless photos are supplied, and anything with a minor's face needs the media release checked first.</li>
+        <li><strong>Turnaround and cost</strong> for the first batch, given 1 September is immediate.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <div class="sechead">
+      <span class="eyebrow">The content</span>
+      <h2>Everything is already compiled</h2>
+      <p>Every name, jersey number, coach, school team, tournament date and matchup is on one page, with copy buttons on each list so nothing has to be retyped. Names are spelled as they appear on our roster — please use them exactly.</p>
+    </div>
+    <p><a class="link" href="https://claude.ai/code/artifact/48343eba-c90a-4ff8-8ae9-22d2db91df2e">Open the content kit &rarr;</a></p>
+  </section>
+
+  <footer>DS Elite Volleyball &middot; brief prepared 31 August 2026 &middot; content generated from the club roster, tournament calendar and school schedules</footer>
+</div>
+</body>
+</html>

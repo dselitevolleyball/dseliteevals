@@ -1,0 +1,1946 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow, noarchive">
+</head>
+<body>
+<title>DS Elite Content Kit</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Source+Sans+3:wght@400;600;700&display=swap">
+<style>
+  :root {
+    --ground:#f7f5f8; --surface:#fff; --sunk:#efebf1; --ink:#1a151d; --body:#4a4351;
+    --mut:#7d7486; --rule:#e2dce6; --accent:#c2186f; --accent-soft:#fbe8f1;
+    --gold:#9a6508; --shadow:0 1px 2px rgba(26,21,29,.05), 0 4px 16px rgba(26,21,29,.045);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:#131017; --surface:#1c1721; --sunk:#241d2a; --ink:#f4eff6; --body:#cdc3d4;
+      --mut:#948a9d; --rule:#322a39; --accent:#f472b6; --accent-soft:#33162a;
+      --gold:#f0c060; --shadow:0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground:#131017; --surface:#1c1721; --sunk:#241d2a; --ink:#f4eff6; --body:#cdc3d4;
+    --mut:#948a9d; --rule:#322a39; --accent:#f472b6; --accent-soft:#33162a;
+    --gold:#f0c060; --shadow:0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--ground); color:var(--body);
+    font-family:"Source Sans 3",ui-sans-serif,system-ui,sans-serif; font-size:16px; line-height:1.55;
+    -webkit-font-smoothing:antialiased; }
+  .wrap { max-width:1080px; margin:0 auto; padding:36px 20px 80px; }
+  h1,h2,h3 { font-family:"Barlow Condensed","Source Sans 3",sans-serif; color:var(--ink); margin:0; text-wrap:balance; }
+  h1 { font-size:clamp(2.4rem,7vw,3.8rem); font-weight:700; line-height:.95; text-transform:uppercase; }
+  h2 { font-size:clamp(1.5rem,3.6vw,2.1rem); font-weight:700; text-transform:uppercase; letter-spacing:.01em; }
+  h3 { font-size:1.28rem; font-weight:700; }
+  p { margin:0; }
+  .eyebrow { font-family:"IBM Plex Mono",monospace; font-size:.68rem; letter-spacing:.18em;
+    text-transform:uppercase; color:var(--accent); font-weight:600; }
+
+  header { border-bottom:2px solid var(--ink); padding-bottom:24px; display:flex; flex-direction:column; gap:10px; }
+  header p { max-width:62ch; font-size:1.06rem; }
+  .stats { display:flex; flex-wrap:wrap; gap:22px; margin-top:8px; }
+  .stat { display:flex; flex-direction:column; }
+  .stat b { font-family:"Barlow Condensed",sans-serif; font-size:2rem; line-height:1; color:var(--ink); }
+  .stat span { font-family:"IBM Plex Mono",monospace; font-size:.66rem; letter-spacing:.12em;
+    text-transform:uppercase; color:var(--mut); font-weight:600; margin-top:3px; }
+
+  nav { position:sticky; top:0; z-index:20; background:var(--ground); border-bottom:1px solid var(--rule);
+    display:flex; gap:6px; padding:10px 0; margin:0 0 8px; flex-wrap:wrap; }
+  nav a { font-family:"IBM Plex Mono",monospace; font-size:.72rem; letter-spacing:.08em; text-transform:uppercase;
+    font-weight:600; color:var(--mut); text-decoration:none; padding:7px 12px; border-radius:3px;
+    border:1px solid var(--rule); background:var(--surface); }
+  nav a:hover, nav a:focus-visible { color:var(--accent); border-color:var(--accent); outline:none; }
+
+  /* scroll-margin clears the sticky nav — without it an anchor jump hides
+     the heading it was aiming at behind the bar. */
+  section { padding-top:44px; display:flex; flex-direction:column; gap:16px; scroll-margin-top:62px; }
+  .sechead { display:flex; flex-direction:column; gap:6px; }
+  .sechead p { max-width:64ch; color:var(--body); }
+
+  .copy { font-family:"IBM Plex Mono",monospace; font-size:.68rem; letter-spacing:.06em; text-transform:uppercase;
+    font-weight:600; padding:6px 11px; border-radius:3px; border:1px solid var(--rule);
+    background:transparent; color:var(--mut); cursor:pointer; }
+  .copy:hover, .copy:focus-visible { border-color:var(--accent); color:var(--accent); outline:none; }
+  .copy.done { border-color:var(--accent); color:var(--accent); background:var(--accent-soft); }
+
+  /* Game day */
+  .games { display:flex; flex-direction:column; gap:14px; }
+  .game { background:var(--surface); border:1px solid var(--rule); border-radius:4px;
+    box-shadow:var(--shadow); overflow:hidden; }
+  .gtop { display:flex; align-items:center; gap:14px; padding:13px 16px; background:var(--sunk);
+    border-bottom:1px solid var(--rule); flex-wrap:wrap; }
+  .gnum { font-family:"Barlow Condensed",sans-serif; font-size:1.5rem; font-weight:700; color:var(--accent);
+    line-height:1; min-width:22px; }
+  .gwhen { display:flex; flex-direction:column; gap:1px; flex:1; min-width:180px; }
+  .gdate { font-weight:700; color:var(--ink); font-size:1.02rem; }
+  .glevel { font-family:"IBM Plex Mono",monospace; font-size:.66rem; letter-spacing:.1em;
+    text-transform:uppercase; color:var(--mut); font-weight:600; }
+  .glevel.all { color:var(--gold); }
+  .gcount { font-family:"IBM Plex Mono",monospace; font-size:.72rem; color:var(--mut); white-space:nowrap; }
+  .gcount b { font-family:"Barlow Condensed",sans-serif; font-size:1.5rem; color:var(--accent); }
+  .vs { display:grid; grid-template-columns:1fr auto 1fr; gap:14px; align-items:start; padding:16px; }
+  .side { display:flex; flex-direction:column; gap:5px; min-width:0; }
+  .sname { font-family:"Barlow Condensed",sans-serif; font-size:1.3rem; font-weight:700; color:var(--ink); line-height:1.05; }
+  .scount { font-family:"IBM Plex Mono",monospace; font-size:.66rem; letter-spacing:.08em;
+    text-transform:uppercase; color:var(--accent); font-weight:600; }
+  .snames { font-size:.9rem; color:var(--body); line-height:1.45; }
+  .chips { display:flex; flex-wrap:wrap; gap:4px; margin-top:2px; }
+  .chip { font-family:"IBM Plex Mono",monospace; font-size:.62rem; padding:2px 6px; border-radius:2px;
+    background:var(--sunk); color:var(--mut); border:1px solid var(--rule); white-space:nowrap; }
+  .vsmark { font-family:"Barlow Condensed",sans-serif; font-size:1.1rem; font-weight:700; color:var(--mut);
+    text-transform:uppercase; align-self:center; }
+  .gfoot { display:flex; gap:8px; padding:0 16px 14px; flex-wrap:wrap; }
+
+  /* Teams */
+  .teams { display:flex; flex-direction:column; gap:14px; }
+  .team { background:var(--surface); border:1px solid var(--rule); border-radius:4px; box-shadow:var(--shadow); overflow:hidden; }
+  .ttop { display:flex; align-items:baseline; gap:12px; padding:13px 16px; background:var(--sunk);
+    border-bottom:1px solid var(--rule); flex-wrap:wrap; }
+  .ttop h3 { color:var(--accent); }
+  .tmeta { font-size:.88rem; color:var(--mut); }
+  .tbody { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.35fr); gap:22px; padding:16px; }
+  .tcol { display:flex; flex-direction:column; gap:9px; align-items:flex-start; min-width:0; }
+  .lbl { font-family:"IBM Plex Mono",monospace; font-size:.66rem; letter-spacing:.12em;
+    text-transform:uppercase; color:var(--mut); font-weight:600; }
+  ol.roster { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:3px; width:100%; }
+  ol.roster li { font-size:.93rem; color:var(--ink); display:flex; gap:9px; align-items:baseline; }
+  .jn { font-family:"IBM Plex Mono",monospace; font-size:.78rem; font-weight:600; color:var(--accent);
+    min-width:24px; text-align:right; font-variant-numeric:tabular-nums; }
+  ul.tourns { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px; width:100%; }
+  ul.tourns li { display:flex; flex-direction:column; gap:0; font-size:.9rem; }
+  .td { font-family:"IBM Plex Mono",monospace; font-size:.72rem; color:var(--accent); font-weight:600; }
+  .tn { color:var(--ink); font-weight:600; line-height:1.3; }
+  .tl { font-size:.78rem; color:var(--mut); }
+
+  /* Schools */
+  .schools { display:grid; grid-template-columns:repeat(auto-fill,minmax(290px,1fr)); gap:14px; }
+  .school { background:var(--surface); border:1px solid var(--rule); border-radius:4px; padding:15px 16px;
+    display:flex; flex-direction:column; gap:11px; box-shadow:var(--shadow); }
+  .school.solo { opacity:.72; }
+  .stop { display:flex; align-items:baseline; gap:10px; }
+  .stop h3 { font-size:1.12rem; flex:1; line-height:1.1; }
+  .scnt { font-family:"Barlow Condensed",sans-serif; font-size:1.7rem; font-weight:700; color:var(--accent); line-height:1; }
+  .lvl { display:flex; flex-direction:column; gap:3px; }
+  .lname { font-family:"IBM Plex Mono",monospace; font-size:.64rem; letter-spacing:.1em;
+    text-transform:uppercase; color:var(--mut); font-weight:600; }
+  ul.lplayers { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:2px; }
+  ul.lplayers li { font-size:.9rem; color:var(--ink); }
+  .lclub { font-family:"IBM Plex Mono",monospace; font-size:.66rem; color:var(--mut); }
+
+  footer { margin-top:56px; padding-top:18px; border-top:1px solid var(--rule);
+    font-family:"IBM Plex Mono",monospace; font-size:.72rem; color:var(--mut); }
+
+  @media (max-width:720px) {
+    .tbody { grid-template-columns:1fr; }
+    .vs { grid-template-columns:1fr; }
+    .vsmark { justify-self:start; }
+  }
+  @media (prefers-reduced-motion:reduce) { * { transition:none !important; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <span class="eyebrow">DS Elite Volleyball &middot; 2026–27</span>
+    <h1>Content Kit</h1>
+    <p>Everything for the season's posts in one place: every team with its coaches, roster and tournament schedule; every school our girls play for; and twelve game days where DS Elite is on both sides of the net.</p>
+    <div class="stats">
+      <span class="stat"><b>20</b><span>Teams</span></span>
+      <span class="stat"><b>215</b><span>Players</span></span>
+      <span class="stat"><b>32</b><span>Schools</span></span>
+      <span class="stat"><b>127</b><span>On a school team</span></span>
+      <span class="stat"><b>12</b><span>Game days</span></span>
+    </div>
+  </header>
+
+  <nav>
+    <a href="#gameday">Game days</a>
+    <a href="#teams">Teams &amp; tournaments</a>
+    <a href="#schools">School rosters</a>
+  </nav>
+
+  <section id="gameday">
+    <div class="sechead">
+      <span class="eyebrow">Post idea &middot; ours vs ours</span>
+      <h2>Twelve game days</h2>
+      <p>Fixtures where a school we have girls at plays another school we have girls at — so DS Elite teammates are across the net from each other. Ranked by how many of ours are involved, then put back in date order. 44 such fixtures remain this season; these are the twelve biggest.</p>
+      <p><strong>Where no level is given, every team at both schools plays that day</strong>, so the whole group is in play. A named level (8th B, Freshman) means only those girls.</p>
+    </div>
+    <div class="games">
+  <article class="game">
+    <div class="gtop">
+      <span class="gnum">1</span>
+      <div class="gwhen">
+        <span class="gdate">Tuesday, September 1</span>
+        <span class="glevel">Freshman</span>
+      </div>
+      <span class="gcount"><b>12</b> ours</span>
+    </div>
+    <div class="vs">
+      <div class="side">
+        <span class="sname">Dripping Springs High School</span>
+        <span class="scount">8 players</span>
+        <p class="snames">Savannah Beckman, Penny Paclik, Addison Struby, Isla Foster, Olivia Murdock, Brynna McMains, Cooper Hovik, Mia Sandoval</p>
+        <div class="chips"><span class="chip">15 Diamond</span><span class="chip">15 Ruby</span><span class="chip">15 Sapphire</span></div>
+      </div>
+      <span class="vsmark">vs</span>
+      <div class="side">
+        <span class="sname">Westlake High School</span>
+        <span class="scount">4 players</span>
+        <p class="snames">Millicent Pierce, London Johnson, Eva Dickinson, Ashley Pritchett</p>
+        <div class="chips"><span class="chip">15 Emerald</span><span class="chip">15 Ruby</span></div>
+      </div>
+    </div>
+    <div class="gfoot">
+      <button class="copy" data-copy="Savannah Beckman, Penny Paclik, Addison Struby, Isla Foster, Olivia Murdock, Brynna McMains, Cooper Hovik, Mia Sandoval · Millicent Pierce, London Johnson, Eva Dickinson, Ashley Pritchett">Copy all names</button>
+      <button class="copy" data-copy="Tuesday, September 1 — Dripping Springs High School vs Westlake High School">Copy matchup</button>
+    </div>
+  </article>
+  <article class="game">
+    <div class="gtop">
+      <span class="gnum">2</span>
+      <div class="gwhen">
+        <span class="gdate">Thursday, September 3</span>
+        <span class="glevel all">all levels</span>
+      </div>
+      <span class="gcount"><b>11</b> ours</span>
+    </div>
+    <div class="vs">
+      <div class="side">
+        <span class="sname">Bee Cave Middle School</span>
+        <span class="scount">9 players</span>
+        <p class="snames">Hadley Willingham, Stella Fullen, Addison Sova, Emilia Kim, Kinley McIvor, Maria Alves, Stella Hueske, Ivy Aguilar, Sophie Lockridge</p>
+        <div class="chips"><span class="chip">13 Diamond</span><span class="chip">13 Ruby</span><span class="chip">13 Sapphire</span><span class="chip">14 Emerald</span><span class="chip">14 Ruby</span><span class="chip">14 Sapphire</span></div>
+      </div>
+      <span class="vsmark">vs</span>
+      <div class="side">
+        <span class="sname">Hill Country Middle School</span>
+        <span class="scount">2 players</span>
+        <p class="snames">Chelsea Harris, Lyla Hyde</p>
+        <div class="chips"><span class="chip">13 Diamond</span><span class="chip">14 Topaz</span></div>
+      </div>
+    </div>
+    <div class="gfoot">
+      <button class="copy" data-copy="Hadley Willingham, Stella Fullen, Addison Sova, Emilia Kim, Kinley McIvor, Maria Alves, Stella Hueske, Ivy Aguilar, Sophie Lockridge · Chelsea Harris, Lyla Hyde">Copy all names</button>
+      <button class="copy" data-copy="Thursday, September 3 — Bee Cave Middle School vs Hill Country Middle School">Copy matchup</button>
+    </div>
+  </article>
+  <article class="game">
+    <div class="gtop">
+      <span class="gnum">3</span>
+      <div class="gwhen">
+        <span class="gdate">Thursday, September 10</span>
+        <span class="glevel all">all levels</span>
+      </div>
+      <span class="gcount"><b>25</b> ours</span>
+    </div>
+    <div class="vs">
+      <div class="side">
+        <span class="sname">Dripping Springs Middle School</span>
+        <span class="scount">22 players</span>
+        <p class="snames">Brooklyn Faldyn, Gianna Miletta, Reese Connell, Chloe Dye, Brooke Stierwald, Josie Thiede, Ella Cate Harper, Ellis Burgoyne, Claire Donahue, Brittan Bradford, June Anne McAnally, Charlotte Hinkle, Elouise Ramirez, Caroline Craig, Emma Kobersky, Riley Hjornevik, Ashley Harris, Belle Davis, Everly Shumway, Jaden Scherer, Nerisse Villanueva, Caroline Buckingham</p>
+        <div class="chips"><span class="chip">13 Emerald</span><span class="chip">13 Ruby</span><span class="chip">14 Diamond</span><span class="chip">14 Emerald</span><span class="chip">14 Ruby</span><span class="chip">14 Sapphire</span><span class="chip">14 Topaz</span><span class="chip">15 Ruby</span><span class="chip">15 Sapphire</span></div>
+      </div>
+      <span class="vsmark">vs</span>
+      <div class="side">
+        <span class="sname">Lake Travis Middle School</span>
+        <span class="scount">3 players</span>
+        <p class="snames">Nicole Wong, Hadley Spencer, Corinne White</p>
+        <div class="chips"><span class="chip">13 Rise 1</span><span class="chip">13 Ruby</span><span class="chip">14 Diamond</span></div>
+      </div>
+    </div>
+    <div class="gfoot">
+      <button class="copy" data-copy="Brooklyn Faldyn, Gianna Miletta, Reese Connell, Chloe Dye, Brooke Stierwald, Josie Thiede, Ella Cate Harper, Ellis Burgoyne, Claire Donahue, Brittan Bradford, June Anne McAnally, Charlotte Hinkle, Elouise Ramirez, Caroline Craig, Emma Kobersky, Riley Hjornevik, Ashley Harris, Belle Davis, Everly Shumway, Jaden Scherer, Nerisse Villanueva, Caroline Buckingham · Nicole Wong, Hadley Spencer, Corinne White">Copy all names</button>
+      <button class="copy" data-copy="Thursday, September 10 — Dripping Springs Middle School vs Lake Travis Middle School">Copy matchup</button>
+    </div>
+  </article>
+  <article class="game">
+    <div class="gtop">
+      <span class="gnum">4</span>
+      <div class="gwhen">
+        <span class="gdate">Thursday, September 10</span>
+        <span class="glevel all">all levels</span>
+      </div>
+      <span class="gcount"><b>16</b> ours</span>
+    </div>
+    <div class="vs">
+      <div class="side">
+        <span class="sname">West Ridge Middle School</span>
+        <span class="scount">7 players</span>
+        <p class="snames">Madeleine Bancroft, Vivian Gressel, Lizzie Brandl, RJ Rowder, Audrey Anders, Juliette Pennock, Kate Lockett</p>
+        <div class="chips"><span class="chip">13 Diamond</span><span class="chip">14 Diamond</span><span class="chip">14 Emerald</span><span class="chip">14 Ruby</span><span class="chip">14 Topaz</span></div>
+      </div>
+      <span class="vsmark">vs</span>
+      <div class="side">
+        <span class="sname">Bee Cave Middle School</span>
+        <span class="scount">9 players</span>
+        <p class="snames">Hadley Willingham, Stella Fullen, Addison Sova, Emilia Kim, Kinley McIvor, Maria Alves, Stella Hueske, Ivy Aguilar, Sophie Lockridge</p>
+        <div class="chips"><span class="chip">13 Diamond</span><span class="chip">13 Ruby</span><span class="chip">13 Sapphire</span><span class="chip">14 Emerald</span><span class="chip">14 Ruby</span><span class="chip">14 Sapphire</span></div>
+      </div>
+    </div>
+    <div class="gfoot">
+      <button class="copy" data-copy="Madeleine Bancroft, Vivian Gressel, Lizzie Brandl, RJ Rowder, Audrey Anders, Juliette Pennock, Kate Lockett · Hadley Willingham, Stella Fullen, Addison Sova, Emilia Kim, Kinley McIvor, Maria Alves, Stella Hueske, Ivy Aguilar, Sophie Lockridge">Copy all names</button>
+      <button class="copy" data-copy="Thursday, September 10 — West Ridge Middle School vs Bee Cave Middle School">Copy matchup</button>
+    </div>
+  </article>
+  <article class="game">
+    <div class="gtop">
+      <span class="gnum">5</span>
+      <div class="gwhen">
+        <span class="gdate">Thursday, September 17</span>
+        <span class="glevel all">all levels</span>
+      </div>
+      <span class="gcount"><b>24</b> ours</span>
+    </div>
+    <div class="vs">
+      <div class="side">
+        <span class="sname">Dripping Springs Middle School</span>
+        <span class="scount">22 players</span>
+        <p class="snames">Brooklyn Faldyn, Gianna Miletta, Reese Connell, Chloe Dye, Brooke Stierwald, Josie Thiede, Ella Cate Harper, Ellis Burgoyne, Claire Donahue, Brittan Bradford, June Anne McAnally, Charlotte Hinkle, Elouise Ramirez, Caroline Craig, Emma Kobersky, Riley Hjornevik, Ashley Harris, Belle Davis, Everly Shumway, Jaden Scherer, Nerisse Villanueva, Caroline Buckingham</p>
+        <div class="chips"><span class="chip">13 Emerald</span><span class="chip">13 Ruby</span><span class="chip">14 Diamond</span><span class="chip">14 Emerald</span><span class="chip">14 Ruby</span><span class="chip">14 Sapphire</span><span class="chip">14 Topaz</span><span class="chip">15 Ruby</span><span class="chip">15 Sapphire</span></div>
+      </div>
+      <span class="vsmark">vs</span>
+      <div class="side">
+        <span class="sname">Hill Country Middle School</span>
+        <span class="scount">2 players</span>
+        <p class="snames">Chelsea Harris, Lyla Hyde</p>
+        <div class="chips"><span class="chip">13 Diamond</span><span class="chip">14 Topaz</span></div>
+      </div>
+    </div>
+    <div class="gfoot">
+      <button class="copy" data-copy="Brooklyn Faldyn, Gianna Miletta, Reese Connell, Chloe Dye, Brooke Stierwald, Josie Thiede, Ella Cate Harper, Ellis Burgoyne, Claire Donahue, Brittan Bradford, June Anne McAnally, Charlotte Hinkle, Elouise Ramirez, Caroline Craig, Emma Kobersky, Riley Hjornevik, Ashley Harris, Belle Davis, Everly Shumway, Jaden Scherer, Nerisse Villanueva, Caroline Buckingham · Chelsea Harris, Lyla Hyde">Copy all names</button>
+      <button class="copy" data-copy="Thursday, September 17 — Dripping Springs Middle School vs Hill Country Middle School">Copy matchup</button>
+    </div>
+  </article>
+  <article class="game">
+    <div class="gtop">
+      <span class="gnum">6</span>
+      <div class="gwhen">
+        <span class="gdate">Thursday, September 17</span>
+        <span class="glevel all">all levels</span>
+      </div>
+      <span class="gcount"><b>11</b> ours</span>
+    </div>
+    <div class="vs">
+      <div class="side">
+        <span class="sname">Bee Cave Middle School</span>
+        <span class="scount">9 players</span>
+        <p class="snames">Hadley Willingham, Stella Fullen, Addison Sova, Emilia Kim, Kinley McIvor, Maria Alves, Stella Hueske, Ivy Aguilar, Sophie Lockridge</p>
+        <div class="chips"><span class="chip">13 Diamond</span><span class="chip">13 Ruby</span><span class="chip">13 Sapphire</span><span class="chip">14 Emerald</span><span class="chip">14 Ruby</span><span class="chip">14 Sapphire</span></div>
+      </div>
+      <span class="vsmark">vs</span>
+      <div class="side">
+        <span class="sname">Hudson Bend Middle School</span>
+        <span class="scount">2 players</span>
+        <p class="snames">Maya Wappler, Lucy Plotkin</p>
+        <div class="chips"><span class="chip">14 Ruby</span><span class="chip">14 Sapphire</span></div>
+      </div>
+    </div>
+    <div class="gfoot">
+      <button class="copy" data-copy="Hadley Willingham, Stella Fullen, Addison Sova, Emilia Kim, Kinley McIvor, Maria Alves, Stella Hueske, Ivy Aguilar, Sophie Lockridge · Maya Wappler, Lucy Plotkin">Copy all names</button>
+      <button class="copy" data-copy="Thursday, September 17 — Bee Cave Middle School vs Hudson Bend Middle School">Copy matchup</button>
+    </div>
+  </article>
+  <article class="game">
+    <div class="gtop">
+      <span class="gnum">7</span>
+      <div class="gwhen">
+        <span class="gdate">Thursday, September 24</span>
+        <span class="glevel all">all levels</span>
+      </div>
+      <span class="gcount"><b>31</b> ours</span>
+    </div>
+    <div class="vs">
+      <div class="side">
+        <span class="sname">Dripping Springs Middle School</span>
+        <span class="scount">22 players</span>
+        <p class="snames">Brooklyn Faldyn, Gianna Miletta, Reese Connell, Chloe Dye, Brooke Stierwald, Josie Thiede, Ella Cate Harper, Ellis Burgoyne, Claire Donahue, Brittan Bradford, June Anne McAnally, Charlotte Hinkle, Elouise Ramirez, Caroline Craig, Emma Kobersky, Riley Hjornevik, Ashley Harris, Belle Davis, Everly Shumway, Jaden Scherer, Nerisse Villanueva, Caroline Buckingham</p>
+        <div class="chips"><span class="chip">13 Emerald</span><span class="chip">13 Ruby</span><span class="chip">14 Diamond</span><span class="chip">14 Emerald</span><span class="chip">14 Ruby</span><span class="chip">14 Sapphire</span><span class="chip">14 Topaz</span><span class="chip">15 Ruby</span><span class="chip">15 Sapphire</span></div>
+      </div>
+      <span class="vsmark">vs</span>
+      <div class="side">
+        <span class="sname">Bee Cave Middle School</span>
+        <span class="scount">9 players</span>
+        <p class="snames">Hadley Willingham, Stella Fullen, Addison Sova, Emilia Kim, Kinley McIvor, Maria Alves, Stella Hueske, Ivy Aguilar, Sophie Lockridge</p>
+        <div class="chips"><span class="chip">13 Diamond</span><span class="chip">13 Ruby</span><span class="chip">13 Sapphire</span><span class="chip">14 Emerald</span><span class="chip">14 Ruby</span><span class="chip">14 Sapphire</span></div>
+      </div>
+    </div>
+    <div class="gfoot">
+      <button class="copy" data-copy="Brooklyn Faldyn, Gianna Miletta, Reese Connell, Chloe Dye, Brooke Stierwald, Josie Thiede, Ella Cate Harper, Ellis Burgoyne, Claire Donahue, Brittan Bradford, June Anne McAnally, Charlotte Hinkle, Elouise Ramirez, Caroline Craig, Emma Kobersky, Riley Hjornevik, Ashley Harris, Belle Davis, Everly Shumway, Jaden Scherer, Nerisse Villanueva, Caroline Buckingham · Hadley Willingham, Stella Fullen, Addison Sova, Emilia Kim, Kinley McIvor, Maria Alves, Stella Hueske, Ivy Aguilar, Sophie Lockridge">Copy all names</button>
+      <button class="copy" data-copy="Thursday, September 24 — Dripping Springs Middle School vs Bee Cave Middle School">Copy matchup</button>
+    </div>
+  </article>
+  <article class="game">
+    <div class="gtop">
+      <span class="gnum">8</span>
+      <div class="gwhen">
+        <span class="gdate">Thursday, October 1</span>
+        <span class="glevel all">all levels</span>
+      </div>
+      <span class="gcount"><b>29</b> ours</span>
+    </div>
+    <div class="vs">
+      <div class="side">
+        <span class="sname">Dripping Springs Middle School</span>
+        <span class="scount">22 players</span>
+        <p class="snames">Brooklyn Faldyn, Gianna Miletta, Reese Connell, Chloe Dye, Brooke Stierwald, Josie Thiede, Ella Cate Harper, Ellis Burgoyne, Claire Donahue, Brittan Bradford, June Anne McAnally, Charlotte Hinkle, Elouise Ramirez, Caroline Craig, Emma Kobersky, Riley Hjornevik, Ashley Harris, Belle Davis, Everly Shumway, Jaden Scherer, Nerisse Villanueva, Caroline Buckingham</p>
+        <div class="chips"><span class="chip">13 Emerald</span><span class="chip">13 Ruby</span><span class="chip">14 Diamond</span><span class="chip">14 Emerald</span><span class="chip">14 Ruby</span><span class="chip">14 Sapphire</span><span class="chip">14 Topaz</span><span class="chip">15 Ruby</span><span class="chip">15 Sapphire</span></div>
+      </div>
+      <span class="vsmark">vs</span>
+      <div class="side">
+        <span class="sname">West Ridge Middle School</span>
+        <span class="scount">7 players</span>
+        <p class="snames">Madeleine Bancroft, Vivian Gressel, Lizzie Brandl, RJ Rowder, Audrey Anders, Juliette Pennock, Kate Lockett</p>
+        <div class="chips"><span class="chip">13 Diamond</span><span class="chip">14 Diamond</span><span class="chip">14 Emerald</span><span class="chip">14 Ruby</span><span class="chip">14 Topaz</span></div>
+      </div>
+    </div>
+    <div class="gfoot">
+      <button class="copy" data-copy="Brooklyn Faldyn, Gianna Miletta, Reese Connell, Chloe Dye, Brooke Stierwald, Josie Thiede, Ella Cate Harper, Ellis Burgoyne, Claire Donahue, Brittan Bradford, June Anne McAnally, Charlotte Hinkle, Elouise Ramirez, Caroline Craig, Emma Kobersky, Riley Hjornevik, Ashley Harris, Belle Davis, Everly Shumway, Jaden Scherer, Nerisse Villanueva, Caroline Buckingham · Madeleine Bancroft, Vivian Gressel, Lizzie Brandl, RJ Rowder, Audrey Anders, Juliette Pennock, Kate Lockett">Copy all names</button>
+      <button class="copy" data-copy="Thursday, October 1 — Dripping Springs Middle School vs West Ridge Middle School">Copy matchup</button>
+    </div>
+  </article>
+  <article class="game">
+    <div class="gtop">
+      <span class="gnum">9</span>
+      <div class="gwhen">
+        <span class="gdate">Thursday, October 8</span>
+        <span class="glevel all">all levels</span>
+      </div>
+      <span class="gcount"><b>24</b> ours</span>
+    </div>
+    <div class="vs">
+      <div class="side">
+        <span class="sname">Dripping Springs Middle School</span>
+        <span class="scount">22 players</span>
+        <p class="snames">Brooklyn Faldyn, Gianna Miletta, Reese Connell, Chloe Dye, Brooke Stierwald, Josie Thiede, Ella Cate Harper, Ellis Burgoyne, Claire Donahue, Brittan Bradford, June Anne McAnally, Charlotte Hinkle, Elouise Ramirez, Caroline Craig, Emma Kobersky, Riley Hjornevik, Ashley Harris, Belle Davis, Everly Shumway, Jaden Scherer, Nerisse Villanueva, Caroline Buckingham</p>
+        <div class="chips"><span class="chip">13 Emerald</span><span class="chip">13 Ruby</span><span class="chip">14 Diamond</span><span class="chip">14 Emerald</span><span class="chip">14 Ruby</span><span class="chip">14 Sapphire</span><span class="chip">14 Topaz</span><span class="chip">15 Ruby</span><span class="chip">15 Sapphire</span></div>
+      </div>
+      <span class="vsmark">vs</span>
+      <div class="side">
+        <span class="sname">Hudson Bend Middle School</span>
+        <span class="scount">2 players</span>
+        <p class="snames">Maya Wappler, Lucy Plotkin</p>
+        <div class="chips"><span class="chip">14 Ruby</span><span class="chip">14 Sapphire</span></div>
+      </div>
+    </div>
+    <div class="gfoot">
+      <button class="copy" data-copy="Brooklyn Faldyn, Gianna Miletta, Reese Connell, Chloe Dye, Brooke Stierwald, Josie Thiede, Ella Cate Harper, Ellis Burgoyne, Claire Donahue, Brittan Bradford, June Anne McAnally, Charlotte Hinkle, Elouise Ramirez, Caroline Craig, Emma Kobersky, Riley Hjornevik, Ashley Harris, Belle Davis, Everly Shumway, Jaden Scherer, Nerisse Villanueva, Caroline Buckingham · Maya Wappler, Lucy Plotkin">Copy all names</button>
+      <button class="copy" data-copy="Thursday, October 8 — Dripping Springs Middle School vs Hudson Bend Middle School">Copy matchup</button>
+    </div>
+  </article>
+  <article class="game">
+    <div class="gtop">
+      <span class="gnum">10</span>
+      <div class="gwhen">
+        <span class="gdate">Thursday, October 8</span>
+        <span class="glevel all">all levels</span>
+      </div>
+      <span class="gcount"><b>12</b> ours</span>
+    </div>
+    <div class="vs">
+      <div class="side">
+        <span class="sname">Bee Cave Middle School</span>
+        <span class="scount">9 players</span>
+        <p class="snames">Hadley Willingham, Stella Fullen, Addison Sova, Emilia Kim, Kinley McIvor, Maria Alves, Stella Hueske, Ivy Aguilar, Sophie Lockridge</p>
+        <div class="chips"><span class="chip">13 Diamond</span><span class="chip">13 Ruby</span><span class="chip">13 Sapphire</span><span class="chip">14 Emerald</span><span class="chip">14 Ruby</span><span class="chip">14 Sapphire</span></div>
+      </div>
+      <span class="vsmark">vs</span>
+      <div class="side">
+        <span class="sname">Lake Travis Middle School</span>
+        <span class="scount">3 players</span>
+        <p class="snames">Nicole Wong, Hadley Spencer, Corinne White</p>
+        <div class="chips"><span class="chip">13 Rise 1</span><span class="chip">13 Ruby</span><span class="chip">14 Diamond</span></div>
+      </div>
+    </div>
+    <div class="gfoot">
+      <button class="copy" data-copy="Hadley Willingham, Stella Fullen, Addison Sova, Emilia Kim, Kinley McIvor, Maria Alves, Stella Hueske, Ivy Aguilar, Sophie Lockridge · Nicole Wong, Hadley Spencer, Corinne White">Copy all names</button>
+      <button class="copy" data-copy="Thursday, October 8 — Bee Cave Middle School vs Lake Travis Middle School">Copy matchup</button>
+    </div>
+  </article>
+  <article class="game">
+    <div class="gtop">
+      <span class="gnum">11</span>
+      <div class="gwhen">
+        <span class="gdate">Thursday, October 15</span>
+        <span class="glevel all">all levels</span>
+      </div>
+      <span class="gcount"><b>11</b> ours</span>
+    </div>
+    <div class="vs">
+      <div class="side">
+        <span class="sname">Bee Cave Middle School</span>
+        <span class="scount">9 players</span>
+        <p class="snames">Hadley Willingham, Stella Fullen, Addison Sova, Emilia Kim, Kinley McIvor, Maria Alves, Stella Hueske, Ivy Aguilar, Sophie Lockridge</p>
+        <div class="chips"><span class="chip">13 Diamond</span><span class="chip">13 Ruby</span><span class="chip">13 Sapphire</span><span class="chip">14 Emerald</span><span class="chip">14 Ruby</span><span class="chip">14 Sapphire</span></div>
+      </div>
+      <span class="vsmark">vs</span>
+      <div class="side">
+        <span class="sname">Hill Country Middle School</span>
+        <span class="scount">2 players</span>
+        <p class="snames">Chelsea Harris, Lyla Hyde</p>
+        <div class="chips"><span class="chip">13 Diamond</span><span class="chip">14 Topaz</span></div>
+      </div>
+    </div>
+    <div class="gfoot">
+      <button class="copy" data-copy="Hadley Willingham, Stella Fullen, Addison Sova, Emilia Kim, Kinley McIvor, Maria Alves, Stella Hueske, Ivy Aguilar, Sophie Lockridge · Chelsea Harris, Lyla Hyde">Copy all names</button>
+      <button class="copy" data-copy="Thursday, October 15 — Bee Cave Middle School vs Hill Country Middle School">Copy matchup</button>
+    </div>
+  </article>
+  <article class="game">
+    <div class="gtop">
+      <span class="gnum">12</span>
+      <div class="gwhen">
+        <span class="gdate">Monday, October 19</span>
+        <span class="glevel">8th B</span>
+      </div>
+      <span class="gcount"><b>12</b> ours</span>
+    </div>
+    <div class="vs">
+      <div class="side">
+        <span class="sname">Sycamore Springs Middle School</span>
+        <span class="scount">3 players</span>
+        <p class="snames">Zoey Baker, Elaina Newman, Genevieve Ponce</p>
+        <div class="chips"><span class="chip">14 Emerald</span><span class="chip">14 Ruby</span><span class="chip">14 Sapphire</span></div>
+      </div>
+      <span class="vsmark">vs</span>
+      <div class="side">
+        <span class="sname">Dripping Springs Middle School</span>
+        <span class="scount">9 players</span>
+        <p class="snames">Reese Connell, Chloe Dye, Brooke Stierwald, Ella Cate Harper, Ellis Burgoyne, Belle Davis, Everly Shumway, Jaden Scherer, Nerisse Villanueva</p>
+        <div class="chips"><span class="chip">14 Emerald</span><span class="chip">14 Ruby</span><span class="chip">14 Sapphire</span><span class="chip">14 Topaz</span><span class="chip">15 Sapphire</span></div>
+      </div>
+    </div>
+    <div class="gfoot">
+      <button class="copy" data-copy="Zoey Baker, Elaina Newman, Genevieve Ponce · Reese Connell, Chloe Dye, Brooke Stierwald, Ella Cate Harper, Ellis Burgoyne, Belle Davis, Everly Shumway, Jaden Scherer, Nerisse Villanueva">Copy all names</button>
+      <button class="copy" data-copy="Monday, October 19 — Sycamore Springs Middle School vs Dripping Springs Middle School">Copy matchup</button>
+    </div>
+  </article></div>
+  </section>
+
+  <section id="teams">
+    <div class="sechead">
+      <span class="eyebrow">Club</span>
+      <h2>Teams &amp; tournaments</h2>
+      <p>Rosters are in jersey-number order. Tournament dates and locations are as entered on the club calendar — Rise teams play the in-house tournament only.</p>
+    </div>
+    <div class="teams">
+  <article class="team" id="team-11-diamond">
+    <div class="ttop">
+      <h3>11 Diamond</h3>
+      <span class="tmeta">Brandon Blahnik · Ella Hinkle</span>
+    </div>
+    <div class="tbody">
+      <div class="tcol">
+        <span class="lbl">Roster &middot; 9</span>
+        <ol class="roster">
+          <li><span class="jn">1</span> Cora Walter</li><li><span class="jn">3</span> Sybil Shumway</li><li><span class="jn">4</span> Sadie Whitacre</li><li><span class="jn">8</span> Allison Stanaland</li><li><span class="jn">10</span> Olivia Kindler</li><li><span class="jn">11</span> Millie Fischer</li><li><span class="jn">14</span> Emma Blahnik</li><li><span class="jn">23</span> Ellie Wong</li><li><span class="jn">34</span> Rebekah Hardge</li>
+        </ol>
+        <button class="copy" data-copy="#1 Cora Walter
+#3 Sybil Shumway
+#4 Sadie Whitacre
+#8 Allison Stanaland
+#10 Olivia Kindler
+#11 Millie Fischer
+#14 Emma Blahnik
+#23 Ellie Wong
+#34 Rebekah Hardge">Copy roster</button>
+      </div>
+      <div class="tcol">
+        <span class="lbl">Tournaments &middot; 8</span>
+        <ul class="tourns">
+          <li><span class="td">Sat, Dec 12 – Dec 13</span><span class="tn">CTPL #1</span><span class="tl">Austin, TX</span></li><li><span class="td">Sat, Jan 9 – Jan 10</span><span class="tn">Countdown City Classic</span><span class="tl">San Antonio, TX</span></li><li><span class="td">Sat, Jan 30 – Jan 31</span><span class="tn">CTPL #2</span><span class="tl">Austin, TX</span></li><li><span class="td">Sat, Feb 13 – Feb 14</span><span class="tn">ATX Showcase</span><span class="tl">Austin, TX</span></li><li><span class="td">Sat, Feb 27 – Feb 28</span><span class="tn">2027 Come and Take It Challenge</span><span class="tl">Bryan, TX</span></li><li><span class="td">Sat, Mar 13 – Mar 14</span><span class="tn">Round Rock Rumble</span><span class="tl">Round Rock, TX</span></li><li><span class="td">Fri, Apr 9 – Apr 11</span><span class="tn">Lone Star Classic Girls Junior National Qualifier Weekend 2 — Dallas</span><span class="tl">Dallas, TX</span></li><li><span class="td">Sat, Apr 24 – Apr 25</span><span class="tn">Lone Star Regionals Qualifier - 11s</span><span class="tl">Austin, TX</span></li>
+        </ul>
+        <button class="copy" data-copy="Sat, Dec 12 – Dec 13 — CTPL #1 (Austin, TX)
+Sat, Jan 9 – Jan 10 — Countdown City Classic (San Antonio, TX)
+Sat, Jan 30 – Jan 31 — CTPL #2 (Austin, TX)
+Sat, Feb 13 – Feb 14 — ATX Showcase (Austin, TX)
+Sat, Feb 27 – Feb 28 — 2027 Come and Take It Challenge (Bryan, TX)
+Sat, Mar 13 – Mar 14 — Round Rock Rumble (Round Rock, TX)
+Fri, Apr 9 – Apr 11 — Lone Star Classic Girls Junior National Qualifier Weekend 2 — Dallas (Dallas, TX)
+Sat, Apr 24 – Apr 25 — Lone Star Regionals Qualifier - 11s (Austin, TX)">Copy schedule</button>
+      </div>
+    </div>
+  </article>
+  <article class="team" id="team-11-rise-1">
+    <div class="ttop">
+      <h3>11 Rise 1</h3>
+      <span class="tmeta">Lindsey Shumway · Rob Roberts</span>
+    </div>
+    <div class="tbody">
+      <div class="tcol">
+        <span class="lbl">Roster &middot; 11</span>
+        <ol class="roster">
+          <li><span class="jn">—</span> Casey Elkins</li><li><span class="jn">—</span> Charlotte John</li><li><span class="jn">—</span> Riley Scott</li><li><span class="jn">—</span> Claire Davis</li><li><span class="jn">—</span> Addison Ballman</li><li><span class="jn">—</span> Fiona Wood</li><li><span class="jn">—</span> Quinn Rybak</li><li><span class="jn">—</span> Ellie James Halbert</li><li><span class="jn">—</span> Harper Ward</li><li><span class="jn">—</span> Juliet Afflixio</li><li><span class="jn">—</span> Greylee Smith</li>
+        </ol>
+        <button class="copy" data-copy="Casey Elkins
+Charlotte John
+Riley Scott
+Claire Davis
+Addison Ballman
+Fiona Wood
+Quinn Rybak
+Ellie James Halbert
+Harper Ward
+Juliet Afflixio
+Greylee Smith">Copy roster</button>
+      </div>
+      <div class="tcol">
+        <span class="lbl">Tournaments &middot; 1</span>
+        <ul class="tourns">
+          <li><span class="td">Sat, Apr 24 – Apr 25</span><span class="tn">Lone Star Regionals Qualifier - 11s</span><span class="tl">Austin, TX</span></li>
+        </ul>
+        <button class="copy" data-copy="Sat, Apr 24 – Apr 25 — Lone Star Regionals Qualifier - 11s (Austin, TX)">Copy schedule</button>
+      </div>
+    </div>
+  </article>
+  <article class="team" id="team-12-diamond">
+    <div class="ttop">
+      <h3>12 Diamond</h3>
+      <span class="tmeta">Tara Fisher · Rene Sandoval</span>
+    </div>
+    <div class="tbody">
+      <div class="tcol">
+        <span class="lbl">Roster &middot; 12</span>
+        <ol class="roster">
+          <li><span class="jn">1</span> Cora Mueller</li><li><span class="jn">3</span> Addison Miller</li><li><span class="jn">4</span> Campbell Smith</li><li><span class="jn">7</span> Hayden Riggs</li><li><span class="jn">8</span> London Prescott</li><li><span class="jn">9</span> Parker Paap</li><li><span class="jn">10</span> Briar Zalac</li><li><span class="jn">11</span> Evelyn Cervenka</li><li><span class="jn">13</span> Sienna Rowder</li><li><span class="jn">15</span> Kinsler Krueger</li><li><span class="jn">16</span> Caelin Stone</li><li><span class="jn">44</span> Lainey Beckman</li>
+        </ol>
+        <button class="copy" data-copy="#1 Cora Mueller
+#3 Addison Miller
+#4 Campbell Smith
+#7 Hayden Riggs
+#8 London Prescott
+#9 Parker Paap
+#10 Briar Zalac
+#11 Evelyn Cervenka
+#13 Sienna Rowder
+#15 Kinsler Krueger
+#16 Caelin Stone
+#44 Lainey Beckman">Copy roster</button>
+      </div>
+      <div class="tcol">
+        <span class="lbl">Tournaments &middot; 10</span>
+        <ul class="tourns">
+          <li><span class="td">Sat, Dec 12 – Dec 13</span><span class="tn">CTPL #1</span><span class="tl">Austin, TX</span></li><li><span class="td">Sat, Jan 9 – Jan 10</span><span class="tn">Countdown City Classic</span><span class="tl">San Antonio, TX</span></li><li><span class="td">Sat, Jan 23 – Jan 24</span><span class="tn">South Texas Power League #2</span><span class="tl">San Antonio, TX</span></li><li><span class="td">Sat, Feb 13 – Feb 14</span><span class="tn">ATX Showcase</span><span class="tl">Austin, TX</span></li><li><span class="td">Sat, Feb 20 – Feb 21</span><span class="tn">CTPL #3</span><span class="tl">Austin, TX</span></li><li><span class="td">Sat, Mar 13 – Mar 14</span><span class="tn">Round Rock Rumble</span><span class="tl">Round Rock, TX</span></li><li><span class="td">Fri, Apr 2 – Apr 4</span><span class="tn">Lone Star Classic Girls Junior National Qualifier Weekend 1 — Dallas</span><span class="tl">Dallas, TX</span></li><li><span class="td">Fri, Apr 23 – Apr 25</span><span class="tn">Red Rock Rave Girls National Qualifier Weekend 3</span><span class="tl">Las Vegas, NV</span></li><li><span class="td">Sat, May 8 – May 9</span><span class="tn">Lone Star Regionals Weekend 1</span><span class="tl">Houston, TX</span></li><li><span class="td">Sat, Jun 5 – Jun 7</span><span class="tn">USAV Girls Club Championship</span><span class="tl">Anaheim, CA</span></li>
+        </ul>
+        <button class="copy" data-copy="Sat, Dec 12 – Dec 13 — CTPL #1 (Austin, TX)
+Sat, Jan 9 – Jan 10 — Countdown City Classic (San Antonio, TX)
+Sat, Jan 23 – Jan 24 — South Texas Power League #2 (San Antonio, TX)
+Sat, Feb 13 – Feb 14 — ATX Showcase (Austin, TX)
+Sat, Feb 20 – Feb 21 — CTPL #3 (Austin, TX)
+Sat, Mar 13 – Mar 14 — Round Rock Rumble (Round Rock, TX)
+Fri, Apr 2 – Apr 4 — Lone Star Classic Girls Junior National Qualifier Weekend 1 — Dallas (Dallas, TX)
+Fri, Apr 23 – Apr 25 — Red Rock Rave Girls National Qualifier Weekend 3 (Las Vegas, NV)
+Sat, May 8 – May 9 — Lone Star Regionals Weekend 1 (Houston, TX)
+Sat, Jun 5 – Jun 7 — USAV Girls Club Championship (Anaheim, CA)">Copy schedule</button>
+      </div>
+    </div>
+  </article>
+  <article class="team" id="team-12-rise-1">
+    <div class="ttop">
+      <h3>12 Rise 1</h3>
+      <span class="tmeta">Rob Roberts · Victoria Reyna</span>
+    </div>
+    <div class="tbody">
+      <div class="tcol">
+        <span class="lbl">Roster &middot; 13</span>
+        <ol class="roster">
+          <li><span class="jn">—</span> Hallye Afflixio</li><li><span class="jn">—</span> Ella Peabody</li><li><span class="jn">—</span> Ellie Rippie</li><li><span class="jn">—</span> Elizabeth Escareno</li><li><span class="jn">—</span> Ella Mendibles</li><li><span class="jn">—</span> Ava Reyes</li><li><span class="jn">—</span> Lilyana Oleksy</li><li><span class="jn">—</span> Sydney Breckner</li><li><span class="jn">—</span> Vallie Miser</li><li><span class="jn">—</span> Josephine Gavin Moss</li><li><span class="jn">—</span> Lucia Thielk</li><li><span class="jn">—</span> Julia Hart</li><li><span class="jn">—</span> Emma Norris</li>
+        </ol>
+        <button class="copy" data-copy="Hallye Afflixio
+Ella Peabody
+Ellie Rippie
+Elizabeth Escareno
+Ella Mendibles
+Ava Reyes
+Lilyana Oleksy
+Sydney Breckner
+Vallie Miser
+Josephine Gavin Moss
+Lucia Thielk
+Julia Hart
+Emma Norris">Copy roster</button>
+      </div>
+      <div class="tcol">
+        <span class="lbl">Tournaments &middot; 1</span>
+        <ul class="tourns">
+          <li><span class="td">Sat, May 8 – May 9</span><span class="tn">Lone Star Regionals Weekend 1</span><span class="tl">Houston, TX</span></li>
+        </ul>
+        <button class="copy" data-copy="Sat, May 8 – May 9 — Lone Star Regionals Weekend 1 (Houston, TX)">Copy schedule</button>
+      </div>
+    </div>
+  </article>
+  <article class="team" id="team-12-ruby">
+    <div class="ttop">
+      <h3>12 Ruby</h3>
+      <span class="tmeta">Jason Baerwald · Jeremiah McElwee · Jaalin Rosser</span>
+    </div>
+    <div class="tbody">
+      <div class="tcol">
+        <span class="lbl">Roster &middot; 10</span>
+        <ol class="roster">
+          <li><span class="jn">1</span> Brooklynn Baerwald</li><li><span class="jn">2</span> Posey Noble</li><li><span class="jn">4</span> Ryan McCollum</li><li><span class="jn">5</span> Briar Carey-McWilliams</li><li><span class="jn">6</span> Katerina Gorelik</li><li><span class="jn">8</span> Gianna Mazza</li><li><span class="jn">13</span> Lily Bohacek</li><li><span class="jn">18</span> Sienna FitzGibbon</li><li><span class="jn">21</span> Jemma Gong</li><li><span class="jn">44</span> Kirra McElwee</li>
+        </ol>
+        <button class="copy" data-copy="#1 Brooklynn Baerwald
+#2 Posey Noble
+#4 Ryan McCollum
+#5 Briar Carey-McWilliams
+#6 Katerina Gorelik
+#8 Gianna Mazza
+#13 Lily Bohacek
+#18 Sienna FitzGibbon
+#21 Jemma Gong
+#44 Kirra McElwee">Copy roster</button>
+      </div>
+      <div class="tcol">
+        <span class="lbl">Tournaments &middot; 9</span>
+        <ul class="tourns">
+          <li><span class="td">Sat, Dec 12 – Dec 13</span><span class="tn">CTPL #1</span><span class="tl">Austin, TX</span></li><li><span class="td">Sat, Jan 9 – Jan 10</span><span class="tn">Countdown City Classic</span><span class="tl">San Antonio, TX</span></li><li><span class="td">Sat, Jan 30 – Jan 31</span><span class="tn">CTPL #2</span><span class="tl">Austin, TX</span></li><li><span class="td">Sat, Feb 13 – Feb 14</span><span class="tn">ATX Showcase</span><span class="tl">Austin, TX</span></li><li><span class="td">Sat, Mar 6 – Mar 7</span><span class="tn">CTPL #4</span><span class="tl">Austin, TX</span></li><li><span class="td">Fri, Apr 2 – Apr 4</span><span class="tn">Lone Star Classic Girls Junior National Qualifier Weekend 1 — Dallas</span><span class="tl">Dallas, TX</span></li><li><span class="td">Sat, Apr 10</span><span class="tn">ADS Blossom Battle</span><span class="tl">Converse, TX</span></li><li><span class="td">Sat, May 1 – May 2</span><span class="tn">Region Roundup #1 2027</span><span class="tl">Buda, TX</span></li><li><span class="td">Sat, May 8 – May 9</span><span class="tn">Lone Star Regionals Weekend 1</span><span class="tl">Houston, TX</span></li>
+        </ul>
+        <button class="copy" data-copy="Sat, Dec 12 – Dec 13 — CTPL #1 (Austin, TX)
+Sat, Jan 9 – Jan 10 — Countdown City Classic (San Antonio, TX)
+Sat, Jan 30 – Jan 31 — CTPL #2 (Austin, TX)
+Sat, Feb 13 – Feb 14 — ATX Showcase (Austin, TX)
+Sat, Mar 6 – Mar 7 — CTPL #4 (Austin, TX)
+Fri, Apr 2 – Apr 4 — Lone Star Classic Girls Junior National Qualifier Weekend 1 — Dallas (Dallas, TX)
+Sat, Apr 10 — ADS Blossom Battle (Converse, TX)
+Sat, May 1 – May 2 — Region Roundup #1 2027 (Buda, TX)
+Sat, May 8 – May 9 — Lone Star Regionals Weekend 1 (Houston, TX)">Copy schedule</button>
+      </div>
+    </div>
+  </article>
+  <article class="team" id="team-13-diamond">
+    <div class="ttop">
+      <h3>13 Diamond</h3>
+      <span class="tmeta">Sam Robinson · Dillyn Austin · Jayden Wright</span>
+    </div>
+    <div class="tbody">
+      <div class="tcol">
+        <span class="lbl">Roster &middot; 10</span>
+        <ol class="roster">
+          <li><span class="jn">1</span> Fabiana Toth</li><li><span class="jn">2</span> Lee Ellen Abernethy</li><li><span class="jn">3</span> Harper Gee</li><li><span class="jn">4</span> Claire Wood</li><li><span class="jn">6</span> Audrey Anders</li><li><span class="jn">7</span> Lizzie Brandl</li><li><span class="jn">11</span> Ivy Aguilar</li><li><span class="jn">17</span> Lyla Hyde</li><li><span class="jn">22</span> Harper Harder</li><li><span class="jn">32</span> Vivienne Chung</li>
+        </ol>
+        <button class="copy" data-copy="#1 Fabiana Toth
+#2 Lee Ellen Abernethy
+#3 Harper Gee
+#4 Claire Wood
+#6 Audrey Anders
+#7 Lizzie Brandl
+#11 Ivy Aguilar
+#17 Lyla Hyde
+#22 Harper Harder
+#32 Vivienne Chung">Copy roster</button>
+      </div>
+      <div class="tcol">
+        <span class="lbl">Tournaments &middot; 9</span>
+        <ul class="tourns">
+          <li><span class="td">Sat, Dec 12 – Dec 13</span><span class="tn">CTPL #1</span><span class="tl">Austin, TX</span></li><li><span class="td">Sat, Jan 9 – Jan 10</span><span class="tn">Countdown City Classic</span><span class="tl">San Antonio, TX</span></li><li><span class="td">Fri, Jan 29 – Jan 31</span><span class="tn">Nike Music City Championship</span><span class="tl">New Orleans</span></li><li><span class="td">Sat, Feb 13 – Feb 14</span><span class="tn">ATX Showcase</span><span class="tl">Austin, TX</span></li><li><span class="td">Sat, Feb 27 – Feb 28</span><span class="tn">2027 Come and Take It Challenge</span><span class="tl">Bryan, TX</span></li><li><span class="td">Sat, Mar 13 – Mar 14</span><span class="tn">SPAM Slam Hawaii</span><span class="tl">Honolulu, HI</span></li><li><span class="td">Fri, Apr 2 – Apr 4</span><span class="tn">Lone Star Classic Girls Junior National Qualifier Weekend 1 — Oklahoma City</span><span class="tl">Oklahoma City, OK</span></li><li><span class="td">Fri, Apr 23 – Apr 25</span><span class="tn">Red Rock Rave Girls National Qualifier Weekend 3</span><span class="tl">Las Vegas, NV</span></li><li><span class="td">Sat, May 8 – May 9</span><span class="tn">Lone Star Regionals Weekend 1</span><span class="tl">Houston, TX</span></li>
+        </ul>
+        <button class="copy" data-copy="Sat, Dec 12 – Dec 13 — CTPL #1 (Austin, TX)
+Sat, Jan 9 – Jan 10 — Countdown City Classic (San Antonio, TX)
+Fri, Jan 29 – Jan 31 — Nike Music City Championship (New Orleans)
+Sat, Feb 13 – Feb 14 — ATX Showcase (Austin, TX)
+Sat, Feb 27 – Feb 28 — 2027 Come and Take It Challenge (Bryan, TX)
+Sat, Mar 13 – Mar 14 — SPAM Slam Hawaii (Honolulu, HI)
+Fri, Apr 2 – Apr 4 — Lone Star Classic Girls Junior National Qualifier Weekend 1 — Oklahoma City (Oklahoma City, OK)
+Fri, Apr 23 – Apr 25 — Red Rock Rave Girls National Qualifier Weekend 3 (Las Vegas, NV)
+Sat, May 8 – May 9 — Lone Star Regionals Weekend 1 (Houston, TX)">Copy schedule</button>
+      </div>
+    </div>
+  </article>
+  <article class="team" id="team-13-emerald">
+    <div class="ttop">
+      <h3>13 Emerald</h3>
+      <span class="tmeta">Kelli Hardge · Shellie Williams</span>
+    </div>
+    <div class="tbody">
+      <div class="tcol">
+        <span class="lbl">Roster &middot; 12</span>
+        <ol class="roster">
+          <li><span class="jn">3</span> Layla Salladay</li><li><span class="jn">4</span> Amalia Wolyniec</li><li><span class="jn">6</span> Ruby Biel</li><li><span class="jn">7</span> Piper Abney</li><li><span class="jn">8</span> Scarlett Krystof</li><li><span class="jn">9</span> Caroline Wilkinson</li><li><span class="jn">10</span> June Anne McAnally</li><li><span class="jn">13</span> Marley Robinson</li><li><span class="jn">14</span> Louise Boehm</li><li><span class="jn">20</span> Chloe Hunter</li><li><span class="jn">23</span> Ashley Harris</li><li><span class="jn">25</span> Hattie Miller</li>
+        </ol>
+        <button class="copy" data-copy="#3 Layla Salladay
+#4 Amalia Wolyniec
+#6 Ruby Biel
+#7 Piper Abney
+#8 Scarlett Krystof
+#9 Caroline Wilkinson
+#10 June Anne McAnally
+#13 Marley Robinson
+#14 Louise Boehm
+#20 Chloe Hunter
+#23 Ashley Harris
+#25 Hattie Miller">Copy roster</button>
+      </div>
+      <div class="tcol">
+        <span class="lbl">Tournaments &middot; 9</span>
+        <ul class="tourns">
+          <li><span class="td">Sat, Dec 5</span><span class="tn">FSC Christmas Kickoff</span><span class="tl">San Antonio, TX</span></li><li><span class="td">Sat, Jan 9 – Jan 10</span><span class="tn">Countdown City Classic</span><span class="tl">San Antonio, TX</span></li><li><span class="td">Sat, Jan 23 – Jan 24</span><span class="tn">South Texas Power League #2</span><span class="tl">San Antonio, TX</span></li><li><span class="td">Sat, Feb 6 – Feb 7</span><span class="tn">CTX Cup 2027</span><span class="tl">Buda, TX</span></li><li><span class="td">Sat, Feb 20 – Feb 21</span><span class="tn">CTPL #3</span><span class="tl">Austin, TX</span></li><li><span class="td">Sat, Apr 3 – Apr 4</span><span class="tn">Final Countdown 2027</span><span class="tl">Buda, TX</span></li><li><span class="td">Fri, Apr 9 – Apr 11</span><span class="tn">Lone Star Classic Girls Junior National Qualifier Weekend 2 — Dallas</span><span class="tl">Dallas, TX</span></li><li><span class="td">Sat, May 1 – May 2</span><span class="tn">Region Roundup #1 2027</span><span class="tl">Buda, TX</span></li><li><span class="td">Sat, May 8 – May 9</span><span class="tn">Lone Star Regionals Weekend 1</span><span class="tl">Houston, TX</span></li>
+        </ul>
+        <button class="copy" data-copy="Sat, Dec 5 — FSC Christmas Kickoff (San Antonio, TX)
+Sat, Jan 9 – Jan 10 — Countdown City Classic (San Antonio, TX)
+Sat, Jan 23 – Jan 24 — South Texas Power League #2 (San Antonio, TX)
+Sat, Feb 6 – Feb 7 — CTX Cup 2027 (Buda, TX)
+Sat, Feb 20 – Feb 21 — CTPL #3 (Austin, TX)
+Sat, Apr 3 – Apr 4 — Final Countdown 2027 (Buda, TX)
+Fri, Apr 9 – Apr 11 — Lone Star Classic Girls Junior National Qualifier Weekend 2 — Dallas (Dallas, TX)
+Sat, May 1 – May 2 — Region Roundup #1 2027 (Buda, TX)
+Sat, May 8 – May 9 — Lone Star Regionals Weekend 1 (Houston, TX)">Copy schedule</button>
+      </div>
+    </div>
+  </article>
+  <article class="team" id="team-13-rise-1">
+    <div class="ttop">
+      <h3>13 Rise 1</h3>
+      <span class="tmeta">no coach assigned</span>
+    </div>
+    <div class="tbody">
+      <div class="tcol">
+        <span class="lbl">Roster &middot; 4</span>
+        <ol class="roster">
+          <li><span class="jn">—</span> Adalyn Shepard</li><li><span class="jn">—</span> Caroline Kosoris</li><li><span class="jn">—</span> Hadley Spencer</li><li><span class="jn">—</span> Kayla Sherman</li>
+        </ol>
+        <button class="copy" data-copy="Adalyn Shepard
+Caroline Kosoris
+Hadley Spencer
+Kayla Sherman">Copy roster</button>
+      </div>
+      <div class="tcol">
+        <span class="lbl">Tournaments &middot; 1</span>
+        <ul class="tourns">
+          <li><span class="td">Sat, May 8 – May 9</span><span class="tn">Lone Star Regionals Weekend 1</span><span class="tl">Houston, TX</span></li>
+        </ul>
+        <button class="copy" data-copy="Sat, May 8 – May 9 — Lone Star Regionals Weekend 1 (Houston, TX)">Copy schedule</button>
+      </div>
+    </div>
+  </article>
+  <article class="team" id="team-13-ruby">
+    <div class="ttop">
+      <h3>13 Ruby</h3>
+      <span class="tmeta">Breanna Coward · Sam Mabry</span>
+    </div>
+    <div class="tbody">
+      <div class="tcol">
+        <span class="lbl">Roster &middot; 12</span>
+        <ol class="roster">
+          <li><span class="jn">1</span> Charlotte Hiller</li><li><span class="jn">2</span> Blake Shipman</li><li><span class="jn">3</span> Garner Geeslin</li><li><span class="jn">4</span> Caroline Buckingham</li><li><span class="jn">6</span> Olivia Mabry</li><li><span class="jn">7</span> Lilli Deitering</li><li><span class="jn">12</span> Scarlett Murphy</li><li><span class="jn">13</span> Emilia Kim</li><li><span class="jn">16</span> Ana Sofia Iturbe</li><li><span class="jn">21</span> Josie Thiede</li><li><span class="jn">22</span> Gianna Miletta</li><li><span class="jn">27</span> Corinne White</li>
+        </ol>
+        <button class="copy" data-copy="#1 Charlotte Hiller
+#2 Blake Shipman
+#3 Garner Geeslin
+#4 Caroline Buckingham
+#6 Olivia Mabry
+#7 Lilli Deitering
+#12 Scarlett Murphy
+#13 Emilia Kim
+#16 Ana Sofia Iturbe
+#21 Josie Thiede
+#22 Gianna Miletta
+#27 Corinne White">Copy roster</button>
+      </div>
+      <div class="tcol">
+        <span class="lbl">Tournaments &middot; 9</span>
+        <ul class="tourns">
+          <li><span class="td">Sat, Dec 5</span><span class="tn">FSC Christmas Kickoff</span><span class="tl">San Antonio, TX</span></li><li><span class="td">Sat, Jan 9 – Jan 10</span><span class="tn">Countdown City Classic</span><span class="tl">San Antonio, TX</span></li><li><span class="td">Sat, Jan 23 – Jan 24</span><span class="tn">South Texas Power League #2</span><span class="tl">San Antonio, TX</span></li><li><span class="td">Sat, Feb 6 – Feb 7</span><span class="tn">CTX Cup 2027</span><span class="tl">Buda, TX</span></li><li><span class="td">Sat, Feb 20 – Feb 21</span><span class="tn">CTPL #3</span><span class="tl">Austin, TX</span></li><li><span class="td">Sat, Feb 27</span><span class="tn">Heart of Texas #3</span><span class="tl">Austin, TX</span></li><li><span class="td">Fri, Apr 2 – Apr 4</span><span class="tn">Lone Star Classic Girls Junior National Qualifier Weekend 1 — Oklahoma City</span><span class="tl">Oklahoma City, OK</span></li><li><span class="td">Sat, May 1 – May 2</span><span class="tn">Region Roundup #1 2027</span><span class="tl">Buda, TX</span></li><li><span class="td">Sat, May 8 – May 9</span><span class="tn">Lone Star Regionals Weekend 1</span><span class="tl">Houston, TX</span></li>
+        </ul>
+        <button class="copy" data-copy="Sat, Dec 5 — FSC Christmas Kickoff (San Antonio, TX)
+Sat, Jan 9 – Jan 10 — Countdown City Classic (San Antonio, TX)
+Sat, Jan 23 – Jan 24 — South Texas Power League #2 (San Antonio, TX)
+Sat, Feb 6 – Feb 7 — CTX Cup 2027 (Buda, TX)
+Sat, Feb 20 – Feb 21 — CTPL #3 (Austin, TX)
+Sat, Feb 27 — Heart of Texas #3 (Austin, TX)
+Fri, Apr 2 – Apr 4 — Lone Star Classic Girls Junior National Qualifier Weekend 1 — Oklahoma City (Oklahoma City, OK)
+Sat, May 1 – May 2 — Region Roundup #1 2027 (Buda, TX)
+Sat, May 8 – May 9 — Lone Star Regionals Weekend 1 (Houston, TX)">Copy schedule</button>
+      </div>
+    </div>
+  </article>
+  <article class="team" id="team-13-sapphire">
+    <div class="ttop">
+      <h3>13 Sapphire</h3>
+      <span class="tmeta">David Stanley · Britney Parker</span>
+    </div>
+    <div class="tbody">
+      <div class="tcol">
+        <span class="lbl">Roster &middot; 12</span>
+        <ol class="roster">
+          <li><span class="jn">2</span> Ava Ballman</li><li><span class="jn">3</span> Harper Busby</li><li><span class="jn">5</span> Hayden Gause</li><li><span class="jn">8</span> Ryan Kate Weirich</li><li><span class="jn">9</span> Kate Stroop</li><li><span class="jn">11</span> Elizabeth Stanley</li><li><span class="jn">13</span> Stella Hueske</li><li><span class="jn">14</span> Ellie McMullin</li><li><span class="jn">17</span> Mackenzie Schwarz</li><li><span class="jn">22</span> Elin Logan</li><li><span class="jn">24</span> Olivia George</li><li><span class="jn">31</span> Annie Ruffin</li>
+        </ol>
+        <button class="copy" data-copy="#2 Ava Ballman
+#3 Harper Busby
+#5 Hayden Gause
+#8 Ryan Kate Weirich
+#9 Kate Stroop
+#11 Elizabeth Stanley
+#13 Stella Hueske
+#14 Ellie McMullin
+#17 Mackenzie Schwarz
+#22 Elin Logan
+#24 Olivia George
+#31 Annie Ruffin">Copy roster</button>
+      </div>
+      <div class="tcol">
+        <span class="lbl">Tournaments &middot; 9</span>
+        <ul class="tourns">
+          <li><span class="td">Sat, Dec 5</span><span class="tn">FSC Christmas Kickoff</span><span class="tl">San Antonio, TX</span></li><li><span class="td">Sat, Jan 9 – Jan 10</span><span class="tn">Countdown City Classic</span><span class="tl">San Antonio, TX</span></li><li><span class="td">Sat, Jan 23 – Jan 24</span><span class="tn">South Texas Power League #2</span><span class="tl">San Antonio, TX</span></li><li><span class="td">Sat, Feb 6 – Feb 7</span><span class="tn">CTX Cup 2027</span><span class="tl">Buda, TX</span></li><li><span class="td">Sat, Feb 20 – Feb 21</span><span class="tn">CTPL #3</span><span class="tl">Austin, TX</span></li><li><span class="td">Sat, Mar 13 – Mar 14</span><span class="tn">Round Rock Rumble</span><span class="tl">Round Rock, TX</span></li><li><span class="td">Fri, Apr 9 – Apr 11</span><span class="tn">Lone Star Classic Girls Junior National Qualifier Weekend 2 — Dallas</span><span class="tl">Dallas, TX</span></li><li><span class="td">Sat, May 1 – May 2</span><span class="tn">Region Roundup #1 2027</span><span class="tl">Buda, TX</span></li><li><span class="td">Sat, May 8 – May 9</span><span class="tn">Lone Star Regionals Weekend 1</span><span class="tl">Houston, TX</span></li>
+        </ul>
+        <button class="copy" data-copy="Sat, Dec 5 — FSC Christmas Kickoff (San Antonio, TX)
+Sat, Jan 9 – Jan 10 — Countdown City Classic (San Antonio, TX)
+Sat, Jan 23 – Jan 24 — South Texas Power League #2 (San Antonio, TX)
+Sat, Feb 6 – Feb 7 — CTX Cup 2027 (Buda, TX)
+Sat, Feb 20 – Feb 21 — CTPL #3 (Austin, TX)
+Sat, Mar 13 – Mar 14 — Round Rock Rumble (Round Rock, TX)
+Fri, Apr 9 – Apr 11 — Lone Star Classic Girls Junior National Qualifier Weekend 2 — Dallas (Dallas, TX)
+Sat, May 1 – May 2 — Region Roundup #1 2027 (Buda, TX)
+Sat, May 8 – May 9 — Lone Star Regionals Weekend 1 (Houston, TX)">Copy schedule</button>
+      </div>
+    </div>
+  </article>
+  <article class="team" id="team-14-diamond">
+    <div class="ttop">
+      <h3>14 Diamond</h3>
+      <span class="tmeta">Drew Rose · Kristen Alexandrov</span>
+    </div>
+    <div class="tbody">
+      <div class="tcol">
+        <span class="lbl">Roster &middot; 11</span>
+        <ol class="roster">
+          <li><span class="jn">1</span> Elouise Ramirez</li><li><span class="jn">3</span> RJ Rowder</li><li><span class="jn">5</span> Charlee Saunders</li><li><span class="jn">6</span> Denver Dolch</li><li><span class="jn">8</span> Nicole Wong</li><li><span class="jn">11</span> Avery Alexandrov</li><li><span class="jn">13</span> Mia Paz</li><li><span class="jn">16</span> Brooklyn Faldyn</li><li><span class="jn">17</span> Charlotte Hinkle</li><li><span class="jn">27</span> Hazel Colletti</li><li><span class="jn">28</span> Ella Brophy</li>
+        </ol>
+        <button class="copy" data-copy="#1 Elouise Ramirez
+#3 RJ Rowder
+#5 Charlee Saunders
+#6 Denver Dolch
+#8 Nicole Wong
+#11 Avery Alexandrov
+#13 Mia Paz
+#16 Brooklyn Faldyn
+#17 Charlotte Hinkle
+#27 Hazel Colletti
+#28 Ella Brophy">Copy roster</button>
+      </div>
+      <div class="tcol">
+        <span class="lbl">Tournaments &middot; 10</span>
+        <ul class="tourns">
+          <li><span class="td">Sat, Dec 12 – Dec 13</span><span class="tn">Fast Warm Up</span><span class="tl">Houston, TX</span></li><li><span class="td">Sat, Jan 9 – Jan 11</span><span class="tn">2027 West Coast Juniors National Qualifier Weekend 1</span><span class="tl">Anaheim</span></li><li><span class="td">Sat, Jan 30 – Jan 31</span><span class="tn">CTPL #2</span><span class="tl">Austin, TX</span></li><li><span class="td">Sat, Feb 13 – Feb 14</span><span class="tn">ATX Showcase</span><span class="tl">Austin, TX</span></li><li><span class="td">Sat, Feb 27 – Feb 28</span><span class="tn">2027 Come and Take It Challenge</span><span class="tl">Bryan, TX</span></li><li><span class="td">Sat, Mar 13 – Mar 14</span><span class="tn">SPAM Slam Hawaii</span><span class="tl">Honolulu, HI</span></li><li><span class="td">Sat, Apr 3 – Apr 4</span><span class="tn">Final Countdown 2027</span><span class="tl">Buda, TX</span></li><li><span class="td">Fri, Apr 9 – Apr 11</span><span class="tn">Lone Star Classic Girls Junior National Qualifier Weekend 2 — Oklahoma City (Convention Center)</span><span class="tl">Oklahoma City, OK</span></li><li><span class="td">Fri, Apr 23 – Apr 25</span><span class="tn">Red Rock Rave Girls National Qualifier Weekend 3</span><span class="tl">Las Vegas, NV</span></li><li><span class="td">Sat, May 8 – May 9</span><span class="tn">Lone Star Regionals Weekend 1</span><span class="tl">Houston, TX</span></li>
+        </ul>
+        <button class="copy" data-copy="Sat, Dec 12 – Dec 13 — Fast Warm Up (Houston, TX)
+Sat, Jan 9 – Jan 11 — 2027 West Coast Juniors National Qualifier Weekend 1 (Anaheim)
+Sat, Jan 30 – Jan 31 — CTPL #2 (Austin, TX)
+Sat, Feb 13 – Feb 14 — ATX Showcase (Austin, TX)
+Sat, Feb 27 – Feb 28 — 2027 Come and Take It Challenge (Bryan, TX)
+Sat, Mar 13 – Mar 14 — SPAM Slam Hawaii (Honolulu, HI)
+Sat, Apr 3 – Apr 4 — Final Countdown 2027 (Buda, TX)
+Fri, Apr 9 – Apr 11 — Lone Star Classic Girls Junior National Qualifier Weekend 2 — Oklahoma City (Convention Center) (Oklahoma City, OK)
+Fri, Apr 23 – Apr 25 — Red Rock Rave Girls National Qualifier Weekend 3 (Las Vegas, NV)
+Sat, May 8 – May 9 — Lone Star Regionals Weekend 1 (Houston, TX)">Copy schedule</button>
+      </div>
+    </div>
+  </article>
+  <article class="team" id="team-14-emerald">
+    <div class="ttop">
+      <h3>14 Emerald</h3>
+      <span class="tmeta">Mikayla Smith-Wright · Ella Hinkle</span>
+    </div>
+    <div class="tbody">
+      <div class="tcol">
+        <span class="lbl">Roster &middot; 9</span>
+        <ol class="roster">
+          <li><span class="jn">2</span> Davie Riggs</li><li><span class="jn">3</span> Elaina Newman</li><li><span class="jn">4</span> Addison Sova</li><li><span class="jn">10</span> Kayton Lauer</li><li><span class="jn">12</span> Kate Lockett</li><li><span class="jn">14</span> Ella Cate Harper</li><li><span class="jn">15</span> Kinley McIvor</li><li><span class="jn">21</span> Fernanda Ponce</li><li><span class="jn">27</span> Joslin Stoddard</li>
+        </ol>
+        <button class="copy" data-copy="#2 Davie Riggs
+#3 Elaina Newman
+#4 Addison Sova
+#10 Kayton Lauer
+#12 Kate Lockett
+#14 Ella Cate Harper
+#15 Kinley McIvor
+#21 Fernanda Ponce
+#27 Joslin Stoddard">Copy roster</button>
+      </div>
+      <div class="tcol">
+        <span class="lbl">Tournaments &middot; 9</span>
+        <ul class="tourns">
+          <li><span class="td">Sat, Dec 5</span><span class="tn">December Dash 2026</span><span class="tl">Buda, TX</span></li><li><span class="td">Sat, Jan 23 – Jan 24</span><span class="tn">January Jam 2027</span><span class="tl">Buda, TX</span></li><li><span class="td">Sat, Feb 6 – Feb 7</span><span class="tn">CTX Cup 2027</span><span class="tl">Buda, TX</span></li><li><span class="td">Sat, Mar 6 – Mar 7</span><span class="tn">CTPL #4</span><span class="tl">Austin, TX</span></li><li><span class="td">Sat, Mar 20</span><span class="tn">March Madness 2027</span><span class="tl">Buda, TX</span></li><li><span class="td">Sat, Apr 3 – Apr 4</span><span class="tn">March Mayhem</span><span class="tl">Waco, TX</span></li><li><span class="td">Fri, Apr 9 – Apr 11</span><span class="tn">Lone Star Classic Girls Junior National Qualifier Weekend 2 — Oklahoma City (Convention Center)</span><span class="tl">Oklahoma City, OK</span></li><li><span class="td">Sat, May 1 – May 2</span><span class="tn">Region Roundup #1 2027</span><span class="tl">Buda, TX</span></li><li><span class="td">Sat, May 8 – May 9</span><span class="tn">Lone Star Regionals Weekend 1</span><span class="tl">Houston, TX</span></li>
+        </ul>
+        <button class="copy" data-copy="Sat, Dec 5 — December Dash 2026 (Buda, TX)
+Sat, Jan 23 – Jan 24 — January Jam 2027 (Buda, TX)
+Sat, Feb 6 – Feb 7 — CTX Cup 2027 (Buda, TX)
+Sat, Mar 6 – Mar 7 — CTPL #4 (Austin, TX)
+Sat, Mar 20 — March Madness 2027 (Buda, TX)
+Sat, Apr 3 – Apr 4 — March Mayhem (Waco, TX)
+Fri, Apr 9 – Apr 11 — Lone Star Classic Girls Junior National Qualifier Weekend 2 — Oklahoma City (Convention Center) (Oklahoma City, OK)
+Sat, May 1 – May 2 — Region Roundup #1 2027 (Buda, TX)
+Sat, May 8 – May 9 — Lone Star Regionals Weekend 1 (Houston, TX)">Copy schedule</button>
+      </div>
+    </div>
+  </article>
+  <article class="team" id="team-14-ruby">
+    <div class="ttop">
+      <h3>14 Ruby</h3>
+      <span class="tmeta">Jayden Wright · Rene Sandoval</span>
+    </div>
+    <div class="tbody">
+      <div class="tcol">
+        <span class="lbl">Roster &middot; 12</span>
+        <ol class="roster">
+          <li><span class="jn">4</span> Stella Fullen</li><li><span class="jn">5</span> Reese Connell</li><li><span class="jn">7</span> Emma Kobersky</li><li><span class="jn">8</span> Hadley Willingham</li><li><span class="jn">9</span> Madeleine Bancroft</li><li><span class="jn">11</span> Amel Renvoye</li><li><span class="jn">12</span> Brittan Bradford</li><li><span class="jn">13</span> Juliette Pennock</li><li><span class="jn">16</span> Maria Alves</li><li><span class="jn">19</span> Belle Davis</li><li><span class="jn">21</span> Lucy Plotkin</li><li><span class="jn">29</span> Genevieve Ponce</li>
+        </ol>
+        <button class="copy" data-copy="#4 Stella Fullen
+#5 Reese Connell
+#7 Emma Kobersky
+#8 Hadley Willingham
+#9 Madeleine Bancroft
+#11 Amel Renvoye
+#12 Brittan Bradford
+#13 Juliette Pennock
+#16 Maria Alves
+#19 Belle Davis
+#21 Lucy Plotkin
+#29 Genevieve Ponce">Copy roster</button>
+      </div>
+      <div class="tcol">
+        <span class="lbl">Tournaments &middot; 11</span>
+        <ul class="tourns">
+          <li><span class="td">Sat, Dec 5</span><span class="tn">December Dash 2026</span><span class="tl">Buda, TX</span></li><li><span class="td">Sat, Dec 19</span><span class="tn">Christmas Challenge</span><span class="tl">San Antonio, TX</span></li><li><span class="td">Sat, Jan 9 – Jan 11</span><span class="tn">2027 West Coast Juniors National Qualifier Weekend 1</span><span class="tl">Anaheim</span></li><li><span class="td">Sat, Jan 30 – Jan 31</span><span class="tn">CTPL #2</span><span class="tl">Austin, TX</span></li><li><span class="td">Sat, Feb 13 – Feb 14</span><span class="tn">ATX Showcase</span><span class="tl">Austin, TX</span></li><li><span class="td">Sat, Feb 27 – Feb 28</span><span class="tn">2027 Come and Take It Challenge</span><span class="tl">Bryan, TX</span></li><li><span class="td">Sat, Mar 6 – Mar 7</span><span class="tn">CTPL #4</span><span class="tl">Austin, TX</span></li><li><span class="td">Fri, Apr 9 – Apr 11</span><span class="tn">Lone Star Classic Girls Junior National Qualifier Weekend 2 — Oklahoma City (Convention Center)</span><span class="tl">Oklahoma City, OK</span></li><li><span class="td">Fri, Apr 23 – Apr 25</span><span class="tn">Red Rock Rave Girls National Qualifier Weekend 3</span><span class="tl">Las Vegas, NV</span></li><li><span class="td">Sat, May 8 – May 9</span><span class="tn">Lone Star Regionals Weekend 1</span><span class="tl">Houston, TX</span></li><li><span class="td">Sat, Jun 5 – Jun 7</span><span class="tn">USAV Girls Club Championship</span><span class="tl">Anaheim, CA</span></li>
+        </ul>
+        <button class="copy" data-copy="Sat, Dec 5 — December Dash 2026 (Buda, TX)
+Sat, Dec 19 — Christmas Challenge (San Antonio, TX)
+Sat, Jan 9 – Jan 11 — 2027 West Coast Juniors National Qualifier Weekend 1 (Anaheim)
+Sat, Jan 30 – Jan 31 — CTPL #2 (Austin, TX)
+Sat, Feb 13 – Feb 14 — ATX Showcase (Austin, TX)
+Sat, Feb 27 – Feb 28 — 2027 Come and Take It Challenge (Bryan, TX)
+Sat, Mar 6 – Mar 7 — CTPL #4 (Austin, TX)
+Fri, Apr 9 – Apr 11 — Lone Star Classic Girls Junior National Qualifier Weekend 2 — Oklahoma City (Convention Center) (Oklahoma City, OK)
+Fri, Apr 23 – Apr 25 — Red Rock Rave Girls National Qualifier Weekend 3 (Las Vegas, NV)
+Sat, May 8 – May 9 — Lone Star Regionals Weekend 1 (Houston, TX)
+Sat, Jun 5 – Jun 7 — USAV Girls Club Championship (Anaheim, CA)">Copy schedule</button>
+      </div>
+    </div>
+  </article>
+  <article class="team" id="team-14-sapphire">
+    <div class="ttop">
+      <h3>14 Sapphire</h3>
+      <span class="tmeta">Ambria Rupp · Mia De la Rosa</span>
+    </div>
+    <div class="tbody">
+      <div class="tcol">
+        <span class="lbl">Roster &middot; 12</span>
+        <ol class="roster">
+          <li><span class="jn">1</span> Zoey Baker</li><li><span class="jn">3</span> Ellis Burgoyne</li><li><span class="jn">4</span> Everly Shumway</li><li><span class="jn">5</span> Phallyn Fulkerson</li><li><span class="jn">7</span> Sophie Lockridge</li><li><span class="jn">10</span> Natalie Davis</li><li><span class="jn">13</span> Jaden Scherer</li><li><span class="jn">14</span> Claire Donahue</li><li><span class="jn">16</span> Alice Hudson</li><li><span class="jn">17</span> Chloe Dye</li><li><span class="jn">18</span> Maya Wappler</li><li><span class="jn">23</span> Caroline Craig</li>
+        </ol>
+        <button class="copy" data-copy="#1 Zoey Baker
+#3 Ellis Burgoyne
+#4 Everly Shumway
+#5 Phallyn Fulkerson
+#7 Sophie Lockridge
+#10 Natalie Davis
+#13 Jaden Scherer
+#14 Claire Donahue
+#16 Alice Hudson
+#17 Chloe Dye
+#18 Maya Wappler
+#23 Caroline Craig">Copy roster</button>
+      </div>
+      <div class="tcol">
+        <span class="lbl">Tournaments &middot; 9</span>
+        <ul class="tourns">
+          <li><span class="td">Sat, Dec 5</span><span class="tn">December Dash 2026</span><span class="tl">Buda, TX</span></li><li><span class="td">Sat, Jan 9 – Jan 10</span><span class="tn">Countdown City Classic</span><span class="tl">San Antonio, TX</span></li><li><span class="td">Sat, Jan 23 – Jan 24</span><span class="tn">South Texas Power League #2</span><span class="tl">San Antonio, TX</span></li><li><span class="td">Sat, Feb 6 – Feb 7</span><span class="tn">CTX Cup 2027</span><span class="tl">Buda, TX</span></li><li><span class="td">Sat, Feb 20 – Feb 21</span><span class="tn">CTPL #3</span><span class="tl">Austin, TX</span></li><li><span class="td">Sat, Mar 13 – Mar 14</span><span class="tn">Round Rock Rumble</span><span class="tl">Round Rock, TX</span></li><li><span class="td">Fri, Apr 9 – Apr 11</span><span class="tn">Lone Star Classic Girls Junior National Qualifier Weekend 2 — Oklahoma City (Bennett Event Center)</span><span class="tl">Oklahoma City, OK</span></li><li><span class="td">Sat, May 1 – May 2</span><span class="tn">Region Roundup #1 2027</span><span class="tl">Buda, TX</span></li><li><span class="td">Sat, May 8 – May 9</span><span class="tn">Lone Star Regionals Weekend 1</span><span class="tl">Houston, TX</span></li>
+        </ul>
+        <button class="copy" data-copy="Sat, Dec 5 — December Dash 2026 (Buda, TX)
+Sat, Jan 9 – Jan 10 — Countdown City Classic (San Antonio, TX)
+Sat, Jan 23 – Jan 24 — South Texas Power League #2 (San Antonio, TX)
+Sat, Feb 6 – Feb 7 — CTX Cup 2027 (Buda, TX)
+Sat, Feb 20 – Feb 21 — CTPL #3 (Austin, TX)
+Sat, Mar 13 – Mar 14 — Round Rock Rumble (Round Rock, TX)
+Fri, Apr 9 – Apr 11 — Lone Star Classic Girls Junior National Qualifier Weekend 2 — Oklahoma City (Bennett Event Center) (Oklahoma City, OK)
+Sat, May 1 – May 2 — Region Roundup #1 2027 (Buda, TX)
+Sat, May 8 – May 9 — Lone Star Regionals Weekend 1 (Houston, TX)">Copy schedule</button>
+      </div>
+    </div>
+  </article>
+  <article class="team" id="team-14-topaz">
+    <div class="ttop">
+      <h3>14 Topaz</h3>
+      <span class="tmeta">Karissa Lee · Britney Parker</span>
+    </div>
+    <div class="tbody">
+      <div class="tcol">
+        <span class="lbl">Roster &middot; 11</span>
+        <ol class="roster">
+          <li><span class="jn">1</span> Evelyn Bachman</li><li><span class="jn">2</span> Zara Malkani</li><li><span class="jn">3</span> Quinn Leonard</li><li><span class="jn">4</span> Quinn Redwine</li><li><span class="jn">5</span> Aubrey Morales</li><li><span class="jn">6</span> Leni Calhoun</li><li><span class="jn">7</span> Helena Pastor</li><li><span class="jn">10</span> Chelsea Harris</li><li><span class="jn">11</span> Caroline Conway</li><li><span class="jn">12</span> Vivian Gressel</li><li><span class="jn">19</span> Nerisse Villanueva</li>
+        </ol>
+        <button class="copy" data-copy="#1 Evelyn Bachman
+#2 Zara Malkani
+#3 Quinn Leonard
+#4 Quinn Redwine
+#5 Aubrey Morales
+#6 Leni Calhoun
+#7 Helena Pastor
+#10 Chelsea Harris
+#11 Caroline Conway
+#12 Vivian Gressel
+#19 Nerisse Villanueva">Copy roster</button>
+      </div>
+      <div class="tcol">
+        <span class="lbl">Tournaments &middot; 9</span>
+        <ul class="tourns">
+          <li><span class="td">Sat, Dec 12 – Dec 13</span><span class="tn">CTPL #1</span><span class="tl">Austin, TX</span></li><li><span class="td">Sat, Jan 9 – Jan 10</span><span class="tn">Countdown City Classic</span><span class="tl">San Antonio, TX</span></li><li><span class="td">Sat, Jan 30 – Jan 31</span><span class="tn">CTPL #2</span><span class="tl">Austin, TX</span></li><li><span class="td">Sat, Feb 13 – Feb 14</span><span class="tn">ATX Showcase</span><span class="tl">Austin, TX</span></li><li><span class="td">Sat, Feb 27</span><span class="tn">Heart of Texas #3</span><span class="tl">Austin, TX</span></li><li><span class="td">Sat, Mar 6 – Mar 7</span><span class="tn">CTPL #4</span><span class="tl">Austin, TX</span></li><li><span class="td">Sat, Apr 3 – Apr 4</span><span class="tn">March Mayhem</span><span class="tl">Waco, TX</span></li><li><span class="td">Fri, Apr 9 – Apr 11</span><span class="tn">Lone Star Classic Girls Junior National Qualifier Weekend 2 — Oklahoma City (Convention Center)</span><span class="tl">Oklahoma City, OK</span></li><li><span class="td">Sat, May 8 – May 9</span><span class="tn">Lone Star Regionals Weekend 1</span><span class="tl">Houston, TX</span></li>
+        </ul>
+        <button class="copy" data-copy="Sat, Dec 12 – Dec 13 — CTPL #1 (Austin, TX)
+Sat, Jan 9 – Jan 10 — Countdown City Classic (San Antonio, TX)
+Sat, Jan 30 – Jan 31 — CTPL #2 (Austin, TX)
+Sat, Feb 13 – Feb 14 — ATX Showcase (Austin, TX)
+Sat, Feb 27 — Heart of Texas #3 (Austin, TX)
+Sat, Mar 6 – Mar 7 — CTPL #4 (Austin, TX)
+Sat, Apr 3 – Apr 4 — March Mayhem (Waco, TX)
+Fri, Apr 9 – Apr 11 — Lone Star Classic Girls Junior National Qualifier Weekend 2 — Oklahoma City (Convention Center) (Oklahoma City, OK)
+Sat, May 8 – May 9 — Lone Star Regionals Weekend 1 (Houston, TX)">Copy schedule</button>
+      </div>
+    </div>
+  </article>
+  <article class="team" id="team-15-diamond">
+    <div class="ttop">
+      <h3>15 Diamond</h3>
+      <span class="tmeta">Hunter Haley · Breanna Coward</span>
+    </div>
+    <div class="tbody">
+      <div class="tcol">
+        <span class="lbl">Roster &middot; 11</span>
+        <ol class="roster">
+          <li><span class="jn">4</span> Juliet Rose</li><li><span class="jn">5</span> Addison Struby</li><li><span class="jn">6</span> Mia Sandoval</li><li><span class="jn">10</span> Amelie Ochoa</li><li><span class="jn">12</span> Ciara Smith</li><li><span class="jn">14</span> Hudson Suffel</li><li><span class="jn">16</span> Brooklyn Jauregui</li><li><span class="jn">19</span> Ava Jensen</li><li><span class="jn">24</span> Hattie Davis</li><li><span class="jn">37</span> Brooke Wright</li><li><span class="jn">99</span> Lyla Daniels</li>
+        </ol>
+        <button class="copy" data-copy="#4 Juliet Rose
+#5 Addison Struby
+#6 Mia Sandoval
+#10 Amelie Ochoa
+#12 Ciara Smith
+#14 Hudson Suffel
+#16 Brooklyn Jauregui
+#19 Ava Jensen
+#24 Hattie Davis
+#37 Brooke Wright
+#99 Lyla Daniels">Copy roster</button>
+      </div>
+      <div class="tcol">
+        <span class="lbl">Tournaments &middot; 10</span>
+        <ul class="tourns">
+          <li><span class="td">Sat, Dec 12 – Dec 13</span><span class="tn">Fast Warm Up</span><span class="tl">Houston, TX</span></li><li><span class="td">Sat, Jan 9 – Jan 11</span><span class="tn">2027 West Coast Juniors National Qualifier Weekend 1</span><span class="tl">Anaheim</span></li><li><span class="td">Sat, Jan 30 – Jan 31</span><span class="tn">CTPL #2</span><span class="tl">Austin, TX</span></li><li><span class="td">Sat, Feb 13 – Feb 14</span><span class="tn">ATX Showcase</span><span class="tl">Austin, TX</span></li><li><span class="td">Fri, Mar 5 – Mar 7</span><span class="tn">2027 Red Rock Rave Girls National Qualifier Weekend 1</span><span class="tl">Las Vegas, NV</span></li><li><span class="td">Sat, Mar 13 – Mar 14</span><span class="tn">SPAM Slam Hawaii</span><span class="tl">Honolulu, HI</span></li><li><span class="td">Sat, Apr 3 – Apr 4</span><span class="tn">March Mayhem</span><span class="tl">Waco, TX</span></li><li><span class="td">Fri, Apr 16 – Apr 18</span><span class="tn">Lone Star Classic Girls Junior National Qualifier Weekend 3 — Houston</span><span class="tl">Houston, TX</span></li><li><span class="td">Sat, Apr 24 – Apr 25</span><span class="tn">CTX Champions 2027</span><span class="tl">Buda, TX</span></li><li><span class="td">Sat, May 15 – May 16</span><span class="tn">Lone Star Regionals Weekend 2</span><span class="tl">Houston, TX</span></li>
+        </ul>
+        <button class="copy" data-copy="Sat, Dec 12 – Dec 13 — Fast Warm Up (Houston, TX)
+Sat, Jan 9 – Jan 11 — 2027 West Coast Juniors National Qualifier Weekend 1 (Anaheim)
+Sat, Jan 30 – Jan 31 — CTPL #2 (Austin, TX)
+Sat, Feb 13 – Feb 14 — ATX Showcase (Austin, TX)
+Fri, Mar 5 – Mar 7 — 2027 Red Rock Rave Girls National Qualifier Weekend 1 (Las Vegas, NV)
+Sat, Mar 13 – Mar 14 — SPAM Slam Hawaii (Honolulu, HI)
+Sat, Apr 3 – Apr 4 — March Mayhem (Waco, TX)
+Fri, Apr 16 – Apr 18 — Lone Star Classic Girls Junior National Qualifier Weekend 3 — Houston (Houston, TX)
+Sat, Apr 24 – Apr 25 — CTX Champions 2027 (Buda, TX)
+Sat, May 15 – May 16 — Lone Star Regionals Weekend 2 (Houston, TX)">Copy schedule</button>
+      </div>
+    </div>
+  </article>
+  <article class="team" id="team-15-emerald">
+    <div class="ttop">
+      <h3>15 Emerald</h3>
+      <span class="tmeta">Sam Robinson · Jaalin Rosser</span>
+    </div>
+    <div class="tbody">
+      <div class="tcol">
+        <span class="lbl">Roster &middot; 11</span>
+        <ol class="roster">
+          <li><span class="jn">1</span> Emma Stooksberry</li><li><span class="jn">4</span> Avery Jauregui</li><li><span class="jn">5</span> Millicent Pierce</li><li><span class="jn">6</span> Kiley Roach</li><li><span class="jn">9</span> Bailey Lateur</li><li><span class="jn">10</span> London Johnson</li><li><span class="jn">11</span> Kendall Hodges</li><li><span class="jn">12</span> Kailey Scott</li><li><span class="jn">13</span> Avery Domuczicz</li><li><span class="jn">14</span> Emma Mize</li><li><span class="jn">21</span> Nora Annen</li>
+        </ol>
+        <button class="copy" data-copy="#1 Emma Stooksberry
+#4 Avery Jauregui
+#5 Millicent Pierce
+#6 Kiley Roach
+#9 Bailey Lateur
+#10 London Johnson
+#11 Kendall Hodges
+#12 Kailey Scott
+#13 Avery Domuczicz
+#14 Emma Mize
+#21 Nora Annen">Copy roster</button>
+      </div>
+      <div class="tcol">
+        <span class="lbl">Tournaments &middot; 10</span>
+        <ul class="tourns">
+          <li><span class="td">Sat, Dec 5</span><span class="tn">December Dash 2026</span><span class="tl">Buda, TX</span></li><li><span class="td">Sat, Jan 16</span><span class="tn">APC # 2 2027 -- 14/15's</span><span class="tl">New Braunfels, TX</span></li><li><span class="td">Sat, Jan 23 – Jan 24</span><span class="tn">January Jam 2027</span><span class="tl">Buda, TX</span></li><li><span class="td">Sat, Feb 6</span><span class="tn">Heart of Texas #2</span><span class="tl">Austin, TX</span></li><li><span class="td">Sat, Feb 20 – Feb 21</span><span class="tn">CTPL #3</span><span class="tl">Austin, TX</span></li><li><span class="td">Sat, Mar 6 – Mar 7</span><span class="tn">CTPL #4</span><span class="tl">Austin, TX</span></li><li><span class="td">Sat, Mar 20 – Mar 21</span><span class="tn">South Texas Spring Classic</span><span class="tl">Universal City, TX</span></li><li><span class="td">Fri, Apr 16 – Apr 18</span><span class="tn">Lone Star Classic Girls Junior National Qualifier Weekend 3 — Oklahoma City</span><span class="tl">Oklahoma City, OK</span></li><li><span class="td">Sat, May 1 – May 2</span><span class="tn">South Texas Summer Classic</span><span class="tl">San Antonio, TX</span></li><li><span class="td">Sat, May 15 – May 16</span><span class="tn">Lone Star Regionals Weekend 2</span><span class="tl">Houston, TX</span></li>
+        </ul>
+        <button class="copy" data-copy="Sat, Dec 5 — December Dash 2026 (Buda, TX)
+Sat, Jan 16 — APC # 2 2027 -- 14/15's (New Braunfels, TX)
+Sat, Jan 23 – Jan 24 — January Jam 2027 (Buda, TX)
+Sat, Feb 6 — Heart of Texas #2 (Austin, TX)
+Sat, Feb 20 – Feb 21 — CTPL #3 (Austin, TX)
+Sat, Mar 6 – Mar 7 — CTPL #4 (Austin, TX)
+Sat, Mar 20 – Mar 21 — South Texas Spring Classic (Universal City, TX)
+Fri, Apr 16 – Apr 18 — Lone Star Classic Girls Junior National Qualifier Weekend 3 — Oklahoma City (Oklahoma City, OK)
+Sat, May 1 – May 2 — South Texas Summer Classic (San Antonio, TX)
+Sat, May 15 – May 16 — Lone Star Regionals Weekend 2 (Houston, TX)">Copy schedule</button>
+      </div>
+    </div>
+  </article>
+  <article class="team" id="team-15-ruby">
+    <div class="ttop">
+      <h3>15 Ruby</h3>
+      <span class="tmeta">Chang Guo · Kelli Hardge</span>
+    </div>
+    <div class="tbody">
+      <div class="tcol">
+        <span class="lbl">Roster &middot; 12</span>
+        <ol class="roster">
+          <li><span class="jn">1</span> Eva Dickinson</li><li><span class="jn">2</span> Kara Fitzgerald</li><li><span class="jn">3</span> Sydney Klinect</li><li><span class="jn">11</span> Olivia Brusuelas</li><li><span class="jn">16</span> Haleigh Smith</li><li><span class="jn">19</span> Ashley Pritchett</li><li><span class="jn">21</span> Kensleigh O'ren Smith</li><li><span class="jn">22</span> Riley Hjornevik</li><li><span class="jn">23</span> Cooper Hovik</li><li><span class="jn">29</span> Harper M. Ward</li><li><span class="jn">30</span> Savannah Beckman</li><li><span class="jn">55</span> Praia McElwee</li>
+        </ol>
+        <button class="copy" data-copy="#1 Eva Dickinson
+#2 Kara Fitzgerald
+#3 Sydney Klinect
+#11 Olivia Brusuelas
+#16 Haleigh Smith
+#19 Ashley Pritchett
+#21 Kensleigh O'ren Smith
+#22 Riley Hjornevik
+#23 Cooper Hovik
+#29 Harper M. Ward
+#30 Savannah Beckman
+#55 Praia McElwee">Copy roster</button>
+      </div>
+      <div class="tcol">
+        <span class="lbl">Tournaments &middot; 10</span>
+        <ul class="tourns">
+          <li><span class="td">Sat, Dec 12 – Dec 13</span><span class="tn">CTPL #1</span><span class="tl">Austin, TX</span></li><li><span class="td">Sat, Jan 9 – Jan 10</span><span class="tn">Countdown City Classic</span><span class="tl">San Antonio, TX</span></li><li><span class="td">Fri, Jan 29 – Jan 31</span><span class="tn">Nike Music City Championship</span><span class="tl">New Orleans</span></li><li><span class="td">Sat, Feb 13 – Feb 14</span><span class="tn">ATX Showcase</span><span class="tl">Austin, TX</span></li><li><span class="td">Fri, Mar 5 – Mar 7</span><span class="tn">2027 Red Rock Rave Girls National Qualifier Weekend 1</span><span class="tl">Las Vegas, NV</span></li><li><span class="td">Sat, Apr 3 – Apr 4</span><span class="tn">March Mayhem</span><span class="tl">Waco, TX</span></li><li><span class="td">Fri, Apr 16 – Apr 18</span><span class="tn">Lone Star Classic Girls Junior National Qualifier Weekend 3 — Dallas</span><span class="tl">Dallas, TX</span></li><li><span class="td">Sat, Apr 24 – Apr 25</span><span class="tn">CTX Champions 2027</span><span class="tl">Buda, TX</span></li><li><span class="td">Sat, May 15 – May 16</span><span class="tn">Lone Star Regionals Weekend 2</span><span class="tl">Houston, TX</span></li><li><span class="td">Sat, Jun 5 – Jun 7</span><span class="tn">USAV Girls Club Championship</span><span class="tl">Anaheim, CA</span></li>
+        </ul>
+        <button class="copy" data-copy="Sat, Dec 12 – Dec 13 — CTPL #1 (Austin, TX)
+Sat, Jan 9 – Jan 10 — Countdown City Classic (San Antonio, TX)
+Fri, Jan 29 – Jan 31 — Nike Music City Championship (New Orleans)
+Sat, Feb 13 – Feb 14 — ATX Showcase (Austin, TX)
+Fri, Mar 5 – Mar 7 — 2027 Red Rock Rave Girls National Qualifier Weekend 1 (Las Vegas, NV)
+Sat, Apr 3 – Apr 4 — March Mayhem (Waco, TX)
+Fri, Apr 16 – Apr 18 — Lone Star Classic Girls Junior National Qualifier Weekend 3 — Dallas (Dallas, TX)
+Sat, Apr 24 – Apr 25 — CTX Champions 2027 (Buda, TX)
+Sat, May 15 – May 16 — Lone Star Regionals Weekend 2 (Houston, TX)
+Sat, Jun 5 – Jun 7 — USAV Girls Club Championship (Anaheim, CA)">Copy schedule</button>
+      </div>
+    </div>
+  </article>
+  <article class="team" id="team-15-sapphire">
+    <div class="ttop">
+      <h3>15 Sapphire</h3>
+      <span class="tmeta">Mikayla Smith-Wright · Shellie Williams</span>
+    </div>
+    <div class="tbody">
+      <div class="tcol">
+        <span class="lbl">Roster &middot; 11</span>
+        <ol class="roster">
+          <li><span class="jn">1</span> Reena Abu Ghosh</li><li><span class="jn">4</span> Anna Sandberg</li><li><span class="jn">5</span> Avery Kyrish</li><li><span class="jn">6</span> Ellie Whittemore</li><li><span class="jn">9</span> Brynna McMains</li><li><span class="jn">16</span> Hadley Horne</li><li><span class="jn">18</span> Isla Foster</li><li><span class="jn">19</span> Penny Paclik</li><li><span class="jn">22</span> Harper Houser</li><li><span class="jn">30</span> Brooke Stierwald</li><li><span class="jn">37</span> Olivia Murdock</li>
+        </ol>
+        <button class="copy" data-copy="#1 Reena Abu Ghosh
+#4 Anna Sandberg
+#5 Avery Kyrish
+#6 Ellie Whittemore
+#9 Brynna McMains
+#16 Hadley Horne
+#18 Isla Foster
+#19 Penny Paclik
+#22 Harper Houser
+#30 Brooke Stierwald
+#37 Olivia Murdock">Copy roster</button>
+      </div>
+      <div class="tcol">
+        <span class="lbl">Tournaments &middot; 9</span>
+        <ul class="tourns">
+          <li><span class="td">Sat, Dec 12 – Dec 13</span><span class="tn">CTPL #1</span><span class="tl">Austin, TX</span></li><li><span class="td">Sat, Jan 9 – Jan 10</span><span class="tn">Countdown City Classic</span><span class="tl">San Antonio, TX</span></li><li><span class="td">Sat, Jan 16</span><span class="tn">APC # 2 2027 -- 14/15's</span><span class="tl">New Braunfels, TX</span></li><li><span class="td">Sat, Jan 30 – Jan 31</span><span class="tn">CTPL #2</span><span class="tl">Austin, TX</span></li><li><span class="td">Sat, Feb 27 – Feb 28</span><span class="tn">2027 Come and Take It Challenge</span><span class="tl">Bryan, TX</span></li><li><span class="td">Sat, Mar 13 – Mar 14</span><span class="tn">Round Rock Rumble</span><span class="tl">Round Rock, TX</span></li><li><span class="td">Fri, Apr 16 – Apr 18</span><span class="tn">Lone Star Classic Girls Junior National Qualifier Weekend 3 — Oklahoma City</span><span class="tl">Oklahoma City, OK</span></li><li><span class="td">Sat, Apr 24 – Apr 25</span><span class="tn">CTX Champions 2027</span><span class="tl">Buda, TX</span></li><li><span class="td">Sat, May 15 – May 16</span><span class="tn">Lone Star Regionals Weekend 2</span><span class="tl">Houston, TX</span></li>
+        </ul>
+        <button class="copy" data-copy="Sat, Dec 12 – Dec 13 — CTPL #1 (Austin, TX)
+Sat, Jan 9 – Jan 10 — Countdown City Classic (San Antonio, TX)
+Sat, Jan 16 — APC # 2 2027 -- 14/15's (New Braunfels, TX)
+Sat, Jan 30 – Jan 31 — CTPL #2 (Austin, TX)
+Sat, Feb 27 – Feb 28 — 2027 Come and Take It Challenge (Bryan, TX)
+Sat, Mar 13 – Mar 14 — Round Rock Rumble (Round Rock, TX)
+Fri, Apr 16 – Apr 18 — Lone Star Classic Girls Junior National Qualifier Weekend 3 — Oklahoma City (Oklahoma City, OK)
+Sat, Apr 24 – Apr 25 — CTX Champions 2027 (Buda, TX)
+Sat, May 15 – May 16 — Lone Star Regionals Weekend 2 (Houston, TX)">Copy schedule</button>
+      </div>
+    </div>
+  </article>
+  <article class="team" id="team-16-diamond">
+    <div class="ttop">
+      <h3>16 Diamond</h3>
+      <span class="tmeta">Tionne Graves-Brown · Ambria Rupp</span>
+    </div>
+    <div class="tbody">
+      <div class="tcol">
+        <span class="lbl">Roster &middot; 10</span>
+        <ol class="roster">
+          <li><span class="jn">1</span> Reagan Obersteller</li><li><span class="jn">5</span> Lucia Baker</li><li><span class="jn">7</span> Isla Walker</li><li><span class="jn">8</span> Genevieve Guerrero</li><li><span class="jn">10</span> Addison Robbins</li><li><span class="jn">11</span> Kira Hoyt</li><li><span class="jn">15</span> Noelle Nichols</li><li><span class="jn">24</span> Kaylee Hoppas</li><li><span class="jn">36</span> Addison Crain</li><li><span class="jn">41</span> Isabella Shepard</li>
+        </ol>
+        <button class="copy" data-copy="#1 Reagan Obersteller
+#5 Lucia Baker
+#7 Isla Walker
+#8 Genevieve Guerrero
+#10 Addison Robbins
+#11 Kira Hoyt
+#15 Noelle Nichols
+#24 Kaylee Hoppas
+#36 Addison Crain
+#41 Isabella Shepard">Copy roster</button>
+      </div>
+      <div class="tcol">
+        <span class="lbl">Tournaments &middot; 10</span>
+        <ul class="tourns">
+          <li><span class="td">Sat, Dec 12 – Dec 13</span><span class="tn">CTPL #1</span><span class="tl">Austin, TX</span></li><li><span class="td">Sat, Jan 9 – Jan 10</span><span class="tn">Countdown City Classic</span><span class="tl">San Antonio, TX</span></li><li><span class="td">Fri, Jan 29 – Jan 31</span><span class="tn">Nike Music City Championship</span><span class="tl">New Orleans</span></li><li><span class="td">Sat, Feb 13 – Feb 14</span><span class="tn">ATX Showcase</span><span class="tl">Austin, TX</span></li><li><span class="td">Fri, Mar 5 – Mar 7</span><span class="tn">2027 Red Rock Rave Girls National Qualifier Weekend 1</span><span class="tl">Las Vegas, NV</span></li><li><span class="td">Sat, Apr 3 – Apr 4</span><span class="tn">March Mayhem</span><span class="tl">Waco, TX</span></li><li><span class="td">Fri, Apr 16 – Apr 18</span><span class="tn">Lone Star Classic Girls Junior National Qualifier Weekend 3 — Houston</span><span class="tl">Houston, TX</span></li><li><span class="td">Sat, Apr 24 – Apr 25</span><span class="tn">CTX Champions 2027</span><span class="tl">Buda, TX</span></li><li><span class="td">Sat, May 15 – May 16</span><span class="tn">Lone Star Regionals Weekend 2</span><span class="tl">Houston, TX</span></li><li><span class="td">Sat, Jun 5 – Jun 7</span><span class="tn">USAV Girls Club Championship</span><span class="tl">Anaheim, CA</span></li>
+        </ul>
+        <button class="copy" data-copy="Sat, Dec 12 – Dec 13 — CTPL #1 (Austin, TX)
+Sat, Jan 9 – Jan 10 — Countdown City Classic (San Antonio, TX)
+Fri, Jan 29 – Jan 31 — Nike Music City Championship (New Orleans)
+Sat, Feb 13 – Feb 14 — ATX Showcase (Austin, TX)
+Fri, Mar 5 – Mar 7 — 2027 Red Rock Rave Girls National Qualifier Weekend 1 (Las Vegas, NV)
+Sat, Apr 3 – Apr 4 — March Mayhem (Waco, TX)
+Fri, Apr 16 – Apr 18 — Lone Star Classic Girls Junior National Qualifier Weekend 3 — Houston (Houston, TX)
+Sat, Apr 24 – Apr 25 — CTX Champions 2027 (Buda, TX)
+Sat, May 15 – May 16 — Lone Star Regionals Weekend 2 (Houston, TX)
+Sat, Jun 5 – Jun 7 — USAV Girls Club Championship (Anaheim, CA)">Copy schedule</button>
+      </div>
+    </div>
+  </article></div>
+  </section>
+
+  <section id="schools">
+    <div class="sechead">
+      <span class="eyebrow">School ball</span>
+      <h2>School rosters</h2>
+      <p>Every school one of our girls plays for, split by the school team she made, with her club team beside her name. Sorted by how many of ours are there; the faded cards have a single player.</p>
+    </div>
+    <div class="schools">
+  <article class="school">
+    <div class="stop">
+      <h3>Dripping Springs Middle School</h3>
+      <span class="scnt">22</span>
+    </div>
+    
+      <div class="lvl">
+        <span class="lname">7th A</span>
+        <ul class="lplayers">
+          <li>Gianna Miletta <span class="lclub">13 Ruby</span></li><li>Josie Thiede <span class="lclub">13 Ruby</span></li>
+        </ul>
+      </div>
+      <div class="lvl">
+        <span class="lname">7th B</span>
+        <ul class="lplayers">
+          <li>Ashley Harris <span class="lclub">13 Emerald</span></li><li>Caroline Buckingham <span class="lclub">13 Ruby</span></li><li>June Anne McAnally <span class="lclub">13 Emerald</span></li>
+        </ul>
+      </div>
+      <div class="lvl">
+        <span class="lname">8th A</span>
+        <ul class="lplayers">
+          <li>Brittan Bradford <span class="lclub">14 Ruby</span></li><li>Brooklyn Faldyn <span class="lclub">14 Diamond</span></li><li>Caroline Craig <span class="lclub">14 Sapphire</span></li><li>Charlotte Hinkle <span class="lclub">14 Diamond</span></li><li>Claire Donahue <span class="lclub">14 Sapphire</span></li><li>Elouise Ramirez <span class="lclub">14 Diamond</span></li><li>Emma Kobersky <span class="lclub">14 Ruby</span></li><li>Riley Hjornevik <span class="lclub">15 Ruby</span></li>
+        </ul>
+      </div>
+      <div class="lvl">
+        <span class="lname">8th B</span>
+        <ul class="lplayers">
+          <li>Belle Davis <span class="lclub">14 Ruby</span></li><li>Brooke Stierwald <span class="lclub">15 Sapphire</span></li><li>Chloe Dye <span class="lclub">14 Sapphire</span></li><li>Ella Cate Harper <span class="lclub">14 Emerald</span></li><li>Ellis Burgoyne <span class="lclub">14 Sapphire</span></li><li>Everly Shumway <span class="lclub">14 Sapphire</span></li><li>Jaden Scherer <span class="lclub">14 Sapphire</span></li><li>Nerisse Villanueva <span class="lclub">14 Topaz</span></li><li>Reese Connell <span class="lclub">14 Ruby</span></li>
+        </ul>
+      </div>
+    <button class="copy" data-copy="Gianna Miletta, Josie Thiede, Ashley Harris, Caroline Buckingham, June Anne McAnally, Brittan Bradford, Brooklyn Faldyn, Caroline Craig, Charlotte Hinkle, Claire Donahue, Elouise Ramirez, Emma Kobersky, Riley Hjornevik, Belle Davis, Brooke Stierwald, Chloe Dye, Ella Cate Harper, Ellis Burgoyne, Everly Shumway, Jaden Scherer, Nerisse Villanueva, Reese Connell">Copy names</button>
+  </article>
+  <article class="school">
+    <div class="stop">
+      <h3>Sycamore Springs Middle School</h3>
+      <span class="scnt">14</span>
+    </div>
+    
+      <div class="lvl">
+        <span class="lname">7th A</span>
+        <ul class="lplayers">
+          <li>Hayden Gause <span class="lclub">13 Sapphire</span></li><li>Kate Stroop <span class="lclub">13 Sapphire</span></li><li>Olivia Mabry <span class="lclub">13 Ruby</span></li><li>Ryan Kate Weirich <span class="lclub">13 Sapphire</span></li>
+        </ul>
+      </div>
+      <div class="lvl">
+        <span class="lname">7th B</span>
+        <ul class="lplayers">
+          <li>Caroline Wilkinson <span class="lclub">13 Emerald</span></li><li>Elin Logan <span class="lclub">13 Sapphire</span></li><li>Garner Geeslin <span class="lclub">13 Ruby</span></li><li>Harper Busby <span class="lclub">13 Sapphire</span></li><li>Harper Gee <span class="lclub">13 Diamond</span></li><li>Louise Boehm <span class="lclub">13 Emerald</span></li><li>Scarlett Murphy <span class="lclub">13 Ruby</span></li>
+        </ul>
+      </div>
+      <div class="lvl">
+        <span class="lname">8th B</span>
+        <ul class="lplayers">
+          <li>Elaina Newman <span class="lclub">14 Emerald</span></li><li>Genevieve Ponce <span class="lclub">14 Ruby</span></li><li>Zoey Baker <span class="lclub">14 Sapphire</span></li>
+        </ul>
+      </div>
+    <button class="copy" data-copy="Hayden Gause, Kate Stroop, Olivia Mabry, Ryan Kate Weirich, Caroline Wilkinson, Elin Logan, Garner Geeslin, Harper Busby, Harper Gee, Louise Boehm, Scarlett Murphy, Elaina Newman, Genevieve Ponce, Zoey Baker">Copy names</button>
+  </article>
+  <article class="school">
+    <div class="stop">
+      <h3>Bee Cave Middle School</h3>
+      <span class="scnt">9</span>
+    </div>
+    
+      <div class="lvl">
+        <span class="lname">7th A</span>
+        <ul class="lplayers">
+          <li>Emilia Kim <span class="lclub">13 Ruby</span></li><li>Ivy Aguilar <span class="lclub">13 Diamond</span></li><li>Stella Hueske <span class="lclub">13 Sapphire</span></li>
+        </ul>
+      </div>
+      <div class="lvl">
+        <span class="lname">8th A</span>
+        <ul class="lplayers">
+          <li>Hadley Willingham <span class="lclub">14 Ruby</span></li><li>Maria Alves <span class="lclub">14 Ruby</span></li><li>Sophie Lockridge <span class="lclub">14 Sapphire</span></li><li>Stella Fullen <span class="lclub">14 Ruby</span></li>
+        </ul>
+      </div>
+      <div class="lvl">
+        <span class="lname">8th B</span>
+        <ul class="lplayers">
+          <li>Addison Sova <span class="lclub">14 Emerald</span></li><li>Kinley McIvor <span class="lclub">14 Emerald</span></li>
+        </ul>
+      </div>
+    <button class="copy" data-copy="Emilia Kim, Ivy Aguilar, Stella Hueske, Hadley Willingham, Maria Alves, Sophie Lockridge, Stella Fullen, Addison Sova, Kinley McIvor">Copy names</button>
+  </article>
+  <article class="school">
+    <div class="stop">
+      <h3>Dripping Springs High School</h3>
+      <span class="scnt">8</span>
+    </div>
+    
+      <div class="lvl">
+        <span class="lname">Flex</span>
+        <ul class="lplayers">
+          <li>Kara Fitzgerald <span class="lclub">15 Ruby</span></li>
+        </ul>
+      </div>
+      <div class="lvl">
+        <span class="lname">Freshman</span>
+        <ul class="lplayers">
+          <li>Addison Struby <span class="lclub">15 Diamond</span></li><li>Brynna McMains <span class="lclub">15 Sapphire</span></li><li>Cooper Hovik <span class="lclub">15 Ruby</span></li><li>Mia Sandoval <span class="lclub">15 Diamond</span></li><li>Olivia Murdock <span class="lclub">15 Sapphire</span></li><li>Penny Paclik <span class="lclub">15 Sapphire</span></li><li>Savannah Beckman <span class="lclub">15 Ruby</span></li>
+        </ul>
+      </div>
+    <button class="copy" data-copy="Kara Fitzgerald, Addison Struby, Brynna McMains, Cooper Hovik, Mia Sandoval, Olivia Murdock, Penny Paclik, Savannah Beckman">Copy names</button>
+  </article>
+  <article class="school">
+    <div class="stop">
+      <h3>St. Michael’s Catholic Prep</h3>
+      <span class="scnt">8</span>
+    </div>
+    
+      <div class="lvl">
+        <span class="lname">7th A</span>
+        <ul class="lplayers">
+          <li>Ellie McMullin <span class="lclub">13 Sapphire</span></li><li>Lee Ellen Abernethy <span class="lclub">13 Diamond</span></li><li>Vivienne Chung <span class="lclub">13 Diamond</span></li>
+        </ul>
+      </div>
+      <div class="lvl">
+        <span class="lname">8th A</span>
+        <ul class="lplayers">
+          <li>Ana Sofia Iturbe <span class="lclub">13 Ruby</span></li><li>Bailey Lateur <span class="lclub">15 Emerald</span></li><li>Denver Dolch <span class="lclub">14 Diamond</span></li><li>Harper Harder <span class="lclub">13 Diamond</span></li>
+        </ul>
+      </div>
+      <div class="lvl">
+        <span class="lname">JV</span>
+        <ul class="lplayers">
+          <li>Anna Sandberg <span class="lclub">15 Sapphire</span></li>
+        </ul>
+      </div>
+    <button class="copy" data-copy="Ellie McMullin, Lee Ellen Abernethy, Vivienne Chung, Ana Sofia Iturbe, Bailey Lateur, Denver Dolch, Harper Harder, Anna Sandberg">Copy names</button>
+  </article>
+  <article class="school">
+    <div class="stop">
+      <h3>Westlake High School</h3>
+      <span class="scnt">8</span>
+    </div>
+    
+      <div class="lvl">
+        <span class="lname">Flex</span>
+        <ul class="lplayers">
+          <li>Brooklyn Jauregui <span class="lclub">15 Diamond</span></li><li>Hadley Horne <span class="lclub">15 Sapphire</span></li><li>Harper Houser <span class="lclub">15 Sapphire</span></li><li>Hudson Suffel <span class="lclub">15 Diamond</span></li>
+        </ul>
+      </div>
+      <div class="lvl">
+        <span class="lname">Freshman</span>
+        <ul class="lplayers">
+          <li>Ashley Pritchett <span class="lclub">15 Ruby</span></li><li>Eva Dickinson <span class="lclub">15 Ruby</span></li><li>London Johnson <span class="lclub">15 Emerald</span></li><li>Millicent Pierce <span class="lclub">15 Emerald</span></li>
+        </ul>
+      </div>
+    <button class="copy" data-copy="Brooklyn Jauregui, Hadley Horne, Harper Houser, Hudson Suffel, Ashley Pritchett, Eva Dickinson, London Johnson, Millicent Pierce">Copy names</button>
+  </article>
+  <article class="school">
+    <div class="stop">
+      <h3>West Ridge Middle School</h3>
+      <span class="scnt">7</span>
+    </div>
+    
+      <div class="lvl">
+        <span class="lname">7th A</span>
+        <ul class="lplayers">
+          <li>Audrey Anders <span class="lclub">13 Diamond</span></li><li>Lizzie Brandl <span class="lclub">13 Diamond</span></li>
+        </ul>
+      </div>
+      <div class="lvl">
+        <span class="lname">8th A</span>
+        <ul class="lplayers">
+          <li>Juliette Pennock <span class="lclub">14 Ruby</span></li><li>Kate Lockett <span class="lclub">14 Emerald</span></li><li>Madeleine Bancroft <span class="lclub">14 Ruby</span></li><li>RJ Rowder <span class="lclub">14 Diamond</span></li>
+        </ul>
+      </div>
+      <div class="lvl">
+        <span class="lname">8th B</span>
+        <ul class="lplayers">
+          <li>Vivian Gressel <span class="lclub">14 Topaz</span></li>
+        </ul>
+      </div>
+    <button class="copy" data-copy="Audrey Anders, Lizzie Brandl, Juliette Pennock, Kate Lockett, Madeleine Bancroft, RJ Rowder, Vivian Gressel">Copy names</button>
+  </article>
+  <article class="school">
+    <div class="stop">
+      <h3>Gorzycki Middle School</h3>
+      <span class="scnt">7</span>
+    </div>
+    
+      <div class="lvl">
+        <span class="lname">7th B</span>
+        <ul class="lplayers">
+          <li>Chloe Hunter <span class="lclub">13 Emerald</span></li>
+        </ul>
+      </div>
+      <div class="lvl">
+        <span class="lname">8th A</span>
+        <ul class="lplayers">
+          <li>Kayton Lauer <span class="lclub">14 Emerald</span></li><li>Natalie Davis <span class="lclub">14 Sapphire</span></li>
+        </ul>
+      </div>
+      <div class="lvl">
+        <span class="lname">8th B</span>
+        <ul class="lplayers">
+          <li>Caroline Conway <span class="lclub">14 Topaz</span></li><li>Lilli Deitering <span class="lclub">13 Ruby</span></li>
+        </ul>
+      </div>
+      <div class="lvl">
+        <span class="lname">Other</span>
+        <ul class="lplayers">
+          <li>Leni Calhoun <span class="lclub">14 Topaz</span></li><li>Quinn Leonard <span class="lclub">14 Topaz</span></li>
+        </ul>
+      </div>
+    <button class="copy" data-copy="Chloe Hunter, Kayton Lauer, Natalie Davis, Caroline Conway, Lilli Deitering, Leni Calhoun, Quinn Leonard">Copy names</button>
+  </article>
+  <article class="school">
+    <div class="stop">
+      <h3>Bowie High School</h3>
+      <span class="scnt">5</span>
+    </div>
+    
+      <div class="lvl">
+        <span class="lname">Flex</span>
+        <ul class="lplayers">
+          <li>Amelie Ochoa <span class="lclub">15 Diamond</span></li><li>Avery Domuczicz <span class="lclub">15 Emerald</span></li><li>Ciara Smith <span class="lclub">15 Diamond</span></li><li>Sydney Klinect <span class="lclub">15 Ruby</span></li>
+        </ul>
+      </div>
+      <div class="lvl">
+        <span class="lname">Freshman</span>
+        <ul class="lplayers">
+          <li>Nora Annen <span class="lclub">15 Emerald</span></li>
+        </ul>
+      </div>
+    <button class="copy" data-copy="Amelie Ochoa, Avery Domuczicz, Ciara Smith, Sydney Klinect, Nora Annen">Copy names</button>
+  </article>
+  <article class="school">
+    <div class="stop">
+      <h3>Johnson High School</h3>
+      <span class="scnt">4</span>
+    </div>
+    
+      <div class="lvl">
+        <span class="lname">Flex</span>
+        <ul class="lplayers">
+          <li>Ava Jensen <span class="lclub">15 Diamond</span></li><li>Harper M. Ward <span class="lclub">15 Ruby</span></li><li>Lyla Daniels <span class="lclub">15 Diamond</span></li>
+        </ul>
+      </div>
+      <div class="lvl">
+        <span class="lname">Freshman</span>
+        <ul class="lplayers">
+          <li>Haleigh Smith <span class="lclub">15 Ruby</span></li>
+        </ul>
+      </div>
+    <button class="copy" data-copy="Ava Jensen, Harper M. Ward, Lyla Daniels, Haleigh Smith">Copy names</button>
+  </article>
+  <article class="school">
+    <div class="stop">
+      <h3>Lake Travis High School</h3>
+      <span class="scnt">4</span>
+    </div>
+    
+      <div class="lvl">
+        <span class="lname">Flex</span>
+        <ul class="lplayers">
+          <li>Addison Robbins <span class="lclub">16 Diamond</span></li><li>Brooke Wright <span class="lclub">15 Diamond</span></li>
+        </ul>
+      </div>
+      <div class="lvl">
+        <span class="lname">Freshman</span>
+        <ul class="lplayers">
+          <li>Hattie Davis <span class="lclub">15 Diamond</span></li><li>Kensleigh O'ren Smith <span class="lclub">15 Ruby</span></li>
+        </ul>
+      </div>
+    <button class="copy" data-copy="Addison Robbins, Brooke Wright, Hattie Davis, Kensleigh O'ren Smith">Copy names</button>
+  </article>
+  <article class="school">
+    <div class="stop">
+      <h3>Lake Travis Middle School</h3>
+      <span class="scnt">3</span>
+    </div>
+    
+      <div class="lvl">
+        <span class="lname">7th A</span>
+        <ul class="lplayers">
+          <li>Hadley Spencer <span class="lclub">13 Rise 1</span></li>
+        </ul>
+      </div>
+      <div class="lvl">
+        <span class="lname">7th B</span>
+        <ul class="lplayers">
+          <li>Corinne White <span class="lclub">13 Ruby</span></li>
+        </ul>
+      </div>
+      <div class="lvl">
+        <span class="lname">8th A</span>
+        <ul class="lplayers">
+          <li>Nicole Wong <span class="lclub">14 Diamond</span></li>
+        </ul>
+      </div>
+    <button class="copy" data-copy="Hadley Spencer, Corinne White, Nicole Wong">Copy names</button>
+  </article>
+  <article class="school">
+    <div class="stop">
+      <h3>Wimberley High School</h3>
+      <span class="scnt">3</span>
+    </div>
+    
+      <div class="lvl">
+        <span class="lname">Freshman</span>
+        <ul class="lplayers">
+          <li>Juliet Rose <span class="lclub">15 Diamond</span></li>
+        </ul>
+      </div>
+      <div class="lvl">
+        <span class="lname">JV</span>
+        <ul class="lplayers">
+          <li>Genevieve Guerrero <span class="lclub">16 Diamond</span></li>
+        </ul>
+      </div>
+      <div class="lvl">
+        <span class="lname">Varsity</span>
+        <ul class="lplayers">
+          <li>Reagan Obersteller <span class="lclub">16 Diamond</span></li>
+        </ul>
+      </div>
+    <button class="copy" data-copy="Juliet Rose, Genevieve Guerrero, Reagan Obersteller">Copy names</button>
+  </article>
+  <article class="school">
+    <div class="stop">
+      <h3>Danforth Junior High</h3>
+      <span class="scnt">2</span>
+    </div>
+    
+      <div class="lvl">
+        <span class="lname">7th A</span>
+        <ul class="lplayers">
+          <li>Blake Shipman <span class="lclub">13 Ruby</span></li>
+        </ul>
+      </div>
+      <div class="lvl">
+        <span class="lname">Other</span>
+        <ul class="lplayers">
+          <li>Piper Abney <span class="lclub">13 Emerald</span></li>
+        </ul>
+      </div>
+    <button class="copy" data-copy="Blake Shipman, Piper Abney">Copy names</button>
+  </article>
+  <article class="school">
+    <div class="stop">
+      <h3>Austin Waldorf School</h3>
+      <span class="scnt">2</span>
+    </div>
+    
+      <div class="lvl">
+        <span class="lname">8th A</span>
+        <ul class="lplayers">
+          <li>Hazel Colletti <span class="lclub">14 Diamond</span></li>
+        </ul>
+      </div>
+      <div class="lvl">
+        <span class="lname">Varsity</span>
+        <ul class="lplayers">
+          <li>Praia McElwee <span class="lclub">15 Ruby</span></li>
+        </ul>
+      </div>
+    <button class="copy" data-copy="Hazel Colletti, Praia McElwee">Copy names</button>
+  </article>
+  <article class="school">
+    <div class="stop">
+      <h3>Hudson Bend Middle School</h3>
+      <span class="scnt">2</span>
+    </div>
+    
+      <div class="lvl">
+        <span class="lname">8th A</span>
+        <ul class="lplayers">
+          <li>Lucy Plotkin <span class="lclub">14 Ruby</span></li><li>Maya Wappler <span class="lclub">14 Sapphire</span></li>
+        </ul>
+      </div>
+    <button class="copy" data-copy="Lucy Plotkin, Maya Wappler">Copy names</button>
+  </article>
+  <article class="school">
+    <div class="stop">
+      <h3>St Andrew’s Episcopal School</h3>
+      <span class="scnt">2</span>
+    </div>
+    
+      <div class="lvl">
+        <span class="lname">Other</span>
+        <ul class="lplayers">
+          <li>Alice Hudson <span class="lclub">14 Sapphire</span></li><li>Quinn Redwine <span class="lclub">14 Topaz</span></li>
+        </ul>
+      </div>
+    <button class="copy" data-copy="Alice Hudson, Quinn Redwine">Copy names</button>
+  </article>
+  <article class="school">
+    <div class="stop">
+      <h3>Regents School of Austin</h3>
+      <span class="scnt">2</span>
+    </div>
+    
+      <div class="lvl">
+        <span class="lname">8th A</span>
+        <ul class="lplayers">
+          <li>Claire Wood <span class="lclub">13 Diamond</span></li><li>Fabiana Toth <span class="lclub">13 Diamond</span></li>
+        </ul>
+      </div>
+    <button class="copy" data-copy="Claire Wood, Fabiana Toth">Copy names</button>
+  </article>
+  <article class="school">
+    <div class="stop">
+      <h3>Hill Country Middle School</h3>
+      <span class="scnt">2</span>
+    </div>
+    
+      <div class="lvl">
+        <span class="lname">7th A</span>
+        <ul class="lplayers">
+          <li>Lyla Hyde <span class="lclub">13 Diamond</span></li>
+        </ul>
+      </div>
+      <div class="lvl">
+        <span class="lname">8th B</span>
+        <ul class="lplayers">
+          <li>Chelsea Harris <span class="lclub">14 Topaz</span></li>
+        </ul>
+      </div>
+    <button class="copy" data-copy="Lyla Hyde, Chelsea Harris">Copy names</button>
+  </article>
+  <article class="school solo">
+    <div class="stop">
+      <h3>Veritas Academy</h3>
+      <span class="scnt">1</span>
+    </div>
+    
+      <div class="lvl">
+        <span class="lname">JV</span>
+        <ul class="lplayers">
+          <li>Kailey Scott <span class="lclub">15 Emerald</span></li>
+        </ul>
+      </div>
+    <button class="copy" data-copy="Kailey Scott">Copy names</button>
+  </article>
+  <article class="school solo">
+    <div class="stop">
+      <h3>O’Henry middle school</h3>
+      <span class="scnt">1</span>
+    </div>
+    
+      <div class="lvl">
+        <span class="lname">8th A</span>
+        <ul class="lplayers">
+          <li>Amel Renvoye <span class="lclub">14 Ruby</span></li>
+        </ul>
+      </div>
+    <button class="copy" data-copy="Amel Renvoye">Copy names</button>
+  </article>
+  <article class="school solo">
+    <div class="stop">
+      <h3>Canyon Ridge Middle School</h3>
+      <span class="scnt">1</span>
+    </div>
+    
+      <div class="lvl">
+        <span class="lname">8th A</span>
+        <ul class="lplayers">
+          <li>Ella Brophy <span class="lclub">14 Diamond</span></li>
+        </ul>
+      </div>
+    <button class="copy" data-copy="Ella Brophy">Copy names</button>
+  </article>
+  <article class="school solo">
+    <div class="stop">
+      <h3>Dripping Springs High</h3>
+      <span class="scnt">1</span>
+    </div>
+    
+      <div class="lvl">
+        <span class="lname">Freshman</span>
+        <ul class="lplayers">
+          <li>Isla Foster <span class="lclub">15 Sapphire</span></li>
+        </ul>
+      </div>
+    <button class="copy" data-copy="Isla Foster">Copy names</button>
+  </article>
+  <article class="school solo">
+    <div class="stop">
+      <h3>Johnson City High School</h3>
+      <span class="scnt">1</span>
+    </div>
+    
+      <div class="lvl">
+        <span class="lname">JV</span>
+        <ul class="lplayers">
+          <li>Emma Mize <span class="lclub">15 Emerald</span></li>
+        </ul>
+      </div>
+    <button class="copy" data-copy="Emma Mize">Copy names</button>
+  </article>
+  <article class="school solo">
+    <div class="stop">
+      <h3>Marble Falls Middle School</h3>
+      <span class="scnt">1</span>
+    </div>
+    
+      <div class="lvl">
+        <span class="lname">8th A</span>
+        <ul class="lplayers">
+          <li>Charlee Saunders <span class="lclub">14 Diamond</span></li>
+        </ul>
+      </div>
+    <button class="copy" data-copy="Charlee Saunders">Copy names</button>
+  </article>
+  <article class="school solo">
+    <div class="stop">
+      <h3>wimberley</h3>
+      <span class="scnt">1</span>
+    </div>
+    
+      <div class="lvl">
+        <span class="lname">JV</span>
+        <ul class="lplayers">
+          <li>Kira Hoyt <span class="lclub">16 Diamond</span></li>
+        </ul>
+      </div>
+    <button class="copy" data-copy="Kira Hoyt">Copy names</button>
+  </article>
+  <article class="school solo">
+    <div class="stop">
+      <h3>Barton Middle School</h3>
+      <span class="scnt">1</span>
+    </div>
+    
+      <div class="lvl">
+        <span class="lname">8th A</span>
+        <ul class="lplayers">
+          <li>Phallyn Fulkerson <span class="lclub">14 Sapphire</span></li>
+        </ul>
+      </div>
+    <button class="copy" data-copy="Phallyn Fulkerson">Copy names</button>
+  </article>
+  <article class="school solo">
+    <div class="stop">
+      <h3>McCormick</h3>
+      <span class="scnt">1</span>
+    </div>
+    
+      <div class="lvl">
+        <span class="lname">Other</span>
+        <ul class="lplayers">
+          <li>Fernanda Ponce <span class="lclub">14 Emerald</span></li>
+        </ul>
+      </div>
+    <button class="copy" data-copy="Fernanda Ponce">Copy names</button>
+  </article>
+  <article class="school solo">
+    <div class="stop">
+      <h3>St. Andrew's Episcopal School</h3>
+      <span class="scnt">1</span>
+    </div>
+    
+      <div class="lvl">
+        <span class="lname">Other</span>
+        <ul class="lplayers">
+          <li>Isabella Shepard <span class="lclub">16 Diamond</span></li>
+        </ul>
+      </div>
+    <button class="copy" data-copy="Isabella Shepard">Copy names</button>
+  </article>
+  <article class="school solo">
+    <div class="stop">
+      <h3>Ann Richards</h3>
+      <span class="scnt">1</span>
+    </div>
+    
+      <div class="lvl">
+        <span class="lname">8th A</span>
+        <ul class="lplayers">
+          <li>Mia Paz <span class="lclub">14 Diamond</span></li>
+        </ul>
+      </div>
+    <button class="copy" data-copy="Mia Paz">Copy names</button>
+  </article>
+  <article class="school solo">
+    <div class="stop">
+      <h3>St. Dominic Savio</h3>
+      <span class="scnt">1</span>
+    </div>
+    
+      <div class="lvl">
+        <span class="lname">Varsity</span>
+        <ul class="lplayers">
+          <li>Ellie Whittemore <span class="lclub">15 Sapphire</span></li>
+        </ul>
+      </div>
+    <button class="copy" data-copy="Ellie Whittemore">Copy names</button>
+  </article>
+  <article class="school solo">
+    <div class="stop">
+      <h3>Dahlstrom Middle School</h3>
+      <span class="scnt">1</span>
+    </div>
+    
+      <div class="lvl">
+        <span class="lname">8th B</span>
+        <ul class="lplayers">
+          <li>Aubrey Morales <span class="lclub">14 Topaz</span></li>
+        </ul>
+      </div>
+    <button class="copy" data-copy="Aubrey Morales">Copy names</button>
+  </article></div>
+  </section>
+
+  <footer>Built from the DS Elite HQ roster, tournament calendar and school schedules &middot; 31 August 2026</footer>
+</div>
+
+<script>
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest('.copy');
+    if (!b) return;
+    var text = b.getAttribute('data-copy') || '';
+    var done = function () {
+      var was = b.textContent;
+      b.textContent = 'Copied';
+      b.classList.add('done');
+      setTimeout(function () { b.textContent = was; b.classList.remove('done'); }, 1400);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, function () { window.prompt('Copy:', text); });
+    } else {
+      window.prompt('Copy:', text);
+    }
+  });
+</script>
+</body>
+</html>

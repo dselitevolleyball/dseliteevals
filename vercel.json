@@ -65,5 +65,16 @@
       "path": "/api/clinic-reminders",
       "schedule": "0 14 * * *"
     }
+  ],
+  "headers": [
+    {
+      "source": "/(kit|brief)-(.*)",
+      "headers": [
+        {
+          "key": "X-Robots-Tag",
+          "value": "noindex, nofollow, noarchive"
+        }
+      ]
+    }
   ]
 }
