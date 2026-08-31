@@ -36,3 +36,6 @@ Thumbs.db
 
 # Contact-import backup — holds parent names, phones and email addresses
 .contact-import-backup.json
+
+# One-off analysis scratch files
+anna-data.mjs
