@@ -10187,7 +10187,9 @@ export default function App() {
       if (!r) return [];
       const out = [];
       if (nrm(r.last_name) !== nrm(p.last_name)) out.push("last name → " + (r.last_name || "(blank)"));
-      if (nrm(r.jersey_number) !== nrm(p.jersey_number)) out.push("number → " + (r.jersey_number || "(blank)"));
+      // Jersey number is deliberately NOT compared. Families can no longer set
+      // it, so a difference here is the club renumbering a girl AFTER she
+      // ordered — not a family changing anything, and nothing to flag.
       if (nrm(r.team_name) !== nrm(p.team_assignment)) out.push("team → " + (r.team_name || "(blank)"));
       return out;
     };
@@ -10295,7 +10297,10 @@ export default function App() {
       ]];
       list.forEach(({ p, r, flags, gaps, school, sizeGaps }) => {
         rowsOut.push([
-          r.team_name || p.team_assignment || "", r.jersey_number ?? "", r.first_name || "", r.last_name || "",
+          // From the roster, not the order. The number is ours to assign, so
+          // the roster is the only thing that can be right — an order saved
+          // before a renumber holds a number nobody wears.
+          r.team_name || p.team_assignment || "", p.jersey_number ?? "", r.first_name || "", r.last_name || "",
           r.parent1_name || "", r.parent1_phone || "", r.parent1_email || "",
           r.parent2_name || "", r.parent2_phone || "", r.parent2_email || "",
           r.single_parent ? "Yes" : "", r.player_phone || "",
@@ -10403,7 +10408,7 @@ export default function App() {
                                 style={{fontWeight:700,color:r?C.text:C.mut,fontSize:12.5,cursor:"pointer"}}>
                                 {p.first_name} {p.last_name}
                               </span>
-                              {r?.jersey_number && <span style={{fontSize:10.5,color:C.mut}}>#{r.jersey_number}</span>}
+                              {p.jersey_number != null && <span style={{fontSize:10.5,color:C.mut}}>#{p.jersey_number}</span>}
                               {!!flags.length && <span title={"Differs from the roster: " + flags.join(", ")}
                                 style={{fontSize:10,fontWeight:800,color:"#f59e0b"}}>⚠ changed</span>}
                               {!!gaps?.length && <span title={"Still missing: " + gaps.join(", ")}
@@ -10469,7 +10474,7 @@ export default function App() {
                     {school === false && <span title="No school-team answer yet" style={{marginLeft:5,color:"#38bdf8"}}>🏫</span>}
                     {!!sizeGaps?.length && <span title={"Outside our stocked sizes: " + sizeGaps.join(" and ")} style={{marginLeft:5,color:C.red}}>⚠</span>}
                   </td>
-                  <td style={{padding:"6px 10px",borderBottom:"1px solid "+C.border,color:C.mut,whiteSpace:"nowrap"}}>{r?.jersey_number ?? p.jersey_number ?? "—"}</td>
+                  <td style={{padding:"6px 10px",borderBottom:"1px solid "+C.border,color:C.mut,whiteSpace:"nowrap"}}>{p.jersey_number ?? "—"}</td>
                   <td style={{padding:"6px 10px",borderBottom:"1px solid "+C.border,color:C.mut,whiteSpace:"nowrap"}}>{r?.team_name || p.team_assignment || "—"}</td>
                   {/* Name over number: the name is what you match to the parent
                       standing at the table, and the number is what you dial once
