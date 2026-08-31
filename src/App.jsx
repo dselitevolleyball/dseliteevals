@@ -14787,6 +14787,16 @@ export default function App() {
     // payroll email. team_name "DSYSA" is what makes it legible on the ledger,
     // and role "dsysa" is what makes it filterable there.
     const DSYSA_TEAM = "DSYSA";
+    // Running a DSYSA night is a different job from working one — the lead
+    // builds the session and owns the floor — so it pays a different rate.
+    // Carried as the check-in's rate_override, which both pay calculators
+    // already honour (the Time Cards ledger here, and api/payroll-report.js
+    // for the Monday email), so nothing about how pay resolves has to change.
+    //
+    // Tied to whoever leads the clinic rather than to a name: today that is
+    // always Bree, and if she works a night she isn't leading, or somebody
+    // covers for her, the rate follows the job rather than the person.
+    const DSYSA_LEAD_RATE = 40;
     const nrmName = (x) => String(x || "").trim().toLowerCase();
     const clinicHours = (c) => {
       const mins = (t) => { const m = /^(\d{1,2}):(\d{2})/.exec(String(t || "")); return m ? +m[1] * 60 + +m[2] : null; };
@@ -14804,6 +14814,8 @@ export default function App() {
       const r = coachRoster.find(x => nrmName((x.first_name || "") + " " + (x.last_name || "")) === nrmName(name));
       return r?.email || null;
     };
+    const isLeadOn = (c, name) => dsysaSignups.some(x =>
+      x.clinic_id === c.id && nrmName(x.coach_name) === nrmName(name) && x.is_lead);
     const dsysaCheckIn = async (c, name) => {
       if (checkFor(c, name)) return;
       const { error } = await supabase.from("coach_checkins").insert({
@@ -14817,6 +14829,7 @@ export default function App() {
         role: "dsysa",
         status: "present",
         source: "admin",
+        rate_override: isLeadOn(c, name) ? DSYSA_LEAD_RATE : null,
         paid: false,
         created_by: coach?.display_name || coach?.email || "admin",
       });
