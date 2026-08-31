@@ -6530,10 +6530,34 @@ export default function App() {
                 {m.created_at ? new Date(m.created_at).toLocaleString(undefined,{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}) : ""}
                 {canOps && m.recipient_count ? " · " + m.recipient_count + " recipient" + (m.recipient_count===1?"":"s") : ""}
               </div>
-              <div style={{fontSize:13.5,color:C.text,lineHeight:1.65,whiteSpace:"pre-wrap",wordBreak:"break-word",
-                background:C.bg,border:"1px solid "+C.border,borderRadius:10,padding:"13px 15px",maxHeight:"58vh",overflowY:"auto"}}>
-                {m.body || "(no text)"}
-              </div>
+              {looksLikeHtml(m.body) ? (
+                /* Shown as the family saw it. In a sandboxed frame with no
+                   allow-scripts, so stored markup renders but cannot run —
+                   this body came from a composer and a script tag in it
+                   should stay inert text, not execute in the app. */
+                <iframe title="Message" sandbox="" srcDoc={
+                  '<style>body{margin:0;padding:14px;font:14px/1.6 -apple-system,Segoe UI,sans-serif;color:#111;background:#fff}' +
+                  'img{max-width:100%}a{color:#c2186f}</style>' + (m.body || "")}
+                  style={{width:"100%",height:"52vh",border:"1px solid "+C.border,borderRadius:10,background:"#fff"}} />
+              ) : (
+                <div style={{fontSize:13.5,color:C.text,lineHeight:1.65,whiteSpace:"pre-wrap",wordBreak:"break-word",
+                  background:C.bg,border:"1px solid "+C.border,borderRadius:10,padding:"13px 15px",maxHeight:"58vh",overflowY:"auto"}}>
+                  {m.body || "(no text)"}
+                </div>
+              )}
+              {/* Who it reached. Folded away because it can be 350 addresses,
+                  but it is the question a sent-history gets opened to answer. */}
+              {canOps && Array.isArray(m.recipients) && m.recipients.length > 0 && (
+                <details style={{marginTop:10}}>
+                  <summary style={{cursor:"pointer",fontSize:11.5,color:C.mut,fontWeight:700}}>
+                    {m.recipients.length} recipient{m.recipients.length===1?"":"s"}
+                  </summary>
+                  <div style={{marginTop:6,maxHeight:150,overflowY:"auto",fontSize:11,color:C.mut,
+                    background:C.bg,border:"1px solid "+C.border,borderRadius:8,padding:"8px 10px",wordBreak:"break-all",lineHeight:1.7}}>
+                    {m.recipients.join(", ")}
+                  </div>
+                </details>
+              )}
               {Array.isArray(m.attachment_names) && m.attachment_names.length > 0 && (
                 <div style={{marginTop:12,fontSize:11.5,color:C.mut}}>
                   📎 Sent with {m.attachment_names.length} attachment{m.attachment_names.length===1?"":"s"}:
@@ -6541,7 +6565,22 @@ export default function App() {
                   <div style={{fontSize:10.5,marginTop:3,fontStyle:"italic"}}>The files are on the email itself — check your inbox for them.</div>
                 </div>
               )}
-              <div style={{display:"flex",justifyContent:"flex-end",marginTop:14}}>
+              <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:14,flexWrap:"wrap"}}>
+                {canOps && (
+                  <button onClick={()=>{
+                      const body = looksLikeHtml(m.body) ? emailHtmlToText(m.body) : (m.body || "");
+                      setEmailSubject(m.subject || "");
+                      setEmailBody(body);
+                      close();
+                      setView("email");
+                    }}
+                    title={looksLikeHtml(m.body)
+                      ? "Copies the words into the composer. It was sent as HTML, so the formatting is not recreated."
+                      : "Copy this subject and message into the composer"}
+                    style={{padding:"9px 16px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.text,fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>
+                    Use as a template
+                  </button>
+                )}
                 <button onClick={close} style={{padding:"9px 18px",borderRadius:8,border:"none",background:C.gold,color:"#000",fontWeight:700,fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Done</button>
               </div>
             </>
@@ -19919,10 +19958,8 @@ export default function App() {
                   const plain = isHtml ? emailHtmlToText(e.body) : (e.body || "");
                   const preview = plain.length > 140 ? plain.slice(0,140) + "…" : plain;
                   return (
-                    <button key={e.id} onClick={()=>{ setEmailSubject(e.subject||""); setEmailBody(plain); }}
-                      title={isHtml
-                        ? "Sent as HTML. Clicking loads a plain-text version into the composer — the original formatting is not recreated."
-                        : "Click to load this subject + message back into the composer"}
+                    <button key={e.id} onClick={()=>setOpenMsgId(e.id)}
+                      title="Open this email and read the whole thing"
                       style={{textAlign:"left",background:C.bg,border:"1px solid "+C.border,borderRadius:8,padding:"8px 10px",cursor:"pointer",fontFamily:"inherit"}}>
                       <div style={{display:"flex",justifyContent:"space-between",gap:8,flexWrap:"wrap",alignItems:"center"}}>
                         <span style={{fontSize:13,fontWeight:700,color:C.text}}>{e.subject || "(no subject)"}</span>
