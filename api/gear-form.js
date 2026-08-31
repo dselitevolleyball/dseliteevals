@@ -287,8 +287,16 @@ export default async function handler(req, res) {
     // that isn't finished yet. is_draft keeps it off the order board until the
     // family presses Send.
     if (isDraft) {
+      // A draft save must never un-submit a finished order. Pressing Send
+      // navigates the page away, which fires visibilitychange, which fires the
+      // autosave beacon — so the last write to arrive is routinely a DRAFT
+      // write for an order that was just submitted a moment earlier. Deciding
+      // is_draft from what is already stored, rather than from which request
+      // happens to land last, makes the race unable to do damage. It also means
+      // a family editing a sent order keeps it sent while they type.
+      const alreadyOrdered = prev && prev.is_draft === false;
       const { error: dErr } = await supabase.from("player_gear_orders")
-        .upsert({ ...row, is_draft: true }, { onConflict: "player_id" });
+        .upsert({ ...row, is_draft: !alreadyOrdered }, { onConflict: "player_id" });
       res.setHeader("Content-Type", "application/json; charset=utf-8");
       return res.status(dErr ? 500 : 200).send(JSON.stringify(dErr ? { ok: false, error: dErr.message } : { ok: true }));
     }
@@ -631,7 +639,7 @@ function renderForm(player, v, { error, preview, askSchool, school, askIntake } 
     var msg = document.getElementById('savemsg');
     if (!form || !window.fetch) return;
     var KEY = 'dse_gear_${esc(String(player.id))}';
-    var timer = null, inFlight = false, dirty = false, everSaved = false;
+    var timer = null, inFlight = false, dirty = false, everSaved = false, submitting = false;
 
     var say = function (t, colour) {
       if (!msg) return;
@@ -654,6 +662,7 @@ function renderForm(player, v, { error, preview, askSchool, school, askIntake } 
     };
 
     var save = function () {
+      if (submitting) return;
       if (inFlight) { dirty = true; return; }
       inFlight = true;
       var body = collect().toString();
@@ -688,8 +697,12 @@ function renderForm(player, v, { error, preview, askSchool, school, askIntake } 
     form.addEventListener('input', schedule);
     form.addEventListener('change', schedule);
     // A phone being locked or the tab being switched away is the most likely
-    // moment to lose an answer, and it is too late for fetch by then.
+    // moment to lose an answer, and it is too late for fetch by then. But
+    // pressing Send ALSO hides the page, and a draft beacon sent on the way out
+    // is a draft write chasing the submission that just left — so once the form
+    // is submitting, autosave stops entirely.
     document.addEventListener('visibilitychange', function () {
+      if (submitting) return;
       if (document.visibilityState !== 'hidden') return;
       var body = collect().toString();
       stash(body);
@@ -699,8 +712,14 @@ function renderForm(player, v, { error, preview, askSchool, school, askIntake } 
           new Blob([body], { type: 'application/x-www-form-urlencoded' }));
       }
     });
-    // Submitting for real is not a draft — let the normal POST carry it.
-    form.addEventListener('submit', function () { clearTimeout(timer); });
+    // Submitting for real is not a draft — let the normal POST carry it, and
+    // silence autosave from here so nothing trails the submission.
+    form.addEventListener('submit', function () {
+      submitting = true;
+      clearTimeout(timer);
+      dirty = false;
+      say('Sending…', '');
+    });
   })();
   </script>`}
   ${askSchool ? `<script>
