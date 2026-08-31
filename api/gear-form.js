@@ -694,6 +694,43 @@ function renderForm(player, v, { error, preview, askSchool, school, askIntake } 
       timer = setTimeout(save, 700);
     };
 
+    // Bring back anything stranded on this phone.
+    //
+    // A save that fails writes the answers to localStorage and says so — but
+    // nothing ever read them back, so a family filling the form in a gym with
+    // no signal typed everything into a page that then threw it away. This is
+    // exactly what happened at the fitting: rows that hold nothing but the
+    // three fields we pre-filled.
+    //
+    // Only EMPTY fields are refilled, so the phone's copy can never overwrite a
+    // newer answer that did reach us. Then it saves, which clears the stash.
+    (function () {
+      var raw = null;
+      try { raw = localStorage.getItem(KEY); } catch (e) { return; }
+      if (!raw) return;
+      var saved;
+      try { saved = new URLSearchParams(raw); } catch (e) { return; }
+      var filled = 0;
+      saved.forEach(function (val, name) {
+        if (!val || name === '__draft') return;
+        var els = form.querySelectorAll('[name="' + name + '"]');
+        if (!els.length) return;
+        var el = els[0];
+        if (el.type === 'checkbox') {
+          if (!el.checked) { el.checked = true; filled++; }
+          return;
+        }
+        if (String(el.value || '').trim()) return;   // the page already has an answer
+        el.value = val;
+        // A select silently ignores a value it has no option for.
+        if (el.tagName === 'SELECT' && el.value !== val) return;
+        filled++;
+      });
+      if (!filled) return;
+      say('Brought back ' + filled + ' answer' + (filled === 1 ? '' : 's') + ' saved on this phone. Check them, then send.', '#e0b455');
+      save();
+    })();
+
     form.addEventListener('input', schedule);
     form.addEventListener('change', schedule);
     // A phone being locked or the tab being switched away is the most likely
