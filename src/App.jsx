@@ -4879,12 +4879,15 @@ export default function App() {
     } else {
       const patch = { team_assignment: value, roster_pos: "" };
       if (value && (p.offer_status === "declined" || p.offer_status === "not_invited" || p.offer_status === "opted_out")) patch.offer_status = "";
-      // Putting a girl on a team IS making her a rostered player, but this
-      // never said so, and roster_status is half of what every roster filter
-      // tests for. Two players sat on teams all season with it unset: invisible
-      // to the player count, the gear board, and every parent email — assigned
-      // and unreachable at the same time.
-      if (value && p.roster_status !== "active") patch.roster_status = "active";
+      // roster_status is deliberately NOT set here. Putting a girl on a team is
+      // an OFFER of a place, not her acceptance of one, and the two are
+      // different facts — Ava Dieringer is slotted into 14 Rise 1 and has not
+      // accepted, so she must not count as rostered or receive club email.
+      //
+      // The cost of the split is that a player can sit on a team with
+      // roster_status unset and be invisible to every audience in the app,
+      // which is how Paige Coker missed a jersey fitting. That wants surfacing
+      // on the Teams board, not papering over here.
       upd(p.id, patch);
     }
   }, [upd]);
