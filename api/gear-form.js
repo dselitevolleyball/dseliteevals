@@ -191,14 +191,15 @@ export default async function handler(req, res) {
     }
     return res.status(200).send(renderForm(
       { first_name: "", last_name: "", team_assignment: "", jersey_number: "" }, {},
-      { preview: true, askSchool: true }));
+      { preview: true, askSchool: true, askIntake: true }));
   }
 
   if (!UUID_RE.test(token)) return res.status(400).send(notFound("That link is missing its code, or it was cut in half by the email app."));
 
   const { data: player } = await supabase
     .from("players").select("id,first_name,last_name,team_assignment,jersey_number,usav_div," +
-      "parent_name,parent_phone,parent_email,parent_email2,parent2_name,parent2_phone,player_phone")
+      "parent_name,parent_phone,parent_email,parent_email2,parent2_name,parent2_phone,player_phone," +
+      "dob,address_line1,city,state,zip,reg_position,player_email,allergies,medical_notes")
     .eq("gear_form_token", token).maybeSingle();
   if (!player) return res.status(404).send(notFound("We can't find that link. It may have been re-issued."));
 
@@ -209,6 +210,11 @@ export default async function handler(req, res) {
   // Only ask the girls old enough for a school team, and only the ones who
   // haven't already told us.
   const askSchool = !school && SCHOOL_DIVS.includes(player.usav_div);
+  // A player who joined after registration closed has none of the things
+  // everyone else filled in months ago. Asked only of those — a family already
+  // on file should not be handed a form that has grown since they opened it.
+  const blank = (v) => !String(v ?? "").trim();
+  const askIntake = blank(player.dob) || blank(player.address_line1);
 
   if (req.method === "POST") {
     let body = req.body;
@@ -296,6 +302,7 @@ export default async function handler(req, res) {
     if (!row.parent1_phone) missing.push("first parent's phone");
     if (!row.parent1_email) missing.push("first parent's email");
     if (!hasParent2 && !row.single_parent) missing.push("the second parent — fill them in, or tick that there's only one");
+
     if (hasParent2 && !row.parent2_name) missing.push("second parent's name");
     if (hasParent2 && !row.parent2_phone) missing.push("second parent's phone");
     if (hasParent2 && !row.parent2_email) missing.push("second parent's email");
@@ -315,6 +322,29 @@ export default async function handler(req, res) {
         error: "Still needs: " + missing.join(", ") + ".",
         askSchool, school: { ...(school || {}), ...(schoolRow || {}), made_raw: madeRaw },
       }));
+    }
+
+    // The intake answers go onto the ROSTER, not the order, because a date of
+    // birth is not a property of a gear order. Written only where the roster is
+    // EMPTY: filling a hole cannot destroy anything, and every field here was
+    // only asked because it was empty. Nothing already on file is touched.
+    if (askIntake && !isDraft) {
+      const patch = {};
+      const fill = (col, val) => { if (blank(player[col]) && String(val || "").trim()) patch[col] = String(val).trim().slice(0, 300); };
+      fill("dob", body?.dob);
+      fill("address_line1", body?.address_line1);
+      fill("city", body?.city);
+      fill("state", body?.state);
+      fill("zip", body?.zip);
+      fill("reg_position", body?.reg_position);
+      fill("player_email", body?.player_email);
+      fill("allergies", body?.allergies);
+      fill("medical_notes", body?.medical_notes);
+      if (Object.keys(patch).length) {
+        // Never allowed to fail the order. The family did the work either way,
+        // and a lost gear order is the more expensive thing to lose.
+        await supabase.from("players").update(patch).eq("id", player.id);
+      }
     }
 
     // Ticking "only one parent" and then filling one in is a family changing
@@ -376,7 +406,7 @@ export default async function handler(req, res) {
       { title: "Order received — DS Elite" }));
   }
 
-  return res.status(200).send(renderForm(player, prev || {}, { askSchool, school: school || {} }));
+  return res.status(200).send(renderForm(player, prev || {}, { askSchool, askIntake, school: school || {} }));
 }
 
 // The school-team questions, for families who never filled in the separate
@@ -417,7 +447,7 @@ function schoolSection(s) {
     </div>`;
 }
 
-function renderForm(player, v, { error, preview, askSchool, school } = {}) {
+function renderForm(player, v, { error, preview, askSchool, school, askIntake } = {}) {
   const sel = (val, cur) => val === cur ? " selected" : "";
   const has = (k) => v && v[k] != null && v[k] !== "";
   // Roster values are the default; anything the family already submitted wins,
@@ -504,6 +534,35 @@ function renderForm(player, v, { error, preview, askSchool, school } = {}) {
         <span>I've checked her last name spelling above, and the number and team we've assigned her are right. <span class="req">*</span></span>
       </label>
     </div>
+
+    ${askIntake ? `
+    <div class="card">
+      <p class="sect">About her</p>
+      <div class="note">
+        We're missing a few basics for her. If you have a moment they're useful
+        to us — but none of it is required, so skip anything you'd have to look up.
+      </div>
+      <div style="height:16px"></div>
+      <label><span class="lb">Date of birth</span>
+        <input type="date" name="dob" value="${esc(player.dob)}">
+        <p class="hint">This sets her USAV age group, so it has to be right.</p></label>
+      <label><span class="lb">Home address</span>
+        <input type="text" name="address_line1" value="${esc(player.address_line1)}" placeholder="Street" autocomplete="off"></label>
+      <label><span class="lb">City</span>
+        <input type="text" name="city" value="${esc(player.city)}" autocomplete="off"></label>
+      <label><span class="lb">State</span>
+        <input type="text" name="state" value="${esc(player.state) || "TX"}" autocomplete="off"></label>
+      <label><span class="lb">ZIP</span>
+        <input type="text" name="zip" value="${esc(player.zip)}" inputmode="numeric" autocomplete="off"></label>
+      <label><span class="lb">Her main position</span>
+        <input type="text" name="reg_position" value="${esc(player.reg_position)}" placeholder="setter, libero, middle, pin hitter…" autocomplete="off"></label>
+      <label><span class="lb">Her email <span style="text-transform:none;letter-spacing:0">(if she has one)</span></span>
+        <input type="email" name="player_email" value="${esc(player.player_email)}" autocomplete="off"></label>
+      <label><span class="lb">Allergies</span>
+        <input type="text" name="allergies" value="${esc(player.allergies)}" placeholder="Leave blank if none" autocomplete="off"></label>
+      <label style="margin-bottom:0"><span class="lb">Anything a coach should know</span>
+        <textarea name="medical_notes" placeholder="An inhaler, what to give instead of ibuprofen, an old injury — anything we'd want to know in a hurry.">${esc(player.medical_notes)}</textarea></label>
+    </div>` : ""}
 
     <div class="card">
       <p class="sect">Who we contact</p>
