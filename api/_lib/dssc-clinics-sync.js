@@ -77,7 +77,16 @@ function mergeSessions(existing, incoming, today) {
   }
   for (const ex of E) {
     if (used.has(ex)) continue;
-    const keep = ex.date < today || ex.coach_name || (ex.focus || "").trim() || (ex.recap || "").trim();
+    // A future session missing from Playbook is normally one that was cancelled
+    // or moved there, so dropping it keeps us in step. It is only safe to drop
+    // when nobody has done work against it — and "somebody is on it" now means
+    // the staff[] array as well as the older coach_name field. Assignments
+    // moved to staff[] and left coach_name null, so this test alone was
+    // deleting sessions coaches had already been rostered onto: nine of them
+    // were one narrow sync away from vanishing.
+    const staffed = Array.isArray(ex.staff) && ex.staff.length > 0;
+    const keep = ex.date < today || ex.coach_name || staffed
+      || (ex.focus || "").trim() || (ex.recap || "").trim();
     if (keep) out.push(ex);            // history or hand-entered work — never drop
   }
   out.sort((a, b) => (a.date || "").localeCompare(b.date || "") || parseHM(a.start_time) - parseHM(b.start_time));
