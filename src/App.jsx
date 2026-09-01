@@ -4272,7 +4272,7 @@ export default function App() {
   useEffect(() => {
     // Roster also drives the Tryout coach picker / Text Coaches lookup,
     // so make sure it's loaded whenever either tab opens.
-    if (isApproved && (view === "coaches" || view === "tryouts" || view === "home" || view === "clockin" || view === "teamdir" || view === "practice" || view === "timecards" || view === "clinics" || view === "dssccal" || view === "tournaments" || view === "kickoff")) loadCoachRoster();
+    if (isApproved && (view === "coaches" || view === "tryouts" || view === "home" || view === "clockin" || view === "teamdir" || view === "practice" || view === "timecards" || view === "clinics" || view === "dssccal" || view === "tournaments" || view === "kickoff" || view === "travel")) loadCoachRoster();
   }, [isApproved, view, loadCoachRoster]);
   // The coach card edits coach_roster, so make sure it's loaded when one opens.
   useEffect(() => { if (isApproved && coachCardName) loadCoachRoster(); }, [isApproved, coachCardName, loadCoachRoster]);
@@ -26640,7 +26640,13 @@ export default function App() {
               return (
                 <tr key={name}>
                   <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,fontWeight:700,whiteSpace:"nowrap"}}>
-                    {name}
+                    {/* Booking a trip constantly raises questions about the
+                        person — what else are they on that weekend, what is
+                        their phone number — and the coach card already answers
+                        all of them. */}
+                    <span onClick={()=>setCoachCardName(name)} title="Open their coach card"
+                      style={{cursor:"pointer",textDecoration:"underline",textDecorationColor:C.border,
+                        textUnderlineOffset:3}}>{name}</span>
                     {isExtra(name) && (
                       <>
                         <span title="Added by hand — their team isn't at this tournament"
@@ -27079,7 +27085,11 @@ export default function App() {
                             {t.location && <span style={{color:C.mut}}> · {shortCity(t.location)}</span>}
                           </td>
                           <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,color:C.mut,whiteSpace:"nowrap"}}>{fmtRange(t)}</td>
-                          <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,fontWeight:700,whiteSpace:"nowrap"}}>{name}</td>
+                          <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,fontWeight:700,whiteSpace:"nowrap"}}>
+                            <span onClick={()=>setCoachCardName(name)} title="Open their coach card"
+                              style={{cursor:"pointer",textDecoration:"underline",textDecorationColor:C.border,
+                                textUnderlineOffset:3}}>{name}</span>
+                          </td>
                           {travelCell(t.id, name, row, "airline", "Southwest")}
                           {travelWhenCell(t.id, name, row, "depart_date", "depart_time")}
                           {travelWhenCell(t.id, name, row, "return_date", "return_time")}
