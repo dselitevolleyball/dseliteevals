@@ -61,14 +61,14 @@ const SOCKS         = ["M (shoe size 5-10)", "L (shoe size 10-13)"];
 // The smallest sleeve is XS, not a youth size — that's what the sample on the
 // table is labelled, and the form has to offer the size a parent is holding.
 const SLEEVES       = ["XS", "Adult S", "Adult M", "Adult L"];
-// The shoe we picked is stocked 5.5 to 13, and a range has two ends that can
-// both be missed: our U11s and U12s are nine and ten years old, and a 17s
-// middle can be past 13. Neither family should have to pick a size they know
-// is wrong — see the kneepad list for the same reasoning.
+// The Avoli is stocked 5.5 to 14, and a range has two ends that can both be
+// missed: our U11s and U12s are nine and ten years old, and a 17s middle can be
+// past the top of the range. Neither family should have to pick a size they
+// know is wrong — see the kneepad list for the same reasoning.
 const SHOES         = ["5.5", "6", "6.5", "7", "7.5", "8", "8.5", "9", "9.5",
-                       "10", "10.5", "11", "11.5", "12", "12.5", "13",
+                       "10", "10.5", "11", "11.5", "12", "12.5", "13", "13.5", "14",
                        "Smaller than 5.5 — these don't come small enough",
-                       "Bigger than 13 — these don't come big enough"];
+                       "Bigger than 14 — these don't come big enough"];
 
 // School-team questions, only asked of girls old enough to be on one. Same
 // options as api/school-form.js — two lists that drift apart would file one
