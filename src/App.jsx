@@ -10647,6 +10647,19 @@ export default function App() {
       window.open(data.signedUrl, "_blank", "noreferrer");
     };
     const openPhoto = photoOpen != null ? mine.find(p => p.id === photoOpen) : null;
+    // Whose link it came through. The name box on the form is optional, so this
+    // is the attribution that always holds — a photo can never be anonymous
+    // when the link that carried it belongs to one family.
+    const viaPlayer = (p) => {
+      const pl = players.find(x => x.id === p.player_id);
+      return pl ? pl.first_name + " " + pl.last_name : null;
+    };
+    const credit = (p) => {
+      const who = String(p.uploaded_by || "").trim();
+      const via = viaPlayer(p);
+      if (who && via) return who + " (" + via + "'s family)";
+      return who || (via ? via + "'s family" : "a family");
+    };
     const pill = (k, label, n) => (
       <button key={k} onClick={()=>setPhotoFilter(k)}
         style={{padding:"6px 12px",borderRadius:8,cursor:"pointer",fontFamily:"inherit",fontSize:11.5,fontWeight:700,
@@ -10691,7 +10704,7 @@ export default function App() {
                   <span style={{fontSize:13.5,fontWeight:800,color:C.gold}}>{k}</span>
                   <span style={{fontSize:11,color:C.mut}}>{list.length} photo{list.length===1?"":"s"}</span>
                   <span style={{fontSize:11,color:C.mut}}>
-                    · from {[...new Set(list.map(p => p.uploaded_by).filter(Boolean))].join(", ") || "a family"}
+                    · from {[...new Set(list.map(credit))].join(", ")}
                   </span>
                 </div>
                 <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))",gap:8}}>
@@ -10737,7 +10750,7 @@ export default function App() {
             <div onClick={e=>e.stopPropagation()} style={{textAlign:"center",color:C.mut,fontSize:12,maxWidth:640}}>
               {openPhoto.caption && <div style={{color:C.text,fontSize:14,marginBottom:4}}>{openPhoto.caption}</div>}
               <div>{[openPhoto.event_label, openPhoto.team_name,
-                openPhoto.uploaded_by && "sent by " + openPhoto.uploaded_by, openPhoto.taken_on]
+                "sent by " + credit(openPhoto), openPhoto.taken_on, openPhoto.original_name]
                 .filter(Boolean).join(" · ")}</div>
               <div style={{display:"flex",gap:8,justifyContent:"center",marginTop:10}}>
                 <button onClick={()=>download(openPhoto)}

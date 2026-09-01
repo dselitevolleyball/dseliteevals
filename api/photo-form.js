@@ -150,7 +150,7 @@ export default async function handler(req, res) {
   if (!UUID_RE.test(token)) return res.status(400).send(notFound("That link is missing its code, or it was cut in half by the email app."));
 
   const { data: player } = await supabase
-    .from("players").select("id,first_name,last_name,team_assignment")
+    .from("players").select("id,first_name,last_name,team_assignment,parent_name")
     .eq("photo_upload_token", token).maybeSingle();
   if (!player) return res.status(404).send(notFound("We can't find that link. It may have been re-issued."));
 
@@ -202,7 +202,11 @@ export default async function handler(req, res) {
       storage_path: String(p?.path || "").slice(0, 400),
       player_id: player.id,
       team_name: player.team_assignment || null,
-      uploaded_by: String(body?.uploaded_by || "").trim().slice(0, 120) || null,
+      // Who sent it. The name box is optional and routinely skipped, but the
+      // link is per-family so we already know: fall back to the parent on the
+      // record rather than storing an anonymous photo nobody can thank.
+      uploaded_by: String(body?.uploaded_by || "").trim().slice(0, 120)
+        || String(player.parent_name || "").trim() || null,
       context: evt.context,
       tournament_id: evt.tournamentId,
       event_label: evt.label,
