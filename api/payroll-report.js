@@ -18,6 +18,7 @@
 //      PAYROLL_REPORT_TO (opt comma list — overrides the default recipients).
 
 import { createClient } from "@supabase/supabase-js";
+import { makeRateResolver, makeNameResolver } from "../shared/coach-pay.js";
 
 const DEFAULT_TO = ["bpounds@generalledgerpartners.com", "rparker@generalledgerpartners.com", "drew@dselitevolleyball.com", "kristen@dselitevolleyball.com", "tionne@dselitevolleyball.com"];
 const OWNER_EMAILS = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"];
@@ -74,41 +75,16 @@ export default async function handler(req, res) {
 
   // Resolve a check-in's free-text coach_name to a canonical First-Last, so
   // hours group under the real name (coaches log in with varied display names).
-  const rosterByEmail = new Map();
-  (roster || []).forEach(r => { if (r.email) rosterByEmail.set(norm(r.email), `${r.first_name || ""} ${r.last_name || ""}`.trim()); });
-  const canonNames = new Map();
-  (roster || []).forEach(r => { const full = `${r.first_name || ""} ${r.last_name || ""}`.trim(); if (full) canonNames.set(norm(full), full); });
-  (teams || []).forEach(t => [t.head_coach, t.assistant_coach].forEach(n => { if (n && n.trim()) canonNames.set(norm(n), n.trim()); }));
-  (rates || []).forEach(r => { if (r.coach_name) canonNames.set(norm(r.coach_name), r.coach_name.trim()); });
-  const canonicalName = (raw, email) => {
-    if (email) { const e = rosterByEmail.get(norm(email)); if (e) return e; }
-    const base = String(raw || "").replace(/^\s*coach\s+/i, "").trim();
-    const n = norm(base);
-    if (canonNames.has(n)) return canonNames.get(n);
-    const toks = n.split(/\s+/).filter(Boolean);
-    if (toks.length) {
-      const first = toks[0], last = toks[toks.length - 1];
-      for (const [k, v] of canonNames) { const kt = k.split(/\s+/), kf = kt[0], kl = kt[kt.length - 1];
-        if (kl === last && (kf === first || kf.startsWith(first) || first.startsWith(kf))) return v; }
-      const firstOnly = [...canonNames.values()].filter(v => norm(v).split(/\s+/)[0] === first);
-      if (firstOnly.length === 1) return firstOnly[0];
-    }
-    return base || raw;
-  };
+  // Name resolution moved to shared/coach-pay.js — the coach confirmation
+  // needs the same answer, and two implementations would eventually greet
+  // somebody by a name this report had already corrected.
+  const canonicalName = makeNameResolver({ roster: roster || [], teams: teams || [], rates: rates || [] });
 
-  const rateRow = (nm) => (rates || []).find(r => norm(r.coach_name) === norm(nm));
-  const isHeadOf = (nm, team) => !!team && (teams || []).some(t => t.team_name === team && norm(t.head_coach) === norm(nm));
-  // A per-shift rate_override beats the standing rate for that row only — it is
-  // how a one-off event (a club-wide coach training) pays a rate that has
-  // nothing to do with whose team the coach normally covers. It also stands in
-  // for a missing coach_rates row, so an override alone is enough to pay someone.
-  const rateFor = (nm, team, override) => {
-    if (override != null && override !== "") return Number(override);
-    const r = rateRow(nm);
-    if (!r) return null;
-    if (r.head_rate != null && isHeadOf(nm, team)) return Number(r.head_rate);
-    return r.hourly_rate != null ? Number(r.hourly_rate) : null;
-  };
+  // Rate resolution moved to shared/coach-pay.js so the coach's own weekly
+  // confirmation (api/timecard-summary.js) cannot drift from what is sent to
+  // the bookkeeper. The rules are unchanged: a per-shift override wins, then
+  // head_rate on a team she head-coaches, then hourly_rate.
+  const rateFor = makeRateResolver({ rates: rates || [], teams: teams || [] });
 
   // Group by canonical coach.
   const byCoach = new Map();
