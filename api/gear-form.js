@@ -302,8 +302,37 @@ export default async function handler(req, res) {
       // happens to land last, makes the race unable to do damage. It also means
       // a family editing a sent order keeps it sent while they type.
       const alreadyOrdered = prev && prev.is_draft === false;
+
+      // A DRAFT MAY ADD, NEVER ERASE.
+      //
+      // Autosave posts the whole form, so a field that arrives empty is
+      // indistinguishable from a field the family cleared — and on 1 September
+      // two finished orders were flattened this way: every size null, the
+      // confirmation cleared, one shoe size left behind. Hazel Colletti's and
+      // Evelyn Bachman's answers are simply gone, because nothing kept the old
+      // values and nothing stopped the write.
+      //
+      // Whatever emptied that form — a stale tab, a half-rendered page, a
+      // beacon fired at the wrong moment — the fix is the same and does not
+      // depend on knowing which: a draft only ever fills a blank or changes a
+      // value to another value. It cannot turn an answer back into a blank.
+      //
+      // Clearing an answer is still possible, through the Send button, which
+      // validates the whole form and cannot succeed while things are missing.
+      const keepFilled = (next, before) => {
+        if (!before) return next;
+        const out = { ...next };
+        for (const [k, val] of Object.entries(next)) {
+          const emptied = val === null || val === "" || val === false;
+          const had = before[k] !== null && before[k] !== undefined && before[k] !== "" && before[k] !== false;
+          if (emptied && had) out[k] = before[k];
+        }
+        return out;
+      };
+      const safe = keepFilled({ ...row, is_draft: !alreadyOrdered }, prev);
+
       const { error: dErr } = await supabase.from("player_gear_orders")
-        .upsert({ ...row, is_draft: !alreadyOrdered }, { onConflict: "player_id" });
+        .upsert(safe, { onConflict: "player_id" });
       res.setHeader("Content-Type", "application/json; charset=utf-8");
       return res.status(dErr ? 500 : 200).send(JSON.stringify(dErr ? { ok: false, error: dErr.message } : { ok: true }));
     }
