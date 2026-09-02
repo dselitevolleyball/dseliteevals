@@ -72,6 +72,10 @@
     {
       "path": "/api/timecard-summary",
       "schedule": "0 14 * * 1"
+    },
+    {
+      "path": "/api/travel-gap-alert",
+      "schedule": "0 13 * * *"
     }
   ],
   "headers": [

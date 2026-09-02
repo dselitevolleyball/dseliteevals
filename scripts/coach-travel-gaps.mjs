@@ -28,7 +28,8 @@ import { readFileSync } from "node:fs";
 import { createClient } from "@supabase/supabase-js";
 
 const APP = "https://dseliteevals.vercel.app";
-const TO = "kristen@dselitevolleyball.com";
+// Both, matching api/travel-gap-alert.js — Kristen books it, Drew watches it.
+const TO = ["kristen@dselitevolleyball.com", "drew@dselitevolleyball.com"];
 const SENDER = { name: "Drew Rose", email: "drew@dselitevolleyball.com" };
 // Mirrors isPlaceholderCoach in src/App.jsx. "TBD" in an override means the
 // slot is open, not that a person called TBD is travelling.
@@ -161,7 +162,7 @@ else {
         : `Travel to book — ${gaps.length} unbooked trips`,
       body: "Kristen,\n\nCoaching has changed and these tournaments now need travel booked that didn't before.\n\n" + text +
         "\n\nWeekends where the assistant is listed as somebody else, or as TBD, are left out — those aren't her trips.\n\nDrew",
-      bodyHtml: html, recipients: [TO],
+      bodyHtml: html, recipients: TO,
       sentBy: SENDER.name, sentByEmail: SENDER.email, source: "script",
     }),
   });
