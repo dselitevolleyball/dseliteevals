@@ -4443,7 +4443,14 @@ export default function App() {
   const travelStaffFor = useCallback((tournamentId) => {
     const names = new Set();
     for (const a of tournamentAssignments.filter(x => x.tournament_id === tournamentId && !tnIsDropped(x))) {
-      const t = teamsList.find(x => x.id === a.team_id) || practiceTeams.find(x => x.team_name === a.team_id);
+      // practice_teams first. It is the live staffing table — the team card
+      // and the practice board both write it — while teams is the older
+      // tryout-planning copy. Looking there first meant a coach added to a team
+      // was invisible on travel until somebody happened to update both: Kelli
+      // Hardge joined 15 Ruby and the old row still said "15-2 Assistant
+      // Coach", which is a placeholder, so she was filtered out entirely.
+      // Every other lookup in this file already prefers practice_teams.
+      const t = practiceTeams.find(x => x.team_name === a.team_id) || teamsList.find(x => x.id === a.team_id);
       const eff = tnEffectiveStaff(a, t ? { head_coach: t.head_coach, assistant_coach: t.assistant_coach } : null);
       [eff.head, eff.asst, a.sub_coach].forEach(n => {
         const v = String(n || "").trim();
@@ -16727,18 +16734,24 @@ export default function App() {
     // Assign/unassign this coach to a team's head/assistant slot (practice_teams).
     // Uses the same name string this card matches on, so it shows up immediately.
     const coachField = (role) => role === "assistant" ? "assistant_coach" : role === "third" ? "third_coach" : "head_coach";
-    const assignCoachTeam = async (teamName, role) => {
+    // Written to BOTH tables. teams is the older copy and several screens
+    // still read it, so updating only practice_teams left them disagreeing —
+    // which is exactly how a coach ends up staffed on a team and absent from
+    // its travel. teams has no third_coach column, so that role updates one.
+    const setCoachTeam = async (teamName, role, value, verb) => {
       const field = coachField(role);
-      const { error } = await supabase.from("practice_teams").update({ [field]: name, updated_at: new Date().toISOString() }).eq("team_name", teamName);
-      if (error) { window.alert("Assign failed: " + error.message); return; }
+      const stamp = { [field]: value, updated_at: new Date().toISOString() };
+      const jobs = [supabase.from("practice_teams").update(stamp).eq("team_name", teamName)];
+      if (field !== "third_coach") jobs.push(supabase.from("teams").update({ [field]: value }).eq("id", teamName));
+      const [pt, tm] = await Promise.all(jobs);
+      if (pt.error) { window.alert(verb + " failed: " + pt.error.message); return; }
+      // The old table failing is not worth blocking on, but it is worth saying:
+      // silently half-applying is how the two drifted apart to begin with.
+      if (tm?.error) console.error("teams table not updated for " + teamName + ": " + tm.error.message);
       await loadPractice();
     };
-    const unassignCoachTeam = async (teamName, role) => {
-      const field = coachField(role);
-      const { error } = await supabase.from("practice_teams").update({ [field]: null, updated_at: new Date().toISOString() }).eq("team_name", teamName);
-      if (error) { window.alert("Remove failed: " + error.message); return; }
-      await loadPractice();
-    };
+    const assignCoachTeam = (teamName, role) => setCoachTeam(teamName, role, name, "Assign");
+    const unassignCoachTeam = (teamName, role) => setCoachTeam(teamName, role, null, "Remove");
     // Edit the coach's roster attributes (contact, sizes, notes) from the card.
     const updateRoster = async (patch) => {
       if (!roster) return;
