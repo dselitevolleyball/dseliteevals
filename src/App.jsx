@@ -3,6 +3,7 @@ import { supabase } from "./supabase";
 import Papa from "papaparse";
 import { DndContext, useDraggable, useDroppable, PointerSensor, TouchSensor, useSensor, useSensors } from "@dnd-kit/core";
 import { GEAR_TEAMS } from "../shared/gear-teams.js";
+import { planRooms, pairCoaches } from "../shared/room-plan.js";
 import { SCHOOL_DIVS } from "../shared/school-divs.js";
 import { schoolKey } from "../shared/school-schedule.js";
 
@@ -15806,6 +15807,7 @@ export default function App() {
                 <th style={th}>Email</th>
                 <th style={th}>Phone</th>
                 <th style={th}>DOB</th>
+                <th style={th} title="Used to pair coaches into hotel rooms on travel">Sex</th>
                 <th style={th}>Address</th>
                 <th style={th}>USAV #</th>
                 <th style={th}>AAU #</th>
@@ -15889,6 +15891,17 @@ export default function App() {
                       </td>
                       {rcell("phone","555-555-5555",130)}
                       {rcell("dob","1994-03-21",110)}
+                      <td style={td}>
+                        <select style={{...inpStyle,padding:"5px 8px",fontSize:12,minWidth:64,cursor:"pointer",
+                          color:(r&&r.sex)?C.text:C.mut}}
+                          value={(r && r.sex) || ""}
+                          title="Pairs coaches into hotel rooms on travel. Blank means they get counted a room of their own."
+                          onChange={e => upsertRoster({ sex: e.target.value || null })}>
+                          <option value="">—</option>
+                          <option value="F">F</option>
+                          <option value="M">M</option>
+                        </select>
+                      </td>
                       {rcell("address","123 Main St, Dripping Springs, TX",200)}
                       {rcell("usav_number","1234567",100)}
                       {rcell("aau_number","Y1A2B3C",100)}
@@ -26509,7 +26522,7 @@ export default function App() {
       purchased: rows.filter(r => r.flight_purchased).length,
       driving:  rows.filter(r => isDriving(r)).length,
       ownFlight: rows.filter(r => booksOwn(r)).length,
-      ticketed: rows.filter(r => (!air || !weBookFor(r) || r.flight_purchased) && (!needsRoom(r) || r.room_id)).length,
+      ticketed: rows.filter(r => (!air || !weBookFor(r) || r.flight_purchased) && (!needsRoom(r) || r.room_booked)).length,
     };
   };
   const travelMoney = (v) => (v == null || v === "" || Number(v) === 0) ? "" : "$" + Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 });
@@ -26551,7 +26564,10 @@ export default function App() {
   // assign, so counting one as missing leaves the event permanently amber.
   const needsRoom  = (r) => !r?.no_room_needed;
   // A trip still needs work if there's no ticket number or no room assigned.
-  const tripNeedsBooking = (r, air = true) => (air && weBookFor(r) && !r?.flight_purchased) || (needsRoom(r) && !r?.room_id);
+  // Assigning a room number is planning; booking it is the job. Until
+  // room_booked is ticked the trip is still outstanding, which is why this
+  // tests the flag rather than the room_id it used to.
+  const tripNeedsBooking = (r, air = true) => (air && weBookFor(r) && !r?.flight_purchased) || (needsRoom(r) && !r?.room_booked);
 
   // The travel editor itself. Shared by the tournament card and the Travel
   // screen so there's one implementation to keep correct, not two.
@@ -26568,6 +26584,32 @@ export default function App() {
     const rowFor = (n) => rows.find(r => r.coach_name === n) || {};
     const rooms = travelRooms.filter(r => r.tournament_id === tn.id).sort((x, y) => (x.room_no || 0) - (y.room_no || 0));
     const inp = {...inpStyle,padding:"4px 7px",fontSize:11,width:"100%"};
+
+    // ── How many rooms to hold ────────────────────────────────────────────
+    // Stay-to-play means committing to a block before a single family has
+    // booked, so the number comes from the roster rather than from what people
+    // eventually do. Rules live in shared/room-plan.js.
+    const roomPlan = (() => {
+      const teamsHere = tournamentAssignments
+        .filter(a => a.tournament_id === tn.id).map(a => a.team_id);
+      const attending = players.filter(p =>
+        p.roster_status === "active" && (p.season || "2026-27") === "2026-27" &&
+        teamsHere.includes(p.team_assignment) &&
+        !["declined","not_invited","opted_out"].includes(p.offer_status || ""));
+      // A coach is "here as a parent" when one of the players attending this
+      // weekend is her own — matched on the parent fields the roster already
+      // holds, which is how Kelli Hardge and Kristen Alexandrov resolve.
+      const nrmN = (x) => String(x || "").trim().toLowerCase().replace(/\s+/g, " ");
+      const hasPlayerHere = (name) => attending.some(p =>
+        nrmN(p.parent_name) === nrmN(name) || nrmN(p.parent2_name) === nrmN(name));
+      const sexOf = (name) => {
+        const r = coachRoster.find(x => nrmN((x.first_name || "") + " " + (x.last_name || "")) === nrmN(name));
+        return r?.sex || null;
+      };
+      const coachList = staff.map(n => ({ name: n, sex: sexOf(n), hasPlayerHere: hasPlayerHere(n) }));
+      return { ...planRooms({ players: attending.map(p => p.id), coaches: coachList }),
+               pairs: pairCoaches(coachList), teamsHere };
+    })();
     const air = tn.airfare_required !== false;   // NULL means not decided yet — assume flights
     const master = masterFor(tn.id);
     const onMaster = (r) => !r?.flight_deviation && !!master && weBookFor(r);
@@ -26582,6 +26624,39 @@ export default function App() {
       : ["Coach","Room","Own room","Payroll deduction"];
     return (
       <div style={{overflowX:"auto"}}>
+        {/* How many rooms to hold. Shown for stay-to-play, where the block has
+            to be committed before anyone has booked, and on request elsewhere. */}
+        {(tn.stay_to_play || roomPlan.total > 0) && (
+          <div style={{background:C.bg,border:"1px solid "+(tn.stay_to_play?C.gold:C.border),borderRadius:10,
+            padding:"11px 13px",marginBottom:10}}>
+            <div style={{display:"flex",alignItems:"baseline",gap:10,flexWrap:"wrap",marginBottom:7}}>
+              <span style={{fontSize:11,fontWeight:800,textTransform:"uppercase",letterSpacing:0.5,color:C.gold}}>
+                Rooms to hold{tn.stay_to_play ? " · stay to play" : ""}
+              </span>
+              <span style={{fontFamily:"ui-monospace,monospace",fontSize:18,fontWeight:800,color:C.text}}>{roomPlan.total}</span>
+              <span style={{fontSize:11,color:C.mut}}>
+                {roomPlan.playerRooms} player{roomPlan.playerRooms===1?"":"s"} · {roomPlan.coachRooms} coach{roomPlan.coachRooms===1?"":"es"}
+              </span>
+            </div>
+            <div style={{fontSize:11,color:C.mut,lineHeight:1.6}}>
+              <b style={{color:C.text}}>{roomPlan.breakdown.players.count}</b> players attending, one room per family.
+              {roomPlan.breakdown.women.rooms > 0 && <> · <b style={{color:C.text}}>{roomPlan.breakdown.women.rooms}</b> for {roomPlan.breakdown.women.names.length} women</>}
+              {roomPlan.breakdown.men.rooms > 0 && <> · <b style={{color:C.text}}>{roomPlan.breakdown.men.rooms}</b> for {roomPlan.breakdown.men.names.length} men</>}
+              {roomPlan.breakdown.ownRoom.rooms > 0 && <> · <b style={{color:C.text}}>{roomPlan.breakdown.ownRoom.rooms}</b> own room ({roomPlan.breakdown.ownRoom.names.join(", ")} — own player here)</>}
+            </div>
+            {roomPlan.pairs.length > 0 && (
+              <div style={{display:"flex",gap:5,flexWrap:"wrap",marginTop:7}}>
+                {roomPlan.pairs.map((p, i) => (
+                  <span key={i} style={{fontSize:10,padding:"2px 7px",borderRadius:5,border:"1px solid "+C.border,
+                    color:p.length===1?C.gold:C.mut,whiteSpace:"nowrap"}}>{p.join(" + ")}</span>
+                ))}
+              </div>
+            )}
+            {roomPlan.gaps.map((g, i) => (
+              <div key={i} style={{fontSize:10.5,color:"#f59e0b",fontWeight:600,marginTop:6}}>⚠ {g}</div>
+            ))}
+          </div>
+        )}
         {/* Drive-able events shouldn't ask for a flight number. Off = hotel only. */}
         <label style={{display:"inline-flex",alignItems:"center",gap:6,cursor:"pointer",marginBottom:8,fontSize:11,fontWeight:700,color:air?C.text:C.mut}}>
           <input type="checkbox" checked={air} style={{width:14,height:14,accentColor:C.gold,cursor:"pointer"}}
@@ -27069,7 +27144,7 @@ export default function App() {
             <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,overflow:"hidden"}}>
               <div style={{overflowX:"auto"}}>
                 <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0,minWidth:1120,fontSize:11}}>
-                  <thead><tr>{["","Tournament","Dates","Coach","Airline","Out","Back","Flight $","Bought","Ticket #","Hotel room","Own room","Payroll"].map((h,i) =>
+                  <thead><tr>{["","Tournament","Dates","Coach","Airline","Out","Back","Flight $","Bought","Ticket #","Hotel room","Booked","Own room","Payroll"].map((h,i) =>
                     <th key={i} style={{padding:"6px 7px",textAlign:"left",fontSize:9,fontWeight:700,textTransform:"uppercase",color:C.mut,borderBottom:"1px solid "+C.border,whiteSpace:"nowrap",position:"sticky",top:0,background:C.card}}>{h}</th>)}</tr></thead>
                   <tbody>
                     {shown.map(({ t, name, row }, i) => {
@@ -27123,6 +27198,20 @@ export default function App() {
                                   : { no_room_needed: false })} />
                               no room needed
                             </label>
+                          </td>
+                          <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,textAlign:"center"}}>
+                            {needsRoom(row) ? (
+                              <input type="checkbox" checked={!!row.room_booked}
+                                style={{width:14,height:14,accentColor:C.grn,cursor:"pointer"}}
+                                title={row.room_booked
+                                  ? "Room is reserved" + (row.room_booked_by ? " — marked by " + row.room_booked_by : "")
+                                  : "Tick once this person's room is actually booked"}
+                                onChange={e => saveTravel(t.id, name, {
+                                  room_booked: e.target.checked,
+                                  room_booked_at: e.target.checked ? new Date().toISOString() : null,
+                                  room_booked_by: e.target.checked ? (coach?.display_name || coach?.email || null) : null,
+                                })} />
+                            ) : <span style={{fontSize:10,color:C.mut}}>—</span>}
                           </td>
                           <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,textAlign:"center"}}>
                             {row.no_room_needed ? <span style={{color:C.mut}}>—</span> : (
