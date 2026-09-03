@@ -3,7 +3,7 @@ import { supabase } from "./supabase";
 import Papa from "papaparse";
 import { DndContext, useDraggable, useDroppable, PointerSensor, TouchSensor, useSensor, useSensors } from "@dnd-kit/core";
 import { GEAR_TEAMS } from "../shared/gear-teams.js";
-import { planRooms, pairCoaches } from "../shared/room-plan.js";
+import { planRooms, pairCoaches, planRoomsByTeam, UNASSIGNED } from "../shared/room-plan.js";
 import { SCHOOL_DIVS } from "../shared/school-divs.js";
 import { schoolKey } from "../shared/school-schedule.js";
 
@@ -26619,9 +26619,41 @@ export default function App() {
         const r = coachRoster.find(x => nrmN((x.first_name || "") + " " + (x.last_name || "")) === nrmN(name));
         return r?.sex || null;
       };
-      const coachList = staff.map(n => ({ name: n, sex: sexOf(n), hasPlayerHere: hasPlayerHere(n) }));
+      // Which team each coach travels with, for the by-team split below. A
+      // coach working two teams that weekend still sleeps in one room, so she
+      // is counted once — under the team she heads if she heads one, otherwise
+      // the first alphabetically — and the rest are listed beside her name.
+      // Read off the same assignments travelStaffFor uses, so the names here
+      // are exactly the names in the table below.
+      const coachTeams = new Map();
+      for (const a of tournamentAssignments.filter(x => x.tournament_id === tn.id && !tnIsDropped(x))) {
+        const t = practiceTeams.find(x => x.team_name === a.team_id) || teamsList.find(x => x.id === a.team_id);
+        const eff = tnEffectiveStaff(a, t ? { head_coach: t.head_coach, assistant_coach: t.assistant_coach } : null);
+        const add = (n, isHead) => {
+          const v = String(n || "").trim();
+          if (!v || isPlaceholderPerson(v)) return;
+          const e = coachTeams.get(v) || { head: [], all: [] };
+          if (!e.all.includes(a.team_id)) e.all.push(a.team_id);
+          if (isHead && !e.head.includes(a.team_id)) e.head.push(a.team_id);
+          coachTeams.set(v, e);
+        };
+        add(eff.head, true); add(eff.asst, false); add(a.sub_coach, false);
+      }
+      const primaryTeam = (name) => {
+        const e = coachTeams.get(name);
+        if (!e) return null;   // added by hand, no team — lands in Unassigned
+        const src = e.head.length ? e.head : e.all;
+        return [...src].sort((x, y) => String(x).localeCompare(String(y)))[0] || null;
+      };
+      const coachList = staff.map(n => {
+        const team = primaryTeam(n);
+        return { name: n, sex: sexOf(n), hasPlayerHere: hasPlayerHere(n), team,
+                 alsoTeams: (coachTeams.get(n)?.all || []).filter(x => x !== team) };
+      });
       return { ...planRooms({ players: attending.map(p => p.id), coaches: coachList }),
-               pairs: pairCoaches(coachList), teamsHere };
+               pairs: pairCoaches(coachList), teamsHere,
+               byTeam: planRoomsByTeam({ players: attending.map(p => ({ team: p.team_assignment })),
+                                        coaches: coachList }) };
     })();
     const air = tn.airfare_required !== false;   // NULL means not decided yet — assume flights
     const master = masterFor(tn.id);
@@ -26663,6 +26695,74 @@ export default function App() {
                   <span key={i} style={{fontSize:10,padding:"2px 7px",borderRadius:5,border:"1px solid "+C.border,
                     color:p.length===1?C.gold:C.mut,whiteSpace:"nowrap"}}>{p.join(" + ")}</span>
                 ))}
+              </div>
+            )}
+            {/* Split by team. Lone Star Classic never fits in one block, so the
+                rooms go to two or three properties — and the only split that
+                works is by team, families and their coaches together. The split
+                total can exceed the one-block total (two lone women on
+                different teams can't share across hotels); that gap is shown
+                rather than swallowed. */}
+            {roomPlan.byTeam.groups.length > 1 && (
+              <div style={{marginTop:9,paddingTop:9,borderTop:"1px solid "+C.border}}>
+                <div style={{display:"flex",alignItems:"baseline",gap:9,flexWrap:"wrap",marginBottom:6}}>
+                  <span style={{fontSize:10,fontWeight:800,textTransform:"uppercase",letterSpacing:0.4,color:C.mut}}>
+                    Split by team — booking more than one hotel
+                  </span>
+                  <span style={{fontFamily:"ui-monospace,monospace",fontSize:12,fontWeight:800,color:C.text}}>
+                    {roomPlan.byTeam.splitTotal} rooms across {roomPlan.byTeam.groups.length} groups
+                  </span>
+                  {roomPlan.byTeam.extra > 0 && (
+                    <span style={{fontSize:10,color:"#f59e0b",fontWeight:700}}
+                      title="Coaches who would share in a single block can't share across hotels">
+                      +{roomPlan.byTeam.extra} vs one block ({roomPlan.total}) — coaches can't pair across hotels
+                    </span>
+                  )}
+                </div>
+                <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0,fontSize:11}}>
+                  <thead><tr>{["Team","Rooms","Players","Coaches","Who"].map(h => (
+                    <th key={h} style={{padding:"3px 7px",textAlign:h==="Team"||h==="Who"?"left":"right",fontSize:9,
+                      fontWeight:700,textTransform:"uppercase",color:C.mut,borderBottom:"1px solid "+C.border,
+                      whiteSpace:"nowrap"}}>{h}</th>))}</tr></thead>
+                  <tbody>
+                    {roomPlan.byTeam.groups.map(g => {
+                      const num = {padding:"4px 7px",borderBottom:"1px solid "+C.border,textAlign:"right",
+                        fontFamily:"ui-monospace,monospace",color:C.mut,whiteSpace:"nowrap"};
+                      const also = (nm) => (g.coaches.find(c => c.name === nm)?.alsoTeams || []);
+                      return (
+                        <tr key={g.team}>
+                          <td style={{padding:"4px 7px",borderBottom:"1px solid "+C.border,fontWeight:700,
+                            whiteSpace:"nowrap",color:g.team===UNASSIGNED?C.mut:C.text}}>{g.team}</td>
+                          <td style={{...num,color:C.text,fontWeight:800}}>{g.total}</td>
+                          <td style={num}>{g.playerRooms}</td>
+                          <td style={num}>{g.coachRooms}</td>
+                          <td style={{padding:"4px 7px",borderBottom:"1px solid "+C.border}}>
+                            <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                              {g.pairs.map((pr, i) => (
+                                <span key={i} style={{fontSize:10,padding:"2px 6px",borderRadius:5,
+                                  border:"1px solid "+C.border,color:pr.length===1?C.gold:C.mut,whiteSpace:"nowrap"}}
+                                  title={pr.length===1?"Room to themselves":"Sharing"}>
+                                  {pr.join(" + ")}
+                                  {pr.flatMap(also).length > 0 && (
+                                    <em style={{color:C.mut,fontStyle:"normal",opacity:0.75}}>
+                                      {" · also " + [...new Set(pr.flatMap(also))].join(", ")}
+                                    </em>
+                                  )}
+                                </span>
+                              ))}
+                              {!g.pairs.length && <span style={{color:C.mut,fontStyle:"italic"}}>no coaches on this group</span>}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                {roomPlan.byTeam.groups.some(g => g.team === UNASSIGNED) && (
+                  <div style={{fontSize:10,color:C.mut,fontStyle:"italic",marginTop:5}}>
+                    Unassigned = added by hand, not staffed on a team here. Put them wherever the block has space.
+                  </div>
+                )}
               </div>
             )}
             {roomPlan.gaps.map((g, i) => (

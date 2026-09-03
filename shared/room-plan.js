@@ -92,3 +92,48 @@ export function pairCoaches(coaches = []) {
     .forEach(c => out.push([c.name]));
   return out;
 }
+
+// ── Splitting a weekend across more than one hotel ──────────────────────────
+//
+// Lone Star Classic is the case this exists for: one block is never big enough
+// for the whole club, so the rooms get booked at two or three properties. The
+// only split that survives contact with a parent is by team — a team's families
+// stay together, and its coaches stay with it.
+//
+// Same rules as above, applied per team. Two things follow from that and are
+// worth saying out loud:
+//
+//   A coach who works two teams that weekend sleeps in ONE room, so she is
+//   counted under a single team (the caller decides which — normally the one
+//   she heads) and listed as covering the other.
+//
+//   Splitting can cost a room. Two lone women on different teams share when the
+//   club books one hotel and cannot when it books two. That difference is
+//   returned as `extra` rather than hidden, because it is a real bill and the
+//   alternative — quietly matching the combined number — would leave somebody
+//   without a bed on arrival.
+export const UNASSIGNED = "Unassigned";
+
+const teamLabel = (x) => String(x?.team || "").trim() || UNASSIGNED;
+
+/**
+ * @param {object} input
+ * @param {Array}  input.players  [{ team }]  attending players
+ * @param {Array}  input.coaches  [{ name, sex, hasPlayerHere, team, alsoTeams }]
+ * @returns {object} per-team groups plus what the split costs against one block
+ */
+export function planRoomsByTeam({ players = [], coaches = [] } = {}) {
+  const teams = [...new Set([...players.map(teamLabel), ...coaches.map(teamLabel)])]
+    // Unassigned last: it is the leftovers pile, not a team.
+    .sort((a, b) => a === UNASSIGNED ? 1 : b === UNASSIGNED ? -1 : String(a).localeCompare(String(b)));
+
+  const groups = teams.map(team => {
+    const tp = players.filter(p => teamLabel(p) === team);
+    const tc = coaches.filter(c => teamLabel(c) === team);
+    return { team, coaches: tc, ...planRooms({ players: tp, coaches: tc }), pairs: pairCoaches(tc) };
+  });
+
+  const combinedTotal = planRooms({ players, coaches }).total;
+  const splitTotal = groups.reduce((s, g) => s + g.total, 0);
+  return { groups, splitTotal, combinedTotal, extra: splitTotal - combinedTotal };
+}
