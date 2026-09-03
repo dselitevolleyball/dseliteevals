@@ -8278,6 +8278,26 @@ export default function App() {
   function renderCoachCalendar(matches, teamNames, calOff, setCalOff, calSel, setCalSel, opts = {}) {
     const todayISO = localDateISO();
     const myTeamSet = new Set(teamNames || []);
+    // A coach whose own child plays for a team they don't coach still has that
+    // team's weekend. Rene's daughter is on 15 Diamond, Kelli's on 11 Diamond,
+    // Drew's on 15 Diamond, Jeremiah's older on 15 Ruby — none of which they
+    // coach, so until now the app showed them a schedule that was missing half
+    // of where they actually had to be.
+    //
+    // Those events go on the same calendar, in their own colour and under the
+    // child's name. They are deliberately kept OUT of every set that means
+    // work: no conflict is raised, no pay is due, and the coach is not staffed
+    // on them. This is the calendar telling the truth about a Saturday, not a
+    // second assignment.
+    const kidRows = (players || []).filter(p =>
+      p.roster_status === "active" && (p.season || "2026-27") === "2026-27" &&
+      p.team_assignment && !myTeamSet.has(p.team_assignment) &&
+      !["declined","not_invited","opted_out"].includes(p.offer_status || "") &&
+      (matches(p.parent_name) || matches(p.parent2_name)));
+    const kidTeamSet = new Set(kidRows.map(p => p.team_assignment));
+    // Whose team it is, for the chip. Two children on one team is one label.
+    const kidsOn = (team) => [...new Set(kidRows.filter(p => p.team_assignment === team)
+      .map(p => p.first_name).filter(Boolean))].join(" & ");
     const DOW = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
     const tournamentById = new Map((tournaments || []).map(t => [t.id, t]));
     const t0 = new Date(todayISO + "T00:00");
@@ -8299,13 +8319,29 @@ export default function App() {
       .filter(ta => myTeamSet.has(ta.team_id) || myTeamSet.has(ta.team_name) || matches(ta.head_override) || matches(ta.asst_override))
       .map(ta => ({ team: ta.team_id || ta.team_name, tn: tournamentById.get(ta.tournament_id), sub: !(myTeamSet.has(ta.team_id) || myTeamSet.has(ta.team_name)) }))
       .filter(x => x.tn && !x.tn.cancelled);
-    const teamAtTn = (team, iso) => { const dow = new Date(iso + "T00:00").getDay(); let winStart = iso; if (dow === 0) { const f = new Date(iso + "T00:00"); f.setDate(f.getDate() - 2); winStart = localDateISO(f); } return myTns.some(x => x.team === team && x.tn.start_date <= iso && (((x.tn.end_date || x.tn.start_date) >= iso) || (dow === 0 && x.tn.end_date && x.tn.end_date > x.tn.start_date && x.tn.end_date >= winStart))); };
-    const practicesOn = (iso) => { const phase = phaseForDate(iso); if (!phase) return []; const dow = DOW[new Date(iso + "T00:00").getDay()]; const byTeam = {}; (practiceAssignments||[]).forEach(a => { if (!myTeamSet.has(a.team_name) || (a.phase || "fall1") !== phase || a.day !== dow) return; if (isCancelled(iso, a.team_name) || teamAtTn(a.team_name, iso)) return; (byTeam[a.team_name] = byTeam[a.team_name] || []).push(a.slot); }); return Object.entries(byTeam).map(([team, slots]) => ({ team, slots: mergeAdjacentSlots(slots) })); };
+    // The children's tournaments. No sub flag and no override test — a parent
+    // is never the staffed coach on these, that's the whole point of them.
+    const kidTns = !kidTeamSet.size ? [] : (tournamentAssignments||[])
+      .filter(ta => kidTeamSet.has(ta.team_id) || kidTeamSet.has(ta.team_name))
+      .map(ta => ({ team: ta.team_id || ta.team_name, tn: tournamentById.get(ta.tournament_id) }))
+      .filter(x => x.tn && !x.tn.cancelled);
+    const teamAtTn = (team, iso) => { const dow = new Date(iso + "T00:00").getDay(); let winStart = iso; if (dow === 0) { const f = new Date(iso + "T00:00"); f.setDate(f.getDate() - 2); winStart = localDateISO(f); } return [...myTns, ...kidTns].some(x => x.team === team && x.tn.start_date <= iso && (((x.tn.end_date || x.tn.start_date) >= iso) || (dow === 0 && x.tn.end_date && x.tn.end_date > x.tn.start_date && x.tn.end_date >= winStart))); };
+    const practicesFor = (set, iso) => { const phase = phaseForDate(iso); if (!phase) return []; const dow = DOW[new Date(iso + "T00:00").getDay()]; const byTeam = {}; (practiceAssignments||[]).forEach(a => { if (!set.has(a.team_name) || (a.phase || "fall1") !== phase || a.day !== dow) return; if (isCancelled(iso, a.team_name) || teamAtTn(a.team_name, iso)) return; (byTeam[a.team_name] = byTeam[a.team_name] || []).push(a.slot); }); return Object.entries(byTeam).map(([team, slots]) => ({ team, slots: mergeAdjacentSlots(slots) })); };
     const tnsOn = (iso) => { const seen = new Set(); return myTns.filter(x => x.tn.start_date <= iso && (x.tn.end_date || x.tn.start_date) >= iso).filter(x => { const k = x.team + "|" + x.tn.id; if (seen.has(k)) return false; seen.add(k); return true; }); };
-    const saOn = (iso) => { const byTeam = {}; (saSessions || []).forEach(s => { if (!myTeamSet.has(s.team_name) || s.session_date !== iso) return; if (isCancelled(iso, s.team_name) || teamAtTn(s.team_name, iso)) return; (byTeam[s.team_name] = byTeam[s.team_name] || { slots: [], block: s.block }).slots.push(s.slot); }); return Object.entries(byTeam).map(([team, v]) => ({ team, slots: mergeAdjacentSlots(v.slots), block: v.block })); };
+    const saFor = (set, iso) => { const byTeam = {}; (saSessions || []).forEach(s => { if (!set.has(s.team_name) || s.session_date !== iso) return; if (isCancelled(iso, s.team_name) || teamAtTn(s.team_name, iso)) return; (byTeam[s.team_name] = byTeam[s.team_name] || { slots: [], block: s.block }).slots.push(s.slot); }); return Object.entries(byTeam).map(([team, v]) => ({ team, slots: mergeAdjacentSlots(v.slots), block: v.block })); };
+    const practicesOn = (iso) => practicesFor(myTeamSet, iso);
+    const saOn        = (iso) => saFor(myTeamSet, iso);
+    // The children's day. Empty sets short-circuit, so a coach without a child
+    // on another team pays nothing for any of this.
+    const kidPracticesOn = (iso) => kidTeamSet.size ? practicesFor(kidTeamSet, iso) : [];
+    const kidSaOn        = (iso) => kidTeamSet.size ? saFor(kidTeamSet, iso) : [];
+    const kidTnsOn = (iso) => { const seen = new Set(); return kidTns
+      .filter(x => x.tn.start_date <= iso && (x.tn.end_date || x.tn.start_date) >= iso)
+      .filter(x => { const k = x.team + "|" + x.tn.id; if (seen.has(k)) return false; seen.add(k); return true; }); };
+    const kidEventsOn = (iso) => (teamEvents || []).filter(e => kidTeamSet.has(e.team_name) && e.event_date === iso);
     // Short block tag for S&A entries (season1 → B1, fall2 → F2, …).
     const saTag = (b) => ({ season1:"B1", season2:"B2", fall1:"F1", fall2:"F2" })[b] || null;
-    const PR = "#06b6d4", TNC = "#f59e0b", SA = "#22c55e", SUBC = "#ec4899", FLT = "#14b8a6"; // practice/tournament/S&A/subbing/floating
+    const PR = "#06b6d4", TNC = "#f59e0b", SA = "#22c55e", SUBC = "#ec4899", FLT = "#14b8a6", KID = "#818cf8"; // practice/tournament/S&A/subbing/floating/own child
     const mySubs = (practiceCoverage || []).filter(c => isRealSub(c.sub_name) && matches(c.sub_name));
     const subsOn = (iso) => { const seen = new Set(); return mySubs.filter(c => c.practice_date === iso).map(c => { const mv = (slotMoves||[]).find(x => x.practice_date === iso && x.team_name === c.team_name); return { team: c.team_name, slot: (mv && mv.slot) || c.slot }; }).filter(x => { const k = x.team + "|" + x.slot; if (seen.has(k)) return false; seen.add(k); return true; }); };
     // Floating availability (coach_floats): slots this coach signed up to float.
@@ -8325,9 +8361,10 @@ export default function App() {
     }
     const dsscOn = (iso) => myDssc.filter(x => x.date === iso);
     // Nothing to show for this coach → skip.
-    if (!teamNames.length && !myTns.length && !mySubs.length && !myFloats.length && !myDssc.length) return null;
+    if (!teamNames.length && !myTns.length && !mySubs.length && !myFloats.length && !myDssc.length && !kidTeamSet.size) return null;
     const sel = (calSel && calSel.slice(0,7) === monthKey) ? calSel : (todayISO.slice(0,7) === monthKey ? todayISO : null);
     const selP = sel ? practicesOn(sel) : [], selT = sel ? tnsOn(sel) : [], selSA = sel ? saOn(sel) : [], selSub = sel ? subsOn(sel) : [], selFl = sel ? floatsOn(sel) : [], selDssc = sel ? dsscOn(sel) : [];
+    const selKidP = sel ? kidPracticesOn(sel) : [], selKidT = sel ? kidTnsOn(sel) : [], selKidSA = sel ? kidSaOn(sel) : [], selKidE = sel ? kidEventsOn(sel) : [];
     const fmtLong = (iso) => new Date(iso + "T12:00:00").toLocaleDateString(undefined, { weekday:"long", month:"short", day:"numeric" });
     const cells = []; for (let i = 0; i < leadPad; i++) cells.push(null); for (let d = 1; d <= daysInMonth; d++) cells.push(d);
     const chip = (color) => ({fontSize:7.5,fontWeight:800,lineHeight:"11px",height:11,borderRadius:2,padding:"0 2px",background:color+"33",color,overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis",letterSpacing:0.2});
@@ -8349,6 +8386,7 @@ export default function App() {
             if (d === null) return <div key={"b"+i} />;
             const iso = isoOf(d);
             const evP = practicesOn(iso), evT = tnsOn(iso), evSA = saOn(iso), evSub = subsOn(iso), evFl = floatsOn(iso);
+            const evKidP = kidPracticesOn(iso), evKidT = kidTnsOn(iso), evKidSA = kidSaOn(iso), evKidE = kidEventsOn(iso);
             const tnLabels = [...new Set(evT.map(x => tnAbbr(x.tn.name)))];
             // Flight days for whoever this calendar belongs to. RLS already
             // limits a non-admin to their own rows, and matches() is the same
@@ -8391,7 +8429,11 @@ export default function App() {
               ...evSub.map(x => ({ label: "🔁 " + abbr(x.team) + " " + shortTime(x.slot), c: SUBC })),
               ...evFl.map(sl => ({ label: "☁ " + shortTime(sl), c: FLT })),
               ...evSA.map(x => ({ label: abbr(x.team) + " S&A", c: SA })),
-              ...evP.map(x => ({ label: abbr(x.team) + " " + shortTime(x.slots.join(",")), c: PR }))];
+              ...evP.map(x => ({ label: abbr(x.team) + " " + shortTime(x.slots.join(",")), c: PR })),
+              ...evKidT.map(x => ({ label: "🎒 " + kidsOn(x.team) + " " + tnAbbr(x.tn.name), c: KID })),
+              ...evKidE.map(e => ({ label: "🎒 " + kidsOn(e.team_name) + (fmtFlightTime(e.start_time) ? " " + fmtFlightTime(e.start_time) : ""), c: KID })),
+              ...evKidSA.map(x => ({ label: "🎒 " + kidsOn(x.team) + " S&A", c: KID })),
+              ...evKidP.map(x => ({ label: "🎒 " + kidsOn(x.team) + " " + shortTime(x.slots.join(",")), c: KID }))];
             const isToday = iso === todayISO, isSel = iso === sel;
             return (
               <button key={iso} onClick={()=>setCalSel(iso)} style={{display:"flex",flexDirection:"column",alignItems:"stretch",gap:1,minHeight:30,textAlign:"left",background:isSel?"rgba(233,30,140,0.14)":events.length?C.bg:"transparent",border:"1px solid "+(isSel?C.gold:isToday?C.acc:"transparent"),borderRadius:6,cursor:"pointer",fontFamily:"inherit",padding:"2px 2px 3px",overflow:"hidden"}}>
@@ -8409,11 +8451,18 @@ export default function App() {
           <span style={{display:"flex",alignItems:"center",gap:4}}><span style={{width:10,height:8,borderRadius:2,background:SA+"33",border:"1px solid "+SA}} />S&amp;A</span>
           <span style={{display:"flex",alignItems:"center",gap:4}}><span style={{width:10,height:8,borderRadius:2,background:TNC+"33",border:"1px solid "+TNC}} />Tourn.</span>
           {myDssc.length>0 && <span style={{display:"flex",alignItems:"center",gap:4}}><span style={{width:10,height:8,borderRadius:2,background:"#8b5cf633",border:"1px solid #8b5cf6"}} />🏆 DSSC</span>}
+          {kidTeamSet.size>0 && (
+            <span style={{display:"flex",alignItems:"center",gap:4}} title={[...kidTeamSet].map(t => kidsOn(t) + " · " + t).join(" | ")}>
+              <span style={{width:10,height:8,borderRadius:2,background:KID+"33",border:"1px solid "+KID}} />
+              🎒 {[...kidTeamSet].map(t => kidsOn(t)).join(", ")} — not coaching
+            </span>
+          )}
         </div>
         {sel && (
           <div style={{marginTop:10,borderTop:"1px solid "+C.border,paddingTop:10}}>
             <div style={{fontSize:11,fontWeight:800,color:C.text,marginBottom:6}}>{fmtLong(sel)}{sel===todayISO?" · Today":""}</div>
-            {(selP.length===0 && selT.length===0 && selSA.length===0 && selSub.length===0 && selFl.length===0 && selDssc.length===0) ? (
+            {(selP.length===0 && selT.length===0 && selSA.length===0 && selSub.length===0 && selFl.length===0 && selDssc.length===0
+              && selKidP.length===0 && selKidT.length===0 && selKidSA.length===0 && selKidE.length===0) ? (
               <div style={{fontSize:12,color:C.mut}}>Nothing scheduled.</div>
             ) : (
               <div style={{display:"flex",flexDirection:"column",gap:5}}>
@@ -8463,6 +8512,45 @@ export default function App() {
                   <div key={"p"+i} style={{display:"flex",alignItems:"center",gap:8,fontSize:13}}>
                     <span style={{width:6,height:6,borderRadius:3,background:PR,flexShrink:0}} />
                     <span style={{flex:1,color:C.text,fontWeight:600}}>{x.team}</span>
+                    <span style={{fontSize:11,color:C.mut}}>{x.slots.join(", ")}</span>
+                  </div>
+                ))}
+                {/* The coach's own child, on a team they don't coach. Listed
+                    under the same day but plainly marked, so nobody reads a
+                    daughter's Saturday as a shift they forgot they had. */}
+                {selKidT.map((x,i) => (
+                  <div key={"kt"+i} onClick={()=>openTournament(x.tn.id)} title="Open this tournament"
+                    style={{display:"flex",alignItems:"center",gap:8,fontSize:13,cursor:"pointer"}}>
+                    <span style={{width:6,height:6,borderRadius:3,background:KID,flexShrink:0}} />
+                    <span style={{flex:1,color:C.text,fontWeight:600}} title={x.tn.name}>
+                      🎒 <b style={{color:KID}}>{kidsOn(x.team)}</b> <span style={{fontWeight:500}}>{x.tn.name}</span>
+                      <span style={{color:C.mut,fontWeight:500}}> · {x.team}</span>
+                      {x.tn.location && <span style={{color:C.mut,fontWeight:500}}> · 📍{shortCity(x.tn.location)}</span>}
+                    </span>
+                    <span style={{fontSize:10,fontWeight:800,color:KID,textTransform:"uppercase"}}>Playing</span>
+                  </div>
+                ))}
+                {selKidE.map((e,i) => (
+                  <div key={"ke"+i} style={{display:"flex",alignItems:"center",gap:8,fontSize:13}}>
+                    <span style={{width:6,height:6,borderRadius:3,background:KID,flexShrink:0}} />
+                    <span style={{flex:1,color:C.text,fontWeight:600}}>
+                      🎒 <b style={{color:KID}}>{kidsOn(e.team_name)}</b> <span style={{fontWeight:500}}>{e.title}</span>
+                      <span style={{color:C.mut,fontWeight:500}}> · {e.team_name}</span>
+                    </span>
+                    <span style={{fontSize:11,color:C.mut}}>{fmtFlightTime(e.start_time) || e.start_time || ""}</span>
+                  </div>
+                ))}
+                {selKidSA.map((x,i) => (
+                  <div key={"ksa"+i} style={{display:"flex",alignItems:"center",gap:8,fontSize:13}}>
+                    <span style={{width:6,height:6,borderRadius:3,background:KID,flexShrink:0}} />
+                    <span style={{flex:1,color:C.text,fontWeight:600}}>🎒 <b style={{color:KID}}>{kidsOn(x.team)}</b> <span style={{fontWeight:500}}>{x.team} S&amp;A</span></span>
+                    <span style={{fontSize:11,color:C.mut}}>{x.slots.join(", ")}</span>
+                  </div>
+                ))}
+                {selKidP.map((x,i) => (
+                  <div key={"kp"+i} style={{display:"flex",alignItems:"center",gap:8,fontSize:13}}>
+                    <span style={{width:6,height:6,borderRadius:3,background:KID,flexShrink:0}} />
+                    <span style={{flex:1,color:C.text,fontWeight:600}}>🎒 <b style={{color:KID}}>{kidsOn(x.team)}</b> <span style={{fontWeight:500}}>{x.team} practice</span></span>
                     <span style={{fontSize:11,color:C.mut}}>{x.slots.join(", ")}</span>
                   </div>
                 ))}
