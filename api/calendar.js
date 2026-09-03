@@ -130,6 +130,7 @@ export default async function handler(req, res) {
       `DTEND;TZID=${TZ}:` + dt(startIso, eHour),
       "SUMMARY:" + icsEsc(summary),
     ];
+    if (opts.description) lines.push("DESCRIPTION:" + icsEsc(opts.description));
     if (opts.location) lines.push("LOCATION:" + icsEsc(opts.location));
     if (opts.rruleUntil) lines.push("RRULE:FREQ=WEEKLY;UNTIL=" + opts.rruleUntil.replace(/-/g, "") + "T235959Z");
     for (const ex of opts.exdates || []) lines.push(`EXDATE;TZID=${TZ}:` + dt(ex, sHour));
@@ -202,15 +203,15 @@ export default async function handler(req, res) {
     const t = slotTimes(slot); if (!t) continue;
     push(`${team}-moved-${d}-${slot}`.replace(/\s+/g, "_"), team + " Practice (time change)", d, t[0], t[1], { location: WAREHOUSE_LOC });
   }
-  // Orientation Night (all-day)
+  // Orientation Night, 6-10pm. It used to go out as an all-day banner, which
+  // tells a parent the date and nothing else — and this is a night with a
+  // start time everyone is expected at. The UID is deliberately unchanged, so
+  // a SportsYou calendar already subscribed updates the event it has instead
+  // of gaining a second copy beside it.
   const age = parseInt(team.match(/^\d+/)?.[0] || "", 10);
   if (ORIENTATION[age]) {
-    const d = ORIENTATION[age];
-    ev.push(["BEGIN:VEVENT", "UID:" + (team + "-orientation").replace(/\s+/g, "_") + "@dseliteevals", "DTSTAMP:20260702T000000Z",
-      "DTSTART;VALUE=DATE:" + d.replace(/-/g, ""),
-      "SUMMARY:" + icsEsc("DS Elite Orientation Night — " + team),
-      "DESCRIPTION:" + icsEsc("Jersey tryout, parent orientation, player commitment, and team building. First hour with parents; remaining three hours are team-only."),
-      "LOCATION:" + icsEsc(WAREHOUSE_LOC), "END:VEVENT"].join("\r\n"));
+    push((team + "-orientation").replace(/\s+/g, "_"), "DS Elite Orientation Night — " + team,
+      ORIENTATION[age], 18, 22, { location: WAREHOUSE_LOC, description: "Jersey tryout, parent orientation, player commitment, and team building. First hour with parents; remaining three hours are team-only." });
   }
 
   // One-off team events (jersey tryouts, photo day, meetings). Deliberately
