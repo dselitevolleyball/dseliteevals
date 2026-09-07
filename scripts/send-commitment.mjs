@@ -22,6 +22,13 @@
 //   node scripts/send-commitment.mjs --unsigned            # only those not fully signed
 //   node scripts/send-commitment.mjs --send                # actually send
 //
+// Testing against one real family, without mailing them:
+//   node scripts/send-commitment.mjs --player "Juliet Rose" --to drew@dselitevolleyball.com --send
+//
+// --to replaces the recipients entirely, so the link is a real one for a real
+// player but the mail only goes where you say. Signing from that email writes a
+// real signature for that player — clear it afterwards if it was only a test.
+//
 // --unsigned is the chaser: run it a few days after orientation to catch the
 // families who never finished, and again in October. Safe to re-run — a fully
 // signed family is skipped either way.
@@ -58,6 +65,10 @@ const onlyUnsigned = args.includes("--unsigned");
 const argVal = (flag) => { const i = args.indexOf(flag); return i >= 0 ? args[i + 1] : null; };
 const onlyTeam = argVal("--team");
 const onlyAge = argVal("--age");
+const onlyPlayer = argVal("--player");
+// Redirect every recipient to one address. For testing a real link without
+// mailing the family it belongs to.
+const overrideTo = argVal("--to");
 
 const { data: players, error } = await sb.from("players")
   .select("id, first_name, last_name, age, team_assignment, offer_status, commitment_token, parent_name, parent2_name, parent_email, parent_email2, parent_email3")
@@ -71,6 +82,11 @@ let targets = players.filter(p =>
   !TERMINAL.includes(String(p.offer_status || "").trim()));
 if (onlyTeam) targets = targets.filter(p => p.team_assignment === onlyTeam);
 if (onlyAge) targets = targets.filter(p => String(p.team_assignment || "").startsWith(String(onlyAge)));
+if (onlyPlayer) {
+  const want = onlyPlayer.trim().toLowerCase();
+  targets = targets.filter(p => (p.first_name + " " + p.last_name).trim().toLowerCase() === want);
+  if (!targets.length) { console.error(`No current-roster player called "${onlyPlayer}".`); process.exit(1); }
+}
 
 const { data: signedRows } = await sb.from("player_commitments")
   .select("player_id, player_signed_at, parent_signed_at");
@@ -81,8 +97,10 @@ const partial = (p) => { const r = byId.get(p.id); return !!(r && (r.player_sign
 const alreadyDone = targets.filter(fully).length;
 if (onlyUnsigned) targets = targets.filter(p => !fully(p));
 
-const emailsOf = (p) => [...new Set([p.parent_email, p.parent_email2, p.parent_email3]
-  .map(e => String(e || "").trim()).filter(Boolean))];
+const emailsOf = (p) => overrideTo
+  ? [overrideTo.trim()]
+  : [...new Set([p.parent_email, p.parent_email2, p.parent_email3]
+      .map(e => String(e || "").trim()).filter(Boolean))];
 
 const noToken = targets.filter(p => !p.commitment_token);
 
@@ -92,7 +110,7 @@ Here is the DS Elite commitment for ${p.first_name}${p.team_assignment ? ", " + 
 
 ${APP_URL}/commitment?t=${p.commitment_token}
 
-Nothing in it is new. Every line comes from what we walked through at orientation — the work outside practice, attendance and wall work, tournament days, how we treat officials and teammates, and what we're asking of parents in the stands and on the ride home.
+Nothing in it is new. Every line comes from what we walked through at orientation — the work outside practice, attendance and wall work, tournament days, how we treat officials and teammates, and what we're asking of parents in the stands and when something needs raising.
 
 There are two halves. ${p.first_name} reads and signs hers, and a parent reads and signs the other. Do it together rather than separately — that conversation is most of the point.
 
