@@ -16,6 +16,14 @@
 //   wrong one. So she keeps a room to herself and is never counted as half of
 //   a pair.
 //
+//   That room is her family's room, not a second one. She sleeps where her
+//   daughter sleeps, so the family is ONE booking — counting the player's room
+//   and then a coach room on top books a bed nobody uses. Her own children are
+//   therefore taken out of the player count and the family is charged once,
+//   however many of her kids are playing that weekend. Jeremiah McElwee has two
+//   daughters in the club and Lindsey Shumway has two; without this they book
+//   three rooms apiece.
+//
 // An odd number of same-sex coaches leaves one on her own — three women is two
 // rooms, not one and a half — so each group rounds up independently. Rounding
 // the combined total instead would quietly put a man and a woman together.
@@ -33,10 +41,12 @@ export const norm = (s) => String(s || "").trim().toLowerCase().replace(/\s+/g, 
  * @returns {object} the plan, with every group named so the UI can show its working
  */
 export function planRooms({ players = [], coaches = [] } = {}) {
-  // One room per player's family.
-  const playerRooms = players.length;
-
+  // One room per player's family — minus the players who are a coach's own
+  // kids, because those families are counted once on the coach's side below.
   const own = coaches.filter(c => c.hasPlayerHere);
+  const ownKids = own.reduce((n, c) => n + Math.max(0, Number(c.ownPlayers) || 1), 0);
+  const playerRooms = Math.max(0, players.length - ownKids);
+
   const rest = coaches.filter(c => !c.hasPlayerHere);
   const women = rest.filter(c => c.sex === "F");
   const men = rest.filter(c => c.sex === "M");
@@ -50,6 +60,8 @@ export function planRooms({ players = [], coaches = [] } = {}) {
   // somebody records it. Counted high rather than low: a room too many is a
   // cancellation, a room too few is a coach with nowhere to sleep.
   const unknownRooms = unknown.length;
+  // One room per coach-parent: hers and her kids' together. This is the only
+  // place that family is counted — their players were removed above.
   const ownRooms = own.length;
 
   const coachRooms = womenRooms + menRooms + unknownRooms + ownRooms;
@@ -62,7 +74,7 @@ export function planRooms({ players = [], coaches = [] } = {}) {
       players: { count: players.length, rooms: playerRooms },
       women: { names: women.map(c => c.name), rooms: womenRooms },
       men: { names: men.map(c => c.name), rooms: menRooms },
-      ownRoom: { names: own.map(c => c.name), rooms: ownRooms },
+      ownRoom: { names: own.map(c => c.name), rooms: ownRooms, ownKids },
       unknownSex: { names: unknown.map(c => c.name), rooms: unknownRooms },
     },
     // What stops this being a finished answer, in words the UI can print.

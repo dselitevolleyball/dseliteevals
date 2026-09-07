@@ -1832,6 +1832,7 @@ export default function App() {
   const [coachCalSel, setCoachCalSel]                 = useState(null); // coach card calendar: selected day
   const [tryouts, setTryouts]                         = useState([]);
   const [coachRoster, setCoachRoster]                 = useState([]);
+  const [coachChildren, setCoachChildren]             = useState([]);  // coach -> her own players
   // SMS state
   const [smsThreads, setSmsThreads]                   = useState([]);
   const [smsMessages, setSmsMessages]                 = useState([]);
@@ -4261,6 +4262,13 @@ export default function App() {
     if (error) console.error("Load coach_roster error:", error);
     setCoachRoster(data || []);
   }, []);
+  // Which players are a coach's own kids. Drives the room plan: a coach whose
+  // daughter is at a tournament sleeps in the family's room, not a second one.
+  const loadCoachChildren = useCallback(async () => {
+    const { data, error } = await supabase.from("coach_children").select("*");
+    if (error) console.error("Load coach_children error:", error);
+    setCoachChildren(data || []);
+  }, []);
   // Add a coach to the chart (coach roster) — e.g. a floater not on any team.
   const addCoachToChart = useCallback(async (name) => {
     const n = (name || "").trim();
@@ -4754,7 +4762,7 @@ export default function App() {
         loadPlayers(), loadCoaches(), loadRankings(), loadFavorites(),
         loadTeamStatus(), loadTeamTasks(), loadTeamQuestions(), loadTaskMeta(),
         loadUpdates(), loadPracticeApprovals(), loadCoachRequests(), loadCoachFloats(),
-        loadTeamsList(), loadBlackouts(), loadCoachRoster(), loadPractice(),
+        loadTeamsList(), loadBlackouts(), loadCoachRoster(), loadCoachChildren(), loadPractice(),
         view === "activity" ? loadActivity() : null,
         (view === "tournaments" || view === "teamdir" || view === "home") ? loadTournaments() : null,
         view === "practice" ? loadSnapshots() : null,
@@ -4769,7 +4777,7 @@ export default function App() {
     } finally {
       setRefreshing(false);
     }
-  }, [isApproved, view, loadPlayers, loadCoaches, loadRankings, loadFavorites, loadTeamStatus, loadTeamTasks, loadTeamQuestions, loadTaskMeta, loadUpdates, loadPracticeApprovals, loadCoachRequests, loadCoachFloats, loadTeamsList, loadBlackouts, loadCoachRoster, loadPractice, loadActivity, loadTournaments, loadSnapshots, loadTryouts, loadSmsThreads, loadEmailTemplates, loadEmailLog, loadIgnoredWarnings, loadPracticeCoverage, loadPracticeCancellations]);
+  }, [isApproved, view, loadPlayers, loadCoaches, loadRankings, loadFavorites, loadTeamStatus, loadTeamTasks, loadTeamQuestions, loadTaskMeta, loadUpdates, loadPracticeApprovals, loadCoachRequests, loadCoachFloats, loadTeamsList, loadBlackouts, loadCoachRoster, loadCoachChildren, loadPractice, loadActivity, loadTournaments, loadSnapshots, loadTryouts, loadSmsThreads, loadEmailTemplates, loadEmailLog, loadIgnoredWarnings, loadPracticeCoverage, loadPracticeCancellations]);
   useEffect(() => {
     if (!isApproved) return;
     let t = null;
@@ -26701,8 +26709,23 @@ export default function App() {
       // weekend is her own — matched on the parent fields the roster already
       // holds, which is how Kelli Hardge and Kristen Alexandrov resolve.
       const nrmN = (x) => String(x || "").trim().toLowerCase().replace(/\s+/g, " ");
-      const hasPlayerHere = (name) => attending.some(p =>
-        nrmN(p.parent_name) === nrmN(name) || nrmN(p.parent2_name) === nrmN(name));
+      // Her own players attending this weekend. The coach_children link is the
+      // authority — Jason Baerwald is not on Brooklynn's player record at all,
+      // so a parent-name match alone misses him — with the name match kept as a
+      // fallback for any coach not linked yet.
+      const linkedIdsFor = (name) => {
+        const cr = coachRoster.find(x => nrmN((x.first_name || "") + " " + (x.last_name || "")) === nrmN(name));
+        if (!cr) return null;
+        const ids = coachChildren.filter(c => c.coach_roster_id === cr.id).map(c => c.player_id);
+        return ids.length ? ids : null;
+      };
+      const ownPlayersFor = (name) => {
+        const linked = linkedIdsFor(name);
+        if (linked) return attending.filter(p => linked.includes(p.id)).length;
+        return attending.filter(p =>
+          nrmN(p.parent_name) === nrmN(name) || nrmN(p.parent2_name) === nrmN(name)).length;
+      };
+      const hasPlayerHere = (name) => ownPlayersFor(name) > 0;
       const sexOf = (name) => {
         const r = coachRoster.find(x => nrmN((x.first_name || "") + " " + (x.last_name || "")) === nrmN(name));
         return r?.sex || null;
@@ -26735,7 +26758,8 @@ export default function App() {
       };
       const coachList = staff.map(n => {
         const team = primaryTeam(n);
-        return { name: n, sex: sexOf(n), hasPlayerHere: hasPlayerHere(n), team,
+        const ownPlayers = ownPlayersFor(n);
+        return { name: n, sex: sexOf(n), hasPlayerHere: ownPlayers > 0, ownPlayers, team,
                  alsoTeams: (coachTeams.get(n)?.all || []).filter(x => x !== team) };
       });
       return { ...planRooms({ players: attending.map(p => p.id), coaches: coachList }),
