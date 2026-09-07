@@ -4671,7 +4671,7 @@ export default function App() {
     if (error) { window.alert("Remove failed: " + error.message); loadHawaii(); }
   }, [loadHawaii]);
   // The Email view needs these rows too — its Hawaii audience chips filter on them.
-  useEffect(() => { if (isApproved && (view === "hawaii" || view === "email")) loadHawaii(); }, [isApproved, view, loadHawaii]);
+  useEffect(() => { if (isApproved && (view === "hawaii" || view === "email" || view === "roster")) loadHawaii(); }, [isApproved, view, loadHawaii]);
 
   // Messages waiting for the SportsYou bookmarklet to drain.
   const loadSyOutbox = useCallback(async () => {
@@ -11377,6 +11377,30 @@ export default function App() {
       if (!byTeam.has(t)) byTeam.set(t, []);
       byTeam.get(t).push(p);
     }
+    // Event teams — a tournament-only roster like 14 Crystal for SPAM Slam.
+    // A team with zero practices a week is one by definition, and its players
+    // are NOT on it by team_assignment: they keep their own team for everything
+    // else and are gathered here from hawaii_interest.hawaii_team instead.
+    //
+    // They therefore appear twice on this page, under their home team and again
+    // under the event team, which is the truth — Lucy Plotkin is on 14 Ruby and
+    // she is flying to Honolulu with 14 Crystal.
+    const eventTeamNames = practiceTeams
+      .filter(t => Number(t.practices_per_week) === 0)
+      .map(t => t.team_name);
+    for (const name of eventTeamNames) {
+      // A coach without club-wide visibility sees an event team only if she
+      // staffs it — the players on it are mostly not otherwise hers.
+      if (scoped && !mine.has(name)) continue;
+      const ids = new Set(hawaiiInterest.filter(h => h.hawaii_team === name).map(h => h.player_id));
+      if (!ids.size) continue;
+      const list = players.filter(p => ids.has(p.id)
+        && p.roster_status === "active"
+        && (p.season || "2026-27") === rosterSeason
+        && match(p));
+      if (list.length) byTeam.set(name, list);
+    }
+    const isEventTeam = (t) => eventTeamNames.includes(t);
     const teams = [...byTeam.keys()].sort((a,b) => {
       const ag = parseInt(a) || 99, bg = parseInt(b) || 99;
       return ag - bg || a.localeCompare(b);
@@ -11523,6 +11547,16 @@ export default function App() {
                 <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:8,flexWrap:"wrap"}}>
                   <span onClick={()=>setTeamCardName(t)} title="Open team card"
                     style={{fontSize:14,fontWeight:800,color:C.gold,cursor:"pointer"}}>{t}</span>
+                  {/* An event team is flagged because these players also appear
+                      under their home team above — without the chip the same
+                      girl showing up twice reads as a bug. */}
+                  {isEventTeam(t) && (
+                    <span title="Tournament-only roster. These players are on their home teams for everything else."
+                      style={{fontSize:9,fontWeight:800,letterSpacing:0.5,padding:"2px 7px",borderRadius:10,
+                              background:"rgba(6,182,212,0.14)",color:"#06b6d4",border:"1px solid rgba(6,182,212,0.4)"}}>
+                      TOURNAMENT ONLY
+                    </span>
+                  )}
                   <span style={{fontSize:11,color:C.mut}}>{list.length} player{list.length===1?"":"s"}</span>
                   {tm?.head_coach && <span style={{fontSize:10,color:C.mut,marginLeft:"auto"}}>{tm.head_coach}</span>}
                 </div>
@@ -11542,6 +11576,13 @@ export default function App() {
                       <span style={{fontWeight:700,color:C.text,flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
                         {p.first_name} {p.last_name}
                       </span>
+                      {/* Inside an event team, say where she actually plays.
+                          Otherwise a 13 Ruby girl sitting in a 14s roster looks
+                          like a mistake instead of a call-up. */}
+                      {isEventTeam(t) && p.team_assignment && p.team_assignment !== t && (
+                        <span style={{...chip,color:"#06b6d4",borderColor:"rgba(6,182,212,0.4)"}}
+                          title={"Plays on " + p.team_assignment}>{p.team_assignment}</span>
+                      )}
                       {p.primary_position && <span style={chip}>{p.primary_position}</span>}
                       {!p.parent_email && !p.player_email && <span style={{...chip,color:"#f59e0b",borderColor:"#f59e0b"}} title="No email on file">no email</span>}
                     </div>
