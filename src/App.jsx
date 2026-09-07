@@ -4,6 +4,7 @@ import Papa from "papaparse";
 import { DndContext, useDraggable, useDroppable, PointerSensor, TouchSensor, useSensor, useSensors } from "@dnd-kit/core";
 import { GEAR_TEAMS } from "../shared/gear-teams.js";
 import { planRooms, pairCoaches, planRoomsByTeam, UNASSIGNED } from "../shared/room-plan.js";
+import { PLAYER_CLAUSES, PARENT_CLAUSES, isFullySigned } from "../shared/commitment.js";
 import { SCHOOL_DIVS } from "../shared/school-divs.js";
 import { schoolKey } from "../shared/school-schedule.js";
 
@@ -1582,6 +1583,7 @@ export default function App() {
   // Incident log. `incidentDraft` non-null means the report dialog is open;
   // it carries whatever we could prefill from where the coach opened it.
   const [schoolReports, setSchoolReports]             = useState([]);
+  const [commitments, setCommitments]                 = useState([]);   // orientation-night signatures
   const [schoolFilter, setSchoolFilter]               = useState("all"); // all | in | waiting | none
   const [schoolGroup, setSchoolGroup]                 = useState("school"); // school | team | flat
   const [schoolEditId, setSchoolEditId]               = useState(null);    // player card: whose answer staff is correcting
@@ -2343,6 +2345,13 @@ export default function App() {
     if (error) { console.error("Load school_team_reports error:", error); return; }
     setSchoolReports(data || []);
   }, []);
+  // Orientation-night commitment signatures. Two halves per player; the card
+  // only says "signed" when both are in (isFullySigned in shared/commitment.js).
+  const loadCommitments = useCallback(async () => {
+    const { data, error } = await supabase.from("player_commitments").select("*");
+    if (error) { console.error("Load player_commitments error:", error); return; }
+    setCommitments(data || []);
+  }, []);
   const loadSchoolGames = useCallback(async () => {
     const { data, error } = await supabase.from("school_games").select("*").order("game_date");
     if (error) { console.error("Load school_games error:", error); return; }
@@ -2475,6 +2484,7 @@ export default function App() {
 
   useEffect(() => { if (isApproved) { loadPlayers(); loadRankings(); loadIncidents(); loadIncidentNotes(); } }, [isApproved, loadPlayers, loadRankings, loadIncidents, loadIncidentNotes]);
   useEffect(() => { if (isApproved) loadSchoolReports(); }, [isApproved, loadSchoolReports]);
+  useEffect(() => { if (isApproved) loadCommitments(); }, [isApproved, loadCommitments]);
   useEffect(() => { if (isApproved) loadGearOrders(); }, [isApproved, loadGearOrders]);
   useEffect(() => { if (isApproved) loadSchoolGames(); }, [isApproved, loadSchoolGames]);
   // loadTeamsList is declared further down, so naming it here would be a TDZ
@@ -12532,6 +12542,48 @@ export default function App() {
               })}
             </div>
           </div>
+          {/* Orientation-night commitment. Read-only here on purpose: this is a
+              signature, not a flag, and an admin ticking it would defeat the
+              point. The link is the only way it gets signed. */}
+          {(() => {
+            const c = commitments.find(x => x.player_id === p.id);
+            const done = isFullySigned(c);
+            const half = !!c && !done && (c.player_signed_at || c.parent_signed_at);
+            const when = (t) => { try { return new Date(t).toLocaleDateString("en-US",{month:"short",day:"numeric"}); } catch { return ""; } };
+            const link = p.commitment_token ? "/commitment?t=" + p.commitment_token : null;
+            const tone = done ? C.grn : half ? C.gold : C.mut;
+            return (
+              <div style={{marginTop:8,padding:"12px 14px",background:C.bg,borderRadius:10,border:"1px solid "+(done?C.grn:half?C.gold:C.border)}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,flexWrap:"wrap"}}>
+                  <div style={{fontSize:11,fontWeight:700,color:C.gold,letterSpacing:0.5}}>COMMITMENT</div>
+                  <div style={{fontSize:12,fontWeight:700,color:tone}}>
+                    {done ? "Commitment signed \u2713" : half ? "Half signed" : "Not signed"}
+                  </div>
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:8,marginTop:8}}>
+                  {[["Player", c?.player_name, c?.player_signed_at, PLAYER_CLAUSES.length],
+                    ["Parent", c?.parent_name, c?.parent_signed_at, PARENT_CLAUSES.length]].map(([who,nm,at,n]) => (
+                    <div key={who} style={{padding:"8px 11px",borderRadius:8,border:"1px solid "+(at?C.grn:C.border),background:at?"rgba(34,197,94,0.08)":"transparent"}}>
+                      <div style={{fontSize:11,fontWeight:700,color:at?C.grn:C.mut}}>{who}{at?" \u2713":""}</div>
+                      <div style={{fontSize:11,color:at?C.text:C.mut,marginTop:2}}>
+                        {at ? nm + " \u00b7 " + when(at) + " \u00b7 all " + n + " agreed" : "waiting"}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {link && !done && (
+                  <div style={{marginTop:8,display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+                    <button onClick={()=>{navigator.clipboard?.writeText(window.location.origin+link);}}
+                      style={{background:"none",border:"1px solid "+C.border,color:C.mut,borderRadius:7,padding:"5px 10px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+                      Copy her link
+                    </button>
+                    <a href={link} target="_blank" rel="noreferrer" style={{fontSize:11,color:C.gold,textDecoration:"none",fontWeight:700}}>Open the form \u2192</a>
+                  </div>
+                )}
+                {c?.version && <div style={{fontSize:10,color:C.mut,marginTop:6,fontStyle:"italic"}}>v{c.version}</div>}
+              </div>
+            );
+          })()}
           {/* Mark Complete */}
           <div style={{display:"flex",alignItems:"center",gap:10,marginTop:8,padding:"12px 16px",background:p.eval_complete?"rgba(34,197,94,0.1)":C.bg,borderRadius:10,border:"1px solid "+(p.eval_complete?C.grn:C.border),cursor:"pointer"}} onClick={()=>upd(p.id,{eval_complete:!p.eval_complete})}>
             <input type="checkbox" checked={!!p.eval_complete} readOnly style={{width:20,height:20,accentColor:C.gold,cursor:"pointer"}} />
