@@ -85,6 +85,33 @@ export default async function handler(req, res) {
 
   const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
 
+  const dueAt = (a, team) => [
+    a.head_override || team.head_coach,
+    a.asst_override || team.assistant_coach,
+    team.third_coach,
+    a.sub_coach,
+  ].filter(c => !isPlaceholder(c));
+
+  // Every commitment per coach, day trips included. Coaches sit on two teams
+  // here, and two squads play different tournaments on the same weekend — so a
+  // trip that clashes with something already booked is not a booking to chase.
+  // Jayden was being listed for Countdown City Classic in San Antonio while her
+  // flight to Anaheim that same weekend was already bought.
+  const commitments = new Map();
+  for (const a of (assigns || [])) {
+    const t = tById.get(a.tournament_id);
+    if (!t || t.cancelled) continue;
+    const team = teamBy.get(a.team_id);
+    if (!team) continue;
+    for (const c of [...new Set(dueAt(a, team).map(x => String(x).trim()))]) {
+      const k = norm(c);
+      if (!commitments.has(k)) commitments.set(k, []);
+      commitments.get(k).push({ t, booked: booked.has(a.tournament_id + "|" + k) });
+    }
+  }
+  const overlaps = (x, y) =>
+    x.start_date <= (y.end_date || y.start_date) && y.start_date <= (x.end_date || x.start_date);
+
   const gaps = [];
   for (const a of (assigns || [])) {
     const t = tById.get(a.tournament_id);
@@ -93,16 +120,18 @@ export default async function handler(req, res) {
     if (String(t.start_date) < today) continue;
     const team = teamBy.get(a.team_id);
     if (!team) continue;
-    const going = [
-      a.head_override || team.head_coach,
-      a.asst_override || team.assistant_coach,
-      team.third_coach,
-      a.sub_coach,
-    ].filter(c => !isPlaceholder(c));
-    for (const c of [...new Set(going.map(x => String(x).trim()))]) {
+    for (const c of [...new Set(dueAt(a, team).map(x => String(x).trim()))]) {
       const key = a.tournament_id + "|" + norm(c);
       if (booked.has(key)) continue;
-      gaps.push({ coach: c, team: a.team_id, t, key, isNew: !told.has(key), far: outOfState(t.location) });
+      // Same event entered for both her teams is one trip, not a clash.
+      const clash = (commitments.get(norm(c)) || [])
+        .filter(x => x.t.id !== t.id && overlaps(x.t, t));
+      // Booked elsewhere that weekend: she is provably not going to this one.
+      if (clash.some(x => x.booked)) continue;
+      gaps.push({
+        coach: c, team: a.team_id, t, key, isNew: !told.has(key), far: outOfState(t.location),
+        clash: clash[0] ? String(clash[0].t.name).trim() : null,
+      });
     }
   }
   // De-duplicate: a coach on two teams at one tournament is one trip.
@@ -156,7 +185,10 @@ export default async function handler(req, res) {
       list.map(g =>
         `<tr><td style="padding:7px 10px;border-bottom:1px solid #eee;white-space:nowrap;font-weight:600">${esc(span(g.t.start_date, g.t.end_date))}</td>` +
         `<td style="padding:7px 10px;border-bottom:1px solid #eee;white-space:nowrap">${esc(g.team)}</td>` +
-        `<td style="padding:7px 10px;border-bottom:1px solid #eee">${esc(String(g.t.name).trim())}</td>` +
+        `<td style="padding:7px 10px;border-bottom:1px solid #eee">${esc(String(g.t.name).trim())}` +
+        // She is due at two things that weekend and neither is booked. Say so on
+        // the row, or Kristen books a trip that may not be happening.
+        `${g.clash ? `<div style="color:#9a6510;font-size:12.5px;margin-top:2px">also due at ${esc(g.clash)} that weekend — confirm which before booking</div>` : ""}</td>` +
         `<td style="padding:7px 10px;border-bottom:1px solid #eee;white-space:nowrap">${esc(g.t.location || "")}` +
         `${g.far ? ' <b style="color:#b62d2d">flights</b>' : ""}</td></tr>`).join("") +
       `</tbody></table>`;

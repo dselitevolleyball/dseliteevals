@@ -79,8 +79,44 @@ const tById = new Map((tourns || []).map(t => [t.id, t]));
 const teamBy = new Map((teams || []).map(t => [t.team_name, t]));
 const booked = new Set((travel || []).map(r => r.tournament_id + "|" + norm(r.coach_name)));
 
-// Who is actually going, per tournament per team, after overrides.
+// Who is due where, per tournament per team, after overrides.
+const dueAt = (a, team) => [
+  a.head_override || team.head_coach,
+  a.asst_override || team.assistant_coach,
+  team.third_coach,
+  a.sub_coach,
+].filter(c => !isPlaceholder(c));
+
+// Every commitment a coach has, INCLUDING day trips. A coach on two teams is
+// the normal case here — Jayden heads 14 Ruby and is third on 13 Diamond — and
+// the two squads play different tournaments on the same weekend. She cannot be
+// at both, so a trip that clashes with something else she is due at is not a
+// booking to make, it is a question to answer.
+//
+// Day trips must be in this calendar even though they never need booking:
+// CTPL #2 in Austin is why she is not in New Orleans that weekend.
+const commitments = new Map();
+for (const a of (assigns || [])) {
+  const t = tById.get(a.tournament_id);
+  if (!t || t.cancelled) continue;
+  const team = teamBy.get(a.team_id);
+  if (!team) continue;
+  for (const c of [...new Set(dueAt(a, team).map(x => String(x).trim()))]) {
+    const k = norm(c);
+    if (!commitments.has(k)) commitments.set(k, []);
+    commitments.get(k).push({ t, team: a.team_id, booked: booked.has(a.tournament_id + "|" + k) });
+  }
+}
+const overlaps = (x, y) =>
+  x.start_date <= (y.end_date || y.start_date) && y.start_date <= (x.end_date || x.start_date);
+
+// The same event entered for both her teams is one trip, not a clash.
+const clashFor = (coachKey, t) =>
+  (commitments.get(coachKey) || []).filter(c => c.t.id !== t.id && overlaps(c.t, t));
+
 const gaps = [];
+const superseded = [];   // provably elsewhere: the clashing trip is already booked
+const clashes = [];      // two unbooked commitments the same weekend — Drew decides
 for (const a of (assigns || [])) {
   const t = tById.get(a.tournament_id);
   if (!t || t.cancelled) continue;
@@ -88,22 +124,30 @@ for (const a of (assigns || [])) {
   const team = teamBy.get(a.team_id);
   if (!team) continue;
 
-  const going = [
-    a.head_override || team.head_coach,
-    a.asst_override || team.assistant_coach,
-    team.third_coach,
-    a.sub_coach,
-  ].filter(c => !isPlaceholder(c));
-
-  for (const c of [...new Set(going.map(x => String(x).trim()))]) {
+  for (const c of [...new Set(dueAt(a, team).map(x => String(x).trim()))]) {
     if (onlyCoach && norm(c) !== norm(onlyCoach)) continue;
     if (booked.has(a.tournament_id + "|" + norm(c))) continue;
-    gaps.push({
-      coach: c, team: a.team_id, t,
-      far: outOfState(t.location),
-    });
+
+    const row = { coach: c, team: a.team_id, t, far: outOfState(t.location) };
+    const clash = clashFor(norm(c), t);
+    const settled = clash.find(x => x.booked);
+    if (settled) superseded.push({ ...row, against: settled });
+    else if (clash.length) clashes.push({ ...row, against: clash[0] });
+    else gaps.push(row);
   }
 }
+// Both her teams entered in the same tournament is one trip and one hotel room,
+// not two. Collapse to a single row naming both squads, or Kristen books twice.
+const merged = new Map();
+for (const g of gaps) {
+  const k = norm(g.coach) + "|" + g.t.id;
+  const seen = merged.get(k);
+  if (seen) { if (!seen.teams.includes(g.team)) seen.teams.push(g.team); }
+  else merged.set(k, { ...g, teams: [g.team] });
+}
+gaps.length = 0;
+gaps.push(...[...merged.values()].map(g => ({ ...g, team: g.teams.join(" + ") })));
+
 gaps.sort((x, y) => String(x.coach).localeCompare(String(y.coach))
   || String(x.t.start_date).localeCompare(String(y.t.start_date)));
 
@@ -119,8 +163,28 @@ console.log(`${gaps.length} unbooked trip${gaps.length === 1 ? "" : "s"} across 
 for (const [coach, list] of [...byCoach.entries()].sort()) {
   const far = list.filter(g => g.far).length;
   console.log(`\n  ${coach} — ${list.length} unbooked${far ? `, ${far} out of state` : ""}`);
-  list.forEach(g => console.log(`     ${span(g.t.start_date, g.t.end_date).padEnd(14)}${g.team.padEnd(12)}` +
+  list.forEach(g => console.log(`     ${span(g.t.start_date, g.t.end_date).padEnd(14)}${g.team.padEnd(22)}` +
     `${String(g.t.name).trim().slice(0, 38).padEnd(40)}${g.t.location || ""}${g.far ? "   ✈" : ""}`));
+}
+
+const line = (g) => `     ${span(g.t.start_date, g.t.end_date).padEnd(14)}${g.team.padEnd(22)}` +
+  `${String(g.t.name).trim().slice(0, 38).padEnd(40)}${g.t.location || ""}${g.far ? "   ✈" : ""}`;
+
+if (superseded.length) {
+  console.log(`\n${superseded.length} NOT a trip — she is already booked somewhere else that weekend:`);
+  for (const g of superseded.filter(g => !onlyCoach || norm(g.coach) === norm(onlyCoach))) {
+    console.log(`  ${g.coach}`);
+    console.log(line(g));
+    console.log(`       -> already booked: ${g.against.team} ${String(g.against.t.name).trim()} (${span(g.against.t.start_date, g.against.t.end_date)}, ${g.against.t.location || ""})`);
+  }
+}
+if (clashes.length) {
+  console.log(`\n${clashes.length} CLASH — due at two things that weekend, nothing booked either side. Decide which:`);
+  for (const g of clashes.filter(g => !onlyCoach || norm(g.coach) === norm(onlyCoach))) {
+    console.log(`  ${g.coach}`);
+    console.log(line(g));
+    console.log(`       -> also due: ${g.against.team} ${String(g.against.t.name).trim()} (${span(g.against.t.start_date, g.against.t.end_date)}, ${g.against.t.location || ""})`);
+  }
 }
 
 if (!doSend) { console.log("\nDRY RUN — nothing sent. Add --send to email Kristen."); }
