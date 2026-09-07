@@ -25,7 +25,7 @@
 // the card can tell you who signed which one.
 
 export const SEASON = "2026-27";
-export const VERSION = "2026-27.2";
+export const VERSION = "2026-27.3";
 
 // What the player agrees to. Written to her, not about her.
 export const PLAYER_CLAUSES = [
@@ -55,7 +55,6 @@ export const PLAYER_CLAUSES = [
     title: "Wall work when I miss",
     points: [
       "When I miss a practice or arrive late, I will complete my wall work — traps, setting, passing — before or after another practice.",
-      "I will have my coach sign off on it rather than assume it counted.",
       "I understand that if my wall work is not done, I sit a tournament. Not part of one.",
     ],
   },
@@ -76,7 +75,7 @@ export const PLAYER_CLAUSES = [
     points: [
       "I will not speak to an official — not a word, not a look, not a face from the bench. Only the head coach and the game captain do that.",
       "After a call goes against me, I will go to the next play instead of reacting to it.",
-      "I will shag balls for the team we are about to play.",
+      "I will shag balls for the team we are about to play, and take it seriously.",
       "I will thank the referees working my court.",
     ],
   },
@@ -88,7 +87,6 @@ export const PLAYER_CLAUSES = [
       "I will not let a teammate eat alone, warm up alone, or sit alone.",
       "On the bench I will cheer my teammates by name, track the rotation, and be ready to go in cold.",
       "If two or more of us are planning anything on a tournament weekend — dinner, the pool, a room — I will make sure every player on the roster is invited.",
-      "I will not post anything about a teammate, a coach, or a match on social media.",
     ],
   },
   {
@@ -129,16 +127,6 @@ export const PLAYER_CLAUSES = [
 // commitment only one side can be held to is not a commitment.
 export const PARENT_CLAUSES = [
   {
-    key: "team",
-    slide: "04 · 06",
-    title: "The whole team, not only my player",
-    points: [
-      "I will cheer for every player on the roster, including the ones who are not mine.",
-      "I will judge this season on whether she is better in May than she was in September, and not on the record.",
-      "I will not compare my daughter's playing time to another player's in front of her.",
-    ],
-  },
-  {
     key: "stands",
     slide: "14",
     title: "In the stands",
@@ -146,15 +134,6 @@ export const PARENT_CLAUSES = [
       "I will cheer for effort rather than only for points.",
       "I will leave the coaching to the coaches while a match is going on.",
       "I will say nothing toward an official, an opposing player, or an opposing parent — during a match or after it.",
-    ],
-  },
-  {
-    key: "ridehome",
-    slide: "14",
-    title: "The ride home",
-    points: [
-      "I will not review or coach the match on the ride home.",
-      "I will start with “I loved watching you play” and let her lead from there if she wants to talk about it.",
     ],
   },
   {
@@ -185,18 +164,6 @@ export const PARENT_CLAUSES = [
     title: "Staying reachable",
     points: [
       "I will install SportsYou and keep its notifications turned on all season.",
-      "I will use my access code within 24 hours, and tell her coach if it does not arrive, because the codes expire.",
-      "I accept that if something is not in SportsYou it did not happen, and I will not rely on word of mouth from another parent.",
-    ],
-  },
-  {
-    key: "money",
-    slide: "23",
-    title: "Fees, deadlines and travel",
-    points: [
-      "I will pay on the published schedule and due dates.",
-      "I will place the uniform order before the deadline, because late orders cannot be placed.",
-      "At every national qualifier I will book through the tournament's housing partner and not a cheaper hotel, because enough families booking outside it can cost the team its entry.",
     ],
   },
   {
@@ -205,7 +172,6 @@ export const PARENT_CLAUSES = [
     title: "Injuries, illness and safety",
     points: [
       "I will report an injury or illness the day it happens rather than at the next practice.",
-      "I will follow the return-to-play protocol before she is back on the court.",
       "If I hear about bullying — toward my daughter or anyone else's — I will bring it to an adult in this club.",
     ],
   },
