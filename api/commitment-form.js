@@ -29,7 +29,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import {
-  PLAYER_CLAUSES, PARENT_CLAUSES, ALL_KEYS, VERSION, SEASON, isComplete,
+  PLAYER_CLAUSES, PARENT_CLAUSES, ALL_KEYS, VERSION, SEASON, isComplete, pointCount,
 } from "../shared/commitment.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -77,6 +77,12 @@ const page = (inner, { title = "The commitment — DS Elite" } = {}) => `<!docty
   .cl input { flex:0 0 24px; width:24px; height:24px; margin:2px 0 0; accent-color:var(--gold); }
   .cl .t { display:block; color:var(--ink); font-weight:700; font-size:15.5px; line-height:1.35; }
   .cl .d { display:block; color:var(--body); font-size:.9rem; margin-top:5px; }
+  /* One box covers several specific actions, so they're listed rather than run
+     together as prose — a family scanning this in a gym has to be able to see
+     each thing they're agreeing to. */
+  .cl .pts { margin:7px 0 0; padding-left:18px; color:var(--body); font-size:.89rem; }
+  .cl .pts li { margin:0 0 6px; line-height:1.42; }
+  .cl .pts li:last-child { margin-bottom:0; }
   .cl:has(input:checked) .t { color:var(--gold); }
   label.nm { display:block; margin:18px 0 0; }
   .lb { display:block; font-size:12px; letter-spacing:.09em; text-transform:uppercase;
@@ -121,15 +127,15 @@ function sideForm(side, clauses, player, signed, preview) {
     ? `${esc(player.first_name)}, this is your half`
     : "The parent's half";
   const blurb = side === "player"
-    ? "Read each one. Tick it only if you mean it — these are the things your coaches and your teammates will hold you to all season."
-    : "Read these together with your daughter. If there's a line here you can't commit to, come talk to Drew instead of signing it.";
+    ? "Each box covers the specific things listed under it. Read them, and tick the box only if you mean all of them — this is what your coaches and your teammates will hold you to all season."
+    : "Each box covers the specific things listed under it. Read them together with your daughter, and if there is a single line you can't commit to, come talk to Drew instead of signing around it.";
 
   if (signed?.at) {
     return `<div class="card">
       <p class="sect">${esc(who)}</p>
       <div class="tick"><span class="k">&#10003;</span><span>
         <b>Signed by ${esc(signed.name)}</b>
-        <small>${esc(fmtWhen(signed.at))} · all ${clauses.length} agreed</small>
+        <small>${esc(fmtWhen(signed.at))} · all ${pointCount(clauses)} commitments agreed</small>
       </span></div>
     </div>`;
   }
@@ -142,7 +148,9 @@ function sideForm(side, clauses, player, signed, preview) {
     ${clauses.map((c) => `
       <label class="cl">
         <input type="checkbox" name="k_${c.key}" value="1">
-        <span><span class="t">${esc(c.title)}</span><span class="d">${esc(c.text)}</span></span>
+        <span><span class="t">${esc(c.title)}</span>
+          <ul class="pts">${c.points.map((t) => `<li>${esc(t)}</li>`).join("")}</ul>
+        </span>
       </label>`).join("")}
     <label class="nm"><span class="lb">${side === "player" ? "Player" : "Parent"} full name <span class="req">*</span></span>
       <input type="text" name="name" autocomplete="${side === "player" ? "off" : "name"}"
