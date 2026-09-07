@@ -25,7 +25,7 @@
 // the card can tell you who signed which one.
 
 export const SEASON = "2026-27";
-export const VERSION = "2026-27.4";
+export const VERSION = "2026-27.5";
 
 // What the player agrees to. Written to her, not about her.
 export const PLAYER_CLAUSES = [
@@ -112,10 +112,27 @@ export const PLAYER_CLAUSES = [
       "I will arrive with my hair up, my nails short, and any taping already done.",
       "I will not get a new piercing during the season.",
       "I will keep volleyball shoes for indoors only and bring separate shoes or slides.",
-      // The old wording banned phones at the scorer's table outright, which is
-      // where VolleyApp is scored from. A rule that forbids something the job
-      // requires gets ignored, and the ignoring spreads.
-      "I will have my phone off and in my bag from five minutes before warm-ups. The one exception is the device scoring VolleyApp at the table — that phone is for VolleyApp and nothing else.",
+    ],
+  },
+  {
+    // Phones were one line next to knee pads and hair. They now carry two
+    // exceptions and a consequence, which is more than a gear bullet can hold
+    // and more than a player can find when she is trying to remember the rule.
+    //
+    // The consequence is written down because a privilege with no stated cost
+    // is not a privilege, it is a suggestion. It is phrased as "I understand"
+    // rather than "I will", matching the wall-work clause — the player is not
+    // promising to be caught, she is agreeing to what follows if she is.
+    key: "phones",
+    slide: "19",
+    title: "Phones",
+    points: [
+      "From five minutes before warm-ups until a match is over, my phone is off and in my bag.",
+      "Between matches at a tournament I may use my phone for music. That is the whole exception — not scrolling, not messages, not the camera.",
+      "I understand that if I am caught scrolling, my phone goes to a coach for the rest of the day and I do not get the music exception again for the season.",
+      // The previous wording banned phones at the scorer's table outright,
+      // which is where VolleyApp is scored from.
+      "The one other exception is the device scoring VolleyApp at the table, and that phone is for VolleyApp and nothing else.",
     ],
   },
   {
