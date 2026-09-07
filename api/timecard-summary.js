@@ -1,4 +1,13 @@
-// Vercel Cron: tell each coach what hours went through for them last week.
+// Tell each coach what hours went through for them last week.
+//
+// NOT ON A SCHEDULE. This used to be a Monday cron that emailed every coach
+// automatically, so a week's hours reached them whether or not anyone had
+// looked. Brandon Blahnik's Aug 31 is why that is a problem: a DS Elite float
+// shift and two DSSC clinics covering the same 6-9pm, six hours billed for
+// three worked, and the confirmation went out before a human saw it.
+//
+// It is triggered from Time Cards now, by the same "Approve & email hours"
+// button that sends the payroll report. Approval first, then the coaches hear.
 //
 // Runs Monday, after the payroll report has gone to the bookkeeper, and covers
 // the Monday–Sunday week just finished. One email per coach, with both clubs in
@@ -38,6 +47,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { makeRateResolver, makeNameResolver, lastPayWeek, norm } from "../shared/coach-pay.js";
 
+const OWNER_EMAILS = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"];
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const fmtDay = (iso) => {
@@ -56,13 +66,28 @@ export default async function handler(req, res) {
   const url = (() => { try { return new URL(req.url, "https://x"); } catch { return null; } })();
   const urlToken = url?.searchParams.get("token") || "";
   const bearer = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
-  if (!CRON_SECRET || (bearer !== CRON_SECRET && urlToken !== CRON_SECRET)) return res.status(403).json({ error: "Forbidden" });
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return res.status(500).json({ error: "Server not configured" });
 
   const dry = url?.searchParams.get("dry") === "1";
   if (!dry && (!RESEND_API_KEY || !DSE_FROM_EMAIL)) return res.status(500).json({ error: "Email not configured" });
 
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
+
+  // Same gate as api/payroll-report.js: the cron secret for a manual re-run,
+  // or an admin's session token, which is how the Time Cards button calls it.
+  let authed = !!CRON_SECRET && (bearer === CRON_SECRET || urlToken === CRON_SECRET);
+  if (!authed && bearer) {
+    const { data: { user } = {} } = await supabase.auth.getUser(bearer).catch(() => ({ data: {} }));
+    const email = (user?.email || "").trim().toLowerCase();
+    if (email) {
+      if (OWNER_EMAILS.includes(email)) authed = true;
+      else {
+        const { data: c } = await supabase.from("coaches").select("is_admin, is_approved").ilike("email", email).maybeSingle();
+        if (c && c.is_approved && c.is_admin) authed = true;
+      }
+    }
+  }
+  if (!authed) return res.status(403).json({ error: "Forbidden" });
 
   const today = url?.searchParams.get("week")
     || new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });

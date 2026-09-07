@@ -23042,10 +23042,16 @@ export default function App() {
       a.download = "timecards_" + wkStart + ".csv";
       a.click(); URL.revokeObjectURL(a.href);
     };
-    // Re-send the payroll email (with the hours CSV attached) for the viewed
-    // week — same report the Monday cron sends, on demand for any week.
+    // Approve the viewed week: payroll report + CSV to the bookkeeper and
+    // admins, then the per-coach hours confirmations.
+    //
+    // The coach confirmations used to go out on their own Monday cron, before
+    // anybody had looked at the week. That is how Brandon Blahnik was told six
+    // hours were approved for Aug 31 when he worked three - a DS Elite float
+    // and two DSSC clinics over the same 6-9pm. Nothing reaches a coach now
+    // until an admin has pressed this button.
     const emailReport = async () => {
-      if (!window.confirm("Email the "+fmtD(wkStart)+" – "+fmtD(wkEnd)+" payroll report + hours CSV to the bookkeeper and admins?")) return;
+      if (!window.confirm("Approve "+fmtD(wkStart)+" - "+fmtD(wkEnd)+"?\n\nThis emails:\n- payroll report + hours CSV to the bookkeeper and admins\n- an hours confirmation to every coach who worked that week")) return;
       setTcEmailing(true);
       try {
         const { data:{ session } } = await supabase.auth.getSession();
@@ -23053,7 +23059,18 @@ export default function App() {
         const r = await fetch("/api/payroll-report?week="+wkStart, { method:"POST", headers:{ Authorization:"Bearer "+session.access_token } });
         const d = await r.json().catch(()=>({}));
         if (!r.ok) throw new Error(d.error || ("HTTP "+r.status));
-        window.alert("Sent ✓ — "+(d.hours??0)+"h · "+money(d.amount??0)+"\nEmailed with CSV to: "+((d.to||[]).join(", ")));
+        // Coaches only hear once the payroll report is away. A failure here is
+        // reported but does not undo the approval - the report is already sent,
+        // and the confirmations can be re-run from the same button.
+        let coachNote = "";
+        try {
+          const cr = await fetch("/api/timecard-summary?week="+wkStart, { method:"POST", headers:{ Authorization:"Bearer "+session.access_token } });
+          const cd = await cr.json().catch(()=>({}));
+          coachNote = cr.ok
+            ? "\nCoach confirmations: "+(cd.emailed ?? cd.sent ?? 0)+" sent"
+            : "\nCoach confirmations FAILED: "+(cd.error || ("HTTP "+cr.status))+" - re-run from this button.";
+        } catch(e) { coachNote = "\nCoach confirmations FAILED: "+(e.message||"error")+" - re-run from this button."; }
+        window.alert("Sent ✓ — "+(d.hours??0)+"h · "+money(d.amount??0)+"\nEmailed with CSV to: "+((d.to||[]).join(", "))+coachNote);
       } catch(e) { window.alert("Couldn't send: "+(e.message||"error")); }
       setTcEmailing(false);
     };
