@@ -25,7 +25,7 @@
 // the card can tell you who signed which one.
 
 export const SEASON = "2026-27";
-export const VERSION = "2026-27.3";
+export const VERSION = "2026-27.4";
 
 // What the player agrees to. Written to her, not about her.
 export const PLAYER_CLAUSES = [
@@ -86,6 +86,9 @@ export const PLAYER_CLAUSES = [
     points: [
       "I will not let a teammate eat alone, warm up alone, or sit alone.",
       "On the bench I will cheer my teammates by name, track the rotation, and be ready to go in cold.",
+      "When I am frustrated I will take it to the next rep and not to my teammates — no sighing at an error, no shutting down, no body language that makes it the team's problem.",
+      "I will go to a teammate who is down rather than leave her to it, and I will let my teammates do the same for me.",
+      "On the court I will give encouragement only. The correcting is the coaches' job, not mine.",
       "If two or more of us are planning anything on a tournament weekend — dinner, the pool, a room — I will make sure every player on the roster is invited.",
     ],
   },
@@ -109,7 +112,10 @@ export const PLAYER_CLAUSES = [
       "I will arrive with my hair up, my nails short, and any taping already done.",
       "I will not get a new piercing during the season.",
       "I will keep volleyball shoes for indoors only and bring separate shoes or slides.",
-      "I will have my phone off and in my bag from five minutes before warm-ups, and never at the scorer's table.",
+      // The old wording banned phones at the scorer's table outright, which is
+      // where VolleyApp is scored from. A rule that forbids something the job
+      // requires gets ignored, and the ignoring spreads.
+      "I will have my phone off and in my bag from five minutes before warm-ups. The one exception is the device scoring VolleyApp at the table — that phone is for VolleyApp and nothing else.",
     ],
   },
   {
@@ -156,6 +162,18 @@ export const PARENT_CLAUSES = [
       "I will get her to practice on time, and to tournaments an hour before the first start.",
       "When she has to miss or will be late, I will make sure her coach knows at least two hours before practice.",
       "I understand that missed practices owe wall work, and that if it is not done she sits a tournament.",
+    ],
+  },
+  {
+    // The players already promise this (PLAYER_CLAUSES "teammate"). On a
+    // tournament weekend the dinner and the hotel block are arranged by
+    // parents, so the promise only holds if both sides make it.
+    key: "weekends",
+    slide: "12 · 13",
+    title: "Tournament weekends",
+    points: [
+      "If I am organising anything on a tournament weekend — a dinner, the pool, a hotel block — every family on the roster gets the invitation.",
+      "When plans come together in a group chat, I will check who is not in that chat before the plan is set.",
     ],
   },
   {
