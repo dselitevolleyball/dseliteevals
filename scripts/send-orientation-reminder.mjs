@@ -37,6 +37,9 @@ const NIGHTS = [
 ];
 const ageOf = (team) => String(team || "").trim().split(/\s+/)[0];
 const nightFor = (team) => NIGHTS.find((n) => n.ages.includes(ageOf(team))) || null;
+// Rise is a separate programme and does not come to orientation. Matches
+// isRise in send-orientation.mjs.
+const isRise = (t) => /\brise\b/i.test(String(t || ""));
 
 const args = process.argv.slice(2);
 const flag = (n) => args.includes("--" + n);
@@ -84,6 +87,7 @@ Thank you for your continued help in making this a very special year for DS Elit
 const rows = [];
 for (const { team_name: team } of (teams || []).sort((a, b) => a.team_name.localeCompare(b.team_name))) {
   if (onlyTeam && team !== onlyTeam) continue;
+  if (isRise(team)) { console.log(`· ${team} — Rise, skipped`); continue; }
   const night = nightFor(team);
   if (!night) { console.log(`⚠ ${team} — no orientation night matches this age group, skipped`); continue; }
   if (night.date < today) { console.log(`· ${team} — ${night.label} has passed, skipped`); continue; }
