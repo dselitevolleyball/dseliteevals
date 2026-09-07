@@ -1,6 +1,6 @@
 // Email a tournament-only roster — the girls flying to an event, not a club team.
 //
-// "13 Diamond Hawaii" is the case this exists for. Nine players fly to SPAM
+// "14 Crystal" is the case this exists for. Nine players fly to SPAM
 // Slam: five of 13 Diamond, one from 13 Ruby, three from 14 Ruby. Mailing
 // "13 Diamond" reaches five families who are not going and misses four who are,
 // which is exactly the thing that makes parents stop reading club email.
@@ -11,9 +11,9 @@
 // DRY RUN BY DEFAULT. Nothing sends until --send.
 //
 // Usage:
-//   node scripts/send-event-team.mjs --team "13 Diamond Hawaii"
-//   node scripts/send-event-team.mjs --team "13 Diamond Hawaii" --roster
-//   node scripts/send-event-team.mjs --team "13 Diamond Hawaii" \
+//   node scripts/send-event-team.mjs --team "14 Crystal"
+//   node scripts/send-event-team.mjs --team "14 Crystal" --roster
+//   node scripts/send-event-team.mjs --team "14 Crystal" \
 //        --subject "Hawaii travel details" --body-file notes.txt --send
 //   ... --to drew@dselitevolleyball.com --send      # test to yourself first
 //
