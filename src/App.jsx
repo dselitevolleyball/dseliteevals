@@ -1751,6 +1751,7 @@ export default function App() {
   const [expenses, setExpenses]             = useState([]); // expense ledger
   const [finSeason, setFinSeason]           = useState("2026-27");
   const [finTab, setFinTab]                 = useState("team"); // team | category | pending | all
+  const [orientationNights, setOrientationNights] = useState([]); // club orientation evenings, by age group
   const [dsysaClinics, setDsysaClinics]     = useState([]); // DSYSA clinic dates
   const [dsysaSignups, setDsysaSignups]     = useState([]); // which coaches are covering each
   const [hawaiiAddTeam, setHawaiiAddTeam]   = useState(null); // which Hawaii team's "add player" search is open
@@ -2912,10 +2913,20 @@ export default function App() {
   useEffect(() => { if (isApproved && view === "lineups") { loadLineupPlans(); loadPractice(); loadPlayers(); } }, [isApproved, view, loadLineupPlans, loadPractice, loadPlayers]);
 
   // Coach clock-in loader — last ~90 days of check-ins.
+  //
+  // Orientation nights ride along here rather than in their own effect: they
+  // exist only to put a shift on the clock-in board, so anywhere check-ins are
+  // loaded is exactly where they are needed, and a separate loader would be one
+  // more thing to remember to call.
   const loadCheckins = useCallback(async () => {
     const since = localDateISO(new Date(Date.now() - 90*86400000));
-    const { data, error } = await supabase.from("coach_checkins").select("*")
-      .gte("check_date", since).order("check_date", { ascending: false }).order("created_at", { ascending: false });
+    const [{ data, error }, { data: on, error: oe }] = await Promise.all([
+      supabase.from("coach_checkins").select("*")
+        .gte("check_date", since).order("check_date", { ascending: false }).order("created_at", { ascending: false }),
+      supabase.from("orientation_nights").select("*").order("night_date"),
+    ]);
+    if (oe) console.error("Load orientation_nights error:", oe);
+    else setOrientationNights(on || []);
     if (error) { console.error("Load coach_checkins error:", error); return; }
     setCheckins(data || []);
   }, []);
@@ -21026,6 +21037,28 @@ export default function App() {
                      && c.team_name && !teamCanceled(c.team_name))
         .map(c => ({ team:c.team_name, slot:c.slot, role:"sub" }));
       const floats = coachFloats.filter(f => (f.phase||"season")===ph && f.day===wd && isMe(f.coach_name)).map(f => ({ team:"", slot:f.slot, role:"float" }));
+      // Orientation night. Not a practice, not on the schedule, and worth five
+      // hours — without this the coaches work the evening and have no way to
+      // log it.
+      //
+      // Logged against the coach's own team rather than a generic "Orientation"
+      // so pay resolves exactly as it does for a practice, which is what the
+      // coaches were told. A generic name would make isHeadOf false and quietly
+      // drop the three head coaches who earn a head rate to their base one.
+      // Where a coach has two teams that night, hers as head wins, for the same
+      // reason. The role is what makes these filterable on the ledger.
+      const orientation = (() => {
+        const night = orientationNights.find(o => o.night_date === iso && !o.cancelled);
+        if (!night) return [];
+        const ages = night.ages || [];
+        const mine = myTeamNames.filter(t => ages.includes(String(t).trim().split(/\s+/)[0]));
+        if (!mine.length) return [];
+        const asHead = mine.find(t => (practiceTeams.find(x => x.team_name === t)?.head_coach || "")
+          && isMe(practiceTeams.find(x => x.team_name === t).head_coach));
+        const hhmm = (t) => { const m = /^(\d{1,2}):/.exec(String(t||"")); if (!m) return null; const h = +m[1]; return h > 12 ? h - 12 : h; };
+        const slot = (hhmm(night.start_time) || 5) + "-" + (hhmm(night.end_time) || 10) + "pm";
+        return [{ team: asHead || mine[0], slot, role: "orientation" }];
+      })();
       // ONE payable shift per stretch of wall-clock time. Priority is scheduled
       // → sub → float: a coach covering a team at the hour they'd otherwise
       // float is working that team, and the float is the same two hours, so
@@ -21039,7 +21072,10 @@ export default function App() {
         if (kept.some(k => s < endH(k.slot) && startH(k.slot) < e)) return;
         kept.push(x);
       });
-      consider(scheduled); consider(subs); consider(floats);
+      // Orientation goes first: on one of these four evenings it is where the
+      // coach actually is, so it beats anything the schedule would otherwise
+      // offer for the same hours.
+      consider(orientation); consider(scheduled); consider(subs); consider(floats);
       return kept
        .filter(x => { const k = x.role+"|"+x.team+"|"+x.slot; if(seen2.has(k)) return false; seen2.add(k); return true; })
        .sort((a,b)=> startH(a.slot)-startH(b.slot) || (a.team||"").localeCompare(b.team||""));
@@ -21129,7 +21165,7 @@ export default function App() {
     };
 
     const roleTag = (r) => {
-      const m = { scheduled:["Scheduled",C.mut], sub:["Sub","#f59e0b"], float:["Float","#06b6d4"] }[r] || ["",C.mut];
+      const m = { scheduled:["Scheduled",C.mut], sub:["Sub","#f59e0b"], float:["Float","#06b6d4"], orientation:["Orientation",C.gold] }[r] || ["",C.mut];
       return <span style={{fontSize:9,fontWeight:800,color:m[1],border:"1px solid "+m[1],borderRadius:4,padding:"0 4px",textTransform:"uppercase",letterSpacing:0.3}}>{m[0]}</span>;
     };
 
@@ -21149,7 +21185,7 @@ export default function App() {
             <span style={{fontSize:13,fontWeight:700,color:C.gold}}>{nextShift.slot}</span>
             <span style={{fontSize:12,color:C.mut}}>({slotHours(nextShift.slot)}h)</span>
             <span style={{fontSize:13,color:C.text,fontWeight:600}}>· {nextShift.role==="float" ? "Floating" : nextShift.team}</span>
-            {nextShift.role==="float" && roleTag("float")}
+            {(nextShift.role==="float" || nextShift.role==="orientation") && roleTag(nextShift.role)}
           </div>
         ) : (
           <div style={{fontSize:12,color:C.mut,marginBottom:12}}>No upcoming shifts scheduled in the next two weeks.</div>
@@ -21171,6 +21207,7 @@ export default function App() {
                       <div style={{display:"flex",alignItems:"center",gap:6}}>
                         {isNext && <span style={{fontSize:8,fontWeight:800,color:"#000",background:C.gold,borderRadius:4,padding:"1px 5px",letterSpacing:0.4}}>NEXT UP</span>}
                         <span style={{fontSize:14,fontWeight:700,color:C.text}}>{s.role==="float" ? "Floating" : s.team}</span>
+                        {s.role==="orientation" && <span style={{marginLeft:6}}>{roleTag("orientation")}</span>}
                         {s.role!=="scheduled" && roleTag(s.role)}
                       </div>
                       <div style={{fontSize:12,color:C.mut,marginTop:2}}>{s.slot} · {slotHours(s.slot)}h</div>
@@ -23120,7 +23157,7 @@ export default function App() {
       if (error) { window.alert("Couldn't add shift: "+error.message); return; }
       await loadCheckins(); setTcOpen(coachNm);
     };
-    const roleTag = (r) => { const m = { scheduled:["Sched",C.mut], sub:["Sub","#f59e0b"], float:["Float","#06b6d4"] }[r] || ["",C.mut]; return <span style={{fontSize:9,fontWeight:800,color:m[1],border:"1px solid "+m[1],borderRadius:4,padding:"0 4px"}}>{m[0]}</span>; };
+    const roleTag = (r) => { const m = { scheduled:["Sched",C.mut], sub:["Sub","#f59e0b"], float:["Float","#06b6d4"], orientation:["Orient",C.gold] }[r] || ["",C.mut]; return <span style={{fontSize:9,fontWeight:800,color:m[1],border:"1px solid "+m[1],borderRadius:4,padding:"0 4px"}}>{m[0]}</span>; };
     const isThisWeek = wkStart === weekMondayISO();
     // Export the (filtered) week as CSV — one row per check-in.
     const exportCsv = () => {
