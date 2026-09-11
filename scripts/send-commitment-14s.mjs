@@ -81,10 +81,13 @@ const greetingFor = (p) => {
   return uniq.length ? "Hi " + uniq.join(" and ") + "," : "Hi,";
 };
 
-const build = (p) => {
+// preview=true swaps in the sample pages, which render the real layout but
+// save nothing. A test email is opened and clicked by staff; on a real token
+// that click signs a real girl's commitment or files a photo to her team.
+const build = (p, { preview = false } = {}) => {
   const girl = p.first_name.trim();
-  const commit = `${APP}/commitment?t=${p.commitment_token}`;
-  const photos = `${APP}/photos?t=${p.photo_upload_token}`;
+  const commit = preview ? `${APP}/commitment?preview=1` : `${APP}/commitment?t=${p.commitment_token}`;
+  const photos = preview ? `${APP}/photos?preview=1` : `${APP}/photos?t=${p.photo_upload_token}`;
   const greet = greetingFor(p);
 
   const text = `${greet}
@@ -159,11 +162,11 @@ const send = async (j, recipients) => {
 };
 
 if (testTo) {
-  // A real family's email, links and all, delivered only to the tester — the
-  // links work, so do not sign anything on them.
+  // A real family's wording, delivered only to the tester, with both links
+  // pointed at the preview pages so nothing clicked in it is saved.
   const j = sendable[0];
-  const err = await send(j, [testTo]);
-  console.log(err ? "FAILED: " + err : `test sent to ${testTo} (using ${j.p.first_name} ${j.p.last_name}'s links — don't sign on them)`);
+  const err = await send({ ...j, ...build(j.p, { preview: true }), subject: "[TEST] " + j.subject }, [testTo]);
+  console.log(err ? "FAILED: " + err : `test sent to ${testTo} — ${j.p.first_name}'s wording, preview links`);
 } else if (!doSend) {
   const j = sendable[0];
   if (j) {
