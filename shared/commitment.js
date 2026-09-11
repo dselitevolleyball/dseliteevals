@@ -25,7 +25,7 @@
 // the card can tell you who signed which one.
 
 export const SEASON = "2026-27";
-export const VERSION = "2026-27.5";
+export const VERSION = "2026-27.6";   // .6: social media — the orientation deck said it, the commitment didn't
 
 // What the player agrees to. Written to her, not about her.
 export const PLAYER_CLAUSES = [
@@ -89,6 +89,7 @@ export const PLAYER_CLAUSES = [
       "When I am frustrated I will take it to the next rep and not to my teammates — no sighing at an error, no shutting down, no body language that makes it the team's problem.",
       "I will go to a teammate who is down rather than leave her to it, and I will let my teammates do the same for me.",
       "On the court I will give encouragement only. The correcting is the coaches' job, not mine.",
+      "I will not post anything about a teammate, a coach or a match on social media.",
       "If two or more of us are planning anything on a tournament weekend — dinner, the pool, a room — I will make sure every player on the roster is invited.",
     ],
   },
