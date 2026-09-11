@@ -57,12 +57,34 @@ const onlyPlayer = value("player");
 const env = loadEnv();
 const sb = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
 
-const [{ data: players, error }, { data: teamRows }] = await Promise.all([
+const [{ data: players, error }, { data: teamRows }, { data: coachRoster }] = await Promise.all([
   sb.from("players").select("id, first_name, last_name, team_assignment, offer_status, parent_name, parent2_name, parent_email, parent_email2, parent_email3, commitment_token, photo_upload_token")
     .in("team_assignment", TEAMS),
-  sb.from("practice_teams").select("team_name, practices_per_week").in("team_name", TEAMS),
+  sb.from("practice_teams").select("team_name, practices_per_week, head_coach, assistant_coach, third_coach").in("team_name", TEAMS),
+  sb.from("coach_roster").select("first_name, last_name, phone, email"),
 ]);
 if (error) { console.error(error.message); process.exit(1); }
+
+// Each team's coaches with a way to reach them. Contact details come from the
+// coach roster — the same record payroll and travel use — so a number changed
+// there is the number families get.
+const PLACEHOLDER = /^(tbd|tba|n\/a|na|none|pending|sub|open|needed|\?+|-+|—)$/i;
+const rosterBy = new Map((coachRoster || []).map(r => [norm(`${r.first_name || ""} ${r.last_name || ""}`.trim()), r]));
+const fmtPhone = (p) => {
+  const d = String(p || "").replace(/\D/g, "").slice(-10);
+  return d.length === 10 ? { show: `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}`, tel: "+1" + d } : null;
+};
+const coachesFor = (team) => {
+  const t = (teamRows || []).find(x => x.team_name === team);
+  if (!t) return [];
+  return [["Head coach", t.head_coach], ["Assistant coach", t.assistant_coach], ["Coach", t.third_coach]]
+    .filter(([, n]) => n && !PLACEHOLDER.test(String(n).trim()))
+    .map(([role, n]) => {
+      const r = rosterBy.get(norm(n));
+      const email = String(r?.email || "").trim().toLowerCase();
+      return { role, name: String(n).trim(), phone: fmtPhone(r?.phone), email: EMAIL_RE.test(email) ? email : null };
+    });
+};
 
 // Belt and braces: if any of these five were ever turned into an event team,
 // it drops out here rather than going to families who no longer play on it.
@@ -89,6 +111,7 @@ const build = (p, { preview = false } = {}) => {
   const commit = preview ? `${APP}/commitment?preview=1` : `${APP}/commitment?t=${p.commitment_token}`;
   const photos = preview ? `${APP}/photos?preview=1` : `${APP}/photos?t=${p.photo_upload_token}`;
   const greet = greetingFor(p);
+  const coaches = coachesFor(p.team_assignment);
 
   const text = `${greet}
 
@@ -108,6 +131,10 @@ Second link — this one is for photos of ${p.team_assignment}:
 ${photos}
 
 Everyone can and should upload. Pick the tournament from the dropdown and add as many as you like at once, from your phone or your computer. They build the team's library for the season and are what we use on social media. Bookmark it — it's the same link all year.
+
+YOUR ${p.team_assignment.toUpperCase()} COACHES
+
+${coaches.map(c => `  ${c.name} — ${c.role}\n    ${[c.phone?.show, c.email].filter(Boolean).join("  ·  ") || "contact via the club"}`).join("\n\n")}
 
 See you tonight.
 
@@ -131,6 +158,17 @@ See you tonight.
     + `<p style="margin:0 0 16px">Second link &mdash; this one is for photos of <b>${esc(p.team_assignment)}</b>:</p>`
     + btn(photos, `Upload ${esc(p.team_assignment)} photos`)
     + `<p style="margin:0 0 14px"><b>Everyone can and should upload.</b> Pick the tournament from the dropdown and add as many as you like at once, from your phone or your computer. They build the team&rsquo;s library for the season and are what we use on social media. Bookmark it &mdash; it&rsquo;s the same link all year.</p>`
+    + `<p style="margin:26px 0 10px;font-weight:700;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:#c2186f">Your ${esc(p.team_assignment)} coaches</p>`
+    + `<table style="border-collapse:collapse;width:100%;font-size:14px;margin:0 0 20px">`
+    + coaches.map(c =>
+        `<tr><td style="padding:9px 0;border-bottom:1px solid #eee;vertical-align:top">`
+        + `<b style="font-size:15px">${esc(c.name)}</b><br><span style="color:#777;font-size:13px">${esc(c.role)}</span></td>`
+        + `<td style="padding:9px 0 9px 12px;border-bottom:1px solid #eee;text-align:right;vertical-align:top;line-height:1.7">`
+        + (c.phone ? `<a href="tel:${c.phone.tel}" style="color:#1a1a1a;text-decoration:none;font-weight:600">${c.phone.show}</a><br>` : "")
+        + (c.email ? `<a href="mailto:${esc(c.email)}" style="color:#c2186f;text-decoration:none">${esc(c.email)}</a>` : "")
+        + (!c.phone && !c.email ? `<span style="color:#777">contact via the club</span>` : "")
+        + `</td></tr>`).join("")
+    + `</table>`
     + `<p style="margin:0 0 14px">See you tonight.</p>`
     + '<p style="margin:0">&mdash; Drew</p></div>';
 
