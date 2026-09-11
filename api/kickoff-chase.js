@@ -39,6 +39,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import webpush from "web-push";
+import { isEventTeam } from "../shared/event-teams.js";
 
 // Ten days after the orientation email, then weekly until the window shuts.
 const DEFAULT_START = "2026-09-12";
@@ -88,7 +89,7 @@ export default async function handler(req, res) {
 
   const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
   const [{ data: teams }, { data: kicks }, { data: roster }, { data: accounts }] = await Promise.all([
-    sb.from("practice_teams").select("team_name, head_coach, kickoff_form_token"),
+    sb.from("practice_teams").select("team_name, head_coach, kickoff_form_token, practices_per_week"),
     sb.from("team_kickoffs").select("team_name, kickoff_status, kickoff_date, plan_by"),
     sb.from("coach_roster").select("first_name, last_name, email"),
     sb.from("coaches").select("display_name, email"),
@@ -109,7 +110,8 @@ export default async function handler(req, res) {
   // One row per unsettled team, then grouped by the coach who owns it.
   const open = [];
   for (const t of (teams || [])) {
-    if (isRise(t.team_name) || isPlaceholder(t.head_coach)) continue;
+    // Event teams (14 Crystal) have no kickoff party to chase — see shared/event-teams.js.
+    if (isRise(t.team_name) || isPlaceholder(t.head_coach) || isEventTeam(t)) continue;
     const k = kickBy.get(t.team_name);
     const link = t.kickoff_form_token ? `${base}/kickoff?t=${t.kickoff_form_token}` : base;
     if (k?.kickoff_status === "held") continue;

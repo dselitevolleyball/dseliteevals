@@ -5,6 +5,7 @@ import { DndContext, useDraggable, useDroppable, PointerSensor, TouchSensor, use
 import { GEAR_TEAMS } from "../shared/gear-teams.js";
 import { planRooms, pairCoaches, planRoomsByTeam, UNASSIGNED } from "../shared/room-plan.js";
 import { PLAYER_CLAUSES, PARENT_CLAUSES, isFullySigned } from "../shared/commitment.js";
+import { isEventTeam } from "../shared/event-teams.js";
 import { SCHOOL_DIVS } from "../shared/school-divs.js";
 import { schoolKey } from "../shared/school-schedule.js";
 
@@ -21051,7 +21052,10 @@ export default function App() {
         const night = orientationNights.find(o => o.night_date === iso && !o.cancelled);
         if (!night) return [];
         const ages = night.ages || [];
-        const mine = myTeamNames.filter(t => ages.includes(String(t).trim().split(/\s+/)[0]));
+        // An event team (14 Crystal) has no orientation night of its own; its
+        // girls come with their home teams. See shared/event-teams.js.
+        const mine = myTeamNames.filter(t => ages.includes(String(t).trim().split(/\s+/)[0])
+          && !isEventTeam(practiceTeams.find(x => x.team_name === t)));
         if (!mine.length) return [];
         const asHead = mine.find(t => (practiceTeams.find(x => x.team_name === t)?.head_coach || "")
           && isMe(practiceTeams.find(x => x.team_name === t).head_coach));

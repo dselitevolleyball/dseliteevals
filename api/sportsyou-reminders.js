@@ -25,6 +25,7 @@
 //   SPORTSYOU_REMIND_COACHES                  - optional; "true" to email coaches directly.
 
 import { createClient } from "@supabase/supabase-js";
+import { isEventTeam } from "../shared/event-teams.js";
 
 const RESEND_BATCH = "https://api.resend.com/emails/batch";
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -76,7 +77,7 @@ export default async function handler(req, res) {
 
   // Teams + coaches + latest post per team.
   const [{ data: teams }, { data: coaches }, { data: posts }] = await Promise.all([
-    supabase.from("practice_teams").select("team_name, head_coach"),
+    supabase.from("practice_teams").select("team_name, head_coach, practices_per_week"),
     supabase.from("coaches").select("display_name, email"),
     supabase.from("sportsyou_posts").select("team_name, posted_at").not("team_name", "is", null).order("posted_at", { ascending: false }),
   ]);
@@ -94,6 +95,9 @@ export default async function handler(req, res) {
 
   const silent = [];
   for (const t of (teams || [])) {
+    // An event team (14 Crystal) never posts, so it would read as silent every
+    // single day and nag its coach forever. See shared/event-teams.js.
+    if (isEventTeam(t)) continue;
     const last = latestByTeam.get(t.team_name);
     const lastMs = last ? Date.parse(last) : null;
     if (lastMs && lastMs >= cutoffMs) continue; // recently active — skip
