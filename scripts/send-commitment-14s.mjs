@@ -34,6 +34,11 @@ const APP = "https://dseliteevals.vercel.app";
 const SENDER = { name: "Drew Rose", email: "drew@dselitevolleyball.com" };
 const TEAMS = ["14 Diamond", "14 Emerald", "14 Ruby", "14 Sapphire", "14 Topaz"];
 const TERMINAL = ["declined", "not_invited", "opted_out"];
+// Addresses held back until someone confirms them. The commitment link can
+// sign for the girl, so a mistyped address hands that to a stranger.
+// alexandrov@gmail.com — Avery's second parent; a bare-surname Gmail is
+// almost certainly somebody else's. Kristen still receives it.
+const HOLD = new Set(["alexandrov@gmail.com"]);
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const norm = (s) => String(s || "").trim().toLowerCase();
@@ -181,7 +186,7 @@ Thank you.
 
 const jobs = roster.map(p => {
   const to = [...new Set([p.parent_email, p.parent_email2, p.parent_email3]
-    .map(e => String(e || "").trim().toLowerCase()).filter(e => EMAIL_RE.test(e)))];
+    .map(e => String(e || "").trim().toLowerCase()).filter(e => EMAIL_RE.test(e) && !HOLD.has(e)))];
   return { p, to, ...build(p) };
 });
 const sendable = jobs.filter(j => j.to.length && j.p.commitment_token && j.p.photo_upload_token);
@@ -193,6 +198,7 @@ console.log(`${sendable.length} families · ${sendable.reduce((n, j) => n + j.to
 for (const t of TEAMS) console.log("   " + t.padEnd(12) + (byTeam[t] || 0));
 if (skipped.length) console.log("⚠ cannot send: " + skipped.map(j => j.p.first_name + " " + j.p.last_name).join(", "));
 
+const allIds = [];
 const send = async (j, recipients) => {
   const r = await fetch(APP + "/api/send-email", {
     method: "POST", headers: { "Content-Type": "application/json" },
@@ -201,6 +207,7 @@ const send = async (j, recipients) => {
       sentBy: SENDER.name, sentByEmail: SENDER.email, source: "script" }),
   });
   const o = await r.json().catch(() => ({}));
+  if (Array.isArray(o.ids)) allIds.push(...o.ids);
   return r.ok && !o.error ? null : (o.error || String(r.status));
 };
 
@@ -228,5 +235,10 @@ if (testTo) {
     sent++;
     console.log("sent " + j.p.team_assignment.padEnd(12) + (j.p.first_name + " " + j.p.last_name).padEnd(24) + "→ " + j.to.join(", "));
   }
-  console.log(`\nDone. ${sent} families emailed, ${failed} failed.`);
+  if (sendAt && allIds.length) {
+    const f = new URL("../scheduled-" + sendAt.slice(0, 10) + "-commitment-14s.json", import.meta.url);
+    (await import("node:fs")).writeFileSync(f, JSON.stringify({ sendAt, ids: allIds }, null, 2));
+    console.log(`\n${allIds.length} messages held by Resend until ${sendAt}. Ids saved to ${f.pathname} for cancelling.`);
+  }
+  console.log(`\nDone. ${sent} families ${sendAt ? "queued" : "emailed"}, ${failed} failed.`);
 }

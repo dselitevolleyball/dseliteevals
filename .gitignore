@@ -39,3 +39,4 @@ Thumbs.db
 
 # One-off analysis scratch files
 anna-data.mjs
+scheduled-*.json
