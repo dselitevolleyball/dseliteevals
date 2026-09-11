@@ -135,7 +135,9 @@ function sideForm(side, clauses, player, signed, preview) {
       <p class="sect">${esc(who)}</p>
       <div class="tick"><span class="k">&#10003;</span><span>
         <b>Signed by ${esc(signed.name)}</b>
-        <small>${esc(fmtWhen(signed.at))} · all ${pointCount(clauses)} commitments agreed</small>
+        <small>${esc(fmtWhen(signed.at))} · all ${pointCount(clauses)} commitments agreed${
+          signed.attended === "live" ? " · at orientation in person"
+          : signed.attended === "not_live" ? " · not at orientation" : ""}</small>
       </span></div>
     </div>`;
   }
@@ -152,6 +154,11 @@ function sideForm(side, clauses, player, signed, preview) {
           <ul class="pts">${c.points.map((t) => `<li>${esc(t)}</li>`).join("")}</ul>
         </span>
       </label>`).join("")}
+    <p style="margin:20px 0 8px;color:var(--ink);font-weight:700">Were you at orientation in person? <span class="req">*</span></p>
+    <label class="cl"><input type="radio" name="attended" value="live" ${preview ? "disabled" : ""}>
+      <span><span class="t">Yes &mdash; I was there</span></span></label>
+    <label class="cl"><input type="radio" name="attended" value="not_live" ${preview ? "disabled" : ""}>
+      <span><span class="t">No &mdash; I couldn&rsquo;t make it</span></span></label>
     <label class="nm"><span class="lb">${side === "player" ? "Player" : "Parent"} full name <span class="req">*</span></span>
       <input type="text" name="name" autocomplete="${side === "player" ? "off" : "name"}"
              placeholder="Type your full name" ${preview ? "disabled" : ""}></label>
@@ -164,23 +171,27 @@ function sideForm(side, clauses, player, signed, preview) {
 const script = `
 document.querySelectorAll('form[data-side]').forEach(function (f) {
   var boxes = f.querySelectorAll('input[type=checkbox]');
+  var att = f.querySelectorAll('input[name=attended]');
   var name = f.querySelector('input[name=name]');
   var btn = f.querySelector('button.go');
   var n = f.querySelector('.n');
   var total = boxes.length;
+  function picked() { var v = false; att.forEach(function (r) { if (r.checked) v = true; }); return v; }
   function sync() {
     var done = 0;
     boxes.forEach(function (b) { if (b.checked) done++; });
     n.textContent = done;
-    var ready = done === total && name.value.trim().length > 1;
+    var ready = done === total && picked() && name.value.trim().length > 1;
     btn.disabled = !ready;
     // The button says what is still missing, so nobody taps a dead button and
     // wonders what is wrong with the page.
     btn.textContent = done < total
       ? ('Sign — ' + (total - done) + ' box' + (total - done === 1 ? '' : 'es') + ' left')
+      : !picked() ? 'Say whether you were at orientation'
       : (ready ? 'Sign the commitment' : 'Type your full name to sign');
   }
   boxes.forEach(function (b) { b.addEventListener('change', sync); });
+  att.forEach(function (r) { r.addEventListener('change', sync); });
   name.addEventListener('input', sync);
   sync();
 });`;
@@ -217,15 +228,19 @@ export default async function handler(req, res) {
     const keys = ALL_KEYS[side];
     const items = Object.fromEntries(keys.map((k) => [k, body?.["k_" + k] === "1"]));
     const name = String(body?.name || "").trim().slice(0, 120);
+    // Asked of each signer about themselves: the girl is often there with one
+    // parent while the other signs from home.
+    const attended = ["live", "not_live"].includes(body?.attended) ? body.attended : null;
 
     // Server-side gate. The button is disabled in the browser too, but the
     // browser is not where this gets decided.
-    if (!isComplete(items, side) || name.length < 2) {
+    if (!isComplete(items, side) || name.length < 2 || !attended) {
       return res.status(400).send(page(`
         <span class="eyebrow">DS Elite Volleyball</span><h1>Not quite</h1>
-        <div class="card"><div class="err">${name.length < 2
-          ? "We need a full name to record the signature."
-          : "Every box has to be ticked before this can be signed. If there's one you can't agree to, come talk to Drew rather than signing around it."}</div>
+        <div class="card"><div class="err">${!isComplete(items, side)
+          ? "Every box has to be ticked before this can be signed. If there's one you can't agree to, come talk to Drew rather than signing around it."
+          : !attended ? "Tell us whether you were at orientation in person — it's the question just above your name."
+          : "We need a full name to record the signature."}</div>
         <p style="margin:16px 0 0"><a href="?t=${esc(token)}" style="color:var(--gold)">Back to the commitment</a></p></div>`,
         { title: "Not quite — DS Elite" }));
     }
@@ -237,8 +252,8 @@ export default async function handler(req, res) {
       signed_ip: ip, signed_user_agent: String(req.headers["user-agent"] || "").slice(0, 400),
       updated_at: now,
       ...(side === "player"
-        ? { player_name: name, player_signed_at: now, player_items: items }
-        : { parent_name: name, parent_signed_at: now, parent_items: items }),
+        ? { player_name: name, player_signed_at: now, player_items: items, player_attended: attended }
+        : { parent_name: name, parent_signed_at: now, parent_items: items, parent_attended: attended }),
     };
     const { error } = await supabase.from("player_commitments")
       .upsert(row, { onConflict: "player_id" });
@@ -254,8 +269,8 @@ export default async function handler(req, res) {
     prev = fresh;
   }
 
-  const pSigned = prev?.player_signed_at ? { name: prev.player_name, at: prev.player_signed_at } : null;
-  const gSigned = prev?.parent_signed_at ? { name: prev.parent_name, at: prev.parent_signed_at } : null;
+  const pSigned = prev?.player_signed_at ? { name: prev.player_name, at: prev.player_signed_at, attended: prev.player_attended } : null;
+  const gSigned = prev?.parent_signed_at ? { name: prev.parent_name, at: prev.parent_signed_at, attended: prev.parent_attended } : null;
   const both = pSigned && gSigned;
 
   return res.status(200).send(page(`

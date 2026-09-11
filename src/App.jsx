@@ -12614,13 +12614,20 @@ export default function App() {
                   </div>
                 </div>
                 <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:8,marginTop:8}}>
-                  {[["Player", c?.player_name, c?.player_signed_at, PLAYER_CLAUSES.length],
-                    ["Parent", c?.parent_name, c?.parent_signed_at, PARENT_CLAUSES.length]].map(([who,nm,at,n]) => (
+                  {[["Player", c?.player_name, c?.player_signed_at, PLAYER_CLAUSES.length, c?.player_attended],
+                    ["Parent", c?.parent_name, c?.parent_signed_at, PARENT_CLAUSES.length, c?.parent_attended]].map(([who,nm,at,n,att]) => (
                     <div key={who} style={{padding:"8px 11px",borderRadius:8,border:"1px solid "+(at?C.grn:C.border),background:at?"rgba(34,197,94,0.08)":"transparent"}}>
                       <div style={{fontSize:11,fontWeight:700,color:at?C.grn:C.mut}}>{who}{at?" \u2713":""}</div>
                       <div style={{fontSize:11,color:at?C.text:C.mut,marginTop:2}}>
                         {at ? nm + " \u00b7 " + when(at) + " \u00b7 all " + n + " agreed" : "waiting"}
                       </div>
+                      {/* Signed without hearing it walked through live \u2014 the
+                          family Drew wants to follow up with. */}
+                      {at && att && (
+                        <div style={{fontSize:11,fontWeight:700,marginTop:3,color:att==="live"?C.grn:"#f59e0b"}}>
+                          {att === "live" ? "At orientation in person" : "Not at orientation"}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
