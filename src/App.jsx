@@ -2068,6 +2068,9 @@ export default function App() {
   const [myClaims, setMyClaims]       = useState([]);  // coach expense claims
   const [expClaim, setExpClaim]       = useState(null);// the claim being written
   const [expBusy, setExpBusy]         = useState(false);
+  const [claimReceipts, setClaimReceipts] = useState({});   // claim id → signed receipt URL (Coach Claims queue)
+  const [claimRejecting, setClaimRejecting] = useState(null); // { id, note } — the reject box that's open
+  const [claimBusy, setClaimBusy]     = useState(null);     // claim id mid-save
   const [evalTeam, setEvalTeam]       = useState("");  // which of my teams
   const [evalOpen, setEvalOpen]       = useState(null);// player id being evaluated
   const [evalDraft, setEvalDraft]     = useState(null);// the evaluation being written
@@ -2494,7 +2497,35 @@ export default function App() {
   // that already loads it alongside the other team data.
   useEffect(() => { if (isApproved && (view === "playereval" || view === "roster")) loadPlayerEvals(); }, [isApproved, view, loadPlayerEvals]);
   useEffect(() => { if (isApproved && view === "passing") loadPassing(); }, [isApproved, view, loadPassing]);
-  useEffect(() => { if (isApproved && (view === "myexpenses" || view === "finance")) loadMyClaims(); }, [isApproved, view, loadMyClaims]);
+  // Admins also load on home, so the Coach Claims count is on the menu from the
+  // moment they sign in — a queue nobody knows has something in it is how a
+  // $14 claim waited twenty-three days.
+  useEffect(() => { if (isApproved && (view === "myexpenses" || view === "finance" || view === "claims" || (canOps && view === "home"))) loadMyClaims(); }, [isApproved, view, canOps, loadMyClaims]);
+  // Receipts for the Coach Claims queue, signed once per pending claim. Marked
+  // null while in flight so a re-render can't fetch the same one twice; "" if
+  // the signing failed, so the card can say so instead of spinning forever.
+  useEffect(() => {
+    if (view !== "claims" || !canOps) return;
+    const need = (myClaims || []).filter(c => c.submitted_by && c.status === "pending" && c.receipt_path && claimReceipts[c.id] === undefined);
+    if (!need.length) return;
+    setClaimReceipts(m => { const n = { ...m }; need.forEach(c => { n[c.id] = null; }); return n; });
+    need.forEach(c => supabase.storage.from("receipts").createSignedUrl(c.receipt_path, 3600)
+      .then(({ data }) => setClaimReceipts(m => ({ ...m, [c.id]: data?.signedUrl || "" }))));
+  }, [view, canOps, myClaims, claimReceipts]);
+  // Tell the right person about a claim: filed → Drew; approved / rejected /
+  // paid → the coach. The server checks the claim really is in that state and
+  // stamps it, so calling this twice sends once. Never blocks the UI.
+  const notifyClaim = useCallback(async (id, event) => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) return;
+      await fetch("/api/claim-notify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + session.access_token },
+        body: JSON.stringify({ id, event }),
+      });
+    } catch (e) { console.error("claim notify failed:", e?.message); }
+  }, []);
 
   // Per-coach favorites. RLS scopes rows to the signed-in coach, so a plain
   // select returns only this coach's shortlist.
@@ -4053,6 +4084,8 @@ export default function App() {
     const by = new Map((coachGear || []).map(g => [nrm(g.coach_name), g]));
     return gearPeople.filter(s => !gearComplete(by.get(nrm(s.name)))).length;
   }, [gearPeople, coachGear]);
+  // Coach claims waiting on a decision — the count on the Coach Claims menu item.
+  const pendingClaimCount = canOps ? (myClaims || []).filter(c => c.submitted_by && c.status === "pending").length : 0;
   // Teams the kickoff board still wants something from — drives the nav badge.
   // A booked or held party is done; everything else is either an unanswered
   // coach or a party nobody has scheduled, and both need chasing.
@@ -6421,7 +6454,7 @@ export default function App() {
       const up = await supabase.storage.from("receipts").upload(path, d.file, { contentType: d.file.type || undefined });
       if (up.error) { setExpBusy(false); window.alert("Receipt upload failed: " + up.error.message); return; }
       const tn = myTns.find(t => String(t.id) === String(d.tournament_id));
-      const { error } = await supabase.from("expenses").insert({
+      const { data: filed, error } = await supabase.from("expenses").insert({
         submitted_by: rosterName || meName, submitted_by_email: coach?.email || null,
         submitted_at: new Date().toISOString(), reimburse_to: rosterName || meName,
         status: "pending", source: "coach-claim",
@@ -6432,12 +6465,13 @@ export default function App() {
         season: clubSeasonFor(d.expense_date || today),
         vendor: null, receipt_path: path, receipt_name: d.file.name,
         notes: tn ? "Coach claim · " + tn.name : "Coach claim",
-      });
+      }).select("id").single();
       setExpBusy(false);
       if (error) {
         await supabase.storage.from("receipts").remove([path]);   // don't orphan the file
         window.alert("Couldn't submit: " + error.message); return;
       }
+      if (filed?.id) notifyClaim(filed.id, "filed");   // Drew hears about it now, not in three weeks
       setExpClaim(null);
       await loadMyClaims();
     };
@@ -6561,6 +6595,215 @@ export default function App() {
             );
           })}
         </div>
+      </div>
+    );
+  }
+
+  // Coach Claims — the admin queue for coach expense claims, kept apart from
+  // Finance → Review, where the receipts auto-captured from club email live.
+  // Claims used to land in that same list: Karissa Lee's $14 background check
+  // sat there twenty-three days among 120 email receipts, and nobody on either
+  // side was told anything.
+  //
+  // Oldest first, because the longest wait is the one to clear. Approve, or
+  // reject with a reason — the reason is required because it goes straight into
+  // the email to the coach. Approved claims stay listed here as owed, ride
+  // Monday's accountant report, and leave only when marked paid (which emails
+  // the coach too).
+  function renderClaims() {
+    const money = n => "$" + Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const fmtD = iso => { try { return new Date(String(iso).slice(0,10) + "T12:00:00").toLocaleDateString(undefined,{month:"short",day:"numeric"}); } catch { return iso || ""; } };
+    const daysSince = iso => Math.max(0, Math.floor((Date.now() - Date.parse(iso)) / 86400000));
+    const ago = iso => { const d = daysSince(iso); return d === 0 ? "today" : d === 1 ? "yesterday" : d + " days ago"; };
+    const claims = (myClaims || []).filter(c => c.submitted_by);
+    const pending = claims.filter(c => c.status === "pending")
+      .sort((a, b) => String(a.submitted_at).localeCompare(String(b.submitted_at)));
+    const owed = claims.filter(c => c.status === "approved" && !c.reimbursed);
+    const recent = claims.filter(c => c.status === "rejected" || (c.status === "approved" && c.reimbursed))
+      .sort((a, b) => String(b.updated_at || b.submitted_at).localeCompare(String(a.updated_at || a.submitted_at))).slice(0, 25);
+    const tnName = id => (tournaments || []).find(t => t.id === id)?.name || null;
+    const isPdf = c => /\.pdf$/i.test(c.receipt_name || c.receipt_path || "");
+    const meName = coach?.display_name || coach?.email || null;
+    const stamp = () => new Date().toISOString();
+
+    const approve = async (c) => {
+      setClaimBusy(c.id);
+      const { error } = await supabase.from("expenses").update({
+        status: "approved", approved_by: meName, approved_at: stamp(), reject_note: null, updated_at: stamp(),
+      }).eq("id", c.id);
+      setClaimBusy(null);
+      if (error) { window.alert("Couldn't approve: " + error.message); return; }
+      notifyClaim(c.id, "approved");
+      await loadMyClaims();
+    };
+    const reject = async (c, note) => {
+      const why = String(note || "").trim();
+      if (why.length < 3) { window.alert("Give the coach a reason — it goes in the email to them."); return; }
+      setClaimBusy(c.id);
+      const { error } = await supabase.from("expenses").update({
+        status: "rejected", reject_note: why, approved_by: meName, approved_at: stamp(), updated_at: stamp(),
+      }).eq("id", c.id);
+      setClaimBusy(null);
+      if (error) { window.alert("Couldn't reject: " + error.message); return; }
+      setClaimRejecting(null);
+      notifyClaim(c.id, "rejected");
+      await loadMyClaims();
+    };
+    const setCategory = async (c, category) => {
+      const { error } = await supabase.from("expenses").update({ category, updated_at: stamp() }).eq("id", c.id);
+      if (error) { window.alert("Couldn't save: " + error.message); return; }
+      await loadMyClaims();
+    };
+    const markPaid = async (rows) => {
+      if (!rows.length) return;
+      if (!window.confirm("Mark " + rows.length + " claim" + (rows.length === 1 ? "" : "s") + " as paid — " + money(rows.reduce((s, r) => s + Number(r.amount || 0), 0)) + "?\n\n"
+        + "They leave the accountant's weekly report, and each coach gets an email saying they've been paid.")) return;
+      const now = stamp();
+      const { error } = await supabase.from("expenses").update({ reimbursed: true, reimbursed_at: now, updated_at: now }).in("id", rows.map(r => r.id));
+      if (error) { window.alert("Couldn't save: " + error.message); return; }
+      rows.forEach(r => notifyClaim(r.id, "paid"));
+      await loadMyClaims();
+    };
+    const sendToAccountant = async () => {
+      const total = owed.reduce((s, r) => s + Number(r.amount || 0), 0);
+      if (!window.confirm("Email the reimbursement report to the accountant now?\n\n" + money(total) + " across " + owed.length + " claim" + (owed.length === 1 ? "" : "s") + ".")) return;
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.access_token) throw new Error("Not signed in");
+        const r = await fetch("/api/reimbursement-report", { method: "POST", headers: { Authorization: "Bearer " + session.access_token } });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.error || ("HTTP " + r.status));
+        window.alert("Sent ✓ — " + money(d.total ?? total) + " to " + ((d.to || []).join(", ")));
+      } catch (e) { window.alert("Couldn't send: " + (e.message || "error")); }
+    };
+
+    const card = { background:C.card, border:"1px solid "+C.border, borderRadius:12, marginBottom:12, overflow:"hidden" };
+    const head = { fontSize:13, fontWeight:800, color:C.gold, margin:"22px 0 10px", display:"flex", alignItems:"baseline", gap:10, flexWrap:"wrap" };
+    const btn = (bg, fg, border) => ({ padding:"8px 16px", borderRadius:8, border: border || "none", background:bg, color:fg, fontFamily:"inherit", fontSize:13, fontWeight:800, cursor:"pointer" });
+
+    const byCoach = new Map();
+    owed.forEach(r => { const k = r.reimburse_to || r.submitted_by; if (!byCoach.has(k)) byCoach.set(k, []); byCoach.get(k).push(r); });
+
+    return (
+      <div style={{padding:"18px 16px",maxWidth:1000,margin:"0 auto"}}>
+        <h2 style={{margin:"0 0 2px",fontSize:20,fontWeight:800,color:C.gold}}>Coach Claims</h2>
+        <div style={{fontSize:12,color:C.mut,marginBottom:6}}>
+          Expenses coaches paid for themselves and want back. Approve or reject — the coach is emailed either way.
+          Approved claims go to General Ledger Partners every Monday until they're marked paid.
+        </div>
+
+        <div style={head}>Waiting for you <span style={{color:C.text,fontSize:15}}>{pending.length}</span></div>
+        {!pending.length && <div style={{...card,padding:22,textAlign:"center",color:C.mut,fontSize:12}}>Nothing waiting. You'll get an email and a notification when a coach files one.</div>}
+        {pending.map(c => {
+          const url = claimReceipts[c.id];
+          const tn = tnName(c.tournament_id);
+          const waited = daysSince(c.submitted_at);
+          const rej = claimRejecting?.id === c.id ? claimRejecting : null;
+          const busy = claimBusy === c.id;
+          return (
+            <div key={c.id} style={{...card,border:"1px solid "+(waited > 7 ? C.red : C.gold)}}>
+              <div style={{display:"flex",flexWrap:"wrap",gap:16,padding:14}}>
+                <div style={{flex:"1 1 280px",minWidth:0}}>
+                  <div style={{display:"flex",alignItems:"baseline",gap:10,flexWrap:"wrap"}}>
+                    <span style={{fontSize:24,fontWeight:800,color:C.text}}>{money(c.amount)}</span>
+                    <span style={{fontSize:15,fontWeight:700,color:C.text}}>{c.submitted_by}</span>
+                  </div>
+                  <div style={{fontSize:11,fontWeight:700,color: waited > 7 ? C.red : C.mut,marginTop:2}}>
+                    Filed {ago(c.submitted_at)}{waited > 7 ? " — waiting over a week" : ""}
+                  </div>
+                  <div style={{fontSize:14,color:C.text,marginTop:10}}>{c.item}</div>
+                  <div style={{fontSize:12,color:C.mut,marginTop:3}}>Spent {fmtD(c.expense_date)}{tn ? " · " + tn : ""}</div>
+                  <label style={{display:"flex",alignItems:"center",gap:8,marginTop:10,fontSize:11,color:C.mut,fontWeight:700,textTransform:"uppercase"}}>
+                    Category
+                    <select value={c.category || "Other"} onChange={e => setCategory(c, e.target.value)}
+                      style={{...inpStyle,padding:"5px 8px",fontSize:12,textTransform:"none",fontWeight:600}}>
+                      {[...new Set([...EXPENSE_CATS, c.category || "Other"])].map(k => <option key={k} value={k}>{k}</option>)}
+                    </select>
+                  </label>
+
+                  {!rej ? (
+                    <div style={{display:"flex",gap:8,marginTop:14,flexWrap:"wrap"}}>
+                      <button disabled={busy} onClick={() => approve(c)} style={btn(C.grn, "#000")}>{busy ? "Saving…" : "Approve"}</button>
+                      <button disabled={busy} onClick={() => setClaimRejecting({ id: c.id, note: "" })} style={btn("transparent", C.red, "1px solid " + C.red)}>Reject…</button>
+                    </div>
+                  ) : (
+                    <div style={{marginTop:14}}>
+                      <div style={{fontSize:11,fontWeight:700,color:C.mut,textTransform:"uppercase",marginBottom:4}}>Reason — this goes to {String(c.submitted_by).split(" ")[0]}</div>
+                      <textarea autoFocus value={rej.note} onChange={e => setClaimRejecting({ id: c.id, note: e.target.value })}
+                        placeholder="e.g. Personal meal, not a team expense — or: the receipt doesn't show the amount."
+                        style={{...inpStyle,width:"100%",minHeight:70,padding:"8px 10px",fontSize:13,boxSizing:"border-box",resize:"vertical"}} />
+                      <div style={{display:"flex",gap:8,marginTop:8,flexWrap:"wrap"}}>
+                        <button disabled={busy} onClick={() => reject(c, rej.note)} style={btn(C.red, "#fff")}>{busy ? "Saving…" : "Reject and email " + String(c.submitted_by).split(" ")[0]}</button>
+                        <button disabled={busy} onClick={() => setClaimRejecting(null)} style={btn("transparent", C.mut, "1px solid " + C.border)}>Cancel</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div style={{flex:"1 1 280px",minWidth:0}}>
+                  {!c.receipt_path ? (
+                    <div style={{padding:20,border:"1px dashed "+C.red,borderRadius:8,color:C.red,fontSize:12,textAlign:"center"}}>No receipt attached</div>
+                  ) : url == null ? (
+                    <div style={{padding:20,border:"1px dashed "+C.border,borderRadius:8,color:C.mut,fontSize:12,textAlign:"center"}}>Loading receipt…</div>
+                  ) : url === "" ? (
+                    <div style={{padding:20,border:"1px dashed "+C.red,borderRadius:8,color:C.red,fontSize:12,textAlign:"center"}}>Couldn't load the receipt</div>
+                  ) : isPdf(c) ? (
+                    <iframe title={"Receipt " + c.id} src={url} style={{width:"100%",height:340,border:"1px solid "+C.border,borderRadius:8,background:"#fff"}} />
+                  ) : (
+                    <a href={url} target="_blank" rel="noopener noreferrer">
+                      <img src={url} alt={"Receipt: " + (c.item || "")} style={{display:"block",maxWidth:"100%",maxHeight:340,margin:"0 auto",borderRadius:8,border:"1px solid "+C.border}} />
+                    </a>
+                  )}
+                  {url ? (
+                    <div style={{textAlign:"right",marginTop:6}}>
+                      <a href={url} target="_blank" rel="noopener noreferrer" style={{fontSize:12,color:C.gold,fontWeight:700}}>Open full size ↗</a>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+
+        <div style={head}>
+          Approved, waiting to be paid <span style={{color:C.text,fontSize:15}}>{money(owed.reduce((s, r) => s + Number(r.amount || 0), 0))}</span>
+          <div style={{flex:1}} />
+          {owed.length > 0 && <button onClick={sendToAccountant} style={{...btn("transparent", C.gold, "1px solid " + C.gold),padding:"5px 12px",fontSize:12}}>Send to accountant now</button>}
+        </div>
+        {!owed.length && <div style={{...card,padding:18,textAlign:"center",color:C.mut,fontSize:12}}>Nothing owed.</div>}
+        {[...byCoach.entries()].map(([who, rows]) => (
+          <div key={who} style={card}>
+            <div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderBottom:"1px solid "+C.border,flexWrap:"wrap"}}>
+              <span style={{fontSize:14,fontWeight:800,color:C.text}}>{who}</span>
+              <span style={{fontSize:14,fontWeight:800,color:C.gold}}>{money(rows.reduce((s, r) => s + Number(r.amount || 0), 0))}</span>
+              <div style={{flex:1}} />
+              <button onClick={() => markPaid(rows)} style={{...btn("transparent", C.grn, "1px solid " + C.grn),padding:"5px 12px",fontSize:12}}>
+                Mark {rows.length > 1 ? "all " + rows.length + " " : ""}paid
+              </button>
+            </div>
+            {rows.map(r => (
+              <div key={r.id} style={{display:"flex",gap:10,alignItems:"center",padding:"8px 14px",borderBottom:"1px solid "+C.border,fontSize:12,flexWrap:"wrap"}}>
+                <span style={{fontWeight:700,color:C.text,minWidth:70}}>{money(r.amount)}</span>
+                <span style={{flex:1,minWidth:160,color:C.text}}>{r.item}</span>
+                <span style={{color:C.mut}}>{r.category} · {fmtD(r.expense_date)} · approved {r.approved_at ? fmtD(r.approved_at) : ""}</span>
+              </div>
+            ))}
+          </div>
+        ))}
+
+        {recent.length > 0 && <>
+          <div style={head}>Recently decided</div>
+          <div style={card}>
+            {recent.map(r => (
+              <div key={r.id} style={{display:"flex",gap:10,alignItems:"center",padding:"8px 14px",borderBottom:"1px solid "+C.border,fontSize:12,flexWrap:"wrap"}}>
+                <span style={{fontWeight:800,minWidth:62,color: r.status === "rejected" ? C.red : C.grn}}>{r.status === "rejected" ? "Rejected" : "Paid"}</span>
+                <span style={{fontWeight:700,color:C.text,minWidth:70}}>{money(r.amount)}</span>
+                <span style={{color:C.text,minWidth:110}}>{r.submitted_by}</span>
+                <span style={{flex:1,minWidth:140,color:C.mut}}>{r.item}{r.status === "rejected" && r.reject_note ? " — " + r.reject_note : ""}</span>
+              </div>
+            ))}
+          </div>
+        </>}
       </div>
     );
   }
@@ -14758,7 +15001,9 @@ export default function App() {
     const seasons = [...new Set(expenses.map(e => e.season).filter(Boolean))].sort().reverse();
     const inSeason = expenses.filter(e => e.season === finSeason);
     const live = inSeason.filter(e => e.status === "approved");
-    const pending = expenses.filter(e => e.status === "pending");
+    // Coach claims have their own queue (Coach Claims). Here they were a $14
+    // line lost among 120 email-captured receipts; now this list is receipts only.
+    const pending = expenses.filter(e => e.status === "pending" && !e.submitted_by);
 
     const sum = (rows) => rows.reduce((a, e) => a + Number(e.amount || 0), 0);
     const total = sum(live);
@@ -14939,6 +15184,11 @@ export default function App() {
 
         {finTab === "pending" && (
           <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,overflow:"hidden"}}>
+            {pendingClaimCount > 0 && (
+              <div onClick={() => setView("claims")} style={{padding:"10px 14px",borderBottom:"1px solid "+C.border,background:"rgba(224,180,85,0.08)",fontSize:12,color:C.gold,fontWeight:700,cursor:"pointer"}}>
+                {pendingClaimCount} coach claim{pendingClaimCount === 1 ? "" : "s"} waiting — they have their own queue now. Open Coach Claims →
+              </div>
+            )}
             {!pending.length && <div style={{padding:26,textAlign:"center",color:C.mut,fontSize:12}}>Nothing waiting. Receipts captured from email land here first.</div>}
         {/* Reimbursements owed — approved coach claims the club hasn't paid
             back yet. Kept separate from the review queue because these are
@@ -14959,8 +15209,9 @@ export default function App() {
             if (!ids.length) return;
             if (!window.confirm("Mark " + ids.length + " claim" + (ids.length===1?"":"s") + " as reimbursed?\n\nThey'll drop off this list and off the accountant's weekly report.")) return;
             const { error } = await supabase.from("expenses")
-              .update({ reimbursed: true, updated_at: new Date().toISOString() }).in("id", ids);
+              .update({ reimbursed: true, reimbursed_at: new Date().toISOString(), updated_at: new Date().toISOString() }).in("id", ids);
             if (error) { window.alert("Couldn't save: " + error.message); return; }
+            ids.forEach(id => notifyClaim(id, "paid"));   // same email as marking paid from Coach Claims
             await loadExpenses();
           };
           const sendNow = async () => {
@@ -29919,7 +30170,7 @@ export default function App() {
                   ["tracker","Tracker"], ["teamdir","All Teams"], ["playereval","Player Evaluations"], ["passing","Passer Ratings"], ["practice","Practice"], ["sa","S&A Schedule"], ["scholarships","Scholarships"],
                   ...(isAdmin ? [["hawaii","Hawaii"], ["travel","Travel"], ["finance","Finance"]] : []),
                   ["hdr","DS Elite · Coaches & Pay"],
-                  ["coaches","Coaches"], ...(isAdmin ? [["staffing","Staffing Board"]] : []), ["coverage","Coach Coverage"], ["timecards","Time Cards"], ["myexpenses","My Expenses"], ["gear","Gear Sizes" + (gearOutstanding ? " (" + gearOutstanding + ")" : "")], ["requests","Requests" + (pendingReqs ? " (" + pendingReqs + ")" : "")],
+                  ["coaches","Coaches"], ...(isAdmin ? [["staffing","Staffing Board"]] : []), ["coverage","Coach Coverage"], ["timecards","Time Cards"], ["myexpenses","My Expenses"], ...(canOps ? [["claims","Coach Claims" + (pendingClaimCount ? " (" + pendingClaimCount + ")" : "")]] : []), ["gear","Gear Sizes" + (gearOutstanding ? " (" + gearOutstanding + ")" : "")], ["requests","Requests" + (pendingReqs ? " (" + pendingReqs + ")" : "")],
                   ["hdr","DSSC"],
                   ["clinics","Clinics & Camps"], ["dssccal","Coverage Calendar"], ["dssctime","DSSC Time Cards"], ["pods","Skill Pods"],
                   ["hdr","Communication"],
@@ -30170,6 +30421,7 @@ export default function App() {
         {view==="playereval" && renderPlayerEvals()}
         {view==="passing" && renderPassing()}
         {view==="myexpenses" && renderMyExpenses()}
+        {view==="claims" && canOps && renderClaims()}
         {view==="travel" && renderTravel()}
         {view==="faq" && renderFaq()}
         {view==="practiceplan" && renderPracticePlans()}
