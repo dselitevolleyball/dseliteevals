@@ -76,6 +76,19 @@ export default async function handler(req, res) {
   // request) so replies reach them directly; falls back to the club default.
   const reqReplyTo = (body && typeof body.replyTo === "string" ? body.replyTo : "").trim();
   const replyTo = (reqReplyTo && EMAIL_RE.test(reqReplyTo)) ? reqReplyTo : (DSE_REPLY_TO || extractAddress(DSE_FROM_EMAIL)).trim();
+  // Optional scheduled delivery. Resend holds each message and releases it at
+  // this time, so a send queued for this evening still goes out with every
+  // laptop shut. A schedule that doesn't parse, or is in the past, is REFUSED
+  // rather than ignored: ignoring it would send immediately, which is the one
+  // outcome a caller who asked for later has ruled out.
+  let scheduledAt = null;
+  if (body?.scheduledAt != null && body.scheduledAt !== "") {
+    const t = Date.parse(body.scheduledAt), now = Date.now();
+    if (!Number.isFinite(t) || t < now + 60_000 || t > now + 72 * 3_600_000) {
+      return res.status(400).json({ error: "scheduledAt must be an ISO time between 1 minute and 72 hours from now. Nothing has been sent." });
+    }
+    scheduledAt = new Date(t).toISOString();
+  }
   // Pre-rendered HTML from the composer's formatting toolbar takes priority;
   // otherwise fall back to the plain-text wrap (or raw html when html=true).
   const preRendered = (body && typeof body.bodyHtml === "string" && body.bodyHtml.trim()) ? body.bodyHtml : null;
@@ -134,12 +147,18 @@ export default async function handler(req, res) {
   }
 
   let sent = 0;
+  // Resend message ids, returned for scheduled sends so they can be cancelled
+  // (POST /emails/{id}/cancel) before they go.
+  const ids = [];
   const msgFor = (email) => ({
     from: DSE_FROM_EMAIL, to: [email], reply_to: replyTo, subject, html: htmlBody, text,
     ...(attachments.length ? { attachments } : {}),
+    ...(scheduledAt ? { scheduled_at: scheduledAt } : {}),
   });
 
-  if (attachments.length) {
+  // The batch endpoint drops scheduled_at the same way it drops attachments,
+  // so a scheduled message takes the one-at-a-time path too.
+  if (attachments.length || scheduledAt) {
     // Resend's BATCH endpoint does not support attachments — it accepts the
     // request, returns 200, and drops them. A deck went to 224 people that way.
     // With attachments we must post one message at a time to /emails, which is
@@ -157,7 +176,7 @@ export default async function handler(req, res) {
             headers: { Authorization: "Bearer " + RESEND_API_KEY, "Content-Type": "application/json" },
             body: JSON.stringify(msgFor(email)),
           });
-          if (r.ok) { sent++; continue; }
+          if (r.ok) { sent++; const d = await r.json().catch(() => null); if (d?.id) ids.push(d.id); continue; }
           // 429 = rate limited. One backoff and retry before giving up on it.
           if (r.status === 429) {
             await new Promise(res => setTimeout(res, 1100));
@@ -166,7 +185,7 @@ export default async function handler(req, res) {
               headers: { Authorization: "Bearer " + RESEND_API_KEY, "Content-Type": "application/json" },
               body: JSON.stringify(msgFor(email)),
             });
-            if (again.ok) { sent++; continue; }
+            if (again.ok) { sent++; const d = await again.json().catch(() => null); if (d?.id) ids.push(d.id); continue; }
           }
           const data = await r.json().catch(() => ({}));
           failed.push({ email, error: (data && (data.message || data.error)) || ("Resend error " + r.status) });
@@ -224,7 +243,10 @@ export default async function handler(req, res) {
           Prefer: "return=representation",
         },
         body: JSON.stringify({
-          subject, body: text.slice(0, 20000),
+          subject,
+          body: (scheduledAt
+            ? "[Scheduled — delivered " + new Date(scheduledAt).toLocaleString("en-US", { timeZone: "America/Chicago", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) + " CT]\n\n"
+            : "") + text.slice(0, 20000),
           recipient_count: valid.length, recipients: valid.slice(0, 200),
           sent_count: sent, failed_count: failed.length,
           sent_by: who || (src ? "(" + src + ")" : "(unattributed)"),
@@ -241,7 +263,9 @@ export default async function handler(req, res) {
   // Callers that already push pass skipPush. Mirrored pushes carry skipEmail so
   // send-push does not bounce a second email straight back.
   let pushed = 0;
-  if (!body?.skipPush && valid.length) {
+  // Not for a scheduled send: the push would land now, announcing an email
+  // that hasn't arrived and won't for hours.
+  if (!body?.skipPush && !scheduledAt && valid.length) {
     try {
       const origin = process.env.APP_URL || ("https://" + (req.headers["x-forwarded-host"] || req.headers.host));
       const r = await fetch(origin + "/api/send-push", {
@@ -262,5 +286,6 @@ export default async function handler(req, res) {
     } catch (e) { console.error("email→push mirror failed (email already sent):", e?.message); }
   }
 
-  return res.status(200).json({ ok: failed.length === 0, sent, failed, pushed });
+  return res.status(200).json({ ok: failed.length === 0, sent, failed, pushed,
+    ...(scheduledAt ? { scheduledAt, ids } : {}) });
 }

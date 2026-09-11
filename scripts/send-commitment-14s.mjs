@@ -52,6 +52,7 @@ const flag = (n) => args.includes("--" + n);
 const value = (n) => { const i = args.indexOf("--" + n); return i >= 0 ? args[i + 1] : null; };
 const doSend = flag("send");
 const testTo = value("test");
+const sendAt = value("at");   // ISO time; Resend holds each message until then
 const onlyPlayer = value("player");
 
 const env = loadEnv();
@@ -69,6 +70,9 @@ if (error) { console.error(error.message); process.exit(1); }
 // coach roster — the same record payroll and travel use — so a number changed
 // there is the number families get.
 const PLACEHOLDER = /^(tbd|tba|n\/a|na|none|pending|sub|open|needed|\?+|-+|—)$/i;
+// Staff whose family-facing address is the club one, not the personal address
+// the roster holds for payroll and travel. Drew's call for Kristen.
+const CLUB_EMAIL = { "kristen alexandrov": "kristen@dselitevolleyball.com" };
 const rosterBy = new Map((coachRoster || []).map(r => [norm(`${r.first_name || ""} ${r.last_name || ""}`.trim()), r]));
 const fmtPhone = (p) => {
   const d = String(p || "").replace(/\D/g, "").slice(-10);
@@ -81,7 +85,7 @@ const coachesFor = (team) => {
     .filter(([, n]) => n && !PLACEHOLDER.test(String(n).trim()))
     .map(([role, n]) => {
       const r = rosterBy.get(norm(n));
-      const email = String(r?.email || "").trim().toLowerCase();
+      const email = String(CLUB_EMAIL[norm(n)] || r?.email || "").trim().toLowerCase();
       return { role, name: String(n).trim(), phone: fmtPhone(r?.phone), email: EMAIL_RE.test(email) ? email : null };
     });
 };
@@ -115,14 +119,14 @@ const build = (p, { preview = false } = {}) => {
 
   const text = `${greet}
 
-Tonight at orientation we go through the DS Elite commitment together, and ${girl} and you will each sign it. This is ${girl}'s own link:
+We're going through the DS Elite commitment together at orientation tonight, and ${girl} and you will each sign it. This is ${girl}'s own link:
 
 ${commit}
 
 How it works:
   - Two signatures. ${girl} signs her side and a parent signs yours — separately, in your own names, on the same link. Either can go first.
   - Every point has to be ticked before that side saves.
-  - We walk through it together at 6:00, so have your phone with you. If you don't finish tonight, the link keeps working.
+  - If you're at orientation, open it now and follow along with us. If you couldn't make it tonight, sign whenever you're ready — the link keeps working.
 
 TEAM PHOTOS
 
@@ -136,7 +140,7 @@ YOUR ${p.team_assignment.toUpperCase()} COACHES
 
 ${coaches.map(c => `  ${c.name} — ${c.role}\n    ${[c.phone?.show, c.email].filter(Boolean).join("  ·  ") || "contact via the club"}`).join("\n\n")}
 
-See you tonight.
+Thank you.
 
 — Drew`;
 
@@ -146,13 +150,13 @@ See you tonight.
 
   const html = '<div style="font-family:-apple-system,Segoe UI,sans-serif;font-size:15px;line-height:1.6;color:#1a1a1a;max-width:600px">'
     + `<p style="margin:0 0 14px">${esc(greet)}</p>`
-    + `<p style="margin:0 0 16px">Tonight at orientation we go through the DS Elite commitment together, and ${esc(girl)} and you will each sign it. This is ${esc(girl)}&rsquo;s own link:</p>`
+    + `<p style="margin:0 0 16px">We&rsquo;re going through the DS Elite commitment together at orientation tonight, and ${esc(girl)} and you will each sign it. This is ${esc(girl)}&rsquo;s own link:</p>`
     + btn(commit, `Open ${esc(girl)}&rsquo;s commitment`)
     + `<p style="margin:0 0 8px"><b>How it works</b></p>`
     + `<ul style="margin:0 0 20px;padding-left:20px">`
     + `<li style="margin-bottom:6px"><b>Two signatures.</b> ${esc(girl)} signs her side and a parent signs yours &mdash; separately, in your own names, on the same link. Either can go first.</li>`
     + `<li style="margin-bottom:6px">Every point has to be ticked before that side saves.</li>`
-    + `<li>We walk through it together at <b>6:00</b>, so have your phone with you. If you don&rsquo;t finish tonight, the link keeps working.</li>`
+    + `<li><b>If you&rsquo;re at orientation, open it now and follow along with us.</b> If you couldn&rsquo;t make it tonight, sign whenever you&rsquo;re ready &mdash; the link keeps working.</li>`
     + `</ul>`
     + `<p style="margin:26px 0 10px;font-weight:700;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:#c2186f">Team photos</p>`
     + `<p style="margin:0 0 16px">Second link &mdash; this one is for photos of <b>${esc(p.team_assignment)}</b>:</p>`
@@ -169,7 +173,7 @@ See you tonight.
         + (!c.phone && !c.email ? `<span style="color:#777">contact via the club</span>` : "")
         + `</td></tr>`).join("")
     + `</table>`
-    + `<p style="margin:0 0 14px">See you tonight.</p>`
+    + `<p style="margin:0 0 14px">Thank you.</p>`
     + '<p style="margin:0">&mdash; Drew</p></div>';
 
   return { subject: `Tonight: ${girl}'s DS Elite commitment, and your team photo link`, text, html };
@@ -193,6 +197,7 @@ const send = async (j, recipients) => {
   const r = await fetch(APP + "/api/send-email", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ subject: j.subject, body: j.text, bodyHtml: j.html, recipients,
+      ...(sendAt && !testTo ? { scheduledAt: sendAt, skipPush: true } : {}),
       sentBy: SENDER.name, sentByEmail: SENDER.email, source: "script" }),
   });
   const o = await r.json().catch(() => ({}));
