@@ -59,8 +59,12 @@ const flag = (n) => args.includes("--" + n);
 const value = (n) => { const i = args.indexOf("--" + n); return i >= 0 ? args[i + 1] : null; };
 const doSend = flag("send"), testTo = value("test"), sendAt = value("at");
 const onlyPlayer = value("player"), age = value("age"), teamsArg = value("teams");
-const when = (value("when") || "tonight").toLowerCase();      // tonight | after
-if (!["tonight", "after"].includes(when)) { console.error("--when must be tonight or after"); process.exit(1); }
+// tonight  — lands during the orientation meeting, phones out, follow along
+// after    — lands the day after; they either signed there or still need to
+// practice — no orientation night: the team does it together at practice, so
+//            the player signs there and a parent signs from home
+const when = (value("when") || "tonight").toLowerCase();
+if (!["tonight", "after", "practice"].includes(when)) { console.error("--when must be tonight, after or practice"); process.exit(1); }
 if (!age && !teamsArg) { console.error("Give --age 15 or --teams \"15 Ruby,15 Emerald\""); process.exit(1); }
 
 const sb = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
@@ -124,11 +128,15 @@ const build = (p, { preview = false } = {}) => {
   const coaches = coachesFor(p.team_assignment);
   const live = when === "tonight";
 
-  const opener = live
+  const opener = when === "tonight"
     ? `We're going through the DS Elite commitment together at orientation tonight, and ${girl} and you will each sign it. This is ${girl}'s own link:`
+    : when === "practice"
+    ? `Your team is going through the DS Elite commitment together at practice tonight. ${girl} and you each sign it — separately — and this is ${girl}'s own link:`
     : `We went through the DS Elite commitment together at orientation last night. ${girl} and you each sign it, and this is ${girl}'s own link:`;
-  const third = live
+  const third = when === "tonight"
     ? `If you're at orientation, open it now and follow along with us. If you couldn't make it tonight, sign whenever you're ready — the link keeps working.`
+    : when === "practice"
+    ? `${girl} signs her half at practice with her coach and the team. The parent half is yours to do from this same link — tonight, or whenever suits you.`
     : `If you both signed last night, thank you — there's nothing more to do. If you didn't finish, or you couldn't be there, the link is open and works whenever you're ready.`;
 
   const text = `${greet}
