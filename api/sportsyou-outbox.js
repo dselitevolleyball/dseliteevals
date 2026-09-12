@@ -110,7 +110,22 @@ export default async function handler(req, res) {
   const p = o.pending || [];
   if (!p.length) { alert('Nothing queued in DS HQ.'); return; }
   const G = {}; p.forEach(i => (G[i.message] = G[i.message] || []).push(i));
-  const RS = [], MISS = [];
+  const MISS = [];
+  // Report each group the moment it lands, not at the very end.
+  //
+  // On 11 September the 14s reminders posted to five teams and every row
+  // stayed "pending", because the run stopped before the single report at the
+  // bottom — one long rate-limit backoff or a closed tab is enough. The next
+  // run would then have posted all five again, to families who already had it.
+  // Now a lost tab costs at most the group in flight.
+  let POSTED = 0, FAILED = 0;
+  const REPORT = async (rs) => {
+    if (!rs.length) return;
+    try {
+      const r = await (await fetch(A, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ results: rs }) })).json();
+      POSTED += (r.posted || 0); FAILED += (r.failed || 0);
+    } catch (e) { /* posted but unrecorded — the next run's duplicate check is the backstop */ }
+  };
   // SportsYou rate-limits createPost: fired back to back, roughly the fourth
   // call starts returning code 207 "Too many requests". Identical text for many
   // teams is ONE call so it never showed up, but per-team text (a personalised
@@ -124,13 +139,13 @@ export default async function handler(req, res) {
     if (sent) await SLEEP(4000);            // gap between posts
     sent++;
     document.title = "Posting " + sent + "/" + KEYS.length + " to SportsYou...";
-    const ids = [], ok = [];
+    const ids = [], ok = [], RS = [];
     for (const x of G[m]) {
       const id = BY[N(x.team_name)];
       if (id) { ids.push(id); ok.push(x); }
       else { MISS.push(x.team_name); RS.push({ id: x.id, ok: false, error: 'no SportsYou team match' }); }
     }
-    if (!ids.length) continue;
+    if (!ids.length) { await REPORT(RS); continue; }
     const q = 'mutation {postCreate(allowComments:true, message:' + JSON.stringify(m)
       + ', postTypes:[' + ids.map(() => '"team"').join(', ')
       + '], scheduledTime:"", targetIds:[' + ids.map(v => JSON.stringify(v)).join(', ') + '])}';
@@ -148,8 +163,9 @@ export default async function handler(req, res) {
       }
       ok.forEach(x => RS.push({ id: x.id, ok: !bad, error: bad }));
     } catch (e) { ok.forEach(x => RS.push({ id: x.id, ok: false, error: String(e) })); }
+    await REPORT(RS);
   }
-  const r = await (await fetch(A, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ results: RS }) })).json();
+  const r = { posted: POSTED, failed: FAILED };
   alert('SportsYou \\u2713 posted ' + (r.posted || 0) + ', failed ' + (r.failed || 0)
     + (MISS.length ? '\\n\\nNo SportsYou team for: ' + MISS.join(', ') : ''));
 })();`;
