@@ -4270,9 +4270,12 @@ export default function App() {
     if (!to || !body) return false;
     setSmsSending(true);
     try {
+      // The endpoint sends from the club's number at the club's cost, so it
+      // now requires a signed-in admin — send the session with the request.
+      const { data: { session } } = await supabase.auth.getSession();
       const res = await fetch("/api/send-sms", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + (session?.access_token || "") },
         body: JSON.stringify({
           to, body, player_id: player_id || null,
           sent_by_coach_id: coach?.id || null,
