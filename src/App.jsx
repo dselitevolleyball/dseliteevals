@@ -17755,7 +17755,10 @@ export default function App() {
     };
     // Summer + Fall 1/Fall 2 are Sunday-only (preseason). Only the Regular
     // Season uses the full week. Fall keeps 6 Sunday courts; summer has 5.
-    const FALL_SLOTS = { Sun: SUN_HOURS.map(label => ({ label, capacity: 6 })), Mon: [], Tue: [], Wed: [], Thu: [] };
+    // Fall 2 is the first block in the Warehouse, which has 4 courts (Drew,
+    // 13 Sep). Fall 1 splits across the Warehouse and the Flex, so it keeps 6.
+    // Noon is S&A only and never holds a practice, so its capacity never binds.
+    const FALL_SLOTS = { Sun: SUN_HOURS.map(label => ({ label, capacity: schedulePhase === "fall2" ? 4 : 6 })), Mon: [], Tue: [], Wed: [], Thu: [] };
     const SLOTS = (schedulePhase === "season" || schedulePhase === "postseason") ? SEASON_SLOTS
                 : schedulePhase === "summer" ? PRESEASON_SLOTS
                 : FALL_SLOTS;
@@ -18600,7 +18603,9 @@ export default function App() {
       const sk = a.day + "|" + a.slot;
       if (!coachInSlot.has(sk)) coachInSlot.set(sk, new Map());
       const m = coachInSlot.get(sk);
-      for (const c of [t.head_coach, t.assistant_coach]) {
+      // Third coaches run every practice too (see myTeamNames), so a third coach
+      // on two teams in one hour is as double-booked as a head coach would be.
+      for (const c of [t.head_coach, t.assistant_coach, t.third_coach]) {
         if (!c) continue;
         if (!m.has(c)) m.set(c, []);
         m.get(c).push(a.team_name);
@@ -19323,7 +19328,8 @@ export default function App() {
                         const cMap = coachInSlot.get(sk);
                         const coachClash = isOn && cMap && (
                           (t.head_coach && cMap.get(t.head_coach)?.length > 1) ||
-                          (t.assistant_coach && cMap.get(t.assistant_coach)?.length > 1)
+                          (t.assistant_coach && cMap.get(t.assistant_coach)?.length > 1) ||
+                          (t.third_coach && cMap.get(t.third_coach)?.length > 1)
                         );
                         const bg = !isOn ? "transparent"
                                  : coachClash ? "rgba(239,68,68,0.18)"
