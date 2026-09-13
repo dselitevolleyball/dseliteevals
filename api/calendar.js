@@ -171,12 +171,33 @@ export default async function handler(req, res) {
   const WAREHOUSE_LOC = WAREHOUSE + ", " + WAREHOUSE_ADDR; // S&A / orientation (no court)
   // Dated Sundays: summer / fall1 / fall2
   const datedPhases = [["summer", SUMMER_SUNDAYS], ["fall1", FALL1_SUNDAYS], ["fall2", FALL2_SUNDAYS]];
+  // One event per continuous block of practice, not one per hour. Dated Sundays
+  // are stored as 1-hour rows, so a practice-only team (3-4pm, 4-5pm) used to get
+  // two back-to-back events, and families read that as two different things.
+  // Merged, it is one 3-5pm practice. Speed & Agility is emitted separately
+  // below, so a team with 1h of S&A and 1h of practice still shows exactly those
+  // two. Hours only merge when they share a location — a block that crossed
+  // buildings would be one event pointing at the wrong one for half of it.
   for (const [phase, dates] of datedPhases) {
-    for (const a of assigns.filter(x => (x.phase || "season") === phase && x.day === "Sun")) {
-      const t = slotTimes(a.slot); if (!t) continue;
-      for (const d of dates) {
-        if (cancelled.has(d) || moveByDate.has(d) || goneSun.has(d)) continue;
-        push(`${team}-${phase}-${d}-${a.slot}`.replace(/\s+/g, "_"), team + " Practice", d, t[0], t[1], { location: locFor(a, d) });
+    const rows = assigns
+      .filter(x => (x.phase || "season") === phase && x.day === "Sun")
+      .map(a => ({ a, t: slotTimes(a.slot) }))
+      .filter(x => x.t)
+      .sort((x, y) => x.t[0] - y.t[0]);
+    for (const d of dates) {
+      if (cancelled.has(d) || moveByDate.has(d) || goneSun.has(d)) continue;
+      const blocks = [];
+      for (const { a, t } of rows) {
+        const loc = locFor(a, d);
+        const last = blocks[blocks.length - 1];
+        if (last && last.end === t[0] && last.loc === loc) last.end = t[1];
+        else blocks.push({ firstSlot: a.slot, start: t[0], end: t[1], loc });
+      }
+      // The block keeps the UID of its first hour, so that event already on a
+      // subscribed calendar is updated in place (it just gets longer) and only
+      // the later hour's event is retired — the least churn a merge can cause.
+      for (const b of blocks) {
+        push(`${team}-${phase}-${d}-${b.firstSlot}`.replace(/\s+/g, "_"), team + " Practice", d, b.start, b.end, { location: b.loc });
       }
     }
   }

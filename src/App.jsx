@@ -16907,7 +16907,12 @@ export default function App() {
                 const wd = WD[new Date(iso+"T00:00").getDay()];
                 const as = practiceAssignments.filter(a => a.team_name===teamCardName && a.day===wd && (a.phase||"fall1")===ph);
                 if (!as.length) return null;
-                const def = as[0].slot;
+                // Sundays are stored as 1-hour rows. Taking only the first row
+                // showed a 2-hour practice as "3-4pm" (or "4-5pm", depending on
+                // row order); merged, it reads as the one 3-5pm practice it is.
+                // S&A stays separate (saOnDate), so a 1h S&A + 1h practice team
+                // still shows two things.
+                const def = mergeAdjacentSlots(as.map(a => a.slot)).join(", ");
                 const mv = (slotMoves||[]).find(x => x.practice_date===iso && x.team_name===teamCardName);
                 const eff = mv ? mv.slot : def;
                 const cancelled = (practiceCancellations||[]).some(c => c.practice_date===iso && (!c.team_name || c.team_name===teamCardName));
