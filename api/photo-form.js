@@ -152,20 +152,48 @@ export default async function handler(req, res) {
   const { data: player } = await supabase
     .from("players").select("id,first_name,last_name,team_assignment,parent_name")
     .eq("photo_upload_token", token).maybeSingle();
-  if (!player) return res.status(404).send(notFound("We can't find that link. It may have been re-issued."));
 
-  // That team's own schedule, so the dropdown offers the weekends she is
-  // actually at rather than every tournament the club enters.
-  const { data: assigns } = await supabase.from("tournament_assignments")
-    .select("tournament_id").eq("team_id", player.team_assignment || "");
-  const ids = (assigns || []).map(a => a.tournament_id).filter(Boolean);
-  let tournaments = [];
-  if (ids.length) {
-    const { data: t } = await supabase.from("tournaments")
-      .select("id,name,start_date,end_date,location,cancelled").in("id", ids);
-    tournaments = (t || []).filter(x => !x.cancelled)
-      .sort((a, b) => String(a.start_date).localeCompare(String(b.start_date)));
+  // Not a family's link — maybe a coach's. Same page and library, but a coach
+  // is on several teams, so the team is chosen on the form instead of being
+  // fixed by the link, and only teams she actually coaches are offered.
+  let coach = null, coachTeams = [];
+  if (!player) {
+    const { data: c } = await supabase.from("coach_roster")
+      .select("id,first_name,last_name").eq("photo_upload_token", token).maybeSingle();
+    if (!c) return res.status(404).send(notFound("We can't find that link. It may have been re-issued."));
+    coach = { ...c, name: `${c.first_name || ""} ${c.last_name || ""}`.trim() };
+    const n = (s) => String(s || "").trim().toLowerCase().replace(/\s+/g, " ");
+    const { data: pt } = await supabase.from("practice_teams").select("team_name,head_coach,assistant_coach,third_coach");
+    coachTeams = (pt || [])
+      .filter(t => [t.head_coach, t.assistant_coach, t.third_coach].some(x => n(x) && n(x) === n(coach.name)))
+      .map(t => t.team_name).sort();
   }
+  const teamNames = player ? [player.team_assignment].filter(Boolean) : coachTeams;
+
+  // Each team's own schedule, so the dropdown offers the weekends that team is
+  // actually at rather than every tournament the club enters.
+  const byTeam = {};
+  if (teamNames.length) {
+    const { data: assigns } = await supabase.from("tournament_assignments")
+      .select("team_id,tournament_id").in("team_id", teamNames);
+    const ids = [...new Set((assigns || []).map(a => a.tournament_id).filter(Boolean))];
+    const { data: t } = ids.length
+      ? await supabase.from("tournaments").select("id,name,start_date,end_date,location,cancelled").in("id", ids)
+      : { data: [] };
+    const live = new Map((t || []).filter(x => !x.cancelled).map(x => [x.id, x]));
+    for (const tn of teamNames) {
+      byTeam[tn] = (assigns || []).filter(a => a.team_id === tn).map(a => live.get(a.tournament_id)).filter(Boolean)
+        .sort((a, b) => String(a.start_date).localeCompare(String(b.start_date)));
+    }
+  }
+  // The team a request is about. A family's is fixed by its link; a coach's has
+  // to be one she coaches — anything else is stored as no team, never trusted.
+  const teamFrom = (body) => {
+    if (player) return player.team_assignment || null;
+    const t = String(body?.team || "");
+    return coachTeams.includes(t) ? t : null;
+  };
+  const tournaments = player ? (byTeam[player.team_assignment] || []) : [];
 
   // ── Mint signed upload URLs ───────────────────────────────────────────────
   if (req.method === "POST" && action === "sign") {
@@ -174,8 +202,9 @@ export default async function handler(req, res) {
     const files = Array.isArray(body?.files) ? body.files.slice(0, MAX_PER_BATCH) : [];
     if (!files.length) return json(res, 400, { error: "No files listed." });
 
-    const evt = eventFrom(body, tournaments);
-    const folder = [slug(player.team_assignment || "no-team"), evt.folder].join("/");
+    const team = teamFrom(body);
+    const evt = eventFrom(body, byTeam[team] || []);
+    const folder = [slug(team || (coach ? "coaches" : "no-team")), evt.folder].join("/");
     const out = [];
     for (const f of files) {
       const size = Number(f?.size) || 0;
@@ -197,16 +226,19 @@ export default async function handler(req, res) {
     const photos = Array.isArray(body?.photos) ? body.photos.slice(0, MAX_PER_BATCH) : [];
     if (!photos.length) return json(res, 400, { error: "Nothing to record." });
 
-    const evt = eventFrom(body, tournaments);
+    const team = teamFrom(body);
+    const evt = eventFrom(body, byTeam[team] || []);
     const rows = photos.map(p => ({
       storage_path: String(p?.path || "").slice(0, 400),
-      player_id: player.id,
-      team_name: player.team_assignment || null,
-      // Who sent it. The name box is optional and routinely skipped, but the
-      // link is per-family so we already know: fall back to the parent on the
-      // record rather than storing an anonymous photo nobody can thank.
-      uploaded_by: String(body?.uploaded_by || "").trim().slice(0, 120)
-        || String(player.parent_name || "").trim() || null,
+      player_id: player ? player.id : null,
+      coach_id: coach ? coach.id : null,
+      team_name: team,
+      // Who sent it. A coach's link is one person, so the credit is simply
+      // hers. A family's name box is optional and routinely skipped, but that
+      // link is per-family too: fall back to the parent on the record rather
+      // than storing an anonymous photo nobody can thank.
+      uploaded_by: coach ? (coach.name || null)
+        : (String(body?.uploaded_by || "").trim().slice(0, 120) || String(player.parent_name || "").trim() || null),
       context: evt.context,
       tournament_id: evt.tournamentId,
       event_label: evt.label,
@@ -222,7 +254,9 @@ export default async function handler(req, res) {
     return json(res, 200, { ok: true, saved: rows.length });
   }
 
-  return res.status(200).send(renderForm(player, tournaments, {}));
+  return res.status(200).send(coach
+    ? renderForm(null, [], { coach, teams: coachTeams, byTeam })
+    : renderForm(player, tournaments, {}));
 }
 
 // The event, resolved the same way for both actions so a signed URL and its
@@ -239,9 +273,10 @@ function eventFrom(body, tournaments) {
   return { context, tournamentId: null, label, folder: slug(label) };
 }
 
-function renderForm(player, tournaments, { preview } = {}) {
-  const who = preview ? "your daughter" : `${player.first_name} ${player.last_name}`;
-  const opts = tournaments.map(t =>
+function renderForm(player, tournaments, { preview, coach, teams = [], byTeam = {} } = {}) {
+  const who = preview ? "your daughter" : coach ? coach.name : `${player.first_name} ${player.last_name}`;
+  // A coach's list starts empty and is filled for whichever team is picked.
+  const opts = (coach ? [] : tournaments).map(t =>
     `<option value="${t.id}">${esc(t.name.trim())} — ${esc(fmtDate(t.start_date))}${t.location ? ", " + esc(t.location) : ""}</option>`
   ).join("");
 
@@ -250,10 +285,14 @@ function renderForm(player, tournaments, { preview } = {}) {
   <h1>Send us your photos</h1>
   <p class="sub">${preview
     ? `<span style="color:var(--gold)">Preview — this is what families see. Nothing here uploads.</span>`
-    : `For <b style="color:var(--ink)">${esc(player.team_assignment || "your team")}</b>. Bookmark this page — it's yours for the whole season, and you can come back to it after every tournament.`}</p>
+    : coach
+      ? `Coach <b style="color:var(--ink)">${esc(coach.name)}</b> — this link is yours. Bookmark it and come back after every tournament; everything you send is credited to you.`
+      : `For <b style="color:var(--ink)">${esc(player.team_assignment || "your team")}</b>. Bookmark this page — it's yours for the whole season, and you can come back to it after every tournament.`}</p>
 
   <div class="card">
     <p class="sect">1 &middot; Where are they from?</p>
+    ${coach && teams.length ? `<label style="margin-bottom:14px"><span class="lb">Which team?</span>
+      <select id="team">${teams.map(tn => `<option value="${esc(tn)}">${esc(tn)}</option>`).join("")}</select></label>` : ""}
     <label style="margin-bottom:14px">
       <div class="seg">
         <button type="button" data-c="tournament" aria-pressed="false">A tournament<small>Pick which one below.</small></button>
@@ -289,11 +328,11 @@ function renderForm(player, tournaments, { preview } = {}) {
     <p class="hint" id="tally"></p>
   </div>
 
-  <div class="card">
+  ${coach ? `<input type="hidden" id="uploaded_by" value="${esc(coach.name)}">` : `<div class="card">
     <p class="sect">3 &middot; Who to thank</p>
     <label style="margin-bottom:0"><span class="lb">Your name</span>
       <input type="text" id="uploaded_by" placeholder="So we know who to credit" autocomplete="name"></label>
-  </div>
+  </div>`}
 
   <button class="go" id="send" disabled>Send photos</button>
   <p class="hint" style="text-align:center" id="status">They upload straight from this device — big files are fine.</p>
@@ -301,9 +340,9 @@ function renderForm(player, tournaments, { preview } = {}) {
   <div class="card" style="margin-top:14px">
     <div class="note">
       Photos are used for DS Elite's own posts and the team's end-of-season video.
-      They're stored privately and only staff can see them. If you'd rather your
-      daughter wasn't in anything we post, reply to any club email and tell us —
-      that's honoured for the whole season.
+      They're stored privately and only staff can see them. ${coach
+        ? "Send everything — if a family has asked us not to post their daughter, staff take care of that before anything goes out."
+        : "If you'd rather your daughter wasn't in anything we post, reply to any club email and tell us — that's honoured for the whole season."}
     </div>
   </div>
 
@@ -311,6 +350,17 @@ function renderForm(player, tournaments, { preview } = {}) {
   ${preview ? "" : `<script>
   (function () {
     var ctx = null, chosen = [], busy = false;
+    ${coach ? `// Coach link: the tournament list follows whichever team is picked.
+    var BYTEAM = ${JSON.stringify(Object.fromEntries(Object.entries(byTeam).map(([k, v]) => [k, v.map(t => ({ id: t.id, label: t.name.trim() + " — " + fmtDate(t.start_date) + (t.location ? ", " + t.location : "") }))]))).replace(/</g, "\\u003c")};
+    var teamEl = document.getElementById('team'), tEl = document.getElementById('tournament');
+    function fillT() {
+      var list = (teamEl && BYTEAM[teamEl.value]) || [];
+      tEl.innerHTML = '<option value="">— choose —</option>' + (list.length
+        ? list.map(function (t) { var o = document.createElement('option'); o.value = t.id; o.textContent = t.label; return o.outerHTML; }).join('')
+        : '<option value="" disabled>No tournaments on this team\\'s schedule yet</option>');
+    }
+    if (teamEl) teamEl.addEventListener('change', fillT);
+    fillT();` : ""}
     var $ = function (id) { return document.getElementById(id); };
     var drop = $('drop'), file = $('file'), list = $('list'), send = $('send'),
         status = $('status'), tally = $('tally'), tsel = $('tsel');
@@ -393,6 +443,7 @@ function renderForm(player, tournaments, { preview } = {}) {
     function meta() {
       return {
         context: ctx,
+        team: $('team') ? $('team').value : '',
         tournament_id: ctx === 'tournament' ? Number($('tournament').value) || null : null,
         taken_on: $('taken_on').value || null,
         caption: $('caption').value || '',

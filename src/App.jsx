@@ -8980,6 +8980,19 @@ export default function App() {
           </div>
         </div>
 
+        {/* Photo upload — the coach's own link, always one tap from home. */}
+        {myRoster?.photo_upload_token && (
+          <a href={"/photos?t=" + myRoster.photo_upload_token} target="_blank" rel="noopener noreferrer"
+            style={{display:"flex",alignItems:"center",gap:12,padding:"11px 14px",marginBottom:12,background:C.card,border:"1px solid "+C.border,borderRadius:12,textDecoration:"none"}}>
+            <span style={{fontSize:22}}>📸</span>
+            <span style={{flex:1,minWidth:0}}>
+              <span style={{display:"block",fontSize:14,fontWeight:800,color:C.text}}>Send us your photos</span>
+              <span style={{display:"block",fontSize:12,color:C.mut}}>Your own link — pick the team and tournament, upload straight from your phone.</span>
+            </span>
+            <span style={{fontSize:13,fontWeight:800,color:C.gold,whiteSpace:"nowrap"}}>Upload →</span>
+          </a>
+        )}
+
         {/* TODAY — what's actually on for this coach right now. */}
         {(() => {
           const todayISO = localDateISO();
@@ -11025,6 +11038,8 @@ export default function App() {
     };
     const credit = (p) => {
       const who = String(p.uploaded_by || "").trim();
+      // A coach's link carries no player — say it was a coach, not "a family".
+      if (p.coach_id) return "Coach " + (who || "(unnamed)");
       const via = viaPlayer(p);
       if (who && via) return who + " (" + via + "'s family)";
       return who || (via ? via + "'s family" : "a family");
