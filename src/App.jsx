@@ -17719,7 +17719,12 @@ export default function App() {
     // weekday capacities.
     // Sundays run on 1-hour granularity in every phase. A team practicing
     // a 2-hour block just occupies two consecutive cells.
-    const SUN_HOURS = ["1-2pm","2-3pm","3-4pm","4-5pm","5-6pm","6-7pm","7-8pm","8-9pm"];
+    // 12-1pm is a Speed & Agility-only hour: the S&A room opens at noon but the
+    // courts don't, so the noon cell never offers Practice (see cycleSunCell).
+    // It was missing from this list, so the Fall grid had no noon column and a
+    // team with no open slot next to its practice couldn't be given S&A at all.
+    const SA_ONLY_HOURS = new Set(["12-1pm"]);
+    const SUN_HOURS = ["12-1pm","1-2pm","2-3pm","3-4pm","4-5pm","5-6pm","6-7pm","7-8pm","8-9pm"];
     // Regular season runs on 2-hour Sunday blocks (like the weekdays); the
     // preseason/fall phases keep 1-hour Sunday granularity.
     const SEASON_SUN = ["1-3pm","3-5pm","5-7pm","7-9pm"];
@@ -18691,6 +18696,24 @@ export default function App() {
       await remindSaveOnce();
       const practiceRow = byTeamSlot.get(teamName + "|Sun|" + slot);
       const saRows = saByTeamSlot.get(teamName + "|" + slot) || [];
+      // Noon is S&A only — empty → S&A → empty, never Practice.
+      if (SA_ONLY_HOURS.has(slot)) {
+        if (saRows.length) {
+          const { error } = await supabase.from("sa_sessions").delete().in("id", saRows.map(r => r.id));
+          if (error) { window.alert("Clear S&A failed: " + error.message); return; }
+        } else {
+          const occupants = saBySlot.get(slot);
+          const other = occupants && [...occupants].find(n => n !== teamName);
+          // One team per S&A hour. Say who has it rather than silently doing
+          // nothing, which reads as the click not working.
+          if (other) { window.alert(other + " already has Speed & Agility at " + slot + ". Clear theirs first."); return; }
+          const rows = SA_DATES.map(d => ({ block: schedulePhase, session_date: d, slot, team_name: teamName }));
+          const { error } = await supabase.from("sa_sessions").insert(rows);
+          if (error) { window.alert("Add S&A failed: " + error.message); return; }
+        }
+        await loadPractice();
+        return;
+      }
       if (saRows.length) {
         // S&A → empty.
         const { error } = await supabase.from("sa_sessions").delete().in("id", saRows.map(r => r.id));
@@ -19318,7 +19341,7 @@ export default function App() {
                           const state = saOn ? "sa" : isOn ? "practice" : "empty";
                           const cbg = state === "sa" ? "rgba(245,158,11,0.20)" : state === "practice" ? bg : "transparent";
                           const title = t.locked ? "Team is locked — unlock to edit"
-                            : state === "empty" ? "Click: set Practice"
+                            : state === "empty" ? (SA_ONLY_HOURS.has(s.label) ? "Click: set Speed & Agility (noon is S&A only)" : "Click: set Practice")
                             : state === "practice" ? "Click: switch to Speed & Agility"
                             : "Click: clear";
                           return (
