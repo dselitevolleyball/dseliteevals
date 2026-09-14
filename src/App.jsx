@@ -21347,6 +21347,15 @@ export default function App() {
         .filter(c => c.practice_date===iso && isRealSub(c.sub_name) && isMe(c.sub_name)
                      && c.team_name && !teamCanceled(c.team_name))
         .map(c => ({ team:c.team_name, slot:c.slot, role:"sub" }));
+      // My team's speed & agility hour. The team is in the building and the
+      // coach is with them, so it pays like practice — logged as "scheduled"
+      // against the team so a head coach keeps her head rate. Considered after
+      // practice and subs: a coach whose other team practices that hour is
+      // working that practice, not standing in on the S&A.
+      const sa = saSessions
+        .filter(s => s.session_date===iso && myTeamNames.includes(s.team_name) && !teamCanceled(s.team_name))
+        .map(s => ({ team:s.team_name, slot:s.slot, role:"scheduled", sa:true }))
+        .filter(x => !iAmOut(iso, x.team));
       const floats = coachFloats.filter(f => (f.phase||"season")===ph && f.day===wd && isMe(f.coach_name)).map(f => ({ team:"", slot:f.slot, role:"float" }));
       // Orientation night. Not a practice, not on the schedule, and worth five
       // hours — without this the coaches work the evening and have no way to
@@ -21389,7 +21398,7 @@ export default function App() {
       // Orientation goes first: on one of these four evenings it is where the
       // coach actually is, so it beats anything the schedule would otherwise
       // offer for the same hours.
-      consider(orientation); consider(scheduled); consider(subs); consider(floats);
+      consider(orientation); consider(scheduled); consider(subs); consider(sa); consider(floats);
       return kept
        .filter(x => { const k = x.role+"|"+x.team+"|"+x.slot; if(seen2.has(k)) return false; seen2.add(k); return true; })
        .sort((a,b)=> startH(a.slot)-startH(b.slot) || (a.team||"").localeCompare(b.team||""));
@@ -21523,6 +21532,7 @@ export default function App() {
                         <span style={{fontSize:14,fontWeight:700,color:C.text}}>{s.role==="float" ? "Floating" : s.team}</span>
                         {s.role==="orientation" && <span style={{marginLeft:6}}>{roleTag("orientation")}</span>}
                         {s.role!=="scheduled" && roleTag(s.role)}
+                        {s.sa && <span style={{fontSize:9,fontWeight:800,color:"#22c55e",border:"1px solid #22c55e",borderRadius:4,padding:"0 4px"}}>S&amp;A</span>}
                       </div>
                       <div style={{fontSize:12,color:C.mut,marginTop:2}}>{s.slot} · {slotHours(s.slot)}h</div>
                     </div>
@@ -21744,6 +21754,7 @@ export default function App() {
                           <span style={{fontSize:13,fontWeight:700,color:C.text}}>{new Date(s.iso+"T12:00:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"})}</span>
                           <span style={{fontSize:14,fontWeight:700,color:C.text}}>· {s.role==="float" ? "Floating" : s.team}</span>
                           {s.role!=="scheduled" && roleTag(s.role)}
+                          {s.sa && <span style={{fontSize:9,fontWeight:800,color:"#22c55e",border:"1px solid #22c55e",borderRadius:4,padding:"0 4px"}}>S&amp;A</span>}
                         </div>
                         <div style={{fontSize:12,color:C.mut,marginTop:2}}>{s.slot} · {slotHours(s.slot)}h</div>
                       </div>
