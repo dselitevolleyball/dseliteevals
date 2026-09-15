@@ -131,8 +131,8 @@ const S = [
     `The team has been together since July, so this email catches you up on everything the other families have already received. It's long — please read it through and keep it.`,
   ]],
   ["Accepting your spot", [
-    `${team} is a ${terms.level} team. The season fee is ${terms.fee}, and it covers practices, coaching, tournament entry fees, court fees, the uniform package (shoes not included) and two blocks of strength and conditioning. You can pay in full or on a quarterly plan; a ${terms.deposit} deposit secures ${girl}'s roster spot.`,
-    `Please register and pay the deposit here to accept:`,
+    `${team} is a ${terms.level} team. The season fee is ${terms.fee}, and it covers practices, coaching, tournament entry fees, court fees, the uniform package (shoes not included) and two blocks of strength and conditioning. There's no deposit — the fee is paid in quarterly payments.`,
+    `Please register here to accept ${girl}'s spot:`,
   ], null, [terms.register, "Register and accept"]],
   [`Your ${team} coaches`, [], coaches.map(c => `${c.name} — ${c.role}${c.phone ? " · " + c.phone : ""}${c.email ? " · " + c.email : ""}`)],
   ["1. Join SportsYou — do this first", [
@@ -220,5 +220,7 @@ console.log(`${p.first_name} ${p.last_name} · ${team} → ${to.join(", ") || "N
 if (testTo) { const e = await send("[TEST] " + subject, [testTo]); console.log(e ? "FAILED: " + e : "\ntest sent to " + testTo + " (preview links for commitment, photos, gear)"); }
 else if (doSend) {
   if (!to.length || !p.commitment_token || !p.gear_form_token) { console.error("Missing email or tokens."); process.exit(1); }
-  const e = await send(subject, to); console.log(e ? "FAILED: " + e : "\nsent to " + to.join(", "));
+  // send-email has no cc; each address gets its own copy, which is what a cc is for here.
+  const cc = (value("cc") || "").split(",").map(s => s.trim().toLowerCase()).filter(e => EMAIL_RE.test(e) && !to.includes(e));
+  const e = await send(subject, [...to, ...cc]); console.log(e ? "FAILED: " + e : "\nsent to " + to.join(", ") + (cc.length ? " · copy to " + cc.join(", ") : ""));
 } else console.log("\nDRY RUN — --test <email> or --send.");
