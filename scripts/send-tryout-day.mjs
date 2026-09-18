@@ -22,6 +22,7 @@ const WHEN = "tomorrow, Saturday, September 19, from 1:00 to 4:00pm";
 const WHERE = "DSSC Warehouse, 15113 Fitzhugh Rd, Suite 1400, Dripping Springs";
 const REG_1112 = "https://dselitevolleyball.sportngin.com/register/form/534224012";
 const REG_1314 = "https://dselitevolleyball.sportngin.com/register/form/440865514";
+const FALL_CAMP = "https://drippingsports.playbookapi.com/programs/more_info/class_package/77559/";
 
 const LISTS = {
   accepted: `Rebekah Hardge|Kelli Hardge|krhardge@gmail.com
@@ -127,7 +128,13 @@ const build = (j) => {
     intro = [
       `Thank you for registering ${girl} for DS Elite tryouts! Here's what to expect ${WHEN}, at the ${WHERE}.`,
     ];
-    blocks = LOGISTICS(girl, "A pink shirt — a DS Elite shirt if you have one");
+    blocks = [
+      ...LOGISTICS(girl, "A pink shirt — a DS Elite shirt if you have one"),
+      ["After tryouts", [
+        `We'll be in touch with you about team placement after tryouts.`,
+        `We have more players trying out than open spots, so several girls won't be placed on a team tomorrow — which is exactly why we're running Rise Fall Camp (below).`,
+      ]],
+    ];
     outro = `We're looking forward to seeing ${girl} tomorrow!`;
   } else {
     subject = `There's still time — DS Elite tryouts are tomorrow, 1–4pm`;
@@ -141,6 +148,15 @@ const build = (j) => {
     ];
     outro = `Hope to see ${girl} tomorrow!`;
   }
+
+  // Every family hears about Rise Fall Camp — placed, still trying out, or not signed up.
+  blocks.push(["New: Rise Fall Camp", [
+    `We're offering a second round of our Rise training program — Rise Fall Camp — on Saturdays from September through the start of the season.`,
+    j.group === "accepted"
+      ? `It's great extra training on top of team practice, and we'd love to see ${girl} there.`
+      : `We'd love to see ${girl} at camp whether or not ${plural ? "they make" : "she makes"} a team.`,
+    `Details and sign-up: ${FALL_CAMP}`,
+  ]]);
 
   const link = (s) => esc(s).replace(/(https?:\/\/\S+)/g, '<a href="$1" style="color:#c2186f">$1</a>');
   const text = `Hi ${first},\n\n${intro.join("\n\n")}\n\n`
