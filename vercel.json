@@ -26,6 +26,10 @@
     {
       "source": "/photos",
       "destination": "/api/photo-form"
+    },
+    {
+      "source": "/logos",
+      "destination": "/logos.html"
     }
   ],
   "crons": [
