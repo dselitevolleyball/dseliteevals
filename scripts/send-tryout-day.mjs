@@ -157,6 +157,9 @@ const build = (j) => {
       : `We'd love to see ${girl} at camp whether or not ${plural ? "they make" : "she makes"} a team.`,
     `Details and sign-up: ${FALL_CAMP}`,
   ]]);
+  blocks.push(["Did we miss something?", [
+    `We're doing our best to keep up with everything families have told us, but we may have missed something. If anything here doesn't match your plans, just reply to this email and let us know.`,
+  ]]);
 
   const link = (s) => esc(s).replace(/(https?:\/\/\S+)/g, '<a href="$1" style="color:#c2186f">$1</a>');
   const text = `Hi ${first},\n\n${intro.join("\n\n")}\n\n`
