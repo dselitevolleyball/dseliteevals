@@ -26,7 +26,12 @@
   .btns { display:flex; gap:8px; flex-wrap:wrap; }
   .btn { display:inline-block; padding:9px 14px; border-radius:8px; background:var(--pink); color:#fff; text-decoration:none; font-weight:700; font-size:13px; }
   .btn.ghost { background:transparent; color:var(--pink); border:1px solid var(--pink); }
-  .notes { margin-top:34px; background:#fff; border:1px solid var(--line); border-radius:14px; padding:18px 20px; }
+  .swatches { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:12px; margin:4px 0 14px; }
+  .sw { display:flex; flex-direction:column; gap:2px; font-size:13px; }
+  .sw span { height:54px; border-radius:10px; margin-bottom:6px; }
+  .sw code, .notes code { font-size:12px; color:var(--mut); }
+  .ombre { height:36px; border-radius:10px; background:linear-gradient(90deg,#6A0B3C,#C8216F); }
+  .notes { margin-top:18px; background:#fff; border:1px solid var(--line); border-radius:14px; padding:18px 20px; }
   .notes h3 { margin:0 0 8px; font-size:15px; }
   .notes ul { margin:0; padding-left:20px; }
   .notes li { margin-bottom:6px; }
@@ -102,16 +107,47 @@
     </div>
   </div>
 
-  <div class="notes">
-    <h3>A few tips</h3>
+  <section class="notes">
+    <h3>Which logo to use</h3>
     <ul>
-      <li>Every PNG has a transparent background, so it sits cleanly on any color.</li>
-      <li>Ordering spirit wear? Send the printer the <b>high-resolution PNG</b> or the <b>.ai vector file</b> &mdash; those print sharpest at any size.</li>
-      <li>Please don&rsquo;t stretch, recolor or crop the logo, and keep the pink and black as they are.</li>
-      <li>Planning to sell anything with the logo on it? Check with Coach Drew first.</li>
-      <li>On a phone, press and hold the image or the download button to save it.</li>
+      <li><b>White or light backgrounds:</b> the black &ldquo;DS&rdquo; version.</li>
+      <li><b>Black or dark backgrounds:</b> the white &ldquo;DS&rdquo; version.</li>
+      <li><b>Over photos or on colored shirts:</b> the all-white logo.</li>
+      <li><b>Square spaces</b> (profile pictures, stickers, hats): the stacked diamond logo.</li>
+      <li><b>Printing anything?</b> Send the printer a <b>high-resolution PNG</b> or the <b>.ai vector file</b> &mdash; they stay sharp at any size.</li>
     </ul>
-  </div>
+  </section>
+
+  <section class="notes">
+    <h3>Our colors</h3>
+    <div class="swatches">
+      <div class="sw"><span style="background:#000000"></span><b>Black</b><code>#000000</code></div>
+      <div class="sw"><span style="background:#6A0B3C"></span><b>Deep plum</b><code>#6A0B3C</code></div>
+      <div class="sw"><span style="background:#C8216F"></span><b>DS Elite pink</b><code>#C8216F</code></div>
+      <div class="sw"><span style="background:#FFFFFF;border:1px solid var(--line)"></span><b>White</b><code>#FFFFFF</code></div>
+    </div>
+    <div class="ombre"></div>
+    <h3 style="margin-top:16px">The ombr&eacute;</h3>
+    <p style="margin:0 0 8px">The plum-to-pink fade is our signature.</p>
+    <ul>
+      <li>It lives <b>only on the letters ELITE</b>, running from deep plum on the left to bright pink on the right.</li>
+      <li>Keep that direction &mdash; don&rsquo;t flip it, and don&rsquo;t add other colors to it.</li>
+      <li><b>DS is always solid</b> &mdash; black or white, never pink or faded.</li>
+      <li>If your printer can&rsquo;t do a fade (vinyl and some screen printing can&rsquo;t), make ELITE solid DS Elite pink <code>#C8216F</code>, or print the whole logo in one color: all black or all white.</li>
+    </ul>
+  </section>
+
+  <section class="notes">
+    <h3>Please don&rsquo;t</h3>
+    <ul>
+      <li>Stretch, squish or tilt the logo &mdash; resize it from a corner so it keeps its shape.</li>
+      <li>Change the colors, or add outlines, shadows or glitter effects to the logo itself.</li>
+      <li>Put the pink logo on a pink or busy background &mdash; use the all-white or black version instead.</li>
+      <li>Crowd it &mdash; leave some breathing room around the logo.</li>
+    </ul>
+    <p style="margin:10px 0 0"><b>Selling something?</b> If you&rsquo;re making items to sell (fundraisers, team shops), please check with Coach Drew first.</p>
+    <p style="margin:6px 0 0;color:var(--mut);font-size:13px">On a phone, press and hold a logo or its download button to save it.</p>
+  </section>
 </main>
 <footer>DS Elite Volleyball &middot; Dripping Springs, TX</footer>
 </body>
