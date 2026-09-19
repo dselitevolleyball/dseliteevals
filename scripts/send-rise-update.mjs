@@ -60,9 +60,9 @@ const build = (team, p) => {
   const blocks = [
     [`The ${T} roster so far`, [
       ...players.filter(x => x.team_assignment === team && ["accepted", "made"].includes(x.offer_status))
-        .map(x => `${x.first_name} ${x.last_name}${x.offer_status === "made" ? " — invited, deciding this weekend" : ""}`)
+        .map(x => `${x.first_name} ${x.last_name}`)
         .sort((a, b) => a.localeCompare(b)),
-      `The girls marked "deciding this weekend" have until tomorrow, Sunday, September 20, at 6:00pm to accept, so the roster may shift slightly.`,
+      `A few of these spots are still being confirmed — those families have until tomorrow, Sunday, September 20, at 6:00pm — so the roster may shift slightly.`,
     ]],
     [`Your ${T} coaches`, coaches],
     ["Rise Fall Camp — Saturdays", [

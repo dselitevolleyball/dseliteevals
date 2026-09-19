@@ -164,9 +164,9 @@ const build = (plan, p, extras) => {
     // who's already accepted, and who else is being invited alongside her.
     if (rise) blocks.push([`The ${T} roster so far`, [
       ...players.filter(x => x.team_assignment === plan.team && ["accepted", "made"].includes(x.offer_status))
-        .map(x => `${x.first_name} ${x.last_name}${x.offer_status === "made" ? " — invited, deciding this weekend" : ""}`)
+        .map(x => `${x.first_name} ${x.last_name}`)
         .sort((a, b) => a.localeCompare(b)),
-      `Anyone marked "deciding this weekend" has the same deadline you do, so the roster may shift slightly.`,
+      `A few spots are still being confirmed this weekend, so the roster may shift slightly.`,
     ]]);
     if (rise) blocks.push(["Rise Fall Camp", [
       `Saturdays through the start of the season, at the Warehouse. It's the best way for ${girl} to get going right now.`,
