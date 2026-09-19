@@ -26,6 +26,7 @@ for (const line of readFileSync(new URL("../.env", import.meta.url), "utf8").spl
 }
 const args = process.argv.slice(2);
 const testTo = (() => { const i = args.indexOf("--test"); return i >= 0 ? args[i + 1] : null; })();
+const htmlOut = (() => { const i = args.indexOf("--html"); return i >= 0 ? args[i + 1] : null; })();
 const doSend = args.includes("--send");
 
 const sb = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
@@ -66,6 +67,9 @@ const build = (team, p) => {
       `Until then, Rise Fall Camp runs on Saturdays at the Warehouse — it's the best way for ${girl} to keep touching a volleyball between now and the season, and to get to know her new teammates.`,
       `Sign up here: ${RISE_CAMP}`,
     ]],
+    ["Uniforms", [
+      `Uniform fittings will be scheduled at a later date. For Rise teams that evening also covers orientation and the commitment meeting — we'll send the date as soon as it's set.`,
+    ]],
   ];
   const outro = `Any questions at all, just reply to this email. We're looking forward to this season.`;
   const intro = [
@@ -105,7 +109,15 @@ const send = async (m, recipients) => {
 };
 
 console.log(`${jobs.length} emails: ` + Object.keys(TEAMS).map(t => `${TEAMS[t]} ${jobs.filter(j => j.team === t).length}`).join(", "));
-if (testTo) {
+if (htmlOut && htmlOut.endsWith(".json")) {
+  const { writeFileSync } = await import("node:fs");
+  writeFileSync(htmlOut, JSON.stringify(jobs.map(j => ({ group: TEAMS[j.team] + " (current families)", kind: "update", player: j.p.first_name + " " + j.p.last_name, to: j.to, subject: j.subject, html: j.html })), null, 1));
+  console.log("wrote " + htmlOut);
+} else if (htmlOut) {
+  const { writeFileSync } = await import("node:fs");
+  writeFileSync(htmlOut, jobs.map(j => `<div style="background:#fff;border:1px solid #ddd;border-radius:12px;padding:18px;margin:0 0 18px;max-width:700px"><div style="font-size:12px;color:#666">${esc(TEAMS[j.team])} · to ${esc(j.to.join(", "))}</div><div style="font-size:16px;font-weight:700;margin:4px 0 12px">${esc(j.subject)}</div><hr style="border:none;border-top:1px solid #eee">${j.html}</div>`).join(""));
+  console.log("wrote " + htmlOut);
+} else if (testTo) {
   for (const t of Object.keys(TEAMS)) {
     const j = jobs.find(x => x.team === t);
     if (!j) continue;

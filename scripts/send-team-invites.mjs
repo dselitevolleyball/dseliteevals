@@ -58,7 +58,7 @@ for (const line of readFileSync(new URL("../.env", import.meta.url), "utf8").spl
 }
 const args = process.argv.slice(2);
 const val = (n) => { const i = args.indexOf("--" + n); return i >= 0 ? args[i + 1] : null; };
-const testTo = val("test"), doSend = args.includes("--send"), onlyTeam = val("team");
+const testTo = val("test"), doSend = args.includes("--send"), onlyTeam = val("team"), htmlOut = val("html");
 
 const sb = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
 const TEAMS = PLAN.map(p => p.team);
@@ -171,7 +171,10 @@ const build = (plan, p, extras) => {
     if (plan.startTomorrow) next.unshift(`As soon as you register, ${girl} can practice with the team — starting tomorrow.`);
     if (plan.sportsyou) next.push(`SportsYou is where all team communication and the team calendar live. Download the app and join ${T} with code ${plan.sportsyou}.`);
     next.push(`Lone Star + USAV membership ($55) is required before she can be rostered or play a tournament: ${LONESTAR}`);
-    if (gear) next.push(`Uniform sizes and her player details: ${gear}`);
+    if (gear) next.push(`Her player details and uniform sizes: ${gear}`);
+    next.push(rise
+      ? `Uniform fittings will be scheduled at a later date. For Rise teams that evening also covers orientation and the commitment meeting — we'll send the date as soon as it's set.`
+      : `Uniform fittings will be scheduled at a later date — we'll send the date as soon as it's set.`);
     next.push(`Our club shoe is the Avoli Mid Supersonic Pink, out in November — please wait for our word before buying. Any white volleyball shoe works until then.`);
     next.push(`Club logos for spirit wear: ${APP}/logos`);
     blocks.push(["Once you've registered", next]);
@@ -223,7 +226,23 @@ for (const p of PLAN) {
   if (mine.length) console.log(`  ${p.label.padEnd(12)} ${p.kind.padEnd(9)} ${mine.map(j => j.p.first_name + " " + j.p.last_name).join(", ")}`);
 }
 
-if (testTo) {
+// --html writes every email to one page, so they can be read without sending;
+// a .json path writes the same emails as data for a review page.
+if (htmlOut && htmlOut.endsWith(".json")) {
+  const { writeFileSync } = await import("node:fs");
+  writeFileSync(htmlOut, JSON.stringify(jobs.map(j => ({ group: j.plan.label, kind: j.plan.kind, player: `${j.p.first_name} ${j.p.last_name}`, to: j.to, subject: j.subject, html: j.html })), null, 1));
+  console.log("wrote " + htmlOut);
+} else if (htmlOut) {
+  const { writeFileSync } = await import("node:fs");
+  writeFileSync(htmlOut, '<!doctype html><meta charset="utf-8"><title>DS Elite invites — review</title>'
+    + '<body style="background:#f4f2f3;font-family:-apple-system,Segoe UI,sans-serif;margin:0;padding:24px">'
+    + `<h1 style="font-size:20px">${jobs.length} invites — nothing sent yet</h1>`
+    + jobs.map(j => `<div style="background:#fff;border:1px solid #ddd;border-radius:12px;padding:18px;margin:0 0 18px;max-width:700px">`
+        + `<div style="font-size:12px;color:#666">${esc(j.plan.label)} · to ${esc(j.to.join(", "))}</div>`
+        + `<div style="font-size:16px;font-weight:700;margin:4px 0 12px">${esc(j.subject)}</div><hr style="border:none;border-top:1px solid #eee">${j.html}</div>`).join("")
+    + "</body>");
+  console.log("wrote " + htmlOut);
+} else if (testTo) {
   for (const t of PLAN) {
     const j = jobs.find(x => x.plan.team === t.team);
     if (!j) continue;
