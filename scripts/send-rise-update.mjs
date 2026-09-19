@@ -58,9 +58,12 @@ const build = (team, p) => {
   const others = ["Mon", "Tue", "Wed", "Thu", "Fri"].flatMap(dy => merge(pas.filter(x => x.team_name === team && x.phase === "season" && x.day === dy).map(x => x.slot)).map(s => dy + " " + s));
 
   const blocks = [
-    ["Joining the team", joining.length
-      ? [...joining, `They have until tomorrow, Sunday, September 20, at 6:00pm to accept, so the roster may shift slightly.`]
-      : [`We'll confirm the final roster after tryout offers are returned.`]],
+    [`The ${T} roster so far`, [
+      ...players.filter(x => x.team_assignment === team && ["accepted", "made"].includes(x.offer_status))
+        .map(x => `${x.first_name} ${x.last_name}${x.offer_status === "made" ? " — invited, deciding this weekend" : ""}`)
+        .sort((a, b) => a.localeCompare(b)),
+      `The girls marked "deciding this weekend" have until tomorrow, Sunday, September 20, at 6:00pm to accept, so the roster may shift slightly.`,
+    ]],
     [`Your ${T} coaches`, coaches],
     ["Rise Fall Camp — Saturdays", [
       `Team practice starts the weekend after Thanksgiving${ss.length || others.length ? ` (${[...ss, ...others].join(" · ")})` : ""}.`,

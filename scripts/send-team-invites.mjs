@@ -69,7 +69,7 @@ const [{ data: teams }, { data: roster }, { data: pas }, { data: sas }, { data: 
   sb.from("practice_assignments").select("team_name, phase, day, slot").in("team_name", TEAMS),
   sb.from("sa_sessions").select("team_name, block, session_date, slot").in("team_name", TEAMS).order("session_date"),
   sb.from("tournament_assignments").select("tournament_id, team_id").in("team_id", TEAMS),
-  sb.from("players").select("id, first_name, last_name, team_assignment, parent_name, parent2_name, parent_email, parent_email2, parent_email3, gear_form_token").eq("season", "2026-27"),
+  sb.from("players").select("id, first_name, last_name, team_assignment, offer_status, parent_name, parent2_name, parent_email, parent_email2, parent_email3, gear_form_token").eq("season", "2026-27"),
 ]);
 const { data: tns } = await sb.from("tournaments").select("id, name, start_date, end_date, location, stay_over, cancelled")
   .in("id", [...new Set(tas.map(r => r.tournament_id))]).order("start_date");
@@ -160,6 +160,14 @@ const build = (plan, p, extras) => {
     ]]);
     blocks.push([`Your ${T} coaches`, coachesOf(plan.team).length ? coachesOf(plan.team) : ["We're finalising the coaching staff for this team and will introduce them shortly."]]);
     blocks.push(["Practice", rise ? riseSchedule(plan.team) : regionalSchedule(plan.team)]);
+    // The Rise rosters are being built this weekend, so show the whole group —
+    // who's already accepted, and who else is being invited alongside her.
+    if (rise) blocks.push([`The ${T} roster so far`, [
+      ...players.filter(x => x.team_assignment === plan.team && ["accepted", "made"].includes(x.offer_status))
+        .map(x => `${x.first_name} ${x.last_name}${x.offer_status === "made" ? " — invited, deciding this weekend" : ""}`)
+        .sort((a, b) => a.localeCompare(b)),
+      `Anyone marked "deciding this weekend" has the same deadline you do, so the roster may shift slightly.`,
+    ]]);
     if (rise) blocks.push(["Rise Fall Camp", [
       `Saturdays through the start of the season, at the Warehouse. It's the best way for ${girl} to get going right now.`,
       `Sign up: ${RISE_CAMP}`,
