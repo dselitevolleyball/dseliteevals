@@ -143,6 +143,7 @@ const build = (plan, p, extras) => {
       `There's nothing to pay or register for right now. Just bring her in a pink DS Elite shirt if she has one, with knee pads and a water bottle.`,
     ];
     blocks.push([`Your ${T} coaches`, coachesOf(plan.team)]);
+    blocks.push([`The ${T} roster`, players.filter(x => x.team_assignment === plan.team && ["accepted","made"].includes(x.offer_status)).map(x => `${x.first_name} ${x.last_name}`).sort((a,b)=>a.localeCompare(b))]);
     blocks.push([`What ${T}'s season looks like`, [...regionalSchedule(plan.team), `Tournaments: ${tourneysOf(plan.team).length} this season, including a national qualifier.`]]);
     outro = `If tomorrow doesn't work, just reply and we'll find another practice. We're glad she's interested.`;
   } else {
@@ -160,9 +161,9 @@ const build = (plan, p, extras) => {
     ]]);
     blocks.push([`Your ${T} coaches`, coachesOf(plan.team).length ? coachesOf(plan.team) : ["We're finalising the coaching staff for this team and will introduce them shortly."]]);
     blocks.push(["Practice", rise ? riseSchedule(plan.team) : regionalSchedule(plan.team)]);
-    // The Rise rosters are being built this weekend, so show the whole group —
-    // who's already accepted, and who else is being invited alongside her.
-    if (rise) blocks.push([`The ${T} roster so far`, [
+    // The whole group she'd be joining — offers are still coming back this
+    // weekend, so it's "so far", not final.
+    blocks.push([`The ${T} roster so far`, [
       ...players.filter(x => x.team_assignment === plan.team && ["accepted", "made"].includes(x.offer_status))
         .map(x => `${x.first_name} ${x.last_name}`)
         .sort((a, b) => a.localeCompare(b)),
