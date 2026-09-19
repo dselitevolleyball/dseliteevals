@@ -42,7 +42,8 @@ const PLAN = [
     players: { "Juliet Afflixio": {}, "Charlee Hostetler": {}, "Ava Scarborough": {}, "Addison Ballman": {}, "Claire Davis": {}, "Sloan Scott": {} } },
   { team: "13 Rise 1", label: "13 Rise", kind: "rise", fee: "$2,400",
     players: { "Layla Brown": {}, "Julia Darcy": {}, "Alaina Donahue": {}, "Brooklyn Hostetler": {}, "Alex Jensen": {}, "Rose McIlrath": {}, "Adalyn Shepard": {}, "Brecklyn Thomas": {} } },
-  { team: "13 Diamond", label: "13 Diamond", kind: "practice",
+  // 13 Diamond is at Flex tomorrow, not the Warehouse.
+  { team: "13 Diamond", label: "13 Diamond", kind: "practice", where: "DSSC Flex, 13673 Fitzhugh Rd, Suite 200, Dripping Springs", when: "3–5pm",
     players: { "Hadley Spencer": {} } },
   { team: "14 Emerald", label: "14 Emerald", kind: "regional", fee: "$4,200", sportsyou: "2CUF-EANL", startTomorrow: true,
     players: { "Juliette Nunez": {}, "Emery Roberts": {},
@@ -134,11 +135,11 @@ const build = (plan, p, extras) => {
   let subject, intro, outro;
 
   if (plan.kind === "practice") {
-    const tomorrow = merge(pas.filter(x => x.team_name === plan.team && x.phase === "fall1" && x.day === "Sun").map(x => x.slot)).join(", ");
+    const tomorrow = plan.when || merge(pas.filter(x => x.team_name === plan.team && x.phase === "fall1" && x.day === "Sun").map(x => x.slot)).join(", ");
     subject = `${girl} — an invitation to practice with ${T}`;
     intro = [
       `Thank you for bringing ${girl} to tryouts today — our coaches really enjoyed watching her play.`,
-      `We'd like to invite ${girl} to practice with ${T} tomorrow, Sunday, September 20, ${tomorrow}, at the ${WAREHOUSE}. This isn't a roster spot yet: it's a chance for her to train with the team and for our coaches to see her in that group. After some time together we'd look at offering her a spot.`,
+      `We'd like to invite ${girl} to practice with ${T} tomorrow, Sunday, September 20, ${tomorrow}, at ${plan.where || "the " + WAREHOUSE}. This isn't a roster spot yet: it's a chance for her to train with the team and for our coaches to see her in that group. After some time together we'd look at offering her a spot.`,
       `There's nothing to pay or register for right now. Just bring her in a pink DS Elite shirt if she has one, with knee pads and a water bottle.`,
     ];
     blocks.push([`Your ${T} coaches`, coachesOf(plan.team)]);
