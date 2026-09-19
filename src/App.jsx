@@ -2202,6 +2202,7 @@ export default function App() {
   // Rankings view column sort: key matches a column id in renderRankings' COLS table.
   const [rankSort, setRankSort] = useState({ key: "total", dir: "desc" });
   const [rankAttended, setRankAttended] = useState(false); // Rankings: show only tryout attendees
+  const [rankRise, setRankRise] = useState(false); // Rankings: show only the Rise tryout group (players.rise_tryout)
   // Rankings view date filter — independent from the Evaluate-tab date filter so
   // switching views doesn't carry the selection over.
   const [rankDate, setRankDate] = useState("");
@@ -5544,6 +5545,7 @@ export default function App() {
     if (regSince) l = l.filter(p => p.created_at && p.created_at >= regSince);
     if (filterAttend === "attended") l = l.filter(p => p.tryout_attended);
     else if (filterAttend === "not") l = l.filter(p => !p.tryout_attended);
+    else if (filterAttend === "rise") l = l.filter(p => p.rise_tryout);
     if (sortBy === "name") l.sort((a,b) => (a.last_name||"").localeCompare(b.last_name||""));
     else if (sortBy === "score") l.sort((a,b) => tot(b) - tot(a));
     else if (sortBy === "age") l.sort((a,b) => parseInt(b.age||0) - parseInt(a.age||0));
@@ -9670,6 +9672,7 @@ export default function App() {
             <option value="all">All Attendance</option>
             <option value="attended">Attended tryout</option>
             <option value="not">Not attended</option>
+            <option value="rise">Rise tryout</option>
           </select>
           <select style={{...inpStyle,padding:"7px 10px",fontSize:12}} value={sortBy} onChange={e=>setSortBy(e.target.value)}>
             <option value="name">Name</option><option value="pinny">Pinny #</option><option value="score">Score</option><option value="proj">Projected</option>
@@ -12440,6 +12443,7 @@ export default function App() {
       });
     let shown = filterPos ? ranked.filter(p=>(p.positions||[]).includes(filterPos)) : ranked;
     if (rankAttended) shown = shown.filter(p => p.tryout_attended);
+    if (rankRise) shown = shown.filter(p => p.rise_tryout);
     const onSort = (col) => {
       if (!col.sortable) return;
       setRankSort(prev => prev.key === col.key
@@ -12460,6 +12464,10 @@ export default function App() {
           <label title="Show only players marked as having attended tryouts" style={{display:"flex",alignItems:"center",gap:6,marginLeft:6,padding:"6px 10px",borderRadius:8,background:rankAttended?"rgba(34,197,94,0.14)":"transparent",border:"1px solid "+(rankAttended?C.grn:C.border),cursor:"pointer",fontSize:11,fontWeight:700,color:rankAttended?C.grn:C.mut,userSelect:"none",whiteSpace:"nowrap"}}>
             <input type="checkbox" checked={rankAttended} onChange={e=>setRankAttended(e.target.checked)} style={{width:14,height:14,cursor:"pointer",accentColor:C.grn}} />
             Attended tryouts
+          </label>
+          <label title="Show only players at the Rise tryout" style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderRadius:8,background:rankRise?"rgba(233,30,140,0.12)":"transparent",border:"1px solid "+(rankRise?C.gold:C.border),cursor:"pointer",fontSize:11,fontWeight:700,color:rankRise?C.gold:C.mut,userSelect:"none",whiteSpace:"nowrap"}}>
+            <input type="checkbox" checked={rankRise} onChange={e=>setRankRise(e.target.checked)} style={{width:14,height:14,cursor:"pointer",accentColor:C.gold}} />
+            Rise tryout
           </label>
           <span style={{fontSize:11,color:C.mut,marginLeft:"auto"}}>{shown.length} players</span>
         </div>
@@ -12577,6 +12585,7 @@ export default function App() {
                 <div><span style={lbl}>Vertical (auto, in)</span><div style={{...editInp,display:"flex",alignItems:"center",minHeight:36,fontWeight:800,color:verticalVal!=null?C.grn:C.mut,background:C.card}} title="Jump Touch − Stand &amp; Reach">{verticalVal!=null?verticalVal.toFixed(1)+'"':"—"}</div></div>
                 <div><span style={lbl}>10 Yard Run (sec)</span><DebouncedField style={editInp} placeholder='e.g. 1.85' value={p.sprint_10y==null?"":String(p.sprint_10y)} onCommit={v=>{const n=parseFloat(v); upd(p.id,{sprint_10y:(v.trim()===""||isNaN(n))?null:n});}} /></div>
                 <div><span style={lbl}>Tryout Attended</span><label style={{display:"flex",alignItems:"center",gap:8,padding:"9px 4px",cursor:"pointer"}}><input type="checkbox" checked={!!p.tryout_attended} onChange={e=>upd(p.id,{tryout_attended:e.target.checked})} style={{width:18,height:18,accentColor:C.gold,cursor:"pointer"}} /><span style={{fontSize:13,fontWeight:600,color:p.tryout_attended?C.grn:C.mut}}>{p.tryout_attended?"Present":"Not marked"}</span></label></div>
+                <div><span style={lbl}>Rise Tryout</span><label style={{display:"flex",alignItems:"center",gap:8,padding:"9px 4px",cursor:"pointer"}}><input type="checkbox" checked={!!p.rise_tryout} onChange={e=>upd(p.id,{rise_tryout:e.target.checked})} style={{width:18,height:18,accentColor:C.gold,cursor:"pointer"}} /><span style={{fontSize:13,fontWeight:600,color:p.rise_tryout?C.gold:C.mut}}>{p.rise_tryout?"At Rise tryout":"No"}</span></label></div>
               </div>
               {isCm && <div style={{fontSize:10,color:C.mut,marginTop:6}}>Jump Touch &amp; Approach Touch entered in cm are converted to inches (÷ 2.54) for storage. Stand &amp; Reach and Vertical stay in inches.</div>}
             </div>
