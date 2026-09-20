@@ -64,7 +64,7 @@ const onlyPlayer = value("player"), age = value("age"), teamsArg = value("teams"
 // practice — no orientation night: the team does it together at practice, so
 //            the player signs there and a parent signs from home
 const when = (value("when") || "tonight").toLowerCase();
-if (!["tonight", "after", "practice"].includes(when)) { console.error("--when must be tonight, after or practice"); process.exit(1); }
+if (!["tonight", "after", "practice", "chase"].includes(when)) { console.error("--when must be tonight, after, practice or chase"); process.exit(1); }
 if (!age && !teamsArg) { console.error("Give --age 15 or --teams \"15 Ruby,15 Emerald\""); process.exit(1); }
 
 const sb = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
@@ -106,9 +106,12 @@ const coachesFor = (team) => {
     });
 };
 
+const { data: signed } = await sb.from("player_commitments").select("player_id, player_signed_at, parent_signed_at").in("player_id", (players || []).map(p => p.id));
+const complete = new Set((signed || []).filter(r => r.player_signed_at && r.parent_signed_at).map(r => r.player_id));
 const roster = (players || [])
   .filter(p => !TERMINAL.includes(p.offer_status || ""))
   .filter(p => !onlyPlayer || norm(p.first_name + " " + p.last_name) === norm(onlyPlayer))
+  .filter(p => !flag("unsigned") || !complete.has(p.id))
   .sort((a, b) => a.team_assignment.localeCompare(b.team_assignment) || a.last_name.localeCompare(b.last_name));
 
 const firstName = (full) => String(full || "").trim().split(/\s+/)[0] || "";
@@ -132,11 +135,15 @@ const build = (p, { preview = false } = {}) => {
     ? `We're going through the DS Elite commitment together at orientation tonight, and ${girl} and you will each sign it. This is ${girl}'s own link:`
     : when === "practice"
     ? `Your team is going through the DS Elite commitment together at practice tonight. ${girl} and you each sign it — separately — and this is ${girl}'s own link:`
+    : when === "chase"
+    ? `Your team went through the DS Elite commitment together at practice. ${girl} and a parent each sign it — separately, in your own names — and we are still missing at least one of those signatures. This is ${girl}'s own link:`
     : `We went through the DS Elite commitment together at orientation last night. ${girl} and you each sign it, and this is ${girl}'s own link:`;
   const third = when === "tonight"
     ? `If you're at orientation, open it now and follow along with us. If you couldn't make it tonight, sign whenever you're ready — the link keeps working.`
     : when === "practice"
     ? `${girl} signs her half at practice with her coach and the team. The parent half is yours to do from this same link — tonight, or whenever suits you.`
+    : when === "chase"
+    ? `It takes two minutes on a phone. If you have already signed your half, the link will show you that and you are done.`
     : `If you both signed last night, thank you — there's nothing more to do. If you didn't finish, or you couldn't be there, the link is open and works whenever you're ready.`;
 
   const text = `${greet}
