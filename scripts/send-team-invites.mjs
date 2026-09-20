@@ -37,7 +37,7 @@ const PLAN = [
   { team: "12 Ruby", label: "12 Ruby", kind: "regional", fee: "$4,200", sportsyou: "XJAV-9C6Y", startTomorrow: true,
     players: { "Ava Boyle": {}, "Sydney Breckner": {} } },
   { team: "12 Rise 1", label: "12 Rise", kind: "rise", fee: "$2,400",
-    players: { "Lilyana Oleksy": {}, "Ameliya Abbasova": {}, "Marlo Oswald": {}, "Morgan Haiges": {} } },
+    players: { "Lilyana Oleksy": {}, "Ameliya Abbasova": {}, "Marlo Oswald": {}, "Morgan Haiges": {}, "Mila Mireles": { deadline: "Tuesday, September 22, at 6:00pm" } } },
   { team: "11 Rise 1", label: "11 Rise", kind: "rise", fee: "$2,400",
     players: { "Juliet Afflixio": {}, "Charlee Hostetler": {}, "Ava Scarborough": {}, "Addison Ballman": {}, "Claire Davis": {}, "Sloan Scott": {} } },
   { team: "13 Rise 1", label: "13 Rise", kind: "rise", fee: "$2,400",
@@ -60,6 +60,7 @@ for (const line of readFileSync(new URL("../.env", import.meta.url), "utf8").spl
 const args = process.argv.slice(2);
 const val = (n) => { const i = args.indexOf("--" + n); return i >= 0 ? args[i + 1] : null; };
 const testTo = val("test"), doSend = args.includes("--send"), onlyTeam = val("team"), htmlOut = val("html");
+const onlyPlayer = val("player"); // send one girl's invite without re-sending the team's
 
 const sb = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
 const TEAMS = PLAN.map(p => p.team);
@@ -143,14 +144,14 @@ const build = (plan, p, extras) => {
       `There's nothing to pay or register for right now. Just bring her in a pink DS Elite shirt if she has one, with knee pads and a water bottle.`,
     ];
     blocks.push([`Your ${T} coaches`, coachesOf(plan.team)]);
-    blocks.push([`The ${T} roster`, players.filter(x => x.team_assignment === plan.team && ["accepted","made"].includes(x.offer_status)).map(x => `${x.first_name} ${x.last_name}`).sort((a,b)=>a.localeCompare(b))]);
+    blocks.push([`The ${T} roster`, players.filter(x => x.team_assignment === plan.team && ["accepted","made","locked"].includes(x.offer_status)).map(x => `${x.first_name} ${x.last_name}`).sort((a,b)=>a.localeCompare(b))]);
     blocks.push([`What ${T}'s season looks like`, [...regionalSchedule(plan.team), `Tournaments: ${tourneysOf(plan.team).length} this season, including a national qualifier.`]]);
     outro = `If tomorrow doesn't work, just reply and we'll find another practice. We're glad she's interested.`;
   } else {
     subject = `${girl} is invited to join DS Elite ${T}!`;
     intro = [
-      `Congratulations! We'd love for ${girl} to join ${T} for the 2026-27 DS Elite season. Our coaches were impressed with her at tryouts today, and we think she'll be a great fit for this group.`,
-      `Please register by ${DEADLINE} to accept her spot. If we don't hear from you by then, we'll offer the place to another player.`,
+      `Congratulations! We'd love for ${girl} to join ${T} for the 2026-27 DS Elite season. Our coaches were impressed with her at tryouts, and we think she'll be a great fit for this group.`,
+      `Please register by ${extras.deadline || DEADLINE} to accept her spot. If we don't hear from you by then, we'll offer the place to another player.`,
     ];
     if (extras.discountNote) intro.push(extras.discountNote);
     blocks.push(["Accepting her spot", [
@@ -164,7 +165,7 @@ const build = (plan, p, extras) => {
     // The whole group she'd be joining — offers are still coming back this
     // weekend, so it's "so far", not final.
     blocks.push([`The ${T} roster so far`, [
-      ...players.filter(x => x.team_assignment === plan.team && ["accepted", "made"].includes(x.offer_status))
+      ...players.filter(x => x.team_assignment === plan.team && ["accepted", "made", "locked"].includes(x.offer_status))
         .map(x => `${x.first_name} ${x.last_name}`)
         .sort((a, b) => a.localeCompare(b)),
       `A few spots are still being confirmed this weekend, so the roster may shift slightly.`,
@@ -211,6 +212,7 @@ const jobs = [];
 for (const plan of PLAN) {
   if (onlyTeam && plan.team !== onlyTeam && plan.label !== onlyTeam) continue;
   for (const [name, extras] of Object.entries(plan.players)) {
+    if (onlyPlayer && nm(name) !== nm(onlyPlayer)) continue;
     const p = players.find(x => nm(x.first_name + x.last_name) === nm(name));
     if (!p) { console.error(`NOT IN APP: ${name} (${plan.label})`); continue; }
     const to = [...new Set([extras.email, p.parent_email, p.parent_email2, p.parent_email3]
