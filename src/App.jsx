@@ -1015,7 +1015,10 @@ function parseSlotClock(part) {
   if (!m) return null;
   const h = parseInt(m[1], 10), min = m[2] ? parseInt(m[2], 10) : 0;
   if (h < 1 || h > 12 || min > 59) return null;
-  return (h === 12 ? 12 : h + 12) * 60 + min;
+  // Afternoon/evening by default; 9, 10 and 11 are morning, which is what makes
+  // the Rise orientation's "11-3pm" four hours instead of nothing.
+  const h24 = h === 12 ? 12 : (h >= 9 && h <= 11 ? h : h + 12);
+  return h24 * 60 + min;
 }
 function parsePracticeSlot(slot) {
   const m = String(slot || "").match(/^\s*(\d{1,2}(?::\d{2})?)\s*-\s*(\d{1,2}(?::\d{2})?)\s*pm\s*$/i);
@@ -21312,8 +21315,11 @@ export default function App() {
     };
 
     // Slot start/end hour (practice times read as PM).
-    const startH = sl => { const m=/^\s*(\d{1,2})/.exec(sl||""); if(!m) return 99; const h=+m[1]; return h===12?12:h+12; };
-    const endH   = sl => { const m=/-\s*(\d{1,2})/.exec(sl||""); if(!m) return 99; const h=+m[1]; return h===12?12:h+12; };
+    // Practice slots read as PM ("5-6pm" = 17:00). 9, 10 and 11 read as AM,
+    // which is how the Rise orientation's 11am–3pm window comes out right.
+    const h24 = h => (h === 12 ? 12 : h >= 9 && h <= 11 ? h : h + 12);
+    const startH = sl => { const m=/^\s*(\d{1,2})/.exec(sl||""); if(!m) return 99; return h24(+m[1]); };
+    const endH   = sl => { const m=/-\s*(\d{1,2})/.exec(sl||""); if(!m) return 99; return h24(+m[1]); };
     // Match the logged-in coach against the free-text coach names used in the
     // schedule / floater tables.
     const cand = new Set();
@@ -21379,7 +21385,18 @@ export default function App() {
       const orientation = (() => {
         const night = orientationNights.find(o => o.night_date === iso && !o.cancelled);
         if (!night) return [];
-        const ages = night.ages || [];
+        // A night either names its teams (Rise, 12 Oct) or covers whole age
+        // groups (the four September nights).
+        const only = night.teams || [];
+        const ages = only.length ? [] : (night.ages || []);
+        if (only.length) {
+          const mine2 = myTeamNames.filter(t => only.includes(t));
+          if (!mine2.length) return [];
+          const asHead2 = mine2.find(t => (practiceTeams.find(x => x.team_name === t)?.head_coach || "")
+            && isMe(practiceTeams.find(x => x.team_name === t).head_coach));
+          const hhmm2 = (t) => { const m = /^(\d{1,2}):/.exec(String(t || "")); if (!m) return null; const h = +m[1]; return h > 12 ? h - 12 : h; };
+          return [{ team: asHead2 || mine2[0], slot: (hhmm2(night.start_time) || 11) + "-" + (hhmm2(night.end_time) || 3) + "pm", role: "orientation" }];
+        }
         // An event team (14 Crystal) has no orientation night of its own; its
         // girls come with their home teams. See shared/event-teams.js.
         const mine = myTeamNames.filter(t => ages.includes(String(t).trim().split(/\s+/)[0])
