@@ -1,4 +1,4 @@
-// Rise orientation + jersey try-ons, Mon 12 Oct 2026.
+// Rise orientation + jersey try-ons, Sun 11 Oct 2026.
 //
 // Two audiences:
 //   rise   — every player on 11/12/13 Rise. Mandatory: try-ons at 11:30,
@@ -19,7 +19,7 @@ const APP = "https://dseliteevals.vercel.app";
 const SENDER = { name: "Drew Rose", email: "drew@dselitevolleyball.com" };
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-const WHEN = "Monday, October 12";
+const WHEN = "Sunday, October 11";
 const WHERE = "DSSC Warehouse, 15113 Fitzhugh Rd, Suite 1400, Dripping Springs";
 const RISE_TEAMS = ["11 Rise 1", "12 Rise 1", "13 Rise 1"];
 const TERMINAL = ["declined", "not_invited", "opted_out"];
@@ -32,6 +32,7 @@ for (const line of readFileSync(new URL("../.env", import.meta.url), "utf8").spl
 const args = process.argv.slice(2);
 const val = (n) => { const i = args.indexOf("--" + n); return i >= 0 ? args[i + 1] : null; };
 const testTo = val("test"), doSend = args.includes("--send"), doEvents = args.includes("--events");
+const onlyKind = val("only"); // rise | makeup
 
 const sb = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
 const [{ data: players }, { data: gear }] = await Promise.all([
@@ -100,7 +101,8 @@ const jobs = [];
 for (const p of live) {
   // Hadley Spencer (#266) is trialling with 13 Diamond and has no spot yet — no uniform.
   const kind = RISE_TEAMS.includes(p.team_assignment) ? "rise"
-    : (needsFitting(p) && p.id !== 266 ? "makeup" : null);
+    : (needsFitting(p) && p.id !== 266 && ["made", "accepted", "locked"].includes(p.offer_status) ? "makeup" : null);
+  if (onlyKind && kind !== onlyKind) continue;
   if (!kind) continue;
   const to = [...new Set([p.parent_email, p.parent_email2, p.parent_email3].map(e => String(e || "").trim().toLowerCase()).filter(e => EMAIL_RE.test(e)))];
   if (!to.length) { console.error(`NO EMAIL: ${p.first_name} ${p.last_name} (${p.team_assignment})`); continue; }
@@ -121,7 +123,7 @@ const send = async (m, recipients) => {
 // Put it on the three Rise team calendars (SportsYou reads these).
 if (doEvents) {
   for (const team of RISE_TEAMS) {
-    const row = { team_name: team, title: "Orientation + jersey try-ons (mandatory)", event_date: "2026-10-12",
+    const row = { team_name: team, title: "Orientation + jersey try-ons (mandatory)", event_date: "2026-10-11",
       start_time: "11:30", duration_min: 210, location: "DSSC Warehouse",
       description: "Jersey and uniform try-ons at 11:30am; orientation, the DS Elite commitment and team time at 12:00pm. Mandatory for all Rise players. A parent is needed for the first part." };
     const { data: had } = await sb.from("team_events").select("id").eq("team_name", team).eq("event_date", row.event_date).ilike("title", "Orientation%").maybeSingle();
