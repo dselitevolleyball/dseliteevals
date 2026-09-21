@@ -17279,7 +17279,11 @@ export default function App() {
             const myRate = myRateRow && myRateRow.hourly_rate!=null ? Number(myRateRow.hourly_rate) : null;
             const myHeadRate = myRateRow && myRateRow.head_rate!=null ? Number(myRateRow.head_rate) : null;
             // Role-based: head_rate applies to shifts for teams they head-coach.
-            const shiftRate = (team) => (myHeadRate!=null && team && practiceTeams.some(t => t.team_name===team && norm(t.head_coach)===norm(displayName))) ? myHeadRate : myRate;
+            const shiftRate = (team) => {
+              const tr = team ? myRateRow?.team_rates?.[team] : null;
+              if (tr!=null && tr!=="") return Number(tr);
+              return (myHeadRate!=null && team && practiceTeams.some(t => t.team_name===team && norm(t.head_coach)===norm(displayName))) ? myHeadRate : myRate;
+            };
             const myChecks = checkins.filter(c => norm(c.coach_name)===norm(displayName));
             const hrs = myChecks.reduce((s,c)=>s+Number(c.hours||0),0);
             const unpaidHrs = myChecks.filter(c=>!c.paid).reduce((s,c)=>s+Number(c.hours||0),0);
@@ -23383,6 +23387,8 @@ export default function App() {
     // payroll email will quote different numbers for the same shift.
     const rateFor = (nm, team, override) => {
       if (override!=null && override!=="") return Number(override);
+      const tr = team ? rateRow(nm)?.team_rates?.[team] : null;
+      if (tr!=null && tr!=="") return Number(tr);
       const hr = headRateOf(nm);
       if (hr!=null && team && practiceTeams.some(t => t.team_name===team && norm(t.head_coach)===norm(nm))) return hr;
       return rateOf(nm);

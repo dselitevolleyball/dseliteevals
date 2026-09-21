@@ -16,9 +16,10 @@
 //      team the coach normally covers, and how the DSYSA lead is paid for
 //      running a night. It also stands in for a missing coach_rates row, so an
 //      override alone is enough to pay someone.
-//   2. head_rate, if she head-coaches the team the shift is for.
-//   3. hourly_rate for everything else — assisting, subbing, floating.
-//   4. No rate on file: null, which callers must surface rather than treat as
+//   2. team_rates[team], a rate for one specific team (Breanna on 15 Diamond).
+//   3. head_rate, if she head-coaches the team the shift is for.
+//   4. hourly_rate for everything else — assisting, subbing, floating.
+//   5. No rate on file: null, which callers must surface rather than treat as
 //      zero. A shift priced at nothing looks paid.
 
 export const norm = (s) => String(s || "").trim().toLowerCase().replace(/\s+/g, " ");
@@ -36,6 +37,8 @@ export function makeRateResolver({ rates = [], teams = [] } = {}) {
     if (override != null && override !== "") return Number(override);
     const r = byName.get(norm(nm));
     if (!r) return null;
+    const tr = team && r.team_rates ? r.team_rates[team] : null;
+    if (tr != null && tr !== "") return Number(tr);
     if (r.head_rate != null && isHeadOf(nm, team)) return Number(r.head_rate);
     return r.hourly_rate != null ? Number(r.hourly_rate) : null;
   };

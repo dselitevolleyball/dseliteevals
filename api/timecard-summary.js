@@ -103,7 +103,7 @@ export default async function handler(req, res) {
         .gte("session_date", start).lte("session_date", end),
       supabase.from("coach_roster").select("first_name, last_name, email"),
       supabase.from("coaches").select("display_name, email"),
-      supabase.from("coach_rates").select("coach_name, hourly_rate, head_rate"),
+      supabase.from("coach_rates").select("coach_name, hourly_rate, head_rate, team_rates"),
       supabase.from("practice_teams").select("team_name, head_coach"),
     ]);
 
