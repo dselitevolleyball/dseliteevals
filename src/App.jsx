@@ -21429,7 +21429,23 @@ export default function App() {
       // coach actually is, so it beats anything the schedule would otherwise
       // offer for the same hours.
       consider(orientation); consider(scheduled); consider(subs); consider(sa); consider(floats);
-      return kept
+      // One clock-in per team block. A team's back-to-back hours — two hours of
+      // practice, or an hour of S&A beside an hour of practice — are one
+      // stretch of work, so the coach clocks in once for both and is paid for
+      // both, instead of tapping in twice every Sunday.
+      const hr12 = h => (h > 12 ? h - 12 : h);
+      const blocks = [];
+      kept.slice().sort(byStart).forEach(x => {
+        const prev = blocks[blocks.length - 1];
+        if (prev && x.role === "scheduled" && prev.role === "scheduled" && prev.team === x.team
+            && endH(prev.slot) === startH(x.slot)) {
+          prev.slot = hr12(startH(prev.slot)) + "-" + hr12(endH(x.slot)) + "pm";
+          prev.sa = prev.sa || x.sa;
+          return;
+        }
+        blocks.push({ ...x });
+      });
+      return blocks
        .filter(x => { const k = x.role+"|"+x.team+"|"+x.slot; if(seen2.has(k)) return false; seen2.add(k); return true; })
        .sort((a,b)=> startH(a.slot)-startH(b.slot) || (a.team||"").localeCompare(b.team||""));
     };
@@ -21437,7 +21453,12 @@ export default function App() {
     const mySlots = slotsForDate(today);
 
     const myChecksToday = checkins.filter(c => c.check_date===today && norm(c.coach_name)===norm(coachName));
-    const checkFor = (team, slot) => myChecksToday.find(c => (c.team_name||"")===(team||"") && (c.slot||"")===(slot||""));
+    // A shift counts as logged if any check-in for the same team overlaps it —
+    // so a block logged as two single hours before blocks existed isn't offered
+    // again, and nothing gets paid twice.
+    const overlapsSlot = (a, b) => startH(a) < endH(b) && startH(b) < endH(a);
+    const sameShift = (c, team, slot) => (c.team_name||"")===(team||"") && ((c.slot||"")===(slot||"") || overlapsSlot(c.slot, slot));
+    const checkFor = (team, slot) => myChecksToday.find(c => sameShift(c, team, slot));
     const myHoursToday = myChecksToday.reduce((s,c)=> s + Number(c.hours||0), 0);
     // Check-in window: opens 30 minutes before the slot starts, closes at its end.
     const nowH = new Date().getHours() + new Date().getMinutes()/60;
@@ -21635,7 +21656,7 @@ export default function App() {
               {sched.length>0 && (
                 <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:10}}>
                   {sched.map(s => {
-                    const already = checkins.some(c => c.check_date===iso && norm(c.coach_name)===norm(coachName) && (c.team_name||"")===(s.team||"") && (c.slot||"")===(s.slot||""));
+                    const already = checkins.some(c => c.check_date===iso && norm(c.coach_name)===norm(coachName) && sameShift(c, s.team, s.slot));
                     const bkey = iso+"|"+(s.team||"float")+"|"+(s.slot||"")+"|"+s.role;
                     return (
                       <div key={bkey} style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap",padding:"9px 12px",borderRadius:8,border:"1px solid "+C.border,background:C.bg}}>
@@ -21765,7 +21786,7 @@ export default function App() {
           for (let off=1; off<=7; off++) {
             const dd = new Date(); dd.setDate(dd.getDate()-off); const iso = localDateISO(dd);
             slotsForDate(iso).forEach(s => {
-              const already = checkins.some(c => c.check_date===iso && norm(c.coach_name)===norm(coachName) && (c.team_name||"")===(s.team||"") && (c.slot||"")===(s.slot||""));
+              const already = checkins.some(c => c.check_date===iso && norm(c.coach_name)===norm(coachName) && sameShift(c, s.team, s.slot));
               if (!already) missed.push({ ...s, iso });
             });
           }
