@@ -22,7 +22,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const TERMINAL = ["declined", "not_invited", "opted_out"];
 const CODES = {
-  "11 Rise 1": "NJ7E-CSBS", "11 Diamond": "BZVJ-FHLM", "12 Diamond": "TNCX-ZP4W", "12 Ruby": "XJAV-9C6Y",
+  "11 Rise 1": "NJ7E-CSBS", "13 Rise 1": "Q4DXFDN6", "11 Diamond": "BZVJ-FHLM", "12 Diamond": "TNCX-ZP4W", "12 Ruby": "XJAV-9C6Y",
   "12 Rise 1": "XP88-JSA6", "13 Diamond": "88KA-EFHZ", "13 Ruby": "QEZQ-T36X", "13 Sapphire": "KEZ4-V9F9",
   "13 Emerald": "AQS2-MFTK", "14 Diamond": "RNDK-87KK", "14 Ruby": "B8P3-B5YY", "14 Sapphire": "NN4H-3KPP",
   "14 Emerald": "2CUF-EANL", "14 Topaz": "UYVD-WHUF", "15 Diamond": "VGUK-USAL", "15 Ruby": "NVL3-ML7Z",

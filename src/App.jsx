@@ -897,6 +897,7 @@ const truncName = (name, n = 22) => (name || "").length > n ? (name || "").slice
 // practice_teams.sportsyou_code (if set in the DB) overrides this map.
 const SPORTSYOU_CODES = {
   "11 Rise 1":   "NJ7E-CSBS",
+  "13 Rise 1":   "Q4DXFDN6",
   "11 Diamond":  "BZVJ-FHLM",
   "12 Diamond":  "TNCX-ZP4W",
   "12 Ruby":     "XJAV-9C6Y",
