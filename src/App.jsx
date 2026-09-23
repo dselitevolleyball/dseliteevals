@@ -21409,7 +21409,10 @@ export default function App() {
         }
         // An event team (14 Crystal) has no orientation night of its own; its
         // girls come with their home teams. See shared/event-teams.js.
+        // Rise teams are not part of the age-group nights — they have their
+        // own (11 Oct), which names its teams and is handled above.
         const mine = myTeamNames.filter(t => ages.includes(String(t).trim().split(/\s+/)[0])
+          && !/\brise\b/i.test(t)
           && !isEventTeam(practiceTeams.find(x => x.team_name === t)));
         if (!mine.length) return [];
         const asHead = mine.find(t => (practiceTeams.find(x => x.team_name === t)?.head_coach || "")
