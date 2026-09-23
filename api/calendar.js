@@ -229,8 +229,10 @@ export default async function handler(req, res) {
   // start time everyone is expected at. The UID is deliberately unchanged, so
   // a SportsYou calendar already subscribed updates the event it has instead
   // of gaining a second copy beside it.
+  // Rise teams are not part of the September nights — they have their own
+  // orientation (11 Oct), which rides in on team_events below.
   const age = parseInt(team.match(/^\d+/)?.[0] || "", 10);
-  if (ORIENTATION[age]) {
+  if (ORIENTATION[age] && !/\brise\b/i.test(team)) {
     push((team + "-orientation").replace(/\s+/g, "_"), "DS Elite Orientation Night — " + team,
       ORIENTATION[age], 18, 22, { location: WAREHOUSE_LOC, description: "Jersey tryout, parent orientation, player commitment, and team building. First hour with parents; remaining three hours are team-only." });
   }
