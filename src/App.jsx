@@ -1387,6 +1387,45 @@ const staffApproved = (s) => sessionStaff(s).filter(x => x.status === "approved"
 const staffPending  = (s) => sessionStaff(s).filter(x => x.status === "pending");
 const sessionShort  = (s, clinic) => Math.max(0, staffNeeded(s, clinic) - staffApproved(s).length);
 const onStaff = (s, matches) => sessionStaff(s).some(x => x.status !== "declined" && matches(x.name));
+// A clinic plan pasted from a doc or spreadsheet, turned into session blocks.
+//
+// Drew plans in a table — "0–10 | 🏈 Football Throwing Warm-Up | Start close…"
+// — one row per segment, columns separated by tabs (pasted from Sheets/Docs),
+// pipes, or two-plus spaces. The time column can be a range ("35–47", "0-10")
+// or a plain minute count ("12"). A title row and a "Time / Segment / Focus"
+// header row are skipped, and a row with no time and no second column is
+// treated as a continuation of the previous block's notes.
+function parsePlanPaste(text) {
+  const rows = String(text || "").replace(/\r/g, "").split("\n").map(l => l.replace(/\s+$/, "")).filter(l => l.trim());
+  const split = (l) => {
+    if (l.includes("\t")) return l.split("\t").map(s => s.trim());
+    if (/\s\|\s/.test(l)) return l.split(/\s\|\s/).map(s => s.trim());
+    return l.split(/\s{2,}/).map(s => s.trim());
+  };
+  const range = (s) => { const m = /^(\d+)\s*[–—-]\s*(\d+)$/.exec(String(s || "").trim()); return m ? [+m[1], +m[2]] : null; };
+  const blocks = [];
+  for (const line of rows) {
+    const cols = split(line).filter(c => c !== "");
+    if (!cols.length) continue;
+    const first = cols[0];
+    if (/^time$/i.test(first) && cols.length >= 2) continue;                     // header row
+    const r = range(first);
+    const plain = /^\d+$/.test(first) ? +first : null;
+    if (r || plain != null) {
+      const minutes = r ? Math.max(0, r[1] - r[0]) : plain;
+      const name = (cols[1] || "").trim();
+      const desc = cols.slice(2).join(" · ").trim();
+      if (!name) continue;
+      blocks.push({ id: Math.random().toString(36).slice(2, 10), name, minutes, desc, at: r ? r[0] : null });
+    } else if (blocks.length && cols.length === 1) {
+      // Wrapped text from the previous row's Focus column.
+      const b = blocks[blocks.length - 1];
+      b.desc = (b.desc ? b.desc + " " : "") + first;
+    }
+    // Anything else (a title line, a stray label) is skipped.
+  }
+  return blocks.map(({ at, ...b }) => b);
+}
 // Hours in a practice slot label like "5-7pm" (=2) or "1-2pm" (=1). Practice
 // times are afternoon/evening, so both ends read as PM.
 // Hours a slot is worth — this sets timesheet hours when a coach clocks in, so a
@@ -1739,6 +1778,7 @@ export default function App() {
   // a to-do, and twenty of them buried the three that still need a coach.
   const [showPastClinics, setShowPastClinics] = useState(false);
   const [showDoneSessions, setShowDoneSessions] = useState(false);
+  const [planPaste, setPlanPaste] = useState(null); // clinic plan paste box: null = closed, string = text
   const [clinicFrom, setClinicFrom]     = useState(null);   // view to return to after opening one
   const [clinicViewMode, setClinicViewMode] = useState("list"); // list | calendar
   const [clinicMonth, setClinicMonth]   = useState(null);   // "YYYY-MM" calendar anchor
@@ -24213,7 +24253,39 @@ export default function App() {
                 </div>
               ))}
             </div>
-            {canPlan && <button style={{...S.ghost,marginTop:8}} onClick={()=>setPlan({blocks:[...blocks,{id:rid(),name:"",minutes:15,desc:""}]})}>+ Add block</button>}
+            {canPlan && (
+              <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:8}}>
+                <button style={S.ghost} onClick={()=>setPlan({blocks:[...blocks,{id:rid(),name:"",minutes:15,desc:""}]})}>+ Add block</button>
+                <button style={S.ghost} onClick={()=>setPlanPaste(planPaste==null?"":null)} title="Paste a plan table (time · segment · focus) and it becomes blocks">📋 {planPaste==null?"Paste a plan":"Close paste"}</button>
+              </div>
+            )}
+            {canPlan && planPaste!=null && (() => {
+              const parsed = parsePlanPaste(planPaste);
+              const total = parsed.reduce((s,b)=>s+(Number(b.minutes)||0),0);
+              const keep = blocks.filter(b => String(b.name||"").trim() || String(b.desc||"").trim());
+              const apply = (mode) => {
+                if (!parsed.length) { window.alert("Nothing parsed yet — each row needs a time (like 0–10) then the segment name, then the focus."); return; }
+                setPlan({ blocks: mode==="replace" ? parsed : [...keep, ...parsed] });
+                setPlanPaste(null);
+              };
+              return (
+                <div style={{marginTop:10,padding:"10px 12px",borderRadius:10,border:"1px dashed "+C.gold,background:"rgba(233,30,140,0.04)"}}>
+                  <div style={{fontSize:11,color:C.mut,marginBottom:6}}>Paste rows like <b style={{color:C.text}}>0–10 · Football Throwing Warm-Up · Start close and back up…</b> — tab, pipe or two-space separated (straight from a doc or sheet). Title and header rows are ignored.</div>
+                  <textarea value={planPaste} onChange={e=>setPlanPaste(e.target.value)} placeholder={"Time\tSegment\tFocus\n0–10\t🏈 Football Throwing Warm-Up\tStart close and progressively back up…\n10–15\t🏐 Volleyball Throwing\tThrow volleyballs over the net…"} style={{...S.sel,width:"100%",minHeight:140,resize:"vertical",fontSize:12,fontFamily:"ui-monospace, Menlo, monospace"}} />
+                  <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginTop:8}}>
+                    <span style={{fontSize:12,color:parsed.length?C.grn:C.mut,fontWeight:700}}>{parsed.length ? `${parsed.length} blocks · ${total} min` : "0 blocks parsed"}</span>
+                    <div style={{flex:1}} />
+                    {keep.length>0 && <button style={S.ghost} onClick={()=>apply("append")} disabled={!parsed.length}>Add to existing {keep.length}</button>}
+                    <button style={S.gold} onClick={()=>apply("replace")} disabled={!parsed.length}>{keep.length ? "Replace all blocks" : "Create blocks"}</button>
+                  </div>
+                  {parsed.length>0 && (
+                    <div style={{marginTop:8,display:"flex",flexDirection:"column",gap:3}}>
+                      {parsed.map((b,i)=>(<div key={i} style={{fontSize:12,color:C.text}}><span style={{display:"inline-block",width:40,color:C.mut,textAlign:"right",marginRight:8}}>{b.minutes}m</span><b>{b.name}</b>{b.desc?<span style={{color:C.mut}}> — {b.desc.length>90?b.desc.slice(0,88)+"…":b.desc}</span>:null}</div>))}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
 
           {/* Feedback loop */}
