@@ -1,4 +1,5 @@
-// Daily: what has Playbook published that we haven't seen?
+// Daily: what has Playbook published that we haven't seen? Volleyball and
+// Reach Performance only — Drew wants nothing to do with basketball.
 //
 // Playbook has no API, but the public /programs/register/ page lists every
 // live listing by name in its filter dropdown — programs, seasons, memberships,
@@ -20,7 +21,12 @@
 
 import { createClient } from "@supabase/supabase-js";
 
-const SOURCE = "https://drippingsports.playbookapi.com/programs/register/";
+// Playbook renders a per-sport page whose listing is scoped to that sport, so
+// reading these two (and not the all-programs page) is what keeps basketball out.
+const BASE = "https://drippingsports.playbookapi.com/programs/register/";
+const SOURCES = { volleyball: BASE + "volleyball/", reach_performance: BASE + "reach_performance/" };
+const SOURCE = BASE + "volleyball/";
+const CAT_LABEL = { volleyball: "Volleyball", reach_performance: "Reach Performance" };
 const TO_DEFAULT = "drew@dselitevolleyball.com";
 const TEST_TO = "drew@dselitevolleyball.com";
 const APP = "https://dseliteevals.vercel.app";
@@ -57,22 +63,31 @@ export default async function handler(req, res) {
   const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
   const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" }); // YYYY-MM-DD, Central
 
-  let html = "";
-  try {
-    const r = await fetch(SOURCE, { headers: { "User-Agent": "Mozilla/5.0 (DS Elite HQ program watch)", "Accept": "text/html" }, redirect: "follow" });
-    if (!r.ok) throw new Error("HTTP " + r.status);
-    html = await r.text();
-  } catch (e) {
-    if (!dry) await sb.from("playbook_program_runs").insert({ listed: 0, note: "fetch failed: " + e.message });
-    return res.status(502).json({ error: "Playbook fetch failed: " + e.message });
+  const listed = [];
+  const seenKey = new Set();
+  for (const [category, src] of Object.entries(SOURCES)) {
+    let html = "";
+    try {
+      const r = await fetch(src, { headers: { "User-Agent": "Mozilla/5.0 (DS Elite HQ program watch)", "Accept": "text/html" }, redirect: "follow" });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      html = await r.text();
+    } catch (e) {
+      if (!dry) await sb.from("playbook_program_runs").insert({ listed: 0, note: category + " fetch failed: " + e.message });
+      return res.status(502).json({ error: "Playbook fetch failed (" + category + "): " + e.message });
+    }
+    for (const l of parseListings(html)) {
+      const key = l.kind + "|" + l.name;
+      if (seenKey.has(key)) continue;          // pods are also on the volleyball page
+      seenKey.add(key);
+      listed.push({ ...l, category });
+    }
   }
-  const listed = parseListings(html);
   if (!listed.length) {
     if (!dry) await sb.from("playbook_program_runs").insert({ listed: 0, note: "page had no name-option list — layout changed?" });
     return res.status(502).json({ error: "No listings found on the page — Playbook's page layout may have changed." });
   }
 
-  const { data: known, error } = await sb.from("playbook_programs").select("kind, name, active, first_seen, gone_since");
+  const { data: known, error } = await sb.from("playbook_programs").select("kind, name, category, active, first_seen, gone_since");
   if (error) return res.status(500).json({ error: error.message });
   const knownBy = new Map((known || []).map(k => [k.kind + "|" + k.name, k]));
   const listedKeys = new Set(listed.map(l => l.kind + "|" + l.name));
@@ -89,7 +104,7 @@ export default async function handler(req, res) {
 
   // Keep the table current before deciding whether to email, so a failed
   // send never leaves a listing unrecorded and re-reported forever.
-  const upserts = listed.map(l => ({ kind: l.kind, name: l.name, last_seen: today, active: true, gone_since: null,
+  const upserts = listed.map(l => ({ kind: l.kind, name: l.name, category: l.category, last_seen: today, active: true, gone_since: null,
     ...(knownBy.has(l.kind + "|" + l.name) ? {} : { first_seen: today }) }));
   for (let i = 0; i < upserts.length; i += 100) {
     const { error: uErr } = await sb.from("playbook_programs").upsert(upserts.slice(i, i + 100), { onConflict: "kind,name" });
@@ -110,20 +125,20 @@ export default async function handler(req, res) {
 
   const group = (list) => {
     const by = new Map();
-    for (const l of list) { if (!by.has(l.kind)) by.set(l.kind, []); by.get(l.kind).push(l.name); }
+    for (const l of list) { const k = (CAT_LABEL[l.category] || l.category || "Other") + " · " + (KIND_LABEL[l.kind] || l.kind); if (!by.has(k)) by.set(k, []); by.get(k).push(l.name); }
     return [...by.entries()];
   };
   const section = (title, list, color) => list.length
     ? `<p style="margin:22px 0 6px;font-size:13px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:${color}">${esc(title)} &middot; ${list.length}</p>`
-      + group(list).map(([kind, names]) => `<p style="margin:8px 0 2px;font-size:12px;color:#777">${esc(KIND_LABEL[kind] || kind)}</p><ul style="margin:0 0 6px;padding-left:20px">${names.map(n => `<li>${esc(n)}</li>`).join("")}</ul>`).join("")
+      + group(list).map(([kind, names]) => `<p style="margin:8px 0 2px;font-size:12px;color:#777">${esc(kind)}</p><ul style="margin:0 0 6px;padding-left:20px">${names.map(n => `<li>${esc(n)}</li>`).join("")}</ul>`).join("")
     : "";
   const sectionText = (title, list) => list.length
-    ? `${title.toUpperCase()} (${list.length})\n` + group(list).map(([kind, names]) => `  ${KIND_LABEL[kind] || kind}\n` + names.map(n => "    • " + n).join("\n")).join("\n") + "\n\n"
+    ? `${title.toUpperCase()} (${list.length})\n` + group(list).map(([kind, names]) => `  ${kind}\n` + names.map(n => "    • " + n).join("\n")).join("\n") + "\n\n"
     : "";
 
   const html2 = '<div style="font-family:-apple-system,Segoe UI,sans-serif;font-size:15px;line-height:1.5;color:#1a1a1a;max-width:600px">'
     + `<p style="margin:0 0 6px;font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#c2186f">DSSC &middot; Playbook listings</p>`
-    + `<p style="margin:0 0 4px">Playbook's public program list changed since yesterday's check.</p>`
+    + `<p style="margin:0 0 4px">Playbook's volleyball and Reach Performance listings changed since yesterday's check.</p>`
     + section("New on Playbook", added, "#15803d")
     + section("Back on Playbook", returned, "#0369a1")
     + section("No longer listed", removed, "#b45309")
