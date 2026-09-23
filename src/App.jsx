@@ -1734,6 +1734,11 @@ export default function App() {
   const [ppThoughtShuffle, setPpThoughtShuffle] = useState(0); // "thought before practice" — cycle offset
   const [clinics, setClinics]           = useState([]);     // DSSC clinics & camps
   const [clinicOpenId, setClinicOpenId] = useState(null);   // open clinic detail
+  // Finished work stays out of the way: past clinics and completed sessions are
+  // folded behind a count until asked for. A finished pod block is history, not
+  // a to-do, and twenty of them buried the three that still need a coach.
+  const [showPastClinics, setShowPastClinics] = useState(false);
+  const [showDoneSessions, setShowDoneSessions] = useState(false);
   const [clinicFrom, setClinicFrom]     = useState(null);   // view to return to after opening one
   const [clinicViewMode, setClinicViewMode] = useState("list"); // list | calendar
   const [clinicMonth, setClinicMonth]   = useState(null);   // "YYYY-MM" calendar anchor
@@ -23864,7 +23869,8 @@ export default function App() {
       ghost: { padding:"6px 12px", borderRadius:8, border:"1px solid "+C.border, background:"transparent", color:C.text, fontWeight:600, fontSize:12, cursor:"pointer", fontFamily:"inherit" },
     };
     const KIND = { clinic:["Clinic","#06b6d4"], camp:["Camp","#a855f7"] };
-    const STATUS = { planned:["Planned",C.mut], assigned:["Assigned","#f59e0b"], done:["Done",C.grn] };
+    // "scheduled" is what the Playbook sync writes; without it the badge rendered blank.
+    const STATUS = { planned:["Planned",C.mut], scheduled:["Scheduled","#22d3ee"], assigned:["Assigned","#f59e0b"], done:["Done",C.grn] };
     const fmtDate = iso => iso ? new Date(iso+"T12:00:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"}) : "No date";
 
     const saveClinic = async (id, patch) => {
@@ -24081,6 +24087,7 @@ export default function App() {
             if (!sessions.length) return null;
             const setSess = (i, patch) => saveClinic(open.id, { sessions: sessions.map((s,ix)=> ix===i ? {...s,...patch} : s) });
             const unassigned = sessions.filter(s => !s.coach_name).length;
+            const doneCount = sessions.filter(s => s.date && s.date < today).length;
             const sfmt = d => d ? new Date(d+"T12:00:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"}) : "—";
             // Greedily staff every open session: best-ranked available/skilled coach,
             // never double-booking anyone across overlapping same-day sessions.
@@ -24105,10 +24112,18 @@ export default function App() {
                 <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:8}}>
                   <div style={{...S.lbl,marginBottom:0}}>Sessions ({sessions.length})</div>
                   {unassigned>0 ? <span style={{fontSize:11,fontWeight:800,color:"#f59e0b"}}>⚠ {unassigned} need a coach</span> : <span style={{fontSize:11,fontWeight:800,color:C.grn}}>✓ all covered</span>}
+                  {doneCount>0 && (
+                    <button onClick={()=>setShowDoneSessions(v=>!v)} style={{marginLeft:"auto",background:"none",border:"1px solid "+C.border,borderRadius:6,color:C.mut,fontFamily:"inherit",fontSize:11,fontWeight:700,padding:"3px 9px",cursor:"pointer"}}>
+                      {showDoneSessions ? "Hide" : "Show"} {doneCount} completed
+                    </button>
+                  )}
                 </div>
                 <div style={{fontSize:11,color:C.mut,marginBottom:8}}>Multi-week: each session shows the <b>previous</b> session's focus so coaches build week to week — even when the coach changes.</div>
                 <div style={{display:"flex",flexDirection:"column",gap:8}}>
                   {sessions.map((s,i) => {
+                    // Completed sessions fold away; the index `i` is kept so
+                    // setSess and the previous-focus chain still line up.
+                    if (!showDoneSessions && s.date && s.date < today) return null;
                     const prev = i>0 ? sessions[i-1] : null;
                     const canEditSess = isDirector || (s.coach_name && cand.has(norm(s.coach_name)));
                     return (
@@ -24577,7 +24592,17 @@ export default function App() {
             })() : (
               <>
                 {upcoming.length ? upcoming.map(row) : <div style={{fontSize:12,color:C.mut,marginBottom:10}}>Nothing upcoming.</div>}
-                {past.length>0 && <><div style={{...S.lbl,marginTop:10}}>Past ({past.length})</div>{past.map(row)}</>}
+                {past.length>0 && (
+                  <>
+                    <div style={{display:"flex",alignItems:"center",gap:10,marginTop:10}}>
+                      <div style={{...S.lbl,marginBottom:0}}>Completed ({past.length})</div>
+                      <button onClick={()=>setShowPastClinics(v=>!v)} style={{background:"none",border:"1px solid "+C.border,borderRadius:6,color:C.mut,fontFamily:"inherit",fontSize:11,fontWeight:700,padding:"3px 9px",cursor:"pointer"}}>
+                        {showPastClinics ? "Hide" : "Show"}
+                      </button>
+                    </div>
+                    {showPastClinics && <div style={{marginTop:8}}>{past.map(row)}</div>}
+                  </>
+                )}
               </>
             )}
           </>
