@@ -88,6 +88,10 @@
     {
       "path": "/api/photo-digest",
       "schedule": "0 12 * * *"
+    },
+    {
+      "path": "/api/playbook-programs",
+      "schedule": "30 12 * * *"
     }
   ],
   "headers": [
