@@ -220,6 +220,60 @@ export default async function handler(req, res) {
   const blank = (v) => !String(v ?? "").trim();
   const askIntake = blank(player.dob) || blank(player.address_line1);
 
+  // SHOE SIZE ONLY — /gear?t=<token>&shoe=1
+  //
+  // Shoes are bought as one club order, and the discount depends on the whole
+  // order going in at once. The rest of the uniform is fitted in person on 11
+  // October, so this page asks the one thing we need now and nothing else: a
+  // parent answering one question on a phone beats a parent postponing a form.
+  if (String((req.query && req.query.shoe) || "") === "1") {
+    const shoePage = (msg, done) => page(`<div class="wrap">
+      <div class="eyebrow">DS Elite &middot; ${esc(player.team_assignment || "")}</div>
+      <h1>${esc(player.first_name)}'s shoe size</h1>
+      ${done
+        ? `<p class="sub">Saved &mdash; thank you. Nothing else to do; the rest of ${esc(player.first_name)}'s uniform is fitted in person on Sunday, 11 October.</p>
+           <div class="card"><p style="margin:0">We have <b style="color:var(--gold)">${esc(done)}</b> for ${esc(player.first_name)}.
+           Wrong? <a href="?t=${esc(token)}&shoe=1" style="color:var(--gold)">Change it</a>.</p></div>`
+        : `<p class="sub">We're ordering the club shoe now, and we need her size to go in with everyone else's. One question, then you're done.</p>
+           ${msg ? `<div class="card" style="border-color:var(--err);margin-bottom:14px"><p style="margin:0;color:var(--err)">${esc(msg)}</p></div>` : ""}
+           <form method="post" class="card">
+             <label><span class="lb">Shoe size <span class="req">*</span></span>
+               <select name="shoe_size">
+                 <option value="">Pick a size</option>
+                 ${SHOES.map(s => `<option value="${esc(s)}"${prev && prev.shoe_size === s ? " selected" : ""}>${esc(s)}</option>`).join("")}
+               </select>
+             </label>
+             <label style="display:flex;gap:10px;align-items:flex-start;margin-bottom:18px">
+               <input type="checkbox" name="unsure" value="1" style="width:20px;height:20px;margin-top:3px">
+               <span style="font-size:15px">I'm not sure &mdash; we'll try a pair on at the 11 October fitting.</span>
+             </label>
+             <button type="submit" style="width:100%;padding:15px;border:none;border-radius:10px;background:var(--gold);color:#12100f;font:inherit;font-weight:700;font-size:17px;cursor:pointer">Send her size</button>
+             <p style="margin:14px 0 0;font-size:13px;color:var(--mut)">These run true to size. Shoes are invoiced separately from the uniform package.</p>
+           </form>`}
+    </div>`, { title: player.first_name + " — shoe size — DS Elite" });
+
+    if (req.method !== "POST") return res.status(200).send(shoePage(null, null));
+
+    let body = req.body;
+    if (typeof body === "string") body = Object.fromEntries(new URLSearchParams(body));
+    const size = String(body?.shoe_size || "").trim();
+    const unsure = !!body?.unsure;
+    if (!unsure && !SHOES.includes(size)) {
+      return res.status(200).send(shoePage("Please pick a size, or tick the box to be fitted on 11 October.", null));
+    }
+    const patch = unsure ? { needs_fitting: true } : { shoe_size: size };
+    const { error } = prev
+      ? await supabase.from("player_gear_orders").update(patch).eq("player_id", player.id)
+      : await supabase.from("player_gear_orders").insert({
+          player_id: player.id, first_name: player.first_name, last_name: player.last_name,
+          team_name: player.team_assignment || null,
+          jersey_number: player.jersey_number == null ? null : String(player.jersey_number),
+          is_draft: true, ...patch,
+        });
+    if (error) return res.status(200).send(shoePage("That didn't save — please try once more. (" + error.message + ")", null));
+    return res.status(200).send(shoePage(null, unsure ? "a fitting on 11 October" : size));
+  }
+
   if (req.method === "POST") {
     let body = req.body;
     if (typeof body === "string") body = Object.fromEntries(new URLSearchParams(body));
