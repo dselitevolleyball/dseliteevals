@@ -24090,7 +24090,10 @@ export default function App() {
             if (!sessions.length) return null;
             const setSess = (i, patch) => saveClinic(open.id, { sessions: sessions.map((s,ix)=> ix===i ? {...s,...patch} : s) });
             const unassigned = sessions.filter(s => !s.coach_name).length;
-            const doneCount = sessions.filter(s => s.date && s.date < today).length;
+            // Local date: the list-level `today` below is declared after this early
+            // return, so reaching for it here threw before initialization.
+            const todayS = localDateISO();
+            const doneCount = sessions.filter(s => s.date && s.date < todayS).length;
             const sfmt = d => d ? new Date(d+"T12:00:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"}) : "—";
             // Greedily staff every open session: best-ranked available/skilled coach,
             // never double-booking anyone across overlapping same-day sessions.
@@ -24126,7 +24129,7 @@ export default function App() {
                   {sessions.map((s,i) => {
                     // Completed sessions fold away; the index `i` is kept so
                     // setSess and the previous-focus chain still line up.
-                    if (!showDoneSessions && s.date && s.date < today) return null;
+                    if (!showDoneSessions && s.date && s.date < todayS) return null;
                     const prev = i>0 ? sessions[i-1] : null;
                     const canEditSess = isDirector || (s.coach_name && cand.has(norm(s.coach_name)));
                     return (
