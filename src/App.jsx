@@ -9171,13 +9171,21 @@ export default function App() {
               {inPool && !mine.length && <div style={{fontSize:12,color:C.mut}}>You're in the clinic pool — we'll match you to sessions. <button onClick={()=>setView("clinics")} style={{background:"none",border:"none",color:"#22d3ee",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700,padding:0}}>Add your skills & availability →</button></div>}
               {!!mine.length && (
                 <div style={{display:"flex",flexDirection:"column",gap:5}}>
-                  {mine.slice(0,4).map(({c,s},i) => (
-                    <div key={s.id||i} style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:C.text}}>
+                  {mine.slice(0,4).map(({c,s},i) => {
+                    // Each row opens that clinic — plan, blocks, launch — so a coach
+                    // never has to go find it in the DSSC list.
+                    const hasPlan = Array.isArray(c.plan?.blocks) && c.plan.blocks.some(b => String(b.name||"").trim());
+                    return (
+                    <button key={s.id||i} onClick={()=>{ setClinicOpenId(c.id); setView("clinics"); setOpenMenu(null); }}
+                      title={hasPlan ? "Open this clinic" : "Open this clinic and write the plan"}
+                      style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:C.text,width:"100%",textAlign:"left",padding:"6px 8px",margin:"0 -8px",borderRadius:8,border:"1px solid transparent",background:"transparent",cursor:"pointer",fontFamily:"inherit"}}>
                       <span style={{minWidth:90,fontWeight:700,color:s.date===todayISO?C.gold:C.text}}>{sfmt(s.date)}</span>
-                      <span style={{flex:1}}>{c.name}</span>
-                      <span style={{fontSize:12,color:C.mut}}>{s.start_time}{s.court?" · "+s.court:""}</span>
-                    </div>
-                  ))}
+                      <span style={{flex:1,minWidth:0}}>{c.name}{!hasPlan && <span style={{marginLeft:8,fontSize:10,fontWeight:800,color:"#f59e0b",border:"1px solid #f59e0b",borderRadius:5,padding:"0 6px"}}>needs plan</span>}</span>
+                      <span style={{fontSize:12,color:C.mut,whiteSpace:"nowrap"}}>{s.start_time}{s.court?" · "+s.court:""}</span>
+                      <span style={{fontSize:12,fontWeight:800,color:"#22d3ee"}}>{hasPlan ? "Open →" : "Plan →"}</span>
+                    </button>
+                    );
+                  })}
                   {mine.length>4 && <div style={{fontSize:11,color:C.mut}}>+{mine.length-4} more</div>}
                 </div>
               )}
