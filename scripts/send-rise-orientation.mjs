@@ -62,7 +62,7 @@ const build = (p, kind) => {
       ["The schedule", [
         `11:30am — jersey and uniform try-ons`,
         `12:00pm — orientation, the DS Elite commitment, and team time`,
-        `We'll be done by 3:00pm.`,
+        `We'll be done by 1:00pm.`,
       ]],
       ["Who needs to be there", [
         `${girl} — required.`,
@@ -124,8 +124,8 @@ const send = async (m, recipients) => {
 if (doEvents) {
   for (const team of RISE_TEAMS) {
     const row = { team_name: team, title: "Orientation + jersey try-ons (mandatory)", event_date: "2026-10-11",
-      start_time: "11:30", duration_min: 210, location: "DSSC Warehouse",
-      description: "Jersey and uniform try-ons at 11:30am; orientation, the DS Elite commitment and team time at 12:00pm. Mandatory for all Rise players. A parent is needed for the first part." };
+      start_time: "11:30", duration_min: 90, location: "DSSC Warehouse",
+      description: "Jersey and uniform try-ons at 11:30am; orientation, the DS Elite commitment and team time at 12:00pm, finishing at 1:00pm. Mandatory for all Rise players. A parent is needed for the first part." };
     const { data: had } = await sb.from("team_events").select("id").eq("team_name", team).eq("event_date", row.event_date).ilike("title", "Orientation%").maybeSingle();
     const { error } = had ? await sb.from("team_events").update(row).eq("id", had.id) : await sb.from("team_events").insert(row);
     console.log(error ? `ERR ${team}: ${error.message}` : `${had ? "updated" : "added"} calendar event for ${team}`);
