@@ -322,7 +322,7 @@ export default function DsscAdmin({
                 <div style={{ flex: 1 }} />
                 <span style={{ fontSize: 12, color: DS.mut }}>{last ? "Last synced " + last.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " " + last.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) + (sync.dsscSync?.summary ? ` · +${sync.dsscSync.summary.sessionsAdded || 0} added · −${sync.dsscSync.summary.sessionsRemoved || 0} removed` : "") : "Not synced yet"}</span>
               </div>
-              <div style={{ fontSize: 12, color: DS.mut, lineHeight: 1.5, marginBottom: 8 }}>Playbook is the system of record. Open a month there and click the bookmark: new classes are added, times refreshed, and any class Playbook no longer lists is removed from here — you and Hunter get an email if a coach was on it. Only the dates on screen are touched, so sync month by month. Registrations: export Playbook's registrations report and run <code style={{ color: DS.text }}>node scripts/import-pod-roster.mjs &lt;csv&gt;</code>.</div>
+              <div style={{ fontSize: 12, color: DS.mut, lineHeight: 1.5, marginBottom: 8 }}>Playbook is the system of record. Open a month on its calendar and click 🔄: new classes are added, times refreshed, any class Playbook no longer lists is removed (you and Hunter get an email if a coach was on it), and the registrations report is pulled in the same click. Only the dates on screen are touched, so sync month by month. 📥 pulls registrations alone, from any Playbook page. Registrations: export Playbook's registrations report and run <code style={{ color: DS.text }}>node scripts/import-pod-roster.mjs &lt;csv&gt;</code>.</div>
               {!t && <Btn small onClick={sync.fetchSyncBookmarklet}>Set up the one-click sync →</Btn>}
               {t?.loading && <span style={{ fontSize: 12, color: DS.mut }}>Loading…</span>}
               {t?.error && <div style={{ fontSize: 12, color: DS.orange }}>Couldn't load: {t.error}</div>}
@@ -331,6 +331,7 @@ export default function DsscAdmin({
                 <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                   <a ref={el => { if (el) el.setAttribute("href", t.href); }} onClick={e => e.preventDefault()} draggable="true" style={{ display: "inline-block", padding: "7px 14px", borderRadius: 9, background: DS.lime, color: DS.bg, fontWeight: 800, fontSize: 13, textDecoration: "none", cursor: "grab" }}>🔄 Sync DSSC clinics</a>
                   <Btn small onClick={() => { navigator.clipboard?.writeText(t.href); window.alert("Sync code copied. Create a bookmark and paste it as the URL."); }}>Copy code</Btn>
+                  {t.hrefRegs && <a ref={el => { if (el) el.setAttribute("href", t.hrefRegs); }} onClick={e => e.preventDefault()} draggable="true" title="Run from any Playbook page while logged in — pulls the registrations report into HQ" style={{ display: "inline-block", padding: "7px 14px", borderRadius: 9, background: "rgba(255,255,255,0.10)", color: DS.text, fontWeight: 800, fontSize: 13, textDecoration: "none", cursor: "grab", border: "1px solid " + DS.lineStrong }}>📥 Pull registrations</a>}
                   <a href={t.calendarUrl + "?start_date=" + today.slice(0, 4) + "-08-01&end_date=" + today.slice(0, 4) + "-12-31"} target="_blank" rel="noreferrer" style={{ fontSize: 12, fontWeight: 700, color: DS.lime }}>Open Playbook →</a>
                   <span style={{ fontSize: 11, color: DS.dim }}>Drag the green button to your bookmarks bar once.</span>
                 </div>
@@ -339,7 +340,7 @@ export default function DsscAdmin({
                 <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                   <div style={{ flex: 1, minWidth: 220 }}>
                     <div style={{ fontSize: 13, fontWeight: 700 }}>Registrations (who's signed up)</div>
-                    <div style={{ fontSize: 12, color: DS.mut, lineHeight: 1.5 }}>Playbook → Reports → Registrations → export CSV, then drop it here. New sign-ups are added, nothing is removed. Sync the calendar first so every class exists.</div>
+                    <div style={{ fontSize: 12, color: DS.mut, lineHeight: 1.5 }}>Backup route if the bookmark can't reach Playbook: Reports → Registrations → Export All, then drop the CSV here. New sign-ups are added, nothing is removed.</div>
                   </div>
                   <input ref={fileRef} type="file" accept=".csv,text/csv" style={{ display: "none" }} onChange={e => uploadRegistrations(e.target.files?.[0])} />
                   <Btn small kind="primary" disabled={!!imp?.loading} onClick={() => fileRef.current?.click()}>{imp?.loading ? "Importing…" : "Upload registrations CSV"}</Btn>
