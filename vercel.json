@@ -95,7 +95,7 @@
     },
     {
       "path": "/api/playbook-registrations",
-      "schedule": "15 */4 * * *"
+      "schedule": "15 * * * *"
     }
   ],
   "headers": [

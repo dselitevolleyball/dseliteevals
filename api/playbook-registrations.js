@@ -1,4 +1,4 @@
-// Every 4 hours: pull Playbook's registrations report into the class rosters.
+// Every hour: pull Playbook's registrations report into the class rosters.
 //
 // Playbook has no API, but its "Export All" on the registrations report is a
 // plain GET that a signed-in session can fetch, and its sign-in is an ordinary
@@ -78,7 +78,7 @@ export default async function handler(req, res) {
     if (!dry) {
       await sb.from("dssc_sync").upsert({ id: 1, registrations_error: msg, registrations_error_at: now }, { onConflict: "id" });
       // Same failure every 4 hours is noise; a new one is worth a note.
-      if (prev?.registrations_error !== msg) await notify("Playbook registrations pull failed", msg + "\n\nThe sync runs every 4 hours; the admin board's upload button still works meanwhile.");
+      if (prev?.registrations_error !== msg) await notify("Playbook registrations pull failed", msg + "\n\nThe sync runs every hour; the admin board's upload button still works meanwhile.");
     }
     return res.status(502).json({ ok: false, error: msg });
   };
