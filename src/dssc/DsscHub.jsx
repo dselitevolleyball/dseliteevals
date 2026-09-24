@@ -24,15 +24,15 @@ export const DS = {
   earth: "#87533E", brier: "#0F8B76", black: "#191919",
   font: '"Founders Grotesk", "Archivo", "Outfit", -apple-system, "Segoe UI", sans-serif',
 };
-const nrm = (v) => String(v || "").trim().toLowerCase().replace(/\s+/g, " ");
-const rid = () => Math.random().toString(36).slice(2, 10);
-const fmtDay = (iso, today) => { if (!iso) return "—"; if (iso === today) return "Today"; const d = new Date(iso + "T12:00:00"); const t = new Date(today + "T12:00:00"); if ((d - t) / 86400000 === 1) return "Tomorrow"; return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }); };
-const fmtLong = (iso) => iso ? new Date(iso + "T12:00:00").toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }) : "—";
-const timeRange = (s) => (s.start_time || "") + (s.end_time ? "–" + s.end_time : "");
+export const nrm = (v) => String(v || "").trim().toLowerCase().replace(/\s+/g, " ");
+export const rid = () => Math.random().toString(36).slice(2, 10);
+export const fmtDay = (iso, today) => { if (!iso) return "—"; if (iso === today) return "Today"; const d = new Date(iso + "T12:00:00"); const t = new Date(today + "T12:00:00"); if ((d - t) / 86400000 === 1) return "Tomorrow"; return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }); };
+export const fmtLong = (iso) => iso ? new Date(iso + "T12:00:00").toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }) : "—";
+export const timeRange = (s) => (s.start_time || "") + (s.end_time ? "–" + s.end_time : "");
 // The practice plan is per CLASS (session.blocks). The program-level blocks the
 // director wrote are a template a coach can copy in, never what runs on court.
-const classBlocks = (s) => Array.isArray(s?.blocks) ? s.blocks : [];
-const hasClassPlan = (s) => classBlocks(s).some(b => String(b.name || "").trim());
+export const classBlocks = (s) => Array.isArray(s?.blocks) ? s.blocks : [];
+export const hasClassPlan = (s) => classBlocks(s).some(b => String(b.name || "").trim());
 // One class's families, via the server (it owns the roster lookup and consent).
 async function sendClassMessage(c, s, body, mediaIds = []) {
   const { data: { session } } = await supabase.auth.getSession();
@@ -43,7 +43,7 @@ async function sendClassMessage(c, s, body, mediaIds = []) {
 }
 
 // ── Small brand primitives ──────────────────────────────────────────────────
-function Btn({ kind = "ghost", small, style, children, ...rest }) {
+export function Btn({ kind = "ghost", small, style, children, ...rest }) {
   const base = { fontFamily: DS.font, fontWeight: 700, fontSize: small ? 12 : 13, padding: small ? "6px 11px" : "9px 15px", borderRadius: 9, cursor: "pointer", border: "1px solid transparent", display: "inline-flex", alignItems: "center", gap: 6, lineHeight: 1.1, whiteSpace: "nowrap" };
   const kinds = {
     primary: { background: DS.lime, color: DS.bg, borderColor: DS.lime },
@@ -54,18 +54,18 @@ function Btn({ kind = "ghost", small, style, children, ...rest }) {
   };
   return <button {...rest} style={{ ...base, ...kinds[kind], ...(rest.disabled ? { opacity: 0.5, cursor: "default" } : {}), ...style }}>{children}</button>;
 }
-const Card = ({ style, children, accent }) => <div style={{ background: DS.panel, border: "1px solid " + (accent || DS.line), borderRadius: 14, padding: 16, marginBottom: 14, ...style }}>{children}</div>;
-const Label = ({ children, style }) => <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: DS.lime, marginBottom: 8, ...style }}>{children}</div>;
-const Tag = ({ color = DS.mut, children, fill }) => <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.04em", textTransform: "uppercase", color: fill ? DS.bg : color, background: fill ? color : "transparent", border: "1px solid " + color, borderRadius: 6, padding: "2px 7px", whiteSpace: "nowrap" }}>{children}</span>;
-const inputStyle = { background: DS.panel2, border: "1px solid " + DS.line, borderRadius: 8, color: DS.text, fontFamily: DS.font, fontSize: 14, padding: "9px 11px", width: "100%", boxSizing: "border-box", lineHeight: 1.45 };
-function Grow({ value, onChange, minRows = 2, style, ...rest }) {
+export const Card = ({ style, children, accent }) => <div style={{ background: DS.panel, border: "1px solid " + (accent || DS.line), borderRadius: 14, padding: 16, marginBottom: 14, ...style }}>{children}</div>;
+export const Label = ({ children, style }) => <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: DS.lime, marginBottom: 8, ...style }}>{children}</div>;
+export const Tag = ({ color = DS.mut, children, fill }) => <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.04em", textTransform: "uppercase", color: fill ? DS.bg : color, background: fill ? color : "transparent", border: "1px solid " + color, borderRadius: 6, padding: "2px 7px", whiteSpace: "nowrap" }}>{children}</span>;
+export const inputStyle = { background: DS.panel2, border: "1px solid " + DS.line, borderRadius: 8, color: DS.text, fontFamily: DS.font, fontSize: 14, padding: "9px 11px", width: "100%", boxSizing: "border-box", lineHeight: 1.45 };
+export function Grow({ value, onChange, minRows = 2, style, ...rest }) {
   const ref = useRef(null);
   const resize = () => { const el = ref.current; if (!el) return; el.style.height = "auto"; el.style.height = Math.min(Math.max(el.scrollHeight, minRows * 22) + 2, 480) + "px"; };
   useEffect(() => { resize(); }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
   return <textarea ref={ref} rows={minRows} value={value} onChange={(e) => { onChange(e); resize(); }} style={{ ...inputStyle, resize: "none", ...style }} {...rest} />;
 }
 // Edit locally, write once typing pauses — one Supabase update per thought, not per key.
-function Field({ value, onSave, multiline, minRows, placeholder, style, readOnly }) {
+export function Field({ value, onSave, multiline, minRows, placeholder, style, readOnly }) {
   const [v, setV] = useState(value ?? "");
   const t = useRef(null), last = useRef(value ?? "");
   useEffect(() => { if ((value ?? "") !== last.current && !t.current) { setV(value ?? ""); last.current = value ?? ""; } }, [value]);
@@ -81,7 +81,7 @@ function Field({ value, onSave, multiline, minRows, placeholder, style, readOnly
 // ── The hub ─────────────────────────────────────────────────────────────────
 export default function DsscHub({
   coach, coachRoster = [], clinics = [], dsscCheckins = [], dsscAvail = [], podAttendance = [],
-  isDirector = false, initialClinicId = null, onConsumedInitial,
+  isDirector = false, initialClinicId = null, initialSessionId = null, onConsumedInitial, backTo = null,
   setClinics, reload = {}, staffDsscSession, unstaffDsscSession, notifyDirectors,
   onOpenAdmin, onOpenPlaybook,
 }) {
@@ -127,7 +127,8 @@ export default function DsscHub({
   // Deep-link from the home card: open that clinic's next class of mine.
   useEffect(() => {
     if (!initialClinicId || !clinics.length) return;
-    const pick = upcoming.find(r => r.c.id === initialClinicId) || rows.find(r => r.c.id === initialClinicId && r.s.date >= today) || rows.filter(r => r.c.id === initialClinicId).slice(-1)[0];
+    const pick = (initialSessionId && rows.find(r => r.c.id === initialClinicId && String(r.s.id) === String(initialSessionId)))
+      || upcoming.find(r => r.c.id === initialClinicId) || rows.find(r => r.c.id === initialClinicId && r.s.date >= today) || rows.filter(r => r.c.id === initialClinicId).slice(-1)[0];
     if (pick) { setSel({ clinicId: pick.c.id, sessionId: pick.s.id }); setTab("plan"); }
     onConsumedInitial && onConsumedInitial();
   }, [initialClinicId, clinics.length]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -188,7 +189,7 @@ export default function DsscHub({
   if (open) {
     return shell(
       <ClassView key={open.c.id + "|" + open.s.id} c={open.c} s={open.s} today={today} coach={coach} coachName={coachName} isMe={isMe} isDirector={isDirector}
-        header={header} onBack={() => setSel(null)} tab={tab} setTab={setTab}
+        header={header} onBack={() => { setSel(null); if (backTo) backTo.go(); }} backLabel={backTo ? "‹ " + backTo.label : "‹ My classes"} tab={tab} setTab={setTab}
         saveClinic={saveClinic} saveSession={saveSession} clockIn={clockIn} checkedIn={checkedIn} winState={winState} dropOut={dropOut} pickUp={pickUp} busy={busy}
         podAttendance={podAttendance} reloadAttendance={reload.attendance} run={run} setRun={setRun} onOpenPlaybook={onOpenPlaybook} notifyDirectors={notifyDirectors}
         sessions={(open.c.sessions || []).slice().sort((a, b) => (a.date || "").localeCompare(b.date || ""))} onPickSession={(sid) => setSel({ clinicId: open.c.id, sessionId: sid })} />
@@ -346,7 +347,7 @@ export default function DsscHub({
 }
 
 // ── One class ───────────────────────────────────────────────────────────────
-function ClassView({ c, s, sessions, onPickSession, today, coach, coachName, isMe, isDirector, header, onBack, tab, setTab,
+function ClassView({ c, s, sessions, onPickSession, today, coach, coachName, isMe, isDirector, header, onBack, backLabel, tab, setTab,
   saveClinic, saveSession, clockIn, checkedIn, winState, dropOut, pickUp, busy, podAttendance, reloadAttendance, run, setRun, onOpenPlaybook, notifyDirectors }) {
   const crew = sessionStaff(s).filter(x => x.status !== "declined");
   const mineEntry = crew.find(x => isMe(x.name));
@@ -368,7 +369,7 @@ function ClassView({ c, s, sessions, onPickSession, today, coach, coachName, isM
 
   const tabs = [["plan", "Plan"], ["players", "Players" + (roster?.length ? " · " + roster.length : "")], ["message", "Message"], ["media", "Photos & video" + (media.length ? " · " + media.length : "")], ["recap", "Recap"]];
   return (<>
-    {header(<Btn small onClick={onBack}>‹ My classes</Btn>)}
+    {header(<Btn small onClick={onBack}>{backLabel || "‹ My classes"}</Btn>)}
     <div style={{ marginBottom: 14 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
         <Tag color={DS.lime}>{c.kind === "camp" ? "Camp" : /pod/i.test(c.name || "") ? "Skill pod" : "Clinic"}</Tag>

@@ -9,6 +9,7 @@ import { isEventTeam } from "../shared/event-teams.js";
 import { SCHOOL_DIVS } from "../shared/school-divs.js";
 import { schoolKey } from "../shared/school-schedule.js";
 import DsscHub from "./dssc/DsscHub.jsx";
+import DsscAdmin from "./dssc/DsscAdmin.jsx";
 import { TN_SUB_PLACEHOLDERS, isPlaceholderPerson, sessionStaff, staffNeeded, staffApproved, staffPending, sessionShort, onStaff, parsePlanPaste } from "../shared/dssc-clinics.js";
 
 const POSITIONS = ["S","OH","MB","RS","L","DS","U"];
@@ -1723,6 +1724,9 @@ export default function App() {
   const [dsscWeekOff, setDsscWeekOff]   = useState(0);      // weeks from this one on the DSSC approval table
   const [dsscSync, setDsscSync]         = useState(null);   // last Playbook→clinics sync {last_synced_at, summary}
   const [dsscSyncTok, setDsscSyncTok]   = useState(null);   // built sync bookmarklet {href, calendarUrl} | {configured:false} | {error}
+  const [dsscAdminLegacy, setDsscAdminLegacy] = useState(false); // directors: classic clinics list instead of the admin board
+  const [dsscHubSel, setDsscHubSel]     = useState(null);   // {clinicId, sessionId} the admin board asked the coach hub to open
+  const [dsscHubBack, setDsscHubBack]   = useState(false);  // that class was opened from the admin board, so "back" returns there
   const [swSyncTok, setSwSyncTok]       = useState(null);   // SportWrench sync bookmarklet {href} | {configured:false} | {error}
   const [syPostTok, setSyPostTok]       = useState(null);   // SportsYou post bookmarklet {href} | {configured:false} | {error}
   const [syOutbox, setSyOutbox]         = useState([]);     // sportsyou_outbox rows (pending + recently posted)
@@ -23843,11 +23847,31 @@ export default function App() {
     };
     return (
       <DsscHub coach={coach} coachRoster={coachRoster} clinics={clinics} dsscCheckins={dsscCheckins} dsscAvail={dsscAvail} podAttendance={podAttendance}
-        isDirector={isDsscDirector} initialClinicId={clinicOpenId} onConsumedInitial={()=>setClinicOpenId(null)}
+        isDirector={isDsscDirector} initialClinicId={dsscHubSel?.clinicId || clinicOpenId} initialSessionId={dsscHubSel?.sessionId || null}
+        onConsumedInitial={()=>{ setClinicOpenId(null); setDsscHubSel(null); }} backTo={dsscHubBack ? { label:"Admin board", go:()=>{ setDsscHubBack(false); setView("clinics"); } } : null}
         setClinics={setClinics} reload={{ clinics: loadClinics, checkins: loadDsscCheckins, avail: loadDsscAvail, attendance: loadPodAttendance }}
         staffDsscSession={staffDsscSession} unstaffDsscSession={unstaffDsscSession} notifyDirectors={notifyDirectors}
         onOpenAdmin={isDsscDirector ? ()=>{ setClinicOpenId(null); setView("clinics"); } : null}
         onOpenPlaybook={()=>{ setView("practiceplan"); setPpTab("playbook"); }} />
+    );
+  }
+  function renderDsscAdmin() {
+    const coachName = coach?.display_name || coach?.email || "";
+    const newProgram = async () => {
+      const { data, error } = await supabase.from("dssc_clinics").insert({ name:"New program", kind:"clinic", status:"planned", created_by: coachName }).select().single();
+      if (error) { window.alert("Couldn't create: " + error.message); return; }
+      await loadClinics(); setClinicFrom("clinics"); setClinicOpenId(data.id);
+    };
+    return (
+      <DsscAdmin coach={coach} clinics={clinics} coachRoster={coachRoster} dsscAvail={dsscAvail} podAttendance={podAttendance}
+        setClinics={setClinics} reloadClinics={loadClinics}
+        staffDsscSession={staffDsscSession} unstaffDsscSession={unstaffDsscSession} decideDsscPickup={decideDsscPickup}
+        openClass={(cid, sid)=>{ setDsscHubSel({ clinicId: cid, sessionId: sid }); setDsscHubBack(true); setView("dssc"); }}
+        openProgram={(cid)=>{ setClinicFrom("clinics"); setClinicOpenId(cid); }}
+        newClinic={newProgram}
+        sync={{ dsscSync, dsscSyncTok, fetchSyncBookmarklet }}
+        onCoachHub={()=>{ setDsscHubSel(null); setDsscHubBack(false); setView("dssc"); }} onCoverage={()=>setView("dssccal")} onTimeCards={()=>setView("dssctime")}
+        onLegacy={()=>setDsscAdminLegacy(true)} />
     );
   }
   function renderClinics() {
@@ -24352,7 +24376,7 @@ export default function App() {
           {isDirector && (() => { const n = clinics.filter(c=>!clinicPlanned(c) && (()=>{const nd=clinicNextDate(c);return nd&&nd>=today;})()).sort((a,b)=>(clinicNextDate(a)||"").localeCompare(clinicNextDate(b)||""))[0]; return n ? <button style={S.gold} onClick={()=>setClinicOpenId(n.id)} title="Open the next clinic that still needs a plan">🗓 Plan next: {n.name}</button> : null; })()}
           {isDirector && <button style={S.ghost} onClick={remindToPlan} title="Push + email Hunter to plan the unplanned upcoming clinics">📣 Remind to plan</button>}
           {isDirector && <button style={S.ghost} onClick={newClinic}>+ New clinic</button>}
-          {isDirector && <button style={{...S.ghost,borderColor:"#B2D049",color:"#B2D049"}} onClick={()=>setView("dssc")} title="What coaches see — the club-branded hub">Coach hub →</button>}
+          {isDirector && <button style={{...S.ghost,borderColor:"#B2D049",color:"#B2D049"}} onClick={()=>{ setDsscAdminLegacy(false); setClinicOpenId(null); }} title="The admin board — staffing, sign-ups, pickups">← Admin board</button>}
         </div>
         {methodBanner}
 
@@ -30604,7 +30628,7 @@ export default function App() {
         {view==="travel" && renderTravel()}
         {view==="faq" && renderFaq()}
         {view==="practiceplan" && renderPracticePlans()}
-        {view==="clinics" && (isDsscDirector ? renderClinics() : renderDsscHub())}
+        {view==="clinics" && (isDsscDirector ? ((clinicOpenId || dsscAdminLegacy) ? renderClinics() : renderDsscAdmin()) : renderDsscHub())}
         {view==="dssc" && renderDsscHub()}
         {view==="lineups" && renderLineups()}
         {view==="games" && renderGames()}
