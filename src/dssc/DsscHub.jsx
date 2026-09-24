@@ -177,7 +177,7 @@ export default function DsscHub({
       <ClassView key={open.c.id + "|" + open.s.id} c={open.c} s={open.s} today={today} coach={coach} coachName={coachName} isMe={isMe} isDirector={isDirector}
         header={header} onBack={() => setSel(null)} tab={tab} setTab={setTab}
         saveClinic={saveClinic} saveSession={saveSession} clockIn={clockIn} checkedIn={checkedIn} winState={winState} dropOut={dropOut} busy={busy}
-        podAttendance={podAttendance} reloadAttendance={reload.attendance} run={run} setRun={setRun} onOpenPlaybook={onOpenPlaybook}
+        podAttendance={podAttendance} reloadAttendance={reload.attendance} run={run} setRun={setRun} onOpenPlaybook={onOpenPlaybook} notifyDirectors={notifyDirectors}
         sessions={(open.c.sessions || []).slice().sort((a, b) => (a.date || "").localeCompare(b.date || ""))} onPickSession={(sid) => setSel({ clinicId: open.c.id, sessionId: sid })} />
     );
   }
@@ -317,7 +317,7 @@ export default function DsscHub({
 
 // ── One class ───────────────────────────────────────────────────────────────
 function ClassView({ c, s, sessions, onPickSession, today, coach, coachName, isMe, isDirector, header, onBack, tab, setTab,
-  saveClinic, saveSession, clockIn, checkedIn, winState, dropOut, busy, podAttendance, reloadAttendance, run, setRun, onOpenPlaybook }) {
+  saveClinic, saveSession, clockIn, checkedIn, winState, dropOut, busy, podAttendance, reloadAttendance, run, setRun, onOpenPlaybook, notifyDirectors }) {
   const crew = sessionStaff(s).filter(x => x.status !== "declined");
   const mineEntry = crew.find(x => isMe(x.name));
   const canEdit = isDirector || !!mineEntry;
@@ -372,7 +372,7 @@ function ClassView({ c, s, sessions, onPickSession, today, coach, coachName, isM
     </div>
 
     {tab === "plan" && <PlanTab c={c} s={s} prev={prev} canEdit={canEdit} isDirector={isDirector} coachName={coachName} saveClinic={saveClinic} saveSession={saveSession} onLaunch={(blocks) => setRun({ idx: 0, paused: false, endsAt: Date.now() + (Number(blocks[0].minutes) || 10) * 60000, remainingMs: null })} onOpenPlaybook={onOpenPlaybook} />}
-    {tab === "players" && <PlayersTab c={c} s={s} roster={roster} reload={loadRoster} canEdit={canEdit} coachName={coachName} podAttendance={podAttendance} reloadAttendance={reloadAttendance} />}
+    {tab === "players" && <PlayersTab c={c} s={s} roster={roster} reload={loadRoster} canEdit={canEdit} coachName={coachName} podAttendance={podAttendance} reloadAttendance={reloadAttendance} notifyDirectors={notifyDirectors} />}
     {tab === "message" && <MessageTab c={c} s={s} roster={roster || []} media={media} picked={picked} setPicked={setPicked} messages={messages} reloadMessages={loadMessages} reloadMedia={loadMedia} canEdit={canEdit} coachName={coachName} />}
     {tab === "media" && <MediaTab c={c} s={s} media={media} reload={loadMedia} picked={picked} setPicked={setPicked} canEdit={canEdit} coachName={coachName} goMessage={() => setTab("message")} />}
     {tab === "recap" && <RecapTab c={c} s={s} canEdit={canEdit} isDirector={isDirector} coachName={coachName} saveClinic={saveClinic} saveSession={saveSession} />}
@@ -462,11 +462,13 @@ function PlanTab({ c, s, prev, canEdit, isDirector, coachName, saveClinic, saveS
 }
 
 // ── Players ─────────────────────────────────────────────────────────────────
-function PlayersTab({ c, s, roster, reload, canEdit, coachName, podAttendance, reloadAttendance }) {
+function PlayersTab({ c, s, roster, reload, canEdit, coachName, podAttendance, reloadAttendance, notifyDirectors }) {
   const att = podAttendance.find(a => a.clinic_id === c.id && String(a.session_id) === String(s.id));
   const present = new Set((Array.isArray(att?.present) ? att.present : []).map(String));
   const [adding, setAdding] = useState(false);
-  const [f, setF] = useState({ player_name: "", parent_name: "", parent_email: "", parent_phone: "", sms_consent: false, all: true });
+  const blank = { first: "", last: "", parent_name: "", parent_email: "", parent_phone: "", sms_consent: false, all: false };
+  const [f, setF] = useState(blank);
+  const [more, setMore] = useState(false);
   const [saving, setSaving] = useState(false);
   const savePresent = async (nextSet) => {
     const ids = [...nextSet];
@@ -476,23 +478,31 @@ function PlayersTab({ c, s, roster, reload, canEdit, coachName, podAttendance, r
     reloadAttendance && reloadAttendance();
   };
   const toggle = (id) => { const n = new Set(present); n.has(String(id)) ? n.delete(String(id)) : n.add(String(id)); savePresent(n); };
+  // A kid shows up who isn't on the Playbook list: first and last name is all
+  // the coach should have to type. They're marked here, and Hunter hears about
+  // it straight away so the registration gets sorted on his side.
   const add = async () => {
-    if (!f.player_name.trim()) return;
+    const name = (f.first.trim() + " " + f.last.trim()).trim();
+    if (!f.first.trim() || !f.last.trim()) return;
     setSaving(true);
-    const { error } = await supabase.from("dssc_pod_roster").insert({ clinic_id: c.id, session_id: f.all ? null : String(s.id), player_name: f.player_name.trim(), parent_name: f.parent_name.trim() || null, parent_email: f.parent_email.trim() || null, parent_phone: f.parent_phone.trim() || null, sms_consent: !!f.sms_consent, source: "manual", added_by: coachName });
+    const { data: row, error } = await supabase.from("dssc_pod_roster").insert({ clinic_id: c.id, session_id: f.all ? null : String(s.id), player_name: name, parent_name: f.parent_name.trim() || null, parent_email: f.parent_email.trim() || null, parent_phone: f.parent_phone.trim() || null, sms_consent: !!f.sms_consent, source: "manual", notes: "Not on the Playbook list — added by " + coachName, added_by: coachName }).select().single();
     setSaving(false);
     if (error) { window.alert("Couldn't add: " + error.message); return; }
-    setF({ player_name: "", parent_name: "", parent_email: "", parent_phone: "", sms_consent: false, all: true }); setAdding(false); reload();
+    if (row) { const n = new Set(present); n.add(String(row.id)); await savePresent(n); }
+    notifyDirectors && notifyDirectors("Not on the list — " + name + " at " + c.name,
+      name + " came to " + c.name + " on " + fmtDay(s.date, "") + " (" + timeRange(s) + ") but wasn't on the Playbook sign-up list. Coach " + coachName + " added them to the class and marked them here. Please check the registration.");
+    setF(blank); setAdding(false); setMore(false); reload();
   };
   const remove = async (r) => { if (!window.confirm("Remove " + r.player_name + " from this roster?")) return; await supabase.from("dssc_pod_roster").delete().eq("id", r.id); reload(); };
   const fi = (k, ph, type) => <input type={type || "text"} value={f[k]} onChange={e => setF({ ...f, [k]: e.target.value })} placeholder={ph} style={{ ...inputStyle, padding: "8px 10px", fontSize: 13 }} />;
+  const ready = !!(f.first.trim() && f.last.trim());
   return (
     <Card>
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
         <Label style={{ marginBottom: 0 }}>Signed up{roster ? " · " + roster.length : ""}</Label>
         {roster?.length > 0 && <span style={{ fontSize: 12, color: DS.mut }}>{present.size} here</span>}
         <div style={{ flex: 1 }} />
-        {canEdit && <Btn small onClick={() => setAdding(v => !v)}>{adding ? "Close" : "+ Add player"}</Btn>}
+        {canEdit && <Btn small kind={adding ? "ghost" : "primary"} onClick={() => setAdding(v => !v)}>{adding ? "Close" : "+ Not on the list?"}</Btn>}
       </div>
       {roster == null ? <div style={{ fontSize: 13, color: DS.mut }}>Loading…</div> : !roster.length ? (
         <div style={{ fontSize: 13, color: DS.mut, lineHeight: 1.5 }}>No one on the roster yet. Sign-ups come over from Playbook; a walk-in can be added by hand.</div>
@@ -515,11 +525,23 @@ function PlayersTab({ c, s, roster, reload, canEdit, coachName, podAttendance, r
         </div>
       )}
       {adding && (
-        <div style={{ marginTop: 12, padding: 12, borderRadius: 10, border: "1px dashed " + DS.lime, display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 8 }}>
-          {fi("player_name", "Player name")}{fi("parent_name", "Parent name")}{fi("parent_email", "Parent email", "email")}{fi("parent_phone", "Parent mobile", "tel")}
-          <label style={{ fontSize: 12, color: DS.mut, display: "flex", alignItems: "center", gap: 6 }}><input type="checkbox" checked={f.sms_consent} onChange={e => setF({ ...f, sms_consent: e.target.checked })} /> Parent agreed to texts</label>
-          <label style={{ fontSize: 12, color: DS.mut, display: "flex", alignItems: "center", gap: 6 }}><input type="checkbox" checked={f.all} onChange={e => setF({ ...f, all: e.target.checked })} /> Every class of this program</label>
-          <div style={{ gridColumn: "1/-1", display: "flex", gap: 8 }}><Btn small kind="primary" disabled={saving || !f.player_name.trim()} onClick={add}>{saving ? "…" : "Add"}</Btn></div>
+        <div style={{ marginTop: 12, padding: 12, borderRadius: 10, border: "1px dashed " + DS.lime, background: DS.limeSoft }}>
+          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 2 }}>Player showed up but isn't on the list</div>
+          <div style={{ fontSize: 12, color: DS.mut, marginBottom: 8 }}>Add their name — they're marked here and Hunter gets a heads-up to sort the registration.</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+            {fi("first", "First name")}{fi("last", "Last name")}
+          </div>
+          {more && (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 8, marginTop: 8 }}>
+              {fi("parent_name", "Parent name")}{fi("parent_email", "Parent email", "email")}{fi("parent_phone", "Parent mobile", "tel")}
+              <label style={{ fontSize: 12, color: DS.mut, display: "flex", alignItems: "center", gap: 6 }}><input type="checkbox" checked={f.sms_consent} onChange={e => setF({ ...f, sms_consent: e.target.checked })} /> Parent agreed to texts</label>
+              <label style={{ fontSize: 12, color: DS.mut, display: "flex", alignItems: "center", gap: 6 }}><input type="checkbox" checked={f.all} onChange={e => setF({ ...f, all: e.target.checked })} /> Every class of this program</label>
+            </div>
+          )}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+            <Btn small kind="primary" disabled={saving || !ready} onClick={add}>{saving ? "…" : "Add & tell Hunter"}</Btn>
+            <Btn kind="link" small onClick={() => setMore(v => !v)}>{more ? "Hide parent details" : "Add parent details (optional)"}</Btn>
+          </div>
         </div>
       )}
     </Card>
