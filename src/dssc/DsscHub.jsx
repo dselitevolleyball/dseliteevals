@@ -29,7 +29,18 @@ const rid = () => Math.random().toString(36).slice(2, 10);
 const fmtDay = (iso, today) => { if (!iso) return "—"; if (iso === today) return "Today"; const d = new Date(iso + "T12:00:00"); const t = new Date(today + "T12:00:00"); if ((d - t) / 86400000 === 1) return "Tomorrow"; return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }); };
 const fmtLong = (iso) => iso ? new Date(iso + "T12:00:00").toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }) : "—";
 const timeRange = (s) => (s.start_time || "") + (s.end_time ? "–" + s.end_time : "");
-const hasPlan = (c) => Array.isArray(c?.plan?.blocks) && c.plan.blocks.some(b => String(b.name || "").trim());
+// The practice plan is per CLASS (session.blocks). The program-level blocks the
+// director wrote are a template a coach can copy in, never what runs on court.
+const classBlocks = (s) => Array.isArray(s?.blocks) ? s.blocks : [];
+const hasClassPlan = (s) => classBlocks(s).some(b => String(b.name || "").trim());
+// One class's families, via the server (it owns the roster lookup and consent).
+async function sendClassMessage(c, s, body, mediaIds = []) {
+  const { data: { session } } = await supabase.auth.getSession();
+  const r = await fetch("/api/dssc-class-message", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + (session?.access_token || "") }, body: JSON.stringify({ clinic_id: c.id, session_id: String(s.id), body, media_ids: mediaIds }) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error || ("HTTP " + r.status));
+  return d;
+}
 
 // ── Small brand primitives ──────────────────────────────────────────────────
 function Btn({ kind = "ghost", small, style, children, ...rest }) {
@@ -189,7 +200,7 @@ export default function DsscHub({
   const byDate = []; for (const r of list) { const g = byDate.find(x => x.date === r.s.date); if (g) g.rows.push(r); else byDate.push({ date: r.s.date, rows: [r] }); }
   const needRecap = recent.filter(r => !(r.s.recap || "").trim());
   const classRow = (r, extra) => {
-    const planned = hasPlan(r.c), pending = r.mine?.status === "pending";
+    const planned = hasClassPlan(r.s), pending = r.mine?.status === "pending";
     return (
       <button key={r.c.id + "|" + r.s.id} onClick={() => { setSel({ clinicId: r.c.id, sessionId: r.s.id }); setTab("plan"); }}
         style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", textAlign: "left", padding: "12px 14px", borderRadius: 12, border: "1px solid " + (r.s.date === today ? DS.lime : DS.line), background: r.s.date === today ? DS.limeSoft : DS.panel2, cursor: "pointer", fontFamily: DS.font, color: DS.text }}>
@@ -371,55 +382,67 @@ function ClassView({ c, s, sessions, onPickSession, today, coach, coachName, isM
       {tabs.map(([k, l]) => <button key={k} onClick={() => setTab(k)} style={{ fontFamily: DS.font, fontSize: 13, fontWeight: 700, padding: "9px 12px", background: "none", border: "none", borderBottom: "3px solid " + (tab === k ? DS.lime : "transparent"), color: tab === k ? DS.lime : DS.mut, cursor: "pointer", whiteSpace: "nowrap" }}>{l}</button>)}
     </div>
 
-    {tab === "plan" && <PlanTab c={c} s={s} prev={prev} canEdit={canEdit} isDirector={isDirector} coachName={coachName} saveClinic={saveClinic} saveSession={saveSession} onLaunch={(blocks) => setRun({ idx: 0, paused: false, endsAt: Date.now() + (Number(blocks[0].minutes) || 10) * 60000, remainingMs: null })} onOpenPlaybook={onOpenPlaybook} />}
+    {tab === "plan" && <PlanTab c={c} s={s} prev={prev} canEdit={canEdit} isDirector={isDirector} coachName={coachName} saveClinic={saveClinic} saveSession={saveSession} onLaunch={(blocks) => setRun({ idx: 0, paused: false, endsAt: Date.now() + (Number(blocks[0].minutes) || 10) * 60000, remainingMs: null })} onOpenPlaybook={onOpenPlaybook} roster={roster || []} />}
     {tab === "players" && <PlayersTab c={c} s={s} roster={roster} reload={loadRoster} canEdit={canEdit} coachName={coachName} podAttendance={podAttendance} reloadAttendance={reloadAttendance} notifyDirectors={notifyDirectors} />}
     {tab === "message" && <MessageTab c={c} s={s} roster={roster || []} media={media} picked={picked} setPicked={setPicked} messages={messages} reloadMessages={loadMessages} reloadMedia={loadMedia} canEdit={canEdit} coachName={coachName} />}
     {tab === "media" && <MediaTab c={c} s={s} media={media} reload={loadMedia} picked={picked} setPicked={setPicked} canEdit={canEdit} coachName={coachName} goMessage={() => setTab("message")} />}
     {tab === "recap" && <RecapTab c={c} s={s} canEdit={canEdit} isDirector={isDirector} coachName={coachName} saveClinic={saveClinic} saveSession={saveSession} />}
 
-    {run && <Runner c={c} run={run} setRun={setRun} saveClinic={saveClinic} onEnd={() => { setRun(null); setTab("recap"); }} />}
+    {run && <Runner c={c} blocks={classBlocks(s)} setBlocks={(next) => saveSession(c, s.id, { blocks: next })} run={run} setRun={setRun} onEnd={() => { setRun(null); setTab("recap"); }} />}
   </>);
 }
 
 // ── Plan ────────────────────────────────────────────────────────────────────
-function PlanTab({ c, s, prev, canEdit, isDirector, coachName, saveClinic, saveSession, onLaunch, onOpenPlaybook }) {
-  const plan = c.plan || {}, blocks = Array.isArray(plan.blocks) ? plan.blocks : [];
-  const setPlan = (next) => saveClinic(c.id, { plan: { ...plan, ...next } });
-  const setBlock = (i, patch) => setPlan({ blocks: blocks.map((b, ix) => ix === i ? { ...b, ...patch } : b) });
+function PlanTab({ c, s, prev, canEdit, isDirector, coachName, saveClinic, saveSession, onLaunch, onOpenPlaybook, roster }) {
+  // Three things, in the order a coach needs them: what to tell the parents,
+  // what to run on court, and what the director asked for.
+  const blocks = classBlocks(s);
+  const setBlocks = (next) => saveSession(c, s.id, { blocks: next });
+  const setBlock = (i, patch) => setBlocks(blocks.map((b, ix) => ix === i ? { ...b, ...patch } : b));
   const [paste, setPaste] = useState(null);
-  const status = c.plan_status || "draft";
-  const ST = { draft: ["Draft", DS.mut], submitted: ["Submitted for review", DS.orange], approved: ["Approved", DS.lime] };
+  const [showProgram, setShowProgram] = useState(isDirector);
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState(null);
   const total = blocks.reduce((n, b) => n + (Number(b.minutes) || 0), 0);
+  const template = Array.isArray(c.plan?.blocks) ? c.plan.blocks.filter(b => String(b.name || "").trim()) : [];
+  const sendNote = async () => {
+    const body = String(s.focus || "").trim();
+    if (!body) return;
+    if (!window.confirm(`Send this note to the ${roster.length} famil${roster.length === 1 ? "y" : "ies"} in this class?`)) return;
+    setSending(true); setSent(null);
+    try { const d = await sendClassMessage(c, s, body); setSent(d); } catch (e) { setSent({ error: e.message }); }
+    setSending(false);
+  };
   const field = (label, key, ph) => (
-    <div style={{ marginBottom: 12 }}>
-      <Label>{label}</Label>
-      <Field value={c[key] || ""} onSave={v => saveClinic(c.id, { [key]: v })} multiline minRows={2} placeholder={ph} readOnly={!canEdit} />
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: DS.mut, marginBottom: 4 }}>{label}</div>
+      <Field value={c[key] || ""} onSave={v => saveClinic(c.id, { [key]: v })} multiline minRows={2} placeholder={ph} readOnly={!isDirector} />
     </div>
   );
   return (<>
     <Card accent={DS.lime}>
-      <Label>This class</Label>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+        <Label style={{ marginBottom: 0 }}>Note to parents</Label>
+        <div style={{ flex: 1 }} />
+        <span style={{ fontSize: 12, color: DS.mut }}>{roster.length} famil{roster.length === 1 ? "y" : "ies"}</span>
+        <Btn small kind="primary" disabled={!canEdit || sending || !String(s.focus || "").trim() || !roster.length} onClick={sendNote}>{sending ? "Sending…" : "Send to parents"}</Btn>
+      </div>
       {prev && (prev.focus || prev.recap) && (
-        <div style={{ fontSize: 13, color: DS.mut, marginBottom: 10, paddingLeft: 10, borderLeft: "3px solid " + DS.brier, lineHeight: 1.5 }}>
-          <b style={{ color: DS.text }}>Last class ({fmtDay(prev.date, "")}{prev.coach_name ? " · " + prev.coach_name : ""}):</b>{prev.focus ? " " + prev.focus : ""}{prev.recap ? <><br /><i>Recap:</i> {prev.recap}</> : ""}
+        <div style={{ fontSize: 12, color: DS.mut, marginBottom: 8, paddingLeft: 10, borderLeft: "3px solid " + DS.brier, lineHeight: 1.5 }}>
+          <b style={{ color: DS.text }}>Last class ({fmtDay(prev.date, "")}):</b>{prev.focus ? " " + prev.focus : ""}{prev.recap ? <><br /><i>Recap:</i> {prev.recap}</> : ""}
         </div>
       )}
-      <Field value={s.focus || ""} onSave={v => saveSession(c, s.id, { focus: v })} multiline minRows={2} placeholder="What this class is building — the one thing every kid should leave better at…" readOnly={!canEdit} />
+      <Field value={s.focus || ""} onSave={v => saveSession(c, s.id, { focus: v })} multiline minRows={3} placeholder={"What we're working on today, and anything to bring or know…"} readOnly={!canEdit} />
+      {sent?.error && <div style={{ fontSize: 13, color: DS.orange, fontWeight: 700, marginTop: 6 }}>{sent.error}</div>}
+      {sent && !sent.error && <div style={{ fontSize: 13, color: DS.lime, fontWeight: 700, marginTop: 6 }}>Sent · {sent.emails_sent} email{sent.emails_sent === 1 ? "" : "s"}{sent.texts_sent ? ` · ${sent.texts_sent} texts` : ""}{sent.note ? <span style={{ color: DS.mut, fontWeight: 500 }}> · {sent.note}</span> : null}</div>}
     </Card>
 
     <Card>
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
-        <Label style={{ marginBottom: 0 }}>Program plan</Label>
-        <Tag color={ST[status][1]}>{ST[status][0]}{status === "approved" && c.plan_approved_by ? " · " + c.plan_approved_by : ""}</Tag>
+        <Label style={{ marginBottom: 0 }}>Practice plan{total ? <span style={{ color: DS.mut, fontWeight: 600, letterSpacing: 0, textTransform: "none" }}> · {total} min</span> : null}</Label>
         <div style={{ flex: 1 }} />
-        {canEdit && !isDirector && status !== "submitted" && status !== "approved" && <Btn small onClick={() => { saveClinic(c.id, { plan_status: "submitted" }); }}>Submit for review</Btn>}
-        {isDirector && status !== "approved" && <Btn small kind="primary" onClick={() => saveClinic(c.id, { plan_status: "approved", plan_approved_by: coachName, plan_approved_at: new Date().toISOString() })}>✓ Approve</Btn>}
-        {blocks.length > 0 && <Btn small kind="primary" onClick={() => onLaunch(blocks)}>▶ Run class{total ? " · " + total + " min" : ""}</Btn>}
+        {blocks.length > 0 && <Btn small kind="primary" onClick={() => onLaunch(blocks)}>▶ Run class</Btn>}
       </div>
-      {field("Goals", "goals", "What players walk away with…")}
-      {field("Focus & level", "focus", "Skills and concepts, matched to the level…")}
-      {field("Coach expectations", "expectations", "Energy, structure, safety, our standards…")}
-      <Label>Blocks{total ? <span style={{ color: DS.mut, fontWeight: 600, letterSpacing: 0, textTransform: "none" }}> · {total} min</span> : null}</Label>
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {blocks.map((b, i) => (
           <div key={b.id || i} style={{ display: "flex", gap: 8, alignItems: "flex-start", background: DS.panel2, borderRadius: 10, padding: 10, border: "1px solid " + DS.line }}>
@@ -428,21 +451,23 @@ function PlanTab({ c, s, prev, canEdit, isDirector, coachName, saveClinic, saveS
               {canEdit ? <Field value={b.name || ""} onSave={v => setBlock(i, { name: v })} placeholder="Block" style={{ fontWeight: 700, padding: "7px 9px", marginBottom: 4 }} /> : <div style={{ fontSize: 14, fontWeight: 700 }}>{b.name}</div>}
               {canEdit ? <Field value={b.desc || ""} onSave={v => setBlock(i, { desc: v })} multiline minRows={1} placeholder="Drills, cues, setup…" style={{ fontSize: 13, padding: "7px 9px" }} /> : (b.desc && <div style={{ fontSize: 13, color: DS.mut, lineHeight: 1.45 }}>{b.desc}</div>)}
             </div>
-            {canEdit && <Btn kind="quiet" small onClick={() => setPlan({ blocks: blocks.filter((_, ix) => ix !== i) })} style={{ color: DS.orange }}>✕</Btn>}
+            {canEdit && <Btn kind="quiet" small onClick={() => setBlocks(blocks.filter((_, ix) => ix !== i))} style={{ color: DS.orange }}>✕</Btn>}
           </div>
         ))}
-        {!blocks.length && <div style={{ fontSize: 13, color: DS.mut }}>{canEdit ? "No blocks yet — add one, or paste a plan from a doc." : "No plan yet."}</div>}
+        {!blocks.length && <div style={{ fontSize: 13, color: DS.mut, lineHeight: 1.5 }}>{canEdit ? "No plan for this class yet — add blocks, paste a plan, or start from the director's template." : "No plan yet."}</div>}
       </div>
       {canEdit && (
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
-          <Btn small onClick={() => setPlan({ blocks: [...blocks, { id: rid(), name: "", minutes: 15, desc: "" }] })}>+ Block</Btn>
+          <Btn small onClick={() => setBlocks([...blocks, { id: rid(), name: "", minutes: 15, desc: "" }])}>+ Block</Btn>
           <Btn small onClick={() => setPaste(paste == null ? "" : null)}>{paste == null ? "Paste a plan" : "Close"}</Btn>
+          {template.length > 0 && !blocks.length && <Btn small onClick={() => setBlocks(template.map(b => ({ ...b, id: rid(), notes: "" })))}>Use the director's template ({template.length})</Btn>}
+          {prev && classBlocks(prev).length > 0 && !blocks.length && <Btn small onClick={() => setBlocks(classBlocks(prev).map(b => ({ ...b, id: rid(), notes: "" })))}>Copy last class</Btn>}
           {onOpenPlaybook && <Btn kind="link" small onClick={onOpenPlaybook} style={{ marginLeft: "auto" }}>Playbook →</Btn>}
         </div>
       )}
       {canEdit && paste != null && (() => {
         const parsed = parsePlanPaste(paste), keep = blocks.filter(b => String(b.name || "").trim() || String(b.desc || "").trim());
-        const apply = (mode) => { if (!parsed.length) { window.alert("Each row needs a time (like 0–10), then the block name, then the focus."); return; } setPlan({ blocks: mode === "replace" ? parsed : [...keep, ...parsed] }); setPaste(null); };
+        const apply = (mode) => { if (!parsed.length) { window.alert("Each row needs a time (like 0–10), then the block name, then the focus."); return; } setBlocks(mode === "replace" ? parsed : [...keep, ...parsed]); setPaste(null); };
         return (
           <div style={{ marginTop: 10, padding: 12, borderRadius: 10, border: "1px dashed " + DS.lime, background: DS.limeSoft }}>
             <div style={{ fontSize: 12, color: DS.mut, marginBottom: 6 }}>Rows like <b style={{ color: DS.text }}>0–10 · Warm-up · Start close, back up</b> — tab, pipe or two-space separated.</div>
@@ -456,7 +481,30 @@ function PlanTab({ c, s, prev, canEdit, isDirector, coachName, saveClinic, saveS
           </div>
         );
       })()}
-      {c.director_notes && <div style={{ marginTop: 12, fontSize: 13, color: DS.mut, borderLeft: "3px solid " + DS.orange, paddingLeft: 10, whiteSpace: "pre-wrap" }}><b style={{ color: DS.text }}>Director notes:</b> {c.director_notes}</div>}
+    </Card>
+
+    <Card style={{ borderColor: DS.line }}>
+      <button onClick={() => setShowProgram(v => !v)} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: DS.font, color: DS.text, textAlign: "left" }}>
+        <Label style={{ marginBottom: 0, color: DS.mut }}>Program plan · from the director</Label>
+        <div style={{ flex: 1 }} />
+        <span style={{ fontSize: 12, color: DS.mut }}>{showProgram ? "Hide" : "Show"}</span>
+      </button>
+      {!showProgram && (c.goals || c.focus) && <div style={{ fontSize: 13, color: DS.mut, marginTop: 6, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.goals || c.focus}</div>}
+      {showProgram && (
+        <div style={{ marginTop: 10 }}>
+          {!isDirector && <div style={{ fontSize: 12, color: DS.dim, marginBottom: 8 }}>Set by the director for the whole program — this is what every class should be building toward.</div>}
+          {field("Goals", "goals", "What players walk away with…")}
+          {field("Focus & level", "focus", "Skills and concepts, matched to the level…")}
+          {field("Coach expectations", "expectations", "Energy, structure, safety, our standards…")}
+          {template.length > 0 && (
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: DS.mut, marginBottom: 4 }}>Template blocks</div>
+              {template.map((b, i) => <div key={b.id || i} style={{ fontSize: 13, color: DS.mut }}><span style={{ display: "inline-block", width: 36, textAlign: "right", marginRight: 8 }}>{b.minutes || 0}m</span><b style={{ color: DS.text }}>{b.name}</b>{b.desc ? " — " + b.desc : ""}</div>)}
+            </div>
+          )}
+          {c.director_notes && <div style={{ marginTop: 10, fontSize: 13, color: DS.mut, borderLeft: "3px solid " + DS.orange, paddingLeft: 10, whiteSpace: "pre-wrap" }}><b style={{ color: DS.text }}>Director notes:</b> {c.director_notes}</div>}
+        </div>
+      )}
     </Card>
   </>);
 }
@@ -561,10 +609,7 @@ function MessageTab({ c, s, roster, media, picked, setPicked, messages, reloadMe
     if (!window.confirm(`Send to ${roster.length} famil${roster.length === 1 ? "y" : "ies"} on ${c.name} (${fmtDay(s.date, "")})?`)) return;
     setSending(true); setResult(null);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const r = await fetch("/api/dssc-class-message", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + (session?.access_token || "") }, body: JSON.stringify({ clinic_id: c.id, session_id: String(s.id), body: body.trim(), media_ids: picked }) });
-      const d = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(d.error || ("HTTP " + r.status));
+      const d = await sendClassMessage(c, s, body.trim(), picked);
       setResult(d); setBody(""); setPicked([]); reloadMessages(); reloadMedia();
     } catch (e) { setResult({ error: e.message }); }
     setSending(false);
@@ -667,7 +712,7 @@ function MediaTab({ c, s, media, reload, picked, setPicked, canEdit, coachName, 
 
 // ── Recap ───────────────────────────────────────────────────────────────────
 function RecapTab({ c, s, canEdit, isDirector, coachName, saveClinic, saveSession }) {
-  const notes = (Array.isArray(c.plan?.blocks) ? c.plan.blocks : []).filter(b => String(b.notes || "").trim());
+  const notes = classBlocks(s).filter(b => String(b.notes || "").trim());
   return (<>
     <Card accent={DS.lime}>
       <Label>This class — how it went</Label>
@@ -691,9 +736,8 @@ function RecapTab({ c, s, canEdit, isDirector, coachName, saveClinic, saveSessio
 }
 
 // ── Class runner (per-block timer) ──────────────────────────────────────────
-function Runner({ c, run, setRun, saveClinic, onEnd }) {
-  const plan = c.plan || {}, blocks = Array.isArray(plan.blocks) ? plan.blocks : [];
-  const setBlock = (i, patch) => saveClinic(c.id, { plan: { ...plan, blocks: blocks.map((b, ix) => ix === i ? { ...b, ...patch } : b) } });
+function Runner({ c, blocks, setBlocks, run, setRun, onEnd }) {
+  const setBlock = (i, patch) => setBlocks(blocks.map((b, ix) => ix === i ? { ...b, ...patch } : b));
   const goTo = (i) => { const mins = Number(blocks[i]?.minutes) || 10; setRun({ idx: i, paused: false, endsAt: Date.now() + mins * 60000, remainingMs: null }); };
   const idx = run.idx, b = blocks[idx] || {};
   const remMs = run.paused ? (run.remainingMs || 0) : (run.endsAt - Date.now());

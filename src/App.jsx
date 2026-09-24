@@ -9103,7 +9103,7 @@ export default function App() {
                   {mine.slice(0,4).map(({c,s},i) => {
                     // Each row opens that clinic — plan, blocks, launch — so a coach
                     // never has to go find it in the DSSC list.
-                    const hasPlan = Array.isArray(c.plan?.blocks) && c.plan.blocks.some(b => String(b.name||"").trim());
+                    const hasPlan = Array.isArray(s.blocks) && s.blocks.some(b => String(b.name||"").trim()); // the practice plan is per class
                     return (
                     <button key={s.id||i} onClick={()=>{ setClinicOpenId(c.id); setView("dssc"); setOpenMenu(null); }}
                       title={hasPlan ? "Open this clinic" : "Open this clinic and write the plan"}
