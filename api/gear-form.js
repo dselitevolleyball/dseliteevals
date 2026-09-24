@@ -231,7 +231,7 @@ export default async function handler(req, res) {
       <div class="eyebrow">DS Elite &middot; ${esc(player.team_assignment || "")}</div>
       <h1>${esc(player.first_name)}'s shoe size</h1>
       ${done
-        ? `<p class="sub">Saved &mdash; thank you. Nothing else to do; the rest of ${esc(player.first_name)}'s uniform is fitted in person on Sunday, 11 October.</p>
+        ? `<p class="sub">Saved &mdash; thank you. The rest of ${esc(player.first_name)}'s uniform is fitted in person on Sunday, 11 October; shoes are ordered from the size you give here, so there is nothing to try on that day.</p>
            <div class="card"><p style="margin:0">We have <b style="color:var(--gold)">${esc(done)}</b> for ${esc(player.first_name)}.
            Wrong? <a href="?t=${esc(token)}&shoe=1" style="color:var(--gold)">Change it</a>.</p></div>`
         : `<p class="sub">We're ordering the club shoe now, and we need her size to go in with everyone else's. One question, then you're done.</p>
@@ -245,7 +245,7 @@ export default async function handler(req, res) {
              </label>
              <label style="display:flex;gap:10px;align-items:flex-start;margin-bottom:18px">
                <input type="checkbox" name="unsure" value="1" style="width:20px;height:20px;margin-top:3px">
-               <span style="font-size:15px">I'm not sure &mdash; we'll try a pair on at the 11 October fitting.</span>
+               <span style="font-size:15px">I'm not sure yet &mdash; I'll measure her foot and come back to this link.</span>
              </label>
              <button type="submit" style="width:100%;padding:15px;border:none;border-radius:10px;background:var(--gold);color:#12100f;font:inherit;font-weight:700;font-size:17px;cursor:pointer">Send her size</button>
              <p style="margin:14px 0 0;font-size:13px;color:var(--mut)">These run true to size. Shoes are invoiced separately from the uniform package.</p>
@@ -259,9 +259,11 @@ export default async function handler(req, res) {
     const size = String(body?.shoe_size || "").trim();
     const unsure = !!body?.unsure;
     if (!unsure && !SHOES.includes(size)) {
-      return res.status(200).send(shoePage("Please pick a size, or tick the box to be fitted on 11 October.", null));
+      return res.status(200).send(shoePage("Please pick a size, or tick the box if you need to measure first.", null));
     }
-    const patch = unsure ? { needs_fitting: true } : { shoe_size: size };
+    // "Not sure" records nothing — there are no shoes to try on at the fitting,
+    // so the only way to a size is this link, which keeps working.
+    const patch = unsure ? {} : { shoe_size: size };
     const { error } = prev
       ? await supabase.from("player_gear_orders").update(patch).eq("player_id", player.id)
       : await supabase.from("player_gear_orders").insert({
@@ -271,7 +273,7 @@ export default async function handler(req, res) {
           is_draft: true, ...patch,
         });
     if (error) return res.status(200).send(shoePage("That didn't save — please try once more. (" + error.message + ")", null));
-    return res.status(200).send(shoePage(null, unsure ? "a fitting on 11 October" : size));
+    return res.status(200).send(shoePage(null, unsure ? "no size yet (come back to this link when you have it)" : size));
   }
 
   if (req.method === "POST") {
