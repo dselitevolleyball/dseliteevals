@@ -8,6 +8,8 @@ import { PLAYER_CLAUSES, PARENT_CLAUSES, isFullySigned } from "../shared/commitm
 import { isEventTeam } from "../shared/event-teams.js";
 import { SCHOOL_DIVS } from "../shared/school-divs.js";
 import { schoolKey } from "../shared/school-schedule.js";
+import DsscHub from "./dssc/DsscHub.jsx";
+import { TN_SUB_PLACEHOLDERS, isPlaceholderPerson, sessionStaff, staffNeeded, staffApproved, staffPending, sessionShort, onStaff, parsePlanPaste } from "../shared/dssc-clinics.js";
 
 const POSITIONS = ["S","OH","MB","RS","L","DS","U"];
 const POS_LABELS = {S:"Setter",OH:"Outside Hitter",MB:"Middle Blocker",RS:"Right Side",L:"Libero",DS:"Def Specialist",U:"Utility"};
@@ -62,16 +64,7 @@ const HAWAII_ORDER = ["not_asked", "interested", "committed", "declined"];
 const hawaiiMeta = (s) => HAWAII_STATUS[s] || HAWAII_STATUS.not_asked;
 // A sub coach only clears a coach conflict when it's a REAL name — placeholders
 // like "TBD" mean a coach still needs to be found, so the conflict must remain.
-const TN_SUB_PLACEHOLDERS = new Set(["tbd", "tba", "t.b.d.", "?", "??", "???", "-", "--", "—", "n/a", "na", "none", "pending", "sub", "open", "needed", "?tbd"]);
 const isRealSub = (s) => { const v = String(s || "").trim().toLowerCase(); return !!v && !TN_SUB_PLACEHOLDERS.has(v); };
-// Slot names that aren't people: "13-1 Assistant Coach", "Tournament Floater
-// Coach". The exact-match set above misses these, which is fine for the sub
-// warnings it was written for but not for anything that books a flight or a
-// hotel room. Mirrors the test in api/gear-reminders.js.
-const isPlaceholderPerson = (s) => {
-  const v = String(s || "").trim();
-  return !v || TN_SUB_PLACEHOLDERS.has(v.toLowerCase()) || /new coach|floater coach|assistant coach$/i.test(v);
-};
 // True only when a coach clash is genuinely handled: a real replacement is
 // named, OR it was explicitly overridden with no sub at all (not a placeholder).
 const tnConflictHandled = (a) => { const sub = String(a?.sub_coach || "").trim(); if (isRealSub(sub)) return true; return !!(a?.ignore_conflict && !sub); };
@@ -1362,70 +1355,6 @@ function vbPlayingTime(sets){
 // Local calendar date as YYYY-MM-DD (avoids the UTC off-by-one that toISOString
 // gives in the evening in Central time).
 function localDateISO(d){ const x = d ? new Date(d) : new Date(); return new Date(x.getTime() - x.getTimezoneOffset()*60000).toISOString().slice(0,10); }
-// --- DSSC clinic staffing -------------------------------------------------
-// A session's crew lives in dssc_clinics.sessions[].staff. Sessions written
-// before staffing existed only carry coach_name, so read that as an approved
-// lead rather than showing them as unstaffed — 31 real assignments depend on it.
-// The crew is Playbook's own instructor (coach_name) PLUS whoever the director
-// added in the app (staff[]) — not one or the other. This used to return staff[]
-// whenever it existed, so the moment anyone was added as an assistant the lead
-// vanished from the board and stopped counting toward staffing: "Guaranteed to
-// Serve" listed Bree and Ambria while Tara, the coach actually signed up to run
-// it, was invisible. The lead is listed first and counts as approved, unless
-// they already appear in staff[] — in which case that entry wins, so a lead who
-// declined or is pending stays declined or pending.
-function sessionStaff(s) {
-  const list = Array.isArray(s?.staff) ? s.staff : [];
-  const nm = String(s?.coach_name || "").trim();
-  if (!nm || isPlaceholderPerson(nm)) return list;
-  const k = (v) => String(v || "").trim().toLowerCase().replace(/\s+/g, " ");
-  if (list.some(x => k(x?.name) === k(nm))) return list;
-  return [{ name: nm, role: "lead", status: "approved" }, ...list];
-}
-function staffNeeded(s, clinic) { return Math.max(1, Number(s?.coaches_needed ?? clinic?.coaches_needed ?? 1) || 1); }
-const staffApproved = (s) => sessionStaff(s).filter(x => x.status === "approved");
-const staffPending  = (s) => sessionStaff(s).filter(x => x.status === "pending");
-const sessionShort  = (s, clinic) => Math.max(0, staffNeeded(s, clinic) - staffApproved(s).length);
-const onStaff = (s, matches) => sessionStaff(s).some(x => x.status !== "declined" && matches(x.name));
-// A clinic plan pasted from a doc or spreadsheet, turned into session blocks.
-//
-// Drew plans in a table — "0–10 | 🏈 Football Throwing Warm-Up | Start close…"
-// — one row per segment, columns separated by tabs (pasted from Sheets/Docs),
-// pipes, or two-plus spaces. The time column can be a range ("35–47", "0-10")
-// or a plain minute count ("12"). A title row and a "Time / Segment / Focus"
-// header row are skipped, and a row with no time and no second column is
-// treated as a continuation of the previous block's notes.
-function parsePlanPaste(text) {
-  const rows = String(text || "").replace(/\r/g, "").split("\n").map(l => l.replace(/\s+$/, "")).filter(l => l.trim());
-  const split = (l) => {
-    if (l.includes("\t")) return l.split("\t").map(s => s.trim());
-    if (/\s\|\s/.test(l)) return l.split(/\s\|\s/).map(s => s.trim());
-    return l.split(/\s{2,}/).map(s => s.trim());
-  };
-  const range = (s) => { const m = /^(\d+)\s*[–—-]\s*(\d+)$/.exec(String(s || "").trim()); return m ? [+m[1], +m[2]] : null; };
-  const blocks = [];
-  for (const line of rows) {
-    const cols = split(line).filter(c => c !== "");
-    if (!cols.length) continue;
-    const first = cols[0];
-    if (/^time$/i.test(first) && cols.length >= 2) continue;                     // header row
-    const r = range(first);
-    const plain = /^\d+$/.test(first) ? +first : null;
-    if (r || plain != null) {
-      const minutes = r ? Math.max(0, r[1] - r[0]) : plain;
-      const name = (cols[1] || "").trim();
-      const desc = cols.slice(2).join(" · ").trim();
-      if (!name) continue;
-      blocks.push({ id: Math.random().toString(36).slice(2, 10), name, minutes, desc, at: r ? r[0] : null });
-    } else if (blocks.length && cols.length === 1) {
-      // Wrapped text from the previous row's Focus column.
-      const b = blocks[blocks.length - 1];
-      b.desc = (b.desc ? b.desc + " " : "") + first;
-    }
-    // Anything else (a title line, a stray label) is skipped.
-  }
-  return blocks.map(({ at, ...b }) => b);
-}
 // Hours in a practice slot label like "5-7pm" (=2) or "1-2pm" (=1). Practice
 // times are afternoon/evening, so both ends read as PM.
 // Hours a slot is worth — this sets timesheet hours when a coach clocks in, so a
@@ -3278,8 +3207,8 @@ export default function App() {
   }, []);
   // "coaches" is here because the coach card draws the same calendar, and a
   // DSSC session has to appear on it like any other commitment.
-  useEffect(() => { if (isApproved && (view === "clinics" || view === "home" || view === "dssccal" || view === "dssctime" || view === "coaches")) { loadClinics(); loadDsscCheckins(); } }, [isApproved, view, loadClinics, loadDsscCheckins]);
-    useEffect(() => { if (isApproved && (view === "clinics" || view === "dssccal" || view === "dssctime")) { loadPlaybook(); loadDsscAvail(); loadDsscSync(); loadPodAttendance(); } }, [isApproved, view, loadPlaybook, loadDsscAvail, loadDsscSync, loadPodAttendance]);
+  useEffect(() => { if (isApproved && (view === "clinics" || view === "dssc" || view === "home" || view === "dssccal" || view === "dssctime" || view === "coaches")) { loadClinics(); loadDsscCheckins(); } }, [isApproved, view, loadClinics, loadDsscCheckins]);
+    useEffect(() => { if (isApproved && (view === "clinics" || view === "dssc" || view === "dssccal" || view === "dssctime")) { loadPlaybook(); loadDsscAvail(); loadDsscSync(); loadPodAttendance(); } }, [isApproved, view, loadPlaybook, loadDsscAvail, loadDsscSync, loadPodAttendance]);
   const saveCharter = useCallback(async (team, data) => {
     if (!team) return;
     const row = { team_name: team, data, updated_by: coach?.display_name || coach?.email || null, updated_at: new Date().toISOString() };
@@ -4389,7 +4318,7 @@ export default function App() {
   useEffect(() => {
     // Roster also drives the Tryout coach picker / Text Coaches lookup,
     // so make sure it's loaded whenever either tab opens.
-    if (isApproved && (view === "coaches" || view === "tryouts" || view === "home" || view === "clockin" || view === "teamdir" || view === "practice" || view === "timecards" || view === "clinics" || view === "dssccal" || view === "tournaments" || view === "kickoff" || view === "travel")) loadCoachRoster();
+    if (isApproved && (view === "coaches" || view === "tryouts" || view === "home" || view === "clockin" || view === "teamdir" || view === "practice" || view === "timecards" || view === "clinics" || view === "dssc" || view === "dssccal" || view === "tournaments" || view === "kickoff" || view === "travel")) loadCoachRoster();
   }, [isApproved, view, loadCoachRoster]);
   // The coach card edits coach_roster, so make sure it's loaded when one opens.
   useEffect(() => { if (isApproved && coachCardName) loadCoachRoster(); }, [isApproved, coachCardName, loadCoachRoster]);
@@ -9156,19 +9085,19 @@ export default function App() {
             <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",fontSize:11,color:C.mut,marginBottom:12}}>
               <span style={{color:C.grn,fontWeight:700}}>✓ In the DSSC clinic pool</span>
               <span>— nothing assigned yet.</span>
-              <button onClick={()=>setView("clinics")} style={{background:"none",border:"none",color:"#22d3ee",cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:700,padding:0}}>Open DSSC →</button>
+              <button onClick={()=>setView("dssc")} style={{background:"none",border:"none",color:"#22d3ee",cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:700,padding:0}}>Open the coach hub →</button>
             </div>
           );
           return (
             <div style={{background:"rgba(6,182,212,0.06)",border:"1px solid #06b6d4",borderRadius:12,padding:"12px 14px",marginBottom:14}}>
               <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:8}}>
-                <span style={{fontSize:11,fontWeight:800,textTransform:"uppercase",letterSpacing:0.4,color:"#22d3ee"}}>🏐 DSSC clinics</span>
+                <span style={{fontSize:11,fontWeight:800,textTransform:"uppercase",letterSpacing:0.4,color:"#22d3ee"}}>Dripping Springs Sports Club</span>
                 <div style={{flex:1}} />
                 <button onClick={()=>optIn(!inPool)} style={{padding:"5px 12px",borderRadius:8,border:"1px solid "+(inPool?C.grn:"#06b6d4"),background:inPool?"rgba(34,197,94,0.12)":"transparent",color:inPool?C.grn:"#22d3ee",fontWeight:800,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>{inPool?"✓ In the clinic pool":"Coach clinics? I'm interested"}</button>
-                <button onClick={()=>setView("clinics")} style={{background:"none",border:"none",color:"#22d3ee",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700}}>Open DSSC →</button>
+                <button onClick={()=>setView("dssc")} style={{background:"none",border:"none",color:"#22d3ee",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700}}>Open the coach hub →</button>
               </div>
               {!inPool && !mine.length && <div style={{fontSize:12,color:C.mut}}>Pick up clinic sessions for <b>$25/hr</b> — separate from DS Elite. Tap <b>I'm interested</b> to join the pool, then tell us what you can coach.</div>}
-              {inPool && !mine.length && <div style={{fontSize:12,color:C.mut}}>You're in the clinic pool — we'll match you to sessions. <button onClick={()=>setView("clinics")} style={{background:"none",border:"none",color:"#22d3ee",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700,padding:0}}>Add your skills & availability →</button></div>}
+              {inPool && !mine.length && <div style={{fontSize:12,color:C.mut}}>You're in the clinic pool — we'll match you to sessions. <button onClick={()=>setView("dssc")} style={{background:"none",border:"none",color:"#22d3ee",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700,padding:0}}>Add your skills & availability →</button></div>}
               {!!mine.length && (
                 <div style={{display:"flex",flexDirection:"column",gap:5}}>
                   {mine.slice(0,4).map(({c,s},i) => {
@@ -9176,7 +9105,7 @@ export default function App() {
                     // never has to go find it in the DSSC list.
                     const hasPlan = Array.isArray(c.plan?.blocks) && c.plan.blocks.some(b => String(b.name||"").trim());
                     return (
-                    <button key={s.id||i} onClick={()=>{ setClinicOpenId(c.id); setView("clinics"); setOpenMenu(null); }}
+                    <button key={s.id||i} onClick={()=>{ setClinicOpenId(c.id); setView("dssc"); setOpenMenu(null); }}
                       title={hasPlan ? "Open this clinic" : "Open this clinic and write the plan"}
                       style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:C.text,width:"100%",textAlign:"left",padding:"6px 8px",margin:"0 -8px",borderRadius:8,border:"1px solid transparent",background:"transparent",cursor:"pointer",fontFamily:"inherit"}}>
                       <span style={{minWidth:90,fontWeight:700,color:s.date===todayISO?C.gold:C.text}}>{sfmt(s.date)}</span>
@@ -23900,6 +23829,27 @@ export default function App() {
   // Lives inside DS Elite (shared login/coaches). Hunter (director) schedules
   // clinics, assigns a coach, and sets goals/level/expectations + a plan that
   // mirrors our DS Elite methodology; the coach runs it and leaves feedback.
+  // Whether this login runs the club side (schedules, staffing, approvals).
+  // Owners and admins qualify alongside the named DSSC directors.
+  const isDsscDirector = canOps || DSSC_DIRECTOR_EMAILS.includes(String(coach?.email || "").trim().toLowerCase());
+  // The club-branded coach screen (src/dssc/DsscHub.jsx). Coaches land here
+  // for anything DSSC; directors reach it from the admin screen to see what
+  // their coaches see.
+  function renderDsscHub() {
+    const directorList = [...new Set([...DSSC_DIRECTOR_EMAILS, ...OWNER_EMAILS])];
+    const notifyDirectors = (title, body) => {
+      fetch("/api/send-push", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ skipEmail: true, title, body, url:"/?view=dssccal", audience:{ type:"emails", emails: directorList } }) }).catch(()=>{});
+      fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ skipPush: true, subject: title, body, recipients: directorList }) }).catch(()=>{});
+    };
+    return (
+      <DsscHub coach={coach} coachRoster={coachRoster} clinics={clinics} dsscCheckins={dsscCheckins} dsscAvail={dsscAvail} podAttendance={podAttendance}
+        isDirector={isDsscDirector} initialClinicId={clinicOpenId} onConsumedInitial={()=>setClinicOpenId(null)}
+        setClinics={setClinics} reload={{ clinics: loadClinics, checkins: loadDsscCheckins, avail: loadDsscAvail, attendance: loadPodAttendance }}
+        staffDsscSession={staffDsscSession} unstaffDsscSession={unstaffDsscSession} notifyDirectors={notifyDirectors}
+        onOpenAdmin={isDsscDirector ? ()=>{ setClinicOpenId(null); setView("clinics"); } : null}
+        onOpenPlaybook={()=>{ setView("practiceplan"); setPpTab("playbook"); }} />
+    );
+  }
   function renderClinics() {
     const norm = s => (s||"").toString().trim().toLowerCase();
     const coachName = coach?.display_name || coach?.email || "";
@@ -24402,6 +24352,7 @@ export default function App() {
           {isDirector && (() => { const n = clinics.filter(c=>!clinicPlanned(c) && (()=>{const nd=clinicNextDate(c);return nd&&nd>=today;})()).sort((a,b)=>(clinicNextDate(a)||"").localeCompare(clinicNextDate(b)||""))[0]; return n ? <button style={S.gold} onClick={()=>setClinicOpenId(n.id)} title="Open the next clinic that still needs a plan">🗓 Plan next: {n.name}</button> : null; })()}
           {isDirector && <button style={S.ghost} onClick={remindToPlan} title="Push + email Hunter to plan the unplanned upcoming clinics">📣 Remind to plan</button>}
           {isDirector && <button style={S.ghost} onClick={newClinic}>+ New clinic</button>}
+          {isDirector && <button style={{...S.ghost,borderColor:"#B2D049",color:"#B2D049"}} onClick={()=>setView("dssc")} title="What coaches see — the club-branded hub">Coach hub →</button>}
         </div>
         {methodBanner}
 
@@ -30400,7 +30351,7 @@ export default function App() {
                   ["hdr","DS Elite · Coaches & Pay"],
                   ["coaches","Coaches"], ...(isAdmin ? [["staffing","Staffing Board"]] : []), ["coverage","Coach Coverage"], ["timecards","Time Cards"], ["myexpenses","My Expenses"], ...(canOps ? [["claims","Coach Claims" + (pendingClaimCount ? " (" + pendingClaimCount + ")" : "")]] : []), ["gear","Gear Sizes" + (gearOutstanding ? " (" + gearOutstanding + ")" : "")], ["requests","Requests" + (pendingReqs ? " (" + pendingReqs + ")" : "")],
                   ["hdr","DSSC"],
-                  ["clinics","Clinics & Camps"], ["dssccal","Coverage Calendar"], ["dssctime","DSSC Time Cards"], ["pods","Skill Pods"],
+                  ["dssc","Coach Hub"], ["clinics","Clinics & Camps (admin)"], ["dssccal","Coverage Calendar"], ["dssctime","DSSC Time Cards"], ["pods","Skill Pods"],
                   ["hdr","Communication"],
                   ["email","Email"], ["messages","Messages (SMS)" + (totalUnread > 0 ? " (" + totalUnread + ")" : "")], ["notifications","Notifications"], ["coachcomms","Coach Comms"], ["assignments","Assignments"], ["dsysa","DSYSA Clinics"],
                 ] }] : []),
@@ -30410,7 +30361,7 @@ export default function App() {
                 // In-House Tournament sits here for EVERY coach, ops or not —
                 // all 20 teams play it, so gating it to admins would repeat the
                 // DSYSA mistake of linking people to a page they can't open.
-                { title:"More", items:[["tournament","In-House Tournament"], ...(canOps ? [] : [["dssctime","DSSC Time Cards"],["myexpenses","My Expenses"],["dsysa","DSYSA Clinics"]]), ["activity","Activity"], ["faq","FAQ"], ["games","Games"], ...(isOwner ? [["askai","Ask AI"]] : [])] },
+                { title:"More", items:[["tournament","In-House Tournament"], ...(canOps ? [] : [["dssc","DSSC Coach Hub"],["dssctime","DSSC Time Cards"],["myexpenses","My Expenses"],["dsysa","DSYSA Clinics"]]), ["activity","Activity"], ["faq","FAQ"], ["games","Games"], ...(isOwner ? [["askai","Ask AI"]] : [])] },
               ];
               // Mobile: one hamburger opening a full-height grouped menu.
               if (isNarrow) {
@@ -30653,7 +30604,8 @@ export default function App() {
         {view==="travel" && renderTravel()}
         {view==="faq" && renderFaq()}
         {view==="practiceplan" && renderPracticePlans()}
-        {view==="clinics" && renderClinics()}
+        {view==="clinics" && (isDsscDirector ? renderClinics() : renderDsscHub())}
+        {view==="dssc" && renderDsscHub()}
         {view==="lineups" && renderLineups()}
         {view==="games" && renderGames()}
         {view==="askai" && renderAskAI()}
