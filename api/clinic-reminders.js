@@ -26,6 +26,7 @@
 //      VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT (opt), APP_URL (opt).
 
 import { createClient } from "@supabase/supabase-js";
+import { appOrigin } from "../shared/app-origin.js";
 import webpush from "web-push";
 
 const TZ = "America/Chicago";
@@ -192,7 +193,7 @@ export default async function handler(req, res) {
     });
   }
 
-  const appUrl = APP_URL || ("https://" + (req.headers["x-forwarded-host"] || req.headers.host));
+  const appUrl = appOrigin(req);
   const line = (it) => `${it.source} · ${it.title} — ${it.time}${it.where ? " · " + it.where : ""} (${it.role})`;
 
   let emailed = 0, pushedTotal = 0;

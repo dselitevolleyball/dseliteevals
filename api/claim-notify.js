@@ -25,6 +25,7 @@
 //      CLAIMS_NOTIFY_TO (opt, comma list — defaults to Drew).
 
 import { createClient } from "@supabase/supabase-js";
+import { appOrigin } from "../shared/app-origin.js";
 
 const DEFAULT_TO = "drew@dselitevolleyball.com";
 const REPLY_TO = "drew@dselitevolleyball.com";
@@ -81,7 +82,7 @@ export default async function handler(req, res) {
     const { data: t } = await sb.from("tournaments").select("name").eq("id", c.tournament_id).maybeSingle();
     tn = t?.name ? String(t.name).replace(/\s+/g, " ").trim() : null;
   }
-  const base = APP_URL || ("https://" + (req.headers["x-forwarded-host"] || req.headers.host || "dseliteevals.vercel.app"));
+  const base = appOrigin(req);
   const coachEmail = String(c.submitted_by_email || "").trim().toLowerCase();
   const now = new Date().toISOString();
 

@@ -17,6 +17,7 @@
 // Response: { ok, sent, removed }
 
 import webpush from "web-push";
+import { appOrigin } from "../shared/app-origin.js";
 import { createClient } from "@supabase/supabase-js";
 
 export default async function handler(req, res) {
@@ -102,7 +103,7 @@ export default async function handler(req, res) {
         const dup = probe.length > 20 && (recent || []).some(r =>
           String(r.body || "").replace(/\s+/g, " ").trim().slice(0, 120) === probe);
         if (!dup) {
-          const origin = process.env.APP_URL || ("https://" + (req.headers["x-forwarded-host"] || req.headers.host));
+          const origin = appOrigin(req);
           const r = await fetch(origin + "/api/send-email", {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({

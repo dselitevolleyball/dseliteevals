@@ -11,6 +11,7 @@
 //      GEAR_DEADLINE (opt, YYYY-MM-DD — default below).
 
 import { createClient } from "@supabase/supabase-js";
+import { appOrigin } from "../shared/app-origin.js";
 import webpush from "web-push";
 
 const DEFAULT_DEADLINE = "2026-07-30"; // Thursday
@@ -67,7 +68,7 @@ export default async function handler(req, res) {
   const unreachable = outstanding.filter(s => !s.email).map(s => s.name);
   if (!outstanding.length) return res.status(200).json({ ok: true, outstanding: 0, deadline, note: "everyone has answered" });
 
-  const base = APP_URL || ("https://" + (req.headers["x-forwarded-host"] || req.headers.host || "dseliteevals.vercel.app"));
+  const base = appOrigin(req);
   const url = base + "/?view=home";
   const dlLabel = new Date(deadline + "T12:00:00Z").toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric", timeZone: "UTC" });
   const daysLeft = Math.round((new Date(deadline + "T00:00:00Z") - new Date(today + "T00:00:00Z")) / 86400000);

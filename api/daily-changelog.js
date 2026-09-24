@@ -11,6 +11,7 @@
 //      CHANGELOG_APPROVER_EMAIL (default drew@dselitevolleyball.com), APP_URL (opt).
 
 import { createClient } from "@supabase/supabase-js";
+import { appOrigin } from "../shared/app-origin.js";
 import webpush from "web-push";
 
 const KIND_LABEL = { feature: "New", fix: "Fix", improvement: "Improved", other: "Update" };
@@ -51,7 +52,7 @@ export default async function handler(req, res) {
   }).select().single();
   if (insErr) return res.status(500).json({ error: insErr.message });
 
-  const url = APP_URL || ("https://" + (req.headers["x-forwarded-host"] || req.headers.host || "dseliteevals.vercel.app"));
+  const url = appOrigin(req);
   const approver = (CHANGELOG_APPROVER_EMAIL || "drew@dselitevolleyball.com").toLowerCase();
 
   // Push to Drew.

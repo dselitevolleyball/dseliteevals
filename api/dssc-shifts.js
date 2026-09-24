@@ -15,6 +15,7 @@
 //      DSSC_PLANNER_EMAILS (opt comma list — who approves).
 
 import { createClient } from "@supabase/supabase-js";
+import { appOrigin } from "../shared/app-origin.js";
 import webpush from "web-push";
 import crypto from "node:crypto";
 
@@ -50,7 +51,7 @@ export default async function handler(req, res) {
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
   const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
   const tomorrow = addDays(today, 1), yesterday = addDays(today, -1);
-  const origin = APP_URL || ("https://" + (req.headers["x-forwarded-host"] || req.headers.host));
+  const origin = appOrigin(req);
 
   const [{ data: clinics }, { data: roster }, { data: avail }, { data: checks }] = await Promise.all([
     supabase.from("dssc_clinics").select("id, name, location, start_time, end_time, coaches_needed, sessions"),

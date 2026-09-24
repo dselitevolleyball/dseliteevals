@@ -10,6 +10,7 @@
 //      DSSC_PLANNER_EMAILS (opt comma list — who to remind).
 
 import { createClient } from "@supabase/supabase-js";
+import { appOrigin } from "../shared/app-origin.js";
 import webpush from "web-push";
 
 const PLANNERS_DEFAULT = ["hunterhaleysc10@gmail.com", "hunter@drippingsportsclub.com", "drew@dselitevolleyball.com"];
@@ -63,7 +64,7 @@ export default async function handler(req, res) {
     return { name: c.name, nextDate };
   }).sort((a, b) => (a.nextDate || "").localeCompare(b.nextDate || ""));
 
-  const url = (APP_URL || ("https://" + (req.headers["x-forwarded-host"] || req.headers.host))) + "/?view=clinics";
+  const url = appOrigin(req) + "/?view=clinics";
   const owedCoaches = Object.keys(owed);
   if (!need.length && !owedCoaches.length) return res.status(200).json({ ok: true, note: "nothing to remind" });
 

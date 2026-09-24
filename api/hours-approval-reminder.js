@@ -9,6 +9,7 @@
 //      HOURS_APPROVER_EMAILS (opt comma list — who gets the push).
 
 import { createClient } from "@supabase/supabase-js";
+import { appOrigin } from "../shared/app-origin.js";
 import webpush from "web-push";
 
 // Push whichever of these each person is subscribed under (work + personal).
@@ -109,7 +110,7 @@ export default async function handler(req, res) {
   const { data: subs } = await supabase.from("push_subscriptions").select("endpoint, p256dh, auth, email");
   const mine = (subs || []).filter(s => approvers.includes((s.email || "").toLowerCase()));
 
-  const url = (APP_URL || ("https://" + (req.headers["x-forwarded-host"] || req.headers.host))) + "/?view=timecards";
+  const url = appOrigin(req) + "/?view=timecards";
   const missPart = missingNames.length
     ? ` · ⚠ ${missingNames.length} didn't clock in: ${missingNames.slice(0, 6).join(", ")}${missingNames.length > 6 ? " +" + (missingNames.length - 6) : ""}`
     : "";

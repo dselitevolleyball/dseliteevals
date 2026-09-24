@@ -19,6 +19,7 @@
 //      resend_api_key), DSE_FROM_EMAIL, DSSC_PLANNER_EMAILS (opt), APP_URL (opt)
 
 import crypto from "crypto";
+import { appOrigin } from "../shared/app-origin.js";
 import { createClient } from "@supabase/supabase-js";
 
 const APPROVERS_DEFAULT = ["hunterhaleysc10@gmail.com", "hunter@drippingsportsclub.com", "drew@dselitevolleyball.com"];
@@ -63,7 +64,7 @@ export default async function handler(req, res) {
     return res.status(500).send(page("Error", "<h1>Not available</h1><p>The approval service isn't configured yet.</p>"));
   }
   const supabase = createClient(SUPA_URL, SECRET, { auth: { persistSession: false, autoRefreshToken: false } });
-  const origin = APP_URL || ("https://" + (req.headers["x-forwarded-host"] || req.headers.host));
+  const origin = appOrigin(req);
 
   // ── Send the approver a pair of one-tap links ────────────────────────────
   if (action === "notify") {

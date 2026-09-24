@@ -17,6 +17,7 @@
 //      AES_REGION_ID (opt — default 4 = Lone Star).
 
 import { createClient } from "@supabase/supabase-js";
+import { appOrigin } from "../shared/app-origin.js";
 import webpush from "web-push";
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
@@ -92,7 +93,7 @@ export default async function handler(req, res) {
 
   // Alert on brand-new events (never on the first seeding run).
   const alertRows = firstRun ? [] : inserts.slice().sort((a, b) => (a.start_date || "").localeCompare(b.start_date || ""));
-  const url = (APP_URL || ("https://" + (req.headers["x-forwarded-host"] || req.headers.host || "dseliteevals.vercel.app"))) + "/?view=tournaments";
+  const url = appOrigin(req) + "/?view=tournaments";
   const alertEmails = (AES_ALERT_EMAILS ? AES_ALERT_EMAILS.split(",") : ALERT_DEFAULT).map((s) => s.trim().toLowerCase()).filter(Boolean);
 
   let pushed = 0;
