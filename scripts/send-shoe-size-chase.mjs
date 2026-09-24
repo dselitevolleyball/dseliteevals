@@ -10,6 +10,7 @@
 //   node scripts/send-shoe-size-chase.mjs
 //   node scripts/send-shoe-size-chase.mjs --test drew@dselitevolleyball.com
 //   node scripts/send-shoe-size-chase.mjs --send
+//   node scripts/send-shoe-size-chase.mjs --reminder --send   # URGENT second chase
 
 import { readFileSync } from "node:fs";
 import { createClient } from "@supabase/supabase-js";
@@ -29,7 +30,7 @@ for (const line of readFileSync(new URL("../.env", import.meta.url), "utf8").spl
 }
 const args = process.argv.slice(2);
 const val = (n) => { const i = args.indexOf("--" + n); return i >= 0 ? args[i + 1] : null; };
-const testTo = val("test"), doSend = args.includes("--send");
+const testTo = val("test"), doSend = args.includes("--send"), reminder = args.includes("--reminder");
 
 const sb = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
 const [{ data: players }, { data: gear }] = await Promise.all([
@@ -45,6 +46,7 @@ const build = (p) => {
   const link = `${APP}/gear?t=${p.gear_form_token}&shoe=1`;
   const parents = [...new Set([p.parent_name, p.parent2_name].map(x => String(x || "").trim().split(/\s+/)[0]).filter(Boolean))];
   const greet = parents.length ? "Hi " + listOf(parents) + "," : "Hi,";
+  if (reminder) return buildReminder(p, girl, link, greet);
   const paras = [
     `Quick one, and it's time-sensitive: we're placing the DS Elite shoe order with Avoli right away, and we still don't have ${girl}'s size.`,
     `The whole club goes in as one order, and the bigger that single order is, the better the discount every family gets. A handful of missing sizes is what holds it up.`,
@@ -64,6 +66,31 @@ const build = (p) => {
     + `<p style="margin:0 0 14px"><b>Thank you — please do it today if you can.</b></p>`
     + `<p style="margin:0">Drew Rose<br>Director, DS Elite</p></div>`;
   return { subject: `Need ${girl}'s shoe size today — club shoe order going in`, text, html };
+};
+
+// Second chase, a day later, for the families that still haven't answered.
+// Blunt on purpose: the Avoli order closes without her if we don't have a size.
+const buildReminder = (p, girl, link, greet) => {
+  const lead = `we still don't have ${girl}'s shoe size, and the DS Elite club shoe order with Avoli is going in now.`;
+  const paras = [
+    `If her size isn't in by the time the order is placed, she won't be able to participate in the discounted shoe program we're getting with Avoli. The order goes in as one block and can't be reopened for late sizes.`,
+    `It's one question and takes ten seconds:`,
+  ];
+  const tail = [
+    `Not sure of her size? Check a pair she wears now — the standard size she buys is fine.`,
+    `The rest of her uniform is fitted on Sunday, 11 October — nothing to do about that now.`,
+  ];
+  const text = `${greet}\n\nURGENT — ${lead}\n\n${paras.join("\n\n")}\n\n${link}\n\n${tail.map(t => "  • " + t).join("\n")}\n\nPlease do this today.\n\nDrew Rose\nDirector, DS Elite`;
+  const html = '<div style="font-family:-apple-system,Segoe UI,sans-serif;font-size:15px;line-height:1.6;color:#1a1a1a;max-width:600px">'
+    + `<p style="margin:0 0 14px">${esc(greet)}</p>`
+    + `<p style="margin:0 0 14px"><b style="color:#c62828">URGENT</b> &mdash; ${esc(lead)}</p>`
+    + paras.map(x => `<p style="margin:0 0 14px">${esc(x)}</p>`).join("")
+    + `<p style="margin:6px 0 10px"><a href="${link}" style="display:inline-block;background:#c62828;color:#fff;padding:14px 24px;border-radius:8px;text-decoration:none;font-weight:700;font-size:16px">Give ${esc(girl)}'s shoe size now &rarr;</a></p>`
+    + `<p style="margin:0 0 18px;font-size:12px;color:#777;word-break:break-all">${esc(link)}</p>`
+    + `<ul style="margin:0 0 16px;padding-left:20px">${tail.map(t => `<li style="margin-bottom:5px">${esc(t)}</li>`).join("")}</ul>`
+    + `<p style="margin:0 0 14px"><b>Please do this today.</b></p>`
+    + `<p style="margin:0">Drew Rose<br>Director, DS Elite</p></div>`;
+  return { subject: `URGENT: ${girl}'s shoe size — Avoli discounted shoe order closing`, text, html };
 };
 
 const jobs = [];
