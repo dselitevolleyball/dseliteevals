@@ -337,6 +337,20 @@ export default function DsscAdmin({
                 </div>
               )}
               <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid " + DS.line }}>
+                {(() => {
+                  const d = sync.dsscSync || {};
+                  const at = d.registrations_at ? new Date(d.registrations_at) : null;
+                  const sm = d.registrations_summary || null;
+                  return (
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 12, marginBottom: 8 }}>
+                      <span style={{ fontWeight: 800, color: d.registrations_error ? DS.orange : DS.lime }}>{d.registrations_error ? "⚠ Auto-pull failing" : "Auto-pull every 4 hours"}</span>
+                      {d.registrations_error
+                        ? <span style={{ color: DS.orange }}>{d.registrations_error}</span>
+                        : at ? <span style={{ color: DS.mut }}>last {at.toLocaleDateString(undefined, { month: "short", day: "numeric" })} {at.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}{sm ? ` · +${sm.added} new · ${sm.matched} matched${sm.noSession ? ` · ${sm.noSession} waiting on a calendar sync` : ""}` : ""}</span>
+                        : <span style={{ color: DS.mut }}>hasn't run yet — needs the Playbook sync login in Vercel</span>}
+                    </div>
+                  );
+                })()}
                 <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                   <div style={{ flex: 1, minWidth: 220 }}>
                     <div style={{ fontSize: 13, fontWeight: 700 }}>Registrations (who's signed up)</div>

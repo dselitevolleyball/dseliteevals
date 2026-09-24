@@ -92,6 +92,10 @@
     {
       "path": "/api/playbook-programs",
       "schedule": "30 12 * * *"
+    },
+    {
+      "path": "/api/playbook-registrations",
+      "schedule": "15 */4 * * *"
     }
   ],
   "headers": [
