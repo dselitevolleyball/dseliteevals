@@ -63,7 +63,12 @@ export function parsePlaybookEvents(events) {
 
 // Merge one program's incoming sessions with an existing clinic's sessions,
 // preserving coach/focus/recap and pruning only stale future-empty sessions.
-function mergeSessions(existing, incoming, today) {
+// `window` is the date span the bookmarklet actually had on screen. The
+// Playbook calendar only hands over the visible range, so a session outside it
+// is not "gone from Playbook" — it simply wasn't in view. Syncing October used
+// to delete every unstaffed November class added by the previous sync.
+function mergeSessions(existing, incoming, today, window) {
+  const inView = (d) => !window || (d >= window.min && d <= window.max);
   const E = Array.isArray(existing) ? existing : [];
   const used = new Set();
   const keyOf = (s) => s.date + "|" + (s.start_time || "");
@@ -85,7 +90,7 @@ function mergeSessions(existing, incoming, today) {
     // deleting sessions coaches had already been rostered onto: nine of them
     // were one narrow sync away from vanishing.
     const staffed = Array.isArray(ex.staff) && ex.staff.length > 0;
-    const keep = ex.date < today || ex.coach_name || staffed
+    const keep = ex.date < today || !inView(ex.date) || ex.coach_name || staffed
       || (ex.focus || "").trim() || (ex.recap || "").trim();
     if (keep) out.push(ex);            // history or hand-entered work — never drop
   }
@@ -98,6 +103,8 @@ function mergeSessions(existing, incoming, today) {
 export async function syncClinics(supabase, events, opts = {}) {
   const byProg = parsePlaybookEvents(events);
   const programs = Object.values(byProg);
+  const dates = programs.flatMap(p => p.sessions.map(x => x.date)).filter(Boolean).sort();
+  const window = dates.length ? { min: dates[0], max: dates[dates.length - 1] } : null;
   const today = centralToday();
 
   const { data: existingRows, error: exErr } = await supabase.from("dssc_clinics").select("*").eq("source", "playbook");
@@ -109,7 +116,7 @@ export async function syncClinics(supabase, events, opts = {}) {
 
   for (const g of programs) {
     const ex = byRef.get(g.program);
-    const merged = ex ? mergeSessions(ex.sessions, g.sessions, today) : { sessions: g.sessions.map(s => ({ ...s, coach_name: null, needsCoverage: false })), added: g.sessions.length };
+    const merged = ex ? mergeSessions(ex.sessions, g.sessions, today, window) : { sessions: g.sessions.map(s => ({ ...s, coach_name: null, needsCoverage: false })), added: g.sessions.length };
     sessionsAdded += merged.added;
     const dates = merged.sessions.map(s => s.date).filter(Boolean).sort();
     const first = merged.sessions.find(s => s.date === dates[0]) || merged.sessions[0] || {};
