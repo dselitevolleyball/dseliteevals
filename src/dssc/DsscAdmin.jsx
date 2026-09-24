@@ -7,7 +7,8 @@
 // the old per-program editor stays behind "Program settings" for the fields
 // that rarely change (name, times, location, template plan).
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
+import Papa from "papaparse";
 import { supabase } from "../supabase";
 import { sessionStaff, staffNeeded, sessionShort, staffApproved, staffPending, parseClock, sessionHours, localDateISO, isPlaceholderPerson } from "../../shared/dssc-clinics.js";
 import { DS, nrm, fmtDay, timeRange, hasClassPlan, Btn, Card, Label, Tag, inputStyle } from "./DsscHub.jsx";
@@ -30,6 +31,25 @@ export default function DsscAdmin({
   const [q, setQ] = useState("");
   const [counts, setCounts] = useState(null);         // "cid|sid" -> signed up; "cid|*" -> program-wide
   const [busy, setBusy] = useState("");
+  const [imp, setImp] = useState(null);               // registrations upload: {loading} | result | {error}
+  const fileRef = useRef(null);
+  const [countsTick, setCountsTick] = useState(0);
+  // Playbook's registrations report, picked from disk, parsed here, attached
+  // on the server. Same importer as the CLI script.
+  const uploadRegistrations = (f) => {
+    if (!f) return;
+    setImp({ loading: true });
+    Papa.parse(f, { header: true, skipEmptyLines: true, complete: async ({ data }) => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        const r = await fetch("/api/dssc-roster-import", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + (session?.access_token || "") }, body: JSON.stringify({ rows: data }) });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.error || ("HTTP " + r.status));
+        setImp(d); setCountsTick(t => t + 1);
+      } catch (e) { setImp({ error: e.message }); }
+      if (fileRef.current) fileRef.current.value = "";
+    }, error: (e) => setImp({ error: e.message }) });
+  };
 
   // Sign-ups per class. One light query; the roster table is a few thousand rows at most.
   useEffect(() => {
@@ -41,7 +61,7 @@ export default function DsscAdmin({
       setCounts(m);
     });
     return () => { live = false; };
-  }, [clinics.length]);
+  }, [clinics.length, countsTick]);
   const signedUp = (c, s) => counts ? (counts[c.id + "|" + s.id] || 0) + (counts[c.id + "|*"] || 0) : null;
 
   // Every session, flattened, with the numbers the board sorts and colors by.
@@ -315,6 +335,25 @@ export default function DsscAdmin({
                   <span style={{ fontSize: 11, color: DS.dim }}>Drag the green button to your bookmarks bar once.</span>
                 </div>
               )}
+              <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid " + DS.line }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                  <div style={{ flex: 1, minWidth: 220 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700 }}>Registrations (who's signed up)</div>
+                    <div style={{ fontSize: 12, color: DS.mut, lineHeight: 1.5 }}>Playbook → Reports → Registrations → export CSV, then drop it here. New sign-ups are added, nothing is removed. Sync the calendar first so every class exists.</div>
+                  </div>
+                  <input ref={fileRef} type="file" accept=".csv,text/csv" style={{ display: "none" }} onChange={e => uploadRegistrations(e.target.files?.[0])} />
+                  <Btn small kind="primary" disabled={!!imp?.loading} onClick={() => fileRef.current?.click()}>{imp?.loading ? "Importing…" : "Upload registrations CSV"}</Btn>
+                </div>
+                {imp?.error && <div style={{ fontSize: 13, color: DS.orange, fontWeight: 700, marginTop: 8 }}>{imp.error}</div>}
+                {imp?.ok && (
+                  <div style={{ fontSize: 13, marginTop: 8, lineHeight: 1.5 }}>
+                    <span style={{ color: DS.lime, fontWeight: 800 }}>✓ {imp.added} new sign-up{imp.added === 1 ? "" : "s"}</span> · {imp.matched} matched across {imp.programs.length} programs · {imp.skippedRows} rows skipped (not volleyball classes)
+                    {imp.noSession.length > 0 && (
+                      <div style={{ color: DS.orange, marginTop: 4 }}>{imp.noSession.length} registration{imp.noSession.length === 1 ? "" : "s"} for classes that aren't in HQ yet — sync that month's calendar, then upload again: {[...new Set(imp.noSession.map(x => x.program + " " + x.date.slice(5)))].slice(0, 6).join(", ")}{imp.noSession.length > 6 ? "…" : ""}</div>
+                    )}
+                  </div>
+                )}
+              </div>
             </Card>
           );
         })()}
