@@ -100,6 +100,8 @@ export default function DsscHub({
   const [sel, setSel] = useState(null);            // { clinicId, sessionId }
   const [tab, setTab] = useState("plan");
   const [showAll, setShowAll] = useState(false);
+  const [showAllShifts, setShowAllShifts] = useState(false);
+  const [shiftQ, setShiftQ] = useState("");   // search open shifts by pod name, age, day, court
   const [busy, setBusy] = useState("");
   const [run, setRun] = useState(null);            // class runner
   const [, tick] = useState(0);
@@ -290,14 +292,25 @@ export default function DsscHub({
     )}
 
     <Card accent={openShifts.length ? DS.orange : undefined}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-        <Label style={{ marginBottom: 0, color: openShifts.length ? DS.orange : DS.lime }}>Open shifts</Label>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+        <Label style={{ marginBottom: 0, color: openShifts.length ? DS.orange : DS.lime }}>Open shifts · {openShifts.length}</Label>
         <div style={{ flex: 1 }} />
         <span style={{ fontSize: 12, color: DS.mut }}>$25/hr</span>
       </div>
-      {!openShifts.length ? <div style={{ fontSize: 13, color: DS.mut }}>Every upcoming class is covered. Check back — new pods land here first.</div> : (
+      {openShifts.length > 5 && (
+        <input value={shiftQ} onChange={e => setShiftQ(e.target.value)} placeholder="Search pods — setters, U13, Monday, 6:00pm…" style={{ ...inputStyle, marginBottom: 10, padding: "9px 12px" }} />
+      )}
+      {!openShifts.length ? <div style={{ fontSize: 13, color: DS.mut }}>Every upcoming class is covered. Check back — new pods land here first.</div> : (() => {
+        // Match every word the coach typed against the pod's name, age group,
+        // court, weekday and start time — "u13 monday" finds Monday U13 pods.
+        const words = shiftQ.toLowerCase().split(/\s+/).filter(Boolean);
+        const hay = (r) => [r.c.name, r.c.age_group, r.c.category, r.s.court, r.c.location, r.s.start_time, new Date(r.s.date + "T12:00:00").toLocaleDateString(undefined, { weekday: "long", month: "long" }), r.s.date].join(" ").toLowerCase();
+        const found = words.length ? openShifts.filter(r => { const h = hay(r); return words.every(w => h.includes(w)); }) : openShifts;
+        const shown = (showAllShifts || words.length) ? found : found.slice(0, 15);
+        return (<>
+        {words.length > 0 && <div style={{ fontSize: 12, color: DS.mut, marginBottom: 8 }}>{found.length} match{found.length === 1 ? "" : "es"}</div>}
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          {openShifts.slice(0, 15).map(r => {
+          {shown.map(r => {
             const b = busy === "pu|" + r.s.id;
             return (
               <div key={r.c.id + "|" + r.s.id} style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", padding: "10px 12px", borderRadius: 10, background: DS.panel2, border: "1px solid " + DS.line }}>
@@ -313,9 +326,13 @@ export default function DsscHub({
               </div>
             );
           })}
-          {openShifts.length > 15 && <div style={{ fontSize: 12, color: DS.mut }}>+{openShifts.length - 15} more</div>}
+          {!shown.length && <div style={{ fontSize: 13, color: DS.mut }}>Nothing matches — try a position, an age group or a day.</div>}
         </div>
-      )}
+        {!words.length && found.length > 15 && (
+          <div style={{ marginTop: 10 }}><Btn small onClick={() => setShowAllShifts(v => !v)}>{showAllShifts ? "Show fewer" : `Show all ${found.length} open shifts`}</Btn></div>
+        )}
+        </>);
+      })()}
     </Card>
 
     <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", fontSize: 12, color: DS.mut, marginTop: 4 }}>
