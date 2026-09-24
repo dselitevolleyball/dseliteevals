@@ -300,9 +300,9 @@ export default function DsscAdmin({
               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 6 }}>
                 <Label style={{ marginBottom: 0 }}>Playbook sync</Label>
                 <div style={{ flex: 1 }} />
-                <span style={{ fontSize: 12, color: DS.mut }}>{last ? "Last synced " + last.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " " + last.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : "Not synced yet"}</span>
+                <span style={{ fontSize: 12, color: DS.mut }}>{last ? "Last synced " + last.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " " + last.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) + (sync.dsscSync?.summary ? ` · +${sync.dsscSync.summary.sessionsAdded || 0} added · −${sync.dsscSync.summary.sessionsRemoved || 0} removed` : "") : "Not synced yet"}</span>
               </div>
-              <div style={{ fontSize: 12, color: DS.mut, lineHeight: 1.5, marginBottom: 8 }}>Classes come from the Playbook calendar. Open a month there, click the bookmark; only the dates on screen are touched, so sync month by month. Registrations: export Playbook's registrations report and run <code style={{ color: DS.text }}>node scripts/import-pod-roster.mjs &lt;csv&gt;</code>.</div>
+              <div style={{ fontSize: 12, color: DS.mut, lineHeight: 1.5, marginBottom: 8 }}>Playbook is the system of record. Open a month there and click the bookmark: new classes are added, times refreshed, and any class Playbook no longer lists is removed from here — you and Hunter get an email if a coach was on it. Only the dates on screen are touched, so sync month by month. Registrations: export Playbook's registrations report and run <code style={{ color: DS.text }}>node scripts/import-pod-roster.mjs &lt;csv&gt;</code>.</div>
               {!t && <Btn small onClick={sync.fetchSyncBookmarklet}>Set up the one-click sync →</Btn>}
               {t?.loading && <span style={{ fontSize: 12, color: DS.mut }}>Loading…</span>}
               {t?.error && <div style={{ fontSize: 12, color: DS.orange }}>Couldn't load: {t.error}</div>}

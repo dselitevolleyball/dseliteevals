@@ -1,3 +1,4 @@
+import { appOrigin } from "../../shared/app-origin.js";
 // Shared Playbook → dssc_clinics sync logic. Consumed by:
 //   • api/dssc-clinic-sync.js  (the one-click bookmarklet endpoint)
 //   • scripts/dssc-sync-from-json.mjs  (one-off local seed from extracted JSON)
@@ -80,22 +81,19 @@ function mergeSessions(existing, incoming, today, window) {
     if (ex) { used.add(ex); out.push({ ...ex, end_time: inc.end_time, court: inc.court || ex.court || null }); }
     else { out.push({ id: inc.id, date: inc.date, start_time: inc.start_time, end_time: inc.end_time, court: inc.court || null, coach_name: null, needsCoverage: false }); added++; }
   }
+  const removed = [];
   for (const ex of E) {
     if (used.has(ex)) continue;
-    // A future session missing from Playbook is normally one that was cancelled
-    // or moved there, so dropping it keeps us in step. It is only safe to drop
-    // when nobody has done work against it — and "somebody is on it" now means
-    // the staff[] array as well as the older coach_name field. Assignments
-    // moved to staff[] and left coach_name null, so this test alone was
-    // deleting sessions coaches had already been rostered onto: nine of them
-    // were one narrow sync away from vanishing.
-    const staffed = Array.isArray(ex.staff) && ex.staff.length > 0;
-    const keep = ex.date < today || !inView(ex.date) || ex.coach_name || staffed
-      || (ex.focus || "").trim() || (ex.recap || "").trim();
-    if (keep) out.push(ex);            // history or hand-entered work — never drop
+    // Playbook is the system of record. A future session inside the synced
+    // window that Playbook no longer lists was cancelled or moved there, so it
+    // goes here too — even when a coach was on it. Those are reported back so
+    // the director can tell the coach. History (past dates) is never touched,
+    // and neither is anything outside the dates the calendar had on screen.
+    if (ex.date < today || !inView(ex.date)) { out.push(ex); continue; }
+    removed.push(ex);
   }
   out.sort((a, b) => (a.date || "").localeCompare(b.date || "") || parseHM(a.start_time) - parseHM(b.start_time));
-  return { sessions: out, added };
+  return { sessions: out, added, removed };
 }
 
 // Apply the parsed programs to dssc_clinics via the given Supabase client.
@@ -113,11 +111,13 @@ export async function syncClinics(supabase, events, opts = {}) {
 
   let created = 0, updated = 0, sessionsAdded = 0;
   const touched = [];
+  const removed = [];   // [{ clinic, session }] — future classes Playbook no longer lists
 
   for (const g of programs) {
     const ex = byRef.get(g.program);
     const merged = ex ? mergeSessions(ex.sessions, g.sessions, today, window) : { sessions: g.sessions.map(s => ({ ...s, coach_name: null, needsCoverage: false })), added: g.sessions.length };
     sessionsAdded += merged.added;
+    for (const x of (merged.removed || [])) removed.push({ clinic: ex, session: x });
     const dates = merged.sessions.map(s => s.date).filter(Boolean).sort();
     const first = merged.sessions.find(s => s.date === dates[0]) || merged.sessions[0] || {};
     const common = {
@@ -149,10 +149,50 @@ export async function syncClinics(supabase, events, opts = {}) {
     touched.push({ program: g.program, name: ex ? ex.name : g.name, sessions: merged.sessions.length });
   }
 
+  // A program that has no events at all in the synced window is still subject
+  // to the same rule: whatever it had scheduled in that window is gone from
+  // Playbook, so it goes here too.
+  const seen = new Set(programs.map(g => g.program));
+  for (const ex of (existingRows || [])) {
+    if (seen.has(String(ex.source_ref))) continue;
+    const merged = mergeSessions(ex.sessions, [], today, window);
+    if (!merged.removed.length) continue;
+    for (const x of merged.removed) removed.push({ clinic: ex, session: x });
+    const { error } = await supabase.from("dssc_clinics").update({ sessions: merged.sessions, updated_by: opts.syncedBy || "playbook-sync", updated_at: new Date().toISOString() }).eq("id", ex.id);
+    if (error) throw new Error("prune " + ex.name + ": " + error.message);
+    updated++;
+  }
+
+  // Registrations for a class that no longer exists would keep it looking
+  // populated on the admin board; Playbook has dropped those too.
+  for (const r of removed) {
+    await supabase.from("dssc_pod_roster").delete().eq("clinic_id", r.clinic.id).eq("session_id", String(r.session.id));
+  }
+  const staffedRemovals = removed.filter(r => (r.session.coach_name && String(r.session.coach_name).trim()) || (Array.isArray(r.session.staff) && r.session.staff.some(x => x.status !== "declined")));
+  if (staffedRemovals.length) await tellDirectors(staffedRemovals);
+
   // record sync state (best-effort; table may not exist on very old dbs)
   try {
-    await supabase.from("dssc_sync").upsert({ id: 1, last_synced_at: new Date().toISOString(), synced_by: opts.syncedBy || null, summary: { created, updated, sessionsAdded, programs: touched.length } }, { onConflict: "id" });
+    await supabase.from("dssc_sync").upsert({ id: 1, last_synced_at: new Date().toISOString(), synced_by: opts.syncedBy || null, summary: { created, updated, sessionsAdded, sessionsRemoved: removed.length, programs: touched.length } }, { onConflict: "id" });
   } catch { /* non-fatal */ }
 
-  return { ok: true, created, updated, sessionsAdded, clinics: touched, programs: touched.length };
+  return { ok: true, created, updated, sessionsAdded, sessionsRemoved: removed.length,
+    removed: removed.map(r => ({ program: r.clinic.name, date: r.session.date, start_time: r.session.start_time, coaches: crewNames(r.session) })),
+    clinics: touched, programs: touched.length };
+}
+
+const crewNames = (s) => [...new Set([s.coach_name, ...((Array.isArray(s.staff) ? s.staff : []).filter(x => x.status !== "declined").map(x => x.name))].map(v => String(v || "").trim()).filter(Boolean))];
+
+// Push + email Hunter and Drew when a class a coach was on has disappeared
+// from Playbook, so somebody tells the coach before they turn up to it.
+async function tellDirectors(list) {
+  const to = ["hunterhaleysc10@gmail.com", "hunter@drippingsportsclub.com", "drew@dselitevolleyball.com"];
+  const origin = appOrigin(null);
+  const fmt = (d) => new Date(d + "T12:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "America/Chicago" });
+  const lines = list.map(r => `• ${r.clinic.name} — ${fmt(r.session.date)} ${r.session.start_time || ""} — was staffed by ${crewNames(r.session).join(", ")}`);
+  const body = `Playbook no longer lists ${list.length === 1 ? "this class" : "these classes"}, so ${list.length === 1 ? "it has" : "they have"} been removed from DSSC HQ. The coaches were on them — please let them know:\n\n${lines.join("\n")}\n\nIf Playbook is wrong, add the class back there and sync again.`;
+  try {
+    await fetch(origin + "/api/send-push", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ skipEmail: true, title: "Playbook removed " + list.length + " staffed class" + (list.length === 1 ? "" : "es"), body: lines[0].slice(2, 110), url: "/?view=clinics", audience: { type: "emails", emails: to } }) });
+    await fetch(origin + "/api/send-email", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ skipPush: true, subject: "Playbook removed " + list.length + " staffed DSSC class" + (list.length === 1 ? "" : "es"), body, recipients: to, sentBy: "Playbook sync", source: "dssc-clinic-sync" }) });
+  } catch { /* the sync itself already succeeded */ }
 }
