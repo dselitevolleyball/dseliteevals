@@ -31,7 +31,9 @@ CREATE TABLE IF NOT EXISTS public.dssc_pod_roster (
   updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS dssc_pod_roster_clinic_idx ON public.dssc_pod_roster(clinic_id, session_id);
-CREATE UNIQUE INDEX IF NOT EXISTS dssc_pod_roster_source_ref_uniq ON public.dssc_pod_roster(source_ref) WHERE source_ref IS NOT NULL;
+-- Plain (not partial) so PostgREST can use it as an ON CONFLICT target; NULLs are distinct anyway.
+DROP INDEX IF EXISTS public.dssc_pod_roster_source_ref_uniq;
+CREATE UNIQUE INDEX IF NOT EXISTS dssc_pod_roster_source_ref_uniq ON public.dssc_pod_roster(source_ref);
 ALTER TABLE public.dssc_pod_roster ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "auth_all_dssc_pod_roster" ON public.dssc_pod_roster;
 CREATE POLICY "auth_all_dssc_pod_roster" ON public.dssc_pod_roster FOR ALL USING (auth.uid() IS NOT NULL) WITH CHECK (auth.uid() IS NOT NULL);
