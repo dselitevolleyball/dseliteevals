@@ -189,7 +189,7 @@ export default function DsscHub({
     return shell(
       <ClassView key={open.c.id + "|" + open.s.id} c={open.c} s={open.s} today={today} coach={coach} coachName={coachName} isMe={isMe} isDirector={isDirector}
         header={header} onBack={() => setSel(null)} tab={tab} setTab={setTab}
-        saveClinic={saveClinic} saveSession={saveSession} clockIn={clockIn} checkedIn={checkedIn} winState={winState} dropOut={dropOut} busy={busy}
+        saveClinic={saveClinic} saveSession={saveSession} clockIn={clockIn} checkedIn={checkedIn} winState={winState} dropOut={dropOut} pickUp={pickUp} busy={busy}
         podAttendance={podAttendance} reloadAttendance={reload.attendance} run={run} setRun={setRun} onOpenPlaybook={onOpenPlaybook} notifyDirectors={notifyDirectors}
         sessions={(open.c.sessions || []).slice().sort((a, b) => (a.date || "").localeCompare(b.date || ""))} onPickSession={(sid) => setSel({ clinicId: open.c.id, sessionId: sid })} />
     );
@@ -313,16 +313,18 @@ export default function DsscHub({
           {shown.map(r => {
             const b = busy === "pu|" + r.s.id;
             return (
-              <div key={r.c.id + "|" + r.s.id} style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", padding: "10px 12px", borderRadius: 10, background: DS.panel2, border: "1px solid " + DS.line }}>
+              <div key={r.c.id + "|" + r.s.id} role="button" tabIndex={0} onClick={() => { setSel({ clinicId: r.c.id, sessionId: r.s.id }); setTab("players"); }} onKeyDown={e => { if (e.key === "Enter") { setSel({ clinicId: r.c.id, sessionId: r.s.id }); setTab("players"); } }}
+                title="See who's coaching and which players are signed up"
+                style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", padding: "10px 12px", borderRadius: 10, background: DS.panel2, border: "1px solid " + DS.line, cursor: "pointer" }}>
                 <div style={{ minWidth: 92 }}>
                   <div style={{ fontSize: 13, fontWeight: 800 }}>{fmtDay(r.s.date, today)}</div>
                   <div style={{ fontSize: 12, color: DS.mut }}>{timeRange(r.s)}</div>
                 </div>
                 <div style={{ flex: 1, minWidth: 150 }}>
                   <div style={{ fontSize: 14, fontWeight: 700 }}>{r.c.name}{r.s.needsCoverage && <span style={{ color: DS.orange }}> · needs coverage</span>}</div>
-                  <div style={{ fontSize: 12, color: DS.mut }}>{[r.c.age_group, r.s.court || r.c.location].filter(Boolean).join(" · ")} · {r.short} coach{r.short === 1 ? "" : "es"} short · {sessionHours(r.s)}h · ${25 * sessionHours(r.s)}</div>
+                  <div style={{ fontSize: 12, color: DS.mut }}>{[r.c.age_group, r.s.court || r.c.location].filter(Boolean).join(" · ")} · {r.short} coach{r.short === 1 ? "" : "es"} short{sessionStaff(r.s).filter(x => x.status !== "declined").length ? " · with " + sessionStaff(r.s).filter(x => x.status !== "declined").map(x => x.name.split(" ")[0]).join(", ") : ""} · {sessionHours(r.s)}h · ${25 * sessionHours(r.s)}</div>
                 </div>
-                <Btn kind="warn" small disabled={b} onClick={() => pickUp(r.c, r.s)}>{b ? "…" : "I'll take it"}</Btn>
+                <Btn kind="warn" small disabled={b} onClick={e => { e.stopPropagation(); pickUp(r.c, r.s); }}>{b ? "…" : "I'll take it"}</Btn>
               </div>
             );
           })}
@@ -345,7 +347,7 @@ export default function DsscHub({
 
 // ── One class ───────────────────────────────────────────────────────────────
 function ClassView({ c, s, sessions, onPickSession, today, coach, coachName, isMe, isDirector, header, onBack, tab, setTab,
-  saveClinic, saveSession, clockIn, checkedIn, winState, dropOut, busy, podAttendance, reloadAttendance, run, setRun, onOpenPlaybook, notifyDirectors }) {
+  saveClinic, saveSession, clockIn, checkedIn, winState, dropOut, pickUp, busy, podAttendance, reloadAttendance, run, setRun, onOpenPlaybook, notifyDirectors }) {
   const crew = sessionStaff(s).filter(x => x.status !== "declined");
   const mineEntry = crew.find(x => isMe(x.name));
   const canEdit = isDirector || !!mineEntry;
@@ -393,6 +395,12 @@ function ClassView({ c, s, sessions, onPickSession, today, coach, coachName, isM
         </div>
       )}
       {mineEntry && !isPast && !done && <div style={{ marginTop: 8 }}><Btn kind="link" small style={{ color: DS.orange }} onClick={() => dropOut(c, s)}>Can't make this one — ask for coverage</Btn></div>}
+      {!mineEntry && !isPast && sessionShort(s, c) > 0 && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 12, padding: "10px 12px", borderRadius: 10, background: DS.orangeSoft, border: "1px solid " + DS.orange }}>
+          <span style={{ fontSize: 13, fontWeight: 700, flex: 1 }}>This class is {sessionShort(s, c)} coach{sessionShort(s, c) === 1 ? "" : "es"} short <span style={{ color: DS.mut, fontWeight: 500 }}>· {sessionHours(s)}h · ${25 * sessionHours(s)}</span></span>
+          <Btn kind="warn" small disabled={busy === "pu|" + s.id} onClick={() => pickUp(c, s)}>{busy === "pu|" + s.id ? "…" : "I'll take it"}</Btn>
+        </div>
+      )}
     </div>
 
     <div style={{ display: "flex", gap: 2, borderBottom: "1px solid " + DS.line, marginBottom: 14, overflowX: "auto" }}>
