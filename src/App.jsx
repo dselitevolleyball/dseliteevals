@@ -1721,6 +1721,7 @@ export default function App() {
   const [dsscCoachFilter, setDsscCoachFilter] = useState(""); // "" = every coach
   const [dsscCalMode, setDsscCalMode]   = useState("week"); // week | cal | list — the week board is what gets planned against
   const [dsscCalWeek, setDsscCalWeek]   = useState(0);      // weeks from this one on the DSSC coverage week board
+  const [dsscCalPastOpen, setDsscCalPastOpen] = useState(() => new Set()); // past days of this week the user re-expanded
   const [dsscWeekOff, setDsscWeekOff]   = useState(0);      // weeks from this one on the DSSC approval table
   const [dsscSync, setDsscSync]         = useState(null);   // last Playbook→clinics sync {last_synced_at, summary}
   const [dsscSyncTok, setDsscSyncTok]   = useState(null);   // built sync bookmarklet {href, calendarUrl} | {configured:false} | {error}
@@ -14259,15 +14260,39 @@ export default function App() {
                 // full width above the court columns, since nothing else can go.
                 const wholeGym = rows.filter(r => courtOf(r.court).order === 0);
                 const perCourt = weekCourts.filter(c => c.order !== 0);
+                // Days already behind us fold down to a narrow stub so the
+                // board opens on today and what's still to come. Only on the
+                // current week — paging back to a previous week is a deliberate
+                // look at history, and every day there would be a stub. A stub
+                // reopens on tap, and the header of an open past day folds it.
+                const past = dsscCalWeek === 0 && iso < today;
+                const collapsed = past && !dsscCalPastOpen.has(iso);
+                const togglePast = () => setDsscCalPastOpen(prev => { const n = new Set(prev); if (n.has(iso)) n.delete(iso); else n.add(iso); return n; });
+                if (collapsed) {
+                  return (
+                    <button key={iso} onClick={togglePast} title={"Show " + dt.toLocaleDateString(undefined,{weekday:"long",month:"short",day:"numeric"})}
+                      style={{flex:"0 0 auto",width:54,alignSelf:"stretch",minHeight:120,background:C.bg,border:"1px solid "+C.border,borderRadius:10,
+                              padding:"6px 4px",cursor:"pointer",fontFamily:"inherit",opacity:0.7,display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
+                      <span style={{fontSize:11,fontWeight:800,color:C.text}}>{dt.toLocaleDateString(undefined,{weekday:"short"})}</span>
+                      <span style={{fontSize:14,fontWeight:800,color:C.mut,lineHeight:1}}>{dt.getDate()}</span>
+                      <span style={{fontSize:9,fontWeight:700,color:rows.length ? (dayShort?"#f59e0b":C.grn) : C.mut}}>{rows.length || "—"}</span>
+                      <span style={{fontSize:12,color:C.mut,marginTop:"auto"}}>›</span>
+                    </button>
+                  );
+                }
                 return (
-                  <div key={iso} style={{flex:"0 0 auto",background:C.bg,border:"1px solid "+(isToday?C.acc:C.border),borderRadius:10,overflow:"hidden"}}>
-                    <div style={{padding:"6px 9px",borderBottom:"1px solid "+C.border,background:isToday?"rgba(6,182,212,0.10)":"transparent"}}>
-                      <div style={{fontSize:11,fontWeight:800,color:isToday?C.acc:C.text}}>
-                        {dt.toLocaleDateString(undefined,{weekday:"short"})} {dt.getDate()}
+                  <div key={iso} style={{flex:"0 0 auto",background:C.bg,border:"1px solid "+(isToday?C.acc:C.border),borderRadius:10,overflow:"hidden",opacity:past?0.85:1}}>
+                    <div onClick={past ? togglePast : undefined} title={past ? "Fold this day away" : undefined}
+                      style={{padding:"6px 9px",borderBottom:"1px solid "+C.border,background:isToday?"rgba(6,182,212,0.10)":"transparent",cursor:past?"pointer":"default",display:"flex",alignItems:"center",gap:8}}>
+                      <div>
+                        <div style={{fontSize:11,fontWeight:800,color:isToday?C.acc:C.text}}>
+                          {dt.toLocaleDateString(undefined,{weekday:"short"})} {dt.getDate()}
+                        </div>
+                        <div style={{fontSize:9,fontWeight:700,color:rows.length ? (dayShort?"#f59e0b":C.grn) : C.mut}}>
+                          {rows.length ? rows.length + " session" + (rows.length===1?"":"s") + (dayShort ? " · need " + dayShort : "") : "—"}
+                        </div>
                       </div>
-                      <div style={{fontSize:9,fontWeight:700,color:rows.length ? (dayShort?"#f59e0b":C.grn) : C.mut}}>
-                        {rows.length ? rows.length + " session" + (rows.length===1?"":"s") + (dayShort ? " · need " + dayShort : "") : "—"}
-                      </div>
+                      {past && <span style={{marginLeft:"auto",fontSize:12,color:C.mut}}>‹</span>}
                     </div>
                     {rows.length === 0 ? (
                       <div style={{width:170,fontSize:10,color:C.mut,textAlign:"center",padding:"16px 0"}}>Nothing on</div>
