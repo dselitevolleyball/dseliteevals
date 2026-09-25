@@ -2018,7 +2018,7 @@ export default function App() {
   // email we send them. Every admin control inside renderDsysa — add/cancel a
   // date, set the lead, remove someone else's signup — is separately gated on
   // isAdmin, so opening the view exposes no admin action.
-  const OPS_VIEWS = new Set(["waiting","school","schoolgames","playergear","kickoff","photos","incidentboard","tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","timecards","gear","staffing","roster","hawaii","travel","finance","dssccal","pods"]);
+  const OPS_VIEWS = new Set(["waiting","privates","school","schoolgames","playergear","kickoff","photos","incidentboard","tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","timecards","gear","staffing","roster","hawaii","travel","finance","dssccal","pods"]);
   const canOps    = isAdmin || isOwner;
   const opsDenied = <div style={{padding:24,color:C.mut,textAlign:"center"}}>This section is restricted to administrators. Ask the club administrator (Drew) for access.</div>;
   // Once a player has accepted (or is locked/signed) onto a team, they're
@@ -2161,6 +2161,11 @@ export default function App() {
   const [waitOpen, setWaitOpen]             = useState(() => new Set()); // Waiting on: which needs are expanded
   const [waitTeam, setWaitTeam]             = useState("");
   const [waitSending, setWaitSending]       = useState(null);    // "need|playerId" or "need|all" while a nudge sends
+  const [coachPrivates, setCoachPrivates]   = useState([]);      // DSSC privates: each coach's answer per month
+  const [coachPrivatesAsks, setCoachPrivatesAsks] = useState([]); // and every ask we sent
+  const [privMonth, setPrivMonth]           = useState(() => { const t = new Date(); const d = new Date(t.getFullYear(), t.getMonth() + (t.getDate() >= 20 ? 1 : 0), 1); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0"); });
+  const [privFilter, setPrivFilter]         = useState("all");
+  const [privBusy, setPrivBusy]             = useState(null);
   const [showEvalOnly, setShowEvalOnly] = useState(false);
   const [showEvalAsTryout, setShowEvalAsTryout] = useState(false);
   // Three actionable buckets. eval_registered (the eval CSV roster) is
@@ -2556,6 +2561,15 @@ export default function App() {
     setPlayerNudges(data || []);
   }, []);
   useEffect(() => { if (isApproved && view === "waiting") loadPlayerNudges(); }, [isApproved, view, loadPlayerNudges]);
+  const loadCoachPrivates = useCallback(async () => {
+    const [a, b] = await Promise.all([
+      supabase.from("coach_privates").select("*"),
+      supabase.from("coach_privates_asks").select("coach_id, month, channels, is_test, sent_at").order("sent_at", { ascending: false }).limit(2000),
+    ]);
+    if (a.error) console.error("Load coach_privates error:", a.error); else setCoachPrivates(a.data || []);
+    if (b.error) console.error("Load coach_privates_asks error:", b.error); else setCoachPrivatesAsks(b.data || []);
+  }, []);
+  useEffect(() => { if (isApproved && view === "privates") loadCoachPrivates(); }, [isApproved, view, loadCoachPrivates]);
   useEffect(() => { if (isApproved) loadGearOrders(); }, [isApproved, loadGearOrders]);
   useEffect(() => { if (isApproved) loadSchoolGames(); }, [isApproved, loadSchoolGames]);
   // loadTeamsList is declared further down, so naming it here would be a TDZ
@@ -4439,7 +4453,7 @@ export default function App() {
   useEffect(() => {
     // Roster also drives the Tryout coach picker / Text Coaches lookup,
     // so make sure it's loaded whenever either tab opens.
-    if (isApproved && (view === "coaches" || view === "tryouts" || view === "home" || view === "clockin" || view === "teamdir" || view === "practice" || view === "timecards" || view === "clinics" || view === "dssc" || view === "dssccal" || view === "tournaments" || view === "kickoff" || view === "travel" || view === "messages")) loadCoachRoster();
+    if (isApproved && (view === "coaches" || view === "tryouts" || view === "home" || view === "clockin" || view === "teamdir" || view === "practice" || view === "timecards" || view === "clinics" || view === "dssc" || view === "dssccal" || view === "tournaments" || view === "kickoff" || view === "travel" || view === "messages" || view === "privates")) loadCoachRoster();
   }, [isApproved, view, loadCoachRoster]);
   // The coach card edits coach_roster, so make sure it's loaded when one opens.
   useEffect(() => { if (isApproved && coachCardName) loadCoachRoster(); }, [isApproved, coachCardName, loadCoachRoster]);
@@ -10918,6 +10932,184 @@ export default function App() {
           );
         })}
         <div style={{fontSize:11,color:C.mut,marginTop:6}}>A nudge is one email to the family, from you, with the link they need. Every send is remembered here so you can see who has already been asked.</div>
+      </div>
+    );
+  }
+
+  // ─── DSSC PRIVATES ─────────────────────────────────────────────────────
+  // Which coaches will run private lessons, and the days and hours each one
+  // gave us for the month — the sheet the Playbook schedule is built from.
+  // The asks (text + push + email) go out from here; the cron repeats them on
+  // the 25th for the month ahead.
+  function renderPrivates() {
+    const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    const HOURS = Array.from({ length: 15 }, (_, i) => 7 + i);
+    const hl = (h) => (h % 12 === 0 ? 12 : h % 12) + (h < 12 ? "a" : "p");
+    const monthLabel = (m) => { const [y, mo] = m.split("-").map(Number); return new Date(y, mo - 1, 1).toLocaleDateString(undefined, { month: "long", year: "numeric" }); };
+    const shiftMonth = (m, d) => { const [y, mo] = m.split("-").map(Number); const dt = new Date(Date.UTC(y, mo - 1 + d, 1)); return dt.toISOString().slice(0, 7); };
+    const isPlaceholder = (nm) => /assistant coach|head coach|tbd|coach needed|floater/i.test(nm || "");
+    const roster = coachRoster.map(c => ({ ...c, name: ((c.first_name || "") + " " + (c.last_name || "")).trim() }))
+      .filter(c => c.name && !isPlaceholder(c.name)).sort((a, b) => a.name.localeCompare(b.name));
+    const month = privMonth;
+    const thisMonth = new Map(coachPrivates.filter(r => r.month === month).map(r => [r.coach_id, r]));
+    const latestBy = new Map();
+    for (const r of coachPrivates.slice().sort((a, b) => String(b.submitted_at || "").localeCompare(String(a.submitted_at || "")))) if (!latestBy.has(r.coach_id)) latestBy.set(r.coach_id, r);
+    const lastAsk = new Map();
+    for (const a of coachPrivatesAsks) { if (a.is_test) continue; const k = a.coach_id; if (!lastAsk.has(k) || a.sent_at > lastAsk.get(k).sent_at) lastAsk.set(k, a); }
+    const ago = (iso) => { if (!iso) return ""; const d = Math.floor((Date.now() - new Date(iso)) / 86400000); return d <= 0 ? "today" : d === 1 ? "yesterday" : d + "d ago"; };
+    // "16,17,18,19" → "4–8pm"
+    const ranges = (hs) => {
+      const s = (hs || []).map(Number).sort((a, b) => a - b); const out = [];
+      for (const h of s) { const l = out[out.length - 1]; if (l && l[1] === h) l[1] = h + 1; else out.push([h, h + 1]); }
+      return out;
+    };
+    const rangeText = (r) => hl(r[0]).replace(/[ap]$/, "") + "–" + hl(r[1]) + "m";
+    const hoursOf = (row) => DAYS.reduce((n, d) => n + ((row?.slots?.[d] || []).length), 0);
+
+    const rows = roster.map(c => {
+      const cur = thisMonth.get(c.id) || null, latest = latestBy.get(c.id) || null;
+      const interest = cur?.interested != null ? cur.interested : latest?.interested != null ? latest.interested : null;
+      return { c, cur, latest, interest, hours: hoursOf(cur), ask: lastAsk.get(c.id) || null };
+    });
+    const yes = rows.filter(r => r.interest === true), no = rows.filter(r => r.interest === false), none = rows.filter(r => r.interest == null);
+    const answeredMonth = rows.filter(r => r.cur && r.cur.interested != null).length;
+    const shown = rows.filter(r => privFilter === "all" ? true : privFilter === "yes" ? r.interest === true : privFilter === "no" ? r.interest === false : r.interest == null)
+      .sort((a, b) => (b.hours - a.hours) || a.c.name.localeCompare(b.c.name));
+
+    const call = async (qs, confirmMsg) => {
+      if (confirmMsg && !window.confirm(confirmMsg)) return;
+      setPrivBusy(qs);
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        const r = await fetch("/api/privates-ask?" + qs + "&month=" + month, { method: "POST", headers: { Authorization: "Bearer " + (session?.access_token || "") } });
+        const o = await r.json().catch(() => ({}));
+        if (!r.ok || o.error) { window.alert("Didn't send: " + (o.error || r.statusText)); return; }
+        await loadCoachPrivates();
+        if (qs.includes("dry=1")) window.alert(o.count + " coach" + (o.count === 1 ? "" : "es") + " would be asked for " + monthLabel(month) + ":\n\n" + o.coaches.map(x => "• " + x.name + " (" + (x.kind === "update" ? "update" : "first ask") + (x.phone ? "" : ", no phone") + (x.email ? "" : ", no email") + ")").join("\n"));
+        else window.alert((o.test ? "Test sent to you" : "Sent to " + o.sent + " coach" + (o.sent === 1 ? "" : "es")) + (o.results?.length ? ":\n\n" + o.results.map(x => "• " + x.name + " — " + ((x.channels || []).join(", ") || "nothing went") + (x.sms_error ? " (text failed: " + x.sms_error + ")" : "")).join("\n") : "."));
+      } finally { setPrivBusy(null); }
+    };
+    // One row per coach per day-range, ready for Playbook's schedule.
+    const exportCsv = () => {
+      const out = [["Coach", "Month", "Day", "Start", "End", "Hours", "Note"]];
+      for (const r of rows) {
+        if (!r.cur || !r.cur.interested) continue;
+        for (const d of DAYS) for (const rg of ranges(r.cur.slots?.[d])) out.push([r.c.name, month, d, hl(rg[0]) + "m", hl(rg[1]) + "m", rg[1] - rg[0], r.cur.note || ""]);
+      }
+      if (out.length === 1) { window.alert("No availability in for " + monthLabel(month) + " yet."); return; }
+      downloadCSV("dssc_privates_" + month + ".csv", out);
+    };
+    const copyLink = (c) => {
+      const link = APP_URL.replace(/\/$/, "") + "/privates?t=" + c.privates_token + "&m=" + month;
+      navigator.clipboard?.writeText(link).then(() => window.alert(c.name + "'s link copied.")).catch(() => window.prompt("Her link:", link));
+    };
+    const pill = (k, label, n, color) => (
+      <button key={k} onClick={()=>setPrivFilter(k)}
+        style={{padding:"6px 12px",borderRadius:8,cursor:"pointer",fontFamily:"inherit",fontSize:11.5,fontWeight:700,
+          border:"1px solid "+(privFilter===k?color:C.border),background:privFilter===k?color+"1e":"transparent",color:privFilter===k?color:C.mut}}>
+        {label} <b style={{color:privFilter===k?color:C.text}}>{n}</b>
+      </button>
+    );
+
+    return (
+      <div style={{maxWidth:1100,margin:"0 auto"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:8}}>
+          <div>
+            <h2 style={{margin:0,fontSize:20,fontWeight:800,color:"#22d3ee"}}>🎯 DSSC Privates</h2>
+            <div style={{fontSize:12,color:C.mut,marginTop:2}}>
+              <b style={{color:C.grn}}>{yes.length}</b> in · <b style={{color:C.mut}}>{no.length}</b> not now · <b style={{color:"#f59e0b"}}>{none.length}</b> no answer
+              {" · "}{answeredMonth} answered for {monthLabel(month)}
+            </div>
+          </div>
+          <div style={{flex:1}} />
+          <div style={{display:"flex",alignItems:"center",gap:6}}>
+            <button onClick={()=>setPrivMonth(m=>shiftMonth(m,-1))} style={{background:"none",border:"1px solid "+C.border,borderRadius:6,color:C.text,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:800,width:26,height:26,padding:0}}>‹</button>
+            <span style={{fontSize:13,fontWeight:800,color:C.text,minWidth:130,textAlign:"center"}}>{monthLabel(month)}</span>
+            <button onClick={()=>setPrivMonth(m=>shiftMonth(m,1))} style={{background:"none",border:"1px solid "+C.border,borderRadius:6,color:C.text,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:800,width:26,height:26,padding:0}}>›</button>
+          </div>
+        </div>
+
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",margin:"10px 0 14px"}}>
+          <button onClick={()=>call("test=1")} disabled={!!privBusy}
+            title="Sends the text, the app notification and the email to you only, worded exactly as a coach would get them"
+            style={{padding:"8px 14px",borderRadius:8,border:"1px solid #22d3ee",background:"transparent",color:"#22d3ee",fontFamily:"inherit",fontSize:12,fontWeight:800,cursor:"pointer"}}>
+            {privBusy === "test=1" ? "Sending…" : "📱 Send me a test"}
+          </button>
+          <button onClick={()=>call("dry=1")} disabled={!!privBusy}
+            style={{padding:"8px 14px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontFamily:"inherit",fontSize:12,fontWeight:800,cursor:"pointer"}}>
+            Who would be asked?
+          </button>
+          <button onClick={()=>call("send=1", "Ask every coach (who hasn't said no, and hasn't answered for " + monthLabel(month) + ") by text, app and email now?\n\nThe 25th-of-the-month job does this on its own — only do it by hand for the first round.")} disabled={!!privBusy}
+            style={{padding:"8px 14px",borderRadius:8,border:"none",background:"#22d3ee",color:"#04252b",fontFamily:"inherit",fontSize:12,fontWeight:800,cursor:"pointer"}}>
+            {privBusy === "send=1" ? "Sending…" : "Send the " + monthLabel(month).split(" ")[0] + " ask to coaches"}
+          </button>
+          <div style={{flex:1}} />
+          <button onClick={exportCsv}
+            style={{padding:"8px 14px",borderRadius:8,border:"none",background:C.gold,color:"#1a1613",fontFamily:"inherit",fontSize:12,fontWeight:800,cursor:"pointer"}}>⬇ Playbook sheet (CSV)</button>
+        </div>
+
+        <div style={{display:"flex",gap:7,flexWrap:"wrap",marginBottom:12}}>
+          {pill("all","Everyone",rows.length,C.mut)}
+          {pill("yes","In",yes.length,C.grn)}
+          {pill("none","No answer",none.length,"#f59e0b")}
+          {pill("no","Not now",no.length,C.mut)}
+        </div>
+
+        <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,overflow:"hidden"}}>
+          {shown.length === 0 && <div style={{padding:24,textAlign:"center",color:C.mut,fontSize:12}}>Nobody in this group.</div>}
+          {shown.map(({ c, cur, interest, hours, ask }) => {
+            const col = interest === true ? C.grn : interest === false ? C.mut : "#f59e0b";
+            return (
+              <div key={c.id} style={{display:"flex",gap:12,alignItems:"flex-start",padding:"10px 14px",borderTop:"1px solid "+C.border,flexWrap:"wrap"}}>
+                <div style={{minWidth:190}}>
+                  <div style={{fontSize:13,fontWeight:800,color:C.text}}>{c.name}</div>
+                  <div style={{fontSize:10,color:C.mut,marginTop:2}}>
+                    {ask ? "asked " + ago(ask.sent_at) + " (" + (ask.channels || []).join(", ") + ")" : "not asked yet"}
+                    {cur?.submitted_at && <> · answered {ago(cur.submitted_at)}</>}
+                  </div>
+                </div>
+                <span style={{fontSize:10,fontWeight:800,padding:"2px 8px",borderRadius:999,background:col+"22",color:col,whiteSpace:"nowrap",marginTop:2}}>
+                  {interest === true ? "IN" : interest === false ? "NOT NOW" : "NO ANSWER"}
+                </span>
+                <div style={{flex:1,minWidth:260}}>
+                  {cur && cur.interested && hours > 0 ? (
+                    <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                      <div style={{display:"flex",gap:3}}>
+                        {DAYS.map(d => {
+                          const set = new Set((cur.slots?.[d] || []).map(Number));
+                          return (
+                            <div key={d} title={d + (set.size ? ": " + ranges([...set]).map(rangeText).join(", ") : ": —")} style={{display:"flex",flexDirection:"column",gap:1,alignItems:"center"}}>
+                              <span style={{fontSize:8,fontWeight:800,color:set.size?C.text:C.mut}}>{d[0]}</span>
+                              <div style={{display:"flex",flexDirection:"column",gap:1}}>
+                                {HOURS.map(h => <div key={h} style={{width:9,height:3,borderRadius:1,background:set.has(h)?C.grn:"rgba(255,255,255,0.08)"}} />)}
+                              </div>
+                            </div>
+                          );
+                        })}
+                        <div style={{fontSize:11,color:C.mut,marginLeft:8,lineHeight:1.5}}>
+                          <b style={{color:C.text}}>{hours}h</b> in {monthLabel(month).split(" ")[0]}<br/>
+                          {DAYS.filter(d => (cur.slots?.[d] || []).length).map(d => d + " " + ranges(cur.slots[d]).map(rangeText).join(", ")).join(" · ")}
+                        </div>
+                      </div>
+                      {cur.note && <div style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>“{cur.note}”</div>}
+                    </div>
+                  ) : cur && cur.interested === false ? (
+                    <div style={{fontSize:11,color:C.mut}}>Said not right now{cur.note ? " — “" + cur.note + "”" : ""}.</div>
+                  ) : interest === true ? (
+                    <div style={{fontSize:11,color:"#f59e0b"}}>In, but no hours for {monthLabel(month).split(" ")[0]} yet.</div>
+                  ) : (
+                    <div style={{fontSize:11,color:C.mut}}>—</div>
+                  )}
+                </div>
+                <button onClick={()=>copyLink(c)} title="Copy her page link for this month"
+                  style={{padding:"4px 10px",borderRadius:7,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontFamily:"inherit",fontSize:10,fontWeight:800,cursor:"pointer"}}>link</button>
+              </div>
+            );
+          })}
+        </div>
+        <div style={{fontSize:11,color:C.mut,marginTop:8,lineHeight:1.5}}>
+          Coaches answer on their own page (text, app notification and email all carry the same link). Anyone who's in gets asked again on the 25th of each month for the month ahead; anyone who said not now is left alone. The CSV is one row per coach per block of hours, for Playbook.
+        </div>
       </div>
     );
   }
@@ -31022,7 +31214,7 @@ export default function App() {
                   ["hdr","DS Elite · Coaches & Pay"],
                   ["coaches","Coaches"], ...(isAdmin ? [["staffing","Staffing Board"]] : []), ["coverage","Coach Coverage"], ["timecards","Time Cards"], ["myexpenses","My Expenses"], ...(canOps ? [["claims","Coach Claims" + (pendingClaimCount ? " (" + pendingClaimCount + ")" : "")]] : []), ["gear","Gear Sizes" + (gearOutstanding ? " (" + gearOutstanding + ")" : "")], ["requests","Requests" + (pendingReqs ? " (" + pendingReqs + ")" : "")],
                   ["hdr","DSSC"],
-                  ["dssc","Coach Hub"], ["clinics","Clinics & Camps (admin)"], ["dssccal","Coverage Calendar"], ["dssctime","DSSC Time Cards"], ["pods","Skill Pods"],
+                  ["dssc","Coach Hub"], ["clinics","Clinics & Camps (admin)"], ["dssccal","Coverage Calendar"], ["dssctime","DSSC Time Cards"], ["pods","Skill Pods"], ["privates","Privates"],
                   ["hdr","Communication"],
                   ["email","Email"], ["messages","Messages (SMS)" + (totalUnread > 0 ? " (" + totalUnread + ")" : "")], ["notifications","Notifications"], ["coachcomms","Coach Comms"], ["assignments","Assignments"], ["dsysa","DSYSA Clinics"],
                 ] }] : []),
@@ -31252,6 +31444,7 @@ export default function App() {
         {view==="schoolgames" && renderSchoolGames()}
         {view==="playergear" && renderPlayerGear()}
         {view==="waiting" && renderWaiting()}
+        {view==="privates" && renderPrivates()}
         {view==="kickoff" && renderKickoffs()}
         {view==="photos" && renderTeamPhotos()}
         {view==="incidents" && renderIncidents()}

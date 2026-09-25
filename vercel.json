@@ -30,6 +30,10 @@
     {
       "source": "/logos",
       "destination": "/logos.html"
+    },
+    {
+      "source": "/privates",
+      "destination": "/api/privates-form"
     }
   ],
   "crons": [
@@ -100,6 +104,10 @@
     {
       "path": "/api/playbook-registrations",
       "schedule": "15 * * * *"
+    },
+    {
+      "path": "/api/privates-ask",
+      "schedule": "0 15 25 * *"
     }
   ],
   "functions": {
