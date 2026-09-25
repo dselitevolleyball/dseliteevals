@@ -2018,7 +2018,7 @@ export default function App() {
   // email we send them. Every admin control inside renderDsysa — add/cancel a
   // date, set the lead, remove someone else's signup — is separately gated on
   // isAdmin, so opening the view exposes no admin action.
-  const OPS_VIEWS = new Set(["school","schoolgames","playergear","kickoff","photos","incidentboard","tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","timecards","gear","staffing","roster","hawaii","travel","finance","dssccal","pods"]);
+  const OPS_VIEWS = new Set(["waiting","school","schoolgames","playergear","kickoff","photos","incidentboard","tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","timecards","gear","staffing","roster","hawaii","travel","finance","dssccal","pods"]);
   const canOps    = isAdmin || isOwner;
   const opsDenied = <div style={{padding:24,color:C.mut,textAlign:"center"}}>This section is restricted to administrators. Ask the club administrator (Drew) for access.</div>;
   // Once a player has accepted (or is locked/signed) onto a team, they're
@@ -2157,6 +2157,10 @@ export default function App() {
   //                       the tryout because they can't attend.
   const [showTryoutOnly, setShowTryoutOnly] = useState(false);
   const [seUploading, setSeUploading]       = useState(false);   // SportsEngine member export import in flight
+  const [playerNudges, setPlayerNudges]     = useState([]);      // reminders sent from the Waiting on screen
+  const [waitOpen, setWaitOpen]             = useState(() => new Set()); // Waiting on: which needs are expanded
+  const [waitTeam, setWaitTeam]             = useState("");
+  const [waitSending, setWaitSending]       = useState(null);    // "need|playerId" or "need|all" while a nudge sends
   const [showEvalOnly, setShowEvalOnly] = useState(false);
   const [showEvalAsTryout, setShowEvalAsTryout] = useState(false);
   // Three actionable buckets. eval_registered (the eval CSV roster) is
@@ -2546,6 +2550,12 @@ export default function App() {
   useEffect(() => { if (isApproved) { loadPlayers(); loadRankings(); loadIncidents(); loadIncidentNotes(); } }, [isApproved, loadPlayers, loadRankings, loadIncidents, loadIncidentNotes]);
   useEffect(() => { if (isApproved) loadSchoolReports(); }, [isApproved, loadSchoolReports]);
   useEffect(() => { if (isApproved) loadCommitments(); }, [isApproved, loadCommitments]);
+  const loadPlayerNudges = useCallback(async () => {
+    const { data, error } = await supabase.from("player_nudges").select("player_id, need, sent_at").order("sent_at", { ascending: false }).limit(2000);
+    if (error) { console.error("Load player_nudges error:", error); return; }
+    setPlayerNudges(data || []);
+  }, []);
+  useEffect(() => { if (isApproved && view === "waiting") loadPlayerNudges(); }, [isApproved, view, loadPlayerNudges]);
   useEffect(() => { if (isApproved) loadGearOrders(); }, [isApproved, loadGearOrders]);
   useEffect(() => { if (isApproved) loadSchoolGames(); }, [isApproved, loadSchoolGames]);
   // loadTeamsList is declared further down, so naming it here would be a TDZ
@@ -10730,6 +10740,188 @@ export default function App() {
   // ── Jersey & gear orders ────────────────────────────────────────────────
   // What came back from the public order form. The screen exists for two
   // questions: who hasn't ordered yet, and what do we hand the vendor.
+  // ─── WAITING ON ───────────────────────────────────────────────────────
+  // Only the players who still owe the club something, filed under the four
+  // things families are asked for this time of year, each with a one-tap
+  // reminder to the parents and a record of when the last one went.
+  function renderWaiting() {
+    const TERMINAL = ["declined", "not_invited", "opted_out"];
+    const LONESTAR = "https://memberships.sportsengine.com/org/lone-star-region-volleyball/affiliation/ds-elite-volleyball-ds-elite";
+    const base = APP_URL.replace(/\/$/, "");
+    const isRise = (t) => /\brise\b/i.test(t || "");
+    const eventTeams = new Set(practiceTeams.filter(isEventTeam).map(t => t.team_name));
+    const rostered = players.filter(p => p.team_assignment && (p.roster_status || "active") === "active"
+      && !TERMINAL.includes(p.offer_status || "") && !eventTeams.has(p.team_assignment)
+      && (!waitTeam || p.team_assignment === waitTeam));
+    const teamsAll = [...new Set(players.filter(p => p.team_assignment && !TERMINAL.includes(p.offer_status || "")).map(p => p.team_assignment))]
+      .filter(t => !eventTeams.has(t)).sort((a, b) => (parseInt(a) || 99) - (parseInt(b) || 99) || a.localeCompare(b));
+    const gearBy = new Map(gearOrders.map(r => [r.player_id, r]));
+    const commitBy = new Map(commitments.map(c => [c.player_id, c]));
+    const shoeBy = new Map();
+    for (const inv of shoeInvoices) { if (!inv.player_id) continue; (shoeBy.get(inv.player_id) || shoeBy.set(inv.player_id, []).get(inv.player_id)).push(inv); }
+    const lastNudge = new Map();
+    for (const n of playerNudges) { const k = n.need + "|" + n.player_id; if (!lastNudge.has(k) || n.sent_at > lastNudge.get(k)) lastNudge.set(k, n.sent_at); }
+    const girl = (p) => p.first_name.trim();
+    const parents = (p) => [...new Set([p.parent_name, p.parent2_name].map(x => String(x || "").trim().split(/\s+/)[0]).filter(Boolean))];
+    const greet = (p) => { const ps = parents(p); return ps.length ? "Hi " + (ps.length === 1 ? ps[0] : ps.slice(0, -1).join(", ") + " and " + ps[ps.length - 1]) + "," : "Hi,"; };
+    const sign = "\n\nThank you,\n\n" + (coach?.display_name || "Drew Rose") + "\nDS Elite";
+    const ago = (iso) => { if (!iso) return null; const d = Math.floor((Date.now() - new Date(iso)) / 86400000); return d <= 0 ? "today" : d === 1 ? "yesterday" : d + "d ago"; };
+
+    // The four needs. Each says who is still waiting, what exactly, and the
+    // email that goes if you nudge. `canNudge` is false where the next move is
+    // ours, not the family's (a shoe invoice we haven't issued yet).
+    const NEEDS = [
+      { key: "gear", label: "Gear sizing", icon: "👕", color: "#a78bfa",
+        scope: "Teams that order gear (Rise is fitted on 11 October)",
+        rows: rostered.filter(p => GEAR_TEAMS.includes(p.team_assignment)).map(p => {
+          const r = gearBy.get(p.id);
+          if (r && !r.is_draft && r.details_confirmed) return null;
+          return { p, detail: r ? (r.is_draft ? "started the form, never sent it" : "sent, but details not confirmed") : "no sizes at all", canNudge: !!p.gear_form_token };
+        }).filter(Boolean),
+        subject: (p) => "Still need " + girl(p) + "'s uniform sizes",
+        body: (p) => greet(p) + "\n\nWe still don't have " + girl(p) + "'s uniform sizes, and the order can't go in without them. It takes a couple of minutes:\n\n" + base + "/gear?t=" + p.gear_form_token + "\n\nIf you already filled it in, just open the link and tap send at the bottom so it reaches us." + sign },
+      { key: "shoes", label: "Shoe ordering", icon: "👟", color: "#f59e0b",
+        scope: "Avoli club shoe, $167, invoiced through Playbook",
+        rows: rostered.filter(p => GEAR_TEAMS.includes(p.team_assignment)).map(p => {
+          const inv = shoeBy.get(p.id) || [];
+          if (inv.some(i => i.status === "Paid")) return null;
+          const owed = inv.reduce((n, i) => n + Number(i.remaining || 0), 0);
+          return inv.length ? { p, detail: "invoice unpaid · $" + owed + (inv[0].account_owner ? " · sent to " + inv[0].account_owner : ""), canNudge: true }
+                            : { p, detail: "no invoice in Playbook yet — needs one from us", canNudge: false, ours: true };
+        }).filter(Boolean),
+        subject: (p) => girl(p) + "'s Avoli shoe invoice is still open",
+        body: (p) => greet(p) + "\n\nThe Playbook invoice for " + girl(p) + "'s DS Elite Avoli team shoes ($167) is still unpaid. The club order goes in as one block, so please pay it as soon as you can — the invoice is in your email from Playbook, or under your account at drippingsports.playbookapi.com." + sign },
+      { key: "sportsengine", label: "USAV / SportsEngine membership", icon: "🪪", color: "#38bdf8",
+        scope: "Lone Star Region + USAV, $55 — required before she can be rostered (Rise teams not included)",
+        rows: rostered.filter(p => !isRise(p.team_assignment) && !p.sportsengine_registered).map(p => ({ p, detail: "no SportsEngine profile with the club", canNudge: true })),
+        subject: (p) => girl(p) + " still needs her Lone Star / USAV membership",
+        body: (p) => greet(p) + "\n\nWe can't officially roster " + girl(p) + " or take her to a tournament until her Lone Star + USAV membership is done. It's $55 through SportsEngine and takes a few minutes:\n\n" + LONESTAR + "\n\nWhen it's through, SportsEngine should show her as Eligible for the 2026-27 season." + sign },
+      { key: "commitment", label: "Commitment signing", icon: "✍️", color: C.grn,
+        scope: "Player and a parent both sign (Rise teams sign at orientation on 11 October)",
+        rows: rostered.filter(p => !isRise(p.team_assignment)).map(p => {
+          const c = commitBy.get(p.id);
+          if (c && c.player_signed_at && c.parent_signed_at) return null;
+          const who = !c ? "neither has signed" : !c.player_signed_at && !c.parent_signed_at ? "neither has signed" : !c.player_signed_at ? "parent signed · " + girl(p) + " hasn't" : "player signed · parent hasn't";
+          return { p, detail: who, canNudge: !!p.commitment_token };
+        }).filter(Boolean),
+        subject: (p) => girl(p) + "'s DS Elite commitment still needs a signature",
+        body: (p) => { const c = commitBy.get(p.id); const who = c && c.player_signed_at ? "a parent's signature" : c && c.parent_signed_at ? girl(p) + "'s signature" : "both " + girl(p) + "'s and a parent's signatures";
+          return greet(p) + "\n\n" + girl(p) + "'s DS Elite commitment is still waiting on " + who + ". It's the same page we went through at orientation:\n\n" + base + "/commitment?t=" + p.commitment_token + "\n\nEach of you ticks your own boxes and signs; it saves as you go." + sign; } },
+    ];
+
+    const sendNudge = async (need, row, quiet = false) => {
+      const p = row.p;
+      const to = [...new Set(parentEmailsOf(p).map(e => e.toLowerCase()))];
+      if (!to.length) { if (!quiet) window.alert("No parent email on file for " + p.first_name + " " + p.last_name + "."); return false; }
+      const res = await fetch("/api/send-email", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ subject: need.subject(p), body: need.body(p), recipients: to, skipPush: true,
+          sentBy: coach?.display_name || null, sentByEmail: coach?.email || null, source: "waiting-on nudge · " + need.key }) });
+      const out = await res.json().catch(() => ({}));
+      if (!res.ok || out.error) { if (!quiet) window.alert("Send failed: " + (out.error || res.statusText)); return false; }
+      await supabase.from("player_nudges").insert({ player_id: p.id, need: need.key, channel: "email", recipients: to, sent_by: coach?.display_name || coach?.email || null });
+      return true;
+    };
+    const nudgeOne = async (need, row) => {
+      if (!window.confirm("Email " + parents(row.p).join(" and ") + " about " + row.p.first_name + "'s " + need.label.toLowerCase() + "?")) return;
+      setWaitSending(need.key + "|" + row.p.id);
+      try { if (await sendNudge(need, row)) await loadPlayerNudges(); } finally { setWaitSending(null); }
+    };
+    const nudgeAll = async (need) => {
+      const list = need.rows.filter(r => r.canNudge && parentEmailsOf(r.p).length);
+      if (!list.length) { window.alert("Nobody to nudge here."); return; }
+      if (!window.confirm("Email " + list.length + " famil" + (list.length === 1 ? "y" : "ies") + " about " + need.label.toLowerCase() + "?\n\nEach family gets its own message.")) return;
+      setWaitSending(need.key + "|all");
+      let ok = 0;
+      try { for (const r of list) if (await sendNudge(need, r, true)) ok++; await loadPlayerNudges(); }
+      finally { setWaitSending(null); }
+      window.alert(ok + " of " + list.length + " sent.");
+    };
+    const copyEmails = (need) => {
+      const em = [...new Set(need.rows.flatMap(r => parentEmailsOf(r.p)).map(e => e.toLowerCase()))];
+      if (!em.length) { window.alert("No emails to copy."); return; }
+      navigator.clipboard?.writeText(em.join(", ")).then(() => window.alert(em.length + " addresses copied.")).catch(() => window.prompt("Copy these:", em.join(", ")));
+    };
+    const toggle = (k) => setWaitOpen(prev => { const n = new Set(prev); if (n.has(k)) n.delete(k); else n.add(k); return n; });
+    const total = NEEDS.reduce((n, x) => n + x.rows.length, 0);
+    const playersWaiting = new Set(NEEDS.flatMap(x => x.rows.map(r => r.p.id))).size;
+
+    return (
+      <div style={{maxWidth:980,margin:"0 auto"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:14}}>
+          <div>
+            <h2 style={{margin:0,fontSize:20,fontWeight:800,color:C.gold}}>⏳ Waiting on</h2>
+            <div style={{fontSize:12,color:C.mut,marginTop:2}}>
+              <b style={{color:C.text}}>{playersWaiting}</b> player{playersWaiting===1?"":"s"} still owe{playersWaiting===1?"s":""} something · {total} item{total===1?"":"s"} across four needs
+            </div>
+          </div>
+          <div style={{flex:1}} />
+          <select value={waitTeam} onChange={e=>setWaitTeam(e.target.value)} style={{...inpStyle,padding:"6px 10px",fontSize:12,minWidth:150}}>
+            <option value="">All teams</option>
+            {teamsAll.map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
+        </div>
+
+        {NEEDS.map(need => {
+          const open = waitOpen.has(need.key);
+          const nudgeable = need.rows.filter(r => r.canNudge && parentEmailsOf(r.p).length).length;
+          const busyAll = waitSending === need.key + "|all";
+          const byTeam = new Map();
+          for (const r of need.rows) { const k = r.p.team_assignment; if (!byTeam.has(k)) byTeam.set(k, []); byTeam.get(k).push(r); }
+          const groups = [...byTeam.entries()].sort((a, b) => (parseInt(a[0]) || 99) - (parseInt(b[0]) || 99) || a[0].localeCompare(b[0]));
+          return (
+            <div key={need.key} style={{background:C.card,border:"1px solid "+(need.rows.length ? need.color : C.border),borderRadius:12,marginBottom:10,overflow:"hidden"}}>
+              <div onClick={()=>toggle(need.key)} style={{display:"flex",alignItems:"center",gap:10,padding:"12px 14px",cursor:"pointer",flexWrap:"wrap"}}>
+                <span style={{fontSize:11,color:C.mut,width:10}}>{open ? "⌄" : "›"}</span>
+                <span style={{fontSize:16}}>{need.icon}</span>
+                <div style={{flex:1,minWidth:200}}>
+                  <div style={{fontSize:14,fontWeight:800,color:C.text}}>{need.label} <span style={{fontSize:13,fontWeight:800,color:need.rows.length?need.color:C.grn,marginLeft:6}}>{need.rows.length ? need.rows.length + " waiting" : "all done"}</span></div>
+                  <div style={{fontSize:11,color:C.mut,marginTop:1}}>{need.scope}</div>
+                </div>
+                {need.rows.length > 0 && (
+                  <div style={{display:"flex",gap:6,flexWrap:"wrap"}} onClick={e=>e.stopPropagation()}>
+                    <button onClick={()=>copyEmails(need)} style={{padding:"6px 10px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontFamily:"inherit",fontSize:11,fontWeight:700,cursor:"pointer"}}>Copy emails</button>
+                    <button onClick={()=>nudgeAll(need)} disabled={!nudgeable || !!waitSending}
+                      style={{padding:"6px 12px",borderRadius:8,border:"none",background:nudgeable?need.color:C.border,color:nudgeable?"#000":C.mut,fontFamily:"inherit",fontSize:11,fontWeight:800,cursor:nudgeable?"pointer":"default"}}>
+                      {busyAll ? "Sending…" : "Nudge all " + nudgeable}
+                    </button>
+                  </div>
+                )}
+              </div>
+              {open && need.rows.length > 0 && (
+                <div style={{borderTop:"1px solid "+C.border}}>
+                  {groups.map(([team, list]) => (
+                    <div key={team}>
+                      <div style={{padding:"6px 14px",fontSize:10,fontWeight:800,letterSpacing:0.5,textTransform:"uppercase",color:C.mut,background:"rgba(255,255,255,0.03)",borderBottom:"1px solid "+C.border}}>{team} · {list.length}</div>
+                      {list.slice().sort((a, b) => a.p.last_name.localeCompare(b.p.last_name)).map(r => {
+                        const last = lastNudge.get(need.key + "|" + r.p.id);
+                        const busy = waitSending === need.key + "|" + r.p.id;
+                        const hasEmail = parentEmailsOf(r.p).length > 0;
+                        return (
+                          <div key={r.p.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 14px",borderBottom:"1px solid "+C.border,flexWrap:"wrap"}}>
+                            <button onClick={()=>setProfileId(r.p.id)} style={{background:"none",border:"none",padding:0,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,color:C.text,minWidth:170,textAlign:"left"}}>{r.p.first_name} {r.p.last_name}</button>
+                            <span style={{fontSize:11,color:r.ours?"#f59e0b":C.mut,flex:1,minWidth:200}}>{r.detail}</span>
+                            <span style={{fontSize:10,color:last?C.mut:"transparent",whiteSpace:"nowrap"}}>{last ? "nudged " + ago(last) : "—"}</span>
+                            {r.canNudge
+                              ? <button onClick={()=>nudgeOne(need, r)} disabled={!hasEmail || !!waitSending} title={hasEmail ? "Email " + parents(r.p).join(" and ") : "No parent email on file"}
+                                  style={{padding:"4px 12px",borderRadius:7,border:"1px solid "+(hasEmail?need.color:C.border),background:"transparent",color:hasEmail?need.color:C.mut,fontFamily:"inherit",fontSize:11,fontWeight:800,cursor:hasEmail?"pointer":"default"}}>
+                                  {busy ? "Sending…" : "Nudge"}
+                                </button>
+                              : <span style={{fontSize:10,color:C.mut,padding:"4px 8px"}}>our move</span>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+        <div style={{fontSize:11,color:C.mut,marginTop:6}}>A nudge is one email to the family, from you, with the link they need. Every send is remembered here so you can see who has already been asked.</div>
+      </div>
+    );
+  }
+
   function renderPlayerGear() {
     const TERMINAL_OFFER = ["declined", "not_invited", "opted_out"];
     const eligible = players
@@ -30820,6 +31012,7 @@ export default function App() {
                   ["hdr","DS Elite · Club"],
                   ["school","School Teams"],
                   ["schoolgames","School Games"],
+                  ["waiting","Waiting on"],
                   ["playergear","Gear Orders"],
                   ["kickoff","Kickoffs" + (kickoffOutstanding ? " (" + kickoffOutstanding + ")" : "")],
                   ["photos","Team Photos"],
@@ -31058,6 +31251,7 @@ export default function App() {
         {view==="school" && renderSchoolTeams()}
         {view==="schoolgames" && renderSchoolGames()}
         {view==="playergear" && renderPlayerGear()}
+        {view==="waiting" && renderWaiting()}
         {view==="kickoff" && renderKickoffs()}
         {view==="photos" && renderTeamPhotos()}
         {view==="incidents" && renderIncidents()}
