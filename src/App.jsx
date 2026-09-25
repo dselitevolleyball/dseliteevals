@@ -6,6 +6,7 @@ import { GEAR_TEAMS } from "../shared/gear-teams.js";
 import { planRooms, pairCoaches, planRoomsByTeam, UNASSIGNED } from "../shared/room-plan.js";
 import { PLAYER_CLAUSES, PARENT_CLAUSES, isFullySigned } from "../shared/commitment.js";
 import { isEventTeam } from "../shared/event-teams.js";
+import { parseSaleRows, matchInvoicesToPlayers } from "../shared/shoe-invoices.js";
 import { SCHOOL_DIVS } from "../shared/school-divs.js";
 import { schoolKey } from "../shared/school-schedule.js";
 import DsscHub from "./dssc/DsscHub.jsx";
@@ -1564,6 +1565,8 @@ export default function App() {
   const [schoolRenaming, setSchoolRenaming]          = useState(null);    // school board: which group's name is being retyped
   const [schoolRenameText, setSchoolRenameText]      = useState("");
   const [gearOrders, setGearOrders]                  = useState([]);
+  const [shoeInvoices, setShoeInvoices]               = useState([]);   // Avoli shoe invoices from Playbook's sale export
+  const [shoeUploading, setShoeUploading]             = useState(false);
   const [gearOrderFilter, setGearOrderFilter]        = useState("all");  // all | in | waiting | flagged
   const [gearOrderGroup, setGearOrderGroup]          = useState("team"); // team | flat
   const [gearFillId, setGearFillId]                  = useState(null);   // whose form is open on this device
@@ -2355,7 +2358,37 @@ export default function App() {
       .order("updated_at", { ascending: false });
     if (error) { console.error("Load player_gear_orders error:", error); return; }
     setGearOrders(data || []);
+    // Shoe invoices live beside the orders on the board, so they load together.
+    const inv = await supabase.from("shoe_invoices").select("*").order("sale_date", { ascending: false });
+    if (inv.error) console.error("Load shoe_invoices error:", inv.error);
+    else setShoeInvoices(inv.data || []);
   }, []);
+  // Playbook → Reports → Sales, item "DS Elite Avoli Team Shoes", Export. Rows
+  // are matched to players by name (shared/shoe-invoices.js) and upserted on
+  // the sale id, so re-uploading refreshes paid/unpaid and removes nothing.
+  const uploadShoeInvoices = useCallback((file) => {
+    if (!file) return;
+    setShoeUploading(true);
+    Papa.parse(file, {
+      header: true, skipEmptyLines: true,
+      complete: async ({ data }) => {
+        try {
+          const invoices = parseSaleRows(data);
+          if (!invoices.length) { window.alert("No shoe invoices found in that file. It should be Playbook's sale export for the Avoli shoes."); return; }
+          const { matched, unmatched } = matchInvoicesToPlayers(invoices, players);
+          const stamp = new Date().toISOString();
+          const { error } = await supabase.from("shoe_invoices")
+            .upsert(invoices.map(i => ({ ...i, imported_at: stamp, imported_by: coach?.display_name || coach?.email || null })), { onConflict: "sale_id" });
+          if (error) { window.alert("Couldn't save: " + error.message); return; }
+          await loadGearOrders();
+          const paid = invoices.filter(i => i.status === "Paid").length;
+          window.alert(invoices.length + " shoe invoices imported: " + paid + " paid, " + (invoices.length - paid) + " unpaid. " + matched + " matched to players"
+            + (unmatched.length ? ". Not matched: " + unmatched.map(i => i.participant).join(", ") : "."));
+        } finally { setShoeUploading(false); }
+      },
+      error: (err) => { setShoeUploading(false); window.alert("Couldn't read that file: " + (err?.message || err)); },
+    });
+  }, [players, coach, loadGearOrders]);
   // Every school name already on the board, most common first. Offered as the
   // autocomplete list wherever staff types one, so the second correction lands
   // on the same string as the first instead of inventing a fourth spelling.
@@ -10700,10 +10733,23 @@ export default function App() {
     };
     const schoolBy = new Set(schoolReports.map(r => r.player_id));
     const owesSchool = (p) => SCHOOL_DIVS.includes(p.usav_div) && !schoolBy.has(p.id);
+    // Shoe invoice per girl. A family can carry two invoices (a re-issue);
+    // she is paid if any of them is, and owes whatever is still open.
+    const shoeByPlayer = new Map();
+    for (const inv of shoeInvoices) { if (!inv.player_id) continue; const a = shoeByPlayer.get(inv.player_id) || []; a.push(inv); shoeByPlayer.set(inv.player_id, a); }
+    const shoeOf = (pid) => {
+      const a = shoeByPlayer.get(pid);
+      if (!a || !a.length) return { status: "none", owed: 0, invoices: [] };
+      const paid = a.some(i => i.status === "Paid");
+      return { status: paid ? "paid" : "unpaid", owed: paid ? 0 : a.reduce((n, i) => n + Number(i.remaining || 0), 0), invoices: a };
+    };
     const rows = eligible.map(p => {
       const r = byPlayer.get(p.id);
-      return { p, r, flags: flagsFor(p, r), gaps: contactGaps(r), school: !owesSchool(p), sizeGaps: sizeGapsOf(r) };
+      return { p, r, flags: flagsFor(p, r), gaps: contactGaps(r), school: !owesSchool(p), sizeGaps: sizeGapsOf(r), shoe: shoeOf(p.id) };
     });
+    const shoeUnpaid = rows.filter(x => x.shoe.status === "unpaid");
+    const shoeNone = rows.filter(x => x.shoe.status === "none");
+    const shoeUnmatched = shoeInvoices.filter(i => !i.player_id);
     // A draft is a form still being filled in on somebody's phone, not an
     // order. Counting it as one would drop her off the chase list with her
     // sizes still blank — which is the exact failure autosave was added to
@@ -10725,6 +10771,8 @@ export default function App() {
                 : gearOrderFilter === "noschool" ? noschool
                 : gearOrderFilter === "started" ? started
                 : gearOrderFilter === "sizegap" ? sizegap
+                : gearOrderFilter === "shoeunpaid" ? shoeUnpaid
+                : gearOrderFilter === "shoenone" ? shoeNone
                 : rows)
       .slice().sort((a,b) => (a.p.team_assignment||"").localeCompare(b.p.team_assignment||"")
         || (a.p.last_name||"").localeCompare(b.p.last_name||""));
@@ -10843,7 +10891,76 @@ export default function App() {
           {pill("nocontact","Missing a contact",nocontact.length,"#f59e0b")}
           {pill("noschool","No school answer",noschool.length,"#38bdf8")}
           {sizegap.length > 0 && pill("sizegap","Size we don't stock",sizegap.length,C.red)}
+          {shoeInvoices.length > 0 && pill("shoeunpaid","Shoes unpaid",shoeUnpaid.length,"#f59e0b")}
+          {shoeInvoices.length > 0 && pill("shoenone","No shoe invoice",shoeNone.length,C.mut)}
         </div>
+
+        {/* Avoli club shoes: the one thing families pay for separately, and
+            the only record of who has is Playbook's sale export. */}
+        {canOps && (() => {
+          const paidN = shoeInvoices.filter(i => i.status === "Paid").length;
+          const unpaidN = shoeInvoices.length - paidN;
+          const owed = shoeInvoices.filter(i => i.status !== "Paid").reduce((n, i) => n + Number(i.remaining || 0), 0);
+          const last = shoeInvoices.reduce((mx, i) => (i.imported_at > mx ? i.imported_at : mx), "");
+          const byTeam = new Map();
+          for (const x of rows) { const k = x.p.team_assignment || "(no team)"; if (!byTeam.has(k)) byTeam.set(k, []); byTeam.get(k).push(x); }
+          const teams = [...byTeam.entries()].sort((a, b) => (parseInt(a[0]) || 99) - (parseInt(b[0]) || 99) || a[0].localeCompare(b[0]));
+          const col = (st) => st === "paid" ? C.grn : st === "unpaid" ? "#f59e0b" : C.mut;
+          return (
+            <details open style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,marginBottom:14}}>
+              <summary style={{padding:"10px 14px",cursor:"pointer",fontSize:13,fontWeight:800,color:C.text}}>
+                👟 Avoli shoe invoices{" "}
+                <span style={{color:C.mut,fontWeight:500}}>
+                  {shoeInvoices.length
+                    ? <>· <b style={{color:C.grn}}>{paidN} paid</b> · <b style={{color:"#f59e0b"}}>{unpaidN} unpaid</b> · ${owed.toLocaleString()} still owed{shoeUnmatched.length ? <> · <b style={{color:C.red}}>{shoeUnmatched.length} not matched</b></> : null}</>
+                    : "· nothing imported yet"}
+                </span>
+              </summary>
+              <div style={{padding:"0 14px 12px"}}>
+                <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap",marginBottom:10}}>
+                  <label style={{padding:"7px 12px",borderRadius:8,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontFamily:"inherit",fontSize:12,fontWeight:800,cursor:shoeUploading?"default":"pointer",opacity:shoeUploading?0.6:1}}>
+                    {shoeUploading ? "Importing…" : "⬆ Upload Playbook sale export"}
+                    <input type="file" accept=".csv" style={{display:"none"}} disabled={shoeUploading}
+                      onChange={e => { const f = e.target.files?.[0]; e.target.value = ""; if (f) uploadShoeInvoices(f); }} />
+                  </label>
+                  <span style={{fontSize:11,color:C.mut}}>
+                    Playbook → Reports → Sales → item <b>DS Elite Avoli Team Shoes</b> → Export. Re-uploading refreshes paid/unpaid; nothing is removed.
+                    {last && <> Last import {new Date(last).toLocaleDateString(undefined,{month:"short",day:"numeric"})} {new Date(last).toLocaleTimeString(undefined,{hour:"numeric",minute:"2-digit"})}.</>}
+                  </span>
+                </div>
+                {shoeUnmatched.length > 0 && (
+                  <div style={{fontSize:11,color:C.red,marginBottom:10,lineHeight:1.5}}>
+                    <b>Couldn't match to a player:</b> {shoeUnmatched.map(i => i.participant + " (" + (i.account_owner || "?") + ", " + i.status + (i.match_note ? " — " + i.match_note : "") + ")").join("; ")}
+                  </div>
+                )}
+                {shoeInvoices.length > 0 && (
+                  <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                    {teams.map(([team, list]) => {
+                      const tp = list.filter(x => x.shoe.status === "paid").length, tu = list.filter(x => x.shoe.status === "unpaid").length, tn = list.length - tp - tu;
+                      return (
+                        <div key={team} style={{display:"flex",gap:8,alignItems:"flex-start",flexWrap:"wrap"}}>
+                          <div style={{minWidth:130,fontSize:11,fontWeight:800,color:C.text,paddingTop:3}}>
+                            {team} <span style={{color:C.mut,fontWeight:500}}>{tp}/{list.length} paid{tu ? " · " + tu + " unpaid" : ""}{tn ? " · " + tn + " none" : ""}</span>
+                          </div>
+                          <div style={{display:"flex",gap:4,flexWrap:"wrap",flex:1}}>
+                            {list.slice().sort((a, b) => (a.p.last_name || "").localeCompare(b.p.last_name || "")).map(x => (
+                              <button key={x.p.id} onClick={()=>setProfileId(x.p.id)}
+                                title={(x.shoe.status === "paid" ? "Paid" : x.shoe.status === "unpaid" ? "Unpaid — $" + x.shoe.owed + " owed" : "No shoe invoice in Playbook") + (x.r?.shoe_size ? " · size " + x.r.shoe_size : " · no size on file") + (x.shoe.invoices[0]?.account_owner ? " · invoiced to " + x.shoe.invoices[0].account_owner : "")}
+                                style={{padding:"2px 8px",borderRadius:999,fontSize:10.5,fontWeight:700,cursor:"pointer",fontFamily:"inherit",
+                                  border:"1px solid "+col(x.shoe.status),background:x.shoe.status==="none"?"transparent":col(x.shoe.status)+"22",color:col(x.shoe.status)}}>
+                                {x.p.first_name} {x.p.last_name}{x.r?.shoe_size ? <span style={{opacity:0.7}}> · {x.r.shoe_size}</span> : null}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </details>
+          );
+        })()}
 
         <div style={{display:"flex",gap:7,flexWrap:"wrap",marginBottom:14}}>
           <span style={{fontSize:11,color:C.mut,alignSelf:"center",marginRight:2}}>Group by</span>
@@ -10943,7 +11060,7 @@ export default function App() {
                 fontSize:10,fontWeight:800,letterSpacing:0.4,textTransform:"uppercase",color:C.mut}}>{h}</th>
             ))}</tr></thead>
             <tbody>
-              {shown.map(({ p, r, flags, gaps, school, sizeGaps }) => (
+              {shown.map(({ p, r, flags, gaps, school, sizeGaps, shoe }) => (
                 <tr key={p.id} onClick={()=>setProfileId(p.id)} style={{cursor:"pointer"}}
                   onMouseEnter={e=>e.currentTarget.style.background=C.bg}
                   onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
@@ -10953,6 +11070,7 @@ export default function App() {
                     {!!gaps?.length && <span title={"Still missing: " + gaps.join(", ")} style={{marginLeft:5,color:"#f59e0b"}}>☎</span>}
                     {school === false && <span title="No school-team answer yet" style={{marginLeft:5,color:"#38bdf8"}}>🏫</span>}
                     {!!sizeGaps?.length && <span title={"Outside our stocked sizes: " + sizeGaps.join(" and ")} style={{marginLeft:5,color:C.red}}>⚠</span>}
+                    {shoe && shoe.status !== "none" && <span title={shoe.status === "paid" ? "Shoes paid" : "Shoes unpaid — $" + shoe.owed + " owed"} style={{marginLeft:5,color:shoe.status==="paid"?C.grn:"#f59e0b"}}>👟</span>}
                   </td>
                   <td style={{padding:"6px 10px",borderBottom:"1px solid "+C.border,color:C.mut,whiteSpace:"nowrap"}}>{p.jersey_number ?? "—"}</td>
                   <td style={{padding:"6px 10px",borderBottom:"1px solid "+C.border,color:C.mut,whiteSpace:"nowrap"}}>{r?.team_name || p.team_assignment || "—"}</td>
