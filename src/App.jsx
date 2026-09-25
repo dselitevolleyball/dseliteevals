@@ -12,6 +12,7 @@ import { SCHOOL_DIVS } from "../shared/school-divs.js";
 import { schoolKey } from "../shared/school-schedule.js";
 import DsscHub from "./dssc/DsscHub.jsx";
 import DsscAdmin from "./dssc/DsscAdmin.jsx";
+import HousingView from "./HousingView.jsx";
 import { TN_SUB_PLACEHOLDERS, isPlaceholderPerson, sessionStaff, staffNeeded, staffApproved, staffPending, sessionShort, onStaff, parsePlanPaste } from "../shared/dssc-clinics.js";
 
 const POSITIONS = ["S","OH","MB","RS","L","DS","U"];
@@ -2018,7 +2019,7 @@ export default function App() {
   // email we send them. Every admin control inside renderDsysa — add/cancel a
   // date, set the lead, remove someone else's signup — is separately gated on
   // isAdmin, so opening the view exposes no admin action.
-  const OPS_VIEWS = new Set(["waiting","privates","school","schoolgames","playergear","kickoff","photos","incidentboard","tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","timecards","gear","staffing","roster","hawaii","travel","finance","dssccal","pods"]);
+  const OPS_VIEWS = new Set(["housing","waiting","privates","school","schoolgames","playergear","kickoff","photos","incidentboard","tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","timecards","gear","staffing","roster","hawaii","travel","finance","dssccal","pods"]);
   const canOps    = isAdmin || isOwner;
   const opsDenied = <div style={{padding:24,color:C.mut,textAlign:"center"}}>This section is restricted to administrators. Ask the club administrator (Drew) for access.</div>;
   // Once a player has accepted (or is locked/signed) onto a team, they're
@@ -3000,7 +3001,7 @@ export default function App() {
     setTournamentAssignments(aRes.data || []);
     setTournamentsLoading(false);
   }, []);
-  useEffect(() => { if (isApproved && (view === "tournaments" || view === "teamdir" || view === "home" || view === "practice" || view === "travel")) loadTournaments(); }, [isApproved, view, loadTournaments]);
+  useEffect(() => { if (isApproved && (view === "tournaments" || view === "teamdir" || view === "home" || view === "practice" || view === "travel" || view === "housing")) loadTournaments(); }, [isApproved, view, loadTournaments]);
 
   // Practice tab loader
   const loadPractice = useCallback(async () => {
@@ -4472,7 +4473,7 @@ export default function App() {
   useEffect(() => {
     // Roster also drives the Tryout coach picker / Text Coaches lookup,
     // so make sure it's loaded whenever either tab opens.
-    if (isApproved && (view === "coaches" || view === "tryouts" || view === "home" || view === "clockin" || view === "teamdir" || view === "practice" || view === "timecards" || view === "clinics" || view === "dssc" || view === "dssccal" || view === "tournaments" || view === "kickoff" || view === "travel" || view === "messages" || view === "privates")) loadCoachRoster();
+    if (isApproved && (view === "coaches" || view === "tryouts" || view === "home" || view === "clockin" || view === "teamdir" || view === "practice" || view === "timecards" || view === "clinics" || view === "dssc" || view === "dssccal" || view === "tournaments" || view === "kickoff" || view === "travel" || view === "housing" || view === "messages" || view === "privates")) loadCoachRoster();
   }, [isApproved, view, loadCoachRoster]);
   // The coach card edits coach_roster, so make sure it's loaded when one opens.
   useEffect(() => { if (isApproved && coachCardName) loadCoachRoster(); }, [isApproved, coachCardName, loadCoachRoster]);
@@ -31445,7 +31446,7 @@ export default function App() {
                   ["photos","Team Photos"],
                   ["incidentboard","Issue Board" + (incidents.filter(r => r.status === "open").length ? " (" + incidents.filter(r => r.status === "open").length + ")" : "")],
                   ["tracker","Tracker"], ["teamdir","All Teams"], ["playereval","Player Evaluations"], ["passing","Passer Ratings"], ["practice","Practice"], ["sa","S&A Schedule"], ["scholarships","Scholarships"],
-                  ...(isAdmin ? [["hawaii","Hawaii"], ["travel","Travel"], ["finance","Finance"]] : []),
+                  ...(isAdmin ? [["hawaii","Hawaii"], ["travel","Travel"], ["housing","Housing"], ["finance","Finance"]] : []),
                   ["hdr","DS Elite · Coaches & Pay"],
                   ["coaches","Coaches"], ...(isAdmin ? [["staffing","Staffing Board"]] : []), ["coverage","Coach Coverage"], ["timecards","Time Cards"], ["myexpenses","My Expenses"], ...(canOps ? [["claims","Coach Claims" + (pendingClaimCount ? " (" + pendingClaimCount + ")" : "")]] : []), ["gear","Gear Sizes" + (gearOutstanding ? " (" + gearOutstanding + ")" : "")], ["requests","Requests" + (pendingReqs ? " (" + pendingReqs + ")" : "")],
                   ["hdr","DSSC"],
@@ -31703,6 +31704,7 @@ export default function App() {
         {view==="myexpenses" && renderMyExpenses()}
         {view==="claims" && canOps && renderClaims()}
         {view==="travel" && renderTravel()}
+        {view==="housing" && (isAdmin ? <HousingView tournaments={tournaments} tournamentAssignments={tournamentAssignments} players={players} coachRoster={coachRoster} coach={coach} reloadTournaments={loadTournaments} /> : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Housing is admin-only.</div>)}
         {view==="faq" && renderFaq()}
         {view==="practiceplan" && renderPracticePlans()}
         {view==="clinics" && (isDsscDirector ? ((clinicOpenId || dsscAdminLegacy) ? renderClinics() : renderDsscAdmin()) : renderDsscHub())}
