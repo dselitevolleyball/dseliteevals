@@ -7,6 +7,7 @@ import { planRooms, pairCoaches, planRoomsByTeam, UNASSIGNED } from "../shared/r
 import { PLAYER_CLAUSES, PARENT_CLAUSES, isFullySigned } from "../shared/commitment.js";
 import { isEventTeam } from "../shared/event-teams.js";
 import { parseSaleRows, matchInvoicesToPlayers } from "../shared/shoe-invoices.js";
+import { parseSportsEngineRows, matchMembersToPlayers, playerPatchFor } from "../shared/sportsengine.js";
 import { SCHOOL_DIVS } from "../shared/school-divs.js";
 import { schoolKey } from "../shared/school-schedule.js";
 import DsscHub from "./dssc/DsscHub.jsx";
@@ -2155,6 +2156,7 @@ export default function App() {
   //                       (supplemental=1) — they're using their eval as
   //                       the tryout because they can't attend.
   const [showTryoutOnly, setShowTryoutOnly] = useState(false);
+  const [seUploading, setSeUploading]       = useState(false);   // SportsEngine member export import in flight
   const [showEvalOnly, setShowEvalOnly] = useState(false);
   const [showEvalAsTryout, setShowEvalAsTryout] = useState(false);
   // Three actionable buckets. eval_registered (the eval CSV roster) is
@@ -2389,6 +2391,39 @@ export default function App() {
       error: (err) => { setShoeUploading(false); window.alert("Couldn't read that file: " + (err?.message || err)); },
     });
   }, [players, coach, loadGearOrders]);
+  // SportsEngine → the org's member export (Name, Profile Status, Email, …).
+  // Every player it matches is marked registered with her SportsEngine ID;
+  // adults and unknowns are skipped; nothing is un-ticked, because a box a
+  // coach ticked by hand may be right and the export a day stale.
+  const uploadSportsEngine = useCallback((file) => {
+    if (!file) return;
+    setSeUploading(true);
+    Papa.parse(file, {
+      header: true, skipEmptyLines: true,
+      complete: async ({ data }) => {
+        try {
+          const members = parseSportsEngineRows(data);
+          if (!members.length) { window.alert("No profiles found in that file. It should be SportsEngine's member export (Name, Profile Status, Email…)."); return; }
+          const { matched } = matchMembersToPlayers(members, players);
+          const stamp = new Date().toISOString();
+          let n = 0, failed = 0;
+          for (const m of members) {
+            if (!m.player_id) continue;
+            const { error } = await supabase.from("players").update(playerPatchFor(m, stamp)).eq("id", m.player_id);
+            if (error) failed++; else n++;
+          }
+          const ids = new Set(members.filter(m => m.player_id).map(m => m.player_id));
+          const missing = players.filter(x => x.team_assignment && (x.roster_status || "active") === "active"
+            && !["declined", "not_invited", "opted_out"].includes(x.offer_status || "") && !ids.has(x.id));
+          await loadPlayers();
+          window.alert(members.length + " SportsEngine profiles read · " + matched + " matched to players · " + n + " marked registered"
+            + (failed ? " (" + failed + " failed to save)" : "") + ".\n\nRostered players NOT in the export: " + missing.length
+            + (missing.length ? "\n" + missing.slice(0, 40).map(x => "• " + x.first_name + " " + x.last_name + " (" + x.team_assignment + ")").join("\n") + (missing.length > 40 ? "\n…" : "") : ""));
+        } finally { setSeUploading(false); }
+      },
+      error: (err) => { setSeUploading(false); window.alert("Couldn't read that file: " + (err?.message || err)); },
+    });
+  }, [players, loadPlayers]);
   // Every school name already on the board, most common first. Offered as the
   // autocomplete list wherever staff types one, so the second correction lands
   // on the same string as the first instead of inventing a fourth spelling.
@@ -9879,7 +9914,17 @@ export default function App() {
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,marginBottom:8,flexWrap:"wrap"}}>
           <div style={{fontSize:11,color:C.mut,fontStyle:"italic",flex:1,minWidth:240}}>
             Accepted players for the selected division(s). Click a cell to toggle. Same four flags are editable on the player card.
+            {(() => { const last = players.reduce((mx, x) => (x.sportsengine_synced_at && x.sportsengine_synced_at > mx ? x.sportsengine_synced_at : mx), "");
+              return last ? <> SportsEngine column last synced from the export {new Date(last).toLocaleDateString(undefined,{month:"short",day:"numeric"})}.</> : null; })()}
           </div>
+          {canOps && (
+            <label title="SportsEngine → Members → Export. Marks every player in the file as registered, with her SportsEngine ID."
+              style={{padding:"6px 10px",borderRadius:8,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontFamily:"inherit",fontSize:11,fontWeight:800,cursor:seUploading?"default":"pointer",opacity:seUploading?0.6:1,whiteSpace:"nowrap"}}>
+              {seUploading ? "Importing…" : "⬆ SportsEngine export"}
+              <input type="file" accept=".csv" style={{display:"none"}} disabled={seUploading}
+                onChange={e => { const f = e.target.files?.[0]; e.target.value = ""; if (f) uploadSportsEngine(f); }} />
+            </label>
+          )}
           <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
             <label title="Signed up for tryout but NOT on the eval roster — they still need evaluating" style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderRadius:8,background:showTryoutOnly?"rgba(6,182,212,0.14)":"transparent",border:"1px solid "+(showTryoutOnly?"#06b6d4":C.border),cursor:"pointer",fontSize:11,fontWeight:700,color:showTryoutOnly?"#06b6d4":C.mut,userSelect:"none",whiteSpace:"nowrap"}}>
               <input type="checkbox" checked={showTryoutOnly} onChange={e=>setShowTryoutOnly(e.target.checked)} style={{accentColor:"#06b6d4",cursor:"pointer"}} />
@@ -9988,7 +10033,7 @@ export default function App() {
                                   return (
                                     <td key={k} style={{padding:"6px 8px",textAlign:"center"}}>
                                       <span onClick={()=>upd(p.id,{[k]:!on})}
-                                        title={on?"Click to mark not done":"Click to mark done"}
+                                        title={(k === "sportsengine_registered" && p.sportsengine_id ? "SportsEngine " + (p.sportsengine_status || "profile") + " · " + p.sportsengine_id + " · from the export" + (p.sportsengine_synced_at ? " " + new Date(p.sportsengine_synced_at).toLocaleDateString(undefined,{month:"short",day:"numeric"}) : "") + " · " : "") + (on?"Click to mark not done":"Click to mark done")}
                                         style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:32,height:24,borderRadius:6,cursor:"pointer",fontSize:14,fontWeight:800,border:"1px solid "+(on?C.grn:C.border),background:on?"rgba(34,197,94,0.18)":"transparent",color:on?C.grn:C.mut,userSelect:"none"}}>
                                         {on?"✓":""}
                                       </span>
