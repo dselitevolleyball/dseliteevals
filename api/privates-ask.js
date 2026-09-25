@@ -52,7 +52,11 @@ export default async function handler(req, res) {
   // Cron, or a signed-in admin.
   const bearer = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
   let who = "cron";
-  const cronOk = CRON_SECRET && (bearer === CRON_SECRET || (url?.searchParams.get("token") || "") === CRON_SECRET);
+  // The service-role key also opens this door, so an operator script can run
+  // a send from a machine that holds the same secret the server does.
+  const cronOk = (CRON_SECRET && (bearer === CRON_SECRET || (url?.searchParams.get("token") || "") === CRON_SECRET))
+    || (bearer && bearer === SUPABASE_SERVICE_ROLE_KEY);
+  if (bearer && bearer === SUPABASE_SERVICE_ROLE_KEY) who = "operator";
   if (!cronOk) {
     if (!bearer) return res.status(401).json({ error: "Not signed in" });
     const { data: { user } = {} } = await sb.auth.getUser(bearer).catch(() => ({ data: {} }));
@@ -66,6 +70,8 @@ export default async function handler(req, res) {
 
   const test = url?.searchParams.get("test") === "1";
   const dry = url?.searchParams.get("dry") === "1";
+  // ?channels=sms,push — which of the three to use; all three by default.
+  const want = new Set(String(url?.searchParams.get("channels") || "sms,push,email").split(",").map(x => x.trim()).filter(Boolean));
   const month = /^\d{4}-\d{2}$/.test(url?.searchParams.get("month") || "") ? url.searchParams.get("month") : askMonth();
   const origin = appOrigin(req);
   const label = monthLabel(month);
@@ -103,18 +109,21 @@ export default async function handler(req, res) {
     const w = wording(c);
     const channels = [];
     const phone = normalizePhone(c.phone);
-    if (phone && /^\+\d{10,15}$/.test(phone) && twilioReady()) {
+    let smsError = null;
+    if (want.has("sms") && phone && /^\+\d{10,15}$/.test(phone) && twilioReady()) {
       try { await sendOneSms(sb, { to: phone, name: c.name, kind: "coach" }, w.sms, { sent_by_label: "DSSC privates ask" }); channels.push("sms"); }
-      catch (e) { results.push({ name: c.name, sms_error: e.message }); }
+      catch (e) { smsError = e.message; }
     }
     const email = String(c.email || "").trim().toLowerCase();
-    if (email) {
+    if (email && want.has("push")) {
       try {
         const r = await fetch(origin + "/api/send-push", { method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ skipEmail: true, title: w.push.title, body: w.push.body, url: link(c), audience: { type: "email", email } }) });
         const o = await r.json().catch(() => ({}));
         if (o.sent > 0) channels.push("push");
       } catch { /* push is best-effort */ }
+    }
+    if (email && want.has("email")) {
       try {
         const r = await fetch(origin + "/api/send-email", { method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ skipPush: true, subject: (test ? "[TEST — as " + sample.name + " would see it] " : "") + w.subject, body: w.email, recipients: [email], sentBy: "Drew Rose", sentByEmail: DREW.email, source: "privates-ask" + (test ? " (test)" : "") }) });
@@ -123,7 +132,7 @@ export default async function handler(req, res) {
       } catch { /* logged below as no email channel */ }
     }
     await sb.from("coach_privates_asks").insert({ coach_id: c.id, month, channels, is_test: test, sent_by: who });
-    results.push({ name: c.name, kind: c.kind, channels });
+    results.push({ name: c.name, kind: c.kind, channels, ...(smsError ? { sms_error: smsError } : {}) });
   }
   return res.status(200).json({ ok: true, month, test, sent: results.filter(r => r.channels?.length).length, results });
 }
