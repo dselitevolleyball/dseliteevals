@@ -33,10 +33,10 @@ export function askWording({ first, kind, link, label }) {
     email: `Hi ${first},\n\nQuick one for ${label}: has anything changed in when you can run privates at DSSC? Your page is pre-filled with last month — tap what's different and save:\n\n${link}\n\nIf nothing's changed, just open it and hit Save so we know it's current.\n\nThanks,\nDrew`,
   };
   return {
-    sms: `Hi ${first} — DSSC is opening private lessons on our courts and we'd love our coaches running them. Interested? Tap to say yes/no and pick the days & hours you can work in ${label} (2 min): ${link} — Drew`,
-    push: { title: "Privates at DSSC — are you in?", body: "Tap to say yes and pick the days and hours you can work in " + label + "." },
+    sms: `Hi ${first} — we're about to launch a new private-lessons system at DSSC and we'd love our coaches running them. Interested? Tap to say yes/no, pick the ages & skills you want to coach, and the days & hours you can work in ${label} (2 min): ${link} — Drew`,
+    push: { title: "Privates at DSSC — are you in?", body: "New private-lessons system launching. Tap to say yes and pick your ages, skills, days and hours for " + label + "." },
     subject: `Privates at DSSC — are you in for ${label}?`,
-    email: `Hi ${first},\n\nDSSC is opening private lessons on its courts, booked through Playbook and coached by our own staff. We'd love to have you running them.\n\nThis takes two minutes: say whether you're in, then tap the days and hours you can work in ${label}. We build the Playbook schedule from exactly what you pick.\n\n${link}\n\nIf you're in, we'll check back once a month for the month ahead. If not, just say so and we won't keep asking.\n\nThanks,\nDrew`,
+    email: `Hi ${first},\n\nWe're about to launch a new private-lessons system at DSSC: families book lessons on our courts through Playbook, and our own coaches run them. We'd love to have you in the lineup.\n\nThis takes two minutes: say whether you're in, pick the age groups and skills you want to coach, then tap the days and hours you can work in ${label}. We build the Playbook schedule from exactly what you pick.\n\n${link}\n\nIf you're in, we'll check back once a month for the month ahead. If not, just say so and we won't keep asking.\n\nThanks,\nDrew`,
   };
 }
 const DREW = { name: "Drew Rose", email: "drew@dselitevolleyball.com", phone: "+15122029099" };

@@ -16,6 +16,9 @@ const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").
 export const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 export const HOURS = Array.from({ length: 15 }, (_, i) => 7 + i);   // 7am … 9pm starts
 export const hourLabel = (h) => (h % 12 === 0 ? 12 : h % 12) + (h < 12 ? "am" : "pm");
+export const AGES = [["10u", "10 & under"], ["11-12", "11/12"], ["13-14", "13/14"], ["15+", "15+"]];
+export const SKILLS = [["serving", "Serving"], ["serve-receive", "Serve receive"], ["attacking", "Attacking"], ["libero", "Libero / defensive specialist"], ["middles", "Middles"], ["setting", "Setting"]];
+const pickKeys = (arr, allowed) => Array.isArray(arr) ? allowed.filter(([k]) => arr.map(String).includes(k)).map(([k]) => k) : [];
 const monthLabel = (m) => { const [y, mo] = m.split("-").map(Number); return new Date(Date.UTC(y, mo - 1, 1)).toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" }); };
 const centralToday = () => new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
 // The month we're asking about: this one until the 20th, then next month —
@@ -55,6 +58,9 @@ const page = (inner, title) => `<!doctype html>
   .day .hrs { display:flex; flex-wrap:wrap; gap:6px; flex:1; }
   .hr { padding:7px 0; width:54px; text-align:center; font:inherit; font-size:13px; font-weight:700; cursor:pointer; background:transparent; color:var(--body); border:1px solid var(--rule); border-radius:8px; user-select:none; }
   .hr[aria-pressed="true"] { background:rgba(74,222,128,.16); border-color:var(--grn); color:var(--grn); }
+  .chips { display:flex; gap:8px; flex-wrap:wrap; }
+  .chip { padding:10px 14px; font:inherit; font-size:15px; font-weight:700; cursor:pointer; background:transparent; color:var(--body); border:1px solid var(--rule); border-radius:999px; user-select:none; }
+  .chip[aria-pressed="true"] { background:rgba(34,211,238,.14); border-color:var(--acc); color:var(--acc); }
   .presets { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
   .presets button { padding:7px 11px; font:inherit; font-size:13px; font-weight:700; cursor:pointer; background:transparent; color:var(--mut); border:1px solid var(--rule); border-radius:999px; }
   textarea { width:100%; padding:12px; font:inherit; font-size:16px; color:var(--ink); background:#10161b; border:1px solid var(--rule); border-radius:10px; min-height:70px; }
@@ -99,7 +105,9 @@ export default async function handler(req, res) {
         if (hs.length) slots[d] = hs.map(String);
       }
     }
-    const row = { coach_id: c.id, coach_name: name, month, interested, slots, note: String(body?.note || "").trim().slice(0, 1000) || null, submitted_at: new Date().toISOString(), updated_at: new Date().toISOString() };
+    const row = { coach_id: c.id, coach_name: name, month, interested, slots,
+      ages: interested ? pickKeys(body?.ages, AGES) : [], skills: interested ? pickKeys(body?.skills, SKILLS) : [],
+      note: String(body?.note || "").trim().slice(0, 1000) || null, submitted_at: new Date().toISOString(), updated_at: new Date().toISOString() };
     const { error } = await supabase.from("coach_privates").upsert(row, { onConflict: "coach_id,month" });
     if (error) return res.status(500).json({ error: error.message });
     return res.status(200).json({ ok: true });
@@ -111,7 +119,10 @@ export default async function handler(req, res) {
   ]);
   const seed = cur || null;
   const seedSlots = (cur && cur.interested && Object.keys(cur.slots || {}).length) ? cur.slots : ((prev && prev.interested) ? prev.slots : {});
+  const seedAges = (cur && cur.interested && (cur.ages || []).length) ? cur.ages : ((prev && prev.interested) ? (prev.ages || []) : []);
+  const seedSkills = (cur && cur.interested && (cur.skills || []).length) ? cur.skills : ((prev && prev.interested) ? (prev.skills || []) : []);
   const label = monthLabel(month);
+  const chips = (id, list, seed) => `<div class="chips" id="${id}">${list.map(([k, l]) => `<button type="button" class="chip" data-k="${k}" aria-pressed="${seed.includes(k) ? "true" : "false"}">${esc(l)}</button>`).join("")}</div>`;
 
   const inner = `
 <div class="sub">Hi ${esc(first)} — ${seed ? "you've answered for " + esc(label) + "; change anything below." : "two minutes, all taps."}</div>
@@ -128,7 +139,12 @@ export default async function handler(req, res) {
 </div>
 
 <div class="card ${seed?.interested === true ? "" : "hide"}" id="grid">
-  <div class="sect">2 · When can you work in ${esc(label)}?</div>
+  <div class="sect">2 · Who do you want to coach?</div>
+  <p class="hint" style="margin:0 0 8px">Age groups — tap all that apply.</p>
+  ${chips("ages", AGES, seedAges)}
+  <p class="hint" style="margin:14px 0 8px">Skills you'd like to run privates on.</p>
+  ${chips("skills", SKILLS, seedSkills)}
+  <div class="sect" style="margin-top:22px">3 · When can you work in ${esc(label)}?</div>
   <p class="hint" style="margin:0 0 12px">Tap every hour you're available to start a lesson. Lessons are an hour. Tap again to clear.</p>
   <div class="presets">
     <button type="button" data-preset="wkeve">Weekday evenings 4–8pm</button>
@@ -160,7 +176,8 @@ export default async function handler(req, res) {
   function apply(slots){DAYS.forEach(function(d){var hs=(slots[d]||[]).map(String);grid.querySelectorAll('[data-day="'+d+'"] .hr').forEach(function(b){setPressed(b,hs.indexOf(String(b.dataset.h))>=0);});});}
   apply(seed);
   ask.querySelectorAll('button').forEach(function(b){b.addEventListener('click',function(){interested=b.dataset.v==='yes';ask.querySelectorAll('button').forEach(function(x){setPressed(x,x===b);});grid.classList.toggle('hide',!interested);noCard.classList.toggle('hide',interested);done.classList.add('hide');});});
-  grid.querySelectorAll('.hr').forEach(function(b){b.addEventListener('click',function(){setPressed(b,b.getAttribute('aria-pressed')!=='true');});});
+  grid.querySelectorAll('.hr, .chip').forEach(function(b){b.addEventListener('click',function(){setPressed(b,b.getAttribute('aria-pressed')!=='true');});});
+  function picked(id){var out=[];document.querySelectorAll('#'+id+' .chip[aria-pressed="true"]').forEach(function(x){out.push(x.dataset.k);});return out;}
   grid.querySelectorAll('[data-preset]').forEach(function(b){b.addEventListener('click',function(){var p=b.dataset.preset;
     if(p==='clear'){apply({});return;}
     if(p==='prev'){apply(prevSlots);return;}
@@ -171,9 +188,12 @@ export default async function handler(req, res) {
   save.addEventListener('click',function(){
     if(interested===null){err.textContent='Pick yes or not right now first.';err.classList.remove('hide');return;}
     var slots={};DAYS.forEach(function(d){var hs=[];grid.querySelectorAll('[data-day="'+d+'"] .hr[aria-pressed="true"]').forEach(function(x){hs.push(Number(x.dataset.h));});if(hs.length)slots[d]=hs;});
+    var ages=picked('ages'), skills=picked('skills');
+    if(interested&&!ages.length){err.textContent='Tap at least one age group you want to coach.';err.classList.remove('hide');document.getElementById('ages').scrollIntoView({behavior:'smooth',block:'center'});return;}
+    if(interested&&!skills.length){err.textContent='Tap at least one skill you want to run privates on.';err.classList.remove('hide');document.getElementById('skills').scrollIntoView({behavior:'smooth',block:'center'});return;}
     if(interested&&!Object.keys(slots).length){err.textContent='Tap at least one hour you can work, or choose "Not right now".';err.classList.remove('hide');return;}
     err.classList.add('hide');save.disabled=true;save.textContent='Saving…';
-    fetch(location.href,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({interested:interested,slots:slots,note:document.getElementById('note').value})})
+    fetch(location.href,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({interested:interested,slots:slots,ages:ages,skills:skills,note:document.getElementById('note').value})})
       .then(function(r){return r.json();}).then(function(o){
         if(!o.ok)throw new Error(o.error||'save failed');
         var n=0;Object.keys(slots).forEach(function(d){n+=slots[d].length;});

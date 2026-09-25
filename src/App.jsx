@@ -10944,6 +10944,9 @@ export default function App() {
   function renderPrivates() {
     const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
     const HOURS = Array.from({ length: 15 }, (_, i) => 7 + i);
+    const AGE_L = { "10u": "10 & under", "11-12": "11/12", "13-14": "13/14", "15+": "15+" };
+    const SKILL_L = { serving: "Serving", "serve-receive": "Serve receive", attacking: "Attacking", libero: "Libero/DS", middles: "Middles", setting: "Setting" };
+    const listOf = (arr, map) => (arr || []).map(k => map[k] || k).join(", ");
     const hl = (h) => (h % 12 === 0 ? 12 : h % 12) + (h < 12 ? "a" : "p");
     const monthLabel = (m) => { const [y, mo] = m.split("-").map(Number); return new Date(y, mo - 1, 1).toLocaleDateString(undefined, { month: "long", year: "numeric" }); };
     const shiftMonth = (m, d) => { const [y, mo] = m.split("-").map(Number); const dt = new Date(Date.UTC(y, mo - 1 + d, 1)); return dt.toISOString().slice(0, 7); };
@@ -10991,10 +10994,10 @@ export default function App() {
     };
     // One row per coach per day-range, ready for Playbook's schedule.
     const exportCsv = () => {
-      const out = [["Coach", "Month", "Day", "Start", "End", "Hours", "Note"]];
+      const out = [["Coach", "Month", "Day", "Start", "End", "Hours", "Ages", "Skills", "Note"]];
       for (const r of rows) {
         if (!r.cur || !r.cur.interested) continue;
-        for (const d of DAYS) for (const rg of ranges(r.cur.slots?.[d])) out.push([r.c.name, month, d, hl(rg[0]) + "m", hl(rg[1]) + "m", rg[1] - rg[0], r.cur.note || ""]);
+        for (const d of DAYS) for (const rg of ranges(r.cur.slots?.[d])) out.push([r.c.name, month, d, hl(rg[0]) + "m", hl(rg[1]) + "m", rg[1] - rg[0], listOf(r.cur.ages, AGE_L), listOf(r.cur.skills, SKILL_L), r.cur.note || ""]);
       }
       if (out.length === 1) { window.alert("No availability in for " + monthLabel(month) + " yet."); return; }
       downloadCSV("dssc_privates_" + month + ".csv", out);
@@ -11091,6 +11094,12 @@ export default function App() {
                           {DAYS.filter(d => (cur.slots?.[d] || []).length).map(d => d + " " + ranges(cur.slots[d]).map(rangeText).join(", ")).join(" · ")}
                         </div>
                       </div>
+                      {((cur.ages || []).length > 0 || (cur.skills || []).length > 0) && (
+                        <div style={{display:"flex",gap:4,flexWrap:"wrap",marginTop:2}}>
+                          {(cur.ages || []).map(k => <span key={"a"+k} style={{fontSize:9,fontWeight:800,padding:"1px 7px",borderRadius:999,background:"#22d3ee22",color:"#22d3ee"}}>{AGE_L[k] || k}</span>)}
+                          {(cur.skills || []).map(k => <span key={"s"+k} style={{fontSize:9,fontWeight:700,padding:"1px 7px",borderRadius:999,background:"rgba(255,255,255,0.06)",color:C.text}}>{SKILL_L[k] || k}</span>)}
+                        </div>
+                      )}
                       {cur.note && <div style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>“{cur.note}”</div>}
                     </div>
                   ) : cur && cur.interested === false ? (
