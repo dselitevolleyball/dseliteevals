@@ -22,6 +22,23 @@ import { sendOneSms, normalizePhone, twilioReady } from "./_lib/sms.js";
 import { askMonth } from "./privates-form.js";
 
 const OWNERS = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"];
+
+// The three messages a coach gets, in one place so a preview shows exactly
+// what the send will say. kind: "first" (never answered) | "update" (said yes).
+export function askWording({ first, kind, link, label }) {
+  if (kind === "update") return {
+    sms: `Hi ${first} — DSSC privates for ${label}: has your availability changed? Tap to update the days & hours you can work (30 sec): ${link} — Drew`,
+    push: { title: "DSSC privates — " + label, body: "Has your availability changed? Tap to update your days and hours." },
+    subject: `DSSC privates — your ${label} availability`,
+    email: `Hi ${first},\n\nQuick one for ${label}: has anything changed in when you can run privates at DSSC? Your page is pre-filled with last month — tap what's different and save:\n\n${link}\n\nIf nothing's changed, just open it and hit Save so we know it's current.\n\nThanks,\nDrew`,
+  };
+  return {
+    sms: `Hi ${first} — DSSC is opening private lessons on our courts and we'd love our coaches running them. Interested? Tap to say yes/no and pick the days & hours you can work in ${label} (2 min): ${link} — Drew`,
+    push: { title: "Privates at DSSC — are you in?", body: "Tap to say yes and pick the days and hours you can work in " + label + "." },
+    subject: `Privates at DSSC — are you in for ${label}?`,
+    email: `Hi ${first},\n\nDSSC is opening private lessons on its courts, booked through Playbook and coached by our own staff. We'd love to have you running them.\n\nThis takes two minutes: say whether you're in, then tap the days and hours you can work in ${label}. We build the Playbook schedule from exactly what you pick.\n\n${link}\n\nIf you're in, we'll check back once a month for the month ahead. If not, just say so and we won't keep asking.\n\nThanks,\nDrew`,
+  };
+}
 const DREW = { name: "Drew Rose", email: "drew@dselitevolleyball.com", phone: "+15122029099" };
 const isPlaceholder = (nm) => /assistant coach|head coach|tbd|coach needed|floater/i.test(nm || "");
 const monthLabel = (m) => { const [y, mo] = m.split("-").map(Number); return new Date(Date.UTC(y, mo - 1, 1)).toLocaleDateString("en-US", { month: "long", timeZone: "UTC" }); };
@@ -71,21 +88,7 @@ export default async function handler(req, res) {
     .map(c => ({ ...c, kind: latest.get(c.id)?.interested === true ? "update" : "first" }));
 
   const link = (c) => `${origin}/privates?t=${c.privates_token}&m=${month}`;
-  const wording = (c) => {
-    const first = (c.first_name || c.name).trim();
-    if (c.kind === "update") return {
-      sms: `Hi ${first} — DSSC privates for ${label}: has your availability changed? Tap to update the days & hours you can work (30 sec): ${link(c)} — Drew`,
-      push: { title: "DSSC privates — " + label, body: "Has your availability changed? Tap to update your days and hours." },
-      subject: `DSSC privates — your ${label} availability`,
-      email: `Hi ${first},\n\nQuick one for ${label}: has anything changed in when you can run privates at DSSC? Your page is pre-filled with last month — tap what's different and save:\n\n${link(c)}\n\nIf nothing's changed, just open it and hit Save so we know it's current.\n\nThanks,\nDrew`,
-    };
-    return {
-      sms: `Hi ${first} — DSSC is opening private lessons on our courts and we'd love our coaches running them. Interested? Tap to say yes/no and pick the days & hours you can work in ${label} (2 min): ${link(c)} — Drew`,
-      push: { title: "Privates at DSSC — are you in?", body: "Tap to say yes and pick the days and hours you can work in " + label + "." },
-      subject: `Privates at DSSC — are you in for ${label}?`,
-      email: `Hi ${first},\n\nDSSC is opening private lessons on its courts, booked through Playbook and coached by our own staff. We'd love to have you running them.\n\nThis takes two minutes: say whether you're in, then tap the days and hours you can work in ${label}. We build the Playbook schedule from exactly what you pick.\n\n${link(c)}\n\nIf you're in, we'll check back once a month for the month ahead. If not, just say so and we won't keep asking.\n\nThanks,\nDrew`,
-    };
-  };
+  const wording = (c) => askWording({ first: (c.first_name || c.name).trim(), kind: c.kind, link: link(c), label });
 
   if (dry) return res.status(200).json({ ok: true, dry: true, month, count: coaches.length, coaches: coaches.map(c => ({ name: c.name, kind: c.kind, phone: !!c.phone, email: !!c.email })) });
 
