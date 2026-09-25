@@ -60,6 +60,29 @@ const normalizePhone = (raw) => {
   return digits.startsWith("+") ? digits : "+" + digits;
 };
 
+// Who a phone number belongs to, from the player roster (parents and players)
+// or the coach roster. Numbers are compared on their last ten digits because
+// the roster stores them however a parent typed them.
+async function whoIs(supabase, phone) {
+  const last10 = (s) => String(s || "").replace(/\D/g, "").slice(-10);
+  const d = last10(phone);
+  if (d.length !== 10) return {};
+  const { data: ps } = await supabase.from("players")
+    .select("id, first_name, last_name, team_assignment, offer_status, parent_name, parent2_name, parent_phone, parent2_phone, player_phone");
+  const live = (ps || []).filter(p => !["declined", "not_invited", "opted_out"].includes(p.offer_status || ""));
+  for (const p of [...live, ...(ps || []).filter(p => !live.includes(p))]) {
+    const team = p.team_assignment || null;
+    if (last10(p.parent_phone) === d)  return { player_id: p.id, team_name: team, contact_kind: "parent", contact_name: p.parent_name || (p.first_name + "'s parent") };
+    if (last10(p.parent2_phone) === d) return { player_id: p.id, team_name: team, contact_kind: "parent", contact_name: p.parent2_name || (p.first_name + "'s parent") };
+    if (last10(p.player_phone) === d)  return { player_id: p.id, team_name: team, contact_kind: "player", contact_name: p.first_name + " " + p.last_name };
+  }
+  const { data: cs } = await supabase.from("coach_roster").select("first_name, last_name, phone");
+  for (const c of cs || []) {
+    if (last10(c.phone) === d) return { contact_kind: "coach", contact_name: ((c.first_name || "") + " " + (c.last_name || "")).trim() };
+  }
+  return {};
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.setHeader("Allow", ["POST"]);
@@ -105,23 +128,30 @@ export default async function handler(req, res) {
   const sid  = params.MessageSid || params.SmsSid;
   if (!from || !body) return res.status(200).send("ok");
 
-  // Find or create the thread.
+  // Find or create the thread. A number we've never texted is still very
+  // likely a parent, player or coach we know — match it against the roster so
+  // the inbox files the reply under her team instead of "Other".
   let { data: thread } = await supabase
     .from("sms_threads")
     .select("*")
     .eq("phone", from)
     .maybeSingle();
-  if (!thread) {
-    const ins = await supabase
-      .from("sms_threads")
-      .insert({ phone: from })
-      .select()
-      .single();
-    if (ins.error) {
-      console.error("Thread create failed:", ins.error);
-      return res.status(500).send("DB error");
+  if (!thread || (!thread.contact_kind && !thread.player_id)) {
+    const who = await whoIs(supabase, from);
+    if (!thread) {
+      const ins = await supabase
+        .from("sms_threads")
+        .insert({ phone: from, ...who })
+        .select()
+        .single();
+      if (ins.error) {
+        console.error("Thread create failed:", ins.error);
+        return res.status(500).send("DB error");
+      }
+      thread = ins.data;
+    } else if (Object.keys(who).length) {
+      await supabase.from("sms_threads").update(who).eq("id", thread.id);
     }
-    thread = ins.data;
   }
 
   // Insert message. Dedup on twilio_sid in case Twilio retries.
