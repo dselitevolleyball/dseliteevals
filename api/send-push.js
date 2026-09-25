@@ -89,7 +89,14 @@ export default async function handler(req, res) {
   let mailed = 0;
   if (!body?.skipEmail) {
     try {
-      const emails = [...new Set(targets.map(s => s.email).filter(Boolean))];
+      // The email side used to go only to coaches with a push subscription —
+      // so a coach who never tapped "Enable notifications" got neither the
+      // push NOR the email, and four coaches went a season hearing nothing.
+      // Resolve the audience from the team rows and the coach roster too, so
+      // the email reaches everyone the message is for, phone set up or not.
+      const rosterEmails = await audienceEmails(supabase, audience);
+      const emails = [...new Set([...targets.map(s => s.email), ...rosterEmails]
+        .map(e => String(e || "").trim().toLowerCase()).filter(Boolean))];
       if (emails.length) {
         // Match on the BODY, not the subject. Callers decorate subjects
         // ("… — DS Elite HQ") while the text stays identical, so a subject
@@ -120,4 +127,47 @@ export default async function handler(req, res) {
   }
 
   return res.status(200).json({ ok: true, sent, removed: stale.length, mailed });
+}
+
+// Who a push audience means in people, independent of push subscriptions.
+// Team coaches come from practice_teams (head / assistant / third) resolved
+// to an address through the coach roster and the accounts table, matching
+// the app's own rule (full name, or first + last initial). Admins are the
+// accounts flagged is_admin. Any failure here returns [] so the push path is
+// never blocked by the email one.
+async function audienceEmails(supabase, audience) {
+  try {
+    const type = audience?.type || "all";
+    if (type === "email") return [audience.email];
+    if (type === "emails") return audience.emails || [];
+    if (type === "admins") {
+      const { data } = await supabase.from("coaches").select("email").eq("is_admin", true).eq("is_approved", true);
+      return (data || []).map(c => c.email);
+    }
+    const [{ data: teams }, { data: roster }, { data: accounts }] = await Promise.all([
+      supabase.from("practice_teams").select("team_name, head_coach, assistant_coach, third_coach"),
+      supabase.from("coach_roster").select("first_name, last_name, email"),
+      supabase.from("coaches").select("display_name, email, is_admin").eq("is_approved", true),
+    ]);
+    const norm = s => String(s || "").trim().toLowerCase().replace(/\s+/g, " ");
+    const byName = new Map();
+    const put = (n, e) => { const k = norm(n); if (k && e && !byName.has(k)) byName.set(k, e); };
+    for (const r of roster || []) {
+      const f = norm(r.first_name), l = norm(r.last_name);
+      put(f + " " + l, r.email);
+      if (l) put(f + " " + l[0] + ".", r.email);
+    }
+    for (const a of accounts || []) put(a.display_name, a.email);
+    const rows = (teams || []).filter(t => type === "all" || t.team_name === audience.team);
+    const out = [];
+    for (const t of rows) for (const n of [t.head_coach, t.assistant_coach, t.third_coach]) {
+      const e = byName.get(norm(n));
+      if (e) out.push(e);
+    }
+    if (type === "team" && !audience.excludeAdmins) (accounts || []).filter(a => a.is_admin).forEach(a => out.push(a.email));
+    return out;
+  } catch (e) {
+    console.error("audienceEmails failed (push already sent):", e?.message);
+    return [];
+  }
 }
