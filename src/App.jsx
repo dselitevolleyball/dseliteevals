@@ -24421,7 +24421,7 @@ export default function App() {
                 <div style={{flex:1}} />
                 {last ? <span style={{fontSize:11,color:C.mut}}>Last synced {last.toLocaleDateString(undefined,{month:"short",day:"numeric"})} {last.toLocaleTimeString(undefined,{hour:"numeric",minute:"2-digit"})}{sum?` · ${sum.programs} clinics`:""}</span> : <span style={{fontSize:11,color:C.mut}}>Not synced yet</span>}
               </div>
-              <div style={{fontSize:12,color:C.mut,marginBottom:8,lineHeight:1.5}}>The clinic schedule comes from Playbook. Pull the latest with one click — new sessions are added and times refreshed, while coach assignments, focus, recap and plans are kept. Volleyball clinics only.</div>
+              <div style={{fontSize:12,color:C.mut,marginBottom:8,lineHeight:1.5}}>The clinic schedule comes from Playbook and <b style={{color:C.text}}>pulls itself every hour</b> (about four months ahead), with sign-ups attached ten minutes later. New sessions are added and times refreshed, while coach assignments, focus, recap and plans are kept. Volleyball clinics only. The bookmark below is the manual fallback if you need a class in HQ right now.</div>
               {!t && <button style={S.gold} onClick={fetchSyncBookmarklet}>Set up one-click sync →</button>}
               {t?.loading && <span style={{fontSize:12,color:C.mut}}>Loading…</span>}
               {t?.error && <div style={{fontSize:12,color:"#ef4444"}}>Couldn't load: {t.error}</div>}
@@ -24436,7 +24436,7 @@ export default function App() {
                   </div>
                   <div style={{fontSize:11,color:C.mut,lineHeight:1.6}}>
                     <b>One-time setup:</b> drag <b>🔄 Sync DSSC clinics</b> to your bookmarks bar (or Copy code → new bookmark → paste as URL).<br/>
-                    <b>To sync:</b> open the Playbook calendar (use the link above for the full season), then click the <b>🔄 Sync DSSC clinics</b> bookmark. Done.
+                    <b>To sync by hand:</b> open the Playbook calendar (use the link above for the full season), then click the <b>🔄 Sync DSSC clinics</b> bookmark. Done.
                   </div>
                 </div>
               )}

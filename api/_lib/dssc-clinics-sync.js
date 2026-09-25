@@ -69,7 +69,7 @@ export function parsePlaybookEvents(events) {
 // is not "gone from Playbook" — it simply wasn't in view. Syncing October used
 // to delete every unstaffed November class added by the previous sync.
 function mergeSessions(existing, incoming, today, window) {
-  const inView = (d) => !window || (d >= window.min && d <= window.max);
+  const inView = (d) => !!window && d >= window.min && d <= window.max;
   const E = Array.isArray(existing) ? existing : [];
   const used = new Set();
   const keyOf = (s) => s.date + "|" + (s.start_time || "");
@@ -101,8 +101,11 @@ function mergeSessions(existing, incoming, today, window) {
 export async function syncClinics(supabase, events, opts = {}) {
   const byProg = parsePlaybookEvents(events);
   const programs = Object.values(byProg);
+  // The prune window. The hourly pull says exactly what dates it asked
+  // Playbook for; the bookmarklet can't, so its window is inferred from the
+  // volleyball sessions it found (and is null — no pruning — when it found none).
   const dates = programs.flatMap(p => p.sessions.map(x => x.date)).filter(Boolean).sort();
-  const window = dates.length ? { min: dates[0], max: dates[dates.length - 1] } : null;
+  const window = opts.window || (dates.length ? { min: dates[0], max: dates[dates.length - 1] } : null);
   const today = centralToday();
 
   const { data: existingRows, error: exErr } = await supabase.from("dssc_clinics").select("*").eq("source", "playbook");

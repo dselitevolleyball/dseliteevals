@@ -94,10 +94,17 @@
       "schedule": "30 12 * * *"
     },
     {
+      "path": "/api/playbook-calendar",
+      "schedule": "5 * * * *"
+    },
+    {
       "path": "/api/playbook-registrations",
       "schedule": "15 * * * *"
     }
   ],
+  "functions": {
+    "api/playbook-calendar.js": { "maxDuration": 60 }
+  },
   "headers": [
     {
       "source": "/(kit|brief)-(.*)",

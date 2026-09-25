@@ -111,7 +111,7 @@ export default async function handler(req, res) {
     const prevWaiting = Number(prev?.registrations_summary?.noSession || 0);
     if (summary.noSession > 0 && summary.noSession !== prevWaiting) {
       await notify(`${summary.noSession} Playbook registrations are waiting on a calendar sync`,
-        `${summary.noSession} sign-ups are for classes DSSC HQ doesn't have yet — open that month on the Playbook calendar and click the sync bookmark, and the next pull will attach them.\n\n` + summary.waiting.map(w => "• " + w).join("\n"));
+        `${summary.noSession} sign-ups are for classes DSSC HQ doesn't have yet. The calendar pulls itself every hour, so they normally attach on the next pass; if this is still here in a couple of hours, open that month on the Playbook calendar and click the sync bookmark.\n\n` + summary.waiting.map(w => "• " + w).join("\n"));
     }
   }
   return res.status(200).json({ ok: true, dry, ...summary });
