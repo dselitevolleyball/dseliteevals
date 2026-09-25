@@ -1,4 +1,4 @@
-// Import Playbook's sale export for the Avoli club shoe into shoe_invoices,
+// Import SportsEngine's sale export for the Avoli club shoe into shoe_invoices,
 // matched to players. The gear board's upload button does the same thing.
 //
 //   node scripts/import-shoe-invoices.mjs "C:/Users/drewr/Downloads/SaleItem_20260925194922.csv"

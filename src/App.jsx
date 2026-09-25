@@ -1566,7 +1566,7 @@ export default function App() {
   const [schoolRenaming, setSchoolRenaming]          = useState(null);    // school board: which group's name is being retyped
   const [schoolRenameText, setSchoolRenameText]      = useState("");
   const [gearOrders, setGearOrders]                  = useState([]);
-  const [shoeInvoices, setShoeInvoices]               = useState([]);   // Avoli shoe invoices from Playbook's sale export
+  const [shoeInvoices, setShoeInvoices]               = useState([]);   // Avoli shoe invoices from SportsEngine's sale export
   const [shoeUploading, setShoeUploading]             = useState(false);
   const [gearOrderFilter, setGearOrderFilter]        = useState("all");  // all | in | waiting | flagged
   const [gearOrderGroup, setGearOrderGroup]          = useState("team"); // team | flat
@@ -2374,7 +2374,7 @@ export default function App() {
     if (inv.error) console.error("Load shoe_invoices error:", inv.error);
     else setShoeInvoices(inv.data || []);
   }, []);
-  // Playbook → Reports → Sales, item "DS Elite Avoli Team Shoes", Export. Rows
+  // SportsEngine → the sales report for "DS Elite Avoli Team Shoes", Export. Rows
   // are matched to players by name (shared/shoe-invoices.js) and upserted on
   // the sale id, so re-uploading refreshes paid/unpaid and removes nothing.
   const uploadShoeInvoices = useCallback((file) => {
@@ -2385,7 +2385,7 @@ export default function App() {
       complete: async ({ data }) => {
         try {
           const invoices = parseSaleRows(data);
-          if (!invoices.length) { window.alert("No shoe invoices found in that file. It should be Playbook's sale export for the Avoli shoes."); return; }
+          if (!invoices.length) { window.alert("No shoe invoices found in that file. It should be SportsEngine's sale export for the Avoli shoes."); return; }
           const { matched, unmatched } = matchInvoicesToPlayers(invoices, players);
           const stamp = new Date().toISOString();
           const { error } = await supabase.from("shoe_invoices")
@@ -10795,16 +10795,16 @@ export default function App() {
         subject: (p) => "Still need " + girl(p) + "'s uniform sizes",
         body: (p) => greet(p) + "\n\nWe still don't have " + girl(p) + "'s uniform sizes, and the order can't go in without them. It takes a couple of minutes:\n\n" + base + "/gear?t=" + p.gear_form_token + "\n\nIf you already filled it in, just open the link and tap send at the bottom so it reaches us." + sign },
       { key: "shoes", label: "Shoe ordering", icon: "👟", color: "#f59e0b",
-        scope: "Avoli club shoe, $167, invoiced through Playbook",
+        scope: "Avoli club shoe, $167, invoiced through SportsEngine",
         rows: rostered.filter(p => GEAR_TEAMS.includes(p.team_assignment)).map(p => {
           const inv = shoeBy.get(p.id) || [];
           if (inv.some(i => i.status === "Paid")) return null;
           const owed = inv.reduce((n, i) => n + Number(i.remaining || 0), 0);
           return inv.length ? { p, detail: "invoice unpaid · $" + owed + (inv[0].account_owner ? " · sent to " + inv[0].account_owner : ""), canNudge: true }
-                            : { p, detail: "no invoice in Playbook yet — needs one from us", canNudge: false, ours: true };
+                            : { p, detail: "no invoice in SportsEngine yet — needs one from us", canNudge: false, ours: true };
         }).filter(Boolean),
         subject: (p) => girl(p) + "'s Avoli shoe invoice is still open",
-        body: (p) => greet(p) + "\n\nThe Playbook invoice for " + girl(p) + "'s DS Elite Avoli team shoes ($167) is still unpaid. The club order goes in as one block, so please pay it as soon as you can — the invoice is in your email from Playbook, or under your account at drippingsports.playbookapi.com." + sign },
+        body: (p) => greet(p) + "\n\nThe SportsEngine invoice for " + girl(p) + "'s DS Elite Avoli team shoes ($167) is still unpaid. The club order goes in as one block, so please pay it as soon as you can — the invoice is in your email from SportsEngine, or under your SportsEngine account." + sign },
       { key: "sportsengine", label: "USAV / SportsEngine membership", icon: "🪪", color: "#38bdf8",
         scope: "Lone Star Region + USAV, $55 — required before she can be rostered (Rise teams not included)",
         rows: rostered.filter(p => !isRise(p.team_assignment) && !p.sportsengine_registered).map(p => ({ p, detail: "no SportsEngine profile with the club", canNudge: true })),
@@ -11325,7 +11325,7 @@ export default function App() {
         </div>
 
         {/* Avoli club shoes: the one thing families pay for separately, and
-            the only record of who has is Playbook's sale export. */}
+            the only record of who has is SportsEngine's sale export. */}
         {canOps && (() => {
           const paidN = shoeInvoices.filter(i => i.status === "Paid").length;
           const unpaidN = shoeInvoices.length - paidN;
@@ -11348,12 +11348,12 @@ export default function App() {
               <div style={{padding:"0 14px 12px"}}>
                 <div style={{display:"flex",gap:10,alignItems:"center",flexWrap:"wrap",marginBottom:10}}>
                   <label style={{padding:"7px 12px",borderRadius:8,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontFamily:"inherit",fontSize:12,fontWeight:800,cursor:shoeUploading?"default":"pointer",opacity:shoeUploading?0.6:1}}>
-                    {shoeUploading ? "Importing…" : "⬆ Upload Playbook sale export"}
+                    {shoeUploading ? "Importing…" : "⬆ Upload SportsEngine sale export"}
                     <input type="file" accept=".csv" style={{display:"none"}} disabled={shoeUploading}
                       onChange={e => { const f = e.target.files?.[0]; e.target.value = ""; if (f) uploadShoeInvoices(f); }} />
                   </label>
                   <span style={{fontSize:11,color:C.mut}}>
-                    Playbook → Reports → Sales → item <b>DS Elite Avoli Team Shoes</b> → Export. Re-uploading refreshes paid/unpaid; nothing is removed.
+                    SportsEngine → sales report → item <b>DS Elite Avoli Team Shoes</b> → Export. Re-uploading refreshes paid/unpaid; nothing is removed.
                     {last && <> Last import {new Date(last).toLocaleDateString(undefined,{month:"short",day:"numeric"})} {new Date(last).toLocaleTimeString(undefined,{hour:"numeric",minute:"2-digit"})}.</>}
                   </span>
                 </div>
@@ -11374,7 +11374,7 @@ export default function App() {
                           <div style={{display:"flex",gap:4,flexWrap:"wrap",flex:1}}>
                             {list.slice().sort((a, b) => (a.p.last_name || "").localeCompare(b.p.last_name || "")).map(x => (
                               <button key={x.p.id} onClick={()=>setProfileId(x.p.id)}
-                                title={(x.shoe.status === "paid" ? "Paid" : x.shoe.status === "unpaid" ? "Unpaid — $" + x.shoe.owed + " owed" : "No shoe invoice in Playbook") + (x.r?.shoe_size ? " · size " + x.r.shoe_size : " · no size on file") + (x.shoe.invoices[0]?.account_owner ? " · invoiced to " + x.shoe.invoices[0].account_owner : "")}
+                                title={(x.shoe.status === "paid" ? "Paid" : x.shoe.status === "unpaid" ? "Unpaid — $" + x.shoe.owed + " owed" : "No shoe invoice in SportsEngine") + (x.r?.shoe_size ? " · size " + x.r.shoe_size : " · no size on file") + (x.shoe.invoices[0]?.account_owner ? " · invoiced to " + x.shoe.invoices[0].account_owner : "")}
                                 style={{padding:"2px 8px",borderRadius:999,fontSize:10.5,fontWeight:700,cursor:"pointer",fontFamily:"inherit",
                                   border:"1px solid "+col(x.shoe.status),background:x.shoe.status==="none"?"transparent":col(x.shoe.status)+"22",color:col(x.shoe.status)}}>
                                 {x.p.first_name} {x.p.last_name}{x.r?.shoe_size ? <span style={{opacity:0.7}}> · {x.r.shoe_size}</span> : null}

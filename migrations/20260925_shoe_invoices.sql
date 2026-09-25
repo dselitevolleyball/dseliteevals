@@ -1,7 +1,7 @@
--- 20260925 — Avoli club-shoe invoices, imported from Playbook's sale export.
+-- 20260925 — Avoli club-shoe invoices, imported from SportsEngine's sale export.
 --
 -- Shoes are the one piece of gear a family pays for separately (see the gear
--- form's shoe_invoice_ack). Playbook invoices each family $167 and its
+-- form's shoe_invoice_ack). SportsEngine invoices each family $167 and its
 -- Reports → Sales export is the only record of who has paid. This table is
 -- that export, one row per sale, matched to the player it is for, so the gear
 -- board can show paid / unpaid / no invoice beside her sizes.
@@ -12,10 +12,10 @@
 -- Additive, idempotent.
 
 create table if not exists public.shoe_invoices (
-  sale_id       text primary key,              -- Playbook "Sale ID"
+  sale_id       text primary key,              -- SportsEngine "Sale ID"
   sale_date     timestamptz,
   account_owner text,                          -- who was invoiced (parent)
-  participant   text not null,                 -- the player, as Playbook has her
+  participant   text not null,                 -- the player, as SportsEngine has her
   item_name     text,
   price         numeric(10,2),
   paid          numeric(10,2),

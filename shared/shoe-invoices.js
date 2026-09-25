@@ -1,4 +1,4 @@
-// Playbook's sale export → shoe_invoices rows, matched to players.
+// SportsEngine's sale export → shoe_invoices rows, matched to players.
 //
 // Shared by the gear board's upload button (src/App.jsx) and the CLI
 // (scripts/import-shoe-invoices.mjs), so both read the file the same way and
@@ -8,7 +8,7 @@ import { matchPlayer } from "./name-match.js";
 
 const money = (s) => { const n = parseFloat(String(s ?? "").replace(/[^0-9.-]/g, "")); return Number.isFinite(n) ? n : null; };
 const when = (s) => {
-  // "09/24/2026 12:44 PM" — Playbook is Central; keep the wall clock, note the zone.
+  // "09/24/2026 12:44 PM" — SportsEngine shows Central; keep the wall clock, note the zone.
   const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})\s*(AM|PM)?/i.exec(String(s || "").trim());
   if (!m) return null;
   let h = Number(m[4]) % 12; if (/p/i.test(m[6] || "")) h += 12;
