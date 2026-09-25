@@ -13,6 +13,7 @@ import { schoolKey } from "../shared/school-schedule.js";
 import DsscHub from "./dssc/DsscHub.jsx";
 import DsscAdmin from "./dssc/DsscAdmin.jsx";
 import HousingView from "./HousingView.jsx";
+import AskHQ from "./AskHQ.jsx";
 import { TN_SUB_PLACEHOLDERS, isPlaceholderPerson, sessionStaff, staffNeeded, staffApproved, staffPending, sessionShort, onStaff, parsePlanPaste } from "../shared/dssc-clinics.js";
 
 const POSITIONS = ["S","OH","MB","RS","L","DS","U"];
@@ -1651,6 +1652,7 @@ export default function App() {
   // Mobile nav: collapse the header buttons into a hamburger under 700px.
   const [isNarrow, setIsNarrow] = useState(() => typeof window !== "undefined" && window.matchMedia("(max-width: 700px)").matches);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [askOpen, setAskOpen] = useState(false);   // the Ask HQ assistant panel (admins)
   useEffect(() => {
     if (typeof window === "undefined") return;
     const mq = window.matchMedia("(max-width: 700px)");
@@ -31525,6 +31527,10 @@ export default function App() {
             })()}
           </nav>
           {openMenu && <div onClick={()=>setOpenMenu(null)} style={{position:"fixed",inset:0,zIndex:40}} />}
+          {canOps && <button onClick={()=>setAskOpen(v=>!v)} title="Ask HQ — ask anything about the club's data"
+            style={{padding:"6px 12px",borderRadius:8,border:"1px solid "+(askOpen?C.gold:C.border),background:askOpen?"rgba(233,30,140,0.12)":"transparent",color:C.gold,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:800,marginRight:6}}>
+            ✦ Ask HQ
+          </button>}
           <button onClick={openAddPlayer} title="Add a player from any view"
             style={{padding:"6px 12px",borderRadius:8,border:"1px solid "+C.gold,background:"transparent",color:C.gold,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700}}>
             + Add Player
@@ -31704,6 +31710,7 @@ export default function App() {
         {view==="myexpenses" && renderMyExpenses()}
         {view==="claims" && canOps && renderClaims()}
         {view==="travel" && renderTravel()}
+        {canOps && <AskHQ open={askOpen} onClose={()=>setAskOpen(false)} view={view} coach={coach} />}
         {view==="housing" && (isAdmin ? <HousingView tournaments={tournaments} tournamentAssignments={tournamentAssignments} players={players} coachRoster={coachRoster} coach={coach} reloadTournaments={loadTournaments} /> : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Housing is admin-only.</div>)}
         {view==="faq" && renderFaq()}
         {view==="practiceplan" && renderPracticePlans()}

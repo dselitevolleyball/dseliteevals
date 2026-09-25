@@ -50,6 +50,25 @@ export default function HousingView({ tournaments = [], tournamentAssignments = 
   };
   useEffect(() => { loadRows(list.map(t => t.id)); }, [list.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Write the automatic matches back to the rows, so the database says who a
+  // room belongs to — Ask HQ and anything else reading the table see the same
+  // answer the screen shows. Manual matches are never overwritten.
+  useEffect(() => {
+    if (!players.length) return;
+    const updates = [];
+    for (const tn of list) {
+      const stored = rows[tn.id] || []; if (!stored.length) continue;
+      const a = analyse(tn);
+      a.bookings.forEach((b, i) => {
+        const st = stored[i]; if (!st || st.match_how === "manual") return;
+        const pid = b.matched_player_id || null, team = b.matched_team || null, staff = !!b.is_staff, how = b.match_how || null;
+        if (st.matched_player_id !== pid || st.matched_team !== team || !!st.is_staff !== staff || (st.match_how || null) !== how) updates.push({ id: st.id, matched_player_id: pid, matched_team: team, is_staff: staff, match_how: how });
+      });
+    }
+    if (!updates.length) return;
+    Promise.all(updates.slice(0, 80).map(u => supabase.from("tournament_housing_bookings").update(u).eq("id", u.id))).then(() => loadRows(list.map(t => t.id)));
+  }, [rows, players.length, coachRoster.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Match on the client every render, so a roster change or a manual fix
   // shows up without re-importing. Manual matches (match_how = manual) win.
   const analyse = (tn) => {
