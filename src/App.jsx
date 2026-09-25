@@ -2166,6 +2166,18 @@ export default function App() {
   const [privMonth, setPrivMonth]           = useState(() => { const t = new Date(); const d = new Date(t.getFullYear(), t.getMonth() + (t.getDate() >= 20 ? 1 : 0), 1); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0"); });
   const [privFilter, setPrivFilter]         = useState("all");
   const [privBusy, setPrivBusy]             = useState(null);
+  const [playerCheckins, setPlayerCheckins] = useState([]);      // Quick Check-in rows (recent rounds)
+  const [ciTeam, setCiTeam]                 = useState("");
+  const [ciIdx, setCiIdx]                   = useState(0);
+  const [ciMode, setCiMode]                 = useState("go");    // go | summary
+  const [ciOnlyConcern, setCiOnlyConcern]   = useState(false);
+  const [ciRound]                           = useState(() => {
+    const t = new Date(); const d = new Date(Date.UTC(t.getFullYear(), t.getMonth(), t.getDate()));
+    const day = d.getUTCDay() || 7; d.setUTCDate(d.getUTCDate() + 4 - day);
+    const week = Math.ceil((((d - new Date(Date.UTC(d.getUTCFullYear(), 0, 1))) / 86400000) + 1) / 7);
+    const mon = new Date(d); mon.setUTCDate(d.getUTCDate() - 3); if (week % 2 === 0) mon.setUTCDate(mon.getUTCDate() - 7);
+    return mon.toISOString().slice(0, 10);
+  });
   const [showEvalOnly, setShowEvalOnly] = useState(false);
   const [showEvalAsTryout, setShowEvalAsTryout] = useState(false);
   // Three actionable buckets. eval_registered (the eval CSV roster) is
@@ -2570,6 +2582,13 @@ export default function App() {
     if (b.error) console.error("Load coach_privates_asks error:", b.error); else setCoachPrivatesAsks(b.data || []);
   }, []);
   useEffect(() => { if (isApproved && view === "privates") loadCoachPrivates(); }, [isApproved, view, loadCoachPrivates]);
+  const loadPlayerCheckins = useCallback(async () => {
+    const since = new Date(Date.now() - 100 * 86400000).toISOString().slice(0, 10);
+    const { data, error } = await supabase.from("player_checkins").select("*").gte("round", since).order("round", { ascending: false });
+    if (error) { console.error("Load player_checkins error:", error); return; }
+    setPlayerCheckins(data || []);
+  }, []);
+  useEffect(() => { if (isApproved && view === "checkin") loadPlayerCheckins(); }, [isApproved, view, loadPlayerCheckins]);
   useEffect(() => { if (isApproved) loadGearOrders(); }, [isApproved, loadGearOrders]);
   useEffect(() => { if (isApproved) loadSchoolGames(); }, [isApproved, loadSchoolGames]);
   // loadTeamsList is declared further down, so naming it here would be a TDZ
@@ -11119,6 +11138,213 @@ export default function App() {
         <div style={{fontSize:11,color:C.mut,marginTop:8,lineHeight:1.5}}>
           Coaches answer on their own page (text, app notification and email all carry the same link). Anyone who's in gets asked again on the 25th of each month for the month ahead; anyone who said not now is left alone. The CSV is one row per coach per block of hours, for Playbook.
         </div>
+      </div>
+    );
+  }
+
+  // ─── QUICK CHECK-IN ────────────────────────────────────────────────────
+  // Every two weeks, one player at a time, a handful of taps: which way she's
+  // trending, what she is to the team right now, a high and a low. Built for
+  // speed — a coach with two teams should be through both in ten minutes.
+  // Rounds are two-week windows starting on the Monday of an odd ISO week;
+  // each tap saves on its own, so nothing is lost if she gets pulled away.
+  function renderCheckins() {
+    const TERMINAL = ["declined", "not_invited", "opted_out"];
+    const TRENDS = [["up", "📈", "Growing"], ["flat", "➡️", "Steady"], ["down", "📉", "Slipping"]];
+    const CATS = [["driver", "Driving the team", C.grn], ["solid", "Solid contributor", "#22d3ee"], ["coming", "Coming along", "#a78bfa"], ["concern", "Needs attention", "#f59e0b"]];
+    const TAGS = ["serving", "passing", "attacking", "defense", "setting", "blocking", "effort", "attitude", "leadership", "communication", "confidence", "fitness"];
+    const catOf = (k) => CATS.find(c => c[0] === k);
+    const trendOf = (k) => TRENDS.find(t => t[0] === k);
+    const me = String(coach?.email || "").trim().toLowerCase();
+    const meName = coach?.display_name || me;
+    const fmtRound = (r) => { const d = new Date(r + "T12:00:00"); const e = new Date(d); e.setDate(e.getDate() + 13); return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " – " + e.toLocaleDateString(undefined, { month: "short", day: "numeric" }); };
+    const round = ciRound;
+    const eventTeams = new Set(practiceTeams.filter(isEventTeam).map(t => t.team_name));
+    const teamsAll = (canOps
+      ? practiceTeams.map(t => t.team_name)
+      : myTeamNames).filter(t => t && !eventTeams.has(t))
+      .sort((a, b) => (parseInt(a) || 99) - (parseInt(b) || 99) || a.localeCompare(b));
+    const team = teamsAll.includes(ciTeam) ? ciTeam : (teamsAll[0] || "");
+    const roster = players.filter(p => p.team_assignment === team && (p.roster_status || "active") === "active" && !TERMINAL.includes(p.offer_status || ""))
+      .sort((a, b) => (Number(a.jersey_number) || 999) - (Number(b.jersey_number) || 999) || String(a.last_name || "").localeCompare(String(b.last_name || "")));
+    const mine = (pid, r = round) => playerCheckins.find(c => c.player_id === pid && c.round === r && String(c.coach_email || "").toLowerCase() === me) || null;
+    const anyFor = (pid, r) => playerCheckins.find(c => c.player_id === pid && c.round === r) || null;
+    const priorRounds = [...new Set(playerCheckins.filter(c => c.round < round).map(c => c.round))].sort().reverse();
+    const lastFor = (pid) => { for (const r of priorRounds) { const c = mine(pid, r) || anyFor(pid, r); if (c) return c; } return null; };
+    const done = roster.filter(p => { const c = mine(p.id); return c && (c.trend || c.category); }).length;
+
+    const save = async (p, patch) => {
+      const cur = mine(p.id);
+      const row = { player_id: p.id, team_name: team, round, coach_email: me, coach_name: meName,
+        trend: cur?.trend || null, category: cur?.category || null, highs: cur?.highs || [], lows: cur?.lows || [], high_note: cur?.high_note || null, low_note: cur?.low_note || null,
+        ...patch, updated_at: new Date().toISOString() };
+      setPlayerCheckins(prev => { const i = prev.findIndex(c => c.player_id === p.id && c.round === round && String(c.coach_email || "").toLowerCase() === me); const n = prev.slice(); if (i >= 0) n[i] = { ...n[i], ...row }; else n.push(row); return n; });
+      const { data, error } = await supabase.from("player_checkins").upsert(row, { onConflict: "player_id,round,coach_email" }).select().single();
+      if (error) { window.alert("Didn't save: " + error.message); loadPlayerCheckins(); return; }
+      if (data) setPlayerCheckins(prev => prev.map(c => (c.player_id === p.id && c.round === round && String(c.coach_email || "").toLowerCase() === me) ? { ...c, id: data.id } : c));
+    };
+    const toggleTag = (p, field, tag) => { const cur = mine(p.id); const set = new Set(cur?.[field] || []); if (set.has(tag)) set.delete(tag); else set.add(tag); save(p, { [field]: [...set] }); };
+
+    const idx = Math.min(Math.max(0, ciIdx), Math.max(0, roster.length - 1));
+    const p = roster[idx];
+    const cur = p ? mine(p.id) : null;
+    const last = p ? lastFor(p.id) : null;
+    const go = (i) => setCiIdx(Math.min(Math.max(0, i), Math.max(0, roster.length - 1)));
+
+    const btn = (on, color, label, onClick, big) => (
+      <button onClick={onClick}
+        style={{padding:big?"14px 10px":"8px 12px",borderRadius:big?12:999,cursor:"pointer",fontFamily:"inherit",fontSize:big?15:12,fontWeight:800,flex:big?1:"0 0 auto",
+          border:"1px solid "+(on?color:C.border),background:on?color+"22":"transparent",color:on?color:C.mut,whiteSpace:"nowrap"}}>{label}</button>
+    );
+
+    // ── Summary: every player's latest read, one line each ─────────────
+    const summary = () => {
+      const teamsShown = ciTeam === "__all" && canOps ? teamsAll : [team];
+      const rounds = [...new Set(playerCheckins.map(c => c.round))].sort().reverse().slice(0, 4);
+      const rows = [];
+      for (const t of teamsShown) {
+        const ros = players.filter(x => x.team_assignment === t && (x.roster_status || "active") === "active" && !TERMINAL.includes(x.offer_status || ""))
+          .sort((a, b) => String(a.last_name || "").localeCompare(String(b.last_name || "")));
+        for (const x of ros) {
+          const hist = rounds.map(r => anyFor(x.id, r));
+          const latest = hist.find(Boolean) || null;
+          if (ciOnlyConcern && latest?.category !== "concern" && latest?.trend !== "down") continue;
+          rows.push({ t, x, latest, hist });
+        }
+      }
+      const exportCsv = () => {
+        const out = [["Team", "Player", "#", "Round", "Trend", "Category", "Highs", "High note", "Lows", "Low note", "Coach"]];
+        for (const c of playerCheckins.slice().sort((a, b) => a.round.localeCompare(b.round))) { const x = players.find(y => y.id === c.player_id); if (!x || !teamsShown.includes(c.team_name)) continue;
+          out.push([c.team_name, x.first_name + " " + x.last_name, x.jersey_number ?? "", c.round, trendOf(c.trend)?.[2] || "", catOf(c.category)?.[1] || "", (c.highs || []).join(" "), c.high_note || "", (c.lows || []).join(" "), c.low_note || "", c.coach_name || c.coach_email]); }
+        downloadCSV("player_checkins.csv", out);
+      };
+      return (
+        <div>
+          <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginBottom:10}}>
+            <label style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:C.mut,cursor:"pointer"}}><input type="checkbox" checked={ciOnlyConcern} onChange={e=>setCiOnlyConcern(e.target.checked)} /> Only slipping or needing attention</label>
+            <div style={{flex:1}} />
+            <span style={{fontSize:11,color:C.mut}}>Last {rounds.length} round{rounds.length===1?"":"s"}: {rounds.map(fmtRound).join(" · ")}</span>
+            <button onClick={exportCsv} style={{padding:"6px 12px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontFamily:"inherit",fontSize:11,fontWeight:700,cursor:"pointer"}}>⬇ CSV</button>
+          </div>
+          <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,overflow:"hidden"}}>
+            {rows.length === 0 && <div style={{padding:24,textAlign:"center",color:C.mut,fontSize:12}}>{playerCheckins.length ? "Nobody matches." : "No check-ins yet — tap Check in and start."}</div>}
+            {rows.map(({ t, x, latest, hist }, i) => {
+              const cat = catOf(latest?.category);
+              const showTeam = teamsShown.length > 1 && (i === 0 || rows[i - 1].t !== t);
+              return (
+                <div key={x.id}>
+                  {showTeam && <div style={{padding:"6px 14px",fontSize:10,fontWeight:800,letterSpacing:0.5,textTransform:"uppercase",color:C.mut,background:"rgba(255,255,255,0.03)",borderBottom:"1px solid "+C.border}}>{t}</div>}
+                  <div style={{display:"flex",gap:10,alignItems:"center",padding:"8px 14px",borderBottom:"1px solid "+C.border,flexWrap:"wrap"}}>
+                    <button onClick={()=>setProfileId(x.id)} style={{background:"none",border:"none",padding:0,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,color:C.text,minWidth:160,textAlign:"left"}}>{x.jersey_number != null ? "#" + x.jersey_number + " " : ""}{x.first_name} {x.last_name}</button>
+                    <span title="Trend over the last rounds, newest first" style={{fontSize:14,letterSpacing:2,minWidth:70}}>{hist.map((h, j) => <span key={j} style={{opacity:h?1:0.25}}>{h ? trendOf(h.trend)?.[1] || "·" : "·"}</span>)}</span>
+                    {cat ? <span style={{fontSize:10,fontWeight:800,padding:"2px 8px",borderRadius:999,background:cat[2]+"22",color:cat[2],whiteSpace:"nowrap"}}>{cat[1]}</span> : <span style={{fontSize:10,color:C.mut}}>—</span>}
+                    <span style={{fontSize:11,color:C.mut,flex:1,minWidth:200}}>
+                      {latest?.highs?.length > 0 && <span style={{color:C.grn}}>▲ {latest.highs.join(", ")}{latest.high_note ? " — " + latest.high_note : ""}</span>}
+                      {latest?.highs?.length > 0 && latest?.lows?.length > 0 && " · "}
+                      {latest?.lows?.length > 0 && <span style={{color:"#f59e0b"}}>▼ {latest.lows.join(", ")}{latest.low_note ? " — " + latest.low_note : ""}</span>}
+                      {!latest?.highs?.length && latest?.high_note && <span style={{color:C.grn}}>▲ {latest.high_note}</span>}
+                      {!latest?.lows?.length && latest?.low_note && <span style={{color:"#f59e0b"}}> ▼ {latest.low_note}</span>}
+                    </span>
+                    {latest && <span style={{fontSize:10,color:C.mut,whiteSpace:"nowrap"}}>{latest.coach_name || ""} · {fmtRound(latest.round).split(" – ")[0]}</span>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      );
+    };
+
+    return (
+      <div style={{maxWidth:760,margin:"0 auto"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:10}}>
+          <div>
+            <h2 style={{margin:0,fontSize:20,fontWeight:800,color:C.gold}}>⚡ Quick Check-in</h2>
+            <div style={{fontSize:12,color:C.mut,marginTop:2}}>Round {fmtRound(round)} · a few taps per player, saves as you go</div>
+          </div>
+          <div style={{flex:1}} />
+          <select value={ciTeam === "__all" && canOps ? "__all" : team} onChange={e=>{ setCiTeam(e.target.value); setCiIdx(0); }} style={{...inpStyle,padding:"6px 10px",fontSize:12,minWidth:150}}>
+            {canOps && <option value="__all">All teams (summary)</option>}
+            {teamsAll.map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
+          <div style={{display:"flex",border:"1px solid "+C.border,borderRadius:8,overflow:"hidden"}}>
+            {[["go","Check in"],["summary","Summary"]].map(([k,l]) => (
+              <button key={k} onClick={()=>setCiMode(k)} style={{padding:"6px 12px",border:"none",background:ciMode===k?C.gold:"transparent",color:ciMode===k?"#000":C.mut,fontFamily:"inherit",fontSize:12,fontWeight:700,cursor:"pointer"}}>{l}</button>
+            ))}
+          </div>
+        </div>
+
+        {(ciMode === "summary" || ciTeam === "__all") ? summary() : !team ? (
+          <div style={{padding:24,textAlign:"center",color:C.mut,fontSize:12}}>You're not on a team's staff yet, so there's nobody to check in on.</div>
+        ) : !p ? (
+          <div style={{padding:24,textAlign:"center",color:C.mut,fontSize:12}}>No players on {team} yet.</div>
+        ) : (
+          <>
+            {/* progress: one dot per player, tap to jump */}
+            <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10,flexWrap:"wrap"}}>
+              <span style={{fontSize:11,fontWeight:800,color:done===roster.length?C.grn:C.text}}>{done}/{roster.length} done</span>
+              <div style={{display:"flex",gap:3,flexWrap:"wrap"}}>
+                {roster.map((x, i) => { const c = mine(x.id); const on = c && (c.trend || c.category); return (
+                  <button key={x.id} onClick={()=>go(i)} title={x.first_name + " " + x.last_name}
+                    style={{width:i===idx?22:12,height:12,borderRadius:6,border:"none",padding:0,cursor:"pointer",background:i===idx?C.gold:on?C.grn:"rgba(255,255,255,0.15)"}} />
+                ); })}
+              </div>
+            </div>
+
+            <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:14,padding:"16px 16px 12px"}}>
+              <div style={{display:"flex",alignItems:"baseline",gap:10,flexWrap:"wrap"}}>
+                <div style={{fontSize:24,fontWeight:800,color:C.text,lineHeight:1.1}}>{p.jersey_number != null && <span style={{color:C.gold}}>#{p.jersey_number} </span>}{p.first_name} {p.last_name}</div>
+                <div style={{fontSize:12,color:C.mut}}>{[p.primary_position, p.secondary_position].filter(Boolean).join(" / ") || (p.positions || []).join("/") || ""}</div>
+                <div style={{flex:1}} />
+                <button onClick={()=>setProfileId(p.id)} style={{background:"none",border:"1px solid "+C.border,borderRadius:6,color:C.mut,cursor:"pointer",fontFamily:"inherit",fontSize:10,fontWeight:700,padding:"2px 8px"}}>card</button>
+              </div>
+              {last && (
+                <div style={{fontSize:11,color:C.mut,marginTop:4}}>
+                  Last time ({fmtRound(last.round).split(" – ")[0]}): {trendOf(last.trend)?.[1]} {trendOf(last.trend)?.[2] || ""}{last.category ? " · " + catOf(last.category)?.[1] : ""}
+                  {last.highs?.length ? " · ▲ " + last.highs.join(", ") : ""}{last.lows?.length ? " · ▼ " + last.lows.join(", ") : ""}
+                </div>
+              )}
+
+              <div style={{fontSize:10,fontWeight:800,letterSpacing:0.5,textTransform:"uppercase",color:C.mut,margin:"16px 0 6px"}}>Trend</div>
+              <div style={{display:"flex",gap:8}}>
+                {TRENDS.map(([k, icon, l]) => btn(cur?.trend === k, k==="up"?C.grn:k==="down"?"#f59e0b":"#22d3ee", icon + " " + l, () => save(p, { trend: cur?.trend === k ? null : k }), true))}
+              </div>
+
+              <div style={{fontSize:10,fontWeight:800,letterSpacing:0.5,textTransform:"uppercase",color:C.mut,margin:"16px 0 6px"}}>Right now she is</div>
+              <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                {CATS.map(([k, l, col]) => btn(cur?.category === k, col, l, () => save(p, { category: cur?.category === k ? null : k })))}
+              </div>
+
+              <div style={{display:"grid",gridTemplateColumns:isNarrow?"1fr":"1fr 1fr",gap:14,marginTop:16}}>
+                <div>
+                  <div style={{fontSize:10,fontWeight:800,letterSpacing:0.5,textTransform:"uppercase",color:C.grn,marginBottom:6}}>▲ High</div>
+                  <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>{TAGS.map(t => btn((cur?.highs || []).includes(t), C.grn, t, () => toggleTag(p, "highs", t)))}</div>
+                  <input value={cur?.high_note || ""} onChange={e=>setPlayerCheckins(prev => { const i = prev.findIndex(c => c.player_id === p.id && c.round === round && String(c.coach_email||"").toLowerCase() === me); const n = prev.slice(); if (i >= 0) n[i] = { ...n[i], high_note: e.target.value }; else n.push({ player_id: p.id, round, coach_email: me, team_name: team, highs: [], lows: [], high_note: e.target.value }); return n; })}
+                    onBlur={e=>save(p, { high_note: e.target.value.trim() || null })} placeholder="a line, optional"
+                    style={{...inpStyle,width:"100%",boxSizing:"border-box",marginTop:8,padding:"7px 10px",fontSize:12}} />
+                </div>
+                <div>
+                  <div style={{fontSize:10,fontWeight:800,letterSpacing:0.5,textTransform:"uppercase",color:"#f59e0b",marginBottom:6}}>▼ Low</div>
+                  <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>{TAGS.map(t => btn((cur?.lows || []).includes(t), "#f59e0b", t, () => toggleTag(p, "lows", t)))}</div>
+                  <input value={cur?.low_note || ""} onChange={e=>setPlayerCheckins(prev => { const i = prev.findIndex(c => c.player_id === p.id && c.round === round && String(c.coach_email||"").toLowerCase() === me); const n = prev.slice(); if (i >= 0) n[i] = { ...n[i], low_note: e.target.value }; else n.push({ player_id: p.id, round, coach_email: me, team_name: team, highs: [], lows: [], low_note: e.target.value }); return n; })}
+                    onBlur={e=>save(p, { low_note: e.target.value.trim() || null })} placeholder="a line, optional"
+                    style={{...inpStyle,width:"100%",boxSizing:"border-box",marginTop:8,padding:"7px 10px",fontSize:12}} />
+                </div>
+              </div>
+
+              <div style={{display:"flex",gap:8,alignItems:"center",marginTop:18}}>
+                <button onClick={()=>go(idx-1)} disabled={idx===0} style={{padding:"10px 14px",borderRadius:10,border:"1px solid "+C.border,background:"transparent",color:idx===0?C.border:C.text,fontFamily:"inherit",fontSize:13,fontWeight:800,cursor:idx===0?"default":"pointer"}}>‹ Prev</button>
+                <div style={{flex:1,textAlign:"center",fontSize:11,color:C.mut}}>{idx+1} of {roster.length}{cur && (cur.trend || cur.category) ? " · saved" : ""}</div>
+                {idx < roster.length - 1
+                  ? <button onClick={()=>go(idx+1)} style={{padding:"10px 22px",borderRadius:10,border:"none",background:C.gold,color:"#000",fontFamily:"inherit",fontSize:13,fontWeight:800,cursor:"pointer"}}>Next ›</button>
+                  : <button onClick={()=>{ const n = teamsAll.indexOf(team) + 1; if (n < teamsAll.length && !canOps) { setCiTeam(teamsAll[n]); setCiIdx(0); } else setCiMode("summary"); }}
+                      style={{padding:"10px 22px",borderRadius:10,border:"none",background:C.grn,color:"#000",fontFamily:"inherit",fontSize:13,fontWeight:800,cursor:"pointer"}}>
+                      {(!canOps && teamsAll.indexOf(team) + 1 < teamsAll.length) ? "Done — next team ›" : "Done — see summary"}
+                    </button>}
+              </div>
+            </div>
+          </>
+        )}
       </div>
     );
   }
@@ -31201,7 +31427,7 @@ export default function App() {
               const pendingReqs = coachRequests.filter(r=>r.status==="pending").length;
               const groups = [
                 { title:"Players", items:[...((canViewTeams || myTeamNames.length) ? [["roster","Roster"]] : []),
-                  ...((canViewTeams || myTeamNames.length) ? [["incidents","Issues & Injuries" + (incidents.filter(r => incidentVisible(r) && r.status !== "resolved").length ? " (" + incidents.filter(r => incidentVisible(r) && r.status !== "resolved").length + ")" : "")]] : []), ...(canOps ? [] : [["playereval","Evaluations"],["passing","Passer Ratings"]])] },
+                  ...((canViewTeams || myTeamNames.length) ? [["incidents","Issues & Injuries" + (incidents.filter(r => incidentVisible(r) && r.status !== "resolved").length ? " (" + incidents.filter(r => incidentVisible(r) && r.status !== "resolved").length + ")" : "")]] : []), ...((canViewTeams || myTeamNames.length) ? [["checkin","Quick Check-in"]] : []), ...(canOps ? [] : [["playereval","Evaluations"],["passing","Passer Ratings"]])] },
                 { title:"Tryouts 2026-27", items:[["dashboard","Dashboard"], ["evaluate","Evaluate"], ["favorites","My Favorites" + (favorites.length ? " (" + favorites.length + ")" : "")], ...(canViewTeams ? [["teams","Teams"]] : []), ["rankings","Rankings"], ["physical","Physical Testing"], ["tryouts","Coach Assignments"]] },
                 // Operations is grouped by WHICH BUSINESS a screen belongs to,
                 // not by what it does. DSSC is a separate company with its own
@@ -31454,6 +31680,7 @@ export default function App() {
         {view==="playergear" && renderPlayerGear()}
         {view==="waiting" && renderWaiting()}
         {view==="privates" && renderPrivates()}
+        {view==="checkin" && renderCheckins()}
         {view==="kickoff" && renderKickoffs()}
         {view==="photos" && renderTeamPhotos()}
         {view==="incidents" && renderIncidents()}
