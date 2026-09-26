@@ -89,7 +89,7 @@ export function parseUpperHandEvent(text, Papa) {
   const hi = lines.findIndex((l, i) => i < 15 && /^"?First Name"?\s*,/i.test(l));
   if (hi < 0) return null;
   const meta = Papa.parse(lines.slice(0, hi).join("\n"), { header: false, skipEmptyLines: true }).data;
-  const cell = (re) => { const r = meta.find(x => re.test(String(x[0] || ""))); return r ? clean(r[1] || r.slice(1).join(" ")) : ""; };
+  const cell = (re) => { const r = meta.find(x => re.test(String(x[0] || ""))); return r ? clean(r.slice(1).join(" ")) : ""; };   // a date like "Oct 4, 2025" splits across cells
   const title = cell(/event\s*title|^event$|^title$/i) || cell(/name/i);
   const dateRaw = cell(/start|date|when/i);
   const date = isoDate(dateRaw) || (() => { const m = /([A-Z][a-z]{2,8})\s+(\d{1,2}),?\s+(\d{4})/.exec(dateRaw); return m ? isoDate(new Date(m[0]).toLocaleDateString("en-US")) : null; })();
