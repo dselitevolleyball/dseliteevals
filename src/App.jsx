@@ -2080,6 +2080,16 @@ export default function App() {
   const [favorites, setFavorites] = useState([]); // player_ids the current coach favorited
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState("home");
+  // The platform is two businesses. `workspace` flips the whole thing — header,
+  // colors, navigation, home — between DS Elite and Dripping Springs Sports
+  // Club, instead of DSSC living as a tab inside DS Elite. Opening a DSSC
+  // screen by any route (a push link, the home card) flips it too.
+  const DSSC_VIEWS = new Set(["dssc","clinics","dssctexts","dssccrm","dssccal","dssctime","pods","privates"]);
+  const [workspace, setWorkspace] = useState(() => { try { return localStorage.getItem("dse.workspace") === "dssc" ? "dssc" : "dse"; } catch { return "dse"; } });
+  useEffect(() => {
+    const ws = DSSC_VIEWS.has(view) ? "dssc" : (view === "home" || view === "askai" || view === "notifications" || view === "activity" || view === "faq") ? null : "dse";
+    if (ws && ws !== workspace) { setWorkspace(ws); try { localStorage.setItem("dse.workspace", ws); } catch {} }
+  }, [view]); // eslint-disable-line react-hooks/exhaustive-deps
   // Deep links from notifications (e.g. /?view=practiceplan&tab=playbook) — read
   // the URL once after sign-in, jump to that view/tab, then clean the URL.
   const deepLinkDone = useRef(false);
@@ -31432,11 +31442,23 @@ export default function App() {
   }
 
   return (
-    <div style={{fontFamily:"Outfit,sans-serif",background:C.bg,color:C.text,minHeight:"100vh"}}>
-      <header style={{background:"linear-gradient(135deg,#0f0f0f,#1a1a1a)",borderBottom:"1px solid "+C.border,padding:"12px 18px",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
-        <div style={{fontSize:19,fontWeight:800,color:C.gold,display:"flex",alignItems:"center",gap:8}}>
-          <span style={{fontSize:22}}>◆</span> DS ELITE
-          <span style={{fontSize:11,fontWeight:400,color:C.mut,marginLeft:6}}>HQ</span>
+    <div style={{fontFamily:"Outfit,sans-serif",background:workspace==="dssc"?"#104946":C.bg,color:C.text,minHeight:"100vh"}}>
+      <header style={{background: workspace==="dssc" ? "linear-gradient(135deg,#0C3A37,#104946)" : "linear-gradient(135deg,#0f0f0f,#1a1a1a)",borderBottom:"1px solid "+(workspace==="dssc"?"rgba(255,255,255,0.14)":C.border),padding:"12px 18px",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
+        <div style={{display:"flex",alignItems:"center",gap:14,flexWrap:"wrap"}}>
+          {workspace==="dssc"
+            ? <img src="/dssc/logo-horizontal-white.png" alt="Dripping Springs Sports Club" style={{height:28,width:"auto",cursor:"pointer"}} onClick={()=>{ setView("home"); setOpenMenu(null); }} />
+            : <div style={{fontSize:19,fontWeight:800,color:C.gold,display:"flex",alignItems:"center",gap:8,cursor:"pointer"}} onClick={()=>{ setView("home"); setOpenMenu(null); }}>
+                <span style={{fontSize:22}}>◆</span> DS ELITE
+                <span style={{fontSize:11,fontWeight:400,color:C.mut,marginLeft:6}}>HQ</span>
+              </div>}
+          {/* The switch between the two businesses. Everyone sees it — coaches
+              have a DSSC side (the coach hub) as much as directors do. */}
+          <div role="tablist" aria-label="Business" style={{display:"flex",borderRadius:999,border:"1px solid "+(workspace==="dssc"?"rgba(255,255,255,0.25)":C.border),overflow:"hidden",background:"rgba(0,0,0,0.25)"}}>
+            {[["dse","DS Elite"],["dssc","DSSC"]].map(([k,l]) => (
+              <button key={k} role="tab" aria-selected={workspace===k} onClick={()=>{ if (workspace===k) return; setWorkspace(k); try { localStorage.setItem("dse.workspace", k); } catch {} setView("home"); setOpenMenu(null); setMobileNavOpen(false); }}
+                style={{padding:"5px 12px",border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:800,letterSpacing:0.3,background:workspace===k?(k==="dssc"?"#B2D049":C.gold):"transparent",color:workspace===k?(k==="dssc"?"#104946":"#000"):(workspace==="dssc"?"#A9C7C3":C.mut)}}>{l}</button>
+            ))}
+          </div>
         </div>
         {/* Right cluster. flex:1 + justifyContent:flex-end keeps Add Player, the
             bell and the user chip pinned to the right edge once this block wraps
@@ -31446,7 +31468,8 @@ export default function App() {
         <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",flex:"1 1 auto",minWidth:0,justifyContent:"flex-end"}}>
           <nav style={{display:"flex",gap:3,flexWrap:"wrap",position:"relative",zIndex:50}}>
             {(() => {
-              const btn = (active) => ({padding:"6px 14px",borderRadius:8,border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600,background:active?C.gold:"transparent",color:active?"#000":C.mut});
+              const accent = workspace==="dssc" ? "#B2D049" : C.gold, onAccent = workspace==="dssc" ? "#104946" : "#000", quiet = workspace==="dssc" ? "#A9C7C3" : C.mut;
+              const btn = (active) => ({padding:"6px 14px",borderRadius:8,border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600,background:active?accent:"transparent",color:active?onAccent:quiet});
               const item = (v,l) =>
                 <button key={v} style={btn(view===v)} onClick={()=>{ setView(v); setOpenMenu(null); }}>{l}</button>;
               // Dropdown entries: ["hdr","Label"] renders a section header.
@@ -31487,6 +31510,20 @@ export default function App() {
                 // DSYSA mistake of linking people to a page they can't open.
                 { title:"More", items:[["tournament","In-House Tournament"], ...(canOps ? [] : [["dssc","DSSC Coach Hub"], ...(isDsscDirector ? [["clinics","DSSC Clinics (admin)"],["dssctexts","DSSC Texts"],["dssccrm","DSSC People"]] : []), ["dssctime","DSSC Time Cards"],["myexpenses","My Expenses"],["dsysa","DSYSA Clinics"]]), ["activity","Activity"], ["faq","FAQ"], ["games","Games"], ...(isOwner ? [["askai","Ask AI"]] : [])] },
               ];
+              // Each business gets its own navigation. DS Elite drops the DSSC
+              // screens; DSSC shows only its own, flat (there are few enough).
+              const dropDssc = (g) => {
+                const items = g.items.filter(([v]) => !DSSC_VIEWS.has(v));
+                // A section header with nothing under it goes too.
+                const kept = items.filter(([v], i) => v !== "hdr" || (items[i+1] && items[i+1][0] !== "hdr"));
+                return { ...g, items: kept };
+              };
+              const wsGroups = workspace==="dssc"
+                ? [{ title:"More", items:[ ...(isDsscDirector ? [["dssccal","Coverage Calendar"],["pods","Skill Pods"],["privates","Privates"],["dsysa","DSYSA Clinics"]] : [["dsysa","DSYSA Clinics"]]), ["activity","Activity"], ["faq","FAQ"] ] }]
+                : groups.map(dropDssc).filter(g => g.items.some(([v]) => v !== "hdr"));
+              const wsTop = workspace==="dssc"
+                ? [ ...(isDsscDirector ? [["clinics","Board"]] : []), ["dssc","Coach Hub"], ...(isDsscDirector ? [["dssctexts","Texts"],["dssccrm","People"]] : []), ["dssctime","Time Cards"], ...(!canOps ? [["notifications","Notifications" + (unreadCount>0?" ("+unreadCount+")":"")]] : []) ]
+                : null;
               // Mobile: one hamburger opening a full-height grouped menu.
               if (isNarrow) {
                 const mItem = (v, l) => (
@@ -31499,14 +31536,15 @@ export default function App() {
                   {mobileNavOpen && <>
                     <div onClick={()=>setMobileNavOpen(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",zIndex:79}} />
                     <div style={{position:"fixed",top:54,left:8,right:8,zIndex:80,background:C.card,border:"1px solid "+C.border,borderRadius:12,boxShadow:"0 16px 40px rgba(0,0,0,0.6)",maxHeight:"calc(100vh - 70px)",overflowY:"auto",padding:6}}>
+                      {wsTop ? <>{mItem("home","🏠 Home")}{wsTop.map(([v,l]) => mItem(v,l))}</> : <>
                       {mItem("home","🏠 Home")}
                       {mItem("clockin","⏱ Clock In")}
                       {!canOps && mItem("notifications","🔔 Notifications" + (unreadCount>0?" ("+unreadCount+")":""))}
                       {canOps && mItem("tournaments","🏆 Tournaments")}
                       {mItem("lineups","📋 Lineups")}
                       {mItem("practiceplan","📖 Playbook")}
-                      {mItem("clinics","🏐 DSSC Clinics")}
-                      {groups.map(g => (
+                      </>}
+                      {wsGroups.map(g => (
                         <div key={g.title}>
                           <div style={{padding:"10px 14px 4px",fontSize:9,fontWeight:800,letterSpacing:0.6,textTransform:"uppercase",color:C.gold,borderTop:"1px solid "+C.border,marginTop:6}}>{g.title}</div>
                           {g.items.map(([v,l],i) => v==="hdr"
@@ -31519,14 +31557,15 @@ export default function App() {
                 </>;
               }
               return <>
+                {wsTop ? <>{item("home","Home")}{wsTop.map(([v,l]) => item(v,l))}</> : <>
                 {item("home","Home")}
                 {item("clockin","Clock In")}
                 {!canOps && item("notifications","Notifications" + (unreadCount>0?" ("+unreadCount+")":""))}
                 {canOps && item("tournaments","Tournaments")}
                 {item("lineups","Lineups")}
                 {item("practiceplan","Playbook")}
-                {item("clinics","DSSC")}
-                {groups.map(g => {
+                </>}
+                {wsGroups.map(g => {
                   const activeInGroup = g.items.some(([v]) => v === view);
                   const open = openMenu === g.title;
                   return (
@@ -31554,10 +31593,10 @@ export default function App() {
             style={{padding:"6px 12px",borderRadius:8,border:"1px solid "+(askOpen?C.gold:C.border),background:askOpen?"rgba(233,30,140,0.12)":"transparent",color:C.gold,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:800,marginRight:6}}>
             ✦ Ask HQ
           </button>}
-          <button onClick={openAddPlayer} title="Add a player from any view"
+          {workspace!=="dssc" && <button onClick={openAddPlayer} title="Add a player from any view"
             style={{padding:"6px 12px",borderRadius:8,border:"1px solid "+C.gold,background:"transparent",color:C.gold,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700}}>
             + Add Player
-          </button>
+          </button>}
           <button onClick={refreshAll} disabled={refreshing} title="Refresh — pull the latest changes from everyone"
             style={{marginLeft:6,background:"none",border:"none",cursor:refreshing?"default":"pointer",fontSize:17,lineHeight:1,color:refreshing?C.gold:C.mut,padding:"2px 4px",animation:refreshing?"dse-spin 0.8s linear infinite":"none"}}>
             ⟳
@@ -31678,7 +31717,7 @@ export default function App() {
           prose — capping them just buys empty margin and costs a column. */}
       <div style={{padding:"14px 18px",maxWidth:WIDE_VIEWS.has(view)?"none":1500,margin:"0 auto"}}>
         {OPS_VIEWS.has(view) && view !== "notifications" && !canOps ? opsDenied : <>
-        {view==="home" && renderHome()}
+        {view==="home" && (workspace==="dssc" ? (isDsscDirector ? renderDsscAdmin() : renderDsscHub()) : renderHome())}
         {view==="clockin" && (
           <div style={{maxWidth:820,margin:"0 auto"}}>
             <h2 style={{margin:"0 0 12px",fontSize:20,fontWeight:800,color:C.gold}}>⏱ Clock In &amp; Timesheet</h2>
