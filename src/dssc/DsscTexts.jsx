@@ -52,7 +52,10 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
   useEffect(() => {
     if (!initial) return;
     setSelId(null);
-    setComposer({ scope: initial.sessionId ? "class" : "program", clinicId: initial.clinicId || "", sessionId: initial.sessionId || "", category: "", age: "", who: "families", includeUnconsented: false, body: "", media: [], result: null, selected: new Set(), excluded: new Set(), search: "" });
+    const scope = initial.sessionId ? "class" : "program";
+    const a = buildAudience({ scope, clinicId: initial.clinicId || "", sessionId: initial.sessionId || "", includeUnconsented: true, excluded: new Set(), selected: new Set() });
+    const to = new Map(a.ready.map(x => [x.to, { to: x.to, name: x.name, kind: x.kind, consent: !!x.consent, players: x.dssc_player ? [x.dssc_player] : [], programs: x.dssc_program ? [x.dssc_program] : [], dssc_player: x.dssc_player || null, dssc_program: x.dssc_program || null, via: x.via || null }]));
+    setComposer(blankComposer({ to, group: scope, clinicId: initial.clinicId || "", sessionId: initial.sessionId || "" }));
     onConsumedInitial && onConsumedInitial();
   }, [initial]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -149,7 +152,8 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
   const totalUnread = threads.reduce((n, t) => n + (t.unread_count || 0), 0);
   const markRead = async (id) => { await supabase.from("sms_threads").update({ unread_count: 0 }).eq("id", id); loadThreads(); };
 
-  const openComposer = (scope) => { setSelId(null); setComposer({ scope, clinicId: upcomingClinics[0]?.id || "", sessionId: "", category: "Pods", age: ages[0] || "", who: "families", includeUnconsented: false, body: "", media: [], result: null, selected: new Set(), excluded: new Set(), search: "" }); };
+  const blankComposer = (over = {}) => ({ to: new Map(), group: "program", clinicId: upcomingClinics[0]?.id || "", sessionId: "", category: "Pods", age: ages[0] || "", includeUnconsented: false, body: "", media: [], result: null, search: "", ...over });
+  const openComposer = () => { setSelId(null); setComposer(blankComposer()); };
   const shell = (inner) => (
     <div style={{ margin: "-14px -18px", padding: "16px 16px 30px", background: DS.bg, minHeight: "calc(100vh - 56px)", fontFamily: DS.font, color: DS.text }}>
       <div style={{ maxWidth: 1200, margin: "0 auto" }}>
@@ -158,13 +162,7 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
           <Tag color={DS.lime}>Texts</Tag>
           <span style={{ fontSize: 12, color: DS.mut }}>{threads.length} conversation{threads.length === 1 ? "" : "s"}{totalUnread ? ` · ${totalUnread} unread` : ""} · {consents.length} opt-in{consents.length === 1 ? "" : "s"}</span>
           <div style={{ flex: 1 }} />
-          <Btn small kind="primary" onClick={() => openComposer("program")}>+ Text a program</Btn>
-          <Btn small onClick={() => openComposer("class")}>+ Text a class</Btn>
-          <Btn small onClick={() => openComposer("everyone")}>+ Everyone</Btn>
-          <Btn small onClick={() => openComposer("category")}>+ By category</Btn>
-          <Btn small onClick={() => openComposer("age")}>+ By age</Btn>
-          <Btn small onClick={() => openComposer("coaches")}>+ Coaches</Btn>
-          <Btn small onClick={() => openComposer("pick")}>🔍 Pick people</Btn>
+          <Btn small kind="primary" onClick={openComposer}>+ New text</Btn>
         </div>
         {inner}
       </div>
@@ -198,82 +196,96 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
       <div style={{ background: DS.panel, border: "1px solid " + DS.line, borderRadius: 14, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         {composer && (() => {
           const c = composer, set = (p) => setComposer(x => ({ ...x, ...p }));
-          const aud = buildAudience(c);
+          const to = c.to || new Map();                       // phone -> contact
+          const list = [...to.values()];
+          const ready = list.filter(x => x.kind === "coach" || x.consent || c.includeUnconsented);
+          const held = list.filter(x => x.kind !== "coach" && !x.consent && !c.includeUnconsented);
+          const canSend = (c.body.trim() || c.media.length) && ready.length > 0 && !sending && !c.result;
+          const addContacts = (arr) => { const n = new Map(to); arr.forEach(x => { if (!n.has(x.to)) n.set(x.to, x); }); set({ to: n, result: null, search: "" }); };
+          const remove = (phone) => { const n = new Map(to); n.delete(phone); set({ to: n, result: null }); };
+          // Group → contacts (same audience rules as before), added into the To field.
+          const groupContacts = () => {
+            const g = c.group;
+            const a = buildAudience({ scope: g, clinicId: c.clinicId, sessionId: c.sessionId, category: c.category, age: c.age, includeUnconsented: true, excluded: new Set(), selected: new Set() });
+            return [...a.ready].map(x => ({ to: x.to, name: x.name, kind: x.kind, consent: !!x.consent, players: x.dssc_player ? [x.dssc_player] : [], programs: x.dssc_program ? [x.dssc_program] : [], dssc_player: x.dssc_player || null, dssc_program: x.dssc_program || null, via: x.via || null }));
+          };
+          const gc = groupContacts();
           const cl = clinicById.get(Number(c.clinicId));
-          const sessions = (cl?.sessions || []).filter(s => s.date >= today).sort((a, b) => a.date.localeCompare(b.date));
-          const label = c.scope === "everyone" ? "everyone in current programs" : c.scope === "program" ? (cl?.name || "a program") : c.scope === "class" ? `${cl?.name || "a class"} · ${sessions.find(s => String(s.id) === String(c.sessionId)) ? fmtDay(sessions.find(s => String(s.id) === String(c.sessionId)).date, today) : "pick a class"}` : c.scope === "category" ? c.category : c.scope === "age" ? c.age : c.scope === "pick" ? `${(c.selected || new Set()).size} picked` : "DSSC coaches";
-          const canSend = (c.body.trim() || c.media.length) && aud.ready.length > 0 && !sending && !c.result;
+          const sessions = (cl?.sessions || []).filter(x => x.date >= today).sort((p, q) => p.date.localeCompare(q.date));
+          const q = nrm(c.search);
+          const hits = q ? contacts.filter(x => !to.has(x.to) && [x.name, ...x.players, ...x.programs, x.to].some(v => nrm(v).includes(q))).slice(0, 8) : [];
           const go = async () => {
             if (!canSend) return;
-            if (!window.confirm(`Send to ${aud.ready.length} number${aud.ready.length === 1 ? "" : "s"} (${label})? Each person gets their own one-to-one text from the club number.`)) return;
+            if (!window.confirm(`Send to ${ready.length} number${ready.length === 1 ? "" : "s"}? Each person gets their own one-to-one text from the club number.`)) return;
             setSending(true);
-            const r = await send({ recipients: aud.ready.map(x => ({ to: x.to, name: x.name, kind: x.kind, dssc_program: x.dssc_program || null, dssc_player: x.dssc_player || null })), body: c.body.trim(), media_urls: c.media.map(m => m.url), audience: { type: c.scope, clinic_id: c.clinicId || null, session_id: c.sessionId || null, category: c.category || null, age: c.age || null, include_unconsented: !!c.includeUnconsented, label } });
+            const r = await send({ recipients: ready.map(x => ({ to: x.to, name: x.name, kind: x.kind, dssc_program: x.dssc_program || x.programs?.[0] || null, dssc_player: x.dssc_player || x.players?.[0] || null })), body: c.body.trim(), media_urls: c.media.map(m => m.url), audience: { type: "custom", count: ready.length, include_unconsented: !!c.includeUnconsented } });
             setSending(false); set({ result: r }); loadThreads();
           };
+          const chipStyle = (ok) => ({ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, padding: "4px 6px 4px 10px", borderRadius: 999, background: ok ? "rgba(255,255,255,0.08)" : DS.orangeSoft, border: "1px solid " + (ok ? "transparent" : DS.orange), color: DS.text });
           return (<>
             <div style={{ padding: "12px 16px", borderBottom: "1px solid " + DS.line, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-              <div style={{ fontSize: 15, fontWeight: 800 }}>Text {label}</div><div style={{ flex: 1 }} /><Btn small onClick={() => setComposer(null)}>Close</Btn>
+              <div style={{ fontSize: 15, fontWeight: 800 }}>New text</div>
+              <span style={{ fontSize: 12, color: DS.mut }}>{ready.length} recipient{ready.length === 1 ? "" : "s"}{held.length ? ` · ${held.length} held (no opt-in)` : ""}</span>
+              <div style={{ flex: 1 }} /><Btn small onClick={() => setComposer(null)}>Close</Btn>
             </div>
             <div style={{ flex: 1, overflowY: "auto", padding: "14px 16px", display: "flex", flexDirection: "column", gap: 12 }}>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                <select value={c.scope} onChange={e => set({ scope: e.target.value, result: null })} style={{ ...inputStyle, width: "auto", padding: "6px 9px", fontSize: 13 }}>
-                  {[["program", "A program"], ["class", "One class"], ["everyone", "Everyone (current programs)"], ["category", "By category"], ["age", "By age group"], ["coaches", "DSSC coaches"], ["pick", "Pick people"]].map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-                </select>
-                {(c.scope === "program" || c.scope === "class") && <select value={c.clinicId} onChange={e => set({ clinicId: e.target.value, sessionId: "", result: null })} style={{ ...inputStyle, width: "auto", padding: "6px 9px", fontSize: 13, maxWidth: 320 }}>{upcomingClinics.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}</select>}
-                {c.scope === "class" && <select value={c.sessionId} onChange={e => set({ sessionId: e.target.value, result: null })} style={{ ...inputStyle, width: "auto", padding: "6px 9px", fontSize: 13 }}><option value="">— pick the class —</option>{sessions.map(s => <option key={s.id} value={s.id}>{fmtDay(s.date, today)} {s.start_time || ""}</option>)}</select>}
-                {c.scope === "category" && <select value={c.category} onChange={e => set({ category: e.target.value, result: null })} style={{ ...inputStyle, width: "auto", padding: "6px 9px", fontSize: 13 }}>{["Pods", "Clinics", "Camps", "Adult"].map(k => <option key={k}>{k}</option>)}</select>}
-                {c.scope === "age" && <select value={c.age} onChange={e => set({ age: e.target.value, result: null })} style={{ ...inputStyle, width: "auto", padding: "6px 9px", fontSize: 13 }}>{ages.map(k => <option key={k}>{k}</option>)}</select>}
-                <span style={{ fontSize: 12, color: DS.mut }}><b style={{ color: DS.lime }}>{aud.ready.length}</b> will get it{aud.held.length > 0 && <> · <b style={{ color: DS.orange }}>{aud.held.length}</b> held (no opt-in)</>}{aud.skipped.length > 0 && <> · {aud.skipped.length} no phone</>}</span>
-              </div>
-              {c.scope !== "coaches" && (
-                <div style={{ fontSize: 12, color: DS.mut, lineHeight: 1.5, background: DS.panel2, border: "1px solid " + DS.line, borderRadius: 10, padding: "8px 10px" }}>
-                  Goes to numbers with a recorded opt-in — the <b style={{ color: DS.text }}>/dssc-texts</b> form, or a DS Elite family whose number we already have. {aud.held.length > 0 && <label style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6, cursor: "pointer", color: DS.orange, fontWeight: 700 }}><input type="checkbox" checked={!!c.includeUnconsented} onChange={e => set({ includeUnconsented: e.target.checked, result: null })} /> Include the {aud.held.length} without a recorded opt-in</label>}
+              {/* To */}
+              <div style={{ background: DS.panel2, border: "1px solid " + DS.line, borderRadius: 10, padding: 10 }}>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginBottom: list.length ? 8 : 0 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: DS.lime, marginRight: 4 }}>To</span>
+                  {list.map(x => (
+                    <span key={x.to} style={chipStyle(x.kind === "coach" || x.consent || c.includeUnconsented)} title={fmtPhone(x.to) + (x.players?.length ? " · " + x.players.join(", ") : "")}>
+                      {x.name}{x.players?.length ? <span style={{ color: DS.mut }}> · {x.players[0].split(" ")[0]}</span> : null}{x.kind === "coach" ? <span style={{ color: DS.mut }}> · coach</span> : null}
+                      <button onClick={() => remove(x.to)} style={{ background: "none", border: "none", color: DS.mut, cursor: "pointer", padding: 0, fontSize: 13, lineHeight: 1 }}>✕</button>
+                    </span>
+                  ))}
+                  {list.length > 1 && <button onClick={() => set({ to: new Map(), result: null })} style={{ background: "none", border: "none", color: DS.mut, fontSize: 11, cursor: "pointer", fontFamily: DS.font }}>clear all</button>}
                 </div>
-              )}
-              {c.scope === "pick" && (() => {
-                const q = nrm(c.search); const sel = c.selected || new Set();
-                const hits = (q ? contacts.filter(x => [x.name, ...x.players, ...x.programs, x.to].some(v => nrm(v).includes(q))) : contacts).slice(0, 60);
-                const toggle = (to) => { const n = new Set(sel); n.has(to) ? n.delete(to) : n.add(to); set({ selected: n, result: null }); };
-                return (
-                  <div style={{ background: DS.panel2, border: "1px solid " + DS.line, borderRadius: 10, padding: 10 }}>
-                    <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
-                      <input value={c.search} onChange={e => set({ search: e.target.value })} placeholder="Search a parent, player, program or number…" style={{ ...inputStyle, padding: "7px 10px", fontSize: 13 }} autoFocus />
-                      {hits.length > 0 && <Btn small onClick={() => { const n = new Set(sel); hits.forEach(x => n.add(x.to)); set({ selected: n, result: null }); }}>Add all {hits.length}</Btn>}
-                      {sel.size > 0 && <Btn small kind="quiet" onClick={() => set({ selected: new Set(), result: null })}>Clear</Btn>}
-                    </div>
-                    <div style={{ maxHeight: 220, overflowY: "auto", display: "flex", flexDirection: "column", gap: 2 }}>
+                <div style={{ position: "relative" }}>
+                  <input value={c.search || ""} onChange={e => set({ search: e.target.value })} onKeyDown={e => { if (e.key === "Enter" && hits[0]) { e.preventDefault(); addContacts([hits[0]]); } }} placeholder="Add a person — type a parent, player, program or number…" style={{ ...inputStyle, padding: "8px 10px", fontSize: 13 }} autoFocus />
+                  {hits.length > 0 && (
+                    <div style={{ position: "absolute", left: 0, right: 0, top: "100%", zIndex: 5, background: DS.panel, border: "1px solid " + DS.lineStrong, borderRadius: 10, marginTop: 4, overflow: "hidden", boxShadow: "0 10px 30px rgba(0,0,0,0.4)" }}>
                       {hits.map(x => (
-                        <label key={x.to} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, padding: "4px 6px", borderRadius: 6, background: sel.has(x.to) ? DS.limeSoft : "transparent", cursor: "pointer" }}>
-                          <input type="checkbox" checked={sel.has(x.to)} onChange={() => toggle(x.to)} />
+                        <button key={x.to} onClick={() => addContacts([x])} style={{ display: "flex", gap: 8, alignItems: "center", width: "100%", textAlign: "left", padding: "8px 10px", background: "none", border: "none", borderBottom: "1px solid " + DS.line, color: DS.text, cursor: "pointer", fontFamily: DS.font, fontSize: 13 }}>
                           <span style={{ fontWeight: 700, minWidth: 150 }}>{x.name}</span>
                           <span style={{ color: DS.mut, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{x.kind === "coach" ? "coach" : [x.players.join(", "), x.programs.join(", ")].filter(Boolean).join(" · ")}</span>
                           <span style={{ color: DS.mut, fontSize: 12 }}>{fmtPhone(x.to)}</span>
                           {!x.consent && x.kind !== "coach" && <Tag color={DS.orange}>no opt-in</Tag>}
-                        </label>
+                        </button>
                       ))}
-                      {!hits.length && <div style={{ fontSize: 12, color: DS.mut }}>No one matches.</div>}
+                      {q && contacts.filter(x => [x.name, ...x.players, ...x.programs, x.to].some(v => nrm(v).includes(q))).length > 8 && <div style={{ fontSize: 11, color: DS.mut, padding: "6px 10px" }}>Keep typing to narrow it down…</div>}
                     </div>
-                  </div>
-                );
-              })()}
-              <textarea value={c.body} onChange={e => set({ body: e.target.value })} rows={5} placeholder={"Type the message everyone in " + label + " should get… (it comes from the club number; replies land here)"} style={{ ...inputStyle, resize: "vertical" }} />
+                  )}
+                </div>
+                {/* Add a group */}
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginTop: 8 }}>
+                  <span style={{ fontSize: 11, color: DS.mut }}>or add a group:</span>
+                  <select value={c.group} onChange={e => set({ group: e.target.value })} style={{ ...inputStyle, width: "auto", padding: "5px 8px", fontSize: 12 }}>
+                    {[["program", "A program"], ["class", "One class"], ["everyone", "Everyone in current programs"], ["category", "A category"], ["age", "An age group"], ["coaches", "DSSC coaches"]].map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                  </select>
+                  {(c.group === "program" || c.group === "class") && <select value={c.clinicId} onChange={e => set({ clinicId: e.target.value, sessionId: "" })} style={{ ...inputStyle, width: "auto", padding: "5px 8px", fontSize: 12, maxWidth: 300 }}>{upcomingClinics.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}</select>}
+                  {c.group === "class" && <select value={c.sessionId} onChange={e => set({ sessionId: e.target.value })} style={{ ...inputStyle, width: "auto", padding: "5px 8px", fontSize: 12 }}><option value="">— which class —</option>{sessions.map(x => <option key={x.id} value={x.id}>{fmtDay(x.date, today)} {x.start_time || ""}</option>)}</select>}
+                  {c.group === "category" && <select value={c.category} onChange={e => set({ category: e.target.value })} style={{ ...inputStyle, width: "auto", padding: "5px 8px", fontSize: 12 }}>{["Pods", "Clinics", "Camps", "Adult"].map(k => <option key={k}>{k}</option>)}</select>}
+                  {c.group === "age" && <select value={c.age} onChange={e => set({ age: e.target.value })} style={{ ...inputStyle, width: "auto", padding: "5px 8px", fontSize: 12 }}>{ages.map(k => <option key={k}>{k}</option>)}</select>}
+                  <Btn small disabled={!gc.length || (c.group === "class" && !c.sessionId)} onClick={() => addContacts(gc)}>+ Add {gc.length}</Btn>
+                </div>
+                {held.length > 0 && (
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8, cursor: "pointer", color: DS.orange, fontSize: 12, fontWeight: 700 }}>
+                    <input type="checkbox" checked={!!c.includeUnconsented} onChange={e => set({ includeUnconsented: e.target.checked, result: null })} /> Include the {held.length} without a recorded opt-in (orange)
+                  </label>
+                )}
+              </div>
+
+              <textarea value={c.body} onChange={e => set({ body: e.target.value })} rows={5} placeholder={list.length ? "Type the message… (it comes from the club number; replies land here)" : "Add someone above, then type the message…"} style={{ ...inputStyle, resize: "vertical" }} />
               <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                 <input ref={fileRef} type="file" accept="image/*" multiple style={{ display: "none" }} onChange={e => uploadMedia(e.target.files)} />
                 <Btn small onClick={() => fileRef.current?.click()}>📷 Attach photo</Btn>
                 {c.media.map(m => <span key={m.url} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, padding: "3px 8px", borderRadius: 8, border: "1px solid " + DS.line }}><img src={m.url} alt="" style={{ height: 22, borderRadius: 4 }} />{m.name}<button onClick={() => set({ media: c.media.filter(x => x.url !== m.url) })} style={{ background: "none", border: "none", color: DS.mut, cursor: "pointer" }}>✕</button></span>)}
                 <span style={{ fontSize: 11, color: DS.mut }}>{c.body.length} chars · {segments(c.body)} segment{segments(c.body) === 1 ? "" : "s"}{c.media.length ? " · MMS" : ""}</span>
                 <div style={{ flex: 1 }} />
-                <Btn kind="primary" disabled={!canSend} onClick={go}>{sending ? "Sending…" : `Send to ${aud.ready.length}`}</Btn>
+                <Btn kind="primary" disabled={!canSend} onClick={go}>{sending ? "Sending…" : `Send to ${ready.length}`}</Btn>
               </div>
-              {c.result && <div style={{ border: "1px solid " + (c.result.error || c.result.failed?.length ? DS.orange : DS.lime), borderRadius: 10, padding: "10px 12px", fontSize: 13 }}>{c.result.error ? <span style={{ color: DS.orange, fontWeight: 700 }}>{c.result.error}</span> : <><b style={{ color: DS.lime }}>Sent to {c.result.sent}</b>{c.result.failed?.length > 0 && <div style={{ color: DS.orange, marginTop: 4 }}>{c.result.failed.length} failed: {c.result.failed.map(f => (f.name || f.to) + " (" + f.error + ")").join("; ")}</div>}<div style={{ color: DS.mut, marginTop: 4 }}>Replies show up on the left, one thread per family.</div></>}</div>}
-              <details><summary style={{ cursor: "pointer", fontSize: 12, fontWeight: 700 }}>Recipients ({aud.ready.length}) — untick anyone to leave them out{aud.held.length ? ` · held (${aud.held.length})` : ""}{aud.skipped.length ? ` · no phone (${aud.skipped.length})` : ""}</summary>
-                <div style={{ display: "flex", flexDirection: "column", gap: 3, marginTop: 6, fontSize: 12 }}>
-                  {aud.ready.map(x => <label key={x.to} style={{ display: "flex", gap: 8, alignItems: "center", cursor: "pointer" }}><input type="checkbox" checked onChange={() => { const n = new Set(c.excluded || []); n.add(x.to); set({ excluded: n, result: null }); }} title="Untick to leave this person out" /><span style={{ minWidth: 180 }}>{x.name}</span><span style={{ color: DS.mut }}>{fmtPhone(x.to)}</span>{x.dssc_player && <span style={{ color: DS.mut }}>{x.dssc_player}</span>}{x.via && <Tag color={DS.mut}>{x.via}</Tag>}</label>)}
-                  {[...(c.excluded || [])].map(to => <label key={"x" + to} style={{ display: "flex", gap: 8, alignItems: "center", opacity: .55, cursor: "pointer" }}><input type="checkbox" checked={false} onChange={() => { const n = new Set(c.excluded); n.delete(to); set({ excluded: n, result: null }); }} /><span style={{ minWidth: 180 }}>{(contacts.find(x => x.to === to) || {}).name || fmtPhone(to)}</span><Tag color={DS.mut}>left out</Tag></label>)}
-                  {aud.held.map(x => <div key={x.to} style={{ display: "flex", gap: 8, opacity: .7 }}><span style={{ minWidth: 180 }}>{x.name}</span><span style={{ color: DS.mut }}>{fmtPhone(x.to)}</span><Tag color={DS.orange}>no opt-in</Tag></div>)}
-                  {aud.skipped.map((x, i) => <div key={i} style={{ display: "flex", gap: 8, opacity: .6 }}><span style={{ minWidth: 180 }}>{x.name}</span><Tag color={DS.mut}>{x.reason}</Tag></div>)}
-                </div>
-              </details>
+              {c.result && <div style={{ border: "1px solid " + (c.result.error || c.result.failed?.length ? DS.orange : DS.lime), borderRadius: 10, padding: "10px 12px", fontSize: 13 }}>{c.result.error ? <span style={{ color: DS.orange, fontWeight: 700 }}>{c.result.error}</span> : <><b style={{ color: DS.lime }}>Sent to {c.result.sent}</b>{c.result.failed?.length > 0 && <div style={{ color: DS.orange, marginTop: 4 }}>{c.result.failed.length} failed: {c.result.failed.map(x => (x.name || x.to) + " (" + x.error + ")").join("; ")}</div>}<div style={{ color: DS.mut, marginTop: 4 }}>Replies show up on the left, one thread per person.</div></>}</div>}
               <details><summary style={{ cursor: "pointer", fontSize: 12, fontWeight: 700 }}>Record opt-ins ({consents.length} on file)</summary>
                 <div style={{ fontSize: 12, color: DS.mut, margin: "6px 0" }}>Families opt in at <b style={{ color: DS.text }}>dseliteevals.vercel.app/dssc-texts</b>. Got them another way (a paper form, a text reply)? Paste numbers here, one per line, name after the number.</div>
                 <textarea value={consentPaste} onChange={e => setConsentPaste(e.target.value)} rows={3} placeholder={"512-555-0100 Jamie Smith"} style={{ ...inputStyle, resize: "vertical" }} />
@@ -282,7 +294,7 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
             </div>
           </>);
         })()}
-        {!composer && !selected && <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: DS.mut, fontSize: 13, padding: 20, textAlign: "center" }}>Pick a conversation, or start a text with the buttons above.</div>}
+        {!composer && !selected && <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: DS.mut, fontSize: 13, padding: 20, textAlign: "center" }}>Pick a conversation, or press + New text and add people or a whole program.</div>}
         {!composer && selected && (<>
           <div style={{ padding: "12px 16px", borderBottom: "1px solid " + DS.line }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}><div style={{ fontSize: 15, fontWeight: 800 }}>{selected.contact_name || fmtPhone(selected.phone)}</div>{selected.dssc_player && <Tag color={DS.lime}>{selected.dssc_player}</Tag>}{selected.dssc_program && <Tag color={DS.mut}>{selected.dssc_program}</Tag>}{selected.contact_kind === "coach" && <Tag color={DS.mut}>coach</Tag>}</div>
