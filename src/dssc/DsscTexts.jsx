@@ -52,6 +52,12 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
   useEffect(() => {
     if (!initial) return;
     setSelId(null);
+    if (Array.isArray(initial.recipients)) {
+      const to = new Map(initial.recipients.filter(x => x.to).map(x => [x.to, { to: x.to, name: x.name, kind: x.kind || "parent", consent: !!x.consent || consented.has(last10(x.to)), players: x.players || [], programs: x.programs || [], dssc_player: (x.players || [])[0] || null, dssc_program: (x.programs || [])[0] || null }]));
+      setComposer(blankComposer({ to }));
+      onConsumedInitial && onConsumedInitial();
+      return;
+    }
     const scope = initial.sessionId ? "class" : "program";
     const a = buildAudience({ scope, clinicId: initial.clinicId || "", sessionId: initial.sessionId || "", includeUnconsented: true, excluded: new Set(), selected: new Set() });
     const to = new Map(a.ready.map(x => [x.to, { to: x.to, name: x.name, kind: x.kind, consent: !!x.consent, players: x.dssc_player ? [x.dssc_player] : [], programs: x.dssc_program ? [x.dssc_program] : [], dssc_player: x.dssc_player || null, dssc_program: x.dssc_program || null, via: x.via || null }]));

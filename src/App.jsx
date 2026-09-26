@@ -15,6 +15,7 @@ import DsscAdmin from "./dssc/DsscAdmin.jsx";
 import HousingView from "./HousingView.jsx";
 import AskHQ from "./AskHQ.jsx";
 import DsscTexts from "./dssc/DsscTexts.jsx";
+import DsscCrm from "./dssc/DsscCrm.jsx";
 import { TN_SUB_PLACEHOLDERS, isPlaceholderPerson, sessionStaff, staffNeeded, staffApproved, staffPending, sessionShort, onStaff, parsePlanPaste } from "../shared/dssc-clinics.js";
 
 const POSITIONS = ["S","OH","MB","RS","L","DS","U"];
@@ -31456,7 +31457,7 @@ export default function App() {
                   ["hdr","DS Elite · Coaches & Pay"],
                   ["coaches","Coaches"], ...(isAdmin ? [["staffing","Staffing Board"]] : []), ["coverage","Coach Coverage"], ["timecards","Time Cards"], ["myexpenses","My Expenses"], ...(canOps ? [["claims","Coach Claims" + (pendingClaimCount ? " (" + pendingClaimCount + ")" : "")]] : []), ["gear","Gear Sizes" + (gearOutstanding ? " (" + gearOutstanding + ")" : "")], ["requests","Requests" + (pendingReqs ? " (" + pendingReqs + ")" : "")],
                   ["hdr","DSSC"],
-                  ["dssc","Coach Hub"], ["clinics","Clinics & Camps (admin)"], ["dssctexts","DSSC Texts"], ["dssccal","Coverage Calendar"], ["dssctime","DSSC Time Cards"], ["pods","Skill Pods"], ["privates","Privates"],
+                  ["dssc","Coach Hub"], ["clinics","Clinics & Camps (admin)"], ["dssctexts","DSSC Texts"], ["dssccrm","DSSC People"], ["dssccal","Coverage Calendar"], ["dssctime","DSSC Time Cards"], ["pods","Skill Pods"], ["privates","Privates"],
                   ["hdr","Communication"],
                   ["email","Email"], ["messages","Messages (SMS)" + (totalUnread > 0 ? " (" + totalUnread + ")" : "")], ["notifications","Notifications"], ["coachcomms","Coach Comms"], ["assignments","Assignments"], ["dsysa","DSYSA Clinics"],
                 ] }] : []),
@@ -31466,7 +31467,7 @@ export default function App() {
                 // In-House Tournament sits here for EVERY coach, ops or not —
                 // all 20 teams play it, so gating it to admins would repeat the
                 // DSYSA mistake of linking people to a page they can't open.
-                { title:"More", items:[["tournament","In-House Tournament"], ...(canOps ? [] : [["dssc","DSSC Coach Hub"], ...(isDsscDirector ? [["clinics","DSSC Clinics (admin)"],["dssctexts","DSSC Texts"]] : []), ["dssctime","DSSC Time Cards"],["myexpenses","My Expenses"],["dsysa","DSYSA Clinics"]]), ["activity","Activity"], ["faq","FAQ"], ["games","Games"], ...(isOwner ? [["askai","Ask AI"]] : [])] },
+                { title:"More", items:[["tournament","In-House Tournament"], ...(canOps ? [] : [["dssc","DSSC Coach Hub"], ...(isDsscDirector ? [["clinics","DSSC Clinics (admin)"],["dssctexts","DSSC Texts"],["dssccrm","DSSC People"]] : []), ["dssctime","DSSC Time Cards"],["myexpenses","My Expenses"],["dsysa","DSYSA Clinics"]]), ["activity","Activity"], ["faq","FAQ"], ["games","Games"], ...(isOwner ? [["askai","Ask AI"]] : [])] },
               ];
               // Mobile: one hamburger opening a full-height grouped menu.
               if (isNarrow) {
@@ -31720,6 +31721,9 @@ export default function App() {
         {view==="practiceplan" && renderPracticePlans()}
         {view==="clinics" && (isDsscDirector ? ((clinicOpenId || dsscAdminLegacy) ? renderClinics() : renderDsscAdmin()) : renderDsscHub())}
         {view==="dssc" && renderDsscHub()}
+        {view==="dssccrm" && (isDsscDirector
+          ? <DsscCrm coach={coach} isDirector={isDsscDirector} onText={(recipients)=>{ setDsscTextsInit({ recipients }); setView("dssctexts"); }} />
+          : <div style={{padding:24,color:C.mut,textAlign:"center"}}>DSSC People is for the club's directors.</div>)}
         {view==="dssctexts" && (isDsscDirector
           ? <DsscTexts coach={coach} clinics={clinics} players={players} coachRoster={coachRoster} dsscAvail={dsscAvail} isDirector={isDsscDirector} initial={dsscTextsInit} onConsumedInitial={()=>setDsscTextsInit(null)} />
           : <div style={{padding:24,color:C.mut,textAlign:"center"}}>DSSC texting is for the club's directors.</div>)}
