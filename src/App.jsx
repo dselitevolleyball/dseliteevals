@@ -1872,6 +1872,11 @@ export default function App() {
   const [emailStaff, setEmailStaff]                   = useState(() => new Set()); // per-COACH staff send (own merge fields; independent of the team chips)
   const [emailStatus, setEmailStatus]                 = useState("");    // "" any | a STATUS_OPTS value
   const [emailSubject, setEmailSubject]               = useState("");
+  // Who replies go to. Every email leaves from the club address; the person
+  // who should get the answers is Drew or Kristen, whichever is running that
+  // send. Defaults to whoever is signed in when that is one of them.
+  const EMAIL_REPLY_TO = [["drew@dselitevolleyball.com","Drew"],["kristen@dselitevolleyball.com","Kristen"]];
+  const [emailReplyTo, setEmailReplyTo]               = useState(() => { try { return localStorage.getItem("dse.emailReplyTo") || ""; } catch { return ""; } });
   const [emailBody, setEmailBody]                     = useState("");
   const [emailSending, setEmailSending]               = useState(false);
   const [emailResult, setEmailResult]                 = useState(null);
@@ -20860,6 +20865,11 @@ export default function App() {
   // individual email from the DS Elite address; replies go to the coach's
   // inbox. Scope = players in the selected age groups, optionally narrowed.
   function renderEmailBlast() {
+    // Reply-to for this send: the chosen person, else the signed-in admin if
+    // they are Drew or Kristen, else Drew.
+    const myAddr = String(coach?.email || "").trim().toLowerCase();
+    const emailReplyToAddr = emailReplyTo || (EMAIL_REPLY_TO.some(([e]) => e === myAddr) ? myAddr : EMAIL_REPLY_TO[0][0]);
+    const pickReplyTo = (v) => { setEmailReplyTo(v); try { localStorage.setItem("dse.emailReplyTo", v); } catch {} };
     const divSet = new Set(selectedDivs);
     const scopeOf = (div) => emailGroupScope[div] || "all";
     const divPlayersOf = (div) => players.filter(p => (p.usavDiv || p.usav_div) === div);
@@ -20981,7 +20991,7 @@ export default function App() {
         const res = await fetch("/api/send-email", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ skipLog: true, subject: subj, body: emailMarkupToText(bod), bodyHtml: emailMarkupToHtml(bod), recipients: to,
+          body: JSON.stringify({ skipLog: true, subject: subj, body: emailMarkupToText(bod), bodyHtml: emailMarkupToHtml(bod), recipients: to, replyTo: emailReplyToAddr,
             attachmentPaths: emailFiles.map(f => ({ filename: f.name, path: f.path })) }),
         });
         // Vercel answers an oversized or timed-out request with plain text, so
@@ -21439,7 +21449,7 @@ export default function App() {
         try {
           const res = await fetch("/api/send-email", {
             method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ skipLog: true, subject: subj, body: emailMarkupToText(bod), bodyHtml: emailMarkupToHtml(bod), recipients: recips,
+            body: JSON.stringify({ skipLog: true, subject: subj, body: emailMarkupToText(bod), bodyHtml: emailMarkupToHtml(bod), recipients: recips, replyTo: emailReplyToAddr,
               attachmentPaths: emailFiles.map(a => ({ filename: a.name, path: a.path })) }),
           });
           const d = await res.json().catch(() => ({}));
@@ -21505,7 +21515,7 @@ export default function App() {
         try {
           const res = await fetch("/api/send-email", {
             method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ skipLog: true, subject: subj, body: emailMarkupToText(bod), bodyHtml: emailMarkupToHtml(bod), recipients: [s.email],
+            body: JSON.stringify({ skipLog: true, subject: subj, body: emailMarkupToText(bod), bodyHtml: emailMarkupToHtml(bod), recipients: [s.email], replyTo: emailReplyToAddr,
               attachmentPaths: emailFiles.map(a => ({ filename: a.name, path: a.path })) }),
           });
           const d = await res.json().catch(() => ({}));
@@ -21848,8 +21858,16 @@ export default function App() {
         </div>
 
         {/* Compose */}
-        <input value={emailSubject} onChange={e=>setEmailSubject(e.target.value)} placeholder="Subject"
-          style={{...inpStyle,width:"100%",padding:"10px 12px",fontSize:14,marginBottom:8}} />
+        <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:8,flexWrap:"wrap"}}>
+          <input value={emailSubject} onChange={e=>setEmailSubject(e.target.value)} placeholder="Subject"
+            style={{...inpStyle,flex:1,minWidth:220,padding:"10px 12px",fontSize:14}} />
+          <label style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:C.mut,whiteSpace:"nowrap"}} title="Replies to this email go to this person">
+            Replies to
+            <select value={emailReplyToAddr} onChange={e=>pickReplyTo(e.target.value)} style={{...inpStyle,padding:"8px 10px",fontSize:13}}>
+              {EMAIL_REPLY_TO.map(([e,n]) => <option key={e} value={e}>{n} · {e}</option>)}
+            </select>
+          </label>
+        </div>
         {/* Attachments. Read to base64 on pick so the send is a single call and
             a half-attached file can't go out. 15MB total is the practical
             ceiling for Gmail and Outlook. */}
