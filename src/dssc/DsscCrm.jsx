@@ -30,7 +30,7 @@ export default function DsscCrm({ coach, onText, isDirector }) {
   const [orders, setOrders] = useState([]);
   const [consents, setConsents] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [f, setF] = useState({ q: "", ageMin: "", ageMax: "", gender: "", cat: "", program: "", since: "", notSince: "", source: "", city: "", phone: false, optin: false, tag: "" });
+  const [f, setF] = useState({ q: "", ageMin: "", ageMax: "", gender: "", cat: "", program: "", since: "", notSince: "", source: "", city: "", phone: false, optin: false, tag: "", position: "", level: "" });
   const [openId, setOpenId] = useState(null);
   const [picked, setPicked] = useState(() => new Set());
   const [imp, setImp] = useState(null);
@@ -53,6 +53,8 @@ export default function DsscCrm({ coach, onText, isDirector }) {
   const lastByC = useMemo(() => { const m = new Map(); for (const x of partic) if (x.event_date && (!m.has(x.contact_id) || m.get(x.contact_id) < x.event_date)) m.set(x.contact_id, x.event_date); for (const o of orders) { const d = (o.ordered_at || "").slice(0, 10); if (o.contact_id && d && (!m.has(o.contact_id) || m.get(o.contact_id) < d)) m.set(o.contact_id, d); } return m; }, [partic, orders]);
   const tags = useMemo(() => [...new Set(contacts.flatMap(c => c.tags || []))].sort(), [contacts]);
   const cities = useMemo(() => [...new Set(contacts.map(c => c.city).filter(Boolean))].sort(), [contacts]);
+  const positions = useMemo(() => [...new Set(parts.flatMap(p => [p.position, p.position2]).filter(Boolean))].sort(), [parts]);
+  const lvlTag = (p) => p.dse_level ? <Tag color={p.dse_level === "national" ? DS.lime : p.dse_level === "rise" ? DS.orange : DS.mut}>{p.dse_team || p.dse_level}</Tag> : null;
 
   // ── The filter ───────────────────────────────────────────────────────────
   const results = useMemo(() => {
@@ -70,6 +72,8 @@ export default function DsscCrm({ coach, onText, isDirector }) {
         if (f.ageMin !== "" && (age == null || age < +f.ageMin)) return false;
         if (f.ageMax !== "" && (age == null || age > +f.ageMax)) return false;
         if (f.gender && p.gender !== f.gender) return false;
+        if (f.position && nrm(p.position) !== nrm(f.position) && nrm(p.position2) !== nrm(f.position)) return false;
+        if (f.level === "none" ? p.dse_level : (f.level && p.dse_level !== f.level)) return false;
         const hist = [...(particByP.get(p.id) || []), ...(p.is_contact ? (particByP.get("c" + c.id) || []) : [])];
         if (f.cat === "none") { if (hist.length) return false; }
         else if (f.cat && !hist.some(h => h.category === f.cat)) return false;
@@ -78,7 +82,7 @@ export default function DsscCrm({ coach, onText, isDirector }) {
         if (f.notSince && hist.some(h => h.event_date && h.event_date >= f.notSince)) return false;
         return true;
       };
-      const anyPlayerFilter = f.ageMin !== "" || f.ageMax !== "" || f.gender || f.cat || f.program || f.since || f.notSince;
+      const anyPlayerFilter = f.ageMin !== "" || f.ageMax !== "" || f.gender || f.cat || f.program || f.since || f.notSince || f.position || f.level;
       let matched = anyPlayerFilter ? kids.filter(matchP) : kids;
       // A family with no participants on file but with contact-level history still counts for program filters.
       if (anyPlayerFilter && !matched.length && !kids.length && !f.ageMin && !f.ageMax && !f.gender) { const hist = particByC.get(c.id) || []; if ((f.cat === "none" ? !hist.length : (!f.cat || hist.some(h => h.category === f.cat))) && (!f.program || hist.some(h => nrm(h.program).includes(nrm(f.program))))) matched = []; else continue; }
@@ -93,9 +97,9 @@ export default function DsscCrm({ coach, onText, isDirector }) {
   const chosen = picked.size ? textable.filter(r => picked.has(r.c.id)) : textable;
   const toTexts = () => onText(chosen.map(r => ({ to: r.c.phone, name: ((r.c.first_name || "") + " " + (r.c.last_name || "")).trim() || r.c.email, kind: "parent", consent: consented.has(last10(r.c.phone)), players: (r.matched.length ? r.matched : r.kids).filter(p => !p.is_contact).map(p => p.first_name + " " + p.last_name), programs: [...new Set((particByC.get(r.c.id) || []).map(h => h.program))].slice(0, 3), contact_id: r.c.id })));
   const exportCsv = () => {
-    const lines = [["Parent", "Email", "Phone", "Opted in", "City", "Players", "Programs", "Last activity", "Spend", "Tags"].join(",")];
+    const lines = [["Parent", "Email", "Phone", "Opted in", "City", "Players", "DS Elite", "Programs", "Last activity", "Spend", "Tags"].join(",")];
     const esc = (v) => { const s = v == null ? "" : String(v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
-    for (const r of results) lines.push([esc(((r.c.first_name || "") + " " + (r.c.last_name || "")).trim()), r.c.email, r.c.phone || "", r.c.phone && consented.has(last10(r.c.phone)) ? "yes" : "", esc(r.c.city), esc((r.matched.length ? r.matched : r.kids).map(p => p.first_name + " " + p.last_name + (ageOf(p.dob) != null ? " (" + ageOf(p.dob) + ")" : "")).join("; ")), esc([...new Set((particByC.get(r.c.id) || []).map(h => h.program))].join("; ")), lastByC.get(r.c.id) || "", Math.round((spendByC.get(r.c.id) || 0) / 100), esc((r.c.tags || []).join("; "))].join(","));
+    for (const r of results) lines.push([esc(((r.c.first_name || "") + " " + (r.c.last_name || "")).trim()), r.c.email, r.c.phone || "", r.c.phone && consented.has(last10(r.c.phone)) ? "yes" : "", esc(r.c.city), esc((r.matched.length ? r.matched : r.kids).map(p => p.first_name + " " + p.last_name + (ageOf(p.dob) != null ? " (" + ageOf(p.dob) + ")" : "") + (p.position ? " " + p.position : "")).join("; ")), esc((r.matched.length ? r.matched : r.kids).filter(p => p.dse_team).map(p => p.first_name + ": " + p.dse_team + " · " + p.dse_level).join("; ")), esc([...new Set((particByC.get(r.c.id) || []).map(h => h.program))].join("; ")), lastByC.get(r.c.id) || "", Math.round((spendByC.get(r.c.id) || 0) / 100), esc((r.c.tags || []).join("; "))].join(","));
     const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv" })); a.download = "dssc-people.csv"; a.click(); URL.revokeObjectURL(a.href);
   };
   const tagAll = async () => {
@@ -155,6 +159,8 @@ export default function DsscCrm({ coach, onText, isDirector }) {
             <select value={f.gender} onChange={e => set("gender", e.target.value)} style={sel}><option value="">any gender</option><option value="female">girls</option><option value="male">boys</option></select>
             <select value={f.cat} onChange={e => set("cat", e.target.value)} style={sel}>{CATS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
             <input value={f.program} onChange={e => set("program", e.target.value)} placeholder="program contains…" style={{ ...sel, width: 170 }} />
+            <select value={f.level} onChange={e => set("level", e.target.value)} style={sel} title="DS Elite team level"><option value="">any DS Elite level</option><option value="national">National (Diamond)</option><option value="regional">Regional</option><option value="rise">Rise</option><option value="none">not on a DS Elite team</option></select>
+            <select value={f.position} onChange={e => set("position", e.target.value)} style={sel}><option value="">any position</option>{positions.map(p => <option key={p}>{p}</option>)}</select>
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 8 }}>
             <span style={{ fontSize: 12, color: DS.mut }}>Participated since</span><input type="date" value={f.since} onChange={e => set("since", e.target.value)} style={sel} />
@@ -164,7 +170,7 @@ export default function DsscCrm({ coach, onText, isDirector }) {
             {tags.length > 0 && <select value={f.tag} onChange={e => set("tag", e.target.value)} style={sel}><option value="">any tag</option>{tags.map(t => <option key={t}>{t}</option>)}</select>}
             <label style={{ fontSize: 12, display: "flex", gap: 5, alignItems: "center" }}><input type="checkbox" checked={f.phone} onChange={e => set("phone", e.target.checked)} /> has phone</label>
             <label style={{ fontSize: 12, display: "flex", gap: 5, alignItems: "center" }}><input type="checkbox" checked={f.optin} onChange={e => set("optin", e.target.checked)} /> opted in to texts</label>
-            <Btn kind="link" small onClick={() => { setF({ q: "", ageMin: "", ageMax: "", gender: "", cat: "", program: "", since: "", notSince: "", source: "", city: "", phone: false, optin: false, tag: "" }); setPicked(new Set()); }}>clear</Btn>
+            <Btn kind="link" small onClick={() => { setF({ q: "", ageMin: "", ageMax: "", gender: "", cat: "", program: "", since: "", notSince: "", source: "", city: "", phone: false, optin: false, tag: "", position: "", level: "" }); setPicked(new Set()); }}>clear</Btn>
           </div>
         </Card>
 
@@ -195,7 +201,7 @@ export default function DsscCrm({ coach, onText, isDirector }) {
                         <div style={{ fontWeight: 700 }}>{((c.first_name || "") + " " + (c.last_name || "")).trim() || c.email}{c.do_not_text && <Tag color={DS.orange}> do not text</Tag>}</div>
                         <div style={{ fontSize: 11, color: DS.mut, display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>{c.phone ? <span>{fmtPhone(c.phone)}{optin ? <span style={{ color: DS.lime }}> ✓</span> : ""}</span> : <span style={{ color: DS.orange }}>no phone</span>}<span>{c.email}</span>{c.city && <span>{c.city}</span>}{(c.tags || []).map(t => <Tag key={t} color={DS.mut}>{t}</Tag>)}</div>
                       </td>
-                      <td style={{ padding: "6px 10px", borderBottom: "1px solid " + DS.line, fontSize: 12 }}>{show.filter(p => !p.is_contact).map(p => <div key={p.id}>{p.first_name} {p.last_name}{ageOf(p.dob) != null && <span style={{ color: DS.mut }}> · {ageOf(p.dob)}{p.gender === "female" ? " F" : p.gender === "male" ? " M" : ""}</span>}</div>)}{show.some(p => p.is_contact) && <div style={{ color: DS.mut }}>(self)</div>}</td>
+                      <td style={{ padding: "6px 10px", borderBottom: "1px solid " + DS.line, fontSize: 12 }}>{show.filter(p => !p.is_contact).map(p => <div key={p.id} style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>{p.first_name} {p.last_name}{ageOf(p.dob) != null && <span style={{ color: DS.mut }}>· {ageOf(p.dob)}{p.gender === "female" ? " F" : p.gender === "male" ? " M" : ""}</span>}{p.position && <span style={{ color: DS.mut }}>· {p.position}</span>}{lvlTag(p)}</div>)}{show.some(p => p.is_contact) && <div style={{ color: DS.mut }}>(self)</div>}</td>
                       <td style={{ padding: "6px 10px", borderBottom: "1px solid " + DS.line, fontSize: 11, color: DS.mut, maxWidth: 320 }}>{progs.slice(0, 4).join(" · ")}{progs.length > 4 ? ` +${progs.length - 4}` : ""}</td>
                       <td style={{ padding: "6px 10px", borderBottom: "1px solid " + DS.line, fontSize: 12, whiteSpace: "nowrap" }}>{fmtD(lastByC.get(c.id))}</td>
                       <td style={{ padding: "6px 10px", borderBottom: "1px solid " + DS.line, fontSize: 12, textAlign: "right", whiteSpace: "nowrap" }}>{spendByC.get(c.id) ? money(spendByC.get(c.id)) : ""}</td>
@@ -224,7 +230,7 @@ export default function DsscCrm({ coach, onText, isDirector }) {
                   <div><Label>Tags</Label><Field value={(open.tags || []).join(", ")} onSave={v => saveContact(open.id, { tags: v.split(",").map(s => s.trim()).filter(Boolean) })} placeholder="e.g. hot lead, camp 2025" /><label style={{ fontSize: 12, color: DS.orange, display: "flex", gap: 6, alignItems: "center", marginTop: 6 }}><input type="checkbox" checked={!!open.do_not_text} onChange={e => saveContact(open.id, { do_not_text: e.target.checked })} /> do not text</label></div>
                 </div>
                 <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>{open.phone && !open.do_not_text && <Btn small kind="primary" onClick={() => onText([{ to: open.phone, name: ((open.first_name || "") + " " + (open.last_name || "")).trim(), kind: "parent", consent: !!optin, players: kids.filter(p => !p.is_contact).map(p => p.first_name + " " + p.last_name), programs: [...new Set(hist.map(h => h.program))].slice(0, 3), contact_id: open.id }])}>💬 Text</Btn>}{spendByC.get(open.id) ? <Tag color={DS.mut}>{money(spendByC.get(open.id))} lifetime</Tag> : null}</div>
-                <Card><Label>Players</Label>{kids.length ? kids.map(p => <div key={p.id} style={{ fontSize: 14, padding: "3px 0" }}><b>{p.first_name} {p.last_name}</b>{p.is_contact && <span style={{ color: DS.mut }}> (self)</span>}{ageOf(p.dob) != null && <span style={{ color: DS.mut }}> · {ageOf(p.dob)} · born {fmtD(p.dob)}</span>}{p.gender && <span style={{ color: DS.mut }}> · {p.gender}</span>}{p.dse_player_id && <Tag color={DS.lime}> DS Elite</Tag>}{p.waiver_signed && <span style={{ color: DS.mut, fontSize: 11 }}> · waiver ✓</span>}</div>) : <div style={{ fontSize: 13, color: DS.mut }}>No players on file.</div>}</Card>
+                <Card><Label>Players</Label>{kids.length ? kids.map(p => <div key={p.id} style={{ fontSize: 14, padding: "3px 0" }}><b>{p.first_name} {p.last_name}</b>{p.is_contact && <span style={{ color: DS.mut }}> (self)</span>}{ageOf(p.dob) != null && <span style={{ color: DS.mut }}> · {ageOf(p.dob)} · born {fmtD(p.dob)}</span>}{p.gender && <span style={{ color: DS.mut }}> · {p.gender}</span>}{p.position && <span style={{ color: DS.mut }}> · {p.position}{p.position2 ? "/" + p.position2 : ""}</span>}{lvlTag(p)}{p.waiver_signed && <span style={{ color: DS.mut, fontSize: 11 }}> · waiver ✓</span>}</div>) : <div style={{ fontSize: 13, color: DS.mut }}>No players on file.</div>}</Card>
                 <Card><Label>Programs & events</Label>{hist.length ? hist.map(h => <div key={h.id} style={{ fontSize: 13, padding: "3px 0", display: "flex", gap: 8 }}><span style={{ color: DS.mut, minWidth: 80 }}>{fmtD(h.event_date) || "—"}</span><span style={{ flex: 1 }}>{h.program}{h.participant_id && kids.find(p => p.id === h.participant_id) ? <span style={{ color: DS.mut }}> · {kids.find(p => p.id === h.participant_id).first_name}</span> : null}</span><Tag color={DS.mut}>{h.category || "?"}</Tag></div>) : <div style={{ fontSize: 13, color: DS.mut }}>Nothing recorded yet.</div>}</Card>
                 {os.length > 0 && <Card><Label>Orders (Upper Hand)</Label>{os.slice(0, 15).map(o => <div key={o.id} style={{ fontSize: 13, padding: "2px 0", display: "flex", gap: 8 }}><span style={{ color: DS.mut, minWidth: 80 }}>{fmtD((o.ordered_at || "").slice(0, 10))}</span><span style={{ flex: 1 }} /><span>{money(o.total_cents)}</span></div>)}{os.length > 15 && <div style={{ fontSize: 12, color: DS.mut }}>+{os.length - 15} more</div>}</Card>}
                 <Card><Label>Notes</Label><Field value={open.notes || ""} onSave={v => saveContact(open.id, { notes: v })} multiline minRows={2} placeholder="Anything worth remembering about this family…" /></Card>

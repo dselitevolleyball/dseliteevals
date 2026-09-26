@@ -142,8 +142,13 @@ export async function syncPlaybook(sb) {
 }
 
 // ── DS Elite roster ──────────────────────────────────────────────────────────
+// Rise / Regional / National from the practice_teams level, falling back to the
+// name (Diamond = National, Rise = Rise, the other gems = Regional).
+const levelOf = (team, lvl) => { const l = lower(lvl), t = lower(team); if (/rise|develop/.test(l + " " + t)) return "rise"; if (/national/.test(l) || /diamond/.test(t)) return "national"; if (/regional/.test(l) || t) return "regional"; return null; };
 export async function syncDsElite(sb) {
-  const { data: players } = await sb.from("players").select("id, first_name, last_name, dob, gender, team_assignment, offer_status, parent_name, parent2_name, parent_email, parent_email2, parent_phone, parent2_phone, city, zip, address_line1, state, created_at");
+  const { data: players } = await sb.from("players").select("id, first_name, last_name, dob, gender, team_assignment, offer_status, parent_name, parent2_name, parent_email, parent_email2, parent_phone, parent2_phone, city, zip, address_line1, state, created_at, primary_position, secondary_position");
+  const { data: pteams } = await sb.from("practice_teams").select("team_name, level");
+  const lvlByTeam = new Map((pteams || []).map(t => [t.team_name, t.level]));
   const contacts = [], link = [];
   for (const p of players || []) {
     const e = lower(p.parent_email); if (!EMAIL_RE.test(e)) continue;
@@ -154,6 +159,12 @@ export async function syncDsElite(sb) {
   const ids = await upsertContacts(sb, contacts);
   const parts = link.map(({ p, e }) => ({ contact_id: ids.get(e), first_name: p.first_name, last_name: p.last_name, dob: isoDate(p.dob), gender: p.gender ? lower(p.gender) : "female", dse_player_id: p.id, sources: ["dse"] }));
   const pids = await upsertParticipants(sb, parts);
+  // Position and team level, for sorting the CRM by what a kid plays and where.
+  for (const { p, e } of link) {
+    const id = pids.get(ids.get(e) + "|" + nameKey(p.first_name, p.last_name)); if (!id) continue;
+    const onTeam = p.team_assignment && !["declined", "not_invited", "opted_out"].includes(p.offer_status || "");
+    await sb.from("dssc_participants").update({ position: clean(p.primary_position) || null, position2: clean(p.secondary_position) || null, dse_team: onTeam ? p.team_assignment : null, dse_level: onTeam ? levelOf(p.team_assignment, lvlByTeam.get(p.team_assignment)) : null }).eq("id", id);
+  }
   const rows = link.filter(({ p }) => p.team_assignment && !["declined", "not_invited", "opted_out"].includes(p.offer_status || "")).map(({ p, e }) => ({ participant_id: pids.get(ids.get(e) + "|" + nameKey(p.first_name, p.last_name)) || null, contact_id: ids.get(e), program: "DS Elite " + p.team_assignment + " (2026-27)", category: "volleyball", event_date: "2026-09-01", source: "dse", source_ref: "player-" + p.id }));
   // Remember which DS Elite players belong to each family.
   const byC = new Map(); for (const { p, e } of link) { const cid = ids.get(e); if (!byC.has(cid)) byC.set(cid, []); byC.get(cid).push(p.id); }
