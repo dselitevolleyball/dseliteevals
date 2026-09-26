@@ -65,6 +65,9 @@ export default function AskHQ({ open, onClose, view, coach }) {
   const endRef = useRef(null), inputRef = useRef(null);
   useEffect(() => { try { sessionStorage.setItem(KEY, JSON.stringify(msgs.slice(-30))); } catch {} }, [msgs]);
   useEffect(() => { if (open) { setTimeout(() => inputRef.current?.focus(), 50); endRef.current?.scrollIntoView({ block: "end" }); } }, [open, msgs.length]);
+  // The box grows with what's typed or pasted, up to about six lines, then
+  // scrolls inside itself — and snaps back to two lines once the question is sent.
+  useEffect(() => { const el = inputRef.current; if (!el) return; el.style.height = "auto"; el.style.height = Math.min(el.scrollHeight, 160) + "px"; }, [q, open]);
 
   const ask = async (text) => {
     const question = String(text || q).trim();
@@ -183,7 +186,7 @@ export default function AskHQ({ open, onClose, view, coach }) {
           <input ref={fileRef} type="file" multiple accept=".pdf,image/*,.csv,.txt,.md,.json,.tsv" style={{ display: "none" }} onChange={e => addFiles(e.target.files)} />
           <button onClick={() => fileRef.current?.click()} title="Attach a PDF, screenshot, CSV or text file (or drop it here)" style={{ padding: "10px 11px", borderRadius: 10, border: "1px solid " + C.border, background: "transparent", color: C.mut, fontSize: 16, cursor: "pointer", fontFamily: "inherit" }}>📎</button>
           <textarea ref={inputRef} value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(); } }} placeholder="Ask HQ anything… attach a report, screenshot or CSV with 📎 (Enter to send)" rows={2}
-            style={{ flex: 1, background: C.card, border: "1px solid " + C.border, borderRadius: 10, color: C.text, fontFamily: "inherit", fontSize: 14, padding: "9px 11px", resize: "none" }} />
+            style={{ flex: 1, background: C.card, border: "1px solid " + C.border, borderRadius: 10, color: C.text, fontFamily: "inherit", fontSize: 14, padding: "9px 11px", resize: "none", maxHeight: 160, overflowY: "auto", boxSizing: "border-box", lineHeight: 1.4 }} />
           <button onClick={() => ask()} disabled={busy || (!q.trim() && !files.length) || files.some(f => f.uploading)} style={{ padding: "10px 16px", borderRadius: 10, border: "none", background: C.gold, color: "#000", fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit", opacity: busy || (!q.trim() && !files.length) ? 0.5 : 1 }}>Ask</button>
         </div>
       </div>
