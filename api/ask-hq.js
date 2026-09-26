@@ -8,7 +8,10 @@
 // explaining. It can also draft an email for the admin to send — it never
 // sends anything itself, and it cannot write to the database at all.
 //
-// POST { question, history: [{role, content}], context: { view } }
+// POST { question, history: [{role, content}], context: { view },
+//        attachments: [{ name, type, path }] }   — files in the hq-uploads bucket;
+//        PDFs and images go to Claude as documents/images via a signed URL,
+//        CSV/text files are read and passed inline (first 200KB).
 //   Authorization: Bearer <Supabase session token of an owner/admin>
 // Response { answer, tools: [{name, summary}], drafts: [{to, subject, body}], usage }
 //
@@ -52,6 +55,8 @@ Pay (DS Elite): coach_checkins(coach_name, check_date, team_name, slot, hours, r
 Email: email_log(subject, body, recipient_count, recipients, sent_by, created_at) = every email the app sent.
 DSSC (the club facility, separate payroll): dssc_clinics(id, name, category, age_group, location, sessions jsonb — each session {id, date, start_time, end_time, court, coach_name, staff[], focus, recap, blocks[]}, plan jsonb, source_ref = Playbook program id). Query sessions with jsonb_array_elements(sessions). dssc_pod_roster(clinic_id, session_id, player_name, parent_name, parent_email, parent_phone, sms_consent) = who signed up for a class (session_id null = whole program). dssc_pod_attendance(clinic_id, session_id, session_date, players, present jsonb). dssc_checkins(coach_name, clinic_id, session_id, session_date, clinic_name, hours, approved, paid) = DSSC clock-ins at $25/hr. dssc_availability(coach_name, available, can_lead, tier, skills, note) = the DSSC coach pool.
 School: school_games(school games the players' school teams play). DSYSA: dsysa_clinics + dsysa_signups(coach_name, is_lead) = rec-league clinics staffed by our coaches.
+
+The admin may attach documents (a housing bureau's pickup report, a Playbook export, an invoice, a screenshot). Read them fully and combine them with the database — e.g. match names in an attached report against a roster query. Quote the document where it matters.
 
 If you need a table's columns, call describe_table. Tables you don't know about exist too (list them with describe_table on '').`;
 
@@ -123,7 +128,31 @@ export default async function handler(req, res) {
     .map(m => ({ role: m.role, content: m.content.slice(0, 6000) }));
   const view = String(body.context?.view || "");
 
-  const messages = [...history, { role: "user", content: `Today is ${today} (Central). The admin is on the "${view || "home"}" screen.\n\n${question}` }];
+  // Attachments: the browser already put the file in hq-uploads. Claude reads
+  // PDFs and images by URL (signed, 20 minutes); text-ish files are inlined.
+  const attachments = (Array.isArray(body.attachments) ? body.attachments : []).slice(0, 6)
+    .map(a => ({ name: String(a?.name || "file").slice(0, 120), type: String(a?.type || ""), path: String(a?.path || "") }))
+    .filter(a => a.path && !a.path.includes("..") && a.path.split("/")[0] === email.replace(/[^a-z0-9]/gi, "_"));
+  const blocks = [];
+  for (const a of attachments) {
+    if (a.type === "application/pdf" || a.type.startsWith("image/")) {
+      const { data: signed, error } = await sb.storage.from("hq-uploads").createSignedUrl(a.path, 1200);
+      if (error || !signed?.signedUrl) { blocks.push({ type: "text", text: `(Attachment "${a.name}" couldn't be read: ${error?.message || "no URL"})` }); continue; }
+      blocks.push(a.type === "application/pdf"
+        ? { type: "document", source: { type: "url", url: signed.signedUrl }, title: a.name }
+        : { type: "image", source: { type: "url", url: signed.signedUrl } });
+    } else if (/^text\/|json$/.test(a.type) || /\.(csv|txt|md|json|tsv)$/i.test(a.name)) {
+      const { data: file, error } = await sb.storage.from("hq-uploads").download(a.path);
+      if (error || !file) { blocks.push({ type: "text", text: `(Attachment "${a.name}" couldn't be read)` }); continue; }
+      const text = (await file.text()).slice(0, 200000);
+      blocks.push({ type: "text", text: `Attached file "${a.name}":\n\n${text}` });
+    } else {
+      blocks.push({ type: "text", text: `(Attachment "${a.name}" is a ${a.type || "file"} — I can read PDFs, images, CSV and text. Export it as one of those.)` });
+    }
+  }
+
+  const userText = `Today is ${today} (Central). The admin is on the "${view || "home"}" screen.${attachments.length ? " Attached: " + attachments.map(a => a.name).join(", ") + "." : ""}\n\n${question}`;
+  const messages = [...history, { role: "user", content: blocks.length ? [...blocks, { type: "text", text: userText }] : userText }];
   const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
   const started = Date.now();
   const trail = [], drafts = [];
@@ -158,6 +187,6 @@ export default async function handler(req, res) {
     await sb.from("hq_assistant_log").insert({ asked_by: who, question, answer: "ERROR " + msg, tool_calls: trail, view, ms: Date.now() - started }).catch(() => {});
     return res.status(502).json({ error: msg });
   }
-  await sb.from("hq_assistant_log").insert({ asked_by: who, question, answer, tool_calls: trail, view, input_tokens: usage.input, output_tokens: usage.output, ms: Date.now() - started }).catch(() => {});
+  await sb.from("hq_assistant_log").insert({ asked_by: who, question, answer, tool_calls: trail, view, attachments: attachments.map(a => ({ name: a.name, path: a.path })), input_tokens: usage.input, output_tokens: usage.output, ms: Date.now() - started }).catch(() => {});
   return res.status(200).json({ answer, tools: trail, drafts, usage, ms: Date.now() - started });
 }

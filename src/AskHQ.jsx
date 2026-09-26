@@ -14,7 +14,7 @@ const C = { bg: "#0a0a0a", card: "#141414", border: "#2a2a2a", gold: "#e91e8c", 
 const KEY = "dse.askhq.v1";
 const SUGGEST = {
   home: ["Who hasn't signed the commitment yet, by team?", "Which coaches haven't clocked in for their practices this week?", "What's on the calendar this weekend?"],
-  housing: ["Who hasn't booked their room for the next stay-to-play tournament?", "Draft a reminder to the families who haven't booked."],
+  housing: ["Who hasn't booked their room for the next stay-to-play tournament?", "Draft a reminder to the families who haven't booked.", "Attach the bureau's pickup report PDF and ask: who on these teams isn't on it?"],
   travel: ["Which coaches still need flights booked for upcoming stay-over tournaments?"],
   timecards: ["Total hours per coach this pay week, with anything unusual.", "Who clocked in late or as a sub this week?"],
   clinics: ["Which DSSC classes this week have fewer than 3 signed up?", "Which pods have no coach in the next two weeks?"],
@@ -45,19 +45,35 @@ export default function AskHQ({ open, onClose, view, coach }) {
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
   const [sending, setSending] = useState({});
+  const [files, setFiles] = useState([]);          // [{name, type, path, size, uploading}]
+  const fileRef = useRef(null);
+  const userDir = String(coach?.email || "anon").toLowerCase().replace(/[^a-z0-9]/gi, "_");
+  const addFiles = async (list) => {
+    const picked = [...(list || [])].slice(0, 6 - files.length);
+    for (const f of picked) {
+      const key = Math.random().toString(36).slice(2, 10);
+      const path = `${userDir}/${Date.now()}-${key}-${f.name.replace(/[^\w.\-]+/g, "_")}`;
+      const type = f.type || (/\.csv$/i.test(f.name) ? "text/csv" : /\.(txt|md)$/i.test(f.name) ? "text/plain" : /\.pdf$/i.test(f.name) ? "application/pdf" : "");
+      setFiles(x => [...x, { name: f.name, type, path, size: f.size, uploading: true }]);
+      const { error } = await supabase.storage.from("hq-uploads").upload(path, f, { contentType: type || undefined });
+      setFiles(x => x.map(y => y.path === path ? { ...y, uploading: false, error: error?.message } : y));
+    }
+    if (fileRef.current) fileRef.current.value = "";
+  };
   const endRef = useRef(null), inputRef = useRef(null);
   useEffect(() => { try { sessionStorage.setItem(KEY, JSON.stringify(msgs.slice(-30))); } catch {} }, [msgs]);
   useEffect(() => { if (open) { setTimeout(() => inputRef.current?.focus(), 50); endRef.current?.scrollIntoView({ block: "end" }); } }, [open, msgs.length]);
 
   const ask = async (text) => {
     const question = String(text || q).trim();
-    if (!question || busy) return;
-    setQ(""); setBusy(true);
+    if ((!question && !files.length) || busy || files.some(f => f.uploading)) return;
+    const attachments = files.filter(f => !f.error).map(({ name, type, path }) => ({ name, type, path }));
+    setQ(""); setFiles([]); setBusy(true);
     const history = msgs.filter(m => m.role === "user" || m.role === "assistant").map(m => ({ role: m.role, content: m.content }));
-    setMsgs(m => [...m, { role: "user", content: question }]);
+    setMsgs(m => [...m, { role: "user", content: question || "(see attachment)", files: attachments.map(a => a.name) }]);
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      const r = await fetch("/api/ask-hq", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + (session?.access_token || "") }, body: JSON.stringify({ question, history, context: { view } }) });
+      const r = await fetch("/api/ask-hq", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + (session?.access_token || "") }, body: JSON.stringify({ question: question || "What is in the attached file? Summarise it and tell me what in HQ it relates to.", history, context: { view }, attachments }) });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d.error || ("HTTP " + r.status));
       setMsgs(m => [...m, { role: "assistant", content: d.answer || "", tools: d.tools || [], drafts: (d.drafts || []).map(x => ({ ...x, sent: false })), ms: d.ms }]);
@@ -110,7 +126,7 @@ export default function AskHQ({ open, onClose, view, coach }) {
         {msgs.map((m, mi) => (
           <div key={mi} style={{ marginBottom: 14 }}>
             {m.role === "user" ? (
-              <div style={{ display: "flex", justifyContent: "flex-end" }}><div style={{ background: "rgba(233,30,140,0.14)", border: "1px solid rgba(233,30,140,0.4)", borderRadius: 12, padding: "8px 12px", fontSize: 14, maxWidth: "88%", whiteSpace: "pre-wrap" }}>{m.content}</div></div>
+              <div style={{ display: "flex", justifyContent: "flex-end" }}><div style={{ background: "rgba(233,30,140,0.14)", border: "1px solid rgba(233,30,140,0.4)", borderRadius: 12, padding: "8px 12px", fontSize: 14, maxWidth: "88%", whiteSpace: "pre-wrap" }}>{m.content}{m.files?.length ? <div style={{ fontSize: 11, color: C.mut, marginTop: 4 }}>📎 {m.files.join(", ")}</div> : null}</div></div>
             ) : (
               <div style={{ background: C.card, border: "1px solid " + (m.error ? C.red : C.border), borderRadius: 12, padding: "10px 12px" }}>
                 {m.tools?.length > 0 && (
@@ -145,11 +161,23 @@ export default function AskHQ({ open, onClose, view, coach }) {
         {busy && <div style={{ fontSize: 13, color: C.mut, padding: "4px 2px" }}>Looking that up…</div>}
         <div ref={endRef} />
       </div>
-      <div style={{ padding: 12, borderTop: "1px solid " + C.border }}>
+      <div style={{ padding: 12, borderTop: "1px solid " + C.border }} onDragOver={e => { e.preventDefault(); }} onDrop={e => { e.preventDefault(); addFiles(e.dataTransfer.files); }}>
+        {files.length > 0 && (
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+            {files.map(f => (
+              <span key={f.path} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, padding: "4px 8px", borderRadius: 8, border: "1px solid " + (f.error ? C.red : C.border), background: C.card, color: f.error ? C.red : C.text }}>
+                📎 {f.name}{f.uploading ? " · uploading…" : f.error ? " · " + f.error : ""}
+                <button onClick={() => setFiles(x => x.filter(y => y.path !== f.path))} style={{ background: "none", border: "none", color: C.mut, cursor: "pointer", padding: 0, fontSize: 13 }}>✕</button>
+              </span>
+            ))}
+          </div>
+        )}
         <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
-          <textarea ref={inputRef} value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(); } }} placeholder="Ask HQ anything… (Enter to send, Shift+Enter for a new line)" rows={2}
+          <input ref={fileRef} type="file" multiple accept=".pdf,image/*,.csv,.txt,.md,.json,.tsv" style={{ display: "none" }} onChange={e => addFiles(e.target.files)} />
+          <button onClick={() => fileRef.current?.click()} title="Attach a PDF, screenshot, CSV or text file (or drop it here)" style={{ padding: "10px 11px", borderRadius: 10, border: "1px solid " + C.border, background: "transparent", color: C.mut, fontSize: 16, cursor: "pointer", fontFamily: "inherit" }}>📎</button>
+          <textarea ref={inputRef} value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(); } }} placeholder="Ask HQ anything… attach a report, screenshot or CSV with 📎 (Enter to send)" rows={2}
             style={{ flex: 1, background: C.card, border: "1px solid " + C.border, borderRadius: 10, color: C.text, fontFamily: "inherit", fontSize: 14, padding: "9px 11px", resize: "none" }} />
-          <button onClick={() => ask()} disabled={busy || !q.trim()} style={{ padding: "10px 16px", borderRadius: 10, border: "none", background: C.gold, color: "#000", fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit", opacity: busy || !q.trim() ? 0.5 : 1 }}>Ask</button>
+          <button onClick={() => ask()} disabled={busy || (!q.trim() && !files.length) || files.some(f => f.uploading)} style={{ padding: "10px 16px", borderRadius: 10, border: "none", background: C.gold, color: "#000", fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit", opacity: busy || (!q.trim() && !files.length) ? 0.5 : 1 }}>Ask</button>
         </div>
       </div>
     </div>
