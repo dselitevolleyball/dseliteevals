@@ -45,7 +45,9 @@ export default function AskHQ({ open, onClose, view, coach }) {
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
   const [sending, setSending] = useState({});
-  const [files, setFiles] = useState([]);          // [{name, type, path, size, uploading}]
+  const [files, setFiles] = useState([]);
+  const [health, setHealth] = useState(null);      // {ok, key, db} from GET /api/ask-hq
+  useEffect(() => { if (!open || health) return; fetch("/api/ask-hq").then(r => r.json()).then(setHealth).catch(() => setHealth({ ok: false })); }, [open]); // eslint-disable-line react-hooks/exhaustive-deps          // [{name, type, path, size, uploading}]
   const fileRef = useRef(null);
   const userDir = String(coach?.email || "anon").toLowerCase().replace(/[^a-z0-9]/gi, "_");
   const addFiles = async (list) => {
@@ -115,6 +117,11 @@ export default function AskHQ({ open, onClose, view, coach }) {
         <button onClick={onClose} style={{ background: "none", border: "none", color: C.mut, fontSize: 18, cursor: "pointer" }}>✕</button>
       </div>
       <div style={{ flex: 1, overflowY: "auto", padding: 14 }}>
+        {health && !health.ok && (
+          <div style={{ border: "1px solid " + C.amber, background: "rgba(245,158,11,0.08)", borderRadius: 10, padding: "10px 12px", fontSize: 13, marginBottom: 12, lineHeight: 1.5 }}>
+            {!health.key ? <><b>Not switched on yet.</b> The server has no ANTHROPIC_API_KEY — add it in Vercel → Project → Settings → Environment Variables, redeploy, and this panel will work.</> : <><b>Server isn't configured.</b> Database settings are missing on the server.</>}
+          </div>
+        )}
         {!msgs.length && (
           <div>
             <div style={{ fontSize: 13, color: C.mut, marginBottom: 10, lineHeight: 1.5 }}>Ask about players, rosters, coaches, hours, tournaments, housing, clinics, emails — anything in HQ. It looks the answer up and shows its work. Ask it to draft an email and you get a Send button.</div>

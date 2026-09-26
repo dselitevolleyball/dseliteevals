@@ -66,6 +66,11 @@ const tools = [
   { name: "draft_email", description: "Hand the admin a ready-to-send email. Use it when they ask you to write, draft, email, remind or message people. You do not send it — the app shows it with a Send button. One draft per distinct message; for a per-family message with different names, produce one draft per family (max 40).", input_schema: { type: "object", properties: { to: { type: "array", items: { type: "string" }, description: "recipient email addresses" }, subject: { type: "string" }, body: { type: "string", description: "plain text" }, label: { type: "string", description: "who this is for, e.g. 'Jauregui family (Brooklyn, 15 Diamond)'" } }, required: ["to", "subject", "body"] } },
 ];
 
+// Best-effort log. Supabase builders are thenables with no .catch, so this is
+// the one place that awaits them inside a try — a logging failure must never
+// turn into a 500 for the admin.
+async function log(sb, row) { try { await sb.from("hq_assistant_log").insert(row); } catch { /* ignore */ } }
+
 const scrub = (v) => {
   if (Array.isArray(v)) return v.map(scrub);
   if (v && typeof v === "object") { const o = {}; for (const [k, x] of Object.entries(v)) if (!SECRET_KEY.test(k)) o[k] = scrub(x); return o; }
@@ -101,8 +106,14 @@ async function runTool(sb, name, input, drafts) {
 }
 
 export default async function handler(req, res) {
-  if (req.method !== "POST") { res.setHeader("Allow", ["POST"]); return res.status(405).json({ error: "POST only" }); }
+  try { return await handle(req, res); }
+  catch (e) { return res.status(500).json({ error: "Ask HQ crashed: " + (e?.message || String(e)) }); }
+}
+
+async function handle(req, res) {
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, ANTHROPIC_API_KEY } = process.env;
+  if (req.method === "GET") return res.status(200).json({ ok: !!(ANTHROPIC_API_KEY && SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY), model: MODEL, key: !!ANTHROPIC_API_KEY, db: !!(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) });
+  if (req.method !== "POST") { res.setHeader("Allow", ["GET", "POST"]); return res.status(405).json({ error: "POST only" }); }
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return res.status(500).json({ error: "Server not configured" });
   if (!ANTHROPIC_API_KEY) return res.status(500).json({ error: "ANTHROPIC_API_KEY is not set in Vercel." });
   const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
@@ -184,9 +195,9 @@ export default async function handler(req, res) {
     if (!answer) answer = drafts.length ? "Drafted — see below." : "I ran out of steps before finishing. Try narrowing the question.";
   } catch (e) {
     const msg = e instanceof Anthropic.APIError ? `Claude API ${e.status}: ${e.message}` : (e.message || String(e));
-    await sb.from("hq_assistant_log").insert({ asked_by: who, question, answer: "ERROR " + msg, tool_calls: trail, view, ms: Date.now() - started }).catch(() => {});
+    await log(sb, { asked_by: who, question, answer: "ERROR " + msg, tool_calls: trail, view, ms: Date.now() - started });
     return res.status(502).json({ error: msg });
   }
-  await sb.from("hq_assistant_log").insert({ asked_by: who, question, answer, tool_calls: trail, view, attachments: attachments.map(a => ({ name: a.name, path: a.path })), input_tokens: usage.input, output_tokens: usage.output, ms: Date.now() - started }).catch(() => {});
+  await log(sb, { asked_by: who, question, answer, tool_calls: trail, view, attachments: attachments.map(a => ({ name: a.name, path: a.path })), input_tokens: usage.input, output_tokens: usage.output, ms: Date.now() - started });
   return res.status(200).json({ answer, tools: trail, drafts, usage, ms: Date.now() - started });
 }
