@@ -119,7 +119,7 @@ export default function DsscCrm({ coach, onText, isDirector }) {
     const list = [...(files || [])]; if (!list.length) return;
     setImp({ loading: true });
     try {
-      const parsed = await Promise.all(list.map(file => new Promise((res, rej) => Papa.parse(file, { header: true, skipEmptyLines: true, complete: r => res({ name: file.name, rows: r.data }), error: rej }))));
+      const parsed = await Promise.all(list.map(async file => { const text = await file.text(); const r = Papa.parse(text, { header: true, skipEmptyLines: true }); return { name: file.name, rows: r.data, text: text.length < 4_000_000 ? text : undefined }; }));
       const { data: { session } } = await supabase.auth.getSession();
       const r = await fetch("/api/dssc-crm-import", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + (session?.access_token || "") }, body: JSON.stringify({ files: parsed }) });
       const d = await r.json().catch(() => ({}));
@@ -170,7 +170,7 @@ export default function DsscCrm({ coach, onText, isDirector }) {
           <span style={{ fontSize: 12, color: DS.mut }}>{contacts.length.toLocaleString()} families · {parts.length.toLocaleString()} players · {partic.length.toLocaleString()} program records</span>
           <div style={{ flex: 1 }} />
           <input ref={fileRef} type="file" accept=".csv" multiple style={{ display: "none" }} onChange={e => upload(e.target.files)} />
-          <Btn small onClick={() => fileRef.current?.click()} disabled={!!imp?.loading}>{imp?.loading ? "Importing…" : "⬆ Import CSV"}</Btn>
+          <Btn small onClick={() => fileRef.current?.click()} disabled={!!imp?.loading} title="Playbook participants · Upper Hand contacts / contact list / orders · Upper Hand per-event client lists (as many at once as you like)">{imp?.loading ? "Importing…" : "⬆ Import CSV"}</Btn>
           <Btn small onClick={syncRosters} disabled={!!imp?.loading} title="Pull the current Playbook class rosters and the DS Elite roster in as participation">↻ Sync rosters</Btn>
         </div>
         {imp && !imp.loading && <div style={{ ...{ background: DS.panel, border: "1px solid " + (imp.error ? DS.orange : DS.lime), borderRadius: 12, padding: "10px 14px", marginBottom: 12, fontSize: 13 } }}>{imp.error ? <span style={{ color: DS.orange }}>{imp.error}</span> : <span style={{ color: DS.lime, fontWeight: 700 }}>✓ {imp.summary || JSON.stringify(imp)}</span>}<button onClick={() => setImp(null)} style={{ float: "right", background: "none", border: "none", color: DS.mut, cursor: "pointer" }}>✕</button></div>}

@@ -10,7 +10,8 @@
 // Same loaders as scripts/import-dssc-crm.mjs (api/_lib/dssc-crm.js).
 
 import { createClient } from "@supabase/supabase-js";
-import { importUpperHand, importPlaybookParticipants, syncPlaybook, syncDsElite } from "./_lib/dssc-crm.js";
+import Papa from "papaparse";
+import { importUpperHand, importPlaybookParticipants, syncPlaybook, syncDsElite, parseUpperHandEvent } from "./_lib/dssc-crm.js";
 
 export const config = { maxDuration: 300 };
 const OWNER_EMAILS = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"];
@@ -40,14 +41,19 @@ export default async function handler(req, res) {
     if (!files.length) return res.status(400).json({ error: "No files." });
     const parts = [];
     const uh = { contacts: [], participants: [], orders: [], attendance: [] };
+    let events = 0;
     for (const f of files) {
+      // A per-event export has metadata rows above its header; the browser's
+      // header-based parse can't read it, so it also sends the raw text.
+      const ev = typeof f.text === "string" ? parseUpperHandEvent(f.text, Papa) : null;
+      if (ev) { uh.attendance.push(...ev); events++; parts.push(`${f.name}: event "${ev[0]?.event || "?"}" · ${ev.length} attendees`); continue; }
       const rows = Array.isArray(f.rows) ? f.rows : [];
       const cols = Object.keys(rows[0] || {});
       if (cols.includes("student_pk") && cols.includes("guardian_email")) { const r = await importPlaybookParticipants(sb, rows); parts.push(`${f.name}: ${r.participants} players under ${r.contacts} families (${r.rosterPhones} roster phones filled)`); }
       else if (cols.includes("phone_number") && cols.includes("added_date")) uh.contacts.push(...rows);
       else if (cols.includes("gender") && cols.includes("date_of_birth") && cols.includes("phone")) uh.participants.push(...rows);
       else if (cols.includes("Order Number") && cols.includes("Buyer")) uh.orders.push(...rows);
-      else if (cols.some(c => /event|attend/i.test(c))) uh.attendance.push(...rows);
+      else if (cols.some(c => /event|attend|product|item|program|class/i.test(c))) uh.attendance.push(...rows);
       else parts.push(`${f.name}: didn't recognise the columns (${cols.slice(0, 5).join(", ")}…)`);
     }
     if (uh.contacts.length || uh.participants.length || uh.orders.length || uh.attendance.length) {

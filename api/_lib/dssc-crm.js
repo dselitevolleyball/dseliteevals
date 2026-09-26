@@ -79,6 +79,26 @@ async function upsertParticipation(sb, rows) {
   return list.length;
 }
 
+// Upper Hand's per-event export (Events → an event → Clients → Export): five
+// metadata rows ("Event Title,DS Elite Tryout - 15s", dates, URL…), then a
+// header row starting "First Name". One of these per event is the only way
+// Upper Hand says who did WHAT, so this turns one into attendance rows the
+// importer already understands. Returns null if the text isn't that shape.
+export function parseUpperHandEvent(text, Papa) {
+  const lines = String(text || "").replace(/\r/g, "").split("\n");
+  const hi = lines.findIndex((l, i) => i < 15 && /^"?First Name"?\s*,/i.test(l));
+  if (hi < 0) return null;
+  const meta = Papa.parse(lines.slice(0, hi).join("\n"), { header: false, skipEmptyLines: true }).data;
+  const cell = (re) => { const r = meta.find(x => re.test(String(x[0] || ""))); return r ? clean(r[1] || r.slice(1).join(" ")) : ""; };
+  const title = cell(/event\s*title|^event$|^title$/i) || cell(/name/i);
+  const dateRaw = cell(/start|date|when/i);
+  const date = isoDate(dateRaw) || (() => { const m = /([A-Z][a-z]{2,8})\s+(\d{1,2}),?\s+(\d{4})/.exec(dateRaw); return m ? isoDate(new Date(m[0]).toLocaleDateString("en-US")) : null; })();
+  if (!title) return null;
+  const rows = Papa.parse(lines.slice(hi).join("\n"), { header: true, skipEmptyLines: true }).data;
+  const get = (r, ...keys) => { for (const k of keys) { const kk = Object.keys(r).find(x => x.trim().toLowerCase() === k.toLowerCase()); if (kk && String(r[kk]).trim()) return String(r[kk]).trim(); } return ""; };
+  return rows.map(r => ({ first_name: get(r, "First Name"), last_name: get(r, "Last Name"), email: lower(get(r, "Email", "Email Address", "Parent Email", "Account Email", "Guardian Email")), phone: get(r, "Phone", "Phone Number", "Parent Phone"), date_of_birth: get(r, "Date of Birth", "DOB", "Birthdate"), event: title, date })).filter(r => r.first_name && r.email);
+}
+
 // ── Upper Hand ──────────────────────────────────────────────────────────────
 export async function importUpperHand(sb, { contacts = [], participants = [], orders = [], attendance = [] } = {}) {
   const out = { contacts: 0, participants: 0, orders: 0, ordersMatched: 0, participation: 0 };
@@ -105,11 +125,18 @@ export async function importUpperHand(sb, { contacts = [], participants = [], or
   out.orders = orows.length;
   // Attendance/registration export (when available): participant name + event title + date.
   if (attendance.length) {
+    // Anyone on an event list we haven't seen becomes a contact too — the
+    // attendee export carries the account email, and a family that only ever
+    // bought through an event is exactly who the CRM is for.
+    const extra = attendance.map(r => ({ email: lower(r.email || r.user_email || r["Email"]), first_name: cap(r.first_name || ""), last_name: cap(r.last_name || ""), phone: e164(r.phone), sources: ["upperhand"] })).filter(r => EMAIL_RE.test(r.email) && !ids.has(r.email));
+    if (extra.length) for (const [k, v] of await upsertContacts(sb, extra)) ids.set(k, v);
     const rows = [];
+    const newParts = attendance.map(r => { const e = lower(r.email || r.user_email || r["Email"]); const cid = ids.get(e); return cid ? { contact_id: cid, first_name: r.first_name || r["Participant First Name"] || r["First Name"] || "", last_name: r.last_name || r["Participant Last Name"] || r["Last Name"] || "", dob: isoDate(r.date_of_birth), sources: ["upperhand"] } : null; }).filter(p => p && clean(p.first_name));
+    if (newParts.length) for (const [k, v] of await upsertParticipants(sb, newParts)) pids.set(k, v);
     for (const r of attendance) {
       const e = lower(r.email || r.user_email || r["Email"]); const cid = ids.get(e); if (!cid) continue;
       const first = r.first_name || r["Participant First Name"] || r["First Name"] || "", last = r.last_name || r["Participant Last Name"] || r["Last Name"] || "";
-      const program = r.event || r.program || r["Event Title"] || r["Event"] || r["Product"] || "";
+      const program = r.event || r.program || r["Event Title"] || r["Event"] || r["Event Name"] || r["Product"] || r["Product Name"] || r["Item"] || r["Item Name"] || r["Program"] || r["Class"] || "";
       if (!program) continue;
       const pid = pids.get(cid + "|" + nameKey(first, last)) || null;
       rows.push({ participant_id: pid, contact_id: cid, program, event_date: isoDate(r.date || r["Event Date"] || r["Date"]), source: "upperhand", source_ref: [e, nameKey(first, last), lower(program), isoDate(r.date || r["Event Date"] || r["Date"]) || ""].join("|") });

@@ -9,7 +9,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { createClient } from "@supabase/supabase-js";
 import Papa from "papaparse";
-import { importUpperHand, importPlaybookParticipants, syncPlaybook, syncDsElite } from "../api/_lib/dssc-crm.js";
+import { importUpperHand, importPlaybookParticipants, syncPlaybook, syncDsElite, parseUpperHandEvent } from "../api/_lib/dssc-crm.js";
 
 const env = {};
 for (const l of readFileSync(new URL("../.env", import.meta.url), "utf8").split(/\r?\n/)) { const m = /^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/.exec(l); if (m) env[m[1]] = m[2].replace(/^["']|["']$/g, ""); }
@@ -21,6 +21,9 @@ if (cmd === "playbook") { console.log(JSON.stringify(await importPlaybookPartici
 else if (cmd === "upperhand") {
   const files = readdirSync(arg);
   const pick = (re) => { const f = files.filter(x => re.test(x)).sort().at(-1); return f ? csv(arg + "/" + f) : []; };
-  console.log(JSON.stringify(await importUpperHand(sb, { contacts: pick(/^contacts_list/i), participants: pick(/^contact_list/i), orders: pick(/^order_list/i), attendance: pick(/attend|registration|event_client/i) })));
+  // Every other CSV in the folder is tried as a per-event client list.
+  const attendance = [];
+  for (const f of files.filter(x => /\.csv$/i.test(x) && !/^(contacts_list|contact_list|order_list)/i.test(x))) { const ev = parseUpperHandEvent(readFileSync(arg + "/" + f, "utf8"), Papa); if (ev) { attendance.push(...ev); console.log("event:", ev[0]?.event, "·", ev.length); } }
+  console.log(JSON.stringify(await importUpperHand(sb, { contacts: pick(/^contacts_list/i), participants: pick(/^contact_list/i), orders: pick(/^order_list/i), attendance })));
 } else if (cmd === "sync") { console.log("playbook rosters:", JSON.stringify(await syncPlaybook(sb))); console.log("ds elite:", JSON.stringify(await syncDsElite(sb))); }
 else { console.error("usage: playbook <csv> | upperhand <folder> | sync"); process.exit(1); }
