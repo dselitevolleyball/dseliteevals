@@ -22,6 +22,9 @@ const money = (c) => "$" + (Math.round((c || 0) / 100)).toLocaleString();
 const fmtD = (iso) => iso ? new Date(iso + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "2-digit" }) : "";
 const CATS = [["", "any program"], ["volleyball", "volleyball"], ["basketball", "basketball"], ["reach", "Reach / performance"], ["facility", "rentals / open gym"], ["none", "never participated"]];
 const last10 = (s) => String(s || "").replace(/\D/g, "").slice(-10);
+const POS_GROUPS = [["Setter", /set/i], ["Hitter", /pin|hit|outside|right|opp|oh|rs/i], ["Middle", /mid|mb/i], ["Libero/DS", /lib|ds|def/i]];
+const posGroup = (v) => { const g = POS_GROUPS.find(([, re]) => re.test(String(v || ""))); return g ? g[0] : (v ? "Other" : null); };
+const teamAge = (t) => { const m = /^(\d{1,2})\b/.exec(t || ""); return m ? +m[1] : null; };
 
 export default function DsscCrm({ coach, onText, isDirector }) {
   const [contacts, setContacts] = useState([]);
@@ -30,7 +33,8 @@ export default function DsscCrm({ coach, onText, isDirector }) {
   const [orders, setOrders] = useState([]);
   const [consents, setConsents] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [f, setF] = useState({ q: "", ageMin: "", ageMax: "", gender: "", cat: "", program: "", since: "", notSince: "", source: "", city: "", phone: false, optin: false, tag: "", position: "", level: "" });
+  const blankF = { q: "", ages: new Set(), levels: new Set(), pos: new Set(), gender: "", cat: "", program: "", since: "", notSince: "", source: "", city: "", phone: false, optin: false, tag: "" };
+  const [f, setF] = useState(blankF);
   const [openId, setOpenId] = useState(null);
   const [picked, setPicked] = useState(() => new Set());
   const [imp, setImp] = useState(null);
@@ -53,7 +57,6 @@ export default function DsscCrm({ coach, onText, isDirector }) {
   const lastByC = useMemo(() => { const m = new Map(); for (const x of partic) if (x.event_date && (!m.has(x.contact_id) || m.get(x.contact_id) < x.event_date)) m.set(x.contact_id, x.event_date); for (const o of orders) { const d = (o.ordered_at || "").slice(0, 10); if (o.contact_id && d && (!m.has(o.contact_id) || m.get(o.contact_id) < d)) m.set(o.contact_id, d); } return m; }, [partic, orders]);
   const tags = useMemo(() => [...new Set(contacts.flatMap(c => c.tags || []))].sort(), [contacts]);
   const cities = useMemo(() => [...new Set(contacts.map(c => c.city).filter(Boolean))].sort(), [contacts]);
-  const positions = useMemo(() => [...new Set(parts.flatMap(p => [p.position, p.position2]).filter(Boolean))].sort(), [parts]);
   const lvlTag = (p) => p.dse_level ? <Tag color={p.dse_level === "national" ? DS.lime : p.dse_level === "rise" ? DS.orange : DS.mut}>{p.dse_team || p.dse_level}</Tag> : null;
 
   // ── The filter ───────────────────────────────────────────────────────────
@@ -68,12 +71,13 @@ export default function DsscCrm({ coach, onText, isDirector }) {
       if (f.tag && !(c.tags || []).includes(f.tag)) continue;
       const kids = partsByC.get(c.id) || [];
       const matchP = (p) => {
-        const age = ageOf(p.dob);
-        if (f.ageMin !== "" && (age == null || age < +f.ageMin)) return false;
-        if (f.ageMax !== "" && (age == null || age > +f.ageMax)) return false;
+        // An age chip matches on real age, or on the DS Elite team age ("12 Diamond" = 12s) —
+        // Drew thinks in both, and a 13-year-old playing up on 14s should turn up under 14.
+        const age = ageOf(p.dob), ta = teamAge(p.dse_team);
+        if (f.ages.size && !(f.ages.has(age) || f.ages.has(ta))) return false;
         if (f.gender && p.gender !== f.gender) return false;
-        if (f.position && nrm(p.position) !== nrm(f.position) && nrm(p.position2) !== nrm(f.position)) return false;
-        if (f.level === "none" ? p.dse_level : (f.level && p.dse_level !== f.level)) return false;
+        if (f.pos.size && !(f.pos.has(posGroup(p.position)) || f.pos.has(posGroup(p.position2)))) return false;
+        if (f.levels.size && !(f.levels.has(p.dse_level || "none"))) return false;
         const hist = [...(particByP.get(p.id) || []), ...(p.is_contact ? (particByP.get("c" + c.id) || []) : [])];
         if (f.cat === "none") { if (hist.length) return false; }
         else if (f.cat && !hist.some(h => h.category === f.cat)) return false;
@@ -82,10 +86,10 @@ export default function DsscCrm({ coach, onText, isDirector }) {
         if (f.notSince && hist.some(h => h.event_date && h.event_date >= f.notSince)) return false;
         return true;
       };
-      const anyPlayerFilter = f.ageMin !== "" || f.ageMax !== "" || f.gender || f.cat || f.program || f.since || f.notSince || f.position || f.level;
+      const anyPlayerFilter = f.ages.size || f.gender || f.cat || f.program || f.since || f.notSince || f.pos.size || f.levels.size;
       let matched = anyPlayerFilter ? kids.filter(matchP) : kids;
       // A family with no participants on file but with contact-level history still counts for program filters.
-      if (anyPlayerFilter && !matched.length && !kids.length && !f.ageMin && !f.ageMax && !f.gender) { const hist = particByC.get(c.id) || []; if ((f.cat === "none" ? !hist.length : (!f.cat || hist.some(h => h.category === f.cat))) && (!f.program || hist.some(h => nrm(h.program).includes(nrm(f.program))))) matched = []; else continue; }
+      if (anyPlayerFilter && !matched.length && !kids.length && !f.ages.size && !f.gender && !f.pos.size && !f.levels.size) { const hist = particByC.get(c.id) || []; if ((f.cat === "none" ? !hist.length : (!f.cat || hist.some(h => h.category === f.cat))) && (!f.program || hist.some(h => nrm(h.program).includes(nrm(f.program))))) matched = []; else continue; }
       else if (anyPlayerFilter && !matched.length) continue;
       if (q) { const hay = [c.first_name, c.last_name, c.email, c.phone, c.city, ...(c.tags || []), ...kids.map(p => p.first_name + " " + p.last_name), ...(particByC.get(c.id) || []).map(h => h.program)].map(nrm).join(" "); if (!q.split(/\s+/).every(w => hay.includes(w))) continue; }
       out.push({ c, matched, kids });
@@ -132,6 +136,28 @@ export default function DsscCrm({ coach, onText, isDirector }) {
   };
 
   const set = (k, v) => { setF(x => ({ ...x, [k]: v })); setPicked(new Set()); };
+  const toggle = (k, v) => { setF(x => { const n = new Set(x[k]); n.has(v) ? n.delete(v) : n.add(v); return { ...x, [k]: n }; }); setPicked(new Set()); };
+  // How many players each chip would touch (before the other filters) — enough to see at a glance where the kids are.
+  const counts = useMemo(() => {
+    const ages = new Map(), levels = new Map(), pos = new Map();
+    for (const p of parts) {
+      const a = ageOf(p.dob), ta = teamAge(p.dse_team);
+      for (const v of new Set([a, ta].filter(x => x != null))) ages.set(v, (ages.get(v) || 0) + 1);
+      levels.set(p.dse_level || "none", (levels.get(p.dse_level || "none") || 0) + 1);
+      for (const v of new Set([posGroup(p.position), posGroup(p.position2)].filter(Boolean))) pos.set(v, (pos.get(v) || 0) + 1);
+    }
+    return { ages, levels, pos };
+  }, [parts]);
+  const chipRow = (label, items, key) => (
+    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginTop: 8 }}>
+      <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: DS.mut, minWidth: 64 }}>{label}</span>
+      {items.map(([v, l, n]) => { const on = f[key].has(v); return (
+        <button key={String(v)} onClick={() => toggle(key, v)} style={{ fontFamily: DS.font, fontSize: 13, fontWeight: 800, padding: "5px 11px", borderRadius: 999, cursor: "pointer", border: "1px solid " + (on ? DS.lime : DS.lineStrong), background: on ? DS.lime : "transparent", color: on ? DS.bg : DS.text, opacity: n ? 1 : 0.45 }}>
+          {l}{n ? <span style={{ fontSize: 10, fontWeight: 600, marginLeft: 5, color: on ? DS.bg : DS.mut }}>{n}</span> : null}
+        </button>); })}
+      {f[key].size > 0 && <button onClick={() => set(key, new Set())} style={{ background: "none", border: "none", color: DS.mut, fontSize: 11, cursor: "pointer", fontFamily: DS.font }}>clear</button>}
+    </div>
+  );
   const sel = { ...inputStyle, width: "auto", padding: "6px 9px", fontSize: 13 };
   const open = openId ? contacts.find(c => c.id === openId) : null;
 
@@ -153,15 +179,13 @@ export default function DsscCrm({ coach, onText, isDirector }) {
         <Card accent={DS.lime}>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             <input value={f.q} onChange={e => set("q", e.target.value)} placeholder="Search a parent, player, email, program…" style={{ ...inputStyle, width: 280, padding: "7px 10px", fontSize: 13 }} />
-            <span style={{ fontSize: 12, color: DS.mut }}>Player age</span>
-            <input value={f.ageMin} onChange={e => set("ageMin", e.target.value.replace(/\D/g, ""))} placeholder="from" style={{ ...sel, width: 60 }} />
-            <input value={f.ageMax} onChange={e => set("ageMax", e.target.value.replace(/\D/g, ""))} placeholder="to" style={{ ...sel, width: 60 }} />
             <select value={f.gender} onChange={e => set("gender", e.target.value)} style={sel}><option value="">any gender</option><option value="female">girls</option><option value="male">boys</option></select>
             <select value={f.cat} onChange={e => set("cat", e.target.value)} style={sel}>{CATS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
             <input value={f.program} onChange={e => set("program", e.target.value)} placeholder="program contains…" style={{ ...sel, width: 170 }} />
-            <select value={f.level} onChange={e => set("level", e.target.value)} style={sel} title="DS Elite team level"><option value="">any DS Elite level</option><option value="national">National (Diamond)</option><option value="regional">Regional</option><option value="rise">Rise</option><option value="none">not on a DS Elite team</option></select>
-            <select value={f.position} onChange={e => set("position", e.target.value)} style={sel}><option value="">any position</option>{positions.map(p => <option key={p}>{p}</option>)}</select>
           </div>
+          {chipRow("Age", [7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18].map(a => [a, String(a), counts.ages.get(a) || 0]), "ages")}
+          {chipRow("DS Elite", [["national", "National", counts.levels.get("national") || 0], ["regional", "Regional", counts.levels.get("regional") || 0], ["rise", "Rise", counts.levels.get("rise") || 0], ["none", "Not on a team", counts.levels.get("none") || 0]], "levels")}
+          {chipRow("Position", ["Setter", "Hitter", "Middle", "Libero/DS", "Other"].map(p => [p, p, counts.pos.get(p) || 0]), "pos")}
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 8 }}>
             <span style={{ fontSize: 12, color: DS.mut }}>Participated since</span><input type="date" value={f.since} onChange={e => set("since", e.target.value)} style={sel} />
             <span style={{ fontSize: 12, color: DS.mut }}>but not since</span><input type="date" value={f.notSince} onChange={e => set("notSince", e.target.value)} style={sel} title="Lapsed: nothing on or after this date" />
@@ -170,7 +194,7 @@ export default function DsscCrm({ coach, onText, isDirector }) {
             {tags.length > 0 && <select value={f.tag} onChange={e => set("tag", e.target.value)} style={sel}><option value="">any tag</option>{tags.map(t => <option key={t}>{t}</option>)}</select>}
             <label style={{ fontSize: 12, display: "flex", gap: 5, alignItems: "center" }}><input type="checkbox" checked={f.phone} onChange={e => set("phone", e.target.checked)} /> has phone</label>
             <label style={{ fontSize: 12, display: "flex", gap: 5, alignItems: "center" }}><input type="checkbox" checked={f.optin} onChange={e => set("optin", e.target.checked)} /> opted in to texts</label>
-            <Btn kind="link" small onClick={() => { setF({ q: "", ageMin: "", ageMax: "", gender: "", cat: "", program: "", since: "", notSince: "", source: "", city: "", phone: false, optin: false, tag: "", position: "", level: "" }); setPicked(new Set()); }}>clear</Btn>
+            <Btn kind="link" small onClick={() => { setF(blankF); setPicked(new Set()); }}>clear</Btn>
           </div>
         </Card>
 
