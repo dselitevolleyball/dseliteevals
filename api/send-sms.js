@@ -21,7 +21,8 @@
 //                 or  { error } on a request-level failure.
 
 import { createClient } from "@supabase/supabase-js";
-import { sendOneSms, normalizePhone, twilioReady } from "./_lib/sms.js";
+import { sendOneSms, normalizePhone, twilioReady, brandOf, notReadyMessage } from "./_lib/sms.js";
+const DSSC_DIRECTOR_EMAILS = ["hunterhaleysc10@gmail.com", "hunter@drippingsportsclub.com"];
 
 const LANES = 4;   // concurrent Twilio requests; Twilio queues per number anyway
 
@@ -31,7 +32,8 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Method not allowed" });
   }
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = process.env;
-  if (!twilioReady()) return res.status(500).json({ error: "Twilio not configured. Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER." });
+  const brand = brandOf((req.body || {}).brand);
+  if (!twilioReady(brand)) return res.status(500).json({ error: notReadyMessage(brand) });
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return res.status(500).json({ error: "Supabase service role not configured." });
 
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
@@ -47,6 +49,8 @@ export default async function handler(req, res) {
     const email = (user?.email || "").trim().toLowerCase();
     if (!email) return res.status(401).json({ error: "Not signed in" });
     let ok = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"].includes(email);
+    // DSSC's number is the director's to use too (Hunter isn't a DS Elite admin).
+    if (!ok && brand === "dssc" && DSSC_DIRECTOR_EMAILS.includes(email)) ok = true;
     if (!ok) {
       const { data: c } = await supabase.from("coaches").select("is_admin, is_approved").ilike("email", email).maybeSingle();
       ok = !!(c && c.is_approved && c.is_admin);
@@ -56,14 +60,15 @@ export default async function handler(req, res) {
 
   const b = req.body || {};
   const text = String(b.body || "").trim();
-  if (!text) return res.status(400).json({ error: "Empty 'body'." });
-  const meta = { sent_by_coach_id: b.sent_by_coach_id || null, sent_by_label: b.sent_by_label || null };
+  const media_urls = (Array.isArray(b.media_urls) ? b.media_urls : []).filter(u => /^https?:\/\//.test(String(u))).slice(0, 10);
+  if (!text && !media_urls.length) return res.status(400).json({ error: "Empty 'body'." });
+  const meta = { sent_by_coach_id: b.sent_by_coach_id || null, sent_by_label: b.sent_by_label || null, media_urls };
 
   // Normalise the two request shapes into one list.
   const batch = Array.isArray(b.recipients);
   const list = batch
-    ? b.recipients.map(r => ({ to: normalizePhone(r?.to), name: r?.name || null, player_id: r?.player_id || null, team_name: r?.team_name || null, kind: r?.kind || null }))
-    : [{ to: normalizePhone(b.to), name: b.contact_name || null, player_id: b.player_id || null, team_name: b.team_name || null, kind: b.contact_kind || null }];
+    ? b.recipients.map(r => ({ brand, to: normalizePhone(r?.to), name: r?.name || null, player_id: r?.player_id || null, team_name: r?.team_name || null, kind: r?.kind || null, dssc_program: r?.dssc_program || null, dssc_player: r?.dssc_player || null }))
+    : [{ brand, to: normalizePhone(b.to), name: b.contact_name || null, player_id: b.player_id || null, team_name: b.team_name || null, kind: b.contact_kind || null, dssc_program: b.dssc_program || null, dssc_player: b.dssc_player || null }];
   const valid = list.filter(r => /^\+\d{8,15}$/.test(r.to));
   if (!valid.length) return res.status(400).json({ error: batch ? "No valid phone numbers in 'recipients'." : "Invalid 'to' phone number." });
   // One text per number, even if a parent is listed under two players.
@@ -77,7 +82,7 @@ export default async function handler(req, res) {
 
   // A batch is remembered as one broadcast before anything goes out, so a
   // send that dies half-way still shows what it was meant to be.
-  const ins = await supabase.from("sms_broadcasts").insert({ body: text, audience: b.audience || null, recipient_count: recipients.length, ...meta }).select("id").single();
+  const ins = await supabase.from("sms_broadcasts").insert({ brand, body: text, audience: b.audience || null, recipient_count: recipients.length, media_urls, sent_by_coach_id: meta.sent_by_coach_id, sent_by_label: meta.sent_by_label }).select("id").single();
   if (ins.error) return res.status(500).json({ error: "Broadcast record failed: " + ins.error.message });
   const broadcastId = ins.data.id;
 

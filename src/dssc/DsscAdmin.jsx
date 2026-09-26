@@ -22,7 +22,7 @@ const sameDayWindow = (a, b) => a.date === b.date && a.st != null && a.en != nul
 export default function DsscAdmin({
   coach, clinics = [], coachRoster = [], dsscAvail = [], podAttendance = [],
   setClinics, reloadClinics, staffDsscSession, unstaffDsscSession, decideDsscPickup,
-  openClass, openProgram, newClinic, sync, onCoachHub, onCoverage, onTimeCards, onLegacy,
+  openClass, openProgram, newClinic, sync, onCoachHub, onCoverage, onTimeCards, onLegacy, onTextClass, onTexts,
 }) {
   const today = localDateISO();
   const coachName = coach?.display_name || coach?.email || "";
@@ -178,6 +178,7 @@ export default function DsscAdmin({
           <Btn small onClick={onCoachHub}>Coach hub</Btn>
           {onCoverage && <Btn small onClick={onCoverage}>Coverage calendar</Btn>}
           {onTimeCards && <Btn small onClick={onTimeCards}>Time cards & pay</Btn>}
+          {onTexts && <Btn small onClick={onTexts}>💬 Texts</Btn>}
           <Btn small kind="primary" onClick={newClinic}>+ New program</Btn>
         </div>
 
@@ -244,7 +245,7 @@ export default function DsscAdmin({
                           {!hasClassPlan(r.s) && r.s.date >= today && <Tag color={DS.mut}>no plan</Tag>}
                         </div>
                       </button>
-                      <div>{signupTag(r)}</div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>{signupTag(r)}{onTextClass && r.s.date >= today && <button onClick={() => onTextClass(r.c.id, r.s.id)} title="Text the families in this class" style={{ background: "none", border: "1px solid " + DS.line, borderRadius: 999, color: DS.mut, cursor: "pointer", fontSize: 12, padding: "2px 8px", fontFamily: DS.font }}>💬</button>}</div>
                       <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
                         {crew.map(x => (
                           <span key={x.name} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 700, color: x.status === "pending" ? DS.orange : DS.text, background: x.status === "pending" ? DS.orangeSoft : "rgba(255,255,255,0.08)", border: "1px solid " + (x.status === "pending" ? DS.orange : "transparent"), borderRadius: 999, padding: "3px 6px 3px 10px" }}>

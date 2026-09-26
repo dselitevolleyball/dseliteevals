@@ -34,6 +34,10 @@
     {
       "source": "/privates",
       "destination": "/api/privates-form"
+    },
+    {
+      "source": "/dssc-texts",
+      "destination": "/api/dssc-texts-form"
     }
   ],
   "crons": [

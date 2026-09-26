@@ -21,6 +21,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { appOrigin } from "../shared/app-origin.js";
+import { sendOneSms, twilioReady } from "./_lib/sms.js";
 
 const OWNER_EMAILS = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"];
 const DIRECTOR_EMAILS = ["hunterhaleysc10@gmail.com", "hunter@drippingsportsclub.com"];
@@ -41,8 +42,7 @@ const fmtDate = (iso) => iso ? new Date(iso + "T12:00:00").toLocaleDateString("e
 
 export default async function handler(req, res) {
   if (req.method !== "POST") { res.setHeader("Allow", ["POST"]); return res.status(405).json({ error: "POST only" }); }
-  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, DSE_FROM_EMAIL, DSSC_FROM_EMAIL, DSSC_REPLY_TO,
-          TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, DSSC_TWILIO_FROM_NUMBER } = process.env;
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, DSE_FROM_EMAIL, DSSC_FROM_EMAIL, DSSC_REPLY_TO } = process.env;
   const RESEND_API_KEY = process.env.RESEND_API_KEY || process.env.resend_api_key;
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return res.status(500).json({ error: "Server not configured" });
 
@@ -143,16 +143,15 @@ export default async function handler(req, res) {
   // ── Text ──────────────────────────────────────────────────────────────────
   let textsSent = 0, textsSkipped = noConsent; const textErrors = []; let textNote = null;
   if (phones.size) {
-    if (TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN && DSSC_TWILIO_FROM_NUMBER) {
-      const smsBody = [text, ...media.map(m => m.url)].filter(Boolean).join("\n") + "\n— Coach " + senderName + ", DSSC";
-      for (const to of phones.keys()) {
+    if (twilioReady("dssc")) {
+      // Pictures ride along as MMS (Twilio caps each at 5MB); video goes as a link.
+      const mms = media.filter(m => m.kind === "image" && (!m.bytes || m.bytes <= 5 * 1024 * 1024)).map(m => m.url);
+      const links = media.filter(m => !mms.includes(m.url)).map(m => m.url);
+      const smsBody = [text, ...links].filter(Boolean).join("\n") + "\n— Coach " + senderName + ", DSSC";
+      for (const [to, r] of phones.entries()) {
         try {
-          const tw = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Messages.json`, {
-            method: "POST",
-            headers: { Authorization: "Basic " + Buffer.from(TWILIO_ACCOUNT_SID + ":" + TWILIO_AUTH_TOKEN).toString("base64"), "Content-Type": "application/x-www-form-urlencoded" },
-            body: new URLSearchParams({ From: DSSC_TWILIO_FROM_NUMBER, To: to, Body: smsBody }),
-          });
-          if (tw.ok) textsSent++; else textErrors.push(to + ": " + (await tw.text()).slice(0, 120));
+          await sendOneSms(sb, { to, brand: "dssc", name: r.parent_name || null, kind: "parent", dssc_program: clinic.name, dssc_player: r.player_name || null }, smsBody, { sent_by_label: senderName, media_urls: mms });
+          textsSent++;
         } catch (e) { textErrors.push(to + ": " + e.message); }
       }
     } else {

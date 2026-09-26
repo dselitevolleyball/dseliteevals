@@ -14,6 +14,7 @@ import DsscHub from "./dssc/DsscHub.jsx";
 import DsscAdmin from "./dssc/DsscAdmin.jsx";
 import HousingView from "./HousingView.jsx";
 import AskHQ from "./AskHQ.jsx";
+import DsscTexts from "./dssc/DsscTexts.jsx";
 import { TN_SUB_PLACEHOLDERS, isPlaceholderPerson, sessionStaff, staffNeeded, staffApproved, staffPending, sessionShort, onStaff, parsePlanPaste } from "../shared/dssc-clinics.js";
 
 const POSITIONS = ["S","OH","MB","RS","L","DS","U"];
@@ -1735,6 +1736,7 @@ export default function App() {
   const [dsscAdminLegacy, setDsscAdminLegacy] = useState(false); // directors: classic clinics list instead of the admin board
   const [dsscHubSel, setDsscHubSel]     = useState(null);   // {clinicId, sessionId} the admin board asked the coach hub to open
   const [dsscHubBack, setDsscHubBack]   = useState(false);  // that class was opened from the admin board, so "back" returns there
+  const [dsscTextsInit, setDsscTextsInit] = useState(null); // {clinicId, sessionId} — open DSSC Texts with a class already picked
   const [swSyncTok, setSwSyncTok]       = useState(null);   // SportWrench sync bookmarklet {href} | {configured:false} | {error}
   const [syPostTok, setSyPostTok]       = useState(null);   // SportsYou post bookmarklet {href} | {configured:false} | {error}
   const [syOutbox, setSyOutbox]         = useState([]);     // sportsyou_outbox rows (pending + recently posted)
@@ -3334,8 +3336,8 @@ export default function App() {
   }, []);
   // "coaches" is here because the coach card draws the same calendar, and a
   // DSSC session has to appear on it like any other commitment.
-  useEffect(() => { if (isApproved && (view === "clinics" || view === "dssc" || view === "home" || view === "dssccal" || view === "dssctime" || view === "coaches")) { loadClinics(); loadDsscCheckins(); } }, [isApproved, view, loadClinics, loadDsscCheckins]);
-    useEffect(() => { if (isApproved && (view === "clinics" || view === "dssc" || view === "dssccal" || view === "dssctime")) { loadPlaybook(); loadDsscAvail(); loadDsscSync(); loadPodAttendance(); } }, [isApproved, view, loadPlaybook, loadDsscAvail, loadDsscSync, loadPodAttendance]);
+  useEffect(() => { if (isApproved && (view === "clinics" || view === "dssc" || view === "dssctexts" || view === "home" || view === "dssccal" || view === "dssctime" || view === "coaches")) { loadClinics(); loadDsscCheckins(); } }, [isApproved, view, loadClinics, loadDsscCheckins]);
+    useEffect(() => { if (isApproved && (view === "clinics" || view === "dssc" || view === "dssctexts" || view === "dssccal" || view === "dssctime")) { loadPlaybook(); loadDsscAvail(); loadDsscSync(); loadPodAttendance(); } }, [isApproved, view, loadPlaybook, loadDsscAvail, loadDsscSync, loadPodAttendance]);
   const saveCharter = useCallback(async (team, data) => {
     if (!team) return;
     const row = { team_name: team, data, updated_by: coach?.display_name || coach?.email || null, updated_at: new Date().toISOString() };
@@ -4316,6 +4318,7 @@ export default function App() {
     const { data, error } = await supabase
       .from("sms_threads")
       .select("*")
+      .eq("brand", "dse")
       .order("last_message_at", { ascending: false, nullsFirst: false });
     if (error) console.error("Load sms_threads error:", error);
     setSmsThreads(data || []);
@@ -4331,7 +4334,7 @@ export default function App() {
     setSmsMessages(data || []);
   }, []);
   const loadSmsConsents = useCallback(async () => {
-    const { data, error } = await supabase.from("sms_consents").select("*");
+    const { data, error } = await supabase.from("sms_consents").select("*").eq("brand", "dse");
     if (error) console.error("Load sms_consents error:", error);
     setSmsConsents(data || []);
   }, []);
@@ -4475,7 +4478,7 @@ export default function App() {
   useEffect(() => {
     // Roster also drives the Tryout coach picker / Text Coaches lookup,
     // so make sure it's loaded whenever either tab opens.
-    if (isApproved && (view === "coaches" || view === "tryouts" || view === "home" || view === "clockin" || view === "teamdir" || view === "practice" || view === "timecards" || view === "clinics" || view === "dssc" || view === "dssccal" || view === "tournaments" || view === "kickoff" || view === "travel" || view === "housing" || view === "messages" || view === "privates")) loadCoachRoster();
+    if (isApproved && (view === "coaches" || view === "tryouts" || view === "home" || view === "clockin" || view === "teamdir" || view === "practice" || view === "timecards" || view === "clinics" || view === "dssc" || view === "dssccal" || view === "tournaments" || view === "kickoff" || view === "travel" || view === "housing" || view === "messages" || view === "dssctexts" || view === "privates")) loadCoachRoster();
   }, [isApproved, view, loadCoachRoster]);
   // The coach card edits coach_roster, so make sure it's loaded when one opens.
   useEffect(() => { if (isApproved && coachCardName) loadCoachRoster(); }, [isApproved, coachCardName, loadCoachRoster]);
@@ -13545,7 +13548,7 @@ export default function App() {
                             else if (phone.length === 11 && phone.startsWith("1")) phone = "+" + phone;
                           }
                           // Look up or create the thread, then switch to the Messages tab.
-                          let { data: t } = await supabase.from("sms_threads").select("*").eq("phone", phone).maybeSingle();
+                          let { data: t } = await supabase.from("sms_threads").select("*").eq("phone", phone).eq("brand", "dse").maybeSingle();
                           if (!t) {
                             const ins = await supabase.from("sms_threads").insert({ phone, player_id: p.id }).select().single();
                             if (ins.error) { window.alert("Open chat failed: " + ins.error.message); return; }
@@ -24719,6 +24722,7 @@ export default function App() {
         newClinic={newProgram}
         sync={{ dsscSync, dsscSyncTok, fetchSyncBookmarklet }}
         onCoachHub={()=>{ setDsscHubSel(null); setDsscHubBack(false); setView("dssc"); }} onCoverage={()=>setView("dssccal")} onTimeCards={()=>setView("dssctime")}
+        onTextClass={(cid, sid)=>{ setDsscTextsInit({ clinicId: cid, sessionId: sid }); setView("dssctexts"); }} onTexts={()=>setView("dssctexts")}
         onLegacy={()=>setDsscAdminLegacy(true)} />
     );
   }
@@ -27273,10 +27277,10 @@ export default function App() {
         const phone = e164(m[1]);
         if (!phone) continue;
         const name = l.replace(m[1], "").replace(/^[\s,;:|-]+|[\s,;:|-]+$/g, "").trim() || null;
-        rows.push({ phone, name, source: "pasted", added_by: coach?.display_name || coach?.email || null });
+        rows.push({ phone, brand: "dse", name, source: "pasted", added_by: coach?.display_name || coach?.email || null });
       }
       if (!rows.length) { window.alert("No phone numbers found. One per line, e.g. \"512-555-0100 Jamie Smith\"."); return; }
-      const { error } = await supabase.from("sms_consents").upsert(rows, { onConflict: "phone" });
+      const { error } = await supabase.from("sms_consents").upsert(rows, { onConflict: "phone,brand" });
       if (error) { window.alert("Couldn't save: " + error.message); return; }
       setSmsConsentPaste("");
       loadSmsConsents();
@@ -31452,7 +31456,7 @@ export default function App() {
                   ["hdr","DS Elite · Coaches & Pay"],
                   ["coaches","Coaches"], ...(isAdmin ? [["staffing","Staffing Board"]] : []), ["coverage","Coach Coverage"], ["timecards","Time Cards"], ["myexpenses","My Expenses"], ...(canOps ? [["claims","Coach Claims" + (pendingClaimCount ? " (" + pendingClaimCount + ")" : "")]] : []), ["gear","Gear Sizes" + (gearOutstanding ? " (" + gearOutstanding + ")" : "")], ["requests","Requests" + (pendingReqs ? " (" + pendingReqs + ")" : "")],
                   ["hdr","DSSC"],
-                  ["dssc","Coach Hub"], ["clinics","Clinics & Camps (admin)"], ["dssccal","Coverage Calendar"], ["dssctime","DSSC Time Cards"], ["pods","Skill Pods"], ["privates","Privates"],
+                  ["dssc","Coach Hub"], ["clinics","Clinics & Camps (admin)"], ["dssctexts","DSSC Texts"], ["dssccal","Coverage Calendar"], ["dssctime","DSSC Time Cards"], ["pods","Skill Pods"], ["privates","Privates"],
                   ["hdr","Communication"],
                   ["email","Email"], ["messages","Messages (SMS)" + (totalUnread > 0 ? " (" + totalUnread + ")" : "")], ["notifications","Notifications"], ["coachcomms","Coach Comms"], ["assignments","Assignments"], ["dsysa","DSYSA Clinics"],
                 ] }] : []),
@@ -31462,7 +31466,7 @@ export default function App() {
                 // In-House Tournament sits here for EVERY coach, ops or not —
                 // all 20 teams play it, so gating it to admins would repeat the
                 // DSYSA mistake of linking people to a page they can't open.
-                { title:"More", items:[["tournament","In-House Tournament"], ...(canOps ? [] : [["dssc","DSSC Coach Hub"],["dssctime","DSSC Time Cards"],["myexpenses","My Expenses"],["dsysa","DSYSA Clinics"]]), ["activity","Activity"], ["faq","FAQ"], ["games","Games"], ...(isOwner ? [["askai","Ask AI"]] : [])] },
+                { title:"More", items:[["tournament","In-House Tournament"], ...(canOps ? [] : [["dssc","DSSC Coach Hub"], ...(isDsscDirector ? [["clinics","DSSC Clinics (admin)"],["dssctexts","DSSC Texts"]] : []), ["dssctime","DSSC Time Cards"],["myexpenses","My Expenses"],["dsysa","DSYSA Clinics"]]), ["activity","Activity"], ["faq","FAQ"], ["games","Games"], ...(isOwner ? [["askai","Ask AI"]] : [])] },
               ];
               // Mobile: one hamburger opening a full-height grouped menu.
               if (isNarrow) {
@@ -31716,6 +31720,9 @@ export default function App() {
         {view==="practiceplan" && renderPracticePlans()}
         {view==="clinics" && (isDsscDirector ? ((clinicOpenId || dsscAdminLegacy) ? renderClinics() : renderDsscAdmin()) : renderDsscHub())}
         {view==="dssc" && renderDsscHub()}
+        {view==="dssctexts" && (isDsscDirector
+          ? <DsscTexts coach={coach} clinics={clinics} players={players} coachRoster={coachRoster} dsscAvail={dsscAvail} isDirector={isDsscDirector} initial={dsscTextsInit} onConsumedInitial={()=>setDsscTextsInit(null)} />
+          : <div style={{padding:24,color:C.mut,textAlign:"center"}}>DSSC texting is for the club's directors.</div>)}
         {view==="lineups" && renderLineups()}
         {view==="games" && renderGames()}
         {view==="askai" && renderAskAI()}

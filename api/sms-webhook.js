@@ -1,6 +1,7 @@
 // Vercel serverless function: Twilio inbound + status webhook.
 //
-// Configure both URLs in the Twilio console for your DS Elite phone number:
+// Configure both URLs in the Twilio console for BOTH numbers (DS Elite and
+// DSSC) — the brand is worked out from the number the text arrived on:
 //   - "A Message Comes In":    https://<your-domain>/api/sms-webhook
 //   - "Status callback URL":   https://<your-domain>/api/sms-webhook
 //
@@ -59,6 +60,25 @@ const normalizePhone = (raw) => {
   if (digits.length === 11 && digits.startsWith("1")) return "+" + digits;
   return digits.startsWith("+") ? digits : "+" + digits;
 };
+
+// Which business a text belongs to: the number it arrived on.
+const brandForTo = (to) => {
+  const d = String(to || "").replace(/\D/g, "").slice(-10);
+  const dssc = String(process.env.DSSC_TWILIO_FROM_NUMBER || "").replace(/\D/g, "").slice(-10);
+  return dssc && d === dssc ? "dssc" : "dse";
+};
+// DSSC: who a number belongs to, from the class rosters and the opt-in form.
+async function whoIsDssc(supabase, phone) {
+  const d = String(phone).replace(/\D/g, "").slice(-10);
+  const { data: c } = await supabase.from("sms_consents").select("name, player_name").eq("brand", "dssc").eq("phone", phone).maybeSingle();
+  const { data: rs } = await supabase.from("dssc_pod_roster").select("player_name, parent_name, parent_phone, clinic_id, dssc_clinics(name)").not("parent_phone", "is", null).order("created_at", { ascending: false }).limit(2000);
+  const hit = (rs || []).find(r => String(r.parent_phone || "").replace(/\D/g, "").slice(-10) === d);
+  if (hit) return { contact_kind: "parent", contact_name: c?.name || hit.parent_name || (hit.player_name + "'s parent"), dssc_player: hit.player_name, dssc_program: hit.dssc_clinics?.name || null };
+  if (c) return { contact_kind: "parent", contact_name: c.name || null, dssc_player: c.player_name || null };
+  const { data: cs } = await supabase.from("coach_roster").select("first_name, last_name, phone");
+  for (const k of cs || []) if (String(k.phone || "").replace(/\D/g, "").slice(-10) === d) return { contact_kind: "coach", contact_name: ((k.first_name || "") + " " + (k.last_name || "")).trim() };
+  return {};
+}
 
 // Who a phone number belongs to, from the player roster (parents and players)
 // or the coach roster. Numbers are compared on their last ten digits because
@@ -124,7 +144,11 @@ export default async function handler(req, res) {
 
   // Inbound message.
   const from = normalizePhone(params.From);
-  const body = params.Body || "";
+  const brand = brandForTo(params.To);
+  // An MMS can arrive with no text at all; keep the picture links in the body.
+  const nMedia = Number(params.NumMedia || 0) || 0;
+  const mediaIn = []; for (let i = 0; i < nMedia; i++) if (params["MediaUrl" + i]) mediaIn.push(params["MediaUrl" + i]);
+  const body = (params.Body || "") || (mediaIn.length ? "📷 (photo)" : "");
   const sid  = params.MessageSid || params.SmsSid;
   if (!from || !body) return res.status(200).send("ok");
 
@@ -135,13 +159,14 @@ export default async function handler(req, res) {
     .from("sms_threads")
     .select("*")
     .eq("phone", from)
+    .eq("brand", brand)
     .maybeSingle();
   if (!thread || (!thread.contact_kind && !thread.player_id)) {
-    const who = await whoIs(supabase, from);
+    const who = brand === "dssc" ? await whoIsDssc(supabase, from) : await whoIs(supabase, from);
     if (!thread) {
       const ins = await supabase
         .from("sms_threads")
-        .insert({ phone: from, ...who })
+        .insert({ phone: from, brand, ...who })
         .select()
         .single();
       if (ins.error) {
@@ -161,6 +186,7 @@ export default async function handler(req, res) {
     body,
     twilio_sid: sid || null,
     status: "received",
+    media_urls: mediaIn,
     sent_at: new Date().toISOString(),
   });
   if (msgIns.error && !/duplicate key/.test(msgIns.error.message || "")) {
