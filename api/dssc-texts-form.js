@@ -33,8 +33,8 @@ function page(inner, title = "Text updates from Dripping Springs Sports Club") {
 }
 
 const FORM = (msg) => page(`
-<h1>Get texts from the club</h1>
-<p>Class reminders, schedule changes, coach notes, and photos from your player's clinics and pods — straight to your phone.</p>
+<h1>Keep your number current</h1>
+<p>Class reminders, schedule changes, coach notes and photos from your player's clinics and pods come by text. If you've changed numbers or never gave us one, add it here.</p>
 ${msg ? `<div class="ok">${esc(msg)}</div>` : ""}
 <form method="POST" action="/dssc-texts">
   <label for="n">Your name</label><input id="n" name="name" required autocomplete="name">

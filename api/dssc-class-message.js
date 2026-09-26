@@ -83,12 +83,16 @@ export default async function handler(req, res) {
   if (rErr) return res.status(500).json({ error: rErr.message });
   const classRoster = (roster || []).filter(r => !r.session_id || String(r.session_id) === sessionId);
   const emails = new Map(), phones = new Map();
+  // Everyone in the club's system agreed to texts at registration; only a
+  // recorded opt-out (STOP reply, 21610 bounce, or "do not text") holds one back.
+  const { data: outs } = await sb.from("sms_optouts").select("phone").eq("brand", "dssc");
+  const optedOut = new Set((outs || []).map(o => o.phone));
   let noConsent = 0;
   for (const r of classRoster) {
     const e = nrm(r.parent_email);
     if (e && EMAIL_RE.test(e) && !emails.has(e)) emails.set(e, r);
     const p = normalizePhone(r.parent_phone);
-    if (p && /^\+\d{8,15}$/.test(p) && !phones.has(p)) { if (r.sms_consent) phones.set(p, r); else noConsent++; }
+    if (p && /^\+\d{8,15}$/.test(p) && !phones.has(p)) { if (!optedOut.has(p)) phones.set(p, r); else noConsent++; }
   }
   if (!emails.size && !phones.size) return res.status(400).json({ error: "Nobody on this class has an email or a texting number yet." });
 
@@ -141,7 +145,7 @@ export default async function handler(req, res) {
   }
 
   // ── Text ──────────────────────────────────────────────────────────────────
-  let textsSent = 0, textsSkipped = noConsent; const textErrors = []; let textNote = null;
+  let textsSent = 0, textsSkipped = noConsent; const textErrors = []; let textNote = noConsent ? noConsent + " opted out" : null;
   if (phones.size) {
     if (twilioReady("dssc")) {
       // Pictures ride along as MMS (Twilio caps each at 5MB); video goes as a link.

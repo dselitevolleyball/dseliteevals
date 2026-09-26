@@ -30,7 +30,7 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
   const [selId, setSelId] = useState(null);
   const [msgs, setMsgs] = useState([]);
   const [roster, setRoster] = useState([]);
-  const [consents, setConsents] = useState([]);
+  const [optouts, setOptouts] = useState([]);
   const [composer, setComposer] = useState(null);   // { scope, clinicId, sessionId, category, age, who, includeUnconsented, body, media:[], result }
   const [reply, setReply] = useState("");
   const [sending, setSending] = useState(false);
@@ -42,8 +42,8 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
   const loadThreads = async () => { const { data } = await supabase.from("sms_threads").select("*").eq("brand", "dssc").order("last_message_at", { ascending: false, nullsFirst: false }); setThreads(data || []); };
   const loadMsgs = async (id) => { if (!id) { setMsgs([]); return; } const { data } = await supabase.from("sms_messages").select("*").eq("thread_id", id).order("id"); setMsgs(data || []); };
   const loadRoster = async () => { const { data } = await supabase.from("dssc_pod_roster").select("*"); setRoster(data || []); };
-  const loadConsents = async () => { const { data } = await supabase.from("sms_consents").select("*").eq("brand", "dssc"); setConsents(data || []); };
-  useEffect(() => { loadThreads(); loadRoster(); loadConsents(); fetch("/api/send-sms", { method: "OPTIONS" }).catch(() => {}); }, []);
+  const loadOptouts = async () => { const { data } = await supabase.from("sms_optouts").select("*").eq("brand", "dssc"); setOptouts(data || []); };
+  useEffect(() => { loadThreads(); loadRoster(); loadOptouts(); }, []);
   useEffect(() => { loadMsgs(selId); }, [selId]);
   useEffect(() => {
     const ch = supabase.channel("dssc-sms").on("postgres_changes", { event: "*", schema: "public", table: "sms_messages" }, () => { loadThreads(); if (selId) loadMsgs(selId); }).subscribe();
@@ -53,20 +53,20 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
     if (!initial) return;
     setSelId(null);
     if (Array.isArray(initial.recipients)) {
-      const to = new Map(initial.recipients.filter(x => x.to).map(x => [x.to, { to: x.to, name: x.name, kind: x.kind || "parent", consent: !!x.consent || consented.has(last10(x.to)), players: x.players || [], programs: x.programs || [], dssc_player: (x.players || [])[0] || null, dssc_program: (x.programs || [])[0] || null }]));
+      const to = new Map(initial.recipients.filter(x => x.to).map(x => [x.to, { to: x.to, name: x.name, kind: x.kind || "parent", out: optedOut.has(last10(x.to)), players: x.players || [], programs: x.programs || [], dssc_player: (x.players || [])[0] || null, dssc_program: (x.programs || [])[0] || null }]));
       setComposer(blankComposer({ to }));
       onConsumedInitial && onConsumedInitial();
       return;
     }
     const scope = initial.sessionId ? "class" : "program";
     const a = buildAudience({ scope, clinicId: initial.clinicId || "", sessionId: initial.sessionId || "", includeUnconsented: true, excluded: new Set(), selected: new Set() });
-    const to = new Map(a.ready.map(x => [x.to, { to: x.to, name: x.name, kind: x.kind, consent: !!x.consent, players: x.dssc_player ? [x.dssc_player] : [], programs: x.dssc_program ? [x.dssc_program] : [], dssc_player: x.dssc_player || null, dssc_program: x.dssc_program || null, via: x.via || null }]));
+    const to = new Map(a.ready.map(x => [x.to, { to: x.to, name: x.name, kind: x.kind, out: false, players: x.dssc_player ? [x.dssc_player] : [], programs: x.dssc_program ? [x.dssc_program] : [], dssc_player: x.dssc_player || null, dssc_program: x.dssc_program || null, via: x.via || null }]));
     setComposer(blankComposer({ to, group: scope, clinicId: initial.clinicId || "", sessionId: initial.sessionId || "" }));
     onConsumedInitial && onConsumedInitial();
   }, [initial]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Who could be texted ─────────────────────────────────────────────────
-  const consented = useMemo(() => new Set(consents.map(c => last10(c.phone))), [consents]);
+  const optedOut = useMemo(() => new Set(optouts.map(o => last10(o.phone))), [optouts]);
   // A DS Elite family on a DSSC roster: reuse the phone we already have by email.
   const dsePhoneByEmail = useMemo(() => { const m = new Map(); for (const p of players) for (const e of [p.parent_email, p.parent_email2, p.parent_email3]) { const k = nrm(e); if (k && !m.has(k) && p.parent_phone) m.set(k, { phone: p.parent_phone, name: p.parent_name }); } return m; }, [players]);
   const clinicById = useMemo(() => new Map(clinics.map(c => [c.id, c])), [clinics]);
@@ -76,13 +76,12 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
   // Everyone who could be texted, one entry per number, for the search/pick list.
   const contacts = useMemo(() => {
     const m = new Map();
-    const add = (phone, name, extra) => { const to = e164(phone); if (!to) return; const cur = m.get(to); if (cur) { if (extra.dssc_player && !cur.players.includes(extra.dssc_player)) cur.players.push(extra.dssc_player); if (extra.dssc_program && !cur.programs.includes(extra.dssc_program)) cur.programs.push(extra.dssc_program); cur.consent = cur.consent || !!extra.rosterConsent; return; } m.set(to, { to, name, kind: extra.kind, players: extra.dssc_player ? [extra.dssc_player] : [], programs: extra.dssc_program ? [extra.dssc_program] : [], consent: consented.has(last10(to)) || !!extra.rosterConsent, via: extra.via || null }); };
+    const add = (phone, name, extra) => { const to = e164(phone); if (!to) return; const cur = m.get(to); if (cur) { if (extra.dssc_player && !cur.players.includes(extra.dssc_player)) cur.players.push(extra.dssc_player); if (extra.dssc_program && !cur.programs.includes(extra.dssc_program)) cur.programs.push(extra.dssc_program); return; } m.set(to, { to, name, kind: extra.kind, players: extra.dssc_player ? [extra.dssc_player] : [], programs: extra.dssc_program ? [extra.dssc_program] : [], out: optedOut.has(last10(to)), via: extra.via || null }); };
     for (const r of roster) { const cl = clinicById.get(r.clinic_id); const fb = !r.parent_phone && r.parent_email ? dsePhoneByEmail.get(nrm(r.parent_email)) : null; add(r.parent_phone || fb?.phone, r.parent_name || fb?.name || (r.player_name + "'s parent"), { kind: "parent", dssc_player: r.player_name, dssc_program: cl?.name || null, rosterConsent: !!r.sms_consent, via: fb ? "DS Elite roster" : null }); }
-    for (const c of consents) add(c.phone, c.name || "Opted in", { kind: "parent", dssc_player: c.player_name || null, rosterConsent: true });
     const pool = new Set(dsscAvail.filter(a => a.available).map(a => nrm(a.coach_name)));
     for (const r of coachRoster) { const full = ((r.first_name || "") + " " + (r.last_name || "")).trim(); if (full && pool.has(nrm(full))) add(r.phone, full, { kind: "coach" }); }
     return [...m.values()].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
-  }, [roster, consents, coachRoster, dsscAvail, clinicById, dsePhoneByEmail, consented]);
+  }, [roster, coachRoster, dsscAvail, clinicById, dsePhoneByEmail, optedOut]);
 
   const buildAudience = (c) => {
     const out = [], skipped = [];
@@ -90,15 +89,15 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
     const finish = (list) => { const ready = list.filter(x => !excluded.has(x.to)); return ready; };
     if (c.scope === "pick") {
       const sel = c.selected || new Set();
-      const list = contacts.filter(x => sel.has(x.to)).map(x => ({ to: x.to, name: x.name, kind: x.kind, consent: x.consent, dssc_program: x.programs[0] || null, dssc_player: x.players[0] || null, via: x.via }));
-      const gated = !c.includeUnconsented;
-      return { ready: finish(list.filter(x => x.kind === "coach" || !gated || x.consent)), held: gated ? list.filter(x => x.kind !== "coach" && !x.consent) : [], skipped };
+      const list = contacts.filter(x => sel.has(x.to) && !x.out).map(x => ({ to: x.to, name: x.name, kind: x.kind, dssc_program: x.programs[0] || null, dssc_player: x.players[0] || null, via: x.via }));
+      return { ready: finish(list), held: [], skipped };
     }
     const push = (phone, name, extra) => {
       const to = e164(phone);
       if (!to) { if (name) skipped.push({ name, reason: "no phone" }); return; }
       if (out.some(x => x.to === to)) return;
-      out.push({ to, name, consent: consented.has(last10(to)) || !!extra.rosterConsent, ...extra });
+      if (optedOut.has(last10(to))) { skipped.push({ name, reason: "opted out" }); return; }
+      out.push({ to, name, ...extra });
     };
     if (c.scope === "coaches") {
       const pool = new Set(dsscAvail.filter(a => a.available).map(a => nrm(a.coach_name)));
@@ -115,8 +114,7 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
       const fallback = !r.parent_phone && r.parent_email ? dsePhoneByEmail.get(nrm(r.parent_email)) : null;
       push(r.parent_phone || fallback?.phone, r.parent_name || fallback?.name || (r.player_name + "'s parent"), { kind: "parent", dssc_program: cl?.name || null, dssc_player: r.player_name, rosterConsent: !!r.sms_consent, via: fallback ? "DS Elite roster" : null });
     }
-    const gated = !c.includeUnconsented;
-    return { ready: finish(out.filter(x => !gated || x.consent)), held: gated ? out.filter(x => !x.consent) : [], skipped, excludedCount: excluded.size };
+    return { ready: finish(out), held: [], skipped, excludedCount: excluded.size };
   };
 
   const send = async (payload) => {
@@ -137,17 +135,17 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
     }
     if (fileRef.current) fileRef.current.value = "";
   };
-  const addConsents = async () => {
+  const addOptouts = async () => {
     const rows = [];
     for (const l of consentPaste.split(/\r?\n/).map(s => s.trim()).filter(Boolean)) {
       const m = /(\+?1?[\s(.-]*\d{3}[\s).-]*\d{3}[\s.-]*\d{4})/.exec(l); if (!m) continue;
       const phone = e164(m[1]); if (!phone) continue;
-      rows.push({ phone, brand: "dssc", name: l.replace(m[1], "").replace(/^[\s,;:|-]+|[\s,;:|-]+$/g, "").trim() || null, source: "pasted", added_by: me });
+      rows.push({ phone, brand: "dssc", name: l.replace(m[1], "").replace(/^[\s,;:|-]+|[\s,;:|-]+$/g, "").trim() || null, source: "manual", added_by: me });
     }
     if (!rows.length) { window.alert("No phone numbers found — one per line, name after the number."); return; }
-    const { error } = await supabase.from("sms_consents").upsert(rows, { onConflict: "phone,brand" });
+    const { error } = await supabase.from("sms_optouts").upsert(rows, { onConflict: "phone,brand" });
     if (error) { window.alert(error.message); return; }
-    setConsentPaste(""); loadConsents();
+    setConsentPaste(""); loadOptouts();
   };
 
   // ── Inbox grouping ──────────────────────────────────────────────────────
@@ -158,7 +156,7 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
   const totalUnread = threads.reduce((n, t) => n + (t.unread_count || 0), 0);
   const markRead = async (id) => { await supabase.from("sms_threads").update({ unread_count: 0 }).eq("id", id); loadThreads(); };
 
-  const blankComposer = (over = {}) => ({ to: new Map(), group: "program", clinicId: upcomingClinics[0]?.id || "", sessionId: "", category: "Pods", age: ages[0] || "", includeUnconsented: false, body: "", media: [], result: null, search: "", ...over });
+  const blankComposer = (over = {}) => ({ to: new Map(), group: "program", clinicId: upcomingClinics[0]?.id || "", sessionId: "", category: "Pods", age: ages[0] || "", body: "", media: [], result: null, search: "", ...over });
   const openComposer = () => { setSelId(null); setComposer(blankComposer()); };
   const shell = (inner) => (
     <div style={{ margin: "-14px -18px", padding: "16px 16px 30px", background: DS.bg, minHeight: "calc(100vh - 56px)", fontFamily: DS.font, color: DS.text }}>
@@ -166,7 +164,7 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
           <img src="/dssc/logo-horizontal-white.png" alt="Dripping Springs Sports Club" style={{ height: 30 }} />
           <Tag color={DS.lime}>Texts</Tag>
-          <span style={{ fontSize: 12, color: DS.mut }}>{threads.length} conversation{threads.length === 1 ? "" : "s"}{totalUnread ? ` · ${totalUnread} unread` : ""} · {consents.length} opt-in{consents.length === 1 ? "" : "s"}</span>
+          <span style={{ fontSize: 12, color: DS.mut }}>{threads.length} conversation{threads.length === 1 ? "" : "s"}{totalUnread ? ` · ${totalUnread} unread` : ""}{optouts.length ? ` · ${optouts.length} opted out` : ""}</span>
           <div style={{ flex: 1 }} />
           <Btn small kind="primary" onClick={openComposer}>+ New text</Btn>
         </div>
@@ -204,8 +202,8 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
           const c = composer, set = (p) => setComposer(x => ({ ...x, ...p }));
           const to = c.to || new Map();                       // phone -> contact
           const list = [...to.values()];
-          const ready = list.filter(x => x.kind === "coach" || x.consent || c.includeUnconsented);
-          const held = list.filter(x => x.kind !== "coach" && !x.consent && !c.includeUnconsented);
+          const ready = list.filter(x => !x.out);
+          const held = list.filter(x => x.out);   // opted out — shown so it's obvious, never sent
           const canSend = (c.body.trim() || c.media.length) && ready.length > 0 && !sending && !c.result;
           const addContacts = (arr) => { const n = new Map(to); arr.forEach(x => { if (!n.has(x.to)) n.set(x.to, x); }); set({ to: n, result: null, search: "" }); };
           const remove = (phone) => { const n = new Map(to); n.delete(phone); set({ to: n, result: null }); };
@@ -213,7 +211,7 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
           const groupContacts = () => {
             const g = c.group;
             const a = buildAudience({ scope: g, clinicId: c.clinicId, sessionId: c.sessionId, category: c.category, age: c.age, includeUnconsented: true, excluded: new Set(), selected: new Set() });
-            return [...a.ready].map(x => ({ to: x.to, name: x.name, kind: x.kind, consent: !!x.consent, players: x.dssc_player ? [x.dssc_player] : [], programs: x.dssc_program ? [x.dssc_program] : [], dssc_player: x.dssc_player || null, dssc_program: x.dssc_program || null, via: x.via || null }));
+            return [...a.ready].map(x => ({ to: x.to, name: x.name, kind: x.kind, out: false, players: x.dssc_player ? [x.dssc_player] : [], programs: x.dssc_program ? [x.dssc_program] : [], dssc_player: x.dssc_player || null, dssc_program: x.dssc_program || null, via: x.via || null }));
           };
           const gc = groupContacts();
           const cl = clinicById.get(Number(c.clinicId));
@@ -224,14 +222,14 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
             if (!canSend) return;
             if (!window.confirm(`Send to ${ready.length} number${ready.length === 1 ? "" : "s"}? Each person gets their own one-to-one text from the club number.`)) return;
             setSending(true);
-            const r = await send({ recipients: ready.map(x => ({ to: x.to, name: x.name, kind: x.kind, dssc_program: x.dssc_program || x.programs?.[0] || null, dssc_player: x.dssc_player || x.players?.[0] || null })), body: c.body.trim(), media_urls: c.media.map(m => m.url), audience: { type: "custom", count: ready.length, include_unconsented: !!c.includeUnconsented } });
+            const r = await send({ recipients: ready.map(x => ({ to: x.to, name: x.name, kind: x.kind, dssc_program: x.dssc_program || x.programs?.[0] || null, dssc_player: x.dssc_player || x.players?.[0] || null })), body: c.body.trim(), media_urls: c.media.map(m => m.url), audience: { type: "custom", count: ready.length } });
             setSending(false); set({ result: r }); loadThreads();
           };
-          const chipStyle = (ok) => ({ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, padding: "4px 6px 4px 10px", borderRadius: 999, background: ok ? "rgba(255,255,255,0.08)" : DS.orangeSoft, border: "1px solid " + (ok ? "transparent" : DS.orange), color: DS.text });
+          const chipStyle = (ok) => ({ textDecoration: ok ? "none" : "line-through", display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, padding: "4px 6px 4px 10px", borderRadius: 999, background: ok ? "rgba(255,255,255,0.08)" : DS.orangeSoft, border: "1px solid " + (ok ? "transparent" : DS.orange), color: DS.text });
           return (<>
             <div style={{ padding: "12px 16px", borderBottom: "1px solid " + DS.line, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
               <div style={{ fontSize: 15, fontWeight: 800 }}>New text</div>
-              <span style={{ fontSize: 12, color: DS.mut }}>{ready.length} recipient{ready.length === 1 ? "" : "s"}{held.length ? ` · ${held.length} held (no opt-in)` : ""}</span>
+              <span style={{ fontSize: 12, color: DS.mut }}>{ready.length} recipient{ready.length === 1 ? "" : "s"}{held.length ? ` · ${held.length} opted out (won't be sent)` : ""}</span>
               <div style={{ flex: 1 }} /><Btn small onClick={() => setComposer(null)}>Close</Btn>
             </div>
             <div style={{ flex: 1, overflowY: "auto", padding: "14px 16px", display: "flex", flexDirection: "column", gap: 12 }}>
@@ -240,7 +238,7 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginBottom: list.length ? 8 : 0 }}>
                   <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: DS.lime, marginRight: 4 }}>To</span>
                   {list.map(x => (
-                    <span key={x.to} style={chipStyle(x.kind === "coach" || x.consent || c.includeUnconsented)} title={fmtPhone(x.to) + (x.players?.length ? " · " + x.players.join(", ") : "")}>
+                    <span key={x.to} style={chipStyle(!x.out)} title={fmtPhone(x.to) + (x.out ? " · opted out" : "") + (x.players?.length ? " · " + x.players.join(", ") : "")}>
                       {x.name}{x.players?.length ? <span style={{ color: DS.mut }}> · {x.players[0].split(" ")[0]}</span> : null}{x.kind === "coach" ? <span style={{ color: DS.mut }}> · coach</span> : null}
                       <button onClick={() => remove(x.to)} style={{ background: "none", border: "none", color: DS.mut, cursor: "pointer", padding: 0, fontSize: 13, lineHeight: 1 }}>✕</button>
                     </span>
@@ -256,7 +254,7 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
                           <span style={{ fontWeight: 700, minWidth: 150 }}>{x.name}</span>
                           <span style={{ color: DS.mut, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{x.kind === "coach" ? "coach" : [x.players.join(", "), x.programs.join(", ")].filter(Boolean).join(" · ")}</span>
                           <span style={{ color: DS.mut, fontSize: 12 }}>{fmtPhone(x.to)}</span>
-                          {!x.consent && x.kind !== "coach" && <Tag color={DS.orange}>no opt-in</Tag>}
+                          {x.out && <Tag color={DS.orange}>opted out</Tag>}
                         </button>
                       ))}
                       {q && contacts.filter(x => [x.name, ...x.players, ...x.programs, x.to].some(v => nrm(v).includes(q))).length > 8 && <div style={{ fontSize: 11, color: DS.mut, padding: "6px 10px" }}>Keep typing to narrow it down…</div>}
@@ -275,11 +273,7 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
                   {c.group === "age" && <select value={c.age} onChange={e => set({ age: e.target.value })} style={{ ...inputStyle, width: "auto", padding: "5px 8px", fontSize: 12 }}>{ages.map(k => <option key={k}>{k}</option>)}</select>}
                   <Btn small disabled={!gc.length || (c.group === "class" && !c.sessionId)} onClick={() => addContacts(gc)}>+ Add {gc.length}</Btn>
                 </div>
-                {held.length > 0 && (
-                  <label style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8, cursor: "pointer", color: DS.orange, fontSize: 12, fontWeight: 700 }}>
-                    <input type="checkbox" checked={!!c.includeUnconsented} onChange={e => set({ includeUnconsented: e.target.checked, result: null })} /> Include the {held.length} without a recorded opt-in (orange)
-                  </label>
-                )}
+                {held.length > 0 && <div style={{ marginTop: 8, color: DS.orange, fontSize: 12, fontWeight: 700 }}>{held.length} of these opted out (struck through) and won't be sent.</div>}
               </div>
 
               <textarea value={c.body} onChange={e => set({ body: e.target.value })} rows={5} placeholder={list.length ? "Type the message… (it comes from the club number; replies land here)" : "Add someone above, then type the message…"} style={{ ...inputStyle, resize: "vertical" }} />
@@ -292,10 +286,11 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
                 <Btn kind="primary" disabled={!canSend} onClick={go}>{sending ? "Sending…" : `Send to ${ready.length}`}</Btn>
               </div>
               {c.result && <div style={{ border: "1px solid " + (c.result.error || c.result.failed?.length ? DS.orange : DS.lime), borderRadius: 10, padding: "10px 12px", fontSize: 13 }}>{c.result.error ? <span style={{ color: DS.orange, fontWeight: 700 }}>{c.result.error}</span> : <><b style={{ color: DS.lime }}>Sent to {c.result.sent}</b>{c.result.failed?.length > 0 && <div style={{ color: DS.orange, marginTop: 4 }}>{c.result.failed.length} failed: {c.result.failed.map(x => (x.name || x.to) + " (" + x.error + ")").join("; ")}</div>}<div style={{ color: DS.mut, marginTop: 4 }}>Replies show up on the left, one thread per person.</div></>}</div>}
-              <details><summary style={{ cursor: "pointer", fontSize: 12, fontWeight: 700 }}>Record opt-ins ({consents.length} on file)</summary>
-                <div style={{ fontSize: 12, color: DS.mut, margin: "6px 0" }}>Families opt in at <b style={{ color: DS.text }}>dseliteevals.vercel.app/dssc-texts</b>. Got them another way (a paper form, a text reply)? Paste numbers here, one per line, name after the number.</div>
-                <textarea value={consentPaste} onChange={e => setConsentPaste(e.target.value)} rows={3} placeholder={"512-555-0100 Jamie Smith"} style={{ ...inputStyle, resize: "vertical" }} />
-                <div style={{ marginTop: 6 }}><Btn small disabled={!consentPaste.trim()} onClick={addConsents}>Add opt-ins</Btn></div>
+              <details><summary style={{ cursor: "pointer", fontSize: 12, fontWeight: 700 }}>Opted out ({optouts.length})</summary>
+                <div style={{ fontSize: 12, color: DS.mut, margin: "6px 0" }}>Everyone in the system agreed to texts when they registered. Anyone who replies STOP lands here automatically (Twilio blocks them too); add a number by hand if someone asks in person. START puts them back.</div>
+                {optouts.map(o => <div key={o.phone} style={{ fontSize: 12, display: "flex", gap: 8, alignItems: "center", padding: "2px 0" }}><span style={{ minWidth: 130 }}>{fmtPhone(o.phone)}</span><span style={{ color: DS.mut, flex: 1 }}>{o.name || (contacts.find(x => x.to === o.phone) || {}).name || ""} · {o.source || "manual"} · {new Date(o.opted_out_at).toLocaleDateString()}</span><Btn kind="link" small onClick={async () => { if (!window.confirm("Put " + fmtPhone(o.phone) + " back on the list?")) return; await supabase.from("sms_optouts").delete().eq("phone", o.phone).eq("brand", "dssc"); loadOptouts(); }}>undo</Btn></div>)}
+                <textarea value={consentPaste} onChange={e => setConsentPaste(e.target.value)} rows={2} placeholder={"512-555-0100 Jamie Smith"} style={{ ...inputStyle, resize: "vertical", marginTop: 6 }} />
+                <div style={{ marginTop: 6 }}><Btn small disabled={!consentPaste.trim()} onClick={addOptouts}>Mark opted out</Btn></div>
               </details>
             </div>
           </>);

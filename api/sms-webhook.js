@@ -139,6 +139,11 @@ export default async function handler(req, res) {
     if (status === "delivered") patch.delivered_at = new Date().toISOString();
     if (errorCode) patch.error_code = errorCode;
     await supabase.from("sms_messages").update(patch).eq("twilio_sid", sid);
+    // 21610 = the recipient has unsubscribed from this number. Remember it so
+    // the club stops trying (Twilio already refuses the send).
+    if (String(errorCode) === "21610" && params.To) {
+      await supabase.from("sms_optouts").upsert({ phone: normalizePhone(params.To), brand: brandForTo(params.From), source: "twilio-21610" }, { onConflict: "phone,brand" });
+    }
     return res.status(200).send("ok");
   }
 
@@ -151,6 +156,10 @@ export default async function handler(req, res) {
   const body = (params.Body || "") || (mediaIn.length ? "📷 (photo)" : "");
   const sid  = params.MessageSid || params.SmsSid;
   if (!from || !body) return res.status(200).send("ok");
+  // A STOP-style reply is an opt-out; START/UNSTOP puts them back.
+  const word = body.trim().toLowerCase();
+  if (/^(stop|stopall|unsubscribe|cancel|end|quit)\b/.test(word)) await supabase.from("sms_optouts").upsert({ phone: from, brand, source: "stop-reply", note: body.slice(0, 120) }, { onConflict: "phone,brand" });
+  else if (/^(start|unstop|yes)\b/.test(word)) await supabase.from("sms_optouts").delete().eq("phone", from).eq("brand", brand);
 
   // Find or create the thread. A number we've never texted is still very
   // likely a parent, player or coach we know — match it against the roster so

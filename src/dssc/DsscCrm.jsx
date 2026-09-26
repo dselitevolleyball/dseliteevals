@@ -31,9 +31,9 @@ export default function DsscCrm({ coach, onText, isDirector }) {
   const [parts, setParts] = useState([]);
   const [partic, setPartic] = useState([]);
   const [orders, setOrders] = useState([]);
-  const [consents, setConsents] = useState([]);
+  const [optouts, setOptouts] = useState([]);
   const [loading, setLoading] = useState(true);
-  const blankF = { q: "", ages: new Set(), levels: new Set(), pos: new Set(), gender: "", cat: "", program: "", since: "", notSince: "", source: "", city: "", phone: false, optin: false, tag: "" };
+  const blankF = { q: "", ages: new Set(), levels: new Set(), pos: new Set(), gender: "", cat: "", program: "", since: "", notSince: "", source: "", city: "", phone: false, optout: false, tag: "" };
   const [f, setF] = useState(blankF);
   const [openId, setOpenId] = useState(null);
   const [picked, setPicked] = useState(() => new Set());
@@ -43,13 +43,13 @@ export default function DsscCrm({ coach, onText, isDirector }) {
   const loadAll = async () => {
     setLoading(true);
     const page = async (table, sel, order) => { const out = []; for (let from = 0; ; from += 1000) { const { data } = await supabase.from(table).select(sel).order(order || "id").range(from, from + 999); out.push(...(data || [])); if (!data || data.length < 1000) break; } return out; };
-    const [c, p, pp, o, cs] = await Promise.all([page("dssc_contacts", "*"), page("dssc_participants", "*"), page("dssc_participation", "id, participant_id, contact_id, program, category, event_date, source"), page("dssc_orders", "id, contact_id, total_cents, ordered_at"), supabase.from("sms_consents").select("phone").eq("brand", "dssc").then(r => r.data || [])]);
-    setContacts(c); setParts(p); setPartic(pp); setOrders(o); setConsents(cs); setLoading(false);
+    const [c, p, pp, o, cs] = await Promise.all([page("dssc_contacts", "*"), page("dssc_participants", "*"), page("dssc_participation", "id, participant_id, contact_id, program, category, event_date, source"), page("dssc_orders", "id, contact_id, total_cents, ordered_at"), supabase.from("sms_optouts").select("phone").eq("brand", "dssc").then(r => r.data || [])]);
+    setContacts(c); setParts(p); setPartic(pp); setOrders(o); setOptouts(cs); setLoading(false);
   };
   useEffect(() => { loadAll(); }, []);
 
   // ── Indexes ──────────────────────────────────────────────────────────────
-  const consented = useMemo(() => new Set(consents.map(x => last10(x.phone))), [consents]);
+  const optedOut = useMemo(() => new Set(optouts.map(x => last10(x.phone))), [optouts]);
   const partsByC = useMemo(() => { const m = new Map(); for (const p of parts) { if (!m.has(p.contact_id)) m.set(p.contact_id, []); m.get(p.contact_id).push(p); } return m; }, [parts]);
   const particByP = useMemo(() => { const m = new Map(); for (const x of partic) { const k = x.participant_id || ("c" + x.contact_id); if (!m.has(k)) m.set(k, []); m.get(k).push(x); } return m; }, [partic]);
   const particByC = useMemo(() => { const m = new Map(); for (const x of partic) { if (!m.has(x.contact_id)) m.set(x.contact_id, []); m.get(x.contact_id).push(x); } return m; }, [partic]);
@@ -67,7 +67,7 @@ export default function DsscCrm({ coach, onText, isDirector }) {
       if (f.source && !(c.sources || []).includes(f.source)) continue;
       if (f.city && nrm(c.city) !== nrm(f.city)) continue;
       if (f.phone && !c.phone) continue;
-      if (f.optin && !(c.phone && consented.has(last10(c.phone)))) continue;
+      if (f.optout && !(c.do_not_text || (c.phone && optedOut.has(last10(c.phone))))) continue;
       if (f.tag && !(c.tags || []).includes(f.tag)) continue;
       const kids = partsByC.get(c.id) || [];
       const matchP = (p) => {
@@ -95,15 +95,15 @@ export default function DsscCrm({ coach, onText, isDirector }) {
       out.push({ c, matched, kids });
     }
     return out.sort((a, b) => (lastByC.get(b.c.id) || "").localeCompare(lastByC.get(a.c.id) || "") || (a.c.last_name || "").localeCompare(b.c.last_name || ""));
-  }, [contacts, partsByC, particByP, particByC, f, consented, lastByC]);
+  }, [contacts, partsByC, particByP, particByC, f, optedOut, lastByC]);
 
-  const textable = results.filter(r => r.c.phone && !r.c.do_not_text);
+  const textable = results.filter(r => r.c.phone && !r.c.do_not_text && !optedOut.has(last10(r.c.phone)));
   const chosen = picked.size ? textable.filter(r => picked.has(r.c.id)) : textable;
-  const toTexts = () => onText(chosen.map(r => ({ to: r.c.phone, name: ((r.c.first_name || "") + " " + (r.c.last_name || "")).trim() || r.c.email, kind: "parent", consent: consented.has(last10(r.c.phone)), players: (r.matched.length ? r.matched : r.kids).filter(p => !p.is_contact).map(p => p.first_name + " " + p.last_name), programs: [...new Set((particByC.get(r.c.id) || []).map(h => h.program))].slice(0, 3), contact_id: r.c.id })));
+  const toTexts = () => onText(chosen.map(r => ({ to: r.c.phone, name: ((r.c.first_name || "") + " " + (r.c.last_name || "")).trim() || r.c.email, kind: "parent", players: (r.matched.length ? r.matched : r.kids).filter(p => !p.is_contact).map(p => p.first_name + " " + p.last_name), programs: [...new Set((particByC.get(r.c.id) || []).map(h => h.program))].slice(0, 3), contact_id: r.c.id })));
   const exportCsv = () => {
-    const lines = [["Parent", "Email", "Phone", "Opted in", "City", "Players", "DS Elite", "Programs", "Last activity", "Spend", "Tags"].join(",")];
+    const lines = [["Parent", "Email", "Phone", "Opted out", "City", "Players", "DS Elite", "Programs", "Last activity", "Spend", "Tags"].join(",")];
     const esc = (v) => { const s = v == null ? "" : String(v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
-    for (const r of results) lines.push([esc(((r.c.first_name || "") + " " + (r.c.last_name || "")).trim()), r.c.email, r.c.phone || "", r.c.phone && consented.has(last10(r.c.phone)) ? "yes" : "", esc(r.c.city), esc((r.matched.length ? r.matched : r.kids).map(p => p.first_name + " " + p.last_name + (ageOf(p.dob) != null ? " (" + ageOf(p.dob) + ")" : "") + (p.position ? " " + p.position : "")).join("; ")), esc((r.matched.length ? r.matched : r.kids).filter(p => p.dse_team).map(p => p.first_name + ": " + p.dse_team + " · " + p.dse_level).join("; ")), esc([...new Set((particByC.get(r.c.id) || []).map(h => h.program))].join("; ")), lastByC.get(r.c.id) || "", Math.round((spendByC.get(r.c.id) || 0) / 100), esc((r.c.tags || []).join("; "))].join(","));
+    for (const r of results) lines.push([esc(((r.c.first_name || "") + " " + (r.c.last_name || "")).trim()), r.c.email, r.c.phone || "", (r.c.do_not_text || (r.c.phone && optedOut.has(last10(r.c.phone)))) ? "yes" : "", esc(r.c.city), esc((r.matched.length ? r.matched : r.kids).map(p => p.first_name + " " + p.last_name + (ageOf(p.dob) != null ? " (" + ageOf(p.dob) + ")" : "") + (p.position ? " " + p.position : "")).join("; ")), esc((r.matched.length ? r.matched : r.kids).filter(p => p.dse_team).map(p => p.first_name + ": " + p.dse_team + " · " + p.dse_level).join("; ")), esc([...new Set((particByC.get(r.c.id) || []).map(h => h.program))].join("; ")), lastByC.get(r.c.id) || "", Math.round((spendByC.get(r.c.id) || 0) / 100), esc((r.c.tags || []).join("; "))].join(","));
     const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv" })); a.download = "dssc-people.csv"; a.click(); URL.revokeObjectURL(a.href);
   };
   const tagAll = async () => {
@@ -193,7 +193,7 @@ export default function DsscCrm({ coach, onText, isDirector }) {
             <select value={f.city} onChange={e => set("city", e.target.value)} style={sel}><option value="">any city</option>{cities.map(c => <option key={c}>{c}</option>)}</select>
             {tags.length > 0 && <select value={f.tag} onChange={e => set("tag", e.target.value)} style={sel}><option value="">any tag</option>{tags.map(t => <option key={t}>{t}</option>)}</select>}
             <label style={{ fontSize: 12, display: "flex", gap: 5, alignItems: "center" }}><input type="checkbox" checked={f.phone} onChange={e => set("phone", e.target.checked)} /> has phone</label>
-            <label style={{ fontSize: 12, display: "flex", gap: 5, alignItems: "center" }}><input type="checkbox" checked={f.optin} onChange={e => set("optin", e.target.checked)} /> opted in to texts</label>
+            <label style={{ fontSize: 12, display: "flex", gap: 5, alignItems: "center" }}><input type="checkbox" checked={f.optout} onChange={e => set("optout", e.target.checked)} /> opted out only</label>
             <Btn kind="link" small onClick={() => { setF(blankF); setPicked(new Set()); }}>clear</Btn>
           </div>
         </Card>
@@ -217,13 +217,13 @@ export default function DsscCrm({ coach, onText, isDirector }) {
                 {results.slice(0, 400).map(({ c, matched, kids }) => {
                   const show = matched.length ? matched : kids;
                   const progs = [...new Set((particByC.get(c.id) || []).map(h => h.program))];
-                  const optin = c.phone && consented.has(last10(c.phone));
+                  const out = c.do_not_text || (c.phone && optedOut.has(last10(c.phone)));
                   return (
                     <tr key={c.id} onClick={() => setOpenId(c.id)} style={{ cursor: "pointer", background: picked.has(c.id) ? DS.limeSoft : "transparent" }}>
                       <td style={{ padding: "6px 10px", borderBottom: "1px solid " + DS.line }} onClick={e => e.stopPropagation()}><input type="checkbox" checked={picked.has(c.id)} onChange={() => setPicked(s => { const n = new Set(s); n.has(c.id) ? n.delete(c.id) : n.add(c.id); return n; })} /></td>
                       <td style={{ padding: "6px 10px", borderBottom: "1px solid " + DS.line, fontSize: 13 }}>
                         <div style={{ fontWeight: 700 }}>{((c.first_name || "") + " " + (c.last_name || "")).trim() || c.email}{c.do_not_text && <Tag color={DS.orange}> do not text</Tag>}</div>
-                        <div style={{ fontSize: 11, color: DS.mut, display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>{c.phone ? <span>{fmtPhone(c.phone)}{optin ? <span style={{ color: DS.lime }}> ✓</span> : ""}</span> : <span style={{ color: DS.orange }}>no phone</span>}<span>{c.email}</span>{c.city && <span>{c.city}</span>}{(c.tags || []).map(t => <Tag key={t} color={DS.mut}>{t}</Tag>)}</div>
+                        <div style={{ fontSize: 11, color: DS.mut, display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>{c.phone ? <span>{fmtPhone(c.phone)}{out ? <span style={{ color: DS.orange }}> · opted out</span> : ""}</span> : <span style={{ color: DS.orange }}>no phone</span>}<span>{c.email}</span>{c.city && <span>{c.city}</span>}{(c.tags || []).map(t => <Tag key={t} color={DS.mut}>{t}</Tag>)}</div>
                       </td>
                       <td style={{ padding: "6px 10px", borderBottom: "1px solid " + DS.line, fontSize: 12 }}>{show.filter(p => !p.is_contact).map(p => <div key={p.id} style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>{p.first_name} {p.last_name}{ageOf(p.dob) != null && <span style={{ color: DS.mut }}>· {ageOf(p.dob)}{p.gender === "female" ? " F" : p.gender === "male" ? " M" : ""}</span>}{p.position && <span style={{ color: DS.mut }}>· {p.position}</span>}{lvlTag(p)}</div>)}{show.some(p => p.is_contact) && <div style={{ color: DS.mut }}>(self)</div>}</td>
                       <td style={{ padding: "6px 10px", borderBottom: "1px solid " + DS.line, fontSize: 11, color: DS.mut, maxWidth: 320 }}>{progs.slice(0, 4).join(" · ")}{progs.length > 4 ? ` +${progs.length - 4}` : ""}</td>
@@ -243,17 +243,17 @@ export default function DsscCrm({ coach, onText, isDirector }) {
         {open && (() => {
           const kids = partsByC.get(open.id) || [], hist = (particByC.get(open.id) || []).slice().sort((a, b) => (b.event_date || "").localeCompare(a.event_date || ""));
           const os = orders.filter(o => o.contact_id === open.id).sort((a, b) => (b.ordered_at || "").localeCompare(a.ordered_at || ""));
-          const optin = open.phone && consented.has(last10(open.phone));
+          const out = open.do_not_text || (open.phone && optedOut.has(last10(open.phone)));
           return (
             <div onClick={() => setOpenId(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 50, display: "flex", justifyContent: "flex-end" }}>
               <div onClick={e => e.stopPropagation()} style={{ width: "min(560px, 100vw)", background: DS.bg, borderLeft: "1px solid " + DS.line, height: "100%", overflowY: "auto", padding: 18, fontFamily: DS.font }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}><div style={{ fontSize: 22, fontWeight: 800, flex: 1 }}>{((open.first_name || "") + " " + (open.last_name || "")).trim() || open.email}</div><Btn small onClick={() => setOpenId(null)}>✕</Btn></div>
                 <div style={{ fontSize: 13, color: DS.mut, marginBottom: 10 }}>{open.email} · {(open.sources || []).join(", ")}{open.city ? " · " + open.city : ""}{open.uh_added_at ? " · Upper Hand since " + fmtD(open.uh_added_at) : ""}</div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
-                  <div><Label>Mobile</Label><Field value={open.phone || ""} onSave={v => saveContact(open.id, { phone: v.replace(/\D/g, "").length >= 10 ? "+1" + v.replace(/\D/g, "").slice(-10) : null })} placeholder="(512) 555-0100" /><div style={{ fontSize: 11, color: optin ? DS.lime : DS.orange, marginTop: 3 }}>{open.phone ? (optin ? "✓ opted in to club texts" : "no recorded opt-in") : ""}</div></div>
+                  <div><Label>Mobile</Label><Field value={open.phone || ""} onSave={v => saveContact(open.id, { phone: v.replace(/\D/g, "").length >= 10 ? "+1" + v.replace(/\D/g, "").slice(-10) : null })} placeholder="(512) 555-0100" /><div style={{ fontSize: 11, color: out ? DS.orange : DS.lime, marginTop: 3 }}>{open.phone ? (out ? "opted out of club texts" : "✓ can be texted") : ""}</div></div>
                   <div><Label>Tags</Label><Field value={(open.tags || []).join(", ")} onSave={v => saveContact(open.id, { tags: v.split(",").map(s => s.trim()).filter(Boolean) })} placeholder="e.g. hot lead, camp 2025" /><label style={{ fontSize: 12, color: DS.orange, display: "flex", gap: 6, alignItems: "center", marginTop: 6 }}><input type="checkbox" checked={!!open.do_not_text} onChange={e => saveContact(open.id, { do_not_text: e.target.checked })} /> do not text</label></div>
                 </div>
-                <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>{open.phone && !open.do_not_text && <Btn small kind="primary" onClick={() => onText([{ to: open.phone, name: ((open.first_name || "") + " " + (open.last_name || "")).trim(), kind: "parent", consent: !!optin, players: kids.filter(p => !p.is_contact).map(p => p.first_name + " " + p.last_name), programs: [...new Set(hist.map(h => h.program))].slice(0, 3), contact_id: open.id }])}>💬 Text</Btn>}{spendByC.get(open.id) ? <Tag color={DS.mut}>{money(spendByC.get(open.id))} lifetime</Tag> : null}</div>
+                <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>{open.phone && !out && <Btn small kind="primary" onClick={() => onText([{ to: open.phone, name: ((open.first_name || "") + " " + (open.last_name || "")).trim(), kind: "parent", players: kids.filter(p => !p.is_contact).map(p => p.first_name + " " + p.last_name), programs: [...new Set(hist.map(h => h.program))].slice(0, 3), contact_id: open.id }])}>💬 Text</Btn>}{spendByC.get(open.id) ? <Tag color={DS.mut}>{money(spendByC.get(open.id))} lifetime</Tag> : null}</div>
                 <Card><Label>Players</Label>{kids.length ? kids.map(p => <div key={p.id} style={{ fontSize: 14, padding: "3px 0" }}><b>{p.first_name} {p.last_name}</b>{p.is_contact && <span style={{ color: DS.mut }}> (self)</span>}{ageOf(p.dob) != null && <span style={{ color: DS.mut }}> · {ageOf(p.dob)} · born {fmtD(p.dob)}</span>}{p.gender && <span style={{ color: DS.mut }}> · {p.gender}</span>}{p.position && <span style={{ color: DS.mut }}> · {p.position}{p.position2 ? "/" + p.position2 : ""}</span>}{lvlTag(p)}{p.waiver_signed && <span style={{ color: DS.mut, fontSize: 11 }}> · waiver ✓</span>}</div>) : <div style={{ fontSize: 13, color: DS.mut }}>No players on file.</div>}</Card>
                 <Card><Label>Programs & events</Label>{hist.length ? hist.map(h => <div key={h.id} style={{ fontSize: 13, padding: "3px 0", display: "flex", gap: 8 }}><span style={{ color: DS.mut, minWidth: 80 }}>{fmtD(h.event_date) || "—"}</span><span style={{ flex: 1 }}>{h.program}{h.participant_id && kids.find(p => p.id === h.participant_id) ? <span style={{ color: DS.mut }}> · {kids.find(p => p.id === h.participant_id).first_name}</span> : null}</span><Tag color={DS.mut}>{h.category || "?"}</Tag></div>) : <div style={{ fontSize: 13, color: DS.mut }}>Nothing recorded yet.</div>}</Card>
                 {os.length > 0 && <Card><Label>Orders (Upper Hand)</Label>{os.slice(0, 15).map(o => <div key={o.id} style={{ fontSize: 13, padding: "2px 0", display: "flex", gap: 8 }}><span style={{ color: DS.mut, minWidth: 80 }}>{fmtD((o.ordered_at || "").slice(0, 10))}</span><span style={{ flex: 1 }} /><span>{money(o.total_cents)}</span></div>)}{os.length > 15 && <div style={{ fontSize: 12, color: DS.mut }}>+{os.length - 15} more</div>}</Card>}
