@@ -37,10 +37,15 @@ async function upsertContacts(sb, rows) {
   const byEmail = new Map();
   for (const r of rows) { if (!r.email) continue; const cur = byEmail.get(r.email); byEmail.set(r.email, cur ? { ...cur, ...Object.fromEntries(Object.entries(r).filter(([, v]) => v != null && v !== "")), sources: [...new Set([...(cur.sources || []), ...(r.sources || [])])] } : r); }
   const list = [...byEmail.values()];
-  const { data: existing } = await sb.from("dssc_contacts").select("id, email, phone, first_name, last_name, sources, dob, city").in("email", list.map(r => r.email));
-  const ex = new Map((existing || []).map(e => [e.email, e]));
+  // Lookups in chunks — a single .in() with 800 emails overflows the URL and
+  // silently returns nothing, which is how the first Upper Hand load reported
+  // 0 contacts while inserting 764.
+  const chunked = async (emails) => { const out = []; for (let i = 0; i < emails.length; i += 150) { const { data } = await sb.from("dssc_contacts").select("id, email, phone, first_name, last_name, sources, dob, city").in("email", emails.slice(i, i + 150)); out.push(...(data || [])); } return out; };
+  const ex = new Map((await chunked(list.map(r => r.email))).map(e => [e.email, e]));
+  // No id in the payload: email is the conflict key, and mixing rows with and
+  // without id makes PostgREST send id = null for the ones without.
   const up = list.map(r => { const e = ex.get(r.email) || {}; return {
-    ...(e.id ? { id: e.id } : {}), email: r.email,
+    email: r.email,
     first_name: r.first_name || e.first_name || null, last_name: r.last_name || e.last_name || null,
     phone: r.phone || e.phone || null, address: r.address ?? undefined, city: r.city ?? undefined, state: r.state ?? undefined, zip: r.zip ?? undefined,
     dob: r.dob || e.dob || null, sources: [...new Set([...(e.sources || []), ...(r.sources || [])])],
@@ -50,8 +55,7 @@ async function upsertContacts(sb, rows) {
     const { error } = await sb.from("dssc_contacts").upsert(up.slice(i, i + 300).map(o => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined))), { onConflict: "email" });
     if (error) throw new Error("contacts: " + error.message);
   }
-  const { data: all } = await sb.from("dssc_contacts").select("id, email").in("email", list.map(r => r.email));
-  return new Map((all || []).map(c => [c.email, c.id]));
+  return new Map((await chunked(list.map(r => r.email))).map(c => [c.email, c.id]));
 }
 
 async function upsertParticipants(sb, rows) {
