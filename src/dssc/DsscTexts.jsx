@@ -52,7 +52,7 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
   useEffect(() => {
     if (!initial) return;
     setSelId(null);
-    setComposer({ scope: initial.sessionId ? "class" : "program", clinicId: initial.clinicId || "", sessionId: initial.sessionId || "", category: "", age: "", who: "families", includeUnconsented: false, body: "", media: [], result: null });
+    setComposer({ scope: initial.sessionId ? "class" : "program", clinicId: initial.clinicId || "", sessionId: initial.sessionId || "", category: "", age: "", who: "families", includeUnconsented: false, body: "", media: [], result: null, selected: new Set(), excluded: new Set(), search: "" });
     onConsumedInitial && onConsumedInitial();
   }, [initial]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -64,8 +64,27 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
   const upcomingClinics = useMemo(() => clinics.filter(c => (c.sessions || []).some(s => s.date >= today)).sort((a, b) => a.name.localeCompare(b.name)), [clinics, today]);
   const ages = useMemo(() => [...new Set(clinics.map(c => c.age_group).filter(Boolean))].sort(), [clinics]);
 
+  // Everyone who could be texted, one entry per number, for the search/pick list.
+  const contacts = useMemo(() => {
+    const m = new Map();
+    const add = (phone, name, extra) => { const to = e164(phone); if (!to) return; const cur = m.get(to); if (cur) { if (extra.dssc_player && !cur.players.includes(extra.dssc_player)) cur.players.push(extra.dssc_player); if (extra.dssc_program && !cur.programs.includes(extra.dssc_program)) cur.programs.push(extra.dssc_program); cur.consent = cur.consent || !!extra.rosterConsent; return; } m.set(to, { to, name, kind: extra.kind, players: extra.dssc_player ? [extra.dssc_player] : [], programs: extra.dssc_program ? [extra.dssc_program] : [], consent: consented.has(last10(to)) || !!extra.rosterConsent, via: extra.via || null }); };
+    for (const r of roster) { const cl = clinicById.get(r.clinic_id); const fb = !r.parent_phone && r.parent_email ? dsePhoneByEmail.get(nrm(r.parent_email)) : null; add(r.parent_phone || fb?.phone, r.parent_name || fb?.name || (r.player_name + "'s parent"), { kind: "parent", dssc_player: r.player_name, dssc_program: cl?.name || null, rosterConsent: !!r.sms_consent, via: fb ? "DS Elite roster" : null }); }
+    for (const c of consents) add(c.phone, c.name || "Opted in", { kind: "parent", dssc_player: c.player_name || null, rosterConsent: true });
+    const pool = new Set(dsscAvail.filter(a => a.available).map(a => nrm(a.coach_name)));
+    for (const r of coachRoster) { const full = ((r.first_name || "") + " " + (r.last_name || "")).trim(); if (full && pool.has(nrm(full))) add(r.phone, full, { kind: "coach" }); }
+    return [...m.values()].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  }, [roster, consents, coachRoster, dsscAvail, clinicById, dsePhoneByEmail, consented]);
+
   const buildAudience = (c) => {
     const out = [], skipped = [];
+    const excluded = c.excluded || new Set();
+    const finish = (list) => { const ready = list.filter(x => !excluded.has(x.to)); return ready; };
+    if (c.scope === "pick") {
+      const sel = c.selected || new Set();
+      const list = contacts.filter(x => sel.has(x.to)).map(x => ({ to: x.to, name: x.name, kind: x.kind, consent: x.consent, dssc_program: x.programs[0] || null, dssc_player: x.players[0] || null, via: x.via }));
+      const gated = !c.includeUnconsented;
+      return { ready: finish(list.filter(x => x.kind === "coach" || !gated || x.consent)), held: gated ? list.filter(x => x.kind !== "coach" && !x.consent) : [], skipped };
+    }
     const push = (phone, name, extra) => {
       const to = e164(phone);
       if (!to) { if (name) skipped.push({ name, reason: "no phone" }); return; }
@@ -75,7 +94,7 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
     if (c.scope === "coaches") {
       const pool = new Set(dsscAvail.filter(a => a.available).map(a => nrm(a.coach_name)));
       for (const r of coachRoster) { const full = ((r.first_name || "") + " " + (r.last_name || "")).trim(); if (full && pool.has(nrm(full))) push(r.phone, full, { kind: "coach" }); }
-      return { ready: out, held: [], skipped };
+      return { ready: finish(out), held: [], skipped };
     }
     let rows = roster;
     if (c.scope === "program" || c.scope === "class") rows = rows.filter(r => String(r.clinic_id) === String(c.clinicId) && (c.scope === "program" || !r.session_id || String(r.session_id) === String(c.sessionId)));
@@ -88,7 +107,7 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
       push(r.parent_phone || fallback?.phone, r.parent_name || fallback?.name || (r.player_name + "'s parent"), { kind: "parent", dssc_program: cl?.name || null, dssc_player: r.player_name, rosterConsent: !!r.sms_consent, via: fallback ? "DS Elite roster" : null });
     }
     const gated = !c.includeUnconsented;
-    return { ready: out.filter(x => !gated || x.consent), held: gated ? out.filter(x => !x.consent) : [], skipped };
+    return { ready: finish(out.filter(x => !gated || x.consent)), held: gated ? out.filter(x => !x.consent) : [], skipped, excludedCount: excluded.size };
   };
 
   const send = async (payload) => {
@@ -130,7 +149,7 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
   const totalUnread = threads.reduce((n, t) => n + (t.unread_count || 0), 0);
   const markRead = async (id) => { await supabase.from("sms_threads").update({ unread_count: 0 }).eq("id", id); loadThreads(); };
 
-  const openComposer = (scope) => { setSelId(null); setComposer({ scope, clinicId: upcomingClinics[0]?.id || "", sessionId: "", category: "Pods", age: ages[0] || "", who: "families", includeUnconsented: false, body: "", media: [], result: null }); };
+  const openComposer = (scope) => { setSelId(null); setComposer({ scope, clinicId: upcomingClinics[0]?.id || "", sessionId: "", category: "Pods", age: ages[0] || "", who: "families", includeUnconsented: false, body: "", media: [], result: null, selected: new Set(), excluded: new Set(), search: "" }); };
   const shell = (inner) => (
     <div style={{ margin: "-14px -18px", padding: "16px 16px 30px", background: DS.bg, minHeight: "calc(100vh - 56px)", fontFamily: DS.font, color: DS.text }}>
       <div style={{ maxWidth: 1200, margin: "0 auto" }}>
@@ -145,6 +164,7 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
           <Btn small onClick={() => openComposer("category")}>+ By category</Btn>
           <Btn small onClick={() => openComposer("age")}>+ By age</Btn>
           <Btn small onClick={() => openComposer("coaches")}>+ Coaches</Btn>
+          <Btn small onClick={() => openComposer("pick")}>🔍 Pick people</Btn>
         </div>
         {inner}
       </div>
@@ -181,7 +201,7 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
           const aud = buildAudience(c);
           const cl = clinicById.get(Number(c.clinicId));
           const sessions = (cl?.sessions || []).filter(s => s.date >= today).sort((a, b) => a.date.localeCompare(b.date));
-          const label = c.scope === "everyone" ? "everyone in current programs" : c.scope === "program" ? (cl?.name || "a program") : c.scope === "class" ? `${cl?.name || "a class"} · ${sessions.find(s => String(s.id) === String(c.sessionId)) ? fmtDay(sessions.find(s => String(s.id) === String(c.sessionId)).date, today) : "pick a class"}` : c.scope === "category" ? c.category : c.scope === "age" ? c.age : "DSSC coaches";
+          const label = c.scope === "everyone" ? "everyone in current programs" : c.scope === "program" ? (cl?.name || "a program") : c.scope === "class" ? `${cl?.name || "a class"} · ${sessions.find(s => String(s.id) === String(c.sessionId)) ? fmtDay(sessions.find(s => String(s.id) === String(c.sessionId)).date, today) : "pick a class"}` : c.scope === "category" ? c.category : c.scope === "age" ? c.age : c.scope === "pick" ? `${(c.selected || new Set()).size} picked` : "DSSC coaches";
           const canSend = (c.body.trim() || c.media.length) && aud.ready.length > 0 && !sending && !c.result;
           const go = async () => {
             if (!canSend) return;
@@ -197,7 +217,7 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
             <div style={{ flex: 1, overflowY: "auto", padding: "14px 16px", display: "flex", flexDirection: "column", gap: 12 }}>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                 <select value={c.scope} onChange={e => set({ scope: e.target.value, result: null })} style={{ ...inputStyle, width: "auto", padding: "6px 9px", fontSize: 13 }}>
-                  {[["program", "A program"], ["class", "One class"], ["everyone", "Everyone (current programs)"], ["category", "By category"], ["age", "By age group"], ["coaches", "DSSC coaches"]].map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                  {[["program", "A program"], ["class", "One class"], ["everyone", "Everyone (current programs)"], ["category", "By category"], ["age", "By age group"], ["coaches", "DSSC coaches"], ["pick", "Pick people"]].map(([k, l]) => <option key={k} value={k}>{l}</option>)}
                 </select>
                 {(c.scope === "program" || c.scope === "class") && <select value={c.clinicId} onChange={e => set({ clinicId: e.target.value, sessionId: "", result: null })} style={{ ...inputStyle, width: "auto", padding: "6px 9px", fontSize: 13, maxWidth: 320 }}>{upcomingClinics.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}</select>}
                 {c.scope === "class" && <select value={c.sessionId} onChange={e => set({ sessionId: e.target.value, result: null })} style={{ ...inputStyle, width: "auto", padding: "6px 9px", fontSize: 13 }}><option value="">— pick the class —</option>{sessions.map(s => <option key={s.id} value={s.id}>{fmtDay(s.date, today)} {s.start_time || ""}</option>)}</select>}
@@ -210,6 +230,32 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
                   Goes to numbers with a recorded opt-in — the <b style={{ color: DS.text }}>/dssc-texts</b> form, or a DS Elite family whose number we already have. {aud.held.length > 0 && <label style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6, cursor: "pointer", color: DS.orange, fontWeight: 700 }}><input type="checkbox" checked={!!c.includeUnconsented} onChange={e => set({ includeUnconsented: e.target.checked, result: null })} /> Include the {aud.held.length} without a recorded opt-in</label>}
                 </div>
               )}
+              {c.scope === "pick" && (() => {
+                const q = nrm(c.search); const sel = c.selected || new Set();
+                const hits = (q ? contacts.filter(x => [x.name, ...x.players, ...x.programs, x.to].some(v => nrm(v).includes(q))) : contacts).slice(0, 60);
+                const toggle = (to) => { const n = new Set(sel); n.has(to) ? n.delete(to) : n.add(to); set({ selected: n, result: null }); };
+                return (
+                  <div style={{ background: DS.panel2, border: "1px solid " + DS.line, borderRadius: 10, padding: 10 }}>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+                      <input value={c.search} onChange={e => set({ search: e.target.value })} placeholder="Search a parent, player, program or number…" style={{ ...inputStyle, padding: "7px 10px", fontSize: 13 }} autoFocus />
+                      {hits.length > 0 && <Btn small onClick={() => { const n = new Set(sel); hits.forEach(x => n.add(x.to)); set({ selected: n, result: null }); }}>Add all {hits.length}</Btn>}
+                      {sel.size > 0 && <Btn small kind="quiet" onClick={() => set({ selected: new Set(), result: null })}>Clear</Btn>}
+                    </div>
+                    <div style={{ maxHeight: 220, overflowY: "auto", display: "flex", flexDirection: "column", gap: 2 }}>
+                      {hits.map(x => (
+                        <label key={x.to} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, padding: "4px 6px", borderRadius: 6, background: sel.has(x.to) ? DS.limeSoft : "transparent", cursor: "pointer" }}>
+                          <input type="checkbox" checked={sel.has(x.to)} onChange={() => toggle(x.to)} />
+                          <span style={{ fontWeight: 700, minWidth: 150 }}>{x.name}</span>
+                          <span style={{ color: DS.mut, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{x.kind === "coach" ? "coach" : [x.players.join(", "), x.programs.join(", ")].filter(Boolean).join(" · ")}</span>
+                          <span style={{ color: DS.mut, fontSize: 12 }}>{fmtPhone(x.to)}</span>
+                          {!x.consent && x.kind !== "coach" && <Tag color={DS.orange}>no opt-in</Tag>}
+                        </label>
+                      ))}
+                      {!hits.length && <div style={{ fontSize: 12, color: DS.mut }}>No one matches.</div>}
+                    </div>
+                  </div>
+                );
+              })()}
               <textarea value={c.body} onChange={e => set({ body: e.target.value })} rows={5} placeholder={"Type the message everyone in " + label + " should get… (it comes from the club number; replies land here)"} style={{ ...inputStyle, resize: "vertical" }} />
               <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                 <input ref={fileRef} type="file" accept="image/*" multiple style={{ display: "none" }} onChange={e => uploadMedia(e.target.files)} />
@@ -220,9 +266,10 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
                 <Btn kind="primary" disabled={!canSend} onClick={go}>{sending ? "Sending…" : `Send to ${aud.ready.length}`}</Btn>
               </div>
               {c.result && <div style={{ border: "1px solid " + (c.result.error || c.result.failed?.length ? DS.orange : DS.lime), borderRadius: 10, padding: "10px 12px", fontSize: 13 }}>{c.result.error ? <span style={{ color: DS.orange, fontWeight: 700 }}>{c.result.error}</span> : <><b style={{ color: DS.lime }}>Sent to {c.result.sent}</b>{c.result.failed?.length > 0 && <div style={{ color: DS.orange, marginTop: 4 }}>{c.result.failed.length} failed: {c.result.failed.map(f => (f.name || f.to) + " (" + f.error + ")").join("; ")}</div>}<div style={{ color: DS.mut, marginTop: 4 }}>Replies show up on the left, one thread per family.</div></>}</div>}
-              <details><summary style={{ cursor: "pointer", fontSize: 12, fontWeight: 700 }}>Recipients ({aud.ready.length}){aud.held.length ? ` · held (${aud.held.length})` : ""}{aud.skipped.length ? ` · no phone (${aud.skipped.length})` : ""}</summary>
+              <details><summary style={{ cursor: "pointer", fontSize: 12, fontWeight: 700 }}>Recipients ({aud.ready.length}) — untick anyone to leave them out{aud.held.length ? ` · held (${aud.held.length})` : ""}{aud.skipped.length ? ` · no phone (${aud.skipped.length})` : ""}</summary>
                 <div style={{ display: "flex", flexDirection: "column", gap: 3, marginTop: 6, fontSize: 12 }}>
-                  {aud.ready.map(x => <div key={x.to} style={{ display: "flex", gap: 8 }}><span style={{ minWidth: 180 }}>{x.name}</span><span style={{ color: DS.mut }}>{fmtPhone(x.to)}</span>{x.dssc_player && <span style={{ color: DS.mut }}>{x.dssc_player}</span>}{x.via && <Tag color={DS.mut}>{x.via}</Tag>}</div>)}
+                  {aud.ready.map(x => <label key={x.to} style={{ display: "flex", gap: 8, alignItems: "center", cursor: "pointer" }}><input type="checkbox" checked onChange={() => { const n = new Set(c.excluded || []); n.add(x.to); set({ excluded: n, result: null }); }} title="Untick to leave this person out" /><span style={{ minWidth: 180 }}>{x.name}</span><span style={{ color: DS.mut }}>{fmtPhone(x.to)}</span>{x.dssc_player && <span style={{ color: DS.mut }}>{x.dssc_player}</span>}{x.via && <Tag color={DS.mut}>{x.via}</Tag>}</label>)}
+                  {[...(c.excluded || [])].map(to => <label key={"x" + to} style={{ display: "flex", gap: 8, alignItems: "center", opacity: .55, cursor: "pointer" }}><input type="checkbox" checked={false} onChange={() => { const n = new Set(c.excluded); n.delete(to); set({ excluded: n, result: null }); }} /><span style={{ minWidth: 180 }}>{(contacts.find(x => x.to === to) || {}).name || fmtPhone(to)}</span><Tag color={DS.mut}>left out</Tag></label>)}
                   {aud.held.map(x => <div key={x.to} style={{ display: "flex", gap: 8, opacity: .7 }}><span style={{ minWidth: 180 }}>{x.name}</span><span style={{ color: DS.mut }}>{fmtPhone(x.to)}</span><Tag color={DS.orange}>no opt-in</Tag></div>)}
                   {aud.skipped.map((x, i) => <div key={i} style={{ display: "flex", gap: 8, opacity: .6 }}><span style={{ minWidth: 180 }}>{x.name}</span><Tag color={DS.mut}>{x.reason}</Tag></div>)}
                 </div>
