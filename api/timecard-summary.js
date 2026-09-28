@@ -96,8 +96,8 @@ export default async function handler(req, res) {
   const [{ data: dse }, { data: dssc }, { data: roster }, { data: accounts }, { data: rates }, { data: teams }] =
     await Promise.all([
       supabase.from("coach_checkins")
-        .select("id, coach_name, coach_email, check_date, team_name, slot, hours, role, rate_override, notified_at")
-        .gte("check_date", start).lte("check_date", end),
+        .select("id, coach_name, coach_email, check_date, pay_date, team_name, slot, hours, role, rate_override, notified_at")
+        .or(`and(pay_date.gte.${start},pay_date.lte.${end}),and(pay_date.is.null,check_date.gte.${start},check_date.lte.${end})`),
       supabase.from("dssc_checkins")
         .select("id, coach_name, coach_email, session_date, clinic_name, hours, approved, rejected, sent_at")
         .gte("session_date", start).lte("session_date", end),

@@ -3085,7 +3085,7 @@ export default function App() {
     const since = localDateISO(new Date(Date.now() - 90*86400000));
     const [{ data, error }, { data: on, error: oe }] = await Promise.all([
       supabase.from("coach_checkins").select("*")
-        .gte("check_date", since).order("check_date", { ascending: false }).order("created_at", { ascending: false }),
+        .or(`check_date.gte.${since},pay_date.gte.${since}`).order("check_date", { ascending: false }).order("created_at", { ascending: false }),
       supabase.from("orientation_nights").select("*").order("night_date"),
     ]);
     if (oe) console.error("Load orientation_nights error:", oe);
@@ -24422,7 +24422,10 @@ export default function App() {
     };
 
     const rows = {};
-    checkins.filter(c => c.check_date>=wkStart && c.check_date<=wkEnd && passes(c)).forEach(c => {
+    // The pay week a shift belongs to: its pay_date when it's a correction
+    // paid later, otherwise the day it was worked.
+    const payDay = c => c.pay_date || c.check_date;
+    checkins.filter(c => payDay(c)>=wkStart && payDay(c)<=wkEnd && passes(c)).forEach(c => {
       const cn = canonicalName(c.coach_name, c.coach_email);
       const g = rows[cn] = rows[cn] || { coach:cn, hours:0, unpaidHours:0, checks:[] };
       g.hours += Number(c.hours||0);
@@ -24502,7 +24505,7 @@ export default function App() {
       const lines = [["Date","Coach","Role","Team","Slot","Hours","Rate","Amount","Paid"].join(",")];
       list.forEach(g => g.checks.slice().sort((a,b)=>a.check_date.localeCompare(b.check_date)).forEach(c => {
         const r = rateFor(g.coach, c.team_name);
-        lines.push([c.check_date, esc(g.coach), c.role, esc(c.team_name||"Floating"), c.slot||"", Number(c.hours||0), r??"", r!=null?(Number(c.hours||0)*r).toFixed(2):"", c.paid?"yes":"no"].join(","));
+        lines.push([c.check_date, esc(g.coach), c.role, esc(c.team_name||({ training:"Coaches training", orientation:"Orientation", tryout:"Tryout", dsysa:"DSYSA" }[c.role]||"Floating")), c.slot||"", Number(c.hours||0), r??"", r!=null?(Number(c.hours||0)*r).toFixed(2):"", c.paid?"yes":"no"].join(","));
       }));
       const a = document.createElement("a");
       a.href = URL.createObjectURL(new Blob([lines.join("\n")], { type:"text/csv" }));
@@ -24825,10 +24828,10 @@ export default function App() {
                                 <div key={c.id} style={{display:"flex",alignItems:"center",gap:8,fontSize:12,color:C.text,flexWrap:"wrap"}}>
                                   <input type="date" value={c.check_date} onChange={e=>editCheck(c.id,{ check_date:e.target.value, phase:phaseForDate(e.target.value)||c.phase })} style={{...St.sel,width:135,padding:"4px 6px"}} title="Shift date" />
                                   <select value={c.role} onChange={e=>editCheck(c.id,{ role:e.target.value })} style={{...St.sel,padding:"4px 6px"}} title="Role">
-                                    <option value="scheduled">Scheduled</option><option value="sub">Sub</option><option value="float">Float</option><option value="dsysa">DSYSA</option>
+                                    <option value="scheduled">Scheduled</option><option value="sub">Sub</option><option value="float">Float</option><option value="training">Training</option><option value="orientation">Orientation</option><option value="tryout">Tryout</option><option value="dsysa">DSYSA</option><option value="other">Other</option>
                                   </select>
                                   <select value={c.team_name||""} onChange={e=>editCheck(c.id,{ team_name:e.target.value||null })} style={{...St.sel,padding:"4px 6px",minWidth:120}} title="Team">
-                                    <option value="">Floating</option>
+                                    <option value="">{({ training:"Coaches training", orientation:"Orientation", tryout:"Tryout", dsysa:"DSYSA", other:"No team" }[c.role]) || "Floating"}</option>
                                     {practiceTeams.map(t => <option key={t.team_name} value={t.team_name}>{t.team_name}</option>)}
                                   </select>
                                   <input defaultValue={c.slot||""} key={"slot"+c.id+(c.slot||"")} onBlur={e=>{ const v=e.target.value.trim(); if(v!==(c.slot||"")) editCheck(c.id,{ slot:v||null }); }} placeholder="slot" style={{...St.sel,width:80,padding:"4px 6px"}} title="Time slot" />
@@ -24837,6 +24840,8 @@ export default function App() {
                                   <label style={{display:"flex",alignItems:"center",gap:4,cursor:"pointer",color:c.paid?C.grn:C.mut}}>
                                     <input type="checkbox" checked={!!c.paid} onChange={()=>togglePaid(c)} style={{accentColor:C.grn,cursor:"pointer"}} />paid
                                   </label>
+                                  {c.pay_date && c.pay_date !== c.check_date && <span title="Worked on the shift date, paid in this week" style={{fontSize:10,fontWeight:800,color:"#f59e0b",border:"1px solid #f59e0b",borderRadius:4,padding:"0 5px"}}>paid week of {new Date(c.pay_date+"T12:00:00").toLocaleDateString(undefined,{month:"short",day:"numeric"})}</span>}
+                                  {c.note && <span style={{fontSize:11,color:C.mut,fontStyle:"italic"}}>{c.note}</span>}
                                   <button style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:14}} onClick={()=>delCheck(c.id)} title="Delete check-in">✕</button>
                                 </div>
                                 );

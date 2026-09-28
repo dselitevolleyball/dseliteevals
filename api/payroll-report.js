@@ -73,7 +73,8 @@ export default async function handler(req, res) {
   const weekEnd = addDays(weekStart, 6);
 
   const [{ data: checks }, { data: rates }, { data: teams }, { data: roster }] = await Promise.all([
-    supabase.from("coach_checkins").select("*").gte("check_date", weekStart).lte("check_date", weekEnd),
+    // A correction keeps its real check_date and carries the pay week in pay_date.
+    supabase.from("coach_checkins").select("*").or(`and(pay_date.gte.${weekStart},pay_date.lte.${weekEnd}),and(pay_date.is.null,check_date.gte.${weekStart},check_date.lte.${weekEnd})`),
     supabase.from("coach_rates").select("*"),
     supabase.from("practice_teams").select("team_name, head_coach, assistant_coach"),
     supabase.from("coach_roster").select("first_name, last_name, email"),
@@ -105,7 +106,7 @@ export default async function handler(req, res) {
     if (amt != null) { g.amount += amt; if (!c.paid) g.unpaidAmount += amt; }
     else g.missingRate = true;
     if (late) g.lateCount += 1;
-    g.shifts.push({ date: c.check_date, team: c.team_name || "Floating", slot: c.slot || "", role: c.role, hours: hrs, rate, amount: amt, paid: !!c.paid, late });
+    g.shifts.push({ date: c.check_date, team: c.team_name || ({ training: "Coaches training", orientation: "Orientation", tryout: "Tryout", dsysa: "DSYSA" }[c.role] || "Floating") + (c.pay_date && c.pay_date !== c.check_date ? " (worked " + c.check_date.slice(5).replace("-", "/") + ")" : ""), slot: c.slot || "", role: c.role, hours: hrs, rate, amount: amt, paid: !!c.paid, late });
     byCoach.set(coach, g);
   }
   const rows = [...byCoach.values()].sort((a, b) => a.coach.localeCompare(b.coach));
