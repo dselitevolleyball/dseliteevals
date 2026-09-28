@@ -10884,7 +10884,7 @@ export default function App() {
         body: (p) => { const c = commitBy.get(p.id); const who = c && c.player_signed_at ? "a parent's signature" : c && c.parent_signed_at ? girl(p) + "'s signature" : "both " + girl(p) + "'s and a parent's signatures";
           return greet(p) + "\n\n" + girl(p) + "'s DS Elite commitment is still waiting on " + who + ". It's the same page we went through at orientation:\n\n" + base + "/commitment?t=" + p.commitment_token + "\n\nEach of you ticks your own boxes and signs; it saves as you go." + sign; } },
       { key: "global", label: "Global Challenge interest", icon: "🌍", color: "#2dd4bf",
-        scope: "Croatia, July 2027 · 14 & 15 Diamond (National only) · interest only, answers at the bottom of this screen",
+        scope: "Croatia, July 2027 · 14 & 15 National (Diamond and Ruby) · interest only, answers at the bottom of this screen",
         rows: rostered.filter(p => GC_TEAMS.includes(p.team_assignment) && !gcBy.has(p.id))
           .map(p => ({ p, detail: "hasn't answered", canNudge: !!p.global_token })),
         subject: (p) => "Quick question: " + girl(p) + " and the Girls Global Challenge in Croatia",

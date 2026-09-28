@@ -1,4 +1,4 @@
-// Email 14 and 15 Diamond (National) families the Girls Global Challenge interest form.
+// Email 14 and 15 National team families (Diamond and Ruby) the Girls Global Challenge interest form.
 //
 // One email per player, to all of that player's parent addresses, with the
 // link that opens only her form (/global?t=players.global_token). Families who
