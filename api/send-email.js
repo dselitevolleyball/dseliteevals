@@ -34,6 +34,8 @@ const escapeHtml = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
 // more than the default function timeout.
 export const config = { maxDuration: 300 };
 
+import { appOrigin } from "../shared/app-origin.js";
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.setHeader("Allow", ["POST"]);
@@ -267,7 +269,7 @@ export default async function handler(req, res) {
   // that hasn't arrived and won't for hours.
   if (!body?.skipPush && !scheduledAt && valid.length) {
     try {
-      const origin = process.env.APP_URL || ("https://" + (req.headers["x-forwarded-host"] || req.headers.host));
+      const origin = appOrigin(req);
       const r = await fetch(origin + "/api/send-push", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

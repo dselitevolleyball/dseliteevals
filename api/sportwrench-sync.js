@@ -13,6 +13,7 @@
 import { createClient } from "@supabase/supabase-js";
 import webpush from "web-push";
 import { syncSportWrench } from "./_lib/sportwrench-sync.js";
+import { appOrigin } from "../shared/app-origin.js";
 
 const ALERT_DEFAULT = ["drew@dselitevolleyball.com"];
 const fmtD = (iso) => { try { return new Date(iso + "T00:00:00Z").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" }); } catch { return (iso || "").slice(0, 10); } };
@@ -55,7 +56,7 @@ export default async function handler(req, res) {
 
   // Alert on brand-new events (never on the first seeding run).
   const alertRows = result.firstRun ? [] : result.newRows.slice().sort((a, b) => (a.start_date || "").localeCompare(b.start_date || ""));
-  const url = (APP_URL || ("https://" + (req.headers["x-forwarded-host"] || req.headers.host || "dseliteevals.vercel.app"))) + "/?view=tournaments";
+  const url = appOrigin(req) + "/?view=tournaments";
   const alertEmails = (AES_ALERT_EMAILS ? AES_ALERT_EMAILS.split(",") : ALERT_DEFAULT).map((s) => s.trim().toLowerCase()).filter(Boolean);
   let pushed = 0;
   if (alertRows.length) {

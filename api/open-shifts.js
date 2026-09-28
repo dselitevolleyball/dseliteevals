@@ -12,6 +12,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import webpush from "web-push";
+import { appOrigin } from "../shared/app-origin.js";
 
 const RESEND_BATCH = "https://api.resend.com/emails/batch";
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -43,7 +44,7 @@ export default async function handler(req, res) {
 
   if (!open.length) return res.status(200).json({ ok: true, openShifts: 0, note: "nothing to notify" });
 
-  const url = APP_URL || ("https://" + (req.headers["x-forwarded-host"] || req.headers.host || "dseliteevals.vercel.app"));
+  const url = appOrigin(req);
 
   // App push to everyone subscribed.
   let pushSent = 0;

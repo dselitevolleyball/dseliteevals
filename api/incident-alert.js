@@ -13,6 +13,7 @@
 // send-push already need.
 
 import { createClient } from "@supabase/supabase-js";
+import { appOrigin } from "../shared/app-origin.js";
 
 const KIND_LABEL = {
   injury: "Injury or health",
@@ -69,7 +70,7 @@ export default async function handler(req, res) {
     `Open the board to pick it up:\n${(process.env.APP_URL || "https://dseliteevals.vercel.app")}/?view=incidentboard\n\n` +
     `You're getting this because you're an administrator.`;
 
-  const origin = process.env.APP_URL || ("https://" + (req.headers["x-forwarded-host"] || req.headers.host));
+  const origin = appOrigin(req);
   let sent = 0, pushed = 0;
   try {
     if (emails.length) {

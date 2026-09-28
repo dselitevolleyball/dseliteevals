@@ -40,6 +40,7 @@
 import { createClient } from "@supabase/supabase-js";
 import webpush from "web-push";
 import { isEventTeam } from "../shared/event-teams.js";
+import { appOrigin } from "../shared/app-origin.js";
 
 // Ten days after the orientation email, then weekly until the window shuts.
 const DEFAULT_START = "2026-09-12";
@@ -105,7 +106,7 @@ export default async function handler(req, res) {
   (accounts || []).forEach(a => put(a.display_name, a.email));
   (roster || []).forEach(r => put(`${r.first_name || ""} ${r.last_name || ""}`.trim(), r.email));
 
-  const base = APP_URL || ("https://" + (req.headers["x-forwarded-host"] || req.headers.host || "dseliteevals.vercel.app"));
+  const base = appOrigin(req);   // never the protected deployment host — that showed coaches a Vercel login page
 
   // One row per unsettled team, then grouped by the coach who owns it.
   const open = [];
