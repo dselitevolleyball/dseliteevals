@@ -56,9 +56,8 @@ export const GC_POSITIONS = [
 ];
 
 export const GC_TRAVEL = [
-  { key: "solo", label: "She'd travel with the team on her own", sub: "Like a school trip: with her coaches and teammates" },
-  { key: "parent", label: "At least one parent would come along" },
-  { key: "family", label: "We'd like to make it a family trip" },
+  { key: "solo", label: "Just the player", sub: "She travels with the team, her coaches and the chaperone" },
+  { key: "family", label: "As a family", sub: "At least one parent or family member comes too" },
   { key: "unsure", label: "Not sure yet" },
 ];
 

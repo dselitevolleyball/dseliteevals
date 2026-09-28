@@ -107,6 +107,9 @@ const notFound = (msg) => page(`
   <p style="font-size:.9rem;color:var(--mut)">Reply to the email this came in and we'll send you a fresh link.</p></div>
 `, { title: "Link not found · DS Elite" });
 
+// The position she plays now: one answer, so no "anywhere" option here.
+const PLAYS = GC_POSITIONS.filter((o) => o.key !== "ANY");
+
 const SAMPLE = { id: -1, first_name: "Sample", last_name: "Player", team_assignment: "15 Diamond", parent_name: "A Parent" };
 
 const radio = (name, o, cur, attrs = "") => `
@@ -125,12 +128,12 @@ const script = `
     // A "no" only needs the one tap. Everything else is for families who might go.
     more.classList.toggle('hide', !i || i === 'no');
     var t = val('travel');
-    fam.classList.toggle('hide', !(t === 'parent' || t === 'family'));
-    var pos = f.querySelectorAll('input[name=positions]:checked').length;
+    fam.classList.toggle('hide', t !== 'family');
+    var pos = val('primary_position');
     var name = f.querySelector('input[name=respondent_name]').value.trim().length > 1;
     var missing = !i ? 'Choose whether you\\'re interested'
-      : i !== 'no' && !pos ? 'Pick at least one position'
-      : i !== 'no' && !t ? 'Tell us how she\\'d travel'
+      : i !== 'no' && !pos ? 'Pick the position she plays'
+      : i !== 'no' && !t ? 'Just her, or as a family?'
       : !name ? 'Type your name to send' : '';
     btn.disabled = !!missing;
     btn.textContent = missing || 'Send our answer';
@@ -176,10 +179,12 @@ export default async function handler(req, res) {
 
     const interest = pick(GC_INTEREST, body?.interest);
     const isNo = interest === "no";
-    const positions = isNo ? [] : [...new Set(arr(body?.positions).filter((k) => GC_POSITIONS.some((o) => o.key === k)))];
+    const primary_position = isNo ? null : pick(PLAYS, body?.primary_position);
+    const positions = isNo ? [] : [...new Set(arr(body?.positions).filter((k) => GC_POSITIONS.some((o) => o.key === k)))]
+      .filter((k) => k !== primary_position);
     const travel = isNo ? null : pick(GC_TRAVEL, body?.travel);
     const n = parseInt(body?.travelers, 10);
-    const travelers = !isNo && (travel === "parent" || travel === "family") && n >= 1 && n <= 12 ? n : null;
+    const travelers = !isNo && travel === "family" && n >= 1 && n <= 12 ? n : null;
     const city = isNo ? null : pick(GC_CITIES, body?.city);
     const passport = isNo ? null : (["yes", "no", "unsure"].includes(body?.passport) ? body.passport : null);
     const respondent_name = String(body?.respondent_name || "").trim().slice(0, 120);
@@ -188,11 +193,11 @@ export default async function handler(req, res) {
     // The browser disables the button until these are filled, but the server
     // is where it gets decided.
     problem = !interest ? "Let us know whether you're interested."
-      : !isNo && !positions.length ? "Pick at least one position she'd be open to playing."
-      : !isNo && !travel ? "Tell us how she'd travel."
+      : !isNo && !primary_position ? "Tell us which position she plays."
+      : !isNo && !travel ? "Tell us whether it would be just her or your family too."
       : respondent_name.length < 2 ? "Type your name so we know who answered." : "";
 
-    const answer = { interest, positions, travel, travelers, city, passport, respondent_name, questions };
+    const answer = { interest, primary_position, positions, travel, travelers, city, passport, respondent_name, questions };
     if (!problem && !preview) {
       const now = new Date().toISOString();
       const { error } = await supabase.from("global_challenge_interest").upsert({
@@ -241,7 +246,8 @@ export default async function handler(req, res) {
       <p>The timing is ideal for Texas club players. It starts right after club tryouts and gets everyone
         home before school tryouts.</p>
       <p>Think of it as a school trip more than a family vacation. The girls travel, eat, play and
-        sightsee together as a team.</p>
+        sightsee together as a team. Coach Drew and/or Coach Hunter will lead the team, with a dedicated
+        female chaperone traveling with the girls.</p>
       <p>Families are more than welcome to come. During the day the players are mostly with the team for
         scrimmages and matches, so families are free to explore the city on their own. Group sightseeing
         we all do together.</p>
@@ -282,13 +288,18 @@ export default async function handler(req, res) {
       ${GC_INTEREST.map((o) => radio("interest", o, v.interest)).join("")}
 
       <div id="more">
-        <p class="q">Which positions would she be open to playing? <span class="req">*</span>
-          <small>Tick all that apply. A travel roster is small, so flexibility helps.</small></p>
+        <p class="q">What position does she play? <span class="req">*</span></p>
+        <div class="grid">${PLAYS.map((o) => `
+          <label class="opt"><input type="radio" name="primary_position" value="${o.key}" ${v.primary_position === o.key ? "checked" : ""}>
+            <span><span class="t">${esc(o.label)}</span></span></label>`).join("")}</div>
+
+        <p class="q">Any other positions she'd be open to playing?
+          <small>Optional. Tick all that apply. A travel roster is small, so flexibility helps.</small></p>
         <div class="grid">${GC_POSITIONS.map((o) => `
           <label class="opt"><input type="checkbox" name="positions" value="${o.key}" ${(v.positions || []).includes(o.key) ? "checked" : ""}>
             <span><span class="t">${esc(o.label)}</span></span></label>`).join("")}</div>
 
-        <p class="q">How would she travel? <span class="req">*</span></p>
+        <p class="q">Would it be just ${who}, or would your family come too? <span class="req">*</span></p>
         ${GC_TRAVEL.map((o) => radio("travel", o, v.travel)).join("")}
 
         <div id="fam">
@@ -317,7 +328,7 @@ export default async function handler(req, res) {
     </form>
 
     <div class="foot">DS Elite Volleyball · Girls Global Challenge 2027<br>
-      Questions? Hunter Haley · <a href="mailto:hunter@drippingsportsclub.com">hunter@drippingsportsclub.com</a></div>
+      Questions? Drew Rose · <a href="mailto:drew@dselitevolleyball.com">drew@dselitevolleyball.com</a></div>
     <script>${script}</script>`,
     { title: player.first_name + " · Girls Global Challenge · DS Elite" }));
 }

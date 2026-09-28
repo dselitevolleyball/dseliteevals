@@ -11018,14 +11018,14 @@ export default function App() {
     const going = rows.filter(r => r.a.interest !== "no");
     const posCount = {}, cityCount = {};
     for (const r of going) {
-      for (const k of r.a.positions || []) posCount[k] = (posCount[k] || 0) + 1;
+      if (r.a.primary_position) posCount[r.a.primary_position] = (posCount[r.a.primary_position] || 0) + 1;
       if (r.a.city) cityCount[r.a.city] = (cityCount[r.a.city] || 0) + 1;
     }
     const csv = () => {
       const q = (v) => '"' + String(v ?? "").replace(/"/g, '""') + '"';
-      const lines = [["Player", "Team", "Interest", "Positions", "Travel", "Family coming", "City", "Passport", "Answered by", "Questions", "Answered"].map(q).join(",")];
+      const lines = [["Player", "Team", "Interest", "Plays", "Also open to", "Just her / family", "Family coming", "City", "Passport", "Answered by", "Questions", "Answered"].map(q).join(",")];
       for (const { a, p } of rows) lines.push([p.first_name + " " + p.last_name, p.team_assignment, gcLabel(GC_INTEREST, a.interest),
-        (a.positions || []).map(k => gcLabel(GC_POSITIONS, k)).join("; "), gcLabel(GC_TRAVEL, a.travel), a.travelers ?? "",
+        gcLabel(GC_POSITIONS, a.primary_position), (a.positions || []).map(k => gcLabel(GC_POSITIONS, k)).join("; "), gcLabel(GC_TRAVEL, a.travel), a.travelers ?? "",
         gcLabel(GC_CITIES, a.city), a.passport || "", a.respondent_name, a.questions, (a.updated_at || "").slice(0, 10)].map(q).join(","));
       const el = document.createElement("a");
       el.href = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv" }));
@@ -11039,7 +11039,7 @@ export default function App() {
             <div style={{fontSize:14,fontWeight:800,color:C.text}}>Global Challenge answers</div>
             <div style={{fontSize:11,color:C.mut,marginTop:1}}>
               {ORDER.map(k => <span key={k} style={{marginRight:10}}><b style={{color:COL[k]}}>{rows.filter(r => r.a.interest === k).length}</b> {k}</span>)}
-              {Object.keys(posCount).length > 0 && <> · positions: {GC_POSITIONS.filter(o => posCount[o.key]).map(o => o.key + " " + posCount[o.key]).join(", ")}</>}
+              {Object.keys(posCount).length > 0 && <> · plays: {GC_POSITIONS.filter(o => posCount[o.key]).map(o => o.key + " " + posCount[o.key]).join(", ")}</>}
               {Object.keys(cityCount).length > 0 && <> · city: {Object.entries(cityCount).sort((x, y) => y[1] - x[1]).map(([k, n]) => gcLabel(GC_CITIES, k).split(",")[0] + " " + n).join(", ")}</>}
             </div>
           </div>
@@ -11052,7 +11052,7 @@ export default function App() {
               <button onClick={()=>setProfileId(p.id)} style={{background:"none",border:"none",padding:0,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,color:C.text,minWidth:150,textAlign:"left"}}>{p.first_name} {p.last_name}</button>
               <span style={{fontSize:11,color:C.mut,minWidth:80}}>{p.team_assignment}</span>
               <span style={{fontSize:11,color:C.text,flex:1,minWidth:220}}>
-                {a.interest !== "no" && <>{(a.positions || []).join(", ")} · {gcLabel(GC_TRAVEL, a.travel)}{a.travelers ? " (" + a.travelers + ")" : ""}{a.city ? " · " + gcLabel(GC_CITIES, a.city).split(",")[0] : ""}{a.passport ? " · passport " + a.passport : ""}</>}
+                {a.interest !== "no" && <><b>{a.primary_position || "?"}</b>{(a.positions || []).length ? " (also " + a.positions.join(", ") + ")" : ""} · {gcLabel(GC_TRAVEL, a.travel)}{a.travelers ? " (" + a.travelers + ")" : ""}{a.city ? " · " + gcLabel(GC_CITIES, a.city).split(",")[0] : ""}{a.passport ? " · passport " + a.passport : ""}</>}
                 {a.questions && <div style={{color:C.mut,marginTop:2}}>“{a.questions}” — {a.respondent_name}</div>}
               </span>
             </div>

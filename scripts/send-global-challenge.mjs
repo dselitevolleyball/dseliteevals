@@ -3,7 +3,7 @@
 // One email per player, to all of that player's parent addresses, with the
 // link that opens only her form (/global?t=players.global_token). Families who
 // already answered are skipped unless --all, so this doubles as the chaser.
-// Replies go to Hunter, who is running the trip.
+// Comes from and replies go to Drew.
 //
 // DRY RUN BY DEFAULT: prints who would get it and the first email in full.
 //
@@ -21,7 +21,7 @@ import { createClient } from "@supabase/supabase-js";
 import { GC_TEAMS, GC_PRICE, GC_FAMILY_PRICE } from "../shared/global-challenge.js";
 
 const APP_URL = "https://dseliteevals.vercel.app";
-const SENDER = { name: "Hunter Haley", email: "hunter@drippingsportsclub.com" };
+const SENDER = { name: "Drew Rose", email: "drew@dselitevolleyball.com" };
 const TERMINAL_OFFER = ["declined", "not_invited", "opted_out"];
 
 function loadEnv() {
@@ -79,7 +79,7 @@ const bodyFor = (p) => `${greeting(p)}
 
 We've been invited to bring a DS Elite team to the Girls Global Challenge in Croatia next summer, July 7–18, 2027, and we're asking our 14 and 15 Diamond and Ruby players first to see if there's enough interest to take one.
 
-The tournament has run for more than 20 years and draws teams from across Europe and beyond. Most of them speak English. My dad, Mick Haley, has been there every year for the last six.
+The tournament has run for more than 20 years and draws teams from across Europe and beyond. Most of them speak English. Mick Haley, Coach Hunter's dad, has been there every year for the last six.
 
 The timing is ideal for Texas club players. It starts right after club tryouts and gets everyone home before school tryouts.
 
@@ -91,13 +91,13 @@ How it works:
 
 The pre-tour city options are Budapest, Prague, Vienna/Bratislava (with a Bratislava club team), Milan or Belgrade. The form has a short note on each, and we'd like your vote.
 
-Think of it as a school trip more than a family vacation. The girls travel, eat, play and sightsee together as a team.
+Think of it as a school trip more than a family vacation. The girls travel, eat, play and sightsee together as a team. Coach Drew and/or Coach Hunter will lead the team, with a dedicated female chaperone traveling with the girls.
 
 Families are more than welcome to come. During the day the players are mostly with the team for scrimmages and matches, so families are free to explore the city on their own. Group sightseeing we all do together.
 
 The cost is $${GC_PRICE.toLocaleString("en-US")} per player and $${GC_FAMILY_PRICE.toLocaleString("en-US")} per parent or family member, plus airfare. That covers hotels (players share rooms two or three to a room), meals, tournament entry, team sightseeing and travel between cities in Europe.
 
-There's a short form for ${p.first_name}. It asks whether you're interested, which positions she'd be open to playing, and whether she'd travel on her own or with family:
+There's a short form for ${p.first_name}. It asks whether you're interested, what position she plays, and whether it would be just her or your family too:
 
 ${APP_URL}/global?t=${p.global_token}
 
@@ -107,7 +107,7 @@ Questions? Just reply to this email.
 
 Thanks,
 
-Hunter Haley
+Drew Rose
 DS Elite Volleyball`;
 
 const jobs = targets.map((p) => ({
