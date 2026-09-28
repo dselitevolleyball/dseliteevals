@@ -17695,19 +17695,27 @@ export default function App() {
                         ? <span style={{color:C.red,fontWeight:700}}>Not scheduled — said they'd book it by {dayFmt(kick.plan_by)}, now past</span>
                         : <span style={{color:"#f59e0b",fontWeight:700}}>Not scheduled — coach is booking it by {dayFmt(kick.plan_by)}</span>}
                     {kick?.notes && <div style={{color:C.mut,fontStyle:"italic",marginTop:4}}>“{kick.notes}”</div>}
-                    {canOps && kTeam?.kickoff_form_token && (
+                    {kTeam?.kickoff_form_token && (canOps || myTeamNames.includes(kTeam.team_name)) && (
                       <div style={{marginTop:7,display:"flex",gap:6,flexWrap:"wrap"}}>
-                        <button onClick={()=>{
+                        {/* The team's own coaches update the answer here. There was no
+                            way in from the app before — only the emailed link — and a
+                            coach whose link had gone stale was stuck. */}
+                        <a href={APP_URL.replace(/\/$/, "") + "/kickoff?t=" + kTeam.kickoff_form_token} target="_blank" rel="noreferrer"
+                          style={{padding:"3px 10px",borderRadius:6,border:"1px solid "+C.gold,background:"transparent",
+                            color:C.gold,fontFamily:"inherit",fontSize:10,fontWeight:800,cursor:"pointer",textDecoration:"none"}}>
+                          {kick ? "✎ Update the kickoff answer" : "✎ Answer the kickoff check-in"}
+                        </a>
+                        {canOps && <button onClick={()=>{
                             const l = APP_URL.replace(/\/$/, "") + "/kickoff?t=" + kTeam.kickoff_form_token;
                             navigator.clipboard?.writeText(l)
                               .then(()=>window.alert(teamCardName + "'s check-in link copied — send it to " + (kTeam.head_coach || "their coach") + "."))
                               .catch(()=>window.prompt(teamCardName + "'s check-in link:", l));
                           }}
                           style={{padding:"2px 7px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",
-                            color:C.mut,fontFamily:"inherit",fontSize:10,fontWeight:700,cursor:"pointer"}}>copy coach's link</button>
-                        <button onClick={()=>{ setTeamCardName(null); setView("kickoff"); }}
+                            color:C.mut,fontFamily:"inherit",fontSize:10,fontWeight:700,cursor:"pointer"}}>copy coach's link</button>}
+                        {canOps && <button onClick={()=>{ setTeamCardName(null); setView("kickoff"); }}
                           style={{padding:"2px 7px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",
-                            color:C.mut,fontFamily:"inherit",fontSize:10,fontWeight:700,cursor:"pointer"}}>kickoff board</button>
+                            color:C.mut,fontFamily:"inherit",fontSize:10,fontWeight:700,cursor:"pointer"}}>kickoff board</button>}
                       </div>
                     )}
                   </div>
