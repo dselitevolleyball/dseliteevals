@@ -40,6 +40,10 @@
       "destination": "/coach-guide.html"
     },
     {
+      "source": "/global",
+      "destination": "/api/global-form"
+    },
+    {
       "source": "/dssc-texts",
       "destination": "/api/dssc-texts-form"
     }

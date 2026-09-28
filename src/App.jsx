@@ -6,6 +6,7 @@ import { GEAR_TEAMS } from "../shared/gear-teams.js";
 import { planRooms, pairCoaches, planRoomsByTeam, UNASSIGNED } from "../shared/room-plan.js";
 import { PLAYER_CLAUSES, PARENT_CLAUSES, isFullySigned } from "../shared/commitment.js";
 import { isEventTeam } from "../shared/event-teams.js";
+import { GC_TEAMS, GC_INTEREST, GC_POSITIONS, GC_TRAVEL, GC_CITIES, labelOf as gcLabel } from "../shared/global-challenge.js";
 import { parseSaleRows, matchInvoicesToPlayers } from "../shared/shoe-invoices.js";
 import { parseSportsEngineRows, matchMembersToPlayers, playerPatchFor } from "../shared/sportsengine.js";
 import { SCHOOL_DIVS } from "../shared/school-divs.js";
@@ -1575,6 +1576,7 @@ export default function App() {
   // it carries whatever we could prefill from where the coach opened it.
   const [schoolReports, setSchoolReports]             = useState([]);
   const [commitments, setCommitments]                 = useState([]);   // orientation-night signatures
+  const [gcAnswers, setGcAnswers]                     = useState([]);   // Girls Global Challenge interest (/global)
   const [schoolFilter, setSchoolFilter]               = useState("all"); // all | in | waiting | none
   const [schoolGroup, setSchoolGroup]                 = useState("school"); // school | team | flat
   const [schoolEditId, setSchoolEditId]               = useState(null);    // player card: whose answer staff is correcting
@@ -2403,6 +2405,12 @@ export default function App() {
     if (error) { console.error("Load player_commitments error:", error); return; }
     setCommitments(data || []);
   }, []);
+  // Girls Global Challenge interest form answers, one row per player.
+  const loadGcAnswers = useCallback(async () => {
+    const { data, error } = await supabase.from("global_challenge_interest").select("*");
+    if (error) { console.error("Load global_challenge_interest error:", error); return; }
+    setGcAnswers(data || []);
+  }, []);
   const loadSchoolGames = useCallback(async () => {
     const { data, error } = await supabase.from("school_games").select("*").order("game_date");
     if (error) { console.error("Load school_games error:", error); return; }
@@ -2599,6 +2607,7 @@ export default function App() {
   useEffect(() => { if (isApproved) { loadPlayers(); loadRankings(); loadIncidents(); loadIncidentNotes(); } }, [isApproved, loadPlayers, loadRankings, loadIncidents, loadIncidentNotes]);
   useEffect(() => { if (isApproved) loadSchoolReports(); }, [isApproved, loadSchoolReports]);
   useEffect(() => { if (isApproved) loadCommitments(); }, [isApproved, loadCommitments]);
+  useEffect(() => { if (isApproved) loadGcAnswers(); }, [isApproved, loadGcAnswers]);
   const loadPlayerNudges = useCallback(async () => {
     const { data, error } = await supabase.from("player_nudges").select("player_id, need, sent_at").order("sent_at", { ascending: false }).limit(2000);
     if (error) { console.error("Load player_nudges error:", error); return; }
@@ -10823,6 +10832,7 @@ export default function App() {
       .filter(t => !eventTeams.has(t)).sort((a, b) => (parseInt(a) || 99) - (parseInt(b) || 99) || a.localeCompare(b));
     const gearBy = new Map(gearOrders.map(r => [r.player_id, r]));
     const commitBy = new Map(commitments.map(c => [c.player_id, c]));
+    const gcBy = new Map(gcAnswers.map(a => [a.player_id, a]));
     const shoeBy = new Map();
     for (const inv of shoeInvoices) { if (!inv.player_id) continue; (shoeBy.get(inv.player_id) || shoeBy.set(inv.player_id, []).get(inv.player_id)).push(inv); }
     const lastNudge = new Map();
@@ -10873,6 +10883,12 @@ export default function App() {
         subject: (p) => girl(p) + "'s DS Elite commitment still needs a signature",
         body: (p) => { const c = commitBy.get(p.id); const who = c && c.player_signed_at ? "a parent's signature" : c && c.parent_signed_at ? girl(p) + "'s signature" : "both " + girl(p) + "'s and a parent's signatures";
           return greet(p) + "\n\n" + girl(p) + "'s DS Elite commitment is still waiting on " + who + ". It's the same page we went through at orientation:\n\n" + base + "/commitment?t=" + p.commitment_token + "\n\nEach of you ticks your own boxes and signs; it saves as you go." + sign; } },
+      { key: "global", label: "Global Challenge interest", icon: "🌍", color: "#2dd4bf",
+        scope: "Croatia, July 2027 · 14 & 15 Diamond and Ruby · interest only, answers at the bottom of this screen",
+        rows: rostered.filter(p => GC_TEAMS.includes(p.team_assignment) && !gcBy.has(p.id))
+          .map(p => ({ p, detail: "hasn't answered", canNudge: !!p.global_token })),
+        subject: (p) => "Quick question: " + girl(p) + " and the Girls Global Challenge in Croatia",
+        body: (p) => greet(p) + "\n\nWe haven't heard back yet about the Girls Global Challenge, the U17 tournament in Croatia next July. We're trying to see whether we have enough players to take a team, and an answer helps even if it's a no:\n\n" + base + "/global?t=" + p.global_token + "\n\nIt's interest only. Nothing is owed and nobody is signed up by answering." + sign },
     ];
 
     const sendNudge = async (need, row, quiet = false) => {
@@ -10917,7 +10933,7 @@ export default function App() {
           <div>
             <h2 style={{margin:0,fontSize:20,fontWeight:800,color:C.gold}}>⏳ Waiting on</h2>
             <div style={{fontSize:12,color:C.mut,marginTop:2}}>
-              <b style={{color:C.text}}>{playersWaiting}</b> player{playersWaiting===1?"":"s"} still owe{playersWaiting===1?"s":""} something · {total} item{total===1?"":"s"} across four needs
+              <b style={{color:C.text}}>{playersWaiting}</b> player{playersWaiting===1?"":"s"} still owe{playersWaiting===1?"s":""} something · {total} item{total===1?"":"s"} across {NEEDS.length} needs
             </div>
           </div>
           <div style={{flex:1}} />
@@ -10984,6 +11000,64 @@ export default function App() {
           );
         })}
         <div style={{fontSize:11,color:C.mut,marginTop:6}}>A nudge is one email to the family, from you, with the link they need. Every send is remembered here so you can see who has already been asked.</div>
+        {renderGcAnswers()}
+      </div>
+    );
+  }
+
+  // Girls Global Challenge answers, grouped by interest. Lives under Waiting
+  // on because the chase for non-answers is there; this is the part Hunter
+  // reads to decide whether there's a team.
+  function renderGcAnswers() {
+    const byId = new Map(players.map(p => [p.id, p]));
+    const rows = gcAnswers.map(a => ({ a, p: byId.get(a.player_id) })).filter(r => r.p)
+      .filter(r => !waitTeam || r.p.team_assignment === waitTeam);
+    if (!rows.length) return null;
+    const ORDER = ["yes", "maybe", "no"];
+    const COL = { yes: C.grn, maybe: "#f59e0b", no: C.mut };
+    const going = rows.filter(r => r.a.interest !== "no");
+    const posCount = {}, cityCount = {};
+    for (const r of going) {
+      for (const k of r.a.positions || []) posCount[k] = (posCount[k] || 0) + 1;
+      if (r.a.city) cityCount[r.a.city] = (cityCount[r.a.city] || 0) + 1;
+    }
+    const csv = () => {
+      const q = (v) => '"' + String(v ?? "").replace(/"/g, '""') + '"';
+      const lines = [["Player", "Team", "Interest", "Positions", "Travel", "Family coming", "City", "Passport", "Answered by", "Questions", "Answered"].map(q).join(",")];
+      for (const { a, p } of rows) lines.push([p.first_name + " " + p.last_name, p.team_assignment, gcLabel(GC_INTEREST, a.interest),
+        (a.positions || []).map(k => gcLabel(GC_POSITIONS, k)).join("; "), gcLabel(GC_TRAVEL, a.travel), a.travelers ?? "",
+        gcLabel(GC_CITIES, a.city), a.passport || "", a.respondent_name, a.questions, (a.updated_at || "").slice(0, 10)].map(q).join(","));
+      const el = document.createElement("a");
+      el.href = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv" }));
+      el.download = "global-challenge-interest.csv"; el.click();
+    };
+    return (
+      <div style={{background:C.card,border:"1px solid #2dd4bf",borderRadius:12,marginTop:18,padding:"12px 14px"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+          <span style={{fontSize:16}}>🌍</span>
+          <div style={{flex:1,minWidth:200}}>
+            <div style={{fontSize:14,fontWeight:800,color:C.text}}>Global Challenge answers</div>
+            <div style={{fontSize:11,color:C.mut,marginTop:1}}>
+              {ORDER.map(k => <span key={k} style={{marginRight:10}}><b style={{color:COL[k]}}>{rows.filter(r => r.a.interest === k).length}</b> {k}</span>)}
+              {Object.keys(posCount).length > 0 && <> · positions: {GC_POSITIONS.filter(o => posCount[o.key]).map(o => o.key + " " + posCount[o.key]).join(", ")}</>}
+              {Object.keys(cityCount).length > 0 && <> · city: {Object.entries(cityCount).sort((x, y) => y[1] - x[1]).map(([k, n]) => gcLabel(GC_CITIES, k).split(",")[0] + " " + n).join(", ")}</>}
+            </div>
+          </div>
+          <button onClick={csv} style={{padding:"6px 10px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontFamily:"inherit",fontSize:11,fontWeight:700,cursor:"pointer"}}>⬇ CSV</button>
+        </div>
+        <div style={{marginTop:10,borderTop:"1px solid "+C.border}}>
+          {rows.slice().sort((x, y) => ORDER.indexOf(x.a.interest) - ORDER.indexOf(y.a.interest) || x.p.last_name.localeCompare(y.p.last_name)).map(({ a, p }) => (
+            <div key={p.id} style={{display:"flex",gap:10,padding:"8px 0",borderBottom:"1px solid "+C.border,flexWrap:"wrap",alignItems:"baseline"}}>
+              <span style={{fontSize:11,fontWeight:800,color:COL[a.interest],width:44,textTransform:"uppercase"}}>{a.interest}</span>
+              <button onClick={()=>setProfileId(p.id)} style={{background:"none",border:"none",padding:0,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,color:C.text,minWidth:150,textAlign:"left"}}>{p.first_name} {p.last_name}</button>
+              <span style={{fontSize:11,color:C.mut,minWidth:80}}>{p.team_assignment}</span>
+              <span style={{fontSize:11,color:C.text,flex:1,minWidth:220}}>
+                {a.interest !== "no" && <>{(a.positions || []).join(", ")} · {gcLabel(GC_TRAVEL, a.travel)}{a.travelers ? " (" + a.travelers + ")" : ""}{a.city ? " · " + gcLabel(GC_CITIES, a.city).split(",")[0] : ""}{a.passport ? " · passport " + a.passport : ""}</>}
+                {a.questions && <div style={{color:C.mut,marginTop:2}}>“{a.questions}” — {a.respondent_name}</div>}
+              </span>
+            </div>
+          ))}
+        </div>
       </div>
     );
   }

@@ -44,6 +44,7 @@ Teams are named like "15 Diamond", "12 Ruby", "11 Rise 1" (age then color; Diamo
 
 players: one row per player. team_assignment is the team; the CURRENT roster of a team is players where team_assignment = team AND offer_status NOT IN ('declined','not_invited','opted_out') (roster_status is not reliable). Parent contacts: parent_name, parent_email, parent_email2, parent_email3, parent_phone, parent2_name, parent2_phone; player_email/player_phone. Other useful columns: dob, primary_position, secondary_position, jersey_number, school_team, tryout_number, rise_tryout, offer_status (accepted/made/locked/declined/not_invited/opted_out), notes, parent_feedback_notes, scores (jsonb of 1-5 skill ratings), projected_team.
 player_commitments(player_id, season, player_signed_at, parent_signed_at, player_attended, parent_attended): the signed commitment. Unsigned = no row or a null signed_at.
+global_challenge_interest(player_id, interest yes/maybe/no, positions text[], travel solo/parent/family/unsure, travelers, city, passport, respondent_name, questions, updated_at): the 2027 Girls Global Challenge (Croatia, U17) interest form sent to 14/15 Diamond and Ruby. No row = hasn't answered.
 player_gear_orders(player_id, team_name, sizes…, shoe_size, details_confirmed, needs_fitting, is_draft): uniform sizes.
 player_incidents(player_id, team_name, kind, summary, status, urgency, occurred_on): issues.
 player_evaluations(player_id, team_name, season, scores jsonb, strengths, focus, goal, coach_name).
