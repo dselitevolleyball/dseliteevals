@@ -15,7 +15,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import {
-  GC_PRICE, GC_SINGLE_SUPPLEMENT, GC_ITINERARY, GC_CITIES, GC_INTEREST,
+  GC_PRICE, GC_SINGLE_SUPPLEMENT, GC_FAMILY_PRICE, GC_ITINERARY, GC_CITIES, GC_INTEREST,
   GC_POSITIONS, GC_TRAVEL,
 } from "../shared/global-challenge.js";
 
@@ -238,15 +238,24 @@ export default async function handler(req, res) {
         Mick Haley (Hunter's dad) has been at it every year for the last six.</p>
       <p>We'd enter the <b style="color:var(--ink)">U17 division</b>, so we're asking our 14 and 15 National and Regional
         players first to see if there are enough to field a team.</p>
+      <p>The timing is ideal for Texas club players. It starts right after club tryouts and gets everyone
+        home before school tryouts.</p>
       <p>Think of it as a school trip more than a family vacation. The girls travel, eat, play and
-        sightsee together as a team. Families are very welcome to come too.</p>
+        sightsee together as a team.</p>
+      <p>Families are more than welcome to come. During the day the players are mostly with the team for
+        scrimmages and matches, so families are free to explore the city on their own. Group sightseeing
+        we all do together.</p>
     </div>
 
     <div class="card">
       <p class="sect">The plan</p>
       <ul class="it">${GC_ITINERARY.map((d) => `<li><span class="d">${esc(d.when)}</span><span>${esc(d.what)}</span></li>`).join("")}</ul>
-      <p style="margin-top:12px;color:var(--mut);font-size:.9rem">We'll pick one European city to fly into for the pre-tour.
-        The options are below, and we'd like your vote.</p>
+    </div>
+
+    <div class="card">
+      <p class="sect">Pre-tour options</p>
+      <p>We'll fly into one of these cities for the first three days. Vote for your favorite on the form below.</p>
+      <ul class="it">${GC_CITIES.filter((c) => c.blurb).map((c) => `<li><span><b style="color:var(--ink)">${esc(c.label)}</b><br><span style="color:var(--mut);font-size:.9rem">${esc(c.blurb)}</span></span></li>`).join("")}</ul>
     </div>
 
     <div class="card">
@@ -257,9 +266,10 @@ export default async function handler(req, res) {
         <li>Meals</li>
         <li>Tournament entry</li>
         <li>Team sightseeing</li>
+        <li>Travel between cities in Europe</li>
       </ul>
-      <p style="color:var(--mut);font-size:.9rem">A private room is ${money(GC_SINGLE_SUPPLEMENT)} extra. If family members come along,
-        we'll send you their pricing once we know how many are interested.</p>
+      <div class="price" style="margin-top:14px"><b style="font-size:1.8rem">${money(GC_FAMILY_PRICE)}</b><span>per parent or family member, plus airfare</span></div>
+      <p style="color:var(--mut);font-size:.9rem">A private room is ${money(GC_SINGLE_SUPPLEMENT)} extra.</p>
     </div>
 
     <div class="note"><b>This isn't a commitment.</b> We're only checking interest. Nothing is owed, and

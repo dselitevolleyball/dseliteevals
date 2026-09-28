@@ -13,24 +13,28 @@ export const GC_PACKAGE = 2595;
 export const GC_CLUB_FEE = 500;
 export const GC_PRICE = GC_PACKAGE + GC_CLUB_FEE;
 export const GC_SINGLE_SUPPLEMENT = 700;
+// Parents and family who come along (Drew, 28 Sep 2026).
+export const GC_FAMILY_PRICE = 2495;
 
 // July 2027, per Cory's 27 Aug 2026 email.
 export const GC_ITINERARY = [
   { when: "July 7", what: "Leave the US as a team" },
-  { when: "July 8", what: "Arrive in our pre-tour city" },
-  { when: "July 9–11", what: "Pre-tour: practices, scrimmages against local clubs, and sightseeing together" },
-  { when: "July 12", what: "Travel to Pula, Croatia · opening ceremonies that evening" },
+  { when: "July 8–10", what: "Three days in our pre-tour city: practices, scrimmages against local clubs, and group sightseeing" },
+  { when: "July 11", what: "One night in Maribor, Slovenia" },
+  { when: "July 12", what: "On to Pula, Croatia · opening ceremonies that evening" },
   { when: "July 13–16", what: "The tournament, four days, closing ceremonies and party after the final" },
   { when: "July 17", what: "Travel to Venice, Italy" },
   { when: "July 18", what: "Fly home from Venice" },
 ];
 
+// Cory's pre-tour options (email of 28 Sep 2026). Each is three days in the
+// city, then a night in Maribor, then Pula.
 export const GC_CITIES = [
-  { key: "budapest", label: "Budapest, Hungary" },
-  { key: "prague", label: "Prague, Czech Republic" },
-  { key: "vienna", label: "Vienna, Austria / Bratislava, Slovakia" },
-  { key: "milan", label: "Milan, Italy" },
-  { key: "belgrade", label: "Belgrade, Serbia" },
+  { key: "budapest", label: "Budapest, Hungary", blurb: "The Danube, the Parliament building, Buda Castle and the thermal baths" },
+  { key: "prague", label: "Prague, Czech Republic", blurb: "Old Town Square, Charles Bridge and Prague Castle" },
+  { key: "vienna", label: "Vienna, Austria / Bratislava, Slovakia", blurb: "Two capitals an hour apart, with scrimmages alongside a club team from Bratislava" },
+  { key: "milan", label: "Milan, Italy", blurb: "The Duomo, the Galleria and one of Italy's great volleyball regions" },
+  { key: "belgrade", label: "Belgrade, Serbia", blurb: "Less touristy, with a big volleyball culture and the fortress over two rivers. Cory's personal favorite" },
   { key: "any", label: "No preference" },
 ];
 

@@ -18,7 +18,7 @@
 
 import { readFileSync } from "node:fs";
 import { createClient } from "@supabase/supabase-js";
-import { GC_TEAMS, GC_PRICE } from "../shared/global-challenge.js";
+import { GC_TEAMS, GC_PRICE, GC_FAMILY_PRICE } from "../shared/global-challenge.js";
 
 const APP_URL = "https://dseliteevals.vercel.app";
 const SENDER = { name: "Hunter Haley", email: "hunter@drippingsportsclub.com" };
@@ -81,15 +81,21 @@ We've been invited to bring a DS Elite team to the Girls Global Challenge in Cro
 
 The tournament has run for more than 20 years and draws teams from across Europe and beyond. Most of them speak English. My dad, Mick Haley, has been there every year for the last six.
 
+The timing is ideal for Texas club players. It starts right after club tryouts and gets everyone home before school tryouts.
+
 How it works:
 
 - We fly into one European city as a team and spend three days practicing, scrimmaging local clubs and sightseeing.
-- Then we head to Pula, Croatia, for opening ceremonies and a four-day tournament. We'd play in the U17 division.
+- After a night in Maribor, Slovenia, we head to Pula, Croatia, for opening ceremonies and a four-day tournament. We'd play in the U17 division.
 - We finish in Venice and fly home from there.
 
-Think of it as a school trip more than a family vacation. The girls travel, eat, play and sightsee together as a team, and families are very welcome to come along too.
+The pre-tour city options are Budapest, Prague, Vienna/Bratislava (with a Bratislava club team), Milan or Belgrade. The form has a short note on each, and we'd like your vote.
 
-The cost is $${GC_PRICE.toLocaleString("en-US")} per player plus airfare. That covers hotels (players share rooms two or three to a room), meals, tournament entry and team sightseeing.
+Think of it as a school trip more than a family vacation. The girls travel, eat, play and sightsee together as a team.
+
+Families are more than welcome to come. During the day the players are mostly with the team for scrimmages and matches, so families are free to explore the city on their own. Group sightseeing we all do together.
+
+The cost is $${GC_PRICE.toLocaleString("en-US")} per player and $${GC_FAMILY_PRICE.toLocaleString("en-US")} per parent or family member, plus airfare. That covers hotels (players share rooms two or three to a room), meals, tournament entry, team sightseeing and travel between cities in Europe.
 
 There's a short form for ${p.first_name}. It asks whether you're interested, which positions she'd be open to playing, and whether she'd travel on her own or with family:
 
