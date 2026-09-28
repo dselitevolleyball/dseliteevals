@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Clocking In & Time Off — DS Elite</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Source+Sans+3:wght@400;600;700&display=swap">
+<style>
+  :root { --bg:#12100f; --card:#1c1a18; --ink:#f6f2ec; --body:#d5cfc6; --mut:#928b81; --rule:#332f2b; --gold:#e0b455; --pink:#ec3f8e; --grn:#4ade80; --amb:#f59e0b; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html, body { margin:0; height:100%; }
+  body { background:var(--bg); color:var(--body); font-family:"Source Sans 3",system-ui,sans-serif; font-size:17px; line-height:1.5; display:flex; flex-direction:column; }
+  header { padding:16px 18px 6px; max-width:560px; width:100%; margin:0 auto; }
+  .eyebrow { font-size:11px; letter-spacing:.18em; text-transform:uppercase; color:var(--gold); font-weight:700; }
+  .dots { display:flex; gap:6px; margin-top:10px; }
+  .dots i { flex:1; height:4px; border-radius:2px; background:var(--rule); transition:background .25s; }
+  .dots i.on { background:var(--gold); }
+  main { flex:1; max-width:560px; width:100%; margin:0 auto; padding:10px 18px 0; overflow:hidden; position:relative; }
+  .card { display:none; animation:in .25s ease; }
+  .card.on { display:block; }
+  @keyframes in { from { opacity:0; transform:translateX(14px); } to { opacity:1; transform:none; } }
+  .num { font-family:"Barlow Condensed",sans-serif; font-weight:700; color:var(--pink); font-size:15px; letter-spacing:.08em; text-transform:uppercase; }
+  h1 { margin:4px 0 12px; color:var(--ink); font-family:"Barlow Condensed",sans-serif; font-weight:700; font-size:clamp(2rem,9vw,2.6rem); line-height:1; text-transform:uppercase; }
+  p { margin:0 0 14px; }
+  .big { font-size:1.12rem; color:var(--ink); }
+  .step { display:flex; gap:12px; align-items:flex-start; background:var(--card); border:1px solid var(--rule); border-radius:12px; padding:12px 14px; margin-bottom:10px; }
+  .step b { color:var(--ink); }
+  .step .n { flex:0 0 28px; height:28px; border-radius:50%; background:rgba(224,180,85,.16); color:var(--gold); font-weight:800; display:flex; align-items:center; justify-content:center; font-size:14px; }
+  .btn { display:inline-block; padding:2px 9px; border-radius:7px; font-weight:800; font-size:.9em; white-space:nowrap; }
+  .btn.g { background:var(--grn); color:#06240f; }
+  .btn.o { border:1px solid var(--gold); color:var(--gold); }
+  .btn.a { border:1px solid var(--amb); color:var(--amb); }
+  .note { border-left:3px solid var(--gold); padding:4px 0 4px 12px; color:var(--body); margin:14px 0; }
+  .warn { border-left:3px solid var(--pink); padding:4px 0 4px 12px; color:var(--ink); margin:14px 0; font-weight:600; }
+  .two { display:grid; gap:10px; }
+  .pill { background:var(--card); border:1px solid var(--rule); border-radius:12px; padding:12px 14px; }
+  .pill h3 { margin:0 0 4px; color:var(--ink); font-size:1rem; }
+  .pill p { margin:0; font-size:.95rem; }
+  ul.check { list-style:none; padding:0; margin:0 0 16px; }
+  ul.check li { padding:9px 0 9px 30px; border-bottom:1px solid var(--rule); position:relative; }
+  ul.check li:before { content:"✓"; position:absolute; left:4px; color:var(--grn); font-weight:800; }
+  .open { display:block; text-align:center; background:var(--gold); color:#1a1613; font-weight:800; font-size:17px; padding:15px; border-radius:12px; text-decoration:none; margin-top:6px; }
+  footer { max-width:560px; width:100%; margin:0 auto; padding:14px 18px calc(18px + env(safe-area-inset-bottom)); display:flex; gap:10px; }
+  footer button { flex:1; padding:15px; font:inherit; font-weight:800; font-size:16px; border-radius:12px; cursor:pointer; }
+  #back { background:transparent; color:var(--body); border:1px solid var(--rule); }
+  #next { background:var(--gold); color:#1a1613; border:none; }
+  #back[disabled] { opacity:.35; cursor:default; }
+</style>
+</head>
+<body>
+<header>
+  <div class="eyebrow">DS Elite coaches · 2-minute walkthrough</div>
+  <div class="dots" id="dots"></div>
+</header>
+
+<main id="cards">
+
+  <section class="card on">
+    <div class="num">Why it matters</div>
+    <h1>Your time card is the app</h1>
+    <p class="big">Every hour you're paid for comes from one place: clocking in on DS Elite HQ.</p>
+    <div class="two">
+      <div class="pill"><h3>💵 It's how you get paid</h3><p>Hours are approved every Monday for the week before. Not clocked in means not on the sheet.</p></div>
+      <div class="pill"><h3>🏐 It's how we know the team was covered</h3><p>The directors see who's in the gym. A missing clock-in looks like nobody was there.</p></div>
+      <div class="pill"><h3>⏱ It takes ten seconds</h3><p>One tap when you walk in. Here's exactly how.</p></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="num">Step 1 · On the day</div>
+    <h1>Tap “I'm here”</h1>
+    <div class="step"><div class="n">1</div><div>Open <b>DS Elite HQ</b> and go to <b>Clock In</b>.</div></div>
+    <div class="step"><div class="n">2</div><div>Your shifts for today are listed under <b>Your schedule today</b> — team, time and hours. The next one is marked <b>NEXT UP</b>.</div></div>
+    <div class="step"><div class="n">3</div><div>Tap <span class="btn g">I'm here</span> when you arrive. It opens <b>30 minutes before</b> the start, so you can do it walking in from the car.</div></div>
+    <p class="note">Hours come from the shift, not the moment you tap. Two teams back to back show as one block — one tap covers both. Floating, subbing and S&amp;A hours show up here too.</p>
+  </section>
+
+  <section class="card">
+    <div class="num">Step 2 · Forgot?</div>
+    <h1>Log it the same week</h1>
+    <div class="step"><div class="n">1</div><div>On <b>Clock In</b>, scroll to <b>Log a shift</b>.</div></div>
+    <div class="step"><div class="n">2</div><div>Pick the day you worked. Everything you were scheduled for that day is listed.</div></div>
+    <div class="step"><div class="n">3</div><div>Tap the shift you worked. It's marked late and <b>pays exactly the same</b>.</div></div>
+    <p class="warn">Do it before Monday — that's when last week's hours are approved and sent to payroll.</p>
+  </section>
+
+  <section class="card">
+    <div class="num">Step 3 · Not on the schedule?</div>
+    <h1>Set the hours yourself</h1>
+    <p>Training, a coaches' meeting, covering a team last-minute, a practice that ran long:</p>
+    <div class="step"><div class="n">1</div><div>Under <b>Log a shift</b>, pick what it was — <span class="btn o">Covering a team</span> <span class="btn o">Training</span> <span class="btn o">Floating</span> …</div></div>
+    <div class="step"><div class="n">2</div><div>Pick the team if there is one, then the <b>start</b> and <b>end</b> time. The hours count up as you pick.</div></div>
+    <div class="step"><div class="n">3</div><div>Tap <span class="btn g">Log</span>. It lands on your time card with everything else, and a director checks it before it's approved.</div></div>
+  </section>
+
+  <section class="card">
+    <div class="num">Step 4 · Can't make it?</div>
+    <h1>Tell the app, not just Drew</h1>
+    <div class="two">
+      <div class="pill"><h3>📅 Planned — ask as early as you can</h3><p>Home screen → <span class="btn o">🗓 Request time off</span>, then <b>One practice off</b> (we arrange cover) or <b>Can't work a weekend</b> (so you're not put on that tournament).</p></div>
+      <div class="pill"><h3>🤒 Same day — sick or an emergency</h3><p>On <b>Clock In</b>, find the shift and tap <span class="btn a">Out</span> next to <b>Plan to</b>. The directors get it straight away and start finding cover.</p></div>
+    </div>
+    <p class="warn">Always do it in the app, even if you also text. The app is what tells the sub, and it's what stops you showing up as a no-show on the time card.</p>
+  </section>
+
+  <section class="card">
+    <div class="num">Every Saturday</div>
+    <h1>Your week, by text</h1>
+    <p class="big">Saturday morning you'll get a text and a notification with your week ahead:</p>
+    <div class="step"><div class="n">✓</div><div>Every shift you're working, with the team and the time.</div></div>
+    <div class="step"><div class="n">↔</div><div>Any practice you're <b>covering</b>, and who for.</div></div>
+    <div class="step"><div class="n">✕</div><div>Anything you're <b>not</b> working because someone is covering you — and who.</div></div>
+    <p class="note">Something wrong on it? Reply to that text. That's the fastest way to get it fixed before Sunday.</p>
+  </section>
+
+  <section class="card">
+    <div class="num">That's it</div>
+    <h1>The short version</h1>
+    <ul class="check">
+      <li>Tap <b>I'm here</b> when you arrive — it opens 30 minutes before.</li>
+      <li>Forgot? <b>Log a shift</b> before Monday. Late pays the same.</li>
+      <li>Not on the schedule? <b>Log a shift</b> and set the times.</li>
+      <li>Planned time off: <b>Request time off</b>, as early as you can.</li>
+      <li>Sick on the day: tap <b>Out</b> on the shift.</li>
+      <li>Check your <b>Saturday text</b> and reply if it's wrong.</li>
+    </ul>
+    <a class="open" href="https://dseliteevals.vercel.app/?view=clockin">Open Clock In →</a>
+  </section>
+
+</main>
+
+<footer>
+  <button id="back" type="button">Back</button>
+  <button id="next" type="button">Next</button>
+</footer>
+
+<script>
+(function(){
+  var cards = [].slice.call(document.querySelectorAll('.card'));
+  var dots = document.getElementById('dots'), back = document.getElementById('back'), next = document.getElementById('next');
+  cards.forEach(function(){ dots.appendChild(document.createElement('i')); });
+  var i = 0;
+  function show(n){
+    i = Math.max(0, Math.min(cards.length - 1, n));
+    cards.forEach(function(c, k){ c.classList.toggle('on', k === i); });
+    [].slice.call(dots.children).forEach(function(d, k){ d.classList.toggle('on', k <= i); });
+    back.disabled = i === 0;
+    next.textContent = i === cards.length - 1 ? 'Start over' : 'Next';
+    window.scrollTo(0, 0);
+  }
+  next.addEventListener('click', function(){ show(i === cards.length - 1 ? 0 : i + 1); });
+  back.addEventListener('click', function(){ show(i - 1); });
+  var x0 = null;
+  document.getElementById('cards').addEventListener('touchstart', function(e){ x0 = e.touches[0].clientX; }, { passive:true });
+  document.getElementById('cards').addEventListener('touchend', function(e){
+    if (x0 === null) return; var dx = e.changedTouches[0].clientX - x0; x0 = null;
+    if (Math.abs(dx) > 50) show(i + (dx < 0 ? 1 : -1));
+  });
+  document.addEventListener('keydown', function(e){ if (e.key === 'ArrowRight') show(i + 1); if (e.key === 'ArrowLeft') show(i - 1); });
+  show(0);
+})();
+</script>
+</body>
+</html>

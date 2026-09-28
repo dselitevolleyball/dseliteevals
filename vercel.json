@@ -36,6 +36,10 @@
       "destination": "/api/privates-form"
     },
     {
+      "source": "/coach-guide",
+      "destination": "/coach-guide.html"
+    },
+    {
       "source": "/dssc-texts",
       "destination": "/api/dssc-texts-form"
     }
