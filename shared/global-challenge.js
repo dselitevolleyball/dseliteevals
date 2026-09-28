@@ -5,7 +5,8 @@
 // Organised by Cory Solomon; Hunter runs it for the club. Mick Haley has been
 // to it the last six years.
 
-export const GC_TEAMS = ["14 Diamond", "14 Ruby", "15 Diamond", "15 Ruby"];
+// National teams only (Drew, 28 Sep 2026): Ruby and the other regional tiers are not invited.
+export const GC_TEAMS = ["14 Diamond", "15 Diamond"];
 
 // Cory's package is $2,595 a head. The club adds $500 for its own costs, and
 // families only ever see the total. Airfare is on top of either.
@@ -56,7 +57,7 @@ export const GC_POSITIONS = [
 ];
 
 export const GC_TRAVEL = [
-  { key: "solo", label: "Just the player", sub: "She travels with the team, her coaches and the chaperone" },
+  { key: "solo", label: "Just the player", sub: "She travels with the team, her coaches and a female chaperone or coach" },
   { key: "family", label: "As a family", sub: "At least one parent or family member comes too" },
   { key: "unsure", label: "Not sure yet" },
 ];

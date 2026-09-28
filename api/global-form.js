@@ -241,13 +241,13 @@ export default async function handler(req, res) {
       <p>We've been invited to bring a team to the <b style="color:var(--ink)">Girls Global Challenge</b>, an international
         tournament that has run for more than 20 years. Teams come from across Europe and beyond, and most of them speak English.
         Mick Haley (Hunter's dad) has been at it every year for the last six.</p>
-      <p>We'd enter the <b style="color:var(--ink)">U17 division</b>, so we're asking our 14 and 15 National and Regional
+      <p>We'd enter the <b style="color:var(--ink)">U17 division</b>, so we're inviting our 14 and 15 National team
         players first to see if there are enough to field a team.</p>
       <p>The timing is ideal for Texas club players. It starts right after club tryouts and gets everyone
         home before school tryouts.</p>
       <p>Think of it as a school trip more than a family vacation. The girls travel, eat, play and
         sightsee together as a team. Coach Drew and/or Coach Hunter will lead the team, with a dedicated
-        female chaperone traveling with the girls.</p>
+        female chaperone or coach traveling with the girls.</p>
       <p>Families are more than welcome to come. During the day the players are mostly with the team for
         scrimmages and matches, so families are free to explore the city on their own. Group sightseeing
         we all do together.</p>

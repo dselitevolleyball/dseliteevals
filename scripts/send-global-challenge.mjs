@@ -1,4 +1,4 @@
-// Email 14/15 Diamond and Ruby families the Girls Global Challenge interest form.
+// Email 14 and 15 Diamond (National) families the Girls Global Challenge interest form.
 //
 // One email per player, to all of that player's parent addresses, with the
 // link that opens only her form (/global?t=players.global_token). Families who
@@ -9,7 +9,7 @@
 //
 // Usage:
 //   node scripts/send-global-challenge.mjs                      # dry run
-//   node scripts/send-global-challenge.mjs --team "15 Ruby"     # dry run, one team
+//   node scripts/send-global-challenge.mjs --team "15 Diamond"  # dry run, one team
 //   node scripts/send-global-challenge.mjs --test drew@dselitevolleyball.com --send
 //                                  # the first family's email, sent only to that address
 //   node scripts/send-global-challenge.mjs --send               # actually send
@@ -77,7 +77,7 @@ const greeting = (p) => {
 
 const bodyFor = (p) => `${greeting(p)}
 
-We've been invited to bring a DS Elite team to the Girls Global Challenge in Croatia next summer, July 7–18, 2027, and we're asking our 14 and 15 Diamond and Ruby players first to see if there's enough interest to take one.
+We've been invited to bring a DS Elite team to the Girls Global Challenge in Croatia next summer, July 7–18, 2027, and we're inviting our 14 and 15 National team players to see if there's enough interest to take one.
 
 The tournament has run for more than 20 years and draws teams from across Europe and beyond. Most of them speak English. Mick Haley, Coach Hunter's dad, has been there every year for the last six.
 
@@ -91,7 +91,7 @@ How it works:
 
 The pre-tour city options are Budapest, Prague, Vienna/Bratislava (with a Bratislava club team), Milan or Belgrade. The form has a short note on each, and we'd like your vote.
 
-Think of it as a school trip more than a family vacation. The girls travel, eat, play and sightsee together as a team. Coach Drew and/or Coach Hunter will lead the team, with a dedicated female chaperone traveling with the girls.
+Think of it as a school trip more than a family vacation. The girls travel, eat, play and sightsee together as a team. Coach Drew and/or Coach Hunter will lead the team, with a dedicated female chaperone or coach traveling with the girls.
 
 Families are more than welcome to come. During the day the players are mostly with the team for scrimmages and matches, so families are free to explore the city on their own. Group sightseeing we all do together.
 
