@@ -116,6 +116,10 @@
     {
       "path": "/api/checkin-reminder",
       "schedule": "0 14 * * 1"
+    },
+    {
+      "path": "/api/weekly-schedule",
+      "schedule": "0 15 * * 6"
     }
   ],
   "functions": {
