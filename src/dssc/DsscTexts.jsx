@@ -15,6 +15,7 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import { supabase } from "../supabase";
 import { DS, nrm, fmtDay, Btn, Card, Label, Tag, inputStyle } from "./DsscHub.jsx";
 import { localDateISO } from "../../shared/dssc-clinics.js";
+import { splitSms, SMS_MAX } from "../../shared/sms-split.js";
 
 const last10 = (s) => String(s || "").replace(/\D/g, "").slice(-10);
 const e164 = (s) => { const d = String(s || "").replace(/\D/g, ""); if (d.length === 10) return "+1" + d; if (d.length === 11 && d.startsWith("1")) return "+" + d; return d.length > 10 ? "+" + d : ""; };
@@ -281,7 +282,7 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
                 <input ref={fileRef} type="file" accept="image/*" multiple style={{ display: "none" }} onChange={e => uploadMedia(e.target.files)} />
                 <Btn small onClick={() => fileRef.current?.click()}>📷 Attach photo</Btn>
                 {c.media.map(m => <span key={m.url} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, padding: "3px 8px", borderRadius: 8, border: "1px solid " + DS.line }}><img src={m.url} alt="" style={{ height: 22, borderRadius: 4 }} />{m.name}<button onClick={() => set({ media: c.media.filter(x => x.url !== m.url) })} style={{ background: "none", border: "none", color: DS.mut, cursor: "pointer" }}>✕</button></span>)}
-                <span style={{ fontSize: 11, color: DS.mut }}>{c.body.length} chars · {segments(c.body)} segment{segments(c.body) === 1 ? "" : "s"}{c.media.length ? " · MMS" : ""}</span>
+                <span style={{ fontSize: 11, color: c.body.length > SMS_MAX ? DS.orange : DS.mut, fontWeight: c.body.length > SMS_MAX ? 700 : 400 }}>{c.body.length} chars{c.body.length > SMS_MAX ? ` · too long for one text, goes out as ${splitSms(c.body).length} texts in a row` : ` · ${segments(c.body)} segment${segments(c.body) === 1 ? "" : "s"}`}{c.media.length ? " · MMS" : ""}</span>
                 <div style={{ flex: 1 }} />
                 <Btn kind="primary" disabled={!canSend} onClick={go}>{sending ? "Sending…" : `Send to ${ready.length}`}</Btn>
               </div>

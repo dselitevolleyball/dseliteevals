@@ -11,6 +11,8 @@
 // deals with both has two separate conversations and each screen shows its
 // own.
 
+import { splitSms } from "../../shared/sms-split.js";
+
 export const normalizePhone = (raw) => {
   if (!raw) return "";
   const digits = String(raw).replace(/[^\d+]/g, "");
@@ -72,6 +74,14 @@ export async function threadFor(supabase, r) {
 // meta: { broadcast_id?, sent_by_coach_id?, sent_by_label?, media_urls? }
 // Resolves { message_id, twilio_sid, status, thread_id }; throws with .code / .thread_id on a Twilio refusal.
 export async function sendOneSms(supabase, r, text, meta = {}) {
+  // Over Twilio's 1,600-character cap: send it as numbered parts, in order,
+  // photos riding on the first one. Callers get the last part's result.
+  const parts = splitSms(text);
+  if (parts.length > 1) {
+    let res;
+    for (let i = 0; i < parts.length; i++) res = await sendOneSms(supabase, r, parts[i], i === 0 ? meta : { ...meta, media_urls: [] });
+    return { ...res, parts: parts.length };
+  }
   const { TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN } = process.env;
   const brand = brandOf(r.brand);
   const sender = senderFor(brand);
