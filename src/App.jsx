@@ -22208,8 +22208,20 @@ export default function App() {
     // Practice slots read as PM ("5-6pm" = 17:00). 9, 10 and 11 read as AM,
     // which is how the Rise orientation's 11am–3pm window comes out right.
     const h24 = h => (h === 12 ? 12 : h >= 9 && h <= 11 ? h : h + 12);
-    const startH = sl => { const m=/^\s*(\d{1,2})/.exec(sl||""); if(!m) return 99; return h24(+m[1]); };
-    const endH   = sl => { const m=/-\s*(\d{1,2})/.exec(sl||""); if(!m) return 99; return h24(+m[1]); };
+    // A slot's own am/pm belongs to its END ("7-9pm" ends at 9pm), and the
+    // start sits in the same half of the day unless that would put it after
+    // the end ("11-3pm"). Without this, every evening practice ending at 9
+    // read as over by breakfast and the button said "log it late" all night.
+    const ends = sl => {
+      const m = /^\s*(\d{1,2})(?::(\d{2}))?\s*-\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i.exec(sl||"");
+      if (!m) return [99, 99];
+      let s = +m[1] + (+(m[2]||0))/60, e = +m[3] + (+(m[4]||0))/60;
+      if (m[5]) { const pm = /p/i.test(m[5]); const fx = (h, p) => (h % 12) + (p ? 12 : 0); e = fx(e, pm); s = fx(s, pm); if (s >= e) s = fx(s, !pm); }
+      else { s = h24(Math.floor(s)) + (s % 1); e = h24(Math.floor(e)) + (e % 1); }
+      return [s, e];
+    };
+    const startH = sl => ends(sl)[0];
+    const endH   = sl => ends(sl)[1];
     // Match the logged-in coach against the free-text coach names used in the
     // schedule / floater tables.
     const cand = new Set();
@@ -22518,7 +22530,16 @@ export default function App() {
         )}
 
         {!compact && (<>
-        {/* Clock in for another day — always-available past-shift logger. */}
+        {/* The rules, in plain words, on the screen where they're needed. */}
+        <div style={{...St.card,border:"1px solid rgba(224,180,85,0.5)",background:"rgba(224,180,85,0.05)"}}>
+          <div style={St.lbl}>How clocking in works</div>
+          <div style={{display:"grid",gridTemplateColumns:isNarrow?"1fr":"1fr 1fr 1fr",gap:12,fontSize:12,color:C.text,lineHeight:1.5}}>
+            <div><b style={{color:C.gold}}>1 · On the day</b><br/>Your shifts show under <b>Your schedule today</b>. Tap <b>I'm here</b> when you arrive — it opens 30 minutes before the start. Hours are counted from the shift, not the tap.</div>
+            <div><b style={{color:C.gold}}>2 · Forgot?</b><br/>Any shift stays on this screen for 14 days. Pick the day under <b>Log a shift</b> and tap the one you worked. It's marked late, but it pays the same.</div>
+            <div><b style={{color:C.gold}}>3 · Something not listed?</b><br/>Training, a meeting, covering a team, hours that ran long: use <b>Log a shift</b>, set the start and end time yourself, and it goes to the directors with the rest.</div>
+          </div>
+        </div>
+        {/* Log a shift — any day, any time; the always-available manual logger. */}
         {(() => {
           const iso = pastShift.date || today;
           const sched = slotsForDate(iso);
@@ -22537,10 +22558,10 @@ export default function App() {
           };
           return (
             <div style={St.card}>
-              <div style={St.lbl}>Clock in for another day</div>
+              <div style={St.lbl}>Log a shift — any day, any time</div>
               <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:10}}>
                 <input type="date" max={today} value={iso} onChange={e=>setPastShift(s=>({...s,date:e.target.value}))} style={St.sel} />
-                <span style={{fontSize:11,color:C.mut}}>Pick a day you worked but didn't clock in.</span>
+                <span style={{fontSize:11,color:C.mut}}>Pick the day. Anything scheduled for you that day is listed first — or set the hours yourself below.</span>
               </div>
               {sched.length>0 && (
                 <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:10}}>
@@ -22561,24 +22582,61 @@ export default function App() {
                   })}
                 </div>
               )}
-              <div style={{fontSize:10,fontWeight:800,textTransform:"uppercase",letterSpacing:0.3,color:C.mut,marginBottom:6}}>{sched.length>0 ? "Or log it manually" : "No scheduled shift found that day — log it manually"}</div>
-              <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                <div style={{display:"flex",borderRadius:8,overflow:"hidden",border:"1px solid "+C.border}}>
-                  {[["scheduled","Scheduled"],["sub","Sub"],["float","Float"]].map(([r,l]) => (
-                    <button key={r} onClick={()=>setPastShift(s=>({...s,role:r}))} style={{padding:"6px 12px",border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700,background:pastShift.role===r?C.gold:"transparent",color:pastShift.role===r?"#000":C.mut}}>{l}</button>
-                  ))}
-                </div>
-                {pastShift.role!=="float" && (
-                  <select value={pastShift.team} onChange={e=>setPastShift(s=>({...s,team:e.target.value}))} style={St.sel}>
-                    <option value="">— team —</option>
-                    {teamOpts.map(tn => <option key={tn} value={tn}>{tn}</option>)}
-                  </select>
-                )}
-                <select value={manualSlot} onChange={e=>setPastShift(s=>({...s,slot:e.target.value}))} style={St.sel}>
-                  {slotOpts.map(x => <option key={x} value={x}>{x} · {slotHours(x)}h</option>)}
-                </select>
-                <button style={St.here} disabled={checkinBusy===(iso+"|"+((pastShift.role==="float"?"float":pastShift.team)||"")+"|"+manualSlot+"|"+pastShift.role)} onClick={logManual}>⏱ Log shift</button>
-              </div>
+              <div style={{fontSize:10,fontWeight:800,textTransform:"uppercase",letterSpacing:0.3,color:C.mut,marginBottom:6}}>{sched.length>0 ? "Or set the hours yourself" : "Nothing scheduled for you that day — set the hours yourself"}</div>
+              {(() => {
+                // Start and end as clock times, in quarter hours from 6am to
+                // 10pm. The slot string and the hours come from those two
+                // picks, so a 5:30–7 sub or a 90-minute training is logged as
+                // what it was, instead of the nearest practice block.
+                const TIMES = Array.from({ length: 65 }, (_, i) => { const m = 6 * 60 + i * 15; return String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0"); });
+                const nice = (t) => { const [h, m] = t.split(":").map(Number); const h12 = h % 12 === 0 ? 12 : h % 12; return h12 + (m ? ":" + String(m).padStart(2, "0") : "") + (h >= 12 ? "pm" : "am"); };
+                const mins = (t) => { const [h, m] = t.split(":").map(Number); return h * 60 + m; };
+                const toSlot = (st, en) => { const f = (t) => { const [h, m] = t.split(":").map(Number); const h12 = h % 12 === 0 ? 12 : h % 12; return h12 + (m ? ":" + String(m).padStart(2, "0") : ""); }; return f(st) + "-" + f(en) + (mins(en) >= 12 * 60 ? "pm" : "am"); };
+                const st = pastShift.start || (manualSlot ? String(Math.floor(startH(manualSlot))).padStart(2, "0") + ":" + String(Math.round((startH(manualSlot) % 1) * 60)).padStart(2, "0") : "17:00");
+                const en = pastShift.end || (manualSlot ? String(Math.floor(endH(manualSlot))).padStart(2, "0") + ":" + String(Math.round((endH(manualSlot) % 1) * 60)).padStart(2, "0") : "19:00");
+                const hrs = Math.max(0, Math.round((mins(en) - mins(st)) / 6) / 10);
+                const role = pastShift.role || "scheduled";
+                const needsTeam = ["scheduled", "sub", "orientation"].includes(role);
+                const teamList = role === "scheduled" ? myTeamNames : practiceTeams.map(t => t.team_name);
+                const ROLES = [["scheduled","My team's practice"],["sub","Covering a team"],["float","Floating"],["training","Training"],["orientation","Orientation"],["other","Other"]];
+                const go = async () => {
+                  if (needsTeam && !pastShift.team) { window.alert("Pick the team."); return; }
+                  if (hrs <= 0) { window.alert("The end time has to be after the start."); return; }
+                  await doCheckin({ team: needsTeam ? pastShift.team : "", slot: toSlot(st, en), role, dateISO: iso, force: true });
+                };
+                return (
+                  <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                    <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                      {ROLES.map(([r, l]) => (
+                        <button key={r} onClick={()=>setPastShift(s=>({...s,role:r}))} style={{padding:"6px 12px",borderRadius:999,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700,border:"1px solid "+(role===r?C.gold:C.border),background:role===r?"rgba(224,180,85,0.16)":"transparent",color:role===r?C.gold:C.mut}}>{l}</button>
+                      ))}
+                    </div>
+                    <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                      {needsTeam && (
+                        <select value={pastShift.team} onChange={e=>setPastShift(s=>({...s,team:e.target.value}))} style={St.sel}>
+                          <option value="">— team —</option>
+                          {teamList.map(tn => <option key={tn} value={tn}>{tn}</option>)}
+                        </select>
+                      )}
+                      <span style={{fontSize:11,color:C.mut}}>from</span>
+                      <select value={st} onChange={e=>setPastShift(s=>({...s,start:e.target.value}))} style={St.sel}>{TIMES.map(t => <option key={t} value={t}>{nice(t)}</option>)}</select>
+                      <span style={{fontSize:11,color:C.mut}}>to</span>
+                      <select value={en} onChange={e=>setPastShift(s=>({...s,end:e.target.value}))} style={St.sel}>{TIMES.map(t => <option key={t} value={t}>{nice(t)}</option>)}</select>
+                      <span style={{fontSize:12,fontWeight:800,color:hrs>0?C.grn:C.red}}>{hrs}h</span>
+                      <button style={St.here} disabled={checkinBusy===(iso+"|"+((needsTeam?pastShift.team:"")||"float")+"|"+toSlot(st,en)+"|"+role)} onClick={go}>⏱ Log {hrs > 0 ? hrs + "h" : "shift"}</button>
+                    </div>
+                    {slotOpts.length > 0 && (
+                      <div style={{display:"flex",gap:5,flexWrap:"wrap",alignItems:"center"}}>
+                        <span style={{fontSize:10,color:C.mut}}>Quick pick:</span>
+                        {slotOpts.map(x => (
+                          <button key={x} onClick={()=>setPastShift(s=>({...s, start: String(Math.floor(startH(x))).padStart(2,"0")+":"+String(Math.round((startH(x)%1)*60)).padStart(2,"0"), end: String(Math.floor(endH(x))).padStart(2,"0")+":"+String(Math.round((endH(x)%1)*60)).padStart(2,"0") }))}
+                            style={{padding:"3px 9px",borderRadius:999,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontFamily:"inherit",fontSize:11,fontWeight:700,cursor:"pointer"}}>{x}</button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           );
         })()}
