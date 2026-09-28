@@ -1367,10 +1367,21 @@ function localDateISO(d){ const x = d ? new Date(d) : new Date(); return new Dat
 // Hours a slot is worth — this sets timesheet hours when a coach clocks in, so a
 // slot it can't parse costs someone real money. Handles half hours ("5:30-7:30pm").
 function slotHours(slot){
-  const m = /^\s*(\d{1,2}(?::\d{2})?)\s*-\s*(\d{1,2}(?::\d{2})?)\s*(?:am|pm)?\s*$/i.exec(slot||"");
+  const m = /^\s*(\d{1,2}(?::\d{2})?)\s*-\s*(\d{1,2}(?::\d{2})?)\s*(am|pm)?\s*$/i.exec(slot||"");
   if(!m) return 0;
-  const start = parseSlotClock(m[1]), end = parseSlotClock(m[2]);
+  let start = parseSlotClock(m[1]), end = parseSlotClock(m[2]);
   if (start == null || end == null) return 0;
+  // The slot's own am/pm belongs to the END ("7-9pm" ends at 9pm, not 9am —
+  // the morning guess for 9/10/11 above is only for slots with no meridiem,
+  // and it zeroed every evening practice ending at 9). The start is the same
+  // half of the day unless that would put it after the end ("11-3pm").
+  if (m[3]) {
+    const pm = /p/i.test(m[3]);
+    const fix = (mins, wantPm) => { const h = Math.floor(mins / 60) % 12; return (wantPm ? h + 12 : h) * 60 + (mins % 60); };
+    end = fix(end, pm);
+    start = fix(start, pm);
+    if (start >= end) start = fix(start, !pm);
+  }
   return Math.max(0, Math.round((end - start) / 6) / 10);
 }
 // Monday (week start) for a date, as YYYY-MM-DD.
@@ -24514,6 +24525,43 @@ export default function App() {
       else { await supabase.from("hours_reminder_excludes").delete().eq("coach_name", name); }
       await loadHoursExcludes();
     };
+    // Who actually stood in for an absent coach: a sub clocked in on her team
+    // that day, or a floater clocked in over the same hours. Read from the
+    // check-ins, so it's true whether or not anyone recorded the absence.
+    // [start, end] in minutes for a slot, using the same reading slotHours uses.
+    const spanOf = (slot) => {
+      const m = /^\s*(\d{1,2}(?::\d{2})?)\s*-/.exec(slot || ""); const h = slotHours(slot);
+      if (!m || !h) return null;
+      let st = parseSlotClock(m[1]); if (st == null) return null;
+      if (/pm\s*$/i.test(slot)) { st = ((Math.floor(st / 60) % 12) + 12) * 60 + (st % 60); if (st + h * 60 > 24 * 60) st -= 12 * 60; }
+      return [st, st + h * 60];
+    };
+    const overlaps = (a, b) => { const x = spanOf(a), y = spanOf(b); return !!(x && y && x[0] < y[1] && y[0] < x[1]); };
+    const coveredBy = (d) => {
+      const names = new Set();
+      checkins.filter(c => c.check_date === d.date && c.status !== "absent").forEach(c => {
+        if (c.role === "sub" && c.team_name === d.team) names.add(canonicalName(c.coach_name, c.coach_email) + " (sub)");
+        else if (c.role === "float" && overlaps(c.slot, d.slot)) names.add(canonicalName(c.coach_name, c.coach_email) + " (float)");
+      });
+      return [...names];
+    };
+    // "She called out and told me, not the app." Records the absence for each
+    // missed day — with who covered, if anyone — so it stops being flagged and
+    // the week's story is on the coverage board where the reminder reads it.
+    const calledOut = async (m) => {
+      const suggest = [...new Set(m.days.flatMap(coveredBy))].map(x => x.replace(/ \((sub|float)\)$/, ""));
+      const reason = window.prompt("Record " + m.coach + " as called out for " + m.days.map(d => new Date(d.date+"T12:00:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"}) + " " + d.team).join(", ") + ".\n\nReason (sick, family, no-show…):", "");
+      if (reason === null) return;
+      const sub = window.prompt("Who covered? Leave blank if nobody did." + (suggest.length ? "\n\nClocked in for that team/time: " + suggest.join(", ") : ""), suggest[0] || "");
+      if (sub === null) return;
+      const rows = m.days.map(d => ({ practice_date: d.date, team_name: d.team, slot: d.slot || null, phase: phaseForDate(d.date) || "season", coach_out: m.coach, sub_name: sub.trim() || null, note: reason.trim() || null }));
+      for (const r of rows) await supabase.from("practice_coverage").delete().eq("practice_date", r.practice_date).eq("team_name", r.team_name).eq("coach_out", r.coach_out);
+      const { error } = await supabase.from("practice_coverage").insert(rows);
+      if (error) { window.alert("Couldn't record it: " + error.message); return; }
+      await loadPracticeCoverage();
+    };
+    const calledOutThisWeek = practiceCoverage.filter(c => c.practice_date >= wkStart && c.practice_date <= wkEnd)
+      .sort((a, b) => a.practice_date.localeCompare(b.practice_date) || a.team_name.localeCompare(b.team_name));
 
     return (
       <div style={{maxWidth:1100, margin:"0 auto"}}>
@@ -24560,12 +24608,35 @@ export default function App() {
                 {missingList.map(m => (
                   <div key={m.coach} style={{display:"flex",alignItems:"center",gap:8,fontSize:12,color:C.text,flexWrap:"wrap"}}>
                     <span style={{fontWeight:800,minWidth:130}}>{m.coach}</span>
-                    <span style={{flex:1,color:C.mut}}>{m.days.map(d => new Date(d.date+"T12:00:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"})+" · "+d.team).join("  ·  ")}</span>
-                    <button style={{...St.ghost,padding:"3px 10px",color:C.acc,borderColor:C.acc}} onClick={()=>addMissingShifts(m)} title="Log this coach's missed shift(s) with the right date and hours">+ Add shift</button>
-                    <button style={{...St.ghost,padding:"3px 10px"}} onClick={()=>muteCoach(m.coach, true)} title="Stop flagging this coach in reminders">🔕 Mute</button>
+                    <span style={{flex:1,color:C.mut}}>
+                      {m.days.map((d, i) => { const cov = coveredBy(d); return (
+                        <span key={i}>{i > 0 ? "  ·  " : ""}{new Date(d.date+"T12:00:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"})} · {d.team}
+                          {cov.length > 0 ? <span style={{color:C.grn}}> — covered by {cov.join(", ")}</span> : <span style={{color:"#f59e0b"}}> — nobody covered</span>}
+                        </span>
+                      ); })}
+                    </span>
+                    <button style={{...St.ghost,padding:"3px 10px",color:C.acc,borderColor:C.acc}} onClick={()=>addMissingShifts(m)} title="She was there — log the shift with the right date and hours">+ Was there</button>
+                    <button style={{...St.ghost,padding:"3px 10px",color:"#f59e0b",borderColor:"#f59e0b"}} onClick={()=>calledOut(m)} title="She was out — record the absence and who covered, so this stops being flagged">Called out</button>
+                    <button style={{...St.ghost,padding:"3px 10px"}} onClick={()=>muteCoach(m.coach, true)} title="Stop flagging this coach in reminders for good (leave, stipend-only). For a one-off absence use Called out.">🔕 Mute</button>
                   </div>
                 ))}
               </div>
+            )}
+            {calledOutThisWeek.length > 0 && (
+              <details style={{marginTop:8}} open>
+                <summary style={{fontSize:11,color:C.mut,cursor:"pointer",fontWeight:700}}>Called out this week ({calledOutThisWeek.length})</summary>
+                <div style={{display:"flex",flexDirection:"column",gap:4,marginTop:6}}>
+                  {calledOutThisWeek.map(c => (
+                    <div key={c.id || (c.practice_date + c.team_name + c.coach_out + c.slot)} style={{display:"flex",alignItems:"center",gap:8,fontSize:11,flexWrap:"wrap"}}>
+                      <span style={{fontWeight:800,color:C.text,minWidth:130}}>{c.coach_out}</span>
+                      <span style={{color:C.mut}}>{new Date(c.practice_date+"T12:00:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"})} · {c.team_name}{c.slot ? " · " + c.slot : ""}</span>
+                      <span style={{color:c.sub_name||c.combine_with_team?C.grn:"#f59e0b",fontWeight:700}}>{c.sub_name ? "covered by " + c.sub_name : c.combine_with_team ? "combined with " + c.combine_with_team : "no cover"}</span>
+                      {c.note && <span style={{color:C.mut,fontStyle:"italic"}}>“{c.note}”</span>}
+                      <button style={{...St.ghost,padding:"2px 8px",fontSize:10}} onClick={()=>clearCoverage(c.practice_date, c.team_name, c.slot, c.phase, c.coach_out)} title="Remove this absence">✕</button>
+                    </div>
+                  ))}
+                </div>
+              </details>
             )}
             {hoursExcludes.length>0 && (
               <details style={{marginTop:missingList.length?10:2}}>
