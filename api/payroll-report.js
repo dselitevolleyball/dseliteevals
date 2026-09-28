@@ -42,7 +42,7 @@ export default async function handler(req, res) {
 
   // Allowed either by the cron secret, or by an admin's Supabase session token
   // (so Time Cards can approve + send any week on demand).
-  let authed = !!CRON_SECRET && (bearer === CRON_SECRET || urlToken === CRON_SECRET);
+  let authed = (!!CRON_SECRET && (bearer === CRON_SECRET || urlToken === CRON_SECRET)) || (!!bearer && bearer === SUPABASE_SERVICE_ROLE_KEY);
   let approverEmail = null, approverName = null;
   if (!authed && bearer) {
     const { data: { user } = {} } = await supabase.auth.getUser(bearer).catch(() => ({ data: {} }));
@@ -57,6 +57,12 @@ export default async function handler(req, res) {
   }
   if (!authed) return res.status(403).json({ error: "Forbidden" });
   const approvedBy = approverName || approverEmail; // null when run by the cron
+  // ?to=a@x,b@y sends this week's time cards to just those people, for their
+  // records. It is NOT an approval: the subject and body say so, and the
+  // bookkeepers are not copied.
+  const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  const shareTo = String(url?.searchParams.get("to") || "").split(",").map(x => x.trim().toLowerCase()).filter(x => EMAIL_RE.test(x));
+  const sharing = shareTo.length > 0;
 
   // Report window: the Mon–Sun week BEFORE the current week (Central time).
   // ?week=YYYY-MM-DD reports the week containing that date instead.
@@ -122,7 +128,9 @@ export default async function handler(req, res) {
     .map(s => `<tr${s.late ? ' style="background:#fff7ed"' : ""}><td ${td}>${escapeHtml(g.coach)}</td><td ${td}>${escapeHtml(fmtD(s.date))}</td><td ${td}>${escapeHtml(s.team)}</td><td ${td}>${escapeHtml(s.slot)}</td><td ${td}>${escapeHtml(s.role)}</td><td ${tdR}>${s.hours}</td><td ${tdR}>${s.rate != null ? "$" + s.rate : "—"}</td><td ${tdR}>${s.amount != null ? money(s.amount) : "—"}</td><td ${td}>${s.paid ? "✓ paid" : "unpaid"}${s.late ? ' · <span style="color:#b45309;font-weight:700">⏱ late</span>' : ""}</td></tr>`).join("")).join("");
 
   const approvedBadge = `<span style="display:inline-block;background:#16a34a;color:#fff;font-size:12px;font-weight:700;border-radius:5px;padding:2px 9px;letter-spacing:.3px">✓ APPROVED</span>`;
-  const approvedLine = `<p style="margin:0 0 12px;color:#555;font-size:12px">${approvedBadge} &nbsp;Approved${approvedBy ? " by " + escapeHtml(approvedBy) : ""} — pay these hours.</p>`;
+  const approvedLine = sharing
+    ? `<p style="margin:0 0 12px;color:#555;font-size:12px">Time cards for your records — this is not the payroll approval.</p>`
+    : `<p style="margin:0 0 12px;color:#555;font-size:12px">${approvedBadge} &nbsp;Approved${approvedBy ? " by " + escapeHtml(approvedBy) : ""} — pay these hours.</p>`;
   const html = rows.length === 0
     ? `<div style="font-family:sans-serif;font-size:14px"><h2 style="margin:0 0 6px">DS Elite payroll — ${rangeLabel} ${approvedBadge}</h2>${approvedLine}<p>No coach hours were logged this week.</p></div>`
     : `<div style="font-family:sans-serif;font-size:14px">
@@ -137,7 +145,7 @@ export default async function handler(req, res) {
         <p style="margin-top:14px;font-size:12px;color:#777">Head-coach shifts pay the HC rate; assisting, subbing, and floating pay the default rate. Full ledger: DS Elite HQ → Operations → Time Cards.</p>
       </div>`;
 
-  const approvedText = `APPROVED${approvedBy ? " by " + approvedBy : ""} — pay these hours.\n`;
+  const approvedText = sharing ? `Time cards for your records — this is not the payroll approval.\n` : `APPROVED${approvedBy ? " by " + approvedBy : ""} — pay these hours.\n`;
   const text = rows.length === 0
     ? `DS Elite payroll ${rangeLabel} — ${approvedText}No coach hours logged.`
     : `DS Elite payroll — ${rangeLabel}\n${approvedText}` + rows.map(g => `${g.coach}: ${g.hours}h · ${g.missingRate ? "rate missing" : money(g.amount)} (${g.missingRate ? "—" : money(g.unpaidAmount)} unpaid)${g.lateCount ? ` [${g.lateCount} late]` : ""}`).join("\n") + `\nTOTAL: ${totHours}h · ${money(totAmount)} (${money(totUnpaid)} unpaid)${totLate ? ` · ${totLate} late clock-in(s)` : ""}`;
@@ -151,14 +159,14 @@ export default async function handler(req, res) {
   csvLines.push(["", "TOTAL", "", "", "", totHours, "", totAmount.toFixed(2), "", ""].join(","));
   const csv = csvLines.join("\n");
 
-  const to = (PAYROLL_REPORT_TO ? PAYROLL_REPORT_TO.split(",").map(s => s.trim()).filter(Boolean) : DEFAULT_TO);
+  const to = sharing ? shareTo : (PAYROLL_REPORT_TO ? PAYROLL_REPORT_TO.split(",").map(s => s.trim()).filter(Boolean) : DEFAULT_TO);
   const replyTo = (DSE_REPLY_TO || DSE_FROM_EMAIL).trim();
   const resp = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: { Authorization: `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       from: DSE_FROM_EMAIL, to, reply_to: replyTo,
-      subject: `APPROVED — DS Elite payroll ${rangeLabel} (${totHours}h · ${money(totAmount)})`, html, text,
+      subject: (sharing ? `DS Elite time cards ${rangeLabel}` : `APPROVED — DS Elite payroll ${rangeLabel}`) + ` (${totHours}h · ${money(totAmount)})`, html, text,
       attachments: [{ filename: `dse_hours_${weekStart}.csv`, content: Buffer.from(csv, "utf8").toString("base64") }],
     }),
   });
