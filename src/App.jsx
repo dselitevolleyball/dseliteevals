@@ -2608,7 +2608,7 @@ export default function App() {
   const loadCoachPrivates = useCallback(async () => {
     const [a, b] = await Promise.all([
       supabase.from("coach_privates").select("*"),
-      supabase.from("coach_privates_asks").select("coach_id, month, channels, is_test, sent_at").order("sent_at", { ascending: false }).limit(2000),
+      supabase.from("coach_privates_asks").select("coach_id, month, channels, is_test, sent_at, kind").order("sent_at", { ascending: false }).limit(2000),
     ]);
     if (a.error) console.error("Load coach_privates error:", a.error); else setCoachPrivates(a.data || []);
     if (b.error) console.error("Load coach_privates_asks error:", b.error); else setCoachPrivatesAsks(b.data || []);
@@ -11027,6 +11027,9 @@ export default function App() {
       return { c, cur, latest, interest, hours: hoursOf(cur), ask: lastAsk.get(c.id) || null };
     });
     const yes = rows.filter(r => r.interest === true), no = rows.filter(r => r.interest === false), none = rows.filter(r => r.interest == null);
+    // Asked this month, no answer either way — who a reminder goes to.
+    const askedIds = new Set(coachPrivatesAsks.filter(a => a.month === month && !a.is_test).map(a => a.coach_id));
+    const toRemind = rows.filter(r => r.interest !== false && !(r.cur && r.cur.interested != null) && askedIds.has(r.c.id));
     const answeredMonth = rows.filter(r => r.cur && r.cur.interested != null).length;
     const shown = rows.filter(r => privFilter === "all" ? true : privFilter === "yes" ? r.interest === true : privFilter === "no" ? r.interest === false : r.interest == null)
       .sort((a, b) => (b.hours - a.hours) || a.c.name.localeCompare(b.c.name));
@@ -11098,6 +11101,15 @@ export default function App() {
             style={{padding:"8px 14px",borderRadius:8,border:"none",background:"#22d3ee",color:"#04252b",fontFamily:"inherit",fontSize:12,fontWeight:800,cursor:"pointer"}}>
             {privBusy === "send=1" ? "Sending…" : "Send the " + monthLabel(month).split(" ")[0] + " ask to coaches"}
           </button>
+          <button onClick={()=>call("test=1&reminder=1&channels=sms,push")} disabled={!!privBusy}
+            title="Sends the reminder text and notification to you only, worded exactly as a coach would get it"
+            style={{padding:"8px 14px",borderRadius:8,border:"1px solid #f59e0b",background:"transparent",color:"#f59e0b",fontFamily:"inherit",fontSize:12,fontWeight:800,cursor:"pointer"}}>
+            {privBusy === "test=1&reminder=1&channels=sms,push" ? "Sending…" : "📱 Test the reminder"}
+          </button>
+          <button onClick={()=>call("reminder=1&channels=sms,push", "Remind the " + toRemind.length + " coach" + (toRemind.length===1?"":"es") + " who were asked and haven't answered, by text and app notification?\n\nIt tells them they'll keep being asked each month until they answer, and that tapping \"Not right now\" stops it.\n\n" + toRemind.map(r => "• " + r.c.name).join("\n"))} disabled={!!privBusy || !toRemind.length}
+            style={{padding:"8px 14px",borderRadius:8,border:"none",background:toRemind.length?"#f59e0b":C.border,color:toRemind.length?"#000":C.mut,fontFamily:"inherit",fontSize:12,fontWeight:800,cursor:toRemind.length?"pointer":"default"}}>
+            {privBusy === "reminder=1&channels=sms,push" ? "Sending…" : "🔔 Remind the " + toRemind.length + " who haven't answered"}
+          </button>
           <div style={{flex:1}} />
           <button onClick={exportCsv}
             style={{padding:"8px 14px",borderRadius:8,border:"none",background:C.gold,color:"#1a1613",fontFamily:"inherit",fontSize:12,fontWeight:800,cursor:"pointer"}}>⬇ Playbook sheet (CSV)</button>
@@ -11119,7 +11131,7 @@ export default function App() {
                 <div style={{minWidth:190}}>
                   <div style={{fontSize:13,fontWeight:800,color:C.text}}>{c.name}</div>
                   <div style={{fontSize:10,color:C.mut,marginTop:2}}>
-                    {ask ? "asked " + ago(ask.sent_at) + " (" + (ask.channels || []).join(", ") + ")" : "not asked yet"}
+                    {ask ? (ask.kind === "reminder" ? "reminded " : "asked ") + ago(ask.sent_at) + " (" + (ask.channels || []).join(", ") + ")" : "not asked yet"}
                     {cur?.submitted_at && <> · answered {ago(cur.submitted_at)}</>}
                   </div>
                 </div>

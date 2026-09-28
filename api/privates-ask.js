@@ -26,6 +26,15 @@ const OWNERS = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"];
 // The three messages a coach gets, in one place so a preview shows exactly
 // what the send will say. kind: "first" (never answered) | "update" (said yes).
 export function askWording({ first, kind, link, label }) {
+  // A nudge to someone who was asked and hasn't answered either way. Says
+  // outright that silence keeps the asks coming and one tap on "Not right
+  // now" ends them — the no is as useful to Drew as the yes.
+  if (kind === "reminder") return {
+    sms: `Hi ${first} — reminder: we still need your answer on running private lessons at DSSC for ${label}. Tap yes (and pick ages, skills, days & hours) or "Not right now": ${link} — We'll keep asking each month until you answer; a "no" stops the reminders. — Drew`,
+    push: { title: "Privates at DSSC — still need your answer", body: "Tap yes or not right now. We'll keep asking until you answer; a no stops the reminders." },
+    subject: `Reminder: privates at DSSC — yes or no for ${label}?`,
+    email: `Hi ${first},\n\nA quick reminder: we still need your answer on running private lessons at DSSC.\n\nIf you're in, tap the link, pick the ages and skills you want to coach, and the days and hours you can work in ${label}. If you're not interested, tap "Not right now" — that's a perfectly good answer.\n\n${link}\n\nUntil you answer, we'll keep checking in each month. Saying no stops the reminders.\n\nThanks,\nDrew`,
+  };
   if (kind === "update") return {
     sms: `Hi ${first} — DSSC privates for ${label}: has your availability changed? Tap to update the days & hours you can work (30 sec): ${link} — Drew`,
     push: { title: "DSSC privates — " + label, body: "Has your availability changed? Tap to update your days and hours." },
@@ -70,6 +79,7 @@ export default async function handler(req, res) {
 
   const test = url?.searchParams.get("test") === "1";
   const dry = url?.searchParams.get("dry") === "1";
+  const reminder = url?.searchParams.get("reminder") === "1";
   // ?channels=sms,push — which of the three to use; all three by default.
   const want = new Set(String(url?.searchParams.get("channels") || "sms,push,email").split(",").map(x => x.trim()).filter(Boolean));
   const month = /^\d{4}-\d{2}$/.test(url?.searchParams.get("month") || "") ? url.searchParams.get("month") : askMonth();
@@ -90,8 +100,10 @@ export default async function handler(req, res) {
     .filter(c => c.name && !isPlaceholder(c.name))
     .filter(c => latest.get(c.id)?.interested !== false)           // said no → leave alone
     .filter(c => !answeredThisMonth.has(c.id))                      // already told us for this month
-    .filter(c => test || !askedThisMonth.has(c.id))                 // the cron never asks twice
-    .map(c => ({ ...c, kind: latest.get(c.id)?.interested === true ? "update" : "first" }));
+    // A reminder goes only to coaches already asked this month; a regular
+    // ask never repeats within the month.
+    .filter(c => reminder ? (test || askedThisMonth.has(c.id)) : (test || !askedThisMonth.has(c.id)))
+    .map(c => ({ ...c, kind: reminder && latest.get(c.id)?.interested !== true ? "reminder" : latest.get(c.id)?.interested === true ? "update" : "first" }));
 
   const link = (c) => `${origin}/privates?t=${c.privates_token}&m=${month}`;
   const wording = (c) => askWording({ first: (c.first_name || c.name).trim(), kind: c.kind, link: link(c), label });
@@ -131,7 +143,7 @@ export default async function handler(req, res) {
         if (r.ok && !o.error) channels.push("email");
       } catch { /* logged below as no email channel */ }
     }
-    await sb.from("coach_privates_asks").insert({ coach_id: c.id, month, channels, is_test: test, sent_by: who });
+    await sb.from("coach_privates_asks").insert({ coach_id: c.id, month, channels, is_test: test, sent_by: who, kind: c.kind });
     results.push({ name: c.name, kind: c.kind, channels, ...(smsError ? { sms_error: smsError } : {}) });
   }
   return res.status(200).json({ ok: true, month, test, sent: results.filter(r => r.channels?.length).length, results });

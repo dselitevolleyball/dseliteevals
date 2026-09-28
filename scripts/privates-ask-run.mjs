@@ -4,6 +4,7 @@
 //   node scripts/privates-ask-run.mjs --dry                    # who would be asked
 //   node scripts/privates-ask-run.mjs --test                   # everything to Drew
 //   node scripts/privates-ask-run.mjs --send --channels sms,push
+//   node scripts/privates-ask-run.mjs --test --reminder --channels sms,push   # the reminder, to Drew
 //   node scripts/privates-ask-run.mjs --wait --dry             # keep trying until the deploy answers
 //
 // Env: SUPABASE_SERVICE_ROLE_KEY in .env.
@@ -17,6 +18,7 @@ const val = (n) => { const i = args.indexOf("--" + n); return i >= 0 ? args[i + 
 const qs = new URLSearchParams();
 if (args.includes("--dry")) qs.set("dry", "1");
 if (args.includes("--test")) qs.set("test", "1");
+if (args.includes("--reminder")) qs.set("reminder", "1");
 if (val("channels")) qs.set("channels", val("channels"));
 if (val("month")) qs.set("month", val("month"));
 if (!qs.has("dry") && !qs.has("test") && !args.includes("--send")) { console.error("Say --dry, --test or --send."); process.exit(1); }
