@@ -6,6 +6,11 @@
 // send is the admin's click, through the same /api/send-email everything
 // else uses. The conversation lives in sessionStorage so switching screens
 // doesn't lose it; "New" clears it.
+//
+// Upload a spreadsheet and ask HQ to update from it, and the answer comes
+// with a proposal card: every change with its before → after, each ticked.
+// Nothing is written until the admin taps Apply (api/hq-apply.js), which
+// re-checks each row first and logs every write to change_log.
 
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "./supabase";
@@ -13,7 +18,7 @@ import { supabase } from "./supabase";
 const C = { bg: "#0a0a0a", card: "#141414", border: "#2a2a2a", gold: "#e91e8c", text: "#ffffff", mut: "#999999", grn: "#22c55e", red: "#ef4444", amber: "#f59e0b" };
 const KEY = "dse.askhq.v1";
 const SUGGEST = {
-  home: ["Who hasn't signed the commitment yet, by team?", "Which coaches haven't clocked in for their practices this week?", "What's on the calendar this weekend?"],
+  home: ["📎 Attach a spreadsheet and say: update HQ from this", "Who hasn't signed the commitment yet, by team?", "Which coaches haven't clocked in for their practices this week?", "What's on the calendar this weekend?"],
   housing: ["Who hasn't booked their room for the next stay-to-play tournament?", "Draft a reminder to the families who haven't booked.", "Attach the bureau's pickup report PDF and ask: who on these teams isn't on it?"],
   travel: ["Which coaches still need flights booked for upcoming stay-over tournaments?"],
   timecards: ["Total hours per coach this pay week, with anything unusual.", "Who clocked in late or as a sub this week?"],
@@ -55,7 +60,8 @@ export default function AskHQ({ open, onClose, view, coach }) {
     for (const f of picked) {
       const key = Math.random().toString(36).slice(2, 10);
       const path = `${userDir}/${Date.now()}-${key}-${f.name.replace(/[^\w.\-]+/g, "_")}`;
-      const type = f.type || (/\.csv$/i.test(f.name) ? "text/csv" : /\.(txt|md)$/i.test(f.name) ? "text/plain" : /\.pdf$/i.test(f.name) ? "application/pdf" : "");
+      const type = f.type || (/\.csv$/i.test(f.name) ? "text/csv" : /\.(txt|md)$/i.test(f.name) ? "text/plain" : /\.pdf$/i.test(f.name) ? "application/pdf"
+        : /\.xlsx$/i.test(f.name) ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" : /\.xls$/i.test(f.name) ? "application/vnd.ms-excel" : "");
       setFiles(x => [...x, { name: f.name, type, path, size: f.size, uploading: true }]);
       const { error } = await supabase.storage.from("hq-uploads").upload(path, f, { contentType: type || undefined });
       setFiles(x => x.map(y => y.path === path ? { ...y, uploading: false, error: error?.message } : y));
@@ -81,7 +87,8 @@ export default function AskHQ({ open, onClose, view, coach }) {
       const r = await fetch("/api/ask-hq", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + (session?.access_token || "") }, body: JSON.stringify({ question: question || "What is in the attached file? Summarise it and tell me what in HQ it relates to.", history, context: { view }, attachments }) });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d.error || ("HTTP " + r.status));
-      setMsgs(m => [...m, { role: "assistant", content: d.answer || "", tools: d.tools || [], drafts: (d.drafts || []).map(x => ({ ...x, sent: false })), ms: d.ms }]);
+      setMsgs(m => [...m, { role: "assistant", content: d.answer || "", tools: d.tools || [], drafts: (d.drafts || []).map(x => ({ ...x, sent: false })),
+        proposals: (d.proposals || []).map(x => ({ ...x, picked: x.changes.map((_, i) => i), state: "pending" })), ms: d.ms }]);
     } catch (e) {
       setMsgs(m => [...m, { role: "assistant", content: "Couldn't answer: " + (e.message || "error"), error: true }]);
     }
@@ -108,13 +115,88 @@ export default function AskHQ({ open, onClose, view, coach }) {
     }
   };
 
+  // ── proposals from an uploaded document ────────────────────────────────
+  const setProp = (mi, pi, fn) => setMsgs(m => m.map((x, i) => i === mi ? { ...x, proposals: x.proposals.map((y, j) => j === pi ? fn(y) : y) } : x));
+  const togglePick = (mi, pi, ci) => setProp(mi, pi, y => ({ ...y, picked: y.picked.includes(ci) ? y.picked.filter(k => k !== ci) : [...y.picked, ci].sort((a, b) => a - b) }));
+  const pickAll = (mi, pi, on) => setProp(mi, pi, y => ({ ...y, picked: on ? y.changes.map((_, i) => i) : [] }));
+  const decide = async (mi, pi, discard) => {
+    const pr = msgs[mi].proposals[pi];
+    if (!discard && !pr.picked.length) return;
+    if (!window.confirm(discard ? "Discard these proposed changes? Nothing in HQ changes." : "Apply " + pr.picked.length + " change" + (pr.picked.length === 1 ? "" : "s") + " to HQ?")) return;
+    setProp(mi, pi, y => ({ ...y, state: "working" }));
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const r = await fetch("/api/hq-apply", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + (session?.access_token || "") },
+        body: JSON.stringify(discard ? { proposal_id: pr.id, discard: true } : { proposal_id: pr.id, include: pr.picked }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || ("HTTP " + r.status));
+      setProp(mi, pi, y => ({ ...y, state: d.status, results: d.results || [] }));
+    } catch (e) {
+      window.alert("Couldn't " + (discard ? "discard" : "apply") + ": " + e.message);
+      setProp(mi, pi, y => ({ ...y, state: "pending" }));
+    }
+  };
+  const fmtVal = (v) => v == null || v === "" ? "—" : Array.isArray(v) ? v.join(", ") : typeof v === "object" ? JSON.stringify(v) : String(v);
+  const ProposalCard = ({ pr, mi, pi }) => {
+    const done = pr.state !== "pending" && pr.state !== "working";
+    const resBy = new Map((pr.results || []).map(r => [r.i, r]));
+    const applied = (pr.results || []).filter(r => r.status === "applied").length;
+    return (
+      <div style={{ marginTop: 8, border: "1px solid " + (pr.state === "discarded" ? C.border : C.gold), borderRadius: 10, background: C.bg, padding: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+          <span style={{ fontSize: 13, fontWeight: 800 }}>✎ {pr.summary || "Proposed changes"}</span>
+          <div style={{ flex: 1 }} />
+          <span style={{ fontSize: 11, color: C.mut }}>{pr.changes.length} change{pr.changes.length === 1 ? "" : "s"}</span>
+        </div>
+        {!done && <div style={{ fontSize: 11, color: C.mut, marginBottom: 6 }}>Nothing has changed yet. Untick anything that looks wrong, then Apply. <button onClick={() => pickAll(mi, pi, pr.picked.length !== pr.changes.length)} style={{ background: "none", border: "none", color: C.gold, cursor: "pointer", fontSize: 11, padding: 0, fontFamily: "inherit" }}>{pr.picked.length === pr.changes.length ? "Untick all" : "Tick all"}</button></div>}
+        <div style={{ maxHeight: 340, overflowY: "auto" }}>
+          {pr.changes.map((c, ci) => {
+            const r = resBy.get(ci);
+            return (
+              <label key={ci} style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "6px 2px", borderTop: "1px solid " + C.border, cursor: done ? "default" : "pointer", opacity: done && !r ? 0.45 : 1 }}>
+                {!done && <input type="checkbox" checked={pr.picked.includes(ci)} onChange={() => togglePick(mi, pi, ci)} style={{ marginTop: 3, accentColor: C.gold }} />}
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ fontSize: 13, fontWeight: 700 }}>{c.label || (c.table + " " + JSON.stringify(c.pk || {}))}</span>
+                  <span style={{ fontSize: 10, color: C.mut, marginLeft: 6 }}>{c.table}{c.action === "insert" ? " · new row" : ""}</span>
+                  {Object.keys(c.set).map(k => (
+                    <div key={k} style={{ fontSize: 12, marginTop: 2 }}>
+                      <span style={{ color: C.mut }}>{k.replace(/_/g, " ")}: </span>
+                      {c.action === "update" && <><span style={{ color: C.red, textDecoration: "line-through" }}>{fmtVal(c.before?.[k])}</span><span style={{ color: C.mut }}> → </span></>}
+                      <span style={{ color: C.grn }}>{fmtVal(c.set[k])}</span>
+                    </div>
+                  ))}
+                  {c.reason && <div style={{ fontSize: 11, color: C.mut, marginTop: 2 }}>{c.reason}</div>}
+                  {r && <div style={{ fontSize: 11, marginTop: 2, color: r.status === "applied" ? C.grn : C.amber }}>{r.status === "applied" ? "✓ applied" : "⚠ not applied — " + (r.why || r.status)}</div>}
+                </span>
+              </label>
+            );
+          })}
+        </div>
+        {pr.skipped?.length > 0 && (
+          <details style={{ marginTop: 6 }}>
+            <summary style={{ fontSize: 11, color: C.amber, cursor: "pointer" }}>{pr.skipped.length} couldn't be proposed</summary>
+            {pr.skipped.map((k, i) => <div key={i} style={{ fontSize: 11, color: C.mut, padding: "2px 0" }}>{k.label ? k.label + ": " : ""}{k.why}</div>)}
+          </details>
+        )}
+        <div style={{ display: "flex", gap: 6, marginTop: 8, alignItems: "center" }}>
+          {done
+            ? <span style={{ fontSize: 12, fontWeight: 700, color: pr.state === "discarded" ? C.mut : C.grn }}>{pr.state === "discarded" ? "Discarded — nothing changed" : "✓ " + applied + " applied" + (applied < (pr.results || []).length ? " · " + ((pr.results || []).length - applied) + " not applied" : "")}</span>
+            : <>
+                <button disabled={pr.state === "working" || !pr.picked.length} onClick={() => decide(mi, pi, false)} style={{ padding: "6px 12px", borderRadius: 8, border: "none", background: C.gold, color: "#000", fontWeight: 800, fontSize: 12, cursor: "pointer", fontFamily: "inherit", opacity: pr.picked.length ? 1 : 0.5 }}>{pr.state === "working" ? "Applying…" : "Apply " + pr.picked.length}</button>
+                <button disabled={pr.state === "working"} onClick={() => decide(mi, pi, true)} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid " + C.border, background: "transparent", color: C.mut, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Discard</button>
+              </>}
+        </div>
+      </div>
+    );
+  };
+
   if (!open) return null;
   const suggestions = SUGGEST[view] || SUGGEST.home;
   return (
     <div style={{ position: "fixed", top: 0, right: 0, bottom: 0, width: "min(520px, 100vw)", zIndex: 60, background: C.bg, borderLeft: "1px solid " + C.border, display: "flex", flexDirection: "column", boxShadow: "-12px 0 40px rgba(0,0,0,0.5)", fontFamily: "inherit", color: C.text }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 14px", borderBottom: "1px solid " + C.border }}>
         <span style={{ fontSize: 15, fontWeight: 800, color: C.gold }}>✦ Ask HQ</span>
-        <span style={{ fontSize: 11, color: C.mut }}>reads the database · never changes it</span>
+        <span style={{ fontSize: 11, color: C.mut }}>changes only what you approve</span>
         <div style={{ flex: 1 }} />
         {msgs.length > 0 && <button onClick={() => setMsgs([])} style={{ background: "none", border: "1px solid " + C.border, color: C.mut, borderRadius: 6, padding: "3px 9px", fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>New</button>}
         <button onClick={onClose} style={{ background: "none", border: "none", color: C.mut, fontSize: 18, cursor: "pointer" }}>✕</button>
@@ -127,9 +209,9 @@ export default function AskHQ({ open, onClose, view, coach }) {
         )}
         {!msgs.length && (
           <div>
-            <div style={{ fontSize: 13, color: C.mut, marginBottom: 10, lineHeight: 1.5 }}>Ask about players, rosters, coaches, hours, tournaments, housing, clinics, emails — anything in HQ. It looks the answer up and shows its work. Ask it to draft an email and you get a Send button.</div>
+            <div style={{ fontSize: 13, color: C.mut, marginBottom: 10, lineHeight: 1.5 }}>Ask about players, rosters, coaches, hours, tournaments, housing, clinics, emails — anything in HQ. It looks the answer up and shows its work. Ask it to draft an email and you get a Send button. Attach a spreadsheet (Excel, CSV or PDF) and say "update HQ from this": you'll see every change before anything is saved.</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {suggestions.map(s => <button key={s} onClick={() => ask(s)} style={{ textAlign: "left", padding: "9px 12px", borderRadius: 10, border: "1px solid " + C.border, background: C.card, color: C.text, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>{s}</button>)}
+              {suggestions.map(s => <button key={s} onClick={() => s.startsWith("📎") ? fileRef.current?.click() : ask(s)} style={{ textAlign: "left", padding: "9px 12px", borderRadius: 10, border: "1px solid " + C.border, background: C.card, color: C.text, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>{s}</button>)}
             </div>
           </div>
         )}
@@ -146,6 +228,7 @@ export default function AskHQ({ open, onClose, view, coach }) {
                   </details>
                 )}
                 <Md text={m.content} />
+                {m.proposals?.map((pr, pi) => <ProposalCard key={pr.id} pr={pr} mi={mi} pi={pi} />)}
                 {m.drafts?.length > 0 && (
                   <div style={{ marginTop: 8 }}>
                     {m.drafts.length > 1 && <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}><span style={{ fontSize: 12, color: C.mut }}>{m.drafts.length} drafts</span><div style={{ flex: 1 }} />{m.drafts.some(d => !d.sent) && <button onClick={() => sendAll(mi)} style={{ padding: "5px 11px", borderRadius: 8, border: "none", background: C.gold, color: "#000", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Send all</button>}</div>}
@@ -183,9 +266,9 @@ export default function AskHQ({ open, onClose, view, coach }) {
           </div>
         )}
         <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
-          <input ref={fileRef} type="file" multiple accept=".pdf,image/*,.csv,.txt,.md,.json,.tsv" style={{ display: "none" }} onChange={e => addFiles(e.target.files)} />
-          <button onClick={() => fileRef.current?.click()} title="Attach a PDF, screenshot, CSV or text file (or drop it here)" style={{ padding: "10px 11px", borderRadius: 10, border: "1px solid " + C.border, background: "transparent", color: C.mut, fontSize: 16, cursor: "pointer", fontFamily: "inherit" }}>📎</button>
-          <textarea ref={inputRef} value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(); } }} placeholder="Ask HQ anything… attach a report, screenshot or CSV with 📎 (Enter to send)" rows={2}
+          <input ref={fileRef} type="file" multiple accept=".pdf,image/*,.csv,.txt,.md,.json,.tsv,.xlsx,.xls" style={{ display: "none" }} onChange={e => addFiles(e.target.files)} />
+          <button onClick={() => fileRef.current?.click()} title="Attach a spreadsheet, PDF, screenshot or CSV (or drop it here)" style={{ padding: "10px 11px", borderRadius: 10, border: "1px solid " + C.border, background: "transparent", color: C.mut, fontSize: 16, cursor: "pointer", fontFamily: "inherit" }}>📎</button>
+          <textarea ref={inputRef} value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(); } }} placeholder="Ask HQ anything… or 📎 attach a spreadsheet and say 'update HQ from this' (Enter to send)" rows={2}
             style={{ flex: 1, background: C.card, border: "1px solid " + C.border, borderRadius: 10, color: C.text, fontFamily: "inherit", fontSize: 14, padding: "9px 11px", resize: "none", maxHeight: 160, overflowY: "auto", boxSizing: "border-box", lineHeight: 1.4 }} />
           <button onClick={() => ask()} disabled={busy || (!q.trim() && !files.length) || files.some(f => f.uploading)} style={{ padding: "10px 16px", borderRadius: 10, border: "none", background: C.gold, color: "#000", fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: "inherit", opacity: busy || (!q.trim() && !files.length) ? 0.5 : 1 }}>Ask</button>
         </div>

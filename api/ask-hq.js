@@ -6,25 +6,30 @@
 // by writing read-only SQL against the database (public.hq_query — a single
 // SELECT, read-only transaction, 8s timeout), reading the results, and
 // explaining. It can also draft an email for the admin to send — it never
-// sends anything itself, and it cannot write to the database at all.
+// sends anything itself — and, for an uploaded spreadsheet, propose changes
+// (propose_changes → hq_change_proposals). It cannot write to the database:
+// the admin reviews the proposal and api/hq-apply.js applies what they tick.
 //
 // POST { question, history: [{role, content}], context: { view },
 //        attachments: [{ name, type, path }] }   — files in the hq-uploads bucket;
 //        PDFs and images go to Claude as documents/images via a signed URL,
-//        CSV/text files are read and passed inline (first 200KB).
+//        CSV/text files are read and passed inline (first 200KB);
+//        Excel workbooks are converted to one CSV per sheet.
 //   Authorization: Bearer <Supabase session token of an owner/admin>
-// Response { answer, tools: [{name, summary}], drafts: [{to, subject, body}], usage }
+// Response { answer, tools: [{name, summary}], drafts: [{to, subject, body}], proposals: [{id, summary, changes, skipped}], usage }
 //
 // Env: ANTHROPIC_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 
 import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@supabase/supabase-js";
+import * as XLSX from "xlsx";
+import { checkChanges, MAX_CHANGES } from "./_lib/hq-changes.js";
 
 export const config = { maxDuration: 120 };
 
 const OWNER_EMAILS = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"];
 const MODEL = "claude-opus-5";
-const MAX_TURNS = 10;
+const MAX_TURNS = 16;   // matching a long sheet takes a few more lookups
 const SECRET_KEY = /token|secret|password|api_key|signed_ip|user_agent|raw_email/i;
 
 const SYSTEM = `You are HQ, the assistant inside DS Elite HQ — the operations app for DS Elite Volleyball (a youth club volleyball program in Dripping Springs, TX) and its sister business Dripping Springs Sports Club (DSSC, a facility that runs clinics and skill pods). You are talking to a club administrator. Today's date is given in each question.
@@ -32,7 +37,7 @@ const SYSTEM = `You are HQ, the assistant inside DS Elite HQ — the operations 
 You answer by querying the database with the sql tool and reading what comes back. Never guess at data you could look up. If a question can't be answered from the data, say so plainly. Keep answers tight: lead with the answer, then the supporting list. Use short bullet lists for people; never markdown tables or headers. When you list people, include the detail an admin needs to act (team, parent name, email, phone) unless asked for names only.
 
 RULES
-- Read-only. You cannot change anything. If the admin asks you to change, send, or delete something, do the lookup and hand them what they need (a draft, a list) — the app has buttons for the rest.
+- You cannot write to the database. The one exception is propose_changes (below): you file a proposal, the admin reviews it and taps Apply. You can never delete, send, or change logins. If the admin asks for something else, do the lookup and hand them what they need (a draft, a list) — the app has buttons for the rest.
 - Never select or reveal columns whose names contain token, secret, password, signed_ip or user_agent. They are stripped anyway.
 - Dates: compare with today's date. "This week" is Monday–Sunday in Central time. Tournament and practice dates are DATE columns; check_date/session_date likewise.
 - Be precise about counts. If a query returns the row cap (200 by default), say the list may be truncated and narrow it.
@@ -60,11 +65,27 @@ School: school_games(school games the players' school teams play). DSYSA: dsysa_
 
 The admin may attach documents (a housing bureau's pickup report, a Playbook export, an invoice, a screenshot). Read them fully and combine them with the database — e.g. match names in an attached report against a roster query. Quote the document where it matters.
 
+UPDATING HQ FROM AN UPLOADED DOCUMENT
+When the admin attaches a spreadsheet, export or report and asks you to update HQ from it (or asks "what would this change?"):
+1. Work out which table and columns the document speaks to (describe_table if unsure). Common ones: players (jersey_number, positions, parent contacts, school_team, dob…), coach_travel / coach_travel_rooms (flights, hotels, confirmations), tournaments and tournament_assignments, player_gear_orders, practice_teams, coach_roster.
+2. Match EVERY row of the document to an HQ record with sql, by name plus a second detail (team, parent, email, date) where names could collide. Use the current-roster rule for players.
+3. Call propose_changes once with every change, each naming the row by its primary key (look the id up; never guess), a label a person recognises ("Mia Paz · 14 Diamond"), and a short reason quoting the document. Only set columns the document actually gives a value for; a blank cell means "no information", never "clear it". Don't re-state values HQ already has — they're dropped anyway. Insert only when the document clearly adds something new (a new flight, a new tournament entry), never for a person you failed to match.
+4. In your answer: how many changes you proposed, then list every document row you could NOT match or weren't sure about, and anything skipped. End with: "Review the changes below and tap Apply."
+Never propose deletes. Never propose changes to coaches (logins), message logs, or token/secret columns. Keep to ${MAX_CHANGES} changes per proposal; if there are more, propose the first batch and say so.
+
 If you need a table's columns, call describe_table. Tables you don't know about exist too (list them with describe_table on '').`;
 
 const tools = [
   { name: "sql", description: "Run one read-only SELECT (or WITH … SELECT) against the club database and get the rows back as JSON. Max 200 rows unless max_rows is set (cap 500). Use ILIKE for name matching. Postgres 15.", input_schema: { type: "object", properties: { query: { type: "string" }, max_rows: { type: "integer" } }, required: ["query"] } },
   { name: "describe_table", description: "List the columns of a table (name, type). Pass an empty string to list every table in the database.", input_schema: { type: "object", properties: { table: { type: "string" } }, required: ["table"] } },
+  { name: "propose_changes", description: "File database changes for the admin to review and apply (you cannot apply them). Use only when the admin asked to update HQ from a document or asked what it would change. Updates must name the row by its full primary key (usually {id: N}); look ids up with sql first. The result tells you what was accepted, dropped as no-change, or skipped and why — fix skipped ones and call again if you can.", input_schema: { type: "object", properties: {
+    summary: { type: "string", description: "one line, e.g. 'Jersey numbers for 14 Ruby from Kristen's sheet'" },
+    changes: { type: "array", items: { type: "object", properties: {
+      table: { type: "string" }, action: { type: "string", enum: ["update", "insert"] },
+      pk: { type: "object", description: "primary key of the row to update, e.g. {\"id\": 412}" },
+      set: { type: "object", description: "column → new value" },
+      label: { type: "string", description: "who/what this row is, e.g. 'Mia Paz · 14 Diamond'" },
+      reason: { type: "string", description: "what in the document says so" } }, required: ["table", "action", "set", "label"] } } }, required: ["summary", "changes"] } },
   { name: "draft_email", description: "Hand the admin a ready-to-send email. Use it when they ask you to write, draft, email, remind or message people. You do not send it — the app shows it with a Send button. One draft per distinct message; for a per-family message with different names, produce one draft per family (max 40).", input_schema: { type: "object", properties: { to: { type: "array", items: { type: "string" }, description: "recipient email addresses" }, subject: { type: "string" }, body: { type: "string", description: "plain text" }, label: { type: "string", description: "who this is for, e.g. 'Jauregui family (Brooklyn, 15 Diamond)'" } }, required: ["to", "subject", "body"] } },
 ];
 
@@ -79,7 +100,15 @@ const scrub = (v) => {
   return v;
 };
 
-async function runTool(sb, name, input, drafts) {
+async function runTool(sb, name, input, drafts, ctx = {}) {
+  if (name === "propose_changes") {
+    const { ok, skipped, noop } = await checkChanges(sb, input.changes);
+    if (!ok.length) return { accepted: 0, no_change: noop, skipped, note: noop ? "Every change matched what HQ already has." : "Nothing valid to propose." };
+    const { data, error } = await sb.from("hq_change_proposals").insert({ created_by: ctx.who, summary: String(input.summary || "").slice(0, 300), source_files: ctx.files || [], changes: ok }).select("id").single();
+    if (error) return { error: "Couldn't save the proposal: " + error.message };
+    ctx.proposals.push({ id: data.id, summary: String(input.summary || ""), changes: ok, skipped, noop });
+    return { proposal_id: data.id, accepted: ok.length, no_change: noop, skipped };
+  }
   if (name === "sql") {
     const q = String(input.query || "");
     if (SECRET_KEY.test(q)) return { error: "That query touches a protected column (token/secret/password). Leave those out." };
@@ -154,13 +183,22 @@ async function handle(req, res) {
       blocks.push(a.type === "application/pdf"
         ? { type: "document", source: { type: "url", url: signed.signedUrl }, title: a.name }
         : { type: "image", source: { type: "url", url: signed.signedUrl } });
+    } else if (/\.(xlsx|xlsm|xls|ods)$/i.test(a.name) || /spreadsheetml|ms-excel|opendocument\.spreadsheet/.test(a.type)) {
+      // A workbook becomes one CSV per sheet, so every tab is read.
+      const { data: file, error } = await sb.storage.from("hq-uploads").download(a.path);
+      if (error || !file) { blocks.push({ type: "text", text: `(Attachment "${a.name}" couldn't be read)` }); continue; }
+      try {
+        const wb = XLSX.read(new Uint8Array(await file.arrayBuffer()), { cellDates: true });
+        const sheets = wb.SheetNames.map(n => `--- sheet "${n}" ---\n` + XLSX.utils.sheet_to_csv(wb.Sheets[n], { blankrows: false, dateNF: "yyyy-mm-dd" }));
+        blocks.push({ type: "text", text: `Attached workbook "${a.name}" (${wb.SheetNames.length} sheet${wb.SheetNames.length === 1 ? "" : "s"}):\n\n${sheets.join("\n\n").slice(0, 200000)}` });
+      } catch (e) { blocks.push({ type: "text", text: `(Attachment "${a.name}" isn't a workbook I can open: ${e.message})` }); }
     } else if (/^text\/|json$/.test(a.type) || /\.(csv|txt|md|json|tsv)$/i.test(a.name)) {
       const { data: file, error } = await sb.storage.from("hq-uploads").download(a.path);
       if (error || !file) { blocks.push({ type: "text", text: `(Attachment "${a.name}" couldn't be read)` }); continue; }
       const text = (await file.text()).slice(0, 200000);
       blocks.push({ type: "text", text: `Attached file "${a.name}":\n\n${text}` });
     } else {
-      blocks.push({ type: "text", text: `(Attachment "${a.name}" is a ${a.type || "file"} — I can read PDFs, images, CSV and text. Export it as one of those.)` });
+      blocks.push({ type: "text", text: `(Attachment "${a.name}" is a ${a.type || "file"} — I can read PDFs, images, Excel, CSV and text. Export it as one of those.)` });
     }
   }
 
@@ -168,7 +206,8 @@ async function handle(req, res) {
   const messages = [...history, { role: "user", content: blocks.length ? [...blocks, { type: "text", text: userText }] : userText }];
   const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
   const started = Date.now();
-  const trail = [], drafts = [];
+  const trail = [], drafts = [], proposals = [];
+  const ctx = { who, files: attachments.map(a => ({ name: a.name, path: a.path })), proposals };
   let usage = { input: 0, output: 0 }, answer = "", turns = 0;
   try {
     while (turns++ < MAX_TURNS) {
@@ -188,18 +227,18 @@ async function handle(req, res) {
       const results = [];
       for (const u of uses) {
         const t0 = Date.now();
-        const out = await runTool(sb, u.name, u.input || {}, drafts);
-        trail.push({ name: u.name, input: u.name === "sql" ? String(u.input?.query || "").slice(0, 400) : (u.name === "describe_table" ? u.input?.table : u.input?.label || u.input?.subject), ms: Date.now() - t0, rows: out.rows ?? (out.data ? out.data.length : undefined), error: out.error });
+        const out = await runTool(sb, u.name, u.input || {}, drafts, ctx);
+        trail.push({ name: u.name, input: u.name === "sql" ? String(u.input?.query || "").slice(0, 400) : (u.name === "describe_table" ? u.input?.table : u.name === "propose_changes" ? (u.input?.summary || "") + " · " + (out.accepted ?? 0) + " changes" : u.input?.label || u.input?.subject), ms: Date.now() - t0, rows: out.rows ?? (out.data ? out.data.length : undefined), error: out.error });
         results.push({ type: "tool_result", tool_use_id: u.id, content: JSON.stringify(out).slice(0, 60000), is_error: !!out.error });
       }
       messages.push({ role: "user", content: results });
     }
-    if (!answer) answer = drafts.length ? "Drafted — see below." : "I ran out of steps before finishing. Try narrowing the question.";
+    if (!answer) answer = proposals.length ? "Proposed changes are below — review and tap Apply." : drafts.length ? "Drafted — see below." : "I ran out of steps before finishing. Try narrowing the question.";
   } catch (e) {
     const msg = e instanceof Anthropic.APIError ? `Claude API ${e.status}: ${e.message}` : (e.message || String(e));
     await log(sb, { asked_by: who, question, answer: "ERROR " + msg, tool_calls: trail, view, ms: Date.now() - started });
     return res.status(502).json({ error: msg });
   }
   await log(sb, { asked_by: who, question, answer, tool_calls: trail, view, attachments: attachments.map(a => ({ name: a.name, path: a.path })), input_tokens: usage.input, output_tokens: usage.output, ms: Date.now() - started });
-  return res.status(200).json({ answer, tools: trail, drafts, usage, ms: Date.now() - started });
+  return res.status(200).json({ answer, tools: trail, drafts, proposals, usage, ms: Date.now() - started });
 }
