@@ -25,7 +25,7 @@ import { createClient } from "@supabase/supabase-js";
 import * as XLSX from "xlsx";
 import { checkChanges, MAX_CHANGES } from "./_lib/hq-changes.js";
 
-export const config = { maxDuration: 120 };
+export const config = { maxDuration: 300 };   // a big upload can take a few minutes of lookups
 
 const OWNER_EMAILS = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"];
 const MODEL = "claude-opus-5";
@@ -71,7 +71,7 @@ When the admin attaches a spreadsheet, export or report and asks you to update H
 2. Match EVERY row of the document to an HQ record with sql, by name plus a second detail (team, parent, email, date) where names could collide. Use the current-roster rule for players.
 3. Call propose_changes once with every change, each naming the row by its primary key (look the id up; never guess), a label a person recognises ("Mia Paz · 14 Diamond"), and a short reason quoting the document. Only set columns the document actually gives a value for; a blank cell means "no information", never "clear it". Don't re-state values HQ already has — they're dropped anyway. Insert only when the document clearly adds something new (a new flight, a new tournament entry), never for a person you failed to match.
 4. In your answer: how many changes you proposed, then list every document row you could NOT match or weren't sure about, and anything skipped. End with: "Review the changes below and tap Apply."
-Never propose deletes. Never propose changes to coaches (logins), message logs, or token/secret columns. Keep to ${MAX_CHANGES} changes per proposal; if there are more, propose the first batch and say so.
+Never propose deletes. Never propose changes to coaches (logins), message logs, or token/secret columns. Keep each propose_changes call to about 60 changes (the hard cap is ${MAX_CHANGES}); for more, make several calls, e.g. one per team. Keep reason short (a few words).
 
 If you need a table's columns, call describe_table. Tables you don't know about exist too (list them with describe_table on '').`;
 
@@ -208,18 +208,34 @@ async function handle(req, res) {
   const started = Date.now();
   const trail = [], drafts = [], proposals = [];
   const ctx = { who, files: attachments.map(a => ({ name: a.name, path: a.path })), proposals };
-  let usage = { input: 0, output: 0 }, answer = "", turns = 0;
+  let usage = { input: 0, output: 0 }, answer = "", turns = 0, cutOff = false;
   try {
     while (turns++ < MAX_TURNS) {
-      const r = await client.messages.create({
-        model: MODEL, max_tokens: 6000,
+      // Streamed so a long reply (a proposal covering 80+ rows is ~10K tokens)
+      // isn't capped by a non-streaming HTTP timeout. It used to stop at 6,000
+      // tokens mid-proposal and report "ran out of steps".
+      const r = await client.messages.stream({
+        model: MODEL, max_tokens: 32000,
         thinking: { type: "adaptive" }, output_config: { effort: "medium" },
         system: [{ type: "text", text: SYSTEM, cache_control: { type: "ephemeral" } }],
         tools, messages,
-      });
+      }).finalMessage();
       usage.input += r.usage?.input_tokens || 0; usage.output += r.usage?.output_tokens || 0;
       messages.push({ role: "assistant", content: r.content });
       const uses = r.content.filter(b => b.type === "tool_use");
+      if (r.stop_reason === "max_tokens") {
+        // Cut off. A half-written tool call can't be trusted, so answer each
+        // one with an error and let Claude redo the work in smaller pieces.
+        cutOff = true;
+        if (uses.length) {
+          messages.push({ role: "user", content: uses.map(u => ({ type: "tool_result", tool_use_id: u.id, is_error: true,
+            content: "Your reply was cut off at the output limit before this call finished, so it was not run. Redo it in smaller batches (at most 40 changes per propose_changes call)." })) });
+          continue;
+        }
+        answer = r.content.filter(b => b.type === "text").map(b => b.text).join("\n").trim();
+        answer = (answer ? answer + "\n\n" : "") + "(My answer was cut off at the length limit — ask for the rest, or narrow it to one team.)";
+        break;
+      }
       if (r.stop_reason !== "tool_use" || !uses.length) {
         answer = r.content.filter(b => b.type === "text").map(b => b.text).join("\n").trim();
         break;
@@ -233,7 +249,7 @@ async function handle(req, res) {
       }
       messages.push({ role: "user", content: results });
     }
-    if (!answer) answer = proposals.length ? "Proposed changes are below — review and tap Apply." : drafts.length ? "Drafted — see below." : "I ran out of steps before finishing. Try narrowing the question.";
+    if (!answer) answer = proposals.length ? "Proposed changes are below — review and tap Apply." : drafts.length ? "Drafted — see below." : cutOff ? "My answer kept running past the length limit. Try one team or one part of the file at a time." : "I hit the limit of " + MAX_TURNS + " lookups before finishing. Try narrowing the question.";
   } catch (e) {
     const msg = e instanceof Anthropic.APIError ? `Claude API ${e.status}: ${e.message}` : (e.message || String(e));
     await log(sb, { asked_by: who, question, answer: "ERROR " + msg, tool_calls: trail, view, ms: Date.now() - started });
