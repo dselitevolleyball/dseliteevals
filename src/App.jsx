@@ -2202,6 +2202,7 @@ export default function App() {
   const [waitOpen, setWaitOpen]             = useState(() => new Set()); // Waiting on: which needs are expanded
   const [waitTeam, setWaitTeam]             = useState("");
   const [waitSending, setWaitSending]       = useState(null);    // "need|playerId" or "need|all" while a nudge sends
+  const [waitPreview, setWaitPreview]       = useState(null);    // text preview sheet: { needKey, ids:[playerId], text }
   const [coachPrivates, setCoachPrivates]   = useState([]);      // DSSC privates: each coach's answer per month
   const [coachPrivatesAsks, setCoachPrivatesAsks] = useState([]); // and every ask we sent
   const [privMonth, setPrivMonth]           = useState(() => { const t = new Date(); const d = new Date(t.getFullYear(), t.getMonth() + (t.getDate() >= 20 ? 1 : 0), 1); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0"); });
@@ -10918,14 +10919,14 @@ export default function App() {
 
     // A text goes to each parent mobile as its own message from the club
     // number, so a reply lands in Messages (SMS) under her team like any other.
-    const sendText = async (need, row, quiet = false) => {
+    const sendText = async (need, row, quiet = false, bodyText = null) => {
       const p = row.p;
       const to = textable(p);
       if (!to.length) { if (!quiet) window.alert("No parent mobile on file for " + p.first_name + " " + p.last_name + "."); return false; }
       const { data: { session } } = await supabase.auth.getSession();
       const res = await fetch("/api/send-sms", { method: "POST",
         headers: { "Content-Type": "application/json", Authorization: "Bearer " + (session?.access_token || "") },
-        body: JSON.stringify({ body: need.text(p), audience: "waiting-on nudge · " + need.key + " · " + p.first_name + " " + p.last_name,
+        body: JSON.stringify({ body: bodyText || need.text(p), audience: "waiting-on nudge · " + need.key + " · " + p.first_name + " " + p.last_name,
           recipients: to.map(x => ({ to: x.phone, name: x.name || null, player_id: p.id, team_name: p.team_assignment, kind: "parent" })),
           sent_by_coach_id: coach?.id || null, sent_by_label: coach?.display_name || null }) });
       const out = await res.json().catch(() => ({}));
@@ -10946,8 +10947,28 @@ export default function App() {
       await supabase.from("player_nudges").insert({ player_id: p.id, need: need.key, channel: "email", recipients: to, sent_by: coach?.display_name || coach?.email || null });
       return true;
     };
+    // The wording as edited for the first family, re-aimed at another: her
+    // parents' greeting, her name, and her own links swapped in. Anything the
+    // sender typed stays as typed.
+    const retarget = (text, p0, p) => {
+      if (!p0 || p0.id === p.id) return text;
+      let t = text.split(hiText(p0)).join(hiText(p));
+      for (const [k, v] of Object.entries(p0)) {
+        if (typeof v === "string" && v.length >= 16 && t.includes(v) && typeof p[k] === "string") t = t.split(v).join(p[k]);
+      }
+      const g0 = girlOf(p0), g = girlOf(p);
+      const escRe = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, (m) => "\\" + m);
+      if (g0 && g0 !== g) t = t.replace(new RegExp("\\b" + escRe(g0) + "\\b", "g"), g);
+      return t;
+    };
+    const openTextPreview = (need, rows) => {
+      const list = rows.filter(r => canReach(r, "sms"));
+      if (!list.length) { window.alert("Nobody here has a parent mobile on file."); return; }
+      setWaitPreview({ needKey: need.key, ids: list.map(r => r.p.id), text: need.text(list[0].p) });
+    };
     const nudgeOne = async (need, row, channel = "email") => {
       const sms = channel === "sms";
+      if (sms) { openTextPreview(need, [row]); return; }
       const who = sms ? textable(row.p).map(x => (x.name || "parent").split(/\s+/)[0]).join(" and ") : parents(row.p).join(" and ");
       const preview = sms ? "\n\n" + need.text(row.p) : "";
       if (!window.confirm((sms ? "Text " : "Email ") + (who || "the parents") + " about " + row.p.first_name + "'s " + need.label.toLowerCase() + "?" + preview)) return;
@@ -10956,6 +10977,7 @@ export default function App() {
     };
     const nudgeAll = async (need, channel = "email") => {
       const sms = channel === "sms";
+      if (sms) { openTextPreview(need, need.rows); return; }
       const list = need.rows.filter(r => canReach(r, channel));
       if (!list.length) { window.alert("Nobody to " + (sms ? "text" : "email") + " here."); return; }
       const sample = sms ? "\n\nFor example:\n" + need.text(list[0].p) : "";
@@ -11061,6 +11083,74 @@ export default function App() {
             </div>
           );
         })}
+        {waitPreview && (() => {
+          const need = NEEDS.find(n => n.key === waitPreview.needKey);
+          const rowsAll = need ? need.rows.filter(r => waitPreview.ids.includes(r.p.id)) : [];
+          if (!need || !rowsAll.length) return null;
+          const p0 = rowsAll[0].p;
+          const many = rowsAll.length > 1;
+          const textFor = (r) => retarget(waitPreview.text, p0, r.p);
+          const segs = (t) => Math.max(1, Math.ceil(t.length / (/[^\u0000-\u007f]/.test(t) ? 70 : 160)));
+          const busy = !!waitSending;
+          const close = () => { if (!busy) setWaitPreview(null); };
+          const go = async () => {
+            if (!waitPreview.text.trim()) { window.alert("The message is empty."); return; }
+            setWaitSending(need.key + "|" + (many ? "all" : p0.id) + "|sms");
+            let ok = 0;
+            try { for (const r of rowsAll) if (await sendText(need, r, many, textFor(r))) ok++; await loadPlayerNudges(); }
+            finally { setWaitSending(null); }
+            setWaitPreview(null);
+            if (many) window.alert(ok + " of " + rowsAll.length + " texted.");
+          };
+          return (
+            <div onClick={close} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:9000,display:"flex",alignItems:"center",justifyContent:"center",padding:isNarrow?0:18}}>
+              <div onClick={e=>e.stopPropagation()} style={{background:C.card,border:"1px solid "+C.border,borderRadius:isNarrow?0:14,width:"100%",maxWidth:560,maxHeight:isNarrow?"100%":"90vh",height:isNarrow?"100%":"auto",display:"flex",flexDirection:"column",overflow:"hidden"}}>
+                <div style={{padding:"14px 16px",borderBottom:"1px solid "+C.border}}>
+                  <div style={{fontSize:15,fontWeight:800,color:C.gold}}>
+                    {many ? "Text " + rowsAll.length + " families" : "Text " + (textable(p0).map(x => (x.name || "parent").split(/\s+/)[0]).join(" and ") || "the parents")}
+                    <span style={{color:C.mut,fontWeight:600}}> · {need.label}</span>
+                  </div>
+                  <div style={{fontSize:11,color:C.mut,marginTop:3}}>
+                    {many
+                      ? "Each family gets its own text from the club number, with their own names and links. Replies land in Messages."
+                      : p0.first_name + " " + p0.last_name + " · " + textable(p0).map(x => (x.name ? x.name + " " : "") + x.phone).join(", ")}
+                  </div>
+                </div>
+                <div style={{padding:"12px 16px",overflowY:"auto",flex:1}}>
+                  <div style={{fontSize:10,fontWeight:800,letterSpacing:0.4,textTransform:"uppercase",color:C.mut,marginBottom:6}}>
+                    {many ? "Message — shown as " + p0.first_name + "'s family will get it" : "Message"}
+                  </div>
+                  <textarea value={waitPreview.text} onChange={e=>setWaitPreview(w => ({ ...w, text: e.target.value }))} rows={7}
+                    style={{...inpStyle,width:"100%",boxSizing:"border-box",padding:"10px 12px",fontSize:14,lineHeight:1.45,resize:"vertical",fontFamily:"inherit"}} />
+                  <div style={{display:"flex",gap:10,alignItems:"center",marginTop:4,fontSize:10,color:C.mut}}>
+                    <span>{waitPreview.text.length} characters · {segs(waitPreview.text)} text{segs(waitPreview.text)===1?"":"s"} each</span>
+                    <div style={{flex:1}} />
+                    <button onClick={()=>setWaitPreview(w => ({ ...w, text: need.text(p0) }))} style={{background:"none",border:"none",color:C.acc,cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:700,padding:0}}>Reset wording</button>
+                  </div>
+                  {many && (
+                    <details style={{marginTop:12}}>
+                      <summary style={{cursor:"pointer",fontSize:12,fontWeight:700,color:C.text}}>See every family's text ({rowsAll.length})</summary>
+                      <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:8}}>
+                        {rowsAll.map(r => (
+                          <div key={r.p.id} style={{background:C.bg,border:"1px solid "+C.border,borderRadius:8,padding:"8px 10px"}}>
+                            <div style={{fontSize:11,fontWeight:800,color:C.text,marginBottom:3}}>{r.p.first_name} {r.p.last_name} <span style={{color:C.mut,fontWeight:600}}>· {r.p.team_assignment} · {textable(r.p).map(x => x.phone).join(", ")}</span></div>
+                            <div style={{fontSize:12,color:C.mut,whiteSpace:"pre-wrap",wordBreak:"break-word"}}>{textFor(r)}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  )}
+                </div>
+                <div style={{padding:"12px 16px",borderTop:"1px solid "+C.border,display:"flex",gap:10}}>
+                  <button onClick={close} disabled={busy} style={{flex:1,padding:"11px",borderRadius:10,border:"1px solid "+C.border,background:"transparent",color:C.text,fontFamily:"inherit",fontSize:14,fontWeight:700,cursor:"pointer"}}>Cancel</button>
+                  <button onClick={go} disabled={busy} style={{flex:2,padding:"11px",borderRadius:10,border:"none",background:need.color,color:"#000",fontFamily:"inherit",fontSize:14,fontWeight:800,cursor:busy?"default":"pointer"}}>
+                    {busy ? "Sending…" : many ? "Send " + rowsAll.length + " texts" : "Send text"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
         <div style={{fontSize:11,color:C.mut,marginTop:6}}>A nudge is one email, or one text to each parent mobile, from you, with the link they need. Texts come from the club number and replies land in Messages (SMS); anyone who replied STOP is skipped. Every send is remembered here so you can see who has already been asked.</div>
         {renderGcAnswers()}
       </div>
