@@ -140,6 +140,12 @@ const PARENT_EMAIL_FIELDS = ["parent_email", "parent_email2", "parent_email3"];
 const parentEmailsOf = (p) => PARENT_EMAIL_FIELDS
   .map(k => String(p?.[k] || "").trim())
   .filter(Boolean);
+// Parent mobiles with the parent each belongs to, for texts. Every club family
+// opted in to texts at registration (Drew, 29 Sep 2026); a STOP reply is the
+// only thing that takes a number off, and callers filter those out.
+const parentPhonesOf = (p) => [[p?.parent_phone, p?.parent_name], [p?.parent2_phone, p?.parent2_name]]
+  .map(([ph, nm]) => ({ phone: String(ph || "").trim(), name: String(nm || "").trim() }))
+  .filter(x => x.phone.replace(/\D/g, "").length >= 10);
 
 // ── Player roster table ──────────────────────────────────────────────────
 // Every column the Players table can show. `get` returns the display value;
@@ -2192,6 +2198,7 @@ export default function App() {
   const [showTryoutOnly, setShowTryoutOnly] = useState(false);
   const [seUploading, setSeUploading]       = useState(false);   // SportsEngine member export import in flight
   const [playerNudges, setPlayerNudges]     = useState([]);      // reminders sent from the Waiting on screen
+  const [smsOptouts, setSmsOptouts]         = useState([]);      // numbers that replied STOP (sms_optouts, brand dse)
   const [waitOpen, setWaitOpen]             = useState(() => new Set()); // Waiting on: which needs are expanded
   const [waitTeam, setWaitTeam]             = useState("");
   const [waitSending, setWaitSending]       = useState(null);    // "need|playerId" or "need|all" while a nudge sends
@@ -2609,11 +2616,16 @@ export default function App() {
   useEffect(() => { if (isApproved) loadCommitments(); }, [isApproved, loadCommitments]);
   useEffect(() => { if (isApproved) loadGcAnswers(); }, [isApproved, loadGcAnswers]);
   const loadPlayerNudges = useCallback(async () => {
-    const { data, error } = await supabase.from("player_nudges").select("player_id, need, sent_at").order("sent_at", { ascending: false }).limit(2000);
+    const { data, error } = await supabase.from("player_nudges").select("player_id, need, channel, sent_at").order("sent_at", { ascending: false }).limit(2000);
     if (error) { console.error("Load player_nudges error:", error); return; }
     setPlayerNudges(data || []);
   }, []);
-  useEffect(() => { if (isApproved && view === "waiting") loadPlayerNudges(); }, [isApproved, view, loadPlayerNudges]);
+  const loadSmsOptouts = useCallback(async () => {
+    const { data, error } = await supabase.from("sms_optouts").select("phone").eq("brand", "dse");
+    if (error) { console.error("Load sms_optouts error:", error); return; }
+    setSmsOptouts(data || []);
+  }, []);
+  useEffect(() => { if (isApproved && view === "waiting") { loadPlayerNudges(); loadSmsOptouts(); } }, [isApproved, view, loadPlayerNudges, loadSmsOptouts]);
   const loadCoachPrivates = useCallback(async () => {
     const [a, b] = await Promise.all([
       supabase.from("coach_privates").select("*"),
@@ -10836,11 +10848,18 @@ export default function App() {
     const shoeBy = new Map();
     for (const inv of shoeInvoices) { if (!inv.player_id) continue; (shoeBy.get(inv.player_id) || shoeBy.set(inv.player_id, []).get(inv.player_id)).push(inv); }
     const lastNudge = new Map();
-    for (const n of playerNudges) { const k = n.need + "|" + n.player_id; if (!lastNudge.has(k) || n.sent_at > lastNudge.get(k)) lastNudge.set(k, n.sent_at); }
+    for (const n of playerNudges) { const k = n.need + "|" + n.player_id; if (!lastNudge.has(k) || n.sent_at > lastNudge.get(k).at) lastNudge.set(k, { at: n.sent_at, channel: n.channel }); }
+    // Texts: every parent mobile on file except numbers that replied STOP.
+    const last10 = (x) => String(x || "").replace(/\D/g, "").slice(-10);
+    const optedOut = new Set(smsOptouts.map(o => last10(o.phone)));
+    const textable = (p) => { const seen = new Set(); return parentPhonesOf(p).filter(x => { const k = last10(x.phone); if (optedOut.has(k) || seen.has(k)) return false; seen.add(k); return true; }); };
+    const hiText = (p) => { const ps = parents(p); return ps.length ? "Hi " + ps.join(" and ") + "," : "Hi,"; };
+    const signText = " - " + String(coach?.display_name || "Drew Rose").split(/\s+/)[0] + ", DS Elite";
     const girl = (p) => p.first_name.trim();
     const parents = (p) => [...new Set([p.parent_name, p.parent2_name].map(x => String(x || "").trim().split(/\s+/)[0]).filter(Boolean))];
     const greet = (p) => { const ps = parents(p); return ps.length ? "Hi " + (ps.length === 1 ? ps[0] : ps.slice(0, -1).join(", ") + " and " + ps[ps.length - 1]) + "," : "Hi,"; };
     const sign = "\n\nThank you,\n\n" + (coach?.display_name || "Drew Rose") + "\nDS Elite";
+    const girlOf = (p) => p.first_name.trim();
     const ago = (iso) => { if (!iso) return null; const d = Math.floor((Date.now() - new Date(iso)) / 86400000); return d <= 0 ? "today" : d === 1 ? "yesterday" : d + "d ago"; };
 
     // The four needs. Each says who is still waiting, what exactly, and the
@@ -10848,14 +10867,15 @@ export default function App() {
     // ours, not the family's (a shoe invoice we haven't issued yet).
     const NEEDS = [
       { key: "gear", label: "Gear sizing", icon: "👕", color: "#a78bfa",
-        scope: "Teams that order gear (Rise is fitted on 11 October)",
+        scope: "Teams that order gear (includes 13 Rise 1)",
         rows: rostered.filter(p => GEAR_TEAMS.includes(p.team_assignment)).map(p => {
           const r = gearBy.get(p.id);
           if (r && !r.is_draft && r.details_confirmed) return null;
           return { p, detail: r ? (r.is_draft ? "started the form, never sent it" : "sent, but details not confirmed") : "no sizes at all", canNudge: !!p.gear_form_token };
         }).filter(Boolean),
         subject: (p) => "Still need " + girl(p) + "'s uniform sizes",
-        body: (p) => greet(p) + "\n\nWe still don't have " + girl(p) + "'s uniform sizes, and the order can't go in without them. It takes a couple of minutes:\n\n" + base + "/gear?t=" + p.gear_form_token + "\n\nIf you already filled it in, just open the link and tap send at the bottom so it reaches us." + sign },
+        body: (p) => greet(p) + "\n\nWe still don't have " + girl(p) + "'s uniform sizes, and the order can't go in without them. It takes a couple of minutes:\n\n" + base + "/gear?t=" + p.gear_form_token + "\n\nIf you already filled it in, just open the link and tap send at the bottom so it reaches us." + sign,
+        text: (p) => hiText(p) + " we still need " + girlOf(p) + "'s DS Elite uniform sizes before the order can go in. Takes 2 min: " + base + "/gear?t=" + p.gear_form_token + signText },
       { key: "shoes", label: "Shoe ordering", icon: "👟", color: "#f59e0b",
         scope: "Avoli club shoe, $167, invoiced through SportsEngine",
         rows: rostered.filter(p => GEAR_TEAMS.includes(p.team_assignment)).map(p => {
@@ -10866,12 +10886,14 @@ export default function App() {
                             : { p, detail: "no invoice in SportsEngine yet — needs one from us", canNudge: false, ours: true };
         }).filter(Boolean),
         subject: (p) => girl(p) + "'s Avoli shoe invoice is still open",
-        body: (p) => greet(p) + "\n\nThe SportsEngine invoice for " + girl(p) + "'s DS Elite Avoli team shoes ($167) is still unpaid. The club order goes in as one block, so please pay it as soon as you can — the invoice is in your email from SportsEngine, or under your SportsEngine account." + sign },
+        body: (p) => greet(p) + "\n\nThe SportsEngine invoice for " + girl(p) + "'s DS Elite Avoli team shoes ($167) is still unpaid. The club order goes in as one block, so please pay it as soon as you can — the invoice is in your email from SportsEngine, or under your SportsEngine account." + sign,
+        text: (p) => hiText(p) + " " + girlOf(p) + "'s Avoli team shoe invoice ($167) in SportsEngine is still unpaid. Please pay it when you can so the club order can go in. It's in your SportsEngine email or account." + signText },
       { key: "sportsengine", label: "USAV / SportsEngine membership", icon: "🪪", color: "#38bdf8",
         scope: "Lone Star Region + USAV, $55 — required before she can be rostered (Rise teams not included)",
         rows: rostered.filter(p => !isRise(p.team_assignment) && !p.sportsengine_registered).map(p => ({ p, detail: "no SportsEngine profile with the club", canNudge: true })),
         subject: (p) => girl(p) + " still needs her Lone Star / USAV membership",
-        body: (p) => greet(p) + "\n\nWe can't officially roster " + girl(p) + " or take her to a tournament until her Lone Star + USAV membership is done. It's $55 through SportsEngine and takes a few minutes:\n\n" + LONESTAR + "\n\nWhen it's through, SportsEngine should show her as Eligible for the 2026-27 season." + sign },
+        body: (p) => greet(p) + "\n\nWe can't officially roster " + girl(p) + " or take her to a tournament until her Lone Star + USAV membership is done. It's $55 through SportsEngine and takes a few minutes:\n\n" + LONESTAR + "\n\nWhen it's through, SportsEngine should show her as Eligible for the 2026-27 season." + sign,
+        text: (p) => hiText(p) + " " + girlOf(p) + " still needs her Lone Star + USAV membership ($55) before we can roster her or take her to a tournament: " + LONESTAR + signText },
       { key: "commitment", label: "Commitment signing", icon: "✍️", color: C.grn,
         scope: "Player and a parent both sign (Rise teams sign at orientation on 11 October)",
         rows: rostered.filter(p => !isRise(p.team_assignment)).map(p => {
@@ -10882,15 +10904,36 @@ export default function App() {
         }).filter(Boolean),
         subject: (p) => girl(p) + "'s DS Elite commitment still needs a signature",
         body: (p) => { const c = commitBy.get(p.id); const who = c && c.player_signed_at ? "a parent's signature" : c && c.parent_signed_at ? girl(p) + "'s signature" : "both " + girl(p) + "'s and a parent's signatures";
-          return greet(p) + "\n\n" + girl(p) + "'s DS Elite commitment is still waiting on " + who + ". It's the same page we went through at orientation:\n\n" + base + "/commitment?t=" + p.commitment_token + "\n\nEach of you ticks your own boxes and signs; it saves as you go." + sign; } },
+          return greet(p) + "\n\n" + girl(p) + "'s DS Elite commitment is still waiting on " + who + ". It's the same page we went through at orientation:\n\n" + base + "/commitment?t=" + p.commitment_token + "\n\nEach of you ticks your own boxes and signs; it saves as you go." + sign; },
+        text: (p) => { const c = commitBy.get(p.id); const who = c && c.player_signed_at ? "a parent's signature" : c && c.parent_signed_at ? girlOf(p) + "'s signature" : girlOf(p) + "'s and a parent's signatures";
+          return hiText(p) + " " + girlOf(p) + "'s DS Elite commitment still needs " + who + ": " + base + "/commitment?t=" + p.commitment_token + signText; } },
       { key: "global", label: "Global Challenge interest", icon: "🌍", color: "#2dd4bf",
         scope: "Croatia, July 2027 · 14 & 15 National (Diamond and Ruby) · interest only, answers at the bottom of this screen",
         rows: rostered.filter(p => GC_TEAMS.includes(p.team_assignment) && !gcBy.has(p.id))
           .map(p => ({ p, detail: "hasn't answered", canNudge: !!p.global_token })),
         subject: (p) => "Quick question: " + girl(p) + " and the Girls Global Challenge in Croatia",
-        body: (p) => greet(p) + "\n\nWe haven't heard back yet about the Girls Global Challenge, the U17 tournament in Croatia next July. We're trying to see whether we have enough players to take a team, and an answer helps even if it's a no:\n\n" + base + "/global?t=" + p.global_token + "\n\nIt's interest only. Nothing is owed and nobody is signed up by answering." + sign },
+        body: (p) => greet(p) + "\n\nWe haven't heard back yet about the Girls Global Challenge, the U17 tournament in Croatia next July. We're trying to see whether we have enough players to take a team, and an answer helps even if it's a no:\n\n" + base + "/global?t=" + p.global_token + "\n\nIt's interest only. Nothing is owed and nobody is signed up by answering." + sign,
+        text: (p) => hiText(p) + " is " + girlOf(p) + " interested in the Girls Global Challenge in Croatia next July? Interest only, takes a minute, and a no helps too: " + base + "/global?t=" + p.global_token + signText },
     ];
 
+    // A text goes to each parent mobile as its own message from the club
+    // number, so a reply lands in Messages (SMS) under her team like any other.
+    const sendText = async (need, row, quiet = false) => {
+      const p = row.p;
+      const to = textable(p);
+      if (!to.length) { if (!quiet) window.alert("No parent mobile on file for " + p.first_name + " " + p.last_name + "."); return false; }
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch("/api/send-sms", { method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + (session?.access_token || "") },
+        body: JSON.stringify({ body: need.text(p), audience: "waiting-on nudge · " + need.key + " · " + p.first_name + " " + p.last_name,
+          recipients: to.map(x => ({ to: x.phone, name: x.name || null, player_id: p.id, team_name: p.team_assignment, kind: "parent" })),
+          sent_by_coach_id: coach?.id || null, sent_by_label: coach?.display_name || null }) });
+      const out = await res.json().catch(() => ({}));
+      if (!res.ok || out.error || !out.sent) { if (!quiet) window.alert("Text failed: " + (out.error || (out.failed || []).map(f => f.error).join("; ") || res.statusText)); return false; }
+      await supabase.from("player_nudges").insert({ player_id: p.id, need: need.key, channel: "sms", recipients: to.map(x => x.phone), sent_by: coach?.display_name || coach?.email || null });
+      return true;
+    };
+    const canReach = (r, channel) => r.canNudge && (channel === "sms" ? textable(r.p).length > 0 : parentEmailsOf(r.p).length > 0);
     const sendNudge = async (need, row, quiet = false) => {
       const p = row.p;
       const to = [...new Set(parentEmailsOf(p).map(e => e.toLowerCase()))];
@@ -10903,20 +10946,25 @@ export default function App() {
       await supabase.from("player_nudges").insert({ player_id: p.id, need: need.key, channel: "email", recipients: to, sent_by: coach?.display_name || coach?.email || null });
       return true;
     };
-    const nudgeOne = async (need, row) => {
-      if (!window.confirm("Email " + parents(row.p).join(" and ") + " about " + row.p.first_name + "'s " + need.label.toLowerCase() + "?")) return;
-      setWaitSending(need.key + "|" + row.p.id);
-      try { if (await sendNudge(need, row)) await loadPlayerNudges(); } finally { setWaitSending(null); }
+    const nudgeOne = async (need, row, channel = "email") => {
+      const sms = channel === "sms";
+      const who = sms ? textable(row.p).map(x => (x.name || "parent").split(/\s+/)[0]).join(" and ") : parents(row.p).join(" and ");
+      const preview = sms ? "\n\n" + need.text(row.p) : "";
+      if (!window.confirm((sms ? "Text " : "Email ") + (who || "the parents") + " about " + row.p.first_name + "'s " + need.label.toLowerCase() + "?" + preview)) return;
+      setWaitSending(need.key + "|" + row.p.id + "|" + channel);
+      try { if (await (sms ? sendText : sendNudge)(need, row)) await loadPlayerNudges(); } finally { setWaitSending(null); }
     };
-    const nudgeAll = async (need) => {
-      const list = need.rows.filter(r => r.canNudge && parentEmailsOf(r.p).length);
-      if (!list.length) { window.alert("Nobody to nudge here."); return; }
-      if (!window.confirm("Email " + list.length + " famil" + (list.length === 1 ? "y" : "ies") + " about " + need.label.toLowerCase() + "?\n\nEach family gets its own message.")) return;
-      setWaitSending(need.key + "|all");
+    const nudgeAll = async (need, channel = "email") => {
+      const sms = channel === "sms";
+      const list = need.rows.filter(r => canReach(r, channel));
+      if (!list.length) { window.alert("Nobody to " + (sms ? "text" : "email") + " here."); return; }
+      const sample = sms ? "\n\nFor example:\n" + need.text(list[0].p) : "";
+      if (!window.confirm((sms ? "Text " : "Email ") + list.length + " famil" + (list.length === 1 ? "y" : "ies") + " about " + need.label.toLowerCase() + "?\n\nEach family gets its own message." + sample)) return;
+      setWaitSending(need.key + "|all|" + channel);
       let ok = 0;
-      try { for (const r of list) if (await sendNudge(need, r, true)) ok++; await loadPlayerNudges(); }
+      try { for (const r of list) if (await (sms ? sendText : sendNudge)(need, r, true)) ok++; await loadPlayerNudges(); }
       finally { setWaitSending(null); }
-      window.alert(ok + " of " + list.length + " sent.");
+      window.alert(ok + " of " + list.length + (sms ? " texted." : " sent."));
     };
     const copyEmails = (need) => {
       const em = [...new Set(need.rows.flatMap(r => parentEmailsOf(r.p)).map(e => e.toLowerCase()))];
@@ -10945,8 +10993,10 @@ export default function App() {
 
         {NEEDS.map(need => {
           const open = waitOpen.has(need.key);
-          const nudgeable = need.rows.filter(r => r.canNudge && parentEmailsOf(r.p).length).length;
-          const busyAll = waitSending === need.key + "|all";
+          const nudgeable = need.rows.filter(r => canReach(r, "email")).length;
+          const textableN = need.rows.filter(r => canReach(r, "sms")).length;
+          const busyAll = waitSending === need.key + "|all|email";
+          const busyAllText = waitSending === need.key + "|all|sms";
           const byTeam = new Map();
           for (const r of need.rows) { const k = r.p.team_assignment; if (!byTeam.has(k)) byTeam.set(k, []); byTeam.get(k).push(r); }
           const groups = [...byTeam.entries()].sort((a, b) => (parseInt(a[0]) || 99) - (parseInt(b[0]) || 99) || a[0].localeCompare(b[0]));
@@ -10962,9 +11012,13 @@ export default function App() {
                 {need.rows.length > 0 && (
                   <div style={{display:"flex",gap:6,flexWrap:"wrap"}} onClick={e=>e.stopPropagation()}>
                     <button onClick={()=>copyEmails(need)} style={{padding:"6px 10px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontFamily:"inherit",fontSize:11,fontWeight:700,cursor:"pointer"}}>Copy emails</button>
-                    <button onClick={()=>nudgeAll(need)} disabled={!nudgeable || !!waitSending}
+                    <button onClick={()=>nudgeAll(need, "email")} disabled={!nudgeable || !!waitSending}
                       style={{padding:"6px 12px",borderRadius:8,border:"none",background:nudgeable?need.color:C.border,color:nudgeable?"#000":C.mut,fontFamily:"inherit",fontSize:11,fontWeight:800,cursor:nudgeable?"pointer":"default"}}>
-                      {busyAll ? "Sending…" : "Nudge all " + nudgeable}
+                      {busyAll ? "Sending…" : "✉ Email all " + nudgeable}
+                    </button>
+                    <button onClick={()=>nudgeAll(need, "sms")} disabled={!textableN || !!waitSending}
+                      style={{padding:"6px 12px",borderRadius:8,border:"1px solid "+(textableN?need.color:C.border),background:"transparent",color:textableN?need.color:C.mut,fontFamily:"inherit",fontSize:11,fontWeight:800,cursor:textableN?"pointer":"default"}}>
+                      {busyAllText ? "Texting…" : "💬 Text all " + textableN}
                     </button>
                   </div>
                 )}
@@ -10976,18 +11030,26 @@ export default function App() {
                       <div style={{padding:"6px 14px",fontSize:10,fontWeight:800,letterSpacing:0.5,textTransform:"uppercase",color:C.mut,background:"rgba(255,255,255,0.03)",borderBottom:"1px solid "+C.border}}>{team} · {list.length}</div>
                       {list.slice().sort((a, b) => a.p.last_name.localeCompare(b.p.last_name)).map(r => {
                         const last = lastNudge.get(need.key + "|" + r.p.id);
-                        const busy = waitSending === need.key + "|" + r.p.id;
+                        const busy = waitSending === need.key + "|" + r.p.id + "|email";
+                        const busyText = waitSending === need.key + "|" + r.p.id + "|sms";
                         const hasEmail = parentEmailsOf(r.p).length > 0;
+                        const phones = textable(r.p);
                         return (
                           <div key={r.p.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 14px",borderBottom:"1px solid "+C.border,flexWrap:"wrap"}}>
                             <button onClick={()=>setProfileId(r.p.id)} style={{background:"none",border:"none",padding:0,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,color:C.text,minWidth:170,textAlign:"left"}}>{r.p.first_name} {r.p.last_name}</button>
                             <span style={{fontSize:11,color:r.ours?"#f59e0b":C.mut,flex:1,minWidth:200}}>{r.detail}</span>
-                            <span style={{fontSize:10,color:last?C.mut:"transparent",whiteSpace:"nowrap"}}>{last ? "nudged " + ago(last) : "—"}</span>
+                            <span style={{fontSize:10,color:last?C.mut:"transparent",whiteSpace:"nowrap"}}>{last ? (last.channel === "sms" ? "texted " : "emailed ") + ago(last.at) : "—"}</span>
                             {r.canNudge
-                              ? <button onClick={()=>nudgeOne(need, r)} disabled={!hasEmail || !!waitSending} title={hasEmail ? "Email " + parents(r.p).join(" and ") : "No parent email on file"}
-                                  style={{padding:"4px 12px",borderRadius:7,border:"1px solid "+(hasEmail?need.color:C.border),background:"transparent",color:hasEmail?need.color:C.mut,fontFamily:"inherit",fontSize:11,fontWeight:800,cursor:hasEmail?"pointer":"default"}}>
-                                  {busy ? "Sending…" : "Nudge"}
-                                </button>
+                              ? <span style={{display:"flex",gap:6}}>
+                                  <button onClick={()=>nudgeOne(need, r, "email")} disabled={!hasEmail || !!waitSending} title={hasEmail ? "Email " + parents(r.p).join(" and ") : "No parent email on file"}
+                                    style={{padding:"4px 10px",borderRadius:7,border:"1px solid "+(hasEmail?need.color:C.border),background:"transparent",color:hasEmail?need.color:C.mut,fontFamily:"inherit",fontSize:11,fontWeight:800,cursor:hasEmail?"pointer":"default"}}>
+                                    {busy ? "Sending…" : "✉ Email"}
+                                  </button>
+                                  <button onClick={()=>nudgeOne(need, r, "sms")} disabled={!phones.length || !!waitSending} title={phones.length ? "Text " + phones.map(x => (x.name || "parent") + " " + x.phone).join(", ") : "No parent mobile on file (or they replied STOP)"}
+                                    style={{padding:"4px 10px",borderRadius:7,border:"1px solid "+(phones.length?need.color:C.border),background:"transparent",color:phones.length?need.color:C.mut,fontFamily:"inherit",fontSize:11,fontWeight:800,cursor:phones.length?"pointer":"default"}}>
+                                    {busyText ? "Texting…" : "💬 Text"}
+                                  </button>
+                                </span>
                               : <span style={{fontSize:10,color:C.mut,padding:"4px 8px"}}>our move</span>}
                           </div>
                         );
@@ -10999,7 +11061,7 @@ export default function App() {
             </div>
           );
         })}
-        <div style={{fontSize:11,color:C.mut,marginTop:6}}>A nudge is one email to the family, from you, with the link they need. Every send is remembered here so you can see who has already been asked.</div>
+        <div style={{fontSize:11,color:C.mut,marginTop:6}}>A nudge is one email, or one text to each parent mobile, from you, with the link they need. Texts come from the club number and replies land in Messages (SMS); anyone who replied STOP is skipped. Every send is remembered here so you can see who has already been asked.</div>
         {renderGcAnswers()}
       </div>
     );
