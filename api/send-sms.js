@@ -45,7 +45,10 @@ export default async function handler(req, res) {
   {
     const bearer = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
     if (!bearer) return res.status(401).json({ error: "Not signed in" });
-    const { data: { user } = {} } = await supabase.auth.getUser(bearer).catch(() => ({ data: {} }));
+    // Server-side scripts (scripts/send-*.mjs) send with the service role key,
+    // which already has full access; everyone else signs in.
+    const isService = bearer === SUPABASE_SERVICE_ROLE_KEY;
+    const { data: { user } = {} } = isService ? { data: { user: { email: "drew@dselitevolleyball.com" } } } : await supabase.auth.getUser(bearer).catch(() => ({ data: {} }));
     const email = (user?.email || "").trim().toLowerCase();
     if (!email) return res.status(401).json({ error: "Not signed in" });
     let ok = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"].includes(email);
