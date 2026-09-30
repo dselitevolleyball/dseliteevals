@@ -1,7 +1,8 @@
 // A coach messages ONE class — the families signed up for a single session of
 // a DSSC clinic or pod — with optional pictures/video from that class.
 //
-// POST { clinic_id, session_id, body, media_ids?: [id] }
+// POST { clinic_id, session_id, body, media_ids?: [id], channels?: ["email","sms"] }
+//   channels defaults to both; "email" only or "sms" only when the coach picks.
 //   Authorization: Bearer <Supabase session token>
 //
 // Who may send: an owner/director, an admin coach, or a coach who is on that
@@ -9,10 +10,14 @@
 // the session plus the program-wide rows with session_id NULL), deduped.
 //
 //   Email  → Resend, DSSC-branded, media inline / linked.
-//   Text   → Twilio, ONLY to parents with sms_consent, and ONLY once a DSSC
-//            sending number exists (DSSC_TWILIO_FROM_NUMBER). Until then texts
-//            are counted as skipped and the response says why — the DS Elite
-//            10DLC campaign is registered for DS Elite, not the club.
+//   Text   → Twilio, to every family's parent phone except recorded opt-outs
+//            (sms_optouts brand dssc — STOP replies, bounces, "do not text").
+//            Every family registered with the club agreed to texts (Drew,
+//            26 and 30 Sep 2026), so there is no opt-in gate. Needs the club's
+//            own sending number (DSSC_TWILIO_FROM_NUMBER): the DS Elite 10DLC
+//            campaign is registered for DS Elite, not the club, and must not
+//            carry club messages. Until it's set, texts are skipped and the
+//            response says why.
 //
 // Env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, RESEND_API_KEY (or lowercase),
 //      DSE_FROM_EMAIL, DSSC_FROM_EMAIL (opt, "Dripping Springs Sports Club <…>"),
@@ -51,6 +56,10 @@ export default async function handler(req, res) {
   const clinicId = Number(body.clinic_id), sessionId = String(body.session_id || "").trim();
   const text = String(body.body || "").trim();
   const mediaIds = (Array.isArray(body.media_ids) ? body.media_ids : []).map(Number).filter(Boolean);
+  const want = new Set((Array.isArray(body.channels) && body.channels.length ? body.channels : ["email", "sms"]).map(String));
+  if (want.has("sms") && !want.has("email") && !twilioReady("dssc")) {
+    return res.status(400).json({ error: "Texting for the club isn't live yet — it's waiting on the club's own texting number. Send by email for now." });
+  }
   if (!clinicId || !sessionId) return res.status(400).json({ error: "clinic_id and session_id are required" });
   if (!text && !mediaIds.length) return res.status(400).json({ error: "Write a message or pick something to send." });
 
@@ -90,11 +99,11 @@ export default async function handler(req, res) {
   let noConsent = 0;
   for (const r of classRoster) {
     const e = nrm(r.parent_email);
-    if (e && EMAIL_RE.test(e) && !emails.has(e)) emails.set(e, r);
+    if (want.has("email") && e && EMAIL_RE.test(e) && !emails.has(e)) emails.set(e, r);
     const p = normalizePhone(r.parent_phone);
-    if (p && /^\+\d{8,15}$/.test(p) && !phones.has(p)) { if (!optedOut.has(p)) phones.set(p, r); else noConsent++; }
+    if (want.has("sms") && p && /^\+\d{8,15}$/.test(p) && !phones.has(p)) { if (!optedOut.has(p)) phones.set(p, r); else noConsent++; }
   }
-  if (!emails.size && !phones.size) return res.status(400).json({ error: "Nobody on this class has an email or a texting number yet." });
+  if (!emails.size && !phones.size) return res.status(400).json({ error: want.has("email") && want.has("sms") ? "Nobody on this class has an email or a texting number yet." : want.has("sms") ? "Nobody on this class has a texting number on file." : "Nobody on this class has an email on file." });
 
   // ── Media ─────────────────────────────────────────────────────────────────
   let media = [];

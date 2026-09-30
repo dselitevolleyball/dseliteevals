@@ -34,9 +34,9 @@ export const timeRange = (s) => (s.start_time || "") + (s.end_time ? "–" + s.e
 export const classBlocks = (s) => Array.isArray(s?.blocks) ? s.blocks : [];
 export const hasClassPlan = (s) => classBlocks(s).some(b => String(b.name || "").trim());
 // One class's families, via the server (it owns the roster lookup and consent).
-async function sendClassMessage(c, s, body, mediaIds = []) {
+async function sendClassMessage(c, s, body, mediaIds = [], channels = ["email", "sms"]) {
   const { data: { session } } = await supabase.auth.getSession();
-  const r = await fetch("/api/dssc-class-message", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + (session?.access_token || "") }, body: JSON.stringify({ clinic_id: c.id, session_id: String(s.id), body, media_ids: mediaIds }) });
+  const r = await fetch("/api/dssc-class-message", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + (session?.access_token || "") }, body: JSON.stringify({ channels, clinic_id: c.id, session_id: String(s.id), body, media_ids: mediaIds }) });
   const d = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(d.error || ("HTTP " + r.status));
   return d;
@@ -629,13 +629,18 @@ function MessageTab({ c, s, roster, media, picked, setPicked, messages, reloadMe
   const [result, setResult] = useState(null);
   const emails = new Set(roster.map(r => nrm(r.parent_email)).filter(e => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)));
   const phones = roster.filter(r => String(r.parent_phone || "").replace(/\D/g, "").length >= 10);
-  const texting = phones.filter(r => r.sms_consent).length, noConsent = phones.length - texting;
+  // Every club family agreed to texts; only a STOP reply holds one back, and
+  // the server knows those. So a phone on file is a family we can text.
+  const texting = phones.length, noConsent = 0;
+  const [how, setHow] = useState("both");   // both | email | sms
+  const chans = how === "both" ? ["email", "sms"] : [how];
   const send = async () => {
     if (!body.trim() && !picked.length) return;
-    if (!window.confirm(`Send to ${roster.length} famil${roster.length === 1 ? "y" : "ies"} on ${c.name} (${fmtDay(s.date, "")})?`)) return;
+    const byWhat = how === "both" ? "by email and text" : how === "email" ? "by email only" : "by text only";
+    if (!window.confirm(`Send to ${roster.length} famil${roster.length === 1 ? "y" : "ies"} on ${c.name} (${fmtDay(s.date, "")}), ${byWhat}?`)) return;
     setSending(true); setResult(null);
     try {
-      const d = await sendClassMessage(c, s, body.trim(), picked);
+      const d = await sendClassMessage(c, s, body.trim(), picked, chans);
       setResult(d); setBody(""); setPicked([]); reloadMessages(); reloadMedia();
     } catch (e) { setResult({ error: e.message }); }
     setSending(false);
@@ -647,6 +652,11 @@ function MessageTab({ c, s, roster, media, picked, setPicked, messages, reloadMe
       <div style={{ fontSize: 12, color: DS.mut, marginBottom: 8, lineHeight: 1.5 }}>
         {roster.length ? <>{roster.length} famil{roster.length === 1 ? "y" : "ies"} · {emails.size} by email · {texting} by text{noConsent ? ` · ${noConsent} phone${noConsent === 1 ? "" : "s"} without text consent` : ""}</> : "Nobody on the roster yet — add players first."}
         <span style={{ display: "block", color: DS.dim, marginTop: 2 }}>Texts go out once the club's texting number is approved; until then everyone gets email.</span>
+      </div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", margin: "2px 0 10px" }}>
+        {[["both", "Email + text"], ["email", "Email only"], ["sms", "Text only"]].map(([k, l]) => (
+          <button key={k} onClick={() => setHow(k)} style={{ fontFamily: DS.font, fontSize: 12, fontWeight: 700, padding: "6px 12px", borderRadius: 999, cursor: "pointer", border: "1px solid " + (how === k ? DS.lime : DS.line), background: how === k ? "rgba(178,208,73,0.16)" : "transparent", color: how === k ? DS.lime : DS.mut }}>{l}</button>
+        ))}
       </div>
       <Grow value={body} onChange={e => setBody(e.target.value)} minRows={4} placeholder={"Hi families — great class today! We worked on…\n\nNext week: bring…"} disabled={!canEdit} />
       {media.length > 0 && (
