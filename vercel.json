@@ -131,9 +131,7 @@
     }
   ],
   "functions": {
-    "api/playbook-calendar.js": {
-      "maxDuration": 60
-    },
+    "api/playbook-calendar.js": { "maxDuration": 120 },
     "api/ask-hq.js": {
       "maxDuration": 120
     }

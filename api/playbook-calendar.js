@@ -31,7 +31,7 @@ export default async function handler(req, res) {
   const dry = url?.searchParams.get("dry") === "1";
   const days = Math.min(200, Math.max(7, Number(url?.searchParams.get("days")) || 120));
   const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
-  const { data: prev } = await sb.from("dssc_sync").select("calendar_error").eq("id", 1).maybeSingle();
+  const { data: prev } = await sb.from("dssc_sync").select("calendar_error, calendar_fail_streak").eq("id", 1).maybeSingle();
   const now = new Date().toISOString();
 
   const notify = async (subject, body) => {
@@ -39,9 +39,12 @@ export default async function handler(req, res) {
   };
   const fail = async (msg) => {
     if (!dry) {
-      await sb.from("dssc_sync").upsert({ id: 1, calendar_error: msg, calendar_error_at: now }, { onConflict: "id" });
-      // The same failure every hour is noise; a new one is worth a note.
-      if (prev?.calendar_error !== msg) await notify("Playbook calendar pull failed", msg + "\n\nIt runs every hour. Until it recovers, the 🔄 Sync DSSC clinics bookmark on the Clinics page still works.");
+      // One slow hour at Playbook recovers by itself at the next run, so
+      // nobody hears about it. Two failed runs in a row is a real problem.
+      const streak = (prev?.calendar_fail_streak || 0) + 1;
+      await sb.from("dssc_sync").upsert({ id: 1, calendar_error: msg, calendar_error_at: now, calendar_fail_streak: streak }, { onConflict: "id" });
+      // One email per outage, on its second hour — not one per failed hour.
+      if (streak === 2) await notify("Playbook calendar pull failed twice in a row", msg + "\n\nThat's two hourly runs in a row, so it's worth a look. It keeps trying every hour, and you won't get another email until it has recovered and then failed again. Until it recovers, the 🔄 Sync DSSC clinics bookmark on the Clinics page still works.");
     }
     return res.status(502).json({ ok: false, error: msg });
   };
@@ -58,7 +61,7 @@ export default async function handler(req, res) {
   }
   try {
     const summary = await syncClinics(sb, events, { syncedBy: "playbook auto-pull", window: { min: start, max: addDays(end, -1) } });
-    await sb.from("dssc_sync").upsert({ id: 1, calendar_error: null, calendar_error_at: null }, { onConflict: "id" });
+    await sb.from("dssc_sync").upsert({ id: 1, calendar_error: null, calendar_error_at: null, calendar_fail_streak: 0 }, { onConflict: "id" });
     return res.status(200).json({ ok: true, window: { start, end }, events: events.length, ...summary });
   } catch (e) { return fail("Sync: " + e.message); }
 }

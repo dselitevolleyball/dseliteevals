@@ -30,7 +30,25 @@ export const centralToday = () => new Date().toLocaleDateString("en-CA", { timeZ
 export const addDays = (ymd, n) => { const d = new Date(ymd + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 
 // start inclusive, end exclusive (FullCalendar's convention, which the socket follows).
-export async function fetchPlaybookEvents(start, end, { timeoutMs = 50000 } = {}) {
+//
+// Asked for in month-sized pieces, all at once, each retried once if it
+// stalls. One four-month request takes ~33s and Playbook is slow now and
+// then, so it ran past the old 50s limit about once a day; four monthly
+// requests side by side take ~17s, and a stalled piece gets a second go.
+export async function fetchPlaybookEvents(start, end, { timeoutMs = 45000, chunkDays = 30 } = {}) {
+  const chunks = [];
+  for (let a = start; a < end; a = addDays(a, chunkDays)) { const b = addDays(a, chunkDays); chunks.push([a, b < end ? b : end]); }
+  const one = async ([a, b]) => { try { return await fetchWindow(a, b, timeoutMs); } catch (e1) { try { return await fetchWindow(a, b, timeoutMs); } catch (e2) { throw new Error(e2.message + " (" + a + " → " + b + ", after a retry)"); } } };
+  const parts = await Promise.all(chunks.map(one));
+  const seen = new Set(), all = [];
+  for (const e of parts.flat()) { const k = e.ext.event_program + "|" + e.start + "|" + e.end + "|" + e.title; if (seen.has(k)) continue; seen.add(k); all.push(e); }
+  if (!all.length) throw new Error("Playbook returned no events for " + start + " → " + end + "; not syncing an empty calendar.");
+  return all;
+}
+
+// One request for one window. A quiet month is allowed to come back empty;
+// only an empty WHOLE pull is refused (above).
+async function fetchWindow(start, end, timeoutMs) {
   if (typeof WebSocket !== "function") throw new Error("This runtime has no WebSocket client (needs Node 22+).");
   const page = await fetch(CAL, { headers: { "User-Agent": UA } });
   if (!page.ok) throw new Error("Playbook calendar page returned HTTP " + page.status);
@@ -56,7 +74,6 @@ export async function fetchPlaybookEvents(start, end, { timeoutMs = 50000 } = {}
     ws.addEventListener("error", () => done(reject, new Error("Playbook calendar socket errored")));
     ws.addEventListener("close", (e) => done(reject, new Error("Playbook calendar socket closed before answering (" + e.code + ")")));
   });
-  if (!raw.length) throw new Error("Playbook returned no events for " + start + " → " + end + "; not syncing an empty calendar.");
 
   // Same shape the bookmarklet posts: { start, end, ext: {...} }.
   return raw.map(e => ({
