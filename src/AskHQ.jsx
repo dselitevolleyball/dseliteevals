@@ -122,7 +122,8 @@ export default function AskHQ({ open, onClose, view, coach }) {
   const decide = async (mi, pi, discard) => {
     const pr = msgs[mi].proposals[pi];
     if (!discard && !pr.picked.length) return;
-    if (!window.confirm(discard ? "Discard these proposed changes? Nothing in HQ changes." : "Apply " + pr.picked.length + " change" + (pr.picked.length === 1 ? "" : "s") + " to HQ?")) return;
+    const dels = pr.picked.filter(i => pr.changes[i]?.action === "delete").length;
+    if (!window.confirm(discard ? "Discard these proposed changes? Nothing in HQ changes." : "Apply " + pr.picked.length + " change" + (pr.picked.length === 1 ? "" : "s") + " to HQ?" + (dels ? "\n\n" + dels + " of them delete" + (dels === 1 ? "s a record" : " records") + "." : ""))) return;
     setProp(mi, pi, y => ({ ...y, state: "working" }));
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -157,8 +158,13 @@ export default function AskHQ({ open, onClose, view, coach }) {
                 {!done && <input type="checkbox" checked={pr.picked.includes(ci)} onChange={() => togglePick(mi, pi, ci)} style={{ marginTop: 3, accentColor: C.gold }} />}
                 <span style={{ flex: 1, minWidth: 0 }}>
                   <span style={{ fontSize: 13, fontWeight: 700 }}>{c.label || (c.table + " " + JSON.stringify(c.pk || {}))}</span>
-                  <span style={{ fontSize: 10, color: C.mut, marginLeft: 6 }}>{c.table}{c.action === "insert" ? " · new row" : ""}</span>
-                  {Object.keys(c.set).map(k => (
+                  <span style={{ fontSize: 10, color: c.action === "delete" ? C.red : C.mut, marginLeft: 6, fontWeight: c.action === "delete" ? 800 : 400 }}>{c.table}{c.action === "insert" ? " · new row" : c.action === "delete" ? " · 🗑 delete this record" : ""}</span>
+                  {c.action === "delete" && (
+                    <div style={{ fontSize: 11.5, marginTop: 2, color: C.red, textDecoration: "line-through", textDecorationColor: "rgba(255,90,90,0.5)", lineHeight: 1.45 }}>
+                      {Object.entries(c.before || {}).filter(([k, v]) => v != null && v !== "" && v !== false && !/^(created_at|updated_at)$/.test(k)).slice(0, 10).map(([k, v]) => k.replace(/_/g, " ") + ": " + fmtVal(v)).join(" · ")}
+                    </div>
+                  )}
+                  {Object.keys(c.set || {}).map(k => (
                     <div key={k} style={{ fontSize: 12, marginTop: 2 }}>
                       <span style={{ color: C.mut }}>{k.replace(/_/g, " ")}: </span>
                       {c.action === "update" && <><span style={{ color: C.red, textDecoration: "line-through" }}>{fmtVal(c.before?.[k])}</span><span style={{ color: C.mut }}> → </span></>}
