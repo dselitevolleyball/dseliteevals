@@ -7666,7 +7666,12 @@ export default function App() {
                         </span>
                       </label>
                     )}
-                    {t.travel_mode === "fly_own" && (() => {
+                    {t.travel_mode === "fly_own" && ownFlightOf(t, tn.id).selfPaid && (
+                      <div style={{marginTop:10,padding:"9px 12px",borderRadius:9,border:"1px solid "+C.border,fontSize:11.5,color:C.mut}}>
+                        Your airfare is yours to cover, and the club pays your hotel — nothing to enter here.
+                      </div>
+                    )}
+                    {t.travel_mode === "fly_own" && !ownFlightOf(t, tn.id).selfPaid && (() => {
                       const own = ownFlightOf(t, tn.id);
                       return (
                         <div style={{marginTop:10,padding:"10px 12px",borderRadius:9,border:"1px solid "+(own.paid == null ? "#f59e0b" : C.grn),background:"rgba(139,92,246,0.06)"}}>
@@ -28749,7 +28754,7 @@ export default function App() {
     return {
       rows,
       flights: rows.reduce((s, r) => s + flightSpend(r, tnId), 0),
-      ownUnpriced: rows.filter(r => booksOwn(r) && ownFlightOf(r, tnId).paid == null).length,
+      ownUnpriced: rows.filter(r => booksOwn(r) && !ownFlightOf(r, tnId).selfPaid && ownFlightOf(r, tnId).paid == null).length,
       hotel:   roomTotal,
       coach,
       club:    Math.max(0, roomTotal - coach),
@@ -28797,19 +28802,29 @@ export default function App() {
   // counting either as an outstanding ticket leaves the event permanently amber.
   const isDriving  = (r) => r?.travel_mode === "drive";
   const booksOwn   = (r) => r?.travel_mode === "fly_own";
-  const weBookFor  = (r) => !isDriving(r) && !booksOwn(r);
+  // Nor do we book for someone whose standing arrangement is to buy her own
+  // (paysOwnAir, below) — her trip shouldn't sit amber waiting on a ticket.
+  const weBookFor  = (r) => !isDriving(r) && !booksOwn(r) && !paysOwnAir(r?.coach_name);
   // A coach who books her own flight: what she paid, the club's fare for that
   // trip (the cap), and what she gets back — the lower of the two. With no
   // club fare on file yet there is no cap to apply, so it's her fare.
+  // A standing arrangement on the coach's roster row — Kristen buys her own
+  // flights and isn't reimbursed — overrides all of that: nothing comes back,
+  // and there's no fare to chase.
+  const paysOwnAir = (name) => {
+    const nrm = x => String(x || "").trim().toLowerCase();
+    return !!coachRoster.find(x => nrm((x.first_name || "") + " " + (x.last_name || "")) === nrm(name))?.pays_own_airfare;
+  };
   const ownFlightOf = (r, tnId) => {
     const paid = r?.flight_cost != null && r.flight_cost !== "" ? Number(r.flight_cost) : null;
+    if (paysOwnAir(r?.coach_name)) return { paid, cap: null, reimb: 0, selfPaid: true };
     const cap = Number(masterFor(tnId)?.cost) || null;
-    return { paid, cap, reimb: paid == null ? null : cap != null ? Math.min(paid, cap) : paid };
+    return { paid, cap, reimb: paid == null ? null : cap != null ? Math.min(paid, cap) : paid, selfPaid: false };
   };
   // What one traveller's flight costs the club: nothing for a driver (mileage
   // is its own claim), the reimbursement for an own-booked flight, otherwise
   // the ticket we bought.
-  const flightSpend = (r, tnId) => isDriving(r) ? 0 : booksOwn(r) ? (ownFlightOf(r, tnId).reimb || 0) : (Number(effFlight(r, tnId).cost) || 0);
+  const flightSpend = (r, tnId) => isDriving(r) || paysOwnAir(r?.coach_name) ? 0 : booksOwn(r) ? (ownFlightOf(r, tnId).reimb || 0) : (Number(effFlight(r, tnId).cost) || 0);
   // The room-side twin of the above. A coach commuting from home has no bed to
   // assign, so counting one as missing leaves the event permanently amber.
   const needsRoom  = (r) => !r?.no_room_needed;
@@ -29108,6 +29123,11 @@ export default function App() {
                     <td colSpan={4} style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,color:C.mut,fontSize:10,fontStyle:"italic"}}
                         title="Told us they're driving. Reimbursed per mile at the IRS standard rate — no ticket to buy.">
                       🚗 driving — mileage, no flight to book
+                    </td>
+                  ) : air && booksOwn(r) && ownFlightOf(r, tn.id).selfPaid ? (
+                    <td colSpan={4} style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,color:"#8b5cf6",fontSize:10,fontStyle:"italic"}}
+                        title="Standing arrangement: buys her own flights and isn't reimbursed. Counts $0 airfare to the club.">
+                      ✈ pays her own airfare — not reimbursed
                     </td>
                   ) : air && booksOwn(r) ? (() => {
                     const own = ownFlightOf(r, tn.id);
