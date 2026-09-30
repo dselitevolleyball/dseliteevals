@@ -1857,6 +1857,7 @@ export default function App() {
   const [smsSending, setSmsSending]                   = useState(false);
   const [smsComposer, setSmsComposer]                 = useState(null);   // team / coaches group text being written
   const [smsFolded, setSmsFolded]                     = useState(() => new Set()); // inbox team sections folded away
+  const [smsJustRead, setSmsJustRead]                 = useState(null);   // a thread opened from New stays there while it's open
   const [smsConsents, setSmsConsents]                 = useState([]);     // sms_consents — who opted in to texts
   const [smsConsentPaste, setSmsConsentPaste]         = useState("");
   // SportsYou coach-comms inbox state
@@ -27650,10 +27651,18 @@ export default function App() {
       if (!Number.isNaN(na) && !Number.isNaN(nb) && na !== nb) return na - nb;
       return a.localeCompare(b);
     };
+    // Unread conversations float to a "New" section at the top, newest first,
+    // and go back to their team once they've been read. The one you just
+    // opened from New stays put while it's open, so it doesn't jump out from
+    // under you mid-read.
+    const NEW = "🟢 New";
+    const isNewThread = (t) => (t.unread_count || 0) > 0 || (t.id === smsJustRead && t.id === selectedThreadId);
     const sections = (() => {
       const m = new Map();
-      for (const t of smsThreads) { const g = groupOf(t); if (!m.has(g)) m.set(g, []); m.get(g).push(t); }
-      return [...m.entries()].sort((a, b) => teamSort(a[0], b[0]));
+      for (const t of smsThreads) { if (isNewThread(t)) continue; const g = groupOf(t); if (!m.has(g)) m.set(g, []); m.get(g).push(t); }
+      const teams = [...m.entries()].sort((a, b) => teamSort(a[0], b[0]));
+      const fresh = smsThreads.filter(isNewThread).sort((a, b) => String(b.last_message_at || "").localeCompare(String(a.last_message_at || "")));
+      return fresh.length ? [[NEW, fresh], ...teams] : teams;
     })();
     const toggleFold = (g) => setSmsFolded(prev => { const n = new Set(prev); if (n.has(g)) n.delete(g); else n.add(g); return n; });
 
@@ -27749,12 +27758,13 @@ export default function App() {
           {smsThreads.length === 0 && <div style={{padding:24,textAlign:"center",color:C.mut,fontSize:11}}>No conversations yet.</div>}
           {sections.map(([group, list]) => {
             const unread = list.reduce((n, t) => n + (t.unread_count || 0), 0);
-            const folded = smsFolded.has(group);
+            const isNewSec = group === NEW;
+            const folded = !isNewSec && smsFolded.has(group);
             return (
               <div key={group}>
-                <div onClick={()=>toggleFold(group)}
-                  style={{padding:"7px 14px",borderBottom:"1px solid "+C.border,background:"rgba(255,255,255,0.03)",display:"flex",alignItems:"center",gap:8,cursor:"pointer",position:"sticky",top:57,zIndex:1}}>
-                  <span style={{fontSize:10,color:C.mut,width:10}}>{folded ? "›" : "⌄"}</span>
+                <div onClick={()=>{ if (!isNewSec) toggleFold(group); }}
+                  style={{padding:"7px 14px",borderBottom:"1px solid "+C.border,background:isNewSec?"rgba(34,197,94,0.12)":"rgba(255,255,255,0.03)",display:"flex",alignItems:"center",gap:8,cursor:isNewSec?"default":"pointer",position:"sticky",top:57,zIndex:1}}>
+                  <span style={{fontSize:10,color:C.mut,width:10}}>{isNewSec ? "" : folded ? "›" : "⌄"}</span>
                   <span style={{fontSize:11,fontWeight:800,color:unread?C.grn:C.text,letterSpacing:0.3}}>{group}</span>
                   <span style={{fontSize:10,color:C.mut}}>{list.length}</span>
                   <div style={{flex:1}} />
@@ -27764,10 +27774,11 @@ export default function App() {
                   const isSel = t.id === selectedThreadId;
                   return (
                     <div key={t.id}
-                      onClick={() => { setSmsComposer(null); setSelectedThreadId(t.id); if (t.unread_count) markThreadRead(t.id); }}
+                      onClick={() => { setSmsComposer(null); setSelectedThreadId(t.id); setSmsJustRead(t.unread_count ? t.id : null); if (t.unread_count) markThreadRead(t.id); }}
                       style={{padding:"9px 14px 9px 24px",borderBottom:"1px solid "+C.border,cursor:"pointer",background:isSel?"rgba(233,30,140,0.10)":(t.unread_count?"rgba(34,197,94,0.06)":"transparent")}}>
                       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:6}}>
                         <span style={{fontSize:13,fontWeight:700,color:t.unread_count?C.grn:C.text,maxWidth:200,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{labelOf(t)}</span>
+                        {isNewSec && <span style={{fontSize:9,fontWeight:800,color:C.mut,border:"1px solid "+C.border,borderRadius:6,padding:"0 5px",whiteSpace:"nowrap"}}>{groupOf(t)}</span>}
                         <span style={{fontSize:9,color:C.mut,whiteSpace:"nowrap"}}>{fmtWhen(t.last_message_at)}</span>
                       </div>
                       <div style={{fontSize:11,color:C.mut,marginTop:3,maxWidth:280,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
