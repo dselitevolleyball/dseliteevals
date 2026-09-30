@@ -7499,6 +7499,15 @@ export default function App() {
   // Keyed by tournament + coach rather than row id: a derived trip may have no
   // coach_travel row yet, and confirm_travel_for creates it. Writing straight to
   // the table isn't an option — the read-own policy is SELECT-only.
+  // Her own fare for a flight she booked herself — goes through its own
+  // function because a coach can't write coach_travel directly.
+  const saveOwnFlightCost = async (row, value) => {
+    const cost = value === "" || value == null ? null : Number(value);
+    if (cost != null && !(cost >= 0)) { window.alert("Enter the fare as a number."); return; }
+    setCoachTravel(prev => prev.map(t => (t.tournament_id === row.tournament_id && t.coach_name === row.coach_name && !t.private_owner) ? { ...t, flight_cost: cost } : t));
+    const { error } = await supabase.rpc("set_own_flight_cost", { p_tournament_id: row.tournament_id, p_coach_name: row.coach_name, p_cost: cost });
+    if (error) { window.alert("Couldn't save the fare: " + error.message); loadCoachTravel(); }
+  };
   const saveTripAnswer = async (row, patch) => {
     const next = { ...row, ...patch };
     setCoachTravel(prev => {
@@ -7657,6 +7666,24 @@ export default function App() {
                         </span>
                       </label>
                     )}
+                    {t.travel_mode === "fly_own" && (() => {
+                      const own = ownFlightOf(t, tn.id);
+                      return (
+                        <div style={{marginTop:10,padding:"10px 12px",borderRadius:9,border:"1px solid "+(own.paid == null ? "#f59e0b" : C.grn),background:"rgba(139,92,246,0.06)"}}>
+                          <div style={{fontSize:11.5,fontWeight:700,color:C.text,marginBottom:6}}>What did your ticket cost?</div>
+                          <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                            <span style={{fontSize:13,color:C.mut}}>$</span>
+                            <DebouncedField style={{...inpStyle,width:110,padding:"7px 9px",fontSize:14,fontWeight:700}} type="number" placeholder="0"
+                              value={t.flight_cost ?? ""} onCommit={v => saveOwnFlightCost(t, v)} />
+                            <span style={{fontSize:11.5,fontWeight:700,color:own.paid == null ? "#f59e0b" : C.grn}}>
+                              {own.paid == null ? "Enter it once you've booked — it's how you get reimbursed."
+                                : "You'll be reimbursed " + (travelMoney(own.reimb) || "$0") + (own.cap != null && own.paid > own.cap ? " — the club's fare for this trip was " + travelMoney(own.cap) : "")}
+                            </span>
+                          </div>
+                          <div style={{fontSize:10.5,color:C.mut,marginTop:6}}>The total you paid for your own seat, taxes and fees included. Reimbursement is up to what the club paid for everyone else's ticket on this trip.</div>
+                        </div>
+                      );
+                    })()}
                     <DebouncedField style={{...inpStyle,width:"100%",padding:"6px 9px",fontSize:12,marginTop:9}}
                       placeholder="Anything we should know? (preferred airport, staying extra days, seat needs…)"
                       value={t.travel_note || ""} onCommit={v => saveTripAnswer(t, { travel_note: v.trim() || null })} />
@@ -28721,7 +28748,8 @@ export default function App() {
     const coach = rows.reduce((s, r) => s + coachOwes(r), 0);
     return {
       rows,
-      flights: rows.reduce((s, r) => s + (Number(effFlight(r, tnId).cost) || 0), 0),
+      flights: rows.reduce((s, r) => s + flightSpend(r, tnId), 0),
+      ownUnpriced: rows.filter(r => booksOwn(r) && ownFlightOf(r, tnId).paid == null).length,
       hotel:   roomTotal,
       coach,
       club:    Math.max(0, roomTotal - coach),
@@ -28770,6 +28798,18 @@ export default function App() {
   const isDriving  = (r) => r?.travel_mode === "drive";
   const booksOwn   = (r) => r?.travel_mode === "fly_own";
   const weBookFor  = (r) => !isDriving(r) && !booksOwn(r);
+  // A coach who books her own flight: what she paid, the club's fare for that
+  // trip (the cap), and what she gets back — the lower of the two. With no
+  // club fare on file yet there is no cap to apply, so it's her fare.
+  const ownFlightOf = (r, tnId) => {
+    const paid = r?.flight_cost != null && r.flight_cost !== "" ? Number(r.flight_cost) : null;
+    const cap = Number(masterFor(tnId)?.cost) || null;
+    return { paid, cap, reimb: paid == null ? null : cap != null ? Math.min(paid, cap) : paid };
+  };
+  // What one traveller's flight costs the club: nothing for a driver (mileage
+  // is its own claim), the reimbursement for an own-booked flight, otherwise
+  // the ticket we bought.
+  const flightSpend = (r, tnId) => isDriving(r) ? 0 : booksOwn(r) ? (ownFlightOf(r, tnId).reimb || 0) : (Number(effFlight(r, tnId).cost) || 0);
   // The room-side twin of the above. A coach commuting from home has no bed to
   // assign, so counting one as missing leaves the event permanently amber.
   const needsRoom  = (r) => !r?.no_room_needed;
@@ -29069,12 +29109,22 @@ export default function App() {
                         title="Told us they're driving. Reimbursed per mile at the IRS standard rate — no ticket to buy.">
                       🚗 driving — mileage, no flight to book
                     </td>
-                  ) : air && booksOwn(r) ? (
-                    <td colSpan={4} style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,color:"#8b5cf6",fontSize:10,fontStyle:"italic"}}
+                  ) : air && booksOwn(r) ? (() => {
+                    const own = ownFlightOf(r, tn.id);
+                    return (<>
+                    <td colSpan={3} style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,color:"#8b5cf6",fontSize:10,fontStyle:"italic"}}
                         title="Booking their own flight. Reimbursed up to what we paid for everyone else's ticket on this trip.">
-                      ✈ booking their own — reimburse up to our fare
+                      ✈ booking their own — reimburse up to our fare{own.cap != null ? " (" + travelMoney(own.cap) + ")" : ""}
                     </td>
-                  ) : <>
+                    <td style={{padding:"3px 5px",borderBottom:"1px solid "+C.border}}>
+                      <DebouncedField style={{...inpStyle,padding:"4px 7px",fontSize:11,width:"100%",borderColor:own.paid == null ? "#f59e0b" : C.border}} type="number" placeholder="their fare"
+                        value={r.flight_cost ?? ""} onCommit={v => saveTravel(tn.id, name, { flight_cost: v === "" ? null : v })} />
+                      <div style={{fontSize:9,marginTop:2,fontWeight:700,color:own.paid == null ? "#f59e0b" : C.grn,whiteSpace:"nowrap"}}>
+                        {own.paid == null ? "fare not entered" : "reimburse " + (travelMoney(own.reimb) || "$0") + (own.cap != null && own.paid > own.cap ? " (capped)" : "")}
+                      </div>
+                    </td>
+                    </>);
+                  })() : <>
                   {air && (onMaster(r)
                     ? <td style={roTd} title="On the master flight">{effFlight(r, tn.id).airline || "—"}</td>
                     : f("airline","Southwest"))}
@@ -29609,6 +29659,7 @@ export default function App() {
                 <span style={{fontSize:11,color:C.mut}}>{staff.length} coach{staff.length===1?"":"es"}</span>
                 <span style={{fontSize:11,fontWeight:700,color:done?C.grn:"#f59e0b"}}>{v.ticketed}/{staff.length} arranged</span>
                 {v.driving > 0 && <span style={{fontSize:10,fontWeight:700,color:C.mut}} title="Told us they're driving — mileage, no flight to book">🚗 {v.driving} driving</span>}
+                {v.ownUnpriced > 0 && <span style={{fontSize:10,fontWeight:800,color:"#f59e0b"}} title="Booked their own flight but hasn't entered what it cost — the total is short by that much">⚠ {v.ownUnpriced} fare{v.ownUnpriced===1?"":"s"} missing</span>}
                 {v.ownFlight > 0 && <span style={{fontSize:10,fontWeight:700,color:"#8b5cf6"}} title="Booking their own flight — reimbursed up to our fare">✈ {v.ownFlight} own</span>}
                 {(v.flights + v.club) > 0 && (
                   <span style={{fontSize:12,fontWeight:800,color:C.gold,whiteSpace:"nowrap"}}
