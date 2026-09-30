@@ -48,26 +48,52 @@ export function parsePlanPaste(text) {
     return l.split(/\s{2,}/).map(s => s.trim());
   };
   const range = (s) => { const m = /^(\d+)\s*[–—-]\s*(\d+)$/.exec(String(s || "").trim()); return m ? [+m[1], +m[2]] : null; };
+  // The other way Drew writes a plan — one prose line per segment:
+  //   "10m 🏈 Directional Football Warm-Up — Start close and back up…"
+  //   "12 min: The Three Set Locations - Learn how…"
+  // minutes first ("10m", "10 min", "10'"), then the name, then an em/en dash,
+  // " - " or ": " before the description. Bulleted lines under it ("* Set
+  // pushed outside → LINE", "Scoring:") belong to that segment.
+  const prose = (l) => {
+    const m = /^\s*(\d{1,3})\s*(?:m|min|mins|minutes|['’′])\.?\s+(.+)$/i.exec(l);
+    if (!m) return null;
+    const rest = m[2].trim();
+    const cut = /\s[—–]\s|\s-\s|:\s/.exec(rest);
+    return cut ? { minutes: +m[1], name: rest.slice(0, cut.index).trim(), desc: rest.slice(cut.index + cut[0].length).trim() }
+               : { minutes: +m[1], name: rest, desc: "" };
+  };
+  const bullet = (l) => /^\s*([*•\-–·]|\d+[.)])\s+/.test(l);
+  // A shouting line after the segments ("TONIGHT'S CUE:") opens a note of its
+  // own rather than piling onto the last drill.
+  const capsHeader = (l) => { const t = l.trim().replace(/:$/, ""); return t.length >= 3 && /[A-Z]/.test(t) && t === t.toUpperCase() && !/\d+\s*(m|min)\b/i.test(t) && /:$/.test(l.trim()); };
+  const titleCase = (t) => t.toLowerCase().replace(/(^|\s)(\S)/g, (_, a, b) => a + b.toUpperCase());
+  const append = (b, text) => {
+    const t = text.trim(); if (!t) return;
+    const newline = bullet(text) || /:$/.test(b.desc || "") || /:$/.test(t) || !b.desc;
+    b.desc = b.desc ? b.desc + (newline ? "\n" : " ") + t : t;
+  };
   const blocks = [];
   for (const line of rows) {
+    const p = prose(line);
+    if (p && p.name) { blocks.push({ id: Math.random().toString(36).slice(2, 10), name: p.name, minutes: p.minutes, desc: p.desc, at: null }); continue; }
+    if (blocks.length && capsHeader(line)) { blocks.push({ id: Math.random().toString(36).slice(2, 10), name: titleCase(line.trim().replace(/:$/, "")), minutes: 0, desc: "", at: null }); continue; }
     const cols = split(line).filter(c => c !== "");
     if (!cols.length) continue;
     const first = cols[0];
     if (/^time$/i.test(first) && cols.length >= 2) continue;                     // header row
     const r = range(first);
     const plain = /^\d+$/.test(first) ? +first : null;
-    if (r || plain != null) {
+    if ((r || plain != null) && cols.length >= 2) {
       const minutes = r ? Math.max(0, r[1] - r[0]) : plain;
       const name = (cols[1] || "").trim();
       const desc = cols.slice(2).join(" · ").trim();
       if (!name) continue;
       blocks.push({ id: Math.random().toString(36).slice(2, 10), name, minutes, desc, at: r ? r[0] : null });
-    } else if (blocks.length && cols.length === 1) {
-      // Wrapped text from the previous row's Focus column.
-      const b = blocks[blocks.length - 1];
-      b.desc = (b.desc ? b.desc + " " : "") + first;
+    } else if (blocks.length) {
+      // Wrapped text, a bullet, or a "Scoring:" line under the previous segment.
+      append(blocks[blocks.length - 1], line);
     }
-    // Anything else (a title line, a stray label) is skipped.
+    // Before the first segment: a title, a theme or key words — skipped.
   }
   return blocks.map(({ at, ...b }) => b);
 }
