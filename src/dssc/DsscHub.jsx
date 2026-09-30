@@ -431,12 +431,21 @@ function PlanTab({ c, s, prev, canEdit, isDirector, coachName, saveClinic, saveS
   const [sent, setSent] = useState(null);
   const total = blocks.reduce((n, b) => n + (Number(b.minutes) || 0), 0);
   const template = Array.isArray(c.plan?.blocks) ? c.plan.blocks.filter(b => String(b.name || "").trim()) : [];
+  // Say exactly what goes out: email, text, or both, and to how many.
+  const [noteHow, setNoteHow] = useState("both");   // both | email | sms
+  const noteEmails = new Set(roster.map(r => nrm(r.parent_email)).filter(e => /^[^s@]+@[^s@]+.[^s@]+$/.test(e))).size;
+  const notePhones = new Set(roster.map(r => String(r.parent_phone || "").replace(/D/g, "").slice(-10)).filter(x => x.length === 10)).size;
+  const noteWhat = noteHow === "email" ? `an email to ${noteEmails} famil${noteEmails === 1 ? "y" : "ies"}`
+    : noteHow === "sms" ? `a text message to ${notePhones} famil${notePhones === 1 ? "y" : "ies"}`
+    : `an email to ${noteEmails} famil${noteEmails === 1 ? "y" : "ies"} AND a text message to ${notePhones}`;
   const sendNote = async () => {
     const body = String(s.focus || "").trim();
     if (!body) return;
-    if (!window.confirm(`Send this note to the ${roster.length} famil${roster.length === 1 ? "y" : "ies"} in this class?`)) return;
+    if (!window.confirm(`Send this note as ${noteWhat}?
+
+Each family gets their own copy; replies to a text come back to DSSC Texts.`)) return;
     setSending(true); setSent(null);
-    try { const d = await sendClassMessage(c, s, body); setSent(d); } catch (e) { setSent({ error: e.message }); }
+    try { const d = await sendClassMessage(c, s, body, [], noteHow === "both" ? ["email", "sms"] : [noteHow]); setSent(d); } catch (e) { setSent({ error: e.message }); }
     setSending(false);
   };
   const field = (label, key, ph) => (
@@ -450,8 +459,11 @@ function PlanTab({ c, s, prev, canEdit, isDirector, coachName, saveClinic, saveS
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
         <Label style={{ marginBottom: 0 }}>Note to parents</Label>
         <div style={{ flex: 1 }} />
-        <span style={{ fontSize: 12, color: DS.mut }}>{roster.length} famil{roster.length === 1 ? "y" : "ies"}</span>
-        <Btn small kind="primary" disabled={!canEdit || sending || !String(s.focus || "").trim() || !roster.length} onClick={sendNote}>{sending ? "Sending…" : "Send to parents"}</Btn>
+        <span style={{ fontSize: 12, color: DS.mut }}>{roster.length} famil{roster.length === 1 ? "y" : "ies"} · {noteEmails} email · {notePhones} text</span>
+        {[["both", "✉ Email + 💬 Text"], ["email", "✉ Email only"], ["sms", "💬 Text only"]].map(([k, l]) => (
+          <button key={k} onClick={() => setNoteHow(k)} style={{ fontFamily: DS.font, fontSize: 11.5, fontWeight: 700, padding: "5px 10px", borderRadius: 999, cursor: "pointer", border: "1px solid " + (noteHow === k ? DS.lime : DS.line), background: noteHow === k ? "rgba(178,208,73,0.16)" : "transparent", color: noteHow === k ? DS.lime : DS.mut }}>{l}</button>
+        ))}
+        <Btn small kind="primary" disabled={!canEdit || sending || !String(s.focus || "").trim() || !roster.length} onClick={sendNote}>{sending ? "Sending…" : noteHow === "email" ? "Email parents" : noteHow === "sms" ? "Text parents" : "Email + text parents"}</Btn>
       </div>
       {prev && (prev.focus || prev.recap) && (
         <div style={{ fontSize: 12, color: DS.mut, marginBottom: 8, paddingLeft: 10, borderLeft: "3px solid " + DS.brier, lineHeight: 1.5 }}>
