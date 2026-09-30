@@ -161,12 +161,23 @@ export default async function handler(req, res) {
       const mms = media.filter(m => m.kind === "image" && (!m.bytes || m.bytes <= 5 * 1024 * 1024)).map(m => m.url);
       const links = media.filter(m => !mms.includes(m.url)).map(m => m.url);
       const smsBody = [text, ...links].filter(Boolean).join("\n") + "\n— Coach " + senderName + ", DSSC";
+      // The class is remembered as a group in DSSC Texts: one broadcast row,
+      // named for the program and the day, that every family's text points
+      // at — so the group can be opened, its replies seen together, and
+      // texted again from there.
+      const shortDay = session.date ? new Date(session.date + "T12:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "America/Chicago" }) : "";
+      const { data: bc } = await sb.from("sms_broadcasts").insert({
+        brand: "dssc", body: smsBody, recipient_count: phones.size, sent_by_label: senderName, media_urls: mms.length ? mms : null,
+        audience: { type: "class", clinic_id: clinicId, session_id: sessionId, program: clinic.name, date: session.date || null, label: clinic.name + (shortDay ? " · " + shortDay : ""), from: "coach hub" },
+      }).select("id").single();
+      const broadcastId = bc?.id || null;
       for (const [to, r] of phones.entries()) {
         try {
-          await sendOneSms(sb, { to, brand: "dssc", name: r.parent_name || null, kind: "parent", dssc_program: clinic.name, dssc_player: r.player_name || null }, smsBody, { sent_by_label: senderName, media_urls: mms });
+          await sendOneSms(sb, { to, brand: "dssc", name: r.parent_name || null, kind: "parent", dssc_program: clinic.name, dssc_player: r.player_name || null }, smsBody, { broadcast_id: broadcastId, sent_by_label: senderName, media_urls: mms });
           textsSent++;
         } catch (e) { textErrors.push(to + ": " + e.message); }
       }
+      if (broadcastId) await sb.from("sms_broadcasts").update({ sent_count: textsSent, failed_count: textErrors.length }).eq("id", broadcastId);
     } else {
       textsSkipped += phones.size;
       textNote = "Texting for the club isn't live yet (waiting on the DSSC texting number/approval) — those families got the email only.";

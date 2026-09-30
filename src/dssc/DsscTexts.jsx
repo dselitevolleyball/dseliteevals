@@ -38,16 +38,31 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
   const [folded, setFolded] = useState(() => new Set());
   const [health, setHealth] = useState(null);
   const [consentPaste, setConsentPaste] = useState("");
+  const [groups, setGroups] = useState([]);          // group sends: sms_broadcasts brand dssc
+  const [groupThreads, setGroupThreads] = useState({}); // broadcast id -> [thread id]
+  const [openGroup, setOpenGroup] = useState(null);
   const fileRef = useRef(null);
 
   const loadThreads = async () => { const { data } = await supabase.from("sms_threads").select("*").eq("brand", "dssc").order("last_message_at", { ascending: false, nullsFirst: false }); setThreads(data || []); };
   const loadMsgs = async (id) => { if (!id) { setMsgs([]); return; } const { data } = await supabase.from("sms_messages").select("*").eq("thread_id", id).order("id"); setMsgs(data || []); };
   const loadRoster = async () => { const { data } = await supabase.from("dssc_pod_roster").select("*"); setRoster(data || []); };
   const loadOptouts = async () => { const { data } = await supabase.from("sms_optouts").select("*").eq("brand", "dssc"); setOptouts(data || []); };
-  useEffect(() => { loadThreads(); loadRoster(); loadOptouts(); }, []);
+  // Every group text — a class from the coach hub, or a program / age / pick
+  // from here — and which conversations it went into.
+  const loadGroups = async () => {
+    const { data: bc } = await supabase.from("sms_broadcasts").select("*").eq("brand", "dssc").order("created_at", { ascending: false }).limit(40);
+    const list = bc || [];
+    setGroups(list);
+    if (!list.length) { setGroupThreads({}); return; }
+    const { data: ms } = await supabase.from("sms_messages").select("thread_id, broadcast_id").in("broadcast_id", list.map(b => b.id));
+    const m = {};
+    for (const x of ms || []) { (m[x.broadcast_id] = m[x.broadcast_id] || new Set()).add(x.thread_id); }
+    setGroupThreads(Object.fromEntries(Object.entries(m).map(([k, v]) => [k, [...v]])));
+  };
+  useEffect(() => { loadThreads(); loadRoster(); loadOptouts(); loadGroups(); }, []);
   useEffect(() => { loadMsgs(selId); }, [selId]);
   useEffect(() => {
-    const ch = supabase.channel("dssc-sms").on("postgres_changes", { event: "*", schema: "public", table: "sms_messages" }, () => { loadThreads(); if (selId) loadMsgs(selId); }).subscribe();
+    const ch = supabase.channel("dssc-sms").on("postgres_changes", { event: "*", schema: "public", table: "sms_messages" }, () => { loadThreads(); loadGroups(); if (selId) loadMsgs(selId); }).subscribe();
     return () => { supabase.removeChannel(ch); };
   }, [selId]);
   useEffect(() => {
@@ -179,6 +194,58 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
       {/* Inbox */}
       <div style={{ background: DS.panel, border: "1px solid " + DS.line, borderRadius: 14, overflowY: "auto" }}>
         {!threads.length && <div style={{ padding: 20, fontSize: 12, color: DS.mut, textAlign: "center" }}>No conversations yet. Text a program or a class to start one per family.</div>}
+        {groups.length > 0 && (() => {
+          const byId = new Map(threads.map(t => [t.id, t]));
+          const labelOfGroup = (g) => g.audience?.label && !/^\d+ picked$/.test(g.audience.label) ? g.audience.label
+            : g.audience?.type === "class" ? (g.audience.program || "Class") : g.audience?.type === "custom" || g.audience?.type === "pick" ? (g.recipient_count + " picked") : (g.audience?.type || "Group");
+          const textAgain = (g, members) => {
+            const to = new Map(members.map(t => [t.phone, { to: t.phone, name: t.contact_name || fmtPhone(t.phone), kind: t.contact_kind || "parent", out: optedOut.has(last10(t.phone)), players: t.dssc_player ? [t.dssc_player] : [], programs: t.dssc_program ? [t.dssc_program] : [], dssc_player: t.dssc_player || null, dssc_program: t.dssc_program || null }]));
+            setSelId(null); setComposer(blankComposer({ to }));
+          };
+          return (
+            <div style={{ borderBottom: "2px solid " + DS.line }}>
+              <div style={{ padding: "8px 12px", fontSize: 11, fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", color: DS.lime, background: "rgba(178,208,73,0.06)" }}>Groups</div>
+              {groups.map(g => {
+                const members = (groupThreads[g.id] || []).map(id => byId.get(id)).filter(Boolean);
+                const replied = members.filter(t => t.last_message_direction === "inbound" && t.last_message_at > g.created_at);
+                const unread = members.reduce((n, t) => n + (t.unread_count || 0), 0);
+                const open = openGroup === g.id;
+                return (
+                  <div key={g.id}>
+                    <div onClick={() => setOpenGroup(open ? null : g.id)} style={{ padding: "8px 12px", borderBottom: "1px solid " + DS.line, cursor: "pointer", background: open ? "rgba(255,255,255,0.04)" : "transparent" }}>
+                      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                        <span style={{ fontSize: 10, color: DS.mut }}>{open ? "⌄" : "›"}</span>
+                        <span style={{ fontSize: 12.5, fontWeight: 800, color: unread ? DS.lime : DS.text, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>👥 {labelOfGroup(g)}</span>
+                        <span style={{ fontSize: 10, color: DS.mut, whiteSpace: "nowrap" }}>{fmtWhen(g.created_at)}</span>
+                      </div>
+                      <div style={{ fontSize: 11, color: DS.mut, marginTop: 2, paddingLeft: 14 }}>
+                        {members.length || g.recipient_count} famil{(members.length || g.recipient_count) === 1 ? "y" : "ies"}{replied.length ? <> · <b style={{ color: DS.lime }}>{replied.length} replied</b></> : ""}{g.sent_by_label ? " · " + g.sent_by_label : ""}
+                      </div>
+                    </div>
+                    {open && (
+                      <div style={{ background: "rgba(0,0,0,0.12)", borderBottom: "1px solid " + DS.line }}>
+                        <div style={{ padding: "8px 12px 6px 26px", fontSize: 11, color: DS.mut, whiteSpace: "pre-wrap", maxHeight: 90, overflow: "hidden" }}>{g.body}</div>
+                        {members.map(t => {
+                          const r = t.last_message_direction === "inbound" && t.last_message_at > g.created_at;
+                          return (
+                            <div key={t.id} onClick={() => { setComposer(null); setSelId(t.id); if (t.unread_count) markRead(t.id); }} style={{ padding: "6px 12px 6px 26px", cursor: "pointer", display: "flex", gap: 6, alignItems: "center", background: selId === t.id ? DS.limeSoft || "rgba(178,208,73,0.12)" : "transparent" }}>
+                              <span style={{ fontSize: 12, fontWeight: 700, color: t.unread_count ? DS.lime : DS.text, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{labelOf(t)}</span>
+                              {r && <span style={{ fontSize: 10, fontWeight: 800, color: DS.lime }}>replied</span>}
+                            </div>
+                          );
+                        })}
+                        {!members.length && <div style={{ padding: "6px 12px 8px 26px", fontSize: 11, color: DS.mut }}>Conversations for this group are still loading.</div>}
+                        <div style={{ padding: "6px 12px 10px 26px" }}>
+                          <Btn small kind="primary" disabled={!members.length} onClick={() => textAgain(g, members)}>Text this group again</Btn>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
         {sections.map(([g, list]) => {
           const unread = list.reduce((n, t) => n + (t.unread_count || 0), 0), isF = folded.has(g);
           return (
