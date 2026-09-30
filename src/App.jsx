@@ -1858,6 +1858,7 @@ export default function App() {
   const [smsComposer, setSmsComposer]                 = useState(null);   // team / coaches group text being written
   const [smsFolded, setSmsFolded]                     = useState(() => new Set()); // inbox team sections folded away
   const [smsJustRead, setSmsJustRead]                 = useState(null);   // a thread opened from New stays there while it's open
+  const [smsUnread, setSmsUnread]                     = useState({ dse: 0, dssc: 0 }); // header badges: unread texts per brand
   const [smsConsents, setSmsConsents]                 = useState([]);     // sms_consents — who opted in to texts
   const [smsConsentPaste, setSmsConsentPaste]         = useState("");
   // SportsYou coach-comms inbox state
@@ -4393,20 +4394,36 @@ export default function App() {
     if (isApproved && view === "messages") loadSmsConsents();
   }, [isApproved, view, loadSmsThreads, loadSmsConsents]);
   useEffect(() => { loadSmsMessages(selectedThreadId); }, [selectedThreadId, loadSmsMessages]);
+  // Unread texts for the header badges — both brands, whatever screen you're
+  // on. The inboxes only load their threads when opened, so this is its own
+  // tiny query, refreshed by the realtime feed below and once a minute.
+  const loadSmsUnread = useCallback(async () => {
+    const { data, error } = await supabase.from("sms_threads").select("brand, unread_count").gt("unread_count", 0);
+    if (error) return;
+    const out = { dse: 0, dssc: 0 };
+    for (const t of data || []) out[t.brand === "dssc" ? "dssc" : "dse"] += Number(t.unread_count || 0);
+    setSmsUnread(out);
+  }, []);
+  useEffect(() => {
+    if (!isApproved) return;
+    loadSmsUnread();
+    const iv = setInterval(loadSmsUnread, 60000);
+    return () => clearInterval(iv);
+  }, [isApproved, loadSmsUnread]);
   // Realtime: refresh threads + messages on any sms_messages / sms_threads change.
   useEffect(() => {
     if (!isApproved) return;
     const ch = supabase
       .channel("realtime-sms")
       .on("postgres_changes", { event: "*", schema: "public", table: "sms_messages" }, (payload) => {
-        loadSmsThreads();
+        loadSmsThreads(); loadSmsUnread();
         const tid = payload.new?.thread_id || payload.old?.thread_id;
         if (selectedThreadId && tid === selectedThreadId) loadSmsMessages(selectedThreadId);
       })
-      .on("postgres_changes", { event: "*", schema: "public", table: "sms_threads" }, () => loadSmsThreads())
+      .on("postgres_changes", { event: "*", schema: "public", table: "sms_threads" }, () => { loadSmsThreads(); loadSmsUnread(); })
       .subscribe();
     return () => supabase.removeChannel(ch);
-  }, [isApproved, selectedThreadId, loadSmsThreads, loadSmsMessages]);
+  }, [isApproved, selectedThreadId, loadSmsThreads, loadSmsMessages, loadSmsUnread]);
 
   // SportsYou coach-comms inbox: load posts + live-refresh on new arrivals.
   const loadSportsYouPosts = useCallback(async () => {
@@ -32082,6 +32099,20 @@ export default function App() {
             style={{marginLeft:6,background:"none",border:"none",cursor:refreshing?"default":"pointer",fontSize:17,lineHeight:1,color:refreshing?C.gold:C.mut,padding:"2px 4px",animation:refreshing?"dse-spin 0.8s linear infinite":"none"}}>
             ⟳
           </button>
+          {/* Texts: one icon per brand, each with its unread count. */}
+          {[
+            canOps && { key:"messages", label:"DS Elite", n: smsUnread.dse, color: C.gold, title: "DS Elite texts" },
+            isDsscDirector && { key:"dssctexts", label:"DSSC", n: smsUnread.dssc, color: "#B2D049", title: "DSSC texts" },
+          ].filter(Boolean).map(b => (
+            <button key={b.key} onClick={()=>{ setView(b.key); setOpenMenu(null); setNotifOpen(false); }}
+              title={b.title + (b.n ? " — " + b.n + " unread" : " — nothing unread")}
+              style={{position:"relative",marginLeft:6,display:"inline-flex",flexDirection:"column",alignItems:"center",gap:0,background:"none",border:"none",cursor:"pointer",padding:"0 4px",fontFamily:"inherit",
+                color: view===b.key ? b.color : (b.n ? b.color : C.mut)}}>
+              <span style={{fontSize:17,lineHeight:1}}>💬</span>
+              <span style={{fontSize:8,fontWeight:800,letterSpacing:0.3,lineHeight:1.1}}>{b.label}</span>
+              {b.n > 0 && <span style={{position:"absolute",top:-4,right:-4,minWidth:15,height:15,padding:"0 3px",borderRadius:8,background:b.color,color:"#000",fontSize:9,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center"}}>{b.n > 99 ? "99+" : b.n}</span>}
+            </button>
+          ))}
           <div style={{position:"relative",marginLeft:6}}>
             <button onClick={()=>{ const opening = !notifOpen; setNotifOpen(opening); if (opening) markNotifsRead(); }} title="Notifications"
               style={{position:"relative",background:"none",border:"none",cursor:"pointer",fontSize:18,lineHeight:1,color:unreadCount>0?C.gold:C.mut,padding:"2px 4px"}}>
