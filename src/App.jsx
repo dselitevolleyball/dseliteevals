@@ -28878,8 +28878,8 @@ export default function App() {
       return day + (fmtFlightTime(t) ? " " + fmtFlightTime(t) : "");
     };
     const cols = air
-      ? ["Coach","Dev","Airline","Out","Back","Flight $","Bought","OK?","Ticket #","Room","Own room","Payroll deduction"]
-      : ["Coach","Room","Own room","Payroll deduction"];
+      ? ["Coach","Dev","Airline","Out","Back","Flight $","Flight bought","OK?","Ticket #","Room","Room booked","Own room","Payroll deduction"]
+      : ["Coach","Room","Room booked","Own room","Payroll deduction"];
     return (
       <div style={{overflowX:"auto"}}>
         {/* How many rooms to hold. Shown for stay-to-play, where the block has
@@ -29157,6 +29157,25 @@ export default function App() {
                           : { no_room_needed: false })} />
                       no room needed
                     </label>
+                  </td>
+                  {/* The room half of what "Flight bought" does for flights:
+                      ticked once this person's room is actually reserved. It
+                      lived only on the All trips table, twelve columns in. */}
+                  <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,textAlign:"center",whiteSpace:"nowrap"}}>
+                    {needsRoom(r) ? (
+                      <label style={{display:"inline-flex",alignItems:"center",gap:5,cursor:"pointer",fontSize:10,fontWeight:700,color:r.room_booked?C.grn:C.mut}}
+                        title={r.room_booked
+                          ? "Room is reserved" + (r.room_booked_by ? " — marked by " + r.room_booked_by : "") + (r.room_booked_at ? " on " + new Date(r.room_booked_at).toLocaleDateString(undefined,{month:"short",day:"numeric"}) : "")
+                          : "Tick once this person's hotel room is actually booked"}>
+                        <input type="checkbox" checked={!!r.room_booked} style={{width:15,height:15,accentColor:C.grn,cursor:"pointer"}}
+                          onChange={e => saveTravel(tn.id, name, {
+                            room_booked: e.target.checked,
+                            room_booked_at: e.target.checked ? new Date().toISOString() : null,
+                            room_booked_by: e.target.checked ? (coach?.display_name || coach?.email || null) : null,
+                          })} />
+                        {r.room_booked ? "booked" : "not yet"}
+                      </label>
+                    ) : <span style={{color:C.mut}}>—</span>}
                   </td>
                   <td style={{padding:"3px 7px",borderBottom:"1px solid "+C.border,textAlign:"center"}}>
                     {r.no_room_needed ? <span style={{color:C.mut}}>—</span> : (
@@ -29470,7 +29489,7 @@ export default function App() {
             <div style={{background:C.card,border:"1px solid "+C.border,borderRadius:12,overflow:"hidden"}}>
               <div style={{overflowX:"auto"}}>
                 <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0,minWidth:1120,fontSize:11}}>
-                  <thead><tr>{["","Tournament","Dates","Coach","Airline","Out","Back","Flight $","Bought","Ticket #","Hotel room","Booked","Own room","Payroll"].map((h,i) =>
+                  <thead><tr>{["","Tournament","Dates","Coach","Airline","Out","Back","Flight $","Flight bought","Ticket #","Hotel room","Room booked","Own room","Payroll"].map((h,i) =>
                     <th key={i} style={{padding:"6px 7px",textAlign:"left",fontSize:9,fontWeight:700,textTransform:"uppercase",color:C.mut,borderBottom:"1px solid "+C.border,whiteSpace:"nowrap",position:"sticky",top:0,background:C.card}}>{h}</th>)}</tr></thead>
                   <tbody>
                     {shown.map(({ t, name, row }, i) => {
