@@ -1565,7 +1565,7 @@ export default function App() {
   const [tournamentAssignments, setTournamentAssignments]   = useState([]);
   const [tournamentsLoading, setTournamentsLoading]         = useState(false);
   // Practice schedule tab state
-  const [practiceTeams, setPracticeTeams]             = useState([]);
+  const [practiceTeamsAll, setPracticeTeams]             = useState([]);
   const [practiceAssignments, setPracticeAssignments] = useState([]);
   const [saSessions, setSaSessions]                   = useState([]);
   // One-off per-team calendar rows (jersey tryouts, the in-house tournament).
@@ -1920,7 +1920,16 @@ export default function App() {
   const emailBodyRef                                  = useRef(null);   // textarea ref for toolbar selection edits
   const emailImgInputRef                              = useRef(null);   // hidden file input for inserting images
   const [emailImgUploading, setEmailImgUploading]     = useState(false);
-  const [teamsList, setTeamsList]                           = useState([]);
+  const [teamsListAll, setTeamsList]                           = useState([]);
+  // Event teams — 14 Crystal, the Hawaii roster (shared/event-teams.js: 0
+  // practices a week) — exist only for that one trip. Drew, 1 Oct 2026: they
+  // show nowhere but the Hawaii screen and that tournament's travel. So every
+  // screen reads these filtered lists; only the lookups that resolve who is
+  // coaching a tournament entry (travel, clashes, coverage, the tournament
+  // card) use practiceTeamsAll / teamsListAll.
+  const eventTeamSet = useMemo(() => new Set(practiceTeamsAll.filter(isEventTeam).map(t => t.team_name)), [practiceTeamsAll]);
+  const practiceTeams = useMemo(() => practiceTeamsAll.filter(t => !eventTeamSet.has(t.team_name)), [practiceTeamsAll, eventTeamSet]);
+  const teamsList = useMemo(() => teamsListAll.filter(t => !eventTeamSet.has(t.id)), [teamsListAll, eventTeamSet]);
   const [teamStatus, setTeamStatus]                         = useState({}); // { [team_name]: { status, looking_positions } }
   const [teamTasks, setTeamTasks]                           = useState({}); // { `${team}|${item}`: { status, notes } }
   const [teamVolunteers, setTeamVolunteers]                 = useState([]); // team parents + other volunteers, one row per person
@@ -4725,7 +4734,7 @@ export default function App() {
       // Hardge joined 15 Ruby and the old row still said "15-2 Assistant
       // Coach", which is a placeholder, so she was filtered out entirely.
       // Every other lookup in this file already prefers practice_teams.
-      const t = practiceTeams.find(x => x.team_name === a.team_id) || teamsList.find(x => x.id === a.team_id);
+      const t = practiceTeamsAll.find(x => x.team_name === a.team_id) || teamsListAll.find(x => x.id === a.team_id);
       const eff = tnEffectiveStaff(a, t ? { head_coach: t.head_coach, assistant_coach: t.assistant_coach } : null);
       [eff.head, eff.asst, a.sub_coach].forEach(n => {
         const v = String(n || "").trim();
@@ -4733,7 +4742,7 @@ export default function App() {
       });
     }
     return [...names].sort((a, b) => a.localeCompare(b));
-  }, [tournamentAssignments, teamsList, practiceTeams]);
+  }, [tournamentAssignments, teamsListAll, practiceTeamsAll]);
 
   // Coach travel for stay-over tournaments. RLS returns every row to admins and
   // only their own to a coach, so the same load works for both — no branching.
@@ -5082,7 +5091,7 @@ export default function App() {
   // same hook call order on every render path (pre-auth and post-auth alike).
   const tournamentConflicts = useMemo(() => {
     const tById = new Map(tournaments.map(t => [t.id, t]));
-    const teamById = new Map(teamsList.map(t => [t.id, t]));
+    const teamById = new Map(teamsListAll.map(t => [t.id, t]));
     const coachToItems = new Map();
     for (const a of tournamentAssignments) {
       if (tnConflictHandled(a)) continue; // legacy real sub / explicit override — never conflicts ("TBD" still does)
@@ -5117,7 +5126,7 @@ export default function App() {
       }
     }
     return conflicts;
-  }, [tournaments, tournamentAssignments, teamsList]);
+  }, [tournaments, tournamentAssignments, teamsListAll]);
 
   // Distinct US states (from "City, ST" format) for the location filter
   // dropdown. Also above the auth gates to keep hook order stable.
@@ -9092,7 +9101,7 @@ export default function App() {
     const practicesOnDate = (team, iso) => { const ph = phaseForDate(iso), day = wd(iso); return !!ph && practiceAssignments.some(a => a.team_name === team && a.day === day && (a.phase || "fall1") === ph); };
     // Which tournament is THIS coach at on a given date, and for which team?
     const tnById = new Map((tournaments || []).map(t => [t.id, t]));
-    const teamRec = (name) => practiceTeams.find(t => t.team_name === name) || teamsList.find(t => t.id === name) || {};
+    const teamRec = (name) => practiceTeamsAll.find(t => t.team_name === name) || teamsListAll.find(t => t.id === name) || {};
     const coachTnOn = (iso) => {
       for (const a of (tournamentAssignments || [])) {
         const tn = tnById.get(a.tournament_id); if (!tn || tn.cancelled) continue;
@@ -19142,7 +19151,7 @@ export default function App() {
       // this date (effective staff, real names) → removed from the practice board.
       const awayCoachSet = new Set();
       if (weekday === "Sun" && dailyDate) {
-        const teamById3 = new Map(teamsList.map(t => [t.id, t]));
+        const teamById3 = new Map(teamsListAll.map(t => [t.id, t]));
         const tnById3 = new Map(tournaments.map(t => [t.id, t]));
         // Coaches who head/assist a rostered team. A coach at a tournament only
         // as a swapped-in override (a sub/extra for another team) keeps their own
@@ -19225,7 +19234,7 @@ export default function App() {
       // are already working THIS date shouldn't be offered to cover a practice:
       // a placeholder is "busy" if it's staffing a team's practice at this slot,
       // or working a tournament that covers this date (as override or default).
-      const cvTeamById = new Map(teamsList.map(t => [t.id, t]));
+      const cvTeamById = new Map(teamsListAll.map(t => [t.id, t]));
       const cvTnById = new Map(tournaments.map(t => [t.id, t]));
       const coverageBusyFor = (label) => {
         const busy = new Set(); const low = s => (s || "").trim().toLowerCase();
@@ -20237,7 +20246,7 @@ export default function App() {
             coaches are at a travel (stay-over) tournament that weekend. */}
         {(() => {
           const tnById = new Map(tournaments.map(t => [t.id, t]));
-          const teamById = new Map(teamsList.map(t => [t.id, t]));
+          const teamById = new Map(teamsListAll.map(t => [t.id, t]));
           // A coach at a tournament ONLY as a swapped-in override (sub for another
           // team) keeps their own team, so exclude them from "away" — matches the
           // Daily board. Otherwise use the effective (override-or-default) staff.
@@ -27134,7 +27143,7 @@ export default function App() {
     const isCancelled = (date, team) => practiceCancellations.some(x => x.practice_date === date && (!x.team_name || x.team_name === team));
     // Coaches at a tournament on a given date can't also be picked to float — a
     // coach there only as an override sub for another team keeps their own team.
-    const cvTeamByName = new Map(practiceTeams.map(t => [t.team_name, t]));
+    const cvTeamByName = new Map(practiceTeamsAll.map(t => [t.team_name, t]));
     const cvRosteredLow = new Set(practiceTeams.flatMap(t => [t.head_coach, t.assistant_coach]).filter(Boolean).map(c => c.trim().toLowerCase()));
     const cvTnById = new Map(tournaments.map(t => [t.id, t]));
     const cvAwayCache = new Map();
@@ -28383,9 +28392,9 @@ export default function App() {
   // A team's coaches, from the canonical practice planner (falls back to the
   // tournament teams table, which is kept synced from it).
   const coachesOfTeam = (teamId) => {
-    const pt = practiceTeams.find(t => t.team_name === teamId);
+    const pt = practiceTeamsAll.find(t => t.team_name === teamId);
     if (pt) return [pt.head_coach, pt.assistant_coach].filter(Boolean);
-    const tm = teamsList.find(t => t.id === teamId);
+    const tm = teamsListAll.find(t => t.id === teamId);
     return tm ? [tm.head_coach, tm.assistant_coach].filter(Boolean) : [];
   };
   // Coach clashes if teamId were sent to `tournament`: any other team sharing
@@ -28404,7 +28413,7 @@ export default function App() {
       const tn = tById.get(a.tournament_id);
       if (!tn || tn.cancelled) continue; // same tournament, different team still clashes (one coach, two teams)
       if (!(tn.start_date <= tournament.end_date && tournament.start_date <= tn.end_date)) continue;
-      const otherTeam = practiceTeams.find(t => t.team_name === a.team_id) || teamsList.find(t => t.id === a.team_id);
+      const otherTeam = practiceTeamsAll.find(t => t.team_name === a.team_id) || teamsListAll.find(t => t.id === a.team_id);
       const { head, asst } = tnEffectiveStaff(a, otherTeam);
       const shared = [head, asst].filter(c => c && !tnIsPlaceholder(c)).filter(c => mine.has(c.trim().toLowerCase()));
       for (const c of shared) out.push({ coach: c, otherTeam: a.team_id, otherTournament: tn });
@@ -28428,7 +28437,7 @@ export default function App() {
   const teamAgeOf = (teamId) => {
     const fromName = parseInt(String(teamId || "").match(/^\d+/)?.[0] || "", 10);
     if (fromName) return fromName;
-    const pt = practiceTeams.find(t => t.team_name === teamId) || teamsList.find(t => t.id === teamId);
+    const pt = practiceTeamsAll.find(t => t.team_name === teamId) || teamsListAll.find(t => t.id === teamId);
     return pt ? (parseInt(String(pt.age_div || "").replace(/\D/g, ""), 10) || 0) : 0;
   };
 
@@ -28940,7 +28949,7 @@ export default function App() {
       // are exactly the names in the table below.
       const coachTeams = new Map();
       for (const a of tournamentAssignments.filter(x => x.tournament_id === tn.id && !tnIsDropped(x))) {
-        const t = practiceTeams.find(x => x.team_name === a.team_id) || teamsList.find(x => x.id === a.team_id);
+        const t = practiceTeamsAll.find(x => x.team_name === a.team_id) || teamsListAll.find(x => x.id === a.team_id);
         const eff = tnEffectiveStaff(a, t ? { head_coach: t.head_coach, assistant_coach: t.assistant_coach } : null);
         const add = (n, isHead) => {
           const v = String(n || "").trim();
@@ -29754,7 +29763,7 @@ export default function App() {
 
   function TournamentCard({ tn }) {
     // Assignments for this tournament with looked-up team.
-    const teamById = new Map(teamsList.map(t => [t.id, t]));
+    const teamById = new Map(teamsListAll.map(t => [t.id, t]));
     const myAssignments = tournamentAssignments.filter(a => a.tournament_id === tn.id);
     const conflictsHere = tournamentConflicts.filter(c => c.a.tournament.id === tn.id || c.b.tournament.id === tn.id);
     const conflictTeamIds = new Set();
@@ -30294,11 +30303,11 @@ export default function App() {
         )}
         {/* Subs to find — every slot marked TBD, a running to-do list */}
         {(() => {
-          const teamById = new Map(teamsList.map(t => [t.id, t]));
+          const teamById = new Map(teamsListAll.map(t => [t.id, t]));
           const tnById2 = new Map(tournaments.map(t => [t.id, t]));
           const todos = [];
           for (const a of tournamentAssignments) {
-            const eff = tnEffectiveStaff(a, teamById.get(a.team_id) || practiceTeams.find(t => t.team_name === a.team_id));
+            const eff = tnEffectiveStaff(a, teamById.get(a.team_id) || practiceTeamsAll.find(t => t.team_name === a.team_id));
             if (!eff.headTodo && !eff.asstTodo) continue;
             const tn = tnById2.get(a.tournament_id); if (!tn) continue;
             todos.push({ tn, team: a.team_id, slots: [eff.headTodo && "head coach", eff.asstTodo && "assistant"].filter(Boolean) });
@@ -30901,7 +30910,7 @@ export default function App() {
     // team) on each weekend. Powers the "coach busy elsewhere" blackout on an
     // otherwise-empty cell — you can't schedule a team when its head/assistant
     // is already committed to a different team's tournament that weekend.
-    const teamById = new Map(teamsList.map(t => [t.id, t]));
+    const teamById = new Map(teamsListAll.map(t => [t.id, t]));
     const coachWknd = new Map(); // sat -> Map<coach, [{ teamId, tournament }]>
     for (const a of tournamentAssignments) {
       const tn = tnById.get(a.tournament_id);
@@ -31557,7 +31566,7 @@ export default function App() {
               const ageTarget = { entries, age_low: newTournament.age_low, age_high: newTournament.age_high };
               const eligible = teamsList.filter(t => t.active && !myAsg.some(a => a.team_id === t.id) && tournamentOffersAge(ageTarget, teamAgeOf(t.id)));
               const coachChoices = [...new Set([...practiceTeams, ...teamsList].flatMap(t => [t.head_coach, t.assistant_coach]).filter(Boolean).concat(coachRoster.map(r => ((r.first_name || "") + " " + (r.last_name || "")).trim()).filter(Boolean)))].sort((a, b) => a.localeCompare(b));
-              const teamRecOf = (teamId) => practiceTeams.find(t => t.team_name === teamId) || teamsList.find(t => t.id === teamId);
+              const teamRecOf = (teamId) => practiceTeamsAll.find(t => t.team_name === teamId) || teamsListAll.find(t => t.id === teamId);
               const coachSelect = (a, slot, effName, defName, isSub, isTodo) => (
                 <select value={effName || ""} onChange={e => { const v = e.target.value; if (v === "__sub__") { const n = window.prompt("Sub coach's name (type TBD if not found yet):", ""); if (n && n.trim()) updateAssignmentCoach(a.id, slot, n.trim(), defName); } else updateAssignmentCoach(a.id, slot, v, defName); }}
                   title={(slot === "head" ? "Head" : "Assistant") + " coach working this tournament — swap to a sub to resolve a conflict; TBD = still to find"}
