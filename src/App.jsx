@@ -1824,6 +1824,9 @@ export default function App() {
   const setTeamCardName = (v) => { setTeamSchoolPage(0); setTeamCardNameRaw(v); };
   const [coachCardName, setCoachCardName]             = useState(null); // unified coach-detail modal
   const [teamDirSearch, setTeamDirSearch]             = useState("");   // All Teams directory search
+  // All Teams grouping: by age (13s, 14s…) or by level (National, Regional, Rise). Remembered per browser.
+  const [teamDirSort, setTeamDirSortRaw]              = useState(() => { try { return localStorage.getItem("teamDirSort") === "level" ? "level" : "age"; } catch { return "age"; } });
+  const setTeamDirSort = (v) => { setTeamDirSortRaw(v); try { localStorage.setItem("teamDirSort", v); } catch { /* private mode */ } };
   // 'season' (regular full-week 2–3×/week practices), 'summer' (Jul–Sep, Sunday
   // preseason), 'fall1' (Sep 13–Oct 11), or 'fall2' (Oct 18–Nov 15). The old
   // 'preseason' name maps to 'summer'; 'season' is kept (it holds the regular
@@ -17720,10 +17723,15 @@ export default function App() {
         || (t.level||"").toLowerCase().includes(q))
       .slice()
       .sort((a, b) => ageOf(a) - ageOf(b) || (a.team_name||"").localeCompare(b.team_name||""));
+    // By level: National, then Regional, then Rise (stored as "Developmental"),
+    // youngest first inside each.
+    const LEVEL_ORDER = ["National", "Regional", "Rise", "No level set"];
+    const levelGroupOf = (t) => t.level === "Developmental" || /\brise\b/i.test(t.team_name || "") ? "Rise" : t.level === "National" || t.level === "Regional" ? t.level : "No level set";
     const groups = {};
-    teams.forEach(t => { const g = t.age_div || ("U" + ageOf(t)); (groups[g] = groups[g] || []).push(t); });
-    const groupKeys = Object.keys(groups).sort((a, b) =>
-      (parseInt(a.replace(/\D/g, "")) || 0) - (parseInt(b.replace(/\D/g, "")) || 0));
+    teams.forEach(t => { const g = teamDirSort === "level" ? levelGroupOf(t) : (t.age_div || ("U" + ageOf(t))); (groups[g] = groups[g] || []).push(t); });
+    const groupKeys = teamDirSort === "level"
+      ? LEVEL_ORDER.filter(k => groups[k])
+      : Object.keys(groups).sort((a, b) => (parseInt(a.replace(/\D/g, "")) || 0) - (parseInt(b.replace(/\D/g, "")) || 0));
     const counts = (t) => ({
       players: players.filter(p => p.team_assignment === t.team_name).length,
       practices: practiceAssignments.filter(a => a.team_name === t.team_name && (a.phase || "fall1") === schedulePhase).length,
@@ -17736,8 +17744,18 @@ export default function App() {
             <h2 style={{margin:0,fontSize:20,fontWeight:800,color:C.gold}}>All Teams</h2>
             <div style={{fontSize:12,color:C.mut,marginTop:4}}>{practiceTeams.length} team{practiceTeams.length===1?"":"s"}. Click a team for its coaches, roster, practice, and tournaments.</div>
           </div>
-          <input value={teamDirSearch} onChange={e=>setTeamDirSearch(e.target.value)} placeholder="Search team or coach…"
-            style={{...inpStyle,padding:"8px 12px",fontSize:13,minWidth:220}} />
+          <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+            <div style={{display:"flex",alignItems:"center",gap:4,fontSize:11,color:C.mut}}>
+              Sort by
+              {[["age","Age"],["level","Level"]].map(([k,l]) => (
+                <button key={k} onClick={()=>setTeamDirSort(k)} title={k==="level"?"National, then Regional, then Rise":"13s, 14s, 15s…"}
+                  style={{padding:"6px 12px",borderRadius:8,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700,
+                    border:"1px solid "+(teamDirSort===k?C.gold:C.border),background:teamDirSort===k?"rgba(245,197,24,0.12)":"transparent",color:teamDirSort===k?C.gold:C.mut}}>{l}</button>
+              ))}
+            </div>
+            <input value={teamDirSearch} onChange={e=>setTeamDirSearch(e.target.value)} placeholder="Search team or coach…"
+              style={{...inpStyle,padding:"8px 12px",fontSize:13,minWidth:220}} />
+          </div>
         </div>
         {renderChecklistSetup()}
         {practiceTeams.length === 0 ? (
