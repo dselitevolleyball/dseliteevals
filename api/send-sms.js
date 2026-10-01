@@ -25,6 +25,11 @@ import { sendOneSms, normalizePhone, twilioReady, brandOf, notReadyMessage } fro
 const DSSC_DIRECTOR_EMAILS = ["hunterhaleysc10@gmail.com", "hunter@drippingsportsclub.com"];
 
 const LANES = 4;   // concurrent Twilio requests; Twilio queues per number anyway
+// Roughly 5 texts a second, so a request carries at most a few hundred. The
+// DSSC Texts screen sends a big group (everyone who's ever signed up — over a
+// thousand numbers) in batches of 150, passing back the broadcast_id the first
+// batch made, so the whole send is still one group.
+export const config = { maxDuration: 300 };
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -84,10 +89,18 @@ export default async function handler(req, res) {
   }
 
   // A batch is remembered as one broadcast before anything goes out, so a
-  // send that dies half-way still shows what it was meant to be.
-  const ins = await supabase.from("sms_broadcasts").insert({ brand, body: text, audience: b.audience || null, recipient_count: recipients.length, media_urls, sent_by_coach_id: meta.sent_by_coach_id, sent_by_label: meta.sent_by_label }).select("id").single();
-  if (ins.error) return res.status(500).json({ error: "Broadcast record failed: " + ins.error.message });
-  const broadcastId = ins.data.id;
+  // send that dies half-way still shows what it was meant to be. A later batch
+  // of the same send names that broadcast and adds to it.
+  let broadcastId = Number(b.broadcast_id) || null, prior = null;
+  if (broadcastId) {
+    const { data } = await supabase.from("sms_broadcasts").select("id, brand, body, sent_count, failed_count").eq("id", broadcastId).maybeSingle();
+    if (!data || data.brand !== brand || String(data.body || "").trim() !== text) return res.status(400).json({ error: "That group send doesn't match this message." });
+    prior = data;
+  } else {
+    const ins = await supabase.from("sms_broadcasts").insert({ brand, body: text, audience: b.audience || null, recipient_count: Math.max(recipients.length, Number(b.total_recipients) || 0), media_urls, sent_by_coach_id: meta.sent_by_coach_id, sent_by_label: meta.sent_by_label }).select("id").single();
+    if (ins.error) return res.status(500).json({ error: "Broadcast record failed: " + ins.error.message });
+    broadcastId = ins.data.id;
+  }
 
   const results = [], failed = [];
   let i = 0;
@@ -99,6 +112,6 @@ export default async function handler(req, res) {
     }
   };
   await Promise.all(Array.from({ length: Math.min(LANES, recipients.length) }, worker));
-  await supabase.from("sms_broadcasts").update({ sent_count: results.length, failed_count: failed.length }).eq("id", broadcastId);
+  await supabase.from("sms_broadcasts").update({ sent_count: (prior?.sent_count || 0) + results.length, failed_count: (prior?.failed_count || 0) + failed.length }).eq("id", broadcastId);
   return res.status(200).json({ ok: true, broadcast_id: broadcastId, sent: results.length, failed, thread_ids: results.map(x => x.thread_id) });
 }

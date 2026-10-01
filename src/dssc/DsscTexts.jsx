@@ -8,7 +8,9 @@
 //
 // Who can be reached: families on class rosters (dssc_pod_roster) with a
 // phone — from the /dssc-texts opt-in form, or a DS Elite family we already
-// know by email — plus the DSSC coach pool. Texts default to opted-in numbers
+// know by email — plus the DSSC coach pool. The "past + current" groups also
+// reach everyone DSSC People has a sign-up for (every Playbook registration,
+// Upper Hand history), so a program can be texted long after it ended. Texts default to opted-in numbers
 // only; the sender can include the rest on purpose, same as DS Elite.
 
 import { useState, useEffect, useMemo, useRef } from "react";
@@ -41,6 +43,7 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
   const [groups, setGroups] = useState([]);          // group sends: sms_broadcasts brand dssc
   const [groupThreads, setGroupThreads] = useState({}); // broadcast id -> [thread id]
   const [openGroup, setOpenGroup] = useState(null);
+  const [history, setHistory] = useState(null);      // DSSC People sign-ups, loaded when a past + current group is picked
   const fileRef = useRef(null);
 
   const loadThreads = async () => { const { data } = await supabase.from("sms_threads").select("*").eq("brand", "dssc").order("last_message_at", { ascending: false, nullsFirst: false }); setThreads(data || []); };
@@ -59,7 +62,27 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
     for (const x of ms || []) { (m[x.broadcast_id] = m[x.broadcast_id] || new Set()).add(x.thread_id); }
     setGroupThreads(Object.fromEntries(Object.entries(m).map(([k, v]) => [k, [...v]])));
   };
+  // Everyone who has ever signed up for anything, from DSSC People. Newest
+  // first, so a family's latest program is the one their thread files under.
+  // DS Elite team rows (source dse) are left out: those are club-team
+  // families, not DSSC program sign-ups.
+  const loadHistory = async () => {
+    if (history) return;
+    const page = async (table, sel) => { const out = []; for (let from = 0; ; from += 1000) { const { data, error } = await supabase.from(table).select(sel).order("id").range(from, from + 999); if (error) throw error; out.push(...(data || [])); if (!data || data.length < 1000) break; } return out; };
+    try {
+      const [partic, contacts, parts] = await Promise.all([
+        page("dssc_participation", "id, contact_id, participant_id, program, event_date, source"),
+        page("dssc_contacts", "id, first_name, last_name, phone, do_not_text, sources"),
+        page("dssc_participants", "id, first_name, last_name, is_contact"),
+      ]);
+      setHistory({
+        partic: partic.filter(x => x.source !== "dse" && x.program).sort((a, b) => String(b.event_date || "").localeCompare(String(a.event_date || ""))),
+        contacts: new Map(contacts.map(x => [x.id, x])), parts: new Map(parts.map(x => [x.id, x])),
+      });
+    } catch (e) { setHistory({ partic: [], contacts: new Map(), parts: new Map(), error: e.message }); }
+  };
   useEffect(() => { loadThreads(); loadRoster(); loadOptouts(); loadGroups(); }, []);
+  useEffect(() => { if (composer && (composer.group === "history" || composer.group === "everyone_ever")) loadHistory(); }, [composer?.group]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { loadMsgs(selId); }, [selId]);
   useEffect(() => {
     const ch = supabase.channel("dssc-sms").on("postgres_changes", { event: "*", schema: "public", table: "sms_messages" }, () => { loadThreads(); loadGroups(); if (selId) loadMsgs(selId); }).subscribe();
@@ -108,10 +131,12 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
       const list = contacts.filter(x => sel.has(x.to) && !x.out).map(x => ({ to: x.to, name: x.name, kind: x.kind, dssc_program: x.programs[0] || null, dssc_player: x.players[0] || null, via: x.via }));
       return { ready: finish(list), held: [], skipped };
     }
+    const seen = new Set();
     const push = (phone, name, extra) => {
       const to = e164(phone);
       if (!to) { if (name) skipped.push({ name, reason: "no phone" }); return; }
-      if (out.some(x => x.to === to)) return;
+      if (seen.has(to)) return;
+      seen.add(to);
       if (optedOut.has(last10(to))) { skipped.push({ name, reason: "opted out" }); return; }
       out.push({ to, name, ...extra });
     };
@@ -120,16 +145,45 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
       for (const r of coachRoster) { const full = ((r.first_name || "") + " " + (r.last_name || "")).trim(); if (full && pool.has(nrm(full))) push(r.phone, full, { kind: "coach" }); }
       return { ready: finish(out), held: [], skipped };
     }
+    const pushRoster = (r) => {
+      const cl = clinicById.get(r.clinic_id);
+      const fallback = !r.parent_phone && r.parent_email ? dsePhoneByEmail.get(nrm(r.parent_email)) : null;
+      push(r.parent_phone || fallback?.phone, r.parent_name || fallback?.name || (r.player_name + "'s parent"), { kind: "parent", dssc_program: cl?.name || null, dssc_player: r.player_name, rosterConsent: !!r.sms_consent, via: fallback ? "DS Elite roster" : null });
+    };
+    // Past + current: every sign-up DSSC People knows of for programs whose
+    // name contains the text (or every program at all), plus anyone on a
+    // current class list for them — a family added by hand, or one People
+    // hasn't picked up yet.
+    if (c.scope === "history" || c.scope === "everyone_ever") {
+      const q = c.scope === "history" ? nrm(c.programQ) : "";
+      if (c.scope === "history" && !q) return { ready: [], held: [], skipped };
+      for (const h of history?.partic || []) {
+        if (q && !nrm(h.program).includes(q)) continue;
+        const ct = history.contacts.get(h.contact_id); if (!ct) continue;
+        const who = ((ct.first_name || "") + " " + (ct.last_name || "")).trim();
+        const pp = history.parts.get(h.participant_id);
+        const player = pp && !pp.is_contact ? ((pp.first_name || "") + " " + (pp.last_name || "")).trim() : null;
+        if (ct.do_not_text) { skipped.push({ name: who || player, reason: "do not text" }); continue; }
+        push(ct.phone, who || (player ? player + "'s parent" : "DSSC family"), { kind: "parent", dssc_program: h.program, dssc_player: player || null });
+      }
+      for (const r of roster) { const cl = clinicById.get(r.clinic_id); if (cl && (!q || nrm(cl.name).includes(q))) pushRoster(r); }
+      // Everyone: also every family with a Playbook or Upper Hand account (or
+      // the opt-in form) whose program isn't on record — Upper Hand's export
+      // says what they spent, not what they signed up for.
+      if (c.scope === "everyone_ever") for (const ct of history?.contacts.values() || []) {
+        if (!(ct.sources || []).some(x => x === "playbook" || x === "upperhand" || x === "form")) continue;
+        const who = ((ct.first_name || "") + " " + (ct.last_name || "")).trim() || "DSSC family";
+        if (ct.do_not_text) { skipped.push({ name: who, reason: "do not text" }); continue; }
+        push(ct.phone, who, { kind: "parent", dssc_program: null, dssc_player: null });
+      }
+      return { ready: finish(out), held: [], skipped };
+    }
     let rows = roster;
     if (c.scope === "program" || c.scope === "class") rows = rows.filter(r => String(r.clinic_id) === String(c.clinicId) && (c.scope === "program" || !r.session_id || String(r.session_id) === String(c.sessionId)));
     if (c.scope === "category") rows = rows.filter(r => catOf(clinicById.get(r.clinic_id)) === c.category);
     if (c.scope === "age") rows = rows.filter(r => clinicById.get(r.clinic_id)?.age_group === c.age);
     if (c.scope !== "class") rows = rows.filter(r => { const cl = clinicById.get(r.clinic_id); return cl && (cl.sessions || []).some(s => s.date >= today); });   // current programs only
-    for (const r of rows) {
-      const cl = clinicById.get(r.clinic_id);
-      const fallback = !r.parent_phone && r.parent_email ? dsePhoneByEmail.get(nrm(r.parent_email)) : null;
-      push(r.parent_phone || fallback?.phone, r.parent_name || fallback?.name || (r.player_name + "'s parent"), { kind: "parent", dssc_program: cl?.name || null, dssc_player: r.player_name, rosterConsent: !!r.sms_consent, via: fallback ? "DS Elite roster" : null });
-    }
+    for (const r of rows) pushRoster(r);
     return { ready: finish(out), held: [], skipped, excludedCount: excluded.size };
   };
 
@@ -278,10 +332,19 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
           // Group → contacts (same audience rules as before), added into the To field.
           const groupContacts = () => {
             const g = c.group;
-            const a = buildAudience({ scope: g, clinicId: c.clinicId, sessionId: c.sessionId, category: c.category, age: c.age, includeUnconsented: true, excluded: new Set(), selected: new Set() });
+            const a = buildAudience({ scope: g, clinicId: c.clinicId, sessionId: c.sessionId, category: c.category, age: c.age, programQ: c.programQ, includeUnconsented: true, excluded: new Set(), selected: new Set() });
             return [...a.ready].map(x => ({ to: x.to, name: x.name, kind: x.kind, out: false, players: x.dssc_player ? [x.dssc_player] : [], programs: x.dssc_program ? [x.dssc_program] : [], dssc_player: x.dssc_player || null, dssc_program: x.dssc_program || null, via: x.via || null }));
           };
           const gc = groupContacts();
+          // Which program names the typed text matches, and how many people each.
+          const histQ = nrm(c.programQ);
+          const matchedProgs = c.group === "history" && histQ && history ? (() => {
+            const m = new Map();
+            for (const h of history.partic) if (nrm(h.program).includes(histQ)) { const k = h.program; if (!m.has(k)) m.set(k, new Set()); m.get(k).add(h.participant_id || "c" + h.contact_id); }
+            for (const r of roster) { const cl = clinicById.get(r.clinic_id); if (cl && nrm(cl.name).includes(histQ)) { if (!m.has(cl.name)) m.set(cl.name, new Set()); m.get(cl.name).add("r" + nrm(r.player_name)); } }
+            return [...m.entries()].map(([k, v]) => [k, v.size]).sort((a, b) => b[1] - a[1]);
+          })() : [];
+          const historyGroup = c.group === "history" || c.group === "everyone_ever";
           const cl = clinicById.get(Number(c.clinicId));
           const sessions = (cl?.sessions || []).filter(x => x.date >= today).sort((p, q) => p.date.localeCompare(q.date));
           const q = nrm(c.search);
@@ -290,8 +353,19 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
             if (!canSend) return;
             if (!window.confirm(`Send to ${ready.length} number${ready.length === 1 ? "" : "s"}? Each person gets their own one-to-one text from the club number.`)) return;
             setSending(true);
-            const r = await send({ recipients: ready.map(x => ({ to: x.to, name: x.name, kind: x.kind, dssc_program: x.dssc_program || x.programs?.[0] || null, dssc_player: x.dssc_player || x.players?.[0] || null })), body: c.body.trim(), media_urls: c.media.map(m => m.url), audience: { type: "custom", count: ready.length } });
-            setSending(false); set({ result: r }); loadThreads();
+            // Batches of 150, one group: the first batch makes the broadcast,
+            // the rest add to it. A failed batch stops the send and says how
+            // far it got, so nobody is texted twice by pressing Send again.
+            const all = ready.map(x => ({ to: x.to, name: x.name, kind: x.kind, dssc_program: x.dssc_program || x.programs?.[0] || null, dssc_player: x.dssc_player || x.players?.[0] || null }));
+            const total = { sent: 0, failed: [] };
+            let broadcastId = null, err = null;
+            for (let i = 0; i < all.length; i += 150) {
+              set({ progress: `Sending ${Math.min(i + 150, all.length)} of ${all.length}…` });
+              const r = await send({ recipients: all.slice(i, i + 150), body: c.body.trim(), media_urls: c.media.map(m => m.url), broadcast_id: broadcastId, total_recipients: all.length, audience: { type: "custom", count: all.length, ...(c.groupLabel ? { label: c.groupLabel } : {}) } });
+              if (r.error) { err = r.error + (total.sent ? ` — stopped after ${total.sent} of ${all.length} were sent; don't press Send again for the same people.` : ""); break; }
+              broadcastId = r.broadcast_id || broadcastId; total.sent += r.sent || 0; total.failed.push(...(r.failed || []));
+            }
+            setSending(false); set({ progress: null, result: err ? { error: err, sent: total.sent } : total }); loadThreads(); loadGroups();
           };
           const chipStyle = (ok) => ({ textDecoration: ok ? "none" : "line-through", display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, padding: "4px 6px 4px 10px", borderRadius: 999, background: ok ? "rgba(255,255,255,0.08)" : DS.orangeSoft, border: "1px solid " + (ok ? "transparent" : DS.orange), color: DS.text });
           return (<>
@@ -333,14 +407,22 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginTop: 8 }}>
                   <span style={{ fontSize: 11, color: DS.mut }}>or add a group:</span>
                   <select value={c.group} onChange={e => set({ group: e.target.value })} style={{ ...inputStyle, width: "auto", padding: "5px 8px", fontSize: 12 }}>
-                    {[["program", "A program"], ["class", "One class"], ["everyone", "Everyone in current programs"], ["category", "A category"], ["age", "An age group"], ["coaches", "DSSC coaches"]].map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                    {[["program", "A current program"], ["history", "A program — past + current"], ["class", "One class"], ["everyone", "Everyone in current programs"], ["everyone_ever", "Everyone who's ever signed up"], ["category", "A category"], ["age", "An age group"], ["coaches", "DSSC coaches"]].map(([k, l]) => <option key={k} value={k}>{l}</option>)}
                   </select>
                   {(c.group === "program" || c.group === "class") && <select value={c.clinicId} onChange={e => set({ clinicId: e.target.value, sessionId: "" })} style={{ ...inputStyle, width: "auto", padding: "5px 8px", fontSize: 12, maxWidth: 300 }}>{upcomingClinics.map(x => <option key={x.id} value={x.id}>{x.name}</option>)}</select>}
                   {c.group === "class" && <select value={c.sessionId} onChange={e => set({ sessionId: e.target.value })} style={{ ...inputStyle, width: "auto", padding: "5px 8px", fontSize: 12 }}><option value="">— which class —</option>{sessions.map(x => <option key={x.id} value={x.id}>{fmtDay(x.date, today)} {x.start_time || ""}</option>)}</select>}
                   {c.group === "category" && <select value={c.category} onChange={e => set({ category: e.target.value })} style={{ ...inputStyle, width: "auto", padding: "5px 8px", fontSize: 12 }}>{["Pods", "Clinics", "Camps", "Adult"].map(k => <option key={k}>{k}</option>)}</select>}
                   {c.group === "age" && <select value={c.age} onChange={e => set({ age: e.target.value })} style={{ ...inputStyle, width: "auto", padding: "5px 8px", fontSize: 12 }}>{ages.map(k => <option key={k}>{k}</option>)}</select>}
-                  <Btn small disabled={!gc.length || (c.group === "class" && !c.sessionId)} onClick={() => addContacts(gc)}>+ Add {gc.length}</Btn>
+                  {c.group === "history" && <input value={c.programQ || ""} onChange={e => set({ programQ: e.target.value })} placeholder="program name contains… e.g. women" style={{ ...inputStyle, width: 220, padding: "5px 8px", fontSize: 12 }} />}
+                  <Btn small disabled={!gc.length || (c.group === "class" && !c.sessionId) || (historyGroup && !history)} onClick={() => { addContacts(gc); if (historyGroup) set({ groupLabel: c.group === "history" ? (c.programQ || "").trim() + " — past + current" : "Everyone who's ever signed up" }); }}>{historyGroup && !history ? "Loading sign-ups…" : "+ Add " + gc.length}</Btn>
                 </div>
+                {c.group === "history" && history && histQ && (
+                  <div style={{ marginTop: 6, fontSize: 11, color: DS.mut, lineHeight: 1.5 }}>
+                    {matchedProgs.length ? <>Matches {matchedProgs.length} program{matchedProgs.length === 1 ? "" : "s"}: {matchedProgs.slice(0, 8).map(([k, n]) => k + " (" + n + ")").join(" · ")}{matchedProgs.length > 8 ? " · …" : ""}</> : "No program names contain that."}
+                  </div>
+                )}
+                {c.group === "everyone_ever" && history && <div style={{ marginTop: 6, fontSize: 11, color: DS.mut }}>Every DSSC family on file — anyone who's signed up through Playbook or had an Upper Hand account, plus current class lists — {gc.length} phone numbers. DS Elite team families are only included if they've also signed up for something at DSSC.</div>}
+                {history?.error && historyGroup && <div style={{ marginTop: 6, fontSize: 11, color: DS.orange }}>Couldn't load sign-up history: {history.error}</div>}
                 {held.length > 0 && <div style={{ marginTop: 8, color: DS.orange, fontSize: 12, fontWeight: 700 }}>{held.length} of these opted out (struck through) and won't be sent.</div>}
               </div>
 
@@ -351,7 +433,7 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
                 {c.media.map(m => <span key={m.url} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, padding: "3px 8px", borderRadius: 8, border: "1px solid " + DS.line }}><img src={m.url} alt="" style={{ height: 22, borderRadius: 4 }} />{m.name}<button onClick={() => set({ media: c.media.filter(x => x.url !== m.url) })} style={{ background: "none", border: "none", color: DS.mut, cursor: "pointer" }}>✕</button></span>)}
                 <span style={{ fontSize: 11, color: c.body.length > SMS_MAX ? DS.orange : DS.mut, fontWeight: c.body.length > SMS_MAX ? 700 : 400 }}>{c.body.length} chars{c.body.length > SMS_MAX ? ` · too long for one text, goes out as ${splitSms(c.body).length} texts in a row` : ` · ${segments(c.body)} segment${segments(c.body) === 1 ? "" : "s"}`}{c.media.length ? " · MMS" : ""}</span>
                 <div style={{ flex: 1 }} />
-                <Btn kind="primary" disabled={!canSend} onClick={go}>{sending ? "Sending…" : `Send to ${ready.length}`}</Btn>
+                <Btn kind="primary" disabled={!canSend} onClick={go}>{sending ? (c.progress || "Sending…") : `Send to ${ready.length}`}</Btn>
               </div>
               {c.result && <div style={{ border: "1px solid " + (c.result.error || c.result.failed?.length ? DS.orange : DS.lime), borderRadius: 10, padding: "10px 12px", fontSize: 13 }}>{c.result.error ? <span style={{ color: DS.orange, fontWeight: 700 }}>{c.result.error}</span> : <><b style={{ color: DS.lime }}>Sent to {c.result.sent}</b>{c.result.failed?.length > 0 && <div style={{ color: DS.orange, marginTop: 4 }}>{c.result.failed.length} failed: {c.result.failed.map(x => (x.name || x.to) + " (" + x.error + ")").join("; ")}</div>}<div style={{ color: DS.mut, marginTop: 4 }}>Replies show up on the left, one thread per person.</div></>}</div>}
               <details><summary style={{ cursor: "pointer", fontSize: 12, fontWeight: 700 }}>Opted out ({optouts.length})</summary>
