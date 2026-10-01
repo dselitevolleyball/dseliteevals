@@ -11,7 +11,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import Papa from "papaparse";
-import { importUpperHand, importPlaybookParticipants, syncPlaybook, syncDsElite, parseUpperHandEvent } from "./_lib/dssc-crm.js";
+import { importUpperHand, importPlaybookParticipants, importPlaybookRegistrations, syncPlaybook, syncDsElite, parseUpperHandEvent } from "./_lib/dssc-crm.js";
 
 export const config = { maxDuration: 300 };
 const OWNER_EMAILS = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"];
@@ -50,6 +50,7 @@ export default async function handler(req, res) {
       const rows = Array.isArray(f.rows) ? f.rows : [];
       const cols = Object.keys(rows[0] || {});
       if (cols.includes("student_pk") && cols.includes("guardian_email")) { const r = await importPlaybookParticipants(sb, rows); parts.push(`${f.name}: ${r.participants} players under ${r.contacts} families (${r.rosterPhones} roster phones filled)`); }
+      else if (cols.includes("registration_pk") && cols.includes("source_pk")) { const r = await importPlaybookRegistrations(sb, rows); parts.push(`${f.name}: ${r.new} new Playbook sign-ups (${r.participation} program records, ${r.participants} people)`); }
       else if (cols.includes("phone_number") && cols.includes("added_date")) uh.contacts.push(...rows);
       else if (cols.includes("gender") && cols.includes("date_of_birth") && cols.includes("phone")) uh.participants.push(...rows);
       else if (cols.includes("Order Number") && cols.includes("Buyer")) uh.orders.push(...rows);

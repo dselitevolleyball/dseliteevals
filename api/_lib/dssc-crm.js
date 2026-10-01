@@ -5,6 +5,8 @@
 //
 //   importUpperHand(sb, { contacts, participants, orders })  — Upper Hand CSV rows
 //   syncPlaybook(sb)   — families and classes from dssc_pod_roster / dssc_clinics
+//   importPlaybookRegistrations(sb, rows) — every Playbook sign-up, any program
+//                        (the hourly registrations pull calls this)
 //   syncDsElite(sb)    — DS Elite roster families, as volleyball participation
 //
 // Upper Hand's order export has no line items, so orders give spend and
@@ -25,6 +27,8 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // Upper Hand history and future exports carry everything the club sells.
 export function categoryOf(name) {
   const n = lower(name);
+  // Rentals first: "Volleyball Court 2" and "Basketball Court 1" are court time, not a program.
+  if (/\bcourts?\b|rental|dssc flex|warehouse|open gym|membership|birthday|parent'?s night/.test(n)) return "facility";
   if (/volley|vball|setter|libero|hitter|passing|middles|pins|serve|elite tots|ds elite|rise|guaranteed to|skill lab v/.test(n)) return "volleyball";
   if (/basket|hoop|shooting|point guard|playmaker|dribbl/.test(n)) return "basketball";
   if (/reach|performance|strength|speed|agility|s&a/.test(n)) return "reach";
@@ -166,6 +170,47 @@ export async function syncPlaybook(sb) {
   const pids = await upsertParticipants(sb, parts);
   const rows = parts2.map(({ r, cid, nk }) => { const c = cl.get(r.clinic_id); const s = (c?.sessions || []).find(x => String(x.id) === String(r.session_id)); return { participant_id: pids.get(cid + "|" + nk) || null, contact_id: cid, program: c?.name || "DSSC class", category: "volleyball", event_date: s?.date || null, source: "playbook", source_ref: r.source_ref || ("roster-" + r.id) }; });
   return { contacts: ids.size, participants: pids.size, participation: await upsertParticipation(sb, rows) };
+}
+
+// ── Playbook registrations report (every program, every date) ───────────────
+// The same "Export All" the hourly roster pull fetches. syncPlaybook only sees
+// classes HQ tracks (volleyball, from the calendar), so a family whose only
+// sign-up was the Women's Academy, a basketball lab or a court rental never
+// reached People. This takes every row: the account holder (user_*) is the
+// contact, participant_name the person under them, source the program.
+// source_ref is the registration_pk — the same key the roster import gives a
+// volleyball class row — so the two meet in one record instead of doubling.
+// Only registrations People doesn't have yet are written, so the hourly run is
+// cheap once the backlog is in.
+export async function importPlaybookRegistrations(sb, rows) {
+  const out = { rows: rows.length, new: 0, contacts: 0, participants: 0, participation: 0 };
+  const regs = rows.filter(r => clean(r.registration_pk) && clean(r.source) && EMAIL_RE.test(lower(r.user_email)));
+  const have = new Set();
+  const refs = regs.map(r => clean(r.registration_pk));
+  for (let i = 0; i < refs.length; i += 150) {
+    const { data, error } = await sb.from("dssc_participation").select("source_ref").eq("source", "playbook").in("source_ref", refs.slice(i, i + 150));
+    if (error) throw new Error("participation lookup: " + error.message);
+    (data || []).forEach(d => have.add(d.source_ref));
+  }
+  const fresh = regs.filter(r => !have.has(clean(r.registration_pk)));
+  out.new = fresh.length;
+  if (!fresh.length) return out;
+  const split = (n) => { const [f, ...l] = clean(n).split(" "); return [f || "", l.join(" ")]; };
+  const ids = await upsertContacts(sb, fresh.map(r => { const [f, l] = split(r.user_name); return { email: lower(r.user_email), first_name: cap(f), last_name: cap(l), sources: ["playbook"] }; }));
+  out.contacts = ids.size;
+  const parts = fresh.map(r => {
+    const cid = ids.get(lower(r.user_email)); const [f, l] = split(r.participant_name || r.user_name);
+    return cid && f ? { contact_id: cid, first_name: f, last_name: l, is_contact: nameKey(f, l) === nameKey(...split(r.user_name)), sources: ["playbook"] } : null;
+  }).filter(Boolean);
+  const pids = await upsertParticipants(sb, parts);
+  out.participants = pids.size;
+  out.participation = await upsertParticipation(sb, fresh.map(r => {
+    const cid = ids.get(lower(r.user_email)); const [f, l] = split(r.participant_name || r.user_name);
+    // "Volleyball 101 - 3rd - 5th Grade(15415)": the number is Playbook's session id, not part of the name.
+    const program = clean(r.source).replace(/\s*\(\d+\)\s*$/, "");
+    return { participant_id: pids.get(cid + "|" + nameKey(f, l)) || null, contact_id: cid, program, event_date: isoDate(r.start_date) || isoDate(r.date_created), source: "playbook", source_ref: clean(r.registration_pk) };
+  }));
+  return out;
 }
 
 // ── DS Elite roster ──────────────────────────────────────────────────────────

@@ -21,6 +21,7 @@
 import { createClient } from "@supabase/supabase-js";
 import Papa from "papaparse";
 import { importRoster } from "./_lib/dssc-roster-import.js";
+import { importPlaybookRegistrations } from "./_lib/dssc-crm.js";
 import { appOrigin } from "../shared/app-origin.js";
 
 const BASE = "https://drippingsports.playbookapi.com";
@@ -102,8 +103,14 @@ export default async function handler(req, res) {
   const out = await importRoster(sb, rows, { dry, addedBy: "playbook auto-pull" });
   if (out.error) return fail("Import: " + out.error);
 
+  // Every sign-up — any program, not just the classes above — into DSSC People,
+  // so "everyone who ever did the Women's Academy" can be found. A failure here
+  // is reported in the summary but never fails the roster pull.
+  let people = null;
+  if (!dry) { try { people = await importPlaybookRegistrations(sb, rows); } catch (e) { people = { error: e.message }; } }
+
   const summary = { added: out.added, matched: out.matched, rows: out.rows, noSession: out.noSession.length,
-    waiting: [...new Set(out.noSession.map(x => x.program + " " + x.date))].slice(0, 12) };
+    waiting: [...new Set(out.noSession.map(x => x.program + " " + x.date))].slice(0, 12), people };
   if (!dry) {
     await sb.from("dssc_sync").upsert({ id: 1, registrations_at: now, registrations_summary: summary, registrations_error: null, registrations_error_at: null }, { onConflict: "id" });
     // Tell the director once when registrations are piling up for classes HQ
