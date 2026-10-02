@@ -1920,7 +1920,7 @@ export default function App() {
   const emailBodyRef                                  = useRef(null);   // textarea ref for toolbar selection edits
   const emailImgInputRef                              = useRef(null);   // hidden file input for inserting images
   const [emailImgUploading, setEmailImgUploading]     = useState(false);
-  const [teamsListAll, setTeamsList]                           = useState([]);
+  const [teamsListRaw, setTeamsList]                           = useState([]);
   // Event teams — 14 Crystal, the Hawaii roster (shared/event-teams.js: 0
   // practices a week) — exist only for that one trip. Drew, 1 Oct 2026: they
   // show nowhere but the Hawaii screen and that tournament's travel. So every
@@ -1929,6 +1929,15 @@ export default function App() {
   // card) use practiceTeamsAll / teamsListAll.
   const eventTeamSet = useMemo(() => new Set(practiceTeamsAll.filter(isEventTeam).map(t => t.team_name)), [practiceTeamsAll]);
   const practiceTeams = useMemo(() => practiceTeamsAll.filter(t => !eventTeamSet.has(t.team_name)), [practiceTeamsAll, eventTeamSet]);
+  // The teams table is the older copy of each team; practice_teams is the live
+  // staffing (the team card and the practice board write only it). So its head
+  // and assistant win wherever teams is read — the Tournaments page was still
+  // showing Rob Roberts with Lindsey Shumway on 11 Rise 1 after he'd moved
+  // (Drew, 2 Oct 2026).
+  const teamsListAll = useMemo(() => {
+    const live = new Map(practiceTeamsAll.map(t => [t.team_name, t]));
+    return teamsListRaw.map(t => { const p = live.get(t.id); return p ? { ...t, head_coach: p.head_coach, assistant_coach: p.assistant_coach } : t; });
+  }, [teamsListRaw, practiceTeamsAll]);
   const teamsList = useMemo(() => teamsListAll.filter(t => !eventTeamSet.has(t.id)), [teamsListAll, eventTeamSet]);
   const [teamStatus, setTeamStatus]                         = useState({}); // { [team_name]: { status, looking_positions } }
   const [teamTasks, setTeamTasks]                           = useState({}); // { `${team}|${item}`: { status, notes } }
