@@ -180,14 +180,19 @@ export function buildDaySchedule(f) {
   };
   for (const t of out.teams) for (const [s, e] of t.blocks) for (const p of t.floor) addShift(p.name, t.team, s, e, p.role === "Sub" ? "Sub for " + p.forWhom : p.role);
 
-  // Floaters: only those not working, out or away at that hour.
+  // Floaters: only those not out or away, and only for the hours they aren't
+  // already coaching a team — a floater picked up as a sub (or on a team's
+  // staff) stops floating for those hours.
   for (const fl of f.floats) {
     if ((fl.phase || "season") !== ph || fl.day !== weekday || !practiceDay) continue;
     const k = personKey(fl.coach_name);
     if (away.has(k) || offAnywhere(fl.coach_name)) continue;
     if (f.cover.some(c => samePerson(c.coach_out, fl.coach_name))) continue;
     const [s, e] = span(fl.slot); if (s >= 99) continue;
-    out.floaters.push({ name: fl.coach_name, start: s, end: e });
+    const busy = (coachMap.get(k)?.shifts || []).map(x => [x.start, x.end]);
+    let free = [[s, e]];
+    for (const [bs, be] of busy) free = free.flatMap(([a, b]) => (be <= a || bs >= b) ? [[a, b]] : [[a, Math.min(b, bs)], [Math.max(a, be), b]].filter(([x, y]) => y > x));
+    for (const [a, b] of free) out.floaters.push({ name: fl.coach_name, start: a, end: b });
   }
   for (const s of f.sas) if (!teamCancel.has(s.team_name) && !atTournament.has(s.team_name) && !eventTeams.has(s.team_name)) { const [a, b] = span(s.slot); if (a < 99) out.sa.push({ team: s.team_name, start: a, end: b }); }
   for (const n of f.nights) {

@@ -19204,7 +19204,19 @@ export default function App() {
       const floatersFor = (label) => [...new Set(coachFloats
         .filter(f => (f.phase || "season") === dayPhase && f.day === weekday && f.slot === label)
         .map(f => (f.coach_name || "").trim()).filter(Boolean))]
-        .filter(name => !outTodaySet.has(nrmName(name)) && !awayLow.has(nrmName(name)));
+        .filter(name => !outTodaySet.has(nrmName(name)) && !awayLow.has(nrmName(name)) && !coachingAt(label).has(nrmName(name)));
+      // Everyone already coaching a team in this block — its own staff or a
+      // named sub. A floater picked up to cover a team stops floating then.
+      const coachingAt = (label) => {
+        const set = new Set();
+        for (const a of teamsFor(label)) {
+          if (teamCancelled(dailyDate, a.team_name)) continue;
+          const tm = (practiceTeams || []).find(t => t.team_name === a.team_name) || {};
+          [tm.head_coach, tm.assistant_coach, tm.third_coach].forEach(c => { if (c) set.add(nrmName(c)); });
+          practiceCoverage.forEach(c => { if (c.practice_date === dailyDate && c.team_name === a.team_name && isRealSub(c.sub_name)) set.add(nrmName(c.sub_name)); });
+        }
+        return set;
+      };
       // Slot-agnostic: coverage follows the team even if it's moved to another
       // block that day (one practice per team per day).
       const covFor = (team, label, coachName) => practiceCoverage.find(c =>
