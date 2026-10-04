@@ -71,7 +71,11 @@ export default function DaySchedule({ session, onOpenPractice, onCoachesChanged 
   const saveSub = async (t, coachOut, sub) => {
     setSaving(true);
     const del = await supabase.from("practice_coverage").delete().eq("practice_date", date).eq("team_name", t.team).eq("coach_out", coachOut);
-    const ins = del.error ? del : await supabase.from("practice_coverage").insert({ practice_date: date, team_name: t.team, slot: (t.slots || [])[0] || null, phase: day.phase, coach_out: coachOut, sub_name: (sub || "").trim() || null, combine_with_team: null });
+    // One row per practice slot: fall Sundays are stored hour by hour, and the
+    // clock-in screen turns each row into a payable shift for the sub — one
+    // row for a 3–5pm practice would pay them 3–4pm only.
+    const slots = (t.slots && t.slots.length) ? t.slots : [null];
+    const ins = del.error ? del : await supabase.from("practice_coverage").insert(slots.map(slot => ({ practice_date: date, team_name: t.team, slot, phase: day.phase, coach_out: coachOut, sub_name: (sub || "").trim() || null, combine_with_team: null })));
     setSaving(false);
     if (ins.error) { window.alert("Couldn't save the sub: " + ins.error.message); return; }
     setSubbing(null); await load(); onCoachesChanged?.();
