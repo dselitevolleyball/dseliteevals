@@ -1288,32 +1288,82 @@ function vbDedupeSubs(subs){
 }
 
 // Build the libero/middle-switch config for a set (or null if not set up).
-// In this system the libero covers whichever of the two middles is in the back
-// row; one middle serves for itself, and the libero serves in the OTHER
-// middle's serve rotation (servesFor). The non-serving-covered middle is the
-// "servingMiddle".
-function vbLiberoConf(set){
-  if(!set || !set.autoLibero || !set.liberoId) return null;
-  const mids = (set.middles||[]).filter(Boolean);
+// The libero ALWAYS swaps with whichever middle spot is in the back row — on
+// by default whenever there's a libero and two middles; a coach can only turn
+// it off explicitly (autoLibero === false). She serves for ONE middle
+// (servesFor); the other middle always serves for herself.
+// Middles are the set's tagged middles, or failing that the two players in the
+// six whose role/position is M (posOf supplies it). The switch follows the
+// court SPOT, so a middle's sub gets the same libero switch.
+function vbLiberoConf(set, posOf){
+  if(!set || set.autoLibero===false || !set.liberoId) return null;
+  let mids = (set.middles||[]).filter(Boolean);
+  if(mids.length!==2 && posOf){ const m = (set.lineup||[]).filter(id => id && posOf(id)==="M"); if(m.length===2) mids = m; }
   if(mids.length!==2) return null;
   const servesFor = (set.liberoServesFor && mids.includes(set.liberoServesFor)) ? set.liberoServesFor : mids[1];
   const servingMiddle = mids.find(m => m!==servesFor);
-  return { liberoId:set.liberoId, middleIds:new Set(mids), servesFor, servingMiddle };
+  return { liberoId:set.liberoId, middleIds:new Set(mids), mids, servesFor, servingMiddle };
 }
 
-// Swap the libero in for the back-row middle. The serving middle stays in on
-// serve at position 1 (they serve); everywhere else in the back row the libero
-// covers. Records libFor so the UI can show who the libero replaced.
+// Swap the libero in for the back-row middle spot — the middle, or whoever has
+// subbed in for her there. At position 1 on serve, only the spot the libero
+// serves for gets the libero; the other middle (or her sub) serves herself.
+// Records libFor so the UI can show who the libero replaced.
 function vbApplyLibero(slots, phase, lib){
   if(!lib) return slots;
   let placed = false; // libero can only cover one middle per rotation
   slots.forEach(s => {
-    if(!placed && s.id && lib.middleIds.has(s.id) && s.row==="back"){
-      const keepToServe = phase==="serve" && s.n===1 && s.id===lib.servingMiddle;
+    const midSpot = s.id && s.id!==lib.liberoId && (lib.middleIds.has(s.id) || lib.middleIds.has(s.baseId));
+    if(!placed && midSpot && s.row==="back"){
+      const liberoServesHere = s.baseId===lib.servesFor || s.id===lib.servesFor;
+      const keepToServe = phase==="serve" && s.n===1 && !liberoServesHere;
       if(!keepToServe){ s.libFor = s.id; s.id = lib.liberoId; placed = true; }
     }
   });
   return slots;
+}
+
+// Set rules → planned subs. set.pairs = [{ starterId, subId, when, subServes }]
+//   when "back"   : the sub plays the starter's back-row rotations — in as the
+//                   starter rotates to position 1, out as she comes back to the
+//                   front row. subServes: the sub serves (in from the serve
+//                   half); otherwise the starter serves and the sub comes in on
+//                   serve-receive.
+//   when "front"  : the sub plays the starter's front-row rotations.
+//   when "manual" : no automatic sub — the pair just makes the box tap-cycle.
+// Generated subs are stored in set.subs tagged rule:true and rebuilt on every
+// edit (vbSyncRuleSubs), so the grid, the sub count and the game-day "Sub now"
+// prompts all follow the rules with no special casing.
+function vbRuleSubs(set){
+  const out = [];
+  for(const p of (set.pairs||[])){
+    if(!p || !p.starterId || !p.subId || p.starterId===p.subId || (p.when!=="back" && p.when!=="front")) continue;
+    const k = (set.lineup||[]).indexOf(p.starterId); if(k<0) continue;
+    const idxAt = r => (((k - r) % 6) + 6) % 6;                 // court index of the starter's spot in rotation r
+    const want = r => (VB_COURT[idxAt(r)].row==="back") === (p.when==="back");
+    for(let r=0; r<12; r++){
+      if(!want(r) || (r>0 && want(r-1))) continue;              // start of a window
+      let t = r; while(t<11 && want(t+1)) t++;
+      const enteringBackAtServe = p.when==="back" && r>0 && VB_COURT[idxAt(r)].n===1;
+      const phase = enteringBackAtServe && !p.subServes ? "receive" : "serve";
+      out.push({ inId:p.subId, outId:p.starterId, fromRotation:r, thruRotation:t, phase, rule:true });
+    }
+  }
+  return out;
+}
+function vbSyncRuleSubs(set){
+  if(!set) return set;
+  set.subs = [...(set.subs||[]).filter(x => x && !x.rule), ...vbRuleSubs(set)];
+  return set;
+}
+
+// Live game: when a middle is subbed out, her replacement takes her place as a
+// middle — so the libero keeps switching with that spot — and takes over the
+// libero's serve pick if it was hers.
+function vbHandOffMiddle(st, outId, inId){
+  if(!st || !outId || !inId) return;
+  if((st.middles||[]).includes(outId)) st.middles = st.middles.map(m => m===outId ? inId : m);
+  if(st.liberoServesFor===outId) st.liberoServesFor = inId;
 }
 
 // The 6 court slots for one rotation (0..5). → [{n,row,slot,label,i,baseId,id}]
@@ -26079,7 +26129,7 @@ export default function App() {
       if (plan.team_name) setLineupTeam(plan.team_name);
       setLineupPlanId(plan.id);
       const openSets = (plan.data && plan.data.sets && plan.data.sets.length) ? plan.data.sets : [defaultSet()];
-      openSets.forEach(st => { st.subs = vbDedupeSubs(st.subs); }); // heal duplicate sub entries on open
+      openSets.forEach(st => { st.subs = vbDedupeSubs(st.subs); vbSyncRuleSubs(st); }); // heal duplicate sub entries on open
       setLineupDraft({
         title: plan.title || "Untitled plan",
         opponent: plan.opponent || "",
@@ -26111,7 +26161,9 @@ export default function App() {
       setLineupPlans(prev => prev.filter(p => p.id !== id));
       if (lineupPlanId === id) { setLineupPlanId(null); setLineupDraft(null); }
     };
-    const updateDraft = (fn) => setLineupDraft(d => { if (!d) return d; const n = JSON.parse(JSON.stringify(d)); fn(n); return n; });
+    // Every edit re-derives the rule-made subs, so changing the six, a pair
+    // or the server never leaves stale rule subs behind.
+    const updateDraft = (fn) => setLineupDraft(d => { if (!d) return d; const n = JSON.parse(JSON.stringify(d)); fn(n); (n.sets||[]).forEach(vbSyncRuleSubs); return n; });
 
     const S = {
       card:   { background:C.card, border:"1px solid "+C.border, borderRadius:12, padding:14, marginBottom:14 },
@@ -26137,7 +26189,7 @@ export default function App() {
       const pFirst = id => { const p = pById[id]; if (!p) return "—"; return ((p.name||"").trim().split(/\s+/)[0]) || ("#"+(p.num||"?")); };
       const pName  = id => { const p = pById[id]; return p ? (p.name || ("#"+(p.num||"?"))) : "—"; };
       const pNum   = id => (pById[id] && pById[id].num) || "";
-      const pPos   = id => (pById[id] && pById[id].pos) || "";
+      const pPos   = id => (set && (set.roles||{})[id]) || (pById[id] && pById[id].pos) || "";
       const set = psets[play.setIdx] || psets[0] || null;
       const lineupOk = set && (set.lineup||[]).filter(Boolean).length === 6;
       const upd = fn => setLineupPlay(pl => { const n = JSON.parse(JSON.stringify(pl)); fn(n); return n; }); // deep clone incl. plan → edits are game-only
@@ -26149,7 +26201,7 @@ export default function App() {
       // Live court for the current rotation/phase.
       const phase = (play.stage==="live" ? (play.serving==="us") : (play.startServe==="us")) ? "serve" : "receive";
       const rr = play.stage==="live" ? play.r : (play.startRot||0);
-      const lib = set ? vbLiberoConf(set) : null;
+      const lib = set ? vbLiberoConf(set, pPos) : null;
       // Only apply the libero once we're live. On the approval/lineup-card
       // screen we show the base six (the real middle, with jersey #) because a
       // libero can't be written into the six on the card you hand in.
@@ -26209,14 +26261,14 @@ export default function App() {
       // the rest of this game (session only; the saved plan isn't touched).
       const doLiveSub = (courtI, inId) => upd(pl => {
         const st = pl.plan.data.sets[pl.setIdx];
-        if (st) st.lineup[(courtI + rr) % 6] = inId || null;
+        if (st) { const j = (courtI + rr) % 6; vbHandOffMiddle(st, st.lineup[j], inId); st.lineup[j] = inId || null; }
         pl.subPick = null;
       });
       // Confirm a planned sub: swap IN for OUT in the live lineup (find the OUT
       // player wherever they are) and mark it done so it won't prompt again.
       const confirmPlannedSub = s => upd(pl => {
         const st = pl.plan.data.sets[pl.setIdx];
-        if (st) { const j = (st.lineup||[]).indexOf(s.outId); if (j>=0) st.lineup[j] = s.inId; }
+        if (st) { const j = (st.lineup||[]).indexOf(s.outId); if (j>=0) { vbHandOffMiddle(st, s.outId, s.inId); st.lineup[j] = s.inId; } }
         pl.confirmed = { ...(pl.confirmed||{}), [subKey(s)]: true };
       });
 
@@ -26605,6 +26657,10 @@ export default function App() {
               if ((set.setters||[]).includes(pid)) return "S";
               if (set.liberoId === pid) return "L";
               if ((set.middles||[]).includes(pid)) return "M";
+              // A role picked here (RS, OH, DS…) is saved per set in set.roles and
+              // wins over the roster position — otherwise picking Right side for
+              // an OH on the roster snapped straight back to OH.
+              const picked = (set.roles||{})[pid]; if (picked && ROLES.includes(picked)) return picked;
               if ((set.passers||[]).includes(pid)) return (byId[pid]?.pos==="DS" ? "DS" : "OH");
               const rp = byId[pid]?.pos || ""; return ROLES.includes(rp) ? rp : "";
             };
@@ -26614,6 +26670,7 @@ export default function App() {
               t.middles = (t.middles||[]).filter(x=>x!==pid);
               t.passers = (t.passers||[]).filter(x=>x!==pid);
               if (t.liberoId===pid) t.liberoId = null;
+              const roles = { ...(t.roles||{}) }; if (role) roles[pid] = role; else delete roles[pid]; t.roles = roles;
               if (role==="S") t.setters=[...t.setters,pid];
               else if (role==="M") t.middles=[...t.middles,pid];
               else if (role==="L") { t.liberoId=pid; t.passers=[...t.passers,pid]; }
@@ -26643,20 +26700,73 @@ export default function App() {
 
                 {!settersOk && (set.setters||[]).length>0 && <div style={{fontSize:11,color:"#f59e0b",marginBottom:8}}>⚠ For a true 6-2, your two setters should be opposite (3 apart) so one is always back to set.</div>}
 
-                {/* Libero ⇄ middle switch */}
-                {(set.middles||[]).length===2 && set.liberoId && (() => {
-                  const mids=set.middles; const servesFor=(set.liberoServesFor&&mids.includes(set.liberoServesFor))?set.liberoServesFor:mids[1]; const servingMid=mids.find(m=>m!==servesFor);
+                {/* Rules: who is M1/M2, the libero and who she serves for, and sub
+                    pairings. The rotations below follow these. */}
+                {(() => {
+                  const six = (set.lineup||[]).filter(Boolean);
+                  const lc = vbLiberoConf({ ...set, autoLibero: true }, id => (set.roles||{})[id] || byId[id]?.pos);
+                  const mids = lc ? lc.mids : (set.middles||[]).filter(Boolean);
+                  // M1/M2 keep their slots (set.middles = [M1, M2], either may be empty).
+                  const midSlots = (set.middles||[]).length ? [set.middles[0]||null, set.middles[1]||null] : [mids[0]||null, mids[1]||null];
+                  const setMid = (k, pid) => updateDraft(d => { const t=d.sets[setIdx]; const m=[...midSlots]; m[k]=pid||null; if(pid && m[1-k]===pid) m[1-k]=null; t.middles=m; if(pid) t.roles={...(t.roles||{}), [pid]:"M"}; if(t.liberoServesFor && !m.includes(t.liberoServesFor)) t.liberoServesFor=null; });
+                  const pairs = set.pairs || [];
+                  const setPair = (i, patch) => updateDraft(d => { const t=d.sets[setIdx]; t.pairs=[...(t.pairs||[])]; t.pairs[i]={ ...t.pairs[i], ...patch }; });
+                  const lbl = { fontSize:10, fontWeight:800, color:C.mut, textTransform:"uppercase", letterSpacing:0.3 };
+                  const row = { display:"flex", alignItems:"center", gap:8, flexWrap:"wrap", marginBottom:8 };
+                  const sixOpts = [<option key="" value="">—</option>, ...six.map(id => <option key={id} value={id}>{plabel(id)}</option>)];
                   return (
-                    <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",padding:"8px 10px",borderRadius:8,border:"1px solid "+(set.autoLibero?"#a855f7":C.border),background:set.autoLibero?"rgba(168,85,247,0.08)":C.bg}}>
-                      <label style={{display:"flex",alignItems:"center",gap:6,fontSize:12,fontWeight:700,color:C.text,cursor:"pointer"}}>
-                        <input type="checkbox" checked={!!set.autoLibero} onChange={e=>updateDraft(d=>{ const t=d.sets[setIdx]; t.autoLibero=e.target.checked; if(e.target.checked&&!t.liberoServesFor) t.liberoServesFor=mids[1]; })} style={{width:15,height:15,accentColor:"#a855f7",cursor:"pointer"}} />
-                        Libero ⇄ middle switch
-                      </label>
-                      {set.autoLibero ? (
-                        <span style={{fontSize:12,color:C.mut,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>{pfirst(set.liberoId)} covers the back-row middle · serves for
-                          <select value={servesFor} onChange={e=>updateDraft(d=>{ d.sets[setIdx].liberoServesFor=e.target.value; })} style={S.sel}>{mids.map(m=><option key={m} value={m}>{plabel(m)}</option>)}</select>
-                          <span style={{color:C.text}}>· {pfirst(servingMid)} serves</span></span>
-                      ) : <span style={{fontSize:11,color:C.mut}}>Turn on to auto-sub {pfirst(set.liberoId)} in for whichever middle is back row.</span>}
+                    <div style={{padding:"10px 12px",borderRadius:10,border:"1px solid #a855f7",background:"rgba(168,85,247,0.06)",maxWidth:720}}>
+                      <div style={{fontSize:12,fontWeight:800,color:"#a855f7",marginBottom:8}}>Rules — the rotations follow these</div>
+                      <div style={row}>
+                        <span style={lbl}>M1</span>
+                        <select value={midSlots[0]||""} onChange={e=>setMid(0, e.target.value)} style={S.sel}>{sixOpts}</select>
+                        <span style={lbl}>M2</span>
+                        <select value={midSlots[1]||""} onChange={e=>setMid(1, e.target.value)} style={S.sel}>{sixOpts}</select>
+                      </div>
+                      <div style={row}>
+                        <span style={lbl}>Libero</span>
+                        <select value={set.liberoId||""} onChange={e=>updateDraft(d=>{ const t=d.sets[setIdx]; const v=e.target.value||null; t.liberoId=v; if(v){ t.passers=[...new Set([...(t.passers||[]), v])]; t.roles={...(t.roles||{}), [v]:"L"}; } })} style={S.sel}>
+                          <option value="">—</option>
+                          {roster.filter(p => !six.includes(p.id) || p.id===set.liberoId).map(p => <option key={p.id} value={p.id}>{plabel(p.id)}{p.pos?" ("+p.pos+")":""}</option>)}
+                        </select>
+                        {set.liberoId && mids.length===2 && (<>
+                          <span style={lbl}>serves for</span>
+                          <select value={lc ? lc.servesFor : ""} onChange={e=>updateDraft(d=>{ d.sets[setIdx].liberoServesFor=e.target.value; })} style={S.sel}>
+                            {mids.map((m,i) => <option key={m} value={m}>M{i+1} · {plabel(m)}</option>)}
+                          </select>
+                          <span style={{fontSize:11,color:C.mut}}>{lc ? pfirst(lc.servingMiddle)+" serves for herself" : ""}</span>
+                          <label style={{display:"flex",alignItems:"center",gap:4,fontSize:11,color:C.mut,cursor:"pointer"}}>
+                            <input type="checkbox" checked={set.autoLibero!==false} onChange={e=>updateDraft(d=>{ d.sets[setIdx].autoLibero=e.target.checked; })} style={{accentColor:"#a855f7"}} />
+                            switches with the back-row middle
+                          </label>
+                        </>)}
+                        {set.liberoId && mids.length!==2 && <span style={{fontSize:11,color:"#f59e0b"}}>Pick M1 and M2 so the libero knows who she switches with.</span>}
+                      </div>
+                      <div style={{...lbl, marginBottom:4}}>Sub pairs — who subs with who</div>
+                      {pairs.map((p, i) => (
+                        <div key={i} style={row}>
+                          <select value={p.subId||""} onChange={e=>setPair(i, { subId: e.target.value||null })} style={S.sel}>
+                            <option value="">sub…</option>
+                            {roster.filter(r => r.id!==set.liberoId && (!six.includes(r.id) || r.id===p.subId)).map(r => <option key={r.id} value={r.id}>{plabel(r.id)}{r.pos?" ("+r.pos+")":""}</option>)}
+                          </select>
+                          <span style={{fontSize:11,color:C.mut}}>subs for</span>
+                          <select value={p.starterId||""} onChange={e=>setPair(i, { starterId: e.target.value||null })} style={S.sel}>{sixOpts}</select>
+                          <select value={p.when||"back"} onChange={e=>setPair(i, { when: e.target.value })} style={S.sel}>
+                            <option value="back">in her back-row rotations</option>
+                            <option value="front">in her front-row rotations</option>
+                            <option value="manual">only when I tap (cycle)</option>
+                          </select>
+                          {(p.when||"back")==="back" && (
+                            <label style={{display:"flex",alignItems:"center",gap:4,fontSize:11,color:C.mut,cursor:"pointer"}}>
+                              <input type="checkbox" checked={!!p.subServes} onChange={e=>setPair(i, { subServes: e.target.checked })} />
+                              {p.subId ? pfirst(p.subId) : "sub"} serves
+                            </label>
+                          )}
+                          <button title="Remove this pair (and its rule subs)" onClick={()=>updateDraft(d=>{ const t=d.sets[setIdx]; t.pairs=(t.pairs||[]).filter((_,j)=>j!==i); })} style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:13}}>✕</button>
+                        </div>
+                      ))}
+                      <button onClick={()=>updateDraft(d=>{ const t=d.sets[setIdx]; t.pairs=[...(t.pairs||[]), { starterId:null, subId:null, when:"back", subServes:false }]; })} style={{...S.sel, cursor:"pointer", fontWeight:700}}>＋ Add sub pair</button>
+                      <div style={{fontSize:10,color:C.mut,marginTop:6}}>Pairs fill in the rotation subs automatically (they count toward the {15} per set) and make that box tap-cycle between the two. Manual subs you add below stay as they are.</div>
                     </div>
                   );
                 })()}
@@ -26676,18 +26786,19 @@ export default function App() {
             <div style={{fontSize:12,color:C.mut,padding:"6px 0"}}>Fill all 6 court positions above to see the rotations.</div>
           ) : (() => {
             const liberoId = set.liberoId;
-            const lib = vbLiberoConf(set); // libero/middle back-row switch, or null
-            const isMiddle = id => (set.middles||[]).includes(id);
+            const posOf = id => (set.roles||{})[id] || ((set.middles||[]).includes(id) ? "M" : "") || byId[id]?.pos || "";
+            const lib = vbLiberoConf(set, posOf); // libero/middle back-row switch, or null
+            const isMiddle = id => (set.middles||[]).includes(id) || (lib && lib.middleIds.has(id)) || posOf(id)==="M";
             // A setter never passes — whether picked as the set's setter or just
             // listed as S on the roster, front row or back.
-            const isSetter = id => (set.setters||[]).includes(id) || byId[id]?.pos==="S";
+            const isSetter = id => (set.setters||[]).includes(id) || posOf(id)==="S";
             // In serve-receive the passers are: the libero (always), the back-row
             // OH/DS (always), plus ONE front-row pin (the RS or the OH) that the
             // coach pulls back — chosen per rotation via set.srFront.
             const frontPins = ro => ro.slots.filter(s => s.row==="front" && s.id && !isMiddle(s.id) && !isSetter(s.id)); // the RS & OH
             // RS or OH: the roster position when it says so, otherwise which side
             // of the net the player is on (front right = RS, front left = OH).
-            const pinRole = (id, slot) => { const p = byId[id]?.pos; if (p==="RS") return "RS"; if (p==="OH") return "OH"; return slot && slot.n===2 ? "RS" : "OH"; };
+            const pinRole = (id, slot) => { const p = posOf(id); if (p==="RS") return "RS"; if (p==="OH") return "OH"; return slot && slot.n===2 ? "RS" : "OH"; };
             const srFront = set.srFront || {};
             // The pick is saved as a ROLE ("RS"/"OH") per rotation (0–11), so it
             // survives subs. R7–R12 fall back to their first-pass rotation's pick.
@@ -26709,7 +26820,8 @@ export default function App() {
             // set.subPools remembers each spot's group, so cycling back to the
             // starter (which removes the sub) still leaves the box cyclable.
             const subGroup = (baseId) => {
-              const g = [baseId, ...((set.subPools||{})[baseId]||[]).filter(id => id!==baseId && roster.some(p => p.id===id))]; let grew = true;
+              const fromPairs = (set.pairs||[]).filter(p => p && p.starterId===baseId && p.subId).map(p => p.subId);
+              const g = [baseId, ...[...fromPairs, ...((set.subPools||{})[baseId]||[])].filter((id, i, a) => id!==baseId && a.indexOf(id)===i && roster.some(p => p.id===id))]; let grew = true;
               while (grew) { grew = false; for (const s of (set.subs||[])) if (s.inId && g.includes(s.outId) && !g.includes(s.inId)) { g.push(s.inId); grew = true; } }
               return g;
             };
@@ -26717,7 +26829,7 @@ export default function App() {
               const group = subGroup(slot.baseId);
               if (group.length < 2 || slot.libFor) return false;
               const subs = set.subs || [];
-              const startsHere = s => (s.fromRotation==null?0:s.fromRotation)===ro.r && (s.phase||"serve")===phase && group.includes(s.outId) && group.includes(s.inId);
+              const startsHere = s => !s.rule && (s.fromRotation==null?0:s.fromRotation)===ro.r && (s.phase||"serve")===phase && group.includes(s.outId) && group.includes(s.inId);
               const rest = subs.filter(s => !startsHere(s));
               const before = vbEffective(slot.baseId, ro.r, rest, phase);
               const elsewhere = new Set(vbRotation(set.lineup, ro.r, subs, phase, lib).filter(s => s.i!==slot.i).map(s => s.id));
@@ -26751,7 +26863,7 @@ export default function App() {
               const liberoServing = phase==="serve" && slot.n===1 && slot.id===liberoId && !!slot.libFor; // libero serving in for the middle
               const libSwitch = (slot.id && ro.switchIds && ro.switchIds.has(slot.id)) || liberoServing; // the half the libero⇄middle switch happens (incl. serving for the middle)
               const enteredHere = slot.id && !libSwitch && ro.entered && ro.entered.has(slot.id); // rotated / subbed in
-              const pos = slot.id && byId[slot.id] ? (byId[slot.id].pos||"") : "";
+              const pos = slot.id ? posOf(slot.id) : "";
               const num = slot.id ? pnum(slot.id) : "";
               const nm = slot.id ? (pfirst(slot.id) || "") : "";
               const nmFs = nm.length<=4 ? 16 : nm.length<=6 ? 14 : nm.length<=8 ? 12.5 : nm.length<=10 ? 11 : 10;
