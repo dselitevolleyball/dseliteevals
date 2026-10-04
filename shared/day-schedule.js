@@ -37,8 +37,8 @@ const isPracticeDay = (iso, ph) => {
 const norm = (s) => String(s || "").trim().toLowerCase().replace(/\s+/g, " ");
 // "Kelli R Hardge" and "Kelli Hardge" are one person.
 // Requests get typed as "Coach Tara Fisher" or just "Karissa".
-const personKey = (s) => { const p = norm(s).replace(/^coach\s+/, "").split(" ").filter(Boolean); return p.length >= 3 ? p[0] + " " + p[p.length - 1] : p.join(" "); };
-const samePerson = (a, b) => { const x = personKey(a), y = personKey(b); if (!x || !y) return false; if (x === y) return true; return (!x.includes(" ") && y.split(" ")[0] === x) || (!y.includes(" ") && x.split(" ")[0] === y); };
+export const personKey = (s) => { const p = norm(s).replace(/^coach\s+/, "").split(" ").filter(Boolean); return p.length >= 3 ? p[0] + " " + p[p.length - 1] : p.join(" "); };
+export const samePerson = (a, b) => { const x = personKey(a), y = personKey(b); if (!x || !y) return false; if (x === y) return true; return (!x.includes(" ") && y.split(" ")[0] === x) || (!y.includes(" ") && x.split(" ")[0] === y); };
 export const isPlaceholder = (s) => { const v = String(s || "").trim(); return !v || TN_SUB_PLACEHOLDERS.has(v.toLowerCase()) || /new coach|floater coach|assistant coach$|head coach$|coach needed/i.test(v); };
 const isRealSub = (s) => !!String(s || "").trim() && !isPlaceholder(s);
 const clean = (s) => String(s || "").replace(/\s+/g, " ").trim();
@@ -157,7 +157,7 @@ export function buildDaySchedule(f) {
       const cov = f.cover.find(c => c.team_name === team && samePerson(c.coach_out, raw));
       const awayAt = away.get(personKey(raw));
       const off = offFor(raw, team);
-      if (cov) coaches.push({ role, name: raw, status: "out", sub: isRealSub(cov.sub_name) ? cov.sub_name : null, subPlaceholder: cov.sub_name && !isRealSub(cov.sub_name) ? cov.sub_name : null, combined: cov.combine_with_team || null, why: cov.note || (awayAt ? "at " + awayAt : off ? off : "") });
+      if (cov) coaches.push({ role, name: raw, status: "out", cov: true, sub: isRealSub(cov.sub_name) ? cov.sub_name : null, subPlaceholder: cov.sub_name && !isRealSub(cov.sub_name) ? cov.sub_name : null, combined: cov.combine_with_team || null, why: cov.note || (awayAt ? "at " + awayAt : off ? off : "") });
       else if (awayAt) coaches.push({ role, name: raw, status: "away", why: "at " + awayAt });
       else if (off) coaches.push({ role, name: raw, status: "out", why: off });
       else coaches.push({ role, name: raw, status: "on" });
@@ -168,7 +168,7 @@ export function buildDaySchedule(f) {
       ...coaches.filter(c => c.sub).map(c => ({ name: c.sub, role: "Sub", forWhom: c.name })),
     ];
     const combined = coaches.find(c => c.combined)?.combined || null;
-    out.teams.push({ team, level: t.level || "", venue: info.venue, court: info.court, blocks, coaches, floor, combined });
+    out.teams.push({ team, level: t.level || "", venue: info.venue, court: info.court, blocks, slots: [...info.slots].sort((a, b) => span(a)[0] - span(b)[0]), coaches, floor, combined });
   }
 
   // Per-coach timeline (to catch the same person in two places at once).
@@ -270,6 +270,24 @@ export function buildDaySchedule(f) {
     }
   }
   return out;
+}
+
+// Each person's day in a few lines — what they'd be texted. Includes the
+// teams they're NOT coaching today (and who has it), so marking someone out
+// counts as a change to their plan just like adding a shift does.
+export function plansFor(day) {
+  const plans = new Map();   // personKey → { name, items: [{ start, line }] }
+  const add = (name, start, line) => { const k = personKey(name); if (!k) return; if (!plans.has(k)) plans.set(k, { key: k, name, items: [] }); plans.get(k).items.push({ start, line }); };
+  for (const c of day.coaches || []) for (const s of c.shifts) add(c.name, s.start, `${fmtSpan(s.start, s.end)} ${s.team}` + (/^Sub for /.test(s.role) ? ` (covering for ${s.role.slice(8)})` : ""));
+  for (const t of day.teams || []) for (const c of t.coaches) {
+    if (c.status !== "out" && c.status !== "away") continue;
+    const when = t.blocks.map(([s, e]) => fmtSpan(s, e)).join(", ");
+    add(c.name, t.blocks[0]?.[0] ?? 99, `NOT coaching ${t.team} ${when} — ` + (c.sub ? c.sub + " covering" : c.combined ? "combined with " + c.combined : "no sub yet"));
+  }
+  const fl = new Map();
+  for (const f of day.floaters || []) { const k = personKey(f.name); if (!fl.has(k)) fl.set(k, { name: f.name, spans: [] }); fl.get(k).spans.push([f.start, f.end]); }
+  for (const { name, spans } of fl.values()) for (const [s, e] of mergeSpans(spans)) add(name, s, `${fmtSpan(s, e)} floating`);
+  return [...plans.values()].map(p => ({ key: p.key, name: p.name, body: p.items.sort((a, b) => a.start - b.start).map(i => i.line).join("\n") }));
 }
 
 export async function daySchedule(sb, date) { return buildDaySchedule(await loadDayFacts(sb, date)); }

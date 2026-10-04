@@ -5,6 +5,12 @@
 //   Vercel Cron (Saturday morning) → emails Drew tomorrow's (Sunday's) schedule
 //   ?email=1[&date=]               → send that email now (admin / operator)
 //   ?dry=1                         → with email, return the HTML instead of sending
+//   POST { date, keys: [...] }      → text those coaches their updated plan for the date
+//
+// Updated-plan texts: day_plan_texts remembers what each coach was last told
+// about a date (a baseline taken by the Saturday run or the first time the
+// screen opens the day, then every text sent). The JSON lists each person's
+// plan now vs. that, so the screen can offer "text everyone who changed".
 //
 // Auth: Vercel Cron `Authorization: Bearer <CRON_SECRET>` (or ?token=), the
 // service-role key as bearer (operator script), or a signed-in owner/admin.
@@ -14,7 +20,8 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { appOrigin } from "../shared/app-origin.js";
-import { daySchedule, fmtSpan } from "../shared/day-schedule.js";
+import { daySchedule, fmtSpan, plansFor, samePerson } from "../shared/day-schedule.js";
+import { sendOneSms, normalizePhone, twilioReady } from "./_lib/sms.js";
 
 const OWNERS = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"];
 const TO_DEFAULT = "drew@dselitevolleyball.com";
@@ -33,6 +40,7 @@ export default async function handler(req, res) {
 
   const bearer = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
   const isCron = !!CRON_SECRET && (bearer === CRON_SECRET || (url?.searchParams.get("token") || "") === CRON_SECRET);
+  let who = isCron ? "cron" : "operator";
   if (!isCron && !(bearer && bearer === SUPABASE_SERVICE_ROLE_KEY)) {
     if (!bearer) return res.status(401).json({ error: "Not signed in" });
     const { data: { user } = {} } = await sb.auth.getUser(bearer).catch(() => ({ data: {} }));
@@ -41,7 +49,10 @@ export default async function handler(req, res) {
     let ok = OWNERS.includes(email);
     if (!ok) { const { data: c } = await sb.from("coaches").select("is_admin, is_approved").ilike("email", email).maybeSingle(); ok = !!(c && c.is_approved && c.is_admin); }
     if (!ok) return res.status(403).json({ error: "Admins only" });
+    who = email;
   }
+
+  if (req.method === "POST") return sendPlans(sb, req, res, who);
 
   const qDate = url?.searchParams.get("date") || "";
   const wantEmail = url?.searchParams.get("email") === "1" || (isCron && !qDate);
@@ -50,7 +61,9 @@ export default async function handler(req, res) {
   let day;
   try { day = await daySchedule(sb, date); }
   catch (e) { return res.status(500).json({ error: e.message }); }
-  if (!wantEmail) return res.status(200).json({ ok: true, ...day });
+  let plans = [];
+  try { plans = await planState(sb, day); } catch (e) { console.error("plan state:", e.message); }
+  if (!wantEmail) return res.status(200).json({ ok: true, ...day, plans, smsReady: twilioReady() });
 
   // ── Email ──────────────────────────────────────────────────────────────
   if (!day.cancelled && !day.teams.length) return res.status(200).json({ ok: true, emailed: false, date, note: "no practice that day" });
@@ -120,4 +133,69 @@ ${day.offTeams.length ? `<div style="font-size:13px;color:#555;margin:0 0 12px">
     link,
   ].filter(Boolean).join("\n\n");
   return { html, text, subject };
+}
+
+// ── Updated-plan texts ─────────────────────────────────────────────────────
+const SMS_DATE = (iso) => new Date(iso + "T12:00:00Z").toLocaleDateString("en-US", { weekday: "short", month: "numeric", day: "numeric", timeZone: "UTC" });
+
+// Everyone with a plan today or a plan they were told about, with what they
+// know vs. what's true now. Records a baseline the first time a date is seen.
+async function planState(sb, day) {
+  const now = new Map(plansFor(day).map(p => [p.key, p]));
+  const [{ data: rows, error }, { data: roster }, { data: outs }] = await Promise.all([
+    sb.from("day_plan_texts").select("person_key, coach_name, plan_text, kind, created_at").eq("plan_date", day.date).order("created_at", { ascending: true }),
+    sb.from("coach_roster").select("first_name, last_name, phone"),
+    sb.from("sms_optouts").select("phone").eq("brand", "dse"),
+  ]);
+  if (error) throw new Error(error.message);
+  const known = new Map();   // latest row per person
+  for (const r of rows || []) known.set(r.person_key, r);
+  if (!(rows || []).length && now.size && (day.teams.length || day.cancelled)) {
+    const base = [...now.values()].map(p => ({ plan_date: day.date, person_key: p.key, coach_name: p.name, plan_text: p.body, kind: "baseline" }));
+    const ins = await sb.from("day_plan_texts").insert(base);
+    if (ins.error) throw new Error(ins.error.message);
+    for (const b of base) known.set(b.person_key, { ...b, created_at: new Date().toISOString() });
+  }
+  const optout = new Set((outs || []).map(o => normalizePhone(o.phone)));
+  const phoneFor = (name) => { const r = (roster || []).find(r => samePerson(((r.first_name || "") + " " + (r.last_name || "")).trim(), name)); return r ? normalizePhone(r.phone) : null; };
+  const keys = new Set([...now.keys(), ...[...known.values()].filter(k => k.plan_text).map(k => k.person_key)]);
+  return [...keys].map(k => {
+    const cur = now.get(k), was = known.get(k);
+    const name = cur?.name || was?.coach_name || k;
+    const body = cur?.body || "";
+    const phone = phoneFor(name);
+    return { key: k, name, body, known: was ? was.plan_text : null, changed: (was ? was.plan_text : "") !== body, lastKind: was?.kind || null, lastAt: was?.created_at || null,
+      phone: phone && /^\+\d{10,15}$/.test(phone) ? phone : null, optedOut: !!(phone && optout.has(phone)) };
+  }).sort((a, b) => (b.changed - a.changed) || a.name.localeCompare(b.name));
+}
+
+const planSms = (date, p) => {
+  const now = p.body ? p.body.split("\n") : [];
+  const gone = (p.known || "").split("\n").filter(l => l && !now.includes(l));
+  return [`DS Elite — UPDATED plan for ${SMS_DATE(date)}:`,
+    now.length ? now.join("\n") : "You're not scheduled to coach that day.",
+    gone.length ? "No longer:\n" + gone.join("\n") : "",
+    "Questions? Reply here. — Drew"].filter(Boolean).join("\n\n");
+};
+
+async function sendPlans(sb, req, res, who) {
+  const body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
+  const date = String(body.date || "");
+  const keys = new Set(Array.isArray(body.keys) ? body.keys.map(String) : []);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !keys.size) return res.status(400).json({ error: "date and keys required" });
+  if (!twilioReady()) return res.status(500).json({ error: "Texting isn't configured" });
+  const day = await daySchedule(sb, date);
+  const plans = (await planState(sb, day)).filter(p => keys.has(p.key));
+  const results = [];
+  for (const p of plans) {
+    if (!p.phone) { results.push({ name: p.name, ok: false, error: "no phone on the coach roster" }); continue; }
+    if (p.optedOut) { results.push({ name: p.name, ok: false, error: "opted out of texts (STOP)" }); continue; }
+    const text = planSms(date, p);
+    try {
+      await sendOneSms(sb, { to: p.phone, name: p.name, kind: "coach" }, text, { sent_by_label: "day plan update" });
+      await sb.from("day_plan_texts").insert({ plan_date: date, person_key: p.key, coach_name: p.name, phone: p.phone, plan_text: p.body, kind: "sent", sent_by: who });
+      results.push({ name: p.name, ok: true });
+    } catch (e) { results.push({ name: p.name, ok: false, error: e.message }); }
+  }
+  return res.status(200).json({ ok: true, sent: results.filter(r => r.ok).length, results });
 }

@@ -43,68 +43,120 @@ export default function DaySchedule({ session, onOpenPractice, onCoachesChanged 
   }, [date, session?.access_token]);
   useEffect(() => { load(); }, [load]);
 
-  // Editing a team's staff here changes the team itself — every date, every
-  // screen — not just this day. One-day absences stay on Practice → Daily.
-  const [editing, setEditing] = useState(null);   // team name
+  // One-day subs, the same record Practice → Daily writes (practice_coverage:
+  // date + team + coach out + sub). The team's regular staff never changes here.
+  const [subbing, setSubbing] = useState(null);   // { team, name }
   const [saving, setSaving] = useState(false);
   const [names, setNames] = useState([]);
   useEffect(() => {
-    if (!editing || names.length) return;
+    if (!subbing || names.length) return;
     (async () => {
       const [r, t] = await Promise.all([
         supabase.from("coach_roster").select("first_name, last_name"),
         supabase.from("practice_teams").select("head_coach, assistant_coach, third_coach"),
       ]);
       const seen = new Map();
-      const put = (n) => { const v = String(n || "").trim(); if (v && !seen.has(v.toLowerCase())) seen.set(v.toLowerCase(), v); };
+      const put = (n) => { const v = String(n || "").trim(); if (v && !/assistant coach$|head coach$|floater coach|^tbd$/i.test(v) && !seen.has(v.toLowerCase())) seen.set(v.toLowerCase(), v); };
       (r.data || []).forEach(x => put(((x.first_name || "") + " " + (x.last_name || "")).trim()));
       (t.data || []).forEach(x => { put(x.head_coach); put(x.assistant_coach); put(x.third_coach); });
       setNames([...seen.values()].sort((a, b) => a.localeCompare(b)));
     })();
-  }, [editing, names.length]);
-  const FIELD = { Head: "head_coach", Asst: "assistant_coach", "3rd": "third_coach" };
-  const ROLE_WORD = { Head: "head coach", Asst: "assistant", "3rd": "2nd assistant" };
-  // Same write as the coach card: practice_teams, plus the older teams table
-  // for head/assistant (it has no third_coach) so the two never disagree.
-  const saveCoach = async (team, role, value, current) => {
-    const field = FIELD[role]; const v = String(value || "").trim() || null;
-    if ((v || "") === (current || "")) return;
-    const msg = v ? (current ? `Replace ${current} with ${v} as ${team} ${ROLE_WORD[role]}?` : `Make ${v} ${team} ${ROLE_WORD[role]}?`) : `Remove ${current} as ${team} ${ROLE_WORD[role]}?`;
-    if (!window.confirm(msg + "\n\nThis changes the team everywhere in the app — every practice, tournaments, travel and pay — not just this day.")) return;
-    setSaving(true);
-    const jobs = [supabase.from("practice_teams").update({ [field]: v, updated_at: new Date().toISOString() }).eq("team_name", team)];
-    if (field !== "third_coach") jobs.push(supabase.from("teams").update({ [field]: v }).eq("id", team));
-    const [pt, tm] = await Promise.all(jobs);
-    setSaving(false);
-    if (pt.error) { window.alert("Couldn't save: " + pt.error.message); return; }
-    if (tm?.error) console.error("teams table not updated for " + team + ": " + tm.error.message);
-    await load();
-    onCoachesChanged?.();
+  }, [subbing, names.length]);
+  // Who is already coaching somewhere else during this team's hours.
+  const busyAt = (t) => {
+    const busy = new Set();
+    for (const c of day?.coaches || []) if (c.shifts.some(s => s.team !== t.team && t.blocks.some(([a, b]) => s.start < b && s.end > a))) busy.add(c.name.toLowerCase());
+    return busy;
   };
-  const coachEditor = (t) => (
-    <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 6 }}>
-      {["Head", "Asst", "3rd"].map(role => {
-        const cur = (t.coaches.find(c => c.role === role) || {}).name || "";
+  const saveSub = async (t, coachOut, sub) => {
+    setSaving(true);
+    const del = await supabase.from("practice_coverage").delete().eq("practice_date", date).eq("team_name", t.team).eq("coach_out", coachOut);
+    const ins = del.error ? del : await supabase.from("practice_coverage").insert({ practice_date: date, team_name: t.team, slot: (t.slots || [])[0] || null, phase: day.phase, coach_out: coachOut, sub_name: (sub || "").trim() || null, combine_with_team: null });
+    setSaving(false);
+    if (ins.error) { window.alert("Couldn't save the sub: " + ins.error.message); return; }
+    setSubbing(null); await load(); onCoachesChanged?.();
+  };
+  const clearSub = async (t, coachOut) => {
+    setSaving(true);
+    const { error } = await supabase.from("practice_coverage").delete().eq("practice_date", date).eq("team_name", t.team).eq("coach_out", coachOut);
+    setSaving(false);
+    if (error) { window.alert("Couldn't clear: " + error.message); return; }
+    await load(); onCoachesChanged?.();
+  };
+  const subPicker = (t, c) => {
+    const busy = busyAt(t);
+    return (
+      <div style={{ display: "flex", gap: 5, alignItems: "center", flexWrap: "wrap", margin: "2px 0 4px 36px" }}>
+        <select autoFocus disabled={saving} defaultValue="" onChange={e => {
+            const v = e.target.value; if (v === "") return;
+            if (v === "__none") return saveSub(t, c.name, null);
+            if (v === "__other") { const n = window.prompt("Sub's name:", ""); if (n && n.trim()) saveSub(t, c.name, n.trim()); return; }
+            saveSub(t, c.name, v);
+          }}
+          style={{ flex: 1, minWidth: 140, background: C.card, color: C.text, border: "1px solid " + C.gold, borderRadius: 6, padding: "4px 6px", fontSize: 12, fontFamily: "inherit" }}>
+          <option value="">Who's subbing for {c.name.split(" ")[0]}?</option>
+          <option value="__none">No sub — just mark out</option>
+          {names.filter(n => n.toLowerCase() !== c.name.toLowerCase()).map(n => <option key={n} value={n}>{n}{busy.has(n.toLowerCase()) ? " (busy then)" : ""}</option>)}
+          <option value="__other">＋ Someone else…</option>
+        </select>
+        <button onClick={() => setSubbing(null)} style={{ ...btn, padding: "3px 8px", fontSize: 11 }}>Cancel</button>
+      </div>
+    );
+  };
+  const smallBtn = (color) => ({ background: "transparent", border: "1px solid " + color, color, borderRadius: 6, padding: "0 6px", fontSize: 10, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" });
+  const isSubbing = (t, c) => !!(subbing && subbing.team === t.team && subbing.name === c.name);
+
+  // Updated-plan texts: whose plan for this day differs from the last thing
+  // they were told (or the Saturday baseline).
+  const [pick, setPick] = useState({});
+  const [showAll, setShowAll] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [sendResult, setSendResult] = useState(null);
+  const plans = day?.plans || [];
+  const textable = (p) => !!p.phone && !p.optedOut;
+  useEffect(() => { setPick(Object.fromEntries((day?.plans || []).filter(p => p.changed && p.phone && !p.optedOut).map(p => [p.key, true]))); }, [day]);
+  const sendTexts = async () => {
+    const keys = Object.keys(pick).filter(k => pick[k]);
+    if (!keys.length) return;
+    if (!window.confirm("Text " + keys.length + " coach" + (keys.length === 1 ? "" : "es") + " their updated plan for " + pretty(date) + "?")) return;
+    setSending(true);
+    try {
+      const r = await fetch("/api/day-schedule", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + session.access_token }, body: JSON.stringify({ date, keys }) });
+      const o = await r.json();
+      if (!r.ok) throw new Error(o.error || "HTTP " + r.status);
+      setSendResult(o); await load();
+    } catch (e) { window.alert("Couldn't send: " + e.message); }
+    setSending(false);
+  };
+  const changedCount = plans.filter(p => p.changed).length;
+  const planPanel = plans.length > 0 && (
+    <div style={{ padding: "10px 14px", borderRadius: 10, background: C.card, border: "1px solid " + (changedCount ? C.cyan : C.border), marginBottom: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <b style={{ color: changedCount ? C.cyan : C.mut, fontSize: 13 }}>{changedCount ? changedCount + " coach" + (changedCount === 1 ? "'s" : "es'") + " plan changed" : "No plan changes to text"}</b>
+        <span style={{ fontSize: 11, color: C.mut }}>since the Saturday schedule or their last update text</span>
+        <div style={{ flex: 1 }} />
+        <button onClick={() => setShowAll(v => !v)} style={{ ...btn, padding: "3px 8px", fontSize: 11 }}>{showAll ? "Only changed" : "Show everyone"}</button>
+        <button disabled={sending || !Object.values(pick).some(Boolean) || !day.smsReady} onClick={sendTexts}
+          style={{ ...btn, background: Object.values(pick).some(Boolean) ? C.cyan : "transparent", color: Object.values(pick).some(Boolean) ? "#000" : C.mut, border: "1px solid " + C.cyan }}>
+          {sending ? "Sending…" : "Text " + Object.values(pick).filter(Boolean).length + " updated plan" + (Object.values(pick).filter(Boolean).length === 1 ? "" : "s")}</button>
+      </div>
+      {plans.filter(p => showAll || p.changed).map(p => {
+        const now = p.body ? p.body.split("\n") : [];
+        const gone = (p.known || "").split("\n").filter(l => l && !now.includes(l));
         return (
-          <div key={role} style={{ display: "flex", gap: 6, alignItems: "center" }}>
-            <span style={{ fontSize: 9, fontWeight: 800, color: C.mut, textTransform: "uppercase", width: 30, flexShrink: 0 }}>{role}</span>
-            <select disabled={saving} value={cur} onChange={e => {
-                const v = e.target.value;
-                if (v === "__other") { const n = window.prompt("Coach name:", ""); if (n && n.trim()) saveCoach(t.team, role, n.trim(), cur); return; }
-                saveCoach(t.team, role, v, cur);
-              }}
-              style={{ flex: 1, minWidth: 0, background: C.card, color: C.text, border: "1px solid " + C.border, borderRadius: 6, padding: "4px 6px", fontSize: 12, fontFamily: "inherit" }}>
-              <option value="">— none —</option>
-              {cur && !names.includes(cur) && <option value={cur}>{cur}</option>}
-              {names.map(n => <option key={n} value={n}>{n}</option>)}
-              <option value="__other">＋ Someone else…</option>
-            </select>
-            {cur && <button disabled={saving} title={"Remove " + cur} onClick={() => saveCoach(t.team, role, null, cur)}
-              style={{ background: "transparent", border: "1px solid " + C.red, color: C.red, borderRadius: 6, padding: "2px 8px", fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>✕</button>}
-          </div>
+          <label key={p.key} style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "6px 0", borderTop: "1px solid " + C.border, marginTop: 6, cursor: textable(p) ? "pointer" : "default" }}>
+            <input type="checkbox" disabled={!textable(p)} checked={!!pick[p.key]} onChange={e => setPick(v => ({ ...v, [p.key]: e.target.checked }))} style={{ marginTop: 3 }} />
+            <div style={{ fontSize: 12, minWidth: 0 }}>
+              <b>{p.name}</b>{!p.phone && <span style={{ color: C.amber }}> · no phone on the roster</span>}{p.optedOut && <span style={{ color: C.amber }}> · opted out of texts</span>}
+              {p.lastKind === "sent" && <span style={{ color: C.mut }}> · last texted {new Date(p.lastAt).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })}</span>}
+              <div style={{ color: C.text, whiteSpace: "pre-wrap" }}>{p.body || "Not coaching that day"}</div>
+              {p.changed && gone.length > 0 && <div style={{ color: C.mut, textDecoration: "line-through", whiteSpace: "pre-wrap" }}>{gone.join("\n")}</div>}
+            </div>
+          </label>
         );
       })}
-      <div style={{ fontSize: 10, color: C.mut }}>Changes the team everywhere, every date. For one day out, use Edit coverage.</div>
+      {sendResult && <div style={{ fontSize: 12, marginTop: 8, color: C.grn }}>Sent {sendResult.sent}.{sendResult.results.filter(r => !r.ok).map(r => " " + r.name + ": " + r.error + ".").join("")}</div>}
+      {!day.smsReady && <div style={{ fontSize: 11, color: C.amber, marginTop: 6 }}>Texting isn't configured on the server.</div>}
     </div>
   );
 
@@ -116,7 +168,14 @@ export default function DaySchedule({ session, onOpenPractice, onCoachesChanged 
     <div style={{ display: "flex", flexDirection: "column", gap: 2, marginTop: 4 }}>
       {t.coaches.map((c, i) => {
         const tag = <span style={{ fontSize: 9, fontWeight: 800, color: C.mut, textTransform: "uppercase", width: 30, flexShrink: 0 }}>{c.role}</span>;
-        if (c.status === "on") return <div key={i} style={{ display: "flex", gap: 6, fontSize: 12 }}>{tag}<span>{c.name}</span></div>;
+        if (c.status === "on") return (
+          <div key={i}>
+            <div style={{ display: "flex", gap: 6, fontSize: 12, alignItems: "center" }}>{tag}<span>{c.name}</span>
+              {!isSubbing(t, c) && <button title={"Mark " + c.name + " out on this day and pick a sub"} onClick={() => setSubbing({ team: t.team, name: c.name })} style={smallBtn(C.mut)}>Sub</button>}
+            </div>
+            {isSubbing(t, c) && subPicker(t, c)}
+          </div>
+        );
         if (c.status === "open") return <div key={i} style={{ display: "flex", gap: 6, fontSize: 12 }}>{tag}<span style={{ color: C.amber, fontWeight: 700 }}>Unfilled{c.name ? " (" + c.name + ")" : ""}</span></div>;
         return (
           <div key={i} style={{ display: "flex", gap: 6, fontSize: 12, flexWrap: "wrap" }}>{tag}
@@ -125,6 +184,9 @@ export default function DaySchedule({ session, onOpenPractice, onCoachesChanged 
               : c.combined ? <span style={{ color: C.violet, fontWeight: 700 }}>combined w/ {c.combined}</span>
               : <span style={{ color: t.floor.length >= 2 ? C.mut : C.red, fontWeight: 800 }}>{t.floor.length >= 2 ? "no sub needed" : "NO SUB"}</span>}
             {c.why ? <span style={{ color: C.mut, fontSize: 11 }}>· {c.why}</span> : null}
+            {!isSubbing(t, c) && <button onClick={() => setSubbing({ team: t.team, name: c.name })} style={smallBtn(C.cyan)}>{c.sub ? "Change sub" : "Add sub"}</button>}
+            {c.cov && <button disabled={saving} title={c.name + " is coaching after all"} onClick={() => clearSub(t, c.name)} style={smallBtn(C.grn)}>Back in</button>}
+            {isSubbing(t, c) && <div style={{ width: "100%" }}>{subPicker(t, c)}</div>}
           </div>
         );
       })}
@@ -141,13 +203,10 @@ export default function DaySchedule({ session, onOpenPractice, onCoachesChanged 
     return (
       <div key={t.team} style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid " + (bad ? C.red : C.border), background: bad ? "rgba(239,68,68,0.08)" : C.bg, minWidth: 200, flex: "1 1 200px", maxWidth: 320 }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline" }}>
-          <span style={{ fontWeight: 800, fontSize: 14, color: bad ? C.red : C.text }}>{t.team}
-            <button onClick={() => setEditing(editing === t.team ? null : t.team)} title="Change this team's coaches"
-              style={{ marginLeft: 6, background: "transparent", border: "1px solid " + C.border, color: editing === t.team ? C.gold : C.mut, borderRadius: 6, padding: "0 6px", fontSize: 10, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>{editing === t.team ? "Done" : "✎ Coaches"}</button>
-          </span>
+          <span style={{ fontWeight: 800, fontSize: 14, color: bad ? C.red : C.text }}>{t.team}</span>
           <span style={{ fontSize: 11, color: C.mut, whiteSpace: "nowrap" }}>{t.blocks.map(([s, e]) => fmtSpan(s, e)).join(", ")}{t.venue ? " · " + t.venue : ""}</span>
         </div>
-        {editing === t.team ? coachEditor(t) : coachList(t)}
+        {coachList(t)}
         <div style={{ fontSize: 10, color: t.floor.length >= 2 ? C.grn : C.red, fontWeight: 800, marginTop: 4 }}>{t.floor.length} on the floor{t.combined ? " · combined with " + t.combined : ""}</div>
       </div>
     );
@@ -196,6 +255,7 @@ export default function DaySchedule({ session, onOpenPractice, onCoachesChanged 
             {showInfo && byLevel("info").map((i, k) => <div key={k} style={{ fontSize: 12, color: C.mut, padding: "2px 0" }}>• {i.text}</div>)}
           </div>
         )}
+        {planPanel}
         {day.offTeams.length > 0 && <div style={{ fontSize: 12, color: C.mut, marginBottom: 12 }}><b>Not practicing:</b> {day.offTeams.map(o => o.team + " (" + o.why + ")").join(" · ")}</div>}
 
         {mode === "hour" ? (
