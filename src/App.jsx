@@ -1344,8 +1344,11 @@ function vbRuleSubs(set){
     for(let r=0; r<12; r++){
       if(!want(r) || (r>0 && want(r-1))) continue;              // start of a window
       let t = r; while(t<11 && want(t+1)) t++;
-      const enteringBackAtServe = p.when==="back" && r>0 && VB_COURT[idxAt(r)].n===1;
-      const phase = enteringBackAtServe && !p.subServes ? "receive" : "serve";
+      // The spot reaching position 1 is a serve turn. Who serves is picked per
+      // turn (p.servers[r] = "sub" | "starter"), falling back to subServes.
+      const serveTurn = p.when==="back" && VB_COURT[idxAt(r)].n===1;
+      const who = serveTurn ? ((p.servers||{})[r] || (p.subServes ? "sub" : "starter")) : "sub";
+      const phase = serveTurn && who==="starter" ? "receive" : "serve";
       out.push({ inId:p.subId, outId:p.starterId, fromRotation:r, thruRotation:t, phase, rule:true });
     }
   }
@@ -26762,12 +26765,25 @@ export default function App() {
                             <option value="front">in her front-row rotations</option>
                             <option value="manual">only when I tap (cycle)</option>
                           </select>
-                          {(p.when||"back")==="back" && (
-                            <label style={{display:"flex",alignItems:"center",gap:4,fontSize:11,color:C.mut,cursor:"pointer"}}>
-                              <input type="checkbox" checked={!!p.subServes} onChange={e=>setPair(i, { subServes: e.target.checked })} />
-                              {p.subId ? pfirst(p.subId) : "sub"} serves
-                            </label>
-                          )}
+                          {(p.when||"back")==="back" && p.starterId && p.subId && (() => {
+                            // Each time this spot reaches the service line (once per
+                            // pass), pick who serves: the sub, or the starter (then
+                            // the sub comes in on serve-receive).
+                            const k = (set.lineup||[]).indexOf(p.starterId); if (k<0) return null;
+                            const turns = [k, k+6].filter(r => r < 12);
+                            return turns.map(r => {
+                              const who = (p.servers||{})[r] || (p.subServes ? "sub" : "starter");
+                              return (
+                                <label key={r} style={{display:"flex",alignItems:"center",gap:4,fontSize:11,color:C.mut}}>
+                                  R{r+1} serve:
+                                  <select value={who} onChange={e=>setPair(i, { servers: { ...(p.servers||{}), [r]: e.target.value } })} style={{...S.sel,fontSize:11,padding:"3px 5px"}}>
+                                    <option value="sub">{pfirst(p.subId)}</option>
+                                    <option value="starter">{pfirst(p.starterId)}</option>
+                                  </select>
+                                </label>
+                              );
+                            });
+                          })()}
                           <button title="Remove this pair (and its rule subs)" onClick={()=>updateDraft(d=>{ const t=d.sets[setIdx]; t.pairs=(t.pairs||[]).filter((_,j)=>j!==i); })} style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:13}}>✕</button>
                         </div>
                       ))}
