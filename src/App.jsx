@@ -26172,15 +26172,19 @@ export default function App() {
       const srPassers = (() => {
         if (!lineupOk || phase!=="receive") return new Set();
         const isMid = id => (set.middles||[]).includes(id);
-        const isSet = id => (set.setters||[]).includes(id);
+        const isSet = id => (set.setters||[]).includes(id) || pPos(id)==="S"; // a setter never passes
         const out = new Set();
         slots.forEach(s => {
           if (!s.id) return;
           if (s.id===set.liberoId) { out.add(s.id); return; }
           if (s.row==="back" && !isMid(s.id) && !isSet(s.id)) out.add(s.id);
         });
-        const pins = slots.filter(s => s.row==="front" && s.id && !isMid(s.id));
-        const chosen = pins.find(s => s.id===(set.srFront||{})[rr%6]) || pins.find(s => pPos(s.id)==="OH") || pins[0];
+        const pins = slots.filter(s => s.row==="front" && s.id && !isMid(s.id) && !isSet(s.id));
+        // Same pick as the Rotations grid: a role ("RS"/"OH") per rotation, or
+        // an older plan's player id.
+        const role = (sl) => { const p = pPos(sl.id); return p==="RS" ? "RS" : p==="OH" ? "OH" : sl.n===2 ? "RS" : "OH"; };
+        const v = (set.srFront||{})[rr] ?? (set.srFront||{})[rr%6];
+        const chosen = ((v==="RS"||v==="OH") ? pins.find(sl => role(sl)===v) : pins.find(sl => sl.id===v)) || pins.find(sl => role(sl)==="OH") || pins[0];
         if (chosen) out.add(chosen.id);
         return out;
       })();
@@ -26674,17 +26678,55 @@ export default function App() {
             const liberoId = set.liberoId;
             const lib = vbLiberoConf(set); // libero/middle back-row switch, or null
             const isMiddle = id => (set.middles||[]).includes(id);
-            const isSetter = id => (set.setters||[]).includes(id);
+            // A setter never passes — whether picked as the set's setter or just
+            // listed as S on the roster, front row or back.
+            const isSetter = id => (set.setters||[]).includes(id) || byId[id]?.pos==="S";
             // In serve-receive the passers are: the libero (always), the back-row
             // OH/DS (always), plus ONE front-row pin (the RS or the OH) that the
-            // coach pulls back — chosen per rotation via set.srFront[base].
-            const frontPins = ro => ro.slots.filter(s => s.row==="front" && s.id && !isMiddle(s.id)); // the RS & OH
-            const pinRole = id => (isSetter(id) || byId[id]?.pos==="RS") ? "RS" : "OH"; // front setter runs right side
+            // coach pulls back — chosen per rotation via set.srFront.
+            const frontPins = ro => ro.slots.filter(s => s.row==="front" && s.id && !isMiddle(s.id) && !isSetter(s.id)); // the RS & OH
+            // RS or OH: the roster position when it says so, otherwise which side
+            // of the net the player is on (front right = RS, front left = OH).
+            const pinRole = (id, slot) => { const p = byId[id]?.pos; if (p==="RS") return "RS"; if (p==="OH") return "OH"; return slot && slot.n===2 ? "RS" : "OH"; };
             const srFront = set.srFront || {};
+            // The pick is saved as a ROLE ("RS"/"OH") per rotation (0–11), so it
+            // survives subs. R7–R12 fall back to their first-pass rotation's pick.
+            // Older plans saved a player id; that still matches when that player
+            // is on the court.
+            const srPickFor = r => srFront[r] ?? srFront[r%6];
             const pullPick = ro => {
               const cands = frontPins(ro);
-              const chosen = cands.find(s => s.id===srFront[ro.r%6]);
-              return chosen || cands.find(s => pinRole(s.id)==="OH") || cands[0] || null; // default: the OH
+              const v = srPickFor(ro.r);
+              const chosen = (v==="RS"||v==="OH") ? cands.find(s => pinRole(s.id, s)===v) : cands.find(s => s.id===v);
+              return chosen || cands.find(s => pinRole(s.id, s)==="OH") || cands[0] || null; // default: the OH
+            };
+            const setPull = (r, role) => updateDraft(d => { const t=d.sets[setIdx]; t.srFront={...(t.srFront||{}),[r]:role}; });
+            // Tap-to-cycle subs. A court spot's "group" is its starting player
+            // plus everyone ever subbed in for them (and for those subs) in this
+            // set. Once a spot has a group, tapping the box steps to the next
+            // player from this half onward, replacing — not stacking — the sub
+            // that starts at this half, so cycling doesn't burn sub counts.
+            // set.subPools remembers each spot's group, so cycling back to the
+            // starter (which removes the sub) still leaves the box cyclable.
+            const subGroup = (baseId) => {
+              const g = [baseId, ...((set.subPools||{})[baseId]||[]).filter(id => id!==baseId && roster.some(p => p.id===id))]; let grew = true;
+              while (grew) { grew = false; for (const s of (set.subs||[])) if (s.inId && g.includes(s.outId) && !g.includes(s.inId)) { g.push(s.inId); grew = true; } }
+              return g;
+            };
+            const cycleSub = (ro, slot, phase) => {
+              const group = subGroup(slot.baseId);
+              if (group.length < 2 || slot.libFor) return false;
+              const subs = set.subs || [];
+              const startsHere = s => (s.fromRotation==null?0:s.fromRotation)===ro.r && (s.phase||"serve")===phase && group.includes(s.outId) && group.includes(s.inId);
+              const rest = subs.filter(s => !startsHere(s));
+              const before = vbEffective(slot.baseId, ro.r, rest, phase);
+              const elsewhere = new Set(vbRotation(set.lineup, ro.r, subs, phase, lib).filter(s => s.i!==slot.i).map(s => s.id));
+              const order = group.filter(id => id===slot.id || !elsewhere.has(id));
+              const next = order[(order.indexOf(slot.id)+1) % order.length];
+              const thru = subs.find(startsHere)?.thruRotation ?? 11;
+              updateDraft(d => { const t=d.sets[setIdx]; t.subs = rest.concat(next===before ? [] : [{ inId: next, outId: before, fromRotation: ro.r, thruRotation: thru, phase }]); t.subPools = { ...(t.subPools||{}), [slot.baseId]: group }; });
+              setLineupSubSel({ setId:set.id, r:ro.r, i:slot.i, outId:next, courtN:slot.n, label:slot.label, inId:"", scope:"rest", phase });
+              return true;
             };
             const receivePassers = ro => {
               const out = new Set();
@@ -26704,7 +26746,7 @@ export default function App() {
               const isServer = phase==="serve" && slot.n===1;
               const isSetF = slot.id && slot.id===ro.setterFront;
               const isPass = phase==="receive" && slot.id && ro.passers && ro.passers.has(slot.id);
-              const isRecvPin = phase==="receive" && slot.id && slot.row==="front" && !isMiddle(slot.id); // the RS / OH the coach can pull back
+              const isRecvPin = phase==="receive" && slot.id && slot.row==="front" && !isMiddle(slot.id) && !isSetter(slot.id); // the RS / OH the coach can pull back (never the setter)
               const pinSel = isRecvPin && ro.passers && ro.passers.has(slot.id);                          // this pin is the one pulled back
               const liberoServing = phase==="serve" && slot.n===1 && slot.id===liberoId && !!slot.libFor; // libero serving in for the middle
               const libSwitch = (slot.id && ro.switchIds && ro.switchIds.has(slot.id)) || liberoServing; // the half the libero⇄middle switch happens (incl. serving for the middle)
@@ -26720,7 +26762,7 @@ export default function App() {
               const tip = slot.id ? (pname(slot.id)+(pos?" · "+pos:"")+(slot.libFor?(" (libero for "+pname(slot.libFor)+")"):"")+" · "+slot.label+" — tap to sub") : ("empty · "+slot.label);
               return (
                 <td key={slot.n} title={tip}
-                  onClick={slot.id ? () => setLineupSubSel(sel => (sel && sel.setId===set.id && sel.r===ro.r && sel.i===slot.i && sel.phase===phase) ? null : { setId:set.id, r:ro.r, i:slot.i, outId:slot.id, courtN:slot.n, label:slot.label, inId:"", scope:"rest", phase }) : undefined}
+                  onClick={slot.id ? () => cycleSub(ro, slot, phase) || setLineupSubSel(sel =>(sel && sel.setId===set.id && sel.r===ro.r && sel.i===slot.i && sel.phase===phase) ? null : { setId:set.id, r:ro.r, i:slot.i, outId:slot.id, courtN:slot.n, label:slot.label, inId:"", scope:"rest", phase }) : undefined}
                   style={{position:"relative",border:"1px solid "+C.border,borderRight:edge?"2px solid #3a3a3a":"1px solid "+C.border,outline:isSel?"2px solid "+C.gold:"none",outlineOffset:-2,background:bg,padding:"15px 3px 6px",textAlign:"center",height:62,verticalAlign:"middle",overflow:"hidden",cursor:slot.id?"pointer":"default"}}>
                   {slot.id ? (
                     <>
@@ -26730,7 +26772,7 @@ export default function App() {
                       {isRecvPin && (
                         <label title="Pull this front-row player back to pass in serve-receive" onClick={e=>e.stopPropagation()}
                           style={{position:"absolute",bottom:1,right:2,display:"flex",alignItems:"center",gap:1,fontSize:8,fontWeight:800,cursor:"pointer",lineHeight:1,opacity:pinSel?1:0.4,color:pinSel?C.grn:C.mut}}>
-                          <input type="checkbox" checked={!!pinSel} onChange={e=>{ e.stopPropagation(); updateDraft(d=>{ const t=d.sets[setIdx]; t.srFront={...(t.srFront||{}),[ro.r%6]:slot.id}; }); }} style={{width:11,height:11,accentColor:C.grn,cursor:"pointer",margin:0}} />
+                          <input type="checkbox" checked={!!pinSel} onChange={e=>{ e.stopPropagation(); setPull(ro.r, pinRole(slot.id, slot)); }} style={{width:11,height:11,accentColor:C.grn,cursor:"pointer",margin:0}} />
                           s/r
                         </label>
                       )}
@@ -26762,6 +26804,20 @@ export default function App() {
                           </div>
                           <div title="Total subs used through here" style={{fontSize:9,fontWeight:800,color:ro.cumSubs>SUBS_PER_SET?C.red:C.mut}}>Σ {ro.cumSubs||0}/{SUBS_PER_SET}</div>
                           <div style={{fontSize:9,fontWeight:600,color:C.mut,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ro.setterBack?"sets "+pfirst(ro.setterBack):"—"}</div>
+                          {phase==="receive" && (() => {
+                            // Which front pin drops back to pass: tap to switch OH ⇄ RS.
+                            const pins = frontPins(ro); const cur = pullPick(ro);
+                            if (!cur) return null;
+                            const curRole = pinRole(cur.id, cur);
+                            const other = pins.find(p => pinRole(p.id, p)!==curRole);
+                            return (
+                              <button onClick={() => other && setPull(ro.r, pinRole(other.id, other))} disabled={!other}
+                                title={other ? "Pulling back: "+pname(cur.id)+" ("+curRole+"). Tap to pull "+pname(other.id)+" instead." : "Only "+pname(cur.id)+" can pull back this rotation"}
+                                style={{marginTop:2,background:"rgba(34,197,94,0.14)",border:"1px solid "+C.grn,color:C.grn,borderRadius:6,fontSize:9,fontWeight:800,padding:"1px 6px",cursor:other?"pointer":"default",fontFamily:"inherit",whiteSpace:"nowrap"}}>
+                                SR: {curRole} {pfirst(cur.id)}{other ? " ⇄" : ""}
+                              </button>
+                            );
+                          })()}
                         </th>
                       ))}
                     </tr>
