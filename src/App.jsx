@@ -1351,9 +1351,15 @@ function vbRuleSubs(set){
   }
   return out;
 }
+// Also drops manual subs the rules now own: while the libero switch is on, the
+// libero moves ONLY through it (hand-made "libero in for a middle, rest of the
+// set" subs left her in the front row); and a sub pair replaces any hand-made
+// subs between those same two players.
 function vbSyncRuleSubs(set){
   if(!set) return set;
-  set.subs = [...(set.subs||[]).filter(x => x && !x.rule), ...vbRuleSubs(set)];
+  const lib = set.autoLibero!==false && set.liberoId ? set.liberoId : null;
+  const paired = new Set((set.pairs||[]).filter(p => p && p.starterId && p.subId && p.when!=="manual").flatMap(p => [p.starterId+">"+p.subId, p.subId+">"+p.starterId]));
+  set.subs = [...(set.subs||[]).filter(x => x && !x.rule && !(lib && (x.inId===lib || x.outId===lib)) && !paired.has(x.inId+">"+x.outId)), ...vbRuleSubs(set)];
   return set;
 }
 
@@ -27033,7 +27039,7 @@ export default function App() {
                   const sel = lineupSubSel;
                   const aPhase = sel.phase || "serve"; // sub applies to the half you tapped
                   const onCourt = new Set(vbRotation(set.lineup, sel.r, set.subs, aPhase, lib).map(s=>s.id).filter(Boolean));
-                  const bench = roster.filter(p => !onCourt.has(p.id));
+                  const bench = roster.filter(p => !onCourt.has(p.id) && !(set.autoLibero!==false && p.id===set.liberoId)); // the libero moves only via the automatic switch
                   const related = (set.subs||[]).map((s,idx)=>({s,idx})).filter(({s}) => s.outId===sel.outId || s.inId===sel.outId);
                   const subRange = s => { const f=(s.fromRotation==null?0:s.fromRotation), t=(s.thruRotation==null?11:s.thruRotation); const h=s.phase==="receive"?"serve-receive":"serve"; return `from R${f+1} ${h} → R${t+1}`; };
                   const applySub = () => {
