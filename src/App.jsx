@@ -1266,7 +1266,7 @@ function vbEffective(baseId, rotation, subs, phase){
     const from = s.fromRotation==null ? 0 : s.fromRotation;
     const thru = s.thruRotation==null ? 11 : s.thruRotation;
     const startStep = from*2 + halfOf(s.phase);
-    const endStep   = thru*2 + 1; // through the serve-receive half of the thru rotation
+    const endStep   = thru*2 + (s.thruPhase==="serve" ? 0 : 1); // through the thru rotation's serve-receive half (or just its serve half)
     if(curStep>=startStep && curStep<=endStep) id = s.inId;
   }
   return id;
@@ -1349,8 +1349,17 @@ function vbRuleSubs(set){
       const serveTurn = p.when==="back" && VB_COURT[idxAt(r)].n===1;
       const who = serveTurn ? ((p.servers||{})[r] || (p.subServes ? "sub" : "starter")) : "sub";
       const phase = serveTurn && who==="starter" ? "receive" : "serve";
-      out.push({ inId:p.subId, outId:p.starterId, fromRotation:r, thruRotation:t, phase, rule:true });
+      // Front-row pair: when the spot then rotates to position 1, the sub can
+      // stay in to serve (the starter returns for serve-receive) — default is
+      // the starter coming back to serve.
+      const next = t + 1;
+      const subServesNext = p.when==="front" && next < 12 && VB_COURT[idxAt(next)].n===1 && (p.servers||{})[next]==="sub";
+      out.push({ inId:p.subId, outId:p.starterId, fromRotation:r, thruRotation: subServesNext ? next : t, ...(subServesNext ? { thruPhase:"serve" } : {}), phase, rule:true });
     }
+    // A front-row pair whose spot STARTS the set at position 1 (no front window
+    // before it): the sub serving there is a one-serve sub.
+    if(p.when==="front" && VB_COURT[idxAt(0)].n===1 && (p.servers||{})[0]==="sub")
+      out.push({ inId:p.subId, outId:p.starterId, fromRotation:0, thruRotation:0, thruPhase:"serve", phase:"serve", rule:true });
   }
   return out;
 }
@@ -26765,14 +26774,14 @@ export default function App() {
                             <option value="front">in her front-row rotations</option>
                             <option value="manual">only when I tap (cycle)</option>
                           </select>
-                          {(p.when||"back")==="back" && p.starterId && p.subId && (() => {
+                          {((p.when||"back")==="back" || p.when==="front") && p.starterId && p.subId && (() => {
                             // Each time this spot reaches the service line (once per
                             // pass), pick who serves: the sub, or the starter (then
                             // the sub comes in on serve-receive).
                             const k = (set.lineup||[]).indexOf(p.starterId); if (k<0) return null;
                             const turns = [k, k+6].filter(r => r < 12);
                             return turns.map(r => {
-                              const who = (p.servers||{})[r] || (p.subServes ? "sub" : "starter");
+                              const who = (p.servers||{})[r] || (p.when==="front" ? "starter" : (p.subServes ? "sub" : "starter"));
                               return (
                                 <label key={r} style={{display:"flex",alignItems:"center",gap:4,fontSize:11,color:C.mut}}>
                                   R{r+1} serve:
