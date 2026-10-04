@@ -15,6 +15,7 @@ import DsscHub from "./dssc/DsscHub.jsx";
 import DsscAdmin from "./dssc/DsscAdmin.jsx";
 import HousingView from "./HousingView.jsx";
 import AskHQ from "./AskHQ.jsx";
+import DaySchedule from "./DaySchedule.jsx";
 import DsscTexts from "./dssc/DsscTexts.jsx";
 import DsscCrm from "./dssc/DsscCrm.jsx";
 import { TN_SUB_PLACEHOLDERS, isPlaceholderPerson, sessionStaff, staffNeeded, staffApproved, staffPending, sessionShort, onStaff, parsePlanPaste } from "../shared/dssc-clinics.js";
@@ -2071,7 +2072,7 @@ export default function App() {
   // email we send them. Every admin control inside renderDsysa — add/cancel a
   // date, set the lead, remove someone else's signup — is separately gated on
   // isAdmin, so opening the view exposes no admin action.
-  const OPS_VIEWS = new Set(["housing","waiting","privates","school","schoolgames","playergear","kickoff","photos","incidentboard","tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","timecards","gear","staffing","roster","hawaii","travel","finance","dssccal","pods"]);
+  const OPS_VIEWS = new Set(["housing","waiting","privates","school","schoolgames","playergear","kickoff","photos","incidentboard","tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","dayschedule","timecards","gear","staffing","roster","hawaii","travel","finance","dssccal","pods"]);
   const canOps    = isAdmin || isOwner;
   const opsDenied = <div style={{padding:24,color:C.mut,textAlign:"center"}}>This section is restricted to administrators. Ask the club administrator (Drew) for access.</div>;
   // Once a player has accepted (or is locked/signed) onto a team, they're
@@ -2141,6 +2142,8 @@ export default function App() {
       const p = new URLSearchParams(window.location.search);
       const v = p.get("view"), tab = p.get("tab"), open = p.get("open");
       if (v) setView(v);
+      // The Saturday schedule email links to one date of the Day Schedule.
+      if (v === "dayschedule" && p.get("date")) { try { sessionStorage.setItem("dse.dayschedule.date", p.get("date")); } catch { /* ignore */ } }
       if (tab) setPpTab(tab);
       // "Open the form" has to actually open the form. Landing on the dashboard
       // and expecting someone to spot a panel and press a button is why this
@@ -32030,7 +32033,7 @@ export default function App() {
                   ["tracker","Tracker"], ["teamdir","All Teams"], ["playereval","Player Evaluations"], ["passing","Passer Ratings"], ["practice","Practice"], ["sa","S&A Schedule"], ["scholarships","Scholarships"],
                   ...(isAdmin ? [["hawaii","Hawaii"], ["travel","Travel"], ["housing","Housing"], ["finance","Finance"]] : []),
                   ["hdr","DS Elite · Coaches & Pay"],
-                  ["coaches","Coaches"], ...(isAdmin ? [["staffing","Staffing Board"]] : []), ["coverage","Coach Coverage"], ["timecards","Time Cards"], ["myexpenses","My Expenses"], ...(canOps ? [["claims","Coach Claims" + (pendingClaimCount ? " (" + pendingClaimCount + ")" : "")]] : []), ["gear","Gear Sizes" + (gearOutstanding ? " (" + gearOutstanding + ")" : "")], ["requests","Requests" + (pendingReqs ? " (" + pendingReqs + ")" : "")],
+                  ["coaches","Coaches"], ...(isAdmin ? [["dayschedule","Day Schedule"], ["staffing","Staffing Board"]] : []), ["coverage","Coach Coverage"], ["timecards","Time Cards"], ["myexpenses","My Expenses"], ...(canOps ? [["claims","Coach Claims" + (pendingClaimCount ? " (" + pendingClaimCount + ")" : "")]] : []), ["gear","Gear Sizes" + (gearOutstanding ? " (" + gearOutstanding + ")" : "")], ["requests","Requests" + (pendingReqs ? " (" + pendingReqs + ")" : "")],
                   ["hdr","DSSC"],
                   ["dssc","Coach Hub"], ["clinics","Clinics & Camps (admin)"], ["dssctexts","DSSC Texts"], ["dssccrm","DSSC People"], ["dssccal","Coverage Calendar"], ["dssctime","DSSC Time Cards"], ["pods","Skill Pods"], ["privates","Privates"],
                   ["hdr","Communication"],
@@ -32308,6 +32311,7 @@ export default function App() {
         {view==="timecards" && renderTimeCards()}
         {view==="roster" && ((canViewTeams || myTeamNames.length) ? renderRoster() : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Player lists are restricted. Ask Drew for access.</div>)}
         {view==="gear" && (canOps ? renderGearTracker() : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Gear ordering is admin-only.</div>)}
+        {view==="dayschedule" && (isAdmin ? <DaySchedule session={session} onOpenPractice={()=>setView("practice")} /> : <div style={{padding:24,color:C.mut,textAlign:"center"}}>The day schedule is admin-only.</div>)}
         {view==="staffing" && (isAdmin ? renderStaffing() : <div style={{padding:24,color:C.mut,textAlign:"center"}}>The staffing board is admin-only.</div>)}
         {view==="hawaii" && renderHawaii()}
         {view==="dsysa" && renderDsysa()}
