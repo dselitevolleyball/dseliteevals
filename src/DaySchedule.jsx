@@ -5,6 +5,7 @@
 // Saturday email, so the screen and the email always agree.
 
 import { useState, useEffect, useCallback } from "react";
+import { supabase } from "./supabase";
 
 const C = { bg: "#0a0a0a", card: "#141414", border: "#2a2a2a", gold: "#e91e8c", text: "#ffffff", mut: "#999999", red: "#ef4444", grn: "#22c55e", amber: "#f59e0b", cyan: "#06b6d4", violet: "#a78bfa" };
 const localISO = (d) => { const x = d ? new Date(d) : new Date(); return new Date(x.getTime() - x.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
@@ -16,7 +17,7 @@ const fmtSpan = (s, e) => hr12(s) + (s < 12 && e >= 12 ? "am" : "") + "–" + hr
 const btn = { padding: "6px 12px", borderRadius: 8, border: "1px solid " + C.border, background: "transparent", color: C.text, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" };
 const LEVEL = { critical: { c: C.red, bg: "rgba(239,68,68,0.10)", t: "Needs fixing" }, warn: { c: C.amber, bg: "rgba(245,158,11,0.10)", t: "Worth checking" }, info: { c: C.mut, bg: "rgba(255,255,255,0.03)", t: "Subs & changes already handled" } };
 
-export default function DaySchedule({ session, onOpenPractice }) {
+export default function DaySchedule({ session, onOpenPractice, onCoachesChanged }) {
   const [date, setDate] = useState(() => {
     try { const d = sessionStorage.getItem("dse.dayschedule.date"); if (d) { sessionStorage.removeItem("dse.dayschedule.date"); return d; } } catch { /* ignore */ }
     const t = localISO(); const wd = new Date(t + "T12:00:00").getDay();
@@ -41,6 +42,71 @@ export default function DaySchedule({ session, onOpenPractice }) {
     setLoading(false);
   }, [date, session?.access_token]);
   useEffect(() => { load(); }, [load]);
+
+  // Editing a team's staff here changes the team itself — every date, every
+  // screen — not just this day. One-day absences stay on Practice → Daily.
+  const [editing, setEditing] = useState(null);   // team name
+  const [saving, setSaving] = useState(false);
+  const [names, setNames] = useState([]);
+  useEffect(() => {
+    if (!editing || names.length) return;
+    (async () => {
+      const [r, t] = await Promise.all([
+        supabase.from("coach_roster").select("first_name, last_name"),
+        supabase.from("practice_teams").select("head_coach, assistant_coach, third_coach"),
+      ]);
+      const seen = new Map();
+      const put = (n) => { const v = String(n || "").trim(); if (v && !seen.has(v.toLowerCase())) seen.set(v.toLowerCase(), v); };
+      (r.data || []).forEach(x => put(((x.first_name || "") + " " + (x.last_name || "")).trim()));
+      (t.data || []).forEach(x => { put(x.head_coach); put(x.assistant_coach); put(x.third_coach); });
+      setNames([...seen.values()].sort((a, b) => a.localeCompare(b)));
+    })();
+  }, [editing, names.length]);
+  const FIELD = { Head: "head_coach", Asst: "assistant_coach", "3rd": "third_coach" };
+  const ROLE_WORD = { Head: "head coach", Asst: "assistant", "3rd": "2nd assistant" };
+  // Same write as the coach card: practice_teams, plus the older teams table
+  // for head/assistant (it has no third_coach) so the two never disagree.
+  const saveCoach = async (team, role, value, current) => {
+    const field = FIELD[role]; const v = String(value || "").trim() || null;
+    if ((v || "") === (current || "")) return;
+    const msg = v ? (current ? `Replace ${current} with ${v} as ${team} ${ROLE_WORD[role]}?` : `Make ${v} ${team} ${ROLE_WORD[role]}?`) : `Remove ${current} as ${team} ${ROLE_WORD[role]}?`;
+    if (!window.confirm(msg + "\n\nThis changes the team everywhere in the app — every practice, tournaments, travel and pay — not just this day.")) return;
+    setSaving(true);
+    const jobs = [supabase.from("practice_teams").update({ [field]: v, updated_at: new Date().toISOString() }).eq("team_name", team)];
+    if (field !== "third_coach") jobs.push(supabase.from("teams").update({ [field]: v }).eq("id", team));
+    const [pt, tm] = await Promise.all(jobs);
+    setSaving(false);
+    if (pt.error) { window.alert("Couldn't save: " + pt.error.message); return; }
+    if (tm?.error) console.error("teams table not updated for " + team + ": " + tm.error.message);
+    await load();
+    onCoachesChanged?.();
+  };
+  const coachEditor = (t) => (
+    <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 6 }}>
+      {["Head", "Asst", "3rd"].map(role => {
+        const cur = (t.coaches.find(c => c.role === role) || {}).name || "";
+        return (
+          <div key={role} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <span style={{ fontSize: 9, fontWeight: 800, color: C.mut, textTransform: "uppercase", width: 30, flexShrink: 0 }}>{role}</span>
+            <select disabled={saving} value={cur} onChange={e => {
+                const v = e.target.value;
+                if (v === "__other") { const n = window.prompt("Coach name:", ""); if (n && n.trim()) saveCoach(t.team, role, n.trim(), cur); return; }
+                saveCoach(t.team, role, v, cur);
+              }}
+              style={{ flex: 1, minWidth: 0, background: C.card, color: C.text, border: "1px solid " + C.border, borderRadius: 6, padding: "4px 6px", fontSize: 12, fontFamily: "inherit" }}>
+              <option value="">— none —</option>
+              {cur && !names.includes(cur) && <option value={cur}>{cur}</option>}
+              {names.map(n => <option key={n} value={n}>{n}</option>)}
+              <option value="__other">＋ Someone else…</option>
+            </select>
+            {cur && <button disabled={saving} title={"Remove " + cur} onClick={() => saveCoach(t.team, role, null, cur)}
+              style={{ background: "transparent", border: "1px solid " + C.red, color: C.red, borderRadius: 6, padding: "2px 8px", fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>✕</button>}
+          </div>
+        );
+      })}
+      <div style={{ fontSize: 10, color: C.mut }}>Changes the team everywhere, every date. For one day out, use Edit coverage.</div>
+    </div>
+  );
 
   const teamBy = new Map((day?.teams || []).map(t => [t.team, t]));
   const critTeams = new Set((day?.issues || []).filter(i => i.level === "critical").map(i => i.team).filter(Boolean));
@@ -75,10 +141,13 @@ export default function DaySchedule({ session, onOpenPractice }) {
     return (
       <div key={t.team} style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid " + (bad ? C.red : C.border), background: bad ? "rgba(239,68,68,0.08)" : C.bg, minWidth: 200, flex: "1 1 200px", maxWidth: 320 }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline" }}>
-          <span style={{ fontWeight: 800, fontSize: 14, color: bad ? C.red : C.text }}>{t.team}</span>
+          <span style={{ fontWeight: 800, fontSize: 14, color: bad ? C.red : C.text }}>{t.team}
+            <button onClick={() => setEditing(editing === t.team ? null : t.team)} title="Change this team's coaches"
+              style={{ marginLeft: 6, background: "transparent", border: "1px solid " + C.border, color: editing === t.team ? C.gold : C.mut, borderRadius: 6, padding: "0 6px", fontSize: 10, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>{editing === t.team ? "Done" : "✎ Coaches"}</button>
+          </span>
           <span style={{ fontSize: 11, color: C.mut, whiteSpace: "nowrap" }}>{t.blocks.map(([s, e]) => fmtSpan(s, e)).join(", ")}{t.venue ? " · " + t.venue : ""}</span>
         </div>
-        {coachList(t)}
+        {editing === t.team ? coachEditor(t) : coachList(t)}
         <div style={{ fontSize: 10, color: t.floor.length >= 2 ? C.grn : C.red, fontWeight: 800, marginTop: 4 }}>{t.floor.length} on the floor{t.combined ? " · combined with " + t.combined : ""}</div>
       </div>
     );

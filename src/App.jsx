@@ -32311,7 +32311,7 @@ export default function App() {
         {view==="timecards" && renderTimeCards()}
         {view==="roster" && ((canViewTeams || myTeamNames.length) ? renderRoster() : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Player lists are restricted. Ask Drew for access.</div>)}
         {view==="gear" && (canOps ? renderGearTracker() : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Gear ordering is admin-only.</div>)}
-        {view==="dayschedule" && (isAdmin ? <DaySchedule session={session} onOpenPractice={()=>setView("practice")} /> : <div style={{padding:24,color:C.mut,textAlign:"center"}}>The day schedule is admin-only.</div>)}
+        {view==="dayschedule" && (isAdmin ? <DaySchedule session={session} onOpenPractice={()=>setView("practice")} onCoachesChanged={loadPractice} /> : <div style={{padding:24,color:C.mut,textAlign:"center"}}>The day schedule is admin-only.</div>)}
         {view==="staffing" && (isAdmin ? renderStaffing() : <div style={{padding:24,color:C.mut,textAlign:"center"}}>The staffing board is admin-only.</div>)}
         {view==="hawaii" && renderHawaii()}
         {view==="dsysa" && renderDsysa()}
