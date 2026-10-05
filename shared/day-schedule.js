@@ -85,7 +85,7 @@ export async function loadDayFacts(sb, date) {
     q(sb.from("tournaments").select("id, name, start_date, end_date, cancelled").lte("start_date", date).gte("end_date", fri)),
   ]);
   const tnIds = tns.map(t => t.id);
-  const tas = tnIds.length ? await q(sb.from("tournament_assignments").select("tournament_id, team_id, status, head_override, asst_override").in("tournament_id", tnIds)) : [];
+  const tas = tnIds.length ? await q(sb.from("tournament_assignments").select("tournament_id, team_id, status, head_override, asst_override, sub_coach").in("tournament_id", tnIds)) : [];
   return { date, ph, fri, teams, assigns, moves, cancels, cover, reqs, floats, sas, nights, tns, tas };
 }
 
@@ -123,6 +123,9 @@ export function buildDaySchedule(f) {
         if (isSub && rostered.has(personKey(who))) continue;
         away.set(personKey(who), tn.name);
       }
+      // An extra coach going with the team (sub_coach — e.g. Rene Sandoval as
+      // 12 Diamond's third coach) is travelling: away from every practice.
+      if (a.sub_coach && !isPlaceholder(a.sub_coach)) away.set(personKey(a.sub_coach), tn.name);
     }
   }
 
