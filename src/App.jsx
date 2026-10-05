@@ -6,6 +6,7 @@ import { GEAR_TEAMS } from "../shared/gear-teams.js";
 import { planRooms, pairCoaches, planRoomsByTeam, UNASSIGNED } from "../shared/room-plan.js";
 import { PLAYER_CLAUSES, PARENT_CLAUSES, isFullySigned } from "../shared/commitment.js";
 import { isEventTeam } from "../shared/event-teams.js";
+import { isAustinArea } from "../shared/austin-area.js";
 import { GC_TEAMS, GC_INTEREST, GC_POSITIONS, GC_TRAVEL, GC_CITIES, labelOf as gcLabel } from "../shared/global-challenge.js";
 import { parseSaleRows, matchInvoicesToPlayers } from "../shared/shoe-invoices.js";
 import { parseSportsEngineRows, matchMembersToPlayers, playerPatchFor } from "../shared/sportsengine.js";
@@ -19247,7 +19248,8 @@ export default function App() {
         const rosteredLow = new Set(practiceTeams.flatMap(t => [t.head_coach, t.assistant_coach]).filter(Boolean).map(c => c.trim().toLowerCase()));
         for (const a of tournamentAssignments) {
           const tn = tnById3.get(a.tournament_id); if (!tn) continue;
-          if (tn.start_date <= dailyDate && tn.end_date >= dailyDate) {
+          // Austin-area: the coach still makes this practice (see shared/austin-area.js).
+          if (tn.start_date <= dailyDate && tn.end_date >= dailyDate && !isAustinArea(tn)) {
             const eff = tnEffectiveStaff(a, teamById3.get(a.team_id));
             const consider = (c, isSub) => {
               if (!c || isPlaceholderCoach(c)) return;
@@ -20365,7 +20367,7 @@ export default function App() {
             const friS = fri.toISOString().slice(0, 10), sunS = sun.toISOString().slice(0, 10);
             const practicing = sunByPhase[phaseForDate(sat)] || new Set();
             const competing = new Set(), away = new Set();
-            for (const a of tournamentAssignments) { const tn = tnById.get(a.tournament_id); if (!tn || tnIsDropped(a)) continue; if (tn.start_date <= sunS && tn.end_date >= friS) { if (tn.end_date > tn.start_date || a.status === "locked") competing.add(a.team_id); if (tn.stay_over && (tn.end_date || tn.start_date) >= sunS) effReal(a).forEach(c => away.add(c)); } } // only a tournament still running on Sunday keeps its coaches from Sunday practice (12 Ruby, 10 Apr 2027: a Saturday-only event was flagging both coaches)
+            for (const a of tournamentAssignments) { const tn = tnById.get(a.tournament_id); if (!tn || tnIsDropped(a)) continue; if (tn.start_date <= sunS && tn.end_date >= friS) { if (tn.end_date > tn.start_date || a.status === "locked") competing.add(a.team_id); if (tn.stay_over && !isAustinArea(tn) && (tn.end_date || tn.start_date) >= sunS) effReal(a).forEach(c => away.add(c)); } } // only a tournament still running on Sunday keeps its coaches from Sunday practice (12 Ruby, 10 Apr 2027: a Saturday-only event was flagging both coaches)
             for (const teamName of practicing) {
               if (competing.has(teamName)) continue;
               const tm = teamById.get(teamName); if (!tm || tm.active === false) continue;

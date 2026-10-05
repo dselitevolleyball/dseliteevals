@@ -18,6 +18,7 @@
 
 import { TN_SUB_PLACEHOLDERS } from "./dssc-clinics.js";
 import { isEventTeam } from "./event-teams.js";
+import { isAustinArea } from "./austin-area.js";
 
 export const MIN_STAFF = 2;
 const WD = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -82,7 +83,7 @@ export async function loadDayFacts(sb, date) {
     q(sb.from("coach_floats").select("coach_name, day, slot, phase")),
     q(sb.from("sa_sessions").select("team_name, session_date, slot").eq("session_date", date)),
     q(sb.from("orientation_nights").select("night_date, label, ages, teams, start_time, end_time, cancelled").eq("night_date", date)),
-    q(sb.from("tournaments").select("id, name, start_date, end_date, cancelled").lte("start_date", date).gte("end_date", fri)),
+    q(sb.from("tournaments").select("id, name, start_date, end_date, cancelled, location").lte("start_date", date).gte("end_date", fri)),
   ]);
   const tnIds = tns.map(t => t.id);
   const tas = tnIds.length ? await q(sb.from("tournament_assignments").select("tournament_id, team_id, status, head_override, asst_override, sub_coach").in("tournament_id", tnIds)) : [];
@@ -113,7 +114,8 @@ export function buildDaySchedule(f) {
   for (const a of f.tas) {
     const tn = tnBy.get(a.tournament_id); if (!tn || a.status === "dropped") continue;
     if (weekday === "Sun" && tn.start_date <= date && tn.end_date >= fri && (tn.end_date > tn.start_date || a.status === "locked")) atTournament.set(a.team_id, tn.name);
-    if (tn.start_date <= date && tn.end_date >= date) {
+    // An Austin-area tournament doesn't take a coach away from another team's practice.
+    if (tn.start_date <= date && tn.end_date >= date && !isAustinArea(tn)) {
       const team = teamBy.get(a.team_id) || {};
       for (const [ov, def] of [[a.head_override, team.head_coach], [a.asst_override, team.assistant_coach]]) {
         const who = ov || def; if (!who || isPlaceholder(who)) continue;
