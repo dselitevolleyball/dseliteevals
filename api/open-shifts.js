@@ -38,8 +38,21 @@ export default async function handler(req, res) {
   const { data: cov } = await supabase.from("practice_coverage")
     .select("practice_date, team_name, slot, coach_out, sub_name, combine_with_team")
     .gte("practice_date", today);
+  // An absence only needs a sub when the team is left with fewer than two of
+  // its own coaches on the floor (a third coach covers one absence) — the same
+  // rule as the practice board and the Day Schedule. Otherwise every coach got
+  // a nightly "open shift" for practices that were already fully staffed.
+  const { data: teams } = await supabase.from("practice_teams").select("team_name, head_coach, assistant_coach, third_coach");
+  const nrm = (x) => String(x || "").trim().toLowerCase().replace(/\s+/g, " ");
+  const isPh = (x) => !String(x || "").trim() || /^(tbd|tba|open|needed|sub|pending|n\/a|none|\?+)$/i.test(String(x).trim()) || /new coach|floater coach|assistant coach$/i.test(String(x));
+  const realSub = (x) => !!String(x || "").trim() && !isPh(x);
+  const staffLeft = (c) => {
+    const t = (teams || []).find(x => x.team_name === c.team_name); if (!t) return 0;
+    const outs = new Set((cov || []).filter(o => o.practice_date === c.practice_date && o.team_name === c.team_name && !realSub(o.sub_name) && !o.combine_with_team).map(o => nrm(o.coach_out)));
+    return [t.head_coach, t.assistant_coach, t.third_coach].filter(x => x && !isPh(x) && !outs.has(nrm(x))).length;
+  };
   const open = (cov || [])
-    .filter(c => !c.sub_name && !c.combine_with_team)
+    .filter(c => !c.sub_name && !c.combine_with_team && staffLeft(c) < 2)
     .sort((a, b) => (a.practice_date || "").localeCompare(b.practice_date || "") || (a.slot || "").localeCompare(b.slot || ""));
 
   if (!open.length) return res.status(200).json({ ok: true, openShifts: 0, note: "nothing to notify" });
