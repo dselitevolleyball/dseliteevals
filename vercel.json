@@ -50,6 +50,10 @@
     {
       "source": "/stats",
       "destination": "/api/stats-form"
+    },
+    {
+      "source": "/meet",
+      "destination": "/api/global-meeting"
     }
   ],
   "crons": [
