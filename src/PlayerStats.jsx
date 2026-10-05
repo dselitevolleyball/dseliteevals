@@ -61,11 +61,12 @@ export function PlayerStatHistory({ player }) {
 
 export function StatsLinks({ session }) {
   const [links, setLinks] = useState(null);
+  const [allUrl, setAllUrl] = useState("");
   const [err, setErr] = useState("");
   const [copied, setCopied] = useState("");
   useEffect(() => {
     (async () => {
-      try { const r = await fetch("/api/stats-form?links=1", { headers: { Authorization: "Bearer " + (session?.access_token || "") } }); const d = await r.json(); if (!r.ok) throw new Error(d.error || r.statusText); setLinks(d.links); }
+      try { const r = await fetch("/api/stats-form?links=1", { headers: { Authorization: "Bearer " + (session?.access_token || "") } }); const d = await r.json(); if (!r.ok) throw new Error(d.error || r.statusText); setLinks(d.links); setAllUrl(d.allUrl || ""); }
       catch (e) { setErr(e.message); }
     })();
   }, [session?.access_token]);
@@ -75,6 +76,14 @@ export function StatsLinks({ session }) {
       <div style={{ fontSize: 13, fontWeight: 800, color: C.gold, marginBottom: 4 }}>Coach testing links (no login)</div>
       <div style={{ fontSize: 11, color: C.mut, marginBottom: 8 }}>One link per team — send it to Coach Brandon. It lists the team's players; numbers he saves show on each player card under Testing progress.</div>
       {err && <div style={{ color: C.red, fontSize: 12 }}>{err}</div>}
+      {allUrl && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, background: "rgba(233,30,140,0.08)", border: "1px solid " + C.gold, borderRadius: 8, padding: "8px 10px", marginBottom: 8, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 13, fontWeight: 800 }}>All teams (Brandon picks the team)</span>
+          <span style={{ fontSize: 11, color: C.mut, flex: 1, minWidth: 160 }}>One link for every team — this is the one to send.</span>
+          <a href={allUrl} target="_blank" rel="noreferrer" style={{ fontSize: 11, color: C.mut }}>open</a>
+          <button onClick={() => copy("*", allUrl)} style={{ fontSize: 11, fontWeight: 800, padding: "3px 10px", borderRadius: 6, border: "1px solid " + C.gold, background: copied === "*" ? C.gold : "transparent", color: copied === "*" ? "#000" : C.gold, cursor: "pointer", fontFamily: "inherit" }}>{copied === "*" ? "Copied" : "Copy"}</button>
+        </div>
+      )}
       {!links && !err && <div style={{ color: C.mut, fontSize: 12 }}>Loading…</div>}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(210px,1fr))", gap: 6 }}>
         {(links || []).map(l => (

@@ -38,7 +38,10 @@
       return '<tr data-id="' + p.id + '"><td class="nm">' + (p.num ? '<span class="no">#' + esc(p.num) + "</span> " : "") + esc(p.name) +
         '<div class="when">' + (h.length > 1 ? "tested " + fmtDate(last.date) : "tryout numbers only") + "</div></td>" + cells + '<td><button class="add">+ Add</button></td></tr>';
     }).join("");
-    app.innerHTML = "<h1>" + esc(D.team) + " — testing</h1>" +
+    // Opened from the all-teams list: a way back to it.
+    var ref = document.referrer || "";
+    var fromList = ref.indexOf("/stats?t=") >= 0 && ref !== location.href;
+    app.innerHTML = (fromList ? '<a class="back" href="' + esc(document.referrer) + '" style="display:inline-block;text-decoration:none">‹ All teams</a>' : "") + "<h1>" + esc(D.team) + " — testing</h1>" +
       '<p class="hint">Latest result for each player. ▲▼ is the change from the test before — green is better (for the dash, faster is better). Tap a player to see every test and add new numbers.</p>' +
       '<div class="tw"><table class="list"><thead><tr><th>Player</th>' + M.map(function (m) { return "<th>" + m[1] + "</th>"; }).join("") + "<th></th></tr></thead><tbody>" +
       (rows || '<tr><td colspan="8">No players on this team yet.</td></tr>') + "</tbody></table></div>";

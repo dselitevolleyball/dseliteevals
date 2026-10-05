@@ -54,10 +54,21 @@ export default async function handler(req, res) {
     if (!ok) return res.status(403).json({ error: "Admins only" });
     const { data: teams } = await sb.from("practice_teams").select("team_name, practices_per_week");
     const origin = appOrigin(req);
-    return res.status(200).json({ ok: true, links: (teams || []).filter(t => Number(t.practices_per_week) !== 0).map(t => t.team_name).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).map(team => ({ team, url: origin + "/stats?t=" + signTeam(team, SUPABASE_SERVICE_ROLE_KEY) })) });
+    const all = (teams || []).filter(t => Number(t.practices_per_week) !== 0).map(t => t.team_name).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    return res.status(200).json({ ok: true, allUrl: origin + "/stats?t=" + signTeam("*", SUPABASE_SERVICE_ROLE_KEY), links: all.map(team => ({ team, url: origin + "/stats?t=" + signTeam(team, SUPABASE_SERVICE_ROLE_KEY) })) });
   }
 
   const team = verify(url.searchParams.get("t"), SUPABASE_SERVICE_ROLE_KEY);
+  // One link for every team ("*"): a list of teams, each opening that team's sheet.
+  if (team === "*") {
+    const { data: teams } = await sb.from("practice_teams").select("team_name, practices_per_week, level");
+    const list = (teams || []).filter(t => Number(t.practices_per_week) !== 0).sort((a, b) => a.team_name.localeCompare(b.team_name, undefined, { numeric: true }));
+    const { data: counts } = await sb.from("players").select("team_assignment, offer_status").in("team_assignment", list.map(t => t.team_name));
+    const n = (tn) => (counts || []).filter(p => p.team_assignment === tn && !/declin|releas|withdr|cancel/i.test(p.offer_status || "")).length;
+    res.setHeader("Content-Type", "text/html; charset=utf-8"); res.setHeader("X-Robots-Tag", "noindex, nofollow");
+    return res.status(200).send(page("Pick a team", "<h1>Testing — pick a team</h1><p class=\"hint\">Tap the team you're testing. You'll see every player's latest numbers and can add new ones.</p><div class=\"teams\">"
+      + list.map(t => '<a class="team" href="/stats?t=' + signTeam(t.team_name, SUPABASE_SERVICE_ROLE_KEY) + '"><b>' + esc(t.team_name) + '</b><span>' + n(t.team_name) + " players</span></a>").join("") + "</div>"));
+  }
   if (!team) { res.setHeader("Content-Type", "text/html; charset=utf-8"); return res.status(403).send(page("Link not valid", `<h1>This link isn't valid</h1><p>Ask Drew for the team's testing link.</p>`)); }
   const { data: players } = await sb.from("players").select("id, first_name, last_name, jersey_number, stand_reach, approach_touch, jump_touch, sprint_10y, offer_status")
     .eq("team_assignment", team).order("last_name");
@@ -113,7 +124,7 @@ export default async function handler(req, res) {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.setHeader("X-Robots-Tag", "noindex, nofollow");
   const json = JSON.stringify({ team, today: centralToday(), players: data }).replace(/</g, "\\u003c");
-  return res.status(200).send(page(team + " testing", '<div id="app"></div><script type="application/json" id="data">' + json + '</script><script src="/stats-sheet.js?v=2"></script>'));
+  return res.status(200).send(page(team + " testing", '<div id="app"></div><script type="application/json" id="data">' + json + '</script><script src="/stats-sheet.js?v=3"></script>'));
 }
 
 function page(title, inner) {
@@ -144,5 +155,8 @@ function page(title, inner) {
   .add,.back{background:transparent;border:1px solid #e91e8c;color:#e91e8c;border-radius:8px;padding:6px 10px;font-weight:800;font-size:13px;font-family:inherit}
   .back{margin-bottom:10px} .auto{background:#141414;border:1px solid #333;border-radius:8px;font-size:17px;font-weight:800;color:#22c55e;padding:9px 10px}
   table.hist{min-width:680px} td.dt{font-weight:700}
+  .teams{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+  a.team{display:flex;flex-direction:column;gap:4px;background:#141414;border:1px solid #2a2a2a;border-radius:12px;padding:16px;color:#fff;text-decoration:none}
+  a.team b{font-size:17px} a.team span{font-size:12px;color:#888} a.team:active{border-color:#e91e8c}
 </style></head><body>${inner}</body></html>`;
 }
