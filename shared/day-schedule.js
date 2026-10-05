@@ -131,6 +131,7 @@ export function buildDaySchedule(f) {
     }
   }
 
+  out.awayNames = [...away.keys()];   // personKeys at a (non-Austin-area) tournament today
   if (out.cancelled) { issues.push({ level: "info", text: `Whole day cancelled — ${out.cancelled}` }); return out; }
 
   // Which teams practice when today.

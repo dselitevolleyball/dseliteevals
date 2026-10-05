@@ -18,6 +18,7 @@ import { supabase } from "../supabase";
 import { DS, nrm, fmtDay, Btn, Card, Label, Tag, inputStyle } from "./DsscHub.jsx";
 import { localDateISO } from "../../shared/dssc-clinics.js";
 import { splitSms, SMS_MAX } from "../../shared/sms-split.js";
+import DsscCampaigns from "./DsscCampaigns.jsx";
 
 const last10 = (s) => String(s || "").replace(/\D/g, "").slice(-10);
 const e164 = (s) => { const d = String(s || "").replace(/\D/g, ""); if (d.length === 10) return "+1" + d; if (d.length === 11 && d.startsWith("1")) return "+" + d; return d.length > 10 ? "+" + d : ""; };
@@ -43,6 +44,7 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
   const [groups, setGroups] = useState([]);          // group sends: sms_broadcasts brand dssc
   const [groupThreads, setGroupThreads] = useState({}); // broadcast id -> [thread id]
   const [openGroup, setOpenGroup] = useState(null);
+  const [tab, setTab] = useState("inbox");          // inbox | campaigns
   const [history, setHistory] = useState(null);      // DSSC People sign-ups, loaded when a past + current group is picked
   const fileRef = useRef(null);
 
@@ -235,14 +237,18 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
           <img src="/dssc/logo-horizontal-white.png" alt="Dripping Springs Sports Club" style={{ height: 30 }} />
           <Tag color={DS.lime}>Texts</Tag>
           <span style={{ fontSize: 12, color: DS.mut }}>{threads.length} conversation{threads.length === 1 ? "" : "s"}{totalUnread ? ` · ${totalUnread} unread` : ""}{optouts.length ? ` · ${optouts.length} opted out` : ""}</span>
+          <div style={{ display: "flex", border: "1px solid " + DS.line, borderRadius: 999, overflow: "hidden" }}>
+            {[["inbox", "Inbox"], ["campaigns", "Campaigns"]].map(([k, l]) => <button key={k} onClick={() => setTab(k)} style={{ padding: "5px 14px", border: "none", cursor: "pointer", fontFamily: DS.font, fontSize: 12, fontWeight: 800, background: tab === k ? DS.lime : "transparent", color: tab === k ? DS.bg : DS.mut }}>{l}</button>)}
+          </div>
           <div style={{ flex: 1 }} />
-          <Btn small kind="primary" onClick={openComposer}>+ New text</Btn>
+          {tab === "inbox" && <Btn small kind="primary" onClick={openComposer}>+ New text</Btn>}
         </div>
         {inner}
       </div>
     </div>
   );
 
+  if (tab === "campaigns") return shell(<DsscCampaigns coach={coach} coachRoster={coachRoster} />);
   return shell(
     <div style={{ display: "grid", gridTemplateColumns: "300px 1fr", gap: 14, height: "calc(100vh - 150px)" }}>
       {/* Inbox */}

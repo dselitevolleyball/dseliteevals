@@ -132,10 +132,15 @@
     {
       "path": "/api/day-schedule",
       "schedule": "0 14 * * 6"
+    },
+    {
+      "path": "/api/sms-campaigns",
+      "schedule": "*/10 * * * *"
     }
   ],
   "functions": {
     "api/playbook-calendar.js": { "maxDuration": 120 },
+    "api/sms-campaigns.js": { "maxDuration": 300 },
     "api/ask-hq.js": {
       "maxDuration": 120
     }
