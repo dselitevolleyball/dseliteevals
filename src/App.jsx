@@ -1262,14 +1262,16 @@ function vbEffective(baseId, rotation, subs, phase){
   const curStep = rotation*2 + halfOf(phase);
   let id = baseId;
   for(const s of (subs||[])){
-    if(s.outId!==id || !s.inId) continue;
+    if(s.box || s.outId!==id || !s.inId) continue;
     const from = s.fromRotation==null ? 0 : s.fromRotation;
     const thru = s.thruRotation==null ? 11 : s.thruRotation;
     const startStep = from*2 + halfOf(s.phase);
     const endStep   = thru*2 + (s.thruPhase==="serve" ? 0 : 1); // through the thru rotation's serve-receive half (or just its serve half)
     if(curStep>=startStep && curStep<=endStep) id = s.inId;
   }
-  return id;
+  // A box picked by hand for this spot, rotation and half (set.boxes) wins.
+  const box = (subs||[]).find(s => s.box && s.baseId===baseId && s.rotation===rotation && s.half===phase);
+  return box ? box.inId : id;
 }
 
 // Remove duplicate planned subs. Two subs are "the same" when the same player
@@ -1371,7 +1373,11 @@ function vbSyncRuleSubs(set){
   if(!set) return set;
   const lib = set.autoLibero!==false && set.liberoId ? set.liberoId : null;
   const paired = new Set((set.pairs||[]).filter(p => p && p.starterId && p.subId && p.when!=="manual").flatMap(p => [p.starterId+">"+p.subId, p.subId+">"+p.starterId]));
-  set.subs = [...(set.subs||[]).filter(x => x && !x.rule && !(lib && (x.inId===lib || x.outId===lib)) && !paired.has(x.inId+">"+x.outId)), ...vbRuleSubs(set)];
+  // set.boxes["r|serve|baseId"] = playerId: who is in that box, that half only.
+  const boxes = Object.entries(set.boxes||{}).map(([k, inId]) => { const [r, half, baseId] = k.split("|"); return { r:+r, half, baseId, inId }; })
+    .filter(b => b.inId && b.baseId && (set.lineup||[]).includes(b.baseId) && b.r>=0 && b.r<12)
+    .map(b => ({ box:true, rule:true, baseId:b.baseId, rotation:b.r, half:b.half, inId:b.inId, outId:b.baseId, fromRotation:b.r, thruRotation:b.r, phase:b.half, ...(b.half==="serve" ? { thruPhase:"serve" } : {}) }));
+  set.subs = [...(set.subs||[]).filter(x => x && !x.rule && !(lib && (x.inId===lib || x.outId===lib)) && !paired.has(x.inId+">"+x.outId)), ...vbRuleSubs(set), ...boxes];
   return set;
 }
 
@@ -26856,20 +26862,57 @@ export default function App() {
               while (grew) { grew = false; for (const s of (set.subs||[])) if (s.inId && g.includes(s.outId) && !g.includes(s.inId)) { g.push(s.inId); grew = true; } }
               return g;
             };
+            // Per-box picks (set.boxes): who is in this box for this rotation —
+            // tapped/picked in the serve row it covers serve AND serve-receive,
+            // in the serve-receive row just serve-receive. Picking what the
+            // rules would give anyway clears the override.
+            const boxKey = (r, half, baseId) => r + "|" + half + "|" + baseId;
+            const boxOf = (ro, slot, phase) => (set.boxes||{})[boxKey(ro.r, phase, slot.baseId)] || "";
+            const ruleIdFor = (ro, slot, phase) => vbEffective(slot.baseId, ro.r, (set.subs||[]).filter(x => !x.box), phase);
+            const setBox = (ro, slot, phase, pid) => {
+              const halves = phase==="serve" ? ["serve","receive"] : ["receive"];
+              updateDraft(d => {
+                const t = d.sets[setIdx]; const bx = { ...(t.boxes||{}) };
+                for (const h of halves) {
+                  const rule = vbEffective(slot.baseId, ro.r, (t.subs||[]).filter(x => !x.box), h);
+                  const k = boxKey(ro.r, h, slot.baseId);
+                  if (!pid || pid===rule) delete bx[k]; else bx[k] = pid;
+                }
+                t.boxes = bx;
+                if (pid && pid!==slot.baseId) t.subPools = { ...(t.subPools||{}), [slot.baseId]: [...new Set([...((t.subPools||{})[slot.baseId]||[]), pid])] };
+              });
+            };
+            const freeFor = (ro, slot, phase) => { const on = new Set(vbRotation(set.lineup, ro.r, set.subs, phase, lib).filter(x => x.i!==slot.i).map(x => x.id)); return id => !on.has(id); };
             const cycleSub = (ro, slot, phase) => {
-              const group = subGroup(slot.baseId);
-              if (group.length < 2 || slot.libFor) return false;
-              const subs = set.subs || [];
-              const startsHere = s => !s.rule && (s.fromRotation==null?0:s.fromRotation)===ro.r && (s.phase||"serve")===phase && group.includes(s.outId) && group.includes(s.inId);
-              const rest = subs.filter(s => !startsHere(s));
-              const before = vbEffective(slot.baseId, ro.r, rest, phase);
-              const elsewhere = new Set(vbRotation(set.lineup, ro.r, subs, phase, lib).filter(s => s.i!==slot.i).map(s => s.id));
-              const order = group.filter(id => id===slot.id || !elsewhere.has(id));
+              if (slot.libFor) return false;
+              const group = subGroup(slot.baseId).concat(Object.entries(set.boxes||{}).filter(([k]) => k.endsWith("|"+slot.baseId)).map(([,v]) => v)).filter((id, i, arr) => arr.indexOf(id)===i);
+              if (group.length < 2) return false;
+              const free = freeFor(ro, slot, phase);
+              const order = group.filter(id => id===slot.id || free(id));
               const next = order[(order.indexOf(slot.id)+1) % order.length];
-              const thru = subs.find(startsHere)?.thruRotation ?? 11;
-              updateDraft(d => { const t=d.sets[setIdx]; t.subs = rest.concat(next===before ? [] : [{ inId: next, outId: before, fromRotation: ro.r, thruRotation: thru, phase }]); t.subPools = { ...(t.subPools||{}), [slot.baseId]: group }; });
-              setLineupSubSel({ setId:set.id, r:ro.r, i:slot.i, outId:next, courtN:slot.n, label:slot.label, inId:"", scope:"rest", phase });
+              setBox(ro, slot, phase, next);
+              setLineupSubSel(null);
               return true;
+            };
+            const boxPicker = (ro, slot, phase) => {
+              const free = freeFor(ro, slot, phase);
+              const group = subGroup(slot.baseId);
+              const rule = ruleIdFor(ro, slot, phase);
+              const others = roster.filter(p => !group.includes(p.id) && free(p.id) && !(set.autoLibero!==false && p.id===set.liberoId));
+              return (
+                <div onClick={e=>e.stopPropagation()} style={{position:"absolute",inset:0,background:"#1a1a1a",display:"flex",alignItems:"center",justifyContent:"center",zIndex:5,padding:2}}>
+                  <select autoFocus value={boxOf(ro, slot, phase)} onBlur={()=>setLineupSubSel(null)}
+                    onChange={e=>{ const v = e.target.value;
+                      if (v==="__more") { setLineupSubSel({ setId:set.id, r:ro.r, i:slot.i, outId:slot.id, courtN:slot.n, label:slot.label, inId:"", scope:"one", phase }); return; }
+                      setBox(ro, slot, phase, v); setLineupSubSel(null); }}
+                    style={{...S.sel,fontSize:10,padding:"2px 3px",width:"100%"}}>
+                    <option value="">Rules: {pfirst(rule)}</option>
+                    {group.filter(free).map(id => <option key={id} value={id}>{pfirst(id)}{id===slot.baseId?" (starter)":""}</option>)}
+                    {others.length>0 && <optgroup label="Bench">{others.map(p => <option key={p.id} value={p.id}>{pfirst(p.id)}{p.pos?" ("+p.pos+")":""}</option>)}</optgroup>}
+                    <option value="__more">Sub for several rotations…</option>
+                  </select>
+                </div>
+              );
             };
             const receivePassers = ro => {
               const out = new Set();
@@ -26902,16 +26945,24 @@ export default function App() {
                        : enteredHere ? "rgba(34,197,94,0.30)"   // rotate-in / sub: green
                        : slot.row==="front" ? "rgba(233,30,140,0.06)" : "transparent";
               const isSel = lineupSubSel && lineupSubSel.setId===set.id && lineupSubSel.r===ro.r && lineupSubSel.i===slot.i && lineupSubSel.phase===phase;
-              const tip = slot.id ? (pname(slot.id)+(pos?" · "+pos:"")+(slot.libFor?(" (libero for "+pname(slot.libFor)+")"):"")+" · "+slot.label+" — tap to sub") : ("empty · "+slot.label);
+              const tip = slot.id ? (pname(slot.id)+(pos?" · "+pos:"")+(slot.libFor?(" (libero for "+pname(slot.libFor)+")"):"")+" · "+slot.label+" — tap to pick who is in this box") : ("empty · "+slot.label);
               return (
                 <td key={slot.n} title={tip}
-                  onClick={slot.id ? () => cycleSub(ro, slot, phase) || setLineupSubSel(sel =>(sel && sel.setId===set.id && sel.r===ro.r && sel.i===slot.i && sel.phase===phase) ? null : { setId:set.id, r:ro.r, i:slot.i, outId:slot.id, courtN:slot.n, label:slot.label, inId:"", scope:"rest", phase }) : undefined}
+                  onClick={slot.id ? () => cycleSub(ro, slot, phase) || setLineupSubSel({ setId:set.id, r:ro.r, i:slot.i, phase, mode:"box" }) : undefined}
                   style={{position:"relative",border:"1px solid "+C.border,borderRight:edge?"2px solid #3a3a3a":"1px solid "+C.border,outline:isSel?"2px solid "+C.gold:"none",outlineOffset:-2,background:bg,padding:"15px 3px 6px",textAlign:"center",height:62,verticalAlign:"middle",overflow:"hidden",cursor:slot.id?"pointer":"default"}}>
                   {slot.id ? (
                     <>
                       {num ? <span style={{position:"absolute",top:2,left:3,fontSize:9,fontWeight:800,color:C.mut,lineHeight:1}}>#{num}</span> : null}
                       {pos ? <span style={{position:"absolute",top:2,right:3,fontSize:9,fontWeight:800,color:C.mut,lineHeight:1}}>{pos}</span> : null}
                       {enteredHere && <span title="Rotates in here" style={{position:"absolute",bottom:2,left:3,fontSize:11,color:"#22c55e",fontWeight:800,lineHeight:1}}>▲</span>}
+                      {!slot.libFor && (
+                        <button title={boxOf(ro, slot, phase) ? "Picked by hand for this rotation — tap to change" : "Pick who is in this box for this rotation"}
+                          onClick={e=>{ e.stopPropagation(); setLineupSubSel({ setId:set.id, r:ro.r, i:slot.i, phase, mode:"box" }); }}
+                          style={{position:"absolute",top:1,left:"50%",transform:"translateX(-50%)",background:boxOf(ro, slot, phase)?"#a855f7":"transparent",color:boxOf(ro, slot, phase)?"#fff":C.mut,border:"none",borderRadius:4,fontSize:9,fontWeight:800,lineHeight:1,padding:"1px 4px",cursor:"pointer",fontFamily:"inherit"}}>
+                          {boxOf(ro, slot, phase) ? "✎▾" : "▾"}
+                        </button>
+                      )}
+                      {isSel && lineupSubSel.mode==="box" && boxPicker(ro, slot, phase)}
                       {isRecvPin && (
                         <label title="Pull this front-row player back to pass in serve-receive" onClick={e=>e.stopPropagation()}
                           style={{position:"absolute",bottom:1,right:2,display:"flex",alignItems:"center",gap:1,fontSize:8,fontWeight:800,cursor:"pointer",lineHeight:1,opacity:pinSel?1:0.4,color:pinSel?C.grn:C.mut}}>
@@ -27060,7 +27111,7 @@ export default function App() {
                   </div>
                 )}
                 {/* Click-to-sub panel — appears when a grid cell is tapped */}
-                {lineupSubSel && lineupSubSel.setId===set.id && (() => {
+                {lineupSubSel && lineupSubSel.setId===set.id && lineupSubSel.mode!=="box" && (() => {
                   const sel = lineupSubSel;
                   const aPhase = sel.phase || "serve"; // sub applies to the half you tapped
                   const onCourt = new Set(vbRotation(set.lineup, sel.r, set.subs, aPhase, lib).map(s=>s.id).filter(Boolean));
