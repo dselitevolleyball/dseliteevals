@@ -46,6 +46,10 @@
     {
       "source": "/dssc-texts",
       "destination": "/api/dssc-texts-form"
+    },
+    {
+      "source": "/stats",
+      "destination": "/api/stats-form"
     }
   ],
   "crons": [

@@ -17,6 +17,7 @@ import DsscAdmin from "./dssc/DsscAdmin.jsx";
 import HousingView from "./HousingView.jsx";
 import AskHQ from "./AskHQ.jsx";
 import DaySchedule from "./DaySchedule.jsx";
+import { PlayerStatHistory, StatsLinks } from "./PlayerStats.jsx";
 import DsscTexts from "./dssc/DsscTexts.jsx";
 import DsscCrm from "./dssc/DsscCrm.jsx";
 import { TN_SUB_PLACEHOLDERS, isPlaceholderPerson, sessionStaff, staffNeeded, staffApproved, staffPending, sessionShort, onStaff, parsePlanPaste } from "../shared/dssc-clinics.js";
@@ -13822,6 +13823,8 @@ export default function App() {
             </div>
             );
           })()}
+          {/* Repeat testing since tryouts (Coach Brandon's /stats team links) */}
+          <PlayerStatHistory player={p} />
           {/* Scores */}
           <div style={{marginBottom:14}}>
             <span style={lbl}>Evaluation Scores (tap 1-5)</span>
@@ -32140,6 +32143,7 @@ export default function App() {
 
     return (
       <div>
+        {isAdmin && <StatsLinks session={session} />}
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end",flexWrap:"wrap",gap:10,marginBottom:14}}>
           <div>
             <h2 style={{margin:0,fontSize:20,fontWeight:800,color:C.gold}}>Physical Testing</h2>
