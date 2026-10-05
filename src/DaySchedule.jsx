@@ -29,6 +29,8 @@ export default function DaySchedule({ session, onOpenPractice, onCoachesChanged 
   const [loading, setLoading] = useState(false);
   const [mode, setMode] = useState("hour");
   const [showInfo, setShowInfo] = useState(false);
+  const [dragTeam, setDragTeam] = useState(null);   // team being dragged to a new hour
+  const [dropHour, setDropHour] = useState(null);
 
   const load = useCallback(async () => {
     if (!session?.access_token) return;
@@ -197,6 +199,44 @@ export default function DaySchedule({ session, onOpenPractice, onCoachesChanged 
     </div>
   );
 
+  // ── Move a team to another time, this date only ─────────────────────────
+  // Saved as a one-day practice_slot_moves row (the same record the Sunday
+  // court planner writes), so the Day Schedule, clock-in, the weekly coach
+  // texts and the Saturday email all show the new time. Dropping a team back
+  // on its usual time removes the move.
+  const h12 = (h) => (h % 12 === 0 ? 12 : h % 12);
+  const hourLbl = (h) => h12(h) + (h >= 12 ? "pm" : "am");
+  const isSun = new Date(date + "T12:00:00").getDay() === 0;
+  const CAP = { fall2: 4, fall1: 6, summer: 5, season: 6, postseason: 6 };
+  const moveTeam = async (team, startHour) => {
+    const t = teamBy.get(team); if (!t || !day) return;
+    const s0 = t.blocks[0][0], e0 = t.blocks[t.blocks.length - 1][1], dur = e0 - s0;
+    if (startHour === s0) return;
+    const ns = startHour, ne = startHour + dur;
+    const orig = t.movedFrom ? t.movedFrom[0][0] : s0;
+    const label = `${h12(ns)}-${h12(ne)}${ne >= 12 ? "pm" : "am"}`;
+    const others = (h) => day.teams.filter(x => x.team !== team && x.blocks.some(([a, b]) => a < h + 1 && b > h)).length;
+    const full = isSun && CAP[day.phase] ? Array.from({ length: Math.ceil(dur) }, (_, i) => ns + i).filter(h => others(h) + 1 > CAP[day.phase]) : [];
+    const back = ns === orig;
+    const msg = back ? `Put ${team} back at its usual time (${fmtSpan(ns, ne)}) on ${pretty(date)}?`
+      : `Move ${team} to ${fmtSpan(ns, ne)} on ${pretty(date)} only?` + (full.length ? `\n\nHeads up: ${full.map(hourLbl).join(", ")} would have more teams than the ${CAP[day.phase]} courts.` : "")
+        + `\n\nCoaches see the new time on the Day Schedule, clock-in and their weekly text. Families aren't told automatically.`;
+    if (!window.confirm(msg)) return;
+    const { error } = back
+      ? await supabase.from("practice_slot_moves").delete().eq("practice_date", date).eq("team_name", team)
+      : await supabase.from("practice_slot_moves").upsert({ practice_date: date, team_name: team, slot: label, phase: day.phase, updated_at: new Date().toISOString() }, { onConflict: "practice_date,team_name" });
+    if (error) { window.alert("Couldn't move it: " + error.message); return; }
+    await load(); onCoachesChanged?.();
+  };
+  // Every hour a team could be dropped on: the day's hours plus the usual
+  // practice window (noon–9pm Sundays, 5–9pm weekdays).
+  const hourRows = (() => {
+    if (!day) return [];
+    const have = new Map(day.hours.map(h => [h.hour, h]));
+    const lo = Math.min(day.hours[0]?.hour ?? 99, isSun ? 12 : 17), hi = Math.max((day.hours[day.hours.length - 1]?.hour ?? 0) + 1, 21);
+    return Array.from({ length: hi - lo }, (_, i) => lo + i).map(h => have.get(h) || { hour: h, label: hourLbl(h) + "–" + hourLbl(h + 1), teams: [], sa: [], floaters: [] });
+  })();
+
   const teamCard = (t, starts) => {
     const bad = critTeams.has(t.team);
     if (!starts) return (
@@ -204,12 +244,24 @@ export default function DaySchedule({ session, onOpenPractice, onCoachesChanged 
         {t.team} <span style={{ fontSize: 11 }}>continues · {t.floor.map(p => p.name.split(" ")[0]).join(", ") || "no coach"}</span>
       </div>
     );
+    const start = t.blocks[0][0], dur = t.blocks[t.blocks.length - 1][1] - start;
     return (
-      <div key={t.team} style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid " + (bad ? C.red : C.border), background: bad ? "rgba(239,68,68,0.08)" : C.bg, minWidth: 200, flex: "1 1 200px", maxWidth: 320 }}>
+      <div key={t.team} draggable onDragStart={e => { setDragTeam(t.team); e.dataTransfer.effectAllowed = "move"; }} onDragEnd={() => { setDragTeam(null); setDropHour(null); }}
+        title="Drag to another hour to move this practice for this day only"
+        style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid " + (t.movedFrom ? C.cyan : bad ? C.red : C.border), background: bad ? "rgba(239,68,68,0.08)" : C.bg, minWidth: 200, flex: "1 1 200px", maxWidth: 320, cursor: "grab", opacity: dragTeam === t.team ? 0.5 : 1 }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline" }}>
           <span style={{ fontWeight: 800, fontSize: 14, color: bad ? C.red : C.text }}>{t.team}</span>
-          <span style={{ fontSize: 11, color: C.mut, whiteSpace: "nowrap" }}>{t.blocks.map(([s, e]) => fmtSpan(s, e)).join(", ")}{t.venue ? " · " + t.venue : ""}</span>
+          <select value={start} onChange={e => moveTeam(t.team, Number(e.target.value))} title="Move this practice (this day only)"
+            style={{ background: "transparent", border: "1px solid " + C.border, borderRadius: 6, color: C.mut, fontSize: 11, padding: "1px 2px", fontFamily: "inherit", cursor: "pointer" }}>
+            {hourRows.filter(h => h.hour + dur <= 22).map(h => <option key={h.hour} value={h.hour} style={{ background: C.card }}>{fmtSpan(h.hour, h.hour + dur)}</option>)}
+          </select>
         </div>
+        {t.venue && <div style={{ fontSize: 10, color: C.mut }}>{t.venue}</div>}
+        {t.movedFrom && (
+          <div style={{ fontSize: 11, color: C.cyan, marginTop: 2 }}>Moved today from {t.movedFrom.map(([s, e]) => fmtSpan(s, e)).join(", ")} ·{" "}
+            <button onClick={() => moveTeam(t.team, t.movedFrom[0][0])} style={{ background: "none", border: "none", color: C.cyan, textDecoration: "underline", cursor: "pointer", fontSize: 11, padding: 0, fontFamily: "inherit" }}>undo</button>
+          </div>
+        )}
         {coachList(t)}
         <div style={{ fontSize: 10, color: t.floor.length >= 2 ? C.grn : C.red, fontWeight: 800, marginTop: 4 }}>{t.floor.length} on the floor{t.combined ? " · combined with " + t.combined : ""}</div>
       </div>
@@ -264,8 +316,11 @@ export default function DaySchedule({ session, onOpenPractice, onCoachesChanged 
 
         {mode === "hour" ? (
           <div style={{ background: C.card, border: "1px solid " + C.border, borderRadius: 12, overflow: "hidden" }}>
-            {day.hours.map(h => (
-              <div key={h.hour} style={{ display: "flex", borderTop: "1px solid " + C.border }}>
+            {hourRows.map(h => (
+              <div key={h.hour}
+                onDragOver={e => { if (dragTeam) { e.preventDefault(); if (dropHour !== h.hour) setDropHour(h.hour); } }}
+                onDrop={e => { e.preventDefault(); const tm = dragTeam; setDragTeam(null); setDropHour(null); if (tm) moveTeam(tm, h.hour); }}
+                style={{ display: "flex", borderTop: "1px solid " + C.border, background: dragTeam && dropHour === h.hour ? "rgba(6,182,212,0.12)" : "transparent", outline: dragTeam && dropHour === h.hour ? "1px dashed " + C.cyan : "none", outlineOffset: -2 }}>
                 <div style={{ width: 92, flexShrink: 0, padding: "10px 12px", fontWeight: 800, color: C.gold, fontSize: 13 }}>{h.label}</div>
                 <div style={{ flex: 1, padding: "8px 10px 8px 0", minWidth: 0 }}>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>

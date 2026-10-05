@@ -92,6 +92,8 @@ export default async function handler(req, res) {
     sb.from("coach_roster").select("first_name, last_name, email, phone"),
     sb.from("coaches").select("display_name, email"),
   ]);
+  // One-day time moves (Day Schedule drag / Sunday court planner).
+  const { data: moves } = await sb.from("practice_slot_moves").select("practice_date, team_name, slot").gte("practice_date", start).lte("practice_date", end);
 
   // Who is who: every spelling of a coach → one roster identity (email is the key).
   const people = new Map();   // email → { name, email, phone, keys:Set }
@@ -121,7 +123,9 @@ export default async function handler(req, res) {
     const blocks = [];   // scheduled team hours, merged later per coach
     if (ph) for (const a of assigns || []) {
       if ((a.phase || "season") !== ph || a.day !== wd || eventTeams.has(a.team_name) || cancelledTeam(d, a.team_name)) continue;
-      blocks.push({ team: a.team_name, slot: a.slot, sa: false });
+      const mv = (moves || []).find(m => m.practice_date === d && m.team_name === a.team_name);
+      if (mv && blocks.some(b => b.team === a.team_name && b.slot === mv.slot)) continue;
+      blocks.push({ team: a.team_name, slot: mv ? mv.slot : a.slot, sa: false });
     }
     for (const s of sas || []) if (s.session_date === d && !cancelledTeam(d, s.team_name)) blocks.push({ team: s.team_name, slot: s.slot, sa: true });
     for (const b of blocks) {

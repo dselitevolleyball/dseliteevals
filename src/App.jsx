@@ -22673,9 +22673,13 @@ export default function App() {
       // My own team's practice. Dropped if I called out — checked here rather
       // than at the end, so calling out frees the hour for a sub/float shift
       // instead of letting the dead scheduled row suppress it below.
+      // A team moved to another time for this one date (Day Schedule drag or
+      // the Sunday court planner) practices at the moved time.
+      const movedTo = (tn) => ((slotMoves || []).find(m => m.practice_date === iso && m.team_name === tn) || {}).slot;
       const scheduled = practiceAssignments
         .filter(a => (a.phase||"season")===ph && a.day===wd && myTeamNames.includes(a.team_name) && !teamCanceled(a.team_name))
-        .map(a => ({ team:a.team_name, slot:a.slot, role:"scheduled" }))
+        .map(a => ({ team:a.team_name, slot:movedTo(a.team_name) || a.slot, role:"scheduled" }))
+        .filter((x, i, arr) => arr.findIndex(y => y.team === x.team && y.slot === x.slot) === i)
         .filter(x => !iAmOut(iso, x.team));
       // Practices I was assigned to cover. These are real, payable shifts, and
       // until now the board never showed them — a sub had to hand-enter the

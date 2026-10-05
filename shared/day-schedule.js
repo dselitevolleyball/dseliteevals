@@ -139,8 +139,9 @@ export function buildDaySchedule(f) {
   const rows = practiceDay ? f.assigns.filter(a => (a.phase || "fall1") === ph && a.day === weekday && !eventTeams.has(a.team_name)) : [];
   const byTeam = new Map();
   for (const a of rows) {
-    if (!byTeam.has(a.team_name)) byTeam.set(a.team_name, { slots: new Set(), venue: a.venue || "", court: a.court });
+    if (!byTeam.has(a.team_name)) byTeam.set(a.team_name, { slots: new Set(), orig: new Set(), venue: a.venue || "", court: a.court });
     byTeam.get(a.team_name).slots.add(moveFor.get(a.team_name) || a.slot);
+    byTeam.get(a.team_name).orig.add(a.slot);
   }
   // Approved call-outs dated today take the coach off. A weekend request
   // dated Fri/Sat may or may not include Sunday, so it's raised, not applied.
@@ -176,7 +177,7 @@ export function buildDaySchedule(f) {
       ...coaches.filter(c => c.sub).map(c => ({ name: c.sub, role: "Sub", forWhom: c.name })),
     ];
     const combined = coaches.find(c => c.combined)?.combined || null;
-    out.teams.push({ team, level: t.level || "", venue: info.venue, court: info.court, blocks, slots: [...info.slots].sort((a, b) => span(a)[0] - span(b)[0]), coaches, floor, combined });
+    out.teams.push({ team, level: t.level || "", venue: info.venue, court: info.court, blocks, slots: [...info.slots].sort((a, b) => span(a)[0] - span(b)[0]), movedFrom: moveFor.has(team) ? mergeSpans([...info.orig].map(span).filter(([s, e]) => s < 99 && e > s)) : null, coaches, floor, combined });
   }
 
   // Per-coach timeline (to catch the same person in two places at once).
