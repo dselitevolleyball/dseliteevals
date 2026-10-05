@@ -159,8 +159,7 @@ export function buildDaySchedule(f) {
       const off = offFor(raw, team);
       // A sub who is on a tournament's staff that day can't be here either.
       const subAway = cov && isRealSub(cov.sub_name) ? away.get(personKey(cov.sub_name)) : null;
-      if (subAway) issues.push({ level: "critical", team, text: `${team}: ${cov.sub_name} is down to sub for ${raw} but is at ${subAway} that day — find another sub` });
-      if (cov) coaches.push({ role, name: raw, status: "out", cov: true, sub: isRealSub(cov.sub_name) && !subAway ? cov.sub_name : null, subPlaceholder: cov.sub_name && !isRealSub(cov.sub_name) ? cov.sub_name : null, combined: cov.combine_with_team || null, why: cov.note || (awayAt ? "at " + awayAt : off ? off : "") });
+      if (cov) coaches.push({ role, name: raw, status: "out", cov: true, sub: isRealSub(cov.sub_name) && !subAway ? cov.sub_name : null, subPlaceholder: cov.sub_name && !isRealSub(cov.sub_name) ? cov.sub_name : null, combined: cov.combine_with_team || null, why: (subAway ? cov.sub_name + " was the sub but is at " + subAway : "") || cov.note || (awayAt ? "at " + awayAt : off ? off : "") });
       else if (awayAt) coaches.push({ role, name: raw, status: "away", why: "at " + awayAt });
       else if (off) coaches.push({ role, name: raw, status: "out", why: off });
       else coaches.push({ role, name: raw, status: "on" });
