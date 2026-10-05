@@ -18,6 +18,7 @@ import HousingView from "./HousingView.jsx";
 import AskHQ from "./AskHQ.jsx";
 import DaySchedule from "./DaySchedule.jsx";
 import { PlayerStatHistory, StatsLinks } from "./PlayerStats.jsx";
+import EuropeRsvps from "./EuropeRsvps.jsx";
 import DsscTexts from "./dssc/DsscTexts.jsx";
 import DsscCrm from "./dssc/DsscCrm.jsx";
 import { TN_SUB_PLACEHOLDERS, isPlaceholderPerson, sessionStaff, staffNeeded, staffApproved, staffPending, sessionShort, onStaff, parsePlanPaste } from "../shared/dssc-clinics.js";
@@ -11302,6 +11303,7 @@ export default function App() {
           );
         })()}
         <div style={{fontSize:11,color:C.mut,marginTop:6}}>A nudge is one email, or one text to each parent mobile, from you, with the link they need. Texts come from the club number and replies land in Messages (SMS); anyone who replied STOP is skipped. Every send is remembered here so you can see who has already been asked.</div>
+        <EuropeRsvps players={players} gcAnswers={gcAnswers} />
         {renderGcAnswers()}
       </div>
     );
