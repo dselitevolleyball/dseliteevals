@@ -22648,7 +22648,7 @@ export default function App() {
     const iAmOut = (iso, team) => {
       const covOut = practiceCoverage.some(c => c.practice_date === iso && (!team || c.team_name === team) && isMe(c.coach_out));
       const reqOut = coachRequests.some(r => isMe(r.coach_name) && r.request_date === iso
-        && !/denied|declined|rejected/i.test(r.status || "")
+        && !/denied|declined|rejected|cancel|withdrawn/i.test(r.status || "")
         && (!r.team_name || !team || r.team_name === team));
       return covOut || reqOut;
     };
@@ -23060,7 +23060,7 @@ export default function App() {
           const myReqs = coachRequests.filter(r => isMe(r.coach_name) && (r.request_date||"") >= today)
             .sort((a,b)=> (a.request_date||"").localeCompare(b.request_date||""));
           if (!myReqs.length) return null;
-          const denied = s => /denied|declined|rejected/i.test(s||"");
+          const denied = s => /denied|declined|rejected|cancel|withdrawn/i.test(s||"");
           const stCol = s => s==="approved" ? C.grn : denied(s) ? C.red : "#f59e0b";
           const stLbl = s => s==="approved" ? "✓ Approved" : denied(s) ? "✕ Denied" : "⏳ Pending";
           return (
@@ -23278,7 +23278,7 @@ export default function App() {
           const isPresent = (nm, tn) => dateChecks.some(c => norm(c.coach_name)===norm(nm) && (c.team_name||"")===(tn||""));
           // A scheduled coach who called out (coverage row) or requested off.
           const coachOut = (nm, tn) => practiceCoverage.some(c => c.practice_date===checkinDate && (!tn||c.team_name===tn) && norm(c.coach_out)===norm(nm))
-            || coachRequests.some(r => r.request_date===checkinDate && !/denied|declined|rejected/i.test(r.status||"") && norm(r.coach_name)===norm(nm) && (!r.team_name||!tn||r.team_name===tn));
+            || coachRequests.some(r => r.request_date===checkinDate && !/denied|declined|rejected|cancel|withdrawn/i.test(r.status||"") && norm(r.coach_name)===norm(nm) && (!r.team_name||!tn||r.team_name===tn));
           // Who's covering an out coach: the assigned sub / combined team, else a
           // sub who actually clocked in for that team, else nobody yet.
           const coverInfo = (nm, tn) => {
@@ -24968,7 +24968,7 @@ export default function App() {
       (clockedByDate[c.check_date] = clockedByDate[c.check_date] || new Set()).add(cn);
     });
     const isOut = (nm, date, team) => practiceCoverage.some(c => c.practice_date===date && (!team||c.team_name===team) && norm(c.coach_out)===norm(nm))
-      || coachRequests.some(r => r.request_date===date && !/denied|declined|rejected/i.test(r.status||"") && norm(r.coach_name)===norm(nm) && (!r.team_name||!team||r.team_name===team));
+      || coachRequests.some(r => r.request_date===date && !/denied|declined|rejected|cancel|withdrawn/i.test(r.status||"") && norm(r.coach_name)===norm(nm) && (!r.team_name||!team||r.team_name===team));
     const missMap = {};
     for (let off=0; off<7; off++) {
       const date = localDateISO(new Date(new Date(wkStart+"T12:00:00").getTime()+off*86400000));

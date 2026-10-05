@@ -84,7 +84,7 @@ export default async function handler(req, res) {
   const clockedByDate = {};
   (checks || []).forEach(c => { (clockedByDate[c.check_date] = clockedByDate[c.check_date] || new Set()).add(norm(canon(c.coach_name, c.coach_email))); });
   const isOut = (nm, date, team) => (cover || []).some(c => c.practice_date === date && (!team || c.team_name === team) && norm(c.coach_out) === norm(nm))
-    || (reqs || []).some(r => r.request_date === date && !/denied|declined|rejected/i.test(r.status || "") && norm(r.coach_name) === norm(nm) && (!r.team_name || !team || r.team_name === team));
+    || (reqs || []).some(r => r.request_date === date && !/denied|declined|rejected|cancel|withdrawn/i.test(r.status || "") && norm(r.coach_name) === norm(nm) && (!r.team_name || !team || r.team_name === team));
   const missSet = new Map();
   for (let off = 0; off < 7; off++) {
     const date = addDays(weekStart, off);

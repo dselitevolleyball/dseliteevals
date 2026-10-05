@@ -142,7 +142,7 @@ export function buildDaySchedule(f) {
   const offFor = (name, team) => { const r = todays.find(r => r.status === "approved" && samePerson(r.coach_name, name) && (!r.team_name || r.team_name === team)); return r ? (clean(r.details) || "time off") : null; };
   const offAnywhere = (name) => todays.some(r => r.status === "approved" && samePerson(r.coach_name, name));
   for (const r of todays) if (r.status === "pending") issues.push({ level: "warn", text: `${r.coach_name} has a PENDING time-off request${r.team_name ? " for " + r.team_name : ""}${r.details ? " (" + clean(r.details) + ")" : ""} — approve or deny it` });
-  const earlier = f.reqs.filter(r => r.coach_name && r.request_date < date && r.type === "weekend" && !/denied|declined|rejected/i.test(r.status || ""));
+  const earlier = f.reqs.filter(r => r.coach_name && r.request_date < date && r.type === "weekend" && !/denied|declined|rejected|cancel|withdrawn/i.test(r.status || ""));
 
   for (const [team, info] of [...byTeam.entries()].sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true }))) {
     if (atTournament.has(team)) { out.offTeams.push({ team, why: "At " + atTournament.get(team) }); continue; }

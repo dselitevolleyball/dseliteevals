@@ -111,7 +111,7 @@ export default async function handler(req, res) {
   const cancelledDay = (d) => (cancels || []).some(c => c.practice_date === d && !c.team_name);
   const cancelledTeam = (d, t) => (cancels || []).some(c => c.practice_date === d && c.team_name === t);
   const outRows = (d, t, email) => (cover || []).filter(c => c.practice_date === d && (!t || c.team_name === t) && emailFor(c.coach_out) === email);
-  const offReq = (d, t, email) => (reqs || []).some(r => r.request_date === d && !/denied|declined|rejected/i.test(r.status || "") && emailFor(r.coach_name) === email && (!r.team_name || !t || r.team_name === t));
+  const offReq = (d, t, email) => (reqs || []).some(r => r.request_date === d && !/denied|declined|rejected|cancel|withdrawn/i.test(r.status || "") && emailFor(r.coach_name) === email && (!r.team_name || !t || r.team_name === t));
 
   // Every shift for every coach in the week: { email, date, team, slot, role, note }.
   const shifts = [];
