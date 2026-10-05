@@ -85,63 +85,35 @@ export default async function handler(req, res) {
     }
     if (bad.length) return res.status(400).json({ error: "Some numbers couldn't be read — check the highlighted players.", bad });
     if (!rows.length) return res.status(400).json({ error: "Nothing to save yet — enter at least one number." });
+    // A second save on the same date adds to that day's numbers instead of
+    // blanking the ones already entered.
+    const { data: same } = await sb.from("player_stat_tests").select("*").eq("test_date", date).in("player_id", rows.map(r => r.player_id));
+    for (const r of rows) {
+      const old = (same || []).find(x => x.player_id === r.player_id); if (!old) continue;
+      for (const k of ["stand_reach", "approach_touch", "standing_touch", "broad_jump", "dash_10y", "notes"]) if (r[k] == null && old[k] != null) r[k] = old[k];
+      const reach = r.stand_reach ?? reachOf.get(String(r.player_id));
+      r.vertical = r.approach_touch != null && reach != null ? +(r.approach_touch - reach).toFixed(1) : null;
+    }
     const { error } = await sb.from("player_stat_tests").upsert(rows, { onConflict: "player_id,test_date" });
     if (error) return res.status(500).json({ error: error.message });
     return res.status(200).json({ ok: true, saved: rows.length, date });
   }
 
-  // The sheet.
-  const date = /^\d{4}-\d{2}-\d{2}$/.test(url.searchParams.get("date") || "") ? url.searchParams.get("date") : centralToday();
+  // The sheet: a roster with every player's latest numbers and the change
+  // from the result before; tap a player for their history and to add a new
+  // test, with each number compared to last time as it's typed. The page's
+  // script is public/stats-sheet.js; the data rides along as JSON.
   const { data: done } = await sb.from("player_stat_tests").select("*").in("player_id", roster.map(p => p.id).concat([0])).order("test_date");
-  const latest = new Map(); const today = new Map();
-  for (const d of done || []) { latest.set(d.player_id, d); if (d.test_date === date) today.set(d.player_id, d); }
-  const fmt = (n) => n == null ? "" : String(+(+n).toFixed(1));
-  const card = (p) => {
-    const t = today.get(p.id) || {}, last = latest.get(p.id) || {};
-    const prev = (k, base) => { const v = last[k] ?? base; return v == null ? "" : fmt(v); };
-    const field = (k, label, base, unit) => `<label><span>${label}</span><input inputmode="decimal" name="${k}" value="${esc(fmt(t[k]))}" placeholder="${esc(prev(k, base))}" autocomplete="off"><em>${unit}</em></label>`;
-    return `<div class="p" data-id="${p.id}">
-      <div class="n">${p.jersey_number ? `<b>#${esc(p.jersey_number)}</b> ` : ""}${esc((p.first_name || "") + " " + (p.last_name || ""))}<span class="v">Vertical: <b>—</b></span></div>
-      <div class="g">
-        ${field("stand_reach", "Stand &amp; reach", p.stand_reach, "in")}
-        ${field("approach_touch", "Jump approach", p.approach_touch, "in")}
-        ${field("standing_touch", "Standing jump", p.jump_touch, "in")}
-        ${field("broad_jump", "Broad jump", null, "in")}
-        ${field("dash_10y", "10 yd dash", p.sprint_10y, "sec")}
-      </div>
-    </div>`;
-  };
+  const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
+  const data = roster.map(p => ({
+    id: p.id, name: ((p.first_name || "") + " " + (p.last_name || "")).trim(), num: p.jersey_number || "",
+    hist: [{ date: "", stand_reach: num(p.stand_reach), approach_touch: num(p.approach_touch), standing_touch: num(p.jump_touch), broad_jump: null, dash_10y: num(p.sprint_10y) },
+      ...(done || []).filter(d => d.player_id === p.id).map(d => ({ date: d.test_date, by: d.recorded_by || "", stand_reach: num(d.stand_reach), approach_touch: num(d.approach_touch), standing_touch: num(d.standing_touch), broad_jump: num(d.broad_jump), dash_10y: num(d.dash_10y) }))],
+  }));
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.setHeader("X-Robots-Tag", "noindex, nofollow");
-  return res.status(200).send(page(team + " testing", `
-    <h1>${esc(team)} — testing</h1>
-    <div class="top">
-      <label>Test date <input type="date" id="date" value="${date}"></label>
-      <label>Tested by <input id="by" placeholder="Your name" value=""></label>
-    </div>
-    <p class="hint">Heights in inches — or type feet like <b>8'4</b>. Grey numbers are the player's last result. Vertical fills in (jump approach − stand &amp; reach). Leave anything you didn't test blank. You can come back and save again; the same date updates.</p>
-    ${roster.length ? roster.map(card).join("") : "<p>No players on this team yet.</p>"}
-    <div class="bar"><span id="msg"></span><button id="save">Save</button></div>
-    <script>
-      const by = document.getElementById("by"); try { by.value = localStorage.getItem("statsBy") || ""; } catch {}
-      document.getElementById("date").addEventListener("change", e => { location.search = "?t=" + encodeURIComponent(new URLSearchParams(location.search).get("t")) + "&date=" + e.target.value; });
-      const inch = (v) => { v = String(v || "").trim(); if (!v) return null; let m = /^(\\d+)\\s*(?:'|ft|feet|-)\\s*(\\d+(?:\\.\\d+)?)?\\s*(?:"|in)?$/i.exec(v); if (m) return +m[1]*12 + (m[2] ? +m[2] : 0); m = /^(\\d+(?:\\.\\d+)?)\\s*(?:"|in)?$/i.exec(v); return m ? +m[1] : NaN; };
-      const val = (card, k) => { const i = card.querySelector('[name="' + k + '"]'); return inch(i.value || i.placeholder); };
-      const recalc = (card) => { const a = val(card, "approach_touch"), r = val(card, "stand_reach"); card.querySelector(".v b").textContent = (a != null && r != null && !isNaN(a) && !isNaN(r)) ? (Math.round((a - r) * 10) / 10) + '"' : "—"; };
-      document.querySelectorAll(".p").forEach(c => { recalc(c); c.addEventListener("input", () => { recalc(c); c.classList.remove("bad"); }); });
-      document.getElementById("save").addEventListener("click", async () => {
-        const btn = document.getElementById("save"), msg = document.getElementById("msg");
-        try { localStorage.setItem("statsBy", by.value); } catch {}
-        const rows = [...document.querySelectorAll(".p")].map(c => { const o = { player_id: c.dataset.id }; c.querySelectorAll("input").forEach(i => o[i.name] = i.value); return o; });
-        btn.disabled = true; msg.textContent = "Saving…";
-        try {
-          const r = await fetch(location.href, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ date: document.getElementById("date").value, by: by.value, rows }) });
-          const d = await r.json();
-          if (!r.ok) { (d.bad || []).forEach(id => document.querySelector('.p[data-id="' + id + '"]')?.classList.add("bad")); throw new Error(d.error || "Couldn't save"); }
-          msg.textContent = "Saved " + d.saved + " player" + (d.saved === 1 ? "" : "s") + " ✓";
-        } catch (e) { msg.textContent = e.message; } finally { btn.disabled = false; }
-      });
-    </script>`));
+  const json = JSON.stringify({ team, today: centralToday(), players: data }).replace(/</g, "\\u003c");
+  return res.status(200).send(page(team + " testing", '<div id="app"></div><script type="application/json" id="data">' + json + '</script><script src="/stats-sheet.js?v=2"></script>'));
 }
 
 function page(title, inner) {
@@ -162,6 +134,15 @@ function page(title, inner) {
   .g input::placeholder{color:#555} .g em{position:absolute;right:9px;bottom:11px;font-style:normal;font-size:11px;color:#666}
   .bar{position:fixed;left:0;right:0;bottom:0;background:#111;border-top:1px solid #2a2a2a;padding:12px 14px;display:flex;gap:10px;align-items:center;justify-content:flex-end}
   #msg{font-size:13px;color:#aaa;flex:1} button{background:#22c55e;color:#04240f;border:none;border-radius:10px;font-size:16px;font-weight:800;padding:12px 26px}
-  p{color:#bbb}
+  p{color:#bbb} h2{font-size:16px;margin:18px 0 8px}
+  .tw{overflow-x:auto;border:1px solid #2a2a2a;border-radius:12px;background:#141414}
+  table.list{border-collapse:collapse;width:100%;min-width:760px} table.list th{text-align:left;font-size:10px;text-transform:uppercase;color:#888;padding:8px;white-space:nowrap}
+  table.list td{border-top:1px solid #2a2a2a;padding:8px;font-size:14px;white-space:nowrap;vertical-align:top} table.list tbody tr[data-id]{cursor:pointer} table.list tbody tr[data-id]:active{background:#1d1d1d}
+  td.nm{font-weight:800;position:sticky;left:0;background:#141414;z-index:1} .no{color:#e91e8c} .when{font-size:11px;color:#777;font-weight:400;margin-top:2px}
+  .d{display:block;font-size:11px;font-weight:800;margin-top:2px} .d.up{color:#22c55e} .d.down{color:#ef4444} .d.same{color:#777}
+  .cmp .d,.since .d{display:inline;margin:0} .cmp{font-size:11px;color:#888;margin-top:3px;min-height:14px} .since{color:#777}
+  .add,.back{background:transparent;border:1px solid #e91e8c;color:#e91e8c;border-radius:8px;padding:6px 10px;font-weight:800;font-size:13px;font-family:inherit}
+  .back{margin-bottom:10px} .auto{background:#141414;border:1px solid #333;border-radius:8px;font-size:17px;font-weight:800;color:#22c55e;padding:9px 10px}
+  table.hist{min-width:680px} td.dt{font-weight:700}
 </style></head><body>${inner}</body></html>`;
 }
