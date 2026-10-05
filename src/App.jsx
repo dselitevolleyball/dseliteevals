@@ -20365,7 +20365,7 @@ export default function App() {
             const friS = fri.toISOString().slice(0, 10), sunS = sun.toISOString().slice(0, 10);
             const practicing = sunByPhase[phaseForDate(sat)] || new Set();
             const competing = new Set(), away = new Set();
-            for (const a of tournamentAssignments) { const tn = tnById.get(a.tournament_id); if (!tn || tnIsDropped(a)) continue; if (tn.start_date <= sunS && tn.end_date >= friS) { if (tn.end_date > tn.start_date || a.status === "locked") competing.add(a.team_id); if (tn.stay_over) effReal(a).forEach(c => away.add(c)); } }
+            for (const a of tournamentAssignments) { const tn = tnById.get(a.tournament_id); if (!tn || tnIsDropped(a)) continue; if (tn.start_date <= sunS && tn.end_date >= friS) { if (tn.end_date > tn.start_date || a.status === "locked") competing.add(a.team_id); if (tn.stay_over && (tn.end_date || tn.start_date) >= sunS) effReal(a).forEach(c => away.add(c)); } } // only a tournament still running on Sunday keeps its coaches from Sunday practice (12 Ruby, 10 Apr 2027: a Saturday-only event was flagging both coaches)
             for (const teamName of practicing) {
               if (competing.has(teamName)) continue;
               const tm = teamById.get(teamName); if (!tm || tm.active === false) continue;
