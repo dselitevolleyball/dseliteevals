@@ -1670,6 +1670,8 @@ export default function App() {
   const [practiceCoverage, setPracticeCoverage]       = useState([]); // per-date coach absences + subs (Daily view)
   const [practiceCancellations, setPracticeCancellations] = useState([]); // dates with practice cancelled (holidays)
   const [slotMoves, setSlotMoves]                     = useState([]); // per-date team → block moves (Sunday 4-court planner)
+  const [boardDrag, setBoardDrag]                     = useState(null); // Daily board: team card being dragged to another block
+  const [boardDrop, setBoardDrop]                     = useState(null); // …and the block it's over
   // Incident log. `incidentDraft` non-null means the report dialog is open;
   // it carries whatever we could prefill from where the coach opened it.
   const [schoolReports, setSchoolReports]             = useState([]);
@@ -19286,8 +19288,35 @@ export default function App() {
       // A team can be moved to a different block for THIS date (Sunday 4-court
       // planner). moveFor returns the override slot, or null.
       const moveFor = (team) => { const m = slotMoves.find(x => x.practice_date === dailyDate && x.team_name === team); return m ? m.slot : null; };
-      const teamsFor = (label) => dayAssignments.filter(a => a.day === weekday && (moveFor(a.team_name) || a.slot) === label && !noPracticeTeams.has(a.team_name))
-        .slice().sort((a,b) => ((a.court ?? 99) - (b.court ?? 99)) || a.team_name.localeCompare(b.team_name));
+      // Practice labels → hours ("7-9pm" → [19, 21]); every practice is noon or later.
+      const hrsOf = (lbl) => { const m = /^(\d{1,2})-(\d{1,2})/.exec(lbl || ""); if (!m) return null; const h = (n) => (n === 12 ? 12 : n + 12); return [h(+m[1]), h(+m[2])]; };
+      // A team moved for this date shows in every block its new time covers
+      // (a 2-hour team moved on Fall's hourly board fills both hours), once.
+      const teamsFor = (label) => { const L = hrsOf(label), seen = new Set(); return dayAssignments.filter(a => {
+          if (a.day !== weekday || noPracticeTeams.has(a.team_name)) return false;
+          const mv = moveFor(a.team_name), M = mv ? hrsOf(mv) : null;
+          const hit = mv ? (mv === label || (M && L && M[0] < L[1] && L[0] < M[1])) : a.slot === label;
+          if (!hit || seen.has(a.team_name)) return false; seen.add(a.team_name); return true;
+        }).slice().sort((a,b) => ((a.court ?? 99) - (b.court ?? 99)) || a.team_name.localeCompare(b.team_name)); };
+      // Drag a team card to another block: moves that team for THIS date only
+      // (practice_slot_moves, same as the court planner), keeping its length.
+      // Dropping it back on its usual time clears the move.
+      const dropTeam = async (team, label, capacity) => {
+        const rows = dayAssignments.filter(a => a.day === weekday && a.team_name === team).map(a => hrsOf(a.slot)).filter(Boolean);
+        const T = hrsOf(label); if (!rows.length || !T) return;
+        const s0 = Math.min(...rows.map(r => r[0])), e0 = Math.max(...rows.map(r => r[1])), dur = e0 - s0;
+        const ns = T[0], ne = ns + dur, h12 = (h) => (h % 12 === 0 ? 12 : h % 12);
+        const cur = moveFor(team), C0 = cur ? hrsOf(cur) : [s0, e0];
+        if (C0 && C0[0] === ns) return;
+        const back = ns === s0;
+        const newLabel = dur === T[1] - T[0] ? label : h12(ns) + "-" + h12(ne) + "pm";
+        const full = teamsFor(label).filter(x => x.team_name !== team).length >= (capacity || 99);
+        const nice = h12(ns) + "–" + h12(ne) + "pm";
+        if (!window.confirm((back ? "Put " + team + " back at its usual time (" + nice + ")" : "Move " + team + " to " + nice) + " on " + prettyDate + " only?"
+          + (full && !back ? "\n\nHeads up: that block is already full (" + capacity + " courts)." : "")
+          + "\n\nCoaches see the new time on the boards, Day Schedule, clock-in and their weekly text. Families aren't told automatically.")) return;
+        await setSlotMove(dailyDate, team, back ? null : newLabel, dayPhase);
+      };
       const nrmName = s => (s || "").trim().toLowerCase();
       // A coach who called out (approved request) or is already marked out this
       // date can't be a floater today — drop them from the floater pool.
@@ -19781,7 +19810,11 @@ export default function App() {
                 const coverageFree = coverageSubsFree(s.label);
                 const beforeAfter = beforeAfterFor(s.label);
                 return (
-                  <div key={s.label} style={{flex:"0 0 280px",width:280,background:C.card,border:"1px solid "+C.border,borderRadius:12,overflow:"hidden"}}>
+                  <div key={s.label}
+                    onDragOver={e => { if (boardDrag) { e.preventDefault(); if (boardDrop !== s.label) setBoardDrop(s.label); } }}
+                    onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setBoardDrop(d => d === s.label ? null : d); }}
+                    onDrop={e => { e.preventDefault(); const tm = boardDrag; setBoardDrag(null); setBoardDrop(null); if (tm) dropTeam(tm, s.label, s.capacity); }}
+                    style={{flex:"0 0 280px",width:280,background:boardDrag && boardDrop===s.label ? "rgba(6,182,212,0.10)" : C.card,border:"1px solid "+(boardDrag && boardDrop===s.label ? "#06b6d4" : C.border),borderRadius:12,overflow:"hidden"}}>
                     <div style={{padding:"8px 12px",borderBottom:"1px solid "+C.border,background:C.bg}}>
                       <div style={{fontSize:13,fontWeight:800,color:C.text}}>{weekday} {s.label} <span style={{fontSize:10,color:C.mut,fontWeight:600}}>· {teams.length}</span></div>
                       <div style={{fontSize:10,color:floaters.length?"#06b6d4":C.mut,fontWeight:700,marginTop:2}}>
@@ -19805,7 +19838,11 @@ export default function App() {
                           const otherTeams = teamsFor(s.label).map(x=>x.team_name).filter(tn => tn !== a.team_name);
                           const tCancelled = teamCancelled(dailyDate, a.team_name);
                           return (
-                            <div key={a.team_name} style={{padding:"8px 12px",borderBottom:"1px solid "+C.border,background:tCancelled?"rgba(239,68,68,0.06)":"transparent"}}>
+                            <div key={a.team_name} draggable
+                              onDragStart={e => { if (["SELECT","INPUT","BUTTON","OPTION"].includes(e.target.tagName)) { e.preventDefault(); return; } setBoardDrag(a.team_name); e.dataTransfer.effectAllowed = "move"; }}
+                              onDragEnd={() => { setBoardDrag(null); setBoardDrop(null); }}
+                              title="Drag to another block to move this practice for this day only"
+                              style={{padding:"8px 12px",borderBottom:"1px solid "+C.border,background:tCancelled?"rgba(239,68,68,0.06)":"transparent",cursor:"grab",opacity:boardDrag===a.team_name?0.45:1}}>
                               <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:5}}>
                                 <select value={a.court ?? ""} onChange={e=>setTeamCourt(a.team_name, weekday, s.label, dayPhase, e.target.value)}
                                   title="Court" style={{...inpStyle,padding:"2px 4px",fontSize:12,fontWeight:800,color:a.court?C.gold:C.mut,width:46}}>
