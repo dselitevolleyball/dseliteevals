@@ -96,6 +96,20 @@ const tnIsPlaceholder = (s) => { const v = String(s || "").trim().toLowerCase();
 const shortCity = (loc) => { const s = String(loc||"").split("/")[0].trim(); return s.replace(/,\s*[A-Z]{2}\b.*$/,"").trim() || s; };
 // A coach name that isn't a real person yet (TBD, a hire placeholder, or the
 // tournament floater) — excluded from availability math.
+// Every way a coach's name can be written on a team, float or sub entry, from
+// her coach_roster row: first + last, first name alone, first + last initial,
+// and first + each later part of her legal name. A coach who changes her last
+// name (Karissa Lee → Hartzell, Sep 2026) still matches the "Karissa Lee" her
+// team, floats and subs were entered under, so her schedule doesn't go blank.
+const rosterNameVariants = (r) => {
+  const n = (v) => String(v || "").trim().toLowerCase().replace(/\s+/g, " ");
+  if (!r) return [];
+  const f = n(r.first_name), l = n(r.last_name), out = new Set();
+  if (f) { out.add((f + " " + l).trim()); out.add(f); if (l) out.add(f + " " + l[0] + "."); }
+  const parts = n(r.legal_name).split(" ").filter(Boolean);
+  if (parts.length) { out.add(parts.join(" ")); for (const p of parts.slice(1)) { out.add(parts[0] + " " + p); if (f && f !== parts[0]) out.add(f + " " + p); } }
+  return [...out].filter(Boolean);
+};
 const isPlaceholderCoach = (c) => { const v = String(c || "").trim(); return !v || tnIsPlaceholder(v) || /new coach|floater coach|assistant coach$/i.test(v); };
 // Generic "coverage bodies" that can be assigned to cover a practice (e.g. when a
 // team's coaches are all traveling). They're placeholders — excluded from the
@@ -4240,6 +4254,7 @@ export default function App() {
     const myRoster = coachRoster.find(r => coach?.email && norm(r.email) === norm(coach.email));
     const cand = new Set();
     if (coach?.display_name) cand.add(norm(coach.display_name));
+    rosterNameVariants(myRoster).forEach(v => cand.add(v));
     if (myRoster) {
       const f = norm(myRoster.first_name), l = norm(myRoster.last_name);
       if (f) { cand.add((f + " " + l).trim()); cand.add(f); if (l) cand.add((f + " " + l[0] + ".").trim()); }
@@ -9284,6 +9299,7 @@ export default function App() {
     const myRoster = coachRoster.find(r => coach?.email && norm(r.email) === norm(coach.email));
     const cand = new Set();
     if (coach?.display_name) cand.add(norm(coach.display_name));
+    rosterNameVariants(myRoster).forEach(v => cand.add(v));
     if (myRoster) {
       const f = norm(myRoster.first_name), l = norm(myRoster.last_name);
       if (f) { cand.add((f + " " + l).trim()); cand.add(f); if (l) cand.add((f + " " + l[0] + ".").trim()); }
@@ -9423,6 +9439,7 @@ export default function App() {
           const cand = new Set(); if (coach?.display_name) cand.add(nrm(coach.display_name));
           const mr = coachRoster.find(r => coach?.email && nrm(r.email)===nrm(coach.email));
           if (mr) cand.add(nrm(((mr.first_name||"")+" "+(mr.last_name||"")).trim()));
+          rosterNameVariants(mr).forEach(v => cand.add(v));
           const todayISO = localDateISO();
           const mine = [];
           (clinics||[]).forEach(c => (Array.isArray(c.sessions)?c.sessions:[]).forEach(s => { if (s.coach_name && cand.has(nrm(s.coach_name)) && s.date >= todayISO) mine.push({ c, s }); }));
@@ -22648,6 +22665,7 @@ export default function App() {
     if (coach?.display_name) cand.add(norm(coach.display_name));
     const myR = coachRoster.find(r => coach?.email && norm(r.email)===norm(coach.email));
     if (myR) { const f=norm(myR.first_name), l=norm(myR.last_name); if(f){ cand.add((f+" "+l).trim()); cand.add(f); if(l) cand.add((f+" "+l[0]+".").trim()); } }
+    rosterNameVariants(myR).forEach(v => cand.add(v));
     const isMe = nm => !!nm && cand.has(norm(nm));
     // Am I marked out for a slot on a date? Two sources: processed coverage
     // rows (practice_coverage.coach_out) and my own time-off requests (any
@@ -25329,6 +25347,7 @@ export default function App() {
     const cand = new Set(); if (coach?.display_name) cand.add(norm(coach.display_name));
     const myR = coachRoster.find(r => coach?.email && norm(r.email)===norm(coach.email));
     if (myR) { const f=norm(myR.first_name), l=norm(myR.last_name); if(f){ cand.add((f+" "+l).trim()); } }
+    rosterNameVariants(myR).forEach(v => cand.add(v));
     const isMine = c => c.coach_name && cand.has(norm(c.coach_name));
     const rid = () => "b"+Math.random().toString(36).slice(2,8);
     const coachOptions = coachRoster.slice().sort((a,b)=>(a.first_name||"").localeCompare(b.first_name||"")).map(r => ((r.first_name||"")+" "+(r.last_name||"")).trim()).filter(Boolean);
