@@ -29288,11 +29288,11 @@ export default function App() {
               </span>
               <span style={{fontFamily:"ui-monospace,monospace",fontSize:18,fontWeight:800,color:C.text}}>{roomPlan.total}</span>
               <span style={{fontSize:11,color:C.mut}}>
-                {roomPlan.playerRooms} player{roomPlan.playerRooms===1?"":"s"} · {roomPlan.coachRooms} coach{roomPlan.coachRooms===1?"":"es"}
+                {roomPlan.playerRooms} player room{roomPlan.playerRooms===1?"":"s"} · {roomPlan.coachRooms} coach room{roomPlan.coachRooms===1?"":"s"}
               </span>
             </div>
             <div style={{fontSize:11,color:C.mut,lineHeight:1.6}}>
-              <b style={{color:C.text}}>{roomPlan.breakdown.players.count}</b> players attending, one room per family.
+              <b style={{color:C.text}}>{roomPlan.breakdown.players.count}</b> players attending, one room per family{roomPlan.breakdown.ownRoom.ownKids > 0 && <> ({roomPlan.breakdown.ownRoom.ownKids} of them stay in a coach parent's room)</>}.
               {roomPlan.breakdown.women.rooms > 0 && <> · <b style={{color:C.text}}>{roomPlan.breakdown.women.rooms}</b> for {roomPlan.breakdown.women.names.length} women</>}
               {roomPlan.breakdown.men.rooms > 0 && <> · <b style={{color:C.text}}>{roomPlan.breakdown.men.rooms}</b> for {roomPlan.breakdown.men.names.length} men</>}
               {roomPlan.breakdown.ownRoom.rooms > 0 && <> · <b style={{color:C.text}}>{roomPlan.breakdown.ownRoom.rooms}</b> own room ({roomPlan.breakdown.ownRoom.names.join(", ")} — own player here)</>}
@@ -29328,7 +29328,7 @@ export default function App() {
                   )}
                 </div>
                 <table style={{width:"100%",borderCollapse:"separate",borderSpacing:0,fontSize:11}}>
-                  <thead><tr>{["Team","Rooms","Players","Coaches","Who"].map(h => (
+                  <thead><tr>{["Team","Rooms","Players","Player rooms","Coach rooms","Who"].map(h => (
                     <th key={h} style={{padding:"3px 7px",textAlign:h==="Team"||h==="Who"?"left":"right",fontSize:9,
                       fontWeight:700,textTransform:"uppercase",color:C.mut,borderBottom:"1px solid "+C.border,
                       whiteSpace:"nowrap"}}>{h}</th>))}</tr></thead>
@@ -29342,6 +29342,7 @@ export default function App() {
                           <td style={{padding:"4px 7px",borderBottom:"1px solid "+C.border,fontWeight:700,
                             whiteSpace:"nowrap",color:g.team===UNASSIGNED?C.mut:C.text}}>{g.team}</td>
                           <td style={{...num,color:C.text,fontWeight:800}}>{g.total}</td>
+                          <td style={num}>{g.breakdown.players.count}</td>
                           <td style={num}>{g.playerRooms}</td>
                           <td style={num}>{g.coachRooms}</td>
                           <td style={{padding:"4px 7px",borderBottom:"1px solid "+C.border}}>
