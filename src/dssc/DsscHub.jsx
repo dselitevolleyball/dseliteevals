@@ -41,6 +41,15 @@ async function sendClassMessage(c, s, body, mediaIds = [], channels = ["email", 
   if (!r.ok) throw new Error(d.error || ("HTTP " + r.status));
   return d;
 }
+// Claude drafts the parent note from the class's practice plan; with a
+// previous draft + feedback it rewrites that draft instead. Nothing is sent.
+async function draftParentNote(c, s, previous = "", feedback = "") {
+  const { data: { session } } = await supabase.auth.getSession();
+  const r = await fetch("/api/dssc-class-message", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + (session?.access_token || "") }, body: JSON.stringify({ action: "draft", clinic_id: c.id, session_id: String(s.id), previous, feedback }) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error || ("HTTP " + r.status));
+  return d.draft || "";
+}
 
 // ── Small brand primitives ──────────────────────────────────────────────────
 export function Btn({ kind = "ghost", small, style, children, ...rest }) {
@@ -429,12 +438,24 @@ function PlanTab({ c, s, prev, canEdit, isDirector, coachName, saveClinic, saveS
   const [showProgram, setShowProgram] = useState(isDirector);
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(null);
+  // Claude's draft of the note: { text, feedback, busy, error }. Lives here
+  // until the coach clicks "Use this note", which writes it into the note.
+  const [draft, setDraft] = useState(null);
+  const runDraft = async (revise) => {
+    const prevText = revise ? (draft?.text || "") : "", fb = revise ? (draft?.feedback || "").trim() : "";
+    if (revise && !fb) return;
+    setDraft(d => ({ text: d?.text || "", feedback: d?.feedback || "", busy: true, error: null }));
+    try {
+      const text = await draftParentNote(c, s, prevText, fb);
+      setDraft({ text, feedback: "", busy: false, error: null });
+    } catch (e) { setDraft(d => ({ ...(d || {}), busy: false, error: e.message })); }
+  };
   const total = blocks.reduce((n, b) => n + (Number(b.minutes) || 0), 0);
   const template = Array.isArray(c.plan?.blocks) ? c.plan.blocks.filter(b => String(b.name || "").trim()) : [];
   // Say exactly what goes out: email, text, or both, and to how many.
   const [noteHow, setNoteHow] = useState("both");   // both | email | sms
-  const noteEmails = new Set(roster.map(r => nrm(r.parent_email)).filter(e => /^[^s@]+@[^s@]+.[^s@]+$/.test(e))).size;
-  const notePhones = new Set(roster.map(r => String(r.parent_phone || "").replace(/D/g, "").slice(-10)).filter(x => x.length === 10)).size;
+  const noteEmails = new Set(roster.map(r => nrm(r.parent_email)).filter(e => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e))).size;
+  const notePhones = new Set(roster.map(r => String(r.parent_phone || "").replace(/\D/g, "").slice(-10)).filter(x => x.length === 10)).size;
   const noteWhat = noteHow === "email" ? `an email to ${noteEmails} famil${noteEmails === 1 ? "y" : "ies"}`
     : noteHow === "sms" ? `a text message to ${notePhones} famil${notePhones === 1 ? "y" : "ies"}`
     : `an email to ${noteEmails} famil${noteEmails === 1 ? "y" : "ies"} AND a text message to ${notePhones}`;
@@ -471,6 +492,37 @@ Each family gets their own copy; replies to a text come back to DSSC Texts.`)) r
         </div>
       )}
       <Field value={s.focus || ""} onSave={v => saveSession(c, s.id, { focus: v })} multiline minRows={3} placeholder={"What we're working on today, and anything to bring or know…"} readOnly={!canEdit} />
+      {canEdit && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+          <Btn small disabled={!hasClassPlan(s) || draft?.busy} onClick={() => runDraft(false)}
+            title={hasClassPlan(s) ? "Claude turns today's practice plan into a short note for parents. You review it before anything is sent." : "Add the practice plan below first"}>
+            {draft?.busy && !draft?.text ? "Drafting…" : draft?.text ? "✦ Start over from plan" : "✦ Draft from plan with Claude"}
+          </Btn>
+          {!hasClassPlan(s) && <span style={{ fontSize: 12, color: DS.mut }}>Add a practice plan to draft from it.</span>}
+        </div>
+      )}
+      {canEdit && draft && (draft.text || draft.error) && (
+        <div style={{ marginTop: 10, padding: 12, borderRadius: 10, border: "1px dashed " + DS.lime, background: DS.limeSoft }}>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: DS.mut, marginBottom: 6 }}>Claude's draft — edit freely, nothing is sent yet</div>
+          {draft.text && <Grow value={draft.text} onChange={e => setDraft(d => ({ ...d, text: e.target.value }))} minRows={4} style={{ fontSize: 14, lineHeight: 1.5 }} />}
+          {draft.error && <div style={{ fontSize: 13, color: DS.orange, fontWeight: 700, marginTop: 6 }}>{draft.error}</div>}
+          {draft.text && (
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-start", marginTop: 8 }}>
+              <div style={{ flex: "1 1 260px" }}>
+                <Grow value={draft.feedback || ""} onChange={e => setDraft(d => ({ ...d, feedback: e.target.value }))} minRows={1}
+                  onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) runDraft(true); }}
+                  placeholder={"Feedback for Claude — e.g. \"shorter\", \"mention the kill-streak game\", \"remind them to bring knee pads\""} style={{ fontSize: 13 }} />
+              </div>
+              <Btn small disabled={draft.busy || !(draft.feedback || "").trim()} onClick={() => runDraft(true)}>{draft.busy ? "Revising…" : "↻ Revise"}</Btn>
+            </div>
+          )}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+            {draft.text && <Btn small kind="primary" disabled={draft.busy} onClick={() => { saveSession(c, s.id, { focus: draft.text.trim() }); setDraft(null); }}>Use this note</Btn>}
+            <Btn small kind="quiet" onClick={() => setDraft(null)}>Discard</Btn>
+            {draft.text && <span style={{ fontSize: 12, color: DS.mut, alignSelf: "center" }}>"Use this note" puts it in the note above — then send with the button at the top.</span>}
+          </div>
+        </div>
+      )}
       {sent?.error && <div style={{ fontSize: 13, color: DS.orange, fontWeight: 700, marginTop: 6 }}>{sent.error}</div>}
       {sent && !sent.error && <div style={{ fontSize: 13, color: DS.lime, fontWeight: 700, marginTop: 6 }}>Sent · {sent.emails_sent} email{sent.emails_sent === 1 ? "" : "s"}{sent.texts_sent ? ` · ${sent.texts_sent} texts` : ""}{sent.note ? <span style={{ color: DS.mut, fontWeight: 500 }}> · {sent.note}</span> : null}</div>}
     </Card>

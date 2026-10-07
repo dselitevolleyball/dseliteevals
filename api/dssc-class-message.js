@@ -2,6 +2,9 @@
 // a DSSC clinic or pod — with optional pictures/video from that class.
 //
 // POST { clinic_id, session_id, body, media_ids?: [id], channels?: ["email","sms"] }
+// POST { clinic_id, session_id, action: "draft", feedback?, previous? }
+//   → { draft } — Claude writes the parent note from the class's practice plan
+//   (and rewrites `previous` per the coach's `feedback`). Nothing is sent.
 //   channels defaults to both; "email" only or "sms" only when the coach picks.
 //   Authorization: Bearer <Supabase session token>
 //
@@ -27,6 +30,18 @@
 import { createClient } from "@supabase/supabase-js";
 import { appOrigin } from "../shared/app-origin.js";
 import { sendOneSms, twilioReady } from "./_lib/sms.js";
+import Anthropic from "@anthropic-ai/sdk";
+
+const DRAFT_SYSTEM = `You write the short "note to parents" a Dripping Springs Sports Club (DSSC) volleyball coach sends the families of one class (a clinic or pod session) about today's practice. Parents are not coaches: turn the coach's practice plan into plain language about what their daughter will work on and why it helps her.
+
+Rules:
+- 60-140 words. Warm, upbeat, specific. Sounds like a real coach, not marketing.
+- Lead with the theme of the session in one sentence, then 2-4 concrete things the players will do or learn, in everyday words (explain or skip jargon like "seam", "pin", "cover", "OH/RS/MB").
+- No minute-by-minute schedule, no drill names in quotes, no coaching cues verbatim, no internal coaching notes (things the coach should "watch" or "call") - those are for the coach.
+- If the plan has a game or competition, you may mention it as something fun.
+- Only use what is in the plan and class details. Never invent times, locations, things to bring, or results.
+- Plain text only: no markdown, no bullets, no emoji, no subject line, no greeting name, no sign-off name. It goes out by email and text exactly as written, so keep it to one or two short paragraphs.
+- When given a previous draft and the coach's feedback, rewrite the draft to follow the feedback exactly and keep everything else that worked.`;
 
 const OWNER_EMAILS = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"];
 const DIRECTOR_EMAILS = ["hunterhaleysc10@gmail.com", "hunter@drippingsportsclub.com"];
@@ -57,11 +72,12 @@ export default async function handler(req, res) {
   const text = String(body.body || "").trim();
   const mediaIds = (Array.isArray(body.media_ids) ? body.media_ids : []).map(Number).filter(Boolean);
   const want = new Set((Array.isArray(body.channels) && body.channels.length ? body.channels : ["email", "sms"]).map(String));
-  if (want.has("sms") && !want.has("email") && !twilioReady("dssc")) {
+  const drafting = body.action === "draft";
+  if (!drafting && want.has("sms") && !want.has("email") && !twilioReady("dssc")) {
     return res.status(400).json({ error: "Texting for the club isn't live yet — it's waiting on the club's own texting number. Send by email for now." });
   }
   if (!clinicId || !sessionId) return res.status(400).json({ error: "clinic_id and session_id are required" });
-  if (!text && !mediaIds.length) return res.status(400).json({ error: "Write a message or pick something to send." });
+  if (!drafting && !text && !mediaIds.length) return res.status(400).json({ error: "Write a message or pick something to send." });
 
   const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
 
@@ -86,6 +102,30 @@ export default async function handler(req, res) {
   const privileged = OWNER_EMAILS.includes(email) || DIRECTOR_EMAILS.includes(email) || !!(me?.is_approved && me?.is_admin);
   const onStaff = !!(me?.is_approved) && staffNames.some(n => myNames.has(n));
   if (!privileged && !onStaff) return res.status(403).json({ error: "Only the coaches on this class (or a director) can message it." });
+
+  // ── Draft the parent note from the plan (nothing is sent) ─────────────────
+  if (drafting) {
+    if (!process.env.ANTHROPIC_API_KEY) return res.status(500).json({ error: "Claude isn't configured (ANTHROPIC_API_KEY)." });
+    const blocks = (Array.isArray(session.blocks) ? session.blocks : []).filter(b => String(b?.name || "").trim() || String(b?.desc || "").trim());
+    if (!blocks.length) return res.status(400).json({ error: "This class has no practice plan yet - add the plan first." });
+    const NL = String.fromCharCode(10);
+    const planText = blocks.map(b => "## " + (b.name || "Block") + (Number(b.minutes) ? " (" + Number(b.minutes) + " min)" : "") + (b.desc ? NL + String(b.desc).slice(0, 2500) : "")).join(NL + NL).slice(0, 16000);
+    const facts = ["Program: " + (clinic.name || "DSSC class"), session.date ? "Date: " + fmtDate(session.date) : "", (session.start_time || session.end_time) ? "Time: " + [session.start_time, session.end_time].filter(Boolean).join(" - ") : "", clinic.location ? "Location: " + clinic.location : ""].filter(Boolean).join(NL);
+    const previous = String(body.previous || "").trim().slice(0, 4000), feedback = String(body.feedback || "").trim().slice(0, 2000);
+    let prompt = facts + NL + NL + "Practice plan:" + NL + planText;
+    if (previous && feedback) prompt += NL + NL + "Previous draft:" + NL + previous + NL + NL + "Coach's feedback on that draft:" + NL + feedback + NL + NL + "Rewrite the note following the feedback.";
+    else prompt += NL + NL + "Write the note to parents.";
+    try {
+      const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+      const resp = await client.messages.create({ model: "claude-sonnet-5-5", max_tokens: 1200, system: DRAFT_SYSTEM, messages: [{ role: "user", content: prompt }] });
+      const draft = (resp.content || []).filter(p => p.type === "text").map(p => p.text).join("").trim();
+      if (!draft) return res.status(502).json({ error: "Claude returned an empty draft - try again." });
+      return res.status(200).json({ draft });
+    } catch (e) {
+      console.error("parent note draft failed:", e);
+      return res.status(502).json({ error: "Couldn't draft the note: " + (e?.message || e) });
+    }
+  }
 
   // ── Who gets it ───────────────────────────────────────────────────────────
   const { data: roster, error: rErr } = await sb.from("dssc_pod_roster").select("*").eq("clinic_id", clinicId);
