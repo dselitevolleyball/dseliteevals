@@ -2086,7 +2086,7 @@ export default function App() {
   const [tnSumSort, setTnSumSort]                           = useState({ key: "age", dir: "asc" }); // Summary table sort
   const [tnSelectedTeams, setTnSelectedTeams]               = useState(new Set()); // empty = all shown
   const [tnCalFrom, setTnCalFrom]                           = useState("2026-12-01");
-  const [tnCalTo, setTnCalTo]                               = useState("2027-06-30");
+  const [tnCalTo, setTnCalTo]                               = useState("2027-07-05");
   // Month being shown in the Month View calendar; YYYY-MM-01 string.
   // Default to today's month so it lands on something relevant on open.
   const [tnMonthCursor, setTnMonthCursor]                   = useState(() => {
@@ -31207,13 +31207,21 @@ export default function App() {
       while (d <= end) {
         const sat = new Date(d);
         const satISO = sat.toISOString().slice(0,10);
-        if (SEASON_MONTHS.has(parseInt(satISO.slice(5,7)))) {
+        // Each column owns Tue → Mon around its weekend, so midweek events
+        // (AAU Nationals waves run Mon–Thu, Sun–Wed) still land in a column;
+        // a Monday-holiday event stays with the weekend before it.
+        const tue = new Date(sat); tue.setDate(tue.getDate() - 4);
+        const tueISO = tue.toISOString().slice(0,10);
+        if (SEASON_MONTHS.has(parseInt(satISO.slice(5,7))) || SEASON_MONTHS.has(parseInt(tueISO.slice(5,7)))) {
           const fri = new Date(sat); fri.setDate(fri.getDate() - 1);
           const sun = new Date(sat); sun.setDate(sun.getDate() + 1);
+          const mon = new Date(sat); mon.setDate(mon.getDate() + 2);
           weeks.push({
             fri: fri.toISOString().slice(0,10),
             sat: satISO,
             sun: sun.toISOString().slice(0,10),
+            from: tueISO,
+            to: mon.toISOString().slice(0,10),
           });
         }
         d.setDate(d.getDate() + 7);
@@ -31228,7 +31236,7 @@ export default function App() {
       const tn = tnById.get(a.tournament_id);
       if (!tn) continue;
       for (const wk of weeks) {
-        if (tn.start_date <= wk.sun && tn.end_date >= wk.fri) {
+        if (tn.start_date <= wk.to && tn.end_date >= wk.from) {
           const k = cellKey(a.team_id, wk.sat);
           if (!cellMap.has(k)) cellMap.set(k, []);
           cellMap.get(k).push({ assignment: a, tournament: tn });
@@ -31249,8 +31257,8 @@ export default function App() {
     const conflictCells = new Set();
     for (const c of tournamentConflicts) {
       for (const wk of weeks) {
-        if (c.a.tournament.start_date <= wk.sun && c.a.tournament.end_date >= wk.fri) conflictCells.add(cellKey(c.a.team_id, wk.sat));
-        if (c.b.tournament.start_date <= wk.sun && c.b.tournament.end_date >= wk.fri) conflictCells.add(cellKey(c.b.team_id, wk.sat));
+        if (c.a.tournament.start_date <= wk.to && c.a.tournament.end_date >= wk.from) conflictCells.add(cellKey(c.a.team_id, wk.sat));
+        if (c.b.tournament.start_date <= wk.to && c.b.tournament.end_date >= wk.from) conflictCells.add(cellKey(c.b.team_id, wk.sat));
       }
     }
     // Coach commitments per weekend: who is already at a tournament (via any
@@ -31265,7 +31273,7 @@ export default function App() {
       if (!tn || !tm) continue;
       const coaches = [tm.head_coach, tm.assistant_coach].filter(Boolean);
       for (const wk of weeks) {
-        if (tn.start_date <= wk.sun && tn.end_date >= wk.fri) {
+        if (tn.start_date <= wk.to && tn.end_date >= wk.from) {
           if (!coachWknd.has(wk.sat)) coachWknd.set(wk.sat, new Map());
           const m = coachWknd.get(wk.sat);
           for (const coach of coaches) {
@@ -31306,7 +31314,7 @@ export default function App() {
     };
     // Tournaments matching the Listings filter that overlap this weekend.
     const tournamentsThisWeekend = (wk) =>
-      (filteredTournaments || []).filter(t => t.start_date <= wk.sun && t.end_date >= wk.fri);
+      (filteredTournaments || []).filter(t => t.start_date <= wk.to && t.end_date >= wk.from);
 
     const abbreviate = (name, n = 22) => name.length > n ? name.slice(0, n-1) + "…" : name;
     const fmtMD = (iso) => { const d = new Date(iso + "T00:00"); return (d.getMonth()+1) + "/" + d.getDate(); };

@@ -1,7 +1,7 @@
 -- 2027 AAU Girls Junior National Championships, Orange County Convention
 -- Center, Orlando — five age waves (from the AAU wave graphic, Oct 2026).
 insert into public.tournaments (name, start_date, end_date, location, venue, age_low, age_high, gender, is_qualifier, stay_over, aau, source, format, divisions, entries, wish_list)
-select v.name, v.s::date, v.e::date, 'Orlando, FL', 'Orange County Convention Center', v.lo, v.hi, 'Female', false, true, true, 'AAU', 'Four Day Format',
+select v.name, v.s::date, v.e::date, 'Orlando, FL', 'Orange County Convention Center', v.lo, v.hi, 'Female', false, true, true, 'manual', 'Four Day Format',
        '{}'::text[], v.entries, '{}'::text[]
 from (values
   ('2027 AAU Junior Nationals - Wave 1', '2027-06-13', '2027-06-16', 10, 18, array['10 Girls','11 Open','11 Club','12 Open','12 Premier','12 Club','12 Classic','13 Open','13 Premier','13 Elite','13 Club','13 Aspire','13 Spirit','18 Club','18 Classic']),
