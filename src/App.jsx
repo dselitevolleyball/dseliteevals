@@ -31225,7 +31225,7 @@ export default function App() {
     // (waves run Sun–Wed, Thu–Sun, Mon–Thu…, USAV 16s–17s into July) get a
     // row of their own with their real dates, in place of the weekend rows
     // they'd straddle.
-    const NATIONALS_RE = /junior national|nationals|national championship/i;
+    const NATIONALS_RE = /junior national|national championship|(^|[^-\w])nationals\b/i;
     const tnById = new Map(tournaments.map(t => [t.id, t]));
     const shownIds = new Set(teamsToShow.map(t => t.id));
     const listedIds = new Set((filteredTournaments || []).map(t => t.id));
