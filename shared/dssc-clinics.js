@@ -42,6 +42,8 @@ export const onStaff = (s, matches) => sessionStaff(s).some(x => x.status !== "d
 // treated as a continuation of the previous block's notes.
 export function parsePlanPaste(text) {
   const rows = String(text || "").replace(/\r/g, "").split("\n").map(l => l.replace(/\s+$/, "")).filter(l => l.trim());
+  const clocked = parseClockHeadings(rows);
+  if (clocked) return clocked;
   const split = (l) => {
     if (l.includes("\t")) return l.split("\t").map(s => s.trim());
     if (/\s\|\s/.test(l)) return l.split(/\s\|\s/).map(s => s.trim());
@@ -96,6 +98,50 @@ export function parsePlanPaste(text) {
     // Before the first segment: a title, a theme or key words — skipped.
   }
   return blocks.map(({ at, ...b }) => b);
+}
+
+// The third way a plan arrives — a heading per block with clock offsets,
+// everything under it is that block's content (Oct 2026 pins pod):
+//   "1 · POWER — 0:00–0:15"            numbered block
+//   "NET DOWN 4–6\" — 0:15–0:17"       transition between blocks
+//   "Kneeling, 8–10 yds — 3 min"       drill line → stays in the notes
+//   "1–2<tab>Sealed, no seam<tab>…"     table row → stays in the notes
+// Only used when two or more headings are found, so the table and prose
+// formats above are untouched. A short closing title ("Watch all night")
+// after the last block becomes a 0-minute notes block.
+const CLOCK_HEAD = /^\s*(?:\d{1,2}\s*[·.):]\s*)?(.+?)\s+[—–-]\s+(\d{1,2}):(\d{2})\s*[–—-]\s*(\d{1,2}):(\d{2})\s*$/;
+const KEEP_CAPS = new Set(["MB", "OH", "RS", "OPP", "DS", "MH", "S", "L", "TV", "SR", "3V3", "2V2", "4V4", "6V6"]);
+const niceName = (t) => t === t.toUpperCase() && /[A-Z]{3}/.test(t)
+  ? t.split(/(\s+)/).map(w => KEEP_CAPS.has(w) || !/[A-Z]/.test(w) ? w : w.charAt(0) + w.slice(1).toLowerCase()).join("")
+  : t;
+function parseClockHeadings(rows) {
+  if (rows.filter(l => CLOCK_HEAD.test(l)).length < 2) return null;
+  const blocks = [];
+  const rid = () => Math.random().toString(36).slice(2, 10);
+  const titleLine = (l, cur) => {
+    const t = l.trim();
+    return cur && cur.lines >= 2 && !/\t/.test(l) && !/[\d:.!?,;]/.test(t) && t.split(/\s+/).length <= 4 && /^[A-Za-z]/.test(t);
+  };
+  let cur = null;
+  for (const line of rows) {
+    const m = CLOCK_HEAD.exec(line);
+    if (m) {
+      const a = +m[2] * 60 + +m[3], b = +m[4] * 60 + +m[5];
+      cur = { id: rid(), name: niceName(m[1].trim()), minutes: Math.max(0, b - a), desc: "", lines: 0 };
+      blocks.push(cur); continue;
+    }
+    if (!cur) continue;                                   // a title above the first block
+    if (titleLine(line, cur) && blocks.indexOf(cur) === blocks.length - 1 && cur.minutes > 0 && /watch|all night|notes|reminders|coach/i.test(line)) {
+      cur = { id: rid(), name: niceName(line.trim()), minutes: 0, desc: "", lines: 0 };
+      blocks.push(cur); continue;
+    }
+    // Tables keep their columns readable; a leading tab is an empty corner cell.
+    const t = line.replace(/^\t+/, "").split("\t").map(s => s.trim()).filter(Boolean).join("  |  ");
+    if (!t) continue;
+    cur.desc = cur.desc ? cur.desc + "\n" + t : t;
+    cur.lines++;
+  }
+  return blocks.map(({ lines, ...b }) => b);
 }
 
 // "9am" / "9:30 am" / "3pm" → hours since midnight (9, 9.5, 15); null if unreadable.

@@ -487,7 +487,7 @@ Each family gets their own copy; replies to a text come back to DSSC Texts.`)) r
             {canEdit ? <input type="number" min="0" value={b.minutes ?? ""} onChange={e => setBlock(i, { minutes: e.target.value === "" ? "" : +e.target.value })} style={{ ...inputStyle, width: 60, textAlign: "right", padding: "7px 8px" }} /> : <span style={{ fontSize: 13, color: DS.mut, width: 44, textAlign: "right", paddingTop: 6 }}>{b.minutes || 0}m</span>}
             <div style={{ flex: 1, minWidth: 0 }}>
               {canEdit ? <Field value={b.name || ""} onSave={v => setBlock(i, { name: v })} placeholder="Block" style={{ fontWeight: 700, padding: "7px 9px", marginBottom: 4 }} /> : <div style={{ fontSize: 14, fontWeight: 700 }}>{b.name}</div>}
-              {canEdit ? <Field value={b.desc || ""} onSave={v => setBlock(i, { desc: v })} multiline minRows={1} placeholder="Drills, cues, setup…" style={{ fontSize: 13, padding: "7px 9px" }} /> : (b.desc && <div style={{ fontSize: 13, color: DS.mut, lineHeight: 1.45 }}>{b.desc}</div>)}
+              {canEdit ? <Field value={b.desc || ""} onSave={v => setBlock(i, { desc: v })} multiline minRows={1} placeholder="Drills, cues, setup…" style={{ fontSize: 13, padding: "7px 9px" }} /> : (b.desc && <div style={{ fontSize: 13, color: DS.mut, lineHeight: 1.45, whiteSpace: "pre-wrap" }}>{b.desc}</div>)}
             </div>
             {canEdit && <Btn kind="quiet" small onClick={() => setBlocks(blocks.filter((_, ix) => ix !== i))} style={{ color: DS.orange }}>✕</Btn>}
           </div>

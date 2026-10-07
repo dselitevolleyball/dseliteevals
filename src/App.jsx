@@ -24297,7 +24297,7 @@ export default function App() {
         body{font-family:Arial,Helvetica,sans-serif;margin:34px;color:#111}
         h1{margin:0 0 2px;font-size:22px} .sub{color:#555;margin-bottom:14px;font-size:14px}
         table{border-collapse:collapse;width:100%} td{border-bottom:1px solid #ddd;padding:9px 6px;vertical-align:top}
-        td.m{width:70px;font-weight:700;white-space:nowrap} .d{color:#444;font-size:13px;margin-top:3px;line-height:1.4}
+        td.m{width:70px;font-weight:700;white-space:nowrap} .d{color:#444;font-size:13px;margin-top:3px;line-height:1.4;white-space:pre-wrap}
         .box{margin:10px 0;padding:9px 11px;background:#f4f4f4;border-radius:6px;font-size:13px}
         .tot{margin-top:10px;font-size:13px;color:#333;font-weight:700} .foot{margin-top:16px;color:#888;font-size:12px}
         @media print{body{margin:12mm}}</style></head><body>
@@ -24569,7 +24569,7 @@ export default function App() {
                   <button onClick={runNext} disabled={idx>=runBlocks.length-1} style={{...St.ghost,fontSize:20,padding:"10px 14px",opacity:idx>=runBlocks.length-1?0.4:1}} title="Next block">⏭</button>
                 </div>
 
-                {b.desc && <div style={{fontSize:13,color:C.text,lineHeight:1.5,background:C.card,border:"1px solid "+C.border,borderRadius:10,padding:"10px 12px",marginBottom:10}}>{b.desc}</div>}
+                {b.desc && <div style={{fontSize:13,color:C.text,lineHeight:1.5,whiteSpace:"pre-wrap",background:C.card,border:"1px solid "+C.border,borderRadius:10,padding:"10px 12px",marginBottom:10}}>{b.desc}</div>}
 
                 {/* How did it go? — saved to the block */}
                 <div style={{marginBottom:14}}>
@@ -25732,7 +25732,7 @@ export default function App() {
                   {canPlan ? <input type="number" min="0" value={b.minutes??""} onChange={e=>setBlock(i,{minutes:e.target.value===""?"":+e.target.value})} style={{...S.sel,width:56,textAlign:"right"}} /> : <span style={{fontSize:12,color:C.mut,width:56,textAlign:"right",paddingTop:6}}>{b.minutes||0}m</span>}
                   <div style={{flex:1}}>
                     {canPlan ? <input value={b.name||""} onChange={e=>setBlock(i,{name:e.target.value})} placeholder="Block" style={{...S.sel,width:"100%",fontWeight:700,marginBottom:3}} /> : <div style={{fontSize:13,fontWeight:700}}>{b.name}</div>}
-                    {canPlan ? <textarea value={b.desc||""} onChange={e=>setBlock(i,{desc:e.target.value})} placeholder="Drills / cues…" style={{...S.sel,width:"100%",minHeight:34,resize:"vertical",fontSize:12}} /> : (b.desc && <div style={{fontSize:12,color:C.mut}}>{b.desc}</div>)}
+                    {canPlan ? <textarea value={b.desc||""} onChange={e=>setBlock(i,{desc:e.target.value})} placeholder="Drills / cues…" style={{...S.sel,width:"100%",minHeight:34,resize:"vertical",fontSize:12}} /> : (b.desc && <div style={{fontSize:12,color:C.mut,whiteSpace:"pre-wrap"}}>{b.desc}</div>)}
                   </div>
                   {canPlan && <button onClick={()=>setPlan({blocks:blocks.filter((_,ix)=>ix!==i)})} style={{...S.ghost,padding:"4px 9px",color:C.red}}>✕</button>}
                 </div>
@@ -25818,7 +25818,7 @@ export default function App() {
                     <button onClick={()=>runGoTo(idx)} style={{...S.ghost,fontSize:18,padding:"10px 14px"}}>↺</button>
                     <button onClick={next} disabled={idx>=blocks.length-1} style={{...S.ghost,fontSize:20,padding:"10px 14px",opacity:idx>=blocks.length-1?0.4:1}}>⏭</button>
                   </div>
-                  {b.desc && <div style={{fontSize:13,color:C.text,lineHeight:1.5,background:C.card,border:"1px solid "+C.border,borderRadius:10,padding:"10px 12px",marginBottom:10}}>{b.desc}</div>}
+                  {b.desc && <div style={{fontSize:13,color:C.text,lineHeight:1.5,whiteSpace:"pre-wrap",background:C.card,border:"1px solid "+C.border,borderRadius:10,padding:"10px 12px",marginBottom:10}}>{b.desc}</div>}
                   <div style={{marginBottom:14}}>
                     <div style={{fontSize:10,fontWeight:800,textTransform:"uppercase",letterSpacing:0.3,color:C.mut,marginBottom:4}}>📝 How did it go?</div>
                     <AutoTextarea value={b.notes||""} onChange={e=>setBlock(idx,{notes:e.target.value})} minRows={2} placeholder="What worked, what to fix, standout kids…" style={{...S.sel,width:"100%",fontSize:14,lineHeight:1.5,boxSizing:"border-box"}} />
