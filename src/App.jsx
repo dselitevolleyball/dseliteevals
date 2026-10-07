@@ -31221,9 +31221,11 @@ export default function App() {
         d.setDate(d.getDate() + 7);
       }
     }
-    // AAU events that don't sit inside one Fri–Sun (Nationals waves run
-    // Sun–Wed, Thu–Sun, Mon–Thu…) get a row of their own with their real
-    // dates, in place of the weekend rows they'd straddle.
+    // AAU events and Junior Nationals that don't sit inside one Fri–Sun
+    // (waves run Sun–Wed, Thu–Sun, Mon–Thu…, USAV 16s–17s into July) get a
+    // row of their own with their real dates, in place of the weekend rows
+    // they'd straddle.
+    const NATIONALS_RE = /junior national|nationals|national championship/i;
     const tnById = new Map(tournaments.map(t => [t.id, t]));
     const shownIds = new Set(teamsToShow.map(t => t.id));
     const listedIds = new Set((filteredTournaments || []).map(t => t.id));
@@ -31234,7 +31236,7 @@ export default function App() {
       const sun = new Date(st); sun.setDate(sun.getDate() + (dow === 0 ? 0 : 7 - dow));
       return t.end_date <= sun.toISOString().slice(0,10);
     };
-    const ownRowTns = tournaments.filter(t => t.aau && !t.cancelled && t.start_date && t.end_date
+    const ownRowTns = tournaments.filter(t => (t.aau || NATIONALS_RE.test(t.name || "")) && !t.cancelled && t.start_date && t.end_date
       && t.end_date >= tnCalFrom && t.start_date <= tnCalTo
       && (listedIds.has(t.id) || assignedIds.has(t.id)) && !insideOneWeekend(t));
     const ownIds = new Set(ownRowTns.map(t => t.id));
