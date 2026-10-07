@@ -29509,6 +29509,19 @@ export default function App() {
                       <>
                         <span title="Added by hand — their team isn't at this tournament"
                           style={{marginLeft:6,padding:"1px 5px",borderRadius:4,fontSize:8,fontWeight:800,textTransform:"uppercase",border:"1px solid "+C.gold,color:C.gold}}>added</span>
+                        {/* A saved row outlives a staffing change: Kelli was
+                            swapped off 15 Ruby for Jaalin and Jillian moved to
+                            12 Diamond, but their March Mayhem rows kept them
+                            listed here as "added". Say where they really are. */}
+                        {(() => {
+                          const elsewhere = tournaments.filter(o => o.id !== tn.id && !o.cancelled && o.start_date <= tn.end_date && o.end_date >= tn.start_date && travelStaffFor(o.id).includes(name));
+                          return elsewhere.length > 0 && (
+                            <div style={{fontSize:9,fontWeight:800,color:C.red,whiteSpace:"normal",marginTop:2}}
+                              title="Their team assignment that weekend is another tournament — this row is probably left over from a staffing change">
+                              ⚠ Staffed at {elsewhere.map(o => o.name.trim()).join(", ")} that weekend
+                            </div>
+                          );
+                        })()}
                         <button onClick={() => { const row = rowFor(name); if (row.id && window.confirm("Remove " + name + " from this tournament's travel?")) removeTraveler(row.id); }}
                           style={{marginLeft:5,background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:11,fontWeight:800,padding:0}}>×</button>
                       </>
