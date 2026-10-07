@@ -28546,6 +28546,9 @@ export default function App() {
   // Tournament-related constants used by the cards, filters, and forms.
   // "Bid"/"Non-Bid" are the Lone Star Regionals-style divisions.
   const TN_DIVISIONS = ["Open", "USA", "American", "Liberty", "National", "Elite", "Patriot", "Freedom", "Premier", "Select", "Club", "Bid", "Non-Bid"];
+  // AAU events run their own divisions, in this order (tournaments.aau).
+  const AAU_DIVISIONS = ["Open", "Premier", "Elite", "Select", "Ascend", "Club", "Aspire", "Spirit", "Classic"];
+  const divisionsFor = (tn) => (tn && tn.aau ? AAU_DIVISIONS : TN_DIVISIONS);
   // Age rows for the per-tournament division×age grid (oldest first).
   const TN_AGES = [18, 17, 16, 15, 14, 13, 12, 11];
   // An "entry" token is "<age> <tier>", e.g. "17 American".
@@ -28866,6 +28869,7 @@ export default function App() {
       gender: t.gender || null,
       is_qualifier: !!t.is_qualifier,
       stay_over: !!t.stay_over,
+      aau: !!t.aau,
       source: t.source || "manual",
       status: t.status.trim() || null,
       notes: t.notes.trim() || null,
@@ -28883,7 +28887,7 @@ export default function App() {
     if (error) { window.alert("Save failed: " + error.message); return; }
     setAddingTournament(false);
     setEditingTournament(null);
-    setNewTournament({ name: "", start_date: "", end_date: "", location: "", venue: "", age_low: "", age_high: "", gender: "Female", is_qualifier: false, stay_over: false, source: "manual", status: "", notes: "", divisions: [], wish_list: [], entries: [] });
+    setNewTournament({ name: "", start_date: "", end_date: "", location: "", venue: "", age_low: "", age_high: "", gender: "Female", is_qualifier: false, stay_over: false, aau: false, source: "manual", status: "", notes: "", divisions: [], wish_list: [], entries: [] });
     loadTournaments();
   };
   const openEditTournament = (tn) => {
@@ -28899,6 +28903,7 @@ export default function App() {
       gender: tn.gender || "Female",
       is_qualifier: !!tn.is_qualifier,
       stay_over: !!tn.stay_over,
+      aau: !!tn.aau,
       source: tn.source || "manual",
       status: tn.status || "",
       notes: tn.notes || "",
@@ -28922,7 +28927,7 @@ export default function App() {
   };
   // Selectable age×tier grid. `entries` is the current selection; onToggle(token)
   // flips a cell. Reused by tournament cards and the add/edit modal.
-  const renderEntryGrid = (entries, onToggle) => {
+  const renderEntryGrid = (entries, onToggle, DIVS = TN_DIVISIONS) => {
     const sel = Array.isArray(entries) ? entries : [];
     const cell = (on) => ({ width: 24, height: 18, borderRadius: 4, cursor: "pointer", margin: "0 auto", border: "1px solid " + (on ? C.gold : C.border), background: on ? "rgba(233,30,140,0.30)" : "transparent" });
     return (
@@ -28931,7 +28936,7 @@ export default function App() {
           <thead>
             <tr>
               <th style={{ padding: "2px 6px" }} />
-              {TN_DIVISIONS.map(tier => (
+              {DIVS.map(tier => (
                 <th key={tier} style={{ padding: "2px 4px", color: C.mut, fontWeight: 700, fontSize: 9, whiteSpace: "nowrap", textAlign: "center" }}>{tier}</th>
               ))}
             </tr>
@@ -28940,7 +28945,7 @@ export default function App() {
             {TN_AGES.map(age => (
               <tr key={age}>
                 <td style={{ padding: "1px 6px", color: C.text, fontWeight: 700, fontSize: 10, whiteSpace: "nowrap", textAlign: "right" }}>{age}</td>
-                {TN_DIVISIONS.map(tier => {
+                {DIVS.map(tier => {
                   const token = entryToken(age, tier);
                   const on = sel.includes(token);
                   return (
@@ -30307,7 +30312,7 @@ export default function App() {
                     const anyTiers = [...new Set(entries.map(entryTier))].filter(Boolean);
                     const offered = ageTiers.length ? ageTiers
                       : anyTiers.length ? anyTiers
-                      : (Array.isArray(tn.divisions) && tn.divisions.length ? tn.divisions : TN_DIVISIONS);
+                      : (Array.isArray(tn.divisions) && tn.divisions.length ? tn.divisions : divisionsFor(tn));
                     const opts = (a.division && !offered.includes(a.division)) ? [...offered, a.division] : offered;
                     return (
                       <select value={a.division||""} onChange={e=>updateAssignmentDivision(a.id, e.target.value)}
@@ -30490,7 +30495,7 @@ export default function App() {
               style={{padding:"6px 14px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.text,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
               Bulk import
             </button>
-            <button onClick={()=>{ setEditingTournament(null); setNewTournament({ name: "", start_date: "", end_date: "", location: "", venue: "", age_low: "", age_high: "", gender: "Female", is_qualifier: false, stay_over: false, source: "manual", status: "", notes: "", divisions: [], wish_list: [], entries: [] }); setAddingTournament(true); }}
+            <button onClick={()=>{ setEditingTournament(null); setNewTournament({ name: "", start_date: "", end_date: "", location: "", venue: "", age_low: "", age_high: "", gender: "Female", is_qualifier: false, stay_over: false, aau: false, source: "manual", status: "", notes: "", divisions: [], wish_list: [], entries: [] }); setAddingTournament(true); }}
               style={{padding:"6px 14px",borderRadius:6,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
               + Add tournament
             </button>
@@ -30881,7 +30886,7 @@ export default function App() {
                       <option value="">⚠ division TBD</option>
                       {(() => { const teamAge = parseInt(String(a.team_id).replace(/[^0-9]/g,"")) || 0;
                         const tiers = [...new Set((g.tn.entries||[]).filter(tok => entryAge(tok)===teamAge).map(entryTier))].filter(Boolean);
-                        const opts = tiers.length ? tiers : TN_DIVISIONS;
+                        const opts = tiers.length ? tiers : divisionsFor(g.tn);
                         const list = a.division && !opts.includes(a.division) ? [...opts, a.division] : opts;
                         return list.map(d => <option key={d} value={d}>{d}</option>); })()}
                     </select>
@@ -31852,6 +31857,10 @@ export default function App() {
                 <label htmlFor="newt-stay" style={{fontSize:12,color:C.text,cursor:"pointer"}}>🏨 Stay-over (hotel)</label>
                 {newTournament.stay_over && newTournament.start_date && newTournament.end_date && (() => { const n = tnDayCount(newTournament); return <span style={{fontSize:11,color:"#22d3ee",fontWeight:700}}>{n} night{n===1?"":"s"}</span>; })()}
               </span>
+              <span style={{display:"flex",alignItems:"center",gap:6}} title="AAU events use AAU divisions: Open, Premier, Elite, Select, Ascend, Club, Aspire, Spirit, Classic">
+                <input type="checkbox" id="newt-aau" checked={!!newTournament.aau} onChange={e=>setF("aau", e.target.checked)} />
+                <label htmlFor="newt-aau" style={{fontSize:12,color:C.text,cursor:"pointer"}}>AAU event (AAU divisions)</label>
+              </span>
             </div>
             <div style={{gridColumn:"1 / -1"}}>
               <span style={lbl}>Divisions &amp; Ages (tap cells, e.g. 17 × American)</span>
@@ -31865,7 +31874,7 @@ export default function App() {
               {renderEntryGrid(newTournament.entries, (token)=>setNewTournament(prev => {
                 const cur = prev.entries||[];
                 return {...prev, entries: cur.includes(token) ? cur.filter(x=>x!==token) : [...cur, token]};
-              }))}
+              }), divisionsFor(newTournament))}
             </div>
             <div style={{gridColumn:"1 / -1"}}>
               <span style={lbl}>Wish list (teams that want to go)</span>
@@ -31902,7 +31911,7 @@ export default function App() {
                 const teamAge = ageOf(teamId);
                 const ageTiers = [...new Set(entries.filter(tok => entryAge(tok) === teamAge).map(entryTier))].filter(Boolean);
                 const anyTiers = [...new Set(entries.map(entryTier))].filter(Boolean);
-                return ageTiers.length ? ageTiers : anyTiers.length ? anyTiers : TN_DIVISIONS;
+                return ageTiers.length ? ageTiers : anyTiers.length ? anyTiers : divisionsFor(newTournament);
               };
               // Only offer teams whose age this tournament actually hosts.
               const ageTarget = { entries, age_low: newTournament.age_low, age_high: newTournament.age_high };
