@@ -31207,36 +31207,56 @@ export default function App() {
       while (d <= end) {
         const sat = new Date(d);
         const satISO = sat.toISOString().slice(0,10);
-        // Each column owns Tue → Mon around its weekend, so midweek events
-        // (AAU Nationals waves run Mon–Thu, Sun–Wed) still land in a column;
-        // a Monday-holiday event stays with the weekend before it.
-        const tue = new Date(sat); tue.setDate(tue.getDate() - 4);
-        const tueISO = tue.toISOString().slice(0,10);
-        if (SEASON_MONTHS.has(parseInt(satISO.slice(5,7))) || SEASON_MONTHS.has(parseInt(tueISO.slice(5,7)))) {
+        if (SEASON_MONTHS.has(parseInt(satISO.slice(5,7)))) {
           const fri = new Date(sat); fri.setDate(fri.getDate() - 1);
           const sun = new Date(sat); sun.setDate(sun.getDate() + 1);
-          const mon = new Date(sat); mon.setDate(mon.getDate() + 2);
           weeks.push({
             fri: fri.toISOString().slice(0,10),
             sat: satISO,
             sun: sun.toISOString().slice(0,10),
-            from: tueISO,
-            to: mon.toISOString().slice(0,10),
+            from: fri.toISOString().slice(0,10),
+            to: sun.toISOString().slice(0,10),
           });
         }
         d.setDate(d.getDate() + 7);
       }
     }
-    // Index assignments by (team_id, weekend-key). A weekend matches if the
-    // tournament's date range overlaps Fri-Sun of that weekend.
+    // AAU events that don't sit inside one Fri–Sun (Nationals waves run
+    // Sun–Wed, Thu–Sun, Mon–Thu…) get a row of their own with their real
+    // dates, in place of the weekend rows they'd straddle.
     const tnById = new Map(tournaments.map(t => [t.id, t]));
+    const shownIds = new Set(teamsToShow.map(t => t.id));
+    const listedIds = new Set((filteredTournaments || []).map(t => t.id));
+    const assignedIds = new Set(tournamentAssignments.filter(a => shownIds.has(a.team_id)).map(a => a.tournament_id));
+    const insideOneWeekend = (t) => {
+      const st = new Date(t.start_date + "T00:00"), dow = st.getDay();
+      if (dow !== 5 && dow !== 6 && dow !== 0) return false;
+      const sun = new Date(st); sun.setDate(sun.getDate() + (dow === 0 ? 0 : 7 - dow));
+      return t.end_date <= sun.toISOString().slice(0,10);
+    };
+    const ownRowTns = tournaments.filter(t => t.aau && !t.cancelled && t.start_date && t.end_date
+      && t.end_date >= tnCalFrom && t.start_date <= tnCalTo
+      && (listedIds.has(t.id) || assignedIds.has(t.id)) && !insideOneWeekend(t));
+    const ownIds = new Set(ownRowTns.map(t => t.id));
+    for (const t of ownRowTns) weeks.push({ fri: t.start_date, sat: "own-" + t.id, sun: t.end_date, from: t.start_date, to: t.end_date, own: t.id, ownName: t.name });
+    // Does this row hold this tournament?
+    const wkHas = (wk, tn) => wk.own ? tn.id === wk.own : (!ownIds.has(tn.id) && tn.start_date <= wk.to && tn.end_date >= wk.from);
+    // Drop a weekend row an own-row event covers when nothing else is on it.
+    {
+      const keep = weeks.filter(wk => wk.own || !ownRowTns.some(t => t.start_date <= wk.to && t.end_date >= wk.from)
+        || tournamentAssignments.some(a => { const tn = tnById.get(a.tournament_id); return tn && shownIds.has(a.team_id) && wkHas(wk, tn); })
+        || (filteredTournaments || []).some(t => wkHas(wk, t)));
+      weeks.length = 0; weeks.push(...keep.sort((a, b) => a.from.localeCompare(b.from) || (a.own ? 1 : -1)));
+    }
+    // Index assignments by (team_id, row-key). A weekend matches if the
+    // tournament's date range overlaps Fri-Sun of that weekend.
     const cellMap = new Map();
     const cellKey = (teamId, sat) => teamId + ":" + sat;
     for (const a of tournamentAssignments) {
       const tn = tnById.get(a.tournament_id);
       if (!tn) continue;
       for (const wk of weeks) {
-        if (tn.start_date <= wk.to && tn.end_date >= wk.from) {
+        if (wkHas(wk, tn)) {
           const k = cellKey(a.team_id, wk.sat);
           if (!cellMap.has(k)) cellMap.set(k, []);
           cellMap.get(k).push({ assignment: a, tournament: tn });
@@ -31246,7 +31266,7 @@ export default function App() {
     }
     // Shared-tournament colors: any tournament that 2+ shown teams attend gets a
     // distinct hue, so you can see at a glance which teams are together.
-    const shownIds = new Set(teamsToShow.map(t => t.id));
+    // (shownIds declared above)
     const SHARE_PALETTE = ["#3b82f6", "#ec4899", "#14b8a6", "#f59e0b", "#8b5cf6", "#ef4444", "#10b981", "#eab308", "#06b6d4", "#f472b6", "#84cc16", "#a78bfa", "#fb7185", "#22d3ee", "#f97316", "#c084fc"];
     const tnTeams = new Map();
     for (const [k, its] of cellMap) { const teamId = k.slice(0, k.lastIndexOf(":")); if (!shownIds.has(teamId)) continue; for (const it of its) { if (!tnTeams.has(it.tournament.id)) tnTeams.set(it.tournament.id, new Set()); tnTeams.get(it.tournament.id).add(teamId); } }
@@ -31257,8 +31277,8 @@ export default function App() {
     const conflictCells = new Set();
     for (const c of tournamentConflicts) {
       for (const wk of weeks) {
-        if (c.a.tournament.start_date <= wk.to && c.a.tournament.end_date >= wk.from) conflictCells.add(cellKey(c.a.team_id, wk.sat));
-        if (c.b.tournament.start_date <= wk.to && c.b.tournament.end_date >= wk.from) conflictCells.add(cellKey(c.b.team_id, wk.sat));
+        if (wkHas(wk, c.a.tournament)) conflictCells.add(cellKey(c.a.team_id, wk.sat));
+        if (wkHas(wk, c.b.tournament)) conflictCells.add(cellKey(c.b.team_id, wk.sat));
       }
     }
     // Coach commitments per weekend: who is already at a tournament (via any
@@ -31273,7 +31293,7 @@ export default function App() {
       if (!tn || !tm) continue;
       const coaches = [tm.head_coach, tm.assistant_coach].filter(Boolean);
       for (const wk of weeks) {
-        if (tn.start_date <= wk.to && tn.end_date >= wk.from) {
+        if (wkHas(wk, tn)) {
           if (!coachWknd.has(wk.sat)) coachWknd.set(wk.sat, new Map());
           const m = coachWknd.get(wk.sat);
           for (const coach of coaches) {
@@ -31314,7 +31334,7 @@ export default function App() {
     };
     // Tournaments matching the Listings filter that overlap this weekend.
     const tournamentsThisWeekend = (wk) =>
-      (filteredTournaments || []).filter(t => t.start_date <= wk.to && t.end_date >= wk.from);
+      (filteredTournaments || []).filter(t => wkHas(wk, t));
 
     const abbreviate = (name, n = 22) => name.length > n ? name.slice(0, n-1) + "…" : name;
     const fmtMD = (iso) => { const d = new Date(iso + "T00:00"); return (d.getMonth()+1) + "/" + d.getDate(); };
@@ -31462,6 +31482,7 @@ export default function App() {
                     <tr key={wk.sat} style={{background:rowBg}}>
                       <td style={{padding:"6px 10px",position:"sticky",left:0,zIndex:1,background:bo.length?"rgba(245,158,11,0.10)":isLong?"rgba(6,182,212,0.08)":C.card,borderBottom:"1px solid "+C.border,borderRight:"1px solid "+C.border,whiteSpace:"normal",minWidth:170,maxWidth:230,verticalAlign:"top"}}>
                         <div style={{fontSize:11,fontWeight:700,color:C.text}}>{fmtMD(wk.fri)}–{fmtMD(wk.sun)}</div>
+                        {wk.own && <div style={{fontSize:9,fontWeight:800,color:C.gold}}>{wk.ownName}</div>}
                         {bo.length > 0 && <div style={{fontSize:9,color:"#f59e0b",fontWeight:600}}>{bo.map(b => b.name).join(" / ")}</div>}
                         {isLong && (
                           <span style={{display:"inline-block",marginTop:3,fontSize:8,fontWeight:800,padding:"1px 6px",borderRadius:8,background:"rgba(6,182,212,0.22)",color:"#06b6d4",letterSpacing:0.5}}>3-DAY (DSISD)</span>
