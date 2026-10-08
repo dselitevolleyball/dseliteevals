@@ -32420,7 +32420,7 @@ export default function App() {
                   ["hdr","DS Elite · Coaches & Pay"],
                   ["coaches","Coaches"], ...(isAdmin ? [["dayschedule","Day Schedule"], ["staffing","Staffing Board"]] : []), ["coverage","Coach Coverage"], ["timecards","Time Cards"], ["myexpenses","My Expenses"], ...(canOps ? [["claims","Coach Claims" + (pendingClaimCount ? " (" + pendingClaimCount + ")" : "")]] : []), ["gear","Gear Sizes" + (gearOutstanding ? " (" + gearOutstanding + ")" : "")], ["requests","Requests" + (pendingReqs ? " (" + pendingReqs + ")" : "")],
                   ["hdr","DSSC"],
-                  ["dssc","Coach Hub"], ["clinics","Clinics & Camps (admin)"], ["dssctexts","DSSC Texts"], ["dssccrm","DSSC People"], ["dssccamp","Summer Camp Planning"], ["dssccal","Coverage Calendar"], ["dssctime","DSSC Time Cards"], ["pods","Skill Pods"], ["privates","Privates"],
+                  ["dssc","Coach Hub"], ["clinics","Clinics & Camps (admin)"], ["dssctexts","DSSC Texts"], ["dssccrm","DSSC People"], ["dssccamp","Heatwave (camp planning)"], ["dssccal","Coverage Calendar"], ["dssctime","DSSC Time Cards"], ["pods","Skill Pods"], ["privates","Privates"],
                   ["hdr","Communication"],
                   ["email","Email"], ["messages","Messages (SMS)" + (totalUnread > 0 ? " (" + totalUnread + ")" : "")], ["notifications","Notifications"], ["coachcomms","Coach Comms"], ["assignments","Assignments"], ["dsysa","DSYSA Clinics"],
                 ] }] : []),
@@ -32444,7 +32444,7 @@ export default function App() {
                 ? [{ title:"More", items:[ ...(isDsscDirector ? [["dssccal","Coverage Calendar"],["pods","Skill Pods"],["privates","Privates"],["dsysa","DSYSA Clinics"]] : [["dsysa","DSYSA Clinics"]]), ["activity","Activity"], ["faq","FAQ"] ] }]
                 : groups.map(dropDssc).filter(g => g.items.some(([v]) => v !== "hdr"));
               const wsTop = workspace==="dssc"
-                ? [ ...(isDsscDirector ? [["clinics","Board"]] : []), ["dssc","Coach Hub"], ...(isDsscDirector ? [["dssctexts","Texts"],["dssccrm","People"],["dssccamp","Summer Camp"]] : []), ["dssctime","Time Cards"], ...(!canOps ? [["notifications","Notifications" + (unreadCount>0?" ("+unreadCount+")":"")]] : []) ]
+                ? [ ...(isDsscDirector ? [["clinics","Board"]] : []), ["dssc","Coach Hub"], ...(isDsscDirector ? [["dssctexts","Texts"],["dssccrm","People"],["dssccamp","Heatwave"]] : []), ["dssctime","Time Cards"], ...(!canOps ? [["notifications","Notifications" + (unreadCount>0?" ("+unreadCount+")":"")]] : []) ]
                 : null;
               // Mobile: one hamburger opening a full-height grouped menu.
               if (isNarrow) {
