@@ -20,6 +20,7 @@ import DaySchedule from "./DaySchedule.jsx";
 import { PlayerStatHistory, StatsLinks } from "./PlayerStats.jsx";
 import EuropeRsvps from "./EuropeRsvps.jsx";
 import DsscTexts from "./dssc/DsscTexts.jsx";
+import DsscCamp from "./dssc/DsscCamp.jsx";
 import DsscCrm from "./dssc/DsscCrm.jsx";
 import { TN_SUB_PLACEHOLDERS, isPlaceholderPerson, sessionStaff, staffNeeded, staffApproved, staffPending, sessionShort, onStaff, parsePlanPaste } from "../shared/dssc-clinics.js";
 
@@ -2220,7 +2221,7 @@ export default function App() {
   // colors, navigation, home — between DS Elite and Dripping Springs Sports
   // Club, instead of DSSC living as a tab inside DS Elite. Opening a DSSC
   // screen by any route (a push link, the home card) flips it too.
-  const DSSC_VIEWS = new Set(["dssc","clinics","dssctexts","dssccrm","dssccal","dssctime","pods","privates"]);
+  const DSSC_VIEWS = new Set(["dssc","clinics","dssctexts","dssccrm","dssccal","dssctime","pods","privates","dssccamp"]);
   const [workspace, setWorkspace] = useState(() => { try { return localStorage.getItem("dse.workspace") === "dssc" ? "dssc" : "dse"; } catch { return "dse"; } });
   useEffect(() => {
     const ws = DSSC_VIEWS.has(view) ? "dssc" : (view === "home" || view === "askai" || view === "notifications" || view === "activity" || view === "faq") ? null : "dse";
@@ -32419,7 +32420,7 @@ export default function App() {
                   ["hdr","DS Elite · Coaches & Pay"],
                   ["coaches","Coaches"], ...(isAdmin ? [["dayschedule","Day Schedule"], ["staffing","Staffing Board"]] : []), ["coverage","Coach Coverage"], ["timecards","Time Cards"], ["myexpenses","My Expenses"], ...(canOps ? [["claims","Coach Claims" + (pendingClaimCount ? " (" + pendingClaimCount + ")" : "")]] : []), ["gear","Gear Sizes" + (gearOutstanding ? " (" + gearOutstanding + ")" : "")], ["requests","Requests" + (pendingReqs ? " (" + pendingReqs + ")" : "")],
                   ["hdr","DSSC"],
-                  ["dssc","Coach Hub"], ["clinics","Clinics & Camps (admin)"], ["dssctexts","DSSC Texts"], ["dssccrm","DSSC People"], ["dssccal","Coverage Calendar"], ["dssctime","DSSC Time Cards"], ["pods","Skill Pods"], ["privates","Privates"],
+                  ["dssc","Coach Hub"], ["clinics","Clinics & Camps (admin)"], ["dssctexts","DSSC Texts"], ["dssccrm","DSSC People"], ["dssccamp","Summer Camp Planning"], ["dssccal","Coverage Calendar"], ["dssctime","DSSC Time Cards"], ["pods","Skill Pods"], ["privates","Privates"],
                   ["hdr","Communication"],
                   ["email","Email"], ["messages","Messages (SMS)" + (totalUnread > 0 ? " (" + totalUnread + ")" : "")], ["notifications","Notifications"], ["coachcomms","Coach Comms"], ["assignments","Assignments"], ["dsysa","DSYSA Clinics"],
                 ] }] : []),
@@ -32443,7 +32444,7 @@ export default function App() {
                 ? [{ title:"More", items:[ ...(isDsscDirector ? [["dssccal","Coverage Calendar"],["pods","Skill Pods"],["privates","Privates"],["dsysa","DSYSA Clinics"]] : [["dsysa","DSYSA Clinics"]]), ["activity","Activity"], ["faq","FAQ"] ] }]
                 : groups.map(dropDssc).filter(g => g.items.some(([v]) => v !== "hdr"));
               const wsTop = workspace==="dssc"
-                ? [ ...(isDsscDirector ? [["clinics","Board"]] : []), ["dssc","Coach Hub"], ...(isDsscDirector ? [["dssctexts","Texts"],["dssccrm","People"]] : []), ["dssctime","Time Cards"], ...(!canOps ? [["notifications","Notifications" + (unreadCount>0?" ("+unreadCount+")":"")]] : []) ]
+                ? [ ...(isDsscDirector ? [["clinics","Board"]] : []), ["dssc","Coach Hub"], ...(isDsscDirector ? [["dssctexts","Texts"],["dssccrm","People"],["dssccamp","Summer Camp"]] : []), ["dssctime","Time Cards"], ...(!canOps ? [["notifications","Notifications" + (unreadCount>0?" ("+unreadCount+")":"")]] : []) ]
                 : null;
               // Mobile: one hamburger opening a full-height grouped menu.
               if (isNarrow) {
@@ -32717,6 +32718,9 @@ export default function App() {
         {view==="dssccrm" && (isDsscDirector
           ? <DsscCrm coach={coach} isDirector={isDsscDirector} onText={(recipients)=>{ setDsscTextsInit({ recipients }); setView("dssctexts"); }} />
           : <div style={{padding:24,color:C.mut,textAlign:"center"}}>DSSC People is for the club's directors.</div>)}
+        {view==="dssccamp" && (isDsscDirector
+          ? <DsscCamp coach={coach} />
+          : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Summer camp planning is for the club's directors.</div>)}
         {view==="dssctexts" && (isDsscDirector
           ? <DsscTexts coach={coach} clinics={clinics} players={players} coachRoster={coachRoster} dsscAvail={dsscAvail} isDirector={isDsscDirector} initial={dsscTextsInit} onConsumedInitial={()=>setDsscTextsInit(null)} />
           : <div style={{padding:24,color:C.mut,textAlign:"center"}}>DSSC texting is for the club's directors.</div>)}
