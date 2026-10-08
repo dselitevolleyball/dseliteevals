@@ -60,9 +60,9 @@ const DEFAULT_SECTIONS = [
   ["name", "Name", "Heatwave Volleyball"],
   ["brand", "Brand", "Full name: Heatwave Volleyball\nShort forms: Heatwave ATX, H-ATX\nPrograms: Heatwave Summer Sessions; Heatwave Winter Sessions (later)"],
   ["tagline", "Tagline", "Where the best come to train from the best."],
-  ["pitch", "The pitch", "A small-group summer intensive in Austin for national and bubble-national players. Three days of position-specific training led by college coaches, 12-15 athletes on two courts, with a coach-to-player ratio of about 1 to 4. It's built for the player who already trains hard and wants a summer edge she can't get at her club or a big-name camp of 200. For families from out of town it's also a reason to spend a few days in Austin: train in the mornings and afternoons, and enjoy the city's food, music and Hill Country in the evenings."],
+  ["pitch", "The pitch", "A small-group summer intensive in Austin for national and bubble-national players. Two days of position-specific training led by college coaches: 14 athletes on two courts with four coaches, a 1:3.5 coach-to-player ratio. $1,600 per two-day session (room and board not included). It's built for the player who already trains hard and wants a summer edge she can't get at her club or a big-name camp of 200. For families from out of town it's also a reason to spend a few days in Austin: train in the mornings and afternoons, and enjoy the city's food, music and Hill Country in the evenings."],
   ["who", "Who it's for (eligibility)", "Ages 14-16 for the position intensives (Hitting, Libero/Defense, Setting); ages 11-12 for All Skills.\nNational or bubble-national level: playing on (or pushing for) a national/open-level club team.\nAdmission requires a referral from the player's club coach or club director, plus game or skills film.\nWe keep each session to similar ages and levels so the training stays at the top end - two courts, one group."],
-  ["format", "Format", "2 or 3 days per session (14-16: 3 days; 11/12: 2 days).\n9:00am-12:00pm training, 12:00-1:00 lunch provided by DSSC, 1:00-4:00pm training. 6 hours on court a day.\nOne star lead coach + three DS Elite / DSSC assistants, two courts, capped at 12-15 players.\nEach athlete leaves with a written evaluation from the lead coach and a short video breakdown of her skill work (worth adding: it's the thing families share)."],
+  ["format", "Format", "Every session is 2 days. $1,600 per athlete, lunch on training days included; room and board not included.\n9:00am-12:00pm training, 12:00-1:00 lunch provided by DSSC, 1:00-4:00pm training. 6 hours on court a day.\nOne star lead coach + three DS Elite / DSSC assistants, two courts, 14 players (4 coaches : 14 athletes = 1:3.5).\nEach athlete leaves with a written evaluation from the lead coach and a short video breakdown of her skill work (worth adding: it's the thing families share)."],
   ["coaches", "Coaching", "Each session is led by a college head or assistant coach who specializes in that skill - the name is the product, so we announce the lead coach for every session. Three DS Elite / DSSC staff assist on court so every rep gets feedback. We need 8 star coaches for 8 sessions (shortlist 2 per session in case of conflicts)."],
   ["apply", "Application", "1. Apply online: player info, position, club and team, level, and a film link (Hudl/YouTube).\n2. A coach or club director submits a short referral (we email them a link, so the referral comes from the coach, not the parent).\n3. Pay the application deposit by card to hold a place in review.\n4. We review film + referral and accept, waitlist or decline within 14 days.\n5. Accepted players pay the balance within 7 days to lock the spot. Declined applicants get the deposit back in full."],
   ["policy", "Payment & cancellation", "Deposit at application; balance due on acceptance.\nCancel on or before April 1: 50% of the amount paid is refunded.\nCancel after April 1: no refund.\nIf DSSC cancels a session, a full refund or a transfer to another session.\n(Confirm with counsel/insurance before launch; spell out what happens if a player is injured before camp.)"],
@@ -365,6 +365,7 @@ function CoachesTab({ coaches, sessions, saveCoach, addCoach, removeCoach }) {
           <Mini label="Travel per session ($)"><Field value={c.travel_est == null ? "" : String(c.travel_est)} onSave={v => saveCoach(c.id, { travel_est: v.trim() ? num(v) : null })} placeholder="default estimate" /></Mini>
           <Mini label="Connection"><Field value={c.connection || ""} onSave={v => saveCoach(c.id, { connection: v })} placeholder="Who knows them" /></Mini>
         </div>
+        <SiteProfile c={c} saveCoach={saveCoach} />
         <div style={{ marginTop: 10 }}><Field value={c.notes || ""} onSave={v => saveCoach(c.id, { notes: v })} multiline minRows={1} placeholder="Notes" /></div>
       </Card>
     ))}
@@ -459,4 +460,43 @@ function InterestTab() {
       </Card>
     ))}
   </>);
+}
+
+// The coach's public card on heatwaveatx.com: headshot, bio, and a switch.
+// The site's hero reads coaches with show_on_site on (heatwave-atx api/coaches.js).
+function SiteProfile({ c, saveCoach }) {
+  const [busy, setBusy] = useState(false), [err, setErr] = useState(null);
+  const upload = async (file) => {
+    if (!file) return;
+    if (!/^image\//.test(file.type)) { setErr("Pick an image file."); return; }
+    setBusy(true); setErr(null);
+    const ext = (file.name.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const path = "coaches/" + c.id + "-" + Date.now() + "." + ext;
+    const { error } = await supabase.storage.from("heatwave").upload(path, file, { contentType: file.type, upsert: true });
+    if (error) { setErr(error.message); setBusy(false); return; }
+    const { data } = supabase.storage.from("heatwave").getPublicUrl(path);
+    await saveCoach(c.id, { photo_url: data.publicUrl });
+    setBusy(false);
+  };
+  const ready = !!(c.photo_url && (c.bio || "").trim() && (c.title || "").trim());
+  return (
+    <div style={{ marginTop: 12, padding: 12, borderRadius: 12, border: "1px dashed " + (c.show_on_site ? DS.lime : DS.line), display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-start" }}>
+      <div style={{ width: 96, flex: "none" }}>
+        <div style={{ width: 96, height: 120, borderRadius: 10, background: DS.panel2, backgroundImage: c.photo_url ? "url(" + c.photo_url + ")" : "none", backgroundSize: "cover", backgroundPosition: "center top", display: "flex", alignItems: "center", justifyContent: "center", color: DS.dim, fontSize: 11, textAlign: "center" }}>{c.photo_url ? "" : "No photo"}</div>
+        <label style={{ display: "block", marginTop: 6, fontSize: 12, fontWeight: 700, color: DS.lime, cursor: "pointer" }}>
+          {busy ? "Uploading…" : c.photo_url ? "Change photo" : "Upload photo"}
+          <input type="file" accept="image/*" style={{ display: "none" }} onChange={e => upload(e.target.files?.[0])} />
+        </label>
+      </div>
+      <div style={{ flex: "1 1 260px" }}>
+        <Mini label="Bio for heatwaveatx.com (shows when people hover her photo)"><Field value={c.bio || ""} onSave={v => saveCoach(c.id, { bio: v })} multiline minRows={3} placeholder="2-4 sentences: current role, where she played, what she's known for as a coach." /></Mini>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, fontSize: 13, fontWeight: 700, color: c.show_on_site ? DS.lime : DS.mut, cursor: ready || c.show_on_site ? "pointer" : "default" }}
+          title={ready ? "" : "Needs a photo, a bio and a title first"}>
+          <input type="checkbox" checked={!!c.show_on_site} disabled={!ready && !c.show_on_site} onChange={e => saveCoach(c.id, { show_on_site: e.target.checked })} style={{ width: 18, height: 18, accentColor: DS.lime }} />
+          Show on heatwaveatx.com {ready ? "" : "· add a photo, bio and title first"}
+        </label>
+        {err && <div style={{ color: DS.orange, fontSize: 12, fontWeight: 700, marginTop: 4 }}>{err}</div>}
+      </div>
+    </div>
+  );
 }
