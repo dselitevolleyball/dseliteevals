@@ -73,7 +73,17 @@ export async function threadFor(supabase, r) {
 // r: { to (E.164), brand?, name?, kind?, player_id?, team_name?, dssc_program?, dssc_player? }
 // meta: { broadcast_id?, sent_by_coach_id?, sent_by_label?, media_urls? }
 // Resolves { message_id, twilio_sid, status, thread_id }; throws with .code / .thread_id on a Twilio refusal.
+// "{first}" in a text becomes the first name of the person THIS text goes to,
+// so a greeting never names the other parent (Oct 2026: "Hi Fernanda and
+// Antonio" went to each of them, and to the wrong families). "Coach Tara
+// Fisher" -> "Tara"; no name on file -> "there".
+export const personalizeSms = (text, r) => {
+  const first = String(r?.name || "").trim().replace(/^coach\s+/i, "").split(/\s+/)[0] || "";
+  return String(text || "").replace(/\{first\}/gi, first || "there");
+};
+
 export async function sendOneSms(supabase, r, text, meta = {}) {
+  text = personalizeSms(text, r);
   // Over Twilio's 1,600-character cap: send it as numbered parts, in order,
   // photos riding on the first one. Callers get the last part's result.
   const parts = splitSms(text);

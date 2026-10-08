@@ -11025,7 +11025,12 @@ export default function App() {
     const last10 = (x) => String(x || "").replace(/\D/g, "").slice(-10);
     const optedOut = new Set(smsOptouts.map(o => last10(o.phone)));
     const textable = (p) => { const seen = new Set(); return parentPhonesOf(p).filter(x => { const k = last10(x.phone); if (optedOut.has(k) || seen.has(k)) return false; seen.add(k); return true; }); };
-    const hiText = (p) => { const ps = parents(p); return ps.length ? "Hi " + ps.join(" and ") + "," : "Hi,"; };
+    // "{first}" is filled in per phone by /api/send-sms (personalizeSms), so
+    // each parent's text greets only that parent — never "Hi Mom and Dad" to
+    // both, and never another family's names (Oct 2026).
+    const hiText = () => "Hi {first},";
+    const firstOfName = (n) => String(n || "").trim().split(/\s+/)[0] || "there";
+    const asSent = (text, x) => String(text || "").replace(/\{first\}/gi, firstOfName(x?.name));
     const signText = " - " + String(coach?.display_name || "Drew Rose").split(/\s+/)[0] + ", DS Elite";
     const girl = (p) => p.first_name.trim();
     const parents = (p) => [...new Set([p.parent_name, p.parent2_name].map(x => String(x || "").trim().split(/\s+/)[0]).filter(Boolean))];
@@ -11291,6 +11296,7 @@ export default function App() {
                   <div style={{fontSize:10,fontWeight:800,letterSpacing:0.4,textTransform:"uppercase",color:C.mut,marginBottom:6}}>
                     {many ? "Message — shown as " + p0.first_name + "'s family will get it" : "Message"}
                   </div>
+                  <div style={{fontSize:11,color:C.mut,marginBottom:6}}><b style={{color:C.text}}>{"{first}"}</b> becomes the first name of the parent each text goes to — {textable(p0).map(x => firstOfName(x.name) + " gets \"Hi " + firstOfName(x.name) + ",\"").join(", ") || "each parent sees only their own name"}.</div>
                   <textarea value={waitPreview.text} onChange={e=>setWaitPreview(w => ({ ...w, text: e.target.value }))} rows={7}
                     style={{...inpStyle,width:"100%",boxSizing:"border-box",padding:"10px 12px",fontSize:14,lineHeight:1.45,resize:"vertical",fontFamily:"inherit"}} />
                   <div style={{display:"flex",gap:10,alignItems:"center",marginTop:4,fontSize:10,color:C.mut}}>
@@ -11305,7 +11311,7 @@ export default function App() {
                         {rowsAll.map(r => (
                           <div key={r.p.id} style={{background:C.bg,border:"1px solid "+C.border,borderRadius:8,padding:"8px 10px"}}>
                             <div style={{fontSize:11,fontWeight:800,color:C.text,marginBottom:3}}>{r.p.first_name} {r.p.last_name} <span style={{color:C.mut,fontWeight:600}}>· {r.p.team_assignment} · {textable(r.p).map(x => x.phone).join(", ")}</span></div>
-                            <div style={{fontSize:12,color:C.mut,whiteSpace:"pre-wrap",wordBreak:"break-word"}}>{textFor(r)}</div>
+                            {textable(r.p).map(x => <div key={x.phone} style={{fontSize:12,color:C.mut,whiteSpace:"pre-wrap",wordBreak:"break-word",marginTop:4}}><b style={{color:C.text}}>To {x.name || x.phone}:</b> {asSent(textFor(r), x)}</div>)}
                           </div>
                         ))}
                       </div>
@@ -28242,6 +28248,8 @@ export default function App() {
                     style={{...inpStyle,padding:"10px 12px",fontSize:13,resize:"vertical",fontFamily:"inherit",lineHeight:1.4}} />
                   <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
                     <span style={{fontSize:10,color:C.mut}}>{c.body.length} chars · {segments(c.body)} segment{segments(c.body)===1?"":"s"} each</span>
+                    <button onClick={()=>set({ body: c.body.startsWith("Hi {first}") ? c.body : "Hi {first}, " + c.body })} title="Each person's text greets them by their own first name"
+                      style={{background:"none",border:"1px solid "+C.border,borderRadius:6,color:C.acc,cursor:"pointer",fontFamily:"inherit",fontSize:10,fontWeight:700,padding:"2px 8px"}}>+ Hi {"{first}"}</button>
                     <div style={{flex:1}} />
                     <button onClick={go} disabled={!canSend}
                       style={{padding:"9px 18px",borderRadius:8,border:"none",background:canSend?C.gold:C.border,color:canSend?"#000":C.mut,fontFamily:"inherit",fontSize:13,fontWeight:800,cursor:canSend?"pointer":"default"}}>
