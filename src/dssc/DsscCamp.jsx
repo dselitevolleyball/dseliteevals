@@ -151,7 +151,7 @@ export default function DsscCamp({ coach }) {
   const name = plan?.sections?.name || "Heatwave Volleyball";
 
   if (!plan) return <div style={{ padding: 24, color: DS.mut, fontFamily: DS.font }}>Loading…</div>;
-  const tabs = [["plan", "Plan"], ["econ", "Economics"], ["sessions", "Sessions"], ["coaches", `Coaches (${coaches.length})`], ["launch", "Launch"]];
+  const tabs = [["plan", "Plan"], ["econ", "Economics"], ["sessions", "Sessions"], ["coaches", `Coaches (${coaches.length})`], ["interest", "Interest"], ["launch", "Launch"]];
   const confirmedLeads = live.filter(s => coachBy.get(s.lead_coach_id)?.status === "confirmed").length;
 
   return (
@@ -179,6 +179,7 @@ export default function DsscCamp({ coach }) {
         {tab === "econ" && <EconTab econ={econ} savePlan={savePlan} rows={rows} tot={tot} net={net} />}
         {tab === "sessions" && <SessionsTab sessions={sessions} coaches={coaches} coachBy={coachBy} econ={econ} saveSession={saveSession} />}
         {tab === "coaches" && <CoachesTab coaches={coaches} sessions={sessions} saveCoach={saveCoach} addCoach={addCoach} removeCoach={removeCoach} />}
+        {tab === "interest" && <InterestTab />}
         {tab === "launch" && <LaunchTab plan={plan} savePlan={savePlan} />}
       </div>
     </div>
@@ -398,5 +399,64 @@ function LaunchTab({ plan, savePlan }) {
         );
       })}
     </Card>
+  </>);
+}
+
+// Sign-ups from the heatwaveatx.com interest form (api/interest.js in the
+// heatwave-atx repo writes heatwave_interest with the service role).
+const ROLE_LABEL = { parent: "Parent", player: "Player", director: "Director / coach" };
+const LEVEL_LABEL = { national: "National", bubble: "Bubble", regional: "Regional", other: "Other" };
+const INT_STATUS = ["new", "contacted", "applied", "not a fit"];
+function InterestTab() {
+  const [rows, setRows] = useState(null);
+  const [role, setRole] = useState(""), [q, setQ] = useState("");
+  useEffect(() => { supabase.from("heatwave_interest").select("*").order("created_at", { ascending: false }).then(({ data }) => setRows(data || [])); }, []);
+  const save = async (id, patch) => { setRows(xs => xs.map(x => x.id === id ? { ...x, ...patch } : x)); await supabase.from("heatwave_interest").update(patch).eq("id", id); };
+  if (!rows) return <div style={{ color: DS.mut }}>Loading…</div>;
+  const ql = q.trim().toLowerCase();
+  const shown = rows.filter(r => (!role || r.role === role) && (!ql || [r.name, r.email, r.player_name, r.club, r.city].join(" ").toLowerCase().includes(ql)));
+  const bySession = Object.keys(FOCUS).map(k => [k, rows.filter(r => (r.sessions || []).includes(k)).length]);
+  const csv = () => {
+    const cols = ["created_at", "role", "name", "email", "phone", "ok_text", "player_name", "grad_year", "club", "level", "sessions", "city", "heard_from", "message", "status", "notes"];
+    const cell = (v) => '"' + String(Array.isArray(v) ? v.join("; ") : v ?? "").replace(/"/g, '""') + '"';
+    const blob = new Blob([[cols.join(","), ...shown.map(r => cols.map(c => cell(r[c])).join(","))].join("\n")], { type: "text/csv" });
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "heatwave-interest.csv"; a.click();
+  };
+  return (<>
+    <Card accent={DS.lime}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <Stat label="Sign-ups" value={rows.length} />
+        <Stat label="Directors" value={rows.filter(r => r.role === "director").length} />
+        <Stat label="National" value={rows.filter(r => r.level === "national").length} />
+        {bySession.map(([k, n]) => <Stat key={k} label={FOCUS[k]} value={n} />)}
+      </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10, alignItems: "center" }}>
+        <select value={role} onChange={e => setRole(e.target.value)} style={{ ...small, width: "auto" }}><option value="">Everyone</option>{Object.entries(ROLE_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
+        <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search name, club, city" style={{ ...small, width: 220 }} />
+        <div style={{ flex: 1 }} />
+        <a href="https://heatwaveatx.com" target="_blank" rel="noreferrer" style={{ color: DS.lime, fontSize: 13, fontWeight: 700 }}>heatwaveatx.com ↗</a>
+        <Btn small onClick={csv} disabled={!shown.length}>Download CSV</Btn>
+      </div>
+    </Card>
+    {!shown.length && <div style={{ color: DS.mut, fontSize: 14, padding: "8px 2px" }}>{rows.length ? "No sign-ups match." : "No sign-ups yet — the form is live at heatwaveatx.com."}</div>}
+    {shown.map(r => (
+      <Card key={r.id}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <b style={{ fontSize: 16 }}>{r.player_name || r.name}</b>
+          <Tag color={r.role === "director" ? DS.orange : DS.mut}>{ROLE_LABEL[r.role] || r.role}</Tag>
+          {r.level && <Tag color={r.level === "national" ? DS.lime : DS.mut}>{LEVEL_LABEL[r.level]}</Tag>}
+          {(r.sessions || []).map(k => <Tag key={k} color={DS.brier}>{FOCUS[k] || k}</Tag>)}
+          <div style={{ flex: 1 }} />
+          <span style={{ fontSize: 12, color: DS.mut }}>{new Date(r.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>
+          <select value={r.status} onChange={e => save(r.id, { status: e.target.value })} style={{ ...small, width: "auto" }}>{INT_STATUS.map(x => <option key={x}>{x}</option>)}</select>
+        </div>
+        <div style={{ fontSize: 13, color: DS.mut, marginTop: 6, lineHeight: 1.6 }}>
+          {r.player_name && <>{r.name} · </>}<a href={"mailto:" + r.email} style={{ color: DS.lime }}>{r.email}</a>{r.phone ? " · " + r.phone : ""}{r.ok_text ? " (OK to text)" : ""}
+          {r.club && <> · {r.club}</>}{r.grad_year && <> · class of {r.grad_year}</>}{r.city && <> · {r.city}</>}{r.heard_from && <> · heard via {r.heard_from}</>}
+        </div>
+        {r.message && <div style={{ fontSize: 14, marginTop: 6, whiteSpace: "pre-wrap" }}>"{r.message}"</div>}
+        <div style={{ marginTop: 8 }}><Field value={r.notes || ""} onSave={v => save(r.id, { notes: v })} placeholder="Notes" /></div>
+      </Card>
+    ))}
   </>);
 }
