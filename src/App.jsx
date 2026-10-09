@@ -28190,9 +28190,10 @@ export default function App() {
     const chip = (text, color) => <span style={{fontSize:9,fontWeight:800,padding:"1px 6px",borderRadius:8,background:color+"22",color,whiteSpace:"nowrap"}}>{text}</span>;
 
     return (
-      <div style={{display:"grid",gridTemplateColumns:"320px 1fr",gap:14,height:"calc(100vh - 160px)"}}>
+      // Phones: the list OR the open conversation, full width, with a Back button.
+      <div style={isNarrow ? {height:"calc(100dvh - 120px)",display:"flex",flexDirection:"column"} : {display:"grid",gridTemplateColumns:"320px 1fr",gap:14,height:"calc(100vh - 160px)"}}>
         {/* Thread list, filed by team */}
-        <div style={{background:C.card,borderRadius:12,border:"1px solid "+C.border,overflowY:"auto"}}>
+        <div style={{background:C.card,borderRadius:12,border:"1px solid "+C.border,overflowY:"auto",...(isNarrow ? {flex:1,display:(selected || smsComposer || smsNewTo) ? "none" : "block"} : {})}}>
           <div style={{padding:"10px 14px",borderBottom:"1px solid "+C.border,position:"sticky",top:0,background:C.card,zIndex:2}}>
             <div style={{display:"flex",alignItems:"center",gap:8}}>
               <div>
@@ -28207,7 +28208,7 @@ export default function App() {
             </div>
             <div style={{position:"relative",marginTop:8}}>
               <input value={smsSearch} onChange={e=>setSmsSearch(e.target.value)} placeholder="Search parent, player, phone or message…"
-                style={{...inpStyle,width:"100%",boxSizing:"border-box",padding:"8px 30px 8px 10px",fontSize:13}} />
+                style={{...inpStyle,width:"100%",boxSizing:"border-box",padding:"8px 30px 8px 10px",fontSize:isNarrow?16:13}} />
               {smsSearch && <button onClick={()=>setSmsSearch("")} title="Clear" style={{position:"absolute",right:6,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:C.mut,fontSize:16,cursor:"pointer"}}>×</button>}
             </div>
             {!q && (
@@ -28272,7 +28273,9 @@ export default function App() {
         </div>
 
         {/* Right pane: composer, a thread, or the empty state */}
-        <div style={{background:C.card,borderRadius:12,border:"1px solid "+C.border,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+        <div style={{background:C.card,borderRadius:12,border:"1px solid "+C.border,display:(isNarrow && !(selected || smsComposer || smsNewTo)) ? "none" : "flex",flexDirection:"column",overflow:"hidden",...(isNarrow ? {flex:1} : {})}}>
+          {isNarrow && <button onClick={()=>{ setSelectedThreadId(null); setSmsComposer(null); setSmsNewTo(null); }}
+            style={{textAlign:"left",padding:"12px 14px",background:"rgba(255,255,255,0.04)",border:"none",borderBottom:"1px solid "+C.border,color:C.gold,fontFamily:"inherit",fontSize:15,fontWeight:800,cursor:"pointer"}}>‹ All messages</button>}
           {smsComposer && (() => {
             const c = smsComposer;
             const set = (patch) => setSmsComposer(prev => ({ ...prev, ...patch }));
@@ -28438,7 +28441,7 @@ export default function App() {
                     placeholder="Type a message…"
                     rows={2}
                     onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); } }}
-                    style={{...inpStyle,flex:1,padding:"8px 10px",fontSize:13,resize:"vertical",minHeight:40,maxHeight:140,fontFamily:"inherit"}} />
+                    style={{...inpStyle,flex:1,padding:"8px 10px",fontSize:isNarrow?16:13,resize:"vertical",minHeight:40,maxHeight:140,fontFamily:"inherit"}} />
                   <button onClick={send} disabled={smsSending || !smsCompose.trim()}
                     style={{padding:"10px 16px",borderRadius:8,border:"none",background:smsCompose.trim()?C.gold:C.border,color:smsCompose.trim()?"#000":C.mut,fontFamily:"inherit",fontSize:13,fontWeight:700,cursor:smsCompose.trim()?"pointer":"default"}}>
                     {smsSending ? "Sending…" : "Send"}
@@ -32488,8 +32491,11 @@ export default function App() {
               have a DSSC side (the coach hub) as much as directors do. */}
           <div role="tablist" aria-label="Business" style={{display:"flex",borderRadius:999,border:"1px solid "+(workspace==="dssc"?"rgba(255,255,255,0.25)":C.border),overflow:"hidden",background:"rgba(0,0,0,0.25)"}}>
             {[["dse","DS Elite"],["dssc","DSSC"]].map(([k,l]) => (
-              <button key={k} role="tab" aria-selected={workspace===k} onClick={()=>{ if (workspace===k) return; setWorkspace(k); try { localStorage.setItem("dse.workspace", k); } catch {} setView("home"); setOpenMenu(null); setMobileNavOpen(false); }}
-                style={{padding:"5px 12px",border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:800,letterSpacing:0.3,background:workspace===k?(k==="dssc"?"#B2D049":C.gold):"transparent",color:workspace===k?(k==="dssc"?"#104946":"#000"):(workspace==="dssc"?"#A9C7C3":C.mut)}}>{l}</button>
+              <button key={k} role="tab" aria-selected={workspace===k} onClick={()=>{ if (workspace===k) return; setWorkspace(k); try { localStorage.setItem("dse.workspace", k); } catch {}
+                  // Switching while in the texts lands in the other business's texts.
+                  const twin = { messages: "dssctexts", dssctexts: "messages" }[view];
+                  setView(twin && (twin !== "dssctexts" || isDsscDirector) ? twin : "home"); setOpenMenu(null); setMobileNavOpen(false); }}
+                style={{padding:isNarrow?"9px 18px":"5px 12px",minWidth:isNarrow?96:undefined,border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:isNarrow?14:11,fontWeight:800,letterSpacing:0.3,background:workspace===k?(k==="dssc"?"#B2D049":C.gold):"transparent",color:workspace===k?(k==="dssc"?"#104946":"#000"):(workspace==="dssc"?"#A9C7C3":C.mut)}}>{l}</button>
             ))}
           </div>
         </div>

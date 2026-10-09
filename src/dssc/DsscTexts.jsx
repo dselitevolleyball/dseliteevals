@@ -45,6 +45,9 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
   const [groupThreads, setGroupThreads] = useState({}); // broadcast id -> [thread id]
   const [openGroup, setOpenGroup] = useState(null);
   const [tab, setTab] = useState("inbox");          // inbox | campaigns
+  // Phones get one pane at a time (list, or the open conversation / composer).
+  const [narrow, setNarrow] = useState(() => typeof window !== "undefined" && window.matchMedia("(max-width: 700px)").matches);
+  useEffect(() => { const mq = window.matchMedia("(max-width: 700px)"); const f = () => setNarrow(mq.matches); mq.addEventListener("change", f); return () => mq.removeEventListener("change", f); }, []);
   const [history, setHistory] = useState(null);      // DSSC People sign-ups, loaded when a past + current group is picked
   const fileRef = useRef(null);
 
@@ -250,9 +253,9 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
 
   if (tab === "campaigns") return shell(<DsscCampaigns coach={coach} coachRoster={coachRoster} />);
   return shell(
-    <div style={{ display: "grid", gridTemplateColumns: "300px 1fr", gap: 14, height: "calc(100vh - 150px)" }}>
+    <div style={narrow ? { height: "calc(100dvh - 170px)", display: "flex", flexDirection: "column" } : { display: "grid", gridTemplateColumns: "300px 1fr", gap: 14, height: "calc(100vh - 150px)" }}>
       {/* Inbox */}
-      <div style={{ background: DS.panel, border: "1px solid " + DS.line, borderRadius: 14, overflowY: "auto" }}>
+      <div style={{ background: DS.panel, border: "1px solid " + DS.line, borderRadius: 14, overflowY: "auto", ...(narrow ? { flex: 1, display: (selId || composer) ? "none" : "block" } : {}) }}>
         {!threads.length && <div style={{ padding: 20, fontSize: 12, color: DS.mut, textAlign: "center" }}>No conversations yet. Text a program or a class to start one per family.</div>}
         {groups.length > 0 && (() => {
           const byId = new Map(threads.map(t => [t.id, t]));
@@ -325,7 +328,8 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
       </div>
 
       {/* Right pane */}
-      <div style={{ background: DS.panel, border: "1px solid " + DS.line, borderRadius: 14, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <div style={{ background: DS.panel, border: "1px solid " + DS.line, borderRadius: 14, display: narrow && !(selId || composer) ? "none" : "flex", flexDirection: "column", overflow: "hidden", ...(narrow ? { flex: 1 } : {}) }}>
+        {narrow && <button onClick={() => { setSelId(null); setComposer(null); }} style={{ textAlign: "left", padding: "12px 14px", background: "rgba(255,255,255,0.05)", border: "none", borderBottom: "1px solid " + DS.line, color: DS.lime, fontFamily: DS.font, fontSize: 15, fontWeight: 800, cursor: "pointer" }}>‹ All messages</button>}
         {composer && (() => {
           const c = composer, set = (p) => setComposer(x => ({ ...x, ...p }));
           const to = c.to || new Map();                       // phone -> contact
