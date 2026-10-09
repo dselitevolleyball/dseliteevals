@@ -18,6 +18,7 @@ import HousingView from "./HousingView.jsx";
 import AskHQ from "./AskHQ.jsx";
 import DaySchedule from "./DaySchedule.jsx";
 import { PlayerStatHistory, StatsLinks } from "./PlayerStats.jsx";
+import StatReports from "./StatReports.jsx";
 import EuropeRsvps from "./EuropeRsvps.jsx";
 import DsscTexts from "./dssc/DsscTexts.jsx";
 import DsscCamp from "./dssc/DsscCamp.jsx";
@@ -2168,6 +2169,9 @@ export default function App() {
   // isAdmin, so opening the view exposes no admin action.
   const OPS_VIEWS = new Set(["housing","waiting","privates","school","schoolgames","playergear","kickoff","photos","incidentboard","tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","dayschedule","timecards","gear","staffing","roster","hawaii","travel","finance","dssccal","pods"]);
   const canOps    = isAdmin || isOwner;
+  // Testing report emails: admins plus the performance coach (keep in step
+  // with REPORT_SENDERS in api/stat-report.js).
+  const canSendReports = canOps || ["brandonblahnik@outlook.com"].includes(String(coach?.email || "").trim().toLowerCase());
   const opsDenied = <div style={{padding:24,color:C.mut,textAlign:"center"}}>This section is restricted to administrators. Ask the club administrator (Drew) for access.</div>;
   // Once a player has accepted (or is locked/signed) onto a team, they're
   // locked to that team — only the owner (Drew) can change their offer status,
@@ -32406,7 +32410,7 @@ export default function App() {
               const pendingReqs = coachRequests.filter(r=>r.status==="pending").length;
               const groups = [
                 { title:"Players", items:[...((canViewTeams || myTeamNames.length) ? [["roster","Roster"]] : []),
-                  ...((canViewTeams || myTeamNames.length) ? [["incidents","Issues & Injuries" + (incidents.filter(r => incidentVisible(r) && r.status !== "resolved").length ? " (" + incidents.filter(r => incidentVisible(r) && r.status !== "resolved").length + ")" : "")]] : []), ...((canViewTeams || myTeamNames.length) ? [["checkin","Quick Check-in"]] : []), ...(canOps ? [] : [["playereval","Evaluations"],["passing","Passer Ratings"]])] },
+                  ...((canViewTeams || myTeamNames.length) ? [["incidents","Issues & Injuries" + (incidents.filter(r => incidentVisible(r) && r.status !== "resolved").length ? " (" + incidents.filter(r => incidentVisible(r) && r.status !== "resolved").length + ")" : "")]] : []), ...((canViewTeams || myTeamNames.length) ? [["checkin","Quick Check-in"]] : []), ...(canSendReports ? [["testreports","Testing Reports"]] : []), ...(canOps ? [] : [["playereval","Evaluations"],["passing","Passer Ratings"]])] },
                 { title:"Tryouts 2026-27", items:[["dashboard","Dashboard"], ["evaluate","Evaluate"], ["favorites","My Favorites" + (favorites.length ? " (" + favorites.length + ")" : "")], ...(canViewTeams ? [["teams","Teams"]] : []), ["rankings","Rankings"], ["physical","Physical Testing"], ["tryouts","Coach Assignments"]] },
                 // Operations is grouped by WHICH BUSINESS a screen belongs to,
                 // not by what it does. DSSC is a separate company with its own
@@ -32732,6 +32736,7 @@ export default function App() {
         {view==="dssctexts" && (isDsscDirector
           ? <DsscTexts coach={coach} clinics={clinics} players={players} coachRoster={coachRoster} dsscAvail={dsscAvail} isDirector={isDsscDirector} initial={dsscTextsInit} onConsumedInitial={()=>setDsscTextsInit(null)} />
           : <div style={{padding:24,color:C.mut,textAlign:"center"}}>DSSC texting is for the club's directors.</div>)}
+        {view==="testreports" && (canSendReports ? <StatReports coach={coach} players={players} /> : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Testing reports are for admins and the performance coach.</div>)}
         {view==="lineups" && renderLineups()}
         {view==="games" && renderGames()}
         {view==="askai" && renderAskAI()}
