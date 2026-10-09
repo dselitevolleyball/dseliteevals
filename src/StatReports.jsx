@@ -8,6 +8,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { supabase } from "./supabase";
 import { buildReport, metricRows, fmtMetric, DEFAULT_SETTINGS } from "../shared/stat-report.js";
+import { StatsLinks } from "./PlayerStats.jsx";
 
 const C = { bg: "#0a0a0a", card: "#141414", border: "#2a2a2a", gold: "#e91e8c", text: "#ffffff", mut: "#999999", red: "#ef4444", grn: "#22c55e" };
 const inp = { background: "#0f0f0f", border: "1px solid " + C.border, borderRadius: 8, color: C.text, fontFamily: "inherit", fontSize: 13, padding: "8px 10px", width: "100%", boxSizing: "border-box" };
@@ -15,7 +16,7 @@ const TERMINAL = ["declined", "not_invited", "opted_out"];
 const fmtD = (iso) => iso ? new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "";
 const teamSort = (a, b) => (parseInt(a) || 99) - (parseInt(b) || 99) || a.localeCompare(b);
 
-export default function StatReports({ coach, players = [] }) {
+export default function StatReports({ coach, players = [], session }) {
   const [settings, setSettings] = useState(null);
   const [tests, setTests] = useState([]);
   const [drafts, setDrafts] = useState(new Map());
@@ -94,6 +95,8 @@ export default function StatReports({ coach, players = [] }) {
         </div>
         <button onClick={() => setShowTpl(v => !v)} style={{ padding: "8px 14px", borderRadius: 8, border: "1px solid " + C.gold, background: showTpl ? C.gold : "transparent", color: showTpl ? "#000" : C.gold, fontWeight: 800, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>{showTpl ? "Close template" : "✎ Edit email template"}</button>
       </div>
+
+      <StatsLinks session={session} />
 
       {showTpl && (
         <div style={{ background: C.card, border: "1px solid " + C.gold, borderRadius: 12, padding: 14, marginBottom: 14 }}>

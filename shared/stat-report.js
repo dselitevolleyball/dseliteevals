@@ -20,11 +20,11 @@ export const METRICS = [
 
 export const DEFAULT_SETTINGS = {
   subject: "{player_first}'s performance testing results",
-  intro: "My name is Brandon Blahnik. I run performance training at Dripping Springs Sports Club and coach with DS Elite. I tested {player_first} with her {team} teammates, and I wanted to share where she is right now and where she's already improved.",
+  intro: "I'm Coach Brandon, and I run performance training at Dripping Springs Sports Club. I tested {player_first} with her {team} teammates, and I wanted to share where she is right now and where she's already improved.",
   pitch: "If {player_first} wants to keep building on this, we've just launched Reach Performance memberships at DSSC: ongoing speed, strength and jump training built for volleyball players, with regular re-testing so you can watch the numbers move. I'd love to work with her. Reply to this email with any questions, or tap below to learn more.",
   pitch_button: "Learn about Reach memberships",
   pitch_link: "",
-  signoff: "Brandon Blahnik\nPerformance Coach, Reach at DSSC\nDS Elite Volleyball",
+  signoff: "Coach Brandon\nPerformance Coach, Reach at DSSC",
 };
 
 const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };

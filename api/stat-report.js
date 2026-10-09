@@ -12,7 +12,8 @@ import { createClient } from "@supabase/supabase-js";
 import { buildReport } from "../shared/stat-report.js";
 
 const OWNER_EMAILS = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"];
-export const REPORT_SENDERS = ["brandonblahnik@outlook.com"];
+// The DSSC performance coach (the new Brandon at DSSC - not Brandon Blahnik).
+export const REPORT_SENDERS = ["brandon@drippingsportsclub.com"];
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const nrm = (v) => String(v || "").trim().toLowerCase();
 

@@ -48,7 +48,8 @@ export default async function handler(req, res) {
     if (!ok && bearer) {
       const { data: { user } = {} } = await sb.auth.getUser(bearer).catch(() => ({ data: {} }));
       const email = (user?.email || "").toLowerCase();
-      ok = OWNERS.includes(email);
+      // The DSSC performance coach (new Brandon) can share the testing links too.
+      ok = OWNERS.includes(email) || email === "brandon@drippingsportsclub.com";
       if (!ok && email) { const { data: c } = await sb.from("coaches").select("is_admin,is_approved").ilike("email", email).maybeSingle(); ok = !!(c?.is_admin && c?.is_approved); }
     }
     if (!ok) return res.status(403).json({ error: "Admins only" });

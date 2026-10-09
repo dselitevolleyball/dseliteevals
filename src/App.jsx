@@ -2171,7 +2171,7 @@ export default function App() {
   const canOps    = isAdmin || isOwner;
   // Testing report emails: admins plus the performance coach (keep in step
   // with REPORT_SENDERS in api/stat-report.js).
-  const canSendReports = canOps || ["brandonblahnik@outlook.com"].includes(String(coach?.email || "").trim().toLowerCase());
+  const canSendReports = canOps || ["brandon@drippingsportsclub.com"].includes(String(coach?.email || "").trim().toLowerCase());
   const opsDenied = <div style={{padding:24,color:C.mut,textAlign:"center"}}>This section is restricted to administrators. Ask the club administrator (Drew) for access.</div>;
   // Once a player has accepted (or is locked/signed) onto a team, they're
   // locked to that team — only the owner (Drew) can change their offer status,
@@ -32736,7 +32736,7 @@ export default function App() {
         {view==="dssctexts" && (isDsscDirector
           ? <DsscTexts coach={coach} clinics={clinics} players={players} coachRoster={coachRoster} dsscAvail={dsscAvail} isDirector={isDsscDirector} initial={dsscTextsInit} onConsumedInitial={()=>setDsscTextsInit(null)} />
           : <div style={{padding:24,color:C.mut,textAlign:"center"}}>DSSC texting is for the club's directors.</div>)}
-        {view==="testreports" && (canSendReports ? <StatReports coach={coach} players={players} /> : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Testing reports are for admins and the performance coach.</div>)}
+        {view==="testreports" && (canSendReports ? <StatReports coach={coach} players={players} session={session} /> : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Testing reports are for admins and the performance coach.</div>)}
         {view==="lineups" && renderLineups()}
         {view==="games" && renderGames()}
         {view==="askai" && renderAskAI()}
