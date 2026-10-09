@@ -1,5 +1,6 @@
 // POST /api/stat-report — send one player's performance testing report.
 //   { player_id, test_to? }   test_to = send only to that address, subject [TEST]
+//   { sample: true, test_to }  the template with a made-up player, to any address
 // The email is rebuilt here from the saved template + the player's saved draft
 // with shared/stat-report.js (the same builder as the app's preview), sent from
 // DS Elite with replies going to the coach who sent it, and logged in
@@ -9,7 +10,7 @@
 // Env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, RESEND_API_KEY, DSE_FROM_EMAIL.
 
 import { createClient } from "@supabase/supabase-js";
-import { buildReport } from "../shared/stat-report.js";
+import { buildReport, SAMPLE_PLAYER, SAMPLE_TESTS, SAMPLE_DRAFT } from "../shared/stat-report.js";
 
 const OWNER_EMAILS = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"];
 // The DSSC performance coach (the new Brandon at DSSC - not Brandon Blahnik).
@@ -34,17 +35,20 @@ export default async function handler(req, res) {
   const senderName = me?.display_name || email;
 
   let b = req.body; try { b = typeof b === "string" ? JSON.parse(b) : (b || {}); } catch { return res.status(400).json({ error: "Invalid JSON" }); }
+  const sample = !!b.sample;
   const playerId = Number(b.player_id);
-  if (!playerId) return res.status(400).json({ error: "player_id required" });
+  if (!playerId && !sample) return res.status(400).json({ error: "player_id required" });
   const testTo = b.test_to ? nrm(b.test_to) : null;
-  if (testTo && !EMAIL_RE.test(testTo)) return res.status(400).json({ error: "Bad test address" });
+  if (testTo && !EMAIL_RE.test(testTo)) return res.status(400).json({ error: "That test address doesn't look right." });
+  if (sample && !testTo) return res.status(400).json({ error: "A sample can only go to a test address." });
 
-  const [{ data: player }, { data: tests }, { data: set }, { data: draft }] = await Promise.all([
+  let [{ data: player }, { data: tests }, { data: set }, { data: draft }] = await Promise.all([
     sb.from("players").select("id, first_name, last_name, team_assignment, parent_name, parent2_name, parent_email, parent_email2, parent_email3, stand_reach, approach_touch, jump_touch, sprint_10y").eq("id", playerId).maybeSingle(),
     sb.from("player_stat_tests").select("*").eq("player_id", playerId).order("test_date"),
     sb.from("stat_report_settings").select("data").eq("id", "main").maybeSingle(),
     sb.from("stat_report_drafts").select("*").eq("player_id", playerId).maybeSingle(),
   ]);
+  if (sample) { player = SAMPLE_PLAYER; tests = SAMPLE_TESTS; draft = SAMPLE_DRAFT; }
   if (!player) return res.status(404).json({ error: "Player not found" });
   const firsts = [...new Set([player.parent_name, player.parent2_name].map(x => String(x || "").trim().split(/\s+/)[0]).filter(Boolean))];
   const parentFirst = firsts.length <= 1 ? (firsts[0] || "") : firsts.slice(0, -1).join(", ") + " and " + firsts[firsts.length - 1];
@@ -61,7 +65,7 @@ export default async function handler(req, res) {
   if (!r.ok) return res.status(502).json({ error: "Email failed: " + r.status + " " + (await r.text()).slice(0, 200) });
 
   await Promise.all([
-    sb.from("stat_report_sends").insert({ player_id: playerId, recipients: to, subject, body: rep.text, test: !!testTo, sent_by: senderName }),
+    sample ? Promise.resolve() : sb.from("stat_report_sends").insert({ player_id: playerId, recipients: to, subject, body: rep.text, test: !!testTo, sent_by: senderName }),
     sb.from("email_log").insert({ subject, body: rep.text, recipient_count: to.length, recipients: to, sent_count: to.length, failed_count: 0, sent_by: senderName, sent_by_email: email }),
   ]);
   return res.status(200).json({ ok: true, to, test: !!testTo });

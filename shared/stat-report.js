@@ -25,6 +25,14 @@ export const DEFAULT_SETTINGS = {
   pitch_button: "Learn about Reach memberships",
   pitch_link: "",
   signoff: "Coach Brandon\nPerformance Coach, Reach at DSSC",
+  // The metrics section — all editable in the template.
+  numbers_heading: "{player_first}'s numbers",
+  col_test: "Test", col_baseline: "Baseline", col_now: "Now", col_change: "Change",
+  show_gains: true,
+  gains_text: "Where {player_first} got better:",
+  worked_heading: "What we worked on",
+  pitch_heading: "Reach Performance",
+  default_metrics: [],          // empty = every metric on file
 };
 
 const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
@@ -76,7 +84,8 @@ export function buildReport({ player, tests, settings, draft, parentFirst }) {
   const team = String(player?.team_assignment || "").replace(/ 1$/, "");
   const vars = { player_first: String(player?.first_name || "").trim(), team: team || "DS Elite", parent_first: parentFirst || "" };
   const all = metricRows(player, tests);
-  const picked = Array.isArray(draft?.metrics) && draft.metrics.length ? all.filter(r => draft.metrics.includes(r.key)) : all;
+  const want = Array.isArray(draft?.metrics) && draft.metrics.length ? draft.metrics : (Array.isArray(S.default_metrics) && S.default_metrics.length ? S.default_metrics : null);
+  const picked = want ? all.filter(r => want.includes(r.key)) : all;
   const gains = picked.filter(r => r.better === true);
   const subject = fill(S.subject, vars);
   const greet = parentFirst ? `Hi ${parentFirst},` : "Hi,";
@@ -97,27 +106,33 @@ export function buildReport({ player, tests, settings, draft, parentFirst }) {
   };
   const table = picked.length
     ? `<table style="border-collapse:collapse;width:100%;font-size:14px;margin:4px 0 16px"><thead><tr style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#888">`
-      + `<th style="text-align:left;padding:6px 10px">Test</th><th style="text-align:right;padding:6px 10px">Baseline</th>${anyLatest ? '<th style="text-align:right;padding:6px 10px">Now</th><th style="text-align:right;padding:6px 10px">Change</th>' : ""}</tr></thead><tbody>`
+      + `<th style="text-align:left;padding:6px 10px">${esc(S.col_test)}</th><th style="text-align:right;padding:6px 10px">${esc(S.col_baseline)}</th>${anyLatest ? `<th style="text-align:right;padding:6px 10px">${esc(S.col_now)}</th><th style="text-align:right;padding:6px 10px">${esc(S.col_change)}</th>` : ""}</tr></thead><tbody>`
       + picked.map(row).join("") + `</tbody></table>`
     : "";
-  const gainLine = gains.length ? `Where ${vars.player_first} got better: ${gains.map(g => `${g.label} (${fmtChange(g.key, g.change)})`).join(", ")}.` : "";
+  const gainLine = S.show_gains !== false && gains.length ? `${fill(S.gains_text, vars)} ${gains.map(g => `${g.label} (${fmtChange(g.key, g.change)})`).join(", ")}.` : "";
   const H = (t) => `<p style="margin:22px 0 8px;font-weight:700;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:#c2186f">${esc(t)}</p>`;
   const html = '<div style="font-family:-apple-system,Segoe UI,sans-serif;font-size:15px;line-height:1.6;color:#1a1a1a;max-width:620px">'
     + P(greet) + intro.map(P).join("")
-    + (picked.length ? H(`${vars.player_first}'s numbers`) + table : "")
+    + (picked.length ? H(fill(S.numbers_heading, vars)) + table : "")
     + (gainLine ? `<p style="margin:0 0 14px;padding:10px 12px;background:#ecfdf3;border-radius:8px;color:#14532d;font-weight:600">${esc(gainLine)}</p>` : "")
-    + (worked ? H("What we worked on") + P(worked) : "")
+    + (worked ? H(fill(S.worked_heading, vars)) + P(worked) : "")
     + (note ? P(note) : "")
-    + (pitch.length ? H("Reach Performance") + pitch.map(P).join("") : "")
+    + (pitch.length ? H(fill(S.pitch_heading, vars)) + pitch.map(P).join("") : "")
     + (S.pitch_link ? `<p style="margin:6px 0 18px"><a href="${esc(S.pitch_link)}" style="display:inline-block;background:#e91e8c;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:700">${esc(fill(S.pitch_button, vars) || "Learn more")}</a></p>` : "")
     + `<p style="margin:18px 0 0">${esc(fill(S.signoff, vars)).replace(/\n/g, "<br>")}</p></div>`;
 
   // ── Text ──
   const tline = (r) => `  ${r.label}: ${fmtMetric(r.key, r.baseline)} (${r.baselineFrom})` + (r.latest != null ? ` -> ${fmtMetric(r.key, r.latest)} (${r.latestFrom})${r.change != null ? "  " + fmtChange(r.key, r.change) + (r.better ? " better" : "") : ""}` : "");
   const text = [greet, ...intro,
-    picked.length ? `${vars.player_first.toUpperCase()}'S NUMBERS\n` + picked.map(tline).join("\n") : "",
-    gainLine, worked ? "WHAT WE WORKED ON\n" + worked : "", note,
-    pitch.length ? "REACH PERFORMANCE\n" + pitch.join("\n\n") + (S.pitch_link ? "\n" + S.pitch_link : "") : "",
+    picked.length ? fill(S.numbers_heading, vars).toUpperCase() + "\n" + picked.map(tline).join("\n") : "",
+    gainLine, worked ? fill(S.worked_heading, vars).toUpperCase() + "\n" + worked : "", note,
+    pitch.length ? fill(S.pitch_heading, vars).toUpperCase() + "\n" + pitch.join("\n\n") + (S.pitch_link ? "\n" + S.pitch_link : "") : "",
     fill(S.signoff, vars)].filter(Boolean).join("\n\n");
   return { subject, html, text, rows: all, picked };
 }
+
+// A made-up player for previewing / test-sending the template before anyone
+// real has been retested.
+export const SAMPLE_PLAYER = { id: 0, first_name: "Sample", last_name: "Player", team_assignment: "14 Diamond", stand_reach: 90, approach_touch: 112, jump_touch: 101, sprint_10y: 1.95 };
+export const SAMPLE_TESTS = [{ test_date: new Date().toISOString().slice(0, 10), stand_reach: 90.5, approach_touch: 115, standing_touch: 103, broad_jump: 86, dash_10y: 1.88 }];
+export const SAMPLE_DRAFT = { worked_on: "Approach footwork, arm swing timing and first-step quickness off the block.", note: "" };
