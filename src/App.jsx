@@ -28418,6 +28418,8 @@ export default function App() {
                     return (
                       <div key={m.id} style={{display:"flex",justifyContent:out?"flex-end":"flex-start"}}>
                         <div style={{maxWidth:"75%",padding:"8px 12px",borderRadius:14,background:out?"rgba(233,30,140,0.18)":"rgba(255,255,255,0.06)",color:C.text,fontSize:13,lineHeight:1.4,border:"1px solid "+(out?C.acc:C.border)}}>
+                          {/* Pictures (MMS) — ones we sent and ones parents text in. Tap to open full size. */}
+                          {(Array.isArray(m.media_urls) ? m.media_urls : []).map(u => <a key={u} href={u} target="_blank" rel="noreferrer"><img src={u} alt="Picture" loading="lazy" style={{maxWidth:240,width:"100%",borderRadius:8,display:"block",marginBottom:m.body?6:0}} /></a>)}
                           <div style={{whiteSpace:"pre-wrap",wordBreak:"break-word"}}>{m.body}</div>
                           <div style={{fontSize:9,color:C.mut,marginTop:4,textAlign:out?"right":"left"}}>
                             {fmtWhen(m.sent_at || m.created_at)}
