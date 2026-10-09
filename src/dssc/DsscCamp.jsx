@@ -28,11 +28,16 @@ const addDays = (iso, n) => { const d = new Date(iso + "T12:00:00"); d.setDate(d
 
 // Economics assumptions (editable on the Economics tab, stored in plan.data.econ).
 const DEFAULT_ECON = {
+  sessionPrice: 1600, sessionDays: 2, athletes: 14,
   starRate: 1000, flight: 500, hotelNight: 200, groundDay: 60, mealsDay: 75,
   assistants: 3, asstRate: 30, asstHours: 8,
   lunch: 15, swag: 35, courtDay: 0, procPct: 3, marketing: 3000, deposit: 250,
 };
+// Program pricing applies to every session at once (Sessions tab can still
+// override one). The rest are cost assumptions.
+const PRICING_KEYS = ["sessionPrice", "sessionDays", "athletes"];
 const ECON_FIELDS = [
+  ["Program pricing (every session)", [["sessionPrice", "Price per athlete, per session", "$"], ["sessionDays", "Days per session", "#"], ["athletes", "Athletes per session", "#"]]],
   ["Star coach", [["starRate", "Day rate", "$"], ["flight", "Flight (per session)", "$"], ["hotelNight", "Hotel per night", "$"], ["groundDay", "Car / Uber per day", "$"], ["mealsDay", "Meals per day", "$"]]],
   ["DS Elite / DSSC assistants", [["assistants", "Assistants per session", "#"], ["asstRate", "Hourly rate", "$"], ["asstHours", "Paid hours per day", "#"]]],
   ["Per player / per day", [["lunch", "Lunch per person per day (players + coaches)", "$"], ["swag", "Shirt / swag per player", "$"], ["courtDay", "Court cost per day (2 courts; $0 = our own)", "$"], ["procPct", "Card processing", "%"]]],
@@ -176,7 +181,8 @@ export default function DsscCamp({ coach }) {
         </div>
 
         {tab === "plan" && <PlanTab plan={plan} savePlan={savePlan} />}
-        {tab === "econ" && <EconTab econ={econ} savePlan={savePlan} rows={rows} tot={tot} net={net} />}
+        {tab === "econ" && <EconTab econ={econ} savePlan={savePlan} rows={rows} tot={tot} net={net}
+          applyPricing={async (e) => { for (const x of sessions.filter(x => x.status !== "cancelled")) await saveSession(x.id, { days: e.sessionDays, cap: e.athletes, expected: null, price_per_day: Math.round(e.sessionPrice / Math.max(1, e.sessionDays)) }); }} />}
         {tab === "sessions" && <SessionsTab sessions={sessions} coaches={coaches} coachBy={coachBy} econ={econ} saveSession={saveSession} />}
         {tab === "coaches" && <CoachesTab coaches={coaches} sessions={sessions} saveCoach={saveCoach} addCoach={addCoach} removeCoach={removeCoach} />}
         {tab === "interest" && <InterestTab />}
@@ -209,10 +215,21 @@ function PlanTab({ plan, savePlan }) {
   </>);
 }
 
-function EconTab({ econ, savePlan, rows, tot, net }) {
-  const set = (k, v) => savePlan({ econ: { ...econ, [k]: num(v) } });
-  // 2- vs 3-day comparison for a 14-16 session with the default star coach.
-  const grid = [600, 700, 800].map(price => ({ price, cells: [[2, 12], [2, 15], [3, 12], [3, 15]].map(([days, n]) => ({ days, n, e: sessionEcon({ days, price_per_day: price, cap: n, expected: n }, econ, null) })) }));
+function EconTab({ econ, savePlan, rows, tot, net, applyPricing }) {
+  const set = async (k, v) => {
+    const next = { ...econ, [k]: num(v) };
+    if (next[k] === econ[k]) return;
+    if (PRICING_KEYS.includes(k)) {
+      if (!(next.sessionDays >= 1) || !(next.athletes >= 1)) return;
+      await savePlan({ econ: next });
+      await applyPricing(next);
+    } else savePlan({ econ: next });
+  };
+  // What one session nets at the program's days, across prices and group sizes.
+  const P = econ.sessionPrice, D = Math.max(1, econ.sessionDays), N = econ.athletes;
+  const prices = [...new Set([P - 200, P, P + 200].filter(x => x > 0))];
+  const sizes = [...new Set([N - 2, N, N + 1].filter(x => x > 0))];
+  const grid = prices.map(price => ({ price, cells: sizes.map(n => ({ n, e: sessionEcon({ days: D, price_per_day: price / D, cap: n, expected: n }, econ, null) })) }));
   const th = { textAlign: "right", padding: "6px 8px", fontSize: 11, color: DS.mut, fontWeight: 700, textTransform: "uppercase", whiteSpace: "nowrap", borderBottom: "1px solid " + DS.line };
   const td = { textAlign: "right", padding: "6px 8px", fontSize: 13, borderBottom: "1px solid " + DS.line, whiteSpace: "nowrap" };
   return (<>
@@ -230,7 +247,7 @@ function EconTab({ econ, savePlan, rows, tot, net }) {
           <thead><tr><th style={{ ...th, textAlign: "left" }}>Session</th><th style={th}>Players</th><th style={th}>Revenue</th><th style={th}>Star + travel</th><th style={th}>Assistants</th><th style={th}>Lunch</th><th style={th}>Swag/courts/fees</th><th style={th}>Net</th><th style={th}>Break-even</th></tr></thead>
           <tbody>{rows.map(({ s, e }) => (
             <tr key={s.id}>
-              <td style={{ ...td, textAlign: "left" }}>{s.name}<div style={{ fontSize: 11, color: DS.mut }}>{s.days} days · ${s.price_per_day}/day</div></td>
+              <td style={{ ...td, textAlign: "left" }}>{s.name}<div style={{ fontSize: 11, color: DS.mut }}>{s.days} days · {money(s.price_per_day * s.days)}/athlete</div></td>
               <td style={td}>{e.n}</td><td style={td}>{money(e.revenue)}</td><td style={td}>{money(e.star + e.travel)}</td><td style={td}>{money(e.assistants)}</td>
               <td style={td}>{money(e.lunch)}</td><td style={td}>{money(e.swag + e.courts + e.processing)}</td>
               <td style={{ ...td, fontWeight: 800, color: e.margin >= 0 ? DS.lime : DS.orange }}>{money(e.margin)}</td>
@@ -240,17 +257,17 @@ function EconTab({ econ, savePlan, rows, tot, net }) {
       </div>
     </Card>
     <Card>
-      <Label>2 days or 3? (one 14-16 session, net)</Label>
+      <Label>Price × group size (one {D}-day session, net)</Label>
       <div style={{ overflowX: "auto" }}>
         <table style={{ borderCollapse: "collapse", minWidth: 520 }}>
-          <thead><tr><th style={{ ...th, textAlign: "left" }}>Price / day</th><th style={th}>2 days · 12</th><th style={th}>2 days · 15</th><th style={th}>3 days · 12</th><th style={th}>3 days · 15</th></tr></thead>
+          <thead><tr><th style={{ ...th, textAlign: "left" }}>Price / athlete</th>{sizes.map(n => <th key={n} style={th}>{n} athletes</th>)}</tr></thead>
           <tbody>{grid.map(r => (
             <tr key={r.price}><td style={{ ...td, textAlign: "left", fontWeight: 700 }}>${r.price}</td>
-              {r.cells.map((c, i) => <td key={i} style={td}><b style={{ color: DS.lime }}>{money(c.e.margin)}</b><div style={{ fontSize: 11, color: DS.mut }}>{money(c.n * r.price * c.days)} in · {money(c.n * r.price * c.days / c.n)} each</div></td>)}
+              {r.cells.map((c, i) => <td key={i} style={{ ...td, background: r.price === P && c.n === N ? DS.limeSoft : "transparent" }}><b style={{ color: DS.lime }}>{money(c.e.margin)}</b><div style={{ fontSize: 11, color: DS.mut }}>{money(c.n * r.price)} in</div></td>)}
             </tr>))}</tbody>
         </table>
       </div>
-      <div style={{ fontSize: 12, color: DS.mut, marginTop: 8, lineHeight: 1.5 }}>The star coach's travel is a fixed cost per session, so a third day spreads it further — 3 days earns noticeably more per session for the same flight. The trade-off is price per family: a 3-day session at $700 is $2,100 before travel.</div>
+      <div style={{ fontSize: 12, color: DS.mut, marginTop: 8, lineHeight: 1.5 }}>Highlighted: the current plan. Change price, days or athletes under Assumptions and every session updates.</div>
     </Card>
     <Card>
       <Label>Assumptions</Label>
