@@ -602,20 +602,39 @@ Each family gets their own copy; replies to a text come back to DSSC Texts.`)) r
 // ── Players ─────────────────────────────────────────────────────────────────
 function PlayersTab({ c, s, roster, reload, canEdit, coachName, podAttendance, reloadAttendance, notifyDirectors }) {
   const att = podAttendance.find(a => a.clinic_id === c.id && String(a.session_id) === String(s.id));
-  const present = new Set((Array.isArray(att?.present) ? att.present : []).map(String));
+  // Check-ins are applied one tap at a time to the row as it is in the
+  // database right now — not by saving this screen's copy of the list. The old
+  // way lost taps: a quick second tap (or a second coach checking kids in on
+  // another phone) saved a stale list over the first, and Love the Floor got
+  // stuck at 12 of 19 (Oct 9 2026). Local state shows the tick instantly.
+  const serverPresent = (Array.isArray(att?.present) ? att.present : []).map(String).sort().join(",");
+  const [local, setLocal] = useState(null);
+  useEffect(() => { setLocal(null); }, [serverPresent]);
+  const present = local || new Set(serverPresent ? serverPresent.split(",") : []);
+  const queue = useRef(Promise.resolve());
   const [adding, setAdding] = useState(false);
   const blank = { first: "", last: "", parent_name: "", parent_email: "", parent_phone: "", sms_consent: false, all: false };
   const [f, setF] = useState(blank);
   const [more, setMore] = useState(false);
   const [saving, setSaving] = useState(false);
-  const savePresent = async (nextSet) => {
-    const ids = [...nextSet];
-    const row = { clinic_id: c.id, session_id: String(s.id), session_date: s.date, players: ids.length, present: ids, recorded_by: coachName, recorded_at: new Date().toISOString() };
-    const { error } = await supabase.from("dssc_pod_attendance").upsert(row, { onConflict: "clinic_id,session_id" });
-    if (error) window.alert("Couldn't save attendance: " + error.message);
-    reloadAttendance && reloadAttendance();
+  // Add or remove ONE kid against the current database row, in tap order.
+  const applyPresent = (id, here) => {
+    const k = String(id);
+    setLocal(prev => { const n = new Set(prev || present); here ? n.add(k) : n.delete(k); return n; });
+    queue.current = queue.current.then(async () => {
+      const { data: cur } = await supabase.from("dssc_pod_attendance").select("present").eq("clinic_id", c.id).eq("session_id", String(s.id)).maybeSingle();
+      const n = new Set((Array.isArray(cur?.present) ? cur.present : []).map(String));
+      here ? n.add(k) : n.delete(k);
+      const ids = [...n];
+      const row = { clinic_id: c.id, session_id: String(s.id), session_date: s.date, players: ids.length, present: ids, recorded_by: coachName, recorded_at: new Date().toISOString() };
+      const { error } = await supabase.from("dssc_pod_attendance").upsert(row, { onConflict: "clinic_id,session_id" });
+      if (error) window.alert("Couldn't save attendance: " + error.message);
+      setLocal(n);
+    }).catch(e => window.alert("Couldn't save attendance: " + (e?.message || e)))
+      .then(() => { reloadAttendance && reloadAttendance(); });
+    return queue.current;
   };
-  const toggle = (id) => { const n = new Set(present); n.has(String(id)) ? n.delete(String(id)) : n.add(String(id)); savePresent(n); };
+  const toggle = (id) => applyPresent(id, !present.has(String(id)));
   // A kid shows up who isn't on the Playbook list: first and last name is all
   // the coach should have to type. They're marked here, and Hunter hears about
   // it straight away so the registration gets sorted on his side.
@@ -626,7 +645,7 @@ function PlayersTab({ c, s, roster, reload, canEdit, coachName, podAttendance, r
     const { data: row, error } = await supabase.from("dssc_pod_roster").insert({ clinic_id: c.id, session_id: f.all ? null : String(s.id), player_name: name, parent_name: f.parent_name.trim() || null, parent_email: f.parent_email.trim() || null, parent_phone: f.parent_phone.trim() || null, sms_consent: !!f.sms_consent, source: "manual", notes: "Not on the Playbook list — added by " + coachName, added_by: coachName }).select().single();
     setSaving(false);
     if (error) { window.alert("Couldn't add: " + error.message); return; }
-    if (row) { const n = new Set(present); n.add(String(row.id)); await savePresent(n); }
+    if (row) await applyPresent(row.id, true);
     notifyDirectors && notifyDirectors("Not on the list — " + name + " at " + c.name,
       name + " came to " + c.name + " on " + fmtDay(s.date, "") + " (" + timeRange(s) + ") but wasn't on the Playbook sign-up list. Coach " + coachName + " added them to the class and marked them here. Please check the registration.");
     setF(blank); setAdding(false); setMore(false); reload();
