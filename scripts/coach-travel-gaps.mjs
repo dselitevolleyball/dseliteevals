@@ -26,10 +26,11 @@
 
 import { readFileSync } from "node:fs";
 import { createClient } from "@supabase/supabase-js";
+import { travelSections } from "../shared/travel-email.js";
 
 const APP = "https://dseliteevals.vercel.app";
 // Both, matching api/travel-gap-alert.js — Kristen books it, Drew watches it.
-const TO = ["kristen@dselitevolleyball.com", "drew@dselitevolleyball.com"];
+const TO_DEFAULT = ["kristen@dselitevolleyball.com", "drew@dselitevolleyball.com"];
 const SENDER = { name: "Drew Rose", email: "drew@dselitevolleyball.com" };
 // Mirrors isPlaceholderCoach in src/App.jsx. "TBD" in an override means the
 // slot is open, not that a person called TBD is travelling.
@@ -61,6 +62,8 @@ function loadEnv() {
 const args = process.argv.slice(2);
 const flag = (n) => args.includes("--" + n);
 const value = (n) => { const i = args.indexOf("--" + n); return i >= 0 ? args[i + 1] : null; };
+// --to a@x.com,b@y.com sends a preview somewhere else (default: Kristen + Drew).
+const TO = value("to") ? value("to").split(",").map(x => x.trim()).filter(Boolean) : TO_DEFAULT;
 const doSend = flag("send");
 const onlyCoach = value("coach");
 const allTournaments = flag("all-tournaments");
@@ -197,18 +200,9 @@ else {
     `<td style="padding:7px 10px;border-bottom:1px solid #eee;white-space:nowrap">${esc(g.t.location || "")}` +
     `${g.far ? ' <b style="color:#b62d2d">flights</b>' : ""}</td></tr>`).join("");
 
-  const sections = [...byCoach.entries()].sort().map(([coach, list]) => {
-    const far = list.filter(g => g.far).length;
-    return `<p style="margin:26px 0 8px;font-weight:700;font-size:15px">${esc(coach)} — ${list.length} unbooked` +
-      `${far ? `, <span style="color:#b62d2d">${far} needing flights</span>` : ""}</p>` +
-      `<table style="border-collapse:collapse;width:100%;font-size:14px"><tbody>${rows(list)}</tbody></table>`;
-  }).join("");
-
-  const text = [...byCoach.entries()].sort().map(([coach, list]) =>
-    coach + " — " + list.length + " unbooked:\n" +
-    list.map(g => "  " + span(g.t.start_date, g.t.end_date) + "  " + g.team + "  " +
-      String(g.t.name).trim() + " — " + (g.t.location || "") + (g.far ? "  (FLIGHTS)" : "")).join("\n")
-  ).join("\n\n");
+  // Grouped by event, in date order (shared/travel-email.js).
+  const built = travelSections(gaps);
+  const sections = built.html, text = built.text;
 
   const html = '<div style="font-family:-apple-system,Segoe UI,sans-serif;font-size:15px;line-height:1.6;color:#1a1a1a;max-width:640px">'
     + '<p style="margin:0 0 14px">Kristen,</p>'

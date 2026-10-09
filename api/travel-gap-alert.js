@@ -31,6 +31,7 @@
 //      TRAVEL_ALERT_TO (opt — defaults to Kristen).
 
 import { createClient } from "@supabase/supabase-js";
+import { travelSections } from "../shared/travel-email.js";
 
 // Kristen books it; Drew asked to see it too, having found out about Dillyn
 // Austin's three unbooked trips by noticing they were missing rather than by
@@ -138,14 +139,20 @@ export default async function handler(req, res) {
   const seen = new Set();
   const all = gaps.filter(g => (seen.has(g.key) ? false : seen.add(g.key)));
   const fresh = all.filter(g => g.isNew);
-  fresh.sort((a, b) => String(a.coach).localeCompare(String(b.coach))
-    || String(a.t.start_date).localeCompare(String(b.t.start_date)));
 
+
+  // Plain inserts. The unique index is on lower(trim(coach_name)), so an upsert
+  // with onConflict "coach_name,tournament_id" matched no constraint, failed
+  // every time, and the failure was ignored: nothing was ever marked and the
+  // same ~66 trips went out as "new" every morning (found Oct 9 2026). `fresh`
+  // already excludes anything told, so one row at a time and skip duplicates.
   const mark = async (rows) => {
-    if (!rows.length) return;
-    await sb.from("travel_gap_notices").upsert(
-      rows.map(g => ({ coach_name: g.coach, tournament_id: g.t.id, team_name: g.team })),
-      { onConflict: "coach_name,tournament_id", ignoreDuplicates: true });
+    let failed = 0;
+    for (const g of rows) {
+      const { error } = await sb.from("travel_gap_notices").insert({ coach_name: g.coach, tournament_id: g.t.id, team_name: g.team });
+      if (error && error.code !== "23505") { failed++; console.error("travel_gap_notices insert", error.message); }
+    }
+    return failed;
   };
 
   if (seed) {
@@ -168,35 +175,14 @@ export default async function handler(req, res) {
   }
   if (!RESEND_API_KEY || !DSE_FROM_EMAIL) return res.status(500).json({ error: "Email not configured" });
 
-  const byCoach = new Map();
-  for (const g of fresh) {
-    if (!byCoach.has(g.coach)) byCoach.set(g.coach, []);
-    byCoach.get(g.coach).push(g);
-  }
-
-  // The first run would otherwise be a wall of 74 rows. Say the number, link to
-  // the board, and let the habit start with something readable.
+  // Grouped by event, in date order (shared/travel-email.js).
   const bulk = firstRun && fresh.length > 12;
-  const sections = bulk ? "" : [...byCoach.entries()].map(([coach, list]) => {
-    const far = list.filter(g => g.far).length;
-    return `<p style="margin:24px 0 8px;font-weight:700;font-size:15px">${esc(coach)} — ${list.length} unbooked` +
-      `${far ? `, <span style="color:#b62d2d">${far} needing flights</span>` : ""}</p>` +
-      `<table style="border-collapse:collapse;width:100%;font-size:14px"><tbody>` +
-      list.map(g =>
-        `<tr><td style="padding:7px 10px;border-bottom:1px solid #eee;white-space:nowrap;font-weight:600">${esc(span(g.t.start_date, g.t.end_date))}</td>` +
-        `<td style="padding:7px 10px;border-bottom:1px solid #eee;white-space:nowrap">${esc(g.team)}</td>` +
-        `<td style="padding:7px 10px;border-bottom:1px solid #eee">${esc(String(g.t.name).trim())}` +
-        // She is due at two things that weekend and neither is booked. Say so on
-        // the row, or Kristen books a trip that may not be happening.
-        `${g.clash ? `<div style="color:#9a6510;font-size:12.5px;margin-top:2px">also due at ${esc(g.clash)} that weekend — confirm which before booking</div>` : ""}</td>` +
-        `<td style="padding:7px 10px;border-bottom:1px solid #eee;white-space:nowrap">${esc(g.t.location || "")}` +
-        `${g.far ? ' <b style="color:#b62d2d">flights</b>' : ""}</td></tr>`).join("") +
-      `</tbody></table>`;
-  }).join("");
+  const built = travelSections(fresh);
+  const sections = bulk ? "" : built.html;
 
   const lead = bulk
     ? `<p style="margin:0 0 14px">There are <b>${fresh.length}</b> tournaments with a coach due and no travel booked. That is the current backlog rather than anything that changed today — from tomorrow this email only arrives when something <i>new</i> turns up.</p>`
-    : `<p style="margin:0 0 14px">${fresh.length === 1 ? "A trip has" : fresh.length + " trips have"} appeared that need travel booked. Staffing changed, or a team was entered into a tournament, and nobody would otherwise have said.</p>`;
+    : `<p style="margin:0 0 14px">${fresh.length === 1 ? "A trip has" : fresh.length + " trips have"} appeared that need travel booked, across ${built.events} event${built.events === 1 ? "" : "s"}. Staffing changed, or a team was entered into a tournament, and nobody would otherwise have said.</p>`;
 
   const html = '<div style="font-family:-apple-system,Segoe UI,sans-serif;font-size:15px;line-height:1.6;color:#1a1a1a;max-width:640px">'
     + '<p style="margin:0 0 14px">Kristen,</p>' + lead + sections
@@ -206,11 +192,7 @@ export default async function handler(req, res) {
 
   const text = "Kristen,\n\n" + (bulk
     ? `There are ${fresh.length} tournaments with a coach due and no travel booked. That is the current backlog; from tomorrow this only arrives when something new turns up.\n`
-    : [...byCoach.entries()].map(([coach, list]) =>
-        coach + " — " + list.length + " unbooked:\n" + list.map(g =>
-          "  " + span(g.t.start_date, g.t.end_date) + "  " + g.team + "  " +
-          String(g.t.name).trim() + " — " + (g.t.location || "") + (g.far ? "  (FLIGHTS)" : "")).join("\n")
-      ).join("\n\n"))
+    : built.text)
     + `\n\n${APP}/?view=travel\n\nEach trip is reported once; you won't see these again.\n\nDrew`;
 
   const r = await fetch("https://api.resend.com/emails", {
