@@ -34,11 +34,10 @@ export const DEFAULT_SETTINGS = {
   pitch_heading: "Reach Performance",
   default_metrics: [],          // empty = every metric on file
   // Charts (drawn with table cells so they show in every email app).
-  show_progress: true,
-  progress_heading: "{player_first}'s progress",
+  team_metrics: ["vertical", "dash_10y"],   // compared against the team (and its average)
   show_team: true,
   team_heading: "Where {player_first} stands on {team}",
-  team_note: "Each bar is a teammate, best on the left. Names stay private.",
+  team_note: "Each grey bar is a teammate, best at the top. Names stay private.",
 };
 
 const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
@@ -101,31 +100,11 @@ export function metricSeries(player, tests, key) {
   return out;
 }
 
-// Progress chart: one horizontal bar per result, per metric (2+ results only).
-function progressHtml(player, tests, picked, S, vars) {
-  const blocks = picked.map(r => {
-    const pts = metricSeries(player, tests, r.key);
-    if (pts.length < 2) return "";
-    const up = METRICS.find(m => m[0] === r.key)[3];
-    const vals = pts.map(p => p.value), lo = Math.min(...vals), hi = Math.max(...vals);
-    // Bars start at 70% of the lowest value so differences are visible.
-    const floor = lo * 0.7, span = Math.max(hi - floor, 0.01);
-    const bar = (p, i) => {
-      const w = Math.max(8, Math.round(((up ? p.value : hi + lo - p.value) - floor) / span * 100));
-      const last = i === pts.length - 1;
-      return `<tr><td style="padding:3px 8px 3px 0;font-size:12px;color:#666;white-space:nowrap;width:70px">${esc(p.from)}</td>`
-        + `<td style="padding:3px 0"><table role="presentation" cellpadding="0" cellspacing="0" style="width:100%"><tr>`
-        + `<td style="width:${w}%;background:${last ? "#e91e8c" : "#f5b8d6"};height:16px;border-radius:3px"></td><td style="width:${100 - w}%"></td></tr></table></td>`
-        + `<td style="padding:3px 0 3px 8px;font-size:12px;font-weight:${last ? 700 : 400};white-space:nowrap;width:64px;text-align:right">${esc(fmtMetric(r.key, p.value))}</td></tr>`;
-    };
-    return `<div style="margin:0 0 12px"><div style="font-size:13px;font-weight:700;margin-bottom:2px">${esc(r.label)}${up ? "" : ' <span style="font-weight:400;color:#888">(lower is better)</span>'}</div>`
-      + `<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse">${pts.map(bar).join("")}</table></div>`;
-  }).filter(Boolean);
-  return blocks.length ? `<p style="margin:22px 0 8px;font-weight:700;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:#c2186f">${esc(fill(S.progress_heading, vars))}</p>` + blocks.join("") : "";
-}
-
-// Team standing: every teammate with a result is an unnamed grey bar, best on
-// the left; hers is pink. Shown only with 3+ players so no one is singled out.
+// Team comparison (only the metrics in S.team_metrics — vertical and 10-yard
+// sprint by default). A ranked bar chart, best at the top: every teammate is an
+// unnamed grey bar, hers is pink and named, and the team average is its own
+// dark bar at the place it falls. Needs 3+ players with a result.
+const teamMetricsOf = (S) => (Array.isArray(S.team_metrics) && S.team_metrics.length ? S.team_metrics : ["vertical", "dash_10y"]).filter(k => METRICS.some(m => m[0] === k));
 export function teamStanding(player, tests, teammates, key) {
   const up = METRICS.find(m => m[0] === key)[3];
   const latestOf = (p, t) => { const s = metricSeries(p, t, key); return s.length ? s[s.length - 1].value : null; };
@@ -137,18 +116,27 @@ export function teamStanding(player, tests, teammates, key) {
   const avg = all.reduce((s, x) => s + x.v, 0) / all.length;
   return { all, rank, n: all.length, best: all[0].v, avg, mine, up };
 }
-function teamHtml(player, tests, teammates, picked, S, vars) {
-  const blocks = picked.filter(r => r.key !== "stand_reach").map(r => {
-    const t = teamStanding(player, tests, teammates, r.key);
+function teamHtml(player, tests, teammates, S, vars) {
+  const blocks = teamMetricsOf(S).map(key => {
+    const t = teamStanding(player, tests, teammates, key);
     if (!t) return "";
-    const vals = t.all.map(x => x.v), lo = Math.min(...vals), hi = Math.max(...vals), span = Math.max(hi - lo, 0.01);
-    const cells = t.all.map(x => {
-      const h = 14 + Math.round(((t.up ? x.v - lo : hi - x.v) / span) * 34);
-      return `<td style="vertical-align:bottom;padding:0 1px"><div style="height:${48 - h}px"></div><div style="height:${h}px;background:${x.me ? "#e91e8c" : "#d4d4d8"};border-radius:2px 2px 0 0"></div></td>`;
-    }).join("");
-    return `<div style="margin:0 0 14px"><div style="font-size:13px;font-weight:700">${esc(r.label)} <span style="font-weight:400;color:#666">· ${esc(vars.player_first)} is #${t.rank} of ${t.n}</span></div>`
-      + `<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;table-layout:fixed;border-collapse:collapse;margin:4px 0 2px"><tr>${cells}</tr></table>`
-      + `<div style="font-size:12px;color:#666">${esc(vars.player_first)}: <b style="color:#e91e8c">${esc(fmtMetric(r.key, t.mine))}</b> · Team best: <b>${esc(fmtMetric(r.key, t.best))}</b> · Team average: ${esc(fmtMetric(r.key, t.avg))}</div></div>`;
+    const label = METRICS.find(m => m[0] === key)[1];
+    const rows = [...t.all.map(x => ({ ...x, avg: false })), { v: t.avg, me: false, avg: true }]
+      .sort((a, b) => (t.up ? b.v - a.v : a.v - b.v) || (a.avg ? -1 : 1));
+    const vals = rows.map(x => x.v), lo = Math.min(...vals), hi = Math.max(...vals);
+    // Bars run from 60% (worst) to 100% (best) so the gaps read clearly.
+    const width = (v) => Math.round(60 + ((t.up ? v - lo : hi - v) / Math.max(hi - lo, 0.001)) * 40);
+    const bar = (x) => {
+      const color = x.me ? "#e91e8c" : x.avg ? "#3f3f46" : "#d4d4d8";
+      const name = x.me ? vars.player_first : x.avg ? "Team average" : "";
+      return `<tr><td style="padding:2px 8px 2px 0;font-size:12px;white-space:nowrap;width:96px;font-weight:${x.me || x.avg ? 700 : 400};color:${x.me ? "#e91e8c" : "#3f3f46"}">${esc(name)}</td>`
+        + `<td style="padding:2px 0"><table role="presentation" cellpadding="0" cellspacing="0" style="width:100%"><tr><td style="width:${width(x.v)}%;background:${color};height:${x.me || x.avg ? 16 : 10}px;border-radius:3px"></td><td></td></tr></table></td>`
+        + `<td style="padding:2px 0 2px 8px;font-size:12px;white-space:nowrap;width:56px;text-align:right;font-weight:${x.me || x.avg ? 700 : 400};color:${x.me || x.avg ? "#1a1a1a" : "#a1a1aa"}">${esc(fmtMetric(key, x.v))}</td></tr>`;
+    };
+    const vsAvg = t.mine - t.avg, ahead = t.up ? vsAvg > 0 : vsAvg < 0;
+    return `<div style="margin:0 0 18px"><div style="font-size:14px;font-weight:700">${esc(label)}${t.up ? "" : ' <span style="font-weight:400;color:#888">(lower is faster)</span>'}</div>`
+      + `<div style="font-size:12px;color:#666;margin:2px 0 6px">${esc(vars.player_first)} is #${t.rank} of ${t.n} · ${esc(fmtMetric(key, Math.abs(vsAvg)).replace(/^-/, ""))} ${ahead ? "better than" : "behind"} the team average · Team best ${esc(fmtMetric(key, t.best))}</div>`
+      + `<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse">${rows.map(bar).join("")}</table></div>`;
   }).filter(Boolean);
   return blocks.length ? `<p style="margin:22px 0 4px;font-weight:700;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:#c2186f">${esc(fill(S.team_heading, vars))}</p>`
     + `<p style="margin:0 0 10px;font-size:12px;color:#888">${esc(fill(S.team_note, vars))}</p>` + blocks.join("") : "";
@@ -190,8 +178,7 @@ export function buildReport({ player, tests, settings, draft, parentFirst, teamm
     + P(greet) + intro.map(P).join("")
     + (picked.length ? H(fill(S.numbers_heading, vars)) + table : "")
     + (gainLine ? `<p style="margin:0 0 14px;padding:10px 12px;background:#ecfdf3;border-radius:8px;color:#14532d;font-weight:600">${esc(gainLine)}</p>` : "")
-    + (S.show_progress !== false ? progressHtml(player, tests, picked, S, vars) : "")
-    + (S.show_team !== false ? teamHtml(player, tests, teammates, picked, S, vars) : "")
+    + (S.show_team !== false ? teamHtml(player, tests, teammates, S, vars) : "")
     + (worked ? H(fill(S.worked_heading, vars)) + P(worked) : "")
     + (note ? P(note) : "")
     + (pitch.length ? H(fill(S.pitch_heading, vars)) + pitch.map(P).join("") : "")
@@ -203,7 +190,7 @@ export function buildReport({ player, tests, settings, draft, parentFirst, teamm
   const text = [greet, ...intro,
     picked.length ? fill(S.numbers_heading, vars).toUpperCase() + "\n" + picked.map(tline).join("\n") : "",
     gainLine,
-    S.show_team !== false ? picked.filter(r => r.key !== "stand_reach").map(r => { const t = teamStanding(player, tests, teammates, r.key); return t ? `  ${r.label}: #${t.rank} of ${t.n} on the team (team best ${fmtMetric(r.key, t.best)})` : ""; }).filter(Boolean).join("\n") : "",
+    S.show_team !== false ? teamMetricsOf(S).map(key => { const t = teamStanding(player, tests, teammates, key); const lab = METRICS.find(m => m[0] === key)[1]; return t ? `  ${lab}: #${t.rank} of ${t.n} on the team (team average ${fmtMetric(key, t.avg)}, team best ${fmtMetric(key, t.best)})` : ""; }).filter(Boolean).join("\n") : "",
     worked ? fill(S.worked_heading, vars).toUpperCase() + "\n" + worked : "", note,
     pitch.length ? fill(S.pitch_heading, vars).toUpperCase() + "\n" + pitch.join("\n\n") + (S.pitch_link ? "\n" + S.pitch_link : "") : "",
     fill(S.signoff, vars)].filter(Boolean).join("\n\n");

@@ -168,11 +168,15 @@ export default function StatReports({ coach, players = [], session }) {
               {T("gains_text", "Summary line starts with", 1, "Followed automatically by each improved metric and how much.")}
               {T("worked_heading", "Heading for \"what she worked on\"")}
             </Section>
-            <Section title="Charts">
-              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, marginBottom: 6, cursor: "pointer" }}><input type="checkbox" checked={settings.show_progress !== false} onChange={e => saveSettings({ show_progress: e.target.checked })} style={{ accentColor: C.gold, width: 16, height: 16 }} /> Progress chart (each metric over the season; needs 2+ results)</label>
-              {T("progress_heading", "Progress chart heading")}
-              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, marginBottom: 6, cursor: "pointer" }}><input type="checkbox" checked={settings.show_team !== false} onChange={e => saveSettings({ show_team: e.target.checked })} style={{ accentColor: C.gold, width: 16, height: 16 }} /> Team standing (where she ranks on her team, teammates unnamed; needs 3+ players with results)</label>
-              {T("team_heading", "Team standing heading")}{T("team_note", "Note under the team heading")}
+            <Section title="Team comparison chart">
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, marginBottom: 6, cursor: "pointer" }}><input type="checkbox" checked={settings.show_team !== false} onChange={e => saveSettings({ show_team: e.target.checked })} style={{ accentColor: C.gold, width: 16, height: 16 }} /> Show where she ranks against her team and the team average (teammates unnamed; needs 3+ players with results)</label>
+              <span style={lbl}>Metrics compared against the team</span>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+                {METRICS.filter(m => m[0] !== "stand_reach").map(([k, l]) => { const cur = Array.isArray(settings.team_metrics) && settings.team_metrics.length ? settings.team_metrics : ["vertical", "dash_10y"]; const on = cur.includes(k); return (
+                  <button key={k} onClick={() => { const n = new Set(cur); n.has(k) ? n.delete(k) : n.add(k); if (!n.size) return; saveSettings({ team_metrics: METRICS.map(m => m[0]).filter(x => n.has(x)) }); }}
+                    style={{ fontSize: 12, fontWeight: 700, padding: "5px 10px", borderRadius: 999, cursor: "pointer", fontFamily: "inherit", border: "1px solid " + (on ? C.gold : C.border), background: on ? "rgba(233,30,140,0.15)" : "transparent", color: on ? C.gold : C.mut }}>{l}</button>); })}
+              </div>
+              {T("team_heading", "Heading")}{T("team_note", "Note under the heading")}
             </Section>
             <Section title="Reach membership pitch">{T("pitch_heading", "Heading")}{T("pitch", "Pitch", 5)}{T("pitch_button", "Button text")}{T("pitch_link", "Button link (leave blank to hide the button)")}</Section>
             <Section title="Sign-off">{T("signoff", "Sign-off", 3)}</Section>

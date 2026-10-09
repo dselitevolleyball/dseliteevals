@@ -2172,6 +2172,9 @@ export default function App() {
   // Testing report emails: admins plus the performance coach (keep in step
   // with REPORT_SENDERS in api/stat-report.js).
   const canSendReports = canOps || ["brandon@drippingsportsclub.com"].includes(String(coach?.email || "").trim().toLowerCase());
+  // Brandon runs Reach and does no volleyball coaching: his login is the
+  // testing screen and nothing else (Drew, Oct 9 2026).
+  const isReachOnly = !canOps && ["brandon@drippingsportsclub.com"].includes(String(coach?.email || "").trim().toLowerCase());
   const opsDenied = <div style={{padding:24,color:C.mut,textAlign:"center"}}>This section is restricted to administrators. Ask the club administrator (Drew) for access.</div>;
   // Once a player has accepted (or is locked/signed) onto a team, they're
   // locked to that team — only the owner (Drew) can change their offer status,
@@ -32401,7 +32404,7 @@ export default function App() {
             left. minWidth:0 lets it shrink instead of overflowing the header. */}
         <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",flex:"1 1 auto",minWidth:0,justifyContent:"flex-end"}}>
           <nav style={{display:"flex",gap:3,flexWrap:"wrap",position:"relative",zIndex:50}}>
-            {(() => {
+            {isReachOnly ? <span style={{fontSize:13,fontWeight:800,color:C.gold,padding:"6px 10px"}}>Reach · Testing Reports</span> : (() => {
               const accent = workspace==="dssc" ? "#B2D049" : C.gold, onAccent = workspace==="dssc" ? "#104946" : "#000", quiet = workspace==="dssc" ? "#A9C7C3" : C.mut;
               const btn = (active) => ({padding:"6px 14px",borderRadius:8,border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600,background:active?accent:"transparent",color:active?onAccent:quiet});
               const item = (v,l) =>
@@ -32664,7 +32667,7 @@ export default function App() {
       {/* 1500 keeps text screens readable, but the wide boards are grids, not
           prose — capping them just buys empty margin and costs a column. */}
       <div style={{padding:"14px 18px",maxWidth:WIDE_VIEWS.has(view)?"none":1500,margin:"0 auto"}}>
-        {OPS_VIEWS.has(view) && view !== "notifications" && !canOps ? opsDenied : <>
+        {isReachOnly ? <StatReports coach={coach} players={players} session={session} /> : OPS_VIEWS.has(view) && view !== "notifications" && !canOps ? opsDenied : <>
         {view==="home" && (workspace==="dssc" ? (isDsscDirector ? renderDsscAdmin() : renderDsscHub()) : renderHome())}
         {view==="clockin" && (
           <div style={{maxWidth:820,margin:"0 auto"}}>
