@@ -114,3 +114,12 @@ export function balanceSeason(list, players, { locked = new Set(), iterations = 
   }
   return list;
 }
+
+// Deal `n` new generic assignments for a team, fair against everything it has
+// already worked (`done`: [{ assignments }]), balanced across the lot.
+export function dealAssignments(players, n, { sets = 3, computer = false, done = [], iterations = 20000 } = {}) {
+  const counts = tally(done);
+  const fresh = Array.from({ length: n }, () => ({ assignments: planMatch({ players, counts, sets, computer }) }));
+  const all = balanceSeason([...done.map(d => ({ assignments: d.assignments }))].concat(fresh), players, { locked: new Set(done.map((_, i) => i)), iterations });
+  return all.slice(done.length).map(x => x.assignments);
+}

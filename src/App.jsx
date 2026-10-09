@@ -32750,7 +32750,7 @@ export default function App() {
         {view==="dssctexts" && (isDsscDirector
           ? <DsscTexts coach={coach} clinics={clinics} players={players} coachRoster={coachRoster} dsscAvail={dsscAvail} isDirector={isDsscDirector} initial={dsscTextsInit} onConsumedInitial={()=>setDsscTextsInit(null)} />
           : <div style={{padding:24,color:C.mut,textAlign:"center"}}>DSSC texting is for the club's directors.</div>)}
-        {view==="workduty" && <WorkDuty coach={coach} players={players} tournaments={tournaments} tournamentAssignments={tournamentAssignments}
+        {view==="workduty" && <WorkDuty coach={coach} players={players}
           teamNames={((canViewTeams || canOps) ? teamsList.filter(t => t.active).map(t => t.id) : myTeamNames.filter(t => teamsList.some(x => x.id === t))).slice().sort((a, b) => (parseInt(a) || 99) - (parseInt(b) || 99) || a.localeCompare(b))} />}
         {view==="testreports" && (canSendReports ? <StatReports coach={coach} players={players} session={session} /> : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Testing reports are for admins and the performance coach.</div>)}
         {view==="lineups" && renderLineups()}
