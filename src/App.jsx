@@ -19,6 +19,7 @@ import AskHQ from "./AskHQ.jsx";
 import DaySchedule from "./DaySchedule.jsx";
 import { PlayerStatHistory, StatsLinks } from "./PlayerStats.jsx";
 import StatReports from "./StatReports.jsx";
+import WorkDuty from "./WorkDuty.jsx";
 import EuropeRsvps from "./EuropeRsvps.jsx";
 import DsscTexts from "./dssc/DsscTexts.jsx";
 import DsscCamp from "./dssc/DsscCamp.jsx";
@@ -32423,7 +32424,7 @@ export default function App() {
               const pendingReqs = coachRequests.filter(r=>r.status==="pending").length;
               const groups = [
                 { title:"Players", items:[...((canViewTeams || myTeamNames.length) ? [["roster","Roster"]] : []),
-                  ...((canViewTeams || myTeamNames.length) ? [["incidents","Issues & Injuries" + (incidents.filter(r => incidentVisible(r) && r.status !== "resolved").length ? " (" + incidents.filter(r => incidentVisible(r) && r.status !== "resolved").length + ")" : "")]] : []), ...((canViewTeams || myTeamNames.length) ? [["checkin","Quick Check-in"]] : []), ...(canSendReports ? [["testreports","Testing Reports"]] : []), ...(canOps ? [] : [["playereval","Evaluations"],["passing","Passer Ratings"]])] },
+                  ...((canViewTeams || myTeamNames.length) ? [["incidents","Issues & Injuries" + (incidents.filter(r => incidentVisible(r) && r.status !== "resolved").length ? " (" + incidents.filter(r => incidentVisible(r) && r.status !== "resolved").length + ")" : "")]] : []), ...((canViewTeams || myTeamNames.length) ? [["checkin","Quick Check-in"]] : []), ...((canViewTeams || canOps || myTeamNames.length) ? [["workduty","Work Duty"]] : []), ...(canSendReports ? [["testreports","Testing Reports"]] : []), ...(canOps ? [] : [["playereval","Evaluations"],["passing","Passer Ratings"]])] },
                 { title:"Tryouts 2026-27", items:[["dashboard","Dashboard"], ["evaluate","Evaluate"], ["favorites","My Favorites" + (favorites.length ? " (" + favorites.length + ")" : "")], ...(canViewTeams ? [["teams","Teams"]] : []), ["rankings","Rankings"], ["physical","Physical Testing"], ["tryouts","Coach Assignments"]] },
                 // Operations is grouped by WHICH BUSINESS a screen belongs to,
                 // not by what it does. DSSC is a separate company with its own
@@ -32749,6 +32750,8 @@ export default function App() {
         {view==="dssctexts" && (isDsscDirector
           ? <DsscTexts coach={coach} clinics={clinics} players={players} coachRoster={coachRoster} dsscAvail={dsscAvail} isDirector={isDsscDirector} initial={dsscTextsInit} onConsumedInitial={()=>setDsscTextsInit(null)} />
           : <div style={{padding:24,color:C.mut,textAlign:"center"}}>DSSC texting is for the club's directors.</div>)}
+        {view==="workduty" && <WorkDuty coach={coach} players={players} tournaments={tournaments} tournamentAssignments={tournamentAssignments}
+          teamNames={((canViewTeams || canOps) ? teamsList.filter(t => t.active).map(t => t.id) : myTeamNames.filter(t => teamsList.some(x => x.id === t))).slice().sort((a, b) => (parseInt(a) || 99) - (parseInt(b) || 99) || a.localeCompare(b))} />}
         {view==="testreports" && (canSendReports ? <StatReports coach={coach} players={players} session={session} /> : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Testing reports are for admins and the performance coach.</div>)}
         {view==="lineups" && renderLineups()}
         {view==="games" && renderGames()}
