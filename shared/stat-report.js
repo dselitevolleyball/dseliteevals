@@ -34,7 +34,7 @@ export const DEFAULT_SETTINGS = {
   pitch_heading: "Reach Performance",
   default_metrics: [],          // empty = every metric on file
   // Charts (drawn with table cells so they show in every email app).
-  team_metrics: ["vertical", "dash_10y"],   // compared against the team (and its average)
+  team_metrics: ["vertical", "broad_jump", "dash_10y"],   // compared against the team (and its average)
   show_team: true,
   team_heading: "Where {player_first} stands on {team}",
   team_note: "Each grey bar is a teammate, best at the top. Names stay private.",
@@ -104,7 +104,7 @@ export function metricSeries(player, tests, key) {
 // sprint by default). A ranked bar chart, best at the top: every teammate is an
 // unnamed grey bar, hers is pink and named, and the team average is its own
 // dark bar at the place it falls. Needs 3+ players with a result.
-const teamMetricsOf = (S) => (Array.isArray(S.team_metrics) && S.team_metrics.length ? S.team_metrics : ["vertical", "dash_10y"]).filter(k => METRICS.some(m => m[0] === k));
+const teamMetricsOf = (S) => (Array.isArray(S.team_metrics) && S.team_metrics.length ? S.team_metrics : ["vertical", "broad_jump", "dash_10y"]).filter(k => METRICS.some(m => m[0] === k));
 export function teamStanding(player, tests, teammates, key) {
   const up = METRICS.find(m => m[0] === key)[3];
   const latestOf = (p, t) => { const s = metricSeries(p, t, key); return s.length ? s[s.length - 1].value : null; };

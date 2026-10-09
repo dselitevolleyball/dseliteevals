@@ -172,7 +172,7 @@ export default function StatReports({ coach, players = [], session }) {
               <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, marginBottom: 6, cursor: "pointer" }}><input type="checkbox" checked={settings.show_team !== false} onChange={e => saveSettings({ show_team: e.target.checked })} style={{ accentColor: C.gold, width: 16, height: 16 }} /> Show where she ranks against her team and the team average (teammates unnamed; needs 3+ players with results)</label>
               <span style={lbl}>Metrics compared against the team</span>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
-                {METRICS.filter(m => m[0] !== "stand_reach").map(([k, l]) => { const cur = Array.isArray(settings.team_metrics) && settings.team_metrics.length ? settings.team_metrics : ["vertical", "dash_10y"]; const on = cur.includes(k); return (
+                {METRICS.filter(m => m[0] !== "stand_reach").map(([k, l]) => { const cur = Array.isArray(settings.team_metrics) && settings.team_metrics.length ? settings.team_metrics : ["vertical", "broad_jump", "dash_10y"]; const on = cur.includes(k); return (
                   <button key={k} onClick={() => { const n = new Set(cur); n.has(k) ? n.delete(k) : n.add(k); if (!n.size) return; saveSettings({ team_metrics: METRICS.map(m => m[0]).filter(x => n.has(x)) }); }}
                     style={{ fontSize: 12, fontWeight: 700, padding: "5px 10px", borderRadius: 999, cursor: "pointer", fontFamily: "inherit", border: "1px solid " + (on ? C.gold : C.border), background: on ? "rgba(233,30,140,0.15)" : "transparent", color: on ? C.gold : C.mut }}>{l}</button>); })}
               </div>

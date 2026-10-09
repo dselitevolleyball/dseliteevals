@@ -2285,6 +2285,15 @@ export default function App() {
   const [ptY, setPtY]       = useState("vertical");   // vertical axis metric
   const [ptTeam, setPtTeam] = useState("");           // "" = all teams
   const [ptPos, setPtPos]   = useState("");           // "" = all positions
+  // Broad jump isn't a tryout test: it comes from each player's latest result
+  // in player_stat_tests (team testing links / Testing Reports), loaded when the
+  // Physical Testing screen opens.
+  const [ptBroad, setPtBroad] = useState(() => new Map());
+  useEffect(() => {
+    if (view !== "physical") return;
+    supabase.from("player_stat_tests").select("player_id, test_date, broad_jump").not("broad_jump", "is", null).order("test_date")
+      .then(({ data }) => { const m = new Map(); for (const r of data || []) m.set(r.player_id, +r.broad_jump); setPtBroad(m); });
+  }, [view]);
   // Owner-only "Ask AI" tab — natural-language questions over the player data.
   const [askQ, setAskQ]           = useState("");
   const [askAnswer, setAskAnswer] = useState("");
@@ -32234,6 +32243,7 @@ export default function App() {
       jump_touch:     { label:"Jump Touch",     unit:'"', get:p=>{const v=parseFloat(p.jump_touch);     return Number.isFinite(v)?v:null;}, lowerBetter:false, fmt:v=>v.toFixed(1) },
       approach_touch: { label:"Approach Touch", unit:'"', get:p=>{const v=parseFloat(p.approach_touch); return Number.isFinite(v)?v:null;}, lowerBetter:false, fmt:v=>v.toFixed(1) },
       vertical:       { label:"Vertical",       unit:'"', get:p=>vertical(p),                                                            lowerBetter:false, fmt:v=>v.toFixed(1) },
+      broad_jump:     { label:"Broad Jump",     unit:'"', get:p=>{const v=ptBroad.get(p.id); return Number.isFinite(v)?v:null;}, lowerBetter:false, fmt:v=>v.toFixed(1) },
       sprint_10y:     { label:"10 Yard Run",    unit:"s", get:p=>{const v=parseFloat(p.sprint_10y);     return Number.isFinite(v)?v:null;}, lowerBetter:true,  fmt:v=>v.toFixed(2) },
       stand_reach:    { label:"Stand & Reach",  unit:'"', get:p=>{const v=parseFloat(p.stand_reach);    return Number.isFinite(v)?v:null;}, lowerBetter:false, fmt:v=>v.toFixed(1) },
     };
