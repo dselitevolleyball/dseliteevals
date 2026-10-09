@@ -48,15 +48,26 @@ export function planMatch({ players, counts, sets = 3, computer = false, out = [
   const book = pick("book", new Set());
   const libero = pick("libero", new Set([book]));
   const allMatch = new Set([book, libero].filter(Boolean));
+  // Each set is dealt as a whole: try every way to fill its slots from the
+  // players free that set and keep the one that leaves the job counts most
+  // even (sum of squares), so nobody drifts two jobs ahead of anyone else.
+  const slots = SET_SLOTS.filter(([slot]) => slot !== "comp" || computer);
   const setRows = [];
   for (let i = 0; i < sets; i++) {
-    const used = new Set(allMatch);
+    const cand = pool.filter(id => !allMatch.has(id));
+    const cost = (id, role) => { const c = get(id); return (c[role] + 1) ** 2 * 100 + (c.total + 1) ** 2 + (thisMatch[id] || 0) * 50 + jitter.get(id); };
+    let best = null, bestCost = Infinity;
+    const walk = (k, used, acc, sum) => {
+      if (sum >= bestCost) return;
+      if (k === slots.length) { best = acc.slice(); bestCost = sum; return; }
+      const role = slots[k][1];
+      const free = cand.filter(id => !used.has(id));
+      if (!free.length) { acc.push(null); walk(k + 1, used, acc, sum); acc.pop(); return; }
+      for (const id of free) { used.add(id); acc.push(id); walk(k + 1, used, acc, sum + cost(id, role)); acc.pop(); used.delete(id); }
+    };
+    walk(0, new Set(), [], 0);
     const row = {};
-    for (const [slot, role] of SET_SLOTS) {
-      if (slot === "comp" && !computer) continue;
-      row[slot] = pick(role, used);
-      if (row[slot]) used.add(row[slot]);
-    }
+    slots.forEach(([slot, role], k) => { const id = best?.[k] ?? null; row[slot] = id; if (id) { get(id)[role]++; get(id).total++; thisMatch[id] = (thisMatch[id] || 0) + 1; } });
     setRows.push(row);
   }
   return { book, libero, sets: setRows, out: [...outSet] };
@@ -72,4 +83,34 @@ export function daysOf(start, end) {
   const out = [];
   for (let d = new Date(start + "T12:00:00Z"); d.toISOString().slice(0, 10) <= (end || start); d.setUTCDate(d.getUTCDate() + 1)) out.push(d.toISOString().slice(0, 10));
   return out;
+}
+
+// Season balancing. After the matches are dealt one by one, swap two players'
+// jobs within a single match (always valid: they just trade everything they
+// do that match) whenever it makes every job's counts more even. `locked`
+// match indexes (already worked) are never touched. Aims for every player
+// within one of every other player on every job.
+export function balanceSeason(list, players, { locked = new Set(), iterations = 30000, rand = Math.random } = {}) {
+  const ids = players.map(p => String(p.id));
+  const roles = ["book", "libero", "line", "flip", "comp", "total"];
+  const score = (c) => { let s = 0; for (const r of roles) { const v = ids.map(id => (c[id] || {})[r] || 0); const m = v.reduce((a, b) => a + b, 0) / v.length; s += v.reduce((a, b) => a + (b - m) ** 2, 0) * (r === "total" ? 1 : 3); } return s; };
+  const swapIn = (a, x, y) => {
+    const sw = (v) => (v === x ? y : v === y ? x : v);
+    return { ...a, book: sw(a.book), libero: sw(a.libero), sets: (a.sets || []).map(s => Object.fromEntries(Object.entries(s).map(([k, v]) => [k, sw(v)]))) };
+  };
+  const free = list.map((_, i) => i).filter(i => !locked.has(i));
+  if (!free.length || ids.length < 2) return list;
+  let cur = tally(list), best = score(cur);
+  for (let it = 0; it < iterations; it++) {
+    const i = free[Math.floor(rand() * free.length)];
+    const x = ids[Math.floor(rand() * ids.length)], y = ids[Math.floor(rand() * ids.length)];
+    if (x === y) continue;
+    const out = (list[i].assignments.out || []).map(String);
+    if (out.includes(x) || out.includes(y)) continue;
+    const before = list[i].assignments, after = swapIn(before, x, y);
+    list[i] = { ...list[i], assignments: after };
+    const c = tally(list), s = score(c);
+    if (s <= best) { best = s; cur = c; } else list[i] = { ...list[i], assignments: before };
+  }
+  return list;
 }

@@ -6,7 +6,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { supabase } from "./supabase";
-import { planMatch, tally, daysOf, ROLE_LABEL, ROLE_SHORT, SET_SLOTS } from "../shared/work-duty.js";
+import { planMatch, tally, daysOf, balanceSeason, ROLE_LABEL, ROLE_SHORT, SET_SLOTS } from "../shared/work-duty.js";
 
 const C = { bg: "#0a0a0a", card: "#141414", border: "#2a2a2a", gold: "#e91e8c", text: "#ffffff", mut: "#999999", red: "#ef4444", grn: "#22c55e" };
 const inp = { background: "#0f0f0f", border: "1px solid " + C.border, borderRadius: 8, color: C.text, fontFamily: "inherit", fontSize: 13, padding: "7px 9px" };
@@ -75,7 +75,11 @@ export default function WorkDuty({ coach, players = [], tournaments = [], tourna
           assignments: planMatch({ players: roster, counts, sets: settings.sets, computer: settings.computer }) });
       }
     }
-    if (rows.length) { const { error } = await supabase.from("work_duty_matches").insert(rows); if (error) setErr(error.message); }
+    // Even it out across the whole season (worked matches are never touched).
+    const doneList = matches.filter(m => m.done).map(m => ({ assignments: m.assignments }));
+    const all = balanceSeason([...doneList, ...rows], roster, { locked: new Set(doneList.map((_, i) => i)), iterations: 20000 });
+    const balanced = all.slice(doneList.length);
+    if (balanced.length) { const { error } = await supabase.from("work_duty_matches").insert(balanced); if (error) setErr(error.message); }
     setBusy(false); setActiveId(null); load();
   };
   // Re-deal one match (someone's out, or just a re-roll), fair against every other match.
