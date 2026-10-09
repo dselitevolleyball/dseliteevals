@@ -1958,6 +1958,20 @@ export default function App() {
   const [smsComposer, setSmsComposer]                 = useState(null);   // team / coaches group text being written
   const [smsFolded, setSmsFolded]                     = useState(() => new Set()); // inbox team sections folded away
   const [smsJustRead, setSmsJustRead]                 = useState(null);   // a thread opened from New stays there while it's open
+  // Inbox: "recent" = one list, newest first (default); "teams" = filed by team.
+  const [smsListMode, setSmsListMode]                 = useState(() => { try { return localStorage.getItem("dse.smsList") === "teams" ? "teams" : "recent"; } catch { return "recent"; } });
+  const [smsSearch, setSmsSearch]                     = useState("");
+  const [smsSearchHits, setSmsSearchHits]             = useState(null);   // thread ids whose messages contain the search text
+  const [smsNewTo, setSmsNewTo]                       = useState(null);   // { to, name, player_id, team } — first text to someone with no thread yet
+  useEffect(() => {
+    const q = smsSearch.trim();
+    if (q.length < 3) { setSmsSearchHits(null); return; }
+    const t = setTimeout(async () => {
+      const { data } = await supabase.from("sms_messages").select("thread_id").ilike("body", "%" + q.replace(/[%_]/g, "") + "%").limit(500);
+      setSmsSearchHits(new Set((data || []).map(r => r.thread_id)));
+    }, 300);
+    return () => clearTimeout(t);
+  }, [smsSearch]);
   const [smsUnread, setSmsUnread]                     = useState({ dse: 0, dssc: 0 }); // header badges: unread texts per brand
   const [smsConsents, setSmsConsents]                 = useState([]);     // sms_consents — who opted in to texts
   const [smsConsentPaste, setSmsConsentPaste]         = useState("");
@@ -28074,6 +28088,34 @@ export default function App() {
       return fresh.length ? [[NEW, fresh], ...teams] : teams;
     })();
     const toggleFold = (g) => setSmsFolded(prev => { const n = new Set(prev); if (n.has(g)) n.delete(g); else n.add(g); return n; });
+    // Search: parent / player / contact name, phone, team, or any message text.
+    const q = smsSearch.trim().toLowerCase(), qDigits = q.replace(/\D/g, "");
+    const matches = (t) => {
+      if (!q) return true;
+      const p = t.player_id ? playerById.get(t.player_id) : null;
+      const hay = [t.contact_name, t.display_name, labelOf(t), groupOf(t), t.last_message_preview, p && (p.first_name + " " + p.last_name), p && p.parent_name, p && p.parent2_name].join(" ").toLowerCase();
+      if (q.split(/\s+/).every(w => hay.includes(w))) return true;
+      if (qDigits.length >= 4 && String(t.phone || "").replace(/\D/g, "").includes(qDigits)) return true;
+      return !!(smsSearchHits && smsSearchHits.has(t.id));
+    };
+    const byRecent = (a, b) => String(b.last_message_at || "").localeCompare(String(a.last_message_at || ""));
+    const shown = q || smsListMode === "recent"
+      ? [[q ? "Results" : "Recent", smsThreads.filter(matches).slice().sort(byRecent)]]
+      : sections;
+    // Parents on the roster who match the search but have never been texted.
+    const threadPhones = new Set(smsThreads.map(t => last10(t.phone)));
+    const newContacts = q.length >= 2 ? (() => {
+      const out = [];
+      for (const p of players) {
+        if (!p.team_assignment || TERMINAL.includes(p.offer_status || "")) continue;
+        for (const [ph, nm] of [[p.parent_phone, p.parent_name], [p.parent2_phone, p.parent2_name]]) {
+          const d = last10(ph); if (d.length !== 10 || threadPhones.has(d) || out.some(x => last10(x.to) === d)) continue;
+          const hay = [nm, p.first_name + " " + p.last_name, p.team_assignment].join(" ").toLowerCase();
+          if (q.split(/\s+/).every(w => hay.includes(w)) || (qDigits.length >= 4 && d.includes(qDigits))) out.push({ to: "+1" + d, name: nm || (p.first_name + "'s parent"), player_id: p.id, team: p.team_assignment, girl: p.first_name });
+        }
+      }
+      return out.slice(0, 8);
+    })() : [];
 
     // ── Who a group text would go to ────────────────────────────────────
     const teamOptions = (() => {
@@ -28163,16 +28205,42 @@ export default function App() {
               <button onClick={()=>openComposer("coaches")} title="Text the coaching staff"
                 style={{padding:"5px 10px",borderRadius:7,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontFamily:"inherit",fontSize:11,fontWeight:800,cursor:"pointer"}}>+ Coaches</button>
             </div>
+            <div style={{position:"relative",marginTop:8}}>
+              <input value={smsSearch} onChange={e=>setSmsSearch(e.target.value)} placeholder="Search parent, player, phone or message…"
+                style={{...inpStyle,width:"100%",boxSizing:"border-box",padding:"8px 30px 8px 10px",fontSize:13}} />
+              {smsSearch && <button onClick={()=>setSmsSearch("")} title="Clear" style={{position:"absolute",right:6,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:C.mut,fontSize:16,cursor:"pointer"}}>×</button>}
+            </div>
+            {!q && (
+              <div style={{display:"flex",gap:4,marginTop:8}}>
+                {[["recent","Recent"],["teams","By team"]].map(([k,l]) => (
+                  <button key={k} onClick={()=>{ setSmsListMode(k); try { localStorage.setItem("dse.smsList", k); } catch {} }}
+                    style={{flex:1,padding:"5px 0",borderRadius:7,border:"1px solid "+(smsListMode===k?C.gold:C.border),background:smsListMode===k?"rgba(233,30,140,0.15)":"transparent",color:smsListMode===k?C.gold:C.mut,fontFamily:"inherit",fontSize:11,fontWeight:800,cursor:"pointer"}}>{l}</button>
+                ))}
+              </div>
+            )}
           </div>
           {smsThreads.length === 0 && <div style={{padding:24,textAlign:"center",color:C.mut,fontSize:11}}>No conversations yet.</div>}
-          {sections.map(([group, list]) => {
+          {q && newContacts.length > 0 && (
+            <div>
+              <div style={{padding:"7px 14px",borderBottom:"1px solid "+C.border,background:"rgba(255,255,255,0.03)",fontSize:11,fontWeight:800,color:C.text}}>Start a new text</div>
+              {newContacts.map(c => (
+                <div key={c.to} onClick={()=>{ setSmsComposer(null); setSelectedThreadId(null); setSmsNewTo(c); setSmsCompose(""); }}
+                  style={{padding:"9px 14px 9px 24px",borderBottom:"1px solid "+C.border,cursor:"pointer",background:smsNewTo?.to===c.to?"rgba(233,30,140,0.10)":"transparent"}}>
+                  <div style={{fontSize:13,fontWeight:700}}>{c.name} <span style={{color:C.mut,fontWeight:500}}>· {c.girl}</span></div>
+                  <div style={{fontSize:11,color:C.mut}}>{c.team} · {fmtPhone(c.to)} · no texts yet</div>
+                </div>
+              ))}
+            </div>
+          )}
+          {q && shown[0][1].length === 0 && !newContacts.length && <div style={{padding:20,textAlign:"center",color:C.mut,fontSize:12}}>Nothing matches "{smsSearch}".</div>}
+          {shown.map(([group, list]) => {
             const unread = list.reduce((n, t) => n + (t.unread_count || 0), 0);
-            const isNewSec = group === NEW;
+            const isNewSec = group === NEW || group === "Recent" || group === "Results";
             const folded = !isNewSec && smsFolded.has(group);
             return (
               <div key={group}>
                 <div onClick={()=>{ if (!isNewSec) toggleFold(group); }}
-                  style={{padding:"7px 14px",borderBottom:"1px solid "+C.border,background:isNewSec?"rgba(34,197,94,0.12)":"rgba(255,255,255,0.03)",display:"flex",alignItems:"center",gap:8,cursor:isNewSec?"default":"pointer",position:"sticky",top:57,zIndex:1}}>
+                  style={{padding:"7px 14px",borderBottom:"1px solid "+C.border,background:isNewSec?"rgba(34,197,94,0.12)":"rgba(255,255,255,0.03)",display:"flex",alignItems:"center",gap:8,cursor:isNewSec?"default":"pointer"}}>
                   <span style={{fontSize:10,color:C.mut,width:10}}>{isNewSec ? "" : folded ? "›" : "⌄"}</span>
                   <span style={{fontSize:11,fontWeight:800,color:unread?C.grn:C.text,letterSpacing:0.3}}>{group}</span>
                   <span style={{fontSize:10,color:C.mut}}>{list.length}</span>
@@ -28183,7 +28251,7 @@ export default function App() {
                   const isSel = t.id === selectedThreadId;
                   return (
                     <div key={t.id}
-                      onClick={() => { setSmsComposer(null); setSelectedThreadId(t.id); setSmsJustRead(t.unread_count ? t.id : null); if (t.unread_count) markThreadRead(t.id); }}
+                      onClick={() => { setSmsComposer(null); setSmsNewTo(null); setSelectedThreadId(t.id); setSmsJustRead(t.unread_count ? t.id : null); if (t.unread_count) markThreadRead(t.id); }}
                       style={{padding:"9px 14px 9px 24px",borderBottom:"1px solid "+C.border,cursor:"pointer",background:isSel?"rgba(233,30,140,0.10)":(t.unread_count?"rgba(34,197,94,0.06)":"transparent")}}>
                       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:6}}>
                         <span style={{fontSize:13,fontWeight:700,color:t.unread_count?C.grn:C.text,maxWidth:200,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{labelOf(t)}</span>
@@ -28308,7 +28376,22 @@ export default function App() {
             );
           })()}
 
-          {!smsComposer && !selected && (
+          {!smsComposer && !selected && smsNewTo && (
+            <div style={{flex:1,display:"flex",flexDirection:"column"}}>
+              <div style={{padding:"12px 16px",borderBottom:"1px solid "+C.border}}>
+                <div style={{fontSize:15,fontWeight:800}}>{smsNewTo.name}</div>
+                <div style={{fontSize:11,color:C.mut}}>{smsNewTo.girl}'s parent · {smsNewTo.team} · {fmtPhone(smsNewTo.to)} · first text</div>
+              </div>
+              <div style={{flex:1}} />
+              <div style={{padding:12,borderTop:"1px solid "+C.border,display:"flex",gap:8}}>
+                <textarea value={smsCompose} onChange={e=>setSmsCompose(e.target.value)} rows={3} placeholder={"Text " + smsNewTo.name.split(" ")[0] + "…"}
+                  style={{...inpStyle,flex:1,padding:"8px 10px",fontSize:13,resize:"vertical",fontFamily:"inherit"}} />
+                <button disabled={!smsCompose.trim() || smsSending} onClick={async ()=>{ const ok = await sendSms({ to: smsNewTo.to, body: smsCompose.trim(), player_id: smsNewTo.player_id }); if (ok) { setSmsCompose(""); setSmsNewTo(null); setSmsSearch(""); } }}
+                  style={{padding:"0 18px",borderRadius:8,border:"none",background:C.gold,color:"#000",fontFamily:"inherit",fontSize:13,fontWeight:800,cursor:"pointer"}}>{smsSending ? "…" : "Send"}</button>
+              </div>
+            </div>
+          )}
+          {!smsComposer && !selected && !smsNewTo && (
             <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:C.mut,fontSize:12,padding:20,textAlign:"center"}}>
               {smsThreads.length === 0
                 ? "Text a team or the coaches with the buttons above, or a parent from any player card."
