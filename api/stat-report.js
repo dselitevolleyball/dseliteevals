@@ -10,7 +10,7 @@
 // Env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, RESEND_API_KEY, DSE_FROM_EMAIL.
 
 import { createClient } from "@supabase/supabase-js";
-import { buildReport, SAMPLE_PLAYER, SAMPLE_TESTS, SAMPLE_DRAFT } from "../shared/stat-report.js";
+import { buildReport, SAMPLE_PLAYER, SAMPLE_TESTS, SAMPLE_DRAFT, SAMPLE_TEAM } from "../shared/stat-report.js";
 
 const OWNER_EMAILS = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"];
 // The DSSC performance coach (the new Brandon at DSSC - not Brandon Blahnik).
@@ -52,7 +52,16 @@ export default async function handler(req, res) {
   if (!player) return res.status(404).json({ error: "Player not found" });
   const firsts = [...new Set([player.parent_name, player.parent2_name].map(x => String(x || "").trim().split(/\s+/)[0]).filter(Boolean))];
   const parentFirst = firsts.length <= 1 ? (firsts[0] || "") : firsts.slice(0, -1).join(", ") + " and " + firsts[firsts.length - 1];
-  const rep = buildReport({ player, tests: tests || [], settings: set?.data || {}, draft: draft || {}, parentFirst });
+  // Teammates (unnamed in the email) for the team-standing chart.
+  let teammates = SAMPLE_TEAM;
+  if (!sample && player.team_assignment) {
+    const { data: mates } = await sb.from("players").select("id, first_name, stand_reach, approach_touch, jump_touch, sprint_10y, offer_status").eq("team_assignment", player.team_assignment).eq("season", "2026-27");
+    const live = (mates || []).filter(m => !["declined", "not_invited", "opted_out"].includes(m.offer_status || ""));
+    const ids = live.map(m => m.id);
+    const { data: mt } = ids.length ? await sb.from("player_stat_tests").select("*").in("player_id", ids) : { data: [] };
+    teammates = live.map(m => ({ player: m, tests: (mt || []).filter(t => t.player_id === m.id) }));
+  }
+  const rep = buildReport({ player, tests: tests || [], settings: set?.data || {}, draft: draft || {}, parentFirst, teammates });
   if (!rep.picked.length) return res.status(400).json({ error: "No testing numbers on file for " + player.first_name + " yet." });
 
   const to = testTo ? [testTo] : [...new Set([player.parent_email, player.parent_email2, player.parent_email3].map(nrm).filter(e => EMAIL_RE.test(e)))];

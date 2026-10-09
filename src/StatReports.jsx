@@ -8,7 +8,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { supabase } from "./supabase";
-import { buildReport, metricRows, fmtMetric, DEFAULT_SETTINGS, METRICS, SAMPLE_PLAYER, SAMPLE_TESTS, SAMPLE_DRAFT } from "../shared/stat-report.js";
+import { buildReport, metricRows, fmtMetric, DEFAULT_SETTINGS, METRICS, SAMPLE_PLAYER, SAMPLE_TESTS, SAMPLE_DRAFT, SAMPLE_TEAM } from "../shared/stat-report.js";
 import { StatsLinks } from "./PlayerStats.jsx";
 
 const C = { bg: "#0a0a0a", card: "#141414", border: "#2a2a2a", gold: "#e91e8c", text: "#ffffff", mut: "#999999", red: "#ef4444", grn: "#22c55e" };
@@ -111,11 +111,12 @@ export default function StatReports({ coach, players = [], session }) {
 
   // Template preview: the sample player, or any real player.
   const tplPlayer = tplPreview === "sample" ? SAMPLE_PLAYER : roster.find(p => String(p.id) === tplPreview) || SAMPLE_PLAYER;
-  const tplRep = buildReport({ player: tplPlayer, tests: tplPlayer.id ? (testsBy.get(tplPlayer.id) || []) : SAMPLE_TESTS, settings, draft: tplPlayer.id ? (drafts.get(tplPlayer.id) || {}) : SAMPLE_DRAFT, parentFirst: tplPlayer.id ? parentFirstOf(tplPlayer) : "Jordan" });
+  const matesOf = (p) => roster.filter(x => x.team_assignment === p.team_assignment).map(x => ({ player: x, tests: testsBy.get(x.id) || [] }));
+  const tplRep = buildReport({ player: tplPlayer, tests: tplPlayer.id ? (testsBy.get(tplPlayer.id) || []) : SAMPLE_TESTS, settings, draft: tplPlayer.id ? (drafts.get(tplPlayer.id) || {}) : SAMPLE_DRAFT, parentFirst: tplPlayer.id ? parentFirstOf(tplPlayer) : "Jordan", teammates: tplPlayer.id ? matesOf(tplPlayer) : SAMPLE_TEAM });
 
   const draft = player ? (drafts.get(player.id) || {}) : {};
   const rows = player ? metricRows(player, testsBy.get(player.id) || []) : [];
-  const rep = player ? buildReport({ player, tests: testsBy.get(player.id) || [], settings, draft, parentFirst: parentFirstOf(player) }) : null;
+  const rep = player ? buildReport({ player, tests: testsBy.get(player.id) || [], settings, draft, parentFirst: parentFirstOf(player), teammates: matesOf(player) }) : null;
   const defaults = Array.isArray(settings.default_metrics) && settings.default_metrics.length ? settings.default_metrics : null;
   const picked = new Set(Array.isArray(draft.metrics) && draft.metrics.length ? draft.metrics : (defaults || rows.map(r => r.key)));
   const toggleMetric = (k) => { const n = new Set(picked); n.has(k) ? n.delete(k) : n.add(k); saveDraft(player.id, { metrics: rows.map(r => r.key).filter(x => n.has(x)) }); };
@@ -166,6 +167,12 @@ export default function StatReports({ coach, players = [], session }) {
               </label>
               {T("gains_text", "Summary line starts with", 1, "Followed automatically by each improved metric and how much.")}
               {T("worked_heading", "Heading for \"what she worked on\"")}
+            </Section>
+            <Section title="Charts">
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, marginBottom: 6, cursor: "pointer" }}><input type="checkbox" checked={settings.show_progress !== false} onChange={e => saveSettings({ show_progress: e.target.checked })} style={{ accentColor: C.gold, width: 16, height: 16 }} /> Progress chart (each metric over the season; needs 2+ results)</label>
+              {T("progress_heading", "Progress chart heading")}
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, marginBottom: 6, cursor: "pointer" }}><input type="checkbox" checked={settings.show_team !== false} onChange={e => saveSettings({ show_team: e.target.checked })} style={{ accentColor: C.gold, width: 16, height: 16 }} /> Team standing (where she ranks on her team, teammates unnamed; needs 3+ players with results)</label>
+              {T("team_heading", "Team standing heading")}{T("team_note", "Note under the team heading")}
             </Section>
             <Section title="Reach membership pitch">{T("pitch_heading", "Heading")}{T("pitch", "Pitch", 5)}{T("pitch_button", "Button text")}{T("pitch_link", "Button link (leave blank to hide the button)")}</Section>
             <Section title="Sign-off">{T("signoff", "Sign-off", 3)}</Section>

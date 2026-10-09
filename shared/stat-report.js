@@ -33,6 +33,12 @@ export const DEFAULT_SETTINGS = {
   worked_heading: "What we worked on",
   pitch_heading: "Reach Performance",
   default_metrics: [],          // empty = every metric on file
+  // Charts (drawn with table cells so they show in every email app).
+  show_progress: true,
+  progress_heading: "{player_first}'s progress",
+  show_team: true,
+  team_heading: "Where {player_first} stands on {team}",
+  team_note: "Each bar is a teammate, best on the left. Names stay private.",
 };
 
 const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
@@ -79,7 +85,76 @@ export function metricRows(player, tests = []) {
 
 const fill = (t, v) => String(t || "").replace(/\{(\w+)\}/g, (m, k) => (v[k] != null ? v[k] : m));
 
-export function buildReport({ player, tests, settings, draft, parentFirst }) {
+// Every result on file for one metric, in order: [{ from, value }].
+export function metricSeries(player, tests, key) {
+  const num2 = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
+  const sr = num2(player?.stand_reach), ap = num2(player?.approach_touch);
+  const tryout = { stand_reach: sr, approach_touch: ap, standing_touch: num2(player?.jump_touch), vertical: sr != null && ap != null ? ap - sr : null, broad_jump: null, dash_10y: num2(player?.sprint_10y) };
+  const out = tryout[key] != null ? [{ from: "Tryouts", value: tryout[key] }] : [];
+  let reach = sr;
+  for (const t of [...(tests || [])].sort((a, b) => String(a.test_date).localeCompare(String(b.test_date)))) {
+    if (num2(t.stand_reach) != null) reach = num2(t.stand_reach);
+    let v = num2(t[key]);
+    if (key === "vertical" && v == null && num2(t.approach_touch) != null && reach != null) v = num2(t.approach_touch) - reach;
+    if (v != null) out.push({ from: fmtDate(t.test_date), value: v });
+  }
+  return out;
+}
+
+// Progress chart: one horizontal bar per result, per metric (2+ results only).
+function progressHtml(player, tests, picked, S, vars) {
+  const blocks = picked.map(r => {
+    const pts = metricSeries(player, tests, r.key);
+    if (pts.length < 2) return "";
+    const up = METRICS.find(m => m[0] === r.key)[3];
+    const vals = pts.map(p => p.value), lo = Math.min(...vals), hi = Math.max(...vals);
+    // Bars start at 70% of the lowest value so differences are visible.
+    const floor = lo * 0.7, span = Math.max(hi - floor, 0.01);
+    const bar = (p, i) => {
+      const w = Math.max(8, Math.round(((up ? p.value : hi + lo - p.value) - floor) / span * 100));
+      const last = i === pts.length - 1;
+      return `<tr><td style="padding:3px 8px 3px 0;font-size:12px;color:#666;white-space:nowrap;width:70px">${esc(p.from)}</td>`
+        + `<td style="padding:3px 0"><table role="presentation" cellpadding="0" cellspacing="0" style="width:100%"><tr>`
+        + `<td style="width:${w}%;background:${last ? "#e91e8c" : "#f5b8d6"};height:16px;border-radius:3px"></td><td style="width:${100 - w}%"></td></tr></table></td>`
+        + `<td style="padding:3px 0 3px 8px;font-size:12px;font-weight:${last ? 700 : 400};white-space:nowrap;width:64px;text-align:right">${esc(fmtMetric(r.key, p.value))}</td></tr>`;
+    };
+    return `<div style="margin:0 0 12px"><div style="font-size:13px;font-weight:700;margin-bottom:2px">${esc(r.label)}${up ? "" : ' <span style="font-weight:400;color:#888">(lower is better)</span>'}</div>`
+      + `<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse">${pts.map(bar).join("")}</table></div>`;
+  }).filter(Boolean);
+  return blocks.length ? `<p style="margin:22px 0 8px;font-weight:700;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:#c2186f">${esc(fill(S.progress_heading, vars))}</p>` + blocks.join("") : "";
+}
+
+// Team standing: every teammate with a result is an unnamed grey bar, best on
+// the left; hers is pink. Shown only with 3+ players so no one is singled out.
+export function teamStanding(player, tests, teammates, key) {
+  const up = METRICS.find(m => m[0] === key)[3];
+  const latestOf = (p, t) => { const s = metricSeries(p, t, key); return s.length ? s[s.length - 1].value : null; };
+  const mine = latestOf(player, tests);
+  const others = (teammates || []).filter(x => x.player.id !== player.id).map(x => latestOf(x.player, x.tests)).filter(v => v != null);
+  if (mine == null || others.length < 2) return null;
+  const all = [...others.map(v => ({ v, me: false })), { v: mine, me: true }].sort((a, b) => up ? b.v - a.v : a.v - b.v);
+  const rank = all.findIndex(x => x.me) + 1;
+  const avg = all.reduce((s, x) => s + x.v, 0) / all.length;
+  return { all, rank, n: all.length, best: all[0].v, avg, mine, up };
+}
+function teamHtml(player, tests, teammates, picked, S, vars) {
+  const blocks = picked.filter(r => r.key !== "stand_reach").map(r => {
+    const t = teamStanding(player, tests, teammates, r.key);
+    if (!t) return "";
+    const vals = t.all.map(x => x.v), lo = Math.min(...vals), hi = Math.max(...vals), span = Math.max(hi - lo, 0.01);
+    const cells = t.all.map(x => {
+      const h = 14 + Math.round(((t.up ? x.v - lo : hi - x.v) / span) * 34);
+      return `<td style="vertical-align:bottom;padding:0 1px"><div style="height:${48 - h}px"></div><div style="height:${h}px;background:${x.me ? "#e91e8c" : "#d4d4d8"};border-radius:2px 2px 0 0"></div></td>`;
+    }).join("");
+    return `<div style="margin:0 0 14px"><div style="font-size:13px;font-weight:700">${esc(r.label)} <span style="font-weight:400;color:#666">· ${esc(vars.player_first)} is #${t.rank} of ${t.n}</span></div>`
+      + `<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;table-layout:fixed;border-collapse:collapse;margin:4px 0 2px"><tr>${cells}</tr></table>`
+      + `<div style="font-size:12px;color:#666">${esc(vars.player_first)}: <b style="color:#e91e8c">${esc(fmtMetric(r.key, t.mine))}</b> · Team best: <b>${esc(fmtMetric(r.key, t.best))}</b> · Team average: ${esc(fmtMetric(r.key, t.avg))}</div></div>`;
+  }).filter(Boolean);
+  return blocks.length ? `<p style="margin:22px 0 4px;font-weight:700;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:#c2186f">${esc(fill(S.team_heading, vars))}</p>`
+    + `<p style="margin:0 0 10px;font-size:12px;color:#888">${esc(fill(S.team_note, vars))}</p>` + blocks.join("") : "";
+}
+
+export function buildReport({ player, tests, settings, draft, parentFirst, teammates }) {
   const S = { ...DEFAULT_SETTINGS, ...(settings || {}) };
   const team = String(player?.team_assignment || "").replace(/ 1$/, "");
   const vars = { player_first: String(player?.first_name || "").trim(), team: team || "DS Elite", parent_first: parentFirst || "" };
@@ -115,6 +190,8 @@ export function buildReport({ player, tests, settings, draft, parentFirst }) {
     + P(greet) + intro.map(P).join("")
     + (picked.length ? H(fill(S.numbers_heading, vars)) + table : "")
     + (gainLine ? `<p style="margin:0 0 14px;padding:10px 12px;background:#ecfdf3;border-radius:8px;color:#14532d;font-weight:600">${esc(gainLine)}</p>` : "")
+    + (S.show_progress !== false ? progressHtml(player, tests, picked, S, vars) : "")
+    + (S.show_team !== false ? teamHtml(player, tests, teammates, picked, S, vars) : "")
     + (worked ? H(fill(S.worked_heading, vars)) + P(worked) : "")
     + (note ? P(note) : "")
     + (pitch.length ? H(fill(S.pitch_heading, vars)) + pitch.map(P).join("") : "")
@@ -125,7 +202,9 @@ export function buildReport({ player, tests, settings, draft, parentFirst }) {
   const tline = (r) => `  ${r.label}: ${fmtMetric(r.key, r.baseline)} (${r.baselineFrom})` + (r.latest != null ? ` -> ${fmtMetric(r.key, r.latest)} (${r.latestFrom})${r.change != null ? "  " + fmtChange(r.key, r.change) + (r.better ? " better" : "") : ""}` : "");
   const text = [greet, ...intro,
     picked.length ? fill(S.numbers_heading, vars).toUpperCase() + "\n" + picked.map(tline).join("\n") : "",
-    gainLine, worked ? fill(S.worked_heading, vars).toUpperCase() + "\n" + worked : "", note,
+    gainLine,
+    S.show_team !== false ? picked.filter(r => r.key !== "stand_reach").map(r => { const t = teamStanding(player, tests, teammates, r.key); return t ? `  ${r.label}: #${t.rank} of ${t.n} on the team (team best ${fmtMetric(r.key, t.best)})` : ""; }).filter(Boolean).join("\n") : "",
+    worked ? fill(S.worked_heading, vars).toUpperCase() + "\n" + worked : "", note,
     pitch.length ? fill(S.pitch_heading, vars).toUpperCase() + "\n" + pitch.join("\n\n") + (S.pitch_link ? "\n" + S.pitch_link : "") : "",
     fill(S.signoff, vars)].filter(Boolean).join("\n\n");
   return { subject, html, text, rows: all, picked };
@@ -136,3 +215,6 @@ export function buildReport({ player, tests, settings, draft, parentFirst }) {
 export const SAMPLE_PLAYER = { id: 0, first_name: "Sample", last_name: "Player", team_assignment: "14 Diamond", stand_reach: 90, approach_touch: 112, jump_touch: 101, sprint_10y: 1.95 };
 export const SAMPLE_TESTS = [{ test_date: new Date().toISOString().slice(0, 10), stand_reach: 90.5, approach_touch: 115, standing_touch: 103, broad_jump: 86, dash_10y: 1.88 }];
 export const SAMPLE_DRAFT = { worked_on: "Approach footwork, arm swing timing and first-step quickness off the block.", note: "" };
+// Made-up teammates for the sample preview's team chart.
+export const SAMPLE_TEAM = [[110, 1.90], [118, 1.85], [108, 2.00], [113, 1.92], [104, 2.05], [115, 1.97], [109, 1.99]]
+  .map(([ap, d], i) => ({ player: { id: -1 - i, first_name: "T" + i, stand_reach: 90, approach_touch: ap, sprint_10y: d }, tests: [] }));
