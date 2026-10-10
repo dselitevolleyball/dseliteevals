@@ -168,6 +168,22 @@ export default async function handler(req, res) {
   ]);
   const volunteers = vols || [];
 
+  // A coach with two teams gets one notification naming both, but it can only
+  // open one form — so every form links to her other teams' forms (Coach KK
+  // has 14 Emerald and 15 Sapphire; Oct 2026).
+  const { data: mine } = team.head_coach
+    ? await supabase.from("practice_teams").select("team_name,kickoff_form_token").eq("head_coach", team.head_coach).neq("team_name", team.team_name)
+    : { data: [] };
+  const otherTeams = (mine || []).filter(o => o.kickoff_form_token && !/rise/i.test(o.team_name));
+  const { data: otherKicks } = otherTeams.length
+    ? await supabase.from("team_kickoffs").select("team_name,kickoff_status,kickoff_date").in("team_name", otherTeams.map(o => o.team_name))
+    : { data: [] };
+  const othersHtml = otherTeams.length ? `<div class="card" style="margin-bottom:16px"><b>Your other team${otherTeams.length > 1 ? "s" : ""}</b>${otherTeams.map(o => {
+      const k = (otherKicks || []).find(x => x.team_name === o.team_name);
+      const st = !k ? "no answer yet" : k.kickoff_status === "held" ? "held " + fmtDate(k.kickoff_date) : k.kickoff_status === "scheduled" ? "booked for " + fmtDate(k.kickoff_date) : "not scheduled yet";
+      return `<div style="display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap"><span style="flex:1">${esc(o.team_name)} &middot; <span style="color:var(--mut, #888)">${esc(st)}</span></span><a href="/kickoff?t=${esc(o.kickoff_form_token)}" style="font-weight:700;color:var(--gold, #e91e8c)">Open ${esc(o.team_name)}&rsquo;s form &rarr;</a></div>`;
+    }).join("")}</div>` : "";
+
   if (req.method === "POST") {
     let body = req.body;
     if (typeof body === "string") body = Object.fromEntries(new URLSearchParams(body));
@@ -202,7 +218,7 @@ export default async function handler(req, res) {
     if (status === "scheduled" && !date) missing.push("the date it's booked for");
     if (status === "not_scheduled" && !planBy) missing.push("the date you'll have it booked by");
     if (missing.length) {
-      return res.status(200).send(renderForm(team, volunteers, { ...draft, ticked, added }, {
+      return res.status(200).send(renderForm(team, volunteers, { ...draft, ticked, added }, { othersHtml,
         error: "Still needs: " + missing.join("; ") + ".",
       }));
     }
@@ -277,14 +293,15 @@ export default async function handler(req, res) {
           ${recap.map(([k, val]) => `<tr><td>${esc(k)}</td><td>${esc(val)}</td></tr>`).join("")}
         </table>
       </div>
+      ${othersHtml}
       <div class="foot">Questions? Drew — drew@dselitevolleyball.com</div>`,
       { title: "Saved — kickoff check-in — DS Elite" }));
   }
 
-  return res.status(200).send(renderForm(team, volunteers, prev || {}, {}));
+  return res.status(200).send(renderForm(team, volunteers, prev || {}, { othersHtml }));
 }
 
-function renderForm(team, volunteers, v, { error, preview } = {}) {
+function renderForm(team, volunteers, v, { error, preview, othersHtml = "" } = {}) {
   const has = (k) => v && v[k] != null && v[k] !== "";
   // A rejected submission shows what the coach just typed; a first load shows
   // what they told us last time. Neither is ever overwritten by a default.
@@ -331,6 +348,7 @@ function renderForm(team, volunteers, v, { error, preview } = {}) {
          ? `<span style="color:var(--gold)">You've already answered — this is what you told us. Change anything and send it again.</span>`
          : "Two questions, about a minute."}`}</p>
 
+  ${othersHtml}
   <!-- novalidate: the server checks every answer and re-shows the form with what's missing.
        Browser checks blocked the button silently: an old "book it by" date before today
        sat in a hidden field with min=today, so phones refused to submit (Coach KK, Oct 2026). -->
