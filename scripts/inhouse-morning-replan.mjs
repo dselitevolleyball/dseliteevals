@@ -17,13 +17,16 @@ for (const line of readFileSync(new URL("../.env", import.meta.url), "utf8").spl
 const write = process.argv.includes("--write");
 const sb = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
 const DATE = "2026-11-29";
-const HOURS = ["10:00", "11:00", "12:00", "13:00", "14:00"];   // moved 2h later (Drew, Oct 10)
+const HOURS = ["10:00", "11:00", "12:00", "13:00"];   // 10am-1pm starts (Drew, Oct 10)
 const COURTS = ["Court 1", "Court 2"];
+// 9 matches don't fit 4 hours x 2 courts, so one 13s match is dropped: National 13 Diamond
+// vs Regional 13 Sapphire (both still play 2; Emerald and Ruby play 3).
+const DROP = ["13 Diamond", "13 Sapphire"];
 const T13 = ["13 Diamond", "13 Emerald", "13 Ruby", "13 Sapphire"];
 const YNG = ["11 Diamond", "12 Diamond", "12 Ruby"];
 const ALL = [...YNG, ...T13];
 const matches = [];
-for (let i = 0; i < 4; i++) for (let j = i + 1; j < 4; j++) matches.push([T13[i], T13[j]]);
+for (let i = 0; i < 4; i++) for (let j = i + 1; j < 4; j++) if (!(T13[i] === DROP[0] && T13[j] === DROP[1])) matches.push([T13[i], T13[j]]);
 for (let i = 0; i < 3; i++) for (let j = i + 1; j < 3; j++) matches.push([YNG[i], YNG[j]]);
 
 // Every way to put the 9 matches into 5 hours x 2 courts (no team twice an hour).
