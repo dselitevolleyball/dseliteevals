@@ -62,9 +62,9 @@ for (let h = 0; h < HOURS.length; h++) {
   const line = [];
   best.plan[h].forEach((m, ci) => {
     const court = COURTS[ci], [a, b] = m, w = best.crew.find(c => c.h === h && c.m === m).w;
-    add(a, "Tournament — vs " + b, h, court, `DS Elite in-house tournament. ${a} vs ${b} on ${court}.`);
-    add(b, "Tournament — vs " + a, h, court, `DS Elite in-house tournament. ${b} vs ${a} on ${court}.`);
-    add(w, "Tournament — WORK " + court, h, court, `Officiating duty: ${a} vs ${b} on ${court}. Ref, score, and lines.`);
+    add(a, "Tournament — vs " + b, h, court, `DS Elite in-house tournament. ${a} vs ${b} on ${court}. Coaches arrive by 3:00pm.`);
+    add(b, "Tournament — vs " + a, h, court, `DS Elite in-house tournament. ${b} vs ${a} on ${court}. Coaches arrive by 3:00pm.`);
+    add(w, "Tournament — WORK " + court, h, court, `Officiating duty: ${a} vs ${b} on ${court}. Ref, score, and lines. Coaches arrive by 3:00pm.`);
     line.push(`${court}: ${a} v ${b} [work ${w}]`);
   });
   console.log(`${HOURS[h]}  ${line.join("   |   ") || "(free)"}`);

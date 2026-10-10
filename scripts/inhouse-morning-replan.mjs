@@ -17,7 +17,7 @@ for (const line of readFileSync(new URL("../.env", import.meta.url), "utf8").spl
 const write = process.argv.includes("--write");
 const sb = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
 const DATE = "2026-11-29";
-const HOURS = ["10:00", "11:00", "12:00", "13:00"];   // 10am-1pm starts (Drew, Oct 10)
+const HOURS = ["11:00", "12:00", "13:00", "14:00"];   // 11am-2pm starts, coaches arrive 10am (Drew, Oct 10)
 const COURTS = ["Court 1", "Court 2"];
 // 8 matches in 4 hours x 2 courts (Drew, Oct 10): 13 Diamond and 13 Ruby play 3,
 // everyone else 2 - so 13 Emerald vs 13 Sapphire is the 13s match left out.
@@ -68,9 +68,9 @@ for (let h = 0; h < HOURS.length; h++) {
   const line = [];
   best.plan[h].forEach((m, ci) => {
     const court = COURTS[ci], [a, b] = m, w = best.crew.find(c => c.h === h && c.m === m).w;
-    add(a, "Tournament — vs " + b, h, court, `DS Elite in-house tournament. ${a} vs ${b} on ${court}.`);
-    add(b, "Tournament — vs " + a, h, court, `DS Elite in-house tournament. ${b} vs ${a} on ${court}.`);
-    add(w, "Tournament — WORK " + court, h, court, `Officiating duty: ${a} vs ${b} on ${court}. Ref, score, and lines.`);
+    add(a, "Tournament — vs " + b, h, court, `DS Elite in-house tournament. ${a} vs ${b} on ${court}. Coaches arrive by 10:00am.`);
+    add(b, "Tournament — vs " + a, h, court, `DS Elite in-house tournament. ${b} vs ${a} on ${court}. Coaches arrive by 10:00am.`);
+    add(w, "Tournament — WORK " + court, h, court, `Officiating duty: ${a} vs ${b} on ${court}. Ref, score, and lines. Coaches arrive by 10:00am.`);
     line.push(`${court}: ${a} v ${b} [work ${w}]`);
   });
   console.log(`${HOURS[h]}  ${line.join("   |   ") || "(free)"}`);
