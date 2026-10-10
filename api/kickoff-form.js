@@ -331,7 +331,10 @@ function renderForm(team, volunteers, v, { error, preview } = {}) {
          ? `<span style="color:var(--gold)">You've already answered — this is what you told us. Change anything and send it again.</span>`
          : "Two questions, about a minute."}`}</p>
 
-  <form method="POST" id="f">
+  <!-- novalidate: the server checks every answer and re-shows the form with what's missing.
+       Browser checks blocked the button silently: an old "book it by" date before today
+       sat in a hidden field with min=today, so phones refused to submit (Coach KK, Oct 2026). -->
+  <form method="POST" id="f" novalidate>
     ${error ? `<div class="err">${esc(error)}</div>` : ""}
 
     <div class="card">
@@ -394,7 +397,7 @@ function renderForm(team, volunteers, v, { error, preview } = {}) {
         </div>
         <div style="height:16px"></div>
         <label style="margin-bottom:0"><span class="lb">I'll have a date booked by <span class="req">*</span></span>
-          <input type="date" name="plan_by" value="${esc(planBy)}" min="${today()}">
+          <input type="date" name="plan_by" value="${esc(planBy)}">
           <p class="hint">We'll check back with you then, not before.</p></label>
       </div>
     </div>
