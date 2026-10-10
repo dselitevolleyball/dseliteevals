@@ -246,7 +246,7 @@ export default async function handler(req, res) {
   // app can draw a court grid, but a parent doesn't want five hour-long blocks
   // on their calendar — they want "we're at the gym 7-1". Collapse each team's
   // tournament day into ONE session block and put the match list in the body.
-  // Session windows (Drew, Oct 10 2026): younger group arrives 10am, matches
+  // Session windows (Drew, Oct 10 2026): younger group players arrive 10:30am (coaches 10am), matches
   // 11-3; older group players arrive 3:30pm (coaches 3pm), matches 4-8. The block runs from arrival to
   // the end of the session's last match so the invite includes warmup.
   const isTourn = e => /^Tournament/i.test(e.title || "");
@@ -260,7 +260,7 @@ export default async function handler(req, res) {
   for (const [date, rows] of tournByDate) {
     rows.sort((a, b) => hhmmToMin(a.start_time) - hhmmToMin(b.start_time));
     const morning = hhmmToMin(rows[0].start_time) < 15 * 60;
-    const startMin = morning ? 10 * 60 : 15 * 60 + 30;
+    const startMin = morning ? 10 * 60 + 30 : 15 * 60 + 30;
     const endMin   = morning ? 15 * 60 : 20 * 60;
     const fmt = m => { const h = Math.floor(m / 60), mm = m % 60, ap = h >= 12 ? "pm" : "am", hh = h % 12 === 0 ? 12 : h % 12; return hh + (mm ? ":" + String(mm).padStart(2, "0") : "") + ap; };
     const body = rows.map(r => {
@@ -269,7 +269,7 @@ export default async function handler(req, res) {
       const what = work ? "WORK " + (r.location || "") : r.title.replace(/^Tournament — /, "");
       return t + "  " + what + (work ? "" : "  (" + (r.location || "") + ")");
     }).join("\n");
-    const arrive = morning ? "Arrive by 10:00am. Matches 11:00am-3:00pm." : "Players arrive by 3:30pm. First match 4:00pm, done by 8:00pm.";
+    const arrive = morning ? "Players arrive by 10:30am. First match 11:00am, done by 3:00pm." : "Players arrive by 3:30pm. First match 4:00pm, done by 8:00pm.";
     ev.push(["BEGIN:VEVENT",
       "UID:" + (team + "-tourn-" + date).replace(/\s+/g, "_") + "@dseliteevals",
       "DTSTAMP:20260702T000000Z",
