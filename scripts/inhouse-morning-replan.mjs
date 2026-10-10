@@ -19,9 +19,9 @@ const sb = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth:
 const DATE = "2026-11-29";
 const HOURS = ["10:00", "11:00", "12:00", "13:00"];   // 10am-1pm starts (Drew, Oct 10)
 const COURTS = ["Court 1", "Court 2"];
-// 9 matches don't fit 4 hours x 2 courts, so one 13s match is dropped: National 13 Diamond
-// vs Regional 13 Sapphire (both still play 2; Emerald and Ruby play 3).
-const DROP = ["13 Diamond", "13 Sapphire"];
+// 8 matches in 4 hours x 2 courts (Drew, Oct 10): 13 Diamond and 13 Ruby play 3,
+// everyone else 2 - so 13 Emerald vs 13 Sapphire is the 13s match left out.
+const DROP = ["13 Emerald", "13 Sapphire"];
 const T13 = ["13 Diamond", "13 Emerald", "13 Ruby", "13 Sapphire"];
 const YNG = ["11 Diamond", "12 Diamond", "12 Ruby"];
 const ALL = [...YNG, ...T13];
