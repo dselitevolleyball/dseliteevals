@@ -52,7 +52,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { isEventTeam } from "../shared/event-teams.js";
 import {
-  tzForTournament, localNow, withNext, aesTeamSnapshot, ottoTeamSnapshot, aesPoolPlayId, aesDecodeKey,
+  tzForTournament, localNow, withNext, aesTeamSnapshot, ottoTeamSnapshot, aesPoolPlayId, aesDecodeKey, aesKey,
 } from "../shared/tournament-feed.js";
 import {
   aesEvent, aesLanding, aesTimestamp, aesStandings, aesNext, aesTeamHeader, aesTeamSchedule, aesPoolsheet,
@@ -257,6 +257,10 @@ function cached(key, ttlMs, fn) {
 // aes:<results key>:<clubId> | otto:<esw id or numeric id>:<teamId,teamId>
 export function parseDemo(s) {
   const str = String(s || "").trim();
+  // A plain AES event number (the one in advancedeventsystems.com/46164) works
+  // too — checked first, because a number ending in 0-2 also looks like a key.
+  const n = /^aes:(\d{3,10}):(-?\d{1,9})$/.exec(str);
+  if (n) return { platform: "aes", key: aesKey(n[1]), clubId: Number(n[2]), param: str };
   const a = /^aes:([A-Za-z0-9_-]{4,160}[0-2]):(-?\d{1,9})$/.exec(str);
   if (a) return { platform: "aes", key: a[1], clubId: Number(a[2]), param: str };
   const o = /^otto:([0-9a-f]{9}|\d{3,10}):(\d{1,12}(?:,\d{1,12}){0,11})$/i.exec(str);

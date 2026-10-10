@@ -909,9 +909,10 @@ export async function testFeed(spec, { tz = null, now = new Date(), maxTeams = 1
   const teams = [];
   for (const fav of favs) {
     const snap = await buildOttoTeam(ctx, key, fav, { event, allowPools: true, nowLocal });
-    teams.push({ team_id: fav.team_id, team_name: fav.team_name, error: null, snapshot: withNext(snap, nowLocal) });
+    // source: which OTTO API answered — "rest" while GraphQL is down (tournament-sources.js).
+    teams.push({ team_id: fav.team_id, team_name: fav.team_name, source: fav._source || "graphql", error: null, snapshot: withNext(snap, nowLocal) });
   }
-  return { ok: true, platform, key, event: { name: event.long_name, start: msDay(event.date_start), end: msDay(event.date_end), location: place(event.city, event.state), published: !!event.schedule_published, otto_timezone: event.timezone || null }, tz: zone, now_local: nowLocal, teams, calls: ctx.calls, ms: ctx.elapsed() };
+  return { ok: true, platform, key, event: { name: event.long_name, start: msDay(event.date_start), end: msDay(event.date_end), location: place(event.city, event.state), published: !!event.schedule_published, otto_timezone: event.timezone || null }, tz: zone, now_local: nowLocal, otto_graphql: S.ottoGqlState(), teams, calls: ctx.calls, ms: ctx.elapsed() };
 }
 
 // The landing row for a results key (scheduler-only events have no eventId,
