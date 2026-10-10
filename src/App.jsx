@@ -1673,6 +1673,8 @@ export default function App() {
   const [practiceCoverage, setPracticeCoverage]       = useState([]); // per-date coach absences + subs (Daily view)
   const [practiceCancellations, setPracticeCancellations] = useState([]); // dates with practice cancelled (holidays)
   const [slotMoves, setSlotMoves]                     = useState([]); // per-date team → block moves (Sunday 4-court planner)
+  const [scrims, setScrims]                           = useState([]); // practice_scrimmages: teams scrimmaging on a shared court, per date + block
+  const [scrimForm, setScrimForm]                     = useState(null); // { slot, teams:[], court, notes } — the "+ Scrimmage" form open on a block
   const [boardDrag, setBoardDrag]                     = useState(null); // Daily board: team card being dragged to another block
   const [boardDrop, setBoardDrop]                     = useState(null); // …and the block it's over
   // Incident log. `incidentDraft` non-null means the report dialog is open;
@@ -3021,6 +3023,11 @@ export default function App() {
     if (error) { console.error("Load practice_slot_moves error:", error); return; }
     setSlotMoves(data || []);
   }, []);
+  const loadScrims = useCallback(async () => {
+    const { data, error } = await supabase.from("practice_scrimmages").select("*").order("practice_date");
+    if (error) { console.error("Load practice_scrimmages error:", error); return; }
+    setScrims(data || []);
+  }, []);
   const loadCoachGear = useCallback(async () => {
     const { data, error } = await supabase.from("coach_gear").select("*");
     if (error) { console.error("Load coach_gear error:", error); return; }
@@ -3661,7 +3668,7 @@ export default function App() {
   // visited the Practice view first.
   useEffect(() => { if (isApproved && view === "staffing") { loadStaffing(); loadPractice(); loadPracticeCoverage(); } }, [isApproved, view, loadStaffing, loadPractice, loadPracticeCoverage]);
   useEffect(() => { if (isApproved && view === "coverage") { loadPracticeCoverage(); loadPractice(); } }, [isApproved, view, loadPracticeCoverage, loadPractice]);
-  useEffect(() => { if (isApproved && view === "practice") { loadPracticeCancellations(); loadSlotMoves(); } }, [isApproved, view, loadPracticeCancellations, loadSlotMoves]);
+  useEffect(() => { if (isApproved && view === "practice") { loadPracticeCancellations(); loadSlotMoves(); loadScrims(); } }, [isApproved, view, loadPracticeCancellations, loadSlotMoves, loadScrims]);
   // Optimistically patch local state, then upsert the merged row. `merged` is
   // computed from current state synchronously (NOT inside the setState updater,
   // which React may run later) so the upsert payload is always complete.
@@ -19858,6 +19865,52 @@ export default function App() {
                       <div style={{fontSize:10,color:floaters.length?"#06b6d4":C.mut,fontWeight:700,marginTop:2}}>
                         {floaters.length ? "☁ " + floaters.join(", ") : "☁ no floater"}
                       </div>
+                      {/* Scrimmages this block: which teams play each other, on which shared court. */}
+                      {scrims.filter(x => x.practice_date === dailyDate && x.slot === s.label).map(x => (
+                        <div key={x.id} style={{marginTop:6,padding:"6px 8px",borderRadius:8,background:"rgba(249,115,22,0.12)",border:"1px solid #f97316"}}>
+                          <div style={{display:"flex",alignItems:"center",gap:6}}>
+                            <span style={{fontSize:11,fontWeight:900,color:"#f97316"}}>⚔ SCRIMMAGE{x.court ? " · Court " + x.court : ""}</span>
+                            <div style={{flex:1}} />
+                            <button onClick={async ()=>{ if (!window.confirm("Remove this scrimmage?")) return; setScrims(p => p.filter(y => y.id !== x.id)); await supabase.from("practice_scrimmages").delete().eq("id", x.id); }}
+                              title="Remove" style={{background:"none",border:"none",color:C.mut,cursor:"pointer",fontSize:13,padding:0}}>✕</button>
+                          </div>
+                          <div style={{fontSize:12,fontWeight:800,color:C.text}}>{(x.teams || []).join(" vs ")}</div>
+                          {x.notes && <div style={{fontSize:10,color:C.mut}}>{x.notes}</div>}
+                        </div>
+                      ))}
+                      {scrimForm?.slot === s.label ? (() => {
+                        const f = scrimForm, setF = (p) => setScrimForm(v => ({ ...v, ...p }));
+                        const save = async () => {
+                          if (f.teams.length < 2) { window.alert("Pick at least two teams."); return; }
+                          const row = { practice_date: dailyDate, slot: s.label, teams: f.teams, court: f.court || null, notes: f.notes.trim() || null, created_by: coach?.display_name || coach?.email || null };
+                          const { data, error } = await supabase.from("practice_scrimmages").insert(row).select().single();
+                          if (error) { window.alert("Couldn't save: " + error.message); return; }
+                          setScrims(p => [...p, data]); setScrimForm(null);
+                        };
+                        return (
+                          <div style={{marginTop:6,padding:8,borderRadius:8,border:"1px solid #f97316",background:C.card}}>
+                            <div style={{fontSize:10,fontWeight:800,color:"#f97316",marginBottom:4}}>WHO'S SCRIMMAGING?</div>
+                            {teams.map(a => { const on = f.teams.includes(a.team_name); return (
+                              <label key={a.team_name} style={{display:"flex",alignItems:"center",gap:6,fontSize:12,fontWeight:700,padding:"2px 0",cursor:"pointer"}}>
+                                <input type="checkbox" checked={on} onChange={()=>setF({ teams: on ? f.teams.filter(t => t !== a.team_name) : [...f.teams, a.team_name] })} style={{accentColor:"#f97316"}} />{a.team_name}
+                              </label>); })}
+                            <div style={{display:"flex",gap:6,alignItems:"center",marginTop:6}}>
+                              <span style={{fontSize:11,color:C.mut}}>Shared court</span>
+                              <select value={f.court} onChange={e=>setF({ court: e.target.value })} style={{...inpStyle,padding:"2px 4px",fontSize:12}}>
+                                <option value="">—</option>{[1,2,3,4,5,6].map(n => <option key={n} value={String(n)}>{"C"+n}</option>)}
+                              </select>
+                            </div>
+                            <input value={f.notes} onChange={e=>setF({ notes: e.target.value })} placeholder="Notes (optional)" style={{...inpStyle,width:"100%",boxSizing:"border-box",padding:"4px 6px",fontSize:11,marginTop:6}} />
+                            <div style={{display:"flex",gap:6,marginTop:6}}>
+                              <button onClick={save} style={{flex:1,padding:"5px 0",borderRadius:6,border:"none",background:"#f97316",color:"#000",fontWeight:800,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>Save scrimmage</button>
+                              <button onClick={()=>setScrimForm(null)} style={{padding:"5px 8px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>Cancel</button>
+                            </div>
+                          </div>
+                        );
+                      })() : teams.length >= 2 && (
+                        <button onClick={()=>setScrimForm({ slot: s.label, teams: [], court: "", notes: "" })}
+                          style={{marginTop:6,padding:"3px 8px",borderRadius:6,border:"1px dashed #f97316",background:"transparent",color:"#f97316",fontSize:10,fontWeight:800,cursor:"pointer",fontFamily:"inherit"}}>⚔ + Scrimmage</button>
+                      )}
                     </div>
                     {teams.length === 0 ? (
                       <div style={{padding:14,color:C.mut,fontSize:11}}>No teams this block.</div>
@@ -19887,6 +19940,8 @@ export default function App() {
                                   <option value="">C—</option>
                                   {[1,2,3,4,5,6].map(n => <option key={n} value={n}>{"C"+n}</option>)}
                                 </select>
+                                {(() => { const sc = scrims.find(x => x.practice_date === dailyDate && x.slot === s.label && (x.teams || []).includes(a.team_name));
+                                  return sc ? <span title={"Scrimmage vs " + sc.teams.filter(t => t !== a.team_name).join(", ") + (sc.court ? " on court " + sc.court : "")} style={{order:9,fontSize:9,fontWeight:900,color:"#f97316",border:"1px solid #f97316",borderRadius:5,padding:"1px 5px",whiteSpace:"nowrap"}}>⚔ vs {sc.teams.filter(t => t !== a.team_name).join(", ")}{sc.court ? " · C" + sc.court : ""}</span> : null; })()}
                                 <span onClick={()=>setTeamCardName(a.team_name)} style={{fontSize:13,fontWeight:800,color:tCancelled?C.mut:C.gold,cursor:"pointer",textDecoration:tCancelled?"line-through":"none"}}>{a.team_name}</span>
                                 {(() => { const sa2 = (saSessions||[]).find(x => x.session_date === dailyDate && x.team_name === a.team_name);
                                   return sa2 ? <span title={"Speed & Agility " + sa2.slot} style={{fontSize:9,fontWeight:800,color:"#22c55e",border:"1px solid #22c55e",borderRadius:5,padding:"1px 5px",whiteSpace:"nowrap"}}>💪 {sa2.slot}</span> : null; })()}
