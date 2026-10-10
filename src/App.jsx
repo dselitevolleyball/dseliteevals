@@ -9037,6 +9037,9 @@ export default function App() {
     const sel = (calSel && calSel.slice(0,7) === monthKey) ? calSel : (todayISO.slice(0,7) === monthKey ? todayISO : null);
     const selP = sel ? practicesOn(sel) : [], selT = sel ? tnsOn(sel) : [], selSA = sel ? saOn(sel) : [], selSub = sel ? subsOn(sel) : [], selFl = sel ? floatsOn(sel) : [], selDssc = sel ? dsscOn(sel) : [];
     const selKidP = sel ? kidPracticesOn(sel) : [], selKidT = sel ? kidTnsOn(sel) : [], selKidSA = sel ? kidSaOn(sel) : [], selKidE = sel ? kidEventsOn(sel) : [];
+    // My teams' one-off events that day (in-house tournament matches + work, jersey tryouts).
+    const selE = sel ? (teamEvents || []).filter(e => myTeamSet.has(e.team_name) && e.event_date === sel).sort((a, b) => String(a.start_time).localeCompare(String(b.start_time))) : [];
+    const selArrive = [...new Set(selE.map(e => (/Coaches arrive by ([0-9:apm]+)/i.exec(e.description || "") || [])[1]).filter(Boolean))];
     const fmtLong = (iso) => new Date(iso + "T12:00:00").toLocaleDateString(undefined, { weekday:"long", month:"short", day:"numeric" });
     const cells = []; for (let i = 0; i < leadPad; i++) cells.push(null); for (let d = 1; d <= daysInMonth; d++) cells.push(d);
     const chip = (color) => ({fontSize:7.5,fontWeight:800,lineHeight:"11px",height:11,borderRadius:2,padding:"0 2px",background:color+"33",color,overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis",letterSpacing:0.2});
@@ -9134,10 +9137,19 @@ export default function App() {
           <div style={{marginTop:10,borderTop:"1px solid "+C.border,paddingTop:10}}>
             <div style={{fontSize:11,fontWeight:800,color:C.text,marginBottom:6}}>{fmtLong(sel)}{sel===todayISO?" · Today":""}</div>
             {(selP.length===0 && selT.length===0 && selSA.length===0 && selSub.length===0 && selFl.length===0 && selDssc.length===0
-              && selKidP.length===0 && selKidT.length===0 && selKidSA.length===0 && selKidE.length===0) ? (
+              && selKidP.length===0 && selKidT.length===0 && selKidSA.length===0 && selKidE.length===0 && selE.length===0) ? (
               <div style={{fontSize:12,color:C.mut}}>Nothing scheduled.</div>
             ) : (
               <div style={{display:"flex",flexDirection:"column",gap:5}}>
+                {selArrive.length > 0 && (
+                  <div style={{fontSize:12,fontWeight:800,color:"#e11d48"}}>🏆 In-House Tournament · coaches arrive by {selArrive.join(" / ")}</div>
+                )}
+                {selE.map((e,i) => { const work = /WORK/i.test(e.title); return (
+                  <div key={"e"+i} style={{display:"flex",alignItems:"center",gap:8,fontSize:13}}>
+                    <span style={{width:6,height:6,borderRadius:3,background:work?"#f97316":"#e11d48",flexShrink:0}} />
+                    <span style={{flex:1,color:C.text,fontWeight:600}}>{work ? "🦺 " : "🏆 "}{e.team_name} <span style={{fontWeight:500}}>{e.title.replace(/^Tournament — /,"")}</span>{e.location && <span style={{color:C.mut,fontWeight:500,fontSize:11}}> · {e.location}</span>}</span>
+                    <span style={{fontSize:11,color:C.mut}}>{fmtFlightTime(e.start_time) || e.start_time || ""}</span>
+                  </div>); })}
                 {selDssc.map((x,i) => (
                   <div key={"dssc"+i} onClick={()=>openClinic(x.clinicId)} title="Open this clinic"
                     style={{display:"flex",alignItems:"center",gap:8,fontSize:13,cursor:"pointer"}}>
@@ -20969,7 +20981,7 @@ export default function App() {
                     <td style={td}>
                       {plays.sort((x,y)=>x.start_time.localeCompare(y.start_time)).map(e =>
                         <div key={e.id}>{fmtT(e.start_time)} · {e.title.replace(/^Tournament — /,"")} <span style={{color:C.mut}}>({e.location})</span></div>)}
-                      {plays.length !== 3 && <div style={{fontSize:10,color:plays.length<3?C.red:"#f59e0b",fontWeight:700,marginTop:2}}>{plays.length} matches</div>}
+                      {(plays.length < 2 || plays.length > 3) && <div style={{fontSize:10,color:plays.length<2?C.red:"#f59e0b",fontWeight:700,marginTop:2}}>{plays.length} matches</div>}
                     </td>
                     <td style={{...td,color:"#f97316"}}>
                       {works.length ? works.sort((x,y)=>x.start_time.localeCompare(y.start_time)).map(e =>
