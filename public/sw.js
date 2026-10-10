@@ -1,7 +1,8 @@
 // DS Elite PWA service worker.
 // Deliberately NETWORK-FIRST for page loads so coaches always get the latest
 // deploy (the app is updated often and needs Supabase online anyway). The only
-// thing cached is the last successful page, used purely as an offline fallback.
+// thing cached is the last successful page (one for HQ, one for the /hub
+// pages), used purely as an offline fallback.
 const CACHE = 'dse-shell-v2';
 
 self.addEventListener('install', () => {
@@ -22,11 +23,17 @@ self.addEventListener('push', (event) => {
   try { data = event.data ? event.data.json() : {}; }
   catch (e) { data = { body: event.data ? event.data.text() : '' }; }
   const title = data.title || 'DS Elite';
+  // A tagged push (the Tournament Hub's "hub-<team>") replaces that team's
+  // older alert in the tray; renotify makes the replacement buzz/show again
+  // instead of landing silently. Only with a tag — Chrome throws on
+  // renotify without one.
+  const tag = data.tag || undefined;
   const options = {
     body: data.body || '',
     icon: '/icon-192.png',
     badge: '/icon-192.png',
-    tag: data.tag || undefined,
+    tag,
+    renotify: !!tag,
     data: { url: data.url || '/' },
   };
   event.waitUntil(self.registration.showNotification(title, options));
@@ -70,15 +77,23 @@ self.addEventListener('fetch', (event) => {
   // Only handle top-level navigations; let everything else (assets, Supabase,
   // /api) go straight to the network so nothing is ever served stale.
   if (req.mode !== 'navigate') return;
+  // The public Tournament Hub (/hub, its own registration with scope /hub, but
+  // also inside HQ's '/' scope) keeps its own offline copy, so HQ and the hub
+  // never overwrite each other's. Only successful pages are kept — a 404 from
+  // a bad link must not become the offline fallback.
+  const path = new URL(req.url).pathname;
+  const key = (path === '/hub' || path.startsWith('/hub/')) ? '/hub' : '/';
   event.respondWith((async () => {
     try {
       const fresh = await fetch(req);
-      const cache = await caches.open(CACHE);
-      cache.put('/', fresh.clone());
+      if (fresh.ok) {
+        const copy = fresh.clone(); // now, before the page starts reading the body
+        event.waitUntil(caches.open(CACHE).then((c) => c.put(key, copy)).catch(() => {}));
+      }
       return fresh;
     } catch (e) {
       const cache = await caches.open(CACHE);
-      const cached = await cache.match('/');
+      const cached = await cache.match(key);
       return cached || Response.error();
     }
   })());

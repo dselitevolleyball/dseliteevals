@@ -1,0 +1,17 @@
+{
+  "id": "/hub",
+  "name": "DS Elite Hub",
+  "short_name": "DS Elite",
+  "description": "DS Elite Volleyball tournament schedules, courts, live scores and alerts",
+  "start_url": "/hub",
+  "scope": "/hub",
+  "display": "standalone",
+  "background_color": "#12100f",
+  "theme_color": "#12100f",
+  "orientation": "portrait",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

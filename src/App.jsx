@@ -21,6 +21,7 @@ import DaySchedule from "./DaySchedule.jsx";
 import { PlayerStatHistory, StatsLinks } from "./PlayerStats.jsx";
 import StatReports from "./StatReports.jsx";
 import WorkDuty from "./WorkDuty.jsx";
+import TournamentHub from "./TournamentHub.jsx";
 import EuropeRsvps from "./EuropeRsvps.jsx";
 import DsscTexts from "./dssc/DsscTexts.jsx";
 import DsscCamp from "./dssc/DsscCamp.jsx";
@@ -1660,6 +1661,8 @@ export default function App() {
   const [tournaments, setTournaments]                       = useState([]);
   const [tournamentAssignments, setTournamentAssignments]   = useState([]);
   const [tournamentsLoading, setTournamentsLoading]         = useState(false);
+  // Tournament Hub opened from a TournamentCard: which tournament to show first.
+  const [hubTn, setHubTn]                                   = useState(null);
   // Practice schedule tab state
   const [practiceTeamsAll, setPracticeTeams]             = useState([]);
   const [practiceAssignments, setPracticeAssignments] = useState([]);
@@ -3274,7 +3277,7 @@ export default function App() {
     setTournamentAssignments(aRes.data || []);
     setTournamentsLoading(false);
   }, []);
-  useEffect(() => { if (isApproved && (view === "tournaments" || view === "teamdir" || view === "home" || view === "practice" || view === "travel" || view === "housing")) loadTournaments(); }, [isApproved, view, loadTournaments]);
+  useEffect(() => { if (isApproved && (view === "tournaments" || view === "teamdir" || view === "home" || view === "practice" || view === "travel" || view === "housing" || view === "hub")) loadTournaments(); }, [isApproved, view, loadTournaments]);
 
   // Practice tab loader
   const loadPractice = useCallback(async () => {
@@ -3302,7 +3305,7 @@ export default function App() {
     if (error) { console.error("Load practice_snapshots error:", error); return; }
     setSnapshots(data || []);
   }, []);
-  useEffect(() => { if (isApproved && (view === "practice" || view === "teamdir" || view === "home" || view === "coaches" || view === "tournaments" || view === "travel")) loadPractice(); }, [isApproved, view, loadPractice]);
+  useEffect(() => { if (isApproved && (view === "practice" || view === "teamdir" || view === "home" || view === "coaches" || view === "tournaments" || view === "travel" || view === "hub")) loadPractice(); }, [isApproved, view, loadPractice]);
   useEffect(() => { if (isApproved && view === "practice") loadSnapshots(); }, [isApproved, view, loadSnapshots]);
   useEffect(() => { if (isApproved && view === "sa") loadPractice(); }, [isApproved, view, loadPractice]);
   // Coach/team cards (openable from any view) need practice_teams loaded.
@@ -4764,7 +4767,7 @@ export default function App() {
   useEffect(() => {
     // Roster also drives the Tryout coach picker / Text Coaches lookup,
     // so make sure it's loaded whenever either tab opens.
-    if (isApproved && (view === "coaches" || view === "tryouts" || view === "home" || view === "clockin" || view === "teamdir" || view === "practice" || view === "timecards" || view === "clinics" || view === "dssc" || view === "dssccal" || view === "tournaments" || view === "kickoff" || view === "travel" || view === "housing" || view === "messages" || view === "dssctexts" || view === "privates")) loadCoachRoster();
+    if (isApproved && (view === "coaches" || view === "tryouts" || view === "home" || view === "clockin" || view === "teamdir" || view === "practice" || view === "timecards" || view === "clinics" || view === "dssc" || view === "dssccal" || view === "tournaments" || view === "kickoff" || view === "travel" || view === "housing" || view === "messages" || view === "dssctexts" || view === "privates" || view === "hub")) loadCoachRoster();
   }, [isApproved, view, loadCoachRoster]);
   // The coach card edits coach_roster, so make sure it's loaded when one opens.
   useEffect(() => { if (isApproved && coachCardName) loadCoachRoster(); }, [isApproved, coachCardName, loadCoachRoster]);
@@ -30508,6 +30511,11 @@ export default function App() {
             })()}
           </div>
           <div style={{display:"flex",gap:5,alignItems:"center"}}>
+            <button onClick={()=>{ setHubTn(tn.id); setView("hub"); }}
+              title="This tournament's schedules and results in the Tournament Hub"
+              style={{padding:"4px 8px",borderRadius:6,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+              📊 Schedule &amp; results
+            </button>
             <button onClick={()=>openEditTournament(tn)}
               title="Edit tournament"
               style={{padding:"4px 8px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
@@ -32892,6 +32900,8 @@ export default function App() {
           : <div style={{padding:24,color:C.mut,textAlign:"center"}}>DSSC texting is for the club's directors.</div>)}
         {view==="workduty" && <WorkDuty coach={coach} players={players}
           teamNames={((canViewTeams || canOps) ? teamsList.filter(t => t.active).map(t => t.id) : myTeamNames.filter(t => teamsList.some(x => x.id === t))).slice().sort((a, b) => (parseInt(a) || 99) - (parseInt(b) || 99) || a.localeCompare(b))} />}
+        {view==="hub" && <TournamentHub supabase={supabase} C={C} tournaments={tournaments} tournamentAssignments={tournamentAssignments} practiceTeams={practiceTeams} practiceTeamsAll={practiceTeamsAll}
+          isOps={canOps} myTeamNames={myTeamNames} initialTournamentId={hubTn} onConsumedInitial={()=>setHubTn(null)} session={session} />}
         {view==="testreports" && (canSendReports ? <StatReports coach={coach} players={players} session={session} /> : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Testing reports are for admins and the performance coach.</div>)}
         {view==="lineups" && renderLineups()}
         {view==="games" && renderGames()}

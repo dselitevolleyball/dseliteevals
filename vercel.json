@@ -54,6 +54,10 @@
     {
       "source": "/meet",
       "destination": "/api/global-meeting"
+    },
+    {
+      "source": "/hub",
+      "destination": "/api/hub"
     }
   ],
   "crons": [
@@ -144,10 +148,16 @@
     {
       "path": "/api/sms-campaigns",
       "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/tournament-sync",
+      "schedule": "*/5 * * * *"
     }
   ],
   "functions": {
     "api/playbook-calendar.js": { "maxDuration": 120 },
+    "api/tournament-sync.js": { "maxDuration": 120 },
+    "api/tournament-feed.js": { "maxDuration": 120 },
     "api/sms-campaigns.js": { "maxDuration": 300 },
     "api/ask-hq.js": {
       "maxDuration": 120

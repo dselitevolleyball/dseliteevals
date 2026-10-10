@@ -38,6 +38,7 @@ const IT = {
   playergear:    ["Player Gear Orders", "👕", "ops", "gear orders uniforms shoes", "Gear"],
   scholarships:  ["Scholarships", "🎓", "ops", "financial aid", "Scholar"],
   tournaments:   ["Tournaments", "🏆", "ops", "aes lone star events schedule", "Events"],
+  hub:           ["Tournament Hub", "📊", "all", "schedule results scores standings pools brackets aes otto sportwrench live", "Results"],
   workduty:      ["Work Duty", "🦺", "duty", "work matches officiating", "Work"],
   tournament:    ["In-House Tournament", "🥇", "all", "in house", "In-House"],
   dsysa:         ["DSYSA Clinics", "⚽", "all", "dsysa", "DSYSA"],
@@ -86,7 +87,7 @@ const DSE_OPS = [
   ["talk", "Talk to people", "💬", ["messages", "email", "notifications", "coachcomms", "assignments"]],
   ["teams", "Teams & players", "🏐", ["teamdir", "roster", "incidentboard", "incidents", "school", "schoolgames", "photos"]],
   ["families", "Families & signups", "👪", ["waiting", "tracker", "kickoff", "playergear", "scholarships"]],
-  ["events", "Tournaments & travel", "✈️", ["tournaments", "workduty", "tournament", "dsysa", "travel", "housing", "hawaii"]],
+  ["events", "Tournaments & travel", "✈️", ["tournaments", "hub", "workduty", "tournament", "dsysa", "travel", "housing", "hawaii"]],
   ["staff", "Staff, pay & finance", "💵", ["coaches", "requests", "gear", "timecards", "claims", "myexpenses", "finance"]],
   ["court", "On the court", "📖", ["lineups", "practiceplan", "checkin", "playereval", "passing", "testreports", "games"]],
   ["tryouts", "Tryouts 2026-27", "🎯", ["dashboard", "evaluate", "favorites", "teams", "rankings", "physical", "tryouts"]],
@@ -96,7 +97,7 @@ const DSE_COACH = [
   ["mine", "My teams", "🏐", ["incidents", "checkin", "workduty"]],
   ["court", "On the court", "📖", ["lineups", "practiceplan", "playereval", "passing", "games", "testreports"]],
   ["me", "Me", "🙋", ["home", "clockin", "notifications", "myexpenses"]],
-  ["events", "Events", "🏆", ["tournament", "dsysa"]],
+  ["events", "Events", "🏆", ["hub", "tournament", "dsysa"]],
   ["tryouts", "Tryouts 2026-27", "🎯", ["dashboard", "evaluate", "favorites", "teams", "rankings", "physical", "tryouts"]],
 ];
 const DSSC_SECS = [
