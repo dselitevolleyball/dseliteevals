@@ -3,7 +3,7 @@
 // morning is re-planned for the 7 teams left on Courts 1 and 2:
 //   13 Diamond / Emerald / Ruby / Sapphire  - round robin (3 matches each)
 //   11 Diamond / 12 Diamond / 12 Ruby       - round robin (2 matches each)
-// 9 matches in 5 one-hour slots (8am-12pm starts). Every match is worked by a
+// 9 matches in 5 one-hour slots (10am-2pm starts; the 14s-16s start at 4pm). Every match is worked by a
 // team that's free that hour; the search keeps anyone from playing 3 in a row
 // and spreads the work evenly.
 //   node scripts/inhouse-morning-replan.mjs            # dry run
@@ -17,7 +17,7 @@ for (const line of readFileSync(new URL("../.env", import.meta.url), "utf8").spl
 const write = process.argv.includes("--write");
 const sb = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
 const DATE = "2026-11-29";
-const HOURS = ["08:00", "09:00", "10:00", "11:00", "12:00"];
+const HOURS = ["10:00", "11:00", "12:00", "13:00", "14:00"];   // moved 2h later (Drew, Oct 10)
 const COURTS = ["Court 1", "Court 2"];
 const T13 = ["13 Diamond", "13 Emerald", "13 Ruby", "13 Sapphire"];
 const YNG = ["11 Diamond", "12 Diamond", "12 Ruby"];
@@ -75,7 +75,7 @@ for (let h = 0; h < HOURS.length; h++) {
 const cnt = {}; for (const r of rows) { const k = r.team_name; cnt[k] = cnt[k] || { play: 0, work: 0 }; /WORK/.test(r.title) ? cnt[k].work++ : cnt[k].play++; }
 console.log("\n" + Object.entries(cnt).sort().map(([t, c]) => `${t}: ${c.play} matches, ${c.work} work`).join("\n"));
 
-const { data: old } = await sb.from("team_events").select("id").eq("event_date", DATE).ilike("title", "Tournament%").lt("start_time", "14:00");
+const { data: old } = await sb.from("team_events").select("id").eq("event_date", DATE).ilike("title", "Tournament%").lt("start_time", "16:00");
 console.log(`\nReplaces ${old.length} morning rows with ${rows.length}. Afternoon untouched.`);
 if (!write) { console.log("DRY RUN"); process.exit(0); }
 const { error: e1 } = await sb.from("team_events").delete().in("id", old.map(r => r.id)); if (e1) throw e1;
