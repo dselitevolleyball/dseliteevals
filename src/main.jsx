@@ -38,11 +38,19 @@ class ErrorBoundary extends React.Component {
   }
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(
-  <ErrorBoundary>
-    <App />
-  </ErrorBoundary>
-)
+// Dev only: /?navpreview renders the navigation harness (src/NavPreview.jsx)
+// without signing in. The DEV check drops it from production builds.
+if (import.meta.env.DEV && new URLSearchParams(window.location.search).has('navpreview')) {
+  import('./NavPreview.jsx').then(({ default: NavPreview }) => {
+    ReactDOM.createRoot(document.getElementById('root')).render(<ErrorBoundary><NavPreview /></ErrorBoundary>)
+  })
+} else {
+  ReactDOM.createRoot(document.getElementById('root')).render(
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
+  )
+}
 
 // Register the PWA service worker so the app is installable on phones
 // ("Add to Home Screen"). Network-first, so deploys are picked up immediately.

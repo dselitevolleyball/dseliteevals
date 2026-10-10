@@ -16,6 +16,7 @@ import DsscHub from "./dssc/DsscHub.jsx";
 import DsscAdmin from "./dssc/DsscAdmin.jsx";
 import HousingView from "./HousingView.jsx";
 import AskHQ from "./AskHQ.jsx";
+import { buildNav, navTheme, Sidebar, NavDrawer, BottomBar, SiblingChips } from "./Nav.jsx";
 import DaySchedule from "./DaySchedule.jsx";
 import { PlayerStatHistory, StatsLinks } from "./PlayerStats.jsx";
 import StatReports from "./StatReports.jsx";
@@ -1772,11 +1773,27 @@ export default function App() {
   // Mobile nav: collapse the header buttons into a hamburger under 700px.
   const [isNarrow, setIsNarrow] = useState(() => typeof window !== "undefined" && window.matchMedia("(max-width: 700px)").matches);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const navDrawerRef = useRef(false); // mirrors mobileNavOpen for listeners (popstate, width change)
   const [askOpen, setAskOpen] = useState(false);   // the Ask HQ assistant panel (admins)
+  // Sidebar (src/Nav.jsx). navCollapsed: null = automatic (icon rail under
+  // 1100px wide), true/false = what the user picked with the button or [ key.
+  const [navCollapsed, setNavCollapsed] = useState(() => { try { const v = localStorage.getItem("dse.navCollapsed"); return v === "1" ? true : v === "0" ? false : null; } catch { return null; } });
+  const [navPins, setNavPins] = useState(() => { try { return JSON.parse(localStorage.getItem("dse.navPins") || "{}") || {}; } catch { return {}; } });
+  const [isMidWidth, setIsMidWidth] = useState(() => typeof window !== "undefined" && window.matchMedia("(max-width: 1099px)").matches);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mq = window.matchMedia("(max-width: 1099px)");
+    const on = e => setIsMidWidth(e.matches);
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, []);
   useEffect(() => {
     if (typeof window === "undefined") return;
     const mq = window.matchMedia("(max-width: 700px)");
-    const onChange = e => { setIsNarrow(e.matches); if (!e.matches) setMobileNavOpen(false); };
+    const onChange = e => {
+      setIsNarrow(e.matches);
+      if (!e.matches) { if (navDrawerRef.current && window.history.state && window.history.state.drawer) window.history.back(); else setMobileNavOpen(false); }
+    };
     mq.addEventListener("change", onChange);
     return () => mq.removeEventListener("change", onChange);
   }, []);
@@ -2254,8 +2271,11 @@ export default function App() {
   // Deep links from notifications (e.g. /?view=practiceplan&tab=playbook) — read
   // the URL once after sign-in, jump to that view/tab, then clean the URL.
   const deepLinkDone = useRef(false);
+  const urlSyncReady = useRef(false); // the URL writer stays off until the deep link has been read
   useEffect(() => {
-    if (!isApproved || deepLinkDone.current) return;
+    if (!isApproved) return;
+    urlSyncReady.current = true;
+    if (deepLinkDone.current) return;
     try {
       const p = new URLSearchParams(window.location.search);
       const v = p.get("view"), tab = p.get("tab"), open = p.get("open");
@@ -2273,7 +2293,10 @@ export default function App() {
       // thing itself rather than on a list the reader still has to search.
       const msg = p.get("msg");
       if (msg) { setOpenMsgId(Number(msg) || null); if (!v) setView("notifications"); }
-      if (v || tab || open || p.get("msg")) { deepLinkDone.current = true; window.history.replaceState({}, "", window.location.pathname); }
+      // Keep ?view= (so Back and reload work) but drop the one-time bits.
+      deepLinkDone.current = true;
+      const landed = v || (msg ? "notifications" : null);
+      if (v || tab || open || msg) window.history.replaceState({ view: landed || "home" }, "", window.location.pathname + (landed && landed !== "home" ? "?view=" + encodeURIComponent(landed) : ""));
     } catch { /* ignore */ }
   }, [isApproved]); // eslint-disable-line react-hooks/exhaustive-deps
   // The gear modal renders nothing without a draft form, and only openGear()
@@ -2324,6 +2347,45 @@ export default function App() {
   const [tnAskOpen, setTnAskOpen]     = useState(false);
   // Which nav dropdown ("Tryouts" / "Operations") is open, or null. Click-to-toggle.
   const [openMenu, setOpenMenu] = useState(null);
+  // Phone drawer: opening it adds a history entry, so the phone's Back gesture
+  // closes the drawer instead of leaving the screen.
+  useEffect(() => {
+    navDrawerRef.current = mobileNavOpen;
+    if (mobileNavOpen && !(window.history.state && window.history.state.drawer))
+      window.history.pushState({ ...(window.history.state || {}), drawer: true }, "");
+  }, [mobileNavOpen]);
+  // Every screen change becomes a history entry (?view=), so the browser and
+  // phone Back buttons walk back through screens and a reload stays put.
+  useEffect(() => {
+    if (!urlSyncReady.current) return;
+    const cur = new URLSearchParams(window.location.search).get("view") || "home";
+    if (cur === view) return; // already there (deep link, or this change came from Back)
+    const url = window.location.pathname + (view === "home" ? "" : "?view=" + encodeURIComponent(view));
+    const replace = !!(window.history.state && window.history.state.drawer); // picked from the open drawer: replace its entry
+    window.history[replace ? "replaceState" : "pushState"]({ view }, "", url);
+    if (replace && navDrawerRef.current) window.history.pushState({ view, drawer: true }, "", url);
+  }, [view]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Stamp each entry with the business it showed, so Back to Home (which
+  // belongs to both) returns to the right one.
+  useEffect(() => {
+    if (!urlSyncReady.current) return;
+    const st = window.history.state || {};
+    if (st.ws !== workspace) window.history.replaceState({ ...st, ws: workspace }, "", window.location.href);
+  }, [workspace, view]);
+  useEffect(() => {
+    const onPop = (e) => {
+      if (navDrawerRef.current) { setMobileNavOpen(false); return; } // Back closes the drawer first
+      const v = (e.state && e.state.view) || new URLSearchParams(window.location.search).get("view") || "home";
+      setOpenMenu(null); setNotifOpen(false);
+      const ws = e.state && e.state.ws;
+      if ((ws === "dse" || ws === "dssc") && (v === "home" || v === "notifications" || v === "activity" || v === "faq" || v === "askai")) {
+        setWorkspace(ws); try { localStorage.setItem("dse.workspace", ws); } catch { /* private mode */ }
+      }
+      setView(v);
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
   // Selected age-group tabs. Multi-select: clicking a tab toggles membership.
   // Always at least one division is selected. Drives Evaluate filter, Teams sections, and Rankings.
   const [selectedDivs, setSelectedDivs] = useState(["U14"]);
@@ -28258,7 +28320,7 @@ export default function App() {
 
     return (
       // Phones: the list OR the open conversation, full width, with a Back button.
-      <div style={isNarrow ? {height:"calc(100dvh - 120px)",display:"flex",flexDirection:"column"} : {display:"grid",gridTemplateColumns:"320px 1fr",gap:14,height:"calc(100vh - 160px)"}}>
+      <div style={isNarrow ? {height:"calc(100dvh - 136px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))",display:"flex",flexDirection:"column"} : {display:"grid",gridTemplateColumns:"320px 1fr",gap:14,height:"calc(100vh - 110px)"}}>
         {/* Thread list, filed by team */}
         <div style={{background:C.card,borderRadius:12,border:"1px solid "+C.border,overflowY:"auto",...(isNarrow ? {flex:1,display:(selected || smsComposer || smsNewTo) ? "none" : "block"} : {})}}>
           <div style={{padding:"10px 14px",borderBottom:"1px solid "+C.border,position:"sticky",top:0,background:C.card,zIndex:2}}>
@@ -32544,169 +32606,86 @@ export default function App() {
     );
   }
 
+  // ── Navigation (src/Nav.jsx): one list drives the desktop sidebar, the phone
+  // drawer, bottom bar and section chips, gated exactly like the screen guards.
+  const navCtx = {
+    workspace, canOps, isAdmin, isOwner, canViewTeams, hasTeams: myTeamNames.length > 0, canSendReports, isDsscDirector, pins: navPins,
+    counts: {
+      smsDse: smsUnread.dse, smsDssc: smsUnread.dssc, notif: unreadCount,
+      issuesOpen: incidents.filter(r => r.status === "open").length,
+      issuesMine: incidents.filter(r => incidentVisible(r) && r.status !== "resolved").length,
+      kickoffs: kickoffOutstanding, claims: pendingClaimCount, reqs: coachRequests.filter(r => r.status === "pending").length,
+      gear: gearOutstanding, favorites: favorites.length,
+    },
+  };
+  const nav = buildNav(navCtx);
+  const navT = navTheme(workspace, C);
+  const navSec = nav.sectionOf(view);
+  const showSidebar = !isNarrow && !isReachOnly;
+  const showPhoneNav = isNarrow && !isReachOnly;
+  const sidebarCollapsed = navCollapsed === null ? isMidWidth : navCollapsed;
+  const setSidebarCollapsed = (v) => { setNavCollapsed(v); try { localStorage.setItem("dse.navCollapsed", v ? "1" : "0"); } catch { /* private mode */ } };
+  const togglePin = (v) => {
+    const cur = nav.pinsBase;
+    const next = cur.includes(v) ? cur.filter(x => x !== v) : [...cur, v].slice(-8);
+    setNavPins(p => { const n = { ...p, [nav.ws]: next }; try { localStorage.setItem("dse.navPins", JSON.stringify(n)); } catch { /* private mode */ } return n; });
+  };
+  const closeNavDrawer = () => { if (window.history.state && window.history.state.drawer) window.history.back(); else setMobileNavOpen(false); };
+  const navGo = (v) => {
+    setOpenMenu(null); setNotifOpen(false);
+    if (mobileNavOpen) { if (v === view) { closeNavDrawer(); return; } setMobileNavOpen(false); }
+    setView(v);
+  };
+  // Switching business keeps you on the matching screen when there is one.
+  const switchWorkspace = (k) => {
+    if (workspace === k) return;
+    setWorkspace(k); try { localStorage.setItem("dse.workspace", k); } catch { /* private mode */ }
+    const twin = { messages: "dssctexts", dssctexts: "messages", timecards: "dssctime", dssctime: "timecards", coverage: "dssccal", dssccal: "coverage" }[view];
+    const there = buildNav({ ...navCtx, workspace: k });
+    setView(twin && there.visible.has(twin) ? twin : "home"); setOpenMenu(null);
+  };
+
   return (
-    <div style={{fontFamily:"Outfit,sans-serif",background:workspace==="dssc"?"#104946":C.bg,color:C.text,minHeight:"100vh"}}>
-      <header style={{background: workspace==="dssc" ? "linear-gradient(135deg,#0C3A37,#104946)" : "linear-gradient(135deg,#0f0f0f,#1a1a1a)",borderBottom:"1px solid "+(workspace==="dssc"?"rgba(255,255,255,0.14)":C.border),padding:"12px 18px",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
-        <div style={{display:"flex",alignItems:"center",gap:14,flexWrap:"wrap"}}>
-          {workspace==="dssc"
+    <div style={{fontFamily:"Outfit,sans-serif",background:workspace==="dssc"?"#104946":C.bg,color:C.text,minHeight:"100vh",...(showSidebar ? {display:"flex",alignItems:"flex-start"} : {})}}>
+      {showSidebar && <Sidebar nav={nav} view={view} go={navGo} switchWs={switchWorkspace} collapsed={sidebarCollapsed} setCollapsed={setSidebarCollapsed} togglePin={togglePin} C={C} />}
+      <div style={showSidebar ? {flex:"1 1 auto",minWidth:0} : undefined}>
+      <header style={{background: workspace==="dssc" ? "linear-gradient(135deg,#0C3A37,#104946)" : "linear-gradient(135deg,#0f0f0f,#1a1a1a)",borderBottom:"1px solid "+(workspace==="dssc"?"rgba(255,255,255,0.14)":C.border),padding:isNarrow?"calc(8px + env(safe-area-inset-top, 0px)) 10px 8px":"10px 18px",minHeight:isNarrow?undefined:52,display:"flex",flexWrap:isNarrow?"nowrap":"wrap",alignItems:"center",justifyContent:"space-between",gap:8,...(isNarrow ? {position:"sticky",top:0,zIndex:45} : {})}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,minWidth:0,flex:"1 1 auto"}}>
+          {isReachOnly ? (<>
+          {isNarrow ? <span style={{fontSize:22,color:C.gold,flexShrink:0}}>◆</span> : workspace==="dssc"
             ? <img src="/dssc/logo-horizontal-white.png" alt="Dripping Springs Sports Club" style={{height:28,width:"auto",cursor:"pointer"}} onClick={()=>{ setView("home"); setOpenMenu(null); }} />
             : <div style={{fontSize:19,fontWeight:800,color:C.gold,display:"flex",alignItems:"center",gap:8,cursor:"pointer"}} onClick={()=>{ setView("home"); setOpenMenu(null); }}>
                 <span style={{fontSize:22}}>◆</span> DS ELITE
                 <span style={{fontSize:11,fontWeight:400,color:C.mut,marginLeft:6}}>HQ</span>
               </div>}
-          {/* The switch between the two businesses. Everyone sees it — coaches
-              have a DSSC side (the coach hub) as much as directors do. */}
-          <div role="tablist" aria-label="Business" style={{display:"flex",borderRadius:999,border:"1px solid "+(workspace==="dssc"?"rgba(255,255,255,0.25)":C.border),overflow:"hidden",background:"rgba(0,0,0,0.25)"}}>
-            {[["dse","DS Elite"],["dssc","DSSC"]].map(([k,l]) => (
-              <button key={k} role="tab" aria-selected={workspace===k} onClick={()=>{ if (workspace===k) return; setWorkspace(k); try { localStorage.setItem("dse.workspace", k); } catch {}
-                  // Switching while in the texts lands in the other business's texts.
-                  const twin = { messages: "dssctexts", dssctexts: "messages" }[view];
-                  setView(twin && (twin !== "dssctexts" || isDsscDirector) ? twin : "home"); setOpenMenu(null); setMobileNavOpen(false); }}
-                style={{padding:isNarrow?"9px 18px":"5px 12px",minWidth:isNarrow?96:undefined,border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:isNarrow?14:11,fontWeight:800,letterSpacing:0.3,background:workspace===k?(k==="dssc"?"#B2D049":C.gold):"transparent",color:workspace===k?(k==="dssc"?"#104946":"#000"):(workspace==="dssc"?"#A9C7C3":C.mut)}}>{l}</button>
-            ))}
-          </div>
+          <span style={{fontSize:13,fontWeight:800,color:C.gold,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",minWidth:0}}>Reach · Testing Reports</span>
+          </>) : isNarrow ? (<>
+            <button onClick={()=>setMobileNavOpen(true)} aria-label="Open menu" title="Menu"
+              style={{width:40,height:40,flexShrink:0,borderRadius:10,border:"1px solid "+navT.border,background:"transparent",color:navT.text,fontSize:18,cursor:"pointer",fontFamily:"inherit"}}>☰</button>
+            <div style={{minWidth:0,lineHeight:1.15}} onClick={()=>setMobileNavOpen(true)}>
+              <div style={{fontSize:10,fontWeight:800,letterSpacing:0.4,textTransform:"uppercase",color:navT.mut,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{workspace==="dssc"?"DSSC":"DS Elite"}{navSec ? " · " + navSec.title : ""}</div>
+              <div style={{fontSize:16,fontWeight:800,color:navT.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{nav.label(view)}</div>
+            </div>
+          </>) : (
+            <div style={{fontSize:13,color:navT.mut,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",minWidth:0}}>
+              {navSec && <span>{navSec.icon} {navSec.title}<span style={{margin:"0 8px",color:navT.dim}}>›</span></span>}
+              <span style={{color:navT.text,fontWeight:800}}>{nav.label(view)}</span>
+            </div>
+          )}
         </div>
-        {/* Right cluster. flex:1 + justifyContent:flex-end keeps Add Player, the
-            bell and the user chip pinned to the right edge once this block wraps
-            onto its own line — below ~1600px the nav is wide enough to force that
-            wrap, and space-between on the header alone would strand them at the
-            left. minWidth:0 lets it shrink instead of overflowing the header. */}
-        <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",flex:"1 1 auto",minWidth:0,justifyContent:"flex-end"}}>
-          <nav style={{display:"flex",gap:3,flexWrap:"wrap",position:"relative",zIndex:50}}>
-            {isReachOnly ? <span style={{fontSize:13,fontWeight:800,color:C.gold,padding:"6px 10px"}}>Reach · Testing Reports</span> : (() => {
-              const accent = workspace==="dssc" ? "#B2D049" : C.gold, onAccent = workspace==="dssc" ? "#104946" : "#000", quiet = workspace==="dssc" ? "#A9C7C3" : C.mut;
-              const btn = (active) => ({padding:"6px 14px",borderRadius:8,border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600,background:active?accent:"transparent",color:active?onAccent:quiet});
-              const item = (v,l) =>
-                <button key={v} style={btn(view===v)} onClick={()=>{ setView(v); setOpenMenu(null); }}>{l}</button>;
-              // Dropdown entries: ["hdr","Label"] renders a section header.
-              const pendingReqs = coachRequests.filter(r=>r.status==="pending").length;
-              const groups = [
-                { title:"Players", items:[...((canViewTeams || myTeamNames.length) ? [["roster","Roster"]] : []),
-                  ...((canViewTeams || myTeamNames.length) ? [["incidents","Issues & Injuries" + (incidents.filter(r => incidentVisible(r) && r.status !== "resolved").length ? " (" + incidents.filter(r => incidentVisible(r) && r.status !== "resolved").length + ")" : "")]] : []), ...((canViewTeams || myTeamNames.length) ? [["checkin","Quick Check-in"]] : []), ...((canViewTeams || canOps || myTeamNames.length) ? [["workduty","Work Duty"]] : []), ...(canSendReports ? [["testreports","Testing Reports"]] : []), ...(canOps ? [] : [["playereval","Evaluations"],["passing","Passer Ratings"]])] },
-                { title:"Tryouts 2026-27", items:[["dashboard","Dashboard"], ["evaluate","Evaluate"], ["favorites","My Favorites" + (favorites.length ? " (" + favorites.length + ")" : "")], ...(canViewTeams ? [["teams","Teams"]] : []), ["rankings","Rankings"], ["physical","Physical Testing"], ["tryouts","Coach Assignments"]] },
-                // Operations is grouped by WHICH BUSINESS a screen belongs to,
-                // not by what it does. DSSC is a separate company with its own
-                // clinics, coaches, pay rate and payroll run, and its three
-                // screens used to sit scattered across the DS Elite sections —
-                // two under Club, hours under Coaches & Pay — which read as if
-                // they were the same operation. They now have their own block.
-                ...(canOps ? [{ title:"Operations", items:[
-                  ["hdr","DS Elite · Club"],
-                  ["school","School Teams"],
-                  ["schoolgames","School Games"],
-                  ["waiting","Waiting on"],
-                  ["playergear","Gear Orders"],
-                  ["kickoff","Kickoffs" + (kickoffOutstanding ? " (" + kickoffOutstanding + ")" : "")],
-                  ["photos","Team Photos"],
-                  ["incidentboard","Issue Board" + (incidents.filter(r => r.status === "open").length ? " (" + incidents.filter(r => r.status === "open").length + ")" : "")],
-                  ["tracker","Tracker"], ["teamdir","All Teams"], ["playereval","Player Evaluations"], ["passing","Passer Ratings"], ["practice","Practice"], ["sa","S&A Schedule"], ["scholarships","Scholarships"],
-                  ...(isAdmin ? [["hawaii","Hawaii"], ["travel","Travel"], ["housing","Housing"], ["finance","Finance"]] : []),
-                  ["hdr","DS Elite · Coaches & Pay"],
-                  ["coaches","Coaches"], ...(isAdmin ? [["dayschedule","Day Schedule"], ["staffing","Staffing Board"]] : []), ["coverage","Coach Coverage"], ["timecards","Time Cards"], ["myexpenses","My Expenses"], ...(canOps ? [["claims","Coach Claims" + (pendingClaimCount ? " (" + pendingClaimCount + ")" : "")]] : []), ["gear","Gear Sizes" + (gearOutstanding ? " (" + gearOutstanding + ")" : "")], ["requests","Requests" + (pendingReqs ? " (" + pendingReqs + ")" : "")],
-                  ["hdr","DSSC"],
-                  ["dssc","Coach Hub"], ["clinics","Clinics & Camps (admin)"], ["dssctexts","DSSC Texts"], ["dssccrm","DSSC People"], ["dssccamp","Heatwave (camp planning)"], ["dssccal","Coverage Calendar"], ["dssctime","DSSC Time Cards"], ["pods","Skill Pods"], ["privates","Privates"],
-                  ["hdr","Communication"],
-                  ["email","Email"], ["messages","Messages (SMS)" + (totalUnread > 0 ? " (" + totalUnread + ")" : "")], ["notifications","Notifications"], ["coachcomms","Coach Comms"], ["assignments","Assignments"], ["dsysa","DSYSA Clinics"],
-                ] }] : []),
-                // DSYSA sits under Operations for admins; coaches reach the same
-                // view from here, otherwise the "hit I'll help" ask email links
-                // them somewhere they have no menu entry for.
-                // In-House Tournament sits here for EVERY coach, ops or not —
-                // all 20 teams play it, so gating it to admins would repeat the
-                // DSYSA mistake of linking people to a page they can't open.
-                { title:"More", items:[["tournament","In-House Tournament"], ...(canOps ? [] : [["dssc","DSSC Coach Hub"], ...(isDsscDirector ? [["clinics","DSSC Clinics (admin)"],["dssctexts","DSSC Texts"],["dssccrm","DSSC People"]] : []), ["dssctime","DSSC Time Cards"],["myexpenses","My Expenses"],["dsysa","DSYSA Clinics"]]), ["activity","Activity"], ["faq","FAQ"], ["games","Games"], ...(isOwner ? [["askai","Ask AI"]] : [])] },
-              ];
-              // Each business gets its own navigation. DS Elite drops the DSSC
-              // screens; DSSC shows only its own, flat (there are few enough).
-              const dropDssc = (g) => {
-                const items = g.items.filter(([v]) => !DSSC_VIEWS.has(v));
-                // A section header with nothing under it goes too.
-                const kept = items.filter(([v], i) => v !== "hdr" || (items[i+1] && items[i+1][0] !== "hdr"));
-                return { ...g, items: kept };
-              };
-              const wsGroups = workspace==="dssc"
-                ? [{ title:"More", items:[ ...(isDsscDirector ? [["dssccal","Coverage Calendar"],["pods","Skill Pods"],["privates","Privates"],["dsysa","DSYSA Clinics"]] : [["dsysa","DSYSA Clinics"]]), ["activity","Activity"], ["faq","FAQ"] ] }]
-                : groups.map(dropDssc).filter(g => g.items.some(([v]) => v !== "hdr"));
-              const wsTop = workspace==="dssc"
-                ? [ ...(isDsscDirector ? [["clinics","Board"]] : []), ["dssc","Coach Hub"], ...(isDsscDirector ? [["dssctexts","Texts"],["dssccrm","People"],["dssccamp","Heatwave"]] : []), ["dssctime","Time Cards"], ...(!canOps ? [["notifications","Notifications" + (unreadCount>0?" ("+unreadCount+")":"")]] : []) ]
-                : null;
-              // Mobile: one hamburger opening a full-height grouped menu.
-              if (isNarrow) {
-                const mItem = (v, l) => (
-                  <button key={v} onClick={()=>{ setView(v); setOpenMenu(null); setMobileNavOpen(false); }}
-                    style={{display:"block",width:"100%",textAlign:"left",padding:"11px 14px",borderRadius:8,border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:14,fontWeight:600,background:view===v?C.gold:"transparent",color:view===v?"#000":C.text}}>{l}</button>
-                );
-                return <>
-                  <button onClick={()=>setMobileNavOpen(v=>!v)} title="Menu"
-                    style={{...btn(mobileNavOpen),fontSize:17,padding:"5px 13px",border:"1px solid "+(mobileNavOpen?C.gold:C.border)}}>☰</button>
-                  {mobileNavOpen && <>
-                    <div onClick={()=>setMobileNavOpen(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",zIndex:79}} />
-                    <div style={{position:"fixed",top:54,left:8,right:8,zIndex:80,background:C.card,border:"1px solid "+C.border,borderRadius:12,boxShadow:"0 16px 40px rgba(0,0,0,0.6)",maxHeight:"calc(100vh - 70px)",overflowY:"auto",padding:6}}>
-                      {wsTop ? <>{mItem("home","🏠 Home")}{wsTop.map(([v,l]) => mItem(v,l))}</> : <>
-                      {mItem("home","🏠 Home")}
-                      {mItem("clockin","⏱ Clock In")}
-                      {!canOps && mItem("notifications","🔔 Notifications" + (unreadCount>0?" ("+unreadCount+")":""))}
-                      {canOps && mItem("tournaments","🏆 Tournaments")}
-                      {mItem("lineups","📋 Lineups")}
-                      {mItem("practiceplan","📖 Playbook")}
-                      </>}
-                      {wsGroups.map(g => (
-                        <div key={g.title}>
-                          <div style={{padding:"10px 14px 4px",fontSize:9,fontWeight:800,letterSpacing:0.6,textTransform:"uppercase",color:C.gold,borderTop:"1px solid "+C.border,marginTop:6}}>{g.title}</div>
-                          {g.items.map(([v,l],i) => v==="hdr"
-                            ? <div key={"sh"+i} style={{padding:"7px 14px 2px",fontSize:9,fontWeight:800,letterSpacing:0.5,textTransform:"uppercase",color:C.mut}}>{l}</div>
-                            : mItem(v,l))}
-                        </div>
-                      ))}
-                    </div>
-                  </>}
-                </>;
-              }
-              return <>
-                {wsTop ? <>{item("home","Home")}{wsTop.map(([v,l]) => item(v,l))}</> : <>
-                {item("home","Home")}
-                {item("clockin","Clock In")}
-                {!canOps && item("notifications","Notifications" + (unreadCount>0?" ("+unreadCount+")":""))}
-                {canOps && item("tournaments","Tournaments")}
-                {item("lineups","Lineups")}
-                {item("practiceplan","Playbook")}
-                </>}
-                {wsGroups.map(g => {
-                  const activeInGroup = g.items.some(([v]) => v === view);
-                  const open = openMenu === g.title;
-                  return (
-                    <div key={g.title} style={{position:"relative"}}>
-                      <button style={btn(activeInGroup)} onClick={()=>setOpenMenu(open ? null : g.title)}>
-                        {g.title} <span style={{fontSize:9,opacity:.8}}>▾</span>
-                      </button>
-                      {open && (
-                        <div style={{position:"absolute",top:"100%",left:0,marginTop:4,background:C.card,border:"1px solid "+C.border,borderRadius:8,padding:4,minWidth:170,boxShadow:"0 10px 28px rgba(0,0,0,0.45)"}}>
-                          {g.items.map(([v,l],i) =>
-                            v === "hdr"
-                              ? <div key={"hdr"+i} style={{padding:"7px 12px 3px",fontSize:9,fontWeight:800,letterSpacing:0.6,textTransform:"uppercase",color:C.mut,borderTop:i>0?"1px solid "+C.border:"none",marginTop:i>0?4:0}}>{l}</div>
-                              : <button key={v} style={{display:"block",width:"100%",textAlign:"left",padding:"8px 12px",borderRadius:6,border:"none",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600,background:view===v?C.gold:"transparent",color:view===v?"#000":C.text}} onClick={()=>{ setView(v); setOpenMenu(null); }}>{l}</button>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </>;
-            })()}
-          </nav>
-          {openMenu && <div onClick={()=>setOpenMenu(null)} style={{position:"fixed",inset:0,zIndex:40}} />}
-          {canOps && <button onClick={()=>setAskOpen(v=>!v)} title="Ask HQ — ask anything about the club's data"
-            style={{padding:"6px 12px",borderRadius:8,border:"1px solid "+(askOpen?C.gold:C.border),background:askOpen?"rgba(233,30,140,0.12)":"transparent",color:C.gold,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:800,marginRight:6}}>
-            ✦ Ask HQ
+        <div style={{display:"flex",gap:isNarrow?2:8,alignItems:"center",flex:isNarrow?"0 0 auto":"0 1 auto",flexWrap:isNarrow?"nowrap":"wrap",justifyContent:"flex-end",minWidth:0,marginLeft:"auto"}}>
+          {canOps && <button onClick={()=>setAskOpen(v=>!v)} title="Ask HQ — ask anything about the club's data" aria-label="Ask HQ"
+            style={{padding:isNarrow?"7px 10px":"6px 12px",borderRadius:8,border:"1px solid "+(askOpen?C.gold:C.border),background:askOpen?"rgba(233,30,140,0.12)":"transparent",color:C.gold,cursor:"pointer",fontFamily:"inherit",fontSize:isNarrow?14:12,fontWeight:800,marginRight:isNarrow?2:6}}>
+            {isNarrow ? "✦" : "✦ Ask HQ"}
           </button>}
-          {workspace!=="dssc" && <button onClick={openAddPlayer} title="Add a player from any view"
+          {!isNarrow && !isReachOnly && workspace!=="dssc" && <button onClick={openAddPlayer} title="Add a player from any view"
             style={{padding:"6px 12px",borderRadius:8,border:"1px solid "+C.gold,background:"transparent",color:C.gold,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700}}>
             + Add Player
           </button>}
-          <button onClick={refreshAll} disabled={refreshing} title="Refresh — pull the latest changes from everyone"
+          {!isNarrow && <button onClick={refreshAll} disabled={refreshing} title="Refresh — pull the latest changes from everyone"
             style={{marginLeft:6,background:"none",border:"none",cursor:refreshing?"default":"pointer",fontSize:17,lineHeight:1,color:refreshing?C.gold:C.mut,padding:"2px 4px",animation:refreshing?"dse-spin 0.8s linear infinite":"none"}}>
             ⟳
-          </button>
+          </button>}
           {/* Texts: one icon per brand, each with its unread count. */}
           {[
             canOps && { key:"messages", label:"DS Elite", n: smsUnread.dse, color: C.gold, title: "DS Elite texts" },
@@ -32729,7 +32708,7 @@ export default function App() {
             </button>
             {notifOpen && (<>
               <div onClick={()=>setNotifOpen(false)} style={{position:"fixed",inset:0,zIndex:60}} />
-              <div style={{position:"fixed",top:56,right:8,left:"auto",width:"min(360px, calc(100vw - 16px))",maxHeight:"72vh",overflowY:"auto",background:C.card,border:"1px solid "+C.border,borderRadius:10,boxShadow:"0 12px 32px rgba(0,0,0,0.55)",zIndex:61,padding:6}}>
+              <div style={{position:"fixed",top:isNarrow?"calc(60px + env(safe-area-inset-top, 0px))":56,right:8,left:"auto",width:"min(360px, calc(100vw - 16px))",maxHeight:"72vh",overflowY:"auto",background:C.card,border:"1px solid "+C.border,borderRadius:10,boxShadow:"0 12px 32px rgba(0,0,0,0.55)",zIndex:61,padding:6}}>
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,padding:"6px 8px"}}>
                   <span style={{fontSize:12,fontWeight:800,color:C.gold}}>Notifications</span>
                   {pushState==="on" && <button onClick={disablePush} title="Turn off push on this device" style={{fontSize:9,fontWeight:800,padding:"2px 8px",borderRadius:8,border:"1px solid "+C.grn,background:"rgba(34,197,94,0.18)",color:C.grn,cursor:"pointer",fontFamily:"inherit"}}>Push on ✓</button>}
@@ -32760,9 +32739,10 @@ export default function App() {
               </div>
             </>)}
           </div>
+          {(!isNarrow || isReachOnly) && (
           <div style={{display:"flex",alignItems:"center",gap:6,marginLeft:6,paddingLeft:10,borderLeft:"1px solid "+C.border}}>
-            <span style={{fontSize:11,color:C.mut}} title={coach.email}>
-              {coach.display_name || coach.email}
+            <span style={{fontSize:11,color:C.mut,whiteSpace:"nowrap"}} title={coach.email}>
+              {!isMidWidth && (coach.display_name || coach.email)}
               {isAdmin && <span style={{color:C.gold,marginLeft:4,fontSize:9}}>ADMIN</span>}
               {coachPreview && <span style={{color:C.acc,marginLeft:4,fontSize:9,fontWeight:800}}>COACH VIEW</span>}
             </span>
@@ -32779,6 +32759,7 @@ export default function App() {
               Sign out
             </button>
           </div>
+          )}
         </div>
       </header>
       {/* A newer build is deployed than this tab is running — prompt a reload
@@ -32810,6 +32791,7 @@ export default function App() {
           </div>
         );
       })()}
+      {showPhoneNav && view !== "messages" && view !== "dssctexts" && <SiblingChips nav={nav} view={view} go={navGo} C={C} />}
       {/* Age-group chips — only on views that actually filter by age group.
           (Allow-list: everything else — clock-in, timecards, clinics, etc. — has no use for them.) */}
       {new Set(["evaluate","favorites","teams","rankings","tracker","physical","tryouts","email"]).has(view) && (
@@ -32835,7 +32817,7 @@ export default function App() {
       )}
       {/* 1500 keeps text screens readable, but the wide boards are grids, not
           prose — capping them just buys empty margin and costs a column. */}
-      <div style={{padding:"14px 18px",maxWidth:WIDE_VIEWS.has(view)?"none":1500,margin:"0 auto"}}>
+      <div style={{padding:showPhoneNav?"14px 18px calc(84px + env(safe-area-inset-bottom, 0px))":"14px 18px",maxWidth:WIDE_VIEWS.has(view)?"none":1500,margin:"0 auto"}}>
         {isReachOnly ? <StatReports coach={coach} players={players} session={session} /> : OPS_VIEWS.has(view) && view !== "notifications" && !canOps ? opsDenied : <>
         {view==="home" && (workspace==="dssc" ? (isDsscDirector ? renderDsscAdmin() : renderDsscHub()) : renderHome())}
         {view==="clockin" && (
@@ -32916,6 +32898,16 @@ export default function App() {
         {view==="askai" && renderAskAI()}
         </>}
       </div>
+      </div>
+      {showPhoneNav && <BottomBar nav={nav} view={view} go={navGo} onMenu={()=>{ if (mobileNavOpen) closeNavDrawer(); else setMobileNavOpen(true); }} menuOpen={mobileNavOpen} C={C} />}
+      {showPhoneNav && mobileNavOpen && <NavDrawer nav={nav} view={view} go={navGo} switchWs={switchWorkspace} togglePin={togglePin} onClose={closeNavDrawer} C={C}
+        extras={{
+          onAddPlayer: workspace!=="dssc" ? ()=>{ closeNavDrawer(); openAddPlayer(); } : null,
+          onRefresh: refreshAll, refreshing,
+          userName: coach.display_name || coach.email, tag: coachPreview ? "COACH VIEW" : (isAdmin ? "ADMIN" : ""),
+          onTogglePreview: (isRealAdmin || isRealOwner) ? ()=>{ setCoachPreview(v=>!v); navGo("home"); } : null, coachPreview,
+          onSignOut: async ()=>{ closeNavDrawer(); setMobileNavOpen(false); await supabase.auth.signOut(); },
+        }} />}
       {renderRequestOffModal()}
       {renderGearModal()}
       {renderDetailsModal()}

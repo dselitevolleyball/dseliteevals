@@ -233,9 +233,11 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
 
   const blankComposer = (over = {}) => ({ to: new Map(), group: "program", clinicId: upcomingClinics[0]?.id || "", sessionId: "", category: "Pods", age: ages[0] || "", body: "", media: [], result: null, search: "", ...over });
   const openComposer = () => { setSelId(null); setComposer(blankComposer()); };
-  const shell = (inner) => (
-    <div style={{ margin: "-14px -18px", padding: "16px 16px 30px", background: DS.bg, minHeight: "calc(100vh - 56px)", fontFamily: DS.font, color: DS.text }}>
-      <div style={{ maxWidth: 1200, margin: "0 auto" }}>
+  const shell = (inner, fill) => (
+    <div style={narrow && fill
+      ? { margin: "-14px -18px", padding: "12px 12px 10px", background: DS.bg, height: "calc(100dvh - 114px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))", display: "flex", flexDirection: "column", boxSizing: "border-box", fontFamily: DS.font, color: DS.text }
+      : { margin: "-14px -18px", padding: "16px 16px 30px", background: DS.bg, minHeight: "calc(100vh - 56px)", fontFamily: DS.font, color: DS.text }}>
+      <div style={narrow && fill ? { width: "100%", flex: 1, minHeight: 0, display: "flex", flexDirection: "column" } : { maxWidth: 1200, margin: "0 auto" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
           <img src="/dssc/logo-horizontal-white.png" alt="Dripping Springs Sports Club" style={{ height: 30 }} />
           <Tag color={DS.lime}>Texts</Tag>
@@ -253,7 +255,7 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
 
   if (tab === "campaigns") return shell(<DsscCampaigns coach={coach} coachRoster={coachRoster} />);
   return shell(
-    <div style={narrow ? { height: "calc(100dvh - 170px)", display: "flex", flexDirection: "column" } : { display: "grid", gridTemplateColumns: "300px 1fr", gap: 14, height: "calc(100vh - 150px)" }}>
+    <div style={narrow ? { flex: 1, minHeight: 0, display: "flex", flexDirection: "column" } : { display: "grid", gridTemplateColumns: "300px 1fr", gap: 14, height: "calc(100vh - 150px)" }}>
       {/* Inbox */}
       <div style={{ background: DS.panel, border: "1px solid " + DS.line, borderRadius: 14, overflowY: "auto", ...(narrow ? { flex: 1, display: (selId || composer) ? "none" : "block" } : {}) }}>
         {!threads.length && <div style={{ padding: 20, fontSize: 12, color: DS.mut, textAlign: "center" }}>No conversations yet. Text a program or a class to start one per family.</div>}
@@ -479,5 +481,5 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
         </>)}
       </div>
     </div>
-  );
+  , true);
 }
