@@ -8,6 +8,18 @@
   var M = [["stand_reach", "Stand & reach", '"', 1], ["approach_touch", "Jump approach", '"', 1], ["standing_touch", "Standing jump", '"', 1], ["vertical", "Vertical", '"', 1], ["broad_jump", "Broad jump", '"', 1], ["dash_10y", "10 yd dash", "s", 0]];
   var app = document.getElementById("app");
   var by = ""; try { by = localStorage.getItem("statsBy") || ""; } catch (e) { /* private mode */ }
+  // Lengths can be typed in centimeters (Drew, Oct 2026 - same as the tryout
+  // Physical Testing card): the sheet converts to inches as you type and saves
+  // inches, so the server, the player card and the reports never see cm.
+  var CM = 2.54, LEN = { stand_reach: 1, approach_touch: 1, standing_touch: 1, broad_jump: 1 };
+  var unit = "in"; try { unit = localStorage.getItem("statsUnit") === "cm" ? "cm" : "in"; } catch (e) { /* private mode */ }
+  // A typed value -> inches (null = blank, NaN = unreadable), read in unit u.
+  function toIn(key, v, u) {
+    if (!LEN[key] || (u || unit) !== "cm") return inch(v);
+    v = String(v || "").trim(); if (!v) return null;
+    var m = /^(\d+(?:\.\d+)?)\s*(?:cm)?$/i.exec(v); return m ? Math.round(+m[1] / CM * 100) / 100 : NaN;
+  }
+  function inUnit(inches) { return unit === "cm" ? String(Math.round(inches * CM * 10) / 10) : f1(inches); }
 
   function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
   function f1(n) { return n == null ? "—" : String(Math.round(n * 10) / 10); }
@@ -61,18 +73,19 @@
     function field(m) {
       if (m[0] === "vertical") return '<label><span>Vertical (auto)</span><div class="auto" id="vert">—</div><div class="cmp" id="c_vertical"></div></label>';
       var t = points(h, m[0]);
-      return '<label><span>' + m[1] + '</span><input inputmode="decimal" name="' + m[0] + '" autocomplete="off" placeholder="' + (t[1] == null ? "" : f1(t[1])) + '"><em>' + (m[2] === "s" ? "sec" : "in") + '</em><div class="cmp" id="c_' + m[0] + '"></div></label>';
+      return '<label><span>' + m[1] + '</span><div class="iw"><input inputmode="decimal" name="' + m[0] + '" autocomplete="off" placeholder="' + (t[1] == null ? "" : (LEN[m[0]] ? inUnit(t[1]) : f1(t[1]))) + '"><em>' + (m[2] === "s" ? "sec" : unit) + '</em></div><div class="cmp" id="c_' + m[0] + '"></div></label>';
     }
     app.innerHTML = '<button class="back">‹ All players</button><h1>' + (p.num ? '<span class="no">#' + esc(p.num) + "</span> " : "") + esc(p.name) + "</h1>" +
       '<div class="tw"><table class="list hist"><thead><tr><th>Date</th>' + M.map(function (m) { return "<th>" + m[1] + "</th>"; }).join("") + "</tr></thead><tbody>" + histRows + "</tbody></table></div>" +
-      '<h2>New test</h2><div class="top"><label>Date <input type="date" id="date" value="' + D.today + '"></label><label>Tested by <input id="by" value="' + esc(by) + '" placeholder="Your name"></label></div>' +
-      '<p class="hint">Inches, or feet like <b>8\'4</b>. Leave anything you didn\'t test blank — stand &amp; reach carries over from last time for the vertical. Saving again on the same date updates it.</p>' +
+      '<h2>New test</h2><div class="top"><label>Date <input type="date" id="date" value="' + D.today + '"></label><label>Tested by <input id="by" value="' + esc(by) + '" placeholder="Your name"></label>' +
+      '<label>Measuring in<span class="units"><button type="button" data-u="in">IN</button><button type="button" data-u="cm">CM</button></span></label></div>' +
+      '<p class="hint" id="unitHint"></p>' +
       '<div class="g">' + M.map(field).join("") + "</div>" +
       '<div class="bar"><span id="msg"></span><button class="save">Save</button></div>';
     app.querySelector(".back").onclick = list;
     var inputs = app.querySelectorAll(".g input");
     function recalc() {
-      var vals = {}; inputs.forEach(function (i) { vals[i.name] = inch(i.value); });
+      var vals = {}; inputs.forEach(function (i) { vals[i.name] = toIn(i.name, i.value); });
       var reach = vals.stand_reach != null && !isNaN(vals.stand_reach) ? vals.stand_reach : points(h, "stand_reach")[1];
       vals.vertical = (vals.approach_touch != null && !isNaN(vals.approach_touch) && reach != null) ? vals.approach_touch - reach : null;
       document.getElementById("vert").textContent = vals.vertical == null ? "—" : f1(vals.vertical) + '"';
@@ -80,14 +93,47 @@
         var el = document.getElementById("c_" + m[0]), t = points(h, m[0]), v = vals[m[0]];
         if (v != null && isNaN(v)) { el.innerHTML = '<span class="d down">can\'t read that</span>'; return; }
         if (v == null) { el.innerHTML = t[1] == null ? "no earlier result" : "last: " + f1(t[1]) + m[2]; return; }
-        el.innerHTML = t[1] == null ? "first result" : "vs last " + delta(t[1], v, m[3], m[2]) + (t[2] != null && t[0] != null ? ' <span class="since">· vs first ' + delta(t[2], v, m[3], m[2]) + "</span>" : "");
+        // Typing cm: show the inches it becomes, right under the box.
+        var conv = LEN[m[0]] && unit === "cm" ? '<b class="conv">= ' + f1(v) + ' in</b> · ' : "";
+        el.innerHTML = conv + (t[1] == null ? "first result" : "vs last " + delta(t[1], v, m[3], m[2]) + (t[2] != null && t[0] != null ? ' <span class="since">· vs first ' + delta(t[2], v, m[3], m[2]) + "</span>" : ""));
       });
     }
     inputs.forEach(function (i) { i.addEventListener("input", recalc); });
+    function setUnitUI() {
+      app.querySelectorAll(".units button").forEach(function (b) { b.className = b.dataset.u === unit ? "on" : ""; });
+      inputs.forEach(function (i) {
+        if (!LEN[i.name]) return;
+        i.nextElementSibling.textContent = unit;
+        var t = points(h, i.name); i.placeholder = t[1] == null ? "" : inUnit(t[1]);
+      });
+      document.getElementById("unitHint").innerHTML = unit === "cm"
+        ? "Centimeters: each number shows in inches as you type and is saved in inches (&divide; 2.54). Leave anything you didn't test blank &mdash; stand &amp; reach carries over from last time for the vertical. Saving again on the same date updates it."
+        : "Inches, or feet like <b>8'4</b>. Leave anything you didn't test blank &mdash; stand &amp; reach carries over from last time for the vertical. Saving again on the same date updates it.";
+    }
+    // Switching units keeps what's typed: each length is converted to the new unit.
+    app.querySelectorAll(".units button").forEach(function (b) {
+      b.onclick = function () {
+        var to = b.dataset.u; if (to === unit) return;
+        inputs.forEach(function (i) {
+          if (!LEN[i.name] || !i.value.trim()) return;
+          var v = toIn(i.name, i.value, unit); if (v == null || isNaN(v)) return;
+          i.value = to === "cm" ? String(Math.round(v * CM * 10) / 10) : String(Math.round(v * 10) / 10);
+        });
+        unit = to; try { localStorage.setItem("statsUnit", unit); } catch (e) { /* ignore */ }
+        setUnitUI(); recalc();
+      };
+    });
+    setUnitUI();
     recalc();
     app.querySelector(".save").onclick = async function () {
       var btn = this, msg = document.getElementById("msg"), row = { player_id: p.id };
-      inputs.forEach(function (i) { row[i.name] = i.value; });
+      // Lengths go to the server in inches, whatever unit they were typed in.
+      var unreadable = false;
+      inputs.forEach(function (i) {
+        var v = toIn(i.name, i.value); if (v != null && isNaN(v)) unreadable = true;
+        row[i.name] = LEN[i.name] && v != null && !isNaN(v) ? String(v) : i.value;
+      });
+      if (unreadable) { document.getElementById("msg").textContent = "Fix the numbers marked “can't read that” first."; return; }
       by = document.getElementById("by").value; try { localStorage.setItem("statsBy", by); } catch (e) { /* ignore */ }
       btn.disabled = true; msg.textContent = "Saving…";
       try {

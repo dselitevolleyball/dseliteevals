@@ -125,7 +125,7 @@ export default async function handler(req, res) {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.setHeader("X-Robots-Tag", "noindex, nofollow");
   const json = JSON.stringify({ team, today: centralToday(), players: data }).replace(/</g, "\\u003c");
-  return res.status(200).send(page(team + " testing", '<div id="app"></div><script type="application/json" id="data">' + json + '</script><script src="/stats-sheet.js?v=3"></script>'));
+  return res.status(200).send(page(team + " testing", '<div id="app"></div><script type="application/json" id="data">' + json + '</script><script src="/stats-sheet.js?v=4"></script>'));
 }
 
 function page(title, inner) {
@@ -154,6 +154,7 @@ function page(title, inner) {
   .d{display:block;font-size:11px;font-weight:800;margin-top:2px} .d.up{color:#22c55e} .d.down{color:#ef4444} .d.same{color:#777}
   .cmp .d,.since .d{display:inline;margin:0} .cmp{font-size:11px;color:#888;margin-top:3px;min-height:14px} .since{color:#777}
   .add,.back{background:transparent;border:1px solid #e91e8c;color:#e91e8c;border-radius:8px;padding:6px 10px;font-weight:800;font-size:13px;font-family:inherit}
+  .units{display:inline-flex;border:1px solid #333;border-radius:8px;overflow:hidden} .units button{background:transparent;color:#aaa;border:none;border-radius:0;padding:9px 16px;font-size:14px;font-weight:800;font-family:inherit} .units button.on{background:#e91e8c;color:#000} .conv{color:#e5e5e5} .g .iw{position:relative} .g .iw em{top:50%;bottom:auto;transform:translateY(-50%)}
   .back{margin-bottom:10px} .auto{background:#141414;border:1px solid #333;border-radius:8px;font-size:17px;font-weight:800;color:#22c55e;padding:9px 10px}
   table.hist{min-width:680px} td.dt{font-weight:700}
   .teams{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
