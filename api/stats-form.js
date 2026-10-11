@@ -125,7 +125,7 @@ export default async function handler(req, res) {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.setHeader("X-Robots-Tag", "noindex, nofollow");
   const json = JSON.stringify({ team, today: centralToday(), players: data }).replace(/</g, "\\u003c");
-  return res.status(200).send(page(team + " testing", '<div id="app"></div><script type="application/json" id="data">' + json + '</script><script src="/stats-sheet.js?v=4"></script>'));
+  return res.status(200).send(page(team + " testing", '<div id="app"></div><script type="application/json" id="data">' + json + '</script><script src="/stats-sheet.js?v=5"></script>'));
 }
 
 function page(title, inner) {

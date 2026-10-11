@@ -8,10 +8,10 @@
   var M = [["stand_reach", "Stand & reach", '"', 1], ["approach_touch", "Jump approach", '"', 1], ["standing_touch", "Standing jump", '"', 1], ["vertical", "Vertical", '"', 1], ["broad_jump", "Broad jump", '"', 1], ["dash_10y", "10 yd dash", "s", 0]];
   var app = document.getElementById("app");
   var by = ""; try { by = localStorage.getItem("statsBy") || ""; } catch (e) { /* private mode */ }
-  // Lengths can be typed in centimeters (Drew, Oct 2026 - same as the tryout
+  // Jump approach and standing jump can be typed in centimeters (Drew, Oct 2026 - same as the tryout
   // Physical Testing card): the sheet converts to inches as you type and saves
   // inches, so the server, the player card and the reports never see cm.
-  var CM = 2.54, LEN = { stand_reach: 1, approach_touch: 1, standing_touch: 1, broad_jump: 1 };
+  var CM = 2.54, LEN = { approach_touch: 1, standing_touch: 1 }; // the two touches only (Drew); stand & reach and broad jump stay inches
   var unit = "in"; try { unit = localStorage.getItem("statsUnit") === "cm" ? "cm" : "in"; } catch (e) { /* private mode */ }
   // A typed value -> inches (null = blank, NaN = unreadable), read in unit u.
   function toIn(key, v, u) {
@@ -73,7 +73,7 @@
     function field(m) {
       if (m[0] === "vertical") return '<label><span>Vertical (auto)</span><div class="auto" id="vert">—</div><div class="cmp" id="c_vertical"></div></label>';
       var t = points(h, m[0]);
-      return '<label><span>' + m[1] + '</span><div class="iw"><input inputmode="decimal" name="' + m[0] + '" autocomplete="off" placeholder="' + (t[1] == null ? "" : (LEN[m[0]] ? inUnit(t[1]) : f1(t[1]))) + '"><em>' + (m[2] === "s" ? "sec" : unit) + '</em></div><div class="cmp" id="c_' + m[0] + '"></div></label>';
+      return '<label><span>' + m[1] + '</span><div class="iw"><input inputmode="decimal" name="' + m[0] + '" autocomplete="off" placeholder="' + (t[1] == null ? "" : (LEN[m[0]] ? inUnit(t[1]) : f1(t[1]))) + '"><em>' + (m[2] === "s" ? "sec" : LEN[m[0]] ? unit : "in") + '</em></div><div class="cmp" id="c_' + m[0] + '"></div></label>';
     }
     app.innerHTML = '<button class="back">‹ All players</button><h1>' + (p.num ? '<span class="no">#' + esc(p.num) + "</span> " : "") + esc(p.name) + "</h1>" +
       '<div class="tw"><table class="list hist"><thead><tr><th>Date</th>' + M.map(function (m) { return "<th>" + m[1] + "</th>"; }).join("") + "</tr></thead><tbody>" + histRows + "</tbody></table></div>" +
@@ -107,7 +107,7 @@
         var t = points(h, i.name); i.placeholder = t[1] == null ? "" : inUnit(t[1]);
       });
       document.getElementById("unitHint").innerHTML = unit === "cm"
-        ? "Centimeters: each number shows in inches as you type and is saved in inches (&divide; 2.54). Leave anything you didn't test blank &mdash; stand &amp; reach carries over from last time for the vertical. Saving again on the same date updates it."
+        ? "Jump approach and standing jump in centimeters: each shows in inches as you type and is saved in inches (&divide; 2.54). Stand &amp; reach and broad jump stay in inches. Leave anything you didn't test blank &mdash; stand &amp; reach carries over from last time for the vertical. Saving again on the same date updates it."
         : "Inches, or feet like <b>8'4</b>. Leave anything you didn't test blank &mdash; stand &amp; reach carries over from last time for the vertical. Saving again on the same date updates it.";
     }
     // Switching units keeps what's typed: each length is converted to the new unit.
