@@ -7,8 +7,8 @@
 // she can't submit — team is required — or chased forever for an order she was
 // never meant to place.
 //
-// Rise teams are left out unless they order: 13 Rise 1 was added 2026-09-29
-// at Drew's request; 11 and 12 Rise still don't order this gear.
+// Rise teams: 13 Rise 1 added 2026-09-29; 11 and 12 Rise added 2026-10-11
+// (Drew: every Rise player does the jersey try-on and gets the order link).
 // Adding a team here puts it in the dropdown, on the board, and in the send.
 export const GEAR_TEAMS = [
   "16 Diamond",
@@ -17,5 +17,5 @@ export const GEAR_TEAMS = [
   "13 Diamond", "13 Ruby", "13 Sapphire", "13 Emerald",
   "12 Diamond", "12 Ruby",
   "11 Diamond",
-  "13 Rise 1",
+  "13 Rise 1", "12 Rise 1", "11 Rise 1",
 ];
