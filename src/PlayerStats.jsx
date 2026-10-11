@@ -10,6 +10,8 @@ import { supabase } from "./supabase";
 const C = { bg: "#0a0a0a", card: "#141414", border: "#2a2a2a", gold: "#e91e8c", text: "#ffffff", mut: "#999999", red: "#ef4444", grn: "#22c55e" };
 const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
 const f1 = (n) => n == null ? "—" : String(+n.toFixed(1));
+// The 10-yard dash keeps hundredths (1.85s, not 1.9) - Drew, Oct 2026.
+const fk = (k, n) => n == null ? "—" : k === "dash_10y" ? (Math.round(n * 100) / 100).toFixed(2) : f1(n);
 const fmtDate = (iso) => new Date(iso + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "2-digit" });
 // [key, label, unit, higherIsBetter]
 const COLS = [["stand_reach", "Stand & reach", '"', true], ["approach_touch", "Jump approach", '"', true], ["standing_touch", "Standing jump", '"', true], ["vertical", "Vertical", '"', true], ["broad_jump", "Broad jump", '"', true], ["dash_10y", "10 yd", "s", false]];
@@ -42,13 +44,13 @@ export function PlayerStatHistory({ player }) {
             {all.map((r, i) => (
               <tr key={i}>
                 <td style={{ ...td, color: C.mut, fontSize: 12 }} title={r.by ? "Tested by " + r.by : ""}>{r.label}</td>
-                {COLS.map(([k, , u]) => <td key={k} style={{ ...td, fontWeight: k === "vertical" ? 800 : 600, color: r[k] == null ? C.mut : C.text }}>{r[k] == null ? "—" : f1(r[k]) + u}</td>)}
+                {COLS.map(([k, , u]) => <td key={k} style={{ ...td, fontWeight: k === "vertical" ? 800 : 600, color: r[k] == null ? C.mut : C.text }}>{r[k] == null ? "—" : fk(k, r[k]) + u}</td>)}
               </tr>
             ))}
             {tests.length > 0 && (
               <tr>
                 <td style={{ ...td, color: C.gold, fontSize: 11, fontWeight: 800 }}>Change</td>
-                {COLS.map(([k, , u, up]) => { const a = first(k), b = lastV(k); if (a == null || b == null || all.filter(x => x[k] != null).length < 2) return <td key={k} style={{ ...td, color: C.mut }}>—</td>; const d = b - a, good = up ? d > 0 : d < 0; return <td key={k} style={{ ...td, fontWeight: 800, color: Math.abs(d) < 0.05 ? C.mut : good ? C.grn : C.red }}>{d > 0 ? "+" : ""}{f1(d)}{u}</td>; })}
+                {COLS.map(([k, , u, up]) => { const a = first(k), b = lastV(k); if (a == null || b == null || all.filter(x => x[k] != null).length < 2) return <td key={k} style={{ ...td, color: C.mut }}>—</td>; const d = b - a, good = up ? d > 0 : d < 0; return <td key={k} style={{ ...td, fontWeight: 800, color: Math.abs(d) < (k === "dash_10y" ? 0.005 : 0.05) ? C.mut : good ? C.grn : C.red }}>{d > 0 ? "+" : ""}{fk(k, d)}{u}</td>; })}
               </tr>
             )}
           </tbody>

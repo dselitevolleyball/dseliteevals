@@ -23,6 +23,8 @@
 
   function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
   function f1(n) { return n == null ? "—" : String(Math.round(n * 10) / 10); }
+  // Timed runs keep hundredths (1.85s, not 1.9) - Drew, Oct 2026. unit "s" = the 10-yard dash.
+  function fv(n, unit) { return n == null ? "—" : unit === "s" ? (Math.round(n * 100) / 100).toFixed(2) : f1(n); }
   function inch(v) {
     v = String(v || "").trim(); if (!v) return null;
     var m = /^(\d+)\s*(?:'|ft|feet|-)\s*(\d+(?:\.\d+)?)?\s*(?:"|in)?$/i.exec(v); if (m) return +m[1] * 12 + (m[2] ? +m[2] : 0);
@@ -38,15 +40,15 @@
   function points(hist, k) { var v = hist.filter(function (h) { return h[k] != null; }); return [v.length > 1 ? v[v.length - 2][k] : null, v.length ? v[v.length - 1][k] : null, v.length ? v[0][k] : null]; }
   function delta(prev, cur, up, unit) {
     if (prev == null || cur == null) return "";
-    var d = cur - prev; if (Math.abs(d) < 0.05) return '<span class="d same">no change</span>';
+    var d = cur - prev; if (Math.abs(d) < (unit === "s" ? 0.005 : 0.05)) return '<span class="d same">no change</span>';
     var good = up ? d > 0 : d < 0;
-    return '<span class="d ' + (good ? "up" : "down") + '">' + (d > 0 ? "▲ +" : "▼ ") + f1(d) + unit + "</span>";
+    return '<span class="d ' + (good ? "up" : "down") + '">' + (d > 0 ? "▲ +" : "▼ ") + fv(Math.abs(d) * (d < 0 ? -1 : 1), unit).replace(/^-/, "") + unit + "</span>";
   }
 
   function list() {
     var rows = D.players.map(function (p) {
       var h = withVert(p.hist), last = h[h.length - 1];
-      var cells = M.map(function (m) { var t = points(h, m[0]); return "<td><b>" + (t[1] == null ? "—" : f1(t[1]) + m[2]) + "</b>" + delta(t[0], t[1], m[3], m[2]) + "</td>"; }).join("");
+      var cells = M.map(function (m) { var t = points(h, m[0]); return "<td><b>" + (t[1] == null ? "—" : fv(t[1], m[2]) + m[2]) + "</b>" + delta(t[0], t[1], m[3], m[2]) + "</td>"; }).join("");
       return '<tr data-id="' + p.id + '"><td class="nm">' + (p.num ? '<span class="no">#' + esc(p.num) + "</span> " : "") + esc(p.name) +
         '<div class="when">' + (h.length > 1 ? "tested " + fmtDate(last.date) : "tryout numbers only") + "</div></td>" + cells + '<td><button class="add">+ Add</button></td></tr>';
     }).join("");
@@ -67,13 +69,13 @@
     var histRows = h.map(function (r, i) {
       return '<tr><td class="dt">' + fmtDate(r.date) + (r.by ? '<div class="when">' + esc(r.by) + "</div>" : "") + "</td>" + M.map(function (m) {
         var prev = null; for (var j = i - 1; j >= 0; j--) if (h[j][m[0]] != null) { prev = h[j][m[0]]; break; }
-        return "<td>" + (r[m[0]] == null ? "—" : f1(r[m[0]]) + m[2]) + delta(prev, r[m[0]], m[3], m[2]) + "</td>";
+        return "<td>" + (r[m[0]] == null ? "—" : fv(r[m[0]], m[2]) + m[2]) + delta(prev, r[m[0]], m[3], m[2]) + "</td>";
       }).join("") + "</tr>";
     }).join("");
     function field(m) {
       if (m[0] === "vertical") return '<label><span>Vertical (auto)</span><div class="auto" id="vert">—</div><div class="cmp" id="c_vertical"></div></label>';
       var t = points(h, m[0]);
-      return '<label><span>' + m[1] + '</span><div class="iw"><input inputmode="decimal" name="' + m[0] + '" autocomplete="off" placeholder="' + (t[1] == null ? "" : (LEN[m[0]] ? inUnit(t[1]) : f1(t[1]))) + '"><em>' + (m[2] === "s" ? "sec" : LEN[m[0]] ? unit : "in") + '</em></div><div class="cmp" id="c_' + m[0] + '"></div></label>';
+      return '<label><span>' + m[1] + '</span><div class="iw"><input inputmode="decimal" name="' + m[0] + '" autocomplete="off" placeholder="' + (t[1] == null ? "" : (LEN[m[0]] ? inUnit(t[1]) : fv(t[1], m[2]))) + '"><em>' + (m[2] === "s" ? "sec" : LEN[m[0]] ? unit : "in") + '</em></div><div class="cmp" id="c_' + m[0] + '"></div></label>';
     }
     app.innerHTML = '<button class="back">‹ All players</button><h1>' + (p.num ? '<span class="no">#' + esc(p.num) + "</span> " : "") + esc(p.name) + "</h1>" +
       '<div class="tw"><table class="list hist"><thead><tr><th>Date</th>' + M.map(function (m) { return "<th>" + m[1] + "</th>"; }).join("") + "</tr></thead><tbody>" + histRows + "</tbody></table></div>" +
@@ -92,7 +94,7 @@
       M.forEach(function (m) {
         var el = document.getElementById("c_" + m[0]), t = points(h, m[0]), v = vals[m[0]];
         if (v != null && isNaN(v)) { el.innerHTML = '<span class="d down">can\'t read that</span>'; return; }
-        if (v == null) { el.innerHTML = t[1] == null ? "no earlier result" : "last: " + f1(t[1]) + m[2]; return; }
+        if (v == null) { el.innerHTML = t[1] == null ? "no earlier result" : "last: " + fv(t[1], m[2]) + m[2]; return; }
         // Typing cm: show the inches it becomes, right under the box.
         var conv = LEN[m[0]] && unit === "cm" ? '<b class="conv">= ' + f1(v) + ' in</b> · ' : "";
         el.innerHTML = conv + (t[1] == null ? "first result" : "vs last " + delta(t[1], v, m[3], m[2]) + (t[2] != null && t[0] != null ? ' <span class="since">· vs first ' + delta(t[2], v, m[3], m[2]) + "</span>" : ""));
