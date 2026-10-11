@@ -61,7 +61,9 @@ const pool = group === "rise"
   // id 266 is excluded in send-oct11-orientation-texts.mjs's fitting list too.
   : live.filter(p => !RISE.includes(p.team_assignment) && ["made", "accepted", "locked"].includes(p.offer_status) && needsFitting(p) && p.id !== 266);
 const skippedDone = pool.filter(complete);
-const targets = pool.filter(p => !complete(p)).sort((a, b) => a.team_assignment.localeCompare(b.team_assignment) || a.last_name.localeCompare(b.last_name));
+// --player <id>: just one girl (e.g. a late add to a Rise team).
+const onlyId = val("player") ? Number(val("player")) : null;
+const targets = pool.filter(p => !complete(p) && (!onlyId || p.id === onlyId)).sort((a, b) => a.team_assignment.localeCompare(b.team_assignment) || a.last_name.localeCompare(b.last_name));
 
 const links = (p) => ({ commit: `${APP}/commitment?t=${p.commitment_token}`, gear: `${APP}/gear?t=${p.gear_form_token}` });
 const textFor = (p) => {
