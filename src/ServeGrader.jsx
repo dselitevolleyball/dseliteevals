@@ -11,7 +11,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "./supabase";
 
 const C = { bg: "#0a0a0a", card: "#141414", border: "#2a2a2a", gold: "#e91e8c", text: "#ffffff", mut: "#999999", grn: "#22c55e", amber: "#f59e0b", red: "#ef4444", blue: "#60a5fa" };
-const ACC = [[1, "In", "anywhere"], [2, "Target area", "the zone called"], [3, "On target", "deep corner / seam"]];
+// A miss is graded like any serve: accuracy 0 plus a toughness (Drew, Oct 11).
+const ACC = [[0, "Miss", "net / out"], [1, "In", "anywhere"], [2, "Target", "zone called"], [3, "On target", "corner / seam"]];
 const TOUGH = [[1, "Easy", "perfect pass"], [2, "Pressure", "passer has to move"], [3, "Nasty", "ace or a 1-pass"]];
 const TYPES = [["float", "Float", "no spin"], ["fast", "Fast", "topspin / jump"]];
 export const serveScore = (accuracy, toughness) => (accuracy === 0 ? 0 : accuracy * toughness);
@@ -44,7 +45,9 @@ const toneIn = (v) => (v == null ? C.mut : v >= 0.9 ? C.grn : v >= 0.8 ? C.amber
 export function summarize(reps) {
   const n = reps.length, ins = reps.filter(r => r.accuracy > 0);
   const avg = (arr, k) => (arr.length ? arr.reduce((s, r) => s + Number(r[k] || 0), 0) / arr.length : null);
-  return { n, inPct: n ? ins.length / n : null, score: n ? avg(reps, "score") : null, acc: avg(ins, "accuracy"), tough: avg(ins, "toughness"), nasty: n ? reps.filter(r => r.toughness === 3).length / n : null };
+  // Accuracy averages every serve (a miss is 0); toughness every serve that has
+  // one (misses graded before Oct 11 have none).
+  return { n, inPct: n ? ins.length / n : null, score: n ? avg(reps, "score") : null, acc: avg(reps, "accuracy"), tough: avg(reps.filter(r => r.toughness != null), "toughness"), nasty: n ? reps.filter(r => r.toughness === 3).length / n : null };
 }
 
 const savedTeam = () => { try { return localStorage.getItem("dse.serveTeam") || ""; } catch { return ""; } };
@@ -55,6 +58,7 @@ export default function ServeGrader({ coach, players = [], teams = [], api = sup
   const dateTouched = useRef(false);        // the coach picked a date by hand
   const pending = useRef(new Map());        // temp id -> insert promise (resolves to the saved row or null)
   const [loadError, setLoadError] = useState("");
+  const [lastDeleted, setLastDeleted] = useState(null); // for Restore after a one-tap delete
   const [reloadKey, setReloadKey] = useState(0);
   const loadedTeam = useRef("");
   const [tab, setTab] = useState("grade");
@@ -103,11 +107,11 @@ export default function ServeGrader({ coach, players = [], teams = [], api = sup
   };
   const record = async (accuracy, toughness) => {
     if (!sel) { setFlash("Tap the server first."); return; }
-    const row = { player_id: sel.id, team_name: team, session_date: date, serve_type: type, accuracy, toughness: accuracy === 0 ? null : toughness, score: serveScore(accuracy, toughness), graded_by: coach?.display_name || coach?.email || null };
+    const row = { player_id: sel.id, team_name: team, session_date: date, serve_type: type, accuracy, toughness, score: serveScore(accuracy, toughness), graded_by: coach?.display_name || coach?.email || null };
     const tmp = { ...row, id: "tmp" + Date.now() + Math.random().toString(36).slice(2, 6), created_at: new Date().toISOString() };
-    const what = `${short(sel)} ${accuracy === 0 ? "miss" : "A" + accuracy + "×T" + toughness}`;
-    setReps(r => [...(r || []), tmp]); setAcc(null);
-    setFlash(accuracy === 0 ? `${short(sel)}: miss (0)` : `${short(sel)}: ${type === "float" ? "Float" : "Fast"} · accuracy ${accuracy} × toughness ${toughness} = ${row.score}`);
+    const what = `${short(sel)} A${accuracy}×T${toughness}`;
+    setReps(r => [...(r || []), tmp]); setAcc(null); setLastDeleted(null);
+    setFlash(`${short(sel)}: ${type === "float" ? "Float" : "Fast"} · ${accuracy === 0 ? "miss" : "accuracy " + accuracy} × toughness ${toughness} = ${row.score}`);
     const p = api.insert(row).then(saved => {
       setReps(r => (r || []).map(x => (x.id === tmp.id ? saved : x)));
       return saved;
@@ -119,19 +123,30 @@ export default function ServeGrader({ coach, players = [], teams = [], api = sup
     pending.current.set(tmp.id, p);
     await p;
   };
-  const undo = async () => {
-    const last = today.slice(-1)[0]; if (!last) return;
-    if (!window.confirm(`Remove the last serve (${short(roster.find(p => p.id === last.player_id) || {})}, ${last.accuracy === 0 ? "miss" : "score " + last.score})?`)) return;
+  // Delete any serve in one tap (no confirm): Restore puts it back if it was the wrong one.
+  const removeRep = async (rep) => {
     // Still saving: wait for it, then delete the saved row (else it lands in the DB anyway).
-    let target = last;
-    if (String(last.id).startsWith("tmp")) {
-      const p = pending.current.get(last.id);
+    let target = rep;
+    if (String(rep.id).startsWith("tmp")) {
+      const p = pending.current.get(rep.id);
       target = p ? await p : null;
-      if (!target) { setReps(r => (r || []).filter(x => x.id !== last.id)); setFlash("Last serve removed."); return; }
+      if (!target) { setReps(r => (r || []).filter(x => x.id !== rep.id)); setFlash("Serve deleted."); return; }
     }
     // Only hide it once the delete has worked, so a retry can't remove the serve before it.
-    try { await api.remove(target.id); setReps(r => (r || []).filter(x => x.id !== target.id && x.id !== last.id)); setFlash("Last serve removed."); }
-    catch (e) { setLoadError("Couldn't remove that serve: " + e.message); }
+    try {
+      await api.remove(target.id);
+      setReps(r => (r || []).filter(x => x.id !== target.id && x.id !== rep.id));
+      setLastDeleted(target);
+      const p = roster.find(x => x.id === target.player_id);
+      setFlash(`Deleted ${p ? short(p) : "serve"} A${target.accuracy}${target.toughness != null ? "×T" + target.toughness : ""}.`);
+    } catch (e) { setLoadError("Couldn't remove that serve: " + e.message); }
+  };
+  const undo = () => { const last = today.slice(-1)[0]; if (last) removeRep(last); };
+  const restore = async () => {
+    const d = lastDeleted; if (!d) return; setLastDeleted(null);
+    const { id, ...row } = d; // keeps created_at, so it goes back in its old place
+    try { const saved = await api.insert(row); setReps(r => [...(r || []), saved].sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)))); setFlash("Serve restored."); }
+    catch (e) { setLoadError("Couldn't restore that serve: " + e.message); }
   };
 
   if (!teams.length) return <div style={{ padding: 30, textAlign: "center", color: C.mut, fontSize: 13 }}>No teams to grade yet. If you coach a team, it shows here once your teams have loaded.</div>;
@@ -174,20 +189,17 @@ export default function ServeGrader({ coach, players = [], teams = [], api = sup
           <div style={{ display: "flex", gap: 8 }}>
             {TYPES.map(([k, l, sub]) => <button key={k} onClick={() => setType(k)} style={big(type === k, C.blue)}><span style={{ fontSize: 15, fontWeight: 800 }}>{l}</span><span style={{ fontSize: 10, color: C.mut }}>{sub}</span></button>)}
           </div>
-          <div style={lbl}>Did it go in?</div>
-          <button onClick={() => record(0, null)} style={{ ...big(false), width: "100%", border: "1px solid " + C.red, background: C.red + "1f", color: C.red }}>
-            <span style={{ fontSize: 16, fontWeight: 800 }}>Miss</span><span style={{ fontSize: 11, opacity: 0.85 }}>net or out = 0</span>
-          </button>
-          <div style={lbl}>Accuracy (if it's in)</div>
-          <div style={{ display: "flex", gap: 8 }}>
-            {ACC.map(([v, l, sub]) => <button key={v} onClick={() => setAcc(acc === v ? null : v)} style={big(acc === v)}><span style={{ fontSize: 18, fontWeight: 800 }}>{v}</span><span style={{ fontSize: 13, fontWeight: 700 }}>{l}</span><span style={{ fontSize: 10, color: C.mut }}>{sub}</span></button>)}
+          <div style={lbl}>Accuracy</div>
+          <div style={{ display: "flex", gap: 6 }}>
+            {ACC.map(([v, l, sub]) => <button key={v} onClick={() => setAcc(acc === v ? null : v)} style={{ ...big(acc === v, v === 0 ? C.red : undefined), ...(v === 0 && acc !== 0 ? { color: C.red, borderColor: C.red + "88" } : {}) }}><span style={{ fontSize: 18, fontWeight: 800 }}>{v}</span><span style={{ fontSize: 13, fontWeight: 700 }}>{l}</span><span style={{ fontSize: 10, color: C.mut }}>{sub}</span></button>)}
           </div>
-          <div style={lbl}>Toughness {acc ? <span style={{ color: C.gold, textTransform: "none", letterSpacing: 0 }}>· saves the serve</span> : null}</div>
-          <div style={{ display: "flex", gap: 8, opacity: acc ? 1 : 0.45 }}>
-            {TOUGH.map(([v, l, sub]) => <button key={v} onClick={() => (acc ? record(acc, v) : setFlash("Tap accuracy first (or Miss)."))} style={big(false)}><span style={{ fontSize: 18, fontWeight: 800 }}>{v}</span><span style={{ fontSize: 13, fontWeight: 700 }}>{l}</span><span style={{ fontSize: 10, color: C.mut }}>{sub}</span></button>)}
+          <div style={lbl}>Toughness {acc !== null ? <span style={{ color: C.gold, textTransform: "none", letterSpacing: 0 }}>· saves the serve</span> : null}</div>
+          <div style={{ display: "flex", gap: 6, opacity: acc !== null ? 1 : 0.45 }}>
+            {TOUGH.map(([v, l, sub]) => <button key={v} onClick={() => (acc !== null ? record(acc, v) : setFlash("Tap accuracy first."))} style={big(false)}><span style={{ fontSize: 18, fontWeight: 800 }}>{v}</span><span style={{ fontSize: 13, fontWeight: 700 }}>{l}</span><span style={{ fontSize: 10, color: C.mut }}>{sub}</span></button>)}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 12, minHeight: 28 }}>
             <span style={{ flex: 1, fontSize: 13, color: /Didn't|Couldn't/.test(flash) ? C.red : C.mut }}>{flash}</span>
+            {lastDeleted && <button onClick={restore} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid " + C.gold, background: "transparent", color: C.gold, fontFamily: "inherit", fontSize: 12, fontWeight: 800, cursor: "pointer" }}>Restore</button>}
             {today.length > 0 && <button onClick={undo} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid " + C.border, background: "transparent", color: C.mut, fontFamily: "inherit", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>↶ Undo last</button>}
           </div>
         </div>
@@ -200,7 +212,12 @@ export default function ServeGrader({ coach, players = [], teams = [], api = sup
               {stat(one(s.acc), "accuracy")}{stat(one(s.tough), "toughness")}{stat(pct(s.nasty), "nasty")}
             </div>
             <div style={{ fontSize: 12, color: C.mut, lineHeight: 1.9, marginBottom: 14 }}>
-              {mine(sel.id).slice(-10).reverse().map((r, i) => <div key={r.id || i}>{r.serve_type === "float" ? "Float" : "Fast"} · {r.accuracy === 0 ? <span style={{ color: C.red, fontWeight: 700 }}>miss</span> : <>A{r.accuracy} × T{r.toughness} = <b style={{ color: toneScore(r.score) }}>{r.score}</b></>}</div>)}
+              {mine(sel.id).slice(-10).reverse().map((r, i) => (
+                <div key={r.id || i} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ flex: 1 }}>{r.serve_type === "float" ? "Float" : "Fast"} · {r.accuracy === 0 ? <span style={{ color: C.red, fontWeight: 700 }}>miss</span> : <>A{r.accuracy}</>}{r.toughness != null ? <> × T{r.toughness}</> : null} = <b style={{ color: toneScore(r.score) }}>{r.score}</b></span>
+                  <button onClick={() => removeRep(r)} aria-label="Delete this serve" title="Delete this serve"
+                    style={{ width: 30, height: 26, borderRadius: 6, border: "1px solid " + C.border, background: "transparent", color: C.mut, cursor: "pointer", fontSize: 13, lineHeight: 1, flexShrink: 0 }}>✕</button>
+                </div>))}
               {!mine(sel.id).length && "No serves yet today."}
             </div>
           </>}
@@ -272,7 +289,7 @@ export default function ServeGrader({ coach, players = [], teams = [], api = sup
             </tbody>
           </table>
         </div>
-        <div style={{ fontSize: 11, color: C.mut, marginTop: 8, lineHeight: 1.6 }}>Score = accuracy × toughness (0–9); a miss is 0 and counts in the average. Accuracy and toughness average the serves that went in. Nasty = share of all serves graded toughness 3.</div>
+        <div style={{ fontSize: 11, color: C.mut, marginTop: 8, lineHeight: 1.6 }}>Score = accuracy × toughness (0–9). A miss is accuracy 0, so it scores 0, but its toughness still counts. Accuracy and toughness average every serve; nasty = share of serves graded toughness 3.</div>
       </div>
     );
   };

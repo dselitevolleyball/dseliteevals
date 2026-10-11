@@ -13,7 +13,7 @@ for (const [ago, pid, type, a, t] of [[6, 1, "float", 2, 2], [6, 1, "float", 0, 
   store.push({ id: id++, player_id: pid, team_name: "14 Ruby", session_date: day(ago), serve_type: type, accuracy: a, toughness: t, score: a === 0 ? 0 : a * t, created_at: new Date().toISOString() });
 export const api = {
   load: async (team) => store.filter(r => r.team_name === team),
-  insert: async (row) => { await new Promise(res => setTimeout(res, 900)); const r = { ...row, id: id++, created_at: new Date().toISOString() }; store.push(r); return r; }, // slow, like gym wifi
+  insert: async (row) => { await new Promise(res => setTimeout(res, 900)); const r = { ...row, id: id++, created_at: row.created_at || new Date().toISOString() }; store.push(r); return r; }, // slow, like gym wifi
   _store: store,
   remove: async (rid) => { const i = store.findIndex(r => r.id === rid); if (i >= 0) store.splice(i, 1); },
 };
