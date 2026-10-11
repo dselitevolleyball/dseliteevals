@@ -22,6 +22,7 @@ import { PlayerStatHistory, StatsLinks } from "./PlayerStats.jsx";
 import StatReports from "./StatReports.jsx";
 import WorkDuty from "./WorkDuty.jsx";
 import TournamentHub from "./TournamentHub.jsx";
+import RegistrationCheck, { RegBadges, loadRegistrationCheck } from "./RegistrationCheck.jsx";
 import EuropeRsvps from "./EuropeRsvps.jsx";
 import DsscTexts from "./dssc/DsscTexts.jsx";
 import DsscCamp from "./dssc/DsscCamp.jsx";
@@ -1663,6 +1664,8 @@ export default function App() {
   const [tournamentsLoading, setTournamentsLoading]         = useState(false);
   // Tournament Hub opened from a TournamentCard: which tournament to show first.
   const [hubTn, setHubTn]                                   = useState(null);
+  // Daily registration check (AES/OTTO vs HQ): { regs, flags, autos, runs } — RegistrationCheck.jsx.
+  const [regCheck, setRegCheck]                             = useState(null);
   // Practice schedule tab state
   const [practiceTeamsAll, setPracticeTeams]             = useState([]);
   const [practiceAssignments, setPracticeAssignments] = useState([]);
@@ -3278,6 +3281,9 @@ export default function App() {
     setTournamentsLoading(false);
   }, []);
   useEffect(() => { if (isApproved && (view === "tournaments" || view === "teamdir" || view === "home" || view === "practice" || view === "travel" || view === "housing" || view === "hub")) loadTournaments(); }, [isApproved, view, loadTournaments]);
+  // Registration check rows/flags/runs — the Tournaments view only (ops).
+  const loadRegCheck = useCallback(async () => setRegCheck(await loadRegistrationCheck(supabase)), []);
+  useEffect(() => { if (isApproved && canOps && view === "tournaments") loadRegCheck(); }, [isApproved, canOps, view, loadRegCheck]);
 
   // Practice tab loader
   const loadPractice = useCallback(async () => {
@@ -30566,6 +30572,7 @@ export default function App() {
                     onMouseEnter={e=>e.currentTarget.style.textDecorationColor=fg}
                     onMouseLeave={e=>e.currentTarget.style.textDecorationColor="transparent"}>{a.team_id}</span>
                   {tm && tm.level && <span style={{fontSize:9,color:C.mut}}>· {tm.level}</span>}
+                  <RegBadges data={regCheck} tournamentId={tn.id} team={a.team_id} />
                   {(() => {
                     // Offer the divisions THIS tournament runs for THIS team's age
                     // (from its age×division entries). Fall back: any tier the
@@ -30763,12 +30770,15 @@ export default function App() {
               style={{padding:"6px 14px",borderRadius:6,border:"1px solid "+C.gold,background:"transparent",color:C.gold,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
               + Add tournament
             </button>
-            <button onClick={loadTournaments} disabled={tournamentsLoading}
+            <button onClick={()=>{ loadTournaments(); loadRegCheck(); }} disabled={tournamentsLoading}
               style={{padding:"6px 12px",borderRadius:6,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
               {tournamentsLoading ? "Loading…" : "Refresh"}
             </button>
           </div>
         </div>
+        {/* Daily registration check — AES/OTTO vs our statuses, flags to look at, Run now */}
+        <RegistrationCheck supabase={supabase} C={C} data={regCheck} tournaments={tournaments} coach={coach}
+          onReload={(ran)=>{ loadRegCheck(); if (ran) loadTournaments(); }} onOpenTeam={setTeamCardName} />
         {/* AI schedule Q&A (owner-only) */}
         {isOwner && (
           <div style={{marginBottom:8,background:C.card,borderRadius:10,border:"1px solid "+(tnAskOpen?C.gold:C.border),overflow:"hidden"}}>

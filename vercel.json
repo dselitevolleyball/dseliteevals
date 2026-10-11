@@ -152,12 +152,17 @@
     {
       "path": "/api/tournament-sync",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/registration-check",
+      "schedule": "30 13 * * *"
     }
   ],
   "functions": {
     "api/playbook-calendar.js": { "maxDuration": 120 },
     "api/tournament-sync.js": { "maxDuration": 120 },
     "api/tournament-feed.js": { "maxDuration": 120 },
+    "api/registration-check.js": { "maxDuration": 300 },
     "api/sms-campaigns.js": { "maxDuration": 300 },
     "api/ask-hq.js": {
       "maxDuration": 120

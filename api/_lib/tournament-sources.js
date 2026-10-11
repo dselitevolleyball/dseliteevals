@@ -127,6 +127,27 @@ export async function aesLanding(eventId) {
   return getJson(`${AES_WWW}/landing/events/${encodeURIComponent(eventId)}`, { nullOn404: true });
 }
 
+// Who is registered for an event (the landing page's Teams tab), as the event
+// director chose to show it: visibility = the event's eventTeamVisibilityType
+// .code — 'all' → /teams (every entry with its status), 'accepted' →
+// /teams/accepted (accepted entries only; pending ones are hidden), 'none' →
+// nothing is public (null, no call). The page's setting is not the API's,
+// though: /teams answered the full list (Dropped / Pending / Waitlist too) for
+// 'accepted' and 'none' events alike when checked on 11 Oct 2026, so
+// registration-check asks for 'all' first and uses the visibility only as the
+// fallback. Rows: { teamId, name, clubId, clubName,
+// teamCode, acceptedType: { displayName: 'Accepted' | 'Pending' | 'Dropped' |
+// 'Waitlist' | 'Ok To Pay' | 'Incomplete' }, divisionDescription }. Null also
+// for the HTML fallback / 404 (not readable — never read that as "no teams").
+// Used by api/_lib/registration-check.js (DS Elite = clubId 32611).
+export async function aesLandingTeams(eventId, visibility = "all") {
+  const v = String(visibility || "all").toLowerCase();
+  if (v === "none") return null;
+  const j = await getJson(`${AES_WWW}/landing/events/${encodeURIComponent(eventId)}/teams${v === "accepted" ? "/accepted" : ""}`, { nullOn404: true });
+  if (j == null) return null;
+  return Array.isArray(j) || Array.isArray(j?.value) ? valueOf(j) : null;
+}
+
 // The landing list (OData) — the only place scheduler-only events (no eventId)
 // can be found. Events overlapping [start, end]; optional state ('TX'),
 // schedulerOnly, posted, nameContains.
@@ -764,7 +785,12 @@ async function allOttoEvents() {
 // OTTO events overlapping [start, end] (YYYY-MM-DD), optionally in a state.
 // event_id is the hex esw id once the schedule is published, the numeric id
 // before. Falls back to GraphQL paginatedEvents (no end dates there) if the
-// REST list is down.
+// REST list is down. That fallback is NOT the whole window — 10 pages of 20
+// from two weeks back cover only a few weeks of a busy season (975 events in
+// the 300 days ahead on 11 Oct 2026; page 10 ended 9 Jan) — so its array
+// carries complete = false (plus truncated, and why REST failed). A caller
+// that must see every event (api/_lib/registration-check.js) treats that like
+// no list at all; the REST list's array has complete = true.
 export async function ottoEvents({ start, end, state = null } = {}) {
   const s = ymd(start), e = ymd(end || start), st = state ? String(state).toUpperCase() : null;
   const pick = (r) => ({
@@ -775,11 +801,14 @@ export async function ottoEvents({ start, end, state = null } = {}) {
   });
   try {
     const rows = await allOttoEvents();
-    return rows.map(pick).filter((r) => r.date_start && r.date_start <= e && (r.date_end || r.date_start) >= s && (!st || String(r.state || "").toUpperCase() === st));
+    const res = rows.map(pick).filter((r) => r.date_start && r.date_start <= e && (r.date_end || r.date_start) >= s && (!st || String(r.state || "").toUpperCase() === st));
+    res.complete = true;
+    return res;
   } catch (err) {
     const out = [];
     const before = new Date(Date.parse(e + "T00:00:00Z") + 2 * 86400000).toISOString().slice(0, 10);
     const after = new Date(Date.parse(s + "T00:00:00Z") - 14 * 86400000).toISOString().slice(0, 10);
+    let truncated = true;
     for (let page = 1; page <= 10; page++) {
       const d = await ottoGql(PAGINATED_EVENTS, { page, pageSize: 20, startAfter: after, startBefore: before, asc: true });
       const p = d.paginatedEvents;
@@ -787,11 +816,14 @@ export async function ottoEvents({ start, end, state = null } = {}) {
         const ds = Number(it.date_start) > 0 ? new Date(Number(it.date_start)).toISOString().slice(0, 10) : null;
         out.push(pick({ ...it, date_start: ds, date_end: null }));
       }
-      if (!p || page >= (p.page_info?.page_count || 1)) break;
+      if (!p || page >= (p.page_info?.page_count || 1)) { truncated = false; break; }
     }
     // Without end dates, keep events starting in the window (or up to 3 days before it).
     const early = new Date(Date.parse(s + "T00:00:00Z") - 3 * 86400000).toISOString().slice(0, 10);
-    return out.filter((r) => r.date_start && r.date_start <= e && r.date_start >= early && (!st || String(r.state || "").toUpperCase() === st));
+    const res = out.filter((r) => r.date_start && r.date_start <= e && r.date_start >= early && (!st || String(r.state || "").toUpperCase() === st));
+    // Never the whole window (no end dates; maybe cut at 10 pages) — see above.
+    Object.assign(res, { complete: false, truncated, why: String(err?.message || err).slice(0, 160) });
+    return res;
   }
 }
 
