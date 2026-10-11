@@ -156,10 +156,15 @@ export default async function handler(req, res) {
   const body = (params.Body || "") || (mediaIn.length ? "📷 (photo)" : "");
   const sid  = params.MessageSid || params.SmsSid;
   if (!from || !body) return res.status(200).send("ok");
-  // A STOP-style reply is an opt-out; START/UNSTOP puts them back.
-  const word = body.trim().toLowerCase();
-  if (/^(stop|stopall|unsubscribe|cancel|end|quit)\b/.test(word)) await supabase.from("sms_optouts").upsert({ phone: from, brand, source: "stop-reply", note: body.slice(0, 120) }, { onConflict: "phone,brand" });
-  else if (/^(start|unstop|yes)\b/.test(word)) await supabase.from("sms_optouts").delete().eq("phone", from).eq("brand", brand);
+  // A STOP-style reply is an opt-out; START/UNSTOP puts them back. Like Twilio,
+  // only when the keyword is the WHOLE message: "Cancel Ava's private tomorrow"
+  // or "Yes, she'll be there" are ordinary texts, and since sendOneSms now
+  // refuses unsubscribed numbers, a false match would cut a family off.
+  // A plain YES only clears a carrier-style STOP, never one staff set by hand.
+  const word = body.trim().toLowerCase().replace(/[\s.!]+$/, "");
+  if (/^(stop|stopall|stop all|unsubscribe|cancel|end|quit|optout|opt out|revoke)$/.test(word)) await supabase.from("sms_optouts").upsert({ phone: from, brand, source: "stop-reply", note: body.slice(0, 120) }, { onConflict: "phone,brand" });
+  else if (/^(start|unstop)$/.test(word)) await supabase.from("sms_optouts").delete().eq("phone", from).eq("brand", brand);
+  else if (word === "yes") await supabase.from("sms_optouts").delete().eq("phone", from).eq("brand", brand).neq("source", "manual");
 
   // Find or create the thread. A number we've never texted is still very
   // likely a parent, player or coach we know — match it against the roster so

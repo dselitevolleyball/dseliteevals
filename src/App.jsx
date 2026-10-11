@@ -2844,11 +2844,12 @@ export default function App() {
     setPlayerNudges(data || []);
   }, []);
   const loadSmsOptouts = useCallback(async () => {
-    const { data, error } = await supabase.from("sms_optouts").select("phone").eq("brand", "dse");
+    const { data, error } = await supabase.from("sms_optouts").select("*").eq("brand", "dse");
     if (error) { console.error("Load sms_optouts error:", error); return; }
     setSmsOptouts(data || []);
   }, []);
   useEffect(() => { if (isApproved && view === "waiting") { loadPlayerNudges(); loadSmsOptouts(); } }, [isApproved, view, loadPlayerNudges, loadSmsOptouts]);
+  useEffect(() => { if (isApproved && view === "messages") loadSmsOptouts(); }, [isApproved, view, loadSmsOptouts]); // unsubscribe state in the inbox
   const loadCoachPrivates = useCallback(async () => {
     const [a, b] = await Promise.all([
       supabase.from("coach_privates").select("*"),
@@ -4645,14 +4646,14 @@ export default function App() {
     const ch = supabase
       .channel("realtime-sms")
       .on("postgres_changes", { event: "*", schema: "public", table: "sms_messages" }, (payload) => {
-        loadSmsThreads(); loadSmsUnread();
+        loadSmsThreads(); loadSmsUnread(); loadSmsOptouts(); // a STOP reply shows its banner right away
         const tid = payload.new?.thread_id || payload.old?.thread_id;
         if (selectedThreadId && tid === selectedThreadId) loadSmsMessages(selectedThreadId);
       })
       .on("postgres_changes", { event: "*", schema: "public", table: "sms_threads" }, () => { loadSmsThreads(); loadSmsUnread(); })
       .subscribe();
     return () => supabase.removeChannel(ch);
-  }, [isApproved, selectedThreadId, loadSmsThreads, loadSmsMessages, loadSmsUnread]);
+  }, [isApproved, selectedThreadId, loadSmsThreads, loadSmsMessages, loadSmsUnread, loadSmsOptouts]);
 
   // SportsYou coach-comms inbox: load posts + live-refresh on new arrivals.
   const loadSportsYouPosts = useCallback(async () => {
@@ -28268,6 +28269,7 @@ export default function App() {
         const to = e164(phone);
         if (!to) { if (name) skipped.push({ name, reason: "no phone on file" }); return; }
         if (out.some(x => x.to === to)) return;
+        if (smsOptouts.some(o => last10(o.phone) === last10(to))) { skipped.push({ name, reason: "unsubscribed (replied STOP)" }); return; }
         out.push({ to, name, consent: consented.has(last10(to)), ...extra });
       };
       if (c.type === "team") {
@@ -28544,15 +28546,41 @@ export default function App() {
             const player = selected.player_id ? playerById.get(selected.player_id) : null;
             const title = labelOf(selected);
             const group = groupOf(selected);
+            // Unsubscribe (Drew, Oct 11): a STOP reply is recorded automatically by
+            // the webhook; staff can also unsubscribe or resubscribe by hand.
+            const outRow = smsOptouts.find(o => last10(o.phone) === last10(selected.phone));
+            const how = outRow ? (outRow.source === "manual" ? "unsubscribed" + (outRow.added_by ? " by " + outRow.added_by : "") : "replied " + (String(outRow.note || "STOP").trim().split(/\s+/)[0] || "STOP").toUpperCase()) : "";
+            const unsubscribe = async () => {
+              if (!window.confirm("Unsubscribe " + title + " from DS Elite texts? Team and coach texts will skip this number.")) return;
+              const { error } = await supabase.from("sms_optouts").upsert({ phone: selected.phone, brand: "dse", source: "manual", name: title, note: "Unsubscribed from the inbox", added_by: coach?.display_name || coach?.email || null }, { onConflict: "phone,brand" });
+              if (error) window.alert(error.message); else loadSmsOptouts();
+            };
+            const resubscribe = async () => {
+              const stop = outRow && outRow.source !== "manual";
+              if (!window.confirm(stop
+                ? "They replied STOP, so the phone carrier is blocking our texts. Only resubscribe if they asked to hear from us again - they also need to text START to this number before texts will go through. Resubscribe?"
+                : "Resubscribe this number to DS Elite texts?")) return;
+              const { error } = await supabase.from("sms_optouts").delete().eq("phone", outRow.phone).eq("brand", "dse");
+              if (error) window.alert(error.message); else loadSmsOptouts();
+            };
             return (
               <>
-                <div style={{padding:"12px 16px",borderBottom:"1px solid "+C.border}}>
-                  <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                    <div style={{fontSize:14,fontWeight:800,color:C.gold}}>{title}</div>
-                    {chip(group, group === "Coaches" ? "#a78bfa" : C.acc)}
-                    {selected.contact_kind && selected.contact_kind !== "coach" && chip(selected.contact_kind, C.mut)}
+                {outRow && (
+                  <div style={{display:"flex",alignItems:"center",gap:10,padding:"9px 16px",background:"rgba(239,68,68,0.10)",borderBottom:"1px solid "+C.red,flexWrap:"wrap"}}>
+                    <span style={{flex:1,minWidth:180,fontSize:13,fontWeight:700,color:C.red}}>🚫 Unsubscribed{how ? " - " + how : ""}{outRow.opted_out_at ? " · " + new Date(outRow.opted_out_at).toLocaleDateString(undefined,{month:"short",day:"numeric"}) : ""}. Texts to this number are blocked.</span>
+                    <button onClick={resubscribe} style={{padding:"5px 12px",borderRadius:7,border:"1px solid "+C.border,background:"transparent",color:C.text,fontFamily:"inherit",fontSize:12,fontWeight:700,cursor:"pointer"}}>Resubscribe</button>
                   </div>
-                  <div style={{fontSize:11,color:C.mut,marginTop:2}}>{fmtPhone(selected.phone)}{player && <button onClick={()=>setProfileId(player.id)} style={{marginLeft:8,padding:"2px 8px",borderRadius:5,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Open player card</button>}</div>
+                )}
+                <div style={{padding:"12px 16px",borderBottom:"1px solid "+C.border,display:"flex",alignItems:"flex-start",gap:10}}>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                      <div style={{fontSize:14,fontWeight:800,color:C.gold}}>{title}</div>
+                      {chip(group, group === "Coaches" ? "#a78bfa" : C.acc)}
+                      {selected.contact_kind && selected.contact_kind !== "coach" && chip(selected.contact_kind, C.mut)}
+                    </div>
+                    <div style={{fontSize:11,color:C.mut,marginTop:2}}>{fmtPhone(selected.phone)}{player && <button onClick={()=>setProfileId(player.id)} style={{marginLeft:8,padding:"2px 8px",borderRadius:5,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Open player card</button>}</div>
+                  </div>
+                  {!outRow && <button onClick={unsubscribe} title="Stop texting this number" style={{flexShrink:0,padding:"4px 10px",borderRadius:7,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontFamily:"inherit",fontSize:11,fontWeight:700,cursor:"pointer"}}>Unsubscribe</button>}
                 </div>
                 <div style={{flex:1,overflowY:"auto",padding:"14px 16px",display:"flex",flexDirection:"column",gap:8}}>
                   {smsMessages.map(m => {
@@ -28575,6 +28603,9 @@ export default function App() {
                   })}
                   {smsMessages.length === 0 && <div style={{textAlign:"center",color:C.mut,fontSize:11,padding:20}}>No messages in this thread yet.</div>}
                 </div>
+                {outRow ? (
+                  <div style={{borderTop:"1px solid "+C.border,padding:"12px 14px",fontSize:12,color:C.mut}}>Unsubscribed - replies are off for this number. Resubscribe above if they ask to hear from us again.</div>
+                ) : (
                 <div style={{borderTop:"1px solid "+C.border,padding:"10px 14px",display:"flex",gap:8,alignItems:"flex-end"}}>
                   <textarea value={smsCompose} onChange={e=>setSmsCompose(e.target.value)}
                     placeholder="Type a message…"
@@ -28586,6 +28617,7 @@ export default function App() {
                     {smsSending ? "Sending…" : "Send"}
                   </button>
                 </div>
+                )}
               </>
             );
           })()}

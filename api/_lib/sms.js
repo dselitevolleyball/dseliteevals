@@ -96,6 +96,15 @@ export async function sendOneSms(supabase, r, text, meta = {}) {
   const brand = brandOf(r.brand);
   const sender = senderFor(brand);
   if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN || !sender) throw new Error(notReadyMessage(brand));
+  // Unsubscribed numbers never get texts (Drew, Oct 11 2026): a STOP reply is
+  // recorded by the webhook, and staff can unsubscribe someone from the inbox.
+  // Brand-scoped: a STOP to DSSC doesn't stop DS Elite. If the lookup itself
+  // fails the text still goes - Twilio still refuses true STOP numbers.
+  const d10 = String(r.to || "").replace(/\D/g, "").slice(-10);
+  if (d10.length === 10) {
+    const { data: out, error: outErr } = await supabase.from("sms_optouts").select("phone").eq("brand", brand).like("phone", "%" + d10).limit(1);
+    if (!outErr && out && out.length) { const err = new Error("Unsubscribed: this number replied STOP or was unsubscribed in the inbox, so it wasn't texted."); err.code = "opted_out"; throw err; }
+  }
   const media = (Array.isArray(meta.media_urls) ? meta.media_urls : []).filter(u => /^https?:\/\//.test(String(u))).slice(0, 10);
   const thread = await threadFor(supabase, { ...r, brand });
   // Insert the message in 'queued' state so the UI can show it immediately

@@ -85,7 +85,7 @@ export default async function handler(req, res) {
 
   if (!batch) {
     try { return res.status(200).json({ ok: true, ...(await sendOneSms(supabase, recipients[0], text, meta)) }); }
-    catch (e) { return res.status(500).json({ error: e.message, code: e.code }); }
+    catch (e) { return res.status(e.code === "opted_out" ? 409 : 500).json({ error: e.message, code: e.code }); }
   }
 
   // A batch is remembered as one broadcast before anything goes out, so a

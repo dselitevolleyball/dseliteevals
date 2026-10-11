@@ -90,7 +90,7 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
   useEffect(() => { if (composer && (composer.group === "history" || composer.group === "everyone_ever")) loadHistory(); }, [composer?.group]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { loadMsgs(selId); }, [selId]);
   useEffect(() => {
-    const ch = supabase.channel("dssc-sms").on("postgres_changes", { event: "*", schema: "public", table: "sms_messages" }, () => { loadThreads(); loadGroups(); if (selId) loadMsgs(selId); }).subscribe();
+    const ch = supabase.channel("dssc-sms").on("postgres_changes", { event: "*", schema: "public", table: "sms_messages" }, () => { loadThreads(); loadGroups(); loadOptouts(); if (selId) loadMsgs(selId); }).subscribe();
     return () => { supabase.removeChannel(ch); };
   }, [selId]);
   useEffect(() => {
@@ -458,10 +458,37 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
           </>);
         })()}
         {!composer && !selected && <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: DS.mut, fontSize: 13, padding: 20, textAlign: "center" }}>Pick a conversation, or press + New text and add people or a whole program.</div>}
-        {!composer && selected && (<>
-          <div style={{ padding: "12px 16px", borderBottom: "1px solid " + DS.line }}>
+        {!composer && selected && (() => {
+          // Unsubscribe state for this number (Drew, Oct 11): a STOP reply is recorded
+          // automatically; staff can also unsubscribe or resubscribe by hand.
+          const outRow = optouts.find(o => last10(o.phone) === last10(selected.phone));
+          const how = outRow ? (outRow.source === "manual" ? "unsubscribed" + (outRow.added_by ? " by " + outRow.added_by : "") : "replied " + (String(outRow.note || "STOP").trim().split(/\s+/)[0] || "STOP").toUpperCase()) : "";
+          const unsubscribe = async () => {
+            if (!window.confirm(`Unsubscribe ${selected.contact_name || fmtPhone(selected.phone)} from DSSC texts? Group and program texts will skip this number.`)) return;
+            const { error } = await supabase.from("sms_optouts").upsert({ phone: selected.phone, brand: "dssc", source: "manual", name: selected.contact_name || null, note: "Unsubscribed from the inbox", added_by: me }, { onConflict: "phone,brand" });
+            if (error) window.alert(error.message); else loadOptouts();
+          };
+          const resubscribe = async () => {
+            const stop = outRow && outRow.source !== "manual";
+            if (!window.confirm(stop
+              ? "They replied STOP, so the phone carrier is blocking our texts. Only resubscribe if they asked to hear from us again - they also need to text START to this number before texts will go through. Resubscribe?"
+              : "Resubscribe this number to DSSC texts?")) return;
+            const { error } = await supabase.from("sms_optouts").delete().eq("phone", outRow.phone).eq("brand", "dssc");
+            if (error) window.alert(error.message); else loadOptouts();
+          };
+          return (<>
+          {outRow && (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 16px", background: "rgba(249,115,22,0.12)", borderBottom: "1px solid " + DS.orange, flexWrap: "wrap" }}>
+              <span style={{ flex: 1, minWidth: 180, fontSize: 13, fontWeight: 700, color: DS.orange }}>🚫 Unsubscribed{how ? " - " + how : ""}{outRow.opted_out_at ? " · " + fmtWhen(outRow.opted_out_at) : ""}. Texts to this number are blocked.</span>
+              <Btn small onClick={resubscribe}>Resubscribe</Btn>
+            </div>
+          )}
+          <div style={{ padding: "12px 16px", borderBottom: "1px solid " + DS.line, display: "flex", alignItems: "flex-start", gap: 10 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}><div style={{ fontSize: 15, fontWeight: 800 }}>{selected.contact_name || fmtPhone(selected.phone)}</div>{selected.dssc_player && <Tag color={DS.lime}>{selected.dssc_player}</Tag>}{selected.dssc_program && <Tag color={DS.mut}>{selected.dssc_program}</Tag>}{selected.contact_kind === "coach" && <Tag color={DS.mut}>coach</Tag>}</div>
             <div style={{ fontSize: 12, color: DS.mut, marginTop: 2 }}>{fmtPhone(selected.phone)}</div>
+            </div>
+            {!outRow && <Btn small onClick={unsubscribe}>Unsubscribe</Btn>}
           </div>
           <div style={{ flex: 1, overflowY: "auto", padding: "14px 16px", display: "flex", flexDirection: "column", gap: 8 }}>
             {msgs.map(m => { const out = m.direction === "outbound"; return (
@@ -474,11 +501,15 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
               </div>); })}
             {!msgs.length && <div style={{ textAlign: "center", color: DS.mut, fontSize: 12, padding: 20 }}>No messages yet.</div>}
           </div>
+          {outRow ? (
+            <div style={{ borderTop: "1px solid " + DS.line, padding: "12px 14px", fontSize: 12, color: DS.mut }}>Unsubscribed - replies are off for this number. Resubscribe above if they ask to hear from us again.</div>
+          ) : (
           <div style={{ borderTop: "1px solid " + DS.line, padding: "10px 14px", display: "flex", gap: 8, alignItems: "flex-end" }}>
             <textarea value={reply} onChange={e => setReply(e.target.value)} rows={2} placeholder="Type a reply…" onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); } }} style={{ ...inputStyle, flex: 1, resize: "vertical", minHeight: 40, maxHeight: 140 }} />
             <Btn kind="primary" disabled={sending || !reply.trim()} onClick={async () => { setSending(true); const r = await send({ to: selected.phone, body: reply.trim(), contact_name: selected.contact_name, dssc_program: selected.dssc_program, dssc_player: selected.dssc_player, contact_kind: selected.contact_kind }); setSending(false); if (r.error) window.alert(r.error); else { setReply(""); loadMsgs(selected.id); loadThreads(); } }}>{sending ? "…" : "Send"}</Btn>
           </div>
-        </>)}
+          )}
+        </>); })()}
       </div>
     </div>
   , true);
