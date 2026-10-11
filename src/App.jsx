@@ -16,6 +16,7 @@ import DsscHub from "./dssc/DsscHub.jsx";
 import DsscAdmin from "./dssc/DsscAdmin.jsx";
 import HousingView from "./HousingView.jsx";
 import AskHQ from "./AskHQ.jsx";
+import ServeGrader from "./ServeGrader.jsx";
 import { buildNav, navTheme, Sidebar, NavDrawer, BottomBar, SiblingChips } from "./Nav.jsx";
 import DaySchedule from "./DaySchedule.jsx";
 import { PlayerStatHistory, StatsLinks } from "./PlayerStats.jsx";
@@ -32890,6 +32891,8 @@ export default function App() {
         {view==="pods" && renderPods()}
         {view==="playereval" && renderPlayerEvals()}
         {view==="passing" && renderPassing()}
+        {view==="serving" && <ServeGrader coach={coach} players={players}
+          teams={((canViewTeams || canOps) ? teamsList.filter(t => t.active).map(t => t.id) : myTeamNames.filter(t => teamsList.some(x => x.id === t))).slice().sort((a, b) => (parseInt(a) || 99) - (parseInt(b) || 99) || a.localeCompare(b))} />}
         {view==="myexpenses" && renderMyExpenses()}
         {view==="claims" && canOps && renderClaims()}
         {view==="travel" && renderTravel()}
