@@ -17,6 +17,7 @@ import { createClient } from "@supabase/supabase-js";
 import * as SR from "../shared/stat-report.js";
 import { writeCoachTake, positionNames, AI_MODEL } from "./_lib/stat-report-ai.js";
 import { REPORT_SENDERS } from "./stat-report.js";
+import { isYouthTeam } from "../shared/reach-plan.js";
 
 export const config = { maxDuration: 300 };
 
@@ -54,6 +55,9 @@ export function factsFor({ player, tests, teammates, level, draft, reviews }) {
     level: LEVEL[level] || null,
     positions: positionNames(player.positions),
     has_retest: results.some(r => r.now != null),
+    // 11s/12s: Reach only after an evaluation; their email attaches the at-home
+    // Intro S&C program instead (shared/reach-plan.js).
+    youth_11_12: isYouthTeam(player.team_assignment),
     results,
     worked_on: draft?.worked_on || null,
   };

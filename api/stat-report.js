@@ -112,7 +112,8 @@ export default async function handler(req, res) {
   const mail = async ({ to, subject, rep, pid }) => {
     if (!DSSC_RESEND) throw new Error("DSSC_RESEND_API_KEY isn't set on the server, so the report can't go out from brandon@drippingsportsclub.com.");
     const r = await fetch("https://api.resend.com/emails", { method: "POST", headers: { Authorization: "Bearer " + DSSC_RESEND, "Content-Type": "application/json" },
-      body: JSON.stringify({ from: REPORT_FROM, to, reply_to: replyTo, subject, html: rep.html, text: rep.text }) });
+      // attachments: the Intro S&C PDF on 11s/12s reports (Resend fetches it by URL).
+      body: JSON.stringify({ from: REPORT_FROM, to, reply_to: replyTo, subject, html: rep.html, text: rep.text, ...(rep.attachments?.length ? { attachments: rep.attachments } : {}) }) });
     if (!r.ok) throw new Error("Email failed: " + r.status + " " + (await r.text()).slice(0, 200));
     await Promise.all([
       pid ? sb.from("stat_report_sends").insert({ player_id: pid, recipients: to, subject, body: rep.text, test: !!testTo, sent_by: senderName }) : Promise.resolve(),

@@ -9,7 +9,7 @@
 //   statFlags(player, tests, { peers }) -> likely data-entry errors, staff only (see the block above it)
 //   statPeerStats(players, testsByPlayer) / allStatFlags(...) / flaggedReportKeys(...) -> HQ helpers
 //
-import { REACH_COPY, reachPlanFor } from "./reach-plan.js";
+import { REACH_COPY, REACH_YOUTH_COPY, reachPlanFor, isYouthTeam } from "./reach-plan.js";
 
 // Baseline = the first result on file (tryouts, else the first test); latest =
 // the most recent test. "Better" respects direction (10-yard: lower is better).
@@ -46,6 +46,9 @@ export const DEFAULT_SETTINGS = {
   fine_print: REACH_COPY.fine_print,
   photos: REACH_COPY.photos,
   photos_caption: REACH_COPY.photos_caption,
+  // 11s and 12s get this instead of the pitch + memberships, with the PDF attached.
+  youth_pitch_heading: REACH_YOUTH_COPY.youth_pitch_heading,
+  youth_pitch: REACH_YOUTH_COPY.youth_pitch,
   take_heading: "My take on {player_first}",
   signoff: "Coach Brandon\nPerformance Coach, Reach at DSSC",
   // The metrics section — all editable in the template.
@@ -224,12 +227,19 @@ export function buildReport({ player, tests, settings, draft, parentFirst, teamm
   const subject = fill(S.subject, vars);
   const greet = parentFirst ? `Hi ${parentFirst},` : "Hi,";
   const para = (t) => fill(t, vars).split(/\n{2,}/).map(p => p.trim()).filter(Boolean);
-  const intro = para(S.intro), pitch = para(S.pitch);
+  // 11s and 12s: evaluation + director's discretion, no sign-up buttons, the
+  // Intro S&C PDF attached (shared/reach-plan.js REACH_YOUTH_COPY).
+  const youth = isYouthTeam(player?.team_assignment);
+  const base = String(origin).replace(/\/$/, "");
+  const pdf = youth ? { ...REACH_YOUTH_COPY.youth_pdf, url: base + REACH_YOUTH_COPY.youth_pdf.path } : null;
+  const pitchHeading = youth ? S.youth_pitch_heading : S.pitch_heading;
+  const intro = para(S.intro), pitch = para(youth ? S.youth_pitch : S.pitch);
   const worked = String(draft?.worked_on || "").trim(), note = String(draft?.note || "").trim();
   // Claude's "Coach's take" (api/stat-report-ai.js), as written or as a coach edited it.
   const take = String(draft?.ai_take || "").trim();
-  const members = Array.isArray(S.memberships) ? S.memberships.filter(m => m && m.link) : [];
-  const photos = (Array.isArray(S.photos) ? S.photos : []).filter(Boolean).map(p => /^https?:/.test(p) ? p : String(origin).replace(/\/$/, "") + p);
+  const members = !youth && Array.isArray(S.memberships) ? S.memberships.filter(m => m && m.link) : [];
+  const pitchLink = youth ? "" : S.pitch_link;
+  const photos = (Array.isArray(S.photos) ? S.photos : []).filter(Boolean).map(p => /^https?:/.test(p) ? p : base + p);
   const anyLatest = picked.some(r => r.latest != null);
 
   // ── HTML ──
@@ -257,7 +267,8 @@ export function buildReport({ player, tests, settings, draft, parentFirst, teamm
     + (S.show_team !== false ? teamHtml(player, tests, teammates, S, vars, drop) : "")
     + (worked ? H(fill(S.worked_heading, vars)) + P(worked) : "")
     + (note ? P(note) : "")
-    + (pitch.length ? H(fill(S.pitch_heading, vars)) + pitch.map(P).join("") : "")
+    + (pitch.length ? H(fill(pitchHeading, vars)) + pitch.map(P).join("") : "")
+    + (pdf ? `<p style="margin:0 0 18px"><a href="${esc(pdf.url)}" style="display:inline-block;background:#1a1a1a;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:700;font-size:14px">${esc(pdf.label)}</a><br><span style="font-size:12px;color:#666">Also attached to this email.</span></p>` : "")
     // Coach Brandon with athletes he has trained — two photos side by side
     // (a table, so they sit together in every email app), one caption.
     + (photos.length ? `<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;margin:6px 0 6px"><tr>${photos.map(u => `<td style="width:${Math.floor(100 / photos.length)}%;padding:0 4px;vertical-align:top"><img src="${esc(u)}" alt="Coach Brandon with athletes he has trained" width="290" style="width:100%;max-width:290px;height:auto;border-radius:8px;display:block"></td>`).join("")}</tr></table>`
@@ -270,7 +281,7 @@ export function buildReport({ player, tests, settings, draft, parentFirst, teamm
           + `<div style="font-size:13px;color:#555;margin:2px 0 10px">${esc(m.detail)}</div>`
           + `<a href="${esc(m.link)}" style="display:inline-block;background:${m.recommended ? "#e91e8c" : "#1a1a1a"};color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:700;font-size:14px">Sign ${esc(vars.player_first)} up for ${esc(m.name)}</a></div>`).join("")
         + (S.fine_print ? `<p style="margin:4px 0 14px;font-size:12px;color:#666">${esc(fill(S.fine_print, vars))}</p>` : "")
-      : (S.pitch_link ? `<p style="margin:6px 0 18px"><a href="${esc(S.pitch_link)}" style="display:inline-block;background:#e91e8c;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:700">${esc(fill(S.pitch_button, vars) || "Learn more")}</a></p>` : ""))
+      : (pitchLink ? `<p style="margin:6px 0 18px"><a href="${esc(pitchLink)}" style="display:inline-block;background:#e91e8c;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:700">${esc(fill(S.pitch_button, vars) || "Learn more")}</a></p>` : ""))
     + `<p style="margin:18px 0 0">${esc(fill(S.signoff, vars)).replace(/\n/g, "<br>")}</p></div>`;
 
   // ── Text ──
@@ -281,11 +292,12 @@ export function buildReport({ player, tests, settings, draft, parentFirst, teamm
     gainLine,
     S.show_team !== false ? teamMetricsOf(S, drop).map(key => { const t = teamStanding(player, tests, teammates, key); const lab = METRICS.find(m => m[0] === key)[1]; return t ? `  ${lab}: #${t.rank} of ${t.n} on the team (team average ${fmtMetric(key, t.avg)}, team best ${fmtMetric(key, t.best)})` : ""; }).filter(Boolean).join("\n") : "",
     worked ? fill(S.worked_heading, vars).toUpperCase() + "\n" + worked : "", note,
-    pitch.length ? fill(S.pitch_heading, vars).toUpperCase() + "\n" + pitch.join("\n\n") + (!members.length && S.pitch_link ? "\n" + S.pitch_link : "") : "",
+    pitch.length ? fill(pitchHeading, vars).toUpperCase() + "\n" + pitch.join("\n\n") + (!members.length && pitchLink ? "\n" + pitchLink : "") + (pdf ? "\n\n" + pdf.label + ": " + pdf.url : "") : "",
     photos.length && S.photos_caption ? fill(S.photos_caption, vars) : "",
     members.length ? [S.signup_note ? fill(S.signup_note, vars) : "", ...members.map(m => `${m.name} (${m.price}): ${m.detail}\n${m.link}`), S.fine_print ? fill(S.fine_print, vars) : ""].filter(Boolean).join("\n\n") : "",
     fill(S.signoff, vars)].filter(Boolean).join("\n\n");
-  return { subject, html, text, rows: all, picked };
+  // attachments: Resend's shape ({ filename, path: a public URL }).
+  return { subject, html, text, rows: all, picked, youth, attachments: pdf ? [{ filename: pdf.filename, path: pdf.url }] : [] };
 }
 
 // ── Red flags: numbers that look like data-entry errors (staff only) ─────────

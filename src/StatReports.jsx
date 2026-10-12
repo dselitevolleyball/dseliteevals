@@ -450,6 +450,10 @@ export default function StatReports({ coach, players = [], session }) {
               })}
               {T("fine_print", "Fine print", 2)}
             </Section>
+            <Section title="11s and 12s (instead of the pitch and memberships)">
+              {T("youth_pitch_heading", "Heading")}
+              {T("youth_pitch", "Message", 7, "Reach for 11s/12s is only after an evaluation and the director's discretion. These emails attach the Intro to Volleyball S&C PDF and have no sign-up buttons. Pick an 11s or 12s player in the preview to see it.")}
+            </Section>
             <Section title="Sign-off">{T("signoff", "Sign-off", 3)}</Section>
           </div>
           <div style={{ background: C.card, border: "1px solid " + C.border, borderRadius: 12, padding: 14, alignSelf: "start", position: "sticky", top: 12 }}>

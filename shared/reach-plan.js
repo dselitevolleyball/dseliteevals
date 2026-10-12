@@ -49,6 +49,21 @@ export function reachPlanFor(team, assignments, { phase = "season" } = {}) {
   return { kind, team, nights, lateDays: late.map(n => n.day), earlyDays: early.map(n => n.day), text };
 }
 
+// 11s and 12s (Drew, 12 Oct 2026): "only after evaluation and director's
+// discretion because we typically start at 13s", with the Intro to Volleyball
+// S&C program attached. Their email swaps the 2x-a-week pitch and the
+// membership buttons for this copy and the PDF (public/reach/intro-volleyball-sc.pdf).
+export const isYouthTeam = (team) => /^\s*1[12]\b/.test(String(team || ""));
+export const REACH_YOUTH_COPY = {
+  youth_pitch_heading: "Building {player_first}'s athletic base",
+  youth_pitch: [
+    "At 11 and 12, the biggest gains come from moving well, landing safely and building basic strength. Those habits protect her body and pay off for years.",
+    "Individual Reach training typically starts at 13s. For 11s and 12s, we add players only after an evaluation and at the director's discretion. If you'd like {player_first} considered, just reply to this email and we'll set one up.",
+    "In the meantime, I've attached Intro to Volleyball Strength & Conditioning, a program built for ages 11–12: 8 weeks, 3 days a week, about 40 minutes a session. It starts with bodyweight and bands, then moves to light weights and bigger jumps, and it has a simple test and log so you can see her progress. Please supervise every session.",
+  ].join("\n\n"),
+  youth_pdf: { filename: "Intro Volleyball S&C.pdf", path: "/reach/intro-volleyball-sc.pdf", label: "Open the Intro to Volleyball S&C program (PDF)" },
+};
+
 // The new pitch copy (Drew, 12 Oct 2026). {player_first}, {team} and
 // {reach_plan} are filled per player by the report builder.
 export const REACH_COPY = {
