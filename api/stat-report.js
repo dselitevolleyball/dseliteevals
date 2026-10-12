@@ -8,7 +8,7 @@
 //       email per family (see the team section at the bottom)
 // The email is rebuilt here from the saved template + the player's saved draft
 // with shared/stat-report.js (the same builder as the app's preview), sent from
-// DS Elite with replies going to the coach who sent it, and logged in
+// brandon@drippingsportsclub.com (replies to him) whoever sends it, and logged in
 // stat_report_sends + email_log. Replies { ok, to, test, held } — held = the
 // flagged metric keys her email would have shown and left out instead (not a
 // flagged metric that was never picked for her).
@@ -100,11 +100,22 @@ export default async function handler(req, res) {
     sb.from("practice_assignments").select("team_name, day, slot, phase"),
   ]);
   const settings = set?.data || {}, origin = appOrigin(req);
+  // From Brandon's own address, whoever presses send (Drew, Oct 12 2026: "send
+  // this email from brandon@drippingsportsclub.com"); replies go to him. If
+  // Resend won't send from that domain, it falls back to the DS Elite address
+  // (still reply-to Brandon) and the reply says so (from_fallback).
   const addr = (/<([^>]+)>/.exec(DSE_FROM_EMAIL) || [, DSE_FROM_EMAIL])[1].trim();
-  const from = `${senderName.replace(/[<>"]/g, "")} · DS Elite <${addr}>`;
+  const REPORT_FROM = process.env.REPORT_FROM_EMAIL || `Coach Brandon <${REPORT_SENDERS[0]}>`;
+  const replyTo = REPORT_SENDERS[0];
+  let fromFallback = false;
+  const send = (from, to, subject, rep) => fetch("https://api.resend.com/emails", { method: "POST", headers: { Authorization: "Bearer " + RESEND, "Content-Type": "application/json" },
+    body: JSON.stringify({ from, to, reply_to: replyTo, subject, html: rep.html, text: rep.text }) });
   const mail = async ({ to, subject, rep, pid }) => {
-    const r = await fetch("https://api.resend.com/emails", { method: "POST", headers: { Authorization: "Bearer " + RESEND, "Content-Type": "application/json" },
-      body: JSON.stringify({ from, to, reply_to: email, subject, html: rep.html, text: rep.text }) });
+    let r = fromFallback ? null : await send(REPORT_FROM, to, subject, rep);
+    if (!r || (!r.ok && (r.status === 403 || r.status === 422) && /domain|verif/i.test(await r.clone().text()))) {
+      fromFallback = true;
+      r = await send(`Coach Brandon · DS Elite <${addr}>`, to, subject, rep);
+    }
     if (!r.ok) throw new Error("Email failed: " + r.status + " " + (await r.text()).slice(0, 200));
     await Promise.all([
       pid ? sb.from("stat_report_sends").insert({ player_id: pid, recipients: to, subject, body: rep.text, test: !!testTo, sent_by: senderName }) : Promise.resolve(),
@@ -115,7 +126,7 @@ export default async function handler(req, res) {
   if (sample) {
     const rep = buildReport({ player: SAMPLE_PLAYER, tests: SAMPLE_TESTS, settings, draft: SAMPLE_DRAFT, parentFirst: "Jordan", teammates: SAMPLE_TEAM, practice: practice || [], origin });
     try { await mail({ to: [testTo], subject: "[TEST] " + rep.subject, rep, pid: null }); } catch (e) { return res.status(502).json({ error: e.message }); }
-    return res.status(200).json({ ok: true, to: [testTo], test: true, held: [] });
+    return res.status(200).json({ ok: true, to: [testTo], test: true, held: [], from_fallback: fromFallback });
   }
 
   let club, allTests;
@@ -177,7 +188,7 @@ export default async function handler(req, res) {
     const j = prepare(roster[0]);
     if (j.why) return res.status(400).json({ error: j.why });
     try { await mail({ to: j.to, subject: (testTo ? "[TEST] " : "") + j.rep.subject, rep: j.rep, pid: j.player.id }); } catch (e) { return res.status(502).json({ error: e.message }); }
-    return res.status(200).json({ ok: true, to: j.to, test: !!testTo, held: j.held });
+    return res.status(200).json({ ok: true, to: j.to, test: !!testTo, held: j.held, from_fallback: fromFallback });
   }
 
   // Whole team (Drew, Oct 12 2026: "send to the whole team in 1 fell swoop").
@@ -200,5 +211,5 @@ export default async function handler(req, res) {
     } catch (e) { skipped.push({ player_id: p.id, name, why: e.message }); }
     await new Promise(r => setTimeout(r, 600));   // Resend allows 2 a second
   }
-  return res.status(200).json({ ok: true, team: teamName, test: !!testTo, dry, sent: done, skipped });
+  return res.status(200).json({ ok: true, team: teamName, test: !!testTo, dry, sent: done, skipped, from_fallback: fromFallback });
 }
