@@ -18,7 +18,7 @@ export async function loadCourtBookings(sb, start, end) {
     const s = hourOf(ev.start); let e = hourOf(ev.end);
     if (s == null || e == null) continue;
     if (endDate > date) e = 24;        // runs past midnight: this screen stops at the end of the day
-    bookings.push({ id: ev.ext.id ?? null, kind: ev.ext.event_type === "CalendarHold" ? "hold" : "dssc", label: eventLabel(ev), category: eventCategory(ev), date, start: s, end: e, courts });
+    bookings.push({ id: ev.ext.id ?? null, kind: ev.ext.event_type === "CalendarHold" ? "hold" : "dssc", label: eventLabel(ev), category: eventCategory(ev), program: ev.ext.event_program ? String(ev.ext.event_program) : null, date, start: s, end: e, courts });
   }
   bookings.sort((a, b) => a.date.localeCompare(b.date) || a.start - b.start);
 

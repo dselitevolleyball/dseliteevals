@@ -12,6 +12,7 @@ import { COURTS, buildCourtDay, fmtHour, sundayBlock } from "../shared/courts.js
 const C = { bg: "#0a0a0a", card: "#141414", border: "#2a2a2a", gold: "#e91e8c", text: "#ffffff", mut: "#999999", grn: "#22c55e" };
 const KIND = {
   dssc: { bg: "rgba(178,208,73,0.20)", bd: "#B2D049", fg: "#d9ef8a", name: "DSSC program" },
+  empty: { bg: "rgba(56,189,248,0.10)", bd: "#38bdf8", fg: "#7dd3fc", name: "DSSC class, 0 signed up", dash: true },
   hold: { bg: "rgba(249,115,22,0.20)", bd: "#f97316", fg: "#fdba74", name: "Hold / rental" },
   dse: { bg: "rgba(233,30,140,0.20)", bd: "#e91e8c", fg: "#f9a8d4", name: "DS Elite" },
   tourn: { bg: "rgba(245,158,11,0.22)", bd: "#f59e0b", fg: "#fcd34d", name: "In-House Tournament" },
@@ -63,7 +64,7 @@ export default function CourtAvailability({ loaders = liveLoaders }) {
     if (cache[wk] && !reload) return;
     let live = true; const mine = wk; setBusy(mine);
     Promise.all([loaders.bookings(wk, 7), loaders.dse(dates)])
-      .then(([b, dse]) => { if (live) setCache(c => ({ ...c, [wk]: { bookings: b.bookings || [], reservations: b.reservations || [], offCourt: b.offCourt || 0, dse, at: new Date() } })); })
+      .then(([b, dse]) => { if (live) setCache(c => ({ ...c, [wk]: { bookings: b.bookings || [], reservations: b.reservations || [], offCourt: b.offCourt || 0, rosterAt: b.rosterAt || null, dse, at: new Date() } })); })
       .catch(e => { if (live) setCache(c => ({ ...c, [wk]: { error: e.message } })); })
       .finally(() => { setBusy(b => (b === mine ? null : b)); if (live) setReload(0); });
     return () => { live = false; };
@@ -71,14 +72,33 @@ export default function CourtAvailability({ loaders = liveLoaders }) {
 
   const data = cache[wk];
   const loading = busy === wk;
-  const gridFor = (d) => {
+  // Clinics & Camps classes carry their sign-ups (the board's numbers). A class
+  // with nobody signed up gets its own color, and dropEmpty builds the day
+  // without them - the extra court time we'd have if those classes didn't run.
+  const isEmpty = (b) => b.kind === "dssc" && b.signups === 0;
+  const gridFor = (d, dropEmpty) => {
     if (!data || data.error) return null;
     const dse = data.dse[d] || { teams: [], scrims: [], tourn: [] };
-    const bookings = data.bookings.filter(b => b.date === d && (pub || showHolds || b.kind !== "hold"))
-      .map(b => ({ courts: b.courts, start: b.start, end: b.end, kind: b.kind, label: b.label, detail: b.category }))
+    const bookings = data.bookings.filter(b => b.date === d && (pub || showHolds || b.kind !== "hold") && !(dropEmpty && isEmpty(b)))
+      .map(b => ({ courts: b.courts, start: b.start, end: b.end, kind: isEmpty(b) ? "empty" : b.kind, label: b.label, detail: (b.signups != null ? b.signups + " signed up" + (b.category ? " · " : "") : "") + (b.category || "") }))
       .concat(dse.tourn || []);
     return { ...buildCourtDay({ bookings, teams: dse.teams, scrims: dse.scrims, reserved: sundayBlock(d, data.reservations || []), startHour: START_H, endHour: END_H }), cancelled: dse.cancelled, phase: dse.phase };
   };
+
+  // Court time that only opens up if the empty classes are dropped, per court.
+  const extraFree = (d, g) => {
+    if (pub || !g || !data.bookings.some(b => b.date === d && isEmpty(b))) return {};
+    const alt = gridFor(d, true);
+    return Object.fromEntries(COURTS.map(c => { const w = []; let s0 = null;
+      g.slots.forEach((h, i) => { const x = g.cells[c.id][i] && !alt.cells[c.id][i]; if (x && s0 == null) s0 = h; else if (!x && s0 != null) { w.push([s0, h]); s0 = null; } });
+      if (s0 != null) w.push([s0, END_H]); return [c.id, w]; }));
+  };
+  const emptyOn = (ds) => (data && !data.error ? data.bookings.filter(b => ds.includes(b.date) && isEmpty(b)) : []);
+  const emptyList = (ds, title) => { const e = emptyOn(ds); if (pub || !e.length) return null; return (
+    <div style={{ fontSize: 12, color: KIND.empty.fg, margin: "0 0 10px", padding: "8px 10px", border: "1px dashed " + KIND.empty.bd, borderRadius: 10, lineHeight: 1.6 }}>
+      <b>{title} ({e.length}):</b>{" "}
+      {e.map((b, i) => <span key={i}>{i ? " · " : ""}{ds.length > 1 ? fmtDay(b.date) + " " : ""}{short(b.start)}–{short(b.end)} {b.label} <span style={{ color: C.mut }}>({courtNames(b.courts)})</span></span>)}
+    </div>); };
 
   // Reservations Playbook has with no time (rentals): listed on their day, not drawn.
   const untimed = (d) => {
@@ -96,7 +116,7 @@ export default function CourtAvailability({ loaders = liveLoaders }) {
     </div>
   ) : (
     <div style={{ display: "flex", flexWrap: "wrap", gap: 10, fontSize: 11, color: C.mut, margin: "0 0 10px" }}>
-      {Object.entries(KIND).map(([k, v]) => <span key={k} style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><span style={{ width: 12, height: 12, borderRadius: 3, background: v.bg, border: "1px solid " + v.bd }} />{v.name}</span>)}
+      {Object.entries(KIND).map(([k, v]) => <span key={k} style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><span style={{ width: 12, height: 12, borderRadius: 3, background: v.bg, border: (v.dash ? "1px dashed " : "1px solid ") + v.bd }} />{v.name}</span>)}
       <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><span style={{ width: 12, height: 12, borderRadius: 3, border: "1px dashed " + KIND.dse.bd }} />DS Elite, court not set</span>
       <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><span style={{ width: 12, height: 12, borderRadius: 3, background: "rgba(34,197,94,0.10)", border: "1px solid rgba(34,197,94,0.5)" }} />Free</span>
     </div>
@@ -104,6 +124,7 @@ export default function CourtAvailability({ loaders = liveLoaders }) {
 
   const dayView = () => {
     const g = gridFor(date); if (!g) return null;
+    const xf = extraFree(date, g);
     const th = { padding: "6px 6px", fontSize: 11, fontWeight: 800, color: C.mut, textAlign: "center", borderBottom: "1px solid " + C.border, background: C.bg, position: "sticky", top: 0, zIndex: 1 };
     return (
       <div>
@@ -112,8 +133,10 @@ export default function CourtAvailability({ loaders = liveLoaders }) {
             <div key={c.id} style={{ background: C.card, border: "1px solid " + C.border, borderRadius: 10, padding: "8px 10px" }}>
               <div style={{ fontSize: 12, fontWeight: 800 }}>{c.label} <span style={{ color: C.mut, fontWeight: 600 }}>· {c.building}</span></div>
               <div style={{ fontSize: 12, color: w.length ? C.grn : C.mut, marginTop: 2, lineHeight: 1.5 }}>{w.length ? (pub ? "Open " : "Free ") + w.join(", ") : "No open time"}</div>
+              {windows(xf[c.id] || []).length > 0 && <div style={{ fontSize: 11, color: KIND.empty.fg, marginTop: 2, lineHeight: 1.5 }} title="Booked by a class with nobody signed up">+ {windows(xf[c.id]).join(", ")} if empty classes drop</div>}
             </div>); })}
         </div>
+        {emptyList([date], "No sign-ups today")}
         {untimed(date).length > 0 && (
           <div style={{ fontSize: 12, color: "#fdba74", marginBottom: 8, lineHeight: 1.6 }}>
             {pub ? "Also reserved today (time not shown): " : "Also reserved today - Playbook reservation, time not on the calendar: "}
@@ -145,9 +168,9 @@ export default function CourtAvailability({ loaders = liveLoaders }) {
                         <div style={cell && pub
                           ? { height: "100%", minHeight: n * 22 - 4, borderRadius: 6, background: "#1c1c1c", border: "1px solid #3a3a3a", color: "#8a8a8a", padding: "3px 5px", fontSize: 11, fontWeight: 700 }
                           : cell
-                          ? { height: "100%", minHeight: n * 22 - 4, borderRadius: 6, background: k.bg, border: (cell.auto ? "1px dashed " : "1px solid ") + (conflict ? "#ef4444" : k.bd), color: k.fg, padding: "3px 5px", fontSize: 11, fontWeight: 700, lineHeight: 1.25, overflow: "hidden" }
+                          ? { height: "100%", minHeight: n * 22 - 4, borderRadius: 6, background: k.bg, border: (cell.auto || k.dash ? "1px dashed " : "1px solid ") + (conflict ? "#ef4444" : k.bd), color: k.fg, padding: "3px 5px", fontSize: 11, fontWeight: 700, lineHeight: 1.25, overflow: "hidden" }
                           : { height: "100%", minHeight: n * 22 - 4, borderRadius: 6, background: "rgba(34,197,94,0.07)", border: "1px solid rgba(34,197,94,0.25)", color: "#4ade80", padding: "3px 5px", fontSize: 10, fontWeight: 700 }}>
-                          {cell && pub ? "Booked" : cell ? <>{conflict ? "⚠ " : ""}{cell.label}{n >= 2 && cell.detail ? <div style={{ fontWeight: 500, opacity: 0.8 }}>{cell.detail}</div> : null}</> : (n >= 2 ? (pub ? "Open " : "Free ") + short(h) + "–" + short(g.slots[si + n - 1] + 0.5) : "")}
+                          {cell && pub ? "Booked" : cell ? <>{conflict ? "⚠ " : ""}{cell.kind === "empty" && n < 2 ? "0 · " : ""}{cell.label}{n >= 2 && cell.detail ? <div style={{ fontWeight: 500, opacity: 0.8 }}>{cell.detail}</div> : null}</> : (n >= 2 ? (pub ? "Open " : "Free ") + short(h) + "–" + short(g.slots[si + n - 1] + 0.5) : "")}
                         </div>
                       </td>);
                   })}
@@ -164,7 +187,9 @@ export default function CourtAvailability({ loaders = liveLoaders }) {
     if (!data || data.error) return null;
     const th = { padding: "7px 8px", fontSize: 11, fontWeight: 800, color: C.mut, textAlign: "left", borderBottom: "1px solid " + C.border, background: C.bg, whiteSpace: "nowrap" };
     const grids = Object.fromEntries(dates.map(d => [d, gridFor(d)]));
-    return (
+    const extra = Object.fromEntries(dates.map(d => [d, extraFree(d, grids[d])]));
+    return (<>
+      {emptyList(dates, "Classes with no sign-ups this week")}
       <div style={{ overflowX: "auto", border: "1px solid " + C.border, borderRadius: 10 }}>
         <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 820 }}>
           <thead><tr><th style={th}>Court</th>{dates.map(d => <th key={d} style={{ ...th, cursor: "pointer", color: d === date ? C.gold : C.mut }} onClick={() => { setDate(d); setMode("day"); }}>{fmtDay(d)}</th>)}</tr></thead>
@@ -175,6 +200,7 @@ export default function CourtAvailability({ loaders = liveLoaders }) {
                 {dates.map(d => { const w = windows(grids[d].free[c.id]); return (
                   <td key={d} onClick={() => { setDate(d); setMode("day"); }} style={{ padding: "8px", fontSize: 11, borderTop: "1px solid " + C.border, borderLeft: "1px solid #1a1a1a", verticalAlign: "top", cursor: "pointer", color: w.length ? C.grn : C.mut, lineHeight: 1.6 }}>
                     {w.length ? w.map(x => <div key={x}>{x}</div>) : "Booked"}
+                    {windows(extra[d][c.id] || []).map(x => <div key={"e" + x} style={{ color: KIND.empty.fg, fontSize: 10 }} title="Opens up if the class with nobody signed up doesn't run">+ {x} (empty class)</div>)}
                     {untimed(d).some(r => r.courts.includes(c.id)) && <div style={{ color: "#fdba74", fontSize: 10 }} title="A Playbook reservation with no time on the calendar">+ reserved (time?)</div>}
                   </td>); })}
               </tr>
@@ -182,7 +208,7 @@ export default function CourtAvailability({ loaders = liveLoaders }) {
           </tbody>
         </table>
       </div>
-    );
+    </>);
   };
 
   return (
@@ -219,7 +245,7 @@ export default function CourtAvailability({ loaders = liveLoaders }) {
       {data && !data.error && pub && <div style={{ fontSize: 11, color: C.mut, marginTop: 10 }}>Client view: open court time only. Booked time doesn't say who has the court.</div>}
       {data && !data.error && !pub && (
         <div style={{ fontSize: 11, color: C.mut, marginTop: 10, lineHeight: 1.6 }}>
-          From Playbook's public calendar{data.at ? " (pulled " + data.at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) + ")" : ""} plus DS Elite's practice schedule. Court rentals booked as Playbook reservations (outside renters) aren't on the public calendar, so they don't show. DS Elite's Sunday block (the whole Warehouse, 1–9pm) is always shown as taken. Reach Performance isn't on a court{data.offCourt ? ` (${data.offCourt} sessions this week left off)` : ""}. DS Elite practices without a court number are placed on a free court (dashed). Showing {fmtHour(START_H)}–{fmtHour(END_H)}.
+          From Playbook's public calendar{data.at ? " (pulled " + data.at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) + ")" : ""} plus DS Elite's practice schedule. Court rentals booked as Playbook reservations (outside renters) aren't on the public calendar, so they don't show. DS Elite's Sunday block (the whole Warehouse, 1–9pm) is always shown as taken. Sign-up counts are the Clinics & Camps board's (Playbook registrations{data.rosterAt ? ", pulled " + new Date(data.rosterAt).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" }) : ""}); basketball and other programs not on the board have no count. Reach Performance isn't on a court{data.offCourt ? ` (${data.offCourt} sessions this week left off)` : ""}. DS Elite practices without a court number are placed on a free court (dashed). Showing {fmtHour(START_H)}–{fmtHour(END_H)}.
         </div>
       )}
     </div>
