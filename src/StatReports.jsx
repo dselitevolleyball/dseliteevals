@@ -149,8 +149,8 @@ export default function StatReports({ coach, players = [], session }) {
     const saved = drafts.get(p.id)?.metrics || [];
     const acked = held.filter(k => saved.includes(ackOf(flags, k)));
     const omit = held.filter(k => !acked.includes(k));
-    const sk = saved.filter(k => LABEL[k]), dm = Array.isArray(settings?.default_metrics) && settings.default_metrics.length ? settings.default_metrics : null;
-    const pick = sk.length ? sk : dm || metricRows(p, mine).map(r => r.key);
+    const dm = Array.isArray(settings?.default_metrics) && settings.default_metrics.length ? settings.default_metrics : null;
+    const pick = dm || metricRows(p, mine).map(r => r.key);   // team-wide list, same for every player
     return { flags, held, acked, omit, cut: omit.filter(k => pick.includes(k)) };
   };
   // Sent with every send so the server holds back the same metrics even if its
@@ -341,16 +341,21 @@ export default function StatReports({ coach, players = [], session }) {
   const hold = holdOf(player);
   const rep = player ? buildReport({ player, tests: testsBy.get(player.id) || [], settings, draft, parentFirst: parentFirstOf(player), teammates: matesOf(player), omit: hold.omit, practice, origin: window.location.origin }) : null;
   const defaults = Array.isArray(settings.default_metrics) && settings.default_metrics.length ? settings.default_metrics : null;
-  const savedKeys = (Array.isArray(draft.metrics) ? draft.metrics : []).filter(k => LABEL[k]);
-  // base = what she'd get with no flags; a held metric stays in base (so it
-  // comes back by itself once the number is fixed) but is shown unticked.
-  const base = new Set(savedKeys.length ? savedKeys : (defaults || rows.map(r => r.key)));
+  // base = the team-wide list (Drew, Oct 12 2026: every player gets the same
+  // metrics); a held metric stays in base (so it comes back by itself once the
+  // number is fixed) but is shown unticked.
+  const base = new Set(defaults || METRICS.map(m => m[0]));
   const picked = new Set([...base].filter(k => !hold.omit.includes(k)));
+  const setAcks = (ok) => saveDraft(player.id, { metrics: [...ok].map(x => ackOf(hold.flags, x)) });
   const toggleMetric = (k) => {
-    const want = new Set(base), ok = new Set(hold.acked);
-    if (picked.has(k)) { want.delete(k); ok.delete(k); }
-    else { want.add(k); if (hold.held.includes(k)) ok.add(k); }   // ticking a flagged one = "include anyway"
-    saveDraft(player.id, { metrics: [...rows.map(r => r.key).filter(x => want.has(x)), ...[...ok].map(x => ackOf(hold.flags, x))] });
+    // A flagged number on her report: include anyway / leave out, just for her.
+    if (base.has(k) && hold.held.includes(k)) { const ok = new Set(hold.acked); ok.has(k) ? ok.delete(k) : ok.add(k); setAcks(ok); return; }
+    // Anything else changes the list for every player.
+    const on = base.has(k);
+    if (!window.confirm(`${on ? "Remove" : "Add"} ${LABEL[k]} ${on ? "from" : "to"} every player's report?`)) return;
+    const cur = new Set(base); on ? cur.delete(k) : cur.add(k);
+    const arr = METRICS.map(m => m[0]).filter(x => cur.has(x));
+    if (arr.length) saveSettings({ default_metrics: arr.length === METRICS.length ? [] : arr });
   };
   const tested = (p) => (testsBy.get(p.id) || []).length;
   const redN = openAll.filter(f => f.level === "red").length, amberN = openAll.length - redN;
@@ -406,7 +411,7 @@ export default function StatReports({ coach, players = [], session }) {
             <Section title="Metrics section">
               {T("numbers_heading", "Heading above the numbers")}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6 }}>{[["col_test", "Column 1"], ["col_baseline", "Baseline column"], ["col_now", "Now column"], ["col_change", "Change column"]].map(([k, l]) => T(k, l))}</div>
-              <span style={lbl}>Metrics included by default (each player can still change hers)</span>
+              <span style={lbl}>Metrics in every report (the same for every player)</span>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
                 {METRICS.map(([k, l]) => { const on = !defaults || defaults.includes(k); return (
                   <button key={k} onClick={() => { const cur = new Set(defaults || METRICS.map(m => m[0])); cur.has(k) ? cur.delete(k) : cur.add(k); const arr = METRICS.map(m => m[0]).filter(x => cur.has(x)); saveSettings({ default_metrics: arr.length === METRICS.length ? [] : arr }); }}
@@ -607,7 +612,7 @@ export default function StatReports({ coach, players = [], session }) {
                 );
               })()}
 
-              <span style={lbl}>Metrics in her report (tap to include / leave out)</span>
+              <span style={lbl}>Metrics in every report (tap to change it for all players; a flagged number can be included just for her)</span>
               {!rows.length && <div style={{ color: C.mut, fontSize: 13 }}>No testing numbers on file yet — add her results above.</div>}
               {rows.map(r => {
                 const on = picked.has(r.key), held = hold.held.includes(r.key), dim = on ? 1 : 0.45;
@@ -626,7 +631,7 @@ export default function StatReports({ coach, players = [], session }) {
                       <div style={{ gridColumn: "2 / -1", fontSize: 11, lineHeight: 1.4 }}>
                         {own.map((f, i) => <div key={i} style={{ color: flagC(f.level) }}>⚑ {f.from}: {f.reason}</div>)}
                         {ride.length > 0 && <div style={{ color: flagC(ride) }}>⚑ Rides on the flagged {[...new Set(ride.map(f => `${LABEL[f.key]} (${f.from})`))].join(", ")}.</div>}
-                        <div style={{ color: C.mut }}>{on ? "Included anyway — tap to leave it out." : base.has(r.key) ? "Left out of her email — tap to include anyway." : "Not picked for her email — tapping adds this flagged number to it."}</div>
+                        <div style={{ color: C.mut }}>{on ? "Included anyway — tap to leave it out." : base.has(r.key) ? "Left out of her email — tap to include anyway." : "Not in the reports — tapping adds it for every player."}</div>
                       </div>
                     )}
                   </div>); })}

@@ -220,7 +220,10 @@ export function buildReport({ player, tests, settings, draft, parentFirst, teamm
   const plan = reachPlanFor(player?.team_assignment || "", practice || []);
   const vars = { player_first: String(player?.first_name || "").trim(), team: team || "DS Elite", parent_first: parentFirst || "", reach_plan: team ? plan.text.split(player.team_assignment).join(team) : plan.text };   // "11 Rise 1" reads as "11 Rise"
   const all = metricRows(player, tests);
-  const want = Array.isArray(draft?.metrics) && draft.metrics.length ? draft.metrics : (Array.isArray(S.default_metrics) && S.default_metrics.length ? S.default_metrics : null);
+  // One metric list for every player (Drew, Oct 12 2026: "the metrics in her
+  // report need to be team wide"): the template's default_metrics. A draft's
+  // metrics column now only carries flag ticks ("ok:<key>:<print>").
+  const want = Array.isArray(S.default_metrics) && S.default_metrics.length ? S.default_metrics : null;
   const drop = new Set(Array.isArray(omit) ? omit : []);
   const picked = (want ? all.filter(r => want.includes(r.key)) : all).filter(r => !drop.has(r.key));
   const gains = picked.filter(r => r.better === true);
