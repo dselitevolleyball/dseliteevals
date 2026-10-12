@@ -31,7 +31,8 @@ export const METRICS = [
 
 export const DEFAULT_SETTINGS = {
   subject: "{player_first}'s performance testing results",
-  intro: "I'm Coach Brandon, and I run performance training at Dripping Springs Sports Club. I tested {player_first} with her {team} teammates, and I wanted to share where she is right now and where she's already improved.",
+  // Drew, Oct 12 2026: open with the past 5 weeks of working with her team.
+  intro: "I'm Coach Brandon, and I run performance training at Dripping Springs Sports Club. Over the past 5 weeks I've been working personally with {team}, and with {player_first} whenever she was able to make it, and it's been great working with her! I wanted to share where she is right now and where she's already improved.",
   // The Reach pitch (Drew, 12 Oct 2026): 2x a week, start now through
   // Thanksgiving, the slot that fits her team's practice nights ({reach_plan},
   // from shared/reach-plan.js), individual plans, both memberships, and the
