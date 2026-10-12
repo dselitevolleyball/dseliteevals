@@ -12,7 +12,7 @@
 // Auth: signed-in owner, approved admin, or DSSC director (Bearer access token).
 import { createClient } from "@supabase/supabase-js";
 import { fetchPlaybookEvents, addDays, centralToday } from "./_lib/playbook-calendar.js";
-import { courtsForEvent, eventLabel, eventCategory, hourOf } from "../shared/courts.js";
+import { courtsForEvent, courtsForName, eventLabel, eventCategory, hourOf } from "../shared/courts.js";
 
 const OWNERS = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"];
 const DIRECTORS = ["hunterhaleysc10@gmail.com", "hunter@drippingsportsclub.com"];
@@ -51,6 +51,24 @@ export default async function handler(req, res) {
     bookings.push({ id: ev.ext.id ?? null, kind: ev.ext.event_type === "CalendarHold" ? "hold" : "dssc", label: eventLabel(ev), category: eventCategory(ev), date, start: s, end: e, courts });
   }
   bookings.sort((a, b) => a.date.localeCompare(b.date) || a.start - b.start);
+
+  // Court reservations (rentals, DS Elite's Sunday courts) aren't on the public
+  // calendar. The hourly registrations sync stores them with a court and a date
+  // but no time; the booker's email domain says who has it.
+  const reservations = [];
+  const { data: rs } = await sb.from("dssc_participation").select("program, event_date, contact_id").eq("category", "facility").gte("event_date", start).lt("event_date", end);
+  const ids = [...new Set((rs || []).map(r => r.contact_id).filter(Boolean))];
+  const { data: cs } = ids.length ? await sb.from("dssc_contacts").select("id, email").in("id", ids) : { data: [] };
+  const domainOf = new Map((cs || []).map(c => [c.id, String(c.email || "").toLowerCase().split("@")[1] || ""]));
+  const PRIVATE = /^(gmail|yahoo|icloud|hotmail|outlook|aol|me|live|msn)\./;
+  const KNOWN = { "acesintexas.com": "Aces", "aesaprepacademy.com": "AESA Prep Academy", "veritasacademy.net": "Veritas Academy", "4thquarterathlete.com": "4th Quarter Athlete" };
+  const nice = (d) => KNOWN[d] || d.replace(/\.(com|net|org|edu|us)$/, "").replace(/[-_.]/g, " ").replace(/\b\w/g, x => x.toUpperCase());
+  for (const r of rs || []) {
+    const courts = courtsForName(r.program); if (!courts.length) continue;
+    const d = domainOf.get(r.contact_id) || "";
+    const internal = /^(drippingsportsclub\.com|dselitevolleyball\.com)$/.test(d);
+    reservations.push({ date: r.event_date, courts, name: r.program, internal, who: internal ? "DSSC / DS Elite" : PRIVATE.test(d) || !d ? "Private rental" : nice(d) });
+  }
   res.setHeader("Cache-Control", "no-store");
-  return res.status(200).json({ ok: true, start, end, bookings, offCourt });
+  return res.status(200).json({ ok: true, start, end, bookings, offCourt, reservations });
 }

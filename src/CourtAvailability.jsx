@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "./supabase";
 import { daySchedule, span } from "../shared/day-schedule.js";
-import { COURTS, buildCourtDay, fmtHour, reservedFor } from "../shared/courts.js";
+import { COURTS, buildCourtDay, fmtHour, sundayBlock } from "../shared/courts.js";
 
 const C = { bg: "#0a0a0a", card: "#141414", border: "#2a2a2a", gold: "#e91e8c", text: "#ffffff", mut: "#999999", grn: "#22c55e" };
 const KIND = {
@@ -77,7 +77,7 @@ export default function CourtAvailability({ loaders = liveLoaders }) {
     if (cache[wk] && !reload) return;
     let live = true; const mine = wk; setBusy(mine);
     Promise.all([loaders.bookings(wk, 7), loaders.dse(dates)])
-      .then(([b, dse]) => { if (live) setCache(c => ({ ...c, [wk]: { bookings: b.bookings || [], offCourt: b.offCourt || 0, dse, at: new Date() } })); })
+      .then(([b, dse]) => { if (live) setCache(c => ({ ...c, [wk]: { bookings: b.bookings || [], reservations: b.reservations || [], offCourt: b.offCourt || 0, dse, at: new Date() } })); })
       .catch(e => { if (live) setCache(c => ({ ...c, [wk]: { error: e.message } })); })
       .finally(() => { setBusy(b => (b === mine ? null : b)); if (live) setReload(0); });
     return () => { live = false; };
@@ -91,9 +91,16 @@ export default function CourtAvailability({ loaders = liveLoaders }) {
     const bookings = data.bookings.filter(b => b.date === d && (pub || showHolds || b.kind !== "hold"))
       .map(b => ({ courts: b.courts, start: b.start, end: b.end, kind: b.kind, label: b.label, detail: b.category }))
       .concat(dse.tourn || []);
-    return { ...buildCourtDay({ bookings, teams: dse.teams, scrims: dse.scrims, reserved: reservedFor(d), startHour: START_H, endHour: END_H }), cancelled: dse.cancelled, phase: dse.phase };
+    return { ...buildCourtDay({ bookings, teams: dse.teams, scrims: dse.scrims, reserved: sundayBlock(d, data.reservations || []), startHour: START_H, endHour: END_H }), cancelled: dse.cancelled, phase: dse.phase };
   };
 
+  // Reservations Playbook has with no time (rentals): listed on their day, not drawn.
+  const untimed = (d) => {
+    if (!data || data.error) return [];
+    const sun = new Date(d + "T12:00:00").getDay() === 0;
+    return (data.reservations || []).filter(r => r.date === d && !(sun && r.internal));
+  };
+  const courtNames = (cs) => cs.map(c => c.replace("V", "Court ")).join(" + ");
   const btn = (on) => ({ padding: "7px 14px", border: "none", background: on ? C.gold : "transparent", color: on ? "#000" : C.mut, fontFamily: "inherit", fontSize: 13, fontWeight: 800, cursor: "pointer" });
   const nav = (n) => setDate(addDays(date, mode === "week" ? 7 * n : n));
   const legend = pub ? (
@@ -121,6 +128,12 @@ export default function CourtAvailability({ loaders = liveLoaders }) {
               <div style={{ fontSize: 12, color: w.length ? C.grn : C.mut, marginTop: 2, lineHeight: 1.5 }}>{w.length ? (pub ? "Open " : "Free ") + w.join(", ") : "No open time"}</div>
             </div>); })}
         </div>
+        {untimed(date).length > 0 && (
+          <div style={{ fontSize: 12, color: "#fdba74", marginBottom: 8, lineHeight: 1.6 }}>
+            {pub ? "Also reserved today (time not shown): " : "Also reserved today - Playbook reservation, time not on the calendar: "}
+            {untimed(date).map((r, i) => <span key={i}>{i ? " · " : ""}<b>{courtNames(r.courts)}</b>{pub ? "" : " (" + r.who + ")"}</span>)}
+          </div>
+        )}
         {!pub && g.cancelled && <div style={{ fontSize: 12, color: "#f59e0b", marginBottom: 8 }}>DS Elite practices are off this day: {g.cancelled}</div>}
         {!pub && g.issues.length > 0 && <div style={{ fontSize: 12, color: "#ef4444", marginBottom: 8 }}>⚠ {g.issues.join(" · ")}</div>}
         <div style={{ overflowX: "auto", border: "1px solid " + C.border, borderRadius: 10 }}>
@@ -176,6 +189,7 @@ export default function CourtAvailability({ loaders = liveLoaders }) {
                 {dates.map(d => { const w = windows(grids[d].free[c.id]); return (
                   <td key={d} onClick={() => { setDate(d); setMode("day"); }} style={{ padding: "8px", fontSize: 11, borderTop: "1px solid " + C.border, borderLeft: "1px solid #1a1a1a", verticalAlign: "top", cursor: "pointer", color: w.length ? C.grn : C.mut, lineHeight: 1.6 }}>
                     {w.length ? w.map(x => <div key={x}>{x}</div>) : "Booked"}
+                    {untimed(d).some(r => r.courts.includes(c.id)) && <div style={{ color: "#fdba74", fontSize: 10 }} title="A Playbook reservation with no time on the calendar">+ reserved (time?)</div>}
                   </td>); })}
               </tr>
             ))}

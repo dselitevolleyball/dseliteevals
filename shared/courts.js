@@ -58,6 +58,28 @@ export const DSE_RESERVED = [
 ];
 export const reservedFor = (ymd) => { const dow = new Date(ymd + "T12:00:00").getDay(); return DSE_RESERVED.filter(r => r.dow === dow); };
 
+// Court reservations Playbook has on the books (synced hourly from the
+// registrations report into dssc_participation): a court and a date, no time.
+// "Volleyball court 5 Rentals - Dssc flex" -> V5, "DSSC Flex" -> V5+V6, ...
+export function courtsForName(name) {
+  const s = String(name || "");
+  let m = /volleyball court\s*(\d)/i.exec(s); if (m && +m[1] >= 1 && +m[1] <= 6) return ["V" + m[1]];
+  m = /basketball court\s*(\d)/i.exec(s); if (m) return { 1: ["V1", "V2"], 2: ["V3", "V4"], 3: FLEX }[m[1]] || [];
+  if (/dssc flex|^flex$/i.test(s.trim())) return FLEX;
+  if (/warehouse/i.test(s)) return WAREHOUSE;
+  return [];
+}
+// DS Elite's Sunday block, going by the calendar (Drew, Oct 12): the courts
+// the club has reserved in Playbook that Sunday, 1-9pm. A Sunday with nothing
+// reserved yet falls back to the standing Warehouse rule above.
+export function sundayBlock(ymd, reservations = []) {
+  if (new Date(ymd + "T12:00:00").getDay() !== 0) return [];
+  const courts = [...new Set(reservations.filter(r => r.date === ymd && r.internal).flatMap(r => r.courts))];
+  if (!courts.length) return reservedFor(ymd);
+  const order = COURTS.map(c => c.id);
+  return [{ dow: 0, start: 13, end: 21, courts: courts.sort((a, b) => order.indexOf(a) - order.indexOf(b)), label: "DS Elite Sunday block", detail: "Reserved for DS Elite in Playbook, 1-9pm" }];
+}
+
 // "Program Package" name, or the hold's own title ("Hold - Aces Private Rental").
 export function eventLabel(ev) {
   const c = ev.ext?.contents || "";
