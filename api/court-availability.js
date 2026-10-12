@@ -37,7 +37,9 @@ export default async function handler(req, res) {
 
   const url = new URL(req.url, "https://x");
   res.setHeader("Cache-Control", "no-store");
-  if (url.searchParams.get("link") === "1") return res.status(200).json({ ok: true, url: appOrigin(req) + "/courts?t=" + courtsToken(SUPABASE_SERVICE_ROLE_KEY) });
+  // The link families get: the DSSC site (www.drippingsportsclub.com) proxies
+  // /opengym to this app's /courts?t=. "direct" is the same page on this domain.
+  if (url.searchParams.get("link") === "1") return res.status(200).json({ ok: true, url: "https://www.drippingsportsclub.com/opengym", direct: appOrigin(req) + "/courts?t=" + courtsToken(SUPABASE_SERVICE_ROLE_KEY) });
 
   const start = /^\d{4}-\d{2}-\d{2}$/.test(url.searchParams.get("start") || "") ? url.searchParams.get("start") : centralToday();
   const days = Math.min(14, Math.max(1, Number(url.searchParams.get("days")) || 1));
