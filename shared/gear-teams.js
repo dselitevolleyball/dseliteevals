@@ -19,3 +19,10 @@ export const GEAR_TEAMS = [
   "11 Diamond",
   "13 Rise 1", "12 Rise 1", "11 Rise 1",
 ];
+
+// Rise teams don't buy the club shoe (Drew, 12 Oct 2026: "anyone with Rise
+// teams don't need to see anything about shoes"). The order form hides every
+// shoe question for them and HQ leaves them out of the shoe chase, so both
+// ask this one question.
+export const isRiseTeam = (team) => /\brise\b/i.test(String(team || ""));
+export const ordersShoes = (team) => GEAR_TEAMS.includes(team) && !isRiseTeam(team);

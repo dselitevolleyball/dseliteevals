@@ -41,7 +41,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { saveSchoolGames } from "./_lib/school-games.js";
-import { GEAR_TEAMS as TEAMS } from "../shared/gear-teams.js";
+import { GEAR_TEAMS as TEAMS, isRiseTeam } from "../shared/gear-teams.js";
 import { SCHOOL_DIVS } from "../shared/school-divs.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -91,9 +91,17 @@ const ITEMS = [
   { key: "kneepad_size",      label: "Kneepads",                 img: "kneepads",     opts: KNEEPADS },
   { key: "sock_size",         label: "Socks",                    img: "socks",        opts: SOCKS },
   { key: "arm_sleeve_size",   label: "Arm Sleeves",              img: "arm-sleeves",  opts: SLEEVES },
-  { key: "shoe_size",         label: "Shoe Size",                img: "shoes",        opts: SHOES,
+  { key: "shoe_size",         label: "Shoe Size",                img: "shoes",        opts: SHOES, shoe: true,
     hint: "These run true to size. Shoes are ordered as a group and invoiced separately." },
 ];
+
+// Rise teams don't buy the club shoe (Drew, 12 Oct 2026: "anyone with Rise
+// teams don't need to see anything about shoes"). Their list is this one minus
+// the item flagged shoe, and the page, the validation and the recap all take
+// it from here, so a Rise family can't be asked for, chased for, or shown a
+// size the form never offered her. Whether she's Rise is shared/gear-teams.js's
+// call (isRiseTeam), not a second copy of the rule.
+const itemsFor = (rise) => rise ? ITEMS.filter(it => !it.shoe) : ITEMS;
 
 const page = (inner, { title = "Gear order — DS Elite" } = {}) => `<!doctype html>
 <html lang="en"><head>
@@ -227,6 +235,20 @@ export default async function handler(req, res) {
   // October, so this page asks the one thing we need now and nothing else: a
   // parent answering one question on a phone beats a parent postponing a form.
   if (String((req.query && req.query.shoe) || "") === "1") {
+    // Rise teams don't buy the club shoe (Drew, 12 Oct 2026: "anyone with Rise
+    // teams don't need to see anything about shoes"). The shoe chase never went
+    // to Rise families, but this is only her order link plus &shoe=1, so one
+    // can still land here — and a page telling her Rise needs no shoes is
+    // itself a page about shoes. So she's sent straight on to her normal order
+    // form instead. 303, not 302: a POST from an old tab comes back as a plain
+    // GET of the form, so nothing is saved either way and an old tab can't put
+    // a Rise girl into the shoe order. Decided by the roster team, the one rule
+    // the order form and HQ use too; there's no team picker on this page.
+    if (isRiseTeam(player.team_assignment)) {
+      res.setHeader("Location", "?t=" + encodeURIComponent(token));
+      return res.status(303).end();
+    }
+
     const shoePage = (msg, done) => page(`<div class="wrap">
       <div class="eyebrow">DS Elite &middot; ${esc(player.team_assignment || "")}</div>
       <h1>${esc(player.first_name)}'s shoe size</h1>
@@ -324,6 +346,32 @@ export default async function handler(req, res) {
     };
     for (const it of ITEMS) row[it.key] = pick(it.key, it.opts);
 
+    // Rise teams don't buy the club shoe (Drew, 12 Oct 2026). Who's Rise is the
+    // ROSTER's answer, not the dropdown's — the same rule as HQ
+    // (ordersShoes(p.team_assignment)) and the &shoe=1 link — because the two
+    // disagree on real girls. Rose McIlrath is on 13 Rise 1 with an order
+    // still saying 13 Diamond; Reese Ragsdale was moved off 11 Rise 1 after
+    // her order went in. Going by the order's team, the form demanded a shoe
+    // size from Rose that HQ would never chase, and hid the shoe from Reese
+    // while HQ chased her for the invoice. The submitted team decides only for
+    // a girl the roster hasn't placed — and that's also the only page where the
+    // shoe question follows the dropdown (renderForm), so Send still never
+    // demands an answer the family wasn't shown. A placed non-Rise girl who
+    // flips the dropdown to Rise is still asked for a size, on the page and
+    // here.
+    //
+    // A Rise form offers no shoe size, so nothing it sends can set one. What's
+    // already on file is carried over rather than blanked: 26 Rise orders came
+    // in with a size before this call, and re-sending a jersey order shouldn't
+    // be what quietly erases one (nor a parent nudging the team dropdown). Who
+    // goes in the shoe order is decided by team (ordersShoes in
+    // shared/gear-teams.js), not by whether a size happens to be stored.
+    const rise = isRiseTeam(player.team_assignment || row.team_name);
+    if (rise) {
+      row.shoe_size = prev ? prev.shoe_size ?? null : null;
+      row.shoe_invoice_ack = prev ? !!prev.shoe_invoice_ack : false;
+    }
+
     // The school answer rides along, but it must never block a gear order: the
     // only required part is the one-tap yes/no, and "not sure yet" is a real
     // answer. School/grade/level are required only once she says yes, because
@@ -410,7 +458,7 @@ export default async function handler(req, res) {
     // contact details are still required — those are how we tell her when to
     // come in.
     if (!row.needs_fitting) {
-      for (const it of ITEMS) if (!row[it.key]) missing.push(it.label.toLowerCase());
+      for (const it of itemsFor(rise)) if (!row[it.key]) missing.push(it.label.toLowerCase());
     }
     if (!row.details_confirmed) missing.push("the confirmation box");
     if (askSchool) {
@@ -490,7 +538,7 @@ export default async function handler(req, res) {
         ? [row.parent2_name, row.parent2_phone, row.parent2_email].filter(Boolean).join(" · ")
         : "one parent/guardian"],
       ...(row.player_phone ? [["Her phone", row.player_phone]] : []),
-      ...ITEMS.map(it => [it.label, row[it.key]]),
+      ...itemsFor(rise).map(it => [it.label, row[it.key]]),
       ...(schoolSaved ? [
         ["School team", schoolRow.made_team === false ? "not playing this year"
           : [schoolRow.school, schoolRow.team_level].filter(Boolean).join(" · ") || "yes"],
@@ -562,6 +610,19 @@ function renderForm(player, v, { error, preview, askSchool, school, askIntake } 
   const jersey = has("jersey_number") ? v.jersey_number
     : (player.jersey_number == null ? "" : String(player.jersey_number));
   const team = has("team_name") ? v.team_name : (player.team_assignment || "");
+  // Rise teams don't buy the club shoe (Drew, 12 Oct 2026), and who's Rise is
+  // the ROSTER's answer: the POST, HQ and the &shoe=1 link all ask the roster,
+  // so the page must too, or a girl whose saved order names another team
+  // (Rose McIlrath: roster 13 Rise 1, order 13 Diamond) is shown a shoe
+  // question that Send insists on and HQ never chases. The dropdown decides
+  // only on a page with no roster team — the staff preview, or a girl not
+  // placed yet (pickable) — and only there does the shoe question follow it
+  // (the script at the bottom). A placed Rise girl's page carries no shoe
+  // markup at all (shoeless); a placed non-Rise girl's keeps the question
+  // whatever she picks, because the server still asks her for a size.
+  const pickable = !player.team_assignment;
+  const rise = isRiseTeam(player.team_assignment || team);
+  const shoeless = rise && !pickable;
   // A draft is not a submission. Without this, a parent who typed two letters
   // and came back would be told they had already sent their order in.
   const submitted = !!v.updated_at && v.is_draft === false;
@@ -583,18 +644,29 @@ function renderForm(player, v, { error, preview, askSchool, school, askIntake } 
   };
   const playerPhone = pre("player_phone", player.player_phone);
 
-  const itemHtml = (it) => `
-    <div class="item">
+  // On a pickable page the shoe item is drawn for Rise too, hidden and
+  // switched off, so picking a non-Rise team in the dropdown can bring it
+  // straight back. A placed Rise girl's page leaves it out. Disabled rather
+  // than merely hidden: a disabled select is neither sent nor validated, so the
+  // hidden question can't block Send or ride along in an autosave. The shoe
+  // invoice tick-box below gets the same treatment inside a wrapper div
+  // (#shoeack), because .chk sets display:flex after .hide in the stylesheet
+  // and would win over .hide on the label itself.
+  const itemHtml = (it) => {
+    const off = it.shoe && rise;
+    return `
+    <div class="item${off ? " hide" : ""}"${it.shoe ? ' id="shoeitem"' : ""}>
       <div class="pic"><img src="/gear/${it.img}.jpg" alt="" loading="lazy" onerror="this.parentNode.remove()"></div>
       <div class="fields">
         <label><span class="lb">${esc(it.label)} <span class="req">*</span></span>
-          <select name="${it.key}" required>
+          <select name="${it.key}"${off ? " disabled" : " required"}>
             <option value="">— choose —</option>
             ${it.opts.map(o => `<option${sel(o, v[it.key])}>${esc(o)}</option>`).join("")}
           </select></label>
         ${it.hint ? `<p class="hint">${esc(it.hint)}</p>` : ""}
       </div>
     </div>`;
+  };
 
   return page(`
   <span class="eyebrow">DS Elite Volleyball</span>
@@ -712,11 +784,13 @@ function renderForm(player, v, { error, preview, askSchool, school, askIntake } 
         a guessed size gets ordered, so we would rather measure her than have you estimate.</span>
       </label>
       <div id="sizeblock"${v.needs_fitting ? ' class="hide"' : ""}>
-        ${ITEMS.map(itemHtml).join("")}
+        ${itemsFor(shoeless).map(itemHtml).join("")}
+        ${shoeless ? "" : `<div id="shoeack"${rise ? ' class="hide"' : ""}>
         <label class="chk" style="margin-bottom:0">
-          <input type="checkbox" name="shoe_invoice_ack" value="1"${v.shoe_invoice_ack ? " checked" : ""}>
+          <input type="checkbox" name="shoe_invoice_ack" value="1"${v.shoe_invoice_ack ? " checked" : ""}${rise ? " disabled" : ""}>
           <span>I understand shoes are ordered as a group at a discount and will be invoiced separately by email.</span>
         </label>
+        </div>`}
       </div>
       <p class="hint fitnote${v.needs_fitting ? "" : " hide"}" id="fitnote" style="margin-bottom:0">
         We'll be in touch with the next fitting time. Everything else on this form still needs filling in —
@@ -734,9 +808,43 @@ function renderForm(player, v, { error, preview, askSchool, school, askIntake } 
 
     <button class="go" type="submit">${submitted ? "Update our order" : "Send our order"}</button>
     <p class="hint" style="text-align:center" id="savemsg">Your answers save as you go — you can close this and come back.</p>
-    <p class="hint" style="text-align:center">All gear is provided by DS Elite except shoes.</p>
+    <p class="hint" style="text-align:center">All gear is provided by DS Elite${shoeless ? "" : `<span id="exceptshoes"${rise ? ' class="hide"' : ""}> except shoes</span>`}.</p>
   </form>
   <div class="foot">Questions? Coach Kristen — kristen@dselitevolleyball.com</div>
+  ${pickable ? `<script>
+  (function () {
+    // Rise teams don't buy the club shoe (Drew, 12 Oct 2026). Only on a page
+    // with no roster team — the staff preview, or a girl not placed yet —
+    // because that's the one case where the POST goes by the submitted team,
+    // so the shoe pieces follow whatever is picked: hidden, switched off and
+    // not required on a Rise team; back exactly as they were on any other. A
+    // placed girl's page is drawn for her roster team and stays that way: hide
+    // the question for a placed non-Rise girl who picks Rise and Send would
+    // still demand it. Only the shoe pieces are touched, never #sizeblock, so
+    // "she wasn't measured" still works on top of this — and the change
+    // bubbles to the form, so autosave still fires (700ms later, after this has
+    // switched the select off). Nothing here saves. The Rise names come from
+    // the server's isRiseTeam, not a second copy of the rule.
+    var RISE = ${JSON.stringify(TEAMS.filter(isRiseTeam)).replace(/</g, "\\u003c")};
+    var team = document.querySelector('select[name="team_name"]');
+    var shoe = document.querySelector('select[name="shoe_size"]');
+    var ack = document.querySelector('input[name="shoe_invoice_ack"]');
+    if (!team) return;
+    var sync = function () {
+      var rise = RISE.indexOf(team.value) !== -1;
+      ['shoeitem', 'shoeack', 'exceptshoes'].forEach(function (id) {
+        var el = document.getElementById(id);
+        if (el) el.classList.toggle('hide', rise);
+      });
+      if (shoe) { shoe.disabled = rise; shoe.required = !rise; }
+      if (ack) ack.disabled = rise;
+    };
+    team.addEventListener('change', sync);
+    // Once on load as well, for a browser that restores a different team on
+    // reload than the one the server drew the page for.
+    sync();
+  })();
+  </script>` : ""}
   ${preview ? "" : `<script>
   (function () {
     var fit = document.getElementById('needsfit');

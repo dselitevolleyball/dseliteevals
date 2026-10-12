@@ -26,7 +26,7 @@ import { createClient } from "@supabase/supabase-js";
 // The exact team list the form offers. Imported rather than repeated: a player
 // whose team is missing from the dropdown cannot submit the form at all, so the
 // send has to know the same list the page knows.
-import { GEAR_TEAMS as FORM_TEAMS } from "../shared/gear-teams.js";
+import { GEAR_TEAMS as FORM_TEAMS, ordersShoes } from "../shared/gear-teams.js";
 
 const APP_URL = "https://dseliteevals.vercel.app";
 const SENDER = { name: "Drew Rose", email: "drew@dselitevolleyball.com" };
@@ -77,7 +77,8 @@ const targets = players.filter(p =>
 
 // A player whose team isn't in the form's dropdown can't submit it at all —
 // team is a required field — so she is held back and named instead of being
-// sent to a dead end. Today that's the Rise teams, which don't order this gear.
+// sent to a dead end. (Rise teams are on the list and order jerseys and gear,
+// but not the club shoe — their email leaves shoes out. Drew, 12 Oct 2026.)
 const offForm = targets.filter(p => !FORM_TEAMS.includes(p.team_assignment));
 const sendable = targets.filter(p => FORM_TEAMS.includes(p.team_assignment));
 
@@ -109,9 +110,11 @@ ${APP_URL}/gear?t=${p.gear_form_token}
 
 A few notes:
 
-- All gear is provided by DS Elite except shoes.
+${ordersShoes(p.team_assignment)
+  ? `- All gear is provided by DS Elite except shoes.
 - We're ordering shoes as a group and getting a discount.
-- Shoes are invoiced separately by email — nothing to pay on this form.
+- Shoes are invoiced separately by email — nothing to pay on this form.`
+  : `- All gear is provided by DS Elite.`}
 
 That link stays live until we place the order, so if a size turns out wrong, open it again and change it.
 
@@ -139,7 +142,7 @@ if (offForm.length) {
   const teams = [...new Set(offForm.map(p => p.team_assignment))].sort();
   console.log(`
 ${offForm.length} held back — not on the gear order list: ${teams.join(", ")}`);
-  console.log("   Rise is excluded on purpose. Any OTHER team here needs adding to shared/gear-teams.js.");
+  console.log("   These teams aren't on the gear order list — add them to shared/gear-teams.js if they should order.");
 }
 if (noEmail.length) {
   console.log(`\n⚠ ${noEmail.length} with NO email on file — these need chasing another way:`);

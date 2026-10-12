@@ -23,6 +23,7 @@
 
 import { readFileSync } from "node:fs";
 import { createClient } from "@supabase/supabase-js";
+import { isRiseTeam } from "../shared/gear-teams.js";
 
 function loadEnv() {
   const raw = readFileSync(new URL("../.env", import.meta.url), "utf8");
@@ -47,7 +48,7 @@ const SIZES = [
 const has = (v) => !!String(v ?? "").trim();
 
 // The same checks, in the same order, as the form's `missing` array.
-function whatsMissing(r) {
+function whatsMissing(r, rise = false) {
   const out = [];
   if (!has(r.first_name)) out.push("first name");
   if (!has(r.last_name)) out.push("last name");
@@ -60,7 +61,7 @@ function whatsMissing(r) {
   if (hasP2 && !has(r.parent2_name)) out.push("parent 2 name");
   if (hasP2 && !has(r.parent2_phone)) out.push("parent 2 phone");
   if (hasP2 && !has(r.parent2_email)) out.push("parent 2 email");
-  for (const [k, label] of SIZES) if (!has(r[k])) out.push(label);
+  for (const [k, label] of SIZES) if (!has(r[k]) && !(rise && k === "shoe_size")) out.push(label);
   if (!r.details_confirmed) out.push("the confirmation box");
   return out;
 }
@@ -72,7 +73,11 @@ const { data: drafts, error } = await supabase.from("player_gear_orders")
   .select("*").eq("is_draft", true);
 if (error) { console.error("Load failed:", error.message); process.exit(1); }
 
-const graded = (drafts || []).map(r => ({ r, missing: whatsMissing(r) }))
+// Rise players don't buy the club shoe, so the form never asks them for a size
+// (Drew, 12 Oct 2026) — judged by her roster team, the same rule the form uses.
+const { data: roster } = await supabase.from("players").select("id, team_assignment").in("id", (drafts || []).map(r => r.player_id));
+const teamOf = new Map((roster || []).map(p => [p.id, p.team_assignment]));
+const graded = (drafts || []).map(r => ({ r, missing: whatsMissing(r, isRiseTeam(teamOf.get(r.player_id) || r.team_name)) }))
   .sort((a, b) => a.missing.length - b.missing.length ||
     String(a.r.team_name).localeCompare(String(b.r.team_name)) ||
     String(a.r.last_name).localeCompare(String(b.r.last_name)));

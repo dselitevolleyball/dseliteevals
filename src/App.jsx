@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from "rea
 import { supabase } from "./supabase";
 import Papa from "papaparse";
 import { DndContext, useDraggable, useDroppable, PointerSensor, TouchSensor, useSensor, useSensors } from "@dnd-kit/core";
-import { GEAR_TEAMS } from "../shared/gear-teams.js";
+import { GEAR_TEAMS, isRiseTeam, ordersShoes } from "../shared/gear-teams.js";
 import { planRooms, pairCoaches, planRoomsByTeam, UNASSIGNED } from "../shared/room-plan.js";
 import { PLAYER_CLAUSES, PARENT_CLAUSES, isFullySigned } from "../shared/commitment.js";
 import { isEventTeam } from "../shared/event-teams.js";
@@ -155,6 +155,12 @@ const GEAR_ITEMS = [
   ["arm_sleeve_size",   "Arm Sleeves"],
   ["shoe_size",         "Shoe"],
 ];
+// Rise teams don't buy the club shoe (Drew, 12 Oct 2026: "anyone with Rise
+// teams don't need to see anything about shoes"), so a Rise girl's Shoe is
+// left out — or blank where a column has to line up — never "—", which reads
+// as an answer we're still owed. Size values from before the form hid the
+// question stay in the table; they just aren't shown or exported.
+const gearItemApplies = (team, key) => key !== "shoe_size" || !isRiseTeam(team);
 
 // ── Parent contacts ──────────────────────────────────────────────────────
 // A player carries up to three parent/guardian addresses, and every one of them
@@ -11130,7 +11136,6 @@ export default function App() {
     const TERMINAL = ["declined", "not_invited", "opted_out"];
     const LONESTAR = "https://memberships.sportsengine.com/org/lone-star-region-volleyball/affiliation/ds-elite-volleyball-ds-elite";
     const base = APP_URL.replace(/\/$/, "");
-    const isRise = (t) => /\brise\b/i.test(t || "");
     const eventTeams = new Set(practiceTeams.filter(isEventTeam).map(t => t.team_name));
     const rostered = players.filter(p => p.team_assignment && (p.roster_status || "active") === "active"
       && !TERMINAL.includes(p.offer_status || "") && !eventTeams.has(p.team_assignment)
@@ -11167,7 +11172,7 @@ export default function App() {
     // ours, not the family's (a shoe invoice we haven't issued yet).
     const NEEDS = [
       { key: "gear", label: "Gear sizing", icon: "👕", color: "#a78bfa",
-        scope: "Teams that order gear (includes 13 Rise 1)",
+        scope: "Teams that order gear (includes the Rise teams)",
         rows: rostered.filter(p => GEAR_TEAMS.includes(p.team_assignment)).map(p => {
           const r = gearBy.get(p.id);
           if (r && !r.is_draft && r.details_confirmed) return null;
@@ -11177,8 +11182,10 @@ export default function App() {
         body: (p) => greet(p) + "\n\nWe still don't have " + girl(p) + "'s uniform sizes, and the order can't go in without them. It takes a couple of minutes:\n\n" + base + "/gear?t=" + p.gear_form_token + "\n\nIf you already filled it in, just open the link and tap send at the bottom so it reaches us." + sign,
         text: (p) => hiText(p) + " we still need " + girlOf(p) + "'s DS Elite uniform sizes before the order can go in. Takes 2 min: " + base + "/gear?t=" + p.gear_form_token + signText },
       { key: "shoes", label: "Shoe ordering", icon: "👟", color: "#f59e0b",
-        scope: "Avoli club shoe, $167, invoiced through SportsEngine",
-        rows: rostered.filter(p => GEAR_TEAMS.includes(p.team_assignment)).map(p => {
+        // Rise teams don't buy the club shoe (Drew, 12 Oct 2026) — before
+        // this they sat here as ~30 "no invoice, our move" rows nobody owed.
+        scope: "Avoli club shoe, $167, invoiced through SportsEngine (Rise teams not included)",
+        rows: rostered.filter(p => ordersShoes(p.team_assignment)).map(p => {
           const inv = shoeBy.get(p.id) || [];
           if (inv.some(i => i.status === "Paid")) return null;
           const owed = inv.reduce((n, i) => n + Number(i.remaining || 0), 0);
@@ -11190,13 +11197,13 @@ export default function App() {
         text: (p) => hiText(p) + " " + girlOf(p) + "'s Avoli team shoe invoice ($167) in SportsEngine is still unpaid. Please pay it when you can so the club order can go in. It's in your SportsEngine email or account." + signText },
       { key: "sportsengine", label: "USAV / SportsEngine membership", icon: "🪪", color: "#38bdf8",
         scope: "Lone Star Region + USAV, $55 — required before she can be rostered (Rise teams not included)",
-        rows: rostered.filter(p => !isRise(p.team_assignment) && !p.sportsengine_registered).map(p => ({ p, detail: "no SportsEngine profile with the club", canNudge: true })),
+        rows: rostered.filter(p => !isRiseTeam(p.team_assignment) && !p.sportsengine_registered).map(p => ({ p, detail: "no SportsEngine profile with the club", canNudge: true })),
         subject: (p) => girl(p) + " still needs her Lone Star / USAV membership",
         body: (p) => greet(p) + "\n\nWe can't officially roster " + girl(p) + " or take her to a tournament until her Lone Star + USAV membership is done. It's $55 through SportsEngine and takes a few minutes:\n\n" + LONESTAR + "\n\nWhen it's through, SportsEngine should show her as Eligible for the 2026-27 season." + sign,
         text: (p) => hiText(p) + " " + girlOf(p) + " still needs her Lone Star + USAV membership ($55) before we can roster her or take her to a tournament: " + LONESTAR + signText },
       { key: "commitment", label: "Commitment signing", icon: "✍️", color: C.grn,
         scope: "Player and a parent both sign (Rise teams sign at orientation on 11 October)",
-        rows: rostered.filter(p => !isRise(p.team_assignment)).map(p => {
+        rows: rostered.filter(p => !isRiseTeam(p.team_assignment)).map(p => {
           const c = commitBy.get(p.id);
           if (c && c.player_signed_at && c.parent_signed_at) return null;
           const who = !c ? "neither has signed" : !c.player_signed_at && !c.parent_signed_at ? "neither has signed" : !c.player_signed_at ? "parent signed · " + girl(p) + " hasn't" : "player signed · parent hasn't";
@@ -11960,11 +11967,11 @@ export default function App() {
     // which would sit unread among eleven chips, but they are the answers that
     // need somebody to go and source something rather than place an order.
     const OUT_OF_RANGE = /too small|don't come|dont come/i;
-    const sizeGapsOf = (r) => {
+    const sizeGapsOf = (r, team) => {
       if (!r) return [];
       const out = [];
       if (OUT_OF_RANGE.test(String(r.kneepad_size || ""))) out.push("kneepads");
-      if (OUT_OF_RANGE.test(String(r.shoe_size || ""))) out.push("shoes");
+      if (ordersShoes(team) && OUT_OF_RANGE.test(String(r.shoe_size || ""))) out.push("shoes");
       return out;
     };
     const schoolBy = new Set(schoolReports.map(r => r.player_id));
@@ -11979,13 +11986,20 @@ export default function App() {
       const paid = a.some(i => i.status === "Paid");
       return { status: paid ? "paid" : "unpaid", owed: paid ? 0 : a.reduce((n, i) => n + Number(i.remaining || 0), 0), invoices: a };
     };
+    // shoe is null for a Rise girl (Drew, 12 Oct 2026: Rise doesn't buy the
+    // club shoe), so she drops out of both shoe pills, the per-team shoe lines
+    // and the 👟 mark rather than sitting there as "no invoice".
     const rows = eligible.map(p => {
       const r = byPlayer.get(p.id);
-      return { p, r, flags: flagsFor(p, r), gaps: contactGaps(r), school: !owesSchool(p), sizeGaps: sizeGapsOf(r), shoe: shoeOf(p.id) };
+      return { p, r, flags: flagsFor(p, r), gaps: contactGaps(r), school: !owesSchool(p), sizeGaps: sizeGapsOf(r, p.team_assignment),
+        shoe: ordersShoes(p.team_assignment) ? shoeOf(p.id) : null };
     });
-    const shoeUnpaid = rows.filter(x => x.shoe.status === "unpaid");
-    const shoeNone = rows.filter(x => x.shoe.status === "none");
-    const shoeUnmatched = shoeInvoices.filter(i => !i.player_id);
+    const shoeUnpaid = rows.filter(x => x.shoe?.status === "unpaid");
+    const shoeNone = rows.filter(x => x.shoe?.status === "none");
+    // An Avoli invoice matched to a Rise girl can only be a wrong name match,
+    // so it's listed with the ones we couldn't match, where somebody fixes it.
+    const riseIds = new Set(players.filter(p => isRiseTeam(p.team_assignment)).map(p => p.id));
+    const shoeUnmatched = shoeInvoices.filter(i => !i.player_id || riseIds.has(i.player_id));
     // A draft is a form still being filled in on somebody's phone, not an
     // order. Counting it as one would drop her off the chase list with her
     // sizes still blank — which is the exact failure autosave was added to
@@ -12068,8 +12082,9 @@ export default function App() {
           r.parent1_name || "", r.parent1_phone || "", r.parent1_email || "",
           r.parent2_name || "", r.parent2_phone || "", r.parent2_email || "",
           r.single_parent ? "Yes" : "", r.player_phone || "",
-          ...GEAR_ITEMS.map(([k]) => r[k] || ""),
-          r.details_confirmed ? "Yes" : "No", r.shoe_invoice_ack ? "Yes" : "No",
+          // Shoe columns stay so the sheet lines up; a Rise girl's are blank.
+          ...GEAR_ITEMS.map(([k]) => gearItemApplies(p.team_assignment, k) ? r[k] || "" : ""),
+          r.details_confirmed ? "Yes" : "No", isRiseTeam(p.team_assignment) ? "" : r.shoe_invoice_ack ? "Yes" : "No",
           r.notes || "", flags.join("; "), gaps.join("; "), school ? "" : "no", sizeGaps.join("; "),
           r.updated_at ? new Date(r.updated_at).toLocaleDateString() : "",
         ]);
@@ -12077,9 +12092,9 @@ export default function App() {
       downloadCSV("dselite-gear-order.csv", rowsOut);
     };
 
-    const sizeChips = (r) => (
+    const sizeChips = (r, team) => (
       <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-        {GEAR_ITEMS.map(([k, label]) => (
+        {GEAR_ITEMS.filter(([k]) => gearItemApplies(team, k)).map(([k, label]) => (
           <span key={k} title={label}
             style={{fontSize:9.5,fontWeight:700,padding:"1px 5px",borderRadius:5,
               border:"1px solid "+C.border,color:r[k]?C.text:C.mut}}>
@@ -12139,7 +12154,7 @@ export default function App() {
           const owed = shoeInvoices.filter(i => i.status !== "Paid").reduce((n, i) => n + Number(i.remaining || 0), 0);
           const last = shoeInvoices.reduce((mx, i) => (i.imported_at > mx ? i.imported_at : mx), "");
           const byTeam = new Map();
-          for (const x of rows) { const k = x.p.team_assignment || "(no team)"; if (!byTeam.has(k)) byTeam.set(k, []); byTeam.get(k).push(x); }
+          for (const x of rows) { if (!x.shoe) continue; const k = x.p.team_assignment || "(no team)"; if (!byTeam.has(k)) byTeam.set(k, []); byTeam.get(k).push(x); }
           const teams = [...byTeam.entries()].sort((a, b) => (parseInt(a[0]) || 99) - (parseInt(b[0]) || 99) || a[0].localeCompare(b[0]));
           const col = (st) => st === "paid" ? C.grn : st === "unpaid" ? "#f59e0b" : C.mut;
           return (
@@ -12166,7 +12181,7 @@ export default function App() {
                 </div>
                 {shoeUnmatched.length > 0 && (
                   <div style={{fontSize:11,color:C.red,marginBottom:10,lineHeight:1.5}}>
-                    <b>Couldn't match to a player:</b> {shoeUnmatched.map(i => i.participant + " (" + (i.account_owner || "?") + ", " + i.status + (i.match_note ? " — " + i.match_note : "") + ")").join("; ")}
+                    <b>Couldn't match to a player:</b> {shoeUnmatched.map(i => i.participant + " (" + (i.account_owner || "?") + ", " + i.status + (riseIds.has(i.player_id) ? " — matched to a Rise player" : i.match_note ? " — " + i.match_note : "") + ")").join("; ")}
                   </div>
                 )}
                 {shoeInvoices.length > 0 && (
@@ -12265,7 +12280,7 @@ export default function App() {
                             {r ? <div style={{marginTop:3}}>
                                    {r.is_draft && <div style={{fontSize:10,fontWeight:800,color:"#a78bfa",marginBottom:2}}>
                                      ✎ still filling this in</div>}
-                                   {sizeChips(r)}
+                                   {sizeChips(r, p.team_assignment)}
                                  </div>
                                : <div style={{fontSize:11,color:C.mut,marginTop:1}}>no order yet</div>}
                           </div>
@@ -12323,7 +12338,7 @@ export default function App() {
                   <td style={{padding:"6px 10px",borderBottom:"1px solid "+C.border,whiteSpace:"nowrap",color:r?.player_phone?C.text:C.mut}}>{r?.player_phone || "—"}</td>
                   {GEAR_ITEMS.map(([k]) => (
                     <td key={k} style={{padding:"6px 10px",borderBottom:"1px solid "+C.border,whiteSpace:"nowrap",
-                      color:r?.[k]?C.text:C.mut}}>{r?.[k] || "—"}</td>
+                      color:r?.[k]?C.text:C.mut}}>{gearItemApplies(p.team_assignment, k) ? r?.[k] || "—" : ""}</td>
                   ))}
                   <td style={{padding:"6px 10px",borderBottom:"1px solid "+C.border,color:C.mut,whiteSpace:"nowrap",fontSize:11}}>
                     {r ? new Date(r.updated_at).toLocaleDateString(undefined,{month:"short",day:"numeric"}) : ""}
@@ -14682,7 +14697,7 @@ export default function App() {
                       {g.team_name ? <> · {g.team_name}</> : null}
                     </div>
                     <div style={{display:"grid",gridTemplateColumns:isNarrow?"1fr 1fr":"repeat(4,1fr)",gap:9}}>
-                      {GEAR_ITEMS.map(([k, label]) => (
+                      {GEAR_ITEMS.filter(([k]) => gearItemApplies(p.team_assignment, k)).map(([k, label]) => (
                         <div key={k}>
                           <div style={{fontSize:9.5,fontWeight:800,textTransform:"uppercase",letterSpacing:0.4,color:C.mut}}>{label}</div>
                           <div style={{fontSize:12.5,color:g[k]?C.text:C.mut,marginTop:1}}>{g[k] || "—"}</div>
