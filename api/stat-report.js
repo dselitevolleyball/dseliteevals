@@ -28,6 +28,7 @@
 // buildReport has no way to print them.
 //
 // Who may send: owners/admins, or a coach listed in REPORT_SENDERS (Brandon).
+// The service-role key may send tests only (as Brandon), for operator scripts.
 // Env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, RESEND_API_KEY, DSE_FROM_EMAIL.
 
 import { createClient } from "@supabase/supabase-js";
@@ -71,16 +72,19 @@ export default async function handler(req, res) {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY || !RESEND || !DSE_FROM_EMAIL) return res.status(500).json({ error: "Server not configured" });
   const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
 
+  let b = req.body; try { b = typeof b === "string" ? JSON.parse(b) : (b || {}); } catch { return res.status(400).json({ error: "Invalid JSON" }); }
   const bearer = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
-  const { data: { user } = {} } = await sb.auth.getUser(bearer).catch(() => ({ data: {} }));
+  // The service-role key (operator scripts) may only send tests, as Brandon.
+  const operator = bearer === SUPABASE_SERVICE_ROLE_KEY;
+  if (operator && !b.test_to) return res.status(403).json({ error: "The service key can only send tests." });
+  const { data: { user } = {} } = operator ? { data: { user: { email: REPORT_SENDERS[0] } } } : await sb.auth.getUser(bearer).catch(() => ({ data: {} }));
   const email = nrm(user?.email);
   if (!email) return res.status(401).json({ error: "Sign in first" });
   const { data: me } = await sb.from("coaches").select("display_name, is_admin, is_approved").ilike("email", email).maybeSingle();
-  const allowed = OWNER_EMAILS.includes(email) || REPORT_SENDERS.includes(email) || !!(me?.is_approved && me?.is_admin);
+  const allowed = operator || OWNER_EMAILS.includes(email) || REPORT_SENDERS.includes(email) || !!(me?.is_approved && me?.is_admin);
   if (!allowed) return res.status(403).json({ error: "Only admins and the performance coach can send testing reports." });
-  const senderName = me?.display_name || email;
+  const senderName = me?.display_name || (operator ? "Coach Brandon" : email);
 
-  let b = req.body; try { b = typeof b === "string" ? JSON.parse(b) : (b || {}); } catch { return res.status(400).json({ error: "Invalid JSON" }); }
   const sample = !!b.sample;
   const playerId = Number(b.player_id) || null;
   const teamName = String(b.team || "").trim() || null;
