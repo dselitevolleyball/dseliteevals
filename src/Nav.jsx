@@ -15,6 +15,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 const IT = {
   home:          ["Home", "🏠", "all", "dashboard start", "Home"],
   courts:        ["Court Availability", "🏟", "dir", "courts open free available gym space playbook rental booked", "Courts"],
+  dsscplan:      ["2027 Planning Calendar", "🗓", "dir", "planning calendar 2027 workbook plan courts schedule warehouse flex open", "Plan"],
   dayschedule:   ["Day Schedule", "🕘", "admin", "hour by hour coverage who is working", "Day"],
   practice:      ["Practice Board", "📋", "ops", "practice daily board courts scrimmage", "Practice"],
   coverage:      ["Coach Coverage", "🔁", "ops", "subs sub coverage", "Coverage"],
@@ -104,7 +105,7 @@ const DSE_COACH = [
   ["tryouts", "Tryouts 2026-27", "🎯", ["dashboard", "evaluate", "favorites", "teams", "rankings", "physical", "tryouts"]],
 ];
 const DSSC_SECS = [
-  ["programs", "Programs", "🏕", ["clinics", "courts", "dssccamp", "pods", "privates"]],
+  ["programs", "Programs", "🏕", ["clinics", "courts", "dsscplan", "dssccamp", "pods", "privates"]],
   ["people", "Texts & people", "💬", ["dssctexts", "dssccrm"]],
   ["dsscstaff", "Coaches & pay", "🗓", ["dssc", "dssccal", "dssctime"]],
 ];

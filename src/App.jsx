@@ -18,6 +18,7 @@ import HousingView from "./HousingView.jsx";
 import AskHQ from "./AskHQ.jsx";
 import ServeGrader from "./ServeGrader.jsx";
 import CourtAvailability from "./CourtAvailability.jsx";
+import DsscPlanner from "./dssc/DsscPlanner.jsx";
 import { buildNav, navTheme, Sidebar, NavDrawer, BottomBar, SiblingChips } from "./Nav.jsx";
 import DaySchedule from "./DaySchedule.jsx";
 import { PlayerStatHistory, StatsLinks } from "./PlayerStats.jsx";
@@ -1510,7 +1511,7 @@ function weekMondayISO(d){ const x = d ? new Date(d) : new Date(); const back = 
 // full window instead of the centered 1500px reading width: the DSSC coaches
 // week board (7 days x 3 courts) and the practice Daily board (a card per
 // block). Both already scroll sideways; the cap only made them scroll sooner.
-const WIDE_VIEWS = new Set(["dssccal", "practice", "testboard"]);
+const WIDE_VIEWS = new Set(["dssccal", "practice", "testboard", "dsscplan"]);
 
 const PHASE_DATES = [
   { id:"summer",     from:"2026-07-12", to:"2026-09-12" },
@@ -2278,7 +2279,7 @@ export default function App() {
   // colors, navigation, home — between DS Elite and Dripping Springs Sports
   // Club, instead of DSSC living as a tab inside DS Elite. Opening a DSSC
   // screen by any route (a push link, the home card) flips it too.
-  const DSSC_VIEWS = new Set(["dssc","clinics","dssctexts","dssccrm","dssccal","dssctime","pods","privates","dssccamp","courts"]);
+  const DSSC_VIEWS = new Set(["dssc","clinics","dssctexts","dssccrm","dssccal","dssctime","pods","privates","dssccamp","courts","dsscplan"]);
   const [workspace, setWorkspace] = useState(() => { try { return localStorage.getItem("dse.workspace") === "dssc" ? "dssc" : "dse"; } catch { return "dse"; } });
   useEffect(() => {
     const ws = DSSC_VIEWS.has(view) ? "dssc" : (view === "home" || view === "askai" || view === "notifications" || view === "activity" || view === "faq") ? null : "dse";
@@ -32963,6 +32964,7 @@ export default function App() {
         {view==="pods" && renderPods()}
         {view==="playereval" && renderPlayerEvals()}
         {view==="passing" && renderPassing()}
+        {view==="dsscplan" && (isDsscDirector ? <DsscPlanner coach={coach} /> : <div style={{padding:24,color:C.mut,textAlign:"center"}}>The planning calendar is for admins and the DSSC directors.</div>)}
         {view==="courts" && (isDsscDirector ? <CourtAvailability onOpenClass={(cid, sid)=>{ setDsscHubSel({ clinicId: cid, sessionId: sid }); setDsscHubBack("courts"); setView("dssc"); }} /> : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Court availability is for admins and the DSSC directors.</div>)}
         {view==="serving" && <ServeGrader coach={coach} players={players}
           teams={((canViewTeams || canOps) ? teamsList.filter(t => t.active).map(t => t.id) : myTeamNames.filter(t => teamsList.some(x => x.id === t))).slice().sort((a, b) => (parseInt(a) || 99) - (parseInt(b) || 99) || a.localeCompare(b))} />}
