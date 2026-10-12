@@ -29,6 +29,7 @@ import EuropeRsvps from "./EuropeRsvps.jsx";
 import DsscTexts from "./dssc/DsscTexts.jsx";
 import DsscCamp from "./dssc/DsscCamp.jsx";
 import DsscCrm from "./dssc/DsscCrm.jsx";
+import { parentMailings, greetingFor } from "../shared/parent-mail.js";
 import { TN_SUB_PLACEHOLDERS, isPlaceholderPerson, sessionStaff, staffNeeded, staffApproved, staffPending, sessionShort, onStaff, parsePlanPaste } from "../shared/dssc-clinics.js";
 
 const POSITIONS = ["S","OH","MB","RS","L","DS","U"];
@@ -11246,11 +11247,16 @@ export default function App() {
       const p = row.p;
       const to = [...new Set(parentEmailsOf(p).map(e => e.toLowerCase()))];
       if (!to.length) { if (!quiet) window.alert("No parent email on file for " + p.first_name + " " + p.last_name + "."); return false; }
-      const res = await fetch("/api/send-email", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ subject: need.subject(p), body: need.body(p), recipients: to, skipPush: true,
-          sentBy: coach?.display_name || null, sentByEmail: coach?.email || null, source: "waiting-on nudge · " + need.key }) });
-      const out = await res.json().catch(() => ({}));
-      if (!res.ok || out.error) { if (!quiet) window.alert("Send failed: " + (out.error || res.statusText)); return false; }
+      // Divorced / separated parents: one email each, greeting only that parent.
+      const body = need.body(p), together = greet(p);
+      const sends = p.parents_separate ? parentMailings(p).map(m => ({ to: m.to, body: body.startsWith(together) ? greetingFor(m.parentFirst) + body.slice(together.length) : body })) : [{ to, body }];
+      for (const s of sends) {
+        const res = await fetch("/api/send-email", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ subject: need.subject(p), body: s.body, recipients: s.to, skipPush: true,
+            sentBy: coach?.display_name || null, sentByEmail: coach?.email || null, source: "waiting-on nudge · " + need.key }) });
+        const out = await res.json().catch(() => ({}));
+        if (!res.ok || out.error) { if (!quiet) window.alert("Send failed: " + (out.error || res.statusText)); return false; }
+      }
       await supabase.from("player_nudges").insert({ player_id: p.id, need: need.key, channel: "email", recipients: to, sent_by: coach?.display_name || coach?.email || null });
       return true;
     };
@@ -14116,6 +14122,12 @@ export default function App() {
               <div><span style={lbl}>Parent Email</span><DebouncedField type="email" style={editInp} placeholder="email@example.com" value={p.parent_email||""} onCommit={v=>upd(p.id,{parent_email:v})} /></div>
               <div><span style={lbl}>Parent Email 2</span><DebouncedField type="email" style={editInp} placeholder="email@example.com" value={p.parent_email2||""} onCommit={v=>upd(p.id,{parent_email2:v})} /></div>
               <div><span style={lbl}>Parent Email 3</span><DebouncedField type="email" style={editInp} placeholder="email@example.com" value={p.parent_email3||""} onCommit={v=>upd(p.id,{parent_email3:v})} /></div>
+              {/* Divorced / separated (Drew, Oct 12 2026): personal emails go to
+                  each parent on their own, greeting only them (shared/parent-mail.js). */}
+              <label style={{gridColumn:"1 / -1",display:"flex",alignItems:"center",gap:8,fontSize:12,cursor:"pointer",color:p.parents_separate?C.gold:C.text}}>
+                <input type="checkbox" checked={!!p.parents_separate} onChange={e=>upd(p.id,{parents_separate:e.target.checked})} style={{accentColor:C.gold,width:16,height:16}} />
+                <span><b>Parents divorced / separated</b> <span style={{color:C.mut}}>— emails about her go to each parent separately (Parent Email ↔ Parent Name, Parent Email 2 ↔ Parent 2 Name), never together</span></span>
+              </label>
               <div>
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:6}}>
                   <span style={lbl}>Parent Phone</span>

@@ -34,6 +34,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { appOrigin } from "../shared/app-origin.js";
+import { parentMailings } from "../shared/parent-mail.js";
 import { buildReport, statFlags, reviewFlags, statPeerStats, flaggedReportKeys, METRICS, SAMPLE_PLAYER, SAMPLE_TESTS, SAMPLE_DRAFT, SAMPLE_TEAM } from "../shared/stat-report.js";
 
 // A team of ~14 at Resend's 2 a second, plus the season read.
@@ -62,7 +63,7 @@ const ackOf = (flags, k) => `ok:${k}:${flagPrint(flags, k)}`;
 // The columns statFlags / teamStanding read, for the season pool + teammates.
 const STAT_COLS = "id, first_name, team_assignment, season, usav_div, offer_status, stand_reach, approach_touch, jump_touch, sprint_10y, stat_baseline_date";
 // Everything the email needs about the girl herself.
-const PLAYER_COLS = "id, first_name, last_name, team_assignment, season, usav_div, offer_status, parent_name, parent2_name, parent_email, parent_email2, parent_email3, stand_reach, approach_touch, jump_touch, sprint_10y, stat_baseline_date";
+const PLAYER_COLS = "id, first_name, last_name, team_assignment, season, usav_div, offer_status, parent_name, parent2_name, parent_email, parent_email2, parent_email3, parents_separate, stand_reach, approach_touch, jump_touch, sprint_10y, stat_baseline_date";
 // Every row, past PostgREST's 1,000-row page.
 const every = async (q) => { const out = []; for (let from = 0; ; from += 1000) { const { data, error } = await q().range(from, from + 999); if (error) throw error; out.push(...(data || [])); if (!data || data.length < 1000) return out; } };
 
@@ -167,26 +168,36 @@ export default async function handler(req, res) {
     const include = new Set(asked.filter(k => !mine.has(k) || saved.includes(ackOf(flags, k))));
     const omit = KEYS.filter(k => held.has(k) && !include.has(k));
     const teammates = player.team_assignment ? club.filter(m => m.team_assignment === player.team_assignment && live(m)).map(m => ({ player: m, tests: testsOf(m.id) })) : [];
-    const firsts = [...new Set([player.parent_name, player.parent2_name].map(x => String(x || "").trim().split(/\s+/)[0]).filter(Boolean))];
-    const parentFirst = firsts.length <= 1 ? (firsts[0] || "") : firsts.slice(0, -1).join(", ") + " and " + firsts[firsts.length - 1];
-    const args = { player, tests, settings, draft, parentFirst, teammates, practice: practice || [], origin };
+    // Divorced / separated parents (players.parents_separate) get one email
+    // each, greeting only them; otherwise one email to every parent address.
+    const mailings = parentMailings(player);
+    const args = { player, tests, settings, draft, parentFirst: mailings[0]?.parentFirst || "", teammates, practice: practice || [], origin };
     const rep = buildReport({ ...args, omit });
     // The held metrics her email would otherwise have shown (the pick with no
     // omit); a flagged metric that was never picked isn't news to staff.
     const wanted = omit.length ? buildReport(args).picked.map(r => r.key).filter(k => omit.includes(k)) : [];
-    const to = testTo ? [testTo] : [...new Set([player.parent_email, player.parent_email2, player.parent_email3].map(nrm).filter(e => EMAIL_RE.test(e)))];
+    // A test sends every version (each parent's copy) to the test address.
+    const sends = mailings.map(m => ({ to: testTo ? [testTo] : m.to, rep: m.parentFirst === args.parentFirst ? rep : buildReport({ ...args, parentFirst: m.parentFirst, omit }) }));
+    if (!sends.length && testTo) sends.push({ to: [testTo], rep });
+    const to = testTo ? [testTo] : [...new Set(mailings.flatMap(m => m.to))];
     const why = !rep.picked.length ? (wanted.length
         ? `Nothing left to send for ${player.first_name}: the numbers picked for her report look like typos (${wanted.map(k => LABEL[k]).join(", ")}). Fix them, or tick them back in, first.`
         : "No testing numbers on file for " + player.first_name + " yet.")
       : !to.length ? "No parent email on file for " + player.first_name + "." : null;
-    return { player, rep, to, held: wanted, why };
+    return { player, rep, to, sends, separate: !!player.parents_separate, held: wanted, why };
+  };
+  const deliver = async (j, prefix) => {
+    for (let i = 0; i < j.sends.length; i++) {
+      if (i) await new Promise(r => setTimeout(r, 600));   // Resend allows 2 a second
+      await mail({ to: j.sends[i].to, subject: prefix + j.sends[i].rep.subject, rep: j.sends[i].rep, pid: j.player.id });
+    }
   };
 
   if (playerId) {
     const j = prepare(roster[0]);
     if (j.why) return res.status(400).json({ error: j.why });
-    try { await mail({ to: j.to, subject: (testTo ? "[TEST] " : "") + j.rep.subject, rep: j.rep, pid: j.player.id }); } catch (e) { return res.status(502).json({ error: e.message }); }
-    return res.status(200).json({ ok: true, to: j.to, test: !!testTo, held: j.held });
+    try { await deliver(j, testTo ? "[TEST] " : ""); } catch (e) { return res.status(502).json({ error: e.message }); }
+    return res.status(200).json({ ok: true, to: j.to, separate: j.separate, emails: j.sends.length, test: !!testTo, held: j.held });
   }
 
   // Whole team (Drew, Oct 12 2026: "send to the whole team in 1 fell swoop").
@@ -202,10 +213,10 @@ export default async function handler(req, res) {
     if (!testTo && !resend && sentIds.has(p.id)) { skipped.push({ player_id: p.id, name, why: "Already sent" }); continue; }
     const j = prepare(p);
     if (j.why) { skipped.push({ player_id: p.id, name, why: j.why }); continue; }
-    if (dry) { done.push({ player_id: p.id, name, to: j.to, held: j.held }); continue; }
+    if (dry) { done.push({ player_id: p.id, name, to: j.to, separate: j.separate, held: j.held }); continue; }
     try {
-      await mail({ to: j.to, subject: (testTo ? `[TEST · ${name}] ` : "") + j.rep.subject, rep: j.rep, pid: p.id });
-      done.push({ player_id: p.id, name, to: j.to, held: j.held });
+      await deliver(j, testTo ? `[TEST · ${name}] ` : "");
+      done.push({ player_id: p.id, name, to: j.to, separate: j.separate, held: j.held });
     } catch (e) { skipped.push({ player_id: p.id, name, why: e.message }); }
     await new Promise(r => setTimeout(r, 600));   // Resend allows 2 a second
   }

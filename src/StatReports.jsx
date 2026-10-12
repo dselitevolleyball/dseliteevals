@@ -27,6 +27,7 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import { supabase } from "./supabase";
 import { buildReport, flagId, reviewFlags, metricRows, fmtMetric, fmtChange, baselineLabel, statResultRows, allStatFlags, flaggedReportKeys, DEFAULT_SETTINGS, METRICS, SAMPLE_PLAYER, SAMPLE_TESTS, SAMPLE_DRAFT, SAMPLE_TEAM } from "../shared/stat-report.js";
 import { StatsLinks } from "./PlayerStats.jsx";
+import { parentMailings } from "../shared/parent-mail.js";
 
 const C = { bg: "#0a0a0a", card: "#141414", border: "#2a2a2a", gold: "#e91e8c", text: "#ffffff", mut: "#999999", red: "#ef4444", grn: "#22c55e", amb: "#f59e0b" };
 const inp = { background: "#0f0f0f", border: "1px solid " + C.border, borderRadius: 8, color: C.text, fontFamily: "inherit", fontSize: 13, padding: "8px 10px", width: "100%", boxSizing: "border-box" };
@@ -131,7 +132,8 @@ export default function StatReports({ coach, players = [], session }) {
   const onTeam = roster.filter(p => p.team_assignment === team).sort((a, b) => a.first_name.localeCompare(b.first_name));
   const player = roster.find(p => p.id === pid) || null;
   const parentEmails = (p) => [...new Set([p.parent_email, p.parent_email2, p.parent_email3].map(e => String(e || "").trim().toLowerCase()).filter(e => /@/.test(e)))];
-  const parentFirstOf = (p) => { const f = [...new Set([p.parent_name, p.parent2_name].map(x => String(x || "").trim().split(/\s+/)[0]).filter(Boolean))]; return f.length <= 1 ? (f[0] || "") : f.slice(0, -1).join(", ") + " and " + f[f.length - 1]; };
+  // Same as the send (shared/parent-mail.js): separated parents each get their own email; the preview greets the first.
+  const parentFirstOf = (p) => parentMailings(p)[0]?.parentFirst || "";
   // What a player's flags do to her email: held = the report metrics a flag
   // touches (flaggedReportKeys), acked = the held ones someone ticked back in
   // for these exact flags, omit = held − acked (what buildReport leaves out),
@@ -253,7 +255,7 @@ export default function StatReports({ coach, players = [], session }) {
     if (!player) return;
     const h = holdOf(player);
     const extra = (h.cut.length ? `\n\nLeft out (flagged as a possible typo): ${labels(h.cut)}.` : "") + (h.acked.length ? `\n\nIncludes flagged numbers you ticked: ${labels(h.acked)}.` : "");
-    if (!window.confirm(`Send ${player.first_name}'s testing report to ${parentEmails(player).join(", ")}?${extra}`)) return;
+    if (!window.confirm(`Send ${player.first_name}'s testing report to ${parentEmails(player).join(", ")}${player.parents_separate && parentMailings(player).length > 1 ? " (a separate email to each parent)" : ""}?${extra}`)) return;
     setBusy("send"); setMsg(null);
     try { const j = await post({ player_id: player.id, ...flagBody(h) }); setMsg({ ok: `Sent to ${j.to.join(", ")}.` + heldNote(j) }); load(); }
     catch (e) { setMsg({ err: e.message }); }
@@ -550,7 +552,7 @@ export default function StatReports({ coach, players = [], session }) {
                       <input type="date" value={player.stat_baseline_date ? String(player.stat_baseline_date).slice(0, 10) : ""} onChange={e => saveBaseline(e.target.value)} style={{ ...inp, width: 140, padding: "3px 6px", fontSize: 12, colorScheme: "dark" }} /></label>
                   : <span style={{ fontSize: 11, color: C.mut }}>Baseline {baselineLabel(player)}</span>)}
                 <div style={{ flex: 1 }} />
-                <span style={{ fontSize: 11, color: C.mut }}>To: {parentEmails(player).join(", ") || <span style={{ color: C.red }}>no parent email</span>}</span>
+                <span style={{ fontSize: 11, color: C.mut }}>To: {parentEmails(player).join(", ") || <span style={{ color: C.red }}>no parent email</span>}{player.parents_separate && parentMailings(player).length > 1 && <b style={{ color: C.amb }}> · separate emails (parents divorced/separated)</b>}</span>
               </div>
 
               {!entry ? <button onClick={() => setEntry({ date: new Date().toISOString().slice(0, 10) })} style={{ ...btn(false), marginBottom: 10 }}>＋ Add test results</button> : (
