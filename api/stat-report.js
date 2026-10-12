@@ -107,12 +107,14 @@ export default async function handler(req, res) {
   const addr = (/<([^>]+)>/.exec(DSE_FROM_EMAIL) || [, DSE_FROM_EMAIL])[1].trim();
   const REPORT_FROM = process.env.REPORT_FROM_EMAIL || `Coach Brandon <${REPORT_SENDERS[0]}>`;
   const replyTo = REPORT_SENDERS[0];
-  let fromFallback = false;
+  let fromFallback = false, fromWhy = "";
   const send = (from, to, subject, rep) => fetch("https://api.resend.com/emails", { method: "POST", headers: { Authorization: "Bearer " + RESEND, "Content-Type": "application/json" },
     body: JSON.stringify({ from, to, reply_to: replyTo, subject, html: rep.html, text: rep.text }) });
   const mail = async ({ to, subject, rep, pid }) => {
     let r = fromFallback ? null : await send(REPORT_FROM, to, subject, rep);
-    if (!r || (!r.ok && (r.status === 403 || r.status === 422) && /domain|verif/i.test(await r.clone().text()))) {
+    const why = r && !r.ok ? await r.clone().text() : "";
+    if (!r || (!r.ok && (r.status === 403 || r.status === 422) && /domain|verif/i.test(why))) {
+      if (why) fromWhy = why.slice(0, 300);
       fromFallback = true;
       r = await send(`Coach Brandon · DS Elite <${addr}>`, to, subject, rep);
     }
@@ -126,7 +128,7 @@ export default async function handler(req, res) {
   if (sample) {
     const rep = buildReport({ player: SAMPLE_PLAYER, tests: SAMPLE_TESTS, settings, draft: SAMPLE_DRAFT, parentFirst: "Jordan", teammates: SAMPLE_TEAM, practice: practice || [], origin });
     try { await mail({ to: [testTo], subject: "[TEST] " + rep.subject, rep, pid: null }); } catch (e) { return res.status(502).json({ error: e.message }); }
-    return res.status(200).json({ ok: true, to: [testTo], test: true, held: [], from_fallback: fromFallback });
+    return res.status(200).json({ ok: true, to: [testTo], test: true, held: [], from_fallback: fromFallback, ...(fromFallback ? { from_error: fromWhy } : {}) });
   }
 
   let club, allTests;
@@ -188,7 +190,7 @@ export default async function handler(req, res) {
     const j = prepare(roster[0]);
     if (j.why) return res.status(400).json({ error: j.why });
     try { await mail({ to: j.to, subject: (testTo ? "[TEST] " : "") + j.rep.subject, rep: j.rep, pid: j.player.id }); } catch (e) { return res.status(502).json({ error: e.message }); }
-    return res.status(200).json({ ok: true, to: j.to, test: !!testTo, held: j.held, from_fallback: fromFallback });
+    return res.status(200).json({ ok: true, to: j.to, test: !!testTo, held: j.held, from_fallback: fromFallback, ...(fromFallback ? { from_error: fromWhy } : {}) });
   }
 
   // Whole team (Drew, Oct 12 2026: "send to the whole team in 1 fell swoop").
@@ -211,5 +213,5 @@ export default async function handler(req, res) {
     } catch (e) { skipped.push({ player_id: p.id, name, why: e.message }); }
     await new Promise(r => setTimeout(r, 600));   // Resend allows 2 a second
   }
-  return res.status(200).json({ ok: true, team: teamName, test: !!testTo, dry, sent: done, skipped, from_fallback: fromFallback });
+  return res.status(200).json({ ok: true, team: teamName, test: !!testTo, dry, sent: done, skipped, from_fallback: fromFallback, ...(fromFallback ? { from_error: fromWhy } : {}) });
 }
