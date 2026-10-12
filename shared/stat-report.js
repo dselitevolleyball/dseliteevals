@@ -2,11 +2,22 @@
 // testing (Drew, Oct 9 2026). One builder for the app's live preview and the
 // server's send (api/stat-report.js), so what Brandon sees is what goes out.
 //
-//   metricRows(player, tests)  -> [{ key, label, baseline, baselineFrom, latest, latestFrom, change, better }]
-//   buildReport({ player, tests, settings, draft, parentFirst }) -> { subject, html, text }
+//   metricRows(player, tests)  -> [{ key, label, baseline, baselineFrom, baselineDate, baselineRow,
+//                                    latest, latestFrom, latestDate, latestRow, change, better }]
+//   buildReport({ player, tests, settings, draft, parentFirst, teammates, omit }) -> { subject, html, text, rows, picked }
+//   statResultRows(player, tests) -> every result on file, oldest first (the baseline, then each test)
+//   statFlags(player, tests, { peers }) -> likely data-entry errors, staff only (see the block above it)
+//   statPeerStats(players, testsByPlayer) / allStatFlags(...) / flaggedReportKeys(...) -> HQ helpers
 //
+import { REACH_COPY, reachPlanFor } from "./reach-plan.js";
+
 // Baseline = the first result on file (tryouts, else the first test); latest =
 // the most recent test. "Better" respects direction (10-yard: lower is better).
+// Every number and change shows two decimals (Drew, Oct 12 2026: "make sure the
+// change is two decimal points like 3.14"), and the baseline is labelled with
+// the day it was measured, players.stat_baseline_date, not "Tryouts" ("include
+// the date of the baseline instead of tryouts"); "Tryouts" only when unknown.
+// Pure and browser-safe: no imports, no I/O.
 
 export const METRICS = [
   // key, label, unit, higherIsBetter, tryout column
@@ -21,9 +32,20 @@ export const METRICS = [
 export const DEFAULT_SETTINGS = {
   subject: "{player_first}'s performance testing results",
   intro: "I'm Coach Brandon, and I run performance training at Dripping Springs Sports Club. I tested {player_first} with her {team} teammates, and I wanted to share where she is right now and where she's already improved.",
-  pitch: "If {player_first} wants to keep building on this, we've just launched Reach Performance memberships at DSSC: ongoing speed, strength and jump training built for volleyball players, with regular re-testing so you can watch the numbers move. I'd love to work with her. Reply to this email with any questions, or tap below to learn more.",
-  pitch_button: "Learn about Reach memberships",
+  // The Reach pitch (Drew, 12 Oct 2026): 2x a week, start now through
+  // Thanksgiving, the slot that fits her team's practice nights ({reach_plan},
+  // from shared/reach-plan.js), individual plans, both memberships, and the
+  // photos of Coach Brandon with athletes he has trained.
+  pitch_heading: REACH_COPY.pitch_heading,
+  pitch: REACH_COPY.pitch,
+  pitch_button: REACH_COPY.pitch_button,
   pitch_link: "",
+  signup_note: REACH_COPY.signup_note,
+  memberships: REACH_COPY.memberships,
+  fine_print: REACH_COPY.fine_print,
+  photos: REACH_COPY.photos,
+  photos_caption: REACH_COPY.photos_caption,
+  take_heading: "My take on {player_first}",
   signoff: "Coach Brandon\nPerformance Coach, Reach at DSSC",
   // The metrics section — all editable in the template.
   numbers_heading: "{player_first}'s numbers",
@@ -31,7 +53,6 @@ export const DEFAULT_SETTINGS = {
   show_gains: true,
   gains_text: "Where {player_first} got better:",
   worked_heading: "What we worked on",
-  pitch_heading: "Reach Performance",
   default_metrics: [],          // empty = every metric on file
   // Charts (drawn with table cells so they show in every email app).
   team_metrics: ["vertical", "broad_jump", "dash_10y"],   // compared against the team (and its average)
@@ -43,81 +64,123 @@ export const DEFAULT_SETTINGS = {
 const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
 const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const fmtDate = (iso) => { try { return new Date(String(iso).slice(0, 10) + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" }); } catch { return String(iso || ""); } };
-const ftIn = (n) => { const r = Math.round(n * 2) / 2; const f = Math.floor(r / 12), i = r - f * 12; return f ? `${f}' ${i % 1 ? i.toFixed(1) : i}"` : `${i}"`; };
+const unitOf = (key) => METRICS.find(m => m[0] === key)?.[2];
+// Whole hundredths, half away from zero. The nudge stops float drift
+// (1.865 * 100 = 186.4999…) from rounding a typed 1.865 down to 1.86.
+const hund = (n) => Math.sign(n) * Math.round(Math.abs(n) * 100 + 1e-6);
+const d2 = (n) => (hund(n) / 100).toFixed(2);
+// Feet and inches with the inch remainder to two decimals, ".00" dropped:
+// 8' 8.72", 8' 6.50", 8' 6" (Drew, Oct 12 2026 — two decimals so baseline
+// minus now visibly equals the change; it used to round to the half inch).
+const ftIn = (n) => { const h = hund(n), f = Math.floor(h / 1200), i = h - f * 1200; const s = i % 100 ? (i / 100).toFixed(2) : String(i / 100); return f ? `${f}' ${s}"` : `${s}"`; };
 export const fmtMetric = (key, v) => {
-  if (v == null) return "—";
-  const unit = METRICS.find(m => m[0] === key)?.[2];
-  if (unit === "sec") return v.toFixed(2) + "s";
-  if (key === "vertical" || key === "broad_jump") return (Math.round(v * 2) / 2) + '"';
-  return ftIn(v);
+  if (v == null || !Number.isFinite(+v)) return "—";
+  if (unitOf(key) === "sec") return d2(+v) + "s";
+  if (key === "vertical" || key === "broad_jump") return d2(+v) + '"';   // 21.70"
+  return ftIn(+v);
 };
-const fmtChange = (key, d) => {
-  const unit = METRICS.find(m => m[0] === key)?.[2];
-  const s = d > 0 ? "+" : d < 0 ? "−" : "±";
-  return unit === "sec" ? s + Math.abs(d).toFixed(2) + "s" : s + (Math.round(Math.abs(d) * 2) / 2) + '"';
+// Every change shows exactly two decimals: +3.14", −0.12s, and ±0.00 when it
+// rounds to nothing (Drew, Oct 12 2026: "two decimal points like 3.14").
+export const fmtChange = (key, d) => {
+  if (d == null || !Number.isFinite(+d)) return "";
+  const h = hund(+d);
+  return (h > 0 ? "+" : h < 0 ? "−" : "±") + (Math.abs(h) / 100).toFixed(2) + (unitOf(key) === "sec" ? "s" : '"');
 };
 
-export function metricRows(player, tests = []) {
+// What the baseline is labelled with: the day it was measured ("Jun 26"),
+// players.stat_baseline_date (migrations/20261012_stat_baseline_date.sql, Drew
+// Oct 12 2026: "include the date of the baseline instead of tryouts"), else the
+// old word "Tryouts" for a player whose date isn't known.
+export const baselineLabel = (player) => /^\d{4}-\d{2}-\d{2}/.test(String(player?.stat_baseline_date || "")) ? fmtDate(player.stat_baseline_date) : "Tryouts";
+
+// Every result on file, oldest first: the baseline (the tryout columns on
+// players) then each player_stat_tests row. One walk shared by the email
+// table, the series/team charts and the red flags, so they never disagree.
+//   { row: "tryout" | "test:<id>", from: "Jun 26", date, tryout, <metric keys>,
+//     reach (hers or the latest earlier one; tests often leave it blank),
+//     reachOwn, reachRow, vertEntered (the stored vertical, tests only), standJump }
+// vertical = approach touch − reach whenever both are on file, else the stored
+// number (a row with no touch or no reach). Nobody types a vertical (the
+// sheet's box is "Vertical (auto)"), and 39 of the 48 Oct 11 verticals were
+// saved with toFixed(1): the email showed Denver Dolch's 104.72 − 83 as a
+// padded 21.70" and +3.54" for a real +3.56", while /stats showed 21.72"
+// (Oct 12 2026, Drew: "two decimal points like 3.14"). Worked out here, the
+// email, HQ, the player card and the sheet agree to the hundredth. vertEntered
+// keeps the stored number so vMismatch still catches a hand-typed or stale one
+// (> 1" off; that rounding is ≤ 0.05"). standJump = standing touch − reach
+// (not a report metric; the flags use it).
+export function statResultRows(player, tests = []) {
   const sr = num(player?.stand_reach), ap = num(player?.approach_touch);
-  const tryout = { from: "Tryouts", stand_reach: sr, approach_touch: ap, standing_touch: num(player?.jump_touch), vertical: sr != null && ap != null ? ap - sr : null, broad_jump: null, dash_10y: num(player?.sprint_10y) };
-  const sorted = [...tests].sort((a, b) => String(a.test_date).localeCompare(String(b.test_date)));
-  let reach = sr;
-  const rows = sorted.map(t => {
-    const r = { from: fmtDate(t.test_date) };
+  const base = /^\d{4}-\d{2}-\d{2}/.test(String(player?.stat_baseline_date || "")) ? String(player.stat_baseline_date).slice(0, 10) : null;
+  const rows = [{ row: "tryout", from: baselineLabel(player), date: base, tryout: true,
+    stand_reach: sr, approach_touch: ap, standing_touch: num(player?.jump_touch), vertical: sr != null && ap != null ? ap - sr : null, broad_jump: null, dash_10y: num(player?.sprint_10y),
+    reach: sr, reachOwn: sr != null, reachRow: sr != null ? "tryout" : null, vertEntered: null }];
+  let reach = sr, reachRow = rows[0].reachRow;
+  const sorted = [...(tests || [])].sort((a, b) => String(a.test_date).localeCompare(String(b.test_date)) || (Number(a.id) || 0) - (Number(b.id) || 0));
+  sorted.forEach((t, i) => {
+    const r = { row: "test:" + (t.id ?? i), from: fmtDate(t.test_date), date: String(t.test_date || "").slice(0, 10) || null, tryout: false };
     for (const [k] of METRICS) r[k] = num(t[k]);
-    if (r.stand_reach != null) reach = r.stand_reach;
-    if (r.vertical == null && r.approach_touch != null && reach != null) r.vertical = r.approach_touch - reach;
-    return r;
+    if (r.stand_reach != null) { reach = r.stand_reach; reachRow = r.row; }
+    Object.assign(r, { reach, reachOwn: r.stand_reach != null, reachRow, vertEntered: r.vertical });
+    if (r.approach_touch != null && reach != null) r.vertical = r.approach_touch - reach;
+    rows.push(r);
   });
-  const all = [tryout, ...rows];
-  return METRICS.map(([key, label, , up]) => {
+  for (const r of rows) r.standJump = r.standing_touch != null && r.reach != null ? r.standing_touch - r.reach : null;
+  return rows;
+}
+
+export function metricRows(player, tests = []) {
+  const all = statResultRows(player, tests);
+  return METRICS.map(([key, label, unit, up]) => {
     const has = all.filter(x => x[key] != null);
     if (!has.length) return null;
     const a = has[0], b = has.length > 1 ? has[has.length - 1] : null;
-    const change = b ? b[key] - a[key] : null;
-    return { key, label, baseline: a[key], baselineFrom: a.from, latest: b ? b[key] : null, latestFrom: b ? b.from : null,
+    // The change is taken between the two numbers as shown (to the hundredth),
+    // so "baseline − now" on the page always equals the change printed beside it.
+    const change = b ? (hund(b[key]) - hund(a[key])) / 100 : null;
+    return { key, label, baseline: a[key], baselineFrom: a.from, baselineDate: a.date, baselineRow: a.row,
+      latest: b ? b[key] : null, latestFrom: b ? b.from : null, latestDate: b ? b.date : null, latestRow: b ? b.row : null,
       // A real change, not noise: a quarter inch, or two hundredths of a second.
       // Standing reach is growth, not training, so it is never called "better".
-      change, better: (() => { if (change == null || key === "stand_reach") return null; const min = METRICS.find(m => m[0] === key)[2] === "sec" ? 0.02 : 0.25; if (Math.abs(change) < min) return null; return up ? change > 0 : change < 0; })() };
+      change, better: (() => { if (change == null || key === "stand_reach") return null; const min = unit === "sec" ? 0.02 : 0.25; if (Math.abs(change) < min) return null; return up ? change > 0 : change < 0; })() };
   }).filter(Boolean);
 }
 
 const fill = (t, v) => String(t || "").replace(/\{(\w+)\}/g, (m, k) => (v[k] != null ? v[k] : m));
 
-// Every result on file for one metric, in order: [{ from, value }].
+// Every result on file for one metric, in order: [{ from, value, date, row }].
+// The baseline's `from` is its measuring date ("Jun 26"), else "Tryouts".
 export function metricSeries(player, tests, key) {
-  const num2 = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
-  const sr = num2(player?.stand_reach), ap = num2(player?.approach_touch);
-  const tryout = { stand_reach: sr, approach_touch: ap, standing_touch: num2(player?.jump_touch), vertical: sr != null && ap != null ? ap - sr : null, broad_jump: null, dash_10y: num2(player?.sprint_10y) };
-  const out = tryout[key] != null ? [{ from: "Tryouts", value: tryout[key] }] : [];
-  let reach = sr;
-  for (const t of [...(tests || [])].sort((a, b) => String(a.test_date).localeCompare(String(b.test_date)))) {
-    if (num2(t.stand_reach) != null) reach = num2(t.stand_reach);
-    let v = num2(t[key]);
-    if (key === "vertical" && v == null && num2(t.approach_touch) != null && reach != null) v = num2(t.approach_touch) - reach;
-    if (v != null) out.push({ from: fmtDate(t.test_date), value: v });
-  }
-  return out;
+  return statResultRows(player, tests).filter(r => r[key] != null).map(r => ({ from: r.from, value: r[key], date: r.date, row: r.row }));
 }
 
 // Team comparison (only the metrics in S.team_metrics — vertical and 10-yard
 // sprint by default). A ranked bar chart, best at the top: every teammate is an
 // unnamed grey bar, hers is pink and named, and the team average is its own
 // dark bar at the place it falls. Needs 3+ players with a result.
-const teamMetricsOf = (S) => (Array.isArray(S.team_metrics) && S.team_metrics.length ? S.team_metrics : ["vertical", "broad_jump", "dash_10y"]).filter(k => METRICS.some(m => m[0] === k));
+// drop = buildReport's omit: a metric held back from the table leaves the chart too.
+const teamMetricsOf = (S, drop) => (Array.isArray(S.team_metrics) && S.team_metrics.length ? S.team_metrics : ["vertical", "broad_jump", "dash_10y"]).filter(k => METRICS.some(m => m[0] === k) && !(drop && drop.has(k)));
+// A teammate whose latest number is red-flagged as a likely typo is left out
+// (Oct 12 2026: Genevieve Guerrero's 30.65" vertical, reach probably 72.5 for
+// 82.5, was printing as "team best" in every 16 Diamond family's email).
 export function teamStanding(player, tests, teammates, key) {
   const up = METRICS.find(m => m[0] === key)[3];
-  const latestOf = (p, t) => { const s = metricSeries(p, t, key); return s.length ? s[s.length - 1].value : null; };
+  const latestOf = (p, t, mate) => {
+    const s = metricSeries(p, t, key); if (!s.length) return null;
+    const last = s[s.length - 1];
+    if (mate && statFlags(p, t).some(f => f.level === "red" && f.row === last.row && (f.key === key || f.related.includes(key)))) return null;
+    return last.value;
+  };
   const mine = latestOf(player, tests);
-  const others = (teammates || []).filter(x => x.player.id !== player.id).map(x => latestOf(x.player, x.tests)).filter(v => v != null);
+  const others = (teammates || []).filter(x => x.player.id !== player.id).map(x => latestOf(x.player, x.tests, true)).filter(v => v != null);
   if (mine == null || others.length < 2) return null;
   const all = [...others.map(v => ({ v, me: false })), { v: mine, me: true }].sort((a, b) => up ? b.v - a.v : a.v - b.v);
   const rank = all.findIndex(x => x.me) + 1;
   const avg = all.reduce((s, x) => s + x.v, 0) / all.length;
   return { all, rank, n: all.length, best: all[0].v, avg, mine, up };
 }
-function teamHtml(player, tests, teammates, S, vars) {
-  const blocks = teamMetricsOf(S).map(key => {
+function teamHtml(player, tests, teammates, S, vars, drop) {
+  const blocks = teamMetricsOf(S, drop).map(key => {
     const t = teamStanding(player, tests, teammates, key);
     if (!t) return "";
     const label = METRICS.find(m => m[0] === key)[1];
@@ -142,19 +205,30 @@ function teamHtml(player, tests, teammates, S, vars) {
     + `<p style="margin:0 0 10px;font-size:12px;color:#888">${esc(fill(S.team_note, vars))}</p>` + blocks.join("") : "";
 }
 
-export function buildReport({ player, tests, settings, draft, parentFirst, teammates }) {
+// omit = metric keys to leave out whatever the draft/template picks: the
+// red-flagged numbers HQ holds back until someone fixes or ticks them
+// (flaggedReportKeys). Flag text itself never goes in the email.
+// practice: practice_assignments rows, for the Reach slot that fits her team's
+// nights. origin: absolute base for the photos (email apps need full URLs).
+export function buildReport({ player, tests, settings, draft, parentFirst, teammates, omit, practice, origin = "https://dseliteevals.vercel.app" }) {
   const S = { ...DEFAULT_SETTINGS, ...(settings || {}) };
   const team = String(player?.team_assignment || "").replace(/ 1$/, "");
-  const vars = { player_first: String(player?.first_name || "").trim(), team: team || "DS Elite", parent_first: parentFirst || "" };
+  const plan = reachPlanFor(player?.team_assignment || "", practice || []);
+  const vars = { player_first: String(player?.first_name || "").trim(), team: team || "DS Elite", parent_first: parentFirst || "", reach_plan: plan.text };
   const all = metricRows(player, tests);
   const want = Array.isArray(draft?.metrics) && draft.metrics.length ? draft.metrics : (Array.isArray(S.default_metrics) && S.default_metrics.length ? S.default_metrics : null);
-  const picked = want ? all.filter(r => want.includes(r.key)) : all;
+  const drop = new Set(Array.isArray(omit) ? omit : []);
+  const picked = (want ? all.filter(r => want.includes(r.key)) : all).filter(r => !drop.has(r.key));
   const gains = picked.filter(r => r.better === true);
   const subject = fill(S.subject, vars);
   const greet = parentFirst ? `Hi ${parentFirst},` : "Hi,";
   const para = (t) => fill(t, vars).split(/\n{2,}/).map(p => p.trim()).filter(Boolean);
   const intro = para(S.intro), pitch = para(S.pitch);
   const worked = String(draft?.worked_on || "").trim(), note = String(draft?.note || "").trim();
+  // Claude's "Coach's take" (api/stat-report-ai.js), as written or as a coach edited it.
+  const take = String(draft?.ai_take || "").trim();
+  const members = Array.isArray(S.memberships) ? S.memberships.filter(m => m && m.link) : [];
+  const photos = (Array.isArray(S.photos) ? S.photos : []).filter(Boolean).map(p => /^https?:/.test(p) ? p : String(origin).replace(/\/$/, "") + p);
   const anyLatest = picked.some(r => r.latest != null);
 
   // ── HTML ──
@@ -176,30 +250,266 @@ export function buildReport({ player, tests, settings, draft, parentFirst, teamm
   const H = (t) => `<p style="margin:22px 0 8px;font-weight:700;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:#c2186f">${esc(t)}</p>`;
   const html = '<div style="font-family:-apple-system,Segoe UI,sans-serif;font-size:15px;line-height:1.6;color:#1a1a1a;max-width:620px">'
     + P(greet) + intro.map(P).join("")
+    + (take ? H(fill(S.take_heading, vars)) + `<p style="margin:0 0 14px;padding:2px 0 2px 12px;border-left:3px solid #e91e8c">${esc(take).replace(/\n/g, "<br>")}</p>` : "")
     + (picked.length ? H(fill(S.numbers_heading, vars)) + table : "")
     + (gainLine ? `<p style="margin:0 0 14px;padding:10px 12px;background:#ecfdf3;border-radius:8px;color:#14532d;font-weight:600">${esc(gainLine)}</p>` : "")
-    + (S.show_team !== false ? teamHtml(player, tests, teammates, S, vars) : "")
+    + (S.show_team !== false ? teamHtml(player, tests, teammates, S, vars, drop) : "")
     + (worked ? H(fill(S.worked_heading, vars)) + P(worked) : "")
     + (note ? P(note) : "")
     + (pitch.length ? H(fill(S.pitch_heading, vars)) + pitch.map(P).join("") : "")
-    + (S.pitch_link ? `<p style="margin:6px 0 18px"><a href="${esc(S.pitch_link)}" style="display:inline-block;background:#e91e8c;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:700">${esc(fill(S.pitch_button, vars) || "Learn more")}</a></p>` : "")
+    // Coach Brandon with athletes he has trained — two photos side by side
+    // (a table, so they sit together in every email app), one caption.
+    + (photos.length ? `<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;margin:6px 0 6px"><tr>${photos.map(u => `<td style="width:${Math.floor(100 / photos.length)}%;padding:0 4px;vertical-align:top"><img src="${esc(u)}" alt="Coach Brandon with athletes he has trained" width="290" style="width:100%;max-width:290px;height:auto;border-radius:8px;display:block"></td>`).join("")}</tr></table>`
+        + (S.photos_caption ? `<p style="margin:0 0 16px;font-size:12px;color:#666">${esc(fill(S.photos_caption, vars))}</p>` : "") : "")
+    // The memberships, Elite (the 2x-a-week plan) first.
+    + (members.length
+      ? (S.signup_note ? P(fill(S.signup_note, vars)) : "")
+        + members.map(m => `<div style="border:1px solid ${m.recommended ? "#e91e8c" : "#e5e5e5"};border-radius:10px;padding:12px 14px;margin:0 0 10px">`
+          + `<div style="font-weight:700;font-size:15px">${esc(m.name)} · ${esc(m.price)}${m.recommended ? ` <span style="font-size:11px;font-weight:700;color:#e91e8c;text-transform:uppercase;letter-spacing:.05em">· recommended</span>` : ""}</div>`
+          + `<div style="font-size:13px;color:#555;margin:2px 0 10px">${esc(m.detail)}</div>`
+          + `<a href="${esc(m.link)}" style="display:inline-block;background:${m.recommended ? "#e91e8c" : "#1a1a1a"};color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:700;font-size:14px">Sign ${esc(vars.player_first)} up for ${esc(m.name)}</a></div>`).join("")
+        + (S.fine_print ? `<p style="margin:4px 0 14px;font-size:12px;color:#666">${esc(fill(S.fine_print, vars))}</p>` : "")
+      : (S.pitch_link ? `<p style="margin:6px 0 18px"><a href="${esc(S.pitch_link)}" style="display:inline-block;background:#e91e8c;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:700">${esc(fill(S.pitch_button, vars) || "Learn more")}</a></p>` : ""))
     + `<p style="margin:18px 0 0">${esc(fill(S.signoff, vars)).replace(/\n/g, "<br>")}</p></div>`;
 
   // ── Text ──
   const tline = (r) => `  ${r.label}: ${fmtMetric(r.key, r.baseline)} (${r.baselineFrom})` + (r.latest != null ? ` -> ${fmtMetric(r.key, r.latest)} (${r.latestFrom})${r.change != null ? "  " + fmtChange(r.key, r.change) + (r.better ? " better" : "") : ""}` : "");
   const text = [greet, ...intro,
+    take ? fill(S.take_heading, vars).toUpperCase() + "\n" + take : "",
     picked.length ? fill(S.numbers_heading, vars).toUpperCase() + "\n" + picked.map(tline).join("\n") : "",
     gainLine,
-    S.show_team !== false ? teamMetricsOf(S).map(key => { const t = teamStanding(player, tests, teammates, key); const lab = METRICS.find(m => m[0] === key)[1]; return t ? `  ${lab}: #${t.rank} of ${t.n} on the team (team average ${fmtMetric(key, t.avg)}, team best ${fmtMetric(key, t.best)})` : ""; }).filter(Boolean).join("\n") : "",
+    S.show_team !== false ? teamMetricsOf(S, drop).map(key => { const t = teamStanding(player, tests, teammates, key); const lab = METRICS.find(m => m[0] === key)[1]; return t ? `  ${lab}: #${t.rank} of ${t.n} on the team (team average ${fmtMetric(key, t.avg)}, team best ${fmtMetric(key, t.best)})` : ""; }).filter(Boolean).join("\n") : "",
     worked ? fill(S.worked_heading, vars).toUpperCase() + "\n" + worked : "", note,
-    pitch.length ? fill(S.pitch_heading, vars).toUpperCase() + "\n" + pitch.join("\n\n") + (S.pitch_link ? "\n" + S.pitch_link : "") : "",
+    pitch.length ? fill(S.pitch_heading, vars).toUpperCase() + "\n" + pitch.join("\n\n") + (!members.length && S.pitch_link ? "\n" + S.pitch_link : "") : "",
+    photos.length && S.photos_caption ? fill(S.photos_caption, vars) : "",
+    members.length ? [S.signup_note ? fill(S.signup_note, vars) : "", ...members.map(m => `${m.name} (${m.price}): ${m.detail}\n${m.link}`), S.fine_print ? fill(S.fine_print, vars) : ""].filter(Boolean).join("\n\n") : "",
     fill(S.signoff, vars)].filter(Boolean).join("\n\n");
   return { subject, html, text, rows: all, picked };
 }
 
+// ── Red flags: numbers that look like data-entry errors (staff only) ─────────
+// Drew, Oct 12 2026: "red-flag potential issues with players' metrics — things
+// that seem too high or too low — potentially a data entry issue." Calibrated
+// on all 200 tryout baselines + the 56 Oct 11 retests, and on the 187 typos
+// staff fixed by hand at tryouts (change_log): the rules would have caught
+// every one of those. The morning of Oct 12 they flagged 9 red + 6 amber on 11
+// players; 7 red + 7 amber on 11 after Drew raised Denver Dolch's June touches
+// at 11:08 CT (counts move as staff fix numbers — allStatFlags is live). The
+// aim is typos, not unusual athletes — Hazel Colletti's 97" reach is
+// consistent with her touches and never flags.
+//   statFlags(player, tests, { peers }) ->
+//     [{ key, from, date, row, value, level: "red"|"amber", reason, rule, related, prevRow?, z? }]
+// key = the metric cell that gets the badge; related = the other report
+// metrics whose number or change rides on the same suspect value (Everly
+// Shumway's 40 cm-short June touches make a fake 6.16" vertical, and would
+// make a fake ~+16" gain at her retest), so "off by default" covers key +
+// related (flaggedReportKeys). `from` carries the baseline date like the
+// email does. Never put `reason` in a family email.
+export const STAT_FLAG_RULES = {
+  // A. Unit slips + physical limits for girls 9–18 (red). Wide on purpose: the
+  // real data spans reach 67–97, touches 79.5–116.5, broad jump 48–86 and
+  // 10-yard 1.69–2.91. The unit bands are cut at the typos staff actually made
+  // (10-yard 1770/245, cm 213–238 in an inches box, 8875/825/1052, reach 7).
+  range: { stand_reach: [58, 104], approach_touch: [70, 125], standing_touch: [68, 122], broad_jump: [30, 110], dash_10y: [1.45, 3.5] },
+  // B. The same row against itself. Clean results: approach vertical 10.53–26.10
+  // across 238 values (30" is national-team), standing jump from 9.94, approach
+  // minus standing touch −0.79 to +6.70 (a 1 cm tie is common).
+  vertical: [9, 30],
+  standJump: [7, 27],
+  bonus: { redLo: -4, amberLo: -1.5, amberHi: 7, redHi: 9 },
+  vMismatch: 1,       // an entered vertical vs approach touch − reach
+  stAboveAp: 2,       // standing touch over her best approach with approach blank (12 Ruby, Oct 11)
+  // C. Change vs her previous result. Over 95–108 days the real spread was
+  // reach 0 to +2.5, vertical ±4.4, 10-yard −0.25 to +0.14s: amber sits just
+  // outside that, red at about twice. Gains ("Up"; for the 10-yard, faster)
+  // widen by max(1, months/4) so a Feb retest isn't over-flagged; drops
+  // ("Down"; 10-yard slower) don't. Reach growth is [base, per month] —
+  // peak height velocity ~0.45"/mo plus 1–2" of measuring noise.
+  change: {
+    stand_reach: { amberDown: 1, redDown: 2.5, amberUp: [1, 0.6], redUp: [2, 1] },
+    vertical: { amberDown: 5, redDown: 8, amberUp: 5, redUp: 8 },
+    standJump: { amberDown: 5, redDown: 8, amberUp: 5, redUp: 8 },
+    broad_jump: { amberDown: 8, redDown: 14, amberUp: 10, redUp: 16 },
+    dash_10y: { amberDown: 0.25, redDown: 0.4, amberUp: 0.3, redUp: 0.5 },
+  },
+  // D. Unusual for her age group (amber only): robust z = (v − median) /
+  // max(1.4826 × MAD, floor), flagged at |z| ≥ 4 in a pool of 15+. z ≥ 3 would
+  // also catch real athletes (Brittan Bradford 2.18s, Ellie Wong 21.1", Kate
+  // Stroop 48"). Small pools (most broad jumps today) wait for more tests.
+  peer: { z: 4, minN: 15, floor: { vertical: 1.5, standJump: 1.5, dash_10y: 0.06, broad_jump: 3, stand_reach: 1.5, approach_touch: 2, standing_touch: 2 } },
+  // The U14 jump station typed every touch 40 cm short from 17:24 to 17:48 on
+  // Jun 26; Drew fixed the rest at 17:56 but missed three. He raised Denver
+  // Dolch's by 10" on Oct 12 (15.75" would match her Oct 11 retest); Everly
+  // Shumway and Lucy Brewer remain. A low touch this would mend gets a hint.
+  short40cm: 15.75,
+};
+const FLAG_LABEL = Object.fromEntries(METRICS.map(m => [m[0], m[1]]));
+const typed = (v) => String(+(+v).toFixed(2));   // a slipped number as typed: 1770, 9222.05
+const signed = (d) => { const h = hund(d); return (h > 0 ? "+" : h < 0 ? "−" : "±") + (Math.abs(h) / 100).toFixed(2); };
+// Peer group from usav_div: U9–U15 each, U16–U18 pooled (only 10 players
+// tested); anything else (a stray "U47") gets no peer check.
+export const statAgeGroup = (div) => { const m = /^U(\d+)$/i.exec(String(div || "").trim()); if (!m) return null; const a = +m[1]; return a < 9 || a > 18 ? null : a >= 16 ? "U16+" : "U" + a; };
+// testsByPlayer may be a Map (StatReports' testsBy), a { [player_id]: [] }
+// object, or a flat array of player_stat_tests rows.
+const testsLookup = (x) => {
+  if (x instanceof Map) return (id) => x.get(id) || [];
+  if (Array.isArray(x)) { const m = new Map(); for (const t of x) { if (!m.has(t.player_id)) m.set(t.player_id, []); m.get(t.player_id).push(t); } return (id) => m.get(id) || []; }
+  return (id) => (x && x[id]) || [];
+};
+const PEER_KEYS = ["vertical", "standJump", "dash_10y", "broad_jump", "stand_reach", "approach_touch", "standing_touch"];
+
+// Median + MAD of every result on file (baselines and all tests) per age group
+// and metric. Build once for the whole club and pass it to statFlags as peers.
+export function statPeerStats(players, testsByPlayer) {
+  const testsOf = testsLookup(testsByPlayer), pools = {};
+  for (const p of players || []) {
+    const g = statAgeGroup(p?.usav_div); if (!g) continue;
+    for (const r of statResultRows(p, testsOf(p.id))) for (const k of PEER_KEYS) if (r[k] != null) { pools[g] = pools[g] || {}; (pools[g][k] = pools[g][k] || []).push(r[k]); }
+  }
+  const med = (a) => { const s = [...a].sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+  const out = {};
+  for (const [g, ks] of Object.entries(pools)) for (const [k, a] of Object.entries(ks)) { const m = med(a); out[g] = out[g] || {}; out[g][k] = { median: m, mad: med(a.map(x => Math.abs(x - m))), n: a.length }; }
+  return out;
+}
+
+export function statFlags(player, tests, { peers } = {}) {
+  const R = STAT_FLAG_RULES, rows = statResultRows(player, tests), out = [];
+  const add = (r, key, level, rule, reason, extra) => out.push({ key, from: r.from, date: r.date, row: r.row, value: r[key], level, reason, rule, related: [], ...(extra || {}) });
+  const SIZE = ["stand_reach", "approach_touch", "standing_touch"];
+  const rangeRed = (row, keys) => out.some(f => f.row === row && f.rule === "range" && keys.includes(f.key));
+  const short = R.short40cm;
+  for (const r of rows) {
+    // A. Unit slips first (they explain the number), then the physical range.
+    for (const [k, [lo, hi]] of Object.entries(R.range)) {
+      const v = r[k]; if (v == null) continue;
+      const L = FLAG_LABEL[k]; let why = null;
+      if (k === "dash_10y") {
+        if (v >= 100) why = `${L} ${typed(v)}s: looks like it was typed without the decimal point (${d2(v / (v >= 1000 ? 1000 : 100))}s?)`;
+        else if (v >= 10) why = `${L} ${typed(v)}s: looks like a typo (${d2(v / 10)}s?)`;
+        else if (v < lo) why = `${L} ${d2(v)}s is faster than any youth player runs; likely a typo`;
+        else if (v > hi) why = `${L} ${d2(v)}s is far too slow for 10 yards; likely a typo`;
+      } else {
+        if (v >= 600) why = `${L} ${typed(v)}": missing decimal point? (${d2(v / (v >= 6000 ? 100 : 10))}"?)`;
+        else if (v >= 150 && v < 330) why = `${L} ${typed(v)}": looks like centimeters (${d2(v / 2.54)}")`;
+        else if (v < 12) why = `${L} ${typed(v)}": looks like feet (${typed(v)} ft = ${d2(v * 12)}"). Enter inches`;
+        else if (v < 40 && (k === "approach_touch" || k === "standing_touch")) why = `${L} ${typed(v)}": looks like a jump height, not a touch height`;
+        else if (v < lo || v > hi) why = `${L} ${d2(v)}" is too ${v < lo ? "low" : "high"} to be right; likely a typo`;
+      }
+      if (why) add(r, k, "red", "range", why, { related: k === "approach_touch" || k === "stand_reach" ? ["vertical"] : [] });
+    }
+    // B. Relationships on a junk number are noise, so a row with a bad
+    // reach/touch skips them; so does a reach carried from a row where it's bad.
+    if (rangeRed(r.row, SIZE)) continue;
+    const reach = r.reachRow && r.reachRow !== r.row && rangeRed(r.reachRow, ["stand_reach"]) ? null : r.reach;
+    const ap = r.approach_touch, st = r.standing_touch;
+    if (ap != null && reach != null) {
+      const v = ap - reach, [lo, hi] = R.vertical;
+      const why = `(touch ${d2(ap)}" − reach ${d2(reach)}")`;
+      if (v <= 0) add(r, "approach_touch", "red", "ap<=reach", `Approach touch ${d2(ap)}" is not above her standing reach ${d2(reach)}"; likely a typo`, { related: ["stand_reach", "vertical"] });
+      else if (v < lo) add(r, "vertical", "red", "vertLow", `Approach vertical only ${d2(v)}" ${why}; one of those is likely a typo${v + short >= lo && v + short <= hi ? " (touch about 40 cm short?)" : ""}`, { value: v, related: ["approach_touch", "stand_reach"] });
+      else if (v > hi) add(r, "vertical", "red", "vertHigh", `Approach vertical ${d2(v)}" ${why} is beyond elite level; check the reach and touch`, { value: v, related: ["approach_touch", "stand_reach"] });
+    }
+    if (st != null && reach != null) {
+      const v = st - reach, [lo, hi] = R.standJump;
+      if (v <= 0) add(r, "standing_touch", "red", "st<=reach", `Standing jump touch ${d2(st)}" is not above her standing reach ${d2(reach)}"; likely a typo`, { related: ["stand_reach"] });
+      else if (v < lo) add(r, "standing_touch", "red", "sjLow", `Standing jump only ${d2(v)}" above her reach (touch ${d2(st)}", reach ${d2(reach)}"); likely a typo${v + short >= lo && v + short <= hi ? " (touch about 40 cm short?)" : ""}`, { related: ["stand_reach"] });
+      else if (v > hi) add(r, "standing_touch", "red", "sjHigh", `Standing jump ${d2(v)}" above her reach (touch ${d2(st)}", reach ${d2(reach)}") is beyond elite level; likely a typo`, { related: ["stand_reach"] });
+    }
+    if (ap != null && st != null) {
+      const d = ap - st, B = R.bonus;
+      if (d < B.redLo) add(r, "approach_touch", "red", "bonusNeg", `Approach touch ${d2(ap)}" is ${d2(-d)}" below her standing jump touch ${d2(st)}". Boxes swapped, or a typo?`, { related: ["standing_touch", "vertical"] });
+      else if (d < B.amberLo) add(r, "approach_touch", "amber", "bonusNeg", `Approach touch ${d2(ap)}" is ${d2(-d)}" below her standing jump touch ${d2(st)}". Boxes swapped?`, { related: ["standing_touch", "vertical"] });
+      else if (d > B.redHi) add(r, "standing_touch", "red", "bonusPos", `Standing jump touch ${d2(st)}" is ${d2(d)}" below her approach touch ${d2(ap)}". Players are usually within 0–5"; likely a typo`, { related: ["approach_touch"] });
+      else if (d > B.amberHi) add(r, "standing_touch", "amber", "bonusPos", `Standing jump touch ${d2(st)}" is ${d2(d)}" below her approach touch ${d2(ap)}"; an unusually big gap`, { related: ["approach_touch"] });
+    }
+    if (r.vertEntered != null && ap != null && reach != null && Math.abs(r.vertEntered - (ap - reach)) > R.vMismatch)
+      add(r, "vertical", "red", "vMismatch", `Vertical ${d2(r.vertEntered)}" doesn't match approach touch − reach (${d2(ap - reach)}")`, { value: r.vertEntered, related: ["approach_touch", "stand_reach"] });
+    if (!r.tryout && st != null && ap == null) {
+      const bestAp = Math.max(...rows.filter(x => x !== r && x.approach_touch != null).map(x => x.approach_touch));
+      if (Number.isFinite(bestAp) && st > bestAp + R.stAboveAp)
+        add(r, "standing_touch", "amber", "stAboveAp", `Standing jump touch ${d2(st)}" is above her best approach touch (${d2(bestAp)}") and approach is blank. Typed in the wrong box?`);
+    }
+  }
+
+  // C. Change vs her previous result for that metric (each consecutive pair,
+  // not only vs the baseline); the flag sits on the later result. Raw touches
+  // aren't checked: touch change = reach change + jump change, both covered,
+  // and checking both would double-flag one typo. Skipped when either end
+  // already has a red flag that explains it.
+  const CHANGE = [["stand_reach", "stand_reach", ["stand_reach"], ["vertical"]], ["vertical", "vertical", ["vertical", "approach_touch", "stand_reach"], ["approach_touch"]],
+    ["standJump", "standing_touch", ["standing_touch", "stand_reach"], []], ["broad_jump", "broad_jump", ["broad_jump"], []], ["dash_10y", "dash_10y", ["dash_10y"], []]];
+  for (const [m, key, deps, related] of CHANGE) {
+    const c = R.change[m], u = m === "dash_10y" ? "s" : '"';
+    let prev = null;
+    for (const r of rows) {
+      const v = r[m]; if (v == null) continue;   // stand_reach is only her own, never a carried one
+      if (prev) {
+        const known = !!(prev.r.date && r.date);
+        const months = known ? Math.max(0.5, (Date.parse(r.date) - Date.parse(prev.r.date)) / 864e5 / 30.44) : 4;
+        const sc = Math.max(1, months / 4), d = v - prev.v, gain = m === "dash_10y" ? -d : d;
+        const lim = (x) => Array.isArray(x) ? x[0] + x[1] * months : x * sc;
+        const level = gain > lim(c.redUp) ? "red" : gain > lim(c.amberUp) ? "amber" : -gain > c.redDown ? "red" : -gain > c.amberDown ? "amber" : null;
+        const explained = out.some(f => f.level === "red" && (f.row === r.row || f.row === prev.r.row) && (deps.includes(f.key) || f.related.includes(key)));
+        if (level && !explained) {
+          const lab = m === "standJump" ? "Standing jump (touch − reach)" : FLAG_LABEL[m];
+          add(r, key, level, "change:" + m, `${lab} ${signed(d)}${u} since ${prev.r.from} (${d2(prev.v)}${u} → ${d2(v)}${u})${known ? ` in ${months.toFixed(1)} months` : ""}, more than real change explains; one of the two is likely a typo`, { prevRow: prev.r.row, related });
+        }
+      }
+      prev = { r, v };
+    }
+  }
+
+  // D. Unusual for her age group (amber). Body size (reach, touches) only on
+  // rows where B can't cross-check it — no reach + touch pair — so tall
+  // athletes never flag; Lucy Brewer's lone short touches do.
+  const g = statAgeGroup(player?.usav_div), P = peers && g ? peers[g] : null;
+  if (P) for (const r of rows) {
+    const ks = ["vertical", "standJump", "dash_10y", "broad_jump"];
+    if (!(r.reach != null && (r.approach_touch != null || r.standing_touch != null))) ks.push(...SIZE);
+    for (const m of ks) {
+      const v = r[m], s = P[m]; if (v == null || !s || s.n < R.peer.minN) continue;
+      const sd = Math.max(1.4826 * s.mad, R.peer.floor[m]), z = (v - s.median) / sd;
+      const key = m === "standJump" ? "standing_touch" : m, u = m === "dash_10y" ? "s" : '"';
+      if (Math.abs(z) < R.peer.z || out.some(f => f.row === r.row && f.key === key && f.level === "red")) continue;
+      const what = m === "standJump" ? `Standing jump (touch − reach) ${d2(v)}"` : `${FLAG_LABEL[m]} ${d2(v)}${u}`;
+      const dir = m === "dash_10y" ? (z > 0 ? "slower than" : "faster than") : z > 0 ? "above" : "below";
+      const mend = z < 0 && m !== "dash_10y" && m !== "broad_jump" && m !== "stand_reach" && Math.abs((v + short - s.median) / sd) < R.peer.z;
+      add(r, key, "amber", "peer:" + m, `${what} is far ${dir} other ${g} players (typical ${d2(s.median)}${u}). Double-check it${mend ? " (about 40 cm short?)" : ""}`, { z: Math.round(z * 10) / 10 });
+    }
+  }
+
+  // Red first, then oldest result first.
+  const at = new Map(rows.map((r, i) => [r.row, i]));
+  return out.map((f, i) => [f, i]).sort(([a, i], [b, j]) => (a.level === b.level ? 0 : a.level === "red" ? -1 : 1) || at.get(a.row) - at.get(b.row) || i - j).map(([f]) => f);
+}
+
+// Every flag across the club for HQ's "Check these numbers" panel: red first,
+// then team (no team last), then player. Each flag gains player_id, player, team.
+export function allStatFlags(players, testsByPlayer, { peers } = {}) {
+  const testsOf = testsLookup(testsByPlayer), P = peers || statPeerStats(players, testsByPlayer), out = [];
+  for (const p of players || []) for (const f of statFlags(p, testsOf(p.id), { peers: P }))
+    out.push({ ...f, player_id: p.id, player: `${p.first_name || ""} ${p.last_name || ""}`.trim(), team: p.team_assignment || "" });
+  const tn = (t) => (t ? parseInt(t) || 99 : 999);
+  return out.sort((a, b) => (a.level === b.level ? 0 : a.level === "red" ? -1 : 1) || tn(a.team) - tn(b.team) || a.team.localeCompare(b.team) || a.player.localeCompare(b.player) || (a.player_id - b.player_id));
+}
+
+// The report metrics a flag actually touches: its key + related, when the
+// flagged result (or, for a change flag, either end) is the baseline or the
+// "now" that metric shows. HQ ticks these off by default; a flag on an
+// in-between test doesn't change the email. level: "red" to count only reds.
+export function flaggedReportKeys(player, tests, flags, { level } = {}) {
+  const shown = new Map(metricRows(player, tests).map(r => [r.key, [r.baselineRow, r.latestRow].filter(Boolean)]));
+  const hit = new Set();
+  for (const f of flags || []) {
+    if (level && f.level !== level) continue;
+    for (const k of [f.key, ...(f.related || [])]) { const s = shown.get(k); if (s && (s.includes(f.row) || (f.prevRow && s.includes(f.prevRow)))) hit.add(k); }
+  }
+  return METRICS.map(m => m[0]).filter(k => hit.has(k));
+}
+
 // A made-up player for previewing / test-sending the template before anyone
 // real has been retested.
-export const SAMPLE_PLAYER = { id: 0, first_name: "Sample", last_name: "Player", team_assignment: "14 Diamond", stand_reach: 90, approach_touch: 112, jump_touch: 101, sprint_10y: 1.95 };
+export const SAMPLE_PLAYER = { id: 0, first_name: "Sample", last_name: "Player", team_assignment: "14 Diamond", usav_div: "U14", stand_reach: 90, approach_touch: 112, jump_touch: 101, sprint_10y: 1.95, stat_baseline_date: "2026-06-26" };
 export const SAMPLE_TESTS = [{ test_date: new Date().toISOString().slice(0, 10), stand_reach: 90.5, approach_touch: 115, standing_touch: 103, broad_jump: 86, dash_10y: 1.88 }];
 export const SAMPLE_DRAFT = { worked_on: "Approach footwork, arm swing timing and first-step quickness off the block.", note: "" };
 // Made-up teammates for the sample preview's team chart.

@@ -11,10 +11,19 @@
 // secret), so a link only opens its own team and can't be guessed. No expiry:
 // it's the team's standing link. Values: inches (or 8'4" style), broad jump
 // inches (or 6'10"), 10-yard dash seconds. Vertical = approach − stand & reach.
+//
+// As the coach types, the sheet warns under a box when a number looks like a
+// data-entry slip — cm in an inches box, a dash typed as 186, an approach touch
+// below her reach, a jump that moved more than real training explains (Drew,
+// Oct 12 2026: "red-flag potential issues with players' metrics — things that
+// seem too high or too low"). Saving still works. The thresholds aren't copied
+// into the page: STAT_FLAG_RULES from shared/stat-report.js rides along in the
+// JSON, so the sheet and HQ's statFlags can't drift apart on a number.
 
 import crypto from "crypto";
 import { createClient } from "@supabase/supabase-js";
 import { appOrigin } from "../shared/app-origin.js";
+import { METRICS, STAT_FLAG_RULES } from "../shared/stat-report.js";
 
 const OWNERS = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"];
 const b64url = (buf) => Buffer.from(buf).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
@@ -71,7 +80,7 @@ export default async function handler(req, res) {
       + list.map(t => '<a class="team" href="/stats?t=' + signTeam(t.team_name, SUPABASE_SERVICE_ROLE_KEY) + '"><b>' + esc(t.team_name) + '</b><span>' + n(t.team_name) + " players</span></a>").join("") + "</div>"));
   }
   if (!team) { res.setHeader("Content-Type", "text/html; charset=utf-8"); return res.status(403).send(page("Link not valid", `<h1>This link isn't valid</h1><p>Ask Drew for the team's testing link.</p>`)); }
-  const { data: players } = await sb.from("players").select("id, first_name, last_name, jersey_number, stand_reach, approach_touch, jump_touch, sprint_10y, offer_status")
+  const { data: players } = await sb.from("players").select("id, first_name, last_name, jersey_number, stand_reach, approach_touch, jump_touch, sprint_10y, stat_baseline_date, offer_status")
     .eq("team_assignment", team).order("last_name");
   const roster = (players || []).filter(p => !/declin|releas|withdr|cancel/i.test(p.offer_status || ""));
 
@@ -92,7 +101,9 @@ export default async function handler(req, res) {
       if (Object.values(v).some(x => Number.isNaN(x))) { bad.push(r.player_id); continue; }
       if (Object.values(v).every(x => x == null) && !String(r.notes || "").trim()) continue;
       const reach = v.stand_reach ?? reachOf.get(String(r.player_id));
-      const vert = v.approach_touch != null && reach != null ? +(v.approach_touch - reach).toFixed(1) : null;
+      // Hundredths, like every number in the reports (Drew, Oct 12 2026: "two
+      // decimal points like 3.14") — 104.72 − 83 is 21.72", not 21.7".
+      const vert = v.approach_touch != null && reach != null ? +(v.approach_touch - reach).toFixed(2) : null;
       rows.push({ player_id: Number(r.player_id), test_date: date, team_name: team, ...v, vertical: vert, notes: String(r.notes || "").trim().slice(0, 300) || null, recorded_by: by, source: "stats-link", updated_at: new Date().toISOString() });
     }
     if (bad.length) return res.status(400).json({ error: "Some numbers couldn't be read — check the highlighted players.", bad });
@@ -104,7 +115,7 @@ export default async function handler(req, res) {
       const old = (same || []).find(x => x.player_id === r.player_id); if (!old) continue;
       for (const k of ["stand_reach", "approach_touch", "standing_touch", "broad_jump", "dash_10y", "notes"]) if (r[k] == null && old[k] != null) r[k] = old[k];
       const reach = r.stand_reach ?? reachOf.get(String(r.player_id));
-      r.vertical = r.approach_touch != null && reach != null ? +(r.approach_touch - reach).toFixed(1) : null;
+      r.vertical = r.approach_touch != null && reach != null ? +(r.approach_touch - reach).toFixed(2) : null;
     }
     const { error } = await sb.from("player_stat_tests").upsert(rows, { onConflict: "player_id,test_date" });
     if (error) return res.status(500).json({ error: error.message });
@@ -115,17 +126,23 @@ export default async function handler(req, res) {
   // from the result before; tap a player for their history and to add a new
   // test, with each number compared to last time as it's typed. The page's
   // script is public/stats-sheet.js; the data rides along as JSON.
+  // base = the day her tryout numbers were measured (players.stat_baseline_date,
+  // Oct 12 2026), shown instead of "Tryout" and used for the change-over-time
+  // warnings. Each test keeps its id and stored vertical so the warnings walk
+  // the history exactly as statFlags does. rules/labels = the shared flag
+  // thresholds and metric names (STAT_FLAG_RULES, METRICS) — one source.
   const { data: done } = await sb.from("player_stat_tests").select("*").in("player_id", roster.map(p => p.id).concat([0])).order("test_date");
   const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
   const data = roster.map(p => ({
     id: p.id, name: ((p.first_name || "") + " " + (p.last_name || "")).trim(), num: p.jersey_number || "",
+    base: /^\d{4}-\d{2}-\d{2}/.test(String(p.stat_baseline_date || "")) ? String(p.stat_baseline_date).slice(0, 10) : null,
     hist: [{ date: "", stand_reach: num(p.stand_reach), approach_touch: num(p.approach_touch), standing_touch: num(p.jump_touch), broad_jump: null, dash_10y: num(p.sprint_10y) },
-      ...(done || []).filter(d => d.player_id === p.id).map(d => ({ date: d.test_date, by: d.recorded_by || "", stand_reach: num(d.stand_reach), approach_touch: num(d.approach_touch), standing_touch: num(d.standing_touch), broad_jump: num(d.broad_jump), dash_10y: num(d.dash_10y) }))],
+      ...(done || []).filter(d => d.player_id === p.id).map(d => ({ id: d.id, date: d.test_date, by: d.recorded_by || "", stand_reach: num(d.stand_reach), approach_touch: num(d.approach_touch), standing_touch: num(d.standing_touch), vertical: num(d.vertical), broad_jump: num(d.broad_jump), dash_10y: num(d.dash_10y) }))],
   }));
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.setHeader("X-Robots-Tag", "noindex, nofollow");
-  const json = JSON.stringify({ team, today: centralToday(), players: data }).replace(/</g, "\\u003c");
-  return res.status(200).send(page(team + " testing", '<div id="app"></div><script type="application/json" id="data">' + json + '</script><script src="/stats-sheet.js?v=6"></script>'));
+  const json = JSON.stringify({ team, today: centralToday(), players: data, rules: STAT_FLAG_RULES, labels: Object.fromEntries(METRICS.map(m => [m[0], m[1]])) }).replace(/</g, "\\u003c");
+  return res.status(200).send(page(team + " testing", '<div id="app"></div><script type="application/json" id="data">' + json + '</script><script src="/stats-sheet.js?v=7"></script>'));
 }
 
 function page(title, inner) {
@@ -157,6 +174,8 @@ function page(title, inner) {
   .units{display:inline-flex;border:1px solid #333;border-radius:8px;overflow:hidden} .units button{background:transparent;color:#aaa;border:none;border-radius:0;padding:9px 16px;font-size:14px;font-weight:800;font-family:inherit} .units button.on{background:#e91e8c;color:#000} .conv{color:#e5e5e5} .g .iw{position:relative} .g .iw em{top:50%;bottom:auto;transform:translateY(-50%)}
   .back{margin-bottom:10px} .auto{background:#141414;border:1px solid #333;border-radius:8px;font-size:17px;font-weight:800;color:#22c55e;padding:9px 10px}
   table.hist{min-width:680px} td.dt{font-weight:700}
+  .warn{font-size:12px;line-height:1.4;color:#fbbf24;background:rgba(245,158,11,.1);border-left:3px solid #f59e0b;border-radius:0 6px 6px 0;padding:5px 8px;margin-top:4px}
+  .g input.flag,.auto.flag{border-color:#f59e0b} #msg.warned{color:#fbbf24}
   .teams{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
   a.team{display:flex;flex-direction:column;gap:4px;background:#141414;border:1px solid #2a2a2a;border-radius:12px;padding:16px;color:#fff;text-decoration:none}
   a.team b{font-size:17px} a.team span{font-size:12px;color:#888} a.team:active{border-color:#e91e8c}

@@ -13991,7 +13991,7 @@ export default function App() {
             );
           })()}
           {/* Repeat testing since tryouts (Coach Brandon's /stats team links) */}
-          <PlayerStatHistory player={p} />
+          <PlayerStatHistory player={p} players={players} />
           {/* Scores */}
           <div style={{marginBottom:14}}>
             <span style={lbl}>Evaluation Scores (tap 1-5)</span>
