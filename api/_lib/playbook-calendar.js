@@ -35,14 +35,17 @@ export const addDays = (ymd, n) => { const d = new Date(ymd + "T12:00:00Z"); d.s
 // stalls. One four-month request takes ~33s and Playbook is slow now and
 // then, so it ran past the old 50s limit about once a day; four monthly
 // requests side by side take ~17s, and a stalled piece gets a second go.
-export async function fetchPlaybookEvents(start, end, { timeoutMs = 45000, chunkDays = 30 } = {}) {
+// byId: dedupe on Playbook's event id (the court screen - two holds at the same
+// time on different courts are two bookings); default keeps the clinic sync's key.
+// allowEmpty: a quiet day or week is a real answer for the court screen.
+export async function fetchPlaybookEvents(start, end, { timeoutMs = 45000, chunkDays = 30, byId = false, allowEmpty = false } = {}) {
   const chunks = [];
   for (let a = start; a < end; a = addDays(a, chunkDays)) { const b = addDays(a, chunkDays); chunks.push([a, b < end ? b : end]); }
   const one = async ([a, b]) => { try { return await fetchWindow(a, b, timeoutMs); } catch (e1) { try { return await fetchWindow(a, b, timeoutMs); } catch (e2) { throw new Error(e2.message + " (" + a + " → " + b + ", after a retry)"); } } };
   const parts = await Promise.all(chunks.map(one));
   const seen = new Set(), all = [];
-  for (const e of parts.flat()) { const k = e.ext.event_program + "|" + e.start + "|" + e.end + "|" + e.title; if (seen.has(k)) continue; seen.add(k); all.push(e); }
-  if (!all.length) throw new Error("Playbook returned no events for " + start + " → " + end + "; not syncing an empty calendar.");
+  for (const e of parts.flat()) { const k = byId && e.ext.id != null ? "id:" + e.ext.id : e.ext.event_program + "|" + e.start + "|" + e.end + "|" + e.title; if (seen.has(k)) continue; seen.add(k); all.push(e); }
+  if (!all.length && !allowEmpty) throw new Error("Playbook returned no events for " + start + " → " + end + "; not syncing an empty calendar.");
   return all;
 }
 
@@ -78,6 +81,6 @@ async function fetchWindow(start, end, timeoutMs) {
   // Same shape the bookmarklet posts: { start, end, ext: {...} }.
   return raw.map(e => ({
     title: e.title, start: centralISO(e.start), end: centralISO(e.end),
-    ext: { event_type: e.event_type, event_program: e.event_program, event_category: e.event_category, event_teams: e.event_teams, contents: e.contents },
+    ext: { event_type: e.event_type, event_program: e.event_program, event_category: e.event_category, event_teams: e.event_teams, contents: e.contents, id: e.id, resourceIds: Array.isArray(e.resourceIds) ? e.resourceIds : [] },
   })).filter(e => e.start);
 }

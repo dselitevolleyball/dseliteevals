@@ -17,6 +17,7 @@ import DsscAdmin from "./dssc/DsscAdmin.jsx";
 import HousingView from "./HousingView.jsx";
 import AskHQ from "./AskHQ.jsx";
 import ServeGrader from "./ServeGrader.jsx";
+import CourtAvailability from "./CourtAvailability.jsx";
 import { buildNav, navTheme, Sidebar, NavDrawer, BottomBar, SiblingChips } from "./Nav.jsx";
 import DaySchedule from "./DaySchedule.jsx";
 import { PlayerStatHistory, StatsLinks } from "./PlayerStats.jsx";
@@ -2278,7 +2279,7 @@ export default function App() {
   const DSSC_VIEWS = new Set(["dssc","clinics","dssctexts","dssccrm","dssccal","dssctime","pods","privates","dssccamp"]);
   const [workspace, setWorkspace] = useState(() => { try { return localStorage.getItem("dse.workspace") === "dssc" ? "dssc" : "dse"; } catch { return "dse"; } });
   useEffect(() => {
-    const ws = DSSC_VIEWS.has(view) ? "dssc" : (view === "home" || view === "askai" || view === "notifications" || view === "activity" || view === "faq") ? null : "dse";
+    const ws = DSSC_VIEWS.has(view) ? "dssc" : (view === "home" || view === "askai" || view === "notifications" || view === "activity" || view === "faq" || view === "courts") ? null : "dse";
     if (ws && ws !== workspace) { setWorkspace(ws); try { localStorage.setItem("dse.workspace", ws); } catch {} }
   }, [view]); // eslint-disable-line react-hooks/exhaustive-deps
   // Deep links from notifications (e.g. /?view=practiceplan&tab=playbook) — read
@@ -32938,6 +32939,7 @@ export default function App() {
         {view==="pods" && renderPods()}
         {view==="playereval" && renderPlayerEvals()}
         {view==="passing" && renderPassing()}
+        {view==="courts" && (isDsscDirector ? <CourtAvailability /> : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Court availability is for admins and the DSSC directors.</div>)}
         {view==="serving" && <ServeGrader coach={coach} players={players}
           teams={((canViewTeams || canOps) ? teamsList.filter(t => t.active).map(t => t.id) : myTeamNames.filter(t => teamsList.some(x => x.id === t))).slice().sort((a, b) => (parseInt(a) || 99) - (parseInt(b) || 99) || a.localeCompare(b))} />}
         {view==="myexpenses" && renderMyExpenses()}

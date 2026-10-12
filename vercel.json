@@ -160,6 +160,7 @@
   ],
   "functions": {
     "api/playbook-calendar.js": { "maxDuration": 120 },
+    "api/court-availability.js": { "maxDuration": 60 },
     "api/tournament-sync.js": { "maxDuration": 120 },
     "api/tournament-feed.js": { "maxDuration": 120 },
     "api/registration-check.js": { "maxDuration": 300 },

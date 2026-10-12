@@ -14,6 +14,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 // Gates: all | ops | admin | owner | teams | mine | duty | reports | opsMine | opsTeams | dir
 const IT = {
   home:          ["Home", "🏠", "all", "dashboard start", "Home"],
+  courts:        ["Court Availability", "🏟", "dir", "courts open free available gym space playbook rental booked", "Courts"],
   dayschedule:   ["Day Schedule", "🕘", "admin", "hour by hour coverage who is working", "Day"],
   practice:      ["Practice Board", "📋", "ops", "practice daily board courts scrimmage", "Practice"],
   coverage:      ["Coach Coverage", "🔁", "ops", "subs sub coverage", "Coverage"],
@@ -84,7 +85,7 @@ const IT = {
 };
 
 const DSE_OPS = [
-  ["today", "Today & schedule", "📅", ["home", "dayschedule", "practice", "coverage", "staffing", "sa", "clockin"]],
+  ["today", "Today & schedule", "📅", ["home", "dayschedule", "practice", "courts", "coverage", "staffing", "sa", "clockin"]],
   ["talk", "Talk to people", "💬", ["messages", "email", "notifications", "coachcomms", "assignments"]],
   ["teams", "Teams & players", "🏐", ["teamdir", "roster", "incidentboard", "incidents", "school", "schoolgames", "photos"]],
   ["families", "Families & signups", "👪", ["waiting", "tracker", "kickoff", "playergear", "scholarships"]],
@@ -102,7 +103,7 @@ const DSE_COACH = [
   ["tryouts", "Tryouts 2026-27", "🎯", ["dashboard", "evaluate", "favorites", "teams", "rankings", "physical", "tryouts"]],
 ];
 const DSSC_SECS = [
-  ["programs", "Programs", "🏕", ["clinics", "dssccamp", "pods", "privates"]],
+  ["programs", "Programs", "🏕", ["clinics", "courts", "dssccamp", "pods", "privates"]],
   ["people", "Texts & people", "💬", ["dssctexts", "dssccrm"]],
   ["dsscstaff", "Coaches & pay", "🗓", ["dssc", "dssccal", "dssctime"]],
 ];
@@ -151,7 +152,7 @@ export function buildNav(ctx) {
   for (const v of footer) if (!seen.has(v)) { seen.add(v); searchList.push({ v, sec: "", ws }); }
   // Screens both businesses share (Home, Notifications...) only borrow a
   // section from the business you're in, never from the other one.
-  const NEUTRAL = new Set(["home", "notifications", "activity", "faq", "askai"]);
+  const NEUTRAL = new Set(["home", "notifications", "activity", "faq", "askai", "courts"]);
   const sectionOf = (v) => sections.find(s => s.items.includes(v)) || (NEUTRAL.has(v) ? null : other.find(s => s.items.includes(v))) || null;
   return {
     ws, sections, footer, pins, pinsBase, visible, badge, info, sectionTotal, restTotal, sectionOf, searchList,
