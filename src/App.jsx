@@ -4072,8 +4072,19 @@ export default function App() {
     let weekday; try { weekday = WD[new Date(date + "T00:00").getDay()]; } catch { return null; }
     const phase = phaseFor(date);
     const nrm = s => (s || "").trim().toLowerCase().replace(/\s+/g, " ");
-    const rN = nrm(coachRaw), rFirst = rN.split(" ")[0];
-    const coachMatches = (name) => { const nn = nrm(name); return nn === rN || nn.split(" ")[0] === rN || nn === rFirst || nn.split(" ")[0] === rFirst; };
+    // A login name like "Coach Sam R" has to find "Sam Robinson" on the team:
+    // drop a leading "Coach", and when a last name or initial is given it has
+    // to fit (so "Sam R" never matches Sam Mabry). Before Oct 12 2026 the first
+    // word ("coach") matched nothing, so her absences were filed under "Coach
+    // Sam R" next to the roster's "Sam Robinson".
+    // Last word = surname, so "Kelli R Hardge" fits "Kelli Hardge".
+    const rN = nrm(coachRaw).replace(/^coach\s+/, ""), rW = rN.split(" "), rFirst = rW[0], rL = (rW.length > 1 ? rW[rW.length - 1] : "").replace(/\.$/, "");
+    const coachMatches = (name) => {
+      const nn = nrm(name).replace(/^coach\s+/, ""), nW = nn.split(" "), nFirst = nW[0], nLast = nW.length > 1 ? nW[nW.length - 1] : "";
+      if (nn === rN) return true;
+      if (nFirst !== rFirst) return false;
+      return !rL || !nLast || nLast === rL || (rL.length === 1 && nLast.startsWith(rL));
+    };
 
     const [fRes, cRes, ptRes, rRes, taRes, tnRes] = await Promise.all([
       supabase.from("coach_floats").select("coach_name, day, slot, phase"),
