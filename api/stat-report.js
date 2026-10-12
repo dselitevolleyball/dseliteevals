@@ -29,7 +29,8 @@
 //
 // Who may send: owners/admins, or a coach listed in REPORT_SENDERS (Brandon).
 // The service-role key may send tests only (as Brandon), for operator scripts.
-// Env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, RESEND_API_KEY, DSE_FROM_EMAIL.
+// Env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, DSSC_RESEND_API_KEY (the DSSC Resend
+// account, where drippingsportsclub.com is verified), REPORT_FROM_EMAIL (optional).
 
 import { createClient } from "@supabase/supabase-js";
 import { appOrigin } from "../shared/app-origin.js";
@@ -67,9 +68,9 @@ const every = async (q) => { const out = []; for (let from = 0; ; from += 1000) 
 
 export default async function handler(req, res) {
   if (req.method !== "POST") { res.setHeader("Allow", "POST"); return res.status(405).json({ error: "POST only" }); }
-  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, DSE_FROM_EMAIL } = process.env;
-  const RESEND = process.env.RESEND_API_KEY || process.env.resend_api_key;
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY || !RESEND || !DSE_FROM_EMAIL) return res.status(500).json({ error: "Server not configured" });
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = process.env;
+  const DSSC_RESEND = process.env.DSSC_RESEND_API_KEY;
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return res.status(500).json({ error: "Server not configured" });
   const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
 
   let b = req.body; try { b = typeof b === "string" ? JSON.parse(b) : (b || {}); } catch { return res.status(400).json({ error: "Invalid JSON" }); }
@@ -92,6 +93,7 @@ export default async function handler(req, res) {
   const testTo = b.test_to ? nrm(b.test_to) : null;
   if (testTo && !EMAIL_RE.test(testTo)) return res.status(400).json({ error: "That test address doesn't look right." });
   if (sample && !testTo) return res.status(400).json({ error: "A sample can only go to a test address." });
+  if (!DSSC_RESEND && !b.dry) return res.status(500).json({ error: "Testing reports send from brandon@drippingsportsclub.com, which needs DSSC_RESEND_API_KEY (the DSSC Resend account) set on the server. Nothing was sent." });
 
   // Shared by every email in this call: the template, practice nights (her
   // Reach slot), and — for real players — the season pool for the flag check.
@@ -101,23 +103,16 @@ export default async function handler(req, res) {
   ]);
   const settings = set?.data || {}, origin = appOrigin(req);
   // From Brandon's own address, whoever presses send (Drew, Oct 12 2026: "send
-  // this email from brandon@drippingsportsclub.com"); replies go to him. If
-  // Resend won't send from that domain, it falls back to the DS Elite address
-  // (still reply-to Brandon) and the reply says so (from_fallback).
-  const addr = (/<([^>]+)>/.exec(DSE_FROM_EMAIL) || [, DSE_FROM_EMAIL])[1].trim();
+  // this email from brandon@drippingsportsclub.com … I don't want it coming
+  // from DS Elite"); replies go to him. drippingsportsclub.com is verified on
+  // the DSSC Resend account, not DS Elite's, so these go out with that
+  // account's key (DSSC_RESEND_API_KEY) and never fall back to a DS Elite address.
   const REPORT_FROM = process.env.REPORT_FROM_EMAIL || `Coach Brandon <${REPORT_SENDERS[0]}>`;
   const replyTo = REPORT_SENDERS[0];
-  let fromFallback = false, fromWhy = "";
-  const send = (from, to, subject, rep) => fetch("https://api.resend.com/emails", { method: "POST", headers: { Authorization: "Bearer " + RESEND, "Content-Type": "application/json" },
-    body: JSON.stringify({ from, to, reply_to: replyTo, subject, html: rep.html, text: rep.text }) });
   const mail = async ({ to, subject, rep, pid }) => {
-    let r = fromFallback ? null : await send(REPORT_FROM, to, subject, rep);
-    const why = r && !r.ok ? await r.clone().text() : "";
-    if (!r || (!r.ok && (r.status === 403 || r.status === 422) && /domain|verif/i.test(why))) {
-      if (why) fromWhy = why.slice(0, 300);
-      fromFallback = true;
-      r = await send(`Coach Brandon · DS Elite <${addr}>`, to, subject, rep);
-    }
+    if (!DSSC_RESEND) throw new Error("DSSC_RESEND_API_KEY isn't set on the server, so the report can't go out from brandon@drippingsportsclub.com.");
+    const r = await fetch("https://api.resend.com/emails", { method: "POST", headers: { Authorization: "Bearer " + DSSC_RESEND, "Content-Type": "application/json" },
+      body: JSON.stringify({ from: REPORT_FROM, to, reply_to: replyTo, subject, html: rep.html, text: rep.text }) });
     if (!r.ok) throw new Error("Email failed: " + r.status + " " + (await r.text()).slice(0, 200));
     await Promise.all([
       pid ? sb.from("stat_report_sends").insert({ player_id: pid, recipients: to, subject, body: rep.text, test: !!testTo, sent_by: senderName }) : Promise.resolve(),
@@ -128,7 +123,7 @@ export default async function handler(req, res) {
   if (sample) {
     const rep = buildReport({ player: SAMPLE_PLAYER, tests: SAMPLE_TESTS, settings, draft: SAMPLE_DRAFT, parentFirst: "Jordan", teammates: SAMPLE_TEAM, practice: practice || [], origin });
     try { await mail({ to: [testTo], subject: "[TEST] " + rep.subject, rep, pid: null }); } catch (e) { return res.status(502).json({ error: e.message }); }
-    return res.status(200).json({ ok: true, to: [testTo], test: true, held: [], from_fallback: fromFallback, ...(fromFallback ? { from_error: fromWhy } : {}) });
+    return res.status(200).json({ ok: true, to: [testTo], test: true, held: [] });
   }
 
   let club, allTests;
@@ -190,7 +185,7 @@ export default async function handler(req, res) {
     const j = prepare(roster[0]);
     if (j.why) return res.status(400).json({ error: j.why });
     try { await mail({ to: j.to, subject: (testTo ? "[TEST] " : "") + j.rep.subject, rep: j.rep, pid: j.player.id }); } catch (e) { return res.status(502).json({ error: e.message }); }
-    return res.status(200).json({ ok: true, to: j.to, test: !!testTo, held: j.held, from_fallback: fromFallback, ...(fromFallback ? { from_error: fromWhy } : {}) });
+    return res.status(200).json({ ok: true, to: j.to, test: !!testTo, held: j.held });
   }
 
   // Whole team (Drew, Oct 12 2026: "send to the whole team in 1 fell swoop").
@@ -213,5 +208,5 @@ export default async function handler(req, res) {
     } catch (e) { skipped.push({ player_id: p.id, name, why: e.message }); }
     await new Promise(r => setTimeout(r, 600));   // Resend allows 2 a second
   }
-  return res.status(200).json({ ok: true, team: teamName, test: !!testTo, dry, sent: done, skipped, from_fallback: fromFallback, ...(fromFallback ? { from_error: fromWhy } : {}) });
+  return res.status(200).json({ ok: true, team: teamName, test: !!testTo, dry, sent: done, skipped });
 }

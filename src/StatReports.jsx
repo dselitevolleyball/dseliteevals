@@ -235,18 +235,17 @@ export default function StatReports({ coach, players = [], session }) {
       if (!window.confirm(q)) { setBusy(null); return; }
       const j = await post({ team, ...(test ? { test_to: to } : {}) });
       setTeamRun(j);
-      setMsg({ ok: (test ? `${j.sent.length} test emails sent to ${to}.` : `Sent to ${j.sent.length} ${team} families.`) + fromNote(j) });
+      setMsg({ ok: (test ? `${j.sent.length} test emails sent to ${to}.` : `Sent to ${j.sent.length} ${team} families.`) });
       load();
     } catch (e) { setMsg({ err: e.message }); }
     setBusy(null);
   };
   const heldNote = (j) => j?.held?.length ? ` Left out as flagged: ${labels(j.held)}.` : "";
-  const fromNote = (j) => j?.from_fallback ? " (Sent from the DS Elite address: brandon@drippingsportsclub.com isn't set up for sending yet.)" : "";
   const sendTest = async (p) => {
     const to = testTo.trim();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) { setMsg({ err: "Type the email address the test should go to." }); return; }
     setBusy("test"); setMsg(null);
-    try { const j = await post(p ? { player_id: p.id, test_to: to, ...flagBody(holdOf(p)) } : { sample: true, test_to: to }); setMsg({ ok: `Test sent to ${to}.` + heldNote(j) + fromNote(j) }); load(); }
+    try { const j = await post(p ? { player_id: p.id, test_to: to, ...flagBody(holdOf(p)) } : { sample: true, test_to: to }); setMsg({ ok: `Test sent to ${to}.` + heldNote(j) }); load(); }
     catch (e) { setMsg({ err: e.message }); }
     setBusy(null);
   };
@@ -256,7 +255,7 @@ export default function StatReports({ coach, players = [], session }) {
     const extra = (h.cut.length ? `\n\nLeft out (flagged as a possible typo): ${labels(h.cut)}.` : "") + (h.acked.length ? `\n\nIncludes flagged numbers you ticked: ${labels(h.acked)}.` : "");
     if (!window.confirm(`Send ${player.first_name}'s testing report to ${parentEmails(player).join(", ")}?${extra}`)) return;
     setBusy("send"); setMsg(null);
-    try { const j = await post({ player_id: player.id, ...flagBody(h) }); setMsg({ ok: `Sent to ${j.to.join(", ")}.` + heldNote(j) + fromNote(j) }); load(); }
+    try { const j = await post({ player_id: player.id, ...flagBody(h) }); setMsg({ ok: `Sent to ${j.to.join(", ")}.` + heldNote(j) }); load(); }
     catch (e) { setMsg({ err: e.message }); }
     setBusy(null);
   };
