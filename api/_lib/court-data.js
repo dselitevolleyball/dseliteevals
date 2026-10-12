@@ -1,0 +1,84 @@
+// Court Availability data, server side. Shared by the admin route
+// (api/court-availability.js) and the members' public page (api/courts-public.js).
+import crypto from "crypto";
+import { fetchPlaybookEvents, addDays } from "./playbook-calendar.js";
+import { courtsForEvent, courtsForName, eventLabel, eventCategory, hourOf, buildCourtDay, sundayBlock, COURTS } from "../../shared/courts.js";
+import { loadDseCourtInputs } from "../../shared/court-inputs.js";
+
+// Playbook's public calendar resolved to courts, plus the court reservations the
+// hourly registrations sync stores (court + date, no time; the booker's email
+// domain says who has it).
+export async function loadCourtBookings(sb, start, end) {
+  const events = await fetchPlaybookEvents(start, end, { byId: true, allowEmpty: true, chunkDays: 7, timeoutMs: 40000 });
+  const bookings = []; let offCourt = 0;
+  for (const ev of events) {
+    const courts = courtsForEvent(ev.ext);
+    if (!courts.length) { offCourt++; continue; }
+    const date = String(ev.start).slice(0, 10), endDate = String(ev.end).slice(0, 10);
+    const s = hourOf(ev.start); let e = hourOf(ev.end);
+    if (s == null || e == null) continue;
+    if (endDate > date) e = 24;        // runs past midnight: this screen stops at the end of the day
+    bookings.push({ id: ev.ext.id ?? null, kind: ev.ext.event_type === "CalendarHold" ? "hold" : "dssc", label: eventLabel(ev), category: eventCategory(ev), date, start: s, end: e, courts });
+  }
+  bookings.sort((a, b) => a.date.localeCompare(b.date) || a.start - b.start);
+
+  const reservations = [];
+  const { data: rs, error } = await sb.from("dssc_participation").select("program, event_date, contact_id").eq("category", "facility").gte("event_date", start).lt("event_date", end);
+  if (error) throw new Error("Reservations didn't load: " + error.message);
+  const ids = [...new Set((rs || []).map(r => r.contact_id).filter(Boolean))];
+  const { data: cs } = ids.length ? await sb.from("dssc_contacts").select("id, email").in("id", ids) : { data: [] };
+  const domainOf = new Map((cs || []).map(c => [c.id, String(c.email || "").toLowerCase().split("@")[1] || ""]));
+  const PRIVATE = /^(gmail|yahoo|icloud|hotmail|outlook|aol|me|live|msn)\./;
+  const KNOWN = { "acesintexas.com": "Aces", "aesaprepacademy.com": "AESA Prep Academy", "veritasacademy.net": "Veritas Academy", "4thquarterathlete.com": "4th Quarter Athlete" };
+  const nice = (d) => KNOWN[d] || d.replace(/\.(com|net|org|edu|us)$/, "").replace(/[-_.]/g, " ").replace(/\b\w/g, x => x.toUpperCase());
+  for (const r of rs || []) {
+    const courts = courtsForName(r.program); if (!courts.length) continue;
+    const d = domainOf.get(r.contact_id) || "";
+    const internal = /^(drippingsportsclub\.com|dselitevolleyball\.com)$/.test(d);
+    reservations.push({ date: r.event_date, courts, name: r.program, internal, who: internal ? "DSSC / DS Elite" : PRIVATE.test(d) || !d ? "Private rental" : nice(d) });
+  }
+  return { bookings, reservations, offCourt };
+}
+
+// ── Members' link ───────────────────────────────────────────────────────────
+// One link for every open-gym family: an HMAC of a fixed label with the
+// service-role key, so it can't be guessed. To retire a link that got passed
+// around, bump LINK_VERSION (the old link stops working).
+const LINK_VERSION = "v1";
+const b64url = (buf) => Buffer.from(buf).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+export const courtsToken = (secret) => b64url(crypto.createHmac("sha256", secret).update("dssc-open-courts:" + LINK_VERSION).digest()).slice(0, 24);
+export function courtsTokenOk(token, secret) {
+  const want = Buffer.from(courtsToken(secret)), got = Buffer.from(String(token || ""));
+  return got.length === want.length && crypto.timingSafeEqual(got, want);
+}
+
+// What members see for each day: per court, open and booked times only - no
+// program, renter or team names ever leave the server.
+export const PUBLIC_START = 7, PUBLIC_END = 22;
+export async function publicWeek(sb, start, days) {
+  const dates = Array.from({ length: days }, (_, i) => addDays(start, i));
+  const [{ bookings, reservations }, dse] = await Promise.all([loadCourtBookings(sb, start, addDays(start, days)), loadDseCourtInputs(sb, dates)]);
+  // A whole week with nothing on any court means Playbook didn't really answer:
+  // fail (no cache) rather than tell families every court is open.
+  if (!bookings.length) throw new Error("Playbook returned no court bookings for the week");
+  return dates.map(d => {
+    const x = dse[d] || { teams: [], scrims: [], tourn: [] };
+    const b = bookings.filter(k => k.date === d).map(k => ({ courts: k.courts, start: k.start, end: k.end, kind: k.kind, label: "x" })).concat(x.tourn || []);
+    const g = buildCourtDay({ bookings: b, teams: x.teams, scrims: x.scrims, reserved: sundayBlock(d, reservations), startHour: PUBLIC_START, endHour: PUBLIC_END });
+    const sun = new Date(d + "T12:00:00").getDay() === 0;
+    // A DS Elite team with no court set was placed on a guess. For those half
+    // hours members see no open courts at all, rather than a guessed court.
+    g.slots.forEach((h, i) => { if (COURTS.some(c => g.cells[c.id][i] && g.cells[c.id][i].auto)) COURTS.forEach(c => { if (!g.cells[c.id][i]) g.cells[c.id][i] = { kind: "dse", label: "x", key: "guess" }; }); });
+    const open = Object.fromEntries(COURTS.map(c => { const w = []; let s0 = null; g.slots.forEach((h, i) => { if (!g.cells[c.id][i]) { if (s0 == null) s0 = h; } else if (s0 != null) { w.push([s0, h]); s0 = null; } }); if (s0 != null) w.push([s0, PUBLIC_END]); return [c.id, w]; }));
+    const untimed = [...new Set(reservations.filter(r => r.date === d && !(sun && r.internal)).flatMap(r => r.courts))];
+    return {
+      date: d,
+      courts: COURTS.map(c => {
+        const busy = []; let s = null;
+        g.slots.forEach((h, i) => { if (g.cells[c.id][i]) { if (s == null) s = h; } else if (s != null) { busy.push([s, h]); s = null; } });
+        if (s != null) busy.push([s, PUBLIC_END]);
+        return { id: c.id, label: c.label, building: c.building, open: open[c.id], busy, alsoReserved: untimed.includes(c.id) };
+      }),
+    };
+  });
+}

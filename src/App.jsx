@@ -2276,10 +2276,10 @@ export default function App() {
   // colors, navigation, home — between DS Elite and Dripping Springs Sports
   // Club, instead of DSSC living as a tab inside DS Elite. Opening a DSSC
   // screen by any route (a push link, the home card) flips it too.
-  const DSSC_VIEWS = new Set(["dssc","clinics","dssctexts","dssccrm","dssccal","dssctime","pods","privates","dssccamp"]);
+  const DSSC_VIEWS = new Set(["dssc","clinics","dssctexts","dssccrm","dssccal","dssctime","pods","privates","dssccamp","courts"]);
   const [workspace, setWorkspace] = useState(() => { try { return localStorage.getItem("dse.workspace") === "dssc" ? "dssc" : "dse"; } catch { return "dse"; } });
   useEffect(() => {
-    const ws = DSSC_VIEWS.has(view) ? "dssc" : (view === "home" || view === "askai" || view === "notifications" || view === "activity" || view === "faq" || view === "courts") ? null : "dse";
+    const ws = DSSC_VIEWS.has(view) ? "dssc" : (view === "home" || view === "askai" || view === "notifications" || view === "activity" || view === "faq") ? null : "dse";
     if (ws && ws !== workspace) { setWorkspace(ws); try { localStorage.setItem("dse.workspace", ws); } catch {} }
   }, [view]); // eslint-disable-line react-hooks/exhaustive-deps
   // Deep links from notifications (e.g. /?view=practiceplan&tab=playbook) — read

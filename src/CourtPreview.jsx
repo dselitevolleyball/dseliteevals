@@ -13,6 +13,7 @@ const DSE = {
 };
 const loaders = {
   bookings: async () => { await new Promise(r => setTimeout(r, 400)); return { bookings: BOOKINGS, reservations: RESERVATIONS, offCourt: 30 }; },
+  link: async () => "https://dseliteevals.vercel.app/courts?t=PREVIEW",
   dse: async (dates) => Object.fromEntries(dates.map(d => [d, DSE[d] || { teams: [], scrims: [], tourn: [] }])),
 };
 export default function CourtPreview() {

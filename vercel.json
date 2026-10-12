@@ -58,6 +58,10 @@
     {
       "source": "/hub",
       "destination": "/api/hub"
+    },
+    {
+      "source": "/courts",
+      "destination": "/api/courts-public"
     }
   ],
   "crons": [
@@ -159,14 +163,29 @@
     }
   ],
   "functions": {
-    "api/playbook-calendar.js": { "maxDuration": 120 },
-    "api/court-availability.js": { "maxDuration": 60 },
-    "api/tournament-sync.js": { "maxDuration": 120 },
-    "api/tournament-feed.js": { "maxDuration": 120 },
-    "api/registration-check.js": { "maxDuration": 300 },
-    "api/sms-campaigns.js": { "maxDuration": 300 },
+    "api/playbook-calendar.js": {
+      "maxDuration": 120
+    },
+    "api/court-availability.js": {
+      "maxDuration": 60
+    },
+    "api/tournament-sync.js": {
+      "maxDuration": 120
+    },
+    "api/tournament-feed.js": {
+      "maxDuration": 120
+    },
+    "api/registration-check.js": {
+      "maxDuration": 300
+    },
+    "api/sms-campaigns.js": {
+      "maxDuration": 300
+    },
     "api/ask-hq.js": {
       "maxDuration": 120
+    },
+    "api/courts-public.js": {
+      "maxDuration": 60
     }
   },
   "headers": [

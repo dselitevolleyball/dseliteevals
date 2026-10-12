@@ -6,7 +6,7 @@
 // `loaders` can be swapped (the dev harness uses sample data).
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "./supabase";
-import { daySchedule, span } from "../shared/day-schedule.js";
+import { loadDseCourtInputs } from "../shared/court-inputs.js";
 import { COURTS, buildCourtDay, fmtHour, sundayBlock } from "../shared/courts.js";
 
 const C = { bg: "#0a0a0a", card: "#141414", border: "#2a2a2a", gold: "#e91e8c", text: "#ffffff", mut: "#999999", grn: "#22c55e" };
@@ -33,30 +33,14 @@ export const liveLoaders = {
     if (!r.ok || o.error) throw new Error(o.error || "Playbook pull failed (" + r.status + ")");
     return o;
   },
-  dse: async (dates) => {
-    const [days, { data: scr, error: e1 }, { data: evs, error: e2 }] = await Promise.all([
-      Promise.all(dates.map(d => daySchedule(supabase, d))),
-      supabase.from("practice_scrimmages").select("practice_date, slot, teams, court").gte("practice_date", dates[0]).lte("practice_date", dates[dates.length - 1]),
-      supabase.from("team_events").select("event_date, start_time, duration_min, location, title").gte("event_date", dates[0]).lte("event_date", dates[dates.length - 1]).ilike("title", "Tournament%"),
-    ]);
-    if (e1 || e2) throw new Error("DS Elite schedule didn't load: " + (e1 || e2).message);
-    const out = {};
-    dates.forEach((d, i) => {
-      const day = days[i];
-      const teams = (day?.teams || []).map(t => ({ team: t.team, blocks: t.blocks, court: Number(t.court) || null, venue: t.venue || null }));
-      const onToday = new Set(teams.map(t => t.team));
-      const scrims = (day?.cancelled ? [] : (scr || []).filter(s => s.practice_date === d && (s.teams || []).some(t => onToday.has(t)))).map(s => { const [a, b] = span(s.slot); return { start: a, end: b, teams: s.teams || [], court: Number(String(s.court || "").replace(/\D/g, "")) || null }; }).filter(s => s.start < 99);
-      // In-house tournament: one booking per court per match time.
-      const seen = new Set(), tourn = [];
-      for (const e of (evs || []).filter(x => x.event_date === d)) {
-        const n = Number(String(e.location || "").replace(/\D/g, "")); const m = /^(\d{1,2}):(\d{2})/.exec(e.start_time || "");
-        if (!(n >= 1 && n <= 6) || !m) continue;
-        const s = +m[1] + +m[2] / 60, k = n + "|" + s; if (seen.has(k)) continue; seen.add(k);
-        tourn.push({ courts: ["V" + n], start: s, end: s + (Number(e.duration_min) || 60) / 60, kind: "tourn", label: "In-House Tournament", detail: String(e.title || "").replace(/^Tournament\s*[—-]\s*/, "") });
-      }
-      out[d] = { teams, scrims, tourn, cancelled: day?.cancelled || null, phase: day?.phaseLabel || "" };
-    });
-    return out;
+  dse: (dates) => loadDseCourtInputs(supabase, dates),
+  // The no-login link for open-gym members (only open vs booked time).
+  link: async () => {
+    const { data: { session } = {} } = await supabase.auth.getSession();
+    const r = await fetch("/api/court-availability?link=1", { headers: { Authorization: "Bearer " + (session?.access_token || "") } });
+    const o = await r.json().catch(() => ({}));
+    if (!r.ok || !o.url) throw new Error(o.error || "Couldn't get the link");
+    return o.url;
   },
 };
 
@@ -67,6 +51,8 @@ export default function CourtAvailability({ loaders = liveLoaders }) {
   // Client view (Drew, Oct 12): what members would see - only open vs booked,
   // no program, renter or team names, rentals always counted as booked.
   const [pub, setPub] = useState(false);
+  const [memberLink, setMemberLink] = useState("");
+  const [copied, setCopied] = useState(false);   // shown once fetched, also copied
   const [cache, setCache] = useState({});      // weekStart -> { bookings, dse, offCourt, at } | { error }
   const [busy, setBusy] = useState(null);       // week being pulled
   const [reload, setReload] = useState(0);
@@ -211,10 +197,20 @@ export default function CourtAvailability({ loaders = liveLoaders }) {
           <button onClick={() => setMode("day")} style={btn(mode === "day")}>Day</button>
           <button onClick={() => setMode("week")} style={btn(mode === "week")}>Week</button>
         </div>
+        <button onClick={async () => { try { const u = memberLink || await loaders.link(); setMemberLink(u); try { await navigator.clipboard.writeText(u); setCopied(true); } catch { setCopied(false); /* copy blocked: the link shows below */ } } catch (e) { window.alert(e.message); } }}
+          title="The no-login link for open-gym members: open court time only, no names" style={{ ...btn(false), border: "1px solid " + C.border, borderRadius: 8 }}>🔗 Members&rsquo; link</button>
         <button onClick={() => setPub(v => !v)} title="Show only open vs booked time - what members would see" style={{ ...btn(pub), border: "1px solid " + (pub ? C.gold : C.border), borderRadius: 8 }}>👁 Client view</button>
         {!pub && <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: C.mut, cursor: "pointer" }}><input type="checkbox" checked={showHolds} onChange={e => setShowHolds(e.target.checked)} style={{ accentColor: C.gold }} />Holds &amp; rentals</label>}
         <button onClick={() => setReload(r => r + 1)} disabled={loading} title="Pull Playbook again" style={{ ...btn(false), border: "1px solid " + C.border, borderRadius: 8 }}>{loading ? "…" : "⟳"}</button>
       </div>
+      {memberLink && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", padding: "8px 10px", marginBottom: 10, borderRadius: 10, border: "1px solid #B2D049", background: "rgba(178,208,73,0.10)", fontSize: 12 }}>
+          <span style={{ color: "#d9ef8a", fontWeight: 800 }}>Members&rsquo; link{copied ? " (copied)" : " (select to copy)"}:</span>
+          <a href={memberLink} target="_blank" rel="noreferrer" style={{ color: "#d9ef8a", wordBreak: "break-all", flex: 1, minWidth: 200 }}>{memberLink}</a>
+          <span style={{ color: C.mut }}>Open court time only - no names. Send it to open-gym families.</span>
+          <button onClick={() => setMemberLink("")} aria-label="Hide" style={{ background: "none", border: "none", color: C.mut, cursor: "pointer", fontSize: 14 }}>✕</button>
+        </div>
+      )}
       <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 8 }}>{mode === "day" ? fmtDay(date, true) : "Week of " + fmtDay(wk, true)}</div>
       {legend}
       {data?.error ? <div style={{ padding: 16, color: "#ef4444", fontSize: 13 }}>{data.error} <button onClick={() => setReload(r => r + 1)} style={{ marginLeft: 8, ...btn(false), border: "1px solid #ef4444", borderRadius: 8, color: "#ef4444" }}>Retry</button></div>

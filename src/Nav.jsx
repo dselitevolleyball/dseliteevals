@@ -85,7 +85,7 @@ const IT = {
 };
 
 const DSE_OPS = [
-  ["today", "Today & schedule", "📅", ["home", "dayschedule", "practice", "courts", "coverage", "staffing", "sa", "clockin"]],
+  ["today", "Today & schedule", "📅", ["home", "dayschedule", "practice", "coverage", "staffing", "sa", "clockin"]],
   ["talk", "Talk to people", "💬", ["messages", "email", "notifications", "coachcomms", "assignments"]],
   ["teams", "Teams & players", "🏐", ["teamdir", "roster", "incidentboard", "incidents", "school", "schoolgames", "photos"]],
   ["families", "Families & signups", "👪", ["waiting", "tracker", "kickoff", "playergear", "scholarships"]],
@@ -152,7 +152,7 @@ export function buildNav(ctx) {
   for (const v of footer) if (!seen.has(v)) { seen.add(v); searchList.push({ v, sec: "", ws }); }
   // Screens both businesses share (Home, Notifications...) only borrow a
   // section from the business you're in, never from the other one.
-  const NEUTRAL = new Set(["home", "notifications", "activity", "faq", "askai", "courts"]);
+  const NEUTRAL = new Set(["home", "notifications", "activity", "faq", "askai"]);
   const sectionOf = (v) => sections.find(s => s.items.includes(v)) || (NEUTRAL.has(v) ? null : other.find(s => s.items.includes(v))) || null;
   return {
     ws, sections, footer, pins, pinsBase, visible, badge, info, sectionTotal, restTotal, sectionOf, searchList,
