@@ -33,7 +33,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { appOrigin } from "../shared/app-origin.js";
-import { buildReport, statFlags, statPeerStats, flaggedReportKeys, METRICS, SAMPLE_PLAYER, SAMPLE_TESTS, SAMPLE_DRAFT, SAMPLE_TEAM } from "../shared/stat-report.js";
+import { buildReport, statFlags, reviewFlags, statPeerStats, flaggedReportKeys, METRICS, SAMPLE_PLAYER, SAMPLE_TESTS, SAMPLE_DRAFT, SAMPLE_TEAM } from "../shared/stat-report.js";
 
 // A team of ~14 at Resend's 2 a second, plus the season read.
 export const config = { maxDuration: 120 };
@@ -131,10 +131,11 @@ export default async function handler(req, res) {
 
   const ids = playerId ? [playerId] : club.filter(m => m.team_assignment === teamName && live(m)).map(m => m.id);
   if (!ids.length) return res.status(404).json({ error: playerId ? "Player not found" : "No current players on " + teamName + "." });
-  const [{ data: roster, error: rErr }, { data: drafts }, { data: sent }] = await Promise.all([
+  const [{ data: roster, error: rErr }, { data: drafts }, { data: sent }, { data: reviews }] = await Promise.all([
     sb.from("players").select(PLAYER_COLS).in("id", ids),
     sb.from("stat_report_drafts").select("*").in("player_id", ids),
     sb.from("stat_report_sends").select("player_id").in("player_id", ids).eq("test", false),
+    sb.from("stat_flag_reviews").select("player_id, flag_id, decision").in("player_id", ids),
   ]);
   if (rErr) return res.status(500).json({ error: rErr.message });
   if (!roster?.length) return res.status(404).json({ error: "Player not found" });
@@ -145,7 +146,8 @@ export default async function handler(req, res) {
   // own flag list.
   const prepare = (player) => {
     const tests = testsOf(player.id), draft = (drafts || []).find(d => d.player_id === player.id) || {};
-    const flags = statFlags(player, tests, { peers });
+    // Accepted flags are numbers staff said are right; ignored ones still hold.
+    const flags = reviewFlags(statFlags(player, tests, { peers }), reviews, player.id).live;
     const mine = new Set(flaggedReportKeys(player, tests, flags));
     const held = new Set([...mine, ...(playerId ? keysIn(b.flagged) : [])]);
     // A tick counts for a metric flagged here only if the saved draft holds the

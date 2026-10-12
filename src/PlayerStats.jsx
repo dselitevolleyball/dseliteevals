@@ -11,7 +11,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { supabase } from "./supabase";
-import { statResultRows, metricRows, statFlags, statPeerStats, fmtMetric, fmtChange } from "../shared/stat-report.js";
+import { statResultRows, metricRows, statFlags, reviewFlags, statPeerStats, fmtMetric, fmtChange } from "../shared/stat-report.js";
 
 const C = { bg: "#0a0a0a", card: "#141414", border: "#2a2a2a", gold: "#e91e8c", text: "#ffffff", mut: "#999999", red: "#ef4444", grn: "#22c55e", amb: "#f59e0b" };
 // Staff see raw inches to the hundredth (90.16", the same unit as the tryout
@@ -34,6 +34,7 @@ const LABEL = Object.fromEntries(COLS.map(([k, l]) => [k, l]));
 export function PlayerStatHistory({ player, players }) {
   const [tests, setTests] = useState(null);
   const [sel, setSel] = useState(null);
+  const [reviews, setReviews] = useState([]);   // accepted / ignored flags (Testing Reports) don't show here
   const club = !!players;
   useEffect(() => {
     if (!player?.id) return;
@@ -41,6 +42,7 @@ export function PlayerStatHistory({ player, players }) {
     let q = supabase.from("player_stat_tests").select("*");
     if (!club) q = q.eq("player_id", player.id);
     q.order("test_date").then(({ data }) => { if (live) setTests(data || []); });
+    supabase.from("stat_flag_reviews").select("player_id, flag_id, decision").eq("player_id", player.id).then(({ data }) => { if (live) setReviews(data || []); });
     return () => { live = false; };
   }, [player?.id, club]);
   const mine = useMemo(() => (tests || []).filter(t => t.player_id === player?.id), [tests, player?.id]);
@@ -48,7 +50,7 @@ export function PlayerStatHistory({ player, players }) {
   if (!tests || !player) return null;
   const all = statResultRows(player, mine).filter(r => COLS.some(([k]) => r[k] != null));
   if (!all.length) return null;
-  const flags = statFlags(player, mine, { peers });
+  const flags = reviewFlags(statFlags(player, mine, { peers }), reviews, player.id).open;
   const change = new Map(metricRows(player, mine).filter(r => r.latest != null).map(r => [r.key, r.change]));
   // Results after the baseline (a girl with no tryout numbers has her first test as baseline).
   const nTests = all.length - 1;

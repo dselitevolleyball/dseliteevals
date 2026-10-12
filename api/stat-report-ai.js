@@ -29,9 +29,9 @@ const fmtDay = (iso) => { try { return new Date(String(iso).slice(0, 10) + "T12:
 const fmtChange = (d, unit) => (d > 0 ? "+" : d < 0 ? "−" : "±") + Math.abs(d).toFixed(2) + (unit === "sec" ? "s" : '"');
 
 // The facts Claude gets for one player — nothing else.
-export function factsFor({ player, tests, teammates, level, draft }) {
+export function factsFor({ player, tests, teammates, level, draft, reviews }) {
   const flagged = new Set(typeof SR.statFlags === "function"
-    ? SR.statFlags(player, tests, { peers: teammates }).filter(f => f.level === "red").map(f => f.key) : []);
+    ? SR.reviewFlags(SR.statFlags(player, tests, { peers: teammates }), reviews, player.id).live.filter(f => f.level === "red").map(f => f.key) : []);
   const rows = SR.metricRows(player, tests).filter(r => r.key !== "stand_reach" && !flagged.has(r.key));
   const baselineDate = player.stat_baseline_date ? fmtDay(player.stat_baseline_date) : null;
   const results = rows.map(r => {
@@ -95,10 +95,11 @@ export default async function handler(req, res) {
   const live = (mates || []).filter(m => !TERMINAL.includes(m.offer_status || ""));
   if (!roster) roster = live;
   const ids = [...new Set([...live, ...roster].map(m => m.id))];
-  const [{ data: allTests }, { data: drafts }, { data: pt }] = await Promise.all([
+  const [{ data: allTests }, { data: drafts }, { data: pt }, { data: reviews }] = await Promise.all([
     ids.length ? sb.from("player_stat_tests").select("*").in("player_id", ids) : { data: [] },
     ids.length ? sb.from("stat_report_drafts").select("*").in("player_id", ids) : { data: [] },
     teamName ? sb.from("practice_teams").select("level").eq("team_name", teamName).maybeSingle() : { data: null },
+    ids.length ? sb.from("stat_flag_reviews").select("player_id, flag_id, decision").in("player_id", ids) : { data: [] },   // accepted = not a flag
   ]);
   const testsOf = (id) => (allTests || []).filter(t => t.player_id === id);
   const teammates = live.map(m => ({ player: m, tests: testsOf(m.id) }));
@@ -118,7 +119,7 @@ export default async function handler(req, res) {
   const worker = async () => {
     while (i < todo.length) {
       const j = todo[i++];
-      const facts = factsFor({ player: j.p, tests: j.tests, teammates, level: pt?.level, draft: j.draft });
+      const facts = factsFor({ player: j.p, tests: j.tests, teammates, level: pt?.level, draft: j.draft, reviews });
       if (dry) { out.push({ player_id: j.p.id, name: j.p.first_name + " " + j.p.last_name, facts }); continue; }
       try {
         const r = await writeCoachTake(facts);

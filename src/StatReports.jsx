@@ -25,7 +25,7 @@
 
 import { useState, useEffect, useMemo, useRef } from "react";
 import { supabase } from "./supabase";
-import { buildReport, metricRows, fmtMetric, fmtChange, baselineLabel, statResultRows, allStatFlags, flaggedReportKeys, DEFAULT_SETTINGS, METRICS, SAMPLE_PLAYER, SAMPLE_TESTS, SAMPLE_DRAFT, SAMPLE_TEAM } from "../shared/stat-report.js";
+import { buildReport, flagId, reviewFlags, metricRows, fmtMetric, fmtChange, baselineLabel, statResultRows, allStatFlags, flaggedReportKeys, DEFAULT_SETTINGS, METRICS, SAMPLE_PLAYER, SAMPLE_TESTS, SAMPLE_DRAFT, SAMPLE_TEAM } from "../shared/stat-report.js";
 import { StatsLinks } from "./PlayerStats.jsx";
 
 const C = { bg: "#0a0a0a", card: "#141414", border: "#2a2a2a", gold: "#e91e8c", text: "#ffffff", mut: "#999999", red: "#ef4444", grn: "#22c55e", amb: "#f59e0b" };
@@ -85,6 +85,7 @@ export default function StatReports({ coach, players = [], session }) {
   const [showFlags, setShowFlags] = useState(true);
   const [fix, setFix] = useState(null);   // { row, from, vals } — the flagged result being corrected
   const [practice, setPractice] = useState([]);
+  const [reviews, setReviews] = useState([]);   // stat_flag_reviews: accept / ignore per flag
   const [teamRun, setTeamRun] = useState(null);   // last whole-team result { sent, skipped, test, dry }
   const panelRef = useRef(null);
   const me = coach?.display_name || coach?.email || null;
@@ -93,13 +94,15 @@ export default function StatReports({ coach, players = [], session }) {
   const isAdmin = !!coach?.is_admin || OWNER_EMAILS.includes(String(coach?.email || "").trim().toLowerCase());
 
   const load = async () => {
-    const [s, t, d, x, pa] = await Promise.all([
+    const [s, t, d, x, pa, rv] = await Promise.all([
       supabase.from("stat_report_settings").select("data").eq("id", "main").maybeSingle(),
       supabase.from("player_stat_tests").select("*").order("test_date"),
       supabase.from("stat_report_drafts").select("*"),
       supabase.from("stat_report_sends").select("player_id, sent_at, test, recipients, sent_by").order("sent_at", { ascending: false }),
       supabase.from("practice_assignments").select("team_name, day, slot, phase"),
+      supabase.from("stat_flag_reviews").select("*"),
     ]);
+    setReviews(rv.data || []);
     setSettings({ ...DEFAULT_SETTINGS, ...(s.data?.data || {}) });
     setTests(t.data || []); setDrafts(new Map((d.data || []).map(r => [r.player_id, r]))); setSends(x.data || []); setPractice(pa.data || []);
   };
@@ -117,6 +120,13 @@ export default function StatReports({ coach, players = [], session }) {
   const flagsAll = useMemo(() => allStatFlags(allPlayers.filter(p => (p.season || "2026-27") === "2026-27"), testsBy), [allPlayers, testsBy]);
   const flagsBy = useMemo(() => { const m = new Map(); for (const f of flagsAll) { if (!m.has(f.player_id)) m.set(f.player_id, []); m.get(f.player_id).push(f); } return m; }, [flagsAll]);
   const rosterIds = useMemo(() => new Set(roster.map(p => p.id)), [roster]);
+  // Accept / ignore (stat_flag_reviews). Accepted flags are gone everywhere;
+  // ignored ones leave the panel but still hold the number out of her email.
+  const revBy = useMemo(() => { const m = new Map(); for (const [id, fl] of flagsBy) m.set(id, reviewFlags(fl, reviews, id)); return m; }, [flagsBy, reviews]);
+  const openOf = (id) => revBy.get(id)?.open || [];
+  // The panel: flags still waiting on a decision, players on a 2026-27 team
+  // only (Drew: "I don't care about players who aren't on a team").
+  const openAll = useMemo(() => flagsAll.filter(f => rosterIds.has(f.player_id) && (revBy.get(f.player_id)?.open || []).includes(f)), [flagsAll, rosterIds, revBy]);
   const lastSend = (id) => sends.find(s => s.player_id === id && !s.test);
   const onTeam = roster.filter(p => p.team_assignment === team).sort((a, b) => a.first_name.localeCompare(b.first_name));
   const player = roster.find(p => p.id === pid) || null;
@@ -134,7 +144,7 @@ export default function StatReports({ coach, players = [], session }) {
   // The sample player is made up and never held.
   const holdOf = (p) => {
     if (!p?.id) return { flags: [], held: [], acked: [], omit: [], cut: [] };
-    const flags = flagsBy.get(p.id) || [], mine = testsBy.get(p.id) || [];
+    const flags = revBy.get(p.id)?.live || [], mine = testsBy.get(p.id) || [];
     const held = flags.length ? flaggedReportKeys(p, mine, flags) : [];
     const saved = drafts.get(p.id)?.metrics || [];
     const acked = held.filter(k => saved.includes(ackOf(flags, k)));
@@ -159,6 +169,15 @@ export default function StatReports({ coach, players = [], session }) {
     setDrafts(m => new Map(m).set(id, next));
     const { error } = await supabase.from("stat_report_drafts").upsert(next);
     if (error) setMsg({ err: error.message });
+  };
+  // decision: "accept" | "ignore" | null (undo).
+  const decide = async (f, decision) => {
+    const id = flagId(f), who = f.player_id, prev = reviews;
+    setReviews(r => [...r.filter(x => !(x.player_id === who && x.flag_id === id)), ...(decision ? [{ player_id: who, flag_id: id, decision, decided_by: me }] : [])]);
+    const { error } = decision
+      ? await supabase.from("stat_flag_reviews").upsert({ player_id: who, flag_id: id, decision, decided_by: me, decided_at: new Date().toISOString() })
+      : await supabase.from("stat_flag_reviews").delete().eq("player_id", who).eq("flag_id", id);
+    if (error) { setReviews(prev); setMsg({ err: error.message }); }
   };
   const patchPlayer = (id, upd) => setPatch(m => new Map(m).set(id, { ...(m.get(id) || {}), ...upd }));
   // players.stat_baseline_date: the day her tryout numbers were measured,
@@ -334,7 +353,19 @@ export default function StatReports({ coach, players = [], session }) {
     saveDraft(player.id, { metrics: [...rows.map(r => r.key).filter(x => want.has(x)), ...[...ok].map(x => ackOf(hold.flags, x))] });
   };
   const tested = (p) => (testsBy.get(p.id) || []).length;
-  const redN = flagsAll.filter(f => f.level === "red").length, amberN = flagsAll.length - redN;
+  const redN = openAll.filter(f => f.level === "red").length, amberN = openAll.length - redN;
+  const mini = (c) => ({ padding: "3px 9px", borderRadius: 999, border: "1px solid " + c, background: "transparent", color: c, fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" });
+  const Decide = ({ f }) => (
+    <span style={{ display: "inline-flex", gap: 4 }} onClick={e => e.stopPropagation()}>
+      <button title="The number is right: it goes in her email and stops being flagged." onClick={() => decide(f, "accept")} style={mini(C.grn)}>✓ Accept</button>
+      <button title="Stop flagging it. The number stays out of her email." onClick={() => decide(f, "ignore")} style={mini(C.mut)}>Ignore</button>
+    </span>
+  );
+  // Flags someone accepted for this girl, with an undo.
+  const AcceptedList = ({ p }) => { const acc = revBy.get(p.id)?.accepted || []; return acc.length ? (
+    <div style={{ fontSize: 11, color: C.mut, margin: "4px 0 10px" }}>
+      {acc.map((f, i) => <div key={i} style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 2 }}><span style={{ color: C.grn }}>✓</span><span style={{ flex: 1 }}>Accepted as right: {f.from} · {LABEL[f.key]} {fv(f.key, f.value)}</span><button onClick={() => decide(f, null)} style={mini(C.mut)}>Undo</button></div>)}
+    </div>) : null; };
   const out = (fl) => fl.length ? { outline: "2px solid " + flagC(fl), outlineOffset: 2, borderRadius: 4 } : {};
   const T = (k, label, rowsN = 1, hint) => (
     <label key={k} style={{ display: "block", marginBottom: 10 }}><span style={lbl}>{label}</span>
@@ -426,7 +457,7 @@ export default function StatReports({ coach, players = [], session }) {
               <span style={{ ...lbl, marginBottom: 0 }}>Preview with</span>
               <select value={tplPreview} onChange={e => setTplPreview(e.target.value)} style={{ ...inp, width: "auto" }}>
                 <option value="sample">Sample player (made-up numbers)</option>
-                {roster.filter(p => tested(p) || p.approach_touch != null || p.stand_reach != null).sort((a, b) => tested(b) - tested(a) || a.first_name.localeCompare(b.first_name)).map(p => <option key={p.id} value={String(p.id)}>{p.first_name} {p.last_name} · {p.team_assignment}{tested(p) ? " · retested" : ""}{flagsBy.has(p.id) ? " · ⚑" : ""}</option>)}
+                {roster.filter(p => tested(p) || p.approach_touch != null || p.stand_reach != null).sort((a, b) => tested(b) - tested(a) || a.first_name.localeCompare(b.first_name)).map(p => <option key={p.id} value={String(p.id)}>{p.first_name} {p.last_name} · {p.team_assignment}{tested(p) ? " · retested" : ""}{openOf(p.id).length ? " · ⚑" : ""}</option>)}
               </select>
             </div>
             <TestBox p={tplPlayer.id ? tplPlayer : null} />
@@ -439,20 +470,20 @@ export default function StatReports({ coach, players = [], session }) {
 
       {!showTpl && <StatsLinks session={session} />}
 
-      {!showTpl && flagsAll.length > 0 && (
+      {!showTpl && openAll.length > 0 && (
         <div style={{ background: C.card, border: "1px solid " + (redN ? C.red : C.amb), borderRadius: 12, padding: 12, marginBottom: 14 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <span style={{ fontSize: 13, fontWeight: 800, color: redN ? C.red : C.amb }}>⚑ Check these numbers</span>
-            <span style={{ fontSize: 11, color: C.mut }}>{redN} likely typo{redN === 1 ? "" : "s"} · {amberN} to double-check · {new Set(flagsAll.map(f => f.player_id)).size} players</span>
+            <span style={{ fontSize: 11, color: C.mut }}>{redN} likely typo{redN === 1 ? "" : "s"} · {amberN} to double-check · {new Set(openAll.map(f => f.player_id)).size} players</span>
             <div style={{ flex: 1 }} />
             <button onClick={() => setShowFlags(v => !v)} style={{ ...btn(false), padding: "4px 10px", fontSize: 12 }}>{showFlags ? "Hide" : "Show"}</button>
           </div>
           {showFlags && (<>
-            <div style={{ fontSize: 11, color: C.mut, margin: "4px 0 8px" }}>Numbers that look like data-entry slips: centimeters in an inches box, a missing decimal point, a touch below her reach, a jump that changed more than training explains. Red = likely wrong, amber = double-check. Staff only; a flagged number stays out of the family email until it's fixed or ticked back in. Tap one to open her report.</div>
+            <div style={{ fontSize: 11, color: C.mut, margin: "4px 0 8px" }}>Numbers that look like data-entry slips: centimeters in an inches box, a missing decimal point, a touch below her reach, a jump that changed more than training explains. Red = likely wrong, amber = double-check. Staff only; a flagged number stays out of the family email until it's fixed or ticked back in. <b style={{ color: C.text }}>Accept</b> = the number is right, use it. <b style={{ color: C.text }}>Ignore</b> = stop flagging it, keep it out of her email. Players not on a team aren't listed. Tap one to open her report.</div>
             <div style={{ maxHeight: 340, overflowY: "auto" }}>
-              {flagsAll.map((f, i) => { const can = rosterIds.has(f.player_id); return (
-                <div key={i} onClick={can ? () => openFlag(f) : undefined} title={can ? "Open her report" : "Not on a 2026-27 team, so no report. Fix the number on her player card."}
-                  style={{ display: "grid", gridTemplateColumns: "16px minmax(0, 1fr)", gap: 6, padding: "6px 8px", borderRadius: 8, cursor: can ? "pointer" : "default", background: pid === f.player_id ? "rgba(233,30,140,0.10)" : "transparent", borderTop: i ? "1px solid " + C.border : "none" }}>
+              {openAll.map((f, i) => { const can = true; return (
+                <div key={flagId(f) + f.player_id} onClick={() => openFlag(f)} title="Open her report"
+                  style={{ display: "grid", gridTemplateColumns: "16px minmax(0, 1fr) auto", gap: 6, alignItems: "start", padding: "6px 8px", borderRadius: 8, cursor: "pointer", background: pid === f.player_id ? "rgba(233,30,140,0.10)" : "transparent", borderTop: i ? "1px solid " + C.border : "none" }}>
                   <span style={{ color: flagC(f.level), fontSize: 12, lineHeight: "20px" }}>⚑</span>
                   <div style={{ minWidth: 0 }}>
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "baseline", fontSize: 13 }}>
@@ -463,6 +494,7 @@ export default function StatReports({ coach, players = [], session }) {
                     </div>
                     <div style={{ fontSize: 11, color: C.mut, lineHeight: 1.4 }}>{f.reason}</div>
                   </div>
+                  <Decide f={f} />
                 </div>); })}
             </div>
           </>)}
@@ -471,8 +503,8 @@ export default function StatReports({ coach, players = [], session }) {
 
       <div style={{ display: "grid", gridTemplateColumns: "minmax(220px, 300px) 1fr", gap: 14, alignItems: "start" }}>
         <div style={{ background: C.card, border: "1px solid " + C.border, borderRadius: 12, padding: 10 }}>
-          <select value={team} onChange={e => { setTeam(e.target.value); pickPlayer(null); }} style={{ ...inp, marginBottom: 8 }}>{teams.map(t => { const n = roster.filter(p => p.team_assignment === t && flagsBy.has(p.id)).length; return <option key={t} value={t}>{t}{n ? `  ·  ⚑ ${n}` : ""}</option>; })}</select>
-          {onTeam.map(p => { const s = lastSend(p.id), n = tested(p), fl = flagsBy.get(p.id) || []; return (
+          <select value={team} onChange={e => { setTeam(e.target.value); pickPlayer(null); }} style={{ ...inp, marginBottom: 8 }}>{teams.map(t => { const n = roster.filter(p => p.team_assignment === t && openOf(p.id).length).length; return <option key={t} value={t}>{t}{n ? `  ·  ⚑ ${n}` : ""}</option>; })}</select>
+          {onTeam.map(p => { const s = lastSend(p.id), n = tested(p), fl = openOf(p.id); return (
             <button key={p.id} onClick={() => pickPlayer(p.id)} style={{ display: "flex", width: "100%", textAlign: "left", gap: 8, alignItems: "center", padding: "8px 10px", marginBottom: 4, borderRadius: 8, border: "1px solid " + (pid === p.id ? C.gold : "transparent"), background: pid === p.id ? "rgba(233,30,140,0.12)" : "transparent", color: C.text, cursor: "pointer", fontFamily: "inherit" }}>
               <span style={{ flex: 1, fontSize: 13, fontWeight: 700 }}>{p.first_name} {p.last_name}</span>
               {fl.length > 0 && <span title={fl.map(f => `${LABEL[f.key]} (${f.from}): ${f.reason}`).join("\n")} style={{ fontSize: 10, fontWeight: 800, color: flagC(fl), border: "1px solid " + flagC(fl), borderRadius: 999, padding: "0 6px", lineHeight: "16px" }}>⚑ {fl.length}</span>}
@@ -525,6 +557,7 @@ export default function StatReports({ coach, players = [], session }) {
                 </div>
               )}
 
+              {!hold.flags.length && <AcceptedList p={player} />}
               {hold.flags.length > 0 && (() => {
                 const red = hold.flags.some(f => f.level === "red"), n = hold.flags.length;
                 // Results worth a fix box: the flagged one, the earlier end of a
@@ -543,11 +576,12 @@ export default function StatReports({ coach, players = [], session }) {
                       {!hold.held.length ? "None of them are a number her email shows (it uses her first and latest results), so nothing is held back."
                         : !hold.cut.length && !hold.acked.length ? `${labels(hold.held)} ${hold.held.length === 1 ? "isn't" : "aren't"} picked for her email, so nothing is held back.` : ""}
                     </div>
-                    {hold.flags.map((f, i) => (
-                      <div key={i} style={{ display: "flex", gap: 6, fontSize: 12, lineHeight: 1.45, marginBottom: 2 }}>
-                        <span style={{ color: flagC(f.level) }}>⚑</span><span><b>{f.from} · {LABEL[f.key]} {fv(f.key, f.value)}:</b> {f.reason}</span>
-                      </div>
-                    ))}
+                    {hold.flags.map((f, i) => { const ign = !openOf(player.id).includes(f); return (
+                      <div key={i} style={{ display: "flex", gap: 6, fontSize: 12, lineHeight: 1.45, marginBottom: 4, alignItems: "flex-start", opacity: ign ? 0.6 : 1 }}>
+                        <span style={{ color: flagC(f.level) }}>⚑</span><span style={{ flex: 1 }}><b>{f.from} · {LABEL[f.key]} {fv(f.key, f.value)}:</b> {f.reason}</span>
+                        {ign ? <span style={{ fontSize: 11, color: C.mut, whiteSpace: "nowrap" }}>Ignored · kept out <button onClick={() => decide(f, null)} style={mini(C.mut)}>Undo</button></span> : <Decide f={f} />}
+                      </div>); })}
+                    <AcceptedList p={player} />
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginTop: 8 }}>
                       {flagRows.map(row => { const fr = at.get(row).from; return row !== "tryout" || isAdmin
                         ? <button key={row} onClick={() => startFix(row)} style={{ ...btn(false), padding: "5px 10px", fontSize: 12, borderColor: fix?.row === row ? C.gold : C.border }}>✎ Fix the {fr}{row === "tryout" ? " tryout" : ""} numbers</button>

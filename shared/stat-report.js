@@ -494,6 +494,22 @@ export function allStatFlags(players, testsByPlayer, { peers } = {}) {
   return out.sort((a, b) => (a.level === b.level ? 0 : a.level === "red" ? -1 : 1) || tn(a.team) - tn(b.team) || a.team.localeCompare(b.team) || a.player.localeCompare(b.player) || (a.player_id - b.player_id));
 }
 
+// Staff review of a flag (Drew, Oct 12 2026: "accept or ignore"), stored in
+// stat_flag_reviews. flagId = the metric, the result, the rule and the number,
+// so a retyped number is a new flag and shows again.
+//   accept: the number is right. It's no longer a flag anywhere (not held,
+//           not in the panel, not hidden from Claude).
+//   ignore: hidden from the panel and badges, but the number still stays out
+//           of her email.
+export const flagId = (f) => [f.key, f.row, f.prevRow || "", f.rule, Math.round((+f.value || 0) * 100)].join("|");
+export function reviewFlags(flags, reviews, playerId) {
+  const dec = new Map((reviews || []).filter(r => playerId == null || r.player_id === playerId).map(r => [r.flag_id, r.decision]));
+  const open = [], accepted = [], ignored = [];
+  for (const f of flags || []) { const d = dec.get(flagId(f)); (d === "accept" ? accepted : d === "ignore" ? ignored : open).push(f); }
+  // live = what still holds a number out of her email
+  return { open, accepted, ignored, live: [...open, ...ignored] };
+}
+
 // The report metrics a flag actually touches: its key + related, when the
 // flagged result (or, for a change flag, either end) is the baseline or the
 // "now" that metric shows. HQ ticks these off by default; a flag on an
