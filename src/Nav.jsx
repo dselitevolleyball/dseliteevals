@@ -60,6 +60,7 @@ const IT = {
   passing:       ["Passer Ratings", "🎯", "all", "passing serve receive", "Passing"],
   serving:       ["Serve Grader", "🏐", "duty", "serving serves serve grader float fast aces accuracy toughness", "Serves"],
   testreports:   ["Testing Reports", "📈", "reports", "reach stat reports", "Reports"],
+  testboard:     ["Testing Stats Board", "🏅", "all", "physical testing stats board leaderboard vertical broad jump sprint approach", "Stats"],
   games:         ["4v4 Practice Games", "🎲", "all", "games 4v4", "Games"],
   dashboard:     ["Tryout Dashboard", "📊", "all", "dashboard tryouts", "Tryouts"],
   evaluate:      ["Evaluate", "✍️", "all", "tryout evaluate", "Evaluate"],
@@ -91,13 +92,13 @@ const DSE_OPS = [
   ["families", "Families & signups", "👪", ["waiting", "tracker", "kickoff", "playergear", "scholarships"]],
   ["events", "Tournaments & travel", "✈️", ["tournaments", "hub", "workduty", "tournament", "dsysa", "travel", "housing", "hawaii"]],
   ["staff", "Staff, pay & finance", "💵", ["coaches", "requests", "gear", "timecards", "claims", "myexpenses", "finance"]],
-  ["court", "On the court", "📖", ["lineups", "practiceplan", "checkin", "playereval", "passing", "serving", "testreports", "games"]],
+  ["court", "On the court", "📖", ["lineups", "practiceplan", "checkin", "playereval", "passing", "serving", "testreports", "testboard", "games"]],
   ["tryouts", "Tryouts 2026-27", "🎯", ["dashboard", "evaluate", "favorites", "teams", "rankings", "physical", "tryouts"]],
 ];
 // Coaches get their own short order instead of the admin list with holes in it.
 const DSE_COACH = [
   ["mine", "My teams", "🏐", ["incidents", "checkin", "workduty"]],
-  ["court", "On the court", "📖", ["lineups", "practiceplan", "playereval", "passing", "serving", "games", "testreports"]],
+  ["court", "On the court", "📖", ["lineups", "practiceplan", "playereval", "passing", "serving", "games", "testreports", "testboard"]],
   ["me", "Me", "🙋", ["home", "clockin", "notifications", "myexpenses"]],
   ["events", "Events", "🏆", ["hub", "tournament", "dsysa"]],
   ["tryouts", "Tryouts 2026-27", "🎯", ["dashboard", "evaluate", "favorites", "teams", "rankings", "physical", "tryouts"]],

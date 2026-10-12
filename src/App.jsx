@@ -22,6 +22,7 @@ import { buildNav, navTheme, Sidebar, NavDrawer, BottomBar, SiblingChips } from 
 import DaySchedule from "./DaySchedule.jsx";
 import { PlayerStatHistory, StatsLinks } from "./PlayerStats.jsx";
 import StatReports from "./StatReports.jsx";
+import TestingBoard, { ReachHome } from "./TestingBoard.jsx";
 import WorkDuty from "./WorkDuty.jsx";
 import TournamentHub from "./TournamentHub.jsx";
 import RegistrationCheck, { RegBadges, loadRegistrationCheck } from "./RegistrationCheck.jsx";
@@ -1509,7 +1510,7 @@ function weekMondayISO(d){ const x = d ? new Date(d) : new Date(); const back = 
 // full window instead of the centered 1500px reading width: the DSSC coaches
 // week board (7 days x 3 courts) and the practice Daily board (a card per
 // block). Both already scroll sideways; the cap only made them scroll sooner.
-const WIDE_VIEWS = new Set(["dssccal", "practice"]);
+const WIDE_VIEWS = new Set(["dssccal", "practice", "testboard"]);
 
 const PHASE_DATES = [
   { id:"summer",     from:"2026-07-12", to:"2026-09-12" },
@@ -32908,7 +32909,7 @@ export default function App() {
       {/* 1500 keeps text screens readable, but the wide boards are grids, not
           prose — capping them just buys empty margin and costs a column. */}
       <div style={{padding:showPhoneNav?"14px 18px calc(84px + env(safe-area-inset-bottom, 0px))":"14px 18px",maxWidth:WIDE_VIEWS.has(view)?"none":1500,margin:"0 auto"}}>
-        {isReachOnly ? <StatReports coach={coach} players={players} session={session} /> : OPS_VIEWS.has(view) && view !== "notifications" && !canOps ? opsDenied : <>
+        {isReachOnly ? <ReachHome coach={coach} players={players} session={session} /> : OPS_VIEWS.has(view) && view !== "notifications" && !canOps ? opsDenied : <>
         {view==="home" && (workspace==="dssc" ? (isDsscDirector ? renderDsscAdmin() : renderDsscHub()) : renderHome())}
         {view==="clockin" && (
           <div style={{maxWidth:820,margin:"0 auto"}}>
@@ -32987,6 +32988,7 @@ export default function App() {
           teamNames={((canViewTeams || canOps) ? teamsList.filter(t => t.active).map(t => t.id) : myTeamNames.filter(t => teamsList.some(x => x.id === t))).slice().sort((a, b) => (parseInt(a) || 99) - (parseInt(b) || 99) || a.localeCompare(b))} />}
         {view==="hub" && <TournamentHub supabase={supabase} C={C} tournaments={tournaments} tournamentAssignments={tournamentAssignments} practiceTeams={practiceTeams} practiceTeamsAll={practiceTeamsAll}
           isOps={canOps} myTeamNames={myTeamNames} initialTournamentId={hubTn} onConsumedInitial={()=>setHubTn(null)} session={session} />}
+        {view==="testboard" && <TestingBoard players={players} />}
         {view==="testreports" && (canSendReports ? <StatReports coach={coach} players={players} session={session} /> : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Testing reports are for admins and the performance coach.</div>)}
         {view==="lineups" && renderLineups()}
         {view==="games" && renderGames()}
