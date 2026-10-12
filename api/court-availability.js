@@ -9,6 +9,8 @@
 //   GET /api/court-availability?link=1  -> { url } the members' public link
 // Each DSSC booking that is a Clinics & Camps class also carries signups (the
 // registrations the board counts) so empty classes show; null = not tracked.
+// signups is for that one session (Playbook sells most classes by the date),
+// plus anyone registered for the whole program. clinicId/sessionId open the card.
 //
 // Times are Central wall clock in hours (18.5 = 6:30pm). Classes on no court
 // (Reach Performance) and holds on a staff resource only are counted in
@@ -75,6 +77,7 @@ async function attachSignups(sb, bookings) {
     const s = (Array.isArray(c.sessions) ? c.sessions : []).find(x => x?.date === b.date && Math.abs((parseClock(x.start_time) ?? -9) - b.start) < 0.02);
     if (!s) continue;
     b.signups = (n[c.id + "|" + s.id] || 0) + (n[c.id + "|*"] || 0);
+    b.clinicId = c.id; b.sessionId = s.id;
   }
   return sync?.registrations_at || null;
 }

@@ -25543,7 +25543,7 @@ export default function App() {
     return (
       <DsscHub coach={coach} coachRoster={coachRoster} clinics={clinics} dsscCheckins={dsscCheckins} dsscAvail={dsscAvail} podAttendance={podAttendance}
         isDirector={isDsscDirector} initialClinicId={dsscHubSel?.clinicId || clinicOpenId} initialSessionId={dsscHubSel?.sessionId || null}
-        onConsumedInitial={()=>{ setClinicOpenId(null); setDsscHubSel(null); }} backTo={dsscHubBack ? { label:"Admin board", go:()=>{ setDsscHubBack(false); setView("clinics"); } } : null}
+        onConsumedInitial={()=>{ setClinicOpenId(null); setDsscHubSel(null); }} backTo={dsscHubBack ? { label: dsscHubBack==="courts" ? "Court Availability" : "Admin board", go:()=>{ const to = dsscHubBack==="courts" ? "courts" : "clinics"; setDsscHubBack(false); setView(to); } } : null}
         setClinics={setClinics} reload={{ clinics: loadClinics, checkins: loadDsscCheckins, avail: loadDsscAvail, attendance: loadPodAttendance }}
         staffDsscSession={staffDsscSession} unstaffDsscSession={unstaffDsscSession} notifyDirectors={notifyDirectors}
         onOpenAdmin={isDsscDirector ? ()=>{ setClinicOpenId(null); setView("clinics"); } : null}
@@ -32939,7 +32939,7 @@ export default function App() {
         {view==="pods" && renderPods()}
         {view==="playereval" && renderPlayerEvals()}
         {view==="passing" && renderPassing()}
-        {view==="courts" && (isDsscDirector ? <CourtAvailability /> : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Court availability is for admins and the DSSC directors.</div>)}
+        {view==="courts" && (isDsscDirector ? <CourtAvailability onOpenClass={(cid, sid)=>{ setDsscHubSel({ clinicId: cid, sessionId: sid }); setDsscHubBack("courts"); setView("dssc"); }} /> : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Court availability is for admins and the DSSC directors.</div>)}
         {view==="serving" && <ServeGrader coach={coach} players={players}
           teams={((canViewTeams || canOps) ? teamsList.filter(t => t.active).map(t => t.id) : myTeamNames.filter(t => teamsList.some(x => x.id === t))).slice().sort((a, b) => (parseInt(a) || 99) - (parseInt(b) || 99) || a.localeCompare(b))} />}
         {view==="myexpenses" && renderMyExpenses()}

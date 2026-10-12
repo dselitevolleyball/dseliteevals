@@ -45,16 +45,21 @@ export const liveLoaders = {
   },
 };
 
-export default function CourtAvailability({ loaders = liveLoaders }) {
-  const [date, setDate] = useState(iso(new Date()));
-  const [mode, setMode] = useState("day");
+// Kept across visits, so opening a class card and coming back lands on the
+// same day without pulling Playbook again.
+const kept = { date: null, mode: "day", cache: {} };
+
+export default function CourtAvailability({ loaders = liveLoaders, onOpenClass }) {
+  const [date, setDate] = useState(kept.date || iso(new Date()));
+  const [mode, setMode] = useState(kept.mode);
   const [showHolds, setShowHolds] = useState(true);
   // Client view (Drew, Oct 12): what members would see - only open vs booked,
   // no program, renter or team names, rentals always counted as booked.
   const [pub, setPub] = useState(false);
   const [memberLink, setMemberLink] = useState("");
   const [copied, setCopied] = useState(false);   // shown once fetched, also copied
-  const [cache, setCache] = useState({});      // weekStart -> { bookings, dse, offCourt, at } | { error }
+  const [cache, setCache] = useState(loaders === liveLoaders ? kept.cache : {});      // weekStart -> { bookings, dse, offCourt, at } | { error }
+  useEffect(() => { kept.date = date; kept.mode = mode; if (loaders === liveLoaders) kept.cache = Object.fromEntries(Object.entries(cache).filter(([, v]) => !v.error)); }, [date, mode, cache]); // eslint-disable-line react-hooks/exhaustive-deps
   const [busy, setBusy] = useState(null);       // week being pulled
   const [reload, setReload] = useState(0);
   const wk = weekStart(date);
@@ -80,7 +85,7 @@ export default function CourtAvailability({ loaders = liveLoaders }) {
     if (!data || data.error) return null;
     const dse = data.dse[d] || { teams: [], scrims: [], tourn: [] };
     const bookings = data.bookings.filter(b => b.date === d && (pub || showHolds || b.kind !== "hold") && !(dropEmpty && isEmpty(b)))
-      .map(b => ({ courts: b.courts, start: b.start, end: b.end, kind: isEmpty(b) ? "empty" : b.kind, label: b.label, detail: (b.signups != null ? b.signups + " signed up" + (b.category ? " · " : "") : "") + (b.category || "") }))
+      .map(b => ({ courts: b.courts, start: b.start, end: b.end, kind: isEmpty(b) ? "empty" : b.kind, label: b.label, detail: (b.signups != null ? b.signups + " signed up this date" + (b.category ? " · " : "") : "") + (b.category || ""), ref: b.clinicId ? { cid: b.clinicId, sid: b.sessionId } : null }))
       .concat(dse.tourn || []);
     return { ...buildCourtDay({ bookings, teams: dse.teams, scrims: dse.scrims, reserved: sundayBlock(d, data.reservations || []), startHour: START_H, endHour: END_H }), cancelled: dse.cancelled, phase: dse.phase };
   };
@@ -125,6 +130,9 @@ export default function CourtAvailability({ loaders = liveLoaders }) {
   const dayView = () => {
     const g = gridFor(date); if (!g) return null;
     const xf = extraFree(date, g);
+    // Playbook reservations with no time (rentals): tagged on their court's
+    // column, and that court's free time is outlined - it may not really be free.
+    const resOn = Object.fromEntries(COURTS.map(c => [c.id, untimed(date).filter(r => r.courts.includes(c.id))]));
     const th = { padding: "6px 6px", fontSize: 11, fontWeight: 800, color: C.mut, textAlign: "center", borderBottom: "1px solid " + C.border, background: C.bg, position: "sticky", top: 0, zIndex: 1 };
     return (
       <div>
@@ -149,7 +157,9 @@ export default function CourtAvailability({ loaders = liveLoaders }) {
           <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 620, tableLayout: "fixed" }}>
             <thead>
               <tr><th style={{ ...th, width: 58 }} rowSpan={2}>Time</th><th style={th} colSpan={4}>Warehouse</th><th style={{ ...th, borderLeft: "2px solid " + C.border }} colSpan={2}>Flex</th></tr>
-              <tr>{COURTS.map((c, i) => <th key={c.id} style={{ ...th, top: 27, borderLeft: i === 4 ? "2px solid " + C.border : undefined }}>{c.label}</th>)}</tr>
+              <tr>{COURTS.map((c, i) => <th key={c.id} style={{ ...th, top: 27, borderLeft: i === 4 ? "2px solid " + C.border : undefined }}>{c.label}
+                {resOn[c.id].map((r, j) => <div key={j} title="Playbook reservation - the time isn't on the calendar" style={{ marginTop: 3, padding: "2px 4px", borderRadius: 5, background: KIND.hold.bg, border: "1px dashed " + KIND.hold.bd, color: KIND.hold.fg, fontSize: 10, fontWeight: 700, lineHeight: 1.25 }}>{pub ? "Reserved" : r.who} · time?</div>)}
+              </th>)}</tr>
             </thead>
             <tbody>
               {g.slots.map((h, si) => (
@@ -163,14 +173,15 @@ export default function CourtAvailability({ loaders = liveLoaders }) {
                     const k = cell && KIND[cell.kind];
                     const run = col.slice(si, si + n), conflict = run.some(x => x && x.conflict), also = [...new Set(run.flatMap(x => (x && x.also) || []))];
                     return (
-                      <td key={c.id} rowSpan={n} title={pub ? (cell ? "Booked" : "Open") : cell ? cell.label + (cell.detail ? " · " + cell.detail : "") + (also.length ? " · also: " + also.join(", ") : "") : "Free"}
+                      <td key={c.id} rowSpan={n} title={pub ? (cell ? "Booked" : "Open") : cell ? cell.label + (cell.detail ? " · " + cell.detail : "") + (also.length ? " · also: " + also.join(", ") : "") + (cell.ref && onOpenClass ? " - click to open the class card" : "") : "Free"}
+                        onClick={!pub && cell?.ref && onOpenClass ? () => onOpenClass(cell.ref.cid, cell.ref.sid) : undefined}
                         style={{ padding: 2, borderLeft: ci === 4 ? "2px solid " + C.border : "1px solid #1a1a1a", verticalAlign: "top" }}>
                         <div style={cell && pub
                           ? { height: "100%", minHeight: n * 22 - 4, borderRadius: 6, background: "#1c1c1c", border: "1px solid #3a3a3a", color: "#8a8a8a", padding: "3px 5px", fontSize: 11, fontWeight: 700 }
                           : cell
-                          ? { height: "100%", minHeight: n * 22 - 4, borderRadius: 6, background: k.bg, border: (cell.auto || k.dash ? "1px dashed " : "1px solid ") + (conflict ? "#ef4444" : k.bd), color: k.fg, padding: "3px 5px", fontSize: 11, fontWeight: 700, lineHeight: 1.25, overflow: "hidden" }
-                          : { height: "100%", minHeight: n * 22 - 4, borderRadius: 6, background: "rgba(34,197,94,0.07)", border: "1px solid rgba(34,197,94,0.25)", color: "#4ade80", padding: "3px 5px", fontSize: 10, fontWeight: 700 }}>
-                          {cell && pub ? "Booked" : cell ? <>{conflict ? "⚠ " : ""}{cell.kind === "empty" && n < 2 ? "0 · " : ""}{cell.label}{n >= 2 && cell.detail ? <div style={{ fontWeight: 500, opacity: 0.8 }}>{cell.detail}</div> : null}</> : (n >= 2 ? (pub ? "Open " : "Free ") + short(h) + "–" + short(g.slots[si + n - 1] + 0.5) : "")}
+                          ? { height: "100%", minHeight: n * 22 - 4, borderRadius: 6, background: k.bg, border: (cell.auto || k.dash ? "1px dashed " : "1px solid ") + (conflict ? "#ef4444" : k.bd), color: k.fg, cursor: cell.ref && onOpenClass ? "pointer" : undefined, padding: "3px 5px", fontSize: 11, fontWeight: 700, lineHeight: 1.25, overflow: "hidden" }
+                          : { height: "100%", minHeight: n * 22 - 4, borderRadius: 6, background: "rgba(34,197,94,0.07)", border: resOn[c.id].length ? "1px dashed " + KIND.hold.bd : "1px solid rgba(34,197,94,0.25)", color: "#4ade80", padding: "3px 5px", fontSize: 10, fontWeight: 700 }}>
+                          {cell && pub ? "Booked" : cell ? <>{conflict ? "⚠ " : ""}{cell.kind === "empty" && n < 2 ? "0 · " : ""}{cell.label}{n >= 2 && cell.detail ? <div style={{ fontWeight: 500, opacity: 0.8 }}>{cell.detail}</div> : null}</> : (n >= 2 ? (pub ? "Open " : "Free ") + short(h) + "–" + short(g.slots[si + n - 1] + 0.5) : "")}{!cell && n >= 2 && resOn[c.id].length ? <div style={{ color: KIND.hold.fg, fontWeight: 600 }}>? reserved sometime today</div> : null}
                         </div>
                       </td>);
                   })}

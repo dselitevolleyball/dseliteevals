@@ -116,7 +116,7 @@ export function buildCourtDay({ bookings = [], teams = [], scrims = [], reserved
   // 0. Standing DS Elite reservations (the Sunday Warehouse block).
   reserved.forEach((r, n) => { for (const c of r.courts) for (const i of idx(r.start, r.end)) cells[c][i] = { kind: "dse", label: r.label, detail: r.detail || "", key: "r" + n, reserved: true }; });
   // 1. Playbook bookings and the in-house tournament, exactly where they are.
-  bookings.forEach((b, n) => { for (const c of b.courts) for (const i of idx(b.start, b.end)) put(c, i, { kind: b.kind, label: b.label, detail: b.detail || "", key: "b" + n }); });
+  bookings.forEach((b, n) => { for (const c of b.courts) for (const i of idx(b.start, b.end)) put(c, i, { kind: b.kind, label: b.label, detail: b.detail || "", key: "b" + n, ref: b.ref || null }); });
 
   // 2. DS Elite: scrimmage pairs share one court; everyone else gets their own.
   const units = [];
