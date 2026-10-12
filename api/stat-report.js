@@ -4,6 +4,8 @@
 //       flagged = metric keys HQ is holding back as likely typos
 //       include_flagged = flagged keys someone ticked back in on purpose
 //   { sample: true, test_to }  the template with a made-up player, to any address
+//   { team, test_to?, resend?, dry? }  every current player on the team, one
+//       email per family (see the team section at the bottom)
 // The email is rebuilt here from the saved template + the player's saved draft
 // with shared/stat-report.js (the same builder as the app's preview), sent from
 // DS Elite with replies going to the coach who sent it, and logged in
@@ -29,7 +31,11 @@
 // Env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, RESEND_API_KEY, DSE_FROM_EMAIL.
 
 import { createClient } from "@supabase/supabase-js";
+import { appOrigin } from "../shared/app-origin.js";
 import { buildReport, statFlags, statPeerStats, flaggedReportKeys, METRICS, SAMPLE_PLAYER, SAMPLE_TESTS, SAMPLE_DRAFT, SAMPLE_TEAM } from "../shared/stat-report.js";
+
+// A team of ~14 at Resend's 2 a second, plus the season read.
+export const config = { maxDuration: 120 };
 
 const OWNER_EMAILS = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"];
 // The DSSC performance coach (the new Brandon at DSSC - not Brandon Blahnik).
@@ -53,6 +59,8 @@ const flagPrint = (flags, k) => {
 const ackOf = (flags, k) => `ok:${k}:${flagPrint(flags, k)}`;
 // The columns statFlags / teamStanding read, for the season pool + teammates.
 const STAT_COLS = "id, first_name, team_assignment, season, usav_div, offer_status, stand_reach, approach_touch, jump_touch, sprint_10y, stat_baseline_date";
+// Everything the email needs about the girl herself.
+const PLAYER_COLS = "id, first_name, last_name, team_assignment, season, usav_div, offer_status, parent_name, parent2_name, parent_email, parent_email2, parent_email3, stand_reach, approach_touch, jump_touch, sprint_10y, stat_baseline_date";
 // Every row, past PostgREST's 1,000-row page.
 const every = async (q) => { const out = []; for (let from = 0; ; from += 1000) { const { data, error } = await q().range(from, from + 999); if (error) throw error; out.push(...(data || [])); if (!data || data.length < 1000) return out; } };
 
@@ -74,68 +82,117 @@ export default async function handler(req, res) {
 
   let b = req.body; try { b = typeof b === "string" ? JSON.parse(b) : (b || {}); } catch { return res.status(400).json({ error: "Invalid JSON" }); }
   const sample = !!b.sample;
-  const playerId = Number(b.player_id);
-  if (!playerId && !sample) return res.status(400).json({ error: "player_id required" });
+  const playerId = Number(b.player_id) || null;
+  const teamName = String(b.team || "").trim() || null;
+  if (!playerId && !teamName && !sample) return res.status(400).json({ error: "player_id or team required" });
   const testTo = b.test_to ? nrm(b.test_to) : null;
   if (testTo && !EMAIL_RE.test(testTo)) return res.status(400).json({ error: "That test address doesn't look right." });
   if (sample && !testTo) return res.status(400).json({ error: "A sample can only go to a test address." });
 
-  let [{ data: player }, { data: tests }, { data: set }, { data: draft }] = await Promise.all([
-    sb.from("players").select("id, first_name, last_name, team_assignment, season, usav_div, parent_name, parent2_name, parent_email, parent_email2, parent_email3, stand_reach, approach_touch, jump_touch, sprint_10y, stat_baseline_date").eq("id", playerId).maybeSingle(),
-    sb.from("player_stat_tests").select("*").eq("player_id", playerId).order("test_date"),
+  // Shared by every email in this call: the template, practice nights (her
+  // Reach slot), and — for real players — the season pool for the flag check.
+  const [{ data: set }, { data: practice }] = await Promise.all([
     sb.from("stat_report_settings").select("data").eq("id", "main").maybeSingle(),
-    sb.from("stat_report_drafts").select("*").eq("player_id", playerId).maybeSingle(),
+    sb.from("practice_assignments").select("team_name, day, slot, phase"),
   ]);
-  if (sample) { player = SAMPLE_PLAYER; tests = SAMPLE_TESTS; draft = SAMPLE_DRAFT; }
-  if (!player) return res.status(404).json({ error: "Player not found" });
-  const firsts = [...new Set([player.parent_name, player.parent2_name].map(x => String(x || "").trim().split(/\s+/)[0]).filter(Boolean))];
-  const parentFirst = firsts.length <= 1 ? (firsts[0] || "") : firsts.slice(0, -1).join(", ") + " and " + firsts[firsts.length - 1];
-  // The season (flag pool) and teammates (unnamed in the email, for the
-  // team-standing chart) come from one read; the sample keeps its made-up team.
-  let teammates = sample ? SAMPLE_TEAM : [], omit = [];
-  if (!sample) {
-    let club, allTests;
-    try {
-      [club, allTests] = await Promise.all([
-        every(() => sb.from("players").select(STAT_COLS).eq("season", player.season || "2026-27").order("id")),
-        every(() => sb.from("player_stat_tests").select("*").order("id")),
-      ]);
-    } catch (e) { return res.status(500).json({ error: "Couldn't check her numbers: " + (e.message || e) }); }
-    const flags = statFlags(player, tests || [], { peers: statPeerStats(club, allTests) });
-    const mine = new Set(flaggedReportKeys(player, tests || [], flags));
-    const held = new Set([...mine, ...keysIn(b.flagged)]);
+  const settings = set?.data || {}, origin = appOrigin(req);
+  const addr = (/<([^>]+)>/.exec(DSE_FROM_EMAIL) || [, DSE_FROM_EMAIL])[1].trim();
+  const from = `${senderName.replace(/[<>"]/g, "")} · DS Elite <${addr}>`;
+  const mail = async ({ to, subject, rep, pid }) => {
+    const r = await fetch("https://api.resend.com/emails", { method: "POST", headers: { Authorization: "Bearer " + RESEND, "Content-Type": "application/json" },
+      body: JSON.stringify({ from, to, reply_to: email, subject, html: rep.html, text: rep.text }) });
+    if (!r.ok) throw new Error("Email failed: " + r.status + " " + (await r.text()).slice(0, 200));
+    await Promise.all([
+      pid ? sb.from("stat_report_sends").insert({ player_id: pid, recipients: to, subject, body: rep.text, test: !!testTo, sent_by: senderName }) : Promise.resolve(),
+      sb.from("email_log").insert({ subject, body: rep.text, recipient_count: to.length, recipients: to, sent_count: to.length, failed_count: 0, sent_by: senderName, sent_by_email: email }),
+    ]);
+  };
+
+  if (sample) {
+    const rep = buildReport({ player: SAMPLE_PLAYER, tests: SAMPLE_TESTS, settings, draft: SAMPLE_DRAFT, parentFirst: "Jordan", teammates: SAMPLE_TEAM, practice: practice || [], origin });
+    try { await mail({ to: [testTo], subject: "[TEST] " + rep.subject, rep, pid: null }); } catch (e) { return res.status(502).json({ error: e.message }); }
+    return res.status(200).json({ ok: true, to: [testTo], test: true, held: [] });
+  }
+
+  let club, allTests;
+  try {
+    [club, allTests] = await Promise.all([
+      every(() => sb.from("players").select(STAT_COLS).eq("season", "2026-27").order("id")),
+      every(() => sb.from("player_stat_tests").select("*").order("id")),
+    ]);
+  } catch (e) { return res.status(500).json({ error: "Couldn't check the numbers: " + (e.message || e) }); }
+  const peers = statPeerStats(club, allTests);
+  const testsOf = (id) => allTests.filter(t => t.player_id === id).sort((x, y) => String(x.test_date).localeCompare(String(y.test_date)));
+  const live = (m) => !TERMINAL.includes(m.offer_status || "");
+
+  const ids = playerId ? [playerId] : club.filter(m => m.team_assignment === teamName && live(m)).map(m => m.id);
+  if (!ids.length) return res.status(404).json({ error: playerId ? "Player not found" : "No current players on " + teamName + "." });
+  const [{ data: roster, error: rErr }, { data: drafts }, { data: sent }] = await Promise.all([
+    sb.from("players").select(PLAYER_COLS).in("id", ids),
+    sb.from("stat_report_drafts").select("*").in("player_id", ids),
+    sb.from("stat_report_sends").select("player_id").in("player_id", ids).eq("test", false),
+  ]);
+  if (rErr) return res.status(500).json({ error: rErr.message });
+  if (!roster?.length) return res.status(404).json({ error: "Player not found" });
+  const sentIds = new Set((sent || []).map(s => s.player_id));
+
+  // One player's email with the flag holds applied. A team send goes by the
+  // ticks saved on each draft only; a single send also honours the page's
+  // own flag list.
+  const prepare = (player) => {
+    const tests = testsOf(player.id), draft = (drafts || []).find(d => d.player_id === player.id) || {};
+    const flags = statFlags(player, tests, { peers });
+    const mine = new Set(flaggedReportKeys(player, tests, flags));
+    const held = new Set([...mine, ...(playerId ? keysIn(b.flagged) : [])]);
     // A tick counts for a metric flagged here only if the saved draft holds the
     // token for these flags; one only the client flagged is clean by this
     // check, so its tick stands.
-    const saved = Array.isArray(draft?.metrics) ? draft.metrics : [];
-    const include = new Set(keysIn(b.include_flagged).filter(k => !mine.has(k) || saved.includes(ackOf(flags, k))));
-    omit = KEYS.filter(k => held.has(k) && !include.has(k));
-    if (player.team_assignment) teammates = club.filter(m => m.team_assignment === player.team_assignment && !TERMINAL.includes(m.offer_status || ""))
-      .map(m => ({ player: m, tests: allTests.filter(t => t.player_id === m.id) }));
+    const saved = Array.isArray(draft.metrics) ? draft.metrics : [];
+    const asked = playerId ? keysIn(b.include_flagged) : [...mine].filter(k => saved.includes(ackOf(flags, k)));
+    const include = new Set(asked.filter(k => !mine.has(k) || saved.includes(ackOf(flags, k))));
+    const omit = KEYS.filter(k => held.has(k) && !include.has(k));
+    const teammates = player.team_assignment ? club.filter(m => m.team_assignment === player.team_assignment && live(m)).map(m => ({ player: m, tests: testsOf(m.id) })) : [];
+    const firsts = [...new Set([player.parent_name, player.parent2_name].map(x => String(x || "").trim().split(/\s+/)[0]).filter(Boolean))];
+    const parentFirst = firsts.length <= 1 ? (firsts[0] || "") : firsts.slice(0, -1).join(", ") + " and " + firsts[firsts.length - 1];
+    const args = { player, tests, settings, draft, parentFirst, teammates, practice: practice || [], origin };
+    const rep = buildReport({ ...args, omit });
+    // The held metrics her email would otherwise have shown (the pick with no
+    // omit); a flagged metric that was never picked isn't news to staff.
+    const wanted = omit.length ? buildReport(args).picked.map(r => r.key).filter(k => omit.includes(k)) : [];
+    const to = testTo ? [testTo] : [...new Set([player.parent_email, player.parent_email2, player.parent_email3].map(nrm).filter(e => EMAIL_RE.test(e)))];
+    const why = !rep.picked.length ? (wanted.length
+        ? `Nothing left to send for ${player.first_name}: the numbers picked for her report look like typos (${wanted.map(k => LABEL[k]).join(", ")}). Fix them, or tick them back in, first.`
+        : "No testing numbers on file for " + player.first_name + " yet.")
+      : !to.length ? "No parent email on file for " + player.first_name + "." : null;
+    return { player, rep, to, held: wanted, why };
+  };
+
+  if (playerId) {
+    const j = prepare(roster[0]);
+    if (j.why) return res.status(400).json({ error: j.why });
+    try { await mail({ to: j.to, subject: (testTo ? "[TEST] " : "") + j.rep.subject, rep: j.rep, pid: j.player.id }); } catch (e) { return res.status(502).json({ error: e.message }); }
+    return res.status(200).json({ ok: true, to: j.to, test: !!testTo, held: j.held });
   }
-  const args = { player, tests: tests || [], settings: set?.data || {}, draft: draft || {}, parentFirst, teammates };
-  const rep = buildReport({ ...args, omit });
-  // The held metrics her email would otherwise have shown (the pick with no
-  // omit); a flagged metric that was never picked isn't news to staff.
-  const wanted = omit.length ? buildReport(args).picked.map(r => r.key).filter(k => omit.includes(k)) : [];
-  if (!rep.picked.length) {
-    return res.status(400).json({ error: wanted.length
-      ? `Nothing left to send for ${player.first_name}: the numbers picked for her report look like typos (${wanted.map(k => LABEL[k]).join(", ")}). Fix them, or tick them back in, first.`
-      : "No testing numbers on file for " + player.first_name + " yet." });
+
+  // Whole team (Drew, Oct 12 2026: "send to the whole team in 1 fell swoop").
+  // One email per family. Skipped: no numbers, everything picked held as a
+  // likely typo, no parent email, and (unless resend:true) anyone already
+  // sent. A test send puts every girl's email in the test inbox. dry:true
+  // lists who would get one without sending anything.
+  const resend = !!b.resend, dry = !!b.dry;
+  const done = [], skipped = [];
+  const order = roster.slice().sort((x, y) => String(x.first_name).localeCompare(String(y.first_name)));
+  for (const p of order) {
+    const name = p.first_name + " " + p.last_name;
+    if (!testTo && !resend && sentIds.has(p.id)) { skipped.push({ player_id: p.id, name, why: "Already sent" }); continue; }
+    const j = prepare(p);
+    if (j.why) { skipped.push({ player_id: p.id, name, why: j.why }); continue; }
+    if (dry) { done.push({ player_id: p.id, name, to: j.to, held: j.held }); continue; }
+    try {
+      await mail({ to: j.to, subject: (testTo ? `[TEST · ${name}] ` : "") + j.rep.subject, rep: j.rep, pid: p.id });
+      done.push({ player_id: p.id, name, to: j.to, held: j.held });
+    } catch (e) { skipped.push({ player_id: p.id, name, why: e.message }); }
+    await new Promise(r => setTimeout(r, 600));   // Resend allows 2 a second
   }
-
-  const to = testTo ? [testTo] : [...new Set([player.parent_email, player.parent_email2, player.parent_email3].map(nrm).filter(e => EMAIL_RE.test(e)))];
-  if (!to.length) return res.status(400).json({ error: "No parent email on file for " + player.first_name + "." });
-  const addr = (/<([^>]+)>/.exec(DSE_FROM_EMAIL) || [, DSE_FROM_EMAIL])[1].trim();
-  const subject = (testTo ? "[TEST] " : "") + rep.subject;
-
-  const r = await fetch("https://api.resend.com/emails", { method: "POST", headers: { Authorization: "Bearer " + RESEND, "Content-Type": "application/json" },
-    body: JSON.stringify({ from: `${senderName.replace(/[<>"]/g, "")} · DS Elite <${addr}>`, to, reply_to: email, subject, html: rep.html, text: rep.text }) });
-  if (!r.ok) return res.status(502).json({ error: "Email failed: " + r.status + " " + (await r.text()).slice(0, 200) });
-
-  await Promise.all([
-    sample ? Promise.resolve() : sb.from("stat_report_sends").insert({ player_id: playerId, recipients: to, subject, body: rep.text, test: !!testTo, sent_by: senderName }),
-    sb.from("email_log").insert({ subject, body: rep.text, recipient_count: to.length, recipients: to, sent_count: to.length, failed_count: 0, sent_by: senderName, sent_by_email: email }),
-  ]);
-  return res.status(200).json({ ok: true, to, test: !!testTo, held: wanted });
+  return res.status(200).json({ ok: true, team: teamName, test: !!testTo, dry, sent: done, skipped });
 }

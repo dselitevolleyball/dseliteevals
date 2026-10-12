@@ -15,6 +15,13 @@
 // box. A flagged metric is left out of her email until someone fixes the number
 // or ticks it back in; the send API holds them back too (defence in depth) and
 // flag text never reaches a family.
+//
+// The Reach pitch (Drew, Oct 12 2026): each email recommends Reach 2x a week
+// at the slot that fits her team's practice nights (practice_assignments →
+// shared/reach-plan.js), shows Brandon's photos and both memberships, and
+// opens with Claude's "Coach's take" (api/stat-report-ai.js), which a coach
+// can rewrite or edit before it goes. "Whole team" sends every family's email
+// in one go (api/stat-report.js { team }), skipping anyone already sent.
 
 import { useState, useEffect, useMemo, useRef } from "react";
 import { supabase } from "./supabase";
@@ -77,6 +84,8 @@ export default function StatReports({ coach, players = [], session }) {
   const [patch, setPatch] = useState(new Map());
   const [showFlags, setShowFlags] = useState(true);
   const [fix, setFix] = useState(null);   // { row, from, vals } — the flagged result being corrected
+  const [practice, setPractice] = useState([]);
+  const [teamRun, setTeamRun] = useState(null);   // last whole-team result { sent, skipped, test, dry }
   const panelRef = useRef(null);
   const me = coach?.display_name || coach?.email || null;
   // Baseline dates and tryout numbers live on players: admins only (Brandon
@@ -84,14 +93,15 @@ export default function StatReports({ coach, players = [], session }) {
   const isAdmin = !!coach?.is_admin || OWNER_EMAILS.includes(String(coach?.email || "").trim().toLowerCase());
 
   const load = async () => {
-    const [s, t, d, x] = await Promise.all([
+    const [s, t, d, x, pa] = await Promise.all([
       supabase.from("stat_report_settings").select("data").eq("id", "main").maybeSingle(),
       supabase.from("player_stat_tests").select("*").order("test_date"),
       supabase.from("stat_report_drafts").select("*"),
       supabase.from("stat_report_sends").select("player_id, sent_at, test, recipients, sent_by").order("sent_at", { ascending: false }),
+      supabase.from("practice_assignments").select("team_name, day, slot, phase"),
     ]);
     setSettings({ ...DEFAULT_SETTINGS, ...(s.data?.data || {}) });
-    setTests(t.data || []); setDrafts(new Map((d.data || []).map(r => [r.player_id, r]))); setSends(x.data || []);
+    setTests(t.data || []); setDrafts(new Map((d.data || []).map(r => [r.player_id, r]))); setSends(x.data || []); setPractice(pa.data || []);
   };
   useEffect(() => { load(); }, []);
   useEffect(() => { if (!testTo && coach?.email) setTestTo(coach.email); }, [coach?.email]);
@@ -160,12 +170,56 @@ export default function StatReports({ coach, players = [], session }) {
     const { error } = await supabase.from("players").update({ stat_baseline_date: val }).eq("id", player.id);
     setMsg(error ? { err: error.message } : { ok: `${player.first_name}'s baseline is now ${val ? baselineLabel({ stat_baseline_date: val }) : "“Tryouts” (no date)"}.` });
   };
-  const post = async (body) => {
+  const post = async (body, path = "/api/stat-report") => {
     const { data: { session: s } } = await supabase.auth.getSession();
-    const r = await fetch("/api/stat-report", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + (s?.access_token || "") }, body: JSON.stringify(body) });
+    const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + (s?.access_token || "") }, body: JSON.stringify(body) });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.error || "Send failed");
     return j;
+  };
+  // Claude's Coach's take: one girl (always rewritten unless a coach edited
+  // it — then only on confirm), or everyone on the team who doesn't have one.
+  const writeTake = async (p) => {
+    const d = drafts.get(p.id);
+    if (d?.ai_take_edited && !window.confirm(`Someone edited ${p.first_name}'s Coach's take. Replace it with a fresh one from Claude?`)) return;
+    setBusy("ai"); setMsg(null);
+    try {
+      const j = await post({ player_id: p.id, force: !!d?.ai_take_edited }, "/api/stat-report-ai");
+      const r = (j.results || [])[0];
+      if (r?.error || !r?.take) throw new Error(r?.error || "Claude didn't write one.");
+      setMsg({ ok: `Claude wrote ${p.first_name}'s take. Read it over, edit it if you like.` }); load();
+    } catch (e) { setMsg({ err: e.message }); }
+    setBusy(null);
+  };
+  const writeTeamTakes = async () => {
+    setBusy("ai-team"); setMsg(null);
+    try {
+      const j = await post({ team }, "/api/stat-report-ai");
+      const bad = (j.results || []).filter(r => r.error);
+      setMsg({ ok: `Claude wrote ${j.written} take${j.written === 1 ? "" : "s"} for ${team}.` + (j.skipped?.length ? ` ${j.skipped.length} already had one.` : "") + (bad.length ? ` Couldn't write: ${bad.map(r => r.name).join(", ")}.` : "") });
+      load();
+    } catch (e) { setMsg({ err: e.message }); }
+    setBusy(null);
+  };
+  const saveTake = (p, v) => saveDraft(p.id, { ai_take: v.trim() || null, ai_take_edited: true });
+  // Whole team, one email per family. A dry run first so the confirm names who
+  // gets one and who's skipped (already sent, no numbers, all held, no email).
+  const sendTeam = async (test) => {
+    const to = testTo.trim();
+    if (test && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) { setMsg({ err: "Type the email address the tests should go to." }); return; }
+    setBusy(test ? "team-test" : "team"); setMsg(null); setTeamRun(null);
+    try {
+      const dry = await post({ team, dry: true, ...(test ? { test_to: to } : {}) });
+      if (!dry.sent.length) { setTeamRun(dry); setMsg({ err: `Nobody on ${team} to send to.` }); setBusy(null); return; }
+      const skip = dry.skipped.length ? `\n\nSkipped (${dry.skipped.length}): ${dry.skipped.map(s => `${s.name} (${s.why.replace(/\.$/, "")})`).join("; ")}.` : "";
+      const q = test ? `Send ${dry.sent.length} test emails (one per girl on ${team}) to ${to}?${skip}` : `Send ${team}'s testing reports to ${dry.sent.length} families?\n\n${dry.sent.map(s => s.name).join(", ")}${skip}`;
+      if (!window.confirm(q)) { setBusy(null); return; }
+      const j = await post({ team, ...(test ? { test_to: to } : {}) });
+      setTeamRun(j);
+      setMsg({ ok: test ? `${j.sent.length} test emails sent to ${to}.` : `Sent to ${j.sent.length} ${team} families.` });
+      load();
+    } catch (e) { setMsg({ err: e.message }); }
+    setBusy(null);
   };
   const heldNote = (j) => j?.held?.length ? ` Left out as flagged: ${labels(j.held)}.` : "";
   const sendTest = async (p) => {
@@ -261,12 +315,12 @@ export default function StatReports({ coach, players = [], session }) {
   const tplPlayer = tplPreview === "sample" ? SAMPLE_PLAYER : roster.find(p => String(p.id) === tplPreview) || SAMPLE_PLAYER;
   const tplHold = holdOf(tplPlayer);
   const matesOf = (p) => roster.filter(x => x.team_assignment === p.team_assignment).map(x => ({ player: x, tests: testsBy.get(x.id) || [] }));
-  const tplRep = buildReport({ player: tplPlayer, tests: tplPlayer.id ? (testsBy.get(tplPlayer.id) || []) : SAMPLE_TESTS, settings, draft: tplPlayer.id ? (drafts.get(tplPlayer.id) || {}) : SAMPLE_DRAFT, parentFirst: tplPlayer.id ? parentFirstOf(tplPlayer) : "Jordan", teammates: tplPlayer.id ? matesOf(tplPlayer) : SAMPLE_TEAM, omit: tplHold.omit });
+  const tplRep = buildReport({ player: tplPlayer, tests: tplPlayer.id ? (testsBy.get(tplPlayer.id) || []) : SAMPLE_TESTS, settings, draft: tplPlayer.id ? (drafts.get(tplPlayer.id) || {}) : SAMPLE_DRAFT, parentFirst: tplPlayer.id ? parentFirstOf(tplPlayer) : "Jordan", teammates: tplPlayer.id ? matesOf(tplPlayer) : SAMPLE_TEAM, omit: tplHold.omit, practice, origin: window.location.origin });
 
   const draft = player ? (drafts.get(player.id) || {}) : {};
   const rows = player ? metricRows(player, testsBy.get(player.id) || []) : [];
   const hold = holdOf(player);
-  const rep = player ? buildReport({ player, tests: testsBy.get(player.id) || [], settings, draft, parentFirst: parentFirstOf(player), teammates: matesOf(player), omit: hold.omit }) : null;
+  const rep = player ? buildReport({ player, tests: testsBy.get(player.id) || [], settings, draft, parentFirst: parentFirstOf(player), teammates: matesOf(player), omit: hold.omit, practice, origin: window.location.origin }) : null;
   const defaults = Array.isArray(settings.default_metrics) && settings.default_metrics.length ? settings.default_metrics : null;
   const savedKeys = (Array.isArray(draft.metrics) ? draft.metrics : []).filter(k => LABEL[k]);
   // base = what she'd get with no flags; a held metric stays in base (so it
@@ -343,7 +397,28 @@ export default function StatReports({ coach, players = [], session }) {
               </div>
               {T("team_heading", "Heading")}{T("team_note", "Note under the heading")}
             </Section>
-            <Section title="Reach membership pitch">{T("pitch_heading", "Heading")}{T("pitch", "Pitch", 5)}{T("pitch_button", "Button text")}{T("pitch_link", "Button link (leave blank to hide the button)")}</Section>
+            <Section title="Coach's take (written by Claude per girl)">{T("take_heading", "Heading above it", 1, "Claude writes 2–4 sentences from her numbers, team and position. Read or edit each one on her report below.")}</Section>
+            <Section title="Reach membership pitch">
+              {T("pitch_heading", "Heading")}
+              {T("pitch", "Pitch", 9, "{reach_plan} fills in the Reach time that fits her team's practice nights (e.g. 5:30–6:30 before a 7–9 practice).")}
+              {T("photos_caption", "Caption under Coach Brandon's photos", 2)}
+              {T("signup_note", "Above the memberships")}
+              <span style={lbl}>Memberships (a button each; the recommended one is pink)</span>
+              {(Array.isArray(settings.memberships) ? settings.memberships : []).map((m, i) => {
+                const setM = (k, v) => saveSettings({ memberships: settings.memberships.map((x, j) => j === i ? { ...x, [k]: v } : x) });
+                return (
+                  <div key={i + ":" + m.name} style={{ border: "1px solid " + (m.recommended ? C.gold : C.border), borderRadius: 8, padding: 8, marginBottom: 8 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 110px", gap: 6, marginBottom: 6 }}>
+                      <input defaultValue={m.name} onBlur={e => e.target.value.trim() !== m.name && setM("name", e.target.value.trim())} style={inp} placeholder="Name" />
+                      <input defaultValue={m.price} onBlur={e => e.target.value.trim() !== m.price && setM("price", e.target.value.trim())} style={inp} placeholder="$400/month" />
+                    </div>
+                    <input defaultValue={m.detail} onBlur={e => e.target.value.trim() !== m.detail && setM("detail", e.target.value.trim())} style={{ ...inp, marginBottom: 6 }} placeholder="What it includes" />
+                    <input defaultValue={m.link} onBlur={e => e.target.value.trim() !== m.link && setM("link", e.target.value.trim())} style={{ ...inp, marginBottom: 6 }} placeholder="Sign-up link" />
+                    <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, cursor: "pointer" }}><input type="checkbox" checked={!!m.recommended} onChange={e => setM("recommended", e.target.checked)} style={{ accentColor: C.gold }} /> Recommended</label>
+                  </div>);
+              })}
+              {T("fine_print", "Fine print", 2)}
+            </Section>
             <Section title="Sign-off">{T("signoff", "Sign-off", 3)}</Section>
           </div>
           <div style={{ background: C.card, border: "1px solid " + C.border, borderRadius: 12, padding: 14, alignSelf: "start", position: "sticky", top: 12 }}>
@@ -405,6 +480,23 @@ export default function StatReports({ coach, players = [], session }) {
               {s && <span title={"Sent " + fmtD(s.sent_at)} style={{ fontSize: 10, color: C.gold, fontWeight: 800 }}>✓ {fmtD(s.sent_at)}</span>}
             </button>); })}
           {!onTeam.length && <div style={{ color: C.mut, fontSize: 12, padding: 8 }}>No players on this team.</div>}
+          {onTeam.length > 0 && (() => {
+            const ready = onTeam.filter(p => !lastSend(p.id)), noTake = onTeam.filter(p => !drafts.get(p.id)?.ai_take && (tested(p) || p.approach_touch != null));
+            return (
+              <div style={{ borderTop: "1px solid " + C.border, marginTop: 8, paddingTop: 10 }}>
+                <span style={lbl}>Whole team · {team}</span>
+                <button disabled={!!busy} onClick={writeTeamTakes} style={{ ...btn(false), width: "100%", marginBottom: 6, fontSize: 12 }}>{busy === "ai-team" ? "Claude is writing… (about a minute)" : `✦ Write Coach's takes (${noTake.length} missing)`}</button>
+                <button disabled={!!busy} onClick={() => sendTeam(true)} style={{ ...btn(false), width: "100%", marginBottom: 6, fontSize: 12 }}>{busy === "team-test" ? "Sending tests…" : `Send every girl's email as a test to ${testTo || "…"}`}</button>
+                <button disabled={!!busy || !ready.length} onClick={() => sendTeam(false)} style={{ ...btn(true), width: "100%", fontSize: 12 }}>{busy === "team" ? "Sending…" : ready.length ? `Send to the whole team (${ready.length} not sent yet)` : "Everyone on this team has been sent"}</button>
+                <div style={{ fontSize: 10, color: C.mut, marginTop: 6, lineHeight: 1.4 }}>One email per family, each her own report. Skips anyone already sent, with no numbers, or whose picked numbers are all flagged. You'll see the list before anything goes.</div>
+                {teamRun && (
+                  <div style={{ fontSize: 11, marginTop: 8, lineHeight: 1.45 }}>
+                    {teamRun.sent?.length > 0 && <div style={{ color: C.grn }}>✓ {teamRun.dry ? "Would send" : "Sent"}: {teamRun.sent.map(s => s.name.split(" ")[0]).join(", ")}</div>}
+                    {teamRun.skipped?.map(s => <div key={s.player_id} style={{ color: C.mut }}>– {s.name}: {s.why}</div>)}
+                  </div>
+                )}
+              </div>);
+          })()}
         </div>
 
         <div ref={panelRef} style={{ scrollMarginTop: 12 }}>
@@ -500,6 +592,15 @@ export default function StatReports({ coach, players = [], session }) {
                       </div>
                     )}
                   </div>); })}
+              <div style={{ marginTop: 12 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                  <span style={{ ...lbl, marginBottom: 0 }}>Coach's take · written by Claude{draft.ai_take_edited ? " · edited" : ""}</span>
+                  <div style={{ flex: 1 }} />
+                  {rows.length > 0 && <button disabled={!!busy} onClick={() => writeTake(player)} style={{ ...btn(false), padding: "3px 10px", fontSize: 11 }}>{busy === "ai" ? "Writing…" : draft.ai_take ? "✦ Rewrite" : "✦ Write with Claude"}</button>}
+                </div>
+                <textarea key={"t" + player.id + ":" + (draft.ai_take_at || "") + ":" + (draft.ai_take ? draft.ai_take.length : 0)} defaultValue={draft.ai_take || ""} rows={4} placeholder={rows.length ? "Tap ✦ Write with Claude: a few sentences on her best result, what it means for her position, and what an individual Reach plan would target." : "Add her numbers first."} onBlur={e => e.target.value.trim() !== (draft.ai_take || "") && saveTake(player, e.target.value)} style={{ ...inp, resize: "vertical", lineHeight: 1.5 }} />
+                <div style={{ fontSize: 10, color: C.mut, marginTop: 2 }}>Opens her email. Uses only her numbers, team and roster position. Edit freely; an edited take is never overwritten by a team run.</div>
+              </div>
               <label style={{ display: "block", marginTop: 12 }}><span style={lbl}>What she worked on</span>
                 <textarea key={"w" + player.id} defaultValue={draft.worked_on || ""} rows={3} placeholder="e.g. Approach footwork, arm swing timing and first-step quickness." onBlur={e => e.target.value !== (draft.worked_on || "") && saveDraft(player.id, { worked_on: e.target.value })} style={{ ...inp, resize: "vertical" }} />
               </label>

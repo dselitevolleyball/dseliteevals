@@ -214,7 +214,7 @@ export function buildReport({ player, tests, settings, draft, parentFirst, teamm
   const S = { ...DEFAULT_SETTINGS, ...(settings || {}) };
   const team = String(player?.team_assignment || "").replace(/ 1$/, "");
   const plan = reachPlanFor(player?.team_assignment || "", practice || []);
-  const vars = { player_first: String(player?.first_name || "").trim(), team: team || "DS Elite", parent_first: parentFirst || "", reach_plan: plan.text };
+  const vars = { player_first: String(player?.first_name || "").trim(), team: team || "DS Elite", parent_first: parentFirst || "", reach_plan: team ? plan.text.split(player.team_assignment).join(team) : plan.text };   // "11 Rise 1" reads as "11 Rise"
   const all = metricRows(player, tests);
   const want = Array.isArray(draft?.metrics) && draft.metrics.length ? draft.metrics : (Array.isArray(S.default_metrics) && S.default_metrics.length ? S.default_metrics : null);
   const drop = new Set(Array.isArray(omit) ? omit : []);
@@ -511,7 +511,9 @@ export function flaggedReportKeys(player, tests, flags, { level } = {}) {
 // real has been retested.
 export const SAMPLE_PLAYER = { id: 0, first_name: "Sample", last_name: "Player", team_assignment: "14 Diamond", usav_div: "U14", stand_reach: 90, approach_touch: 112, jump_touch: 101, sprint_10y: 1.95, stat_baseline_date: "2026-06-26" };
 export const SAMPLE_TESTS = [{ test_date: new Date().toISOString().slice(0, 10), stand_reach: 90.5, approach_touch: 115, standing_touch: 103, broad_jump: 86, dash_10y: 1.88 }];
-export const SAMPLE_DRAFT = { worked_on: "Approach footwork, arm swing timing and first-step quickness off the block.", note: "" };
+export const SAMPLE_DRAFT = { worked_on: "Approach footwork, arm swing timing and first-step quickness off the block.", note: "",
+  // Stands in for Claude's Coach's take so the template preview shows where it goes.
+  ai_take: "Sample's approach touch is up 3.00\" since June, the second-best jump on 14 Diamond, and that extra height is exactly what lets an outside hitter swing over the block instead of into it. Where an individual Reach plan would help her most is first-step speed: her 10-yard has room to drop, and quicker feet will get her to more balls in transition." };
 // Made-up teammates for the sample preview's team chart.
 export const SAMPLE_TEAM = [[110, 1.90], [118, 1.85], [108, 2.00], [113, 1.92], [104, 2.05], [115, 1.97], [109, 1.99]]
   .map(([ap, d], i) => ({ player: { id: -1 - i, first_name: "T" + i, stand_reach: 90, approach_touch: ap, sprint_10y: d }, tests: [] }));
