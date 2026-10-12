@@ -71,4 +71,10 @@ export const REACH_COPY = {
       link: "https://drippingsports.playbookapi.com/subscribe/subscription_registration/?subscription_id=6529" },
   ],
   fine_print: "Memberships bill monthly, and unused sessions don't roll over. Once you're signed up, book sessions in the DSSC app or on the website.",
+  // Coach Brandon with athletes he has trained (Drew, 12 Oct 2026) — on every
+  // testing report email. One caption for both photos: who stands where isn't
+  // recorded, so no per-photo names. Paths are under public/; the email
+  // builder makes them absolute with the app's origin.
+  photos: ["/reach/brandon-athletes-smu.jpg", "/reach/brandon-athletes-texas.jpg"],
+  photos_caption: "Coach Brandon with athletes he's trained: Henley Anderson (RS/OH, University of Texas), Camille Presley (MB, University of Texas) and Christa Wilburn (OH, SMU).",
 };
