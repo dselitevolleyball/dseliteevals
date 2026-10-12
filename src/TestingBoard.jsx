@@ -14,6 +14,12 @@
 // Likely typos (statFlags, minus the ones staff accepted in Testing Reports)
 // are marked ⚑ and left out of ranks, leaders and averages unless "Include
 // flagged" is on — one bad 30" vertical shouldn't top the club board.
+//
+// Chart (Drew, Oct 12 2026: "grouped by team averages ... chart them on a
+// graph where we can select the y and x axis"): opens on the team averages,
+// and a scatter of any two tests - one big dot per team average, optional
+// small dots per player in her team's color - over whatever is filtered, in
+// the current view, with the same ⚑ rule as the averages.
 
 import { useState, useEffect, useMemo } from "react";
 import { supabase } from "./supabase";
@@ -56,8 +62,9 @@ export function ReachHome({ coach, players, session }) {
   </>);
 }
 
-export default function TestingBoard({ players = [] }) {
-  const [tests, setTests] = useState(null);
+// initial: { tests, levels, reviews } handed in instead of read (dev preview).
+export default function TestingBoard({ players = [], initial }) {
+  const [tests, setTests] = useState(initial?.tests || null);
   const [levels, setLevels] = useState(new Map());
   const [reviews, setReviews] = useState([]);
   const [ages, setAges] = useState([]);
@@ -69,9 +76,13 @@ export default function TestingBoard({ players = [] }) {
   const [withFlagged, setWithFlagged] = useState(false);
   const [view, setView] = useState("now");          // now | change | baseline
   const [sort, setSort] = useState({ key: "approach_touch" });
-  const [byTeam, setByTeam] = useState(false);
+  const [byTeam, setByTeam] = useState(true);
+  const [cx, setCx] = useState("broad_jump");
+  const [cy, setCy] = useState("vertical");
+  const [cPlayers, setCPlayers] = useState(false);
 
   useEffect(() => {
+    if (initial) { setLevels(new Map(initial.levels || [])); setReviews(initial.reviews || []); return; }
     let live = true;
     Promise.all([
       supabase.from("player_stat_tests").select("*").order("test_date"),
@@ -196,6 +207,8 @@ export default function TestingBoard({ players = [] }) {
           </div>); })}
       </div>
 
+      <TeamChart shown={shown} x={cx} y={cy} setX={setCx} setY={setCy} players={cPlayers} setPlayers={setCPlayers} view={view} usable={usable} stats={stats} />
+
       {byTeam ? (
         <div style={{ background: C.card, border: "1px solid " + C.border, borderRadius: 12, overflowX: "auto" }}>
           <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
@@ -236,6 +249,65 @@ export default function TestingBoard({ players = [] }) {
       <div style={{ fontSize: 11, color: C.mut, marginTop: 8 }}>
         {shown.length} of {rows.length} players with testing numbers{nFlagged ? ` · ${nFlagged} with a ⚑ number ${withFlagged ? "included" : "left out of ranks and averages"}` : ""}. Improvement = latest minus baseline (a faster sprint shows as −). Age = the team's age group.
       </div>
+    </div>
+  );
+}
+
+// ── Chart: pick any two tests; team averages (and optionally players) ──────
+const PALETTE = ["#e91e8c", "#22c55e", "#3b82f6", "#f59e0b", "#a855f7", "#06b6d4", "#ef4444", "#84cc16", "#f97316", "#14b8a6", "#eab308", "#8b5cf6", "#ec4899", "#10b981", "#60a5fa", "#fb7185", "#facc15", "#c084fc", "#2dd4bf", "#fdba74"];
+function TeamChart({ shown, x, y, setX, setY, players, setPlayers, view, usable, stats }) {
+  const teams = [...new Set(shown.map(r => r.team))].sort(teamSort);
+  const teamPts = teams.map(t => { const list = shown.filter(r => r.team === t), a = stats(list, x), b = stats(list, y); return a && b ? { team: t, x: a.avg, y: b.avg, nx: a.n, ny: b.n } : null; }).filter(Boolean);
+  // Colors only for the teams on the chart, so the first few stay distinct.
+  const color = Object.fromEntries(teamPts.map((d, i) => [d.team, PALETTE[i % PALETTE.length]]));
+  const playerPts = players ? shown.filter(r => usable(r, x) && usable(r, y)).map(r => ({ r, x: valueOf(r.cells[x], view), y: valueOf(r.cells[y], view) })) : [];
+  const W = 820, H = 460, L = 64, R = 24, T = 18, B = 50;
+  const all = [...teamPts, ...playerPts];
+  const range = (vs) => { if (!vs.length) return [0, 1]; const lo = Math.min(...vs), hi = Math.max(...vs), pad = (hi - lo) * 0.08 || Math.abs(hi) * 0.05 || 1; return [lo - pad, hi + pad]; };
+  const [x0, x1] = range(all.map(d => d.x)), [y0, y1] = range(all.map(d => d.y));
+  // Better is always right / up: the sprint (lower is better) runs backwards.
+  const fx = (v) => { const f = (v - x0) / (x1 - x0 || 1); return L + (META[x].up ? f : 1 - f) * (W - L - R); };
+  const fy = (v) => { const f = (v - y0) / (y1 - y0 || 1); return H - B - (META[y].up ? f : 1 - f) * (H - T - B); };
+  const ticks = (lo, hi) => Array.from({ length: 6 }, (_, i) => lo + (i / 5) * (hi - lo));
+  const tick = (k, v) => view === "change" ? fmtChange(k, v) : META[k].unit === "sec" ? v.toFixed(2) + "s" : v.toFixed(1) + '"';
+  const fv = (k, v) => view === "change" ? fmtChange(k, v) : fmtMetric(k, v);
+  // Labels sit right of their dot (left near the right edge). One that would
+  // land on another label moves a line up or down; if there's no room that
+  // close, it's left off (the legend and hover still name the dot).
+  const placed = [], lab = {};
+  for (const d of [...teamPts].sort((a, b) => fy(a.y) - fy(b.y))) {
+    const left = fx(d.x) > W - R - 110, lx = fx(d.x) + (left ? -12 : 12);
+    const ly = [0, 13, -13].map(o => fy(d.y) + 4 + o).find(y0 => !placed.some(p => Math.abs(p.x - lx) < 95 && Math.abs(p.y - y0) < 13));
+    if (ly == null) continue;
+    placed.push({ x: lx, y: ly }); lab[d.team] = { x: lx, y: ly, anchor: left ? "end" : "start" };
+  }
+  const opts = (other) => KEYS.map(k => <option key={k} value={k} disabled={k === other}>{SHORT[k]}</option>);
+  const tag = view === "change" ? " (improvement)" : view === "baseline" ? " (baseline)" : "";
+  return (
+    <div style={{ background: C.card, border: "1px solid " + C.border, borderRadius: 12, padding: 12, marginBottom: 12 }}>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 8 }}>
+        <span style={{ fontSize: 11, fontWeight: 800, color: C.gold, textTransform: "uppercase", letterSpacing: 0.3 }}>Chart</span>
+        <label style={{ ...lbl, marginBottom: 0, display: "flex", alignItems: "center", gap: 6 }}>X<select value={x} onChange={e => setX(e.target.value)} style={inp}>{opts(y)}</select></label>
+        <label style={{ ...lbl, marginBottom: 0, display: "flex", alignItems: "center", gap: 6 }}>Y<select value={y} onChange={e => setY(e.target.value)} style={inp}>{opts(x)}</select></label>
+        <button onClick={() => { setX(y); setY(x); }} title="Swap axes" style={chip(false)}>⇄</button>
+        <button onClick={() => setPlayers(!players)} style={chip(players)}>Show players</button>
+      </div>
+      {!all.length ? <div style={{ padding: 30, textAlign: "center", color: C.mut, fontSize: 13 }}>No team has both {SHORT[x]} and {SHORT[y]}{tag} numbers{view === "change" ? " (a test with no baseline has no improvement yet)" : ""}.</div> : (
+        <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }} role="img" aria-label={`${SHORT[y]} against ${SHORT[x]} by team`}>
+          {ticks(x0, x1).map((v, i) => <g key={"x" + i}><line x1={fx(v)} x2={fx(v)} y1={T} y2={H - B} stroke="#222" /><text x={fx(v)} y={H - B + 16} fill={C.mut} fontSize="11" textAnchor="middle">{tick(x, v)}</text></g>)}
+          {ticks(y0, y1).map((v, i) => <g key={"y" + i}><line x1={L} x2={W - R} y1={fy(v)} y2={fy(v)} stroke="#222" /><text x={L - 8} y={fy(v) + 4} fill={C.mut} fontSize="11" textAnchor="end">{tick(y, v)}</text></g>)}
+          <text x={(L + W - R) / 2} y={H - 10} fill={C.text} fontSize="12" fontWeight="700" textAnchor="middle">{SHORT[x]}{tag}{META[x].up ? " →" : " — faster to the right"}</text>
+          <text x={16} y={(T + H - B) / 2} fill={C.text} fontSize="12" fontWeight="700" textAnchor="middle" transform={`rotate(-90 16 ${(T + H - B) / 2})`}>{SHORT[y]}{tag}{META[y].up ? " →" : " — faster up"}</text>
+          {playerPts.map((d, i) => <circle key={"p" + i} cx={fx(d.x)} cy={fy(d.y)} r={4} fill={color[d.r.team]} opacity={0.45}><title>{`${d.r.name} (${d.r.team.replace(/ 1$/, "")}) · ${SHORT[x]} ${fv(x, d.x)} · ${SHORT[y]} ${fv(y, d.y)}`}</title></circle>)}
+          {teamPts.map(d => (
+            <g key={d.team}>
+              <circle cx={fx(d.x)} cy={fy(d.y)} r={9} fill={color[d.team]} stroke="#000" strokeWidth="2"><title>{`${d.team.replace(/ 1$/, "")} average · ${SHORT[x]} ${fv(x, d.x)} (${d.nx}) · ${SHORT[y]} ${fv(y, d.y)} (${d.ny})`}</title></circle>
+              {lab[d.team] && <text x={lab[d.team].x} y={lab[d.team].y} textAnchor={lab[d.team].anchor} fill={C.text} fontSize="12" fontWeight="800" stroke="#000" strokeWidth="3" paintOrder="stroke">{d.team.replace(/ 1$/, "")}</text>}
+            </g>))}
+        </svg>
+      )}
+      {teamPts.length > 0 && <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 12px", fontSize: 11, color: C.text, marginTop: 6 }}>{teamPts.map(d => <span key={d.team} style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><span style={{ width: 10, height: 10, borderRadius: 5, background: color[d.team] }} />{d.team.replace(/ 1$/, "")}</span>)}</div>}
+      <div style={{ fontSize: 11, color: C.mut, marginTop: 4 }}>Big dots are team averages (follows the filters above); better is up and to the right. Hover a dot for the numbers.{players ? " Small dots are players in their team's color." : ""}</div>
     </div>
   );
 }
