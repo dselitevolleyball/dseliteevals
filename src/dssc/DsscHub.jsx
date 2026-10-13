@@ -90,7 +90,7 @@ export function Field({ value, onSave, multiline, minRows, placeholder, style, r
 // ── The hub ─────────────────────────────────────────────────────────────────
 export default function DsscHub({
   coach, coachRoster = [], clinics = [], dsscCheckins = [], dsscAvail = [], podAttendance = [],
-  isDirector = false, initialClinicId = null, initialSessionId = null, onConsumedInitial, backTo = null,
+  isDirector = false, initialClinicId = null, initialSessionId = null, initialTab = null, onConsumedInitial, backTo = null,
   setClinics, reload = {}, staffDsscSession, unstaffDsscSession, notifyDirectors,
   onOpenAdmin, onOpenPlaybook,
 }) {
@@ -138,7 +138,7 @@ export default function DsscHub({
     if (!initialClinicId || !clinics.length) return;
     const pick = (initialSessionId && rows.find(r => r.c.id === initialClinicId && String(r.s.id) === String(initialSessionId)))
       || upcoming.find(r => r.c.id === initialClinicId) || rows.find(r => r.c.id === initialClinicId && r.s.date >= today) || rows.filter(r => r.c.id === initialClinicId).slice(-1)[0];
-    if (pick) { setSel({ clinicId: pick.c.id, sessionId: pick.s.id }); setTab("plan"); }
+    if (pick) { setSel({ clinicId: pick.c.id, sessionId: pick.s.id }); setTab(["plan", "players", "message", "media", "recap"].includes(initialTab) ? initialTab : "plan"); }
     onConsumedInitial && onConsumedInitial();
   }, [initialClinicId, clinics.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -417,9 +417,9 @@ function ClassView({ c, s, sessions, onPickSession, today, coach, coachName, isM
       {tabs.map(([k, l]) => <button key={k} onClick={() => setTab(k)} style={{ fontFamily: DS.font, fontSize: 13, fontWeight: 700, padding: "9px 12px", background: "none", border: "none", borderBottom: "3px solid " + (tab === k ? DS.lime : "transparent"), color: tab === k ? DS.lime : DS.mut, cursor: "pointer", whiteSpace: "nowrap" }}>{l}</button>)}
     </div>
 
-    {tab === "plan" && <PlanTab c={c} s={s} prev={prev} canEdit={canEdit} isDirector={isDirector} coachName={coachName} saveClinic={saveClinic} saveSession={saveSession} onLaunch={(blocks) => setRun({ idx: 0, paused: false, endsAt: Date.now() + (Number(blocks[0].minutes) || 10) * 60000, remainingMs: null })} onOpenPlaybook={onOpenPlaybook} roster={roster || []} />}
+    {tab === "plan" && <PlanTab c={c} s={s} prev={prev} canEdit={canEdit} isDirector={isDirector} coachName={coachName} saveClinic={saveClinic} saveSession={saveSession} onLaunch={(blocks) => setRun({ idx: 0, paused: false, endsAt: Date.now() + (Number(blocks[0].minutes) || 10) * 60000, remainingMs: null })} onOpenPlaybook={onOpenPlaybook} roster={roster || []} canText={isDirector || isToday} />}
     {tab === "players" && <PlayersTab c={c} s={s} roster={roster} reload={loadRoster} canEdit={canEdit} coachName={coachName} podAttendance={podAttendance} reloadAttendance={reloadAttendance} notifyDirectors={notifyDirectors} />}
-    {tab === "message" && <MessageTab c={c} s={s} roster={roster || []} media={media} picked={picked} setPicked={setPicked} messages={messages} reloadMessages={loadMessages} reloadMedia={loadMedia} canEdit={canEdit} coachName={coachName} />}
+    {tab === "message" && <MessageTab c={c} s={s} roster={roster || []} media={media} picked={picked} setPicked={setPicked} messages={messages} reloadMessages={loadMessages} reloadMedia={loadMedia} canEdit={canEdit} coachName={coachName} canText={isDirector || isToday} />}
     {tab === "media" && <MediaTab c={c} s={s} media={media} reload={loadMedia} picked={picked} setPicked={setPicked} canEdit={canEdit} coachName={coachName} goMessage={() => setTab("message")} />}
     {tab === "recap" && <RecapTab c={c} s={s} canEdit={canEdit} isDirector={isDirector} coachName={coachName} saveClinic={saveClinic} saveSession={saveSession} />}
 
@@ -428,7 +428,7 @@ function ClassView({ c, s, sessions, onPickSession, today, coach, coachName, isM
 }
 
 // ── Plan ────────────────────────────────────────────────────────────────────
-function PlanTab({ c, s, prev, canEdit, isDirector, coachName, saveClinic, saveSession, onLaunch, onOpenPlaybook, roster }) {
+function PlanTab({ c, s, prev, canEdit, isDirector, coachName, saveClinic, saveSession, onLaunch, onOpenPlaybook, roster, canText = true }) {
   // Three things, in the order a coach needs them: what to tell the parents,
   // what to run on court, and what the director asked for.
   const blocks = classBlocks(s);
@@ -453,7 +453,9 @@ function PlanTab({ c, s, prev, canEdit, isDirector, coachName, saveClinic, saveS
   const total = blocks.reduce((n, b) => n + (Number(b.minutes) || 0), 0);
   const template = Array.isArray(c.plan?.blocks) ? c.plan.blocks.filter(b => String(b.name || "").trim()) : [];
   // Say exactly what goes out: email, text, or both, and to how many.
-  const [noteHow, setNoteHow] = useState("both");   // both | email | sms
+  const [noteHow_, setNoteHow] = useState("both");   // both | email | sms
+  // Coaches can text their class on its day only; before that the note goes by email.
+  const noteHow = canText ? noteHow_ : "email";
   const noteEmails = new Set(roster.map(r => nrm(r.parent_email)).filter(e => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e))).size;
   const notePhones = new Set(roster.map(r => String(r.parent_phone || "").replace(/\D/g, "").slice(-10)).filter(x => x.length === 10)).size;
   const noteWhat = noteHow === "email" ? `an email to ${noteEmails} famil${noteEmails === 1 ? "y" : "ies"}`
@@ -481,7 +483,7 @@ Each family gets their own copy; replies to a text come back to DSSC Texts.`)) r
         <Label style={{ marginBottom: 0 }}>Note to parents</Label>
         <div style={{ flex: 1 }} />
         <span style={{ fontSize: 12, color: DS.mut }}>{roster.length} famil{roster.length === 1 ? "y" : "ies"} · {noteEmails} email · {notePhones} text</span>
-        {[["both", "✉ Email + 💬 Text"], ["email", "✉ Email only"], ["sms", "💬 Text only"]].map(([k, l]) => (
+        {(canText ? [["both", "✉ Email + 💬 Text"], ["email", "✉ Email only"], ["sms", "💬 Text only"]] : [["email", "✉ Email"]]).map(([k, l]) => (
           <button key={k} onClick={() => setNoteHow(k)} style={{ fontFamily: DS.font, fontSize: 11.5, fontWeight: 700, padding: "5px 10px", borderRadius: 999, cursor: "pointer", border: "1px solid " + (noteHow === k ? DS.lime : DS.line), background: noteHow === k ? "rgba(178,208,73,0.16)" : "transparent", color: noteHow === k ? DS.lime : DS.mut }}>{l}</button>
         ))}
         <Btn small kind="primary" disabled={!canEdit || sending || !String(s.focus || "").trim() || !roster.length} onClick={sendNote}>{sending ? "Sending…" : noteHow === "email" ? "Email parents" : noteHow === "sms" ? "Text parents" : "Email + text parents"}</Btn>
@@ -706,7 +708,7 @@ function PlayersTab({ c, s, roster, reload, canEdit, coachName, podAttendance, r
 }
 
 // ── Message the class ───────────────────────────────────────────────────────
-function MessageTab({ c, s, roster, media, picked, setPicked, messages, reloadMessages, reloadMedia, canEdit, coachName }) {
+function MessageTab({ c, s, roster, media, picked, setPicked, messages, reloadMessages, reloadMedia, canEdit, coachName, canText = true }) {
   const [body, setBody] = useState("");
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState(null);
@@ -715,7 +717,8 @@ function MessageTab({ c, s, roster, media, picked, setPicked, messages, reloadMe
   // Every club family agreed to texts; only a STOP reply holds one back, and
   // the server knows those. So a phone on file is a family we can text.
   const texting = phones.length, noConsent = 0;
-  const [how, setHow] = useState("both");   // both | email | sms
+  const [how_, setHow] = useState("both");   // both | email | sms
+  const how = canText ? how_ : "email";
   const chans = how === "both" ? ["email", "sms"] : [how];
   const send = async () => {
     if (!body.trim() && !picked.length) return;
@@ -734,10 +737,10 @@ function MessageTab({ c, s, roster, media, picked, setPicked, messages, reloadMe
       <Label>Message the families in this class</Label>
       <div style={{ fontSize: 12, color: DS.mut, marginBottom: 8, lineHeight: 1.5 }}>
         {roster.length ? <>{roster.length} famil{roster.length === 1 ? "y" : "ies"} · {emails.size} by email · {texting} by text{noConsent ? ` · ${noConsent} phone${noConsent === 1 ? "" : "s"} without text consent` : ""}</> : "Nobody on the roster yet — add players first."}
-        <span style={{ display: "block", color: DS.dim, marginTop: 2 }}>Texts go out once the club's texting number is approved; until then everyone gets email.</span>
+        {!canText && <span style={{ display: "block", color: DS.orange, marginTop: 2, fontWeight: 700 }}>Texting this class opens on the day of the class ({fmtDay(s.date, "")}). Until then you can email the families.</span>}
       </div>
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", margin: "2px 0 10px" }}>
-        {[["both", "Email + text"], ["email", "Email only"], ["sms", "Text only"]].map(([k, l]) => (
+        {(canText ? [["both", "Email + text"], ["email", "Email only"], ["sms", "Text only"]] : [["email", "Email only"]]).map(([k, l]) => (
           <button key={k} onClick={() => setHow(k)} style={{ fontFamily: DS.font, fontSize: 12, fontWeight: 700, padding: "6px 12px", borderRadius: 999, cursor: "pointer", border: "1px solid " + (how === k ? DS.lime : DS.line), background: how === k ? "rgba(178,208,73,0.16)" : "transparent", color: how === k ? DS.lime : DS.mut }}>{l}</button>
         ))}
       </div>

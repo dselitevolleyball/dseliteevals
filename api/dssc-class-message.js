@@ -9,7 +9,7 @@
 //   Authorization: Bearer <Supabase session token>
 //
 // Who may send: an owner/director, an admin coach, or a coach who is on that
-// session's staff. Recipients are the class roster (dssc_pod_roster rows for
+// session's staff — and a coach may TEXT it only on the class's own day. Recipients are the class roster (dssc_pod_roster rows for
 // the session plus the program-wide rows with session_id NULL), deduped.
 //
 //   Email  → Resend, DSSC-branded, media inline / linked.
@@ -102,6 +102,12 @@ export default async function handler(req, res) {
   const privileged = OWNER_EMAILS.includes(email) || DIRECTOR_EMAILS.includes(email) || !!(me?.is_approved && me?.is_admin);
   const onStaff = !!(me?.is_approved) && staffNames.some(n => myNames.has(n));
   if (!privileged && !onStaff) return res.status(403).json({ error: "Only the coaches on this class (or a director) can message it." });
+  // Coaches text their own class on the day of that class only (Drew, 13 Oct
+  // 2026); directors can text any class any day. Email isn't limited.
+  if (!drafting && !privileged && want.has("sms")) {
+    const todayCT = new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
+    if (session.date !== todayCT) return res.status(403).json({ error: `Coaches can text a class on the day of the class only (this one is ${fmtDate(session.date)}). Email works any day, or ask a director to text it.` });
+  }
 
   // ── Draft the parent note from the plan (nothing is sent) ─────────────────
   if (drafting) {

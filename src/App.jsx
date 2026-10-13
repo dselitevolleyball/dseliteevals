@@ -2307,6 +2307,10 @@ export default function App() {
       // the modal appears the moment it does.
       if (open === "confirm") setDetailsOpen(true);
       if (open === "gear") setGearOpen(true);   // seeded by the effect below
+      // The 10am DSSC coach texts link to one class (and the recap ask to its
+      // Recap tab): /?view=dssc&clinic=<id>&session=<id>&ctab=recap
+      const clinicQ = Number(p.get("clinic"));
+      if (v === "dssc" && clinicQ) { setDsscHubSel({ clinicId: clinicQ, sessionId: p.get("session") || null, tab: p.get("ctab") || null }); setDsscHubBack(false); }
       // A push about a message links to that message, so the tap lands on the
       // thing itself rather than on a list the reader still has to search.
       const msg = p.get("msg");
@@ -2314,7 +2318,7 @@ export default function App() {
       // Keep ?view= (so Back and reload work) but drop the one-time bits.
       deepLinkDone.current = true;
       const landed = v || (msg ? "notifications" : null);
-      if (v || tab || open || msg) window.history.replaceState({ view: landed || "home" }, "", window.location.pathname + (landed && landed !== "home" ? "?view=" + encodeURIComponent(landed) : ""));
+      if (v || tab || open || msg || clinicQ) window.history.replaceState({ view: landed || "home" }, "", window.location.pathname + (landed && landed !== "home" ? "?view=" + encodeURIComponent(landed) : ""));
     } catch { /* ignore */ }
   }, [isApproved]); // eslint-disable-line react-hooks/exhaustive-deps
   // The gear modal renders nothing without a draft form, and only openGear()
@@ -25568,7 +25572,7 @@ export default function App() {
     };
     return (
       <DsscHub coach={coach} coachRoster={coachRoster} clinics={clinics} dsscCheckins={dsscCheckins} dsscAvail={dsscAvail} podAttendance={podAttendance}
-        isDirector={isDsscDirector} initialClinicId={dsscHubSel?.clinicId || clinicOpenId} initialSessionId={dsscHubSel?.sessionId || null}
+        isDirector={isDsscDirector} initialClinicId={dsscHubSel?.clinicId || clinicOpenId} initialSessionId={dsscHubSel?.sessionId || null} initialTab={dsscHubSel?.tab || null}
         onConsumedInitial={()=>{ setClinicOpenId(null); setDsscHubSel(null); }} backTo={dsscHubBack ? { label: dsscHubBack==="courts" ? "Court Availability" : "Admin board", go:()=>{ const to = dsscHubBack==="courts" ? "courts" : "clinics"; setDsscHubBack(false); setView(to); } } : null}
         setClinics={setClinics} reload={{ clinics: loadClinics, checkins: loadDsscCheckins, avail: loadDsscAvail, attendance: loadPodAttendance }}
         staffDsscSession={staffDsscSession} unstaffDsscSession={unstaffDsscSession} notifyDirectors={notifyDirectors}

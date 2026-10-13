@@ -160,6 +160,14 @@
     {
       "path": "/api/registration-check",
       "schedule": "30 13 * * *"
+    },
+    {
+      "path": "/api/dssc-coach-texts?utc=15",
+      "schedule": "0 15 * * *"
+    },
+    {
+      "path": "/api/dssc-coach-texts?utc=16",
+      "schedule": "0 16 * * *"
     }
   ],
   "functions": {
