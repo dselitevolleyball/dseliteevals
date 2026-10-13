@@ -1,4 +1,4 @@
-// Vercel Cron (10:05 Central): tell coaches they're on at a clinic today or tomorrow.
+// Vercel Cron (12:05 Central): tell coaches they're on at a clinic today or tomorrow.
 //
 // Covers both programmes, because a coach doesn't think of them as two systems:
 //   DSSC   — sessions inside dssc_clinics.sessions, where she's the session
@@ -83,11 +83,11 @@ export default async function handler(req, res) {
   const dry = q.get("dry") === "1";
   const force = q.get("force") === "1";
   const only = String(q.get("to") || "").trim().toLowerCase();
-  // Sent at 10:05 Central, with the 10am DSSC coach texts (Drew, 13 Oct 2026),
+  // Sent at 12:05 Central, with the noon DSSC coach texts (Drew, 13 Oct 2026),
   // after the empty classes have been cancelled. Two crons cover daylight and
-  // standard time; the one that isn't 10am here does nothing.
+  // standard time; the one that isn't noon here does nothing.
   const hourCT = Number(new Date().toLocaleString("en-US", { timeZone: TZ, hour: "numeric", hour12: false }));
-  if (!dry && !force && !only && !q.get("date") && hourCT !== 10) return res.status(200).json({ ok: true, skipped: `It's ${hourCT}:00 in Dripping Springs, not 10am` });
+  if (!dry && !force && !only && !q.get("date") && hourCT !== 12) return res.status(200).json({ ok: true, skipped: `It's ${hourCT}:00 in Dripping Springs, not noon` });
 
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
 
@@ -144,7 +144,7 @@ export default async function handler(req, res) {
   // ── DSSC ──────────────────────────────────────────────────────────────
   for (const c of dsscClinics || []) {
     for (const s of Array.isArray(c.sessions) ? c.sessions : []) {
-      // Auto-cancelled for no sign-ups (api/dssc-coach-texts.js, 10:00) - the
+      // Auto-cancelled for no sign-ups (api/dssc-coach-texts.js, noon) - the
       // coach was already texted that it's off.
       if (!s || !window.includes(s.date) || s.cancelled) continue;
       const where = s.court || c.location || "";

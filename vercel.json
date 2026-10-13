@@ -158,20 +158,20 @@
       "schedule": "30 13 * * *"
     },
     {
-      "path": "/api/dssc-coach-texts?utc=15",
-      "schedule": "0 15 * * *"
+      "path": "/api/dssc-coach-texts?utc=17",
+      "schedule": "0 17 * * *"
     },
     {
-      "path": "/api/dssc-coach-texts?utc=16",
-      "schedule": "0 16 * * *"
+      "path": "/api/dssc-coach-texts?utc=18",
+      "schedule": "0 18 * * *"
     },
     {
-      "path": "/api/clinic-reminders?utc=15",
-      "schedule": "5 15 * * *"
+      "path": "/api/clinic-reminders?utc=17",
+      "schedule": "5 17 * * *"
     },
     {
-      "path": "/api/clinic-reminders?utc=16",
-      "schedule": "5 16 * * *"
+      "path": "/api/clinic-reminders?utc=18",
+      "schedule": "5 18 * * *"
     }
   ],
   "functions": {

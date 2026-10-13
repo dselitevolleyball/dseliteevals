@@ -1,29 +1,30 @@
-// Vercel Cron: the 10am DSSC coach texts (Drew, 13 Oct 2026).
+// Vercel Cron: the noon DSSC coach texts (Drew, 13 Oct 2026; moved from 10am to
+// noon the same day).
 //
 //   1. Class day — every coach on a DSSC class today (the lead and approved
-//      staff) gets one text at 10am Central listing each class: time, court and
+//      staff) gets one text at noon Central listing each class: time, court and
 //      how many players are signed up. For PODS (Playbook category "Volleyball
 //      PODs" — U13-15 National Pins, Regional Libero/DS, ...) the text also says
 //      whether the practice plan is in and whether the note to parents has gone
 //      out, with a link straight to the class.
 //   2. Day after a pod — the coach who led it gets a text asking for the recap,
 //      with a link that opens that class on its Recap tab.
-//   0. First, any class today (starting 11am or later) with NOBODY signed up is
+//   0. First, any class today (starting 1pm or later) with NOBODY signed up is
 //      cancelled: the session is flagged cancelled (it stays listed, tagged),
-//      its coaches are told in their 10am text, and Hunter gets a text to turn
+//      its coaches are told in their noon text, and Hunter gets a text to turn
 //      off registration for it in Playbook. Held back - and flagged in the
 //      email instead - when the hourly Playbook sign-up import hasn't run
 //      cleanly in 3 hours, or when most of the day shows no sign-ups (both
 //      mean the counts can't be trusted).
-//   3. The DSSC directors get a 10am email: today's pods with plan / parent-note
+//   3. The DSSC directors get a noon email: today's pods with plan / parent-note
 //      status, and yesterday's pods with recap status.
 //
 // Texts go from the club's own number (brand "dssc"), so a coach's reply lands
 // in DSSC Texts. One text per coach per kind per day (dssc_coach_texts), so a
 // retry never doubles up.
 //
-// Two crons (15:00 and 16:00 UTC) cover daylight and standard time; the run
-// that isn't 10am in Dripping Springs does nothing.
+// Two crons (17:00 and 18:00 UTC) cover daylight and standard time; the run
+// that isn't noon in Dripping Springs does nothing.
 //
 // Auth: Vercel Cron sends `Authorization: Bearer <CRON_SECRET>`; also ?token=, or the
 // service-role key as the bearer (scripts).
@@ -31,7 +32,7 @@
 //   ?dry=1        return what would be sent, send nothing
 //   ?test=1       send every text to Drew only, marked with who it was for
 //   ?date=<iso>   pretend today is this date (runs regardless of the hour)
-//   ?force=1      run now even if it isn't 10am / already sent today
+//   ?force=1      run now even if it isn't noon / already sent today
 //   ?only=day|recap|email   one part only
 //
 // Env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, CRON_SECRET, TWILIO_*,
@@ -70,7 +71,7 @@ export default async function handler(req, res) {
   const dry = q.get("dry") === "1", test = q.get("test") === "1", force = q.get("force") === "1";
   const only = q.get("only") || "";
   const hourCT = Number(new Date().toLocaleString("en-US", { timeZone: TZ, hour: "numeric", hour12: false }));
-  if (!dry && !test && !force && !q.get("date") && hourCT !== 10) return res.status(200).json({ ok: true, skipped: `It's ${hourCT}:00 in Dripping Springs, not 10am` });
+  if (!dry && !test && !force && !q.get("date") && hourCT !== 12) return res.status(200).json({ ok: true, skipped: `It's ${hourCT}:00 in Dripping Springs, not noon` });
 
   const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
   const today = q.get("date") || new Date().toLocaleDateString("en-CA", { timeZone: TZ });
@@ -125,7 +126,7 @@ export default async function handler(req, res) {
   const regFresh = !!regAt && (Date.now() - regAt.getTime()) < 3 * 3600e3
     && !(syncRow.registrations_error && syncRow.registrations_error_at && new Date(syncRow.registrations_error_at) > regAt);
   const liveToday = todays.filter(x => !x.s.cancelled);
-  const empty = liveToday.filter(x => players(x.c, x.s) === 0 && (parseClock(x.s.start_time) ?? 24) >= 11);
+  const empty = liveToday.filter(x => players(x.c, x.s) === 0 && (parseClock(x.s.start_time) ?? 24) >= 13);
   let cancelHold = null;
   if (empty.length && syncRow && syncRow.auto_cancel === false) cancelHold = "auto-cancel is switched off";
   else if (empty.length && !regFresh) cancelHold = "the Playbook sign-up import hasn't run cleanly in the last 3 hours";
@@ -138,7 +139,7 @@ export default async function handler(req, res) {
     for (const id of [...new Set(toCancel.map(x => x.c.id))]) {
       const { data: fresh } = await sb.from("dssc_clinics").select("sessions").eq("id", id).maybeSingle();
       const next = (Array.isArray(fresh?.sessions) ? fresh.sessions : []).map(x => cancelledKeys.has(id + "|" + x.id)
-        ? { ...x, cancelled: true, cancelled_at: at, cancelled_by: "auto (10am, no sign-ups)", cancelled_reason: "no players signed up by 10am" } : x);
+        ? { ...x, cancelled: true, cancelled_at: at, cancelled_by: "auto (noon, no sign-ups)", cancelled_reason: "no players signed up by noon" } : x);
       const { error } = await sb.from("dssc_clinics").update({ sessions: next, updated_by: "auto-cancel (no sign-ups)", updated_at: at }).eq("id", id);
       cancelWrites.push({ clinic_id: id, ok: !error, error: error?.message || null });
     }
@@ -203,7 +204,7 @@ export default async function handler(req, res) {
       if (!r) { unresolved.add(em); continue; }
       const name = `${r.first_name || ""} ${r.last_name || ""}`.trim();
       cancelTexts.push({ kind: "cancel", who: { key: "cancel|" + em, name, phone: normalizePhone(r.phone || "") },
-        text: `Hi {first}, DSSC auto-cancelled these classes today - nobody signed up by 10am:\n${lines}\nPlease turn off registration for them in Playbook so nobody signs up. The coaches have been told.`,
+        text: `Hi {first}, DSSC auto-cancelled these classes today - nobody signed up by noon:\n${lines}\nPlease turn off registration for them in Playbook so nobody signs up. The coaches have been told.`,
         items: toCancel.map(x => ({ clinic: x.c.name, session_id: x.s.id, time: timeRange(x.s) })) });
     }
   }
@@ -240,14 +241,14 @@ export default async function handler(req, res) {
     const plansDone = podsToday.filter(p => p.plan).length, notesSent = podsToday.filter(p => p.note).length, recapsIn = podsYesterday.filter(p => p.recap).length;
     const crewOf = (x) => sessionStaff(x.s).filter(y => y.status === "approved").map(y => y.name).join(", ") || "no coach";
     const cancelHtml = toCancel.length
-      ? `<div style="border:1px solid #d9480f;border-radius:10px;padding:10px 14px;margin-bottom:18px"><p style="margin:0 0 6px"><b style="color:#d9480f">Auto-cancelled today - nobody signed up by 10am</b></p><ul style="margin:0;padding-left:18px">${toCancel.map(x => `<li>${esc(x.c.name)} - ${esc(timeRange(x.s))} (${esc(crewOf(x))})</li>`).join("")}</ul><p style="margin:8px 0 0">The coaches were texted. <b>Turn off registration for these in Playbook</b> so nobody signs up.</p></div>`
+      ? `<div style="border:1px solid #d9480f;border-radius:10px;padding:10px 14px;margin-bottom:18px"><p style="margin:0 0 6px"><b style="color:#d9480f">Auto-cancelled today - nobody signed up by noon</b></p><ul style="margin:0;padding-left:18px">${toCancel.map(x => `<li>${esc(x.c.name)} - ${esc(timeRange(x.s))} (${esc(crewOf(x))})</li>`).join("")}</ul><p style="margin:8px 0 0">The coaches were texted. <b>Turn off registration for these in Playbook</b> so nobody signs up.</p></div>`
       : cancelHold ? `<div style="border:1px solid #d9480f;border-radius:10px;padding:10px 14px;margin-bottom:18px"><b style="color:#d9480f">Nothing was auto-cancelled:</b> ${esc(cancelHold)}. These show no sign-ups - check them by hand: ${esc(empty.map(x => x.c.name + " " + timeRange(x.s)).join("; "))}</div>` : "";
     const html = `<div style="font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:14px;color:#191919;max-width:720px">${cancelHtml}
       <p><b>Pods today (${fmtDay(today)})</b> - plans ${plansDone}/${podsToday.length}, parent notes sent ${notesSent}/${podsToday.length}</p>
       ${podsToday.length ? `<table style="border-collapse:collapse;width:100%">${"<tr>" + th("Pod") + th("Coach") + th("Players") + th("Practice plan") + th("Parent note") + "</tr>"}${rowsToday}</table>` : "<p style='color:#667'>No pods today.</p>"}
       <p style="margin-top:22px"><b>Yesterday's pods (${fmtDay(yesterday)})</b> - recaps ${recapsIn}/${podsYesterday.length}</p>
       ${podsYesterday.length ? `<table style="border-collapse:collapse;width:100%">${"<tr>" + th("Pod") + th("Coach") + th("Recap") + "</tr>"}${rowsYest}</table>` : "<p style='color:#667'>No pods yesterday.</p>"}
-      <p style="color:#667;margin-top:18px">Coaches on today's classes were texted at 10am with their player counts${podsToday.length ? " and what's still missing" : ""}; pod leads from yesterday were texted for their recap.</p></div>`;
+      <p style="color:#667;margin-top:18px">Coaches on today's classes were texted at noon with their player counts${podsToday.length ? " and what's still missing" : ""}; pod leads from yesterday were texted for their recap.</p></div>`;
     const from = DSSC_FROM_EMAIL || ("Dripping Springs Sports Club <" + ((DSE_FROM_EMAIL || "").match(/<([^>]+)>/)?.[1] || DSE_FROM_EMAIL) + ">");
     const r = await fetch("https://api.resend.com/emails", { method: "POST", headers: { Authorization: `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
       body: JSON.stringify({ from, to: test ? ["drew@dselitevolleyball.com"] : directors, subject: `${test ? "[TEST] " : ""}${toCancel.length ? toCancel.length + " cancelled (no sign-ups) · " : ""}DSSC pods today: plans ${plansDone}/${podsToday.length}, notes ${notesSent}/${podsToday.length} · recaps ${recapsIn}/${podsYesterday.length}`, html }) }).catch(() => null);

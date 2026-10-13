@@ -120,7 +120,7 @@ export default async function handler(req, res) {
       await notify(`${summary.noSession} Playbook registrations are waiting on a calendar sync`,
         `${summary.noSession} sign-ups are for classes DSSC HQ doesn't have yet. The calendar pulls itself every hour, so they normally attach on the next pass; if this is still here in a couple of hours, open that month on the Playbook calendar and click the sync bookmark.\n\n` + summary.waiting.map(w => "• " + w).join("\n"));
     }
-    // A class auto-cancelled at 10am for no sign-ups (api/dssc-coach-texts.js)
+    // A class auto-cancelled at noon for no sign-ups (api/dssc-coach-texts.js)
     // whose registration was left open can still take a sign-up - and that
     // family thinks their kid has a class tonight. Say so once per class.
     try {
