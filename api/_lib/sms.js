@@ -11,7 +11,7 @@
 // deals with both has two separate conversations and each screen shows its
 // own.
 
-import { splitSms } from "../../shared/sms-split.js";
+import { splitSms, smsPlain } from "../../shared/sms-split.js";
 
 export const normalizePhone = (raw) => {
   if (!raw) return "";
@@ -83,9 +83,11 @@ export const personalizeSms = (text, r) => {
 };
 
 export async function sendOneSms(supabase, r, text, meta = {}) {
-  text = personalizeSms(text, r);
-  // Over Twilio's 1,600-character cap: send it as numbered parts, in order,
-  // photos riding on the first one. Callers get the last part's result.
+  // Plain characters only and ~600 characters a text: emoji or smart quotes in
+  // a long text got 53 of Coach Hunter's 124 Oct 11 texts dropped by carriers
+  // (30019). Longer goes out as numbered parts, in order, photos riding on the
+  // first one. Callers get the last part's result.
+  text = smsPlain(personalizeSms(text, r));
   const parts = splitSms(text);
   if (parts.length > 1) {
     let res;

@@ -17,14 +17,13 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import { supabase } from "../supabase";
 import { DS, nrm, fmtDay, Btn, Card, Label, Tag, inputStyle } from "./DsscHub.jsx";
 import { localDateISO } from "../../shared/dssc-clinics.js";
-import { splitSms, SMS_MAX } from "../../shared/sms-split.js";
+import { smsPreview } from "../../shared/sms-split.js";
 import DsscCampaigns from "./DsscCampaigns.jsx";
 
 const last10 = (s) => String(s || "").replace(/\D/g, "").slice(-10);
 const e164 = (s) => { const d = String(s || "").replace(/\D/g, ""); if (d.length === 10) return "+1" + d; if (d.length === 11 && d.startsWith("1")) return "+" + d; return d.length > 10 ? "+" + d : ""; };
 const fmtPhone = (p) => { const s = String(p || "").replace(/\D/g, ""); if (s.length === 11 && s.startsWith("1")) return `(${s.slice(1, 4)}) ${s.slice(4, 7)}-${s.slice(7)}`; if (s.length === 10) return `(${s.slice(0, 3)}) ${s.slice(3, 6)}-${s.slice(6)}`; return p || ""; };
 const fmtWhen = (iso) => { if (!iso) return ""; const d = new Date(iso); return d.toDateString() === new Date().toDateString() ? d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : d.toLocaleDateString(undefined, { month: "short", day: "numeric" }); };
-const segments = (s) => Math.max(1, Math.ceil((s || "").length / (/[^\u0000-\u007f]/.test(s || "") ? 70 : 160)));
 const catOf = (c) => /pod/i.test(c?.category || "") || /pod/i.test(c?.name || "") ? "Pods" : /camp/i.test(c?.category || "") || /camp/i.test(c?.name || "") ? "Camps" : /adult/i.test(c?.category || "") ? "Adult" : "Clinics";
 
 export default function DsscTexts({ coach, clinics = [], players = [], coachRoster = [], dsscAvail = [], isDirector, initial, onConsumedInitial }) {
@@ -443,7 +442,7 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
                 <input ref={fileRef} type="file" accept="image/*" multiple style={{ display: "none" }} onChange={e => uploadMedia(e.target.files)} />
                 <Btn small onClick={() => fileRef.current?.click()}>📷 Attach photo</Btn>
                 {c.media.map(m => <span key={m.url} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, padding: "3px 8px", borderRadius: 8, border: "1px solid " + DS.line }}><img src={m.url} alt="" style={{ height: 22, borderRadius: 4 }} />{m.name}<button onClick={() => set({ media: c.media.filter(x => x.url !== m.url) })} style={{ background: "none", border: "none", color: DS.mut, cursor: "pointer" }}>✕</button></span>)}
-                <span style={{ fontSize: 11, color: c.body.length > SMS_MAX ? DS.orange : DS.mut, fontWeight: c.body.length > SMS_MAX ? 700 : 400 }}>{c.body.length} chars{c.body.length > SMS_MAX ? ` · too long for one text, goes out as ${splitSms(c.body).length} texts in a row` : ` · ${segments(c.body)} segment${segments(c.body) === 1 ? "" : "s"}`}{c.media.length ? " · MMS" : ""}</span>
+                {(() => { const pv = smsPreview(c.body), warn = pv.parts > 1 || pv.cleaned; return <span style={{ fontSize: 11, color: warn ? DS.orange : DS.mut, fontWeight: warn ? 700 : 400 }}>{`${pv.chars} chars · ${pv.parts > 1 ? "goes out as " + pv.parts + " texts in a row" : "1 text"}${pv.cleaned ? " · emoji and fancy punctuation are removed when sent" : ""}`}{c.media.length ? " · MMS" : ""}</span>; })()}
                 <div style={{ flex: 1 }} />
                 <Btn kind="primary" disabled={!canSend} onClick={go}>{sending ? (c.progress || "Sending…") : `Send to ${ready.length}`}</Btn>
               </div>

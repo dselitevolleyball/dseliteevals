@@ -23,6 +23,7 @@ import { buildNav, navTheme, Sidebar, NavDrawer, BottomBar, SiblingChips } from 
 import DaySchedule from "./DaySchedule.jsx";
 import { PlayerStatHistory, StatsLinks } from "./PlayerStats.jsx";
 import StatReports from "./StatReports.jsx";
+import { smsPreview } from "../shared/sms-split.js";
 import TestingBoard, { ReachHome } from "./TestingBoard.jsx";
 import WorkDuty from "./WorkDuty.jsx";
 import TournamentHub from "./TournamentHub.jsx";
@@ -28349,7 +28350,6 @@ export default function App() {
       if (ok) setSmsCompose("");
     };
     const openComposer = (type) => { setSelectedThreadId(null); setSmsComposer({ type, team: type === "team" ? (teamOptions[0] || "") : "", who: "parents", includeUnconsented: false, body: "", result: null }); };
-    const segments = (s) => Math.max(1, Math.ceil(s.length / (/[^\u0000-\u007f]/.test(s) ? 70 : 160)));
 
     const addConsents = async () => {
       const lines = smsConsentPaste.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
@@ -28517,7 +28517,7 @@ export default function App() {
                   <textarea value={c.body} onChange={e=>set({ body: e.target.value })} placeholder={"Type the message everyone on " + label + " should get…"} rows={5}
                     style={{...inpStyle,padding:"10px 12px",fontSize:13,resize:"vertical",fontFamily:"inherit",lineHeight:1.4}} />
                   <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
-                    <span style={{fontSize:10,color:C.mut}}>{c.body.length} chars · {segments(c.body)} segment{segments(c.body)===1?"":"s"} each</span>
+                    {(() => { const pv = smsPreview(c.body), warn = pv.parts > 1 || pv.cleaned; return <span style={{fontSize:10,color:warn?"#f59e0b":C.mut,fontWeight:warn?700:400}}>{`${pv.chars} chars · ${pv.parts > 1 ? "goes out as " + pv.parts + " texts in a row" : "1 text"}${pv.cleaned ? " · emoji and fancy punctuation are removed when sent" : ""}`} each</span>; })()}
                     <button onClick={()=>set({ body: c.body.startsWith("Hi {first}") ? c.body : "Hi {first}, " + c.body })} title="Each person's text greets them by their own first name"
                       style={{background:"none",border:"1px solid "+C.border,borderRadius:6,color:C.acc,cursor:"pointer",fontFamily:"inherit",fontSize:10,fontWeight:700,padding:"2px 8px"}}>+ Hi {"{first}"}</button>
                     <div style={{flex:1}} />
