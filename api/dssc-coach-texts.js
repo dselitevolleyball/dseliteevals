@@ -18,7 +18,8 @@
 // Two crons (15:00 and 16:00 UTC) cover daylight and standard time; the run
 // that isn't 10am in Dripping Springs does nothing.
 //
-// Auth: Vercel Cron sends `Authorization: Bearer <CRON_SECRET>`; also ?token=.
+// Auth: Vercel Cron sends `Authorization: Bearer <CRON_SECRET>`; also ?token=, or the
+// service-role key as the bearer (scripts).
 // Query:
 //   ?dry=1        return what would be sent, send nothing
 //   ?test=1       send every text to Drew only, marked with who it was for
@@ -54,7 +55,9 @@ export default async function handler(req, res) {
   const RESEND_API_KEY = process.env.RESEND_API_KEY || process.env.resend_api_key;
   const q = (() => { try { return new URL(req.url, "https://x").searchParams; } catch { return new URLSearchParams(); } })();
   const bearer = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
-  if (!CRON_SECRET || (bearer !== CRON_SECRET && q.get("token") !== CRON_SECRET)) return res.status(403).json({ error: "Forbidden" });
+  // The service-role key also works, so a test can be run from a script.
+  const okAuth = (CRON_SECRET && (bearer === CRON_SECRET || q.get("token") === CRON_SECRET)) || (SUPABASE_SERVICE_ROLE_KEY && bearer === SUPABASE_SERVICE_ROLE_KEY);
+  if (!okAuth) return res.status(403).json({ error: "Forbidden" });
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return res.status(500).json({ error: "Server not configured" });
 
   const dry = q.get("dry") === "1", test = q.get("test") === "1", force = q.get("force") === "1";
