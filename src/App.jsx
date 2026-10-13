@@ -418,6 +418,9 @@ const STATUS_COLORS = {"In Progress":"#999999","Locked":"#a855f7","Offered":"#f5
 const OFFER_TO_STATUS = { "":"In Progress", locked:"Locked", made:"Offered", accepted:"Accepted", waiting:"Waiting", declined:"Declined", not_invited:"Not Invited", opted_out:"Opted Out" };
 const STATUS_TO_OFFER = { "In Progress":"", "Open Team":"", Locked:"locked", Offered:"made", Accepted:"accepted", Waiting:"waiting", Declined:"declined", "Not Invited":"not_invited", "Opted Out":"opted_out" };
 const C = {bg:"#0a0a0a",card:"#141414",border:"#2a2a2a",gold:"#e91e8c",text:"#ffffff",mut:"#999999",acc:"#ff69b4",red:"#ef4444",grn:"#22c55e"};
+// DSSC HQ (the /hq build) wears the club palette - evergreen and limegreen -
+// everywhere the DS Elite pink and black would otherwise show through.
+if (HQ_DSSC) Object.assign(C, { bg:"#082C2A", card:"#0C3A37", border:"#1F5A55", gold:"#B2D049", acc:"#B2D049", mut:"#A9C7C3" });
 // Only these owner emails may open the Coaches management screen. UI-level gate.
 const OWNER_EMAILS = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"];
 // DSSC clinic directors — schedule/assign/oversee clinics alongside admins.
