@@ -120,6 +120,30 @@ export default async function handler(req, res) {
       await notify(`${summary.noSession} Playbook registrations are waiting on a calendar sync`,
         `${summary.noSession} sign-ups are for classes DSSC HQ doesn't have yet. The calendar pulls itself every hour, so they normally attach on the next pass; if this is still here in a couple of hours, open that month on the Playbook calendar and click the sync bookmark.\n\n` + summary.waiting.map(w => "• " + w).join("\n"));
     }
+    // A class auto-cancelled at 10am for no sign-ups (api/dssc-coach-texts.js)
+    // whose registration was left open can still take a sign-up - and that
+    // family thinks their kid has a class tonight. Say so once per class.
+    try {
+      const todayCT = new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
+      const { data: cl } = await sb.from("dssc_clinics").select("id,name,sessions");
+      const hits = [];
+      for (const c of cl || []) for (const s of Array.isArray(c.sessions) ? c.sessions : []) if (s?.cancelled && s.date >= todayCT && !s.late_signup_alerted_at) hits.push({ c, s });
+      if (hits.length) {
+        const { data: kids } = await sb.from("dssc_pod_roster").select("clinic_id,session_id,player_name,parent_name,parent_phone").in("clinic_id", [...new Set(hits.map(h => h.c.id))]);
+        const late = hits.map(h => ({ ...h, kids: (kids || []).filter(k => k.clinic_id === h.c.id && (!k.session_id || String(k.session_id) === String(h.s.id))) })).filter(h => h.kids.length);
+        if (late.length) {
+          await notify(`Sign-up for a CANCELLED DSSC class`,
+            `Someone signed up after these classes were auto-cancelled for having no players. Either un-cancel and staff the class, or contact the family and refund - and turn off registration for it in Playbook.\n\n` +
+            late.map(h => `• ${h.c.name} - ${h.s.date} ${h.s.start_time || ""}: ` + h.kids.map(k => `${k.player_name}${k.parent_name ? " (" + k.parent_name + (k.parent_phone ? ", " + k.parent_phone : "") + ")" : ""}`).join("; ")).join("\n"));
+          const at = new Date().toISOString();
+          for (const id of [...new Set(late.map(h => h.c.id))]) {
+            const { data: fresh } = await sb.from("dssc_clinics").select("sessions").eq("id", id).maybeSingle();
+            const ids = new Set(late.filter(h => h.c.id === id).map(h => String(h.s.id)));
+            await sb.from("dssc_clinics").update({ sessions: (fresh?.sessions || []).map(x => ids.has(String(x.id)) ? { ...x, late_signup_alerted_at: at } : x) }).eq("id", id);
+          }
+        }
+      }
+    } catch (e) { console.error("cancelled-class sign-up check:", e.message); }
   }
   return res.status(200).json({ ok: true, dry, ...summary });
 }

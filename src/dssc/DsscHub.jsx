@@ -130,7 +130,7 @@ export default function DsscHub({
   const upcoming = mine.filter(r => r.s.date >= today);
   const since14 = localDateISO(new Date(Date.now() - 14 * 86400000));
   const recent = mine.filter(r => r.s.date < today && r.s.date >= since14).reverse();
-  const openShifts = rows.filter(r => !r.mine && r.s.date >= today && r.short > 0 && !sessionStaff(r.s).some(x => isMe(x.name)));
+  const openShifts = rows.filter(r => !r.mine && !r.s.cancelled && r.s.date >= today && r.short > 0 && !sessionStaff(r.s).some(x => isMe(x.name)));
   const myAvail = dsscAvail.find(a => isMe(a.coach_name));
 
   // Deep-link from the home card: open that clinic's next class of mine.
@@ -206,11 +206,11 @@ export default function DsscHub({
   }
 
   // ── Home: my classes, clock-in, open shifts ──────────────────────────────
-  const todays = upcoming.filter(r => r.s.date === today);
-  const lateOnes = recent.filter(r => !checkedIn(r.s.id) && r.mine.status === "approved");
+  const todays = upcoming.filter(r => r.s.date === today && !r.s.cancelled);
+  const lateOnes = recent.filter(r => !checkedIn(r.s.id) && r.mine.status === "approved" && !r.s.cancelled);
   const list = showAll ? upcoming : upcoming.slice(0, 12);
   const byDate = []; for (const r of list) { const g = byDate.find(x => x.date === r.s.date); if (g) g.rows.push(r); else byDate.push({ date: r.s.date, rows: [r] }); }
-  const needRecap = recent.filter(r => !(r.s.recap || "").trim());
+  const needRecap = recent.filter(r => !(r.s.recap || "").trim() && !r.s.cancelled);
   const classRow = (r, extra) => {
     const planned = hasClassPlan(r.s), pending = r.mine?.status === "pending";
     return (
@@ -226,7 +226,7 @@ export default function DsscHub({
             {[r.c.age_group, r.c.location].filter(Boolean).join(" · ")}
             {r.mine?.role === "lead" && <Tag color={DS.lime}>Lead</Tag>}
             {pending && <Tag color={DS.orange}>Awaiting approval</Tag>}
-            {!planned && !pending && <Tag color={DS.orange}>Needs plan</Tag>}
+            {r.s.cancelled ? <Tag color={DS.orange} fill>Cancelled</Tag> : !planned && !pending && <Tag color={DS.orange}>Needs plan</Tag>}
             {extra}
           </div>
         </div>
@@ -384,7 +384,12 @@ function ClassView({ c, s, sessions, onPickSession, today, coach, coachName, isM
         <Tag color={DS.lime}>{c.kind === "camp" ? "Camp" : /pod/i.test(c.name || "") ? "Skill pod" : "Clinic"}</Tag>
         {mineEntry?.status === "pending" && <Tag color={DS.orange}>Awaiting director approval</Tag>}
         {isToday && <Tag color={DS.lime} fill>Today</Tag>}
+        {s.cancelled && <Tag color={DS.orange} fill>Cancelled</Tag>}
       </div>
+      {s.cancelled && <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", fontSize: 13, fontWeight: 700, color: DS.orange, margin: "6px 0 4px" }}>
+        <span>Cancelled{s.cancelled_reason ? " - " + s.cancelled_reason : ""}. No need to come in for this class.</span>
+        {isDirector && <Btn small onClick={() => { if (window.confirm("Un-cancel this class? It goes back on the coach's schedule - let the coach know it's on.")) saveSession(c, s.id, { cancelled: false, uncancelled_at: new Date().toISOString(), uncancelled_by: coachName }); }}>Un-cancel</Btn>}
+      </div>}
       <div style={{ fontSize: 28, fontWeight: 800, lineHeight: 0.95, letterSpacing: "-0.01em", margin: "6px 0 8px" }}>{c.name}</div>
       <div style={{ fontSize: 14, color: DS.mut }}>{fmtLong(s.date)} · {timeRange(s)}{s.court ? " · " + s.court : ""}{c.location ? " · " + c.location : ""}{c.age_group ? " · " + c.age_group : ""}</div>
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
@@ -396,7 +401,7 @@ function ClassView({ c, s, sessions, onPickSession, today, coach, coachName, isM
           <Btn kind="quiet" small disabled={!next} onClick={() => next && onPickSession(next.id)} title={next ? fmtLong(next.date) : ""}>Next class ›</Btn>
         </div>}
       </div>
-      {mineEntry && (isToday || (isPast && !done && s.date >= localDateISO(new Date(Date.now() - 14 * 86400000)))) && (
+      {mineEntry && !s.cancelled && (isToday || (isPast && !done && s.date >= localDateISO(new Date(Date.now() - 14 * 86400000)))) && (
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 12, padding: "10px 12px", borderRadius: 10, background: DS.panel2, border: "1px solid " + (done ? DS.lime : DS.line) }}>
           <span style={{ fontSize: 13, fontWeight: 700, flex: 1 }}>{done ? "✓ Clocked in" : "Clock in for this class"} <span style={{ color: DS.mut, fontWeight: 500 }}>· {sessionHours(s)}h · ${25 * sessionHours(s)}</span></span>
           {!done && (ws === "early" ? <span style={{ fontSize: 12, color: DS.mut, fontWeight: 700 }}>Opens 30 min before</span>

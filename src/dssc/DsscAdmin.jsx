@@ -74,15 +74,17 @@ export default function DsscAdmin({
     out.sort((a, b) => a.s.date.localeCompare(b.s.date) || ((a.st || 0) - (b.st || 0)));
     return out;
   }, [clinics]);
+  // A class auto-cancelled for no sign-ups stays listed (tagged) but asks for nothing.
   const upcoming = rows.filter(r => r.s.date >= today);
-  const soon = upcoming.filter(r => r.s.date <= addDays(today, 13));
-  const pendingAll = upcoming.filter(r => r.pending.length);
+  const live = upcoming.filter(r => !r.s.cancelled);
+  const soon = live.filter(r => r.s.date <= addDays(today, 13));
+  const pendingAll = live.filter(r => r.pending.length);
   const lowOf = (r) => { const n = signedUp(r.c, r.s); return n != null && n <= 2; };
   const attention = {
     pending: pendingAll.reduce((n, r) => n + r.pending.length, 0),
     short: soon.filter(r => r.short > 0).length,
     low: soon.filter(lowOf).length,
-    noplan: upcoming.filter(r => r.s.date <= addDays(today, 6) && !hasClassPlan(r.s)).length,
+    noplan: live.filter(r => r.s.date <= addDays(today, 6) && !hasClassPlan(r.s)).length,
   };
 
   // ── Who could take a class ─────────────────────────────────────────────
@@ -242,7 +244,7 @@ export default function DsscAdmin({
                         <div style={{ fontSize: 14, fontWeight: 700, lineHeight: 1.2 }}>{r.c.name} <span style={{ color: DS.lime }}>›</span></div>
                         <div style={{ fontSize: 12, color: DS.mut, marginTop: 2, display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
                           {[r.c.age_group, r.c.location].filter(Boolean).join(" · ")}
-                          {!hasClassPlan(r.s) && r.s.date >= today && <Tag color={DS.mut}>no plan</Tag>}
+                          {r.s.cancelled ? <Tag color={DS.orange} fill>Cancelled</Tag> : !hasClassPlan(r.s) && r.s.date >= today && <Tag color={DS.mut}>no plan</Tag>}
                         </div>
                       </button>
                       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>{signupTag(r)}{onTextClass && r.s.date >= today && <button onClick={() => onTextClass(r.c.id, r.s.id)} title="Text the families in this class" style={{ background: "none", border: "1px solid " + DS.line, borderRadius: 999, color: DS.mut, cursor: "pointer", fontSize: 12, padding: "2px 8px", fontFamily: DS.font }}>💬</button>}</div>
