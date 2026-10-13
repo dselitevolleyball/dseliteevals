@@ -77,9 +77,12 @@ const IT = {
   privates:      ["Privates", "🤝", "ops", "private lessons", "Privates"],
   dssctexts:     ["DSSC Texts", "💬", "dir", "sms text messages", "Texts"],
   dssccrm:       ["People", "📇", "dir", "crm families contacts", "People"],
-  dssc:          ["Coach Hub", "🏠", "all", "hub", "Hub"],
-  dssccal:       ["Coverage Calendar", "📅", "ops", "coverage calendar shifts", "Coverage"],
-  dssctime:      ["DSSC Time Cards", "🕒", "all", "payroll hours", "Time"],
+  dssc:          ["Coach Hub", "🏠", "coach", "hub", "Hub"],
+  dssccal:       ["Coverage Calendar", "📅", "dir", "coverage calendar shifts assign coaches", "Coverage"],
+  dssctime:      ["DSSC Time Cards", "🕒", "coach", "payroll hours approve", "Time"],
+  staffhours:    ["My Hours", "⏱", "staff", "clock in clock out shift intern staff hours working on", "Clock"],
+  staffadmin:    ["Staff Hours", "🧾", "dir", "intern staff shifts clock fix approve hours", "Staff hrs"],
+  dsscpeople:    ["Coaches & Staff", "👥", "dir", "add coach basketball intern staff admin people team", "Staff"],
   // Footer
   activity:      ["Activity Log", "🕓", "all", "history changes", "Activity"],
   faq:           ["FAQ", "❓", "all", "help", "FAQ"],
@@ -107,7 +110,7 @@ const DSE_COACH = [
 const DSSC_SECS = [
   ["programs", "Programs", "🏕", ["clinics", "courts", "dsscplan", "dssccamp", "pods", "privates"]],
   ["people", "Texts & people", "💬", ["dssctexts", "dssccrm"]],
-  ["dsscstaff", "Coaches & pay", "🗓", ["dssc", "dssccal", "dssctime"]],
+  ["dsscstaff", "Coaches & pay", "🗓", ["dssc", "dssccal", "dssctime", "staffhours", "staffadmin", "dsscpeople"]],
 ];
 const FOOTER = ["activity", "faq", "askai"];
 
@@ -115,19 +118,23 @@ const ACTION_BADGES = { messages: "smsDse", dssctexts: "smsDssc", notifications:
 const INFO_BADGES = { favorites: "favorites" };
 
 export function buildNav(ctx) {
-  const { canOps, isAdmin, isOwner, canViewTeams, hasTeams, canSendReports, isDsscDirector } = ctx;
+  const { canOps, isAdmin, isOwner, canViewTeams, hasTeams, canSendReports, isDsscDirector, dsscOnly, isDsscStaff } = ctx;
   const n = ctx.counts || {};
   const ok = {
     all: true, ops: !!canOps, admin: !!isAdmin, owner: !!isOwner, teams: !!canViewTeams,
     mine: !!(canViewTeams || hasTeams), duty: !!(canViewTeams || canOps || hasTeams), reports: !!canSendReports,
     opsMine: !!(canOps && (canViewTeams || hasTeams)), opsTeams: !!(canOps && canViewTeams), dir: !!isDsscDirector,
+    // DSSC staff (interns) get the clock, not the coach screens.
+    staff: !!(isDsscStaff || isDsscDirector), coach: !isDsscStaff || !!isDsscDirector,
   };
   const can = (v) => !!IT[v] && ok[IT[v][2]];
   const secsFor = (ws) => {
     const base = ws === "dssc" ? DSSC_SECS : (canOps ? DSE_OPS : DSE_COACH);
     return base.map(([key, title, icon, views]) => ({ key, title, icon, items: views.filter(can) })).filter(s => s.items.length);
   };
-  const ws = ctx.workspace === "dssc" ? "dssc" : "dse";
+  // A DSSC-only login (drippingsportsclub.com/hq, basketball coaches, interns,
+  // the DSSC admins) never sees DS Elite: no switch, no DS Elite search hits.
+  const ws = dsscOnly || ctx.workspace === "dssc" ? "dssc" : "dse";
   const sections = secsFor(ws);
   const footer = FOOTER.filter(can);
   const visible = new Set(["home", ...footer, ...sections.flatMap(s => s.items)]);
@@ -138,12 +145,12 @@ export function buildNav(ctx) {
   // Menu badge on the phone: everything the bottom-bar slots don't already show.
   const restTotal = (shown) => sections.reduce((sum, s) => sum + s.items.reduce((t, v) => t + (!shown.includes(v) && counts(s, v) ? badge(v) : 0), 0), 0);
   const defaults = ws === "dssc"
-    ? (isDsscDirector ? ["clinics", "dssctexts", canOps ? "dssccal" : "dssctime", "dssctime", "dssccrm"] : ["dssc", "dssctime", "notifications"])
+    ? (isDsscDirector ? (dsscOnly ? ["clinics", "dssccal", "dssctime", "staffadmin", "dsscpeople"] : ["clinics", "dssctexts", "dssccal", "dssctime", "dssccrm"]) : isDsscStaff ? ["staffhours"] : ["dssc", "dssctime", "notifications"])
     : (canOps ? ["home", "messages", isAdmin ? "dayschedule" : "coverage", "practice", "tournaments", "waiting"] : ["home", "clockin", "lineups", "practiceplan"]);
   const stored = ctx.pins && Array.isArray(ctx.pins[ws]) ? ctx.pins[ws] : null;
   const pinsBase = [...new Set(stored || defaults)];
   const pins = pinsBase.filter(v => visible.has(v));
-  const other = secsFor(ws === "dssc" ? "dse" : "dssc");
+  const other = dsscOnly ? [] : secsFor(ws === "dssc" ? "dse" : "dssc");
   // Search covers both businesses; picking the other one's screen flips the
   // workspace (App's view -> workspace effect does that).
   const searchList = [];
@@ -157,7 +164,7 @@ export function buildNav(ctx) {
   const NEUTRAL = new Set(["home", "notifications", "activity", "faq", "askai"]);
   const sectionOf = (v) => sections.find(s => s.items.includes(v)) || (NEUTRAL.has(v) ? null : other.find(s => s.items.includes(v))) || null;
   return {
-    ws, sections, footer, pins, pinsBase, visible, badge, info, sectionTotal, restTotal, sectionOf, searchList,
+    ws, dsscOnly: !!dsscOnly, sections, footer, pins, pinsBase, visible, badge, info, sectionTotal, restTotal, sectionOf, searchList,
     label: (v) => (IT[v] ? IT[v][0] : v), icon: (v) => (IT[v] ? IT[v][1] : "•"), short: (v) => (IT[v] ? IT[v][4] : v),
     search: (q) => {
       const s = String(q || "").trim().toLowerCase();
@@ -210,7 +217,7 @@ function Pill({ n, T, info }) {
 }
 
 function Logo({ ws, T, small, onClick }) {
-  if (ws === "dssc") return <img src="/dssc/logo-horizontal-white.png" alt="Dripping Springs Sports Club" onClick={onClick} style={{ height: small ? 18 : 26, width: "auto", cursor: "pointer", display: "block", maxWidth: "100%" }} />;
+  if (ws === "dssc") return <img src={import.meta.env.BASE_URL + "dssc/logo-horizontal-white.png"} alt="Dripping Springs Sports Club" onClick={onClick} style={{ height: small ? 18 : 26, width: "auto", cursor: "pointer", display: "block", maxWidth: "100%" }} />;
   return (
     <div onClick={onClick} style={{ fontSize: small ? 20 : 18, fontWeight: 800, color: T.accent, display: "flex", alignItems: "center", gap: 7, cursor: "pointer", whiteSpace: "nowrap" }}>
       <span style={{ fontSize: small ? 22 : 20 }}>◆</span>{!small && <>DS ELITE<span style={{ fontSize: 10, fontWeight: 600, color: T.mut, marginLeft: 2 }}>HQ</span></>}
@@ -352,7 +359,7 @@ export function Sidebar({ nav, view, go, switchWs, collapsed, setCollapsed, togg
       <aside aria-label="Main menu" style={{ position: "sticky", top: 0, height: "100vh", width: 64, flexShrink: 0, background: T.bg, borderRight: "1px solid " + T.border, display: "flex", flexDirection: "column", alignItems: "center", zIndex: 45 }}>
         <NavStyles />
         <div style={{ padding: "12px 0 8px" }}><Logo ws={nav.ws} T={T} small onClick={goHome} /></div>
-        <div style={{ width: 46, marginBottom: 8 }}><WsSwitch ws={nav.ws} switchWs={switchWs} T={T} vertical /></div>
+        {!nav.dsscOnly && <div style={{ width: 46, marginBottom: 8 }}><WsSwitch ws={nav.ws} switchWs={switchWs} T={T} vertical /></div>}
         <div className="dse-nav-scroll" style={{ flex: 1, overflowY: "auto", overflowX: "hidden", display: "flex", flexDirection: "column", alignItems: "center", gap: 2, width: "100%", paddingBottom: 8 }}>
           {railBtn("_search", "🔍", "Jump to a screen (Ctrl K)", 0, false, openSearch)}
           {railBtn("_pins", "★", "Pinned", 0, nav.pins.includes(view), openFly("_pins"))}
@@ -384,7 +391,7 @@ export function Sidebar({ nav, view, go, switchWs, collapsed, setCollapsed, togg
           <button onClick={() => { if (peek) setPeek(false); else setCollapsed(true); }} title="Collapse menu  [" aria-label="Collapse menu"
             style={{ width: 28, height: 28, borderRadius: 8, border: "1px solid " + T.border, background: "transparent", color: T.mut, cursor: "pointer", fontSize: 14, lineHeight: 1, fontFamily: "inherit", flexShrink: 0 }}>«</button>
         </div>
-        <WsSwitch ws={nav.ws} switchWs={switchWs} T={T} />
+        {!nav.dsscOnly && <WsSwitch ws={nav.ws} switchWs={switchWs} T={T} />}
         <div style={{ position: "relative" }}>
           <span style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)", fontSize: 12, color: T.dim, pointerEvents: "none" }}>🔍</span>
           <input ref={searchRef} value={S.q} onChange={e => S.setQ(e.target.value)} onKeyDown={S.onKey} placeholder="Jump to…" aria-label="Jump to a screen"
@@ -444,7 +451,7 @@ export function NavDrawer({ nav, view, go, switchWs, togglePin, onClose, C, extr
             <div style={{ flex: 1, minWidth: 0 }}><Logo ws={nav.ws} T={T} onClick={() => go("home")} /></div>
             <button onClick={onClose} aria-label="Close menu" style={{ width: 40, height: 40, borderRadius: 10, border: "1px solid " + T.border, background: "transparent", color: T.text, fontSize: 18, cursor: "pointer", fontFamily: "inherit" }}>✕</button>
           </div>
-          <WsSwitch ws={nav.ws} switchWs={switchWs} T={T} big />
+          {!nav.dsscOnly && <WsSwitch ws={nav.ws} switchWs={switchWs} T={T} big />}
           <div style={{ position: "relative" }}>
             <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", fontSize: 14, color: T.dim, pointerEvents: "none" }}>🔍</span>
             {/* 16px keeps iOS from zooming the page when the box gets focus. */}

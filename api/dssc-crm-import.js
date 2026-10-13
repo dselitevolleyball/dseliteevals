@@ -27,7 +27,7 @@ export default async function handler(req, res) {
   const email = String(user?.email || "").trim().toLowerCase();
   if (!email) return res.status(401).json({ error: "Sign in first" });
   let ok = OWNER_EMAILS.includes(email) || DIRECTOR_EMAILS.includes(email);
-  if (!ok) { const { data: c } = await sb.from("coaches").select("is_admin, is_approved").ilike("email", email).maybeSingle(); ok = !!(c?.is_approved && c?.is_admin); }
+  if (!ok) { const { data: c } = await sb.from("coaches").select("is_admin, is_approved, dssc_role").ilike("email", email).maybeSingle(); ok = !!(c?.is_approved && (c?.is_admin || c?.dssc_role === "admin")); }
   if (!ok) return res.status(403).json({ error: "Directors and admins only" });
 
   let body = req.body;

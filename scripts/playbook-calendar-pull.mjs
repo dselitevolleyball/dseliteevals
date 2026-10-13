@@ -27,7 +27,7 @@ console.log(`pulling ${start} → ${end} …`);
 const t0 = Date.now();
 const events = await fetchPlaybookEvents(start, end);
 const progs = Object.values(parsePlaybookEvents(events));
-console.log(`${events.length} events in ${Math.round((Date.now() - t0) / 1000)}s · ${progs.length} volleyball programs`);
+console.log(`${events.length} events in ${Math.round((Date.now() - t0) / 1000)}s · ${progs.length} volleyball + basketball programs`);
 for (const p of progs) console.log(`  ${p.name.padEnd(40)} ${String(p.sessions.length).padStart(3)} sessions  ${p.sessions[0]?.date} .. ${p.sessions[p.sessions.length - 1]?.date}`);
 if (!doSync) { console.log("\nDRY RUN — --sync to write."); process.exit(0); }
 

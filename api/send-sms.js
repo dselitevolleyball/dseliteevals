@@ -60,8 +60,8 @@ export default async function handler(req, res) {
     // DSSC's number is the director's to use too (Hunter isn't a DS Elite admin).
     if (!ok && brand === "dssc" && DSSC_DIRECTOR_EMAILS.includes(email)) ok = true;
     if (!ok) {
-      const { data: c } = await supabase.from("coaches").select("is_admin, is_approved").ilike("email", email).maybeSingle();
-      ok = !!(c && c.is_approved && c.is_admin);
+      const { data: c } = await supabase.from("coaches").select("is_admin, is_approved, dssc_role").ilike("email", email).maybeSingle();
+      ok = !!(c && c.is_approved && (c.is_admin || (brand === "dssc" && c.dssc_role === "admin")));
     }
     if (!ok) return res.status(403).json({ error: "Admins only" });
   }

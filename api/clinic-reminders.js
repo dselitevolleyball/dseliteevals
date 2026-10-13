@@ -96,13 +96,14 @@ export default async function handler(req, res) {
   const window = [today, tomorrow];
 
   const [{ data: dsscClinics }, { data: dsysaClinics }, { data: dsysaSignups },
-         { data: availability }, { data: roster }, { data: coaches }] = await Promise.all([
+         { data: availability }, { data: roster }, { data: coaches }, { data: dsscPeople }] = await Promise.all([
     supabase.from("dssc_clinics").select("id,name,sessions,location"),
     supabase.from("dsysa_clinics").select("*").in("clinic_date", window),
     supabase.from("dsysa_signups").select("*"),
     supabase.from("dssc_availability").select("coach_name,coach_email"),
     supabase.from("coach_roster").select("first_name,last_name,email"),
     supabase.from("coaches").select("display_name,email"),
+    supabase.from("dssc_people").select("first_name,last_name,email").eq("active", true),
   ]);
 
   // Email lookup, best source first. dssc_availability is the only one keyed by
@@ -123,6 +124,8 @@ export default async function handler(req, res) {
     put(full, r.email, full);
   });
   (coaches || []).forEach(c => put(c.display_name, c.email, c.display_name));
+  // DSSC's own coaches (basketball etc.) who aren't on the DS Elite roster.
+  (dsscPeople || []).forEach(p => { const full = `${p.first_name || ""} ${p.last_name || ""}`.trim(); put(full, p.email, full); });
 
   // Keyed on the EMAIL, not the name: the roster has one person as both "Rob
   // Roberts" and "Adriel Roberts", and keying on name would send her two

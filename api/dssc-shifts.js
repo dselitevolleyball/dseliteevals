@@ -26,6 +26,10 @@ const b64url = (buf) => Buffer.from(buf).toString("base64").replace(/\+/g, "-").
 const signLink = (obj, secret) => { const p = b64url(JSON.stringify(obj)); return p + "." + b64url(crypto.createHmac("sha256", secret).update(p).digest()); };
 
 const APPROVERS_DEFAULT = ["hunterhaleysc10@gmail.com", "hunter@drippingsportsclub.com", "drew@dselitevolleyball.com"];
+// Monday approvals by sport (Drew, 13 Oct 2026): Hunter volleyball, Adrian basketball and staff hours.
+const BB_APPROVERS_DEFAULT = ["adrian@drippingsportsclub.com", "drew@dselitevolleyball.com"];
+const STAFF_APPROVERS_DEFAULT = ["adrian@drippingsportsclub.com", "drew@dselitevolleyball.com"];
+const DSSC_APP = "https://www.drippingsportsclub.com/hq";
 const addDays = (iso, n) => { const d = new Date(iso + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 const fmtD = (iso) => { try { return new Date(iso + "T00:00:00Z").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" }); } catch { return iso; } };
 const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -53,12 +57,14 @@ export default async function handler(req, res) {
   const tomorrow = addDays(today, 1), yesterday = addDays(today, -1);
   const origin = appOrigin(req);
 
-  const [{ data: clinics }, { data: roster }, { data: avail }, { data: checks }] = await Promise.all([
-    supabase.from("dssc_clinics").select("id, name, location, start_time, end_time, coaches_needed, sessions"),
+  const [{ data: clinics }, { data: rosterDse }, { data: avail }, { data: checks }, { data: dsscPeople }] = await Promise.all([
+    supabase.from("dssc_clinics").select("id, name, location, start_time, end_time, coaches_needed, sessions, sport"),
     supabase.from("coach_roster").select("first_name, last_name, email"),
     supabase.from("dssc_availability").select("coach_name, coach_email"),
-    supabase.from("dssc_checkins").select("id, coach_name, session_id, session_date, hours, approved, rejected").gte("session_date", addDays(today, -14)),
+    supabase.from("dssc_checkins").select("id, coach_name, clinic_id, session_id, session_date, hours, approved, rejected").gte("session_date", addDays(today, -14)),
+    supabase.from("dssc_people").select("first_name, last_name, email").eq("active", true),
   ]);
+  const roster = [...(rosterDse || []), ...(dsscPeople || [])];   // DSSC-only coaches (basketball) too
 
   const emailFor = (nm) => {
     const a = (avail || []).find(x => x.coach_email && nrm(x.coach_name) === nrm(nm));
@@ -113,11 +119,13 @@ export default async function handler(req, res) {
     const payload = JSON.stringify({ title, body, url });
     await Promise.all(mine.map(s => webpush.sendNotification({ endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } }, payload).catch(() => {})));
   };
+  // DSSC messages come from the club, never "DS Elite" (Drew, 13 Oct 2026).
+  const FROM = process.env.DSSC_FROM_EMAIL || ("Dripping Springs Sports Club <" + ((DSE_FROM_EMAIL || "").match(/<([^>]+)>/)?.[1] || DSE_FROM_EMAIL) + ">");
   const mail = async (to, subject, text, html) => {
     if (!RESEND_API_KEY || !DSE_FROM_EMAIL || !to.length) return;
     await fetch("https://api.resend.com/emails", {
       method: "POST", headers: { Authorization: `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ from: DSE_FROM_EMAIL, to, subject, text, html }),
+      body: JSON.stringify({ from: FROM, to, subject, text, html }),
     }).catch(() => {});
   };
 
@@ -126,10 +134,10 @@ export default async function handler(req, res) {
   for (const [coach, list] of Object.entries(remind)) {
     const em = emailFor(coach); if (!em) continue;
     const lines = list.map(x => `• ${x.clinic} — ${fmtD(x.date)} at ${x.start}${x.court ? " (" + x.court + ")" : ""}`);
-    await push([em], "DSSC clinic tomorrow", `${list.length} session${list.length === 1 ? "" : "s"}. Tap for details.`, origin + "/?view=dssctime");
+    await push([em], "DSSC clinic tomorrow", `${list.length} session${list.length === 1 ? "" : "s"}. Tap for details.`, DSSC_APP + "/?view=dssctime");
     await mail([em], `DSSC clinic tomorrow — ${list.length} session${list.length === 1 ? "" : "s"}`,
-      `You're coaching tomorrow:\n${lines.join("\n")}\n\nClock in from DS Elite HQ → DSSC Hours when you get there.`,
-      `<div style="font-family:sans-serif;font-size:14px"><p>You're coaching tomorrow:</p><ul>${list.map(x => `<li>${esc(x.clinic)} — ${fmtD(x.date)} at ${esc(x.start)}${x.court ? " (" + esc(x.court) + ")" : ""}</li>`).join("")}</ul><p><a href="${origin}/?view=dssctime" style="color:#e91e8c;font-weight:700">Clock in in DS Elite HQ →</a></p></div>`);
+      `You're coaching tomorrow:\n${lines.join("\n")}\n\nClock in from DSSC HQ (www.drippingsportsclub.com/hq) when you get there.`,
+      `<div style="font-family:sans-serif;font-size:14px"><p>You're coaching tomorrow:</p><ul>${list.map(x => `<li>${esc(x.clinic)} — ${fmtD(x.date)} at ${esc(x.start)}${x.court ? " (" + esc(x.court) + ")" : ""}</li>`).join("")}</ul><p><a href="${DSSC_APP}/?view=dssctime" style="color:#0F8B76;font-weight:700">Clock in in DSSC HQ →</a></p></div>`);
     reminded++;
   }
 
@@ -137,9 +145,9 @@ export default async function handler(req, res) {
   let nudged = 0;
   for (const [coach, list] of Object.entries(clockIn)) {
     const em = emailFor(coach); if (!em) continue;
-    await push([em], "Clock in for yesterday's clinic", `${list.length} DSSC session${list.length === 1 ? "" : "s"} not logged. Tap to fix.`, origin + "/?view=dssctime");
+    await push([em], "Clock in for yesterday's clinic", `${list.length} DSSC session${list.length === 1 ? "" : "s"} not logged. Tap to fix.`, DSSC_APP + "/?view=dssctime");
     await mail([em], "You haven't logged yesterday's DSSC hours",
-      `These sessions have no clock-in yet:\n${list.map(x => `• ${x.clinic} — ${fmtD(x.date)}`).join("\n")}\n\nLog them in DS Elite HQ → DSSC Hours so they make this week's pay run.`);
+      `These sessions have no clock-in yet:\n${list.map(x => `• ${x.clinic} — ${fmtD(x.date)}`).join("\n")}\n\nLog them in DSSC HQ (www.drippingsportsclub.com/hq) so they make this week's pay run.`);
     nudged++;
   }
 
@@ -151,23 +159,42 @@ export default async function handler(req, res) {
     const lines = pending.map(p => `• ${p.coach} → ${p.clinic}, ${fmtD(p.date)} at ${p.start} (as ${p.role})
     Approve: ${link(p,"approve")}
     Decline: ${link(p,"decline")}`);
-    await push(approvers, "DSSC pickups need approval", `${pending.length} coach${pending.length === 1 ? "" : "es"} waiting. Tap to review.`, origin + "/?view=dssccal");
+    await push(approvers, "DSSC pickups need approval", `${pending.length} coach${pending.length === 1 ? "" : "es"} waiting. Tap to review.`, DSSC_APP + "/?view=dssccal");
     await mail(approvers, `${pending.length} DSSC shift pickup${pending.length === 1 ? "" : "s"} waiting on you`,
-      `Coaches asked to pick these up and are waiting:\n${lines.join("\n")}\n\nApprove or decline in DS Elite HQ → DSSC Coaches.`,
-      `<div style="font-family:sans-serif;font-size:14px"><p><b>${pending.length}</b> shift pickup${pending.length === 1 ? "" : "s"} waiting on approval:</p><ul>${pending.map(p => `<li style="margin-bottom:10px"><b>${esc(p.coach)}</b> → ${esc(p.clinic)}, ${fmtD(p.date)} at ${esc(p.start)} <i>(as ${esc(p.role)})</i><br><a href="${link(p,'approve')}" style="display:inline-block;background:#22c55e;color:#06210f;font-weight:800;padding:7px 16px;border-radius:7px;text-decoration:none;margin-top:5px">Approve</a> <a href="${link(p,'decline')}" style="display:inline-block;border:1px solid #ef4444;color:#ef4444;font-weight:700;padding:6px 13px;border-radius:7px;text-decoration:none;margin-top:5px">Decline</a></li>`).join("")}</ul><p><a href="${origin}/?view=dssccal" style="color:#e91e8c;font-weight:700">Review in DS Elite HQ →</a></p></div>`);
+      `Coaches asked to pick these up and are waiting:\n${lines.join("\n")}\n\nApprove or decline in DSSC HQ → Coverage Calendar.`,
+      `<div style="font-family:sans-serif;font-size:14px"><p><b>${pending.length}</b> shift pickup${pending.length === 1 ? "" : "s"} waiting on approval:</p><ul>${pending.map(p => `<li style="margin-bottom:10px"><b>${esc(p.coach)}</b> → ${esc(p.clinic)}, ${fmtD(p.date)} at ${esc(p.start)} <i>(as ${esc(p.role)})</i><br><a href="${link(p,'approve')}" style="display:inline-block;background:#22c55e;color:#06210f;font-weight:800;padding:7px 16px;border-radius:7px;text-decoration:none;margin-top:5px">Approve</a> <a href="${link(p,'decline')}" style="display:inline-block;border:1px solid #ef4444;color:#ef4444;font-weight:700;padding:6px 13px;border-radius:7px;text-decoration:none;margin-top:5px">Decline</a></li>`).join("")}</ul><p><a href="${DSSC_APP}/?view=dssccal" style="color:#0F8B76;font-weight:700">Review in DSSC HQ →</a></p></div>`);
   }
 
-  // 3 — Monday: last week's hours still unapproved
+  // 3 — Monday: last week's hours still unapproved, each to whoever approves
+  // them: volleyball -> Hunter, basketball -> Adrian, staff (interns) -> Adrian.
+  const listFrom = (env, dflt) => (env ? env.split(",") : dflt).map(s => s.trim().toLowerCase()).filter(Boolean);
+  const sportOf = (c) => ((clinics || []).find(x => x.id === c.clinic_id)?.sport || "volleyball");
+  const askApproval = async (to, rows, what, view, hoursOf) => {
+    if (!rows.length || !to.length) return;
+    const hrs = Math.round(rows.reduce((s, c) => s + hoursOf(c), 0) * 100) / 100;
+    const byWho = {};
+    for (const c of rows) byWho[c.who] = (byWho[c.who] || 0) + hoursOf(c);
+    const lines = Object.entries(byWho).sort().map(([k, v]) => `• ${k} — ${Math.round(v * 100) / 100}h`);
+    await push(to, `Approve last week's ${what} hours`, `${hrs}h from ${Object.keys(byWho).length} ${Object.keys(byWho).length === 1 ? "person" : "people"}. Tap to approve.`, DSSC_APP + "/?view=" + view);
+    await mail(to, `Approve last week's ${what} hours — ${hrs}h`,
+      `${hrs}h of ${what} hours logged ${fmtD(lastMon)} – ${fmtD(lastSun)} are waiting on your approval:\n${lines.join("\n")}\n\nNothing goes to the accountant until you approve it. ${DSSC_APP}/?view=${view}`,
+      `<div style="font-family:sans-serif;font-size:14px"><p><b>${hrs}h</b> of ${esc(what)} hours logged ${fmtD(lastMon)} – ${fmtD(lastSun)} are waiting on your approval:</p><ul>${lines.map(l => `<li>${esc(l.replace(/^• /, ""))}</li>`).join("")}</ul><p>Nothing goes to the accountant until you approve it.</p><p><a href="${DSSC_APP}/?view=${view}" style="color:#0F8B76;font-weight:700">Approve in DSSC HQ →</a></p></div>`);
+  };
+  const classHours = (c) => Number(c.hours || 0);
   if (unapproved.length) {
-    const hrs = unapproved.reduce((s, c) => s + Number(c.hours || 0), 0);
-    const byCoach = {};
-    for (const c of unapproved) byCoach[c.coach_name] = (byCoach[c.coach_name] || 0) + Number(c.hours || 0);
-    const lines = Object.entries(byCoach).sort().map(([k, v]) => `• ${k} — ${v}h`);
-    await push(approvers, "Approve last week's DSSC hours", `${hrs}h from ${Object.keys(byCoach).length} coach${Object.keys(byCoach).length === 1 ? "" : "es"}. Tap to approve.`, origin + "/?view=dssctime");
-    await mail(approvers, `Approve last week's DSSC hours — ${hrs}h`,
-      `${hrs}h logged ${fmtD(lastMon)} – ${fmtD(lastSun)} are waiting on your approval:\n${lines.join("\n")}\n\nNothing goes to the accountant until you approve it. DS Elite HQ → DSSC Hours.`,
-      `<div style="font-family:sans-serif;font-size:14px"><p><b>${hrs}h</b> logged ${fmtD(lastMon)} – ${fmtD(lastSun)} are waiting on your approval:</p><ul>${lines.map(l => `<li>${esc(l.replace(/^• /, ""))}</li>`).join("")}</ul><p>Nothing goes to the accountant until you approve it.</p><p><a href="${origin}/?view=dssctime" style="color:#e91e8c;font-weight:700">Approve in DS Elite HQ →</a></p></div>`);
+    const rows = unapproved.map(c => ({ ...c, who: c.coach_name }));
+    await askApproval(approvers, rows.filter(c => sportOf(c) === "volleyball"), "DSSC volleyball", "dssctime", classHours);
+    await askApproval(listFrom(process.env.DSSC_BB_APPROVER_EMAILS, BB_APPROVERS_DEFAULT), rows.filter(c => sportOf(c) === "basketball"), "DSSC basketball", "dssctime", classHours);
+  }
+  let staffWaiting = 0;
+  if (isMonday) {
+    const { data: shifts } = await supabase.from("dssc_staff_shifts").select("person_name, person_email, clock_in, clock_out, approved, rejected")
+      .gte("clock_in", lastMon + "T05:00:00Z").lt("clock_in", today + "T05:00:00Z").eq("approved", false).eq("rejected", false).not("clock_out", "is", null);
+    const rows = (shifts || []).map(s => ({ ...s, who: s.person_name || s.person_email }));
+    staffWaiting = rows.length;
+    await askApproval(listFrom(process.env.DSSC_STAFF_APPROVER_EMAILS, STAFF_APPROVERS_DEFAULT), rows, "DSSC staff", "staffadmin",
+      (s) => Math.round(((new Date(s.clock_out) - new Date(s.clock_in)) / 3600000) * 4) / 4);
   }
 
-  return res.status(200).json({ ok: true, reminded, nudged, pending: pending.length, unapproved: unapproved.length });
+  return res.status(200).json({ ok: true, reminded, nudged, pending: pending.length, unapproved: unapproved.length, staffWaiting });
 }

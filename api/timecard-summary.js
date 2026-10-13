@@ -10,9 +10,14 @@
 // button that sends the payroll report. Approval first, then the coaches hear.
 //
 // Runs Monday, after the payroll report has gone to the bookkeeper, and covers
-// the Monday–Sunday week just finished. One email per coach, with both clubs in
-// it, because a coach who works DS Elite practices and DSSC clinics is one
-// person with one week and should not have to reconcile two emails.
+// the Monday–Sunday week just finished.
+//
+// ONE CLUB PER EMAIL (Drew, 13 Oct 2026: "messages to coaches about
+// double-checking their hours should only have DSSC or DS Elite"). ?club=dse
+// (the default, from DS Elite Time Cards) reports DS Elite hours only, signed
+// DS Elite; ?club=dssc (from DSSC Time Cards, after the week goes to the
+// accountant) reports DSSC hours only, from the club. It used to be one email
+// with both clubs in it.
 //
 // WHAT "APPROVED" MEANS, WHICH DIFFERS BY CLUB
 //
@@ -69,6 +74,7 @@ export default async function handler(req, res) {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return res.status(500).json({ error: "Server not configured" });
 
   const dry = url?.searchParams.get("dry") === "1";
+  const club = url?.searchParams.get("club") === "dssc" ? "dssc" : "dse";
   if (!dry && (!RESEND_API_KEY || !DSE_FROM_EMAIL)) return res.status(500).json({ error: "Email not configured" });
 
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
@@ -82,8 +88,9 @@ export default async function handler(req, res) {
     if (email) {
       if (OWNER_EMAILS.includes(email)) authed = true;
       else {
-        const { data: c } = await supabase.from("coaches").select("is_admin, is_approved").ilike("email", email).maybeSingle();
-        if (c && c.is_approved && c.is_admin) authed = true;
+        const { data: c } = await supabase.from("coaches").select("is_admin, is_approved, dssc_role").ilike("email", email).maybeSingle();
+        if (c && c.is_approved && (c.is_admin || (club === "dssc" && c.dssc_role === "admin"))) authed = true;
+        if (club === "dssc" && ["hunter@drippingsportsclub.com", "hunterhaleysc10@gmail.com"].includes(email)) authed = true;
       }
     }
   }
@@ -99,7 +106,7 @@ export default async function handler(req, res) {
         .select("id, coach_name, coach_email, check_date, pay_date, team_name, slot, hours, role, rate_override, notified_at")
         .or(`and(pay_date.gte.${start},pay_date.lte.${end}),and(pay_date.is.null,check_date.gte.${start},check_date.lte.${end})`),
       supabase.from("dssc_checkins")
-        .select("id, coach_name, coach_email, session_date, clinic_name, hours, approved, rejected, sent_at")
+        .select("id, coach_name, coach_email, session_date, clinic_name, hours, approved, rejected, sent_at, coach_notified_at")
         .gte("session_date", start).lte("session_date", end),
       supabase.from("coach_roster").select("first_name, last_name, email"),
       supabase.from("coaches").select("display_name, email"),
@@ -127,7 +134,13 @@ export default async function handler(req, res) {
 
   // DSSC: only approved shifts are anybody's business. A rejected one is a
   // conversation the reviewer has already had, not news to re-break by email.
-  const dsscOk = (dssc || []).filter(c => c.approved && !c.rejected);
+  // Each run is one club: the other club's shifts aren't in it at all.
+  const dsscOk = club === "dssc" ? (dssc || []).filter(c => c.approved && !c.rejected) : [];
+  const dseIn = club === "dse" ? (dse || []) : [];
+  if (club === "dssc") {
+    const { data: ppl } = await supabase.from("dssc_people").select("first_name, last_name, email");
+    (ppl || []).forEach(p => put(`${p.first_name || ""} ${p.last_name || ""}`, p.email));   // basketball coaches
+  }
 
   // Names on a check-in are whatever the entry point wrote. Resolved to the
   // real person before grouping, so one coach is one email and the greeting
@@ -141,12 +154,12 @@ export default async function handler(req, res) {
     if (!byCoach.has(k)) byCoach.set(k, { name: String(name).trim(), dse: [], dssc: [] });
     return byCoach.get(k);
   };
-  (dse || []).forEach(c => { const g = grab(canonicalName(c.coach_name, c.coach_email)); if (g) g.dse.push(c); });
+  dseIn.forEach(c => { const g = grab(canonicalName(c.coach_name, c.coach_email)); if (g) g.dse.push(c); });
   dsscOk.forEach(c => { const g = grab(canonicalName(c.coach_name, c.coach_email)); if (g) g.dssc.push(c); });
 
   const results = [];
   for (const g of byCoach.values()) {
-    const fresh = g.dse.some(c => !c.notified_at) || g.dssc.some(c => !c.sent_at);
+    const fresh = g.dse.some(c => !c.notified_at) || g.dssc.some(c => !c.coach_notified_at);
     const dseH = g.dse.reduce((n, c) => n + Number(c.hours || 0), 0);
     const dsscH = g.dssc.reduce((n, c) => n + Number(c.hours || 0), 0);
     const total = dseH + dsscH;
@@ -193,15 +206,14 @@ If anything above is wrong or missing, reply to this email this week — it is m
 
 Thanks for the work.
 
-Drew Rose
-DS Elite Volleyball`;
+${club === "dssc" ? "Dripping Springs Sports Club" : "Drew Rose\nDS Elite Volleyball"}`;
 
     const row = (a, b, c) =>
       `<tr><td style="padding:5px 12px 5px 0;white-space:nowrap;color:#666">${esc(a)}</td>` +
       `<td style="padding:5px 12px 5px 0;white-space:nowrap;font-weight:700">${esc(b)}</td>` +
       `<td style="padding:5px 0">${esc(c)}</td></tr>`;
     const section = (title, rows, total) => rows.length ? (
-      `<p style="margin:22px 0 6px;font-weight:700;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:#c2186f">` +
+      `<p style="margin:22px 0 6px;font-weight:700;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:${club === "dssc" ? "#0F8B76" : "#c2186f"}">` +
       `${esc(title)} — ${esc(hrs(total))}</p>` +
       `<table style="border-collapse:collapse;font-size:14px">${rows.join("")}</table>`) : "";
 
@@ -214,15 +226,16 @@ DS Elite Volleyball`;
       + `<p style="margin:20px 0 14px;font-size:17px"><b>Total: ${esc(hrs(r.total))}</b></p>`
       + `<p style="margin:0 0 14px">If anything above is wrong or missing, reply to this email this week — it&rsquo;s much easier to fix before payment than after.</p>`
       + `<p style="margin:0 0 14px">Thanks for the work.</p>`
-      + '<p style="margin:0">Drew Rose<br>DS Elite Volleyball</p></div>';
+      + (club === "dssc" ? '<p style="margin:0">Dripping Springs Sports Club</p></div>' : '<p style="margin:0">Drew Rose<br>DS Elite Volleyball</p></div>');
 
     try {
       const resp = await fetch("https://api.resend.com/emails", {
         method: "POST",
         headers: { Authorization: `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
         body: JSON.stringify({
-          from: DSE_FROM_EMAIL, to: [r.to], reply_to: replyTo,
-          subject: `Your hours: ${fmtDay(start)} – ${fmtDay(end)} (${hrs(r.total)})`,
+          from: club === "dssc" ? (process.env.DSSC_FROM_EMAIL || ("Dripping Springs Sports Club <" + (String(DSE_FROM_EMAIL).match(/<([^>]+)>/)?.[1] || DSE_FROM_EMAIL) + ">")) : DSE_FROM_EMAIL,
+          to: [r.to], reply_to: club === "dssc" ? (process.env.DSSC_REPLY_TO || "hunter@drippingsportsclub.com") : replyTo,
+          subject: `Your ${club === "dssc" ? "DSSC" : "DS Elite"} hours: ${fmtDay(start)} – ${fmtDay(end)} (${hrs(r.total)})`,
           text, html,
         }),
       });
@@ -240,7 +253,7 @@ DS Elite Volleyball`;
   // run rather than silently counted as told.
   const now = new Date().toISOString();
   if (dseDone.length) await supabase.from("coach_checkins").update({ notified_at: now }).in("id", dseDone);
-  if (dsscDone.length) await supabase.from("dssc_checkins").update({ sent_at: now }).in("id", dsscDone);
+  if (dsscDone.length) await supabase.from("dssc_checkins").update({ coach_notified_at: now }).in("id", dsscDone);
 
   return res.status(200).json({
     ok: true, week: { start, end }, sent, failed,

@@ -89,7 +89,7 @@ export function Field({ value, onSave, multiline, minRows, placeholder, style, r
 
 // ── The hub ─────────────────────────────────────────────────────────────────
 export default function DsscHub({
-  coach, coachRoster = [], clinics = [], dsscCheckins = [], dsscAvail = [], podAttendance = [],
+  coach, coachRoster = [], clinics = [], dsscCheckins = [], dsscAvail = [], podAttendance = [], sports = ["volleyball"],
   isDirector = false, initialClinicId = null, initialSessionId = null, initialTab = null, onConsumedInitial, backTo = null,
   setClinics, reload = {}, staffDsscSession, unstaffDsscSession, notifyDirectors,
   onOpenAdmin, onOpenPlaybook,
@@ -130,7 +130,8 @@ export default function DsscHub({
   const upcoming = mine.filter(r => r.s.date >= today);
   const since14 = localDateISO(new Date(Date.now() - 14 * 86400000));
   const recent = mine.filter(r => r.s.date < today && r.s.date >= since14).reverse();
-  const openShifts = rows.filter(r => !r.mine && !r.s.cancelled && r.s.date >= today && r.short > 0 && !sessionStaff(r.s).some(x => isMe(x.name)));
+  // Open shifts in the sport(s) you coach - a basketball coach isn't offered volleyball pods.
+  const openShifts = rows.filter(r => !r.mine && !r.s.cancelled && (isDirector || sports.includes(r.c.sport || "volleyball")) && r.s.date >= today && r.short > 0 && !sessionStaff(r.s).some(x => isMe(x.name)));
   const myAvail = dsscAvail.find(a => isMe(a.coach_name));
 
   // Deep-link from the home card: open that clinic's next class of mine.
@@ -187,7 +188,7 @@ export default function DsscHub({
   );
   const header = (sub) => (
     <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 18, flexWrap: "wrap" }}>
-      <img src="/dssc/logo-horizontal-white.png" alt="Dripping Springs Sports Club" style={{ height: 34, width: "auto" }} />
+      <img src={import.meta.env.BASE_URL + "dssc/logo-horizontal-white.png"} alt="Dripping Springs Sports Club" style={{ height: 34, width: "auto" }} />
       <div style={{ flex: 1 }} />
       {sub}
     </div>
@@ -878,7 +879,7 @@ function Runner({ c, blocks, setBlocks, run, setRun, onEnd }) {
     <div style={{ position: "fixed", inset: 0, zIndex: 100, background: DS.bg, overflowY: "auto", fontFamily: DS.font, color: DS.text }}>
       <div style={{ maxWidth: 640, margin: "0 auto", padding: "14px 16px 40px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-          <img src="/dssc/icon-white.png" alt="" style={{ height: 26 }} />
+          <img src={import.meta.env.BASE_URL + "dssc/icon-white.png"} alt="" style={{ height: 26 }} />
           <div style={{ fontSize: 14, fontWeight: 800, flex: 1 }}>{c.name}</div>
           <Btn small onClick={() => setRun(null)}>Exit</Btn>
         </div>

@@ -165,7 +165,7 @@ export default function DsscCrm({ coach, onText, isDirector }) {
     <div style={{ margin: "-14px -18px", padding: "16px 16px 48px", background: DS.bg, minHeight: "calc(100vh - 56px)", fontFamily: DS.font, color: DS.text }}>
       <div style={{ maxWidth: 1200, margin: "0 auto" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
-          <img src="/dssc/logo-horizontal-white.png" alt="Dripping Springs Sports Club" style={{ height: 30 }} />
+          <img src={import.meta.env.BASE_URL + "dssc/logo-horizontal-white.png"} alt="Dripping Springs Sports Club" style={{ height: 30 }} />
           <Tag color={DS.lime}>People</Tag>
           <span style={{ fontSize: 12, color: DS.mut }}>{contacts.length.toLocaleString()} families · {parts.length.toLocaleString()} players · {partic.length.toLocaleString()} program records</span>
           <div style={{ flex: 1 }} />

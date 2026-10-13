@@ -23,7 +23,7 @@ export default async function handler(req, res) {
   if (!email) return res.status(401).json({ error: "Not signed in" });
 
   let ok = OWNER_EMAILS.includes(email) || DIRECTOR_EMAILS.includes(email);
-  if (!ok) { const { data: c } = await supabase.from("coaches").select("is_admin, is_approved").ilike("email", email).maybeSingle(); ok = !!(c && c.is_approved && c.is_admin); }
+  if (!ok) { const { data: c } = await supabase.from("coaches").select("is_admin, is_approved, dssc_role").ilike("email", email).maybeSingle(); ok = !!(c && c.is_approved && (c.is_admin || c.dssc_role === "admin")); }
   if (!ok) return res.status(403).json({ error: "Forbidden" });
 
   if (!secret) return res.status(200).json({ configured: false });

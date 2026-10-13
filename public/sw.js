@@ -4,6 +4,11 @@
 // thing cached is the last successful page (one for HQ, one for the /hub
 // pages), used purely as an offline fallback.
 const CACHE = 'dse-shell-v2';
+// '/' for DS Elite HQ, '/hq/' for the DSSC app at drippingsportsclub.com/hq
+// (same file, registered with that scope). Server pushes carry "/?view=..."
+// links, which belong under the scope.
+const BASE = (() => { try { return new URL(self.registration.scope).pathname; } catch (e) { return '/'; } })();
+const inBase = (u) => (BASE !== '/' && typeof u === 'string' && u.startsWith('/') && !u.startsWith(BASE) ? BASE + u.slice(1) : u);
 
 self.addEventListener('install', () => {
   self.skipWaiting();
@@ -30,11 +35,11 @@ self.addEventListener('push', (event) => {
   const tag = data.tag || undefined;
   const options = {
     body: data.body || '',
-    icon: '/icon-192.png',
-    badge: '/icon-192.png',
+    icon: BASE + 'icon-192.png',
+    badge: BASE + 'icon-192.png',
     tag,
     renotify: !!tag,
-    data: { url: data.url || '/' },
+    data: { url: inBase(data.url || '/') },
   };
   event.waitUntil(self.registration.showNotification(title, options));
 });
@@ -51,7 +56,7 @@ self.addEventListener('push', (event) => {
 // fall through to openWindow, which honours the url on every platform.
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const url = (event.notification.data && event.notification.data.url) || '/';
+  const url = (event.notification.data && event.notification.data.url) || BASE;
   event.waitUntil((async () => {
     const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     for (const c of all) {
@@ -82,7 +87,7 @@ self.addEventListener('fetch', (event) => {
   // never overwrite each other's. Only successful pages are kept — a 404 from
   // a bad link must not become the offline fallback.
   const path = new URL(req.url).pathname;
-  const key = (path === '/hub' || path.startsWith('/hub/')) ? '/hub' : '/';
+  const key = (path === '/hub' || path.startsWith('/hub/')) ? '/hub' : BASE;
   event.respondWith((async () => {
     try {
       const fresh = await fetch(req);

@@ -1,3 +1,4 @@
+import './hq-base.js'
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'
@@ -64,6 +65,6 @@ if (import.meta.env.DEV && new URLSearchParams(window.location.search).has('cour
 // ("Add to Home Screen"). Network-first, so deploys are picked up immediately.
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch(() => {})
+    navigator.serviceWorker.register(import.meta.env.BASE_URL + 'sw.js', { scope: import.meta.env.BASE_URL }).catch(() => {})
   })
 }

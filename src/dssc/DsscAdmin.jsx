@@ -20,12 +20,19 @@ const mondayOf = (iso) => { const d = new Date(iso + "T12:00:00"); return addDay
 const sameDayWindow = (a, b) => a.date === b.date && a.st != null && a.en != null && b.st != null && b.en != null;
 
 export default function DsscAdmin({
-  coach, clinics = [], coachRoster = [], dsscAvail = [], podAttendance = [],
+  coach, clinics: clinicsAll = [], coachRoster = [], dsscAvail = [], podAttendance = [], sports = ["volleyball", "basketball"],
   setClinics, reloadClinics, staffDsscSession, unstaffDsscSession, decideDsscPickup,
   openClass, openProgram, newClinic, sync, onCoachHub, onCoverage, onTimeCards, onLegacy, onTextClass, onTexts,
 }) {
   const today = localDateISO();
   const coachName = coach?.display_name || coach?.email || "";
+  // Volleyball and basketball share the board (Drew, 13 Oct 2026): Hunter
+  // opens on volleyball, Adrian on basketball, administrators on both.
+  const [sport, setSport] = useState(() => (sports.length === 1 ? sports[0] : "all"));
+  const clinics = useMemo(() => (sport === "all" ? clinicsAll : clinicsAll.filter(c => (c.sport || "volleyball") === sport)), [clinicsAll, sport]);
+  // DSSC coaches who aren't on the DS Elite roster (basketball coaches) - for the coach picker.
+  const [dsscPeople, setDsscPeople] = useState([]);
+  useEffect(() => { supabase.from("dssc_people").select("first_name,last_name,role,sports,active").eq("active", true).then(({ data }) => setDsscPeople(data || [])); }, []);
   const [weekOff, setWeekOff] = useState(0);
   const [filter, setFilter] = useState("all");       // all | short | low | pending | noplan
   const [q, setQ] = useState("");
@@ -91,7 +98,9 @@ export default function DsscAdmin({
   const pool = dsscAvail.filter(a => a.available && (a.coach_name || "").trim());
   const availBy = {}; dsscAvail.forEach(a => { availBy[nrm(a.coach_name)] = a; });
   const rosterNames = [...new Set(coachRoster.map(r => ((r.first_name || "") + " " + (r.last_name || "")).trim()).filter(n => n && !isPlaceholderPerson(n)))];
-  const everyone = [...new Set([...pool.map(a => a.coach_name.trim()), ...rosterNames])].sort((a, b) => a.localeCompare(b));
+  const peopleNames = dsscPeople.filter(p => p.role === "coach" && (sport === "all" || (p.sports || []).includes(sport))).map(p => `${p.first_name} ${p.last_name || ""}`.trim());
+  // Basketball classes are coached from the DSSC list, not the volleyball club roster.
+  const everyone = [...new Set(sport === "basketball" ? peopleNames : [...pool.map(a => a.coach_name.trim()), ...rosterNames, ...peopleNames])].sort((a, b) => a.localeCompare(b));
   const commitments = useMemo(() => {
     const m = {};
     for (const r of rows) for (const x of sessionStaff(r.s)) { if (x.status === "declined") continue; (m[nrm(x.name)] = m[nrm(x.name)] || []).push({ date: r.s.date, st: r.st, en: r.en }); }
@@ -174,8 +183,13 @@ export default function DsscAdmin({
     <div style={{ margin: "-14px -18px", padding: "16px 16px 48px", background: DS.bg, minHeight: "calc(100vh - 56px)", fontFamily: DS.font, color: DS.text }}>
       <div style={{ maxWidth: 1100, margin: "0 auto" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
-          <img src="/dssc/logo-horizontal-white.png" alt="Dripping Springs Sports Club" style={{ height: 34, width: "auto" }} />
+          <img src={import.meta.env.BASE_URL + "dssc/logo-horizontal-white.png"} alt="Dripping Springs Sports Club" style={{ height: 34, width: "auto" }} />
           <Tag color={DS.lime}>Admin</Tag>
+          <div style={{ display: "flex", gap: 4, background: DS.panel2, borderRadius: 999, padding: 3 }}>
+            {[["all", "All"], ["volleyball", "Volleyball"], ["basketball", "Basketball"]].map(([k, l]) => (
+              <button key={k} onClick={() => setSport(k)} style={{ fontFamily: DS.font, fontSize: 12, fontWeight: 800, padding: "5px 12px", borderRadius: 999, border: "none", cursor: "pointer", background: sport === k ? DS.lime : "transparent", color: sport === k ? DS.bg : DS.mut }}>{l}</button>
+            ))}
+          </div>
           <div style={{ flex: 1 }} />
           <Btn small onClick={onCoachHub}>Coach hub</Btn>
           {onCoverage && <Btn small onClick={onCoverage}>Coverage calendar</Btn>}

@@ -58,7 +58,7 @@ export default async function handler(req, res) {
     const email = (user?.email || "").trim().toLowerCase();
     if (email) {
       if (OWNER_EMAILS.includes(email)) { authed = true; approvedBy = email; }
-      else { const { data: c } = await supabase.from("coaches").select("is_admin, is_approved, display_name").ilike("email", email).maybeSingle(); if (c && c.is_approved && c.is_admin) { authed = true; approvedBy = c.display_name || email; } }
+      else { const { data: c } = await supabase.from("coaches").select("is_admin, is_approved, dssc_role, display_name").ilike("email", email).maybeSingle(); if (c && c.is_approved && (c.is_admin || c.dssc_role === "admin")) { authed = true; approvedBy = c.display_name || email; } }
     }
   }
   if (!authed) return res.status(403).json({ error: "Forbidden" });

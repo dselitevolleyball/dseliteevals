@@ -32,6 +32,9 @@ import EuropeRsvps from "./EuropeRsvps.jsx";
 import DsscTexts from "./dssc/DsscTexts.jsx";
 import DsscCamp from "./dssc/DsscCamp.jsx";
 import DsscCrm from "./dssc/DsscCrm.jsx";
+import { HQ_DSSC } from "./hq-base.js";
+import DsscPeople from "./dssc/DsscPeople.jsx";
+import { StaffClock, StaffHoursAdmin } from "./dssc/DsscStaff.jsx";
 import { parentMailings, greetingFor } from "../shared/parent-mail.js";
 import { TN_SUB_PLACEHOLDERS, isPlaceholderPerson, sessionStaff, staffNeeded, staffApproved, staffPending, sessionShort, onStaff, parsePlanPaste } from "../shared/dssc-clinics.js";
 
@@ -1885,6 +1888,7 @@ export default function App() {
   const [dsscCalWeek, setDsscCalWeek]   = useState(0);      // weeks from this one on the DSSC coverage week board
   const [dsscCalPastOpen, setDsscCalPastOpen] = useState(() => new Set()); // past days of this week the user re-expanded
   const [dsscWeekOff, setDsscWeekOff]   = useState(0);      // weeks from this one on the DSSC approval table
+  const [dsscTimeSport, setDsscTimeSport] = useState(null); // DSSC approval: volleyball (Hunter) | basketball (Adrian) | all
   const [dsscSync, setDsscSync]         = useState(null);   // last Playbook→clinics sync {last_synced_at, summary}
   const [dsscSyncTok, setDsscSyncTok]   = useState(null);   // built sync bookmarklet {href, calendarUrl} | {configured:false} | {error}
   const [dsscAdminLegacy, setDsscAdminLegacy] = useState(false); // directors: classic clinics list instead of the admin board
@@ -2227,6 +2231,17 @@ export default function App() {
   // Brandon runs Reach and does no volleyball coaching: his login is the
   // testing screen and nothing else (Drew, Oct 9 2026).
   const isReachOnly = !canOps && ["brandon@drippingsportsclub.com"].includes(String(coach?.email || "").trim().toLowerCase());
+  // DSSC as its own app (Drew, 13 Oct 2026). The /hq build (drippingsportsclub.com/hq)
+  // and anyone whose login is DSSC-only (coaches.dssc_only: basketball coaches,
+  // interns, the DSSC administrators) only ever see DSSC. dssc_role: admin runs
+  // DSSC (assign coaches, fix clock-ins, approve hours); coach; staff (generic
+  // clock in/out). sports: which classes they coach / approve.
+  const dsscRole   = coach?.dssc_role || null;
+  const dsscOnly   = HQ_DSSC || !!coach?.dssc_only;
+  const isDsscStaff = dsscRole === "staff";
+  const isDsscDirector = canOps || dsscRole === "admin" || DSSC_DIRECTOR_EMAILS.includes(String(coach?.email || "").trim().toLowerCase());
+  // No sports set: a director sees both, a DS Elite coach coaches volleyball.
+  const dsscSports = Array.isArray(coach?.sports) && coach.sports.length ? coach.sports : (isDsscDirector ? ["volleyball", "basketball"] : ["volleyball"]);
   const opsDenied = <div style={{padding:24,color:C.mut,textAlign:"center"}}>This section is restricted to administrators. Ask the club administrator (Drew) for access.</div>;
   // Once a player has accepted (or is locked/signed) onto a team, they're
   // locked to that team — only the owner (Drew) can change their offer status,
@@ -2280,12 +2295,17 @@ export default function App() {
   // colors, navigation, home — between DS Elite and Dripping Springs Sports
   // Club, instead of DSSC living as a tab inside DS Elite. Opening a DSSC
   // screen by any route (a push link, the home card) flips it too.
-  const DSSC_VIEWS = new Set(["dssc","clinics","dssctexts","dssccrm","dssccal","dssctime","pods","privates","dssccamp","courts","dsscplan"]);
-  const [workspace, setWorkspace] = useState(() => { try { return localStorage.getItem("dse.workspace") === "dssc" ? "dssc" : "dse"; } catch { return "dse"; } });
+  const DSSC_VIEWS = new Set(["dssc","clinics","dssctexts","dssccrm","dssccal","dssctime","pods","privates","dssccamp","courts","dsscplan","staffhours","staffadmin","dsscpeople"]);
+  // Screens a DSSC-only login may open: DSSC's own plus the shared basics.
+  const DSSC_ONLY_OK = new Set([...DSSC_VIEWS, "home", "notifications", "activity", "faq"]);
+  const [workspace, setWorkspace] = useState(() => { if (HQ_DSSC) return "dssc"; try { return localStorage.getItem("dse.workspace") === "dssc" ? "dssc" : "dse"; } catch { return "dse"; } });
   useEffect(() => {
+    if (dsscOnly) { if (workspace !== "dssc") setWorkspace("dssc"); return; }
     const ws = DSSC_VIEWS.has(view) ? "dssc" : (view === "home" || view === "askai" || view === "notifications" || view === "activity" || view === "faq") ? null : "dse";
     if (ws && ws !== workspace) { setWorkspace(ws); try { localStorage.setItem("dse.workspace", ws); } catch {} }
-  }, [view]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [view, dsscOnly]); // eslint-disable-line react-hooks/exhaustive-deps
+  // A DSSC-only login that lands on (or is linked to) a DS Elite screen goes home.
+  useEffect(() => { if (dsscOnly && view && !DSSC_ONLY_OK.has(view)) setView("home"); }, [dsscOnly, view]); // eslint-disable-line react-hooks/exhaustive-deps
   // Deep links from notifications (e.g. /?view=practiceplan&tab=playbook) — read
   // the URL once after sign-in, jump to that view/tab, then clean the URL.
   const deepLinkDone = useRef(false);
@@ -6161,12 +6181,19 @@ export default function App() {
       }
     };
     return (
-      <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",background:C.bg,padding:16}}>
-        <form onSubmit={submitAuth} style={{background:C.card,padding:32,borderRadius:16,border:"1px solid "+C.border,maxWidth:400,width:"100%"}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",background:HQ_DSSC?"#104946":C.bg,padding:16}}>
+        <form onSubmit={submitAuth} style={{background:HQ_DSSC?"#0C3A37":C.card,padding:32,borderRadius:16,border:"1px solid "+(HQ_DSSC?"rgba(255,255,255,0.14)":C.border),maxWidth:400,width:"100%"}}>
+          {HQ_DSSC ? (
+            <div style={{textAlign:"center",marginBottom:20}}>
+              <img src={import.meta.env.BASE_URL + "dssc/logo-horizontal-white.png"} alt="Dripping Springs Sports Club" style={{height:40,width:"auto",margin:"0 auto 10px",display:"block"}} />
+              <div style={{fontSize:13,color:"#A9C7C3"}}>DSSC HQ · coaches & staff</div>
+            </div>
+          ) : (
           <div style={{textAlign:"center",marginBottom:20}}>
             <div style={{fontSize:28,fontWeight:800,color:C.gold,marginBottom:4}}>◆ DS ELITE HQ</div>
             <div style={{fontSize:13,color:C.mut}}>Operations Hub · 2026-27</div>
           </div>
+          )}
           {loginMode === "guest" ? (
             <div style={{textAlign:"center",marginBottom:16,fontSize:12,color:C.mut}}>Shared-device guest login — enter the guest password.</div>
           ) : (
@@ -6207,7 +6234,7 @@ export default function App() {
           <div style={{textAlign:"center",marginTop:12}}>
             {loginMode === "guest"
               ? <button type="button" onClick={()=>{setLoginMode("login");setLoginError("");setLoginInfo("");setLoginPassword("");}} style={{background:"none",border:"none",color:C.mut,fontFamily:"inherit",fontSize:11,cursor:"pointer",textDecoration:"underline"}}>← Back to coach sign in</button>
-              : <button type="button" onClick={()=>{setLoginMode("guest");setLoginError("");setLoginInfo("");setLoginPassword("");}} style={{background:"none",border:"none",color:C.mut,fontFamily:"inherit",fontSize:11,cursor:"pointer",textDecoration:"underline"}}>Guest / shared-device login →</button>}
+              : HQ_DSSC ? null : <button type="button" onClick={()=>{setLoginMode("guest");setLoginError("");setLoginInfo("");setLoginPassword("");}} style={{background:"none",border:"none",color:C.mut,fontFamily:"inherit",fontSize:11,cursor:"pointer",textDecoration:"underline"}}>Guest / shared-device login →</button>}
           </div>
           {loginMode === "login" && (
             <div style={{textAlign:"center",marginTop:12}}>
@@ -6216,7 +6243,7 @@ export default function App() {
                   const email = loginEmail.trim();
                   if (!email) { setLoginError("Enter your email above first, then click Forgot password."); return; }
                   setLoginBusy(true); setLoginError(""); setLoginInfo("");
-                  const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin });
+                  const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin + import.meta.env.BASE_URL });
                   setLoginBusy(false);
                   if (error) { setLoginError(error.message || "Couldn't send reset email."); return; }
                   setLoginInfo("If an account exists for " + email + ", a password-reset link is on its way. Check your inbox (and spam folder).");
@@ -6249,8 +6276,9 @@ export default function App() {
           <div style={{fontSize:24,fontWeight:800,color:C.gold,marginBottom:6}}>◆ Awaiting Approval</div>
           <div style={{fontSize:13,color:C.text,marginBottom:6}}>Hi {coach.display_name || coach.email}.</div>
           <div style={{fontSize:13,color:C.mut,marginBottom:20,lineHeight:1.6}}>
+            {HQ_DSSC ? <>Your account has been created, but a DSSC administrator needs to approve it before you can get in. Ask Drew or your director.</> : <>
             Your account has been created but an admin needs to approve it before you can access the eval data.
-            Ping the Director of Volleyball — they can approve you from the <b>Coaches</b> tab.
+            Ping the Director of Volleyball — they can approve you from the <b>Coaches</b> tab.</>}
           </div>
           <button onClick={async ()=>{ await supabase.auth.signOut(); }}
             style={{padding:"10px 20px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.mut,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:700}}>
@@ -6261,7 +6289,7 @@ export default function App() {
     );
   }
 
-  if (loading) return <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",background:C.bg,color:C.text}}>Loading DS Elite...</div>;
+  if (loading) return <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",background:HQ_DSSC?"#104946":C.bg,color:C.text}}>{HQ_DSSC ? "Loading DSSC HQ..." : "Loading DS Elite..."}</div>;
 
   const divsWithPlayers = DIVS.filter(d => allowedDivSet.has(d) && players.some(p => (p.usavDiv||p.usav_div) === d));
 
@@ -15170,7 +15198,7 @@ export default function App() {
   // coloured by whether it is fully crewed — a list of clinics never made it
   // visible that 136 of 167 sessions had nobody on them.
   function renderDsscCal() {
-    if (!canOps) return <div style={{padding:24,color:C.mut,textAlign:"center"}}>The DSSC coaches calendar is admin-only.</div>;
+    if (!isDsscDirector) return <div style={{padding:24,color:C.mut,textAlign:"center"}}>The DSSC coaches calendar is for the DSSC administrators.</div>;
     const nrm = (v) => String(v || "").trim().toLowerCase();
 
     // Flatten every clinic's sessions into dated rows.
@@ -16021,7 +16049,7 @@ export default function App() {
     const nrm = v => String(v || "").trim().toLowerCase();
     const meName = coach?.display_name || coach?.email || "";
     const matchesMe = nm => !!nm && (nrm(nm) === nrm(meName) || (coach?.email && nrm(nm) === nrm(coach.email)));
-    const isDirector = canOps || DSSC_DIRECTOR_EMAILS.includes(nrm(coach?.email || ""));
+    const isDirector = isDsscDirector;
     const RATE = 25;
     const today = localDateISO();
     const money = n => "$" + Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -16095,7 +16123,11 @@ export default function App() {
     // --- Director: the week under review -----------------------------------
     const weekStart = addDays(mondayOf(today), dsscWeekOff * 7);
     const weekEnd = addDays(weekStart, 6);
-    const weekRows = dsscCheckins.filter(c => c.session_date >= weekStart && c.session_date <= weekEnd)
+    // Hunter approves volleyball hours, Adrian basketball (Drew, 13 Oct 2026);
+    // each opens on their own sport, administrators on everything.
+    const timeSport = dsscTimeSport || (dsscSports.length === 1 ? dsscSports[0] : "all");
+    const sportOfRow = (c) => (clinics.find(x => x.id === c.clinic_id)?.sport || "volleyball");
+    const weekRows = dsscCheckins.filter(c => c.session_date >= weekStart && c.session_date <= weekEnd && (timeSport === "all" || sportOfRow(c) === timeSport))
       .sort((a, b) => String(a.session_date).localeCompare(String(b.session_date)) || String(a.coach_name).localeCompare(String(b.coach_name)));
     const waiting = weekRows.filter(c => !c.approved && !c.rejected);
     const okRows = weekRows.filter(c => c.approved && !c.rejected);
@@ -16225,8 +16257,17 @@ export default function App() {
         const d = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(d.error || ("HTTP " + r.status));
         await supabase.from("dssc_checkins").update({ sent_at: new Date().toISOString() }).in("id", okRows.map(c => c.id));
+        // Then each coach gets their DSSC hours - DSSC only, from the club
+        // (DS Elite hours go in DS Elite's own email). The summary covers the
+        // week before the date it's given, hence +7.
+        let coachNote = "";
+        try {
+          const cr = await fetch("/api/timecard-summary?club=dssc&week=" + addDays(weekStart, 7), { method:"POST", headers:{ Authorization:"Bearer "+session.access_token } });
+          const cd = await cr.json().catch(()=>({}));
+          coachNote = cr.ok ? "\nCoach confirmations: " + (cd.sent ?? 0) + " sent" + ((cd.unreachable||[]).length ? " · no email for " + cd.unreachable.join(", ") : "") : "\nCoach confirmations failed: " + (cd.error || cr.status);
+        } catch (e) { coachNote = "\nCoach confirmations failed: " + e.message; }
         await loadDsscCheckins();
-        window.alert("Sent ✓ — " + (d.hours ?? 0) + "h · " + money(d.amount ?? 0) + "\nTo: " + ((d.to || []).join(", ")));
+        window.alert("Sent ✓ — " + (d.hours ?? 0) + "h · " + money(d.amount ?? 0) + "\nTo: " + ((d.to || []).join(", ")) + coachNote);
       } catch (e) { window.alert("Couldn't send: " + (e.message || "error")); }
     };
 
@@ -16369,6 +16410,9 @@ export default function App() {
           <div style={card}>
             <div style={head}>
               Weekly approval
+              {[["all","All"],["volleyball","Volleyball"],["basketball","Basketball"]].map(([k,l]) => (
+                <button key={k} onClick={()=>setDsscTimeSport(k)} style={{padding:"3px 9px",borderRadius:999,border:"1px solid "+(timeSport===k?C.gold:C.border),background:timeSport===k?C.gold+"22":"transparent",color:timeSport===k?C.gold:C.mut,fontFamily:"inherit",fontSize:11,fontWeight:800,cursor:"pointer"}}>{l}</button>
+              ))}
               <button onClick={()=>setDsscWeekOff(o=>o-1)} style={{background:"none",border:"1px solid "+C.border,borderRadius:6,color:C.text,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:800,width:22,height:22,padding:0}}>‹</button>
               <span style={{fontSize:11,fontWeight:700,color:C.mut,minWidth:130,textAlign:"center"}}>{fmtD(weekStart)} – {fmtD(weekEnd)}</span>
               <button onClick={()=>setDsscWeekOff(o=>o+1)} style={{background:"none",border:"1px solid "+C.border,borderRadius:6,color:C.text,cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:800,width:22,height:22,padding:0}}>›</button>
@@ -16444,6 +16488,8 @@ export default function App() {
                 {(() => { const p = payFor(c); return (
                   <span style={{fontSize:11,fontWeight:700,color:C.text,whiteSpace:"nowrap"}}
                     title={p.kind==="pod" ? DSSC_TIERS[p.tier].label+" tier · "+p.players+" player"+(p.players===1?"":"s")+" · 90-min pod" : p.kind==="uncounted" ? "Pod with no player count yet — flat rate" : p.kind==="untiered" ? "Coach has no tier — flat rate" : "Flat hourly"}>
+                    <button title="Fix the hours on this clock-in" onClick={async ()=>{ const v = window.prompt("Hours for " + c.coach_name + " on " + fmtD(c.session_date) + " (" + c.clinic_name + "):", String(c.hours||0)); if (v == null) return; const n = Math.round(Number(v) * 4) / 4; if (!(n > 0 && n <= 12)) { window.alert("Enter hours between 0.25 and 12."); return; } const { error } = await supabase.from("dssc_checkins").update({ hours: n, source: "admin" }).eq("id", c.id); if (error) window.alert("Couldn't save: " + error.message); await loadDsscCheckins(); }}
+                      style={{background:"none",border:"none",color:C.mut,cursor:"pointer",fontFamily:"inherit",fontSize:11,padding:"0 4px 0 0"}}>✎</button>
                     {Number(c.hours||0)}h · {money(p.amount)}
                     {p.kind==="pod" && <span style={{color:C.grn,fontWeight:800}}> · {DSSC_TIERS[p.tier].label}</span>}
                     {(p.kind==="uncounted"||p.kind==="untiered") && <span style={{color:"#f59e0b",fontWeight:800}}> · {p.kind==="untiered"?"no tier":"not counted"}</span>}
@@ -25559,8 +25605,8 @@ export default function App() {
   // clinics, assigns a coach, and sets goals/level/expectations + a plan that
   // mirrors our DS Elite methodology; the coach runs it and leaves feedback.
   // Whether this login runs the club side (schedules, staffing, approvals).
-  // Owners and admins qualify alongside the named DSSC directors.
-  const isDsscDirector = canOps || DSSC_DIRECTOR_EMAILS.includes(String(coach?.email || "").trim().toLowerCase());
+  // Owners and admins qualify alongside the named DSSC directors and every
+  // coaches.dssc_role = "admin" (isDsscDirector is defined with the role flags).
   // The club-branded coach screen (src/dssc/DsscHub.jsx). Coaches land here
   // for anything DSSC; directors reach it from the admin screen to see what
   // their coaches see.
@@ -25571,7 +25617,7 @@ export default function App() {
       fetch("/api/send-email", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ skipPush: true, subject: title, body, recipients: directorList }) }).catch(()=>{});
     };
     return (
-      <DsscHub coach={coach} coachRoster={coachRoster} clinics={clinics} dsscCheckins={dsscCheckins} dsscAvail={dsscAvail} podAttendance={podAttendance}
+      <DsscHub coach={coach} coachRoster={coachRoster} clinics={clinics} dsscCheckins={dsscCheckins} dsscAvail={dsscAvail} podAttendance={podAttendance} sports={dsscSports}
         isDirector={isDsscDirector} initialClinicId={dsscHubSel?.clinicId || clinicOpenId} initialSessionId={dsscHubSel?.sessionId || null} initialTab={dsscHubSel?.tab || null}
         onConsumedInitial={()=>{ setClinicOpenId(null); setDsscHubSel(null); }} backTo={dsscHubBack ? { label: dsscHubBack==="courts" ? "Court Availability" : "Admin board", go:()=>{ const to = dsscHubBack==="courts" ? "courts" : "clinics"; setDsscHubBack(false); setView(to); } } : null}
         setClinics={setClinics} reload={{ clinics: loadClinics, checkins: loadDsscCheckins, avail: loadDsscAvail, attendance: loadPodAttendance }}
@@ -25588,7 +25634,7 @@ export default function App() {
       await loadClinics(); setClinicFrom("clinics"); setClinicOpenId(data.id);
     };
     return (
-      <DsscAdmin coach={coach} clinics={clinics} coachRoster={coachRoster} dsscAvail={dsscAvail} podAttendance={podAttendance}
+      <DsscAdmin coach={coach} clinics={clinics} coachRoster={coachRoster} dsscAvail={dsscAvail} podAttendance={podAttendance} sports={dsscSports}
         setClinics={setClinics} reloadClinics={loadClinics}
         staffDsscSession={staffDsscSession} unstaffDsscSession={unstaffDsscSession} decideDsscPickup={decideDsscPickup}
         openClass={(cid, sid)=>{ setDsscHubSel({ clinicId: cid, sessionId: sid }); setDsscHubBack(true); setView("dssc"); }}
@@ -25603,7 +25649,7 @@ export default function App() {
   function renderClinics() {
     const norm = s => (s||"").toString().trim().toLowerCase();
     const coachName = coach?.display_name || coach?.email || "";
-    const isDirector = canOps || DSSC_DIRECTOR_EMAILS.includes(norm(coach?.email||""));
+    const isDirector = isDsscDirector;
     // Match the logged-in coach to a clinic's assigned coach name.
     const cand = new Set(); if (coach?.display_name) cand.add(norm(coach.display_name));
     const myR = coachRoster.find(r => coach?.email && norm(r.email)===norm(coach.email));
@@ -32705,7 +32751,7 @@ export default function App() {
   // ── Navigation (src/Nav.jsx): one list drives the desktop sidebar, the phone
   // drawer, bottom bar and section chips, gated exactly like the screen guards.
   const navCtx = {
-    workspace, canOps, isAdmin, isOwner, canViewTeams, hasTeams: myTeamNames.length > 0, canSendReports, isDsscDirector, pins: navPins,
+    workspace, canOps, isAdmin, isOwner, canViewTeams, hasTeams: myTeamNames.length > 0, canSendReports, isDsscDirector, dsscOnly, isDsscStaff, pins: navPins,
     counts: {
       smsDse: smsUnread.dse, smsDssc: smsUnread.dssc, notif: unreadCount,
       issuesOpen: incidents.filter(r => r.status === "open").length,
@@ -32749,7 +32795,7 @@ export default function App() {
         <div style={{display:"flex",alignItems:"center",gap:10,minWidth:0,flex:"1 1 auto"}}>
           {isReachOnly ? (<>
           {isNarrow ? <span style={{fontSize:22,color:C.gold,flexShrink:0}}>◆</span> : workspace==="dssc"
-            ? <img src="/dssc/logo-horizontal-white.png" alt="Dripping Springs Sports Club" style={{height:28,width:"auto",cursor:"pointer"}} onClick={()=>{ setView("home"); setOpenMenu(null); }} />
+            ? <img src={import.meta.env.BASE_URL + "dssc/logo-horizontal-white.png"} alt="Dripping Springs Sports Club" style={{height:28,width:"auto",cursor:"pointer"}} onClick={()=>{ setView("home"); setOpenMenu(null); }} />
             : <div style={{fontSize:19,fontWeight:800,color:C.gold,display:"flex",alignItems:"center",gap:8,cursor:"pointer"}} onClick={()=>{ setView("home"); setOpenMenu(null); }}>
                 <span style={{fontSize:22}}>◆</span> DS ELITE
                 <span style={{fontSize:11,fontWeight:400,color:C.mut,marginLeft:6}}>HQ</span>
@@ -32914,8 +32960,11 @@ export default function App() {
       {/* 1500 keeps text screens readable, but the wide boards are grids, not
           prose — capping them just buys empty margin and costs a column. */}
       <div style={{padding:showPhoneNav?"14px 18px calc(84px + env(safe-area-inset-bottom, 0px))":"14px 18px",maxWidth:WIDE_VIEWS.has(view)?"none":1500,margin:"0 auto"}}>
-        {isReachOnly ? <ReachHome coach={coach} players={players} session={session} /> : OPS_VIEWS.has(view) && view !== "notifications" && !canOps ? opsDenied : <>
-        {view==="home" && (workspace==="dssc" ? (isDsscDirector ? renderDsscAdmin() : renderDsscHub()) : renderHome())}
+        {isReachOnly ? <ReachHome coach={coach} players={players} session={session} /> : (dsscOnly && !DSSC_ONLY_OK.has(view)) ? null : OPS_VIEWS.has(view) && view !== "notifications" && !canOps && !(isDsscDirector && view === "dssccal") ? opsDenied : <>
+        {view==="home" && (workspace==="dssc" ? (isDsscStaff && !isDsscDirector ? <StaffClock coach={coach} isDirector={false} /> : isDsscDirector ? renderDsscAdmin() : renderDsscHub()) : renderHome())}
+        {view==="staffhours" && <StaffClock coach={coach} isDirector={isDsscDirector} />}
+        {view==="staffadmin" && (isDsscDirector ? <StaffHoursAdmin coach={coach} /> : opsDenied)}
+        {view==="dsscpeople" && (isDsscDirector ? <DsscPeople coach={coach} isOwner={isOwner} /> : opsDenied)}
         {view==="clockin" && (
           <div style={{maxWidth:820,margin:"0 auto"}}>
             <h2 style={{margin:"0 0 12px",fontSize:20,fontWeight:800,color:C.gold}}>⏱ Clock In &amp; Timesheet</h2>

@@ -238,7 +238,7 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
       : { margin: "-14px -18px", padding: "16px 16px 30px", background: DS.bg, minHeight: "calc(100vh - 56px)", fontFamily: DS.font, color: DS.text }}>
       <div style={narrow && fill ? { width: "100%", flex: 1, minHeight: 0, display: "flex", flexDirection: "column" } : { maxWidth: 1200, margin: "0 auto" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
-          <img src="/dssc/logo-horizontal-white.png" alt="Dripping Springs Sports Club" style={{ height: 30 }} />
+          <img src={import.meta.env.BASE_URL + "dssc/logo-horizontal-white.png"} alt="Dripping Springs Sports Club" style={{ height: 30 }} />
           <Tag color={DS.lime}>Texts</Tag>
           <span style={{ fontSize: 12, color: DS.mut }}>{threads.length} conversation{threads.length === 1 ? "" : "s"}{totalUnread ? ` · ${totalUnread} unread` : ""}{optouts.length ? ` · ${optouts.length} opted out` : ""}</span>
           <div style={{ display: "flex", border: "1px solid " + DS.line, borderRadius: 999, overflow: "hidden" }}>

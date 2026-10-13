@@ -39,8 +39,8 @@ export default async function handler(req, res) {
     const email = (user?.email || "").trim().toLowerCase();
     if (!email) return res.status(401).json({ error: "Not signed in" });
     let ok = OWNERS.includes(email) || DIRECTORS.includes(email);
-    const { data: c } = await sb.from("coaches").select("display_name, is_admin, is_approved").ilike("email", email).maybeSingle();
-    if (!ok) ok = !!(c && c.is_approved && c.is_admin);
+    const { data: c } = await sb.from("coaches").select("display_name, is_admin, is_approved, dssc_role").ilike("email", email).maybeSingle();
+    if (!ok) ok = !!(c && c.is_approved && (c.is_admin || c.dssc_role === "admin"));
     if (!ok) return res.status(403).json({ error: "Campaigns are for directors and admins" });
     who = c?.display_name || email; whoEmail = email;
   }

@@ -11,7 +11,7 @@ import { appOrigin } from "../../shared/app-origin.js";
 //    <p>Location - <b>DSSC Warehouse</b></p>
 //    <p>Sub Location - <b>Court 2</b></p>"
 //
-// We keep ONLY volleyball clinics (category matches /volleyball/i), group events
+// We keep volleyball and basketball classes (category/package name), group events
 // by program id → one clinic each, and MERGE into dssc_clinics keyed on
 // source_ref = program id. The merge is careful: it never clobbers a director's
 // work — coach assignments, focus, recap, goals, expectations and the plan all
@@ -46,11 +46,15 @@ export function parsePlaybookEvents(events) {
     // Volleyball Academy — it never reached the app no matter how often the
     // sync was run.
     const pkg = field(html, "Program Package");
-    if (!/volleyball/i.test(category + " " + pkg)) continue;
+    // Basketball joined 13 Oct 2026 (Skill Lab / Shooting Lab at DSSC Flex,
+    // category "Basketball Clinic") so basketball coaches run their classes
+    // in HQ the same way; each class carries its sport.
+    const sport = /basketball/i.test(category + " " + pkg) ? "basketball" : /volleyball/i.test(category + " " + pkg) ? "volleyball" : null;
+    if (!sport) continue;
     const start = e.start || e.startStr, end = e.end || e.endStr;
     const date = String(start || "").slice(0, 10);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
-    const g = byProg[program] || (byProg[program] = { program, name: field(html, "Program Package") || "Volleyball Clinic", category, location: field(html, "Location") || null, sessions: [] });
+    const g = byProg[program] || (byProg[program] = { program, name: field(html, "Program Package") || (sport === "basketball" ? "Basketball Clinic" : "Volleyball Clinic"), category, sport, location: field(html, "Location") || null, sessions: [] });
     g.sessions.push({ id: "p" + program + "-" + date + "-" + time24(start), date, start_time: fmtTime(start), end_time: fmtTime(end), court: field(html, "Sub Location") || null });
   }
   // de-dupe identical sessions (same id) and sort each program's sessions
@@ -126,6 +130,7 @@ export async function syncClinics(supabase, events, opts = {}) {
     const common = {
       sessions: merged.sessions,
       category: g.category,
+      sport: g.sport || "volleyball",
       clinic_date: dates[0] || null,
       end_date: dates[dates.length - 1] || null,
       start_time: first.start_time || null,
@@ -190,6 +195,7 @@ const crewNames = (s) => [...new Set([s.coach_name, ...((Array.isArray(s.staff) 
 // from Playbook, so somebody tells the coach before they turn up to it.
 async function tellDirectors(list) {
   const to = ["hunterhaleysc10@gmail.com", "hunter@drippingsportsclub.com", "drew@dselitevolleyball.com"];
+  if (list.some(r => r.clinic?.sport === "basketball")) to.push("adrian@drippingsportsclub.com", "jonathan@drippingsportsclub.com");
   const origin = appOrigin(null);
   const fmt = (d) => new Date(d + "T12:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "America/Chicago" });
   const lines = list.map(r => `• ${r.clinic.name} — ${fmt(r.session.date)} ${r.session.start_time || ""} — was staffed by ${crewNames(r.session).join(", ")}`);

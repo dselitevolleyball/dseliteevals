@@ -4,6 +4,18 @@
   "framework": "vite",
   "rewrites": [
     {
+      "source": "/hq/api/:path*",
+      "destination": "/api/:path*"
+    },
+    {
+      "source": "/hq",
+      "destination": "/hq/index.html"
+    },
+    {
+      "source": "/hq/",
+      "destination": "/hq/index.html"
+    },
+    {
       "source": "/practice",
       "destination": "/practice-planner.html"
     },
@@ -172,6 +184,10 @@
     {
       "path": "/api/clinic-reminders?utc=18",
       "schedule": "5 18 * * *"
+    },
+    {
+      "path": "/api/staff-clock-reminder",
+      "schedule": "*/15 * * * *"
     }
   ],
   "functions": {

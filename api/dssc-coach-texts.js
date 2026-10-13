@@ -77,14 +77,18 @@ export default async function handler(req, res) {
   const today = q.get("date") || new Date().toLocaleDateString("en-CA", { timeZone: TZ });
   const yesterday = addDays(today, -1);
   const origin = appOrigin(req);
-  const classLink = (c, s, tab) => `${origin}/?view=dssc&clinic=${c.id}&session=${encodeURIComponent(s.id)}${tab ? "&ctab=" + tab : ""}`;
+  // Links open the DSSC app (www.drippingsportsclub.com/hq), not DS Elite HQ.
+  const classLink = (c, s, tab) => `https://www.drippingsportsclub.com/hq/?view=dssc&clinic=${c.id}&session=${encodeURIComponent(s.id)}${tab ? "&ctab=" + tab : ""}`;
 
-  const [{ data: clinics }, { data: roster }, { data: coaches }, { data: avail }] = await Promise.all([
-    sb.from("dssc_clinics").select("id,name,category,location,sessions"),
+  const [{ data: clinics }, { data: rosterDse }, { data: coaches }, { data: avail }, { data: dsscPeople }] = await Promise.all([
+    sb.from("dssc_clinics").select("id,name,category,location,sessions,sport"),
     sb.from("coach_roster").select("first_name,last_name,email,phone"),
     sb.from("coaches").select("display_name,email"),
     sb.from("dssc_availability").select("coach_name,coach_email"),
+    sb.from("dssc_people").select("first_name,last_name,email,phone").eq("active", true),
   ]);
+  // DS Elite's roster plus DSSC's own people (basketball coaches, staff, admins).
+  const roster = [...(rosterDse || []), ...(dsscPeople || []).filter(p => !(rosterDse || []).some(r => r.email && p.email && String(r.email).toLowerCase() === String(p.email).toLowerCase()))];
 
   // Who is who: a session names a coach as "ella hinkle", "Coach Tara Fisher"
   // or by login name. Resolve to the roster row (name + phone); never guess.
@@ -125,12 +129,29 @@ export default async function handler(req, res) {
   const regAt = syncRow?.registrations_at ? new Date(syncRow.registrations_at) : null;
   const regFresh = !!regAt && (Date.now() - regAt.getTime()) < 3 * 3600e3
     && !(syncRow.registrations_error && syncRow.registrations_error_at && new Date(syncRow.registrations_error_at) > regAt);
-  const liveToday = todays.filter(x => !x.s.cancelled);
+  // A sport's classes only auto-cancel once that sport's sign-ups have ever
+  // reached HQ - basketball joined 13 Oct 2026, and until its registrations are
+  // seen arriving, "0 signed up" may just mean they aren't imported yet.
+  const sportOf = (c) => c.sport || "volleyball";
+  const sportsWithSignups = new Set();
+  for (const sp of [...new Set((clinics || []).map(sportOf))]) {
+    const ids = (clinics || []).filter(c => sportOf(c) === sp).map(c => c.id);
+    const { count } = ids.length ? await sb.from("dssc_pod_roster").select("id", { count: "exact", head: true }).in("clinic_id", ids) : { count: 0 };
+    if (count > 0) sportsWithSignups.add(sp);
+  }
+  const liveToday = todays.filter(x => !x.s.cancelled && sportsWithSignups.has(sportOf(x.c)));
   const empty = liveToday.filter(x => players(x.c, x.s) === 0 && (parseClock(x.s.start_time) ?? 24) >= 13);
   let cancelHold = null;
   if (empty.length && syncRow && syncRow.auto_cancel === false) cancelHold = "auto-cancel is switched off";
   else if (empty.length && !regFresh) cancelHold = "the Playbook sign-up import hasn't run cleanly in the last 3 hours";
-  else if (empty.length >= 4 && empty.length > liveToday.length / 2) cancelHold = `${empty.length} of ${liveToday.length} classes show no sign-ups, which looks like a sign-up import problem`;
+  else {
+    // Judged per sport: one sport's import trouble shouldn't hold the other's.
+    const heldSports = [...new Set(empty.map(x => sportOf(x.c)))].filter(sp => {
+      const e = empty.filter(x => sportOf(x.c) === sp).length, all = liveToday.filter(x => sportOf(x.c) === sp).length;
+      return e >= 4 && e > all / 2;
+    });
+    if (heldSports.length) cancelHold = `most ${heldSports.join(" and ")} classes today show no sign-ups, which looks like a sign-up import problem`;
+  }
   const toCancel = cancelHold || (only && only !== "day") ? [] : empty;
   const cancelledKeys = new Set(toCancel.map(x => keyOf(x.c, x.s)));
   const cancelWrites = [];
@@ -191,21 +212,25 @@ export default async function handler(req, res) {
     items: items.map(i => ({ clinic: i.c.name, session_id: i.s.id })),
   }));
 
-  // Hunter turns registration off in Playbook, or a family can still sign up
-  // (and pay) for a class that isn't happening.
+  // Whoever runs that sport turns registration off in Playbook (volleyball ->
+  // Hunter, basketball -> Adrian), or a family can still sign up (and pay)
+  // for a class that isn't happening.
   const cancelTexts = [];
   if (toCancel.length) {
-    const lines = toCancel.map(x => {
-      const crew = sessionStaff(x.s).filter(y => y.status === "approved").map(y => y.name).join(", ");
-      return `- ${cleanName(x.c.name)}, ${timeRange(x.s)}${crew ? " (" + crew + ")" : " (no coach)"}`;
-    }).join("\n");
-    for (const em of (process.env.DSSC_CANCEL_NOTIFY_EMAILS || "hunter@drippingsportsclub.com").split(",").map(x => x.trim().toLowerCase()).filter(Boolean)) {
+    const notifyBy = { volleyball: process.env.DSSC_CANCEL_NOTIFY_EMAILS || "hunter@drippingsportsclub.com", basketball: process.env.DSSC_BB_CANCEL_NOTIFY_EMAILS || "adrian@drippingsportsclub.com" };
+    const emailsFor = (x) => (notifyBy[x.c.sport || "volleyball"] || notifyBy.volleyball).split(",").map(e => e.trim().toLowerCase()).filter(Boolean);
+    for (const em of [...new Set(toCancel.flatMap(emailsFor))]) {
+      const mine = toCancel.filter(x => emailsFor(x).includes(em));
       const r = byEmail.get(em);
       if (!r) { unresolved.add(em); continue; }
       const name = `${r.first_name || ""} ${r.last_name || ""}`.trim();
+      const lines = mine.map(x => {
+        const crew = sessionStaff(x.s).filter(y => y.status === "approved").map(y => y.name).join(", ");
+        return `- ${cleanName(x.c.name)}, ${timeRange(x.s)}${crew ? " (" + crew + ")" : " (no coach)"}`;
+      }).join("\n");
       cancelTexts.push({ kind: "cancel", who: { key: "cancel|" + em, name, phone: normalizePhone(r.phone || "") },
-        text: `Hi {first}, DSSC auto-cancelled these classes today - nobody signed up by noon:\n${lines}\nPlease turn off registration for them in Playbook so nobody signs up. The coaches have been told.`,
-        items: toCancel.map(x => ({ clinic: x.c.name, session_id: x.s.id, time: timeRange(x.s) })) });
+        text: `Hi {first}, DSSC auto-cancelled ${mine.length === 1 ? "this class" : "these classes"} today - nobody signed up by noon:\n${lines}\nPlease turn off registration for ${mine.length === 1 ? "it" : "them"} in Playbook so nobody signs up. The coaches have been told.`,
+        items: mine.map(x => ({ clinic: x.c.name, session_id: x.s.id, time: timeRange(x.s) })) });
     }
   }
   let texts = [...(only && only !== "day" ? [] : [...dayTexts, ...cancelTexts]), ...(only && only !== "recap" ? [] : recapTexts)];
@@ -232,7 +257,7 @@ export default async function handler(req, res) {
   }
 
   let emailed = false;
-  const directors = (DSSC_PLANNER_EMAILS ? DSSC_PLANNER_EMAILS.split(",") : DIRECTORS_DEFAULT).map(s => s.trim()).filter(Boolean);
+  const directors = [...new Set([...(DSSC_PLANNER_EMAILS ? DSSC_PLANNER_EMAILS.split(",") : DIRECTORS_DEFAULT), ...(toCancel.some(x => x.c.sport === "basketball") ? ["adrian@drippingsportsclub.com"] : [])].map(s => s.trim()).filter(Boolean))];
   if ((!only || only === "email") && (podsToday.length || podsYesterday.length || toCancel.length || cancelHold) && RESEND_API_KEY && (DSSC_FROM_EMAIL || DSE_FROM_EMAIL) && !sentKey.has("directors|email")) {
     const mark = (ok, label) => `<span style="font-weight:700;color:${ok ? "#0F8B76" : "#d9480f"}">${ok ? "✓" : "✗"} ${label}</span>`;
     const rowsToday = podsToday.map(p => `<tr><td style="padding:6px 8px;border-top:1px solid #e3ebe9"><a href="${classLink(p.c, p.s)}" style="color:#104946;font-weight:700">${esc(p.c.name)}</a><br><span style="color:#667">${esc(timeRange(p.s))}${p.s.court ? " · " + esc(p.s.court) : ""}</span></td><td style="padding:6px 8px;border-top:1px solid #e3ebe9">${esc(p.coaches)}</td><td style="padding:6px 8px;border-top:1px solid #e3ebe9;text-align:center">${p.players}</td><td style="padding:6px 8px;border-top:1px solid #e3ebe9">${mark(p.plan, "Plan")}</td><td style="padding:6px 8px;border-top:1px solid #e3ebe9">${mark(p.note, p.note ? "Sent" : p.written ? "Written, not sent" : "Not sent")}</td></tr>`).join("");
