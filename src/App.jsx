@@ -3553,6 +3553,28 @@ export default function App() {
     if (error) { console.error("Load dssc_availability error:", error); return; }
     setDsscAvail(data || []);
   }, []);
+  // DSSC's own coaches/staff (dssc_people). Basketball coaches live here and
+  // ONLY they can be put on basketball classes; someone who coaches only
+  // basketball is never offered for volleyball (Drew, 13 Oct 2026).
+  const [dsscPeople, setDsscPeople] = useState([]);
+  const loadDsscPeople = useCallback(async () => {
+    const { data, error } = await supabase.from("dssc_people").select("first_name,last_name,email,role,sports,active").eq("active", true);
+    if (!error) setDsscPeople(data || []);
+  }, []);
+  useEffect(() => { if (isApproved && ["clinics", "dssc", "dssccal", "dssctime", "home"].includes(view)) loadDsscPeople(); }, [isApproved, view, loadDsscPeople]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Who may be assigned to a class of this sport: { avail: [...], others: [...] }.
+  const dsscCoachLists = (sport) => {
+    const nm = (s) => String(s || "").trim().toLowerCase().replace(/\s+/g, " ");
+    const full = (p) => ((p.first_name || "") + " " + (p.last_name || "")).trim();
+    const coaches = dsscPeople.filter(p => p.role === "coach");
+    if (sport === "basketball") return { avail: coaches.filter(p => (p.sports || []).includes("basketball")).map(full).sort((a, b) => a.localeCompare(b)), others: [], label: "Basketball coaches" };
+    const bbOnly = new Set(coaches.filter(p => !(p.sports || []).includes("volleyball")).map(p => nm(full(p))));
+    const availNames = dsscAvail.filter(a => a.available && (a.coach_name || "").trim() && !bbOnly.has(nm(a.coach_name))).map(a => a.coach_name.trim()).sort((a, b) => a.localeCompare(b));
+    const rosterNames = [...coachRoster.map(r => ((r.first_name || "") + " " + (r.last_name || "")).trim()), ...coaches.filter(p => (p.sports || []).includes("volleyball")).map(full)]
+      .filter(x => x && !isPlaceholderPerson(x) && !bbOnly.has(nm(x)));
+    const others = [...new Set(rosterNames.filter(x => !availNames.some(a => nm(a) === nm(x))))].sort((a, b) => a.localeCompare(b));
+    return { avail: availNames, others, label: "Available" };
+  };
   // Pod attendance — how many players actually showed. Payroll input, so it has
   // its own table rather than riding on the session JSONB. Until the migration
   // is run this errors and leaves the list empty, which reads as "not counted
@@ -15425,14 +15447,14 @@ export default function App() {
             style={{...inpStyle,padding:"2px 4px",fontSize:9,fontWeight:700,width:"100%",
                     borderColor:r.short?"#f59e0b":C.border,color:r.short?"#f59e0b":C.mut}}>
             <option value="">{r.short ? "+ add " + r.short + " more" : "+ add a coach"}</option>
-            {availNames.length > 0 && (
-              <optgroup label="Available">
-                {availNames.map(nm => <option key={"a"+nm} value={nm+"|"+(canLead.has(nrm(nm))?"lead":"assist")}>{nm}{canLead.has(nrm(nm))?" ★":""}</option>)}
+            {dsscCoachLists(r.clinic?.sport).avail.length > 0 && (
+              <optgroup label={dsscCoachLists(r.clinic?.sport).label}>
+                {dsscCoachLists(r.clinic?.sport).avail.map(nm => <option key={"a"+nm} value={nm+"|"+(canLead.has(nrm(nm))?"lead":"assist")}>{nm}{canLead.has(nrm(nm))?" ★":""}</option>)}
               </optgroup>
             )}
-            <optgroup label="Other coaches">
-              {others.map(nm => <option key={"o"+nm} value={nm+"|"+(canLead.has(nrm(nm))?"lead":"assist")}>{nm}{canLead.has(nrm(nm))?" ★":""}</option>)}
-            </optgroup>
+            {dsscCoachLists(r.clinic?.sport).others.length > 0 && <optgroup label="Other coaches">
+              {dsscCoachLists(r.clinic?.sport).others.map(nm => <option key={"o"+nm} value={nm+"|"+(canLead.has(nrm(nm))?"lead":"assist")}>{nm}{canLead.has(nrm(nm))?" ★":""}</option>)}
+            </optgroup>}
           </select>
         </div>
       );
@@ -15533,14 +15555,14 @@ export default function App() {
           <select value="" onChange={ev => { const [nm, role] = ev.target.value.split("|"); if (nm) staffDsscSession(r.clinicId, r.id, nm, role, "approved"); }}
             style={{...inpStyle,padding:"4px 8px",fontSize:11,minWidth:150,borderColor:r.short?"#f59e0b":C.border,color:r.short?"#f59e0b":C.mut}}>
             <option value="">{r.short ? "+ add " + r.short + " more" : "+ add a coach"}</option>
-            {availNames.length > 0 && (
-              <optgroup label="Available">
-                {availNames.map(nm => <option key={"a"+nm} value={nm+"|"+(canLead.has(nrm(nm))?"lead":"assist")}>{nm}{canLead.has(nrm(nm))?" ★ can lead":""}</option>)}
+            {dsscCoachLists(r.clinic?.sport).avail.length > 0 && (
+              <optgroup label={dsscCoachLists(r.clinic?.sport).label}>
+                {dsscCoachLists(r.clinic?.sport).avail.map(nm => <option key={"a"+nm} value={nm+"|"+(canLead.has(nrm(nm))?"lead":"assist")}>{nm}{canLead.has(nrm(nm))?" ★ can lead":""}</option>)}
               </optgroup>
             )}
-            <optgroup label="Other coaches">
-              {others.map(nm => <option key={"o"+nm} value={nm+"|"+(canLead.has(nrm(nm))?"lead":"assist")}>{nm}{canLead.has(nrm(nm))?" ★ can lead":""}</option>)}
-            </optgroup>
+            {dsscCoachLists(r.clinic?.sport).others.length > 0 && <optgroup label="Other coaches">
+              {dsscCoachLists(r.clinic?.sport).others.map(nm => <option key={"o"+nm} value={nm+"|"+(canLead.has(nrm(nm))?"lead":"assist")}>{nm}{canLead.has(nrm(nm))?" ★ can lead":""}</option>)}
+            </optgroup>}
           </select>
         </div>
       </div>
@@ -25660,7 +25682,8 @@ export default function App() {
     rosterNameVariants(myR).forEach(v => cand.add(v));
     const isMine = c => c.coach_name && cand.has(norm(c.coach_name));
     const rid = () => "b"+Math.random().toString(36).slice(2,8);
-    const coachOptions = coachRoster.slice().sort((a,b)=>(a.first_name||"").localeCompare(b.first_name||"")).map(r => ((r.first_name||"")+" "+(r.last_name||"")).trim()).filter(Boolean);
+    // Coaches for a class of this sport (basketball classes: basketball coaches only).
+    const coachOptionsFor = (sport) => { const L = dsscCoachLists(sport || "volleyball"); return [...new Set([...L.avail, ...L.others])].sort((a,b)=>a.localeCompare(b)); };
 
     const S = {
       card:  { background:C.card, border:"1px solid "+C.border, borderRadius:12, padding:16, marginBottom:14 },
@@ -25780,7 +25803,7 @@ export default function App() {
     const suggestForSession = (clinic, s, exclude) => {
       const st=parseTime(s.start_time), en=parseTime(s.end_time);
       const target=((clinic.category||"")+" "+(clinic.age_group||"")+" "+(clinic.name||"")).toLowerCase();
-      return coachOptions.map(name => {
+      return coachOptionsFor(clinic.sport).map(name => {
         const nk=norm(name); if(exclude && exclude.has(nk)) return null;
         const a=availByName[nk], mySess=coachSessionsMap[nk]||[];
         const clash = mySess.some(x=> x.date===s.date && st!=null && en!=null && x.start!=null && x.end!=null && st<x.end && x.start<en);
@@ -25869,7 +25892,7 @@ export default function App() {
                 <div><div style={S.lbl}>Location</div><input value={open.location||""} onChange={e=>saveClinic(open.id,{location:e.target.value})} placeholder="Warehouse" style={{...S.sel,width:"100%"}} /></div>
                 <div><div style={S.lbl}>Age group</div><input value={open.age_group||""} onChange={e=>saveClinic(open.id,{age_group:e.target.value})} placeholder="10-12U" style={{...S.sel,width:"100%"}} /></div>
                 <div><div style={S.lbl}>Level</div><input value={open.level||""} onChange={e=>saveClinic(open.id,{level:e.target.value})} placeholder="Beginner / Intermediate" style={{...S.sel,width:"100%"}} /></div>
-                <div><div style={S.lbl}>Lead coach</div><select value={open.coach_name||""} onChange={e=>saveClinic(open.id,{coach_name:e.target.value||null, status: e.target.value?(open.status==="planned"?"assigned":open.status):open.status})} style={{...S.sel,width:"100%"}}><option value="">— assign —</option>{coachOptions.map(n=><option key={n} value={n}>{n}</option>)}{open.coach_name && !coachOptions.includes(open.coach_name) && <option value={open.coach_name}>{open.coach_name}</option>}</select></div>
+                <div><div style={S.lbl}>Lead coach</div><select value={open.coach_name||""} onChange={e=>saveClinic(open.id,{coach_name:e.target.value||null, status: e.target.value?(open.status==="planned"?"assigned":open.status):open.status})} style={{...S.sel,width:"100%"}}><option value="">— assign —</option>{coachOptionsFor(open.sport).map(n=><option key={n} value={n}>{n}</option>)}{open.coach_name && !coachOptionsFor(open.sport).includes(open.coach_name) && <option value={open.coach_name}>{open.coach_name}</option>}</select></div>
                 <div><div style={S.lbl}>Assistants</div><input value={open.assistants||""} onChange={e=>saveClinic(open.id,{assistants:e.target.value})} placeholder="Extra coaches" style={{...S.sel,width:"100%"}} /></div>
                 <div><div style={S.lbl}>Status</div><select value={open.status||"planned"} onChange={e=>saveClinic(open.id,{status:e.target.value})} style={{...S.sel,width:"100%"}}>{Object.keys(STATUS).map(k=><option key={k} value={k}>{STATUS[k][0]}</option>)}</select></div>
               </>) : (
@@ -25937,7 +25960,7 @@ export default function App() {
                         <span style={{fontSize:13,fontWeight:700,color:C.text,minWidth:110}}>{sfmt(s.date)}</span>
                         <span style={{fontSize:12,color:C.mut,flex:1,minWidth:90}}>{s.start_time}{s.end_time?"–"+s.end_time:""}{s.court?" · "+s.court:""}</span>
                         {canManage
-                          ? <select value={s.coach_name||""} onChange={e=>setSess(i,{coach_name:e.target.value||null})} style={{...S.sel,minWidth:150}}><option value="">⚠ assign coach</option>{coachOptions.map(n=><option key={n} value={n}>{n}</option>)}{s.coach_name && !coachOptions.includes(s.coach_name) && <option value={s.coach_name}>{s.coach_name}</option>}</select>
+                          ? <select value={s.coach_name||""} onChange={e=>setSess(i,{coach_name:e.target.value||null})} style={{...S.sel,minWidth:150}}><option value="">⚠ assign coach</option>{coachOptionsFor(open.sport).map(n=><option key={n} value={n}>{n}</option>)}{s.coach_name && !coachOptionsFor(open.sport).includes(s.coach_name) && <option value={s.coach_name}>{s.coach_name}</option>}</select>
                           : <span style={{fontSize:12,fontWeight:700,color:s.coach_name?C.grn:"#f59e0b"}}>{s.coach_name?("Coach "+s.coach_name):"needs a coach"}</span>}
                       </div>
                       {canManage && !s.coach_name && (() => {

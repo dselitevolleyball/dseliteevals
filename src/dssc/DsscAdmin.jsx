@@ -98,9 +98,16 @@ export default function DsscAdmin({
   const pool = dsscAvail.filter(a => a.available && (a.coach_name || "").trim());
   const availBy = {}; dsscAvail.forEach(a => { availBy[nrm(a.coach_name)] = a; });
   const rosterNames = [...new Set(coachRoster.map(r => ((r.first_name || "") + " " + (r.last_name || "")).trim()).filter(n => n && !isPlaceholderPerson(n)))];
-  const peopleNames = dsscPeople.filter(p => p.role === "coach" && (sport === "all" || (p.sports || []).includes(sport))).map(p => `${p.first_name} ${p.last_name || ""}`.trim());
-  // Basketball classes are coached from the DSSC list, not the volleyball club roster.
-  const everyone = [...new Set(sport === "basketball" ? peopleNames : [...pool.map(a => a.coach_name.trim()), ...rosterNames, ...peopleNames])].sort((a, b) => a.localeCompare(b));
+  // Who may coach a class depends on ITS sport (Drew, 13 Oct 2026): a basketball
+  // class only offers the basketball coaches list; a volleyball class never
+  // offers someone who coaches only basketball.
+  const fullName = (p) => `${p.first_name} ${p.last_name || ""}`.trim();
+  const dsscCoaches = dsscPeople.filter(p => p.role === "coach");
+  const bbOnly = new Set(dsscCoaches.filter(p => !(p.sports || []).includes("volleyball")).map(p => nrm(fullName(p))));
+  const everyoneFor = (sp) => (sp === "basketball"
+    ? [...new Set(dsscCoaches.filter(p => (p.sports || []).includes("basketball")).map(fullName))]
+    : [...new Set([...pool.map(a => a.coach_name.trim()), ...rosterNames, ...dsscCoaches.filter(p => (p.sports || []).includes("volleyball")).map(fullName)])].filter(n => !bbOnly.has(nrm(n)))
+  ).sort((a, b) => a.localeCompare(b));
   const commitments = useMemo(() => {
     const m = {};
     for (const r of rows) for (const x of sessionStaff(r.s)) { if (x.status === "declined") continue; (m[nrm(x.name)] = m[nrm(x.name)] || []).push({ date: r.s.date, st: r.st, en: r.en }); }
@@ -110,7 +117,7 @@ export default function DsscAdmin({
     const target = ((r.c.category || "") + " " + (r.c.age_group || "") + " " + (r.c.name || "")).toLowerCase();
     const on = new Set(sessionStaff(r.s).map(x => nrm(x.name)));
     const needLead = !staffApproved(r.s).some(x => x.role === "lead");
-    return everyone.map(name => {
+    return everyoneFor(r.c.sport || "volleyball").map(name => {
       const k = nrm(name); if (on.has(k)) return null;
       const a = availBy[k], mine = commitments[k] || [];
       if (mine.some(x => sameDayWindow(x, r) && r.st < x.en && x.st < r.en)) return null;   // clash
@@ -276,7 +283,7 @@ export default function DsscAdmin({
                             style={{ ...inputStyle, width: "auto", padding: "5px 8px", fontSize: 12, fontWeight: 700, borderColor: r.short > 0 ? DS.orange : DS.line, color: r.short > 0 ? DS.orange : DS.mut }}>
                             <option value="">{r.short > 0 ? "+ assign (" + r.short + " short)" : "+ add a coach"}</option>
                             {sug.length > 0 && <optgroup label="Suggested">{sug.map(x => <option key={x.name} value={x.name}>{x.name} — {x.why.join(", ")}</option>)}</optgroup>}
-                            <optgroup label="Everyone">{everyone.filter(n => !sugNames.has(nrm(n)) && !crew.some(x => nrm(x.name) === nrm(n))).map(n => <option key={n} value={n}>{n}</option>)}</optgroup>
+                            <optgroup label={(r.c.sport || "volleyball") === "basketball" ? "Basketball coaches" : "Everyone"}>{everyoneFor(r.c.sport || "volleyball").filter(n => !sugNames.has(nrm(n)) && !crew.some(x => nrm(x.name) === nrm(n))).map(n => <option key={n} value={n}>{n}</option>)}</optgroup>
                           </select>
                         )}
                         {r.s.date >= today && (

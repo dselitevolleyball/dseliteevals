@@ -28,7 +28,7 @@ export default function DsscPeople() {
   const [form, setForm] = useState(null);
   const [busy, setBusy] = useState("");
   const [msg, setMsg] = useState(null);
-  const [filter, setFilter] = useState("all");
+  const [filter, setFilter] = useState("bb");
   const load = useCallback(async () => { try { const d = await call({ action: "list" }); setPeople(d.people || []); } catch (e) { setMsg({ err: e.message }); } }, []);
   useEffect(() => { load(); }, [load]);
 
@@ -49,7 +49,8 @@ export default function DsscPeople() {
     setBusy("");
   };
   const toggleSport = (s) => setForm(f => ({ ...f, sports: f.sports.includes(s) ? f.sports.filter(x => x !== s) : [...f.sports, s] }));
-  const shown = (people || []).filter(p => filter === "all" ? p.active : filter === "inactive" ? !p.active : p.active && p.role === filter);
+  // "Basketball coaches" is the list basketball classes are staffed from - nobody else can be put on one.
+  const shown = (people || []).filter(p => filter === "all" ? p.active : filter === "inactive" ? !p.active : filter === "bb" ? p.active && p.role === "coach" && (p.sports || []).includes("basketball") : p.active && p.role === filter);
 
   return (
     <div style={{ margin: "-14px -18px", padding: "16px 16px 48px", background: DS.bg, minHeight: "calc(100vh - 56px)", fontFamily: DS.font, color: DS.text }}>
@@ -59,7 +60,7 @@ export default function DsscPeople() {
           <div style={{ flex: 1 }} />
           {!form && <Btn kind="primary" onClick={() => setForm({ ...blank })}>+ Add a person</Btn>}
         </div>
-        <div style={{ fontSize: 13, color: DS.mut, marginBottom: 14 }}>Basketball coaches, interns and DSSC administrators who aren't part of DS Elite. DS Elite's volleyball coaches are already set up and don't need adding.</div>
+        <div style={{ fontSize: 13, color: DS.mut, marginBottom: 14 }}>Basketball coaches, interns and DSSC administrators who aren't part of DS Elite. Basketball classes can only be staffed from the basketball coaches here, and a basketball-only coach is never offered for volleyball. DS Elite's volleyball coaches are already set up and don't need adding.</div>
 
         {form && (
           <Card accent={DS.lime}>
@@ -95,7 +96,7 @@ export default function DsscPeople() {
         {msg?.err && <div style={{ color: DS.orange, fontWeight: 700, fontSize: 13, margin: "0 0 12px" }}>{msg.err}</div>}
 
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
-          {[["all", "Everyone"], ["coach", "Coaches"], ["staff", "Staff"], ["admin", "Administrators"], ["inactive", "Inactive"]].map(([k, l]) => (
+          {[["all", "Everyone"], ["bb", "🏀 Basketball coaches"], ["coach", "All coaches"], ["staff", "Staff"], ["admin", "Administrators"], ["inactive", "Inactive"]].map(([k, l]) => (
             <button key={k} onClick={() => setFilter(k)} style={{ fontFamily: DS.font, fontSize: 12, fontWeight: 700, padding: "5px 11px", borderRadius: 999, cursor: "pointer", border: "1px solid " + (filter === k ? DS.lime : DS.line), background: "transparent", color: filter === k ? DS.lime : DS.mut }}>{l}</button>
           ))}
         </div>
