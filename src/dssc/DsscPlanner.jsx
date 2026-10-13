@@ -11,6 +11,7 @@
 // open courts" lists the dates with N courts free for a whole time window.
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../supabase";
+import PlanWorkbook, { programIndex, programFor } from "./PlanWorkbook.jsx";
 
 const C = { bg: "#0a0a0a", card: "#141414", border: "#2a2a2a", gold: "#e91e8c", text: "#ffffff", mut: "#999999", grn: "#22c55e", red: "#ef4444", amb: "#f59e0b" };
 const PLAN = "2027";
@@ -40,7 +41,6 @@ const weekStart = (ymd) => { const d = new Date(ymd + "T12:00:00"); d.setDate(d.
 const fmtDay = (ymd, long) => new Date(ymd + "T12:00:00").toLocaleDateString(undefined, long ? { weekday: "long", month: "long", day: "numeric", year: "numeric" } : { weekday: "short", month: "short", day: "numeric" });
 const hm = (s) => { const h = Math.floor(s / 2), m = s % 2 ? "30" : "00", ap = h >= 12 ? "p" : "a", h12 = ((h + 11) % 12) + 1; return h12 + (m === "00" ? "" : ":" + m) + ap; };
 const hmLong = (s) => { const h = Math.floor(s / 2), ap = h >= 12 ? "pm" : "am", h12 = ((h + 11) % 12) + 1; return h12 + ":" + (s % 2 ? "30" : "00") + " " + ap; };
-const nameOf = (b) => b.label || b.program;
 const btn = (on) => ({ padding: "7px 14px", border: "none", background: on ? C.gold : "transparent", color: on ? "#000" : C.mut, fontFamily: "inherit", fontSize: 13, fontWeight: 800, cursor: "pointer" });
 const inp = { background: "#0f0f0f", border: "1px solid " + C.border, borderRadius: 8, color: C.text, fontFamily: "inherit", fontSize: 13, padding: "7px 9px", boxSizing: "border-box", colorScheme: "dark" };
 const lbl = { fontSize: 10, fontWeight: 800, letterSpacing: 0.4, textTransform: "uppercase", color: C.mut, marginBottom: 4, display: "block" };
@@ -57,6 +57,12 @@ export default function DsscPlanner({ coach }) {
   const [busy, setBusy] = useState(false);
   useEffect(() => { kept.date = date; kept.mode = mode; }, [date, mode]);
   const me = coach?.display_name || coach?.email || null;
+  // Hunter's titled programs (Workbook tab) show in place of the generic name.
+  const [recs, setRecs] = useState([]);
+  const loadRecs = async () => { const { data, error } = await supabase.from("dssc_plan_programs").select("*").eq("plan", PLAN); if (!error) setRecs(data || []); };
+  useEffect(() => { loadRecs(); }, []);
+  const recIdx = useMemo(() => programIndex(recs), [recs]);
+  const nameOf = (b) => programFor(recIdx, b)?.title || b.label || b.program;
 
   const load = async () => {
     const out = [];
@@ -312,7 +318,7 @@ export default function DsscPlanner({ coach }) {
     );
   };
 
-  const title = mode === "day" ? fmtDay(date, true) : mode === "week" ? "Week of " + fmtDay(weekStart(date), true) : new Date(date + "T12:00:00").toLocaleDateString(undefined, { month: "long", year: "numeric" });
+  const title = mode === "workbook" ? "Program workbook: give the generic blocks real titles, lengths and prices" : mode === "day" ? fmtDay(date, true) : mode === "week" ? "Week of " + fmtDay(weekStart(date), true) : new Date(date + "T12:00:00").toLocaleDateString(undefined, { month: "long", year: "numeric" });
   return (
     <div style={{ maxWidth: 1300, margin: "0 auto" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
@@ -322,16 +328,17 @@ export default function DsscPlanner({ coach }) {
         <input type="date" value={date} onChange={e => e.target.value && setDate(e.target.value)} style={inp} />
         <button onClick={() => nav(1)} aria-label="Next" style={{ ...btn(false), border: "1px solid " + C.border, borderRadius: 8 }}>›</button>
         <div style={{ display: "inline-flex", border: "1px solid " + C.border, borderRadius: 8, overflow: "hidden" }}>
-          {["day", "week", "month"].map(m => <button key={m} onClick={() => setMode(m)} style={btn(mode === m)}>{m[0].toUpperCase() + m.slice(1)}</button>)}
+          {["day", "week", "month", "workbook"].map(m => <button key={m} onClick={() => setMode(m)} style={btn(mode === m)}>{m === "workbook" ? "📒 Workbook" : m[0].toUpperCase() + m.slice(1)}</button>)}
         </div>
         <button onClick={() => setFind(find ? false : { from: date, to: addDays(date, 90), days: [1, 2, 3, 4], start: 34, end: 38, need: 2, venue: "" })} style={{ ...btn(!!find), border: "1px solid " + (find ? C.gold : C.border), borderRadius: 8 }}>🔎 Find open courts</button>
         <button onClick={() => startAdd(date)} style={{ ...btn(false), border: "1px solid " + C.border, borderRadius: 8 }}>＋ Plan</button>
       </div>
       <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>{title}</div>
       {find && findPanel()}
-      {legend}
+      {mode !== "workbook" && legend}
       {err ? <div style={{ color: C.red, padding: 16 }}>{err}</div>
         : !rows ? <div style={{ padding: 24, color: C.mut, textAlign: "center" }}>Loading the 2027 plan…</div>
+        : mode === "workbook" ? <PlanWorkbook rows={rows} recs={recs} reloadRecs={loadRecs} me={me} onJump={(d) => { setDate(d); setMode("day"); }} />
         : mode === "day" ? dayView() : mode === "week" ? weekView() : monthView()}
       {rows && (
         <div style={{ fontSize: 11, color: C.mut, marginTop: 10, lineHeight: 1.6 }}>
