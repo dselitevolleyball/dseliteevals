@@ -64,8 +64,8 @@ export const sessionEcon = (s, a, coach) => {
 
 // The program write-up. Drew's brief, tightened — every section is editable.
 const DEFAULT_SECTIONS = [
-  ["name", "Name", "Heatwave Volleyball"],
-  ["brand", "Brand", "Full name: Heatwave Volleyball\nShort forms: Heatwave ATX, H-ATX\nPrograms: Heatwave Summer Sessions; Heatwave Winter Sessions (later)"],
+  ["name", "Name", "Heatwave VB ATX"],
+  ["brand", "Brand", "Full name: Heatwave VB ATX\nShort form in running copy: Heatwave\nPrograms: Heatwave Summer Sessions; Heatwave Winter Sessions (later)"],
   ["tagline", "Tagline", "Where the best come to train from the best."],
   ["pitch", "The pitch", "A small-group summer intensive in Austin for national and bubble-national 14s, 15s and 16s. Two days of position-specific training led by college coaches: 16 athletes on two courts with five coaches, a 1:3.2 coach-to-player ratio. $600 a day, The pitch,200 per two-day session (room and board not included). It's built for the player who already trains hard and wants a summer edge she can't get at her club or a big-name camp of 200. For families from out of town it's also a reason to spend a few days in Austin: train in the mornings and afternoons, and enjoy the city's food, music and Hill Country in the evenings."],
   ["who", "Who it's for (eligibility)", "14s, 15s and 16s only, for the position intensives (Hitting, Libero/Defense, Setting). This hyper-focused approach lets us concentrate on the pre-college recruiting summers of club volleyball and not stretch to other ages, where the value wouldn't be as strong.\nNational or bubble-national level: playing on (or pushing for) a national/open-level club team.\nAdmission requires a referral from the player's club coach or club director, plus game or skills film.\nWe keep each session to similar ages and levels so the training stays at the top end - two courts, one group."],
@@ -155,7 +155,7 @@ export default function DsscCamp({ coach }) {
   const rows = live.map(s => ({ s, e: sessionEcon(s, econ, coachBy.get(s.lead_coach_id)) }));
   const tot = rows.reduce((t, { e }) => ({ revenue: t.revenue + e.revenue, cost: t.cost + e.cost, players: t.players + e.n }), { revenue: 0, cost: 0, players: 0 });
   const net = tot.revenue - tot.cost - econ.marketing;
-  const name = plan?.sections?.name || "Heatwave Volleyball";
+  const name = plan?.sections?.name || "Heatwave VB ATX";
 
   if (!plan) return <div style={{ padding: 24, color: DS.mut, fontFamily: DS.font }}>Loading…</div>;
   const tabs = [["plan", "Plan"], ["econ", "Economics"], ["sessions", "Sessions"], ["coaches", `Coaches (${coaches.length})`], ["applications", "Applications"], ["interest", "Interest"], ["launch", "Launch"]];
@@ -166,7 +166,7 @@ export default function DsscCamp({ coach }) {
       <div style={{ maxWidth: 1100, margin: "0 auto" }}>
         <div style={{ display: "flex", alignItems: "flex-end", gap: 12, flexWrap: "wrap", marginBottom: 6 }}>
           <div style={{ flex: 1, minWidth: 240 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: DS.lime }}>DSSC · Heatwave Summer Sessions 2027</div>
+            <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: DS.lime }}>DSSC · Heatwave VB ATX · Summer 2027 + Winter Edition</div>
             <div style={{ fontSize: 28, fontWeight: 800, lineHeight: 1.15 }}>{name}</div>
             <div style={{ fontSize: 14, color: DS.mut }}>{plan?.sections?.tagline || DEFAULT_SECTIONS[1][2]}</div>
           </div>
