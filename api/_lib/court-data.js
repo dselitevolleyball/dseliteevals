@@ -27,15 +27,19 @@ export async function loadCourtBookings(sb, start, end) {
   if (error) throw new Error("Reservations didn't load: " + error.message);
   const ids = [...new Set((rs || []).map(r => r.contact_id).filter(Boolean))];
   const { data: cs } = ids.length ? await sb.from("dssc_contacts").select("id, email").in("id", ids) : { data: [] };
-  const domainOf = new Map((cs || []).map(c => [c.id, String(c.email || "").toLowerCase().split("@")[1] || ""]));
+  const emailOf = new Map((cs || []).map(c => [c.id, String(c.email || "").trim().toLowerCase()]));
+  const domainOf = new Map([...emailOf].map(([id, e]) => [id, e.split("@")[1] || ""]));
   const PRIVATE = /^(gmail|yahoo|icloud|hotmail|outlook|aol|me|live|msn)\./;
   const KNOWN = { "acesintexas.com": "Aces", "aesaprepacademy.com": "AESA Prep Academy", "veritasacademy.net": "Veritas Academy", "4thquarterathlete.com": "4th Quarter Athlete" };
+  // Renters who book from a personal address (Drew, Oct 14 2026: Tressa
+  // Aleshire's Tue/Thu Flex rentals are DS Storm).
+  const BY_EMAIL = { "tressaaleshire@gmail.com": "DS Storm" };
   const nice = (d) => KNOWN[d] || d.replace(/\.(com|net|org|edu|us)$/, "").replace(/[-_.]/g, " ").replace(/\b\w/g, x => x.toUpperCase());
   for (const r of rs || []) {
     const courts = courtsForName(r.program); if (!courts.length) continue;
     const d = domainOf.get(r.contact_id) || "";
     const internal = /^(drippingsportsclub\.com|dselitevolleyball\.com)$/.test(d);
-    reservations.push({ date: r.event_date, courts, name: r.program, internal, who: internal ? "DSSC / DS Elite" : PRIVATE.test(d) || !d ? "Private rental" : nice(d) });
+    reservations.push({ date: r.event_date, courts, name: r.program, internal, who: internal ? "DSSC / DS Elite" : BY_EMAIL[emailOf.get(r.contact_id)] || (PRIVATE.test(d) || !d ? "Private rental" : nice(d)) });
   }
   return { bookings, reservations, offCourt };
 }
