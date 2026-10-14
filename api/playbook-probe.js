@@ -58,6 +58,46 @@ export default async function handler(req, res) {
     reserv: snip(g.html, "RentableTimeslot|reservation|rentable", 6),
   });
 
+  // ?scan=1&day=YYYY-MM-DD : everything in one call (Drew runs it). Staff
+  // calendar: resources, then that day's events for every resource, summarised
+  // by type with reservation-like samples; plus the Reservations list page's rows.
+  if (url.searchParams.get("scan")) {
+    const pub = await fetch(BASE + "/programs/calendar/", { headers: { "User-Agent": UA } }).then(r => r.text()).catch(() => "");
+    const site = (/'site_pk':\s*'(\d+)'/.exec(pub) || [])[1] || null;
+    const page = await get("/control_panel/staff/global_calendar/");
+    const csrf = (/\bCSRF\s*=\s*['"]([^'"]+)['"]/.exec(page.html) || /csrfmiddlewaretoken" value="([^"]+)"/.exec(page.html) || [])[1] || j.get("csrftoken");
+    const pageSite = (/\bSITE_PK\s*=\s*['"]?(\d+)/.exec(page.html) || [])[1] || null;
+    out.scan = { site, pageSite, haveCsrf: !!csrf };
+    const SITE = pageSite || site;
+    const sock = () => new Promise((resolve) => {
+      let ws; try { ws = new WebSocket(BASE.replace("https", "wss") + "/control_panel/staff/global_calendar/calendar/", { headers: { Cookie: j.header(), "User-Agent": UA, Origin: BASE } }); } catch (e) { return resolve({ error: "ctor: " + e.message }); }
+      const waiting = new Map();
+      ws.addEventListener("message", (m) => { let d; try { d = JSON.parse(m.data); } catch { return; } const w = waiting.get(d.action_name); if (w) { waiting.delete(d.action_name); w(d); } });
+      ws.addEventListener("open", () => resolve({ ask: (payload, ms = 30000) => new Promise((ok) => { const t = setTimeout(() => { waiting.delete(payload.action); ok({ timeout: true }); }, ms); waiting.set(payload.action, (d) => { clearTimeout(t); ok(d); }); ws.send(JSON.stringify({ csrf_token: csrf, site_pk: SITE, ...payload })); }), close: () => { try { ws.close(); } catch {} } }));
+      ws.addEventListener("error", (e) => resolve({ error: "ws error " + (e.message || "") }));
+    });
+    const s = await sock();
+    if (s.error) { out.scan.error = s.error; }
+    else {
+      const r = await s.ask({ action: "global_get_calendar_resources" });
+      const resources = r.resources || [];
+      out.scan.resources = { n: resources.length, keys: Object.keys(r).slice(0, 20), sample: resources.slice(0, 40).map(x => ({ id: x.id, title: x.title || x.name, group: x.group || x.groupId || x.type || null, extra: Object.keys(x).slice(0, 15) })) };
+      const pks = resources.map(x => String(x.id || "").replace(/^S/, "")).filter(Boolean);
+      const day0 = new Date(day + "T00:00:00-05:00"), day1 = new Date(day0.getTime() + 864e5);
+      const e = await s.ask({ action: "global_get_calendar_events", staff_member_pks: pks, start: day0.toISOString(), end: day1.toISOString() }, 45000);
+      const ev = e.events || [];
+      const byType = {}; for (const x of ev) byType[x.event_type] = (byType[x.event_type] || 0) + 1;
+      out.scan.events = { n: ev.length, timeout: !!e.timeout, keys: Object.keys(e).slice(0, 20), byType, eventKeys: ev[0] ? Object.keys(ev[0]) : [],
+        notClasses: ev.filter(x => x.event_type !== "ClassSession").slice(0, 30).map(x => ({ type: x.event_type, title: x.title, start: x.start, end: x.end, res: x.resourceIds, loc: x.location_pks, ext: x.extendedProps ? Object.keys(x.extendedProps) : undefined, contents: String(x.contents || x.description || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 300) })) };
+      s.close();
+    }
+    // The Reservations list page: its table rows as text.
+    const rl = await get("/control_panel/programs/program_rentable_timeslots/");
+    const rows = (rl.html.match(/<tr[\s\S]*?<\/tr>/gi) || []).map(tr => tr.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim()).filter(Boolean);
+    out.scan.reservationList = { status: rl.status, rows: rows.length, sample: rows.slice(0, 30).map(t => t.slice(0, 250)) };
+    res.setHeader("Cache-Control", "no-store"); return res.status(200).json(out);
+  }
+
   // ?path=&grep= : wide snippets of a page's script around a word.
   // ?ws=<socket path>&action=<read action>&payload=<json> : one read-only socket call.
   const wsPath = url.searchParams.get("ws");
