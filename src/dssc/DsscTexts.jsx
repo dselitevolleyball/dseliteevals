@@ -44,6 +44,11 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
   const [groupThreads, setGroupThreads] = useState({}); // broadcast id -> [thread id]
   const [openGroup, setOpenGroup] = useState(null);
   const [tab, setTab] = useState("inbox");          // inbox | campaigns
+  // Inbox list: conversations (grouped by program) or every reply, newest first.
+  // Remembered per browser.
+  const [inboxMode, setInboxModeState] = useState(() => { try { return localStorage.getItem("dssc.texts.inboxMode") === "replies" ? "replies" : "threads"; } catch { return "threads"; } });
+  const setInboxMode = (m) => { setInboxModeState(m); try { localStorage.setItem("dssc.texts.inboxMode", m); } catch { /* private window */ } };
+  const [replies, setReplies] = useState(null);      // inbound sms_messages across all dssc threads, newest first
   // Phones get one pane at a time (list, or the open conversation / composer).
   const [narrow, setNarrow] = useState(() => typeof window !== "undefined" && window.matchMedia("(max-width: 700px)").matches);
   useEffect(() => { const mq = window.matchMedia("(max-width: 700px)"); const f = () => setNarrow(mq.matches); mq.addEventListener("change", f); return () => mq.removeEventListener("change", f); }, []);
@@ -65,6 +70,26 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
     const m = {};
     for (const x of ms || []) { (m[x.broadcast_id] = m[x.broadcast_id] || new Set()).add(x.thread_id); }
     setGroupThreads(Object.fromEntries(Object.entries(m).map(([k, v]) => [k, [...v]])));
+  };
+  // Every inbound text across all club conversations, newest first. Each one is
+  // tied to the latest group text / campaign that went into its thread before
+  // it arrived, so "which campaign is this a reply to" reads at a glance.
+  const loadReplies = async () => {
+    const { data, error } = await supabase.from("sms_messages").select("id, thread_id, body, media_urls, sent_at, created_at, sms_threads!inner(brand, phone, contact_name, contact_kind, dssc_program, dssc_player)").eq("direction", "inbound").eq("sms_threads.brand", "dssc").order("id", { ascending: false }).limit(200);
+    if (error) { setReplies({ error: error.message, list: [] }); return; }
+    const list = data || [];
+    const tids = [...new Set(list.map(r => r.thread_id))];
+    const { data: outs } = tids.length ? await supabase.from("sms_messages").select("thread_id, broadcast_id, created_at").in("thread_id", tids).eq("direction", "outbound").not("broadcast_id", "is", null).order("id", { ascending: false }) : { data: [] };
+    const bids = [...new Set((outs || []).map(o => o.broadcast_id))];
+    const { data: bcs } = bids.length ? await supabase.from("sms_broadcasts").select("id, audience, recipient_count, body, created_at").in("id", bids) : { data: [] };
+    const bcById = new Map((bcs || []).map(b => [b.id, b]));
+    const outsBy = new Map();
+    for (const o of outs || []) { if (!outsBy.has(o.thread_id)) outsBy.set(o.thread_id, []); outsBy.get(o.thread_id).push(o); }   // newest first
+    setReplies({ list: list.map(r => {
+      const at = r.sent_at || r.created_at;
+      const prior = (outsBy.get(r.thread_id) || []).find(o => o.created_at <= at);
+      return { ...r, at, broadcast: prior ? bcById.get(prior.broadcast_id) || null : null };
+    }) });
   };
   // Everyone who has ever signed up for anything, from DSSC People. Newest
   // first, so a family's latest program is the one their thread files under.
@@ -89,9 +114,10 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
   useEffect(() => { if (composer && (composer.group === "history" || composer.group === "everyone_ever")) loadHistory(); }, [composer?.group]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { loadMsgs(selId); }, [selId]);
   useEffect(() => {
-    const ch = supabase.channel("dssc-sms").on("postgres_changes", { event: "*", schema: "public", table: "sms_messages" }, () => { loadThreads(); loadGroups(); loadOptouts(); if (selId) loadMsgs(selId); }).subscribe();
+    const ch = supabase.channel("dssc-sms").on("postgres_changes", { event: "*", schema: "public", table: "sms_messages" }, () => { loadThreads(); loadGroups(); loadOptouts(); if (selId) loadMsgs(selId); if (inboxMode === "replies") loadReplies(); }).subscribe();
     return () => { supabase.removeChannel(ch); };
-  }, [selId]);
+  }, [selId, inboxMode]);
+  useEffect(() => { if (inboxMode === "replies") loadReplies(); }, [inboxMode]);
   useEffect(() => {
     if (!initial) return;
     setSelId(null);
@@ -229,6 +255,11 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
   const selected = threads.find(t => t.id === selId) || null;
   const totalUnread = threads.reduce((n, t) => n + (t.unread_count || 0), 0);
   const markRead = async (id) => { await supabase.from("sms_threads").update({ unread_count: 0 }).eq("id", id); loadThreads(); };
+  const openThread = (id) => { const t = threads.find(x => x.id === id); setComposer(null); setSelId(id); if (t?.unread_count) markRead(id); };
+  const labelOfGroup = (g) => typeof g.audience === "string" && g.audience ? g.audience
+    : g.audience?.label && !/^\d+ picked$/.test(g.audience.label) ? g.audience.label
+    : g.audience?.type === "class" ? (g.audience.program || "Class") : g.audience?.type === "custom" || g.audience?.type === "pick" ? (g.recipient_count + " picked") : (g.audience?.type || "Group");
+  const fmtStamp = (iso) => { if (!iso) return ""; const d = new Date(iso); const t = d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }); return d.toDateString() === new Date().toDateString() ? t : d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + ", " + t; };
 
   const blankComposer = (over = {}) => ({ to: new Map(), group: "program", clinicId: upcomingClinics[0]?.id || "", sessionId: "", category: "Pods", age: ages[0] || "", body: "", media: [], result: null, search: "", ...over });
   const openComposer = () => { setSelId(null); setComposer(blankComposer()); };
@@ -257,11 +288,40 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
     <div style={narrow ? { flex: 1, minHeight: 0, display: "flex", flexDirection: "column" } : { display: "grid", gridTemplateColumns: "300px 1fr", gap: 14, height: "calc(100vh - 150px)" }}>
       {/* Inbox */}
       <div style={{ background: DS.panel, border: "1px solid " + DS.line, borderRadius: 14, overflowY: "auto", ...(narrow ? { flex: 1, display: (selId || composer) ? "none" : "block" } : {}) }}>
-        {!threads.length && <div style={{ padding: 20, fontSize: 12, color: DS.mut, textAlign: "center" }}>No conversations yet. Text a program or a class to start one per family.</div>}
-        {groups.length > 0 && (() => {
+        <div style={{ display: "flex", padding: 8, borderBottom: "1px solid " + DS.line }}>
+          <div style={{ display: "flex", flex: 1, border: "1px solid " + DS.line, borderRadius: 999, overflow: "hidden" }}>
+            {[["threads", "Conversations"], ["replies", "All replies"]].map(([k, l]) => <button key={k} onClick={() => setInboxMode(k)} style={{ flex: 1, padding: "5px 10px", border: "none", cursor: "pointer", fontFamily: DS.font, fontSize: 12, fontWeight: 800, background: inboxMode === k ? DS.lime : "transparent", color: inboxMode === k ? DS.bg : DS.mut }}>{l}</button>)}
+          </div>
+        </div>
+        {inboxMode === "replies" && (() => {
+          if (!replies) return <div style={{ padding: 20, fontSize: 12, color: DS.mut, textAlign: "center" }}>Loading replies…</div>;
+          if (replies.error) return <div style={{ padding: 20, fontSize: 12, color: DS.orange }}>Couldn't load replies: {replies.error}</div>;
+          if (!replies.list.length) return <div style={{ padding: 20, fontSize: 12, color: DS.mut, textAlign: "center" }}>No replies yet. Texts families and coaches send back show up here, newest first.</div>;
           const byId = new Map(threads.map(t => [t.id, t]));
-          const labelOfGroup = (g) => g.audience?.label && !/^\d+ picked$/.test(g.audience.label) ? g.audience.label
-            : g.audience?.type === "class" ? (g.audience.program || "Class") : g.audience?.type === "custom" || g.audience?.type === "pick" ? (g.recipient_count + " picked") : (g.audience?.type || "Group");
+          const seen = new Map();   // thread id -> replies shown so far, to light up the unread ones
+          return replies.list.map(r => {
+            const t = { ...r.sms_threads, ...(byId.get(r.thread_id) || {}) };
+            const n = (seen.get(r.thread_id) || 0) + 1; seen.set(r.thread_id, n);
+            const unread = n <= (t.unread_count || 0);
+            // A one-off pick has no useful name, so show how the group text started instead.
+            const bl = r.broadcast ? labelOfGroup(r.broadcast) : "", generic = /^(\d+ picked|custom|pick|Group)$/.test(bl), snip = String(r.broadcast?.body || "").replace(/\s+/g, " ").trim().slice(0, 50);
+            const where = r.broadcast ? "📣 Reply to " + (generic ? "group text" + (snip ? ": “" + snip + "…”" : "") : bl) :t.contact_kind === "coach" ? "Coaches" : (t.dssc_program || "Direct text");
+            return (
+              <div key={r.id} onClick={() => openThread(r.thread_id)} style={{ padding: "9px 12px", borderBottom: "1px solid " + DS.line, cursor: "pointer", background: r.thread_id === selId ? DS.limeSoft : unread ? "rgba(178,208,73,0.06)" : "transparent" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 6 }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: unread ? DS.lime : DS.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{labelOf(t)}</span>
+                  <span style={{ fontSize: 10, color: DS.mut, whiteSpace: "nowrap" }}>{fmtStamp(r.at)}</span>
+                </div>
+                {t.contact_name && <div style={{ fontSize: 10.5, color: DS.mut }}>{fmtPhone(t.phone)}</div>}
+                <div style={{ fontSize: 12, color: DS.text, marginTop: 3, lineHeight: 1.35, display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden", wordBreak: "break-word" }}>{(r.media_urls || []).length > 0 && <span style={{ color: DS.mut }}>📷 </span>}{r.body || ((r.media_urls || []).length ? <i style={{ color: DS.mut }}>photo</i> : <i style={{ color: DS.mut }}>(empty)</i>)}</div>
+                <div style={{ fontSize: 10.5, color: r.broadcast ? DS.lime : DS.mut, marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{where}</div>
+              </div>
+            );
+          });
+        })()}
+        {inboxMode === "threads" && !threads.length && <div style={{ padding: 20, fontSize: 12, color: DS.mut, textAlign: "center" }}>No conversations yet. Text a program or a class to start one per family.</div>}
+        {inboxMode === "threads" && groups.length > 0 && (() => {
+          const byId = new Map(threads.map(t => [t.id, t]));
           const textAgain = (g, members) => {
             const to = new Map(members.map(t => [t.phone, { to: t.phone, name: t.contact_name || fmtPhone(t.phone), kind: t.contact_kind || "parent", out: optedOut.has(last10(t.phone)), players: t.dssc_player ? [t.dssc_player] : [], programs: t.dssc_program ? [t.dssc_program] : [], dssc_player: t.dssc_player || null, dssc_program: t.dssc_program || null }]));
             setSelId(null); setComposer(blankComposer({ to }));
@@ -310,7 +370,7 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
             </div>
           );
         })()}
-        {sections.map(([g, list]) => {
+        {inboxMode === "threads" && sections.map(([g, list]) => {
           const unread = list.reduce((n, t) => n + (t.unread_count || 0), 0), isF = folded.has(g);
           return (
             <div key={g}>
