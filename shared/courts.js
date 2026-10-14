@@ -116,6 +116,12 @@ export function clockHours(t) {
   if (m[3]) { h = h % 12; if (/p/i.test(m[3])) h += 12; }
   return h > 24 || min > 59 ? null : h + min / 60;
 }
+// "Tionne Graves-Brown session" -> "Tionne"; a court or building session -> null.
+function coachSession(s) {
+  const m = /^\s*([A-Z][\w'.-]*(?:\s+[A-Z][\w'.-]*)+)\s+session\s*$/.exec(String(s || ""));
+  if (!m || /court|flex|warehouse|dssc|gym|field|room/i.test(m[1])) return null;
+  return m[1].split(/\s+/)[0];
+}
 // Who the booking is for, the way the court screen should say it.
 export function rentalWho({ program, details }) {
   const d = String(details || "").trim(), p = String(program || "").trim();
@@ -129,6 +135,8 @@ export function rentalWho({ program, details }) {
   else if (/veritas|lisa jasper/.test(t)) label = "Veritas Academy";
   else if (/birthday/.test(t)) label = "Birthday party";
   else if (/private/.test(t)) { const coach = (/^(.+?)\s+private/i.exec(item) || [])[1]; label = "Private lesson" + (coach ? " (" + coach.trim() + ")" : ""); }
+  // A coach's own booking page: "Breanna Coward session", "Hunter Haley session".
+  else if (!internal && coachSession(item || p)) label = "Private lesson (" + coachSession(item || p) + ")";
   else if (internal) label = /positional/i.test(p) ? "DS Elite positional training" : "DS Elite";
   else label = person || p || "Rental";
   return { label, person: person || null, item: item || p || null, internal };

@@ -52,7 +52,7 @@ export async function loadCourtBookings(sb, start, end) {
       reservations.push({ date: r.date, courts: r.courts, name: r.item || r.label, internal: true, who: "DSSC / DS Elite", start: r.start, end: r.end, timed: true });
       continue;
     }
-    bookings.push({ id: "rental-" + r.id, kind: r.internal ? "dse" : "hold", label: r.label, category: r.internal ? "DS Elite rental" : "Rental" + (r.renter && r.renter !== r.label ? " · " + r.renter : ""), date: r.date, start: r.start, end: r.end, courts: r.courts, rental: true });
+    bookings.push({ id: "rental-" + r.id, kind: r.internal ? "dse" : "hold", label: r.label, category: (r.internal ? "DS Elite rental" : "Rental" + (r.renter && r.renter !== r.label ? " · " + r.renter : "")) + (r.note ? " · Note: " + r.note : ""), date: r.date, start: r.start, end: r.end, courts: r.courts, rental: true });
   }
   // For a date an upload covered, the export is the source of truth: a
   // reservation with no time that HQ already had when the file was exported is

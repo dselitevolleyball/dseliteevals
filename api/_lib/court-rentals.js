@@ -16,6 +16,8 @@ import { rentalCourts, clockHours, rentalWho } from "../../shared/courts.js";
 export const RENTAL_SOURCE = "playbook-events-csv";
 const key = (k) => String(k || "").toLowerCase().replace(/[^a-z]/g, "");
 const pick = (row, ...names) => { for (const [k, v] of Object.entries(row || {})) if (names.includes(key(k))) return String(v ?? "").trim(); return ""; };
+// Playbook's Event Note is HTML ("<p>This day only, ...&nbsp;</p>").
+const plainNote = (s) => String(s || "").replace(/<br\s*\/?>|<\/p>/gi, " ").replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&#39;|&rsquo;/g, "'").replace(/&quot;/g, '"').replace(/\s+/g, " ").trim().slice(0, 300) || null;
 const hhmm = (h) => String(Math.floor(h)).padStart(2, "0") + ":" + String(Math.round((h % 1) * 60)).padStart(2, "0");
 
 // rows: the CSV parsed with a header row ({ Date, Locations, ... }).
@@ -37,7 +39,7 @@ export function parseRentalRows(rows) {
     const who = rentalWho({ program, details });
     const courts = rentalCourts(location, sub);
     const r = { date, start_time: hhmm(s), end_time: hhmm(e), courts, label: who.label, renter: who.person, item: who.item, internal: who.internal,
-      location: location || null, sub_location: sub || null, program: program || null, note: pick(row, "eventnote") || null, source: RENTAL_SOURCE };
+      location: location || null, sub_location: sub || null, program: program || null, note: plainNote(pick(row, "eventnote")), source: RENTAL_SOURCE };
     if (!courts.length) unplaced.push({ date, time: r.start_time + "-" + r.end_time, label: r.label, location, sub });
     rentals.push(r);
   }
@@ -79,7 +81,7 @@ export async function importRentals(sb, rows, who, range = {}) {
 
 // Rentals between start (inclusive) and end (exclusive), as hours.
 export async function loadRentals(sb, start, end) {
-  const { data, error } = await sb.from("dssc_court_rentals").select("id, date, start_time, end_time, courts, label, renter, item, internal").gte("date", start).lt("date", end);
+  const { data, error } = await sb.from("dssc_court_rentals").select("id, date, start_time, end_time, courts, label, renter, item, internal, note").gte("date", start).lt("date", end);
   if (error) throw new Error("Rentals didn't load: " + error.message);
   return (data || []).map(r => ({ ...r, start: clockHours(r.start_time), end: clockHours(r.end_time) })).filter(r => r.start != null && r.end != null && r.end > r.start);
 }
