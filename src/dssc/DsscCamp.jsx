@@ -615,6 +615,7 @@ function ApplicationsTab({ sessions, saveSession }) {
         <Btn small kind="quiet" onClick={toggleFee}>{fee?.enabled ? "Turn off" : "Turn on"}</Btn>
       </div>
     </Card>
+    <CouponsCard apps={apps} setErr={setErr} />
     {err && <div style={{ color: DS.orange, fontWeight: 700, fontSize: 13, margin: "8px 0" }}>{err}</div>}
     {!shown.length && <div style={{ color: DS.mut, fontSize: 14, padding: "8px 2px" }}>{apps.length ? "No applications match." : "No applications yet. Families apply at heatwaveatx.com/apply."}</div>}
     {shown.map(a => {
@@ -629,6 +630,7 @@ function ApplicationsTab({ sessions, saveSession }) {
             {a.age_group && <Tag>{a.age_group}</Tag>}{a.position && <Tag>{a.position}</Tag>}
             {a.level && <Tag color={a.level === "national" ? DS.lime : DS.mut}>{LEVEL_LABEL[a.level] || a.level}</Tag>}
             {(a.session_ids || []).map(id => <Tag key={id} color={DS.brier}>{sessBy.get(id)?.name || "Session " + id}</Tag>)}
+            {a.coupon_code && <Tag color={DS.orange}>code {a.coupon_code}</Tag>}
             <div style={{ flex: 1 }} />
             <span style={{ fontSize: 12, color: DS.mut }}>🎬 {af.length} · ✉ {ar.filter(r => r.status === "submitted").length}/{ar.length}{a.rating ? " · " + "★".repeat(a.rating) : ""}</span>
             <span style={{ fontSize: 12, color: DS.mut }}>{shortD(a.created_at)}</span>
@@ -673,7 +675,7 @@ function AppDetail({ a, film, recs, events, fee, onChange, setErr }) {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 4, fontSize: 13, lineHeight: 1.6 }}>
         {kv("Parent", a.parent_name)}{kv("Account", <a href={"mailto:" + a.account_email} style={{ color: DS.lime }}>{a.account_email}</a>)}{kv("Phone", a.parent_phone)}
         {kv("Player email", a.player_email)}{kv("Birthdate", a.birthdate)}{kv("Height", a.height)}{kv("Club director", a.club_director)}
-        {kv("Total", usd(a.total_amount))}
+        {kv("Total", a.coupon_code ? `${usd(a.total_amount)} (${usd(a.list_amount)} − code ${a.coupon_code} ${usd(a.discount_amount)})` : usd(a.total_amount))}
         {kv("Deposit", a.deposit_paid_at ? `${usd(a.deposit_amount)}${Number(a.deposit_fee) ? " + " + usd(a.deposit_fee) + " fee" : ""} paid ${when(a.deposit_paid_at)}` : a.status === "deposit_pending" ? "bank payment clearing" : "not paid")}
         {kv("Card", a.card_last4 && `${a.card_brand} ····${a.card_last4}${a.card_funding && a.card_funding !== "us_bank_account" ? " (" + a.card_funding + ")" : ""}`)}
         {kv("Balance", a.balance_paid_at ? `${usd(a.balance_amount)}${Number(a.balance_fee) ? " + " + usd(a.balance_fee) + " fee" : ""} paid ${when(a.balance_paid_at)}` : a.status === "accepted" ? <span style={{ color: DS.orange }}>{a.balance_error || "pending"}</span> : null)}
@@ -721,7 +723,7 @@ function AppDetail({ a, film, recs, events, fee, onChange, setErr }) {
       {!decided && <div style={{ marginTop: 12 }}>
         <input value={note} onChange={e => setNote(e.target.value)} placeholder="Optional note to include in the email to the family" style={{ ...small, marginBottom: 8 }} />
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-          <Btn kind="primary" disabled={!paid || !!busy} onClick={() => decide("accept")}>{busy === "accept" ? "Charging…" : `Accept · charge ${usd(balance)}`}</Btn>
+          <Btn kind="primary" disabled={!paid || !!busy} onClick={() => decide("accept")}>{busy === "accept" ? "Charging…" : balance > 0 ? `Accept · charge ${usd(balance)}` : "Accept"}</Btn>
           {a.status !== "waitlisted" && <Btn disabled={!paid || !!busy} onClick={() => decide("waitlist")}>{busy === "waitlist" ? "…" : "Waitlist"}</Btn>}
           <Btn kind="warn" disabled={!paid || !!busy} onClick={() => decide("decline")}>{busy === "decline" ? "Refunding…" : `Decline · refund ${usd(a.deposit_amount)}`}</Btn>
           {!paid && <span style={{ fontSize: 12, color: DS.mut }}>Decisions open once the deposit is paid.</span>}
@@ -734,5 +736,80 @@ function AppDetail({ a, film, recs, events, fee, onChange, setErr }) {
         <div style={{ fontSize: 12, color: DS.mut, marginTop: 6, lineHeight: 1.7 }}>{events.map(e => <div key={e.id}>{when(e.created_at)} · {e.detail || e.kind}{e.actor ? " · " + e.actor : ""}</div>)}</div>
       </details>}
     </div>
+  );
+}
+
+// Coupon codes (heatwave_coupons): families type one on the application before
+// the deposit. percent = % off, amount = $ off, fixed = the new total with its
+// own deposit. "Only for" limits a code to sign-in emails; Max uses counts
+// paid deposits. HWTEST (Drew only) = $1.00 total for end-to-end tests.
+const COUPON_KIND = { percent: "% off", amount: "$ off", fixed: "Fixed total" };
+function CouponsCard({ apps, setErr }) {
+  const [rows, setRows] = useState(null);
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState({ code: "", kind: "percent", value: "", deposit: "", max_uses: "", emails: "", expires: "", note: "" });
+  const load = () => supabase.from("heatwave_coupons").select("*").order("created_at", { ascending: false }).then(({ data, error }) => { if (error) setErr(error.message); setRows(data || []); });
+  useEffect(() => { load(); }, []);
+  const uses = (code) => apps.filter(a => a.coupon_code === code && a.deposit_paid_at).length;
+  const pending = (code) => apps.filter(a => a.coupon_code === code && !a.deposit_paid_at && a.status !== "withdrawn").length;
+  const describe = (c) => c.kind === "percent" ? `${Number(c.value)}% off` : c.kind === "amount" ? `${usd(c.value)} off` : `total ${usd(c.value)}${c.deposit != null ? ` (deposit ${usd(c.deposit)})` : ""}`;
+  const toggle = async (c) => { const { error } = await supabase.from("heatwave_coupons").update({ active: !c.active }).eq("code", c.code); if (error) setErr(error.message); load(); };
+  const add = async () => {
+    const code = draft.code.trim().toUpperCase();
+    if (!/^[A-Z0-9_-]{3,30}$/.test(code)) { setErr("Codes are 3-30 letters, numbers, - or _."); return; }
+    const value = Number(draft.value);
+    if (!(value >= 0) || draft.value === "") { setErr("Give the code a value."); return; }
+    if (draft.kind === "percent" && value > 100) { setErr("Percent off can't be over 100."); return; }
+    const emails = draft.emails.split(/[\s,;]+/).map(x => x.trim().toLowerCase()).filter(Boolean);
+    const row = { code, kind: draft.kind, value, deposit: draft.kind === "fixed" && draft.deposit !== "" ? Number(draft.deposit) : null,
+      max_uses: draft.max_uses === "" ? null : Math.max(1, parseInt(draft.max_uses, 10) || 1), emails: emails.length ? emails : null,
+      expires_at: draft.expires ? new Date(draft.expires + "T23:59:59").toISOString() : null, note: draft.note.trim() || null, active: true };
+    const { error } = await supabase.from("heatwave_coupons").insert(row);
+    if (error) { setErr(/duplicate/.test(error.message) ? `${code} already exists.` : error.message); return; }
+    setErr(null); setDraft({ code: "", kind: "percent", value: "", deposit: "", max_uses: "", emails: "", expires: "", note: "" }); load();
+  };
+  const set = (k) => (e) => setDraft(d => ({ ...d, [k]: e.target.value }));
+  const live = (rows || []).filter(c => c.active).length;
+  return (
+    <Card>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }} onClick={() => setOpen(o => !o)}>
+        <Label style={{ margin: 0 }}>Codes</Label>
+        <span style={{ fontSize: 13, color: DS.mut }}>{rows ? `${live} active` : "…"}</span>
+        <div style={{ flex: 1 }} />
+        <span style={{ fontSize: 13, color: DS.lime, fontWeight: 700 }}>{open ? "Hide" : "Manage"}</span>
+      </div>
+      {open && <div style={{ marginTop: 12 }}>
+        {(rows || []).map(c => (
+          <div key={c.code} style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", padding: "8px 0", borderTop: "1px solid " + DS.line, opacity: c.active ? 1 : 0.55 }}>
+            <b style={{ fontFamily: "monospace", fontSize: 14, letterSpacing: "0.04em" }}>{c.code}</b>
+            <Tag color={c.active ? DS.lime : DS.dim}>{c.active ? "active" : "off"}</Tag>
+            <span style={{ fontSize: 13 }}>{describe(c)}</span>
+            <span style={{ fontSize: 12, color: DS.mut }}>
+              used {uses(c.code)}{c.max_uses != null ? ` of ${c.max_uses}` : ""}{pending(c.code) ? ` · ${pending(c.code)} unpaid` : ""}
+              {c.emails?.length ? ` · only ${c.emails.join(", ")}` : " · anyone"}
+              {c.expires_at ? ` · until ${new Date(c.expires_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}` : ""}
+            </span>
+            {c.note && <span style={{ fontSize: 12, color: DS.mut, flexBasis: "100%" }}>{c.note}</span>}
+            <div style={{ flex: 1 }} />
+            <Btn small kind="quiet" onClick={() => toggle(c)}>{c.active ? "Turn off" : "Turn on"}</Btn>
+          </div>))}
+        <div style={{ borderTop: "1px solid " + DS.line, paddingTop: 12, marginTop: 4 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>New code</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 8 }}>
+            <Mini label="Code"><input value={draft.code} onChange={set("code")} placeholder="CLUBDIRECTOR" style={{ ...small, textTransform: "uppercase" }} /></Mini>
+            <Mini label="Type"><select value={draft.kind} onChange={set("kind")} style={small}>{Object.entries(COUPON_KIND).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></Mini>
+            <Mini label={draft.kind === "percent" ? "Percent off" : draft.kind === "amount" ? "Dollars off" : "New total ($)"}><input value={draft.value} onChange={set("value")} inputMode="decimal" placeholder={draft.kind === "percent" ? "10" : "100"} style={small} /></Mini>
+            {draft.kind === "fixed" && <Mini label="Deposit ($)"><input value={draft.deposit} onChange={set("deposit")} inputMode="decimal" placeholder="250 or less" style={small} /></Mini>}
+            <Mini label="Max uses"><input value={draft.max_uses} onChange={set("max_uses")} inputMode="numeric" placeholder="no limit" style={small} /></Mini>
+            <Mini label="Expires"><input type="date" value={draft.expires} onChange={set("expires")} style={small} /></Mini>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 8, marginTop: 8 }}>
+            <Mini label="Only for these emails (optional)"><input value={draft.emails} onChange={set("emails")} placeholder="parent@example.com, …" style={small} /></Mini>
+            <Mini label="Note (staff only)"><input value={draft.note} onChange={set("note")} placeholder="Who it's for" style={small} /></Mini>
+          </div>
+          <div style={{ marginTop: 10 }}><Btn kind="primary" small onClick={add}>Add code</Btn></div>
+        </div>
+      </div>}
+    </Card>
   );
 }
