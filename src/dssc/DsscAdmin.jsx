@@ -11,7 +11,7 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import Papa from "papaparse";
 import { supabase } from "../supabase";
 import { sessionStaff, staffNeeded, sessionShort, staffApproved, staffPending, parseClock, sessionHours, localDateISO, isPlaceholderPerson } from "../../shared/dssc-clinics.js";
-import { DS, nrm, fmtDay, timeRange, hasClassPlan, Btn, Card, Label, Tag, inputStyle } from "./DsscHub.jsx";
+import { DS, nrm, fmtDay, timeRange, hasClassPlan, Btn, Card, Label, Tag, inputStyle, fetchAll } from "./DsscHub.jsx";
 
 const POD_CAP = 6;
 const isPod = (c) => /pod/i.test(c?.category || "") || /pod/i.test(c?.name || "") || /^U1[135]/.test(c?.name || "");
@@ -58,10 +58,10 @@ export default function DsscAdmin({
     }, error: (e) => setImp({ error: e.message }) });
   };
 
-  // Sign-ups per class. One light query; the roster table is a few thousand rows at most.
+  // Sign-ups per class - every roster row, paged (more than Supabase returns in one go).
   useEffect(() => {
     let live = true;
-    supabase.from("dssc_pod_roster").select("clinic_id, session_id").then(({ data }) => {
+    fetchAll(() => supabase.from("dssc_pod_roster").select("id, clinic_id, session_id")).catch(() => []).then((data) => {
       if (!live) return;
       const m = {};
       for (const r of (data || [])) { const k = r.clinic_id + "|" + (r.session_id || "*"); m[k] = (m[k] || 0) + 1; }

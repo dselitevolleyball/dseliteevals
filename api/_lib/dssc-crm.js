@@ -150,9 +150,22 @@ export async function importUpperHand(sb, { contacts = [], participants = [], or
   return out;
 }
 
+
+// Every row, not just Supabase's first 1,000 per request (dssc_pod_roster
+// passed 1,000 rows in Oct 2026). build() returns a fresh query each call.
+async function fetchAll(build, page = 1000) {
+  const out = [];
+  for (let from = 0; ; from += page) {
+    const { data, error } = await build().order("id").range(from, from + page - 1);
+    if (error) return { data: out.length ? out : null, error };
+    out.push(...(data || []));
+    if (!data || data.length < page) return { data: out, error: null };
+  }
+}
+
 // ── Playbook (current classes) ───────────────────────────────────────────────
 export async function syncPlaybook(sb) {
-  const [{ data: roster }, { data: clinics }] = await Promise.all([sb.from("dssc_pod_roster").select("*"), sb.from("dssc_clinics").select("id, name, category, sessions")]);
+  const [{ data: roster }, { data: clinics }] = await Promise.all([fetchAll(() => sb.from("dssc_pod_roster").select("*")), sb.from("dssc_clinics").select("id, name, category, sessions")]);
   const cl = new Map((clinics || []).map(c => [c.id, c]));
   const contacts = [], parts = [], parts2 = [];
   for (const r of roster || []) {

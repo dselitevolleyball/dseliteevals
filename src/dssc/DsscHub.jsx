@@ -26,6 +26,19 @@ export const DS = {
 };
 export const nrm = (v) => String(v || "").trim().toLowerCase().replace(/\s+/g, " ");
 export const rid = () => Math.random().toString(36).slice(2, 10);
+// Every row of a query, not just the first 1,000 (Supabase's cap per request).
+// The sign-up table passed 1,000 rows in Oct 2026 and the newest classes - the
+// basketball ones - silently read as "0 signed up". build() returns a fresh
+// query each time; pages are taken in id order.
+export async function fetchAll(build, page = 1000) {
+  const out = [];
+  for (let from = 0; ; from += page) {
+    const { data, error } = await build().order("id").range(from, from + page - 1);
+    if (error) throw error;
+    out.push(...(data || []));
+    if (!data || data.length < page) return out;
+  }
+}
 export const fmtDay = (iso, today) => { if (!iso) return "—"; if (iso === today) return "Today"; const d = new Date(iso + "T12:00:00"); const t = new Date(today + "T12:00:00"); if ((d - t) / 86400000 === 1) return "Tomorrow"; return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }); };
 export const fmtLong = (iso) => iso ? new Date(iso + "T12:00:00").toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }) : "—";
 export const timeRange = (s) => (s.start_time || "") + (s.end_time ? "–" + s.end_time : "");

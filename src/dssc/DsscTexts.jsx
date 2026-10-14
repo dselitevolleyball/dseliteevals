@@ -15,7 +15,7 @@
 
 import { useState, useEffect, useMemo, useRef } from "react";
 import { supabase } from "../supabase";
-import { DS, nrm, fmtDay, Btn, Card, Label, Tag, inputStyle } from "./DsscHub.jsx";
+import { DS, nrm, fmtDay, Btn, Card, Label, Tag, inputStyle, fetchAll } from "./DsscHub.jsx";
 import { localDateISO } from "../../shared/dssc-clinics.js";
 import { smsPreview } from "../../shared/sms-split.js";
 import DsscCampaigns from "./DsscCampaigns.jsx";
@@ -52,7 +52,7 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
 
   const loadThreads = async () => { const { data } = await supabase.from("sms_threads").select("*").eq("brand", "dssc").order("last_message_at", { ascending: false, nullsFirst: false }); setThreads(data || []); };
   const loadMsgs = async (id) => { if (!id) { setMsgs([]); return; } const { data } = await supabase.from("sms_messages").select("*").eq("thread_id", id).order("id"); setMsgs(data || []); };
-  const loadRoster = async () => { const { data } = await supabase.from("dssc_pod_roster").select("*"); setRoster(data || []); };
+  const loadRoster = async () => { try { setRoster(await fetchAll(() => supabase.from("dssc_pod_roster").select("*"))); } catch { setRoster([]); } };
   const loadOptouts = async () => { const { data } = await supabase.from("sms_optouts").select("*").eq("brand", "dssc"); setOptouts(data || []); };
   // Every group text — a class from the coach hub, or a program / age / pick
   // from here — and which conversations it went into.

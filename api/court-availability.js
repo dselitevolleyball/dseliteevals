@@ -56,6 +56,19 @@ export default async function handler(req, res) {
   } catch (e) { return res.status(502).json({ error: "Couldn't load court data: " + e.message }); }
 }
 
+
+// Every row, not just Supabase's first 1,000 per request (dssc_pod_roster
+// passed 1,000 rows in Oct 2026). build() returns a fresh query each call.
+async function fetchAll(build, page = 1000) {
+  const out = [];
+  for (let from = 0; ; from += page) {
+    const { data, error } = await build().order("id").range(from, from + page - 1);
+    if (error) return { data: out.length ? out : null, error };
+    out.push(...(data || []));
+    if (!data || data.length < page) return { data: out, error: null };
+  }
+}
+
 // Same numbers as the Clinics & Camps board: dssc_pod_roster rows per session,
 // plus rows on the whole program. The class is the clinic whose source_ref is
 // the Playbook program, the session the one on that date at that start time.
@@ -67,7 +80,7 @@ async function attachSignups(sb, bookings) {
     sb.from("dssc_sync").select("registrations_at").eq("id", 1).maybeSingle(),
   ]);
   if (e1 || !clinics?.length) return sync?.registrations_at || null;
-  const { data: roster, error: e2 } = await sb.from("dssc_pod_roster").select("clinic_id, session_id").in("clinic_id", clinics.map(c => c.id));
+  const { data: roster, error: e2 } = await fetchAll(() => sb.from("dssc_pod_roster").select("id, clinic_id, session_id").in("clinic_id", clinics.map(c => c.id)));
   if (e2) return sync?.registrations_at || null;   // unknown, not zero
   const n = {};
   for (const r of roster || []) { const k = r.clinic_id + "|" + (r.session_id || "*"); n[k] = (n[k] || 0) + 1; }
