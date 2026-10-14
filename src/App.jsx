@@ -25666,7 +25666,7 @@ export default function App() {
         openProgram={(cid)=>{ setClinicFrom("clinics"); setClinicOpenId(cid); }}
         newClinic={newProgram}
         sync={{ dsscSync, dsscSyncTok, fetchSyncBookmarklet }}
-        onCoachHub={()=>{ setDsscHubSel(null); setDsscHubBack(false); setView("dssc"); }} onCoverage={()=>setView("dssccal")} onTimeCards={()=>setView("dssctime")}
+        onCoachHub={()=>{ setDsscHubSel(null); setDsscHubBack(false); setView("dssc"); }} onCoverage={()=>setView("dssccal")} onTimeCards={()=>setView("dssctime")} onMyHours={()=>setView("staffhours")} onStaffHours={()=>setView("staffadmin")} onPeople={()=>setView("dsscpeople")}
         onTextClass={(cid, sid)=>{ setDsscTextsInit({ clinicId: cid, sessionId: sid }); setView("dssctexts"); }} onTexts={()=>setView("dssctexts")}
         onLegacy={()=>setDsscAdminLegacy(true)} />
     );
