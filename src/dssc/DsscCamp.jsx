@@ -19,7 +19,7 @@ import { useState, useEffect, useMemo } from "react";
 import { supabase } from "../supabase";
 import { DS, Btn, Card, Label, Tag, inputStyle, Field, rid } from "./DsscHub.jsx";
 
-const FOCUS = { hitting: "Hitting", defense: "Libero / Defense", setting: "Setting" };
+const FOCUS = { hitting: "Hitting", defense: "Libero / Defense", setting: "Setting", winter: "Winter Edition" };   // winter: the Dec 2026 holiday sessions, all positions
 const STATUS = ["idea", "contacted", "interested", "confirmed", "declined"];
 const STATUS_COLOR = { idea: DS.dim, contacted: DS.mut, interested: DS.orange, confirmed: DS.lime, declined: "#e66" };
 const SESSION_STATUS = ["tentative", "confirmed", "open", "full", "cancelled"];
@@ -301,7 +301,7 @@ function SessionsTab({ sessions, coaches, coachBy, econ, saveSession }) {
     <Card accent={DS.lime}><div style={{ fontSize: 13, color: DS.mut, lineHeight: 1.5 }}>Dates are a starting point: after USAV 16s/17s Nationals (ends Jul 5) and before Texas high-school volleyball starts in August, with two sessions in early June. Move them as coaches' schedules come in — the warning shows if two sessions would need the courts at once.</div></Card>
     {sorted.map(s => {
       const lead = coachBy.get(s.lead_coach_id), e = sessionEcon(s, econ, lead), c = clash(s);
-      const fits = coaches.filter(x => x.status !== "declined" && (x.skills || []).some(k => k === s.focus || (s.focus === "all_skills") || k === "all_skills"))
+      const fits = coaches.filter(x => x.status !== "declined" && (x.skills || []).some(k => k === s.focus || (s.focus === "all_skills" || s.focus === "winter") || k === "all_skills"))
         .sort((a, b) => STATUS.indexOf(b.status) - STATUS.indexOf(a.status) || a.name.localeCompare(b.name));
       return (
         <Card key={s.id} accent={s.status === "cancelled" ? DS.line : undefined} style={{ opacity: s.status === "cancelled" ? 0.6 : 1 }}>
