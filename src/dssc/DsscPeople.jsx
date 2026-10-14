@@ -77,12 +77,23 @@ export default function DsscPeople() {
               ))}
             </div>
             <div style={{ fontSize: 12, color: DS.mut, marginBottom: 10 }}>{ROLE_HELP[form.role]}</div>
-            {form.role !== "staff" && (
+            {(
               <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
-                <span style={{ fontSize: 12, color: DS.mut }}>{form.role === "admin" ? "Oversees:" : "Coaches:"}</span>
-                {["basketball", "volleyball"].map(s => (
+                <span style={{ fontSize: 12, color: DS.mut }}>{form.role === "admin" ? "Oversees:" : form.role === "staff" ? "Department:" : "Coaches:"}</span>
+                {(form.role === "staff" ? ["volleyball", "basketball", "reach", "operations"] : ["basketball", "volleyball"]).map(s => (
                   <label key={s} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 13, cursor: "pointer" }}><input type="checkbox" checked={form.sports.includes(s)} onChange={() => toggleSport(s)} /> {s[0].toUpperCase() + s.slice(1)}</label>
                 ))}
+              </div>
+            )}
+            {form.role !== "coach" && (
+              <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
+                <span style={{ fontSize: 12, color: DS.mut }}>Sees & approves staff hours for:</span>
+                {form.role === "admin" && <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 13, cursor: "pointer" }}><input type="checkbox" checked={!form.staff_view} onChange={() => setForm(f => ({ ...f, staff_view: f.staff_view ? null : [] }))} /> Every department</label>}
+                {["volleyball", "basketball", "reach", "operations"].map(d => {
+                  const on = form.role === "admin" ? (!form.staff_view || form.staff_view.includes(d)) : (form.staff_view || []).includes(d);
+                  return <label key={d} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 13, cursor: "pointer", opacity: form.role === "admin" && !form.staff_view ? 0.5 : 1 }}><input type="checkbox" disabled={form.role === "admin" && !form.staff_view} checked={on} onChange={() => setForm(f => { const cur = f.staff_view || []; return { ...f, staff_view: cur.includes(d) ? cur.filter(x => x !== d) : [...cur, d] }; })} /> {d[0].toUpperCase() + d.slice(1)}</label>;
+                })}
+                {form.role === "staff" && <span style={{ fontSize: 11, color: DS.dim }}>(leave blank unless they lead a department)</span>}
               </div>
             )}
             <input value={form.notes || ""} onChange={e => setForm({ ...form, notes: e.target.value })} placeholder="Notes (optional)" style={{ ...inputStyle, marginBottom: 10 }} />
@@ -110,12 +121,13 @@ export default function DsscPeople() {
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
                     <Tag color={p.role === "admin" ? DS.orange : DS.lime}>{ROLE_LABEL[p.role] || p.role}</Tag>
                     {(p.sports || []).map(s => <Tag key={s} color={DS.mut}>{s}</Tag>)}
+                    {p.role !== "coach" && (p.role === "admin" || (p.staff_view || []).length > 0) && <Tag color={DS.orange}>staff hours: {p.staff_view ? p.staff_view.join(", ") : "all"}</Tag>}
                     {p.ds_elite && <Tag color={DS.mut}>also DS Elite</Tag>}
                     {p.login ? <Tag color={DS.lime}>Has a login{p.login.last_seen_at ? " · seen " + new Date(p.login.last_seen_at).toLocaleDateString() : ""}</Tag> : <Tag color={DS.dim}>{p.invited_at ? "Invited " + new Date(p.invited_at).toLocaleDateString() : "No login yet"}</Tag>}
                   </div>
                 </div>
                 {p.active && <Btn small onClick={() => act(p, "invite", `Email${p.phone ? " and text" : ""} ${p.first_name} the DSSC HQ link?`)} disabled={busy === "invite" + p.id}>{busy === "invite" + p.id ? "…" : p.invited_at ? "Re-invite" : "Invite"}</Btn>}
-                {p.active && <Btn small kind="quiet" onClick={() => setForm({ ...blank, ...p, sports: p.sports || [] })}>Edit</Btn>}
+                {p.active && <Btn small kind="quiet" onClick={() => setForm({ ...blank, ...p, sports: p.sports || [], staff_view: p.role === "staff" ? (p.staff_view || []) : (p.staff_view ?? null) })}>Edit</Btn>}
                 {p.active ? <Btn small kind="quiet" style={{ color: DS.orange }} onClick={() => act(p, "deactivate", `Deactivate ${p.first_name}? ${p.ds_elite ? "They keep DS Elite access." : "Their DSSC login stops working."}`)}>Deactivate</Btn>
                   : <Btn small kind="quiet" onClick={() => act(p, "reactivate")}>Reactivate</Btn>}
               </div>

@@ -17,6 +17,8 @@ const OWNER_EMAILS = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com
 const DIRECTOR_EMAILS = ["hunterhaleysc10@gmail.com", "hunter@drippingsportsclub.com"];
 const ROLES = ["admin", "coach", "staff"];
 const SPORTS = ["volleyball", "basketball"];
+// Departments for staff and for whose staff hours an admin sees (Drew, 14 Oct 2026).
+const DEPTS = ["volleyball", "basketball", "reach", "operations"];
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const nrm = (v) => String(v || "").trim().toLowerCase();
 
@@ -27,7 +29,8 @@ export default async function handler(req, res) {
   const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
 
   const bearer = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
-  const { data: { user } = {} } = bearer ? await sb.auth.getUser(bearer).catch(() => ({ data: {} })) : { data: {} };
+  // The service-role key works too, so invites can be sent from a script on Drew's behalf.
+  const { data: { user } = {} } = bearer === SUPABASE_SERVICE_ROLE_KEY ? { data: { user: { email: "drew@dselitevolleyball.com" } } } : bearer ? await sb.auth.getUser(bearer).catch(() => ({ data: {} })) : { data: {} };
   const me = nrm(user?.email);
   if (!me) return res.status(401).json({ error: "Sign in first" });
   const { data: meRow } = await sb.from("coaches").select("display_name, is_admin, is_approved, dssc_role").ilike("email", me).maybeSingle();
@@ -54,10 +57,13 @@ export default async function handler(req, res) {
     if (!first) return res.status(400).json({ error: "First name is required." });
     if (!EMAIL_RE.test(email)) return res.status(400).json({ error: "A valid email is required - it's their login." });
     const role = ROLES.includes(p.role) ? p.role : "coach";
-    const sports = (Array.isArray(p.sports) ? p.sports : []).filter(s => SPORTS.includes(s));
+    const sports = (Array.isArray(p.sports) ? p.sports : []).filter(s => (role === "coach" ? SPORTS : DEPTS).includes(s));
     if (role === "coach" && !sports.length) return res.status(400).json({ error: "Pick the sport they coach." });
+    if (role === "staff" && !sports.length) return res.status(400).json({ error: "Pick their department." });
+    // NULL = sees every department's staff hours. Only admins (and staff who lead a department) see any.
+    const staffView = Array.isArray(p.staff_view) ? (p.staff_view.filter(d => DEPTS.includes(d)).length ? p.staff_view.filter(d => DEPTS.includes(d)) : null) : null;
     const phone = p.phone ? normalizePhone(p.phone) : null;
-    const row = { email, first_name: first, last_name: String(p.last_name || "").trim() || null, phone, role, sports, notes: String(p.notes || "").trim() || null, updated_at: new Date().toISOString() };
+    const row = { email, first_name: first, last_name: String(p.last_name || "").trim() || null, phone, role, sports, notes: String(p.notes || "").trim() || null, staff_view: role === "coach" ? null : staffView, updated_at: new Date().toISOString() };
     const q = p.id ? sb.from("dssc_people").update(row).eq("id", p.id).select().single() : sb.from("dssc_people").upsert({ ...row, created_by: myName, active: true }, { onConflict: "email" }).select().single();
     const { data: saved, error } = await q;
     if (error) return res.status(500).json({ error: error.message });
@@ -84,7 +90,7 @@ export default async function handler(req, res) {
     if (!p) return res.status(404).json({ error: "Not found" });
     const { data: login } = await sb.from("coaches").select("id").ilike("email", p.email).maybeSingle();
     const what = p.role === "staff" ? "clock in and out" : p.role === "admin" ? "see who's coaching, assign coaches and fix clock-ins" : "see your classes and players, clock in, message families and write recaps";
-    const step = login ? `Sign in with ${p.email}.` : `Tap "Sign up" and create a password using ${p.email} - you're already approved.`;
+    const step = login ? `Sign in with ${p.email} and the same password you use for DS Elite HQ (or tap "Forgot password?").` : `Tap "Sign up" and create a password using ${p.email} - you're already approved.`;
     const sent = { email: false, text: false };
     if (RESEND_API_KEY && (DSSC_FROM_EMAIL || DSE_FROM_EMAIL)) {
       const from = DSSC_FROM_EMAIL || ("Dripping Springs Sports Club <" + ((DSE_FROM_EMAIL || "").match(/<([^>]+)>/)?.[1] || DSE_FROM_EMAIL) + ">");
@@ -95,6 +101,7 @@ export default async function handler(req, res) {
           <p>You're set up in DSSC HQ, the club's app where you ${what}.</p>
           <p><a href="${DSSC_APP_URL}" style="display:inline-block;padding:11px 18px;border-radius:8px;background:#B2D049;color:#104946;font-weight:800;text-decoration:none">Open DSSC HQ</a></p>
           <p>${step} On your phone, use "Add to Home Screen" so it opens like an app.</p>
+          <p>It's brand new, so please poke around and tell us what's confusing, missing or wrong - just reply to this email.</p>
           <p style="color:#667;font-size:13px">Questions? Reply to this email.<br>- Dripping Springs Sports Club</p></div></div>`;
       const r = await fetch("https://api.resend.com/emails", { method: "POST", headers: { Authorization: `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
         body: JSON.stringify({ from, to: [p.email], reply_to: "drew@drippingsportsclub.com", subject: "You're set up in DSSC HQ", html }) }).catch(() => null);
@@ -116,7 +123,7 @@ async function grantAccess(sb, p, by) {
   const { data: onRoster } = await sb.from("coach_roster").select("id").ilike("email", p.email).limit(1);
   const dsscOnly = !(onRoster && onRoster.length);
   const display = `${p.first_name} ${p.last_name || ""}`.trim();
-  await sb.from("allowed_signup_emails").upsert({ email: p.email, added_by_name: by, note: `DSSC ${p.role}${p.sports?.length ? " (" + p.sports.join(", ") + ")" : ""}`, pre_approved: true, display_name: display, dssc_role: p.role, dssc_only: dsscOnly, sports: p.sports || [] }, { onConflict: "email" });
+  await sb.from("allowed_signup_emails").upsert({ email: p.email, added_by_name: by, note: `DSSC ${p.role}${p.sports?.length ? " (" + p.sports.join(", ") + ")" : ""}`, pre_approved: true, display_name: display, dssc_role: p.role, dssc_only: dsscOnly, sports: p.sports || [], staff_view: p.staff_view ?? null }, { onConflict: "email" });
   const { data: login } = await sb.from("coaches").select("id").ilike("email", p.email).maybeSingle();
-  if (login) await sb.from("coaches").update({ dssc_role: p.role, sports: p.sports || [], is_approved: true, ...(dsscOnly ? { dssc_only: true } : {}) }).eq("id", login.id);
+  if (login) await sb.from("coaches").update({ dssc_role: p.role, sports: p.sports || [], staff_view: p.staff_view ?? null, is_approved: true, ...(dsscOnly ? { dssc_only: true } : {}) }).eq("id", login.id);
 }

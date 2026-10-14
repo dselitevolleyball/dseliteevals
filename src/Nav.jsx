@@ -81,7 +81,7 @@ const IT = {
   dssccal:       ["Coverage Calendar", "📅", "dir", "coverage calendar shifts assign coaches", "Coverage"],
   dssctime:      ["DSSC Time Cards", "🕒", "coach", "payroll hours approve", "Time"],
   staffhours:    ["My Hours", "⏱", "staff", "clock in clock out shift intern staff hours working on", "Clock"],
-  staffadmin:    ["Staff Hours", "🧾", "dir", "intern staff shifts clock fix approve hours", "Staff hrs"],
+  staffadmin:    ["Staff Hours", "🧾", "staffview", "intern staff shifts clock fix approve hours", "Staff hrs"],
   dsscpeople:    ["Coaches & Staff", "👥", "dir", "add coach basketball intern staff admin people team", "Staff"],
   // Footer
   activity:      ["Activity Log", "🕓", "all", "history changes", "Activity"],
@@ -118,14 +118,14 @@ const ACTION_BADGES = { messages: "smsDse", dssctexts: "smsDssc", notifications:
 const INFO_BADGES = { favorites: "favorites" };
 
 export function buildNav(ctx) {
-  const { canOps, isAdmin, isOwner, canViewTeams, hasTeams, canSendReports, isDsscDirector, dsscOnly, isDsscStaff } = ctx;
+  const { canOps, isAdmin, isOwner, canViewTeams, hasTeams, canSendReports, isDsscDirector, dsscOnly, isDsscStaff, canSeeStaffHours } = ctx;
   const n = ctx.counts || {};
   const ok = {
     all: true, ops: !!canOps, admin: !!isAdmin, owner: !!isOwner, teams: !!canViewTeams,
     mine: !!(canViewTeams || hasTeams), duty: !!(canViewTeams || canOps || hasTeams), reports: !!canSendReports,
     opsMine: !!(canOps && (canViewTeams || hasTeams)), opsTeams: !!(canOps && canViewTeams), dir: !!isDsscDirector,
     // DSSC staff (interns) get the clock, not the coach screens.
-    staff: !!(isDsscStaff || isDsscDirector), coach: !isDsscStaff || !!isDsscDirector,
+    staff: !!(isDsscStaff || isDsscDirector), coach: !isDsscStaff || !!isDsscDirector, staffview: !!canSeeStaffHours,
   };
   const can = (v) => !!IT[v] && ok[IT[v][2]];
   const secsFor = (ws) => {
@@ -145,7 +145,7 @@ export function buildNav(ctx) {
   // Menu badge on the phone: everything the bottom-bar slots don't already show.
   const restTotal = (shown) => sections.reduce((sum, s) => sum + s.items.reduce((t, v) => t + (!shown.includes(v) && counts(s, v) ? badge(v) : 0), 0), 0);
   const defaults = ws === "dssc"
-    ? (isDsscDirector ? (dsscOnly ? ["clinics", "dssccal", "dssctime", "staffadmin", "dsscpeople"] : ["clinics", "dssctexts", "dssccal", "dssctime", "dssccrm"]) : isDsscStaff ? ["staffhours"] : ["dssc", "dssctime", "notifications"])
+    ? (isDsscDirector ? (dsscOnly ? ["clinics", "dssccal", "dssctime", "staffadmin", "dsscpeople"] : ["clinics", "dssctexts", "dssccal", "dssctime", "dssccrm"]) : isDsscStaff ? (canSeeStaffHours ? ["staffhours", "staffadmin"] : ["staffhours"]) : ["dssc", "dssctime", "notifications"])
     : (canOps ? ["home", "messages", isAdmin ? "dayschedule" : "coverage", "practice", "tournaments", "waiting"] : ["home", "clockin", "lineups", "practiceplan"]);
   const stored = ctx.pins && Array.isArray(ctx.pins[ws]) ? ctx.pins[ws] : null;
   const pinsBase = [...new Set(stored || defaults)];

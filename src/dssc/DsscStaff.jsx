@@ -23,6 +23,22 @@ const fmtDur = (ms) => { const m = Math.max(0, Math.floor(ms / 60000)); return `
 export const weekStart = (d = new Date()) => { const x = new Date(d); x.setHours(0, 0, 0, 0); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x; };
 const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
 const meName = (coach) => coach?.display_name || coach?.email || "";
+// Departments (Drew, 14 Oct 2026). Each department's lead sees and approves its
+// staff hours: volleyball Hunter, basketball Adrian, reach Brandon; Drew,
+// Jonathan and Deroald see all. Operations is broken down by the kind of work.
+export const DEPTS = [["volleyball", "Volleyball"], ["basketball", "Basketball"], ["reach", "Reach"], ["operations", "Operations"]];
+export const OPS_CATS = ["Birthday party", "Facility help", "Intern", "Events", "Other"];
+export const deptLabel = (d) => (DEPTS.find(x => x[0] === d) || [null, d ? d[0].toUpperCase() + d.slice(1) : "Operations"])[1];
+const deptOf = (r) => r.department || "operations";
+const chip = (on, label, onClick, key) => (
+  <button key={key || label} type="button" onClick={onClick} style={{ fontFamily: DS.font, fontSize: 13, fontWeight: 700, padding: "7px 13px", borderRadius: 999, cursor: "pointer", border: "1px solid " + (on ? DS.lime : DS.line), background: on ? DS.limeSoft : "transparent", color: on ? DS.lime : DS.mut }}>{label}</button>
+);
+function DeptPicker({ dept, cat, setDept, setCat }) {
+  return (<div style={{ display: "grid", gap: 8, marginBottom: 10 }}>
+    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{DEPTS.map(([k, l]) => chip(dept === k, l, () => { setDept(k); if (k !== "operations") setCat(null); }, k))}</div>
+    {dept === "operations" && <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{OPS_CATS.map(c => chip(cat === c, c, () => setCat(c), c))}</div>}
+  </div>);
+}
 
 const shell = (children) => (
   <div style={{ margin: "-14px -18px", padding: "16px 16px 48px", background: DS.bg, minHeight: "calc(100vh - 56px)", fontFamily: DS.font, color: DS.text }}>
@@ -32,10 +48,14 @@ const shell = (children) => (
 const Status = ({ r }) => r.rejected ? <Tag color={DS.orange}>Rejected</Tag> : r.approved ? <Tag color={DS.lime}>Approved</Tag> : !r.clock_out ? <Tag color={DS.orange} fill>On the clock</Tag> : <Tag color={DS.mut}>Waiting approval</Tag>;
 
 // ── My Hours ─────────────────────────────────────────────────────────────────
-export function StaffClock({ coach, isDirector }) {
+export function StaffClock({ coach, isDirector, canSeeStaffHours, onStaffHours }) {
   const email = nrm(coach?.email);
   const [rows, setRows] = useState(null);
   const [task, setTask] = useState("");
+  // Starts on the person's own department (coaches.sports holds it for staff).
+  const myDepts = (Array.isArray(coach?.sports) ? coach.sports : []).filter(d => DEPTS.some(x => x[0] === d));
+  const [dept, setDept] = useState(myDepts[0] || "operations");
+  const [cat, setCat] = useState(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
   const [past, setPast] = useState(null);     // { in, out, task } for "add a past shift"
@@ -57,7 +77,7 @@ export function StaffClock({ coach, isDirector }) {
   const weekTotal = thisWeek.reduce((t, r) => t + shiftHours(r), 0);
 
   const act = async (fn, ok) => { setBusy(true); setMsg(null); try { const { error } = await fn(); if (error) throw error; setMsg({ ok }); await load(); } catch (e) { setMsg({ err: e.message }); } setBusy(false); };
-  const clockIn = () => act(() => supabase.from("dssc_staff_shifts").insert({ person_email: coach.email, person_name: meName(coach), clock_in: new Date().toISOString(), task: task.trim() || null, source: "app", created_by: meName(coach) }), "Clocked in.");
+  const clockIn = () => { if (dept === "operations" && !cat) { setMsg({ err: "Pick what kind of operations work." }); return; } act(() => supabase.from("dssc_staff_shifts").insert({ person_email: coach.email, person_name: meName(coach), clock_in: new Date().toISOString(), department: dept, category: dept === "operations" ? cat : null, task: task.trim() || null, source: "app", created_by: meName(coach) }), "Clocked in."); };
   const clockOut = () => act(() => supabase.from("dssc_staff_shifts").update({ clock_out: new Date().toISOString(), task: (task.trim() || open.task || null) }).eq("id", open.id), "Clocked out.");
   const saveFix = () => {
     const out = fromLocalInput(fix.out);
@@ -70,7 +90,8 @@ export function StaffClock({ coach, isDirector }) {
     if (!a || !b || new Date(b) <= new Date(a)) { setMsg({ err: "The end has to be after the start." }); return; }
     if (new Date(b) > new Date()) { setMsg({ err: "A past shift can't end in the future - clock in instead." }); return; }
     if ((new Date(b) - new Date(a)) / 3600000 > 16) { setMsg({ err: "That's over 16 hours - check the dates." }); return; }
-    act(() => supabase.from("dssc_staff_shifts").insert({ person_email: coach.email, person_name: meName(coach), clock_in: a, clock_out: b, task: (past.task || "").trim() || null, source: "past", created_by: meName(coach) }), "Shift added.").then(() => setPast(null));
+    if (dept === "operations" && !cat) { setMsg({ err: "Pick what kind of operations work." }); return; }
+    act(() => supabase.from("dssc_staff_shifts").insert({ person_email: coach.email, person_name: meName(coach), clock_in: a, clock_out: b, department: dept, category: dept === "operations" ? cat : null, task: (past.task || "").trim() || null, source: "past", created_by: meName(coach) }), "Shift added.").then(() => setPast(null));
   };
   const removeMine = (r) => { if (window.confirm("Delete this shift?")) act(() => supabase.from("dssc_staff_shifts").delete().eq("id", r.id), "Deleted."); };
 
@@ -87,7 +108,7 @@ export function StaffClock({ coach, isDirector }) {
       <Label>{open ? "You're on the clock" : "Clock in"}</Label>
       {open ? (<>
         <div style={{ fontSize: 34, fontWeight: 800, lineHeight: 1 }}>{fmtDur(elapsed)}</div>
-        <div style={{ fontSize: 13, color: DS.mut, margin: "6px 0 12px" }}>Since {fmtWhen(open.clock_in)}{open.task ? " · " + open.task : ""}</div>
+        <div style={{ fontSize: 13, color: DS.mut, margin: "6px 0 12px" }}>Since {fmtWhen(open.clock_in)} · {deptLabel(deptOf(open))}{open.category ? " / " + open.category : ""}{open.task ? " · " + open.task : ""}</div>
         {elapsed > 4 * 3600000 && <div style={{ fontSize: 13, color: DS.orange, fontWeight: 700, marginBottom: 10 }}>That's over 4 hours. If you already left, use "I forgot to clock out" and enter when you actually stopped.</div>}
         <input value={task} onChange={e => setTask(e.target.value)} placeholder={open.task ? "Update what you worked on (optional)" : "What did you work on?"} style={{ ...inputStyle, marginBottom: 10 }} />
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -105,6 +126,8 @@ export function StaffClock({ coach, isDirector }) {
           </div>
         )}
       </>) : (<>
+        <div style={{ fontSize: 12, color: DS.mut, marginBottom: 6 }}>Which department is this time for?</div>
+        <DeptPicker dept={dept} cat={cat} setDept={setDept} setCat={setCat} />
         <input value={task} onChange={e => setTask(e.target.value)} placeholder="What are you working on? (front desk, camp setup, social media...)" style={{ ...inputStyle, marginBottom: 10 }} />
         <Btn kind="primary" disabled={busy} onClick={clockIn} style={{ fontSize: 16, padding: "13px 24px" }}>Clock in</Btn>
       </>)}
@@ -124,6 +147,7 @@ export function StaffClock({ coach, isDirector }) {
             <span style={{ fontSize: 12, color: DS.mut, width: 40 }}>Start</span><input type="datetime-local" value={past.in} onChange={e => setPast({ ...past, in: e.target.value })} style={{ ...inputStyle, width: "auto" }} />
             <span style={{ fontSize: 12, color: DS.mut, width: 30 }}>End</span><input type="datetime-local" value={past.out} onChange={e => setPast({ ...past, out: e.target.value })} style={{ ...inputStyle, width: "auto" }} />
           </div>
+          <DeptPicker dept={dept} cat={cat} setDept={setDept} setCat={setCat} />
           <input value={past.task} onChange={e => setPast({ ...past, task: e.target.value })} placeholder="What did you work on?" style={inputStyle} />
           <div style={{ display: "flex", gap: 8 }}><Btn kind="primary" disabled={busy} onClick={savePast}>Add shift</Btn><Btn kind="quiet" onClick={() => setPast(null)}>Cancel</Btn></div>
         </div>
@@ -137,7 +161,7 @@ export function StaffClock({ coach, isDirector }) {
           {rows.map(r => (
             <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "9px 12px", borderRadius: 10, background: DS.panel2, border: "1px solid " + DS.line }}>
               <div style={{ minWidth: 150 }}><div style={{ fontSize: 13, fontWeight: 700 }}>{new Date(r.clock_in).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}</div><div style={{ fontSize: 12, color: DS.mut }}>{fmtTime(r.clock_in)} – {r.clock_out ? fmtTime(r.clock_out) : "now"}</div></div>
-              <div style={{ flex: 1, minWidth: 140, fontSize: 13 }}>{r.task || <i style={{ color: DS.dim }}>no task noted</i>}{r.source === "past" && <span style={{ color: DS.dim, fontSize: 11 }}> · added after</span>}</div>
+              <div style={{ flex: 1, minWidth: 140, fontSize: 13 }}><b>{deptLabel(deptOf(r))}{r.category ? " / " + r.category : ""}</b>{r.task ? " · " + r.task : ""}{r.source === "past" && <span style={{ color: DS.dim, fontSize: 11 }}> · added after</span>}</div>
               <div style={{ fontSize: 14, fontWeight: 800, minWidth: 48, textAlign: "right" }}>{shiftHours(r).toFixed(2)}h</div>
               <Status r={r} />
               {!r.approved && r.clock_out && <Btn kind="quiet" small onClick={() => removeMine(r)} style={{ color: DS.orange }}>✕</Btn>}
@@ -145,13 +169,14 @@ export function StaffClock({ coach, isDirector }) {
           ))}
         </div>
       )}
-      {isDirector && <div style={{ fontSize: 12, color: DS.mut, marginTop: 10 }}>Everyone's shifts are under Staff Hours.</div>}
+      {(isDirector || canSeeStaffHours) && <div style={{ fontSize: 12, color: DS.mut, marginTop: 10 }}>Your team's shifts are under Staff Hours.{onStaffHours && <> <Btn kind="link" small onClick={onStaffHours}>Open Staff Hours →</Btn></>}</div>}
     </Card>
   </>);
 }
 
 // ── Staff Hours (admins) ─────────────────────────────────────────────────────
-export function StaffHoursAdmin({ coach }) {
+export function StaffHoursAdmin({ coach, depts = DEPTS.map(d => d[0]) }) {
+  const [only, setOnly] = useState("all");   // narrow to one of my departments
   const [wk, setWk] = useState(() => weekStart());
   const [rows, setRows] = useState(null);
   const [people, setPeople] = useState([]);
@@ -170,7 +195,8 @@ export function StaffHoursAdmin({ coach }) {
   const [stale, setStale] = useState([]);
   useEffect(() => { supabase.from("dssc_staff_shifts").select("*").is("clock_out", null).lt("clock_in", wk.toISOString()).then(({ data }) => setStale(data || [])); }, [wk, rows]);
 
-  const byPerson = useMemo(() => { const m = new Map(); for (const r of [...stale, ...(rows || [])]) { const k = nrm(r.person_email); if (!m.has(k)) m.set(k, { name: r.person_name || r.person_email, email: r.person_email, rows: [] }); m.get(k).rows.push(r); } return [...m.values()].sort((a, b) => a.name.localeCompare(b.name)); }, [rows, stale]);
+  const mine = (r) => depts.includes(deptOf(r)) && (only === "all" || deptOf(r) === only);
+  const byPerson = useMemo(() => { const m = new Map(); for (const r of [...stale, ...(rows || [])].filter(mine)) { const k = nrm(r.person_email); if (!m.has(k)) m.set(k, { name: r.person_name || r.person_email, email: r.person_email, rows: [] }); m.get(k).rows.push(r); } return [...m.values()].sort((a, b) => a.name.localeCompare(b.name)); }, [rows, stale, only, depts]); // eslint-disable-line react-hooks/exhaustive-deps
   const run = async (fn) => { setMsg(null); const { error } = await fn(); if (error) setMsg({ err: error.message }); await load(); };
   const approve = (r, ok) => run(() => supabase.from("dssc_staff_shifts").update(ok ? { approved: true, rejected: false, approved_by: me, approved_at: new Date().toISOString() } : { approved: false, rejected: true, approved_by: me, approved_at: new Date().toISOString() }).eq("id", r.id));
   const approveAll = (p) => run(() => supabase.from("dssc_staff_shifts").update({ approved: true, rejected: false, approved_by: me, approved_at: new Date().toISOString() }).in("id", p.rows.filter(r => r.clock_out && !r.approved && !r.rejected).map(r => r.id)));
@@ -179,7 +205,7 @@ export function StaffHoursAdmin({ coach }) {
     const a = fromLocalInput(edit.in), b = edit.out ? fromLocalInput(edit.out) : null;
     if (!edit.person_email) { setMsg({ err: "Pick who the shift is for." }); return; }
     if (!a || (b && new Date(b) <= new Date(a))) { setMsg({ err: "The end has to be after the start." }); return; }
-    const patch = { clock_in: a, clock_out: b, task: (edit.task || "").trim() || null, edited_by: me, edited_at: new Date().toISOString() };
+    const patch = { clock_in: a, clock_out: b, task: (edit.task || "").trim() || null, department: edit.department || "operations", category: (edit.department || "operations") === "operations" ? (edit.category || null) : null, edited_by: me, edited_at: new Date().toISOString() };
     await run(() => edit.id ? supabase.from("dssc_staff_shifts").update(patch).eq("id", edit.id)
       : supabase.from("dssc_staff_shifts").insert({ ...patch, person_email: edit.person_email, person_name: edit.person_name, source: "admin", created_by: me }));
     setEdit(null);
@@ -198,6 +224,7 @@ export function StaffHoursAdmin({ coach }) {
         <span style={{ fontSize: 12, color: DS.mut }}>In</span><input type="datetime-local" value={edit.in} onChange={e => setEdit({ ...edit, in: e.target.value })} style={{ ...inputStyle, width: "auto" }} />
         <span style={{ fontSize: 12, color: DS.mut }}>Out</span><input type="datetime-local" value={edit.out || ""} onChange={e => setEdit({ ...edit, out: e.target.value })} style={{ ...inputStyle, width: "auto" }} />
       </div>
+      <DeptPicker dept={edit.department || (depts.length === 1 ? depts[0] : "operations")} cat={edit.category || null} setDept={(d) => setEdit(x => ({ ...x, department: d }))} setCat={(c) => setEdit(x => ({ ...x, category: c }))} />
       <input value={edit.task || ""} onChange={e => setEdit({ ...edit, task: e.target.value })} placeholder="What they worked on" style={inputStyle} />
       <div style={{ display: "flex", gap: 8 }}><Btn kind="primary" onClick={save}>Save</Btn><Btn kind="quiet" onClick={() => setEdit(null)}>Cancel</Btn></div>
     </div>
@@ -205,11 +232,12 @@ export function StaffHoursAdmin({ coach }) {
   return shell(<>
     <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
       <div style={{ fontSize: 24, fontWeight: 800 }}>Staff hours</div>
+      {depts.length > 1 ? <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>{[["all", "All"], ...DEPTS.filter(d => depts.includes(d[0]))].map(([k, l]) => chip(only === k, l, () => setOnly(k), k))}</div> : <Tag color={DS.lime}>{deptLabel(depts[0])}</Tag>}
       <div style={{ flex: 1 }} />
       <Btn small onClick={() => setWk(addDays(wk, -7))}>‹</Btn>
       <span style={{ fontSize: 13, fontWeight: 700, minWidth: 120, textAlign: "center" }}>{label}</span>
       <Btn small onClick={() => setWk(addDays(wk, 7))}>›</Btn>
-      <Btn small kind="primary" onClick={() => setEdit({ person_email: "", person_name: "", in: toLocalInput(new Date(Date.now() - 3 * 3600000).toISOString()), out: toLocalInput(new Date().toISOString()), task: "" })}>+ Add a shift</Btn>
+      <Btn small kind="primary" onClick={() => setEdit({ person_email: "", person_name: "", in: toLocalInput(new Date(Date.now() - 3 * 3600000).toISOString()), out: toLocalInput(new Date().toISOString()), task: "", department: depts.length === 1 ? depts[0] : "operations", category: null })}>+ Add a shift</Btn>
     </div>
     {!edit?.id && editor}
     {msg?.err && <div style={{ color: DS.orange, fontWeight: 700, fontSize: 13, margin: "8px 0" }}>{msg.err}</div>}
@@ -226,10 +254,10 @@ export function StaffHoursAdmin({ coach }) {
             <div key={r.id}>
               <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "8px 11px", borderRadius: 10, background: DS.panel2, border: "1px solid " + (!r.clock_out ? DS.orange : DS.line) }}>
                 <div style={{ minWidth: 160, fontSize: 13 }}><b>{new Date(r.clock_in).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}</b><div style={{ color: DS.mut, fontSize: 12 }}>{fmtTime(r.clock_in)} – {r.clock_out ? fmtTime(r.clock_out) : "still clocked in"}</div></div>
-                <div style={{ flex: 1, minWidth: 140, fontSize: 13 }}>{r.task || <i style={{ color: DS.dim }}>no task</i>}<span style={{ color: DS.dim, fontSize: 11 }}>{r.source === "past" ? " · added after" : r.source === "admin" ? " · added by admin" : ""}{r.edited_by ? ` · edited by ${r.edited_by}` : ""}{r.reminder_sent_at && !r.clock_out ? " · 4-hr text sent" : ""}</span></div>
+                <div style={{ flex: 1, minWidth: 140, fontSize: 13 }}><b>{deptLabel(deptOf(r))}{r.category ? " / " + r.category : ""}</b>{r.task ? " · " + r.task : ""}<span style={{ color: DS.dim, fontSize: 11 }}>{r.source === "past" ? " · added after" : r.source === "admin" ? " · added by admin" : ""}{r.edited_by ? ` · edited by ${r.edited_by}` : ""}{r.reminder_sent_at && !r.clock_out ? " · 4-hr text sent" : ""}</span></div>
                 <div style={{ fontWeight: 800, minWidth: 48, textAlign: "right" }}>{shiftHours(r).toFixed(2)}h</div>
                 <Status r={r} />
-                <Btn small kind="quiet" onClick={() => setEdit({ id: r.id, in: toLocalInput(r.clock_in), out: r.clock_out ? toLocalInput(r.clock_out) : "", task: r.task || "" })}>{r.clock_out ? "Fix" : "Clock out"}</Btn>
+                <Btn small kind="quiet" onClick={() => setEdit({ id: r.id, in: toLocalInput(r.clock_in), out: r.clock_out ? toLocalInput(r.clock_out) : "", task: r.task || "", department: deptOf(r), category: r.category || null })}>{r.clock_out ? "Fix" : "Clock out"}</Btn>
                 {r.clock_out && !r.approved && <Btn small kind="primary" onClick={() => approve(r, true)}>Approve</Btn>}
                 {r.clock_out && !r.rejected && <Btn small kind="quiet" onClick={() => approve(r, false)} style={{ color: DS.orange }}>Reject</Btn>}
                 <Btn small kind="quiet" onClick={() => del(r)} style={{ color: DS.orange }}>✕</Btn>

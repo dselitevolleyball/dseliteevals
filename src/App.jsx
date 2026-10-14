@@ -2233,7 +2233,8 @@ export default function App() {
   const canSendReports = canOps || ["brandon@drippingsportsclub.com"].includes(String(coach?.email || "").trim().toLowerCase());
   // Brandon runs Reach and does no volleyball coaching: his login is the
   // testing screen and nothing else (Drew, Oct 9 2026).
-  const isReachOnly = !canOps && ["brandon@drippingsportsclub.com"].includes(String(coach?.email || "").trim().toLowerCase());
+  // ...but in DSSC HQ (/hq) he is Reach staff in the club app (Drew, 14 Oct 2026).
+  const isReachOnly = !HQ_DSSC && !canOps && ["brandon@drippingsportsclub.com"].includes(String(coach?.email || "").trim().toLowerCase());
   // DSSC as its own app (Drew, 13 Oct 2026). The /hq build (drippingsportsclub.com/hq)
   // and anyone whose login is DSSC-only (coaches.dssc_only: basketball coaches,
   // interns, the DSSC administrators) only ever see DSSC. dssc_role: admin runs
@@ -2245,6 +2246,14 @@ export default function App() {
   const isDsscDirector = canOps || dsscRole === "admin" || DSSC_DIRECTOR_EMAILS.includes(String(coach?.email || "").trim().toLowerCase());
   // No sports set: a director sees both, a DS Elite coach coaches volleyball.
   const dsscSports = Array.isArray(coach?.sports) && coach.sports.length ? coach.sports : (isDsscDirector ? ["volleyball", "basketball"] : ["volleyball"]);
+  // Whose staff hours this login sees (coaches.staff_view; Drew, 14 Oct 2026):
+  // owners/admins and DSSC admins with no staff_view see every department;
+  // Hunter volleyball, Adrian basketball, Brandon reach.
+  const STAFF_DEPTS = ["volleyball", "basketball", "reach", "operations"];
+  const staffDepts = (isOwner || canOps) ? STAFF_DEPTS
+    : Array.isArray(coach?.staff_view) && coach.staff_view.length ? coach.staff_view
+    : dsscRole === "admin" ? STAFF_DEPTS : [];
+  const canSeeStaffHours = staffDepts.length > 0;
   const opsDenied = <div style={{padding:24,color:C.mut,textAlign:"center"}}>This section is restricted to administrators. Ask the club administrator (Drew) for access.</div>;
   // Once a player has accepted (or is locked/signed) onto a team, they're
   // locked to that team — only the owner (Drew) can change their offer status,
@@ -32777,7 +32786,7 @@ export default function App() {
   // ── Navigation (src/Nav.jsx): one list drives the desktop sidebar, the phone
   // drawer, bottom bar and section chips, gated exactly like the screen guards.
   const navCtx = {
-    workspace, canOps, isAdmin, isOwner, canViewTeams, hasTeams: myTeamNames.length > 0, canSendReports, isDsscDirector, dsscOnly, isDsscStaff, pins: navPins,
+    workspace, canOps, isAdmin, isOwner, canViewTeams, hasTeams: myTeamNames.length > 0, canSendReports, isDsscDirector, dsscOnly, isDsscStaff, canSeeStaffHours, pins: navPins,
     counts: {
       smsDse: smsUnread.dse, smsDssc: smsUnread.dssc, notif: unreadCount,
       issuesOpen: incidents.filter(r => r.status === "open").length,
@@ -32987,9 +32996,9 @@ export default function App() {
           prose — capping them just buys empty margin and costs a column. */}
       <div style={{padding:showPhoneNav?"14px 18px calc(84px + env(safe-area-inset-bottom, 0px))":"14px 18px",maxWidth:WIDE_VIEWS.has(view)?"none":1500,margin:"0 auto"}}>
         {isReachOnly ? <ReachHome coach={coach} players={players} session={session} /> : (dsscOnly && !DSSC_ONLY_OK.has(view)) ? null : OPS_VIEWS.has(view) && view !== "notifications" && !canOps && !(isDsscDirector && view === "dssccal") ? opsDenied : <>
-        {view==="home" && (workspace==="dssc" ? (isDsscStaff && !isDsscDirector ? <StaffClock coach={coach} isDirector={false} /> : isDsscDirector ? renderDsscAdmin() : renderDsscHub()) : renderHome())}
-        {view==="staffhours" && <StaffClock coach={coach} isDirector={isDsscDirector} />}
-        {view==="staffadmin" && (isDsscDirector ? <StaffHoursAdmin coach={coach} /> : opsDenied)}
+        {view==="home" && (workspace==="dssc" ? (isDsscStaff && !isDsscDirector ? <StaffClock coach={coach} isDirector={false} canSeeStaffHours={canSeeStaffHours} onStaffHours={canSeeStaffHours ? ()=>setView("staffadmin") : null} /> : isDsscDirector ? renderDsscAdmin() : renderDsscHub()) : renderHome())}
+        {view==="staffhours" && <StaffClock coach={coach} isDirector={isDsscDirector} canSeeStaffHours={canSeeStaffHours} onStaffHours={canSeeStaffHours ? ()=>setView("staffadmin") : null} />}
+        {view==="staffadmin" && (canSeeStaffHours ? <StaffHoursAdmin coach={coach} depts={staffDepts} /> : opsDenied)}
         {view==="dsscpeople" && (isDsscDirector ? <DsscPeople coach={coach} isOwner={isOwner} /> : opsDenied)}
         {view==="clockin" && (
           <div style={{maxWidth:820,margin:"0 auto"}}>

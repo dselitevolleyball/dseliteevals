@@ -26,9 +26,9 @@ const b64url = (buf) => Buffer.from(buf).toString("base64").replace(/\+/g, "-").
 const signLink = (obj, secret) => { const p = b64url(JSON.stringify(obj)); return p + "." + b64url(crypto.createHmac("sha256", secret).update(p).digest()); };
 
 const APPROVERS_DEFAULT = ["hunterhaleysc10@gmail.com", "hunter@drippingsportsclub.com", "drew@dselitevolleyball.com"];
-// Monday approvals by sport (Drew, 13 Oct 2026): Hunter volleyball, Adrian basketball and staff hours.
+// Monday approvals by sport (Drew, 13 Oct 2026): Hunter volleyball, Adrian basketball;
+// staff hours by department further down.
 const BB_APPROVERS_DEFAULT = ["adrian@drippingsportsclub.com", "drew@dselitevolleyball.com"];
-const STAFF_APPROVERS_DEFAULT = ["adrian@drippingsportsclub.com", "drew@dselitevolleyball.com"];
 const DSSC_APP = "https://www.drippingsportsclub.com/hq";
 const addDays = (iso, n) => { const d = new Date(iso + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 const fmtD = (iso) => { try { return new Date(iso + "T00:00:00Z").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" }); } catch { return iso; } };
@@ -188,12 +188,21 @@ export default async function handler(req, res) {
   }
   let staffWaiting = 0;
   if (isMonday) {
-    const { data: shifts } = await supabase.from("dssc_staff_shifts").select("person_name, person_email, clock_in, clock_out, approved, rejected")
+    const { data: shifts } = await supabase.from("dssc_staff_shifts").select("person_name, person_email, clock_in, clock_out, approved, rejected, department")
       .gte("clock_in", lastMon + "T05:00:00Z").lt("clock_in", today + "T05:00:00Z").eq("approved", false).eq("rejected", false).not("clock_out", "is", null);
     const rows = (shifts || []).map(s => ({ ...s, who: s.person_name || s.person_email }));
     staffWaiting = rows.length;
-    await askApproval(listFrom(process.env.DSSC_STAFF_APPROVER_EMAILS, STAFF_APPROVERS_DEFAULT), rows, "DSSC staff", "staffadmin",
-      (s) => Math.round(((new Date(s.clock_out) - new Date(s.clock_in)) / 3600000) * 4) / 4);
+    // Each department's staff hours go to its lead (Drew, 14 Oct 2026).
+    const STAFF_BY_DEPT = {
+      volleyball: listFrom(process.env.DSSC_STAFF_VB_APPROVERS, ["hunter@drippingsportsclub.com"]),
+      basketball: listFrom(process.env.DSSC_STAFF_BB_APPROVERS, ["adrian@drippingsportsclub.com"]),
+      reach: listFrom(process.env.DSSC_STAFF_REACH_APPROVERS, ["brandon@drippingsportsclub.com"]),
+      operations: listFrom(process.env.DSSC_STAFF_APPROVER_EMAILS, ["jonathan@drippingsportsclub.com", "deroald@drippingsportsclub.com", "drew@dselitevolleyball.com"]),
+    };
+    for (const [dept, to] of Object.entries(STAFF_BY_DEPT)) {
+      await askApproval(to, rows.filter(s => (s.department || "operations") === dept), "DSSC " + dept + " staff", "staffadmin",
+        (s) => Math.round(((new Date(s.clock_out) - new Date(s.clock_in)) / 3600000) * 4) / 4);
+    }
   }
 
   return res.status(200).json({ ok: true, reminded, nudged, pending: pending.length, unapproved: unapproved.length, staffWaiting });
