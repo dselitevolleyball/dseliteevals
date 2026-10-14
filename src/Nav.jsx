@@ -73,7 +73,7 @@ const IT = {
   tryouts:       ["Tryout Coach Assignments", "🗂", "all", "coach assignments tryouts", "Assign"],
   // DSSC
   clinics:       ["Clinics & Camps Board", "🗂", "dir", "board clinics camps", "Board"],
-  dssccamp:      ["Heatwave Camp", "🔥", "dir", "camp heatwave", "Heatwave"],
+  dssccamp:      ["Heatwave VB ATX", "🔥", "dir", "camp heatwave vb atx", "Heatwave"],
   pods:          ["Skill Pods", "🧠", "ops", "pods", "Pods"],
   privates:      ["Privates", "🤝", "ops", "private lessons", "Privates"],
   dssctexts:     ["DSSC Texts", "💬", "dir", "sms text messages", "Texts"],
