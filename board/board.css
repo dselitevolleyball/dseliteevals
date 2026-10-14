@@ -65,6 +65,9 @@ button { font-family: inherit; color: inherit; cursor: pointer; border: none; ba
 .vhead { display: flex; align-items: flex-end; gap: 22px; margin-bottom: 14px; }
 .vtitle { font-size: 56px; font-weight: 900; line-height: 0.95; letter-spacing: -0.01em; text-transform: uppercase; }
 .vabout { font-size: 19px; color: var(--mut); font-weight: 600; padding-bottom: 6px; }
+.vcount { align-self: center; font-size: 27px; font-weight: 900; letter-spacing: 0.04em; text-transform: uppercase; color: #0b2d2b; background: var(--lime);
+  border-radius: 14px; padding: 8px 18px; white-space: nowrap; box-shadow: 0 8px 24px rgba(178, 208, 73, 0.28); }
+.vcount span { font-weight: 800; opacity: 0.8; }
 .chips { margin-left: auto; display: flex; gap: 10px; padding-bottom: 6px; }
 .chip { font-size: 17px; font-weight: 900; letter-spacing: 0.08em; text-transform: uppercase; padding: 8px 16px; border-radius: 99px; background: var(--lime-soft); color: var(--lime); border: 2px solid rgba(178, 208, 73, 0.35); }
 .chip.o { background: var(--orange-soft); color: var(--orange); border-color: rgba(255, 115, 0, 0.4); }

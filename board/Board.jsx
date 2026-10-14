@@ -18,13 +18,16 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { fmtMetric } from "../shared/stat-report.js";
+import LOGO from "../public/dssc/logo-horizontal-white.png";
 
 const STAGE_W = 1920, STAGE_H = 1080;
 const AGES = ["U11", "U12", "U13", "U14", "U15", "U16+"];
 const QS = new URLSearchParams(window.location.search);
+// Served at www.drippingsportsclub.com/reach (the club site proxies /reach/* to
+// this build), so the data comes through the same path. No key = the public
+// board; ?k= picks a specific one (stat_boards).
 const KEY = QS.get("k") || "";
-const API = (QS.get("api") || "/api/leaderboard");
-const LOGO = "/dssc/logo-horizontal-white.png";
+const API = import.meta.env.BASE_URL + "api/leaderboard";
 const ALL = { gender: "all", age: "all", team: "all" };
 const BOOT = Date.now();
 
@@ -160,7 +163,9 @@ function Leaderboard({ data, f, metric, highlight, onPick }) {
     <div className="view">
       <div className="vhead">
         <div className="vtitle">{metric.label}</div>
-        <div className="vabout">{metric.about} · {list.length} {genderWord(f.gender)}</div>
+        {/* Drew: "show on the top 20 how many it's out of" */}
+        {list.length > 0 && <div className="vcount">{list.length > 20 ? <>Top 20 <span>of {list.length} {genderWord(f.gender)}</span></> : <>All {list.length} <span>{list.length === 1 ? genderWord(f.gender).replace(/s$/, "") : genderWord(f.gender)}</span></>}</div>}
+        <div className="vabout">{metric.about}</div>
         <Chips f={f} />
       </div>
       {!top.length ? <div className="empty"><div>No results yet{f.gender === "M" ? " for boys" : ""}<small>Be the first on the board: ask Coach Brandon about testing.</small></div></div> : (
@@ -193,6 +198,7 @@ function Gains({ data, f, onPick }) {
     <div className="view">
       <div className="vhead">
         <div className="vtitle">Biggest Gains</div>
+        {(() => { const n = data.athletes.filter(a => matches(a, f) && data.metrics.some(m => (a.m[m.key]?.hist.length || 0) > 1)).length; return n ? <div className="vcount">{n} <span>retested</span></div> : null; })()}
         <div className="vabout">Most improved from first test to latest test</div>
         <Chips f={f} />
       </div>
@@ -389,7 +395,7 @@ function Celebration({ data, ev, leaving }) {
 export default function Board() {
   const stage = useStageScale();
   const [data, setData] = useState(null);
-  const [error, setError] = useState(KEY ? null : "This screen needs its link: …/board?k=…");
+  const [error, setError] = useState(null);
   const [online, setOnline] = useState(true);
   const [mode, setMode] = useState("auto");            // auto = slideshow, touch = someone's using it
   const [slideIdx, setSlideIdx] = useState(0);
@@ -410,7 +416,6 @@ export default function Board() {
 
   // Poll; a result that's new and held still for one poll becomes an event.
   useEffect(() => {
-    if (!KEY) return;
     let stop = false, timer;
     const settle = (d) => {
       const cur = pointsOf(d);
@@ -440,7 +445,7 @@ export default function Board() {
     };
     const load = async () => {
       try {
-        const r = await fetch(`${API}?k=${encodeURIComponent(KEY)}&v=${verRef.current}`, { cache: "no-store" });
+        const r = await fetch(`${API}?${KEY ? "k=" + encodeURIComponent(KEY) + "&" : ""}v=${verRef.current}`, { cache: "no-store" });
         const d = await r.json().catch(() => ({}));
         if (!r.ok || !d.ok) throw new Error(d.error || "HTTP " + r.status);
         if (d.same) { if (dataRef.current) settle(dataRef.current); }
@@ -529,7 +534,7 @@ export default function Board() {
   const byId = useMemo(() => new Map((data?.athletes || []).map(a => [a.id, a])), [data]);
 
   const body = !data ? (
-    <div className="connect"><div><img src={LOGO} alt="" /><div>{error || "Loading the leaderboard…"}</div>{error && KEY && <small>Retrying every few seconds.</small>}</div></div>
+    <div className="connect"><div><img src={LOGO} alt="" /><div>{error || "Loading the leaderboard…"}</div>{error && <small>Retrying every few seconds.</small>}</div></div>
   ) : (<>
     <div className="hdr">
       <img className="logo" src={LOGO} alt="Dripping Springs Sports Club" />

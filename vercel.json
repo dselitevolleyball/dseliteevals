@@ -76,8 +76,23 @@
       "destination": "/api/courts-public"
     },
     {
+      "source": "/reach",
+      "destination": "/reach/index.html"
+    },
+    {
+      "source": "/reach/",
+      "destination": "/reach/index.html"
+    },
+    {
+      "source": "/reach/api/:path*",
+      "destination": "/api/:path*"
+    }
+  ],
+  "redirects": [
+    {
       "source": "/board",
-      "destination": "/board/index.html"
+      "destination": "/reach",
+      "permanent": false
     }
   ],
   "crons": [

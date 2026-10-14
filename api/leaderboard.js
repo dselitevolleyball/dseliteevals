@@ -2,8 +2,11 @@
 // 2026 - "a display that will highlight the top 20 athletes for each of the
 // measurements ... first name and last name initial only").
 //
-//   GET /api/leaderboard?k=<stat_boards.key>
+//   GET /api/leaderboard            the public board (www.drippingsportsclub.com/reach)
+//   GET /api/leaderboard?k=<key>    a specific board (stat_boards.key)
 //   -> { title, subtitle, settings, metrics, athletes, recent, asOf }
+// No key reads the board marked public; with none public it's a 403, so
+// `update stat_boards set public = false` takes the page down without a deploy.
 //
 // Privacy: an athlete is "Quinn R." plus team and age group - never a full
 // last name, a player id, a birthday or a contact. Ids are a hash scoped to
@@ -66,14 +69,18 @@ async function allRows(build, page = 1000) {
 
 export default async function handler(req, res) {
   res.setHeader("Cache-Control", "no-store");
+  res.setHeader("X-Robots-Tag", "noindex");
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = process.env;
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return res.status(500).json({ error: "Server not configured" });
-  const key = String((req.query && req.query.k) || new URL(req.url, "https://x").searchParams.get("k") || "").trim();
-  if (!/^[a-z0-9]{16,64}$/i.test(key)) return res.status(403).json({ error: "This display needs its link (…/board?k=…)." });
+  const asked = String((req.query && req.query.k) || new URL(req.url, "https://x").searchParams.get("k") || "").trim();
+  if (asked && !/^[a-z0-9]{16,64}$/i.test(asked)) return res.status(403).json({ error: "This display link isn't valid." });
 
   const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
-  const { data: board } = await sb.from("stat_boards").select("key, settings").eq("key", key).maybeSingle();
-  if (!board) return res.status(403).json({ error: "This display link isn't valid any more." });
+  const { data: board } = asked
+    ? await sb.from("stat_boards").select("key, settings").eq("key", asked).maybeSingle()
+    : await sb.from("stat_boards").select("key, settings").eq("public", true).order("created_at").limit(1).maybeSingle();
+  if (!board) return res.status(403).json({ error: asked ? "This display link isn't valid any more." : "The leaderboard is switched off right now." });
+  const key = board.key;   // ids are hashed with it, so they match however the board is opened
 
   const cols = "id, first_name, last_name, gender, dob, usav_div, team_assignment, offer_status, stand_reach, approach_touch, jump_touch, sprint_10y, stat_baseline_date";
   const [pRes, tRes, fRes] = await Promise.all([
