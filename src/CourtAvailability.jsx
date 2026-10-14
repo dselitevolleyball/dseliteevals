@@ -4,7 +4,8 @@
 // calendar, resolved to courts); DS Elite from the same day-schedule builder
 // the Day Schedule uses, plus scrimmages and the in-house tournament.
 // `loaders` can be swapped (the dev harness uses sample data).
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import Papa from "papaparse";
 import { supabase } from "./supabase";
 import { loadDseCourtInputs } from "../shared/court-inputs.js";
 import { COURTS, buildCourtDay, fmtHour, sundayBlock } from "../shared/courts.js";
@@ -22,6 +23,7 @@ const iso = (d) => d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, 
 const addDays = (ymd, n) => { const d = new Date(ymd + "T12:00:00"); d.setDate(d.getDate() + n); return iso(d); };
 const weekStart = (ymd) => { const d = new Date(ymd + "T12:00:00"); d.setDate(d.getDate() - d.getDay()); return iso(d); }; // Sunday
 const fmtDay = (ymd, long) => new Date(ymd + "T12:00:00").toLocaleDateString(undefined, long ? { weekday: "long", month: "long", day: "numeric" } : { weekday: "short", month: "short", day: "numeric" });
+const fmtMD = (ymd) => new Date(ymd + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" });
 const short = (h) => fmtHour(h).replace(":00", "").replace("am", "a").replace("pm", "p");
 const windows = (w) => w.filter(([s, e]) => e - s >= 0.5).map(([s, e]) => short(s) + "–" + short(e));
 
@@ -35,6 +37,14 @@ export const liveLoaders = {
     return o;
   },
   dse: (dates) => loadDseCourtInputs(supabase, dates),
+  // Playbook's Events export (events.csv) -> the timed rentals for its dates.
+  importRentals: async (rows, range = {}) => {
+    const { data: { session } = {} } = await supabase.auth.getSession();
+    const r = await fetch("/api/court-availability", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + (session?.access_token || "") }, body: JSON.stringify({ action: "import-rentals", rows, from: range.from, to: range.to, exportedAt: range.exportedAt }) });
+    const o = await r.json().catch(() => ({}));
+    if (!r.ok || o.error) throw new Error(o.error || "Upload failed (" + r.status + ")");
+    return o;
+  },
   // The no-login link for open-gym members (only open vs booked time).
   link: async () => {
     const { data: { session } = {} } = await supabase.auth.getSession();
@@ -62,6 +72,32 @@ export default function CourtAvailability({ loaders = liveLoaders, onOpenClass }
   useEffect(() => { kept.date = date; kept.mode = mode; if (loaders === liveLoaders) kept.cache = Object.fromEntries(Object.entries(cache).filter(([, v]) => !v.error)); }, [date, mode, cache]); // eslint-disable-line react-hooks/exhaustive-deps
   const [busy, setBusy] = useState(null);       // week being pulled
   const [reload, setReload] = useState(0);
+  // Rentals upload (Drew, Oct 14 2026): Playbook's Events export carries every
+  // Rented Session with its time and court, which nothing else gives HQ.
+  const [rentImp, setRentImp] = useState(null);  // { pending } | { loading } | result | { error }
+  const fileRef = useRef(null);
+  // Read the file, then ask which dates the export was made for: rentals HQ has
+  // in that range are replaced, so one cancelled at either end drops out too.
+  const pickRentals = (f) => {
+    if (!f) return;
+    Papa.parse(f, { header: true, skipEmptyLines: true, complete: ({ data: rows }) => {
+      if (fileRef.current) fileRef.current.value = "";
+      const ds = rows.map(r => String(Object.entries(r).find(([k]) => /^\s*date\s*$/i.test(k))?.[1] || "").trim()).filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort();
+      // An export with nothing in it (every rental cancelled) still clears its
+      // dates, once the uploader says which dates those were.
+      const first = ds[0] || null, last = ds[ds.length - 1] || null;
+      setRentImp({ pending: true, rows, name: f.name, exportedAt: f.lastModified ? new Date(f.lastModified).toISOString() : null, first, last, from: first || "", to: last || "" });
+    }, error: (e) => setRentImp({ error: e.message }) });
+  };
+  const uploadRentals = async () => {
+    const p = rentImp; if (!p?.pending) return;
+    if (!p.from || !p.to || p.from > p.to) { window.alert("Pick the dates you exported from Playbook."); return; }
+    if (p.first && (p.from > p.first || p.to < p.last)) { window.alert("The range has to include every date in the file (" + fmtMD(p.first) + " – " + fmtMD(p.last) + ")."); return; }
+    if (!p.first && !window.confirm("There are no rentals in this file. Clear HQ's rentals for " + fmtMD(p.from) + " – " + fmtMD(p.to) + "?")) return;
+    setRentImp({ loading: true });
+    try { const o = await loaders.importRentals(p.rows, { from: p.from, to: p.to, exportedAt: p.exportedAt }); setRentImp(o); kept.cache = {}; setCache({}); setReload(r => r + 1); }
+    catch (e) { setRentImp({ error: e.message }); }
+  };
   const wk = weekStart(date);
   const dates = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(wk, i)), [wk]);
 
@@ -69,7 +105,7 @@ export default function CourtAvailability({ loaders = liveLoaders, onOpenClass }
     if (cache[wk] && !reload) return;
     let live = true; const mine = wk; setBusy(mine);
     Promise.all([loaders.bookings(wk, 7), loaders.dse(dates)])
-      .then(([b, dse]) => { if (live) setCache(c => ({ ...c, [wk]: { bookings: b.bookings || [], reservations: b.reservations || [], offCourt: b.offCourt || 0, rosterAt: b.rosterAt || null, dse, at: new Date() } })); })
+      .then(([b, dse]) => { if (live) setCache(c => ({ ...c, [wk]: { bookings: b.bookings || [], reservations: b.reservations || [], offCourt: b.offCourt || 0, rosterAt: b.rosterAt || null, rentals: b.rentals || null, dse, at: new Date() } })); })
       .catch(e => { if (live) setCache(c => ({ ...c, [wk]: { error: e.message } })); })
       .finally(() => { setBusy(b => (b === mine ? null : b)); if (live) setReload(0); });
     return () => { live = false; };
@@ -109,7 +145,7 @@ export default function CourtAvailability({ loaders = liveLoaders, onOpenClass }
   const untimed = (d) => {
     if (!data || data.error) return [];
     const sun = new Date(d + "T12:00:00").getDay() === 0;
-    return (data.reservations || []).filter(r => r.date === d && !(sun && r.internal));
+    return (data.reservations || []).filter(r => r.date === d && !(sun && r.internal) && !r.timed && !r.covered);
   };
   const courtNames = (cs) => cs.map(c => c.replace("V", "Court ")).join(" + ");
   const btn = (on) => ({ padding: "7px 14px", border: "none", background: on ? C.gold : "transparent", color: on ? "#000" : C.mut, fontFamily: "inherit", fontSize: 13, fontWeight: 800, cursor: "pointer" });
@@ -238,6 +274,10 @@ export default function CourtAvailability({ loaders = liveLoaders, onOpenClass }
           title="The no-login link for open-gym members: open court time only, no names" style={{ ...btn(false), border: "1px solid " + C.border, borderRadius: 8 }}>🔗 Members&rsquo; link</button>
         <button onClick={() => setPub(v => !v)} title="Show only open vs booked time - what members would see" style={{ ...btn(pub), border: "1px solid " + (pub ? C.gold : C.border), borderRadius: 8 }}>👁 Client view</button>
         {!pub && <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: C.mut, cursor: "pointer" }}><input type="checkbox" checked={showHolds} onChange={e => setShowHolds(e.target.checked)} style={{ accentColor: C.gold }} />Holds &amp; rentals</label>}
+        {!pub && loaders.importRentals && <>
+          <input ref={fileRef} type="file" accept=".csv,text/csv" style={{ display: "none" }} onChange={e => pickRentals(e.target.files?.[0])} />
+          <button onClick={() => fileRef.current?.click()} disabled={!!rentImp?.loading} title="Upload Playbook's Events export (events.csv): every rented session with its time and court" style={{ ...btn(false), border: "1px solid " + C.border, borderRadius: 8 }}>{rentImp?.loading ? "Uploading…" : "⬆ Rentals"}</button>
+        </>}
         <button onClick={() => setReload(r => r + 1)} disabled={loading} title="Pull Playbook again" style={{ ...btn(false), border: "1px solid " + C.border, borderRadius: 8 }}>{loading ? "…" : "⟳"}</button>
       </div>
       {memberLink && (
@@ -248,6 +288,36 @@ export default function CourtAvailability({ loaders = liveLoaders, onOpenClass }
           <button onClick={() => setMemberLink("")} aria-label="Hide" style={{ background: "none", border: "none", color: C.mut, cursor: "pointer", fontSize: 14 }}>✕</button>
         </div>
       )}
+      {rentImp?.pending && (
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", padding: "10px 12px", marginBottom: 10, borderRadius: 10, fontSize: 12, lineHeight: 1.5, border: "1px solid #f97316", background: "rgba(249,115,22,0.08)", color: "#fdba74" }}>
+          <div style={{ flex: "1 1 260px" }}><b>{rentImp.name}</b>: {rentImp.first ? <>rentals {fmtMD(rentImp.first)} – {fmtMD(rentImp.last)}.</> : "no rentals in it."} Which dates did you export from Playbook? HQ's rentals in that range are replaced by this file.</div>
+          <input type="date" value={rentImp.from} max={rentImp.first || undefined} onChange={e => e.target.value && setRentImp({ ...rentImp, from: e.target.value })} style={{ background: C.bg, color: C.text, border: "1px solid " + C.border, borderRadius: 8, padding: "5px 7px", fontFamily: "inherit", fontSize: 12, colorScheme: "dark" }} />
+          <span>to</span>
+          <input type="date" value={rentImp.to} min={rentImp.last || undefined} onChange={e => e.target.value && setRentImp({ ...rentImp, to: e.target.value })} style={{ background: C.bg, color: C.text, border: "1px solid " + C.border, borderRadius: 8, padding: "5px 7px", fontFamily: "inherit", fontSize: 12, colorScheme: "dark" }} />
+          <button onClick={uploadRentals} style={{ ...btn(true), borderRadius: 8 }}>Upload</button>
+          <button onClick={() => setRentImp(null)} style={{ ...btn(false), border: "1px solid " + C.border, borderRadius: 8 }}>Cancel</button>
+        </div>
+      )}
+      {rentImp && !rentImp.loading && !rentImp.pending && (
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "8px 10px", marginBottom: 10, borderRadius: 10, fontSize: 12, lineHeight: 1.5, border: "1px solid " + (rentImp.error ? "#ef4444" : "#f97316"), background: rentImp.error ? "rgba(239,68,68,0.08)" : "rgba(249,115,22,0.08)", color: rentImp.error ? "#fca5a5" : "#fdba74" }}>
+          <div style={{ flex: 1 }}>
+            {rentImp.error ? <>Rentals upload failed: {rentImp.error}</> : <>
+              <b>Rentals loaded</b> for {fmtMD(rentImp.window.from)} – {fmtMD(rentImp.window.to)}: {rentImp.added} rented session{rentImp.added === 1 ? "" : "s"}{rentImp.replaced ? ` (replacing ${rentImp.replaced} from the last upload for those dates)` : ""}.
+              {rentImp.unplaced?.length > 0 && <div>No court in Playbook, so not drawn: {rentImp.unplaced.map(u => u.date.slice(5) + " " + u.time + " " + u.label).join(" · ")}</div>}
+              {rentImp.bad?.length > 0 && <div>Couldn't read {rentImp.bad.length} row{rentImp.bad.length === 1 ? "" : "s"}.</div>}
+            </>}
+          </div>
+          <button onClick={() => setRentImp(null)} aria-label="Hide" style={{ background: "none", border: "none", color: C.mut, cursor: "pointer", fontSize: 14 }}>✕</button>
+        </div>
+      )}
+      {data && !data.error && !pub && (() => {
+        // Days this week (today on) that no upload covers: their rentals don't show.
+        const wins = data.rentals?.windows || [], today = iso(new Date());
+        const gaps = dates.filter(d => d >= today && !wins.some(w => d >= w.from && d <= w.to));
+        if (!gaps.length) return null;
+        const span = gaps.length === 1 ? fmtMD(gaps[0]) : fmtMD(gaps[0]) + " – " + fmtMD(gaps[gaps.length - 1]);
+        return <div style={{ fontSize: 12, color: "#fdba74", marginBottom: 8, lineHeight: 1.5 }}>{data.rentals?.at ? `Rental times aren't loaded for ${span}.` : "No rentals uploaded yet, so rental times don't show."} Export those dates from Playbook's Events list (events.csv) and tap ⬆ Rentals.</div>;
+      })()}
       <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 8 }}>{mode === "day" ? fmtDay(date, true) : "Week of " + fmtDay(wk, true)}</div>
       {legend}
       {data?.error ? <div style={{ padding: 16, color: "#ef4444", fontSize: 13 }}>{data.error} <button onClick={() => setReload(r => r + 1)} style={{ marginLeft: 8, ...btn(false), border: "1px solid #ef4444", borderRadius: 8, color: "#ef4444" }}>Retry</button></div>
@@ -256,7 +326,7 @@ export default function CourtAvailability({ loaders = liveLoaders, onOpenClass }
       {data && !data.error && pub && <div style={{ fontSize: 11, color: C.mut, marginTop: 10 }}>Client view: open court time only. Booked time doesn't say who has the court.</div>}
       {data && !data.error && !pub && (
         <div style={{ fontSize: 11, color: C.mut, marginTop: 10, lineHeight: 1.6 }}>
-          From Playbook's public calendar{data.at ? " (pulled " + data.at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) + ")" : ""} plus DS Elite's practice schedule. Court rentals booked as Playbook reservations (outside renters) aren't on the public calendar, so they don't show. DS Elite's Sunday block (the whole Warehouse, 1–9pm) is always shown as taken. Sign-up counts are the Clinics & Camps board's (Playbook registrations{data.rosterAt ? ", pulled " + new Date(data.rosterAt).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" }) : ""}); basketball and other programs not on the board have no count. Reach Performance isn't on a court{data.offCourt ? ` (${data.offCourt} sessions this week left off)` : ""}. DS Elite practices without a court number are placed on a free court (dashed). Showing {fmtHour(START_H)}–{fmtHour(END_H)}.
+          From Playbook's public calendar{data.at ? " (pulled " + data.at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) + ")" : ""} plus DS Elite's practice schedule. Rentals (orange, with times) come from Playbook's Events export{data.rentals?.at ? ", last uploaded " + new Date(data.rentals.at).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : ""}; a reservation booked after the export (or on a day no upload covers) shows as "time?". DS Elite's Sunday block is the courts it has booked in Playbook (the whole Warehouse, 1–9pm, when nothing is booked). Sign-up counts are the Clinics & Camps board's (Playbook registrations{data.rosterAt ? ", pulled " + new Date(data.rosterAt).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" }) : ""}); basketball and other programs not on the board have no count. Reach Performance isn't on a court{data.offCourt ? ` (${data.offCourt} sessions this week left off)` : ""}. DS Elite practices without a court number are placed on a free court (dashed). Showing {fmtHour(START_H)}–{fmtHour(END_H)}.
         </div>
       )}
     </div>

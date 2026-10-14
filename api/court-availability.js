@@ -7,6 +7,11 @@
 //        date, start, end, courts:[...] }], reservations:[{ date, courts, who,
 //        internal, name }], offCourt: n }
 //   GET /api/court-availability?link=1  -> { url } the members' public link
+//   POST { action: "import-rentals", rows: [...] } -> Playbook's Events export
+//        (events.csv, parsed with its header row), from/to = the dates it was
+//        exported for, exportedAt = the file's timestamp; replaces the timed
+//        rentals in that range:
+//        { added, replaced, window, skipped, unplaced }
 // Each DSSC booking that is a Clinics & Camps class also carries signups (the
 // registrations the board counts) so empty classes show; null = not tracked.
 // signups is for that one session (Playbook sells most classes by the date),
@@ -19,6 +24,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { addDays, centralToday } from "./_lib/playbook-calendar.js";
 import { loadCourtBookings, courtsToken } from "./_lib/court-data.js";
+import { importRentals, rentalsMeta } from "./_lib/court-rentals.js";
 import { appOrigin } from "../shared/app-origin.js";
 import { parseClock } from "../shared/dssc-clinics.js";
 
@@ -30,6 +36,7 @@ export default async function handler(req, res) {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return res.status(500).json({ error: "Server not configured" });
   const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
   const bearer = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+  let who = "HQ";
   if (bearer !== SUPABASE_SERVICE_ROLE_KEY) {
     if (!bearer) return res.status(401).json({ error: "Not signed in" });
     const { data: { user } = {} } = await sb.auth.getUser(bearer).catch(() => ({ data: {} }));
@@ -38,6 +45,16 @@ export default async function handler(req, res) {
     let ok = OWNERS.includes(email) || DIRECTORS.includes(email);
     if (!ok) { const { data: c } = await sb.from("coaches").select("is_admin, is_approved, dssc_role").ilike("email", email).maybeSingle(); ok = !!(c && c.is_approved && (c.is_admin || c.dssc_role === "admin")); }
     if (!ok) return res.status(403).json({ error: "Admins and DSSC directors only" });
+    who = email;
+  }
+
+  if (req.method === "POST") {
+    let body = req.body;
+    try { body = typeof body === "string" ? JSON.parse(body) : (body || {}); } catch { return res.status(400).json({ error: "Invalid JSON" }); }
+    if (body.action !== "import-rentals" || !Array.isArray(body.rows)) return res.status(400).json({ error: "Unknown request" });
+    if (body.rows.length > 10000) return res.status(413).json({ error: "That file is too big; export a few months at a time." });
+    try { return res.status(200).json({ ok: true, ...(await importRentals(sb, body.rows, who, { from: body.from, to: body.to, exportedAt: body.exportedAt })) }); }
+    catch (e) { return res.status(400).json({ error: e.message }); }
   }
 
   const url = new URL(req.url, "https://x");
@@ -51,8 +68,8 @@ export default async function handler(req, res) {
   const end = addDays(start, days);
   try {
     const { bookings, reservations, offCourt } = await loadCourtBookings(sb, start, end);
-    const rosterAt = await attachSignups(sb, bookings);
-    return res.status(200).json({ ok: true, start, end, bookings, reservations, offCourt, rosterAt });
+    const [rosterAt, rentals] = await Promise.all([attachSignups(sb, bookings), rentalsMeta(sb, start, end).catch(() => null)]);
+    return res.status(200).json({ ok: true, start, end, bookings, reservations, offCourt, rosterAt, rentals });
   } catch (e) { return res.status(502).json({ error: "Couldn't load court data: " + e.message }); }
 }
 

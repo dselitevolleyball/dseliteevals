@@ -4,6 +4,7 @@ import crypto from "crypto";
 import { fetchPlaybookEvents, addDays } from "./playbook-calendar.js";
 import { courtsForEvent, courtsForName, eventLabel, eventCategory, hourOf, buildCourtDay, sundayBlock, COURTS } from "../../shared/courts.js";
 import { loadDseCourtInputs } from "../../shared/court-inputs.js";
+import { loadRentals, rentalWindows } from "./court-rentals.js";
 
 // Playbook's public calendar resolved to courts, plus the court reservations the
 // hourly registrations sync stores (court + date, no time; the booker's email
@@ -23,7 +24,7 @@ export async function loadCourtBookings(sb, start, end) {
   bookings.sort((a, b) => a.date.localeCompare(b.date) || a.start - b.start);
 
   const reservations = [];
-  const { data: rs, error } = await sb.from("dssc_participation").select("program, event_date, contact_id").eq("category", "facility").gte("event_date", start).lt("event_date", end);
+  const { data: rs, error } = await sb.from("dssc_participation").select("program, event_date, contact_id, created_at").eq("category", "facility").gte("event_date", start).lt("event_date", end);
   if (error) throw new Error("Reservations didn't load: " + error.message);
   const ids = [...new Set((rs || []).map(r => r.contact_id).filter(Boolean))];
   const { data: cs } = ids.length ? await sb.from("dssc_contacts").select("id, email").in("id", ids) : { data: [] };
@@ -39,8 +40,32 @@ export async function loadCourtBookings(sb, start, end) {
     const courts = courtsForName(r.program); if (!courts.length) continue;
     const d = domainOf.get(r.contact_id) || "";
     const internal = /^(drippingsportsclub\.com|dselitevolleyball\.com)$/.test(d);
-    reservations.push({ date: r.event_date, courts, name: r.program, internal, who: internal ? "DSSC / DS Elite" : BY_EMAIL[emailOf.get(r.contact_id)] || (PRIVATE.test(d) || !d ? "Private rental" : nice(d)) });
+    reservations.push({ date: r.event_date, courts, name: r.program, internal, who: internal ? "DSSC / DS Elite" : BY_EMAIL[emailOf.get(r.contact_id)] || (PRIVATE.test(d) || !d ? "Private rental" : nice(d)), synced: r.created_at || null });
   }
+  // Rentals with their times (Playbook's Events export, uploaded on the screen).
+  // DS Elite's own Sunday bookings are its Sunday block (teams are placed in
+  // it), so they join the reservations, timed; everything else is a booking.
+  const rentals = await loadRentals(sb, start, end);
+  for (const r of rentals) {
+    if (!r.courts?.length) continue;
+    if (r.internal && new Date(r.date + "T12:00:00").getDay() === 0) {
+      reservations.push({ date: r.date, courts: r.courts, name: r.item || r.label, internal: true, who: "DSSC / DS Elite", start: r.start, end: r.end, timed: true });
+      continue;
+    }
+    bookings.push({ id: "rental-" + r.id, kind: r.internal ? "dse" : "hold", label: r.label, category: r.internal ? "DS Elite rental" : "Rental" + (r.renter && r.renter !== r.label ? " · " + r.renter : ""), date: r.date, start: r.start, end: r.end, courts: r.courts, rental: true });
+  }
+  // For a date an upload covered, the export is the source of truth: a
+  // reservation with no time that HQ already had when the file was exported is
+  // in the file (drawn with its time), so it's "covered" and not listed as
+  // "time?". One synced after the export - a court booked since - keeps its tag
+  // until the next upload. (Matching renter or court names instead hid
+  // bookings made after the export; review, Oct 14 2026.)
+  const windows = await rentalWindows(sb, start, end);
+  for (const res of reservations) {
+    if (res.timed) continue;
+    res.covered = windows.some(w => res.date >= w.from && res.date <= w.to && (!res.synced || Date.parse(res.synced) <= Date.parse(w.exportedAt)));
+  }
+  bookings.sort((a, b) => a.date.localeCompare(b.date) || a.start - b.start);
   return { bookings, reservations, offCourt };
 }
 
@@ -64,7 +89,8 @@ export async function publicWeek(sb, start, days) {
   const [{ bookings, reservations }, dse] = await Promise.all([loadCourtBookings(sb, start, addDays(start, days)), loadDseCourtInputs(sb, dates)]);
   // A whole week with nothing on any court means Playbook didn't really answer:
   // fail (no cache) rather than tell families every court is open.
-  if (!bookings.length) throw new Error("Playbook returned no court bookings for the week");
+  // Rentals come from the upload, not Playbook, so they don't count here.
+  if (!bookings.some(b => !b.rental)) throw new Error("Playbook returned no court bookings for the week");
   return dates.map(d => {
     const x = dse[d] || { teams: [], scrims: [], tourn: [] };
     const b = bookings.filter(k => k.date === d).map(k => ({ courts: k.courts, start: k.start, end: k.end, kind: k.kind, label: "x" })).concat(x.tourn || []);
@@ -74,7 +100,7 @@ export async function publicWeek(sb, start, days) {
     // hours members see no open courts at all, rather than a guessed court.
     g.slots.forEach((h, i) => { if (COURTS.some(c => g.cells[c.id][i] && g.cells[c.id][i].auto)) COURTS.forEach(c => { if (!g.cells[c.id][i]) g.cells[c.id][i] = { kind: "dse", label: "x", key: "guess" }; }); });
     const open = Object.fromEntries(COURTS.map(c => { const w = []; let s0 = null; g.slots.forEach((h, i) => { if (!g.cells[c.id][i]) { if (s0 == null) s0 = h; } else if (s0 != null) { w.push([s0, h]); s0 = null; } }); if (s0 != null) w.push([s0, PUBLIC_END]); return [c.id, w]; }));
-    const untimed = [...new Set(reservations.filter(r => r.date === d && !(sun && r.internal)).flatMap(r => r.courts))];
+    const untimed = [...new Set(reservations.filter(r => r.date === d && !(sun && r.internal) && !r.timed && !r.covered).flatMap(r => r.courts))];
     return {
       date: d,
       courts: COURTS.map(c => {

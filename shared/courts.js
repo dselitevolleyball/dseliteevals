@@ -70,14 +70,68 @@ export function courtsForName(name) {
   return [];
 }
 // DS Elite's Sunday block, going by the calendar (Drew, Oct 12): the courts
-// the club has reserved in Playbook that Sunday, 1-9pm. A Sunday with nothing
-// reserved yet falls back to the standing Warehouse rule above.
+// the club has reserved in Playbook that Sunday, 1-9pm. When the rentals export
+// gives those bookings their times (Oct 14) the block takes them; a Sunday with
+// nothing reserved yet falls back to the standing Warehouse rule above.
+const courtOrder = (cs) => { const order = COURTS.map(c => c.id); return [...new Set(cs)].sort((a, b) => order.indexOf(a) - order.indexOf(b)); };
 export function sundayBlock(ymd, reservations = []) {
   if (new Date(ymd + "T12:00:00").getDay() !== 0) return [];
-  const courts = [...new Set(reservations.filter(r => r.date === ymd && r.internal).flatMap(r => r.courts))];
+  const mine = reservations.filter(r => r.date === ymd && r.internal);
+  const timed = mine.filter(r => r.start != null && r.end != null && r.end > r.start);
+  if (timed.length) {
+    const g = new Map();
+    for (const r of timed) { const k = r.start + "|" + r.end; if (!g.has(k)) g.set(k, { start: r.start, end: r.end, courts: [] }); g.get(k).courts.push(...r.courts); }
+    // A court DS Elite has reserved with no time that the export doesn't
+    // account for (booked after it - not "covered") still gets 1-9pm.
+    const rest = mine.filter(r => !(r.start != null && r.end != null && r.end > r.start) && !r.covered).flatMap(r => r.courts);
+    const out = [...g.values()].map(x => ({ dow: 0, start: x.start, end: x.end, courts: courtOrder(x.courts), label: "DS Elite Sunday block", detail: "Reserved for DS Elite in Playbook, " + fmtHour(x.start) + "-" + fmtHour(x.end) }));
+    if (rest.length) out.push({ dow: 0, start: 13, end: 21, courts: courtOrder(rest), label: "DS Elite Sunday block", detail: "Reserved for DS Elite in Playbook (time not on the export), 1-9pm" });
+    return out;
+  }
+  const courts = mine.flatMap(r => r.courts);
   if (!courts.length) return reservedFor(ymd);
-  const order = COURTS.map(c => c.id);
-  return [{ dow: 0, start: 13, end: 21, courts: courts.sort((a, b) => order.indexOf(a) - order.indexOf(b)), label: "DS Elite Sunday block", detail: "Reserved for DS Elite in Playbook, 1-9pm" }];
+  return [{ dow: 0, start: 13, end: 21, courts: courtOrder(courts), label: "DS Elite Sunday block", detail: "Reserved for DS Elite in Playbook, 1-9pm" }];
+}
+
+// ── Rentals from Playbook's Events export (Drew, Oct 14 2026) ─────────────────
+// Each Rented Session row: Locations ("DSSC Flex", "DSSC Warehouse, DSSC Flex",
+// "Not Provided"), Sub Locations ("Volleyball Court 4", "Basketball Court 3",
+// "N/A"), Start/End Time ("17:00:00"), Program, Event Details ("Tressa
+// Aleshire - DS Storm").
+// The courts: the sub location when it names one, else a single building
+// (the whole Flex or Warehouse); a booking on "DSSC" with no court -> [].
+const NONE = /^(n\/?a|not provided|none|--|-)?$/i;
+export function rentalCourts(location, sub) {
+  const subs = String(sub || "").split(/\s*,\s*/).filter(x => !NONE.test(x.trim()));
+  const fromSub = subs.flatMap(x => courtsForName(x));
+  if (fromSub.length) return courtOrder(fromSub);
+  const locs = String(location || "").split(/\s*,\s*/).filter(x => !NONE.test(x.trim()));
+  return locs.length === 1 ? courtOrder(courtsForName(locs[0])) : [];
+}
+// "17:00:00" / "5:00 PM" -> 17 (hours).
+export function clockHours(t) {
+  const m = /^\s*(\d{1,2}):(\d{2})(?::\d{2})?\s*([ap]\.?m\.?)?\s*$/i.exec(String(t || ""));
+  if (!m) return null;
+  let h = +m[1]; const min = +m[2];
+  if (m[3]) { h = h % 12; if (/p/i.test(m[3])) h += 12; }
+  return h > 24 || min > 59 ? null : h + min / 60;
+}
+// Who the booking is for, the way the court screen should say it.
+export function rentalWho({ program, details }) {
+  const d = String(details || "").trim(), p = String(program || "").trim();
+  const cut = d.indexOf(" - "), person = cut > 0 ? d.slice(0, cut).trim() : "", item = cut > 0 ? d.slice(cut + 3).trim() : d;
+  const t = (p + " " + d).toLowerCase();
+  const internal = /^drew rose$/i.test(person) || /\bdsev\b|ds elite/i.test(p + " " + item);
+  let label;
+  if (/ds storm|aleshire/.test(t)) label = "DS Storm";
+  else if (/\baces\b|madavane/.test(t)) label = "Aces";
+  else if (/aesa/.test(t)) label = "AESA Prep Academy";
+  else if (/veritas|lisa jasper/.test(t)) label = "Veritas Academy";
+  else if (/birthday/.test(t)) label = "Birthday party";
+  else if (/private/.test(t)) { const coach = (/^(.+?)\s+private/i.exec(item) || [])[1]; label = "Private lesson" + (coach ? " (" + coach.trim() + ")" : ""); }
+  else if (internal) label = /positional/i.test(p) ? "DS Elite positional training" : "DS Elite";
+  else label = person || p || "Rental";
+  return { label, person: person || null, item: item || p || null, internal };
 }
 
 // "Program Package" name, or the hold's own title ("Hold - Aces Private Rental").
