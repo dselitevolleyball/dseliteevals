@@ -58,6 +58,27 @@ export default async function handler(req, res) {
     reserv: snip(g.html, "RentableTimeslot|reservation|rentable", 6),
   });
 
+  // ?path=&grep= : wide snippets of a page's script around a word.
+  // ?ws=<socket path>&action=<read action>&payload=<json> : one read-only socket call.
+  const wsPath = url.searchParams.get("ws");
+  if (wsPath) {
+    const action = url.searchParams.get("action") || "";
+    if (!/^(global_get_calendar_events|global_get_calendar_resources)$/.test(action)) return res.status(400).json({ error: "read actions only" });
+    let payload = {}; try { payload = JSON.parse(url.searchParams.get("payload") || "{}"); } catch { return res.status(400).json({ error: "bad payload" }); }
+    const page = await get(url.searchParams.get("page") || "/control_panel/staff/global_calendar/");
+    const csrf = (/csrfmiddlewaretoken" value="([^"]+)"/.exec(page.html) || /csrf_tokens*[=:]s*['"]([^'"]+)['"]/.exec(page.html) || [])[1] || j.get("csrftoken");
+    out.ws = await new Promise((resolve) => {
+      let ws; try { ws = new WebSocket(BASE.replace("https", "wss") + wsPath, { headers: { Cookie: j.header(), "User-Agent": UA, Origin: BASE } }); } catch (e) { return resolve({ error: "ctor: " + e.message }); }
+      const msgs = [], t = setTimeout(() => { try { ws.close(); } catch {} resolve({ timeout: true, msgs }); }, 25000);
+      ws.addEventListener("open", () => ws.send(JSON.stringify({ csrf_token: csrf, ...payload, action })));
+      ws.addEventListener("message", (m) => { let d; try { d = JSON.parse(m.data); } catch { d = { raw: String(m.data).slice(0, 500) }; } msgs.push(d); if (d.action_name === action || d.action === action || d.events || d.resources) { clearTimeout(t); try { ws.close(); } catch {} resolve({ msgs: msgs.map(x => JSON.stringify(x).slice(0, 12000)) }); } });
+      ws.addEventListener("error", (e) => { clearTimeout(t); resolve({ error: "ws error " + (e.message || ""), msgs }); });
+      ws.addEventListener("close", (e) => { clearTimeout(t); resolve({ closed: e.code, msgs: msgs.map(x => JSON.stringify(x).slice(0, 12000)) }); });
+    });
+    res.setHeader("Cache-Control", "no-store"); return res.status(200).json(out);
+  }
+  const grep = url.searchParams.get("grep");
+  if (only && grep) { const g = await get(only); out.page = { status: g.status, url: g.url, len: g.len }; out.snips = snip(g.html, grep, 8, 2500); res.setHeader("Cache-Control", "no-store"); return res.status(200).json(out); }
   if (only) { const g = await get(only); out.page = describe(g); out.raw = g.html.slice(0, 4000); res.setHeader("Cache-Control", "no-store"); return res.status(200).json(out); }
 
   for (const p of ["/control_panel/", "/control_panel/calendar/", "/control_panel/facilities/calendar/", "/control_panel/schedule/", "/control_panel/facilities/", "/control_panel/reservations/"]) {
