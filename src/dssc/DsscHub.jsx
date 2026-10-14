@@ -47,6 +47,12 @@ export const timeRange = (s) => (s.start_time || "") + (s.end_time ? "–" + s.e
 // director wrote are a template a coach can copy in, never what runs on court.
 export const classBlocks = (s) => Array.isArray(s?.blocks) ? s.blocks : [];
 export const hasClassPlan = (s) => classBlocks(s).some(b => String(b.name || "").trim());
+// A class's pay at the flat $25/hr, as money: "$37.50", not "$37.5".
+export const classPay = (s) => { const n = 25 * sessionHours(s); return "$" + (Number.isInteger(n) ? n : n.toFixed(2)); };
+// The one-minute how-to (Drew, Oct 14 2026 - a plan and a parent note are
+// required for every pod): add the plan, draft the note, send it. Lives in
+// public/dssc/howto/, so it's served by both DS Elite HQ and DSSC HQ (/hq).
+export const HOWTO_VIDEO = import.meta.env.BASE_URL + "dssc/howto/pod-plan.mp4";
 // One class's families, via the server (it owns the roster lookup and consent).
 async function sendClassMessage(c, s, body, mediaIds = [], channels = ["email", "sms"]) {
   const { data: { session } } = await supabase.auth.getSession();
@@ -351,7 +357,7 @@ export default function DsscHub({
                 </div>
                 <div style={{ flex: 1, minWidth: 150 }}>
                   <div style={{ fontSize: 14, fontWeight: 700 }}>{r.c.name}{r.s.needsCoverage && <span style={{ color: DS.orange }}> · needs coverage</span>}</div>
-                  <div style={{ fontSize: 12, color: DS.mut }}>{[r.c.age_group, r.s.court || r.c.location].filter(Boolean).join(" · ")} · {r.short} coach{r.short === 1 ? "" : "es"} short{sessionStaff(r.s).filter(x => x.status !== "declined").length ? " · with " + sessionStaff(r.s).filter(x => x.status !== "declined").map(x => x.name.split(" ")[0]).join(", ") : ""} · {sessionHours(r.s)}h · ${25 * sessionHours(r.s)}</div>
+                  <div style={{ fontSize: 12, color: DS.mut }}>{[r.c.age_group, r.s.court || r.c.location].filter(Boolean).join(" · ")} · {r.short} coach{r.short === 1 ? "" : "es"} short{sessionStaff(r.s).filter(x => x.status !== "declined").length ? " · with " + sessionStaff(r.s).filter(x => x.status !== "declined").map(x => x.name.split(" ")[0]).join(", ") : ""} · {sessionHours(r.s)}h · {classPay(r.s)}</div>
                 </div>
                 {canTake(r.c) ? <Btn kind="warn" small disabled={b} onClick={e => { e.stopPropagation(); pickUp(r.c, r.s); }}>{b ? "…" : "I'll take it"}</Btn>
                   : <span style={{ fontSize: 11, fontWeight: 800, color: DS.mut, whiteSpace: "nowrap" }}>{sportLabel(classSport(r.c))} coaches only</span>}
@@ -401,7 +407,7 @@ function ClassView({ c, s, sessions, onPickSession, today, coach, coachName, isM
     {header(<Btn small onClick={onBack}>{backLabel || "‹ My classes"}</Btn>)}
     <div style={{ marginBottom: 14 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
-        <Tag color={DS.lime}>{c.kind === "camp" ? "Camp" : /pod/i.test(c.name || "") ? "Skill pod" : "Clinic"}</Tag>
+        <Tag color={DS.lime}>{c.kind === "camp" ? "Camp" : /pod/i.test((c.category || "") + " " + (c.name || "")) ? "Skill pod" : "Clinic"}</Tag>
         {mineEntry?.status === "pending" && <Tag color={DS.orange}>Awaiting director approval</Tag>}
         {isToday && <Tag color={DS.lime} fill>Today</Tag>}
         {s.cancelled && <Tag color={DS.orange} fill>Cancelled</Tag>}
@@ -423,7 +429,7 @@ function ClassView({ c, s, sessions, onPickSession, today, coach, coachName, isM
       </div>
       {mineEntry && !s.cancelled && (isToday || (isPast && !done && s.date >= localDateISO(new Date(Date.now() - 14 * 86400000)))) && (
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 12, padding: "10px 12px", borderRadius: 10, background: DS.panel2, border: "1px solid " + (done ? DS.lime : DS.line) }}>
-          <span style={{ fontSize: 13, fontWeight: 700, flex: 1 }}>{done ? "✓ Clocked in" : "Clock in for this class"} <span style={{ color: DS.mut, fontWeight: 500 }}>· {sessionHours(s)}h · ${25 * sessionHours(s)}</span></span>
+          <span style={{ fontSize: 13, fontWeight: 700, flex: 1 }}>{done ? "✓ Clocked in" : "Clock in for this class"} <span style={{ color: DS.mut, fontWeight: 500 }}>· {sessionHours(s)}h · {classPay(s)}</span></span>
           {!done && (ws === "early" ? <span style={{ fontSize: 12, color: DS.mut, fontWeight: 700 }}>Opens 30 min before</span>
             : ws === "past" ? <Btn small disabled={busy === "ci|" + s.id} onClick={() => clockIn(c, s, true)}>Clock in late</Btn>
             : <Btn kind="primary" disabled={busy === "ci|" + s.id} onClick={() => clockIn(c, s)}>I'm here</Btn>)}
@@ -432,7 +438,7 @@ function ClassView({ c, s, sessions, onPickSession, today, coach, coachName, isM
       {mineEntry && !isPast && !done && <div style={{ marginTop: 8 }}><Btn kind="link" small style={{ color: DS.orange }} onClick={() => dropOut(c, s)}>Can't make this one — ask for coverage</Btn></div>}
       {!mineEntry && !isPast && sessionShort(s, c) > 0 && (
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 12, padding: "10px 12px", borderRadius: 10, background: DS.orangeSoft, border: "1px solid " + DS.orange }}>
-          <span style={{ fontSize: 13, fontWeight: 700, flex: 1 }}>This class is {sessionShort(s, c)} coach{sessionShort(s, c) === 1 ? "" : "es"} short <span style={{ color: DS.mut, fontWeight: 500 }}>· {sessionHours(s)}h · ${25 * sessionHours(s)}</span></span>
+          <span style={{ fontSize: 13, fontWeight: 700, flex: 1 }}>This class is {sessionShort(s, c)} coach{sessionShort(s, c) === 1 ? "" : "es"} short <span style={{ color: DS.mut, fontWeight: 500 }}>· {sessionHours(s)}h · {classPay(s)}</span></span>
           {canTake ? <Btn kind="warn" small disabled={busy === "pu|" + s.id} onClick={() => pickUp(c, s)}>{busy === "pu|" + s.id ? "…" : "I'll take it"}</Btn>
             : <span style={{ fontSize: 12, fontWeight: 800, color: DS.mut }}>{sportLabel(classSport(c))} class - {classSport(c)} coaches only</span>}
         </div>
@@ -572,7 +578,7 @@ Each family gets their own copy; replies to a text come back to DSSC Texts.`)) r
             {canEdit && <Btn kind="quiet" small onClick={() => setBlocks(blocks.filter((_, ix) => ix !== i))} style={{ color: DS.orange }}>✕</Btn>}
           </div>
         ))}
-        {!blocks.length && <div style={{ fontSize: 13, color: DS.mut, lineHeight: 1.5 }}>{canEdit ? "No plan for this class yet — add blocks, paste a plan, or start from the director's template." : "No plan yet."}</div>}
+        {!blocks.length && <div style={{ fontSize: 13, color: DS.mut, lineHeight: 1.5 }}>{canEdit ? <>No plan for this class yet — add blocks, paste a plan, or start from the director's template. <a href={HOWTO_VIDEO} target="_blank" rel="noreferrer" style={{ color: DS.lime, fontWeight: 700, textDecoration: "none", whiteSpace: "nowrap" }}>▶ Watch how (1 min)</a></> : "No plan yet."}</div>}
       </div>
       {canEdit && (
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>

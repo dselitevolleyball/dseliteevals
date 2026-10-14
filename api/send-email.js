@@ -148,12 +148,18 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "Attachments total " + (attBytes / 1048576).toFixed(1) + "MB. Keep them under 20MB — most mail servers reject more." });
   }
 
+  // The club's own mail (DSSC announcements to its coaches) goes out as
+  // Dripping Springs Sports Club rather than DS Elite: { brand: "dssc" }.
+  const fromAddr = body?.brand === "dssc"
+    ? (process.env.DSSC_FROM_EMAIL || ("Dripping Springs Sports Club <" + extractAddress(DSE_FROM_EMAIL) + ">"))
+    : DSE_FROM_EMAIL;
+
   let sent = 0;
   // Resend message ids, returned for scheduled sends so they can be cancelled
   // (POST /emails/{id}/cancel) before they go.
   const ids = [];
   const msgFor = (email) => ({
-    from: DSE_FROM_EMAIL, to: [email], reply_to: replyTo, subject, html: htmlBody, text,
+    from: fromAddr, to: [email], reply_to: replyTo, subject, html: htmlBody, text,
     ...(attachments.length ? { attachments } : {}),
     ...(scheduledAt ? { scheduled_at: scheduledAt } : {}),
   });
