@@ -4,8 +4,9 @@
 // Drew's brief: an invite/referral-only summer training program for national
 // and bubble-national players, led by college coaches ("where the best come to
 // train from the best"), sold to out-of-towners as a few days in Austin too.
-// Eight sessions on two courts: Hitting, Libero/Defense and Setting for 14-16s
-// (2 each) plus two 11/12 All Skills. 9-12 and 1-4 with lunch provided.
+// Six sessions on two courts: Hitting, Libero/Defense and Setting (2 each), for
+// 14s, 15s and 16s only - no 11/12s since Oct 14 2026 (the pre-college
+// recruiting summers are where it's worth most). 9-12 and 1-4, lunch provided.
 //
 // Tabs: Plan (the write-up, editable), Economics (assumptions -> per-session
 // P&L, 2- vs 3-day comparison), Sessions (dates, price, cap, lead coach),
@@ -18,7 +19,7 @@ import { useState, useEffect, useMemo } from "react";
 import { supabase } from "../supabase";
 import { DS, Btn, Card, Label, Tag, inputStyle, Field, rid } from "./DsscHub.jsx";
 
-const FOCUS = { hitting: "Hitting", defense: "Libero / Defense", setting: "Setting", all_skills: "All Skills" };
+const FOCUS = { hitting: "Hitting", defense: "Libero / Defense", setting: "Setting" };
 const STATUS = ["idea", "contacted", "interested", "confirmed", "declined"];
 const STATUS_COLOR = { idea: DS.dim, contacted: DS.mut, interested: DS.orange, confirmed: DS.lime, declined: "#e66" };
 const SESSION_STATUS = ["tentative", "confirmed", "open", "full", "cancelled"];
@@ -28,9 +29,9 @@ const addDays = (iso, n) => { const d = new Date(iso + "T12:00:00"); d.setDate(d
 
 // Economics assumptions (editable on the Economics tab, stored in plan.data.econ).
 const DEFAULT_ECON = {
-  sessionPrice: 1600, sessionDays: 2, athletes: 14,
+  sessionPrice: 1200, sessionDays: 2, athletes: 16,
   starRate: 1000, flight: 500, hotelNight: 200, groundDay: 60, mealsDay: 75,
-  assistants: 3, asstRate: 30, asstHours: 8,
+  assistants: 4, asstRate: 30, asstHours: 8,
   lunch: 15, swag: 35, courtDay: 0, procPct: 3, marketing: 3000, deposit: 250,
 };
 // Program pricing applies to every session at once (Sessions tab can still
@@ -65,10 +66,10 @@ const DEFAULT_SECTIONS = [
   ["name", "Name", "Heatwave Volleyball"],
   ["brand", "Brand", "Full name: Heatwave Volleyball\nShort forms: Heatwave ATX, H-ATX\nPrograms: Heatwave Summer Sessions; Heatwave Winter Sessions (later)"],
   ["tagline", "Tagline", "Where the best come to train from the best."],
-  ["pitch", "The pitch", "A small-group summer intensive in Austin for national and bubble-national players. Two days of position-specific training led by college coaches: 14 athletes on two courts with four coaches, a 1:3.5 coach-to-player ratio. $1,600 per two-day session (room and board not included). It's built for the player who already trains hard and wants a summer edge she can't get at her club or a big-name camp of 200. For families from out of town it's also a reason to spend a few days in Austin: train in the mornings and afternoons, and enjoy the city's food, music and Hill Country in the evenings."],
-  ["who", "Who it's for (eligibility)", "Ages 14-16 for the position intensives (Hitting, Libero/Defense, Setting); ages 11-12 for All Skills.\nNational or bubble-national level: playing on (or pushing for) a national/open-level club team.\nAdmission requires a referral from the player's club coach or club director, plus game or skills film.\nWe keep each session to similar ages and levels so the training stays at the top end - two courts, one group."],
-  ["format", "Format", "Every session is 2 days. $1,600 per athlete, lunch on training days included; room and board not included.\n9:00am-12:00pm training, 12:00-1:00 lunch provided by DSSC, 1:00-4:00pm training. 6 hours on court a day.\nOne star lead coach + three DS Elite / DSSC assistants, two courts, 14 players (4 coaches : 14 athletes = 1:3.5).\nEach athlete leaves with a written evaluation from the lead coach and a short video breakdown of her skill work (worth adding: it's the thing families share)."],
-  ["coaches", "Coaching", "Each session is led by a college head or assistant coach who specializes in that skill - the name is the product, so we announce the lead coach for every session. Three DS Elite / DSSC staff assist on court so every rep gets feedback. We need 8 star coaches for 8 sessions (shortlist 2 per session in case of conflicts)."],
+  ["pitch", "The pitch", "A small-group summer intensive in Austin for national and bubble-national 14s, 15s and 16s. Two days of position-specific training led by college coaches: 16 athletes on two courts with five coaches, a 1:3.2 coach-to-player ratio. $600 a day, The pitch,200 per two-day session (room and board not included). It's built for the player who already trains hard and wants a summer edge she can't get at her club or a big-name camp of 200. For families from out of town it's also a reason to spend a few days in Austin: train in the mornings and afternoons, and enjoy the city's food, music and Hill Country in the evenings."],
+  ["who", "Who it's for (eligibility)", "14s, 15s and 16s only, for the position intensives (Hitting, Libero/Defense, Setting). This hyper-focused approach lets us concentrate on the pre-college recruiting summers of club volleyball and not stretch to other ages, where the value wouldn't be as strong.\nNational or bubble-national level: playing on (or pushing for) a national/open-level club team.\nAdmission requires a referral from the player's club coach or club director, plus game or skills film.\nWe keep each session to similar ages and levels so the training stays at the top end - two courts, one group."],
+  ["format", "Format", "Every session is 2 days. $600 a day, Format,200 per athlete, lunch on training days included; room and board not included.\n9:00am-12:00pm training, 12:00-1:00 lunch provided by DSSC, 1:00-4:00pm training. 6 hours on court a day.\nOne star lead coach + four DS Elite / DSSC assistants, two courts, 16 players (5 coaches : 16 athletes = 1:3.2).\nEach athlete leaves with a written evaluation from the lead coach and a short video breakdown of her skill work (worth adding: it's the thing families share)."],
+  ["coaches", "Coaching", "Each session is led by a college head or assistant coach who specializes in that skill - the name is the product, so we announce the lead coach for every session. Four DS Elite / DSSC staff assist on court so every rep gets feedback. We need 6 star coaches for 6 sessions (shortlist 2 per session in case of conflicts)."],
   ["apply", "Application", "1. Apply online: player info, position, club and team, level, and a film link (Hudl/YouTube).\n2. A coach or club director submits a short referral (we email them a link, so the referral comes from the coach, not the parent).\n3. Pay the application deposit by card to hold a place in review.\n4. We review film + referral and accept, waitlist or decline within 14 days.\n5. Accepted players pay the balance within 7 days to lock the spot. Declined applicants get the deposit back in full."],
   ["policy", "Payment & cancellation", "Deposit at application; balance due on acceptance.\nCancel on or before April 1: 50% of the amount paid is refunded.\nCancel after April 1: no refund.\nIf DSSC cancels a session, a full refund or a transfer to another session.\n(Confirm with counsel/insurance before launch; spell out what happens if a player is injured before camp.)"],
   ["marketing", "Marketing & outreach", "Personal invitations to club directors in Texas and neighboring states (Lone Star, North Texas, South Texas, Oklahoma, Louisiana) with a referral link they can forward to their coaches.\nSocial: announce each lead coach as a separate post; short clips from the coaches; DS Elite and DSSC accounts plus the coaches' own followings.\nDirect outreach to our own national-team families and alumni.\nA landing page with the coaches, sessions, the Austin angle (where to stay, eat, what to do) and the application."],
@@ -82,7 +83,7 @@ const DEFAULT_CHECKLIST = [
   ["Check NCAA camp rules for college coaches working a private camp", "2026-11-15"],
   ["Shortlist 16 star coaches (2 per session)", "2026-11-15"],
   ["Pick the payment processor (deposit, balance, partial refunds)", "2026-12-01"],
-  ["Confirm 8 lead coaches and lock session dates", "2026-12-15"],
+  ["Confirm 6 lead coaches and lock session dates", "2026-12-15"],
   ["Build the site + application (film link, referral, deposit)", "2026-12-15"],
   ["Coach/director referral form and email", "2026-12-15"],
   ["Club director invite list and invitation email", "2026-12-20"],
@@ -349,7 +350,7 @@ function CoachesTab({ coaches, sessions, saveCoach, addCoach, removeCoach }) {
   return (<>
     <Card accent={DS.lime}>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <div style={{ fontSize: 13, color: DS.mut, flex: "1 1 280px", lineHeight: 1.5 }}>Every star-coach prospect: what they teach, where they are in the conversation, when they're free. We need 8 confirmed (2 per skill + 2 for 11/12). Assign them to sessions on the Sessions tab.</div>
+        <div style={{ fontSize: 13, color: DS.mut, flex: "1 1 280px", lineHeight: 1.5 }}>Every star-coach prospect: what they teach, where they are in the conversation, when they're free. We need 6 confirmed (2 per skill). Assign them to sessions on the Sessions tab.</div>
         <Btn kind="primary" onClick={addCoach}>+ Add coach</Btn>
       </div>
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 }}>
