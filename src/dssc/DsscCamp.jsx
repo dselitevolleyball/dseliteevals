@@ -13,7 +13,8 @@
 // Coaches (the star-coach workbook), Launch (checklist to Jan 1).
 //
 // Data: dssc_camp_plan (one 'main' row, jsonb), dssc_camp_sessions,
-// dssc_camp_coaches. Applications/payments come later with the public site.
+// dssc_camp_coaches. Applications tab: heatwave_* tables (families apply and
+// pay on heatwaveatx.com/apply; decisions go through its /api/admin).
 
 import { useState, useEffect, useMemo } from "react";
 import { supabase } from "../supabase";
@@ -157,7 +158,7 @@ export default function DsscCamp({ coach }) {
   const name = plan?.sections?.name || "Heatwave Volleyball";
 
   if (!plan) return <div style={{ padding: 24, color: DS.mut, fontFamily: DS.font }}>Loading…</div>;
-  const tabs = [["plan", "Plan"], ["econ", "Economics"], ["sessions", "Sessions"], ["coaches", `Coaches (${coaches.length})`], ["interest", "Interest"], ["launch", "Launch"]];
+  const tabs = [["plan", "Plan"], ["econ", "Economics"], ["sessions", "Sessions"], ["coaches", `Coaches (${coaches.length})`], ["applications", "Applications"], ["interest", "Interest"], ["launch", "Launch"]];
   const confirmedLeads = live.filter(s => coachBy.get(s.lead_coach_id)?.status === "confirmed").length;
 
   return (
@@ -186,6 +187,7 @@ export default function DsscCamp({ coach }) {
           applyPricing={async (e) => { for (const x of sessions.filter(x => x.status !== "cancelled")) await saveSession(x.id, { days: e.sessionDays, cap: e.athletes, expected: null, price_per_day: Math.round(e.sessionPrice / Math.max(1, e.sessionDays)) }); }} />}
         {tab === "sessions" && <SessionsTab sessions={sessions} coaches={coaches} coachBy={coachBy} econ={econ} saveSession={saveSession} />}
         {tab === "coaches" && <CoachesTab coaches={coaches} sessions={sessions} saveCoach={saveCoach} addCoach={addCoach} removeCoach={removeCoach} />}
+        {tab === "applications" && <ApplicationsTab sessions={sessions} saveSession={saveSession} />}
         {tab === "interest" && <InterestTab />}
         {tab === "launch" && <LaunchTab plan={plan} savePlan={savePlan} />}
       </div>
@@ -515,6 +517,222 @@ function SiteProfile({ c, saveCoach }) {
         </label>
         {err && <div style={{ color: DS.orange, fontSize: 12, fontWeight: 700, marginTop: 4 }}>{err}</div>}
       </div>
+    </div>
+  );
+}
+
+// ── Applications (heatwaveatx.com/apply) ─────────────────────────────────────
+// Families apply + pay the $250 deposit on the site, add film and a coach's
+// recommendation; this is the review desk. Reads the heatwave_* tables directly
+// (admins only by RLS); anything that touches money or email - accept (charges
+// the balance), decline (refunds the deposit), waitlist, reminders, the 3%
+// credit-card fee switch, signed film/letter links - goes through the site's
+// /api/admin with this admin's session token.
+const HW_ADMIN = "https://heatwaveatx.com/api/admin";
+const APP_STATUS = {
+  draft: ["Not paid", DS.dim], deposit_pending: ["Bank payment clearing", DS.mut], payment_failed: ["Payment failed", "#e66"],
+  submitted: ["Deposit paid · in progress", DS.orange], complete: ["Complete · ready to review", DS.lime],
+  accepted: ["Accepted", DS.lime], waitlisted: ["Waitlisted", DS.orange], declined: ["Declined", "#e66"], withdrawn: ["Withdrawn", DS.dim],
+};
+const REC_LEVEL = { national: "National / open", bubble: "Bubble national", regional: "Regional", developing: "Still developing" };
+const usd = (n) => "$" + Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: Number(n) % 1 ? 2 : 0, maximumFractionDigits: 2 });
+const when = (iso) => iso ? new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " " + new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : "";
+const shortD = (iso) => new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+async function hwAdmin(body) {
+  const { data } = await supabase.auth.getSession();
+  const r = await fetch(HW_ADMIN, { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + (data?.session?.access_token || "") }, body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || "Heatwave site error " + r.status);
+  return j;
+}
+
+function ApplicationsTab({ sessions, saveSession }) {
+  const [apps, setApps] = useState(null);
+  const [film, setFilm] = useState([]), [recs, setRecs] = useState([]), [events, setEvents] = useState([]);
+  const [fee, setFee] = useState(null);
+  const [status, setStatus] = useState("active"), [sess, setSess] = useState(""), [q, setQ] = useState("");
+  const [open, setOpen] = useState(null);
+  const [err, setErr] = useState(null);
+  const load = async () => {
+    const [a, f, r, e, s] = await Promise.all([
+      supabase.from("heatwave_applications").select("*").order("created_at", { ascending: false }),
+      supabase.from("heatwave_film").select("*").order("created_at"),
+      supabase.from("heatwave_recommendations").select("*").neq("status", "cancelled").order("requested_at"),
+      supabase.from("heatwave_events").select("*").order("created_at", { ascending: false }).limit(1000),
+      supabase.from("heatwave_settings").select("*").eq("key", "surcharge").maybeSingle(),
+    ]);
+    const e1 = a.error || f.error || r.error || e.error; if (e1) setErr(e1.message);
+    setApps(a.data || []); setFilm(f.data || []); setRecs(r.data || []); setEvents(e.data || []); setFee(s.data?.value || { enabled: false, pct: 3 });
+  };
+  useEffect(() => { load(); }, []);
+  if (!apps) return <div style={{ color: DS.mut }}>Loading…</div>;
+
+  const sessBy = new Map(sessions.map(s => [s.id, s]));
+  const appSessions = sessions.filter(s => s.applications_open || apps.some(a => (a.session_ids || []).includes(s.id)));
+  const ACTIVE = ["deposit_pending", "submitted", "complete", "waitlisted"];
+  const ql = q.trim().toLowerCase();
+  const shown = apps.filter(a => (status === "all" ? a.status !== "withdrawn" : status === "active" ? ACTIVE.includes(a.status) : a.status === status)
+    && (!sess || (a.session_ids || []).includes(+sess))
+    && (!ql || [a.player_name, a.parent_name, a.account_email, a.club, a.team, a.city].join(" ").toLowerCase().includes(ql)));
+  const count = (st) => apps.filter(a => a.status === st).length;
+  const toggleFee = async () => {
+    const next = !fee.enabled;
+    if (next && !window.confirm(`Turn ON the ${fee.pct}% credit-card fee?\n\nOnly do this once surcharging is registered with Stripe and the card brands (about 30 days' notice). Debit cards and bank accounts never pay it.`)) return;
+    try { const r = await hwAdmin({ action: "surcharge", enabled: next }); setFee(r.surcharge); } catch (e) { setErr(e.message); }
+  };
+
+  return (<>
+    <Card accent={DS.lime}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <Stat label="Ready to review" value={count("complete")} color={DS.lime} />
+        <Stat label="In progress" value={count("submitted") + count("deposit_pending")} />
+        <Stat label="Accepted" value={count("accepted")} />
+        <Stat label="Waitlisted" value={count("waitlisted")} />
+        <Stat label="Not paid yet" value={count("draft") + count("payment_failed")} />
+        {appSessions.map(s => { const n = apps.filter(a => a.status === "accepted" && (a.session_ids || []).includes(s.id)).length;
+          return <Stat key={s.id} label={s.name + " filled"} value={`${n}/${s.cap}`} color={n >= s.cap ? DS.orange : undefined} />; })}
+      </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10, alignItems: "center" }}>
+        <select value={status} onChange={e => setStatus(e.target.value)} style={{ ...small, width: "auto" }}>
+          <option value="active">Open (paid, not decided)</option><option value="all">Everything</option>
+          {Object.entries(APP_STATUS).map(([k, [l]]) => <option key={k} value={k}>{l}</option>)}
+        </select>
+        <select value={sess} onChange={e => setSess(e.target.value)} style={{ ...small, width: "auto" }}><option value="">All sessions</option>{appSessions.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select>
+        <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search player, parent, club" style={{ ...small, width: 220 }} />
+        <div style={{ flex: 1 }} />
+        <a href="https://heatwaveatx.com/apply" target="_blank" rel="noreferrer" style={{ color: DS.lime, fontSize: 13, fontWeight: 700 }}>heatwaveatx.com/apply ↗</a>
+        <Btn small onClick={load}>Refresh</Btn>
+      </div>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginTop: 10, fontSize: 13, color: DS.mut }}>
+        <span>Taking applications for:</span>
+        {sessions.filter(s => s.status !== "cancelled").map(s => (
+          <label key={s.id} style={{ display: "inline-flex", gap: 5, alignItems: "center", cursor: "pointer", color: s.applications_open ? DS.text : DS.mut }}>
+            <input type="checkbox" checked={!!s.applications_open} onChange={e => saveSession(s.id, { applications_open: e.target.checked })} /> {s.name}
+          </label>))}
+      </div>
+      <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 10, fontSize: 13, color: DS.mut, flexWrap: "wrap" }}>
+        <span>{fee?.pct}% credit-card fee: <b style={{ color: fee?.enabled ? DS.lime : DS.orange }}>{fee?.enabled ? "ON" : "OFF"}</b>{fee?.enabled ? " (debit and bank payments are never charged it)" : " (turn on once surcharging is registered with Stripe)"}</span>
+        <Btn small kind="quiet" onClick={toggleFee}>{fee?.enabled ? "Turn off" : "Turn on"}</Btn>
+      </div>
+    </Card>
+    {err && <div style={{ color: DS.orange, fontWeight: 700, fontSize: 13, margin: "8px 0" }}>{err}</div>}
+    {!shown.length && <div style={{ color: DS.mut, fontSize: 14, padding: "8px 2px" }}>{apps.length ? "No applications match." : "No applications yet. Families apply at heatwaveatx.com/apply."}</div>}
+    {shown.map(a => {
+      const af = film.filter(f => f.application_id === a.id), ar = recs.filter(r => r.application_id === a.id);
+      const [sl, sc] = APP_STATUS[a.status] || [a.status, DS.mut];
+      const isOpen = open === a.id;
+      return (
+        <Card key={a.id} accent={isOpen ? DS.lime : undefined}>
+          <div onClick={() => setOpen(isOpen ? null : a.id)} style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", cursor: "pointer" }}>
+            <b style={{ fontSize: 16 }}>{a.player_name || "(no name)"}</b>
+            <Tag color={sc}>{sl}</Tag>
+            {a.age_group && <Tag>{a.age_group}</Tag>}{a.position && <Tag>{a.position}</Tag>}
+            {a.level && <Tag color={a.level === "national" ? DS.lime : DS.mut}>{LEVEL_LABEL[a.level] || a.level}</Tag>}
+            {(a.session_ids || []).map(id => <Tag key={id} color={DS.brier}>{sessBy.get(id)?.name || "Session " + id}</Tag>)}
+            <div style={{ flex: 1 }} />
+            <span style={{ fontSize: 12, color: DS.mut }}>🎬 {af.length} · ✉ {ar.filter(r => r.status === "submitted").length}/{ar.length}{a.rating ? " · " + "★".repeat(a.rating) : ""}</span>
+            <span style={{ fontSize: 12, color: DS.mut }}>{shortD(a.created_at)}</span>
+          </div>
+          <div style={{ fontSize: 13, color: DS.mut, marginTop: 4 }}>{[a.club, a.team, a.grad_year && "class of " + a.grad_year, a.city].filter(Boolean).join(" · ")}</div>
+          {isOpen && <AppDetail a={a} film={af} recs={ar} events={events.filter(e => e.application_id === a.id)} fee={fee}
+            onChange={(row) => { if (row?.id) setApps(xs => xs.map(x => x.id === row.id ? { ...x, ...row } : x)); load(); }} setErr={setErr} />}
+        </Card>
+      );
+    })}
+  </>);
+}
+
+function AppDetail({ a, film, recs, events, fee, onChange, setErr }) {
+  const [media, setMedia] = useState(null);
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(null);
+  useEffect(() => {
+    if (!film.some(f => f.kind === "upload") && !recs.some(r => r.letter_path)) { setMedia({ film: {}, letters: {} }); return; }
+    hwAdmin({ action: "media", id: a.id }).then(setMedia).catch(e => { setMedia({ film: {}, letters: {} }); setErr(e.message); });
+  }, [a.id, film.length, recs.length]);
+  const balance = Math.max(0, Number(a.total_amount) - Number(a.deposit_amount));
+  const credit = a.card_funding === "credit" && fee?.enabled;
+  const decide = async (decision) => {
+    const msgs = {
+      accept: `Accept ${a.player_name}?\n\nThis charges the balance of ${usd(balance)}${credit ? ` + ${fee.pct}% credit-card fee` : ""} to the ${a.card_brand || "card"} ending ${a.card_last4 || "?"} and emails the family.`,
+      waitlist: `Waitlist ${a.player_name}?\n\nThe family is emailed; the ${usd(a.deposit_amount)} deposit stays on hold.`,
+      decline: `Decline ${a.player_name}?\n\nThis refunds the full deposit and emails the family.`,
+    };
+    if (!window.confirm(msgs[decision])) return;
+    setBusy(decision);
+    try { const r = await hwAdmin({ action: "decide", id: a.id, decision, note }); if (r.problem) window.alert("Done, but: " + r.problem); setNote(""); onChange(r.application); }
+    catch (e) { setErr(e.message); } finally { setBusy(null); }
+  };
+  const saveNotes = (patch) => hwAdmin({ action: "notes", id: a.id, review_notes: a.review_notes, rating: a.rating, ...patch }).then(r => onChange(r.application)).catch(e => setErr(e.message));
+  const remind = async (r) => { try { await hwAdmin({ action: "remind", recId: r.id }); window.alert("Reminder sent to " + r.name + "."); onChange(null); } catch (e) { setErr(e.message); } };
+  const decided = ["accepted", "declined", "withdrawn"].includes(a.status);
+  const paid = !!a.deposit_paid_at;
+  const kv = (k, v) => v ? <div><span style={{ color: DS.mut }}>{k}: </span>{v}</div> : null;
+  return (
+    <div style={{ marginTop: 12, borderTop: "1px solid " + DS.line, paddingTop: 12 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 4, fontSize: 13, lineHeight: 1.6 }}>
+        {kv("Parent", a.parent_name)}{kv("Account", <a href={"mailto:" + a.account_email} style={{ color: DS.lime }}>{a.account_email}</a>)}{kv("Phone", a.parent_phone)}
+        {kv("Player email", a.player_email)}{kv("Birthdate", a.birthdate)}{kv("Height", a.height)}{kv("Club director", a.club_director)}
+        {kv("Total", usd(a.total_amount))}
+        {kv("Deposit", a.deposit_paid_at ? `${usd(a.deposit_amount)}${Number(a.deposit_fee) ? " + " + usd(a.deposit_fee) + " fee" : ""} paid ${when(a.deposit_paid_at)}` : a.status === "deposit_pending" ? "bank payment clearing" : "not paid")}
+        {kv("Card", a.card_last4 && `${a.card_brand} ····${a.card_last4}${a.card_funding && a.card_funding !== "us_bank_account" ? " (" + a.card_funding + ")" : ""}`)}
+        {kv("Balance", a.balance_paid_at ? `${usd(a.balance_amount)}${Number(a.balance_fee) ? " + " + usd(a.balance_fee) + " fee" : ""} paid ${when(a.balance_paid_at)}` : a.status === "accepted" ? <span style={{ color: DS.orange }}>{a.balance_error || "pending"}</span> : null)}
+        {kv("Refund", a.refunded_at && "deposit refunded " + when(a.refunded_at))}
+        {kv("Decision", a.decided_at && `${a.decision} by ${a.decided_by}, ${when(a.decided_at)}`)}
+      </div>
+      {a.notes && <div style={{ fontSize: 14, marginTop: 8, whiteSpace: "pre-wrap" }}><span style={{ color: DS.mut }}>From the family: </span>{a.notes}</div>}
+
+      <Label style={{ marginTop: 16 }}>Film ({film.length})</Label>
+      {!film.length && <div style={{ fontSize: 13, color: DS.mut }}>None yet.</div>}
+      <div style={{ display: "grid", gap: 10 }}>
+        {film.map(f => (
+          <div key={f.id} style={{ background: DS.panel2, borderRadius: 10, padding: 10 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: f.kind === "upload" ? 6 : 0 }}>{f.title || f.file_name || "Film"}{" "}
+              {f.kind === "link" && <a href={f.url} target="_blank" rel="noreferrer" style={{ color: DS.lime, fontWeight: 400, overflowWrap: "anywhere" }}>{f.url} ↗</a>}
+              {f.kind === "upload" && <span style={{ color: DS.mut, fontWeight: 400 }}>{f.bytes ? " · " + (f.bytes / 1048576).toFixed(1) + " MB" : ""}</span>}</div>
+            {f.kind === "upload" && (media?.film?.[f.id] ? <video src={media.film[f.id]} controls preload="metadata" style={{ width: "100%", maxHeight: 420, borderRadius: 8, background: "#000" }} /> : <div style={{ fontSize: 12, color: DS.mut }}>{media ? "Couldn't load this file." : "Loading…"}</div>)}
+          </div>))}
+      </div>
+
+      <Label style={{ marginTop: 16 }}>Recommendation{recs.length === 1 ? "" : "s"}</Label>
+      {!recs.length && <div style={{ fontSize: 13, color: DS.mut }}>The family hasn't asked anyone yet.</div>}
+      {recs.map(r => (
+        <div key={r.id} style={{ background: DS.panel2, borderRadius: 10, padding: 10, marginBottom: 8 }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", fontSize: 13 }}>
+            <b>{r.name}</b><span style={{ color: DS.mut }}>{[r.role, r.club].filter(Boolean).join(" · ")} · <a href={"mailto:" + r.email} style={{ color: DS.lime }}>{r.email}</a></span>
+            <div style={{ flex: 1 }} />
+            {r.status === "submitted" ? <Tag color={DS.lime}>received {shortD(r.submitted_at)}</Tag>
+              : <><span style={{ fontSize: 12, color: DS.mut }}>asked {shortD(r.requested_at)} · {r.reminders} reminder{r.reminders === 1 ? "" : "s"}</span><Btn small kind="quiet" onClick={() => remind(r)}>Remind now</Btn></>}
+          </div>
+          {r.status === "submitted" && <>
+            <div style={{ fontSize: 13, color: DS.mut, marginTop: 6 }}>{[r.relationship, r.years_known && "known " + r.years_known, r.level_rating && "places them: " + (REC_LEVEL[r.level_rating] || r.level_rating)].filter(Boolean).join(" · ")}</div>
+            {r.letter_text && <div style={{ fontSize: 14, marginTop: 6, whiteSpace: "pre-wrap", lineHeight: 1.55 }}>{r.letter_text}</div>}
+            {r.letter_path && (media?.letters?.[r.id] ? <a href={media.letters[r.id]} target="_blank" rel="noreferrer" style={{ color: DS.lime, fontSize: 13, fontWeight: 700, display: "inline-block", marginTop: 6 }}>📄 {r.letter_file_name || "Letter"} ↗</a> : <div style={{ fontSize: 12, color: DS.mut }}>Letter file: {media ? "couldn't load" : "loading…"}</div>)}
+          </>}
+        </div>))}
+
+      <Label style={{ marginTop: 16 }}>Review</Label>
+      <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 8 }}>
+        <span style={{ fontSize: 13, color: DS.mut }}>Rating</span>
+        {[1, 2, 3, 4, 5].map(n => <button key={n} onClick={() => saveNotes({ rating: a.rating === n ? null : n })} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 20, color: (a.rating || 0) >= n ? DS.lime : DS.dim, padding: 0 }}>★</button>)}
+      </div>
+      <Field value={a.review_notes || ""} onSave={v => saveNotes({ review_notes: v })} multiline minRows={2} placeholder="Review notes (staff only)" />
+
+      {!decided && <div style={{ marginTop: 12 }}>
+        <input value={note} onChange={e => setNote(e.target.value)} placeholder="Optional note to include in the email to the family" style={{ ...small, marginBottom: 8 }} />
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <Btn kind="primary" disabled={!paid || !!busy} onClick={() => decide("accept")}>{busy === "accept" ? "Charging…" : `Accept · charge ${usd(balance)}`}</Btn>
+          {a.status !== "waitlisted" && <Btn disabled={!paid || !!busy} onClick={() => decide("waitlist")}>{busy === "waitlist" ? "…" : "Waitlist"}</Btn>}
+          <Btn kind="warn" disabled={!paid || !!busy} onClick={() => decide("decline")}>{busy === "decline" ? "Refunding…" : `Decline · refund ${usd(a.deposit_amount)}`}</Btn>
+          {!paid && <span style={{ fontSize: 12, color: DS.mut }}>Decisions open once the deposit is paid.</span>}
+          {paid && a.status !== "complete" && a.status !== "waitlisted" && <span style={{ fontSize: 12, color: DS.orange }}>Still missing {[!film.length && "film", !recs.some(r => r.status === "submitted") && "a recommendation"].filter(Boolean).join(" and ")}.</span>}
+        </div>
+      </div>}
+
+      {!!events.length && <details style={{ marginTop: 12 }}>
+        <summary style={{ fontSize: 12, color: DS.mut, cursor: "pointer" }}>History ({events.length})</summary>
+        <div style={{ fontSize: 12, color: DS.mut, marginTop: 6, lineHeight: 1.7 }}>{events.map(e => <div key={e.id}>{when(e.created_at)} · {e.detail || e.kind}{e.actor ? " · " + e.actor : ""}</div>)}</div>
+      </details>}
     </div>
   );
 }
