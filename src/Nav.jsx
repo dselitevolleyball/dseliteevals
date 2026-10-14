@@ -28,6 +28,7 @@ const IT = {
   notifications: ["Notifications", "🔔", "all", "alerts", "Alerts"],
   coachcomms:    ["SportsYou Posts", "📣", "ops", "coach comms sportsyou posts", "Posts"],
   assignments:   ["Post Assignments", "📝", "ops", "assignments sportsyou", "Assign"],
+  website:       ["Website", "🌐", "admin", "public website dselitevolleyball.com site coach bios photos profiles roster hide inquiries contact form", "Website"],
   teamdir:       ["All Teams", "🏐", "opsTeams", "teams directory", "Teams"],
   roster:        ["Roster", "👥", "opsMine", "players", "Roster"],
   incidentboard: ["Issue Board", "🚩", "ops", "injury injuries issues incidents", "Issues"],
@@ -93,7 +94,7 @@ const IT = {
 
 const DSE_OPS = [
   ["today", "Today & schedule", "📅", ["home", "dayschedule", "practice", "coverage", "staffing", "sa", "clockin"]],
-  ["talk", "Talk to people", "💬", ["messages", "email", "notifications", "coachcomms", "assignments"]],
+  ["talk", "Talk to people", "💬", ["messages", "email", "notifications", "coachcomms", "assignments", "website"]],
   ["teams", "Teams & players", "🏐", ["teamdir", "roster", "incidentboard", "incidents", "school", "schoolgames", "photos"]],
   ["families", "Families & signups", "👪", ["waiting", "tracker", "kickoff", "playergear", "scholarships"]],
   ["events", "Tournaments & travel", "✈️", ["tournaments", "hub", "workduty", "tournament", "dsysa", "travel", "housing", "hawaii"]],

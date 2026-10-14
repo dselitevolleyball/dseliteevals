@@ -22,12 +22,22 @@ import { isAustinArea } from "./austin-area.js";
 
 export const MIN_STAFF = 2;
 const WD = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const PRESEASON_DATES = {
+export const PRESEASON_DATES = {
   summer: ["2026-07-12", "2026-07-19", "2026-07-26", "2026-08-02", "2026-08-09", "2026-08-16", "2026-08-23", "2026-08-30", "2026-09-06"],
   fall1: ["2026-09-13", "2026-09-20", "2026-09-27", "2026-10-04", "2026-10-11"],
   fall2: ["2026-10-18", "2026-10-25", "2026-11-01", "2026-11-08", "2026-11-15"],
 };
-const PHASE_LABEL = { summer: "Summer", fall1: "Fall 1", fall2: "Fall 2", season: "Regular Season", postseason: "Post Season" };
+export const PHASE_LABEL = { summer: "Summer", fall1: "Fall 1", fall2: "Fall 2", season: "Regular Season", postseason: "Post Season" };
+// First and last practice date of each phase (the preseason ones are dated
+// Sundays; the weekly ones match api/calendar.js SEASON_*/POST_*). The public
+// website (api/site-data.js) shows each team's weekly pattern per phase.
+export const PHASE_RANGES = [
+  ["summer", PRESEASON_DATES.summer[0], PRESEASON_DATES.summer[PRESEASON_DATES.summer.length - 1]],
+  ["fall1", PRESEASON_DATES.fall1[0], PRESEASON_DATES.fall1[PRESEASON_DATES.fall1.length - 1]],
+  ["fall2", PRESEASON_DATES.fall2[0], PRESEASON_DATES.fall2[PRESEASON_DATES.fall2.length - 1]],
+  ["season", "2026-11-29", "2027-05-06"],
+  ["postseason", "2027-05-07", "2027-06-15"],
+];
 // Same cut-overs as the Daily board.
 export const phaseForDate = (iso) => iso >= "2027-05-07" ? "postseason" : iso >= "2026-11-29" ? "season" : iso >= "2026-10-18" ? "fall2" : iso >= "2026-09-13" ? "fall1" : "summer";
 const isPracticeDay = (iso, ph) => {

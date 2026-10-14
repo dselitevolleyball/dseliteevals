@@ -29,6 +29,7 @@ import { smsPreview } from "../shared/sms-split.js";
 import TestingBoard, { ReachHome } from "./TestingBoard.jsx";
 import WorkDuty from "./WorkDuty.jsx";
 import TournamentHub from "./TournamentHub.jsx";
+import SiteAdmin from "./SiteAdmin.jsx";
 import RegistrationCheck, { RegBadges, loadRegistrationCheck } from "./RegistrationCheck.jsx";
 import EuropeRsvps from "./EuropeRsvps.jsx";
 import DsscTexts from "./dssc/DsscTexts.jsx";
@@ -33124,6 +33125,7 @@ export default function App() {
           teamNames={((canViewTeams || canOps) ? teamsList.filter(t => t.active).map(t => t.id) : myTeamNames.filter(t => teamsList.some(x => x.id === t))).slice().sort((a, b) => (parseInt(a) || 99) - (parseInt(b) || 99) || a.localeCompare(b))} />}
         {view==="hub" && <TournamentHub supabase={supabase} C={C} tournaments={tournaments} tournamentAssignments={tournamentAssignments} practiceTeams={practiceTeams} practiceTeamsAll={practiceTeamsAll}
           isOps={canOps} myTeamNames={myTeamNames} initialTournamentId={hubTn} onConsumedInitial={()=>setHubTn(null)} session={session} />}
+        {view==="website" && (isAdmin ? <SiteAdmin coach={coach} /> : <div style={{padding:24,color:C.mut,textAlign:"center"}}>The website screen is admin-only.</div>)}
         {view==="testboard" && <TestingBoard players={players} />}
         {view==="testreports" && (canSendReports ? <StatReports coach={coach} players={players} session={session} /> : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Testing reports are for admins and the performance coach.</div>)}
         {view==="lineups" && renderLineups()}
