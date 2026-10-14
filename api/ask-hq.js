@@ -33,6 +33,9 @@ const MODEL = "claude-opus-5";
 const MAX_TURNS = 16;   // matching a long sheet takes a few more lookups
 const SECRET_KEY = /token|secret|password|api_key|signed_ip|user_agent|raw_email/i;
 
+// Added for a DSSC administrator who isn't an HQ admin.
+const DSSC_ADMIN_NOTE = "This person is a DSSC (Dripping Springs Sports Club) administrator, not a DS Elite Volleyball admin. Answer about DSSC: its clinics, camps, pods, class sign-ups and attendance, DSSC coaches and clock-ins, DSSC texts and the club's people (dssc_* tables), courts and the planning calendar. Don't share DS Elite players' or families' personal details (contact info, medical, money, evaluations); if they ask about DS Elite, give schedule-level answers or say an HQ admin can help. You can't change data for them: if they ask to change something, tell them where in the app to do it or that an HQ admin can make the change.";
+
 const SYSTEM = `You are HQ, the assistant inside DS Elite HQ — the operations app for DS Elite Volleyball (a youth club volleyball program in Dripping Springs, TX) and its sister business Dripping Springs Sports Club (DSSC, a facility that runs clinics and skill pods). You are talking to a club administrator. Today's date is given in each question.
 
 You answer by querying the database with the sql tool and reading what comes back. Never guess at data you could look up. If a question can't be answered from the data, say so plainly. Keep answers tight: lead with the answer, then the supporting list. Use short bullet lists for people; never markdown tables or headers. When you list people, include the detail an admin needs to act (team, parent name, email, phone) unless asked for names only.
@@ -159,10 +162,14 @@ async function handle(req, res) {
   const { data: { user } = {} } = bearer ? await sb.auth.getUser(bearer).catch(() => ({ data: {} })) : { data: {} };
   const email = String(user?.email || "").trim().toLowerCase();
   if (!email) return res.status(401).json({ error: "Sign in first" });
-  let who = email;
+  let who = email, dsscAdmin = false;
   if (!OWNER_EMAILS.includes(email)) {
-    const { data: c } = await sb.from("coaches").select("is_admin, is_approved, display_name").ilike("email", email).maybeSingle();
-    if (!(c?.is_approved && c?.is_admin)) return res.status(403).json({ error: "Ask HQ is for admins." });
+    const { data: c } = await sb.from("coaches").select("is_admin, is_approved, display_name, dssc_role").ilike("email", email).maybeSingle();
+    // DSSC administrators (coaches.dssc_role = 'admin', e.g. Jonathan) get Ask HQ
+    // too (Drew, Oct 14 2026) - for DSSC questions, and without propose_changes,
+    // since only HQ admins can Apply a proposal.
+    dsscAdmin = !!(c?.is_approved && !c?.is_admin && c?.dssc_role === "admin");
+    if (!(c?.is_approved && (c?.is_admin || dsscAdmin))) return res.status(403).json({ error: "Ask HQ is for admins." });
     who = c.display_name || email;
   }
 
@@ -223,8 +230,8 @@ async function handle(req, res) {
       const r = await client.messages.stream({
         model: MODEL, max_tokens: 32000,
         thinking: { type: "adaptive" }, output_config: { effort: "medium" },
-        system: [{ type: "text", text: SYSTEM, cache_control: { type: "ephemeral" } }],
-        tools, messages,
+        system: [{ type: "text", text: SYSTEM, cache_control: { type: "ephemeral" } }, ...(dsscAdmin ? [{ type: "text", text: DSSC_ADMIN_NOTE }] : [])],
+        tools: dsscAdmin ? tools.filter(t => t.name !== "propose_changes") : tools, messages,
       }).finalMessage();
       usage.input += r.usage?.input_tokens || 0; usage.output += r.usage?.output_tokens || 0;
       messages.push({ role: "assistant", content: r.content });
