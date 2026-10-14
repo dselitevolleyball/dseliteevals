@@ -195,7 +195,7 @@ const crewNames = (s) => [...new Set([s.coach_name, ...((Array.isArray(s.staff) 
 // from Playbook, so somebody tells the coach before they turn up to it.
 async function tellDirectors(list) {
   const to = ["hunterhaleysc10@gmail.com", "hunter@drippingsportsclub.com", "drew@dselitevolleyball.com"];
-  if (list.some(r => r.clinic?.sport === "basketball")) to.push("adrian@drippingsportsclub.com", "jonathan@drippingsportsclub.com");
+  if (list.some(r => r.clinic?.sport === "basketball")) to.push("adrian@4thquarterathlete.com", "jonathan@drippingsportsclub.com");
   const origin = appOrigin(null);
   const fmt = (d) => new Date(d + "T12:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "America/Chicago" });
   const lines = list.map(r => `• ${r.clinic.name} — ${fmt(r.session.date)} ${r.session.start_time || ""} — was staffed by ${crewNames(r.session).join(", ")}`);

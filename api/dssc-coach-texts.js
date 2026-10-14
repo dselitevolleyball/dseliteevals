@@ -217,7 +217,7 @@ export default async function handler(req, res) {
   // for a class that isn't happening.
   const cancelTexts = [];
   if (toCancel.length) {
-    const notifyBy = { volleyball: process.env.DSSC_CANCEL_NOTIFY_EMAILS || "hunter@drippingsportsclub.com", basketball: process.env.DSSC_BB_CANCEL_NOTIFY_EMAILS || "adrian@drippingsportsclub.com" };
+    const notifyBy = { volleyball: process.env.DSSC_CANCEL_NOTIFY_EMAILS || "hunter@drippingsportsclub.com", basketball: process.env.DSSC_BB_CANCEL_NOTIFY_EMAILS || "adrian@4thquarterathlete.com" };
     const emailsFor = (x) => (notifyBy[x.c.sport || "volleyball"] || notifyBy.volleyball).split(",").map(e => e.trim().toLowerCase()).filter(Boolean);
     for (const em of [...new Set(toCancel.flatMap(emailsFor))]) {
       const mine = toCancel.filter(x => emailsFor(x).includes(em));
@@ -257,7 +257,7 @@ export default async function handler(req, res) {
   }
 
   let emailed = false;
-  const directors = [...new Set([...(DSSC_PLANNER_EMAILS ? DSSC_PLANNER_EMAILS.split(",") : DIRECTORS_DEFAULT), ...(toCancel.some(x => x.c.sport === "basketball") ? ["adrian@drippingsportsclub.com"] : [])].map(s => s.trim()).filter(Boolean))];
+  const directors = [...new Set([...(DSSC_PLANNER_EMAILS ? DSSC_PLANNER_EMAILS.split(",") : DIRECTORS_DEFAULT), ...(toCancel.some(x => x.c.sport === "basketball") ? ["adrian@4thquarterathlete.com"] : [])].map(s => s.trim()).filter(Boolean))];
   if ((!only || only === "email") && (podsToday.length || podsYesterday.length || toCancel.length || cancelHold) && RESEND_API_KEY && (DSSC_FROM_EMAIL || DSE_FROM_EMAIL) && !sentKey.has("directors|email")) {
     const mark = (ok, label) => `<span style="font-weight:700;color:${ok ? "#0F8B76" : "#d9480f"}">${ok ? "✓" : "✗"} ${label}</span>`;
     const rowsToday = podsToday.map(p => `<tr><td style="padding:6px 8px;border-top:1px solid #e3ebe9"><a href="${classLink(p.c, p.s)}" style="color:#104946;font-weight:700">${esc(p.c.name)}</a><br><span style="color:#667">${esc(timeRange(p.s))}${p.s.court ? " · " + esc(p.s.court) : ""}</span></td><td style="padding:6px 8px;border-top:1px solid #e3ebe9">${esc(p.coaches)}</td><td style="padding:6px 8px;border-top:1px solid #e3ebe9;text-align:center">${p.players}</td><td style="padding:6px 8px;border-top:1px solid #e3ebe9">${mark(p.plan, "Plan")}</td><td style="padding:6px 8px;border-top:1px solid #e3ebe9">${mark(p.note, p.note ? "Sent" : p.written ? "Written, not sent" : "Not sent")}</td></tr>`).join("");

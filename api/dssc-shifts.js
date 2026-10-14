@@ -28,7 +28,7 @@ const signLink = (obj, secret) => { const p = b64url(JSON.stringify(obj)); retur
 const APPROVERS_DEFAULT = ["hunterhaleysc10@gmail.com", "hunter@drippingsportsclub.com", "drew@dselitevolleyball.com"];
 // Monday approvals by sport (Drew, 13 Oct 2026): Hunter volleyball, Adrian basketball;
 // staff hours by department further down.
-const BB_APPROVERS_DEFAULT = ["adrian@drippingsportsclub.com", "drew@dselitevolleyball.com"];
+const BB_APPROVERS_DEFAULT = ["adrian@4thquarterathlete.com", "drew@dselitevolleyball.com"];
 const DSSC_APP = "https://www.drippingsportsclub.com/hq";
 const addDays = (iso, n) => { const d = new Date(iso + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 const fmtD = (iso) => { try { return new Date(iso + "T00:00:00Z").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" }); } catch { return iso; } };
@@ -195,7 +195,7 @@ export default async function handler(req, res) {
     // Each department's staff hours go to its lead (Drew, 14 Oct 2026).
     const STAFF_BY_DEPT = {
       volleyball: listFrom(process.env.DSSC_STAFF_VB_APPROVERS, ["hunter@drippingsportsclub.com"]),
-      basketball: listFrom(process.env.DSSC_STAFF_BB_APPROVERS, ["adrian@drippingsportsclub.com"]),
+      basketball: listFrom(process.env.DSSC_STAFF_BB_APPROVERS, ["adrian@4thquarterathlete.com"]),
       reach: listFrom(process.env.DSSC_STAFF_REACH_APPROVERS, ["brandon@drippingsportsclub.com"]),
       operations: listFrom(process.env.DSSC_STAFF_APPROVER_EMAILS, ["jonathan@drippingsportsclub.com", "deroald@drippingsportsclub.com", "drew@dselitevolleyball.com"]),
     };
