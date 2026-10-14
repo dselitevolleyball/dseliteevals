@@ -22,7 +22,7 @@ const sameDayWindow = (a, b) => a.date === b.date && a.st != null && a.en != nul
 export default function DsscAdmin({
   coach, clinics: clinicsAll = [], coachRoster = [], dsscAvail = [], podAttendance = [], sports = ["volleyball", "basketball"],
   setClinics, reloadClinics, staffDsscSession, unstaffDsscSession, decideDsscPickup,
-  openClass, openProgram, newClinic, sync, onCoachHub, onCoverage, onTimeCards, onLegacy, onTextClass, onTexts, onMyHours, onStaffHours, onPeople,
+  openClass, openProgram, newClinic, sync, onCoachHub, onCoverage, onTimeCards, onLegacy, onTextClass, onTexts, onMyHours, onStaffHours, onPeople, onPay,
 }) {
   const today = localDateISO();
   const coachName = coach?.display_name || coach?.email || "";
@@ -204,6 +204,7 @@ export default function DsscAdmin({
           {onMyHours && <Btn small onClick={onMyHours} title="The general clock in / clock out that staff and interns use">⏱ My hours</Btn>}
           {onStaffHours && <Btn small onClick={onStaffHours} title="Everyone's staff shifts - fix, add, approve">🧾 Staff hours</Btn>}
           {onPeople && <Btn small onClick={onPeople}>👥 Coaches & staff</Btn>}
+          {onPay && <Btn small onClick={onPay}>💲 Pay rates</Btn>}
           {onTexts && <Btn small onClick={onTexts}>💬 Texts</Btn>}
           <Btn small kind="primary" onClick={newClinic}>+ New program</Btn>
         </div>

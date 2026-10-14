@@ -36,6 +36,8 @@ import { HQ_DSSC } from "./hq-base.js";
 import DsscPeople from "./dssc/DsscPeople.jsx";
 import { StaffClock, StaffHoursAdmin } from "./dssc/DsscStaff.jsx";
 import { parentMailings, greetingFor } from "../shared/parent-mail.js";
+import { mergePay, TIER_KEYS as PAY_TIER_KEYS, isPodClinic as isPodClinicPay, podPay as podPayShared, classRateFor, staffRateFor, personKey as payKey } from "../shared/dssc-pay.js";
+import DsscPay from "./dssc/DsscPay.jsx";
 import { TN_SUB_PLACEHOLDERS, isPlaceholderPerson, sessionStaff, staffNeeded, staffApproved, staffPending, sessionShort, onStaff, parsePlanPaste } from "../shared/dssc-clinics.js";
 
 const POSITIONS = ["S","OH","MB","RS","L","DS","U"];
@@ -451,11 +453,17 @@ const DSSC_DIRECTOR_EMAILS = ["hunterhaleysc10@gmail.com", "hunter@drippingsport
 // player up to that still adds pay. Capping the old ladder instead would have
 // flatlined a Master coach at 2 players and an Elite at 3, killing the reason to
 // fill a pod at all. A 7th player pays the same as the 6th.
-const DSSC_TIERS = {
-  competitive: { key:"competitive", label:"Competitive", base90:50, perPlayer90:10, capPlayers:6, cap90:100 },
-  elite:       { key:"elite",       label:"Elite",       base90:70, perPlayer90:10, capPlayers:6, cap90:120 },
-  master:      { key:"master",      label:"Master",      base90:85, perPlayer90:15, capPlayers:6, cap90:160 },
-};
+// Since 14 Oct 2026 the numbers are EDITABLE (DSSC > Pay rates, stored in
+// dssc_pay_settings) and come from shared/dssc-pay.js, the same rules payroll
+// uses. DSSC_TIERS is refreshed in place when the settings load, so everything
+// below that reads it keeps working.
+let DSSC_PAY = mergePay({});
+const DSSC_TIERS = {};
+function applyDsscPay(data) {
+  DSSC_PAY = mergePay(data);
+  for (const k of PAY_TIER_KEYS) DSSC_TIERS[k] = { key: k, ...DSSC_PAY.tiers[k] };
+}
+applyDsscPay({});
 // What a player pays. FLAT — the same for any pod regardless of the coach's
 // tier, so tier moves what the coach earns, not what the customer is charged.
 // Booking the whole block of 5 takes $50 off the total.
@@ -480,18 +488,15 @@ const POD_LEVELS = ["National", "Regional", "Developmental"];
 const POD_AGES = ["11-12s", "13-14s", "15-16s"];
 // A pod is a small-group session; everything else (camps, beginner clinics)
 // stays on the flat hourly rate.
-const isPodClinic = (c) => /pod/i.test(String(c?.category || "") + " " + String(c?.name || ""));
+// ...and only in the sports whose pods pay by tier (volleyball unless changed).
+const isPodClinic = (c) => isPodClinicPay(DSSC_PAY, c);
 // Coach pay for one pod session. players is who actually showed; minutes lets a
 // 90-minute package session pay 1.5x. Returns null when the coach has no tier,
 // so the caller can fall back to the flat rate rather than silently paying zero.
 function dsscPodPay(tierKey, players, minutes) {
-  const t = DSSC_TIERS[tierKey];
-  if (!t) return null;
-  // Clamped at the cap, so a 7th player never pushes pay past the ceiling.
-  const n = Math.min(t.capPlayers, Math.max(1, Math.floor(Number(players) || 1)));
-  const per90 = t.base90 + t.perPlayer90 * (n - 1);
-  const share = Math.max(0, Number(minutes) || 90) / 90;   // pods run 90; a short one pays pro-rata
-  return Math.round(per90 * share * 100) / 100;
+  return podPayShared(DSSC_PAY, tierKey, players, minutes);
+  // Same rule as payroll (shared/dssc-pay.js): base + bonus per player past the
+  // first, capped, pro-rated per 90 minutes; null when the coach has no tier.
 }
 // What the club bills for that same session, so margin is visible internally.
 function dsscPodRevenue(players, { block = false } = {}) {
@@ -2254,6 +2259,8 @@ export default function App() {
     : Array.isArray(coach?.staff_view) && coach.staff_view.length ? coach.staff_view
     : dsscRole === "admin" ? STAFF_DEPTS : [];
   const canSeeStaffHours = staffDepts.length > 0;
+  // Who edits pay: Drew, and DSSC admins who see every department (Jonathan, Deroald).
+  const canEditPay = isOwner || (dsscRole === "admin" && !(Array.isArray(coach?.staff_view) && coach.staff_view.length));
   const opsDenied = <div style={{padding:24,color:C.mut,textAlign:"center"}}>This section is restricted to administrators. Ask the club administrator (Drew) for access.</div>;
   // Once a player has accepted (or is locked/signed) onto a team, they're
   // locked to that team — only the owner (Drew) can change their offer status,
@@ -2307,7 +2314,7 @@ export default function App() {
   // colors, navigation, home — between DS Elite and Dripping Springs Sports
   // Club, instead of DSSC living as a tab inside DS Elite. Opening a DSSC
   // screen by any route (a push link, the home card) flips it too.
-  const DSSC_VIEWS = new Set(["dssc","clinics","dssctexts","dssccrm","dssccal","dssctime","pods","privates","dssccamp","courts","dsscplan","staffhours","staffadmin","dsscpeople"]);
+  const DSSC_VIEWS = new Set(["dssc","clinics","dssctexts","dssccrm","dssccal","dssctime","pods","privates","dssccamp","courts","dsscplan","staffhours","staffadmin","dsscpeople","dsscpay"]);
   // Screens a DSSC-only login may open: DSSC's own plus the shared basics.
   const DSSC_ONLY_OK = new Set([...DSSC_VIEWS, "home", "notifications", "activity", "faq"]);
   const [workspace, setWorkspace] = useState(() => { if (HQ_DSSC) return "dssc"; try { return localStorage.getItem("dse.workspace") === "dssc" ? "dssc" : "dse"; } catch { return "dse"; } });
@@ -3566,6 +3573,19 @@ export default function App() {
   // ONLY they can be put on basketball classes; someone who coaches only
   // basketball is never offered for volleyball (Drew, 13 Oct 2026).
   const [dsscPeople, setDsscPeople] = useState([]);
+  // DSSC pay rules + per-person rates (shared/dssc-pay.js; DSSC > Pay rates).
+  const [dsscPayData, setDsscPayData] = useState(null);
+  const [dsscRates, setDsscRates] = useState([]);
+  const loadDsscPay = useCallback(async () => {
+    const [{ data: st }, { data: rt }] = await Promise.all([
+      supabase.from("dssc_pay_settings").select("data").eq("id", 1).maybeSingle(),
+      supabase.from("dssc_pay_rates").select("*"),
+    ]);
+    applyDsscPay(st?.data || {});
+    setDsscPayData(st?.data || {});
+    setDsscRates(rt || []);
+  }, []);
+  useEffect(() => { if (isApproved && ["clinics", "dssc", "dssccal", "dssctime", "home", "pods", "staffhours", "staffadmin", "dsscpay"].includes(view)) loadDsscPay(); }, [isApproved, view, loadDsscPay]); // eslint-disable-line react-hooks/exhaustive-deps
   const loadDsscPeople = useCallback(async () => {
     const { data, error } = await supabase.from("dssc_people").select("first_name,last_name,email,role,sports,active").eq("active", true);
     if (!error) setDsscPeople(data || []);
@@ -16084,7 +16104,8 @@ export default function App() {
     const meName = coach?.display_name || coach?.email || "";
     const matchesMe = nm => !!nm && (nrm(nm) === nrm(meName) || (coach?.email && nrm(nm) === nrm(coach.email)));
     const isDirector = isDsscDirector;
-    const RATE = 25;
+    const RATE = DSSC_PAY.classRate;   // the default; a coach may have their own (Pay rates)
+    const rateOf = (name, email) => classRateFor(DSSC_PAY, dsscRates, name, email);
     const today = localDateISO();
     const money = n => "$" + Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const parseTime = t => { const m = /(\d+)(?::(\d+))?\s*(am|pm)/i.exec(t || ""); if (!m) return null; let h = +m[1] % 12; if (/pm/i.test(m[3])) h += 12; return h + (m[2] ? +m[2] / 60 : 0); };
@@ -16205,7 +16226,7 @@ export default function App() {
     // attendance hasn't been counted, stays on the flat hourly rate.
     const clinicById = new Map(clinics.map(c => [c.id, c]));
     const payFor = (c) => {
-      const flat = Number(c.hours || 0) * RATE;
+      const flat = Number(c.hours || 0) * rateOf(c.coach_name, c.coach_email);
       const clinic = clinicById.get(c.clinic_id);
       if (!clinic || !isPodClinic(clinic)) return { amount: flat, kind: "hourly" };
       const att = podAttendance.find(a => a.clinic_id === c.clinic_id && String(a.session_id) === String(c.session_id));
@@ -16248,7 +16269,7 @@ export default function App() {
       const lines = [["Date","Coach","Clinic","Hours","Basis","Players","Amount","Status","Sent"].join(",")];
       weekRows.forEach(c => { const p = payFor(c);
         lines.push([c.session_date, esc(c.coach_name), esc(c.clinic_name), Number(c.hours||0),
-          p.kind==="pod" ? DSSC_TIERS[p.tier].label+" pod" : p.kind==="uncounted" ? "pod (not counted)" : p.kind==="untiered" ? "pod (no tier)" : "$"+RATE+"/hr",
+          p.kind==="pod" ? DSSC_TIERS[p.tier].label+" pod" : p.kind==="uncounted" ? "pod (not counted)" : p.kind==="untiered" ? "pod (no tier)" : "$"+rateOf(c.coach_name, c.coach_email)+"/hr",
           p.kind==="pod" ? p.players : "", p.amount.toFixed(2),
           c.rejected ? "rejected" : c.approved ? "approved" : "pending", c.sent_at ? "yes" : "no"].join(","));
       });
@@ -16276,7 +16297,7 @@ export default function App() {
     const sendToAccountant = async () => {
       if (!okRows.length) { window.alert("Nothing approved for this week yet."); return; }
       const typed = window.prompt(
-        "Send " + weekHours + "h (" + money(weekHours * RATE) + ") for " + fmtD(weekStart) + " – " + fmtD(weekEnd) + ".\n\n"
+        "Send " + weekHours + "h of class time (" + money(weekPay) + ", plus any approved staff hours) for " + fmtD(weekStart) + " – " + fmtD(weekEnd) + ".\n\n"
         + "Recipients (comma-separated — edit to add or remove anyone):",
         PAYROLL_TO.join(", "));
       if (typed === null) return;
@@ -16311,7 +16332,7 @@ export default function App() {
     return (
       <div style={{padding:"18px 16px",maxWidth:1000,margin:"0 auto"}}>
         <h2 style={{margin:"0 0 2px",fontSize:20,fontWeight:800,color:C.gold}}>DSSC Time Cards</h2>
-        <div style={{fontSize:12,color:C.mut,marginBottom:14}}>Dripping Springs Sports Club clinic hours — separate from DS Elite pay. ${RATE}/hr.</div>
+        <div style={{fontSize:12,color:C.mut,marginBottom:14}}>Dripping Springs Sports Club clinic hours — separate from DS Elite pay. ${RATE}/hr unless the coach has their own rate (Pay rates).</div>
 
         {/* Mine */}
         <div style={card}>
@@ -16335,7 +16356,7 @@ export default function App() {
                   <span style={{fontSize:12,fontWeight:700,color:C.text,borderBottom:"1px dotted "+C.mut}}>{r.clinicName}</span>
                   <span style={{color:C.mut,fontSize:11,fontWeight:700}}> ›</span>{e.role==="lead" && <span style={{color:"#8b5cf6",fontSize:10,fontWeight:800}}> ★ LEAD</span>}
                 </button>
-                  <div style={{fontSize:10,color:C.mut}}>{[r.court, hoursOf(r)+"h · "+money(hoursOf(r)*RATE)].filter(Boolean).join(" · ")}</div>
+                  <div style={{fontSize:10,color:C.mut}}>{[r.court, hoursOf(r)+"h · "+money(hoursOf(r)*rateOf(meName, coach?.email))].filter(Boolean).join(" · ")}</div>
                 </div>
                 {pend ? <span style={{fontSize:11,fontWeight:800,color:"#f59e0b"}}>Awaiting Hunter's OK</span>
                   : ci ? <span style={{fontSize:11,fontWeight:800,color:ci.rejected?C.red:ci.approved?C.grn:C.mut}}>
@@ -25675,7 +25696,7 @@ export default function App() {
         openProgram={(cid)=>{ setClinicFrom("clinics"); setClinicOpenId(cid); }}
         newClinic={newProgram}
         sync={{ dsscSync, dsscSyncTok, fetchSyncBookmarklet }}
-        onCoachHub={()=>{ setDsscHubSel(null); setDsscHubBack(false); setView("dssc"); }} onCoverage={()=>setView("dssccal")} onTimeCards={()=>setView("dssctime")} onMyHours={()=>setView("staffhours")} onStaffHours={()=>setView("staffadmin")} onPeople={()=>setView("dsscpeople")}
+        onCoachHub={()=>{ setDsscHubSel(null); setDsscHubBack(false); setView("dssc"); }} onCoverage={()=>setView("dssccal")} onTimeCards={()=>setView("dssctime")} onMyHours={()=>setView("staffhours")} onStaffHours={()=>setView("staffadmin")} onPeople={()=>setView("dsscpeople")} onPay={canEditPay ? ()=>setView("dsscpay") : null}
         onTextClass={(cid, sid)=>{ setDsscTextsInit({ clinicId: cid, sessionId: sid }); setView("dssctexts"); }} onTexts={()=>setView("dssctexts")}
         onLegacy={()=>setDsscAdminLegacy(true)} />
     );
@@ -26360,7 +26381,7 @@ export default function App() {
 
         {/* DSSC clinic hours & pay — $25/hr flat, separate from DS Elite payroll */}
         {isDirector && dsscCheckins.length>0 && (() => {
-          const RATE = 25;
+          const RATE = DSSC_PAY.classRate;
           const money = n => "$"+Number(n||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
           const g = {};
           dsscCheckins.forEach(c => { const r = g[c.coach_name] = g[c.coach_name]||{coach:c.coach_name, hours:0, unpaidHours:0, ids:[]}; r.hours+=Number(c.hours||0); if(!c.paid){ r.unpaidHours+=Number(c.hours||0); r.ids.push(c.id); } });
@@ -32786,7 +32807,7 @@ export default function App() {
   // ── Navigation (src/Nav.jsx): one list drives the desktop sidebar, the phone
   // drawer, bottom bar and section chips, gated exactly like the screen guards.
   const navCtx = {
-    workspace, canOps, isAdmin, isOwner, canViewTeams, hasTeams: myTeamNames.length > 0, canSendReports, isDsscDirector, dsscOnly, isDsscStaff, canSeeStaffHours, pins: navPins,
+    workspace, canOps, isAdmin, isOwner, canViewTeams, hasTeams: myTeamNames.length > 0, canSendReports, isDsscDirector, dsscOnly, isDsscStaff, canSeeStaffHours, canEditPay, pins: navPins,
     counts: {
       smsDse: smsUnread.dse, smsDssc: smsUnread.dssc, notif: unreadCount,
       issuesOpen: incidents.filter(r => r.status === "open").length,
@@ -32996,9 +33017,10 @@ export default function App() {
           prose — capping them just buys empty margin and costs a column. */}
       <div style={{padding:showPhoneNav?"14px 18px calc(84px + env(safe-area-inset-bottom, 0px))":"14px 18px",maxWidth:WIDE_VIEWS.has(view)?"none":1500,margin:"0 auto"}}>
         {isReachOnly ? <ReachHome coach={coach} players={players} session={session} /> : (dsscOnly && !DSSC_ONLY_OK.has(view)) ? null : OPS_VIEWS.has(view) && view !== "notifications" && !canOps && !(isDsscDirector && view === "dssccal") ? opsDenied : <>
-        {view==="home" && (workspace==="dssc" ? (isDsscStaff && !isDsscDirector ? <StaffClock coach={coach} isDirector={false} canSeeStaffHours={canSeeStaffHours} onStaffHours={canSeeStaffHours ? ()=>setView("staffadmin") : null} /> : isDsscDirector ? renderDsscAdmin() : renderDsscHub()) : renderHome())}
-        {view==="staffhours" && <StaffClock coach={coach} isDirector={isDsscDirector} canSeeStaffHours={canSeeStaffHours} onStaffHours={canSeeStaffHours ? ()=>setView("staffadmin") : null} />}
-        {view==="staffadmin" && (canSeeStaffHours ? <StaffHoursAdmin coach={coach} depts={staffDepts} /> : opsDenied)}
+        {view==="home" && (workspace==="dssc" ? (isDsscStaff && !isDsscDirector ? <StaffClock pay={DSSC_PAY} rates={dsscRates} coach={coach} isDirector={false} canSeeStaffHours={canSeeStaffHours} onStaffHours={canSeeStaffHours ? ()=>setView("staffadmin") : null} /> : isDsscDirector ? renderDsscAdmin() : renderDsscHub()) : renderHome())}
+        {view==="dsscpay" && (canEditPay ? <DsscPay coach={coach} payData={dsscPayData} rates={dsscRates} people={dsscPeople} avail={dsscAvail} checkins={dsscCheckins} reload={()=>{ loadDsscPay(); loadDsscAvail(); }} /> : opsDenied)}
+        {view==="staffhours" && <StaffClock pay={DSSC_PAY} rates={dsscRates} coach={coach} isDirector={isDsscDirector} canSeeStaffHours={canSeeStaffHours} onStaffHours={canSeeStaffHours ? ()=>setView("staffadmin") : null} />}
+        {view==="staffadmin" && (canSeeStaffHours ? <StaffHoursAdmin coach={coach} depts={staffDepts} pay={DSSC_PAY} rates={dsscRates} /> : opsDenied)}
         {view==="dsscpeople" && (isDsscDirector ? <DsscPeople coach={coach} isOwner={isOwner} /> : opsDenied)}
         {view==="clockin" && (
           <div style={{maxWidth:820,margin:"0 auto"}}>

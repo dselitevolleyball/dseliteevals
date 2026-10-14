@@ -1,5 +1,5 @@
 // DSSC clinic payroll, SEPARATE from DS Elite. Skill Pods pay the coach's tier
-// rate — a base plus a bonus for every player past the first, pro-rated for a
+// rate - a base plus a bonus for every player past the first, pro-rated for a
 // 90-minute package session; all other clinic coaching is a flat $25/hr.
 // Emailed with an hours CSV. Sent by a director from the DSSC pay card
 // ("Approve & email pay") or on a schedule; approval-gated by default.
@@ -12,21 +12,10 @@
 //      DSSC_PAYROLL_TO (opt comma list).
 
 import { createClient } from "@supabase/supabase-js";
+import { mergePay, classShiftPay, staffShiftPay } from "../shared/dssc-pay.js";
 
-const RATE = 25;
-// Must stay identical to DSSC_TIERS / dsscPodPay in src/App.jsx. Pay is
-// base + perPlayer x (players - 1): the base IS the 1-player private rate, and
-// each additional player adds the bonus.
-// Competitive -> Elite -> Master, lowest to highest. "Competitive" is the entry
-// tier on $30 here; an earlier naming had it as the $50 middle tier.
-// Per 90-MINUTE session, capping at 6 players so a full pod lands exactly on
-// $100 / $120 / $160. Must stay identical to DSSC_TIERS / dsscPodPay in
-// src/App.jsx — two answers for one shift is the thing payroll can't have.
-const TIERS = {
-  competitive: { label: "Competitive", base90: 50, perPlayer90: 10, capPlayers: 6 },
-  elite:       { label: "Elite",       base90: 70, perPlayer90: 10, capPlayers: 6 },
-  master:      { label: "Master",      base90: 85, perPlayer90: 15, capPlayers: 6 },
-};
+// Rates and pod tiers are the editable ones (DSSC > Pay rates -> dssc_pay_settings,
+// dssc_pay_rates), priced through shared/dssc-pay.js exactly like the app.
 const DEFAULT_TO = ["bpounds@generalledgerpartners.com", "rparker@generalledgerpartners.com", "hunterhaleysc10@gmail.com", "hunter@drippingsportsclub.com", "drew@dselitevolleyball.com"];
 const OWNER_EMAILS = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"];
 const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -84,26 +73,37 @@ export default async function handler(req, res) {
   // answers for the same shift is the one thing payroll can't have. Anything
   // that isn't a pod, or a pod with no tier or no player count, stays hourly.
   const nrm = (v) => String(v || "").trim().toLowerCase();
-  const [{ data: podClinics }, { data: attendance }, { data: avail }] = await Promise.all([
-    supabase.from("dssc_clinics").select("id, name, category"),
+  const [{ data: podClinics }, { data: attendance }, { data: avail }, { data: paySt }, { data: rates }] = await Promise.all([
+    supabase.from("dssc_clinics").select("id, name, category, sport"),
     supabase.from("dssc_pod_attendance").select("clinic_id, session_id, players"),
     supabase.from("dssc_availability").select("coach_name, tier"),
+    supabase.from("dssc_pay_settings").select("data").eq("id", 1).maybeSingle(),
+    supabase.from("dssc_pay_rates").select("*"),
   ]);
-  const isPod = new Map((podClinics || []).map(c => [c.id, /pod/i.test(String(c.category || "") + " " + String(c.name || ""))]));
+  const pay = mergePay(paySt?.data || {});
+  const RATE = pay.classRate;
+  const clinicOf = new Map((podClinics || []).map(c => [c.id, c]));
   const attOf = new Map((attendance || []).map(a => [a.clinic_id + "|" + String(a.session_id), a.players]));
   const tierOf = new Map((avail || []).map(a => [nrm(a.coach_name), a.tier]));
-  const amountFor = (c) => {
-    const h = Number(c.hours || 0);
-    if (!isPod.get(c.clinic_id)) return { amount: h * RATE, basis: `$${RATE}/hr` };
-    const players = attOf.get(c.clinic_id + "|" + String(c.session_id));
-    if (players == null) return { amount: h * RATE, basis: "pod — not counted" };
-    const t = TIERS[tierOf.get(nrm(c.coach_name))];
-    if (!t) return { amount: h * RATE, basis: "pod — no tier" };
-    const n = Math.min(t.capPlayers, Math.max(1, Math.floor(Number(players) || 1)));
-    // h is the logged session length in hours; the ladder is priced per 90 min.
-    const amount = Math.round((t.base90 + t.perPlayer90 * (n - 1)) * (Math.max(0, h) / 1.5) * 100) / 100;
-    return { amount, basis: `${t.label} pod · ${n}p`, players: n };
-  };
+  const amountFor = (c) => classShiftPay({ pay, rates: rates || [], checkin: c, clinic: clinicOf.get(c.clinic_id), players: attOf.get(c.clinic_id + "|" + String(c.session_id)) ?? null, tier: tierOf.get(nrm(c.coach_name)) });
+
+  // Staff (general clock-in) hours approved for the week, priced at each
+  // person's staff rate. Unpriced = no rate set yet, flagged for whoever pays.
+  const { data: staffAll } = await supabase.from("dssc_staff_shifts").select("*")
+    .gte("clock_in", weekStart + "T05:00:00Z").lt("clock_in", addDays(weekEnd, 1) + "T05:00:00Z").not("clock_out", "is", null);
+  const staffOk = (staffAll || []).filter(x => x.approved && !x.rejected);
+  const staffHeld = (staffAll || []).filter(x => !x.approved && !x.rejected).length;
+  const staffByPerson = new Map();
+  for (const x of staffOk) {
+    const p = staffShiftPay({ pay, rates: rates || [], shift: x });
+    const k = x.person_name || x.person_email;
+    const g = staffByPerson.get(k) || { name: k, hours: 0, amount: 0, unpriced: 0, shifts: [] };
+    g.hours += p.hours; if (p.amount == null) g.unpriced += p.hours; else g.amount += p.amount;
+    g.shifts.push({ date: new Date(x.clock_in).toLocaleDateString("en-CA", { timeZone: "America/Chicago" }), dept: x.department || "operations", what: [x.category, x.task].filter(Boolean).join(" - "), hours: p.hours, rate: p.rate, amount: p.amount });
+    staffByPerson.set(k, g);
+  }
+  const staffRows = [...staffByPerson.values()].sort((a, b) => a.name.localeCompare(b.name));
+  const staffAmt = staffRows.reduce((t, g) => t + g.amount, 0), staffH = staffRows.reduce((t, g) => t + g.hours, 0);
 
   const byCoach = new Map();
   for (const c of (checks || [])) {
@@ -122,25 +122,28 @@ export default async function handler(req, res) {
   const rangeLabel = `${fmtD(weekStart)} – ${fmtD(weekEnd)}`;
 
   const th = 'style="text-align:left;padding:6px 10px;border-bottom:2px solid #ccc;font-size:12px"';
+  const tdS = 'style="padding:6px 10px;border-bottom:1px solid #eee;font-size:13px"', tdSR = 'style="padding:6px 10px;border-bottom:1px solid #eee;font-size:13px;text-align:right"';
+  const staffHtml = staffRows.length ? `<h3 style="margin:22px 0 6px">Staff hours (general clock-in)</h3><table style="border-collapse:collapse"><thead><tr><th style="text-align:left;padding:6px 10px;border-bottom:2px solid #ccc;font-size:12px">Person</th><th style="text-align:left;padding:6px 10px;border-bottom:2px solid #ccc;font-size:12px">Hours</th><th style="text-align:left;padding:6px 10px;border-bottom:2px solid #ccc;font-size:12px">Amount</th></tr></thead><tbody>${staffRows.map(g => `<tr><td ${tdS}><b>${esc(g.name)}</b></td><td ${tdSR}>${g.hours}</td><td ${tdSR}>${money(g.amount)}${g.unpriced ? ` <span style="color:#b45309">+ ${g.unpriced}h with no rate set</span>` : ""}</td></tr>`).join("")}</tbody><tfoot><tr><td ${tdS}><b>Staff total</b></td><td ${tdSR}><b>${staffH}</b></td><td ${tdSR}><b>${money(staffAmt)}</b></td></tr></tfoot></table>${staffHeld ? `<p style="color:#7a4b00">${staffHeld} staff shift${staffHeld === 1 ? "" : "s"} not yet approved - held back.</p>` : ""}<p style="margin-top:14px"><b>Grand total: ${money(totAmt + staffAmt)}</b></p>` : "";
   const td = 'style="padding:6px 10px;border-bottom:1px solid #eee;font-size:13px"';
   const tdR = 'style="padding:6px 10px;border-bottom:1px solid #eee;font-size:13px;text-align:right"';
   const summary = rows.map(g => `<tr><td ${td}><b>${esc(g.coach)}</b></td><td ${tdR}>${g.hours}</td><td ${tdR}>${money(g.amount)}</td><td ${tdR}>${money(g.shifts.filter(x=>!x.paid).reduce((t,x)=>t+x.amount,0))}</td></tr>`).join("");
   const badge = `<span style="display:inline-block;background:#16a34a;color:#fff;font-size:12px;font-weight:700;border-radius:5px;padding:2px 9px">✓ APPROVED</span>`;
-  const html = rows.length === 0
+  const html = rows.length === 0 && !staffRows.length
     ? `<div style="font-family:sans-serif;font-size:14px"><h2>DSSC clinic pay — ${rangeLabel} ${badge}</h2><p>No <b>approved</b> clinic hours for this week.${heldHours ? ` ${heldHours}h are still waiting on Hunter's approval.` : ""}</p></div>`
     : `<div style="font-family:sans-serif;font-size:14px">
         <h2 style="margin:0 0 6px">DSSC clinic pay — ${rangeLabel} ${badge}</h2>
-        <p style="margin:0 0 12px;color:#555">${badge} Approved${approvedBy ? " by " + esc(approvedBy) : ""} · Skill Pods paid by coach tier + players; other clinic coaching <b>${money(RATE)}/hr</b> · ${rows.length} coach${rows.length === 1 ? "" : "es"} · <b>${totH} hours</b> · <b>${money(totAmt)}</b> (${money(totUnpaid)} unpaid). Separate from DS Elite payroll.</p>${heldHours ? `<p style="margin:0 0 12px;padding:8px 10px;background:#fff4e5;border-left:3px solid #f59e0b;color:#7a4b00"><b>${heldHours}h held back</b> — logged but not yet approved, so not included above.</p>` : ""}
+        <p style="margin:0 0 12px;color:#555">${badge} Approved${approvedBy ? " by " + esc(approvedBy) : ""} · Skill Pods paid by coach tier + players; other clinic coaching <b>${money(RATE)}/hr</b> unless the coach has their own rate · ${rows.length} coach${rows.length === 1 ? "" : "es"} · <b>${totH} hours</b> · <b>${money(totAmt)}</b> (${money(totUnpaid)} unpaid). Separate from DS Elite payroll.</p>${heldHours ? `<p style="margin:0 0 12px;padding:8px 10px;background:#fff4e5;border-left:3px solid #f59e0b;color:#7a4b00"><b>${heldHours}h held back</b> — logged but not yet approved, so not included above.</p>` : ""}
         <table style="border-collapse:collapse"><thead><tr><th ${th}>Coach</th><th ${th}>Hours</th><th ${th}>Amount</th><th ${th}>Unpaid</th></tr></thead>
         <tbody>${summary}</tbody>
-        <tfoot><tr><td ${td}><b>Total</b></td><td ${tdR}><b>${totH}</b></td><td ${tdR}><b>${money(totAmt)}</b></td><td ${tdR}><b>${money(totUnpaid)}</b></td></tr></tfoot></table></div>`;
+        <tfoot><tr><td ${td}><b>Total</b></td><td ${tdR}><b>${totH}</b></td><td ${tdR}><b>${money(totAmt)}</b></td><td ${tdR}><b>${money(totUnpaid)}</b></td></tr></tfoot></table>${staffHtml}</div>`;
   const text = `DSSC clinic pay — ${rangeLabel} (APPROVED${approvedBy ? " by " + approvedBy : ""})\n$${RATE}/hr\n` + rows.map(g => `${g.coach}: ${g.hours}h · ${money(g.amount)}`).join("\n") + `\nTOTAL: ${totH}h · ${money(totAmt)}`
     + (heldHours ? `\n(${heldHours}h logged but not yet approved — held back)` : "");
 
   const csvEsc = (v) => { const s = v == null ? "" : String(v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
   const csv = [["Date", "Coach", "Clinic", "Hours", "Basis", "Players", "Amount", "Paid"].join(",")]
     .concat(rows.flatMap(g => g.shifts.sort((a, b) => a.date.localeCompare(b.date)).map(s => [s.date, csvEsc(g.coach), csvEsc(s.clinic), s.hours, csvEsc(s.basis), s.players || "", s.amount.toFixed(2), s.paid ? "yes" : "no"].join(","))))
-    .concat([["", "TOTAL", "", totH, "", "", totAmt.toFixed(2), ""].join(",")]).join("\n");
+    .concat([["", "TOTAL", "", totH, "", "", totAmt.toFixed(2), ""].join(",")])
+    .concat(staffRows.length ? [["", "STAFF HOURS", "", "", "", "", "", ""].join(",")].concat(staffRows.flatMap(g => g.shifts.map(x => [x.date, csvEsc(g.name), csvEsc(x.dept + (x.what ? " - " + x.what : "")), x.hours, x.rate == null ? "no rate" : "$" + x.rate + "/hr", "", x.amount == null ? "" : x.amount.toFixed(2), ""].join(",")))).concat([["", "STAFF TOTAL", "", staffH, "", "", staffAmt.toFixed(2), ""].join(","), ["", "GRAND TOTAL", "", totH + staffH, "", "", (totAmt + staffAmt).toFixed(2), ""].join(",")]) : []).join("\n");
 
   // Recipients: an explicit list from the approver wins, then the env override,
   // then the default. Passing them at send time is what lets Hunter add or drop
@@ -158,8 +161,8 @@ export default async function handler(req, res) {
   const to = asked || (DSSC_PAYROLL_TO ? DSSC_PAYROLL_TO.split(",").map(s => s.trim()).filter(Boolean) : DEFAULT_TO);
   const resp = await fetch("https://api.resend.com/emails", {
     method: "POST", headers: { Authorization: `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ from: DSE_FROM_EMAIL, to, reply_to: (DSE_REPLY_TO || DSE_FROM_EMAIL).trim(), subject: `APPROVED — DSSC clinic pay ${rangeLabel} (${totH}h · ${money(totAmt)})`, html, text, attachments: [{ filename: `dssc_clinic_hours_${weekStart}.csv`, content: Buffer.from(csv, "utf8").toString("base64") }] }),
+    body: JSON.stringify({ from: DSE_FROM_EMAIL, to, reply_to: (DSE_REPLY_TO || DSE_FROM_EMAIL).trim(), subject: `APPROVED — DSSC pay ${rangeLabel} (${totH + staffH}h · ${money(totAmt + staffAmt)})`, html, text, attachments: [{ filename: `dssc_clinic_hours_${weekStart}.csv`, content: Buffer.from(csv, "utf8").toString("base64") }] }),
   });
   if (!resp.ok) return res.status(502).json({ error: "Email send failed", detail: (await resp.text().catch(() => "")).slice(0, 300) });
-  return res.status(200).json({ ok: true, weekStart, weekEnd, coaches: rows.length, hours: totH, amount: totAmt, heldHours, to });
+  return res.status(200).json({ ok: true, weekStart, weekEnd, coaches: rows.length, hours: totH + staffH, amount: totAmt + staffAmt, classAmount: totAmt, staffAmount: staffAmt, heldHours, to });
 }

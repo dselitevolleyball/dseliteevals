@@ -10,6 +10,8 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { supabase } from "../supabase";
 import { DS, Btn, Card, Label, Tag, inputStyle, nrm } from "./DsscHub.jsx";
+import { staffShiftPay, mergePay } from "../../shared/dssc-pay.js";
+const money = (n) => "$" + Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 const pad = (n) => String(n).padStart(2, "0");
 // <input type="datetime-local"> speaks local wall-clock time.
@@ -48,7 +50,8 @@ const shell = (children) => (
 const Status = ({ r }) => r.rejected ? <Tag color={DS.orange}>Rejected</Tag> : r.approved ? <Tag color={DS.lime}>Approved</Tag> : !r.clock_out ? <Tag color={DS.orange} fill>On the clock</Tag> : <Tag color={DS.mut}>Waiting approval</Tag>;
 
 // ── My Hours ─────────────────────────────────────────────────────────────────
-export function StaffClock({ coach, isDirector, canSeeStaffHours, onStaffHours }) {
+export function StaffClock({ coach, isDirector, canSeeStaffHours, onStaffHours, pay = mergePay({}), rates = [] }) {
+  const payOf = (r) => staffShiftPay({ pay, rates, shift: r });
   const email = nrm(coach?.email);
   const [rows, setRows] = useState(null);
   const [task, setTask] = useState("");
@@ -75,6 +78,8 @@ export function StaffClock({ coach, isDirector, canSeeStaffHours, onStaffHours }
   const wk = weekStart();
   const thisWeek = (rows || []).filter(r => new Date(r.clock_in) >= wk && !r.rejected);
   const weekTotal = thisWeek.reduce((t, r) => t + shiftHours(r), 0);
+  const weekPay = thisWeek.reduce((t, r) => t + (payOf(r).amount || 0), 0);
+  const priced = thisWeek.some(r => payOf(r).amount != null);
 
   const act = async (fn, ok) => { setBusy(true); setMsg(null); try { const { error } = await fn(); if (error) throw error; setMsg({ ok }); await load(); } catch (e) { setMsg({ err: e.message }); } setBusy(false); };
   const clockIn = () => { if (dept === "operations" && !cat) { setMsg({ err: "Pick what kind of operations work." }); return; } act(() => supabase.from("dssc_staff_shifts").insert({ person_email: coach.email, person_name: meName(coach), clock_in: new Date().toISOString(), department: dept, category: dept === "operations" ? cat : null, task: task.trim() || null, source: "app", created_by: meName(coach) }), "Clocked in."); };
@@ -101,7 +106,7 @@ export function StaffClock({ coach, isDirector, canSeeStaffHours, onStaffHours }
     <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
       <img src={import.meta.env.BASE_URL + "dssc/logo-horizontal-white.png"} alt="Dripping Springs Sports Club" style={{ height: 30, width: "auto" }} />
       <div style={{ flex: 1 }} />
-      <div style={{ textAlign: "right" }}><div style={{ fontSize: 13, fontWeight: 700 }}>{meName(coach)}</div><div style={{ fontSize: 11, color: DS.mut }}>This week: {weekTotal.toFixed(2)}h</div></div>
+      <div style={{ textAlign: "right" }}><div style={{ fontSize: 13, fontWeight: 700 }}>{meName(coach)}</div><div style={{ fontSize: 11, color: DS.mut }}>This week: {weekTotal.toFixed(2)}h{priced ? " · " + money(weekPay) : ""}</div></div>
     </div>
 
     <Card accent={open ? DS.orange : DS.lime}>
@@ -162,7 +167,7 @@ export function StaffClock({ coach, isDirector, canSeeStaffHours, onStaffHours }
             <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "9px 12px", borderRadius: 10, background: DS.panel2, border: "1px solid " + DS.line }}>
               <div style={{ minWidth: 150 }}><div style={{ fontSize: 13, fontWeight: 700 }}>{new Date(r.clock_in).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}</div><div style={{ fontSize: 12, color: DS.mut }}>{fmtTime(r.clock_in)} – {r.clock_out ? fmtTime(r.clock_out) : "now"}</div></div>
               <div style={{ flex: 1, minWidth: 140, fontSize: 13 }}><b>{deptLabel(deptOf(r))}{r.category ? " / " + r.category : ""}</b>{r.task ? " · " + r.task : ""}{r.source === "past" && <span style={{ color: DS.dim, fontSize: 11 }}> · added after</span>}</div>
-              <div style={{ fontSize: 14, fontWeight: 800, minWidth: 48, textAlign: "right" }}>{shiftHours(r).toFixed(2)}h</div>
+              <div style={{ fontSize: 14, fontWeight: 800, minWidth: 48, textAlign: "right" }}>{shiftHours(r).toFixed(2)}h{payOf(r).amount != null && <div style={{ fontSize: 11, fontWeight: 700, color: DS.lime }}>{money(payOf(r).amount)}</div>}</div>
               <Status r={r} />
               {!r.approved && r.clock_out && <Btn kind="quiet" small onClick={() => removeMine(r)} style={{ color: DS.orange }}>✕</Btn>}
             </div>
@@ -175,7 +180,8 @@ export function StaffClock({ coach, isDirector, canSeeStaffHours, onStaffHours }
 }
 
 // ── Staff Hours (admins) ─────────────────────────────────────────────────────
-export function StaffHoursAdmin({ coach, depts = DEPTS.map(d => d[0]) }) {
+export function StaffHoursAdmin({ coach, depts = DEPTS.map(d => d[0]), pay = mergePay({}), rates = [] }) {
+  const payOf = (r) => staffShiftPay({ pay, rates, shift: r });
   const [only, setOnly] = useState("all");   // narrow to one of my departments
   const [wk, setWk] = useState(() => weekStart());
   const [rows, setRows] = useState(null);
@@ -211,6 +217,8 @@ export function StaffHoursAdmin({ coach, depts = DEPTS.map(d => d[0]) }) {
     setEdit(null);
   };
   const total = (p) => p.rows.filter(r => !r.rejected).reduce((t, r) => t + shiftHours(r), 0);
+  const totalPay = (p) => p.rows.filter(r => !r.rejected).reduce((t, r) => t + (payOf(r).amount || 0), 0);
+  const rateLabel = (p) => { const x = payOf(p.rows[0] || { person_name: p.name, person_email: p.email }); return x.rate == null ? "no rate set" : "$" + x.rate + "/hr"; };
   const label = `${wk.toLocaleDateString(undefined, { month: "short", day: "numeric" })} – ${addDays(wk, 6).toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
   const editor = edit && (
     <div style={{ marginTop: 10, padding: 12, borderRadius: 10, background: DS.panel2, border: "1px dashed " + DS.lime, display: "grid", gap: 8 }}>
@@ -245,7 +253,7 @@ export function StaffHoursAdmin({ coach, depts = DEPTS.map(d => d[0]) }) {
       <Card key={p.email}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
           <div style={{ fontSize: 16, fontWeight: 800 }}>{p.name}</div>
-          <span style={{ fontSize: 13, color: DS.mut }}>{total(p).toFixed(2)}h</span>
+          <span style={{ fontSize: 13, color: DS.mut }}>{total(p).toFixed(2)}h · {rateLabel(p)}{payOf(p.rows[0] || {}).rate != null ? " · " : ""}</span>{payOf(p.rows[0] || {}).rate != null && <b style={{ color: DS.lime, fontSize: 13 }}>{money(totalPay(p))}</b>}
           <div style={{ flex: 1 }} />
           {p.rows.some(r => r.clock_out && !r.approved && !r.rejected) && <Btn small kind="primary" onClick={() => approveAll(p)}>Approve all</Btn>}
         </div>
@@ -255,7 +263,7 @@ export function StaffHoursAdmin({ coach, depts = DEPTS.map(d => d[0]) }) {
               <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "8px 11px", borderRadius: 10, background: DS.panel2, border: "1px solid " + (!r.clock_out ? DS.orange : DS.line) }}>
                 <div style={{ minWidth: 160, fontSize: 13 }}><b>{new Date(r.clock_in).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}</b><div style={{ color: DS.mut, fontSize: 12 }}>{fmtTime(r.clock_in)} – {r.clock_out ? fmtTime(r.clock_out) : "still clocked in"}</div></div>
                 <div style={{ flex: 1, minWidth: 140, fontSize: 13 }}><b>{deptLabel(deptOf(r))}{r.category ? " / " + r.category : ""}</b>{r.task ? " · " + r.task : ""}<span style={{ color: DS.dim, fontSize: 11 }}>{r.source === "past" ? " · added after" : r.source === "admin" ? " · added by admin" : ""}{r.edited_by ? ` · edited by ${r.edited_by}` : ""}{r.reminder_sent_at && !r.clock_out ? " · 4-hr text sent" : ""}</span></div>
-                <div style={{ fontWeight: 800, minWidth: 48, textAlign: "right" }}>{shiftHours(r).toFixed(2)}h</div>
+                <div style={{ fontWeight: 800, minWidth: 48, textAlign: "right" }}>{shiftHours(r).toFixed(2)}h{payOf(r).amount != null && <div style={{ fontSize: 11, color: DS.lime }}>{money(payOf(r).amount)}</div>}</div>
                 <Status r={r} />
                 <Btn small kind="quiet" onClick={() => setEdit({ id: r.id, in: toLocalInput(r.clock_in), out: r.clock_out ? toLocalInput(r.clock_out) : "", task: r.task || "", department: deptOf(r), category: r.category || null })}>{r.clock_out ? "Fix" : "Clock out"}</Btn>
                 {r.clock_out && !r.approved && <Btn small kind="primary" onClick={() => approve(r, true)}>Approve</Btn>}

@@ -82,6 +82,7 @@ const IT = {
   dssctime:      ["DSSC Time Cards", "🕒", "coach", "payroll hours approve", "Time"],
   staffhours:    ["My Hours", "⏱", "staff", "clock in clock out shift intern staff hours working on", "Clock"],
   staffadmin:    ["Staff Hours", "🧾", "staffview", "intern staff shifts clock fix approve hours", "Staff hrs"],
+  dsscpay:       ["Pay rates", "💲", "payedit", "pay rate hourly wage pods tiers payroll money", "Pay"],
   dsscpeople:    ["Coaches & Staff", "👥", "dir", "add coach basketball intern staff admin people team", "Staff"],
   // Footer
   activity:      ["Activity Log", "🕓", "all", "history changes", "Activity"],
@@ -110,7 +111,7 @@ const DSE_COACH = [
 const DSSC_SECS = [
   ["programs", "Programs", "🏕", ["clinics", "courts", "dsscplan", "dssccamp", "pods", "privates"]],
   ["people", "Texts & people", "💬", ["dssctexts", "dssccrm"]],
-  ["dsscstaff", "Coaches & pay", "🗓", ["dssc", "dssccal", "dssctime", "staffhours", "staffadmin", "dsscpeople"]],
+  ["dsscstaff", "Coaches & pay", "🗓", ["dssc", "dssccal", "dssctime", "staffhours", "staffadmin", "dsscpeople", "dsscpay"]],
 ];
 const FOOTER = ["activity", "faq", "askai"];
 
@@ -118,14 +119,14 @@ const ACTION_BADGES = { messages: "smsDse", dssctexts: "smsDssc", notifications:
 const INFO_BADGES = { favorites: "favorites" };
 
 export function buildNav(ctx) {
-  const { canOps, isAdmin, isOwner, canViewTeams, hasTeams, canSendReports, isDsscDirector, dsscOnly, isDsscStaff, canSeeStaffHours } = ctx;
+  const { canOps, isAdmin, isOwner, canViewTeams, hasTeams, canSendReports, isDsscDirector, dsscOnly, isDsscStaff, canSeeStaffHours, canEditPay } = ctx;
   const n = ctx.counts || {};
   const ok = {
     all: true, ops: !!canOps, admin: !!isAdmin, owner: !!isOwner, teams: !!canViewTeams,
     mine: !!(canViewTeams || hasTeams), duty: !!(canViewTeams || canOps || hasTeams), reports: !!canSendReports,
     opsMine: !!(canOps && (canViewTeams || hasTeams)), opsTeams: !!(canOps && canViewTeams), dir: !!isDsscDirector,
     // DSSC staff (interns) get the clock, not the coach screens.
-    staff: !!(isDsscStaff || isDsscDirector), coach: !isDsscStaff || !!isDsscDirector, staffview: !!canSeeStaffHours,
+    staff: !!(isDsscStaff || isDsscDirector), coach: !isDsscStaff || !!isDsscDirector, staffview: !!canSeeStaffHours, payedit: !!canEditPay,
   };
   const can = (v) => !!IT[v] && ok[IT[v][2]];
   const secsFor = (ws) => {
