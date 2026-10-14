@@ -19,6 +19,7 @@ import AskHQ from "./AskHQ.jsx";
 import ServeGrader from "./ServeGrader.jsx";
 import CourtAvailability from "./CourtAvailability.jsx";
 import DsscPlanner from "./dssc/DsscPlanner.jsx";
+import Projects from "./dssc/Projects.jsx";
 import { buildNav, navTheme, Sidebar, NavDrawer, BottomBar, SiblingChips } from "./Nav.jsx";
 import DaySchedule from "./DaySchedule.jsx";
 import { PlayerStatHistory, StatsLinks } from "./PlayerStats.jsx";
@@ -2314,7 +2315,7 @@ export default function App() {
   // colors, navigation, home — between DS Elite and Dripping Springs Sports
   // Club, instead of DSSC living as a tab inside DS Elite. Opening a DSSC
   // screen by any route (a push link, the home card) flips it too.
-  const DSSC_VIEWS = new Set(["dssc","clinics","dssctexts","dssccrm","dssccal","dssctime","pods","privates","dssccamp","courts","dsscplan","staffhours","staffadmin","dsscpeople","dsscpay"]);
+  const DSSC_VIEWS = new Set(["dssc","clinics","dssctexts","dssccrm","dssccal","dssctime","pods","privates","dssccamp","courts","dsscplan","staffhours","staffadmin","dsscpeople","dsscpay","projects"]);
   // Screens a DSSC-only login may open: DSSC's own plus the shared basics.
   const DSSC_ONLY_OK = new Set([...DSSC_VIEWS, "home", "notifications", "activity", "faq"]);
   const [workspace, setWorkspace] = useState(() => { if (HQ_DSSC) return "dssc"; try { return localStorage.getItem("dse.workspace") === "dssc" ? "dssc" : "dse"; } catch { return "dse"; } });
@@ -33074,6 +33075,7 @@ export default function App() {
         {view==="pods" && renderPods()}
         {view==="playereval" && renderPlayerEvals()}
         {view==="passing" && renderPassing()}
+        {view==="projects" && (isDsscDirector || isDsscStaff || dsscRole ? <Projects coach={coach} /> : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Projects are for DSSC staff.</div>)}
         {view==="dsscplan" && (isDsscDirector ? <DsscPlanner coach={coach} /> : <div style={{padding:24,color:C.mut,textAlign:"center"}}>The planning calendar is for admins and the DSSC directors.</div>)}
         {view==="courts" && (isDsscDirector ? <CourtAvailability onOpenClass={(cid, sid)=>{ setDsscHubSel({ clinicId: cid, sessionId: sid }); setDsscHubBack("courts"); setView("dssc"); }} /> : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Court availability is for admins and the DSSC directors.</div>)}
         {view==="serving" && <ServeGrader coach={coach} players={players}

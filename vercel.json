@@ -78,6 +78,10 @@
   ],
   "crons": [
     {
+      "path": "/api/projects-weekly",
+      "schedule": "0 13 * * 1"
+    },
+    {
       "path": "/api/sportsyou-reminders",
       "schedule": "0 14 * * *"
     },
@@ -191,6 +195,12 @@
     }
   ],
   "functions": {
+    "api/projects.js": {
+      "maxDuration": 120
+    },
+    "api/projects-weekly.js": {
+      "maxDuration": 120
+    },
     "api/playbook-calendar.js": {
       "maxDuration": 120
     },

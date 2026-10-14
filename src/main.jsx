@@ -41,7 +41,11 @@ class ErrorBoundary extends React.Component {
 
 // Dev only: /?navpreview renders the navigation harness (src/NavPreview.jsx)
 // without signing in. The DEV check drops it from production builds.
-if (import.meta.env.DEV && new URLSearchParams(window.location.search).has('courtpreview')) {
+if (import.meta.env.DEV && new URLSearchParams(window.location.search).has('projectspreview')) {
+  import('./ProjectsPreview.jsx').then(({ default: ProjectsPreview }) => {
+    ReactDOM.createRoot(document.getElementById('root')).render(<ErrorBoundary><ProjectsPreview /></ErrorBoundary>)
+  })
+} else if (import.meta.env.DEV && new URLSearchParams(window.location.search).has('courtpreview')) {
   import('./CourtPreview.jsx').then(({ default: CourtPreview }) => {
     ReactDOM.createRoot(document.getElementById('root')).render(<ErrorBoundary><CourtPreview /></ErrorBoundary>)
   })

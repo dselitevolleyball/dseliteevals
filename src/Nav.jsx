@@ -14,6 +14,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 // Gates: all | ops | admin | owner | teams | mine | duty | reports | opsMine | opsTeams | dir
 const IT = {
   home:          ["Home", "🏠", "all", "dashboard start", "Home"],
+  projects:      ["Projects", "📌", "staff", "projects tasks to do todos cards launch plan assign heatwave fall fest checklist", "Projects"],
   courts:        ["Court Availability", "🏟", "dir", "courts open free available gym space playbook rental booked", "Courts"],
   dsscplan:      ["2027 Planning Calendar", "🗓", "dir", "planning calendar 2027 workbook plan courts schedule warehouse flex open", "Plan"],
   dayschedule:   ["Day Schedule", "🕘", "admin", "hour by hour coverage who is working", "Day"],
@@ -109,6 +110,7 @@ const DSE_COACH = [
   ["tryouts", "Tryouts 2026-27", "🎯", ["dashboard", "evaluate", "favorites", "teams", "rankings", "physical", "tryouts"]],
 ];
 const DSSC_SECS = [
+  ["projectsec", "Projects", "📌", ["projects"]],
   ["programs", "Programs", "🏕", ["clinics", "courts", "dsscplan", "dssccamp", "pods", "privates"]],
   ["people", "Texts & people", "💬", ["dssctexts", "dssccrm"]],
   ["dsscstaff", "Coaches & pay", "🗓", ["dssc", "dssccal", "dssctime", "staffhours", "staffadmin", "dsscpeople", "dsscpay"]],
