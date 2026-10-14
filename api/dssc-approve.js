@@ -21,6 +21,7 @@
 import crypto from "crypto";
 import { appOrigin } from "../shared/app-origin.js";
 import { createClient } from "@supabase/supabase-js";
+import { canWorkClass, classSport } from "../shared/dssc-sport.js";
 
 const APPROVERS_DEFAULT = ["hunterhaleysc10@gmail.com", "hunter@drippingsportsclub.com", "drew@dselitevolleyball.com"];
 const TTL_MS = 30 * 24 * 3600 * 1000;   // a month — clinics are planned that far out
@@ -130,6 +131,16 @@ export default async function handler(req, res) {
     const word = entry.status === "approved" ? "already approved" : "already declined";
     return res.status(200).send(page("Already handled",
       `<h1>${esc(d.n)} was ${word}</h1><p>${esc(clinic.name)} — ${esc(when)}<br><span class="muted">${esc(where)}</span></p><p class="muted">Change it in <a href="${origin}/?view=dssccal">DSSC Coaches</a>.</p>`));
+  }
+
+  // Coaches work their own sport only (Drew, Oct 14 2026: no volleyball coach on
+  // a basketball class). Approving can't break that; declining always works.
+  if (d.a !== "decline") {
+    const { data: people } = await supabase.from("dssc_people").select("first_name, last_name, sports, active");
+    if (!canWorkClass(d.n, clinic, people || [])) {
+      const sp = classSport(clinic);
+      return res.status(200).send(page("Can't approve", `<h1>${esc(d.n)} isn't a ${esc(sp)} coach</h1><p>${esc(clinic.name)} — ${esc(when)} is a ${esc(sp)} class, so only ${esc(sp)} coaches can take it.</p><p class="muted">Decline the pickup in <a href="${origin}/?view=dssccal">DSSC Coaches</a>, or add ${esc(sp)} to their sports in Coaches &amp; Staff first.</p>`));
+    }
   }
 
   if (!isPost) {

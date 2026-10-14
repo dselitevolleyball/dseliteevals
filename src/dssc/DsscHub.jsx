@@ -14,6 +14,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { supabase } from "../supabase";
 import { sessionStaff, staffNeeded, sessionShort, staffApproved, parsePlanPaste, parseClock, sessionHours, localDateISO } from "../../shared/dssc-clinics.js";
+import { classSport, sportLabel } from "../../shared/dssc-sport.js";
 
 // Brand palette (DSC-25-05 style guide). Greenbriar is decorative only — it
 // fails AA against every other brand color, so it never carries text here.
@@ -143,8 +144,11 @@ export default function DsscHub({
   const upcoming = mine.filter(r => r.s.date >= today);
   const since14 = localDateISO(new Date(Date.now() - 14 * 86400000));
   const recent = mine.filter(r => r.s.date < today && r.s.date >= since14).reverse();
-  // Open shifts in the sport(s) you coach - a basketball coach isn't offered volleyball pods.
-  const openShifts = rows.filter(r => !r.mine && !r.s.cancelled && (isDirector || sports.includes(r.c.sport || "volleyball")) && r.s.date >= today && r.short > 0 && !sessionStaff(r.s).some(x => isMe(x.name)));
+  // Open shifts in the sport(s) you coach - a basketball coach isn't offered
+  // volleyball pods, a volleyball coach can't take a basketball class (Drew, Oct
+  // 14 2026). Directors still see every open shift, but take only their own sport.
+  const canTake = (c) => sports.includes(classSport(c));
+  const openShifts = rows.filter(r => !r.mine && !r.s.cancelled && (isDirector || canTake(r.c)) && r.s.date >= today && r.short > 0 && !sessionStaff(r.s).some(x => isMe(x.name)));
   const myAvail = dsscAvail.find(a => isMe(a.coach_name));
 
   // Deep-link from the home card: open that clinic's next class of mine.
@@ -173,6 +177,7 @@ export default function DsscHub({
     reload.checkins && (await reload.checkins()); setBusy("");
   };
   const pickUp = async (c, s) => {
+    if (!canTake(c)) { window.alert(c.name + " is a " + classSport(c) + " class - only " + classSport(c) + " coaches can pick it up."); return; }
     const lead = !staffApproved(s).some(x => x.role === "lead");
     if (!window.confirm(`Pick up ${c.name} on ${fmtDay(s.date, today)} (${timeRange(s)})?${lead ? "\n\nThis class has no lead yet — the director will confirm you before it's yours." : ""}`)) return;
     setBusy("pu|" + s.id);
@@ -213,7 +218,7 @@ export default function DsscHub({
     return shell(
       <ClassView key={open.c.id + "|" + open.s.id} c={open.c} s={open.s} today={today} coach={coach} coachName={coachName} isMe={isMe} isDirector={isDirector}
         header={header} onBack={() => { setSel(null); if (backTo) backTo.go(); }} backLabel={backTo ? "‹ " + backTo.label : "‹ My classes"} tab={tab} setTab={setTab}
-        saveClinic={saveClinic} saveSession={saveSession} clockIn={clockIn} checkedIn={checkedIn} winState={winState} dropOut={dropOut} pickUp={pickUp} busy={busy}
+        saveClinic={saveClinic} saveSession={saveSession} clockIn={clockIn} checkedIn={checkedIn} winState={winState} dropOut={dropOut} pickUp={pickUp} canTake={canTake(open.c)} busy={busy}
         podAttendance={podAttendance} reloadAttendance={reload.attendance} run={run} setRun={setRun} onOpenPlaybook={onOpenPlaybook} notifyDirectors={notifyDirectors}
         sessions={(open.c.sessions || []).slice().sort((a, b) => (a.date || "").localeCompare(b.date || ""))} onPickSession={(sid) => setSel({ clinicId: open.c.id, sessionId: sid })} />
     );
@@ -348,7 +353,8 @@ export default function DsscHub({
                   <div style={{ fontSize: 14, fontWeight: 700 }}>{r.c.name}{r.s.needsCoverage && <span style={{ color: DS.orange }}> · needs coverage</span>}</div>
                   <div style={{ fontSize: 12, color: DS.mut }}>{[r.c.age_group, r.s.court || r.c.location].filter(Boolean).join(" · ")} · {r.short} coach{r.short === 1 ? "" : "es"} short{sessionStaff(r.s).filter(x => x.status !== "declined").length ? " · with " + sessionStaff(r.s).filter(x => x.status !== "declined").map(x => x.name.split(" ")[0]).join(", ") : ""} · {sessionHours(r.s)}h · ${25 * sessionHours(r.s)}</div>
                 </div>
-                <Btn kind="warn" small disabled={b} onClick={e => { e.stopPropagation(); pickUp(r.c, r.s); }}>{b ? "…" : "I'll take it"}</Btn>
+                {canTake(r.c) ? <Btn kind="warn" small disabled={b} onClick={e => { e.stopPropagation(); pickUp(r.c, r.s); }}>{b ? "…" : "I'll take it"}</Btn>
+                  : <span style={{ fontSize: 11, fontWeight: 800, color: DS.mut, whiteSpace: "nowrap" }}>{sportLabel(classSport(r.c))} coaches only</span>}
               </div>
             );
           })}
@@ -371,7 +377,7 @@ export default function DsscHub({
 
 // ── One class ───────────────────────────────────────────────────────────────
 function ClassView({ c, s, sessions, onPickSession, today, coach, coachName, isMe, isDirector, header, onBack, backLabel, tab, setTab,
-  saveClinic, saveSession, clockIn, checkedIn, winState, dropOut, pickUp, busy, podAttendance, reloadAttendance, run, setRun, onOpenPlaybook, notifyDirectors }) {
+  saveClinic, saveSession, clockIn, checkedIn, winState, dropOut, pickUp, canTake = true, busy, podAttendance, reloadAttendance, run, setRun, onOpenPlaybook, notifyDirectors }) {
   const crew = sessionStaff(s).filter(x => x.status !== "declined");
   const mineEntry = crew.find(x => isMe(x.name));
   const canEdit = isDirector || !!mineEntry;
@@ -427,7 +433,8 @@ function ClassView({ c, s, sessions, onPickSession, today, coach, coachName, isM
       {!mineEntry && !isPast && sessionShort(s, c) > 0 && (
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 12, padding: "10px 12px", borderRadius: 10, background: DS.orangeSoft, border: "1px solid " + DS.orange }}>
           <span style={{ fontSize: 13, fontWeight: 700, flex: 1 }}>This class is {sessionShort(s, c)} coach{sessionShort(s, c) === 1 ? "" : "es"} short <span style={{ color: DS.mut, fontWeight: 500 }}>· {sessionHours(s)}h · ${25 * sessionHours(s)}</span></span>
-          <Btn kind="warn" small disabled={busy === "pu|" + s.id} onClick={() => pickUp(c, s)}>{busy === "pu|" + s.id ? "…" : "I'll take it"}</Btn>
+          {canTake ? <Btn kind="warn" small disabled={busy === "pu|" + s.id} onClick={() => pickUp(c, s)}>{busy === "pu|" + s.id ? "…" : "I'll take it"}</Btn>
+            : <span style={{ fontSize: 12, fontWeight: 800, color: DS.mut }}>{sportLabel(classSport(c))} class - {classSport(c)} coaches only</span>}
         </div>
       )}
     </div>

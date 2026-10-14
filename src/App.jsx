@@ -20,6 +20,7 @@ import ServeGrader from "./ServeGrader.jsx";
 import CourtAvailability from "./CourtAvailability.jsx";
 import DsscPlanner from "./dssc/DsscPlanner.jsx";
 import Projects from "./dssc/Projects.jsx";
+import { classSport, sportLabel, canWorkClass } from "../shared/dssc-sport.js";
 import { buildNav, navTheme, Sidebar, NavDrawer, BottomBar, SiblingChips } from "./Nav.jsx";
 import DaySchedule from "./DaySchedule.jsx";
 import { PlayerStatHistory, StatsLinks } from "./PlayerStats.jsx";
@@ -3536,6 +3537,12 @@ export default function App() {
     const clinic = clinics.find(c => c.id === clinicId);
     const s = (clinic?.sessions || []).find(x => String(x.id) === String(sessionId));
     if (!s || !name) return;
+    // A coach picks up shifts in their own sport only - no volleyball coach on a
+    // basketball class (Drew, Oct 14 2026). Every pickup path lands here.
+    if (status === "pending" && !dsscSports.includes(classSport(clinic))) {
+      window.alert(clinic.name + " is a " + sportLabel(classSport(clinic)).toLowerCase() + " class. Only " + classSport(clinic) + " coaches can pick it up.");
+      return;
+    }
     const nrm = v => String(v || "").trim().toLowerCase();
     const staff = sessionStaff(s).filter(x => nrm(x.name) !== nrm(name));
     // One lead per session — promoting someone demotes the incumbent rather
@@ -3543,7 +3550,7 @@ export default function App() {
     const kept = role === "lead" ? staff.map(x => x.role === "lead" ? { ...x, role: "assist" } : x) : staff;
     kept.push({ name, role, status, picked: status === "pending", by: coach?.display_name || coach?.email || null, at: new Date().toISOString() });
     return updateDsscSession(clinicId, sessionId, { staff: kept });
-  }, [clinics, coach, updateDsscSession]);
+  }, [clinics, coach, updateDsscSession, dsscSports.join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
   const unstaffDsscSession = useCallback((clinicId, sessionId, name) => {
     const clinic = clinics.find(c => c.id === clinicId);
     const s = (clinic?.sessions || []).find(x => String(x.id) === String(sessionId));
@@ -3604,6 +3611,18 @@ export default function App() {
       .filter(x => x && !isPlaceholderPerson(x) && !bbOnly.has(nm(x)));
     const others = [...new Set(rosterNames.filter(x => !availNames.some(a => nm(a) === nm(x))))].sort((a, b) => a.localeCompare(b));
     return { avail: availNames, others, label: "Available" };
+  };
+  // Approving a pickup: the coach has to coach the class's sport (shared/dssc-sport.js;
+  // the one-tap email link checks the same thing). quiet = skip the alert (bulk approve).
+  const approveDsscPickup = (clinicId, sessionId, name, ok, quiet) => {
+    if (ok) {
+      const clinic = clinics.find(c => c.id === clinicId);
+      if (clinic && !canWorkClass(name, clinic, dsscPeople)) {
+        if (!quiet) window.alert(name + " isn't a " + classSport(clinic) + " coach, so they can't take " + clinic.name + ". Decline it, or add " + classSport(clinic) + " to their sports in Coaches & Staff first.");
+        return Promise.resolve(false);
+      }
+    }
+    return decideDsscPickup(clinicId, sessionId, name, ok);
   };
   // Pod attendance — how many players actually showed. Payroll input, so it has
   // its own table rather than riding on the session JSONB. Until the migration
@@ -15422,9 +15441,9 @@ export default function App() {
                     {v.role==="lead" ? "★ " : ""}{v.name}
                     {pend ? (
                       <>
-                        <button onClick={()=>decideDsscPickup(r.clinicId, r.id, v.name, true)} title="Approve"
+                        <button onClick={()=>approveDsscPickup(r.clinicId, r.id, v.name, true)} title="Approve"
                           style={{background:"none",border:"none",color:C.grn,cursor:"pointer",fontFamily:"inherit",fontWeight:800,fontSize:11,padding:0,lineHeight:1}}>✓</button>
-                        <button onClick={()=>decideDsscPickup(r.clinicId, r.id, v.name, false)} title="Decline"
+                        <button onClick={()=>approveDsscPickup(r.clinicId, r.id, v.name, false)} title="Decline"
                           style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontFamily:"inherit",fontWeight:800,fontSize:11,padding:0,lineHeight:1}}>✕</button>
                       </>
                     ) : (
@@ -15562,9 +15581,9 @@ export default function App() {
                 {pend && <span style={{fontSize:9,fontWeight:800}}>picked up · needs OK</span>}
                 {pend ? (
                   <>
-                    <button onClick={()=>decideDsscPickup(r.clinicId, r.id, v.name, true)} title="Approve"
+                    <button onClick={()=>approveDsscPickup(r.clinicId, r.id, v.name, true)} title="Approve"
                       style={{background:"none",border:"none",color:C.grn,cursor:"pointer",fontFamily:"inherit",fontWeight:800,fontSize:12,padding:0}}>✓</button>
-                    <button onClick={()=>decideDsscPickup(r.clinicId, r.id, v.name, false)} title="Decline"
+                    <button onClick={()=>approveDsscPickup(r.clinicId, r.id, v.name, false)} title="Decline"
                       style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontFamily:"inherit",fontWeight:800,fontSize:12,padding:0}}>✕</button>
                   </>
                 ) : (
@@ -15643,7 +15662,9 @@ export default function App() {
             if (!window.confirm("Approve all " + waiting.length + " pickup" + (waiting.length===1?"":"s") + "?\n\n"
               + waiting.slice(0,10).map(x => "• " + x.v.name + " → " + x.r.clinicName + ", " + new Date(x.r.date+"T12:00:00").toLocaleDateString(undefined,{month:"short",day:"numeric"})).join("\n")
               + (waiting.length>10 ? "\n…and " + (waiting.length-10) + " more" : ""))) return;
-            for (const x of waiting) await decideDsscPickup(x.r.clinicId, x.r.id, x.v.name, true);
+            const skipped = [];
+            for (const x of waiting) if ((await approveDsscPickup(x.r.clinicId, x.r.id, x.v.name, true, true)) === false) skipped.push(x.v.name + " → " + x.r.clinicName);
+            if (skipped.length) window.alert("Not approved - the coach doesn't coach that sport:\n" + skipped.join("\n") + "\n\nDecline those, or add the sport in Coaches & Staff.");
           };
           return (
             <div style={{background:C.card,border:"1px solid #f59e0b",borderRadius:12,marginBottom:12,overflow:"hidden"}}>
@@ -15678,9 +15699,9 @@ export default function App() {
                     <span title="Not marked as cleared to lead a clinic"
                       style={{fontSize:9,fontWeight:800,color:"#f59e0b",border:"1px solid #f59e0b",borderRadius:999,padding:"1px 7px"}}>NOT CLEARED TO LEAD</span>
                   )}
-                  <button onClick={()=>decideDsscPickup(r.clinicId, r.id, v.name, true)}
+                  <button onClick={()=>approveDsscPickup(r.clinicId, r.id, v.name, true)}
                     style={{padding:"4px 14px",borderRadius:7,border:"none",background:C.grn,color:"#000",fontFamily:"inherit",fontSize:12,fontWeight:800,cursor:"pointer"}}>Approve</button>
-                  <button onClick={()=>decideDsscPickup(r.clinicId, r.id, v.name, false)}
+                  <button onClick={()=>approveDsscPickup(r.clinicId, r.id, v.name, false)}
                     style={{padding:"4px 10px",borderRadius:7,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontFamily:"inherit",fontSize:12,fontWeight:700,cursor:"pointer"}}>Decline</button>
                 </div>
               ))}
@@ -16141,7 +16162,8 @@ export default function App() {
       .filter(r => r.date >= today || (r.date >= addDays(today, -LATE_DAYS) && !checkinFor(r)))
       .slice(0, 12);
     const lateCount = upcoming.filter(isLate).length;
-    const openShifts = rows.filter(r => r.date >= today && sessionShort(r.s, r.clinic) > 0 && !myEntry(r)).slice(0, 25);
+    // Only classes in the sport(s) you coach (Drew, Oct 14 2026), never a cancelled one.
+    const openShifts = rows.filter(r => r.date >= today && !r.s.cancelled && dsscSports.includes(classSport(r.clinic)) && sessionShort(r.s, r.clinic) > 0 && !myEntry(r)).slice(0, 25);
 
     const clockIn = async (r) => {
       const e = myEntry(r);
@@ -25692,7 +25714,7 @@ export default function App() {
     return (
       <DsscAdmin coach={coach} clinics={clinics} coachRoster={coachRoster} dsscAvail={dsscAvail} podAttendance={podAttendance} sports={dsscSports}
         setClinics={setClinics} reloadClinics={loadClinics}
-        staffDsscSession={staffDsscSession} unstaffDsscSession={unstaffDsscSession} decideDsscPickup={decideDsscPickup}
+        staffDsscSession={staffDsscSession} unstaffDsscSession={unstaffDsscSession} decideDsscPickup={approveDsscPickup}
         openClass={(cid, sid)=>{ setDsscHubSel({ clinicId: cid, sessionId: sid }); setDsscHubBack(true); setView("dssc"); }}
         openProgram={(cid)=>{ setClinicFrom("clinics"); setClinicOpenId(cid); }}
         newClinic={newProgram}
