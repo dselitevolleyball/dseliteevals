@@ -74,6 +74,10 @@
     {
       "source": "/courts",
       "destination": "/api/courts-public"
+    },
+    {
+      "source": "/board",
+      "destination": "/board/index.html"
     }
   ],
   "crons": [
