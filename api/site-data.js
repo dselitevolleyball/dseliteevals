@@ -17,8 +17,10 @@
 //              school, height, contact, parents, scores, notes or any status.
 //   coaches    head/assistant/third coach names + site_staff (title, bio, photo);
 //              placeholders (TBD, floater) dropped; show_on_site=false hides.
-//   practice   each team's weekly pattern per phase (days, times, building).
-//              The per-team ICS feed (/api/calendar?team=) has the exceptions.
+//   practice   each team's weekly pattern per phase (days, times, building), plus
+//              Speed & Agility (sa_sessions) when the same slot recurs on every
+//              remaining date of the phase. The per-team ICS feed
+//              (/api/calendar?team=) has the exceptions and the one-off S&A dates.
 //   tournaments  events with ≥1 non-dropped assignment for a public team, not
 //              cancelled, not over; planned/in_progress entries are "tentative".
 //              Never cost, notes, housing, registration or assignment overrides.
@@ -26,29 +28,40 @@
 //
 // Shape:
 //   { ok, generated_at, season, today,
-//     counts: { teams, athletes, coaches, tournaments, travel_tournaments, qualifiers, states },
+//     counts: { teams, athletes, coaches, tournaments, planned_tournaments, travel_tournaments, qualifiers, states },
 //     venues: { warehouse: Venue, flex: Venue },
 //     teams: Team[], staff: Staff[], tournaments: Tournament[],
 //     this_weekend: { label: 'This weekend'|'Next up', start, end, tournaments } | null,
-//     links: { hq, hub, calendar_index } }
+//     links: { hq, hub } }
+//   counts.tournaments / travel_tournaments / qualifiers / states are over events with at least one
+//   CONFIRMED public-team entry; planned_tournaments = events whose public entries are all tentative.
 //   Venue      { key, name, address, map_url }
 //   Team       { slug, name, age, age_div, gem, level, practices_per_week, coaches: [{ slug, name, role }],
 //                roster: Player[], roster_count, practice: { current_phase, phases: Phase[] },
 //                tournaments: TeamTournament[], next_tournament, live, links: { hub, calendar_ics, calendar_webcal, calendar_google } }
 //   Player     { number, first_name, last_name, name, position, pos_code, grad_year }
-//   Phase      { id, label, from, to, sessions: [{ day, day_label, start, end, label, venue }] }
+//              (a "(Legal) Preferred" name is published as the text outside the parentheses)
+//   practice.current_phase = the phase running today, else the next upcoming phase id, null only when none remain.
+//   Phase      { id, label, from, to, sessions: Session[], note? }
+//   Session    { day, day_label, start, end, label, kind: 'court'|'sa', venue, from?, to? }
+//              kind 'court' → label is the time ('3–5 pm'); kind 'sa' (Speed & Agility, always the Warehouse)
+//              → label is 'Speed & Agility'. from/to (inclusive dates) appear only when the session covers part of
+//              the phase (a Flex venue window ends/starts mid-phase); absent = the whole phase.
+//              note appears when Speed & Agility happens only on some dates of the phase.
 //   TeamTournament { id, kind, name, start, end, city, venue, division, status, qualifier, qualifier_type, travel, url, session }
 //   Tournament { id, kind, name, start, end, city, venue, qualifier, qualifier_type, travel, url, teams: [{ slug, name, division, status }] }
 //   Staff      { slug, name, title, bio, photo_url, leadership, sort_order, teams: [{ slug, name, role }] }
 // scripts/site-data-check.mjs asserts the privacy rules against this builder.
 //
 // Cache: public, s-maxage=120, stale-while-revalidate=600. Errors: 500, no-store.
+// Any query string → 400 { ok:false, error:'no query parameters' } (public, s-maxage=3600), so cache-busting
+// URLs can't make the endpoint rebuild the payload on every hit.
 // Env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY.
 
 import { createClient } from "@supabase/supabase-js";
 import { isEventTeam } from "../shared/event-teams.js";
 import { isAustinArea } from "../shared/austin-area.js";
-import { PHASE_RANGES, PHASE_LABEL, span, isPlaceholder } from "../shared/day-schedule.js";
+import { PHASE_RANGES, PHASE_LABEL, PRESEASON_DATES, span, isPlaceholder } from "../shared/day-schedule.js";
 import { localNow, tzForTournament, withNext, fmtDay, fmtTime, ordinal } from "../shared/tournament-feed.js";
 import { PROD_ORIGIN } from "../shared/app-origin.js";
 import { personSlug } from "../shared/site-slug.js";
@@ -77,6 +90,23 @@ const ymd = (d) => String(d || "").slice(0, 10);
 const addDays = (d, n) => new Date(Date.parse(ymd(d) + "T12:00:00Z") + n * 86400000).toISOString().slice(0, 10);
 const sundayOf = (d) => addDays(d, (7 - new Date(Date.parse(ymd(d) + "T12:00:00Z")).getUTCDay()) % 7);
 const nameKey = (s) => clean(s).toLowerCase();
+const dayOf = (d) => DAYS[new Date(Date.parse(ymd(d) + "T12:00:00Z")).getUTCDay()];
+const sundaysBetween = (from, to) => { const out = []; for (let d = sundayOf(from); d <= to; d = addDays(d, 7)) out.push(d); return out; };
+const chunks = (list, n) => { const out = []; for (let i = 0; i < list.length; i += n) out.push(list.slice(i, i + n)); return out; };
+
+// PostgREST answers at most 1,000 rows a request; page through (build() makes a
+// fresh, ordered query each time) so a table that keeps growing never gets
+// silently cut off.
+async function pageAll(build, what, size = 1000) {
+  const out = [];
+  for (let at = 0; ; at += size) {
+    const r = await build().range(at, at + size - 1);
+    if (r.error) throw new Error(`${what}: ${r.error.message}`);
+    const rows = r.data || [];
+    out.push(...rows);
+    if (rows.length < size) return out;
+  }
+}
 
 // Coach contact details never go out, even if one is typed into a bio in HQ.
 const PHONE_RE = /(?:\+?1[\s.-]?)?\(?\b\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}\b/g;
@@ -113,14 +143,25 @@ function positionOf(p) {
   const code = word(p.primary_position) || word(Array.isArray(p.positions) ? p.positions[0] : null);
   return code ? { position: POS[code], pos_code: code } : { position: null, pos_code: null };
 }
-// '9th' in a report from the 2026-27 season → class of 2030.
+// '9th' for the 2026-27 season → class of 2030 (season end year + (12 − grade)).
+// The report belongs to the player's season row (we only read this season's
+// players), so the CURRENT season decides the year — not the date the form was
+// submitted, which a July submission would push into the previous season.
 function gradYearOf(report, season) {
   if (!report) return null;
   const g = parseInt(String(report.grade || ""), 10);
   if (!(g >= 1 && g <= 12)) return null;
-  const s = seasonForDate(report.submitted_at || report.updated_at) || season;
-  const end = parseInt(String(s).slice(0, 4), 10) + 1;
+  const end = parseInt(String(season).slice(0, 4), 10) + 1;
   return Number.isFinite(end) ? end + (12 - g) : null;
+}
+
+// Some families are stored as "(Legal) Preferred" — the public sees the text
+// outside the parentheses ("Preferred"). If nothing is outside them, the words
+// inside are the best name there is.
+export function publicName(s) {
+  const raw = String(s ?? "");
+  const outside = clean(raw.replace(/\([^)]*(?:\)|$)/g, " ").replace(/[()]/g, " "));
+  return outside || clean(raw.replace(/[()]/g, " "));
 }
 
 // ---- practice --------------------------------------------------------------------
@@ -130,46 +171,117 @@ const h12 = (h) => { const w = Math.floor(h), m = Math.round((h - w) * 60), x = 
 const ampm = (h) => (h >= 12 ? "pm" : "am");
 const timeLabel = (s, e) => (ampm(s) === ampm(e) ? `${h12(s)}–${h12(e)} ${ampm(e)}` : `${h12(s)} ${ampm(s)}–${h12(e)} ${ampm(e)}`);
 
-// Which building, for the part of the phase still to come. Mirrors locFor() in
-// api/calendar.js: summer court 5 is the Flex; an explicit venue wins inside
-// its venue_start..venue_end window.
+// Which building, for one slice of a phase (from..to). Mirrors locFor() in
+// api/calendar.js: summer court 5 is the Flex; an explicit venue wins inside its
+// venue_start..venue_end window. practiceFor() cuts the phase at every window
+// edge first, so a slice is either wholly inside a window or wholly outside it.
 function venueKey(a, phase, from, to) {
   const derivedFlex = phase === "summer" && Number(a.court) === 5;
   const v = clean(a.venue).toLowerCase();
-  const applies = v && (!a.venue_start || ymd(a.venue_start) <= to) && (!a.venue_end || ymd(a.venue_end) >= from);
+  const applies = v && (!a.venue_start || ymd(a.venue_start) <= from) && (!a.venue_end || ymd(a.venue_end) >= to);
   return (applies ? v === "flex" : derivedFlex) ? "flex" : "warehouse";
 }
 
-function practiceFor(rows, today) {
+// Back-to-back / overlapping [start, end] hours → one block.
+function mergeSpans(list) {
+  const merged = [];
+  for (const [s, e] of list.slice().sort((x, y) => x[0] - y[0])) {
+    const p = merged[merged.length - 1];
+    if (p && s <= p[1]) p[1] = Math.max(p[1], e); else merged.push([s, e]);
+  }
+  return merged;
+}
+
+// Speed & Agility (sa_sessions: one row per team, Sunday and hour). A slot that
+// is there on EVERY remaining Sunday of the phase is a weekly session like a
+// court block; anything patchier (the regular-season S&A dates are scattered)
+// can't be a weekly pattern, so the phase just says so and the team's calendar
+// feed carries the dates. Mirrors how api/calendar.js reads the same rows.
+function saFor(saRows, id, from, to, today) {
+  const winFrom = from > today ? from : today;
+  const required = PRESEASON_DATES[id] ? PRESEASON_DATES[id].filter((d) => d >= winFrom && d <= to) : sundaysBetween(winFrom, to);
+  const groups = new Map();                                    // slot → Set(dates)
+  for (const r of saRows) {
+    const d = ymd(r.session_date);
+    if (!d || d < winFrom || d > to) continue;
+    const slot = clean(r.slot);
+    if (!groups.has(slot)) groups.set(slot, new Set());
+    groups.get(slot).add(d);
+  }
+  const weekly = [];
+  let partial = false;
+  for (const [slot, dates] of groups) {
+    const [s, e] = span(slot);
+    const sundays = [...dates].every((d) => dayOf(d) === "Sun");
+    if (s < 99 && e > s && sundays && required.length && required.every((d) => dates.has(d))) weekly.push([s, e]);
+    else partial = true;
+  }
+  return { weekly: mergeSpans(weekly), partial };
+}
+
+const SA_NOTE = "Speed & Agility sessions on select dates — see the team calendar.";
+
+export function practiceFor(rows, saRows, today) {
   const phases = [];
   for (const [id, from, to] of PHASE_RANGES) {
     if (to < today) continue;                                  // only phases that haven't ended
     const mine = rows.filter((a) => (a.phase || "season") === id);
-    if (!mine.length) continue;
-    const winFrom = from > today ? from : today;
-    const groups = new Map();                                  // day|venue → [[s,e]]
+    const sa = saFor(saRows, id, from, to, today);
+    if (!mine.length && !sa.weekly.length) continue;
+
+    // Cut the phase wherever an explicit-venue window starts or ends inside it,
+    // then work out each slice's building on its own.
+    const cuts = new Set([from]);
     for (const a of mine) {
-      const day = DAYS.find((d) => d === clean(a.day).slice(0, 3));
-      const [s, e] = span(a.slot);
-      if (!day || !(s < 99) || !(e > s)) continue;
-      const k = day + "|" + venueKey(a, id, winFrom, to);
-      if (!groups.has(k)) groups.set(k, []);
-      groups.get(k).push([s, e]);
+      if (!clean(a.venue)) continue;
+      const s = ymd(a.venue_start), e = a.venue_end ? addDays(a.venue_end, 1) : "";
+      if (s > from && s <= to) cuts.add(s);
+      if (e > from && e <= to) cuts.add(e);
     }
-    const sessions = [];
-    for (const [k, list] of groups) {
-      const [day, venue] = k.split("|");
-      const merged = [];
-      for (const [s, e] of list.sort((x, y) => x[0] - y[0])) {
-        const p = merged[merged.length - 1];
-        if (p && s <= p[1]) p[1] = Math.max(p[1], e); else merged.push([s, e]);
+    const starts = [...cuts].sort();
+    const slices = starts.map((s, i) => [s, i + 1 < starts.length ? addDays(starts[i + 1], -1) : to]).filter(([, e]) => e >= today);
+
+    const court = new Map();                                   // day|start|end|venue → [{ ..., from, to }]
+    for (const [sFrom, sTo] of slices) {
+      const groups = new Map();                                // day|venue → [[s,e]]
+      for (const a of mine) {
+        const day = DAYS.find((d) => d === clean(a.day).slice(0, 3));
+        const [s, e] = span(a.slot);
+        if (!day || !(s < 99) || !(e > s)) continue;
+        const k = day + "|" + venueKey(a, id, sFrom, sTo);
+        if (!groups.has(k)) groups.set(k, []);
+        groups.get(k).push([s, e]);
       }
-      for (const [s, e] of merged) sessions.push({ day, day_label: DAY_LABEL[day], start: hhmm(s), end: hhmm(e), label: timeLabel(s, e), venue });
+      for (const [k, list] of groups) {
+        const [day, venue] = k.split("|");
+        for (const [s, e] of mergeSpans(list)) {
+          const key = [day, hhmm(s), hhmm(e), venue].join("|");
+          const runs = court.get(key) || [];
+          const last = runs[runs.length - 1];
+          if (last && addDays(last.to, 1) === sFrom) last.to = sTo;   // same block, next slice → one session
+          else runs.push({ day, venue, s, e, from: sFrom, to: sTo });
+          court.set(key, runs);
+        }
+      }
     }
-    sessions.sort((x, y) => DAYS.indexOf(x.day) - DAYS.indexOf(y.day) || x.start.localeCompare(y.start));
-    if (sessions.length) phases.push({ id, label: PHASE_LABEL[id] || id, from, to, sessions });
+
+    const sessions = [];
+    for (const runs of court.values()) {
+      for (const r of runs) {
+        const x = { day: r.day, day_label: DAY_LABEL[r.day], start: hhmm(r.s), end: hhmm(r.e), label: timeLabel(r.s, r.e), kind: "court", venue: r.venue };
+        if (r.from !== from || r.to !== to) { x.from = r.from; x.to = r.to; }
+        sessions.push(x);
+      }
+    }
+    for (const [s, e] of sa.weekly) sessions.push({ day: "Sun", day_label: DAY_LABEL.Sun, start: hhmm(s), end: hhmm(e), label: "Speed & Agility", kind: "sa", venue: "warehouse" });
+    sessions.sort((x, y) => DAYS.indexOf(x.day) - DAYS.indexOf(y.day) || x.start.localeCompare(y.start) || (x.from || "").localeCompare(y.from || ""));
+    if (!sessions.length) continue;
+    const phase = { id, label: PHASE_LABEL[id] || id, from, to, sessions };
+    if (sa.partial) phase.note = SA_NOTE;
+    phases.push(phase);
   }
-  const cur = phases.find((p) => p.from <= today && today <= p.to);
+  // The phase running today; between phases, the next one to start.
+  const cur = phases.find((p) => p.from <= today && today <= p.to) || phases.find((p) => p.from > today);
   return { current_phase: cur ? cur.id : null, phases };
 }
 
@@ -241,12 +353,8 @@ export async function buildSiteData(sb, { now = new Date() } = {}) {
   const season = seasonForDate(today);
   const must = (r, what) => { if (r.error) throw new Error(`${what}: ${r.error.message}`); return r.data || []; };
 
-  const [ptRes, plRes, paRes, asgRes, evRes, staffRes] = await Promise.all([
+  const [ptRes, evRes, staffRes] = await Promise.all([
     sb.from("practice_teams").select("team_name, level, age_div, head_coach, assistant_coach, third_coach, practices_per_week"),
-    sb.from("players").select("id, team_assignment, first_name, last_name, jersey_number, roster_pos, primary_position, positions")
-      .in("offer_status", PUBLIC_OFFER).eq("season", season).eq("site_hidden", false).not("team_assignment", "is", null).neq("team_assignment", ""),
-    sb.from("practice_assignments").select("team_name, phase, day, slot, court, venue, venue_start, venue_end"),
-    sb.from("tournament_assignments").select("tournament_id, team_id, division, status"),
     sb.from("team_events").select("team_name, title, event_date, start_time").ilike("title", "Tournament%").gte("event_date", today),
     sb.from("site_staff").select("name, slug, title, bio, photo_url, leadership, sort_order, show_on_site"),
   ]);
@@ -264,6 +372,21 @@ export async function buildSiteData(sb, { now = new Date() } = {}) {
   }).sort((a, b) => (a.age ?? 99) - (b.age ?? 99) || LEVEL_ORDER[a.level] - LEVEL_ORDER[b.level] || byName(a.name, b.name));
   const teamBy = new Map(teamBase.map((t) => [t.name, t]));
   const teamIdx = new Map(teamBase.map((t, i) => [t.name, i]));
+
+  // Everything else is keyed to the public teams, so ask for only their rows —
+  // paged, and (for the tables that keep every season) cut to what still matters.
+  const teamNames = teamBase.map((t) => t.name);
+  const [playerRows, paRows, saRows, asgRows] = teamNames.length ? await Promise.all([
+    pageAll(() => sb.from("players").select("id, team_assignment, first_name, last_name, jersey_number, roster_pos, primary_position, positions")
+      .in("offer_status", PUBLIC_OFFER).eq("season", season).eq("site_hidden", false).in("team_assignment", teamNames).order("id"), "players"),
+    pageAll(() => sb.from("practice_assignments").select("team_name, phase, day, slot, court, venue, venue_start, venue_end").in("team_name", teamNames).order("id"), "practice_assignments"),
+    pageAll(() => sb.from("sa_sessions").select("team_name, session_date, slot").in("team_name", teamNames).gte("session_date", today).order("id"), "sa_sessions"),
+    pageAll(() => sb.from("tournament_assignments").select("tournament_id, team_id, division, status").in("team_id", teamNames).neq("status", "dropped").order("id"), "tournament_assignments"),
+  ]) : [[], [], [], []];
+  const practiceBy = new Map(teamBase.map((t) => [t.name, []]));
+  for (const a of paRows) practiceBy.get(clean(a.team_name))?.push(a);
+  const saBy = new Map(teamBase.map((t) => [t.name, []]));
+  for (const a of saRows) saBy.get(clean(a.team_name))?.push(a);
 
   // Staff rows (site_staff) by roster name
   const staffRows = must(staffRes, "site_staff");
@@ -288,9 +411,10 @@ export async function buildSiteData(sb, { now = new Date() } = {}) {
   }
 
   // Rosters + grad year
-  const players = must(plRes, "players").filter((p) => teamBy.has(clean(p.team_assignment)));
+  const players = playerRows.filter((p) => teamBy.has(clean(p.team_assignment)));
   const ids = players.map((p) => p.id);
-  const reports = ids.length ? must(await sb.from("school_team_reports").select("player_id, grade, submitted_at, updated_at").in("player_id", ids), "school_team_reports") : [];
+  const reports = [];
+  for (const part of chunks(ids, 150)) reports.push(...must(await sb.from("school_team_reports").select("player_id, grade, submitted_at, updated_at").in("player_id", part), "school_team_reports"));
   const latest = new Map();
   for (const r of reports) {
     const at = r.updated_at || r.submitted_at || "";
@@ -299,7 +423,7 @@ export async function buildSiteData(sb, { now = new Date() } = {}) {
   }
   const rosterBy = new Map(teamBase.map((t) => [t.name, []]));
   for (const p of players) {
-    const first = clean(p.first_name), last = clean(p.last_name);
+    const first = publicName(p.first_name), last = publicName(p.last_name);
     if (!first) continue;
     const n = Number(p.jersey_number);
     const pos = positionOf(p);
@@ -312,15 +436,34 @@ export async function buildSiteData(sb, { now = new Date() } = {}) {
   for (const list of rosterBy.values()) list.sort((a, b) => (a.number ?? 1e9) - (b.number ?? 1e9) || byName(a.first_name, b.first_name) || byName(a.last_name, b.last_name));
 
   // Tournaments: non-dropped assignments for public teams → upcoming, not cancelled
-  const asg = must(asgRes, "tournament_assignments").filter((a) => a.status !== "dropped" && teamBy.has(clean(a.team_id)));
+  const asg = asgRows.filter((a) => a.status !== "dropped" && teamBy.has(clean(a.team_id)));
   const tnIds = [...new Set(asg.map((a) => a.tournament_id))];
-  const tnRows = tnIds.length ? must(await sb.from("tournaments").select("id, name, start_date, end_date, location, venue, is_qualifier, qualifier_type, stay_over, source_url, cancelled, time_zone").in("id", tnIds), "tournaments") : [];
+  const tnRows = [];
+  for (const part of chunks(tnIds, 100)) {
+    tnRows.push(...must(await sb.from("tournaments").select("id, name, start_date, end_date, location, venue, is_qualifier, qualifier_type, stay_over, source_url, cancelled, time_zone")
+      .in("id", part).or(`end_date.gte.${today},and(end_date.is.null,start_date.gte.${today})`), "tournaments"));
+  }
   const tns = new Map();
   for (const t of tnRows) {
     if (t.cancelled || !t.start_date) continue;
     const start = ymd(t.start_date), end = ymd(t.end_date || t.start_date);
     if (end < today) continue;
     tns.set(t.id, { raw: t, start, end });
+  }
+  // A tournament row with no link borrows one from a duplicate of the same event
+  // (same name, same first day) — the sync keeps SportWrench / AES copies apart.
+  const nameNorm = (s) => tnName(s).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const linkless = [...tns.values()].filter((x) => !urlOut(x.raw.source_url));
+  const urlByEvent = new Map();   // normalized name|start → first usable link of another row
+  if (linkless.length) {
+    const days = [...new Set(linkless.map((x) => x.start))];
+    const twins = [];
+    for (const part of chunks(days, 100)) twins.push(...must(await sb.from("tournaments").select("id, name, start_date, source_url, cancelled").in("start_date", part), "tournaments (links)"));
+    twins.sort((a, b) => (a.cancelled ? 1 : 0) - (b.cancelled ? 1 : 0) || a.id - b.id);
+    for (const t of twins) {
+      const u = urlOut(t.source_url), k = nameNorm(t.name) + "|" + ymd(t.start_date);
+      if (u && !urlByEvent.has(k)) urlByEvent.set(k, u);
+    }
   }
   const feedIds = [...tns.values()].filter((x) => addDays(x.start, -3) <= today && today <= addDays(x.end, 1)).map((x) => x.raw.id);
   const feedRows = feedIds.length ? must(await sb.from("tournament_team_feed").select("tournament_id, team_name, snapshot, synced_at").in("tournament_id", feedIds), "tournament_team_feed") : [];
@@ -330,7 +473,7 @@ export async function buildSiteData(sb, { now = new Date() } = {}) {
     return {
       id: String(t.id), kind: "event", name: tnName(t.name), start: x.start, end: x.end, city, venue: venueOutT(t.venue, city),
       qualifier: !!t.is_qualifier, qualifier_type: clean(t.qualifier_type) || null,
-      travel: !!t.stay_over || !isAustinArea({ location: t.location }), url: urlOut(t.source_url),
+      travel: !!t.stay_over || !isAustinArea({ location: t.location }), url: urlOut(t.source_url) || urlByEvent.get(nameNorm(t.name) + "|" + x.start) || null,
     };
   };
   const teamTn = new Map(teamBase.map((t) => [t.name, []]));
@@ -400,7 +543,7 @@ export async function buildSiteData(sb, { now = new Date() } = {}) {
       slug: t.slug, name: t.name, age: t.age, age_div: t.age_div, gem: t.gem, level: t.level, practices_per_week: t.practices_per_week,
       coaches: teamCoaches.get(t.name).map((c) => ({ slug: c.slug, name: c.name, role: c.role })),
       roster, roster_count: roster.length,
-      practice: practiceFor(must(paRes, "practice_assignments").filter((a) => clean(a.team_name) === t.name), today),
+      practice: practiceFor(practiceBy.get(t.name), saBy.get(t.name), today),
       tournaments: tlist, next_tournament: tlist[0] || null, live,
       links: teamLinks(t.name, t.slug),
     };
@@ -436,16 +579,20 @@ export async function buildSiteData(sb, { now = new Date() } = {}) {
     ? { label, start: wk.map((t) => t.start).sort()[0], end: wk.map((t) => t.end).sort().pop(), tournaments: wk }
     : null;
 
-  const states = new Set(allTn.map((t) => stateOf(t.city)).filter(Boolean));
+  // The headline numbers count only events at least one public team is really going to
+  // (a confirmed entry); events every team still has "planned" are counted apart.
+  const going = allTn.filter((t) => t.teams.some((e) => e.status === "confirmed"));
+  const states = new Set(going.map((t) => stateOf(t.city)).filter(Boolean));
   return {
     ok: true, generated_at: new Date(now).toISOString(), season, today,
     counts: {
       teams: teams.length, athletes: teams.reduce((n, t) => n + t.roster_count, 0), coaches: staff.length,
-      tournaments: allTn.length, travel_tournaments: allTn.filter((t) => t.travel).length, qualifiers: allTn.filter((t) => t.qualifier).length, states: states.size,
+      tournaments: going.length, planned_tournaments: allTn.length - going.length,
+      travel_tournaments: going.filter((t) => t.travel).length, qualifiers: going.filter((t) => t.qualifier).length, states: states.size,
     },
     venues: { warehouse: venueOut(VENUES.warehouse), flex: venueOut(VENUES.flex) },
     teams, staff, tournaments: allTn, this_weekend,
-    links: { hq: APP, hub: `${APP}/hub`, calendar_index: `${APP}/api/calendar` },
+    links: { hq: APP, hub: `${APP}/hub` },
   };
 }
 
@@ -465,6 +612,11 @@ export default async function handler(req, res) {
   if (req.method !== "GET" && req.method !== "HEAD") {
     res.setHeader("Allow", "GET, HEAD, OPTIONS");
     return res.status(405).json({ ok: false, error: "GET only" });
+  }
+  // One URL, one cached copy: a query string (cache-busting ?x=1, tracking tags) is refused.
+  if (new URL(req.url || "/", "http://localhost").search.length > 1) {
+    res.setHeader("Cache-Control", "public, s-maxage=3600");
+    return res.status(400).json({ ok: false, error: "no query parameters" });
   }
   try {
     const sb = siteSupabase();

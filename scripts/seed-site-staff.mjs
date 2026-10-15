@@ -12,6 +12,11 @@
 //     season" opener (teams come from the app, not the bio), minus minor
 //     coaches' ages / school. NEVER the agent-written draft_bio, so Karissa
 //     Hartzell's bio stays NULL until she sends one.
+//   - no sentence that names a specific team ("14 Sapphire", "12 Rise 2" — any "<age> <Gem>"
+//     or a team name on practice_teams) or says "next season": rosters change every season
+//     and the website lists each coach's teams from the app, so a bio that names them goes
+//     stale (it already did for five coaches). The sentence is dropped whole; the dry run
+//     lists what was dropped.
 //   - no phone numbers or email addresses: checked with a regex before writing;
 //     the script stops if one slips through.
 //   - photo: coach-headshots/<slug>.jpg → 800x1000-max WebP q80 (metadata
@@ -79,6 +84,10 @@ const SENT_SPLIT = /(?<=[.!?]["”’)]?)\s+(?=["“‘(]?[A-Z0-9])/;
 // "Ambria Rupp will serve as the Head Coach for 14 Sapphire ... next season at DS Elite!"
 // "Brandon Blahnik will be the Head Coach of 11 Diamond next season at DS Elite!"
 const isServeSentence = (s) => /\bwill (?:serve as|be)\b/i.test(s) && /next season|at DS Elite/i.test(s);
+// Sentences that go stale: a named team ("14 Sapphire", "11U Rise 1" is a different thing — only "<age> <Gem>") or "next season".
+const GEMS = "Diamond|Ruby|Emerald|Sapphire|Topaz|Crystal|Pearl|Opal|Onyx|Amethyst|Garnet|Jade|Rise";
+const TEAM_NAMED = new RegExp("\\b\\d{1,2}\\s+(?:" + GEMS + ")\\b", "i");
+const isStale = (s, teamNames) => TEAM_NAMED.test(s) || /\bnext season\b/i.test(s) || teamNames.some((n) => s.toLowerCase().includes(n.toLowerCase()));
 // Minor coaches: no age, no named school.
 const MINOR_FIXES = [
   [/\bAt (?:the age of )?1\d(?: years old)?,\s*/g, ""],                                     // "At 17 years old, Ella brings" → "Ella brings"
@@ -86,7 +95,7 @@ const MINOR_FIXES = [
 ];
 const MINOR_LEFTOVER = /\b1\d years? old\b|\bage(?:d)? 1\d\b|currently a student|high school student/i;
 
-function cleanBio(raw, { minor }) {
+function cleanBio(raw, { minor, teamNames = [], dropped = [] }) {
   if (!raw) return null;
   const paras = String(raw).replace(/\r\n?/g, "\n").split(/\n\s*\n/).map((p) => p.replace(/\s+/g, " ").trim()).filter(Boolean);
   let removed = false;
@@ -97,6 +106,7 @@ function cleanBio(raw, { minor }) {
       const i = sents.findIndex(isServeSentence);
       if (i >= 0) { sents = sents.filter((_, j) => j !== i); removed = true; }
     }
+    sents = sents.filter((s) => { const stale = isStale(s, teamNames); if (stale) dropped.push(s); return !stale; });
     let text = sents.join(" ").trim();
     if (minor) for (const [re, to] of MINOR_FIXES) text = text.replace(re, to);
     if (text) out.push(text);
@@ -114,6 +124,7 @@ const must = (r, what) => { if (r.error) throw new Error(`${what}: ${r.error.mes
 
 const manifest = JSON.parse(readFileSync(MANIFEST, "utf8"));
 const teams = must(await sb.from("practice_teams").select("team_name, head_coach, assistant_coach, third_coach"), "practice_teams");
+const teamNames = teams.map((t) => String(t.team_name || "").trim()).filter((n) => /^\d/.test(n));
 const onRoster = new Set(teams.flatMap((t) => [t.head_coach, t.assistant_coach, t.third_coach]).map((s) => String(s || "").trim()).filter((s) => s && !isPlaceholder(s)));
 const leaderBy = new Map(LEADERSHIP.map((l) => [l.name, l]));
 const existing = new Map(must(await sb.from("site_staff").select("name, updated_by"), "site_staff").map((r) => [r.name, r]));
@@ -134,7 +145,9 @@ const rows = [];
 for (const { m, name } of entries) {
   const slug = personSlug(name);
   const minor = (m.flags || []).some((f) => /minor_coach/i.test(f));
-  const bio = NO_BIO.has(name) ? null : cleanBio(m.bio, { minor });
+  const dropped = [];
+  const bio = NO_BIO.has(name) ? null : cleanBio(m.bio, { minor, teamNames, dropped });
+  if (dry) for (const s of dropped) console.log(`  ${name}: dropped "${s}"`);
   const lead = leaderBy.get(name);
   const title = lead ? lead.title : null;
   for (const [field, v] of [["bio", bio], ["title", title]]) {

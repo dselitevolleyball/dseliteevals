@@ -16,6 +16,8 @@
 //
 // Env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY (read-only queries).
 
+import { isEventTeam } from "../shared/event-teams.js";
+
 const TZ = "America/Chicago";
 const SUMMER_SUNDAYS = ["2026-07-12","2026-07-19","2026-07-26","2026-08-02","2026-08-09","2026-08-16","2026-08-23","2026-08-30","2026-09-06"];
 const FALL1_SUNDAYS  = ["2026-09-13","2026-09-20","2026-09-27","2026-10-04","2026-10-11"];
@@ -70,10 +72,10 @@ export default async function handler(req, res) {
 
   const team = (req.query.team || "").trim();
   if (!team) {
-    // Index page: every team with its copyable feed URL.
-    const teams = await q("practice_teams?select=team_name&order=team_name");
+    // Index page: every team with its copyable feed URL (event teams like 14 Crystal have no calendar to share).
+    const teams = await q("practice_teams?select=team_name,practices_per_week&order=team_name");
     const host = "https://" + (req.headers["x-forwarded-host"] || req.headers.host);
-    const rows = (Array.isArray(teams) ? teams : []).map(t =>
+    const rows = (Array.isArray(teams) ? teams : []).filter(t => !isEventTeam(t)).map(t =>
       `<tr><td style="padding:6px 14px 6px 0;font-weight:700">${t.team_name}</td><td><code>${host}/api/calendar?team=${encodeURIComponent(t.team_name)}</code></td></tr>`).join("");
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     return res.status(200).send(`<html><body style="font-family:sans-serif;padding:24px"><h2>DS Elite team calendar feeds</h2>
@@ -307,7 +309,9 @@ export default async function handler(req, res) {
     if (a.status === "dropped") continue;               // no event for a team that pulled out
     const end = tn.end_date || tn.start_date;
     const summary = team + " Tournament — " + tn.name + (a.status === "planned" ? " (tentative)" : "");
-    const desc = ["Status: " + (a.status || "planned"), a.division ? "Division: " + a.division : "", tn.stay_over ? "Travel tournament — overnight stay." : ""].filter(Boolean).join("\n");
+    // Parents read "Confirmed" / "Tentative", not the planner's internal status words.
+    const confirmed = ["locked", "registered", "accepted", "rostered", "need_to_drop"].includes(a.status);
+    const desc = ["Status: " + (confirmed ? "Confirmed" : "Tentative"), a.division ? "Division: " + a.division : "", tn.stay_over ? "Travel tournament — overnight stay." : ""].filter(Boolean).join("\n");
     // Timed (not all-day) so importers that mangle VALUE=DATE spans — SportsYou
     // shifts/shortens them — render the full Sat–Sun (or Fri–Sun) span. 8am on
     // day 1 through 6pm on the final day, in the same TZID the practice events

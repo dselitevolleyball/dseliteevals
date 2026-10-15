@@ -3,6 +3,7 @@
 // hold no session), body parsing, US phone normalizing, the honeypot and a
 // small per-IP throttle. Every response is JSON with a sentence a parent can read.
 
+import { createHash, timingSafeEqual } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 
 export function cors(res, methods = "POST, OPTIONS") {
@@ -41,7 +42,22 @@ export function usPhone(raw) {
 }
 
 export const clientIp = (req) => String(req.headers["x-forwarded-for"] || req.headers["x-real-ip"] || "").split(",")[0].trim().slice(0, 60) || null;
-export const isTest = (req, body) => String(req.headers["x-site-test"] || "").trim() === "1" || truthy(body && body.test);
+
+// Test mode is for the people building the site, not for visitors: the
+// x-site-test header must carry a secret whose SHA-256 is the constant below
+// (this repo is public, so only the hash lives here; the secret itself is
+// SITE_TEST_TOKEN in the gitignored .env and is never deployed).
+//   'none'    no header — a normal request
+//   'valid'   the secret → test mode (nothing is emailed or texted; opt-in writes nothing)
+//   'invalid' anything else → the endpoint answers 403, never a real submission
+export const SITE_TEST_TOKEN_SHA256 = "8a7b376abdb86254731f9ff32592d772a619bb25c542f5626cd9eb7815ecda10";
+export function testMode(req) {
+  const raw = String(req.headers["x-site-test"] ?? "").trim();
+  if (!raw) return "none";
+  const got = createHash("sha256").update(raw).digest();
+  return timingSafeEqual(got, Buffer.from(SITE_TEST_TOKEN_SHA256, "hex")) ? "valid" : "invalid";
+}
+export const badTestToken = (res) => res.status(403).json({ ok: false, error: "That test token isn't valid." });
 
 // Per warm function instance: a burst from one IP is turned away politely.
 const hits = new Map();

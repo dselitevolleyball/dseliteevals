@@ -85,13 +85,13 @@ export default function SiteAdmin({ coach }) {
     setPlayers(data || []);
   }, [season]);
   const loadInquiries = useCallback(async () => {
-    const { data, error } = await supabase.from("site_inquiries").select("*").order("created_at", { ascending: false }).limit(300);
+    const { data, error } = await supabase.from("site_inquiries").select("*").eq("is_test", false).order("created_at", { ascending: false }).limit(300);
     if (error) setErr(error.message);
     setInquiries(data || []);
   }, []);
   useEffect(() => { loadStaff(); loadPlayers(); loadInquiries(); }, [loadStaff, loadPlayers, loadInquiries]);
 
-  const openCount = inquiries.filter((q) => !q.handled && !q.is_test).length;
+  const openCount = inquiries.filter((q) => !q.handled).length;
   const tabs = [["staff", "Staff profiles"], ["roster", "Roster visibility"], ["inquiries", "Inquiries" + (openCount ? ` (${openCount})` : "")]];
 
   return (
@@ -334,7 +334,7 @@ export function RosterTab({ teams, players, setPlayers, setErr, season }) {
 const TOPIC = { tryouts: "Tryouts", general: "General", coaching: "Coaching", other: "Other" };
 export function InquiriesTab({ rows, setRows, me, setErr, reload }) {
   const [show, setShow] = useState("open");
-  const list = rows.filter((q) => (show === "all" ? true : show === "test" ? q.is_test : !q.handled && !q.is_test));
+  const list = rows.filter((q) => (show === "all" ? true : !q.handled));
   const toggle = async (q) => {
     const patch = { handled: !q.handled, handled_at: !q.handled ? new Date().toISOString() : null, handled_by: !q.handled ? me : null };
     setRows((xs) => xs.map((x) => (x.id === q.id ? { ...x, ...patch } : x)));
@@ -344,7 +344,7 @@ export function InquiriesTab({ rows, setRows, me, setErr, reload }) {
   return (
     <div>
       <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
-        {[["open", "Open"], ["all", "All"], ["test", "Tests"]].map(([k, t]) => <button key={k} onClick={() => setShow(k)} style={{ ...btn(show === k ? "" : "ghost"), padding: "6px 10px", fontSize: 12 }}>{t}</button>)}
+        {[["open", "Open"], ["all", "All"]].map(([k, t]) => <button key={k} onClick={() => setShow(k)} style={{ ...btn(show === k ? "" : "ghost"), padding: "6px 10px", fontSize: 12 }}>{t}</button>)}
         <span style={{ fontSize: 12, color: C.mut, marginLeft: 6 }}>Messages from the website's contact form, newest first. Each one is also emailed to Drew (reply goes straight to the sender).</span>
       </div>
       {!list.length && <div style={{ color: C.mut, fontSize: 13, padding: "8px 2px" }}>{rows.length ? "Nothing here." : "No messages yet."}</div>}
@@ -354,8 +354,7 @@ export function InquiriesTab({ rows, setRows, me, setErr, reload }) {
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 6 }}>
               <b style={{ fontSize: 15 }}>{q.name}</b>
               {chip(TOPIC[q.topic] || q.topic, C.gold)}
-              {q.is_test && chip("Test", C.amber)}
-              {!q.is_test && !q.emailed_at && chip("Not emailed", C.red)}
+              {!q.emailed_at && chip("Not emailed", C.red)}
               <span style={{ fontSize: 12, color: C.mut }}>{ago(q.created_at)}</span>
               <span style={{ flex: 1 }} />
               <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 13, cursor: "pointer" }}>

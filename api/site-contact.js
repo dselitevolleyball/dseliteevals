@@ -8,14 +8,17 @@
 //   200   { ok: true, message }            (+ id and test: true for a test)
 //   400   { ok: false, error, field }
 //
-// Testing: header `x-site-test: 1` (or body.test) saves the row with
+// Testing: the header `x-site-test: <secret>` (SITE_TEST_TOKEN — see testMode() in
+// _lib/site-forms.js; only its hash is in the repo) saves a validated row with
 // is_test = true and sends NO email, so trying the form never lands in Drew's inbox.
+// Test requests are throttled like everyone else's; a wrong token is a 403 (never a
+// real submission). HQ's Inquiries tab doesn't list test rows.
 // company is a honeypot (bots get a 200, nothing is saved or sent).
 //
 // Env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, RESEND_API_KEY, DSE_FROM_EMAIL,
 //      SITE_CONTACT_TO (optional, default drew@dselitevolleyball.com).
 
-import { cors, readBody, str, longStr, isEmail, usPhone, clientIp, isTest, throttled, serviceClient, esc } from "./_lib/site-forms.js";
+import { cors, readBody, str, longStr, isEmail, usPhone, clientIp, testMode, badTestToken, throttled, serviceClient, esc } from "./_lib/site-forms.js";
 
 const TOPICS = { tryouts: "Tryouts", general: "General question", coaching: "Coaching at DS Elite", other: "Other" };
 const DEFAULT_TO = "drew@dselitevolleyball.com";
@@ -25,11 +28,13 @@ export default async function handler(req, res) {
   if (req.method === "OPTIONS") return res.status(204).end();
   if (req.method !== "POST") { res.setHeader("Allow", "POST, OPTIONS"); return res.status(405).json({ ok: false, error: "Use POST." }); }
 
+  const mode = testMode(req);
+  if (mode === "invalid") return badTestToken(res);
+  const test = mode === "valid";
   const b = readBody(req);
   if (str(b.company, 200)) return res.status(200).json({ ok: true, message: "Thanks — we got your message and will get back to you soon." });
   const ip = clientIp(req);
-  const test = isTest(req, b);
-  if (!test && throttled("contact:" + ip, { max: 5 })) return res.status(429).json({ ok: false, error: "That's a lot of messages from one connection. Please wait a few minutes, or email drew@dselitevolleyball.com." });
+  if (throttled((test ? "contact-test:" : "contact:") + ip, { max: test ? 20 : 5 })) return res.status(429).json({ ok: false, error: "That's a lot of messages from one connection. Please wait a few minutes, or email drew@dselitevolleyball.com." });
 
   const name = str(b.name, 120), email = str(b.email, 200).toLowerCase();
   const phoneRaw = str(b.phone, 40), phone = phoneRaw ? usPhone(phoneRaw) : null;
