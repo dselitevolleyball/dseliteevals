@@ -100,7 +100,7 @@ const page = (inner, { title = "Send us your photos — DS Elite" } = {}) => `<!
   .f .x { background:none; border:none; color:var(--mut); font-size:19px; cursor:pointer; line-height:1; padding:0 4px; }
   .bar { height:3px; background:var(--rule); border-radius:2px; overflow:hidden; margin-top:4px; }
   .bar i { display:block; height:100%; width:0; background:var(--gold); transition:width .2s; }
-  button.go { width:100%; padding:16px; font:inherit; font-weight:800; font-size:17px; cursor:pointer;
+  button.go, a.go { width:100%; padding:16px; font:inherit; font-weight:800; font-size:17px; cursor:pointer;
     background:var(--gold); color:#1a1613; border:none; border-radius:11px; margin-top:6px; }
   button.go[disabled] { background:var(--rule); color:var(--mut); cursor:default; }
   .ok { border-left:3px solid var(--grn); background:rgba(74,222,128,.09); padding:14px 16px; border-radius:0 8px 8px 0; }
