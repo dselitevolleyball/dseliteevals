@@ -159,9 +159,15 @@ export default async function handler(req, res) {
   let coach = null, coachTeams = [];
   if (!player) {
     const { data: c } = await supabase.from("coach_roster")
-      .select("id,first_name,last_name").eq("photo_upload_token", token).maybeSingle();
+      .select("id,first_name,last_name,email").eq("photo_upload_token", token).maybeSingle();
     if (!c) return res.status(404).send(notFound("We can't find that link. It may have been re-issued."));
     coach = { ...c, name: `${c.first_name || ""} ${c.last_name || ""}`.trim() };
+    // Admins upload from HQ and expect to land back on Team Photos when done.
+    const em = String(c.email || "").trim().toLowerCase();
+    if (em) {
+      const { data: login } = await supabase.from("coaches").select("is_admin,is_approved").ilike("email", em).maybeSingle();
+      coach.isAdmin = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"].includes(em) || !!(login?.is_admin && login?.is_approved);
+    }
     const n = (s) => String(s || "").trim().toLowerCase().replace(/\s+/g, " ");
     const { data: pt } = await supabase.from("practice_teams").select("team_name,head_coach,assistant_coach,third_coach");
     coachTeams = (pt || [])
@@ -254,8 +260,11 @@ export default async function handler(req, res) {
     return json(res, 200, { ok: true, saved: rows.length });
   }
 
+  // Where the confirmation sends you: opened from HQ (&from=hq), an admin goes
+  // back to Team Photos and a coach back to the home screen.
+  const back = coach && String(q.from || "") === "hq" ? (coach.isAdmin ? "/?view=photos" : "/") : null;
   return res.status(200).send(coach
-    ? renderForm(null, [], { coach, teams: coachTeams, byTeam })
+    ? renderForm(null, [], { coach, teams: coachTeams, byTeam, back })
     : renderForm(player, tournaments, {}));
 }
 
@@ -273,7 +282,7 @@ function eventFrom(body, tournaments) {
   return { context, tournamentId: null, label, folder: slug(label) };
 }
 
-function renderForm(player, tournaments, { preview, coach, teams = [], byTeam = {} } = {}) {
+function renderForm(player, tournaments, { preview, coach, teams = [], byTeam = {}, back = null } = {}) {
   const who = preview ? "your daughter" : coach ? coach.name : `${player.first_name} ${player.last_name}`;
   // A coach's list starts empty and is filled for whichever team is picked.
   const opts = (coach ? [] : tournaments).map(t =>
@@ -289,6 +298,7 @@ function renderForm(player, tournaments, { preview, coach, teams = [], byTeam = 
       ? `Coach <b style="color:var(--ink)">${esc(coach.name)}</b> — this link is yours. Bookmark it and come back after every tournament; everything you send is credited to you.`
       : `For <b style="color:var(--ink)">${esc(player.team_assignment || "your team")}</b>. Bookmark this page — it's yours for the whole season, and you can come back to it after every tournament.`}</p>
 
+  <div id="form">
   <div class="card">
     <p class="sect">1 &middot; Where are they from?</p>
     ${coach && teams.length ? `<label style="margin-bottom:14px"><span class="lb">Which team?</span>
@@ -335,7 +345,24 @@ function renderForm(player, tournaments, { preview, coach, teams = [], byTeam = 
   </div>`}
 
   <button class="go" id="send" disabled>Send photos</button>
-  <p class="hint" style="text-align:center" id="status">They upload straight from this device — big files are fine.</p>
+  <p class="hint" style="text-align:center" id="status">They upload straight from this device — big files are fine. Keep this page open until you see the confirmation.</p>
+  </div>
+
+  <!-- Confirmation: replaces the form once photos are saved (Drew, Oct 16
+       2026 - a family's Monday photos stored but were never recorded because
+       the page was closed before the final step, and nothing said "done"). -->
+  <div id="done" class="hide">
+    <div class="card" style="text-align:center;padding:28px 18px">
+      <div style="width:64px;height:64px;border-radius:50%;background:rgba(74,222,128,.14);border:2px solid var(--grn);margin:0 auto 14px;display:grid;place-items:center;color:var(--grn);font-size:34px;font-weight:800">&#10003;</div>
+      <h1 style="font-size:2.1rem;margin:0 0 6px" id="doneTitle">Photos received</h1>
+      <p class="sub" style="margin:0 0 16px" id="doneSub"></p>
+      <div id="doneThumbs" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(64px,1fr));gap:6px;margin:0 0 16px"></div>
+      <div id="doneWarn" class="err hide" style="text-align:left"></div>
+      ${back ? `<a href="${esc(back)}" class="go" id="backBtn" style="display:block;text-decoration:none;text-align:center;box-sizing:border-box">Back to DS Elite HQ</a>
+      <p class="hint" id="backHint" style="text-align:center">Taking you back in <b id="backSecs">5</b>…</p>` : ""}
+      <button type="button" class="go" id="moreBtn" style="${back ? "background:transparent;color:var(--gold);border:1px solid var(--gold)" : ""}">Send more photos</button>
+    </div>
+  </div>
 
   <div class="card" style="margin-top:14px">
     <div class="note">
@@ -493,31 +520,73 @@ function renderForm(player, tournaments, { preview, coach, teams = [], byTeam = 
         var c = todo[i], s = signed.files[i];
         if (!s || !s.signedUrl) { c.state = 'failed'; c.err = (s && s.error) || 'no upload slot'; draw(); continue; }
         c.state = 'uploading'; c.pct = 0; draw();
-        status.textContent = 'Sending ' + (i + 1) + ' of ' + todo.length + '\\u2026';
+        status.textContent = 'Sending ' + (i + 1) + ' of ' + todo.length + '\\u2026 keep this page open';
         try {
           await put(s.signedUrl, c.f, function (p) { c.pct = p; draw(); });
-          c.state = 'done';
-          landed.push({ path: s.path, name: c.f.name, type: c.f.type, size: c.f.size });
+          var item = { path: s.path, name: c.f.name, type: c.f.type, size: c.f.size };
+          // Saved the moment it lands, not in one batch at the end: closing
+          // the page part-way used to leave stored photos HQ never showed.
+          if (await record(m, item)) { c.state = 'done'; landed.push(item); }
+          else { c.state = 'failed'; c.err = 'Uploaded but not saved - tap Send again'; }
         } catch (e) {
-          c.state = 'failed'; c.err = 'Did not send — try again';
+          c.state = 'failed'; c.err = 'Did not send - try again';
         }
         draw();
       }
 
-      if (landed.length) {
-        try {
-          await fetch(window.location.pathname + window.location.search + '&action=record', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(Object.assign({}, m, { photos: landed })) });
-        } catch (e) { /* the files are safely stored; the row can be rebuilt */ }
-      }
-
       busy = false;
       var failed = chosen.filter(function (c) { return c.state === 'failed'; }).length;
-      status.textContent = landed.length
-        ? ('Thank you \\u2014 ' + landed.length + ' sent.' + (failed ? ' ' + failed + " didn't go through, tap Send again to retry those." : ' You can pick more any time.'))
-        : 'Nothing went through. Check your signal and try again.';
+      if (landed.length) { showDone(m, landed.length, failed); return; }
+      status.textContent = 'Nothing went through. Check your signal and try again.';
       refresh(); draw();
+    });
+
+    async function record(m, item) {
+      for (var a = 0; a < 2; a++) {
+        try {
+          var r = await fetch(window.location.pathname + window.location.search + '&action=record', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(Object.assign({}, m, { photos: [item] })) });
+          if (r.ok) return true;
+        } catch (e) {}
+      }
+      return false;
+    }
+
+    // The confirmation screen: how many landed, where they're filed, the
+    // photos themselves - and from HQ, a trip back there.
+    var BACK = ${JSON.stringify(back)}, TEAM = ${JSON.stringify(coach ? null : (player?.team_assignment || null))};
+    function showDone(m, n, failed) {
+      var team = m.team || TEAM;
+      var tsel = $('tournament').selectedOptions[0], pb = document.querySelector('.seg button[aria-pressed="true"]');
+      var ev = ctx === 'tournament' && tsel && tsel.value ? tsel.textContent : (pb ? pb.firstChild.textContent : '');
+      $('doneTitle').textContent = n + ' photo' + (n === 1 ? '' : 's') + ' received';
+      $('doneSub').textContent = 'Thank you! They are saved' + (team ? ' for ' + team : '') + (ev ? ' - ' + ev : '') + '.';
+      var th = $('doneThumbs'); th.innerHTML = '';
+      chosen.filter(function (c) { return c.state === 'done'; }).forEach(function (c) {
+        var im = document.createElement('img');
+        im.style.cssText = 'width:100%;aspect-ratio:1;object-fit:cover;border-radius:8px;background:#221f1d';
+        if (/^image\\//.test(c.f.type)) { try { im.src = URL.createObjectURL(c.f); } catch (e) {} }
+        th.appendChild(im);
+      });
+      var w = $('doneWarn');
+      if (failed) { w.textContent = failed + (failed === 1 ? " photo didn't" : " photos didn't") + " go through. Tap Send more photos to try " + (failed === 1 ? 'it' : 'them') + ' again.'; w.classList.remove('hide'); }
+      else w.classList.add('hide');
+      $('form').classList.add('hide'); $('done').classList.remove('hide');
+      window.scrollTo(0, 0);
+      if (BACK && !failed) {
+        var secs = 5, el = $('backSecs');
+        var t = setInterval(function () { secs--; if (el) el.textContent = secs; if (secs <= 0) { clearInterval(t); window.location.href = BACK; } }, 1000);
+        $('moreBtn').addEventListener('click', function () { clearInterval(t); var h = $('backHint'); if (h) h.classList.add('hide'); }, { once: true });
+      } else if ($('backHint')) $('backHint').classList.add('hide');
+    }
+    $('moreBtn').addEventListener('click', function () {
+      // Keep only what didn't go through, ready to retry; the event stays picked.
+      chosen = chosen.filter(function (c) { return c.state === 'failed'; });
+      chosen.forEach(function (c) { c.state = 'ready'; c.err = null; });
+      $('done').classList.add('hide'); $('form').classList.remove('hide');
+      status.textContent = chosen.length ? 'Tap Send to try those again.' : 'Pick more photos any time.';
+      draw();
     });
   })();
   </script>`}`,

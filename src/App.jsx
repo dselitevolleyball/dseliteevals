@@ -9596,7 +9596,7 @@ export default function App() {
 
         {/* Photo upload — the coach's own link, always one tap from home. */}
         {myRoster?.photo_upload_token && (
-          <a href={"/photos?t=" + myRoster.photo_upload_token} target="_blank" rel="noopener noreferrer"
+          <a href={"/photos?t=" + myRoster.photo_upload_token + "&from=hq"}
             style={{display:"flex",alignItems:"center",gap:12,padding:"11px 14px",marginBottom:12,background:C.card,border:"1px solid "+C.border,borderRadius:12,textDecoration:"none"}}>
             <span style={{fontSize:22}}>📸</span>
             <span style={{flex:1,minWidth:0}}>
@@ -12595,6 +12595,12 @@ export default function App() {
             </div>
           </div>
           <div style={{flex:1}} />
+          {/* Your own upload link; when it's done it brings you back here. */}
+          {(() => { const me = coachRoster.find(r => coach?.email && String(r.email || "").trim().toLowerCase() === String(coach.email).trim().toLowerCase());
+            return me?.photo_upload_token ? (
+              <a href={"/photos?t=" + me.photo_upload_token + "&from=hq"}
+                style={{padding:"7px 13px",borderRadius:8,background:C.gold,color:"#000",fontSize:12,fontWeight:800,textDecoration:"none",whiteSpace:"nowrap"}}>📸 Upload photos</a>
+            ) : null; })()}
           <a href={APP_URL.replace(/\/$/, "") + "/photos?preview=1"} target="_blank" rel="noreferrer"
             title="See the page families use"
             style={{padding:"8px 14px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",
