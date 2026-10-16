@@ -102,6 +102,11 @@ export default async function handler(req, res) {
   };
   const ar = collect(t, 0);
   const BY = {}; ar.forEach(x => { let n = N(x.name || x.teamName); n = AL[n] || n; const id = x.id || x.teamId; if (id) BY[n] = id; });
+  // Teams missing from the cached list (Oct 16 2026: 13-1 Rise wasn't in
+  // sy-web::teams, so its gear-store post had "no SportsYou team match").
+  // Their SportsYou ids, from the team page URL; used only when the name finds nothing.
+  const PIN = { '13 rise 1': 'te-09b8ac45-b6ef-4ed5-a2ae-d7ff63ff7645' };
+  Object.keys(PIN).forEach(k => { if (!BY[k]) BY[k] = PIN[k]; });
   if (!Object.keys(BY).length) {
     alert('Could not read your SportsYou teams.\\n\\nOpen the Teams page so the app caches them, then retry.\\n\\nDebug: sy-web::teams top-level keys = ' + (t && typeof t === 'object' ? Object.keys(t).join(', ').slice(0, 200) : typeof t));
     return;
