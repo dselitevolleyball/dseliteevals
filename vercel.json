@@ -97,6 +97,10 @@
   ],
   "crons": [
     {
+      "path": "/api/email-schedule",
+      "schedule": "5 * * * *"
+    },
+    {
       "path": "/api/projects-weekly",
       "schedule": "0 13 * * 1"
     },
