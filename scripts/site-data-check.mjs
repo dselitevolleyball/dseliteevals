@@ -85,7 +85,7 @@ ok(data && data.ok === true, "ok is not true");
 
 // ---- 2. exact keys (the contract) + private-looking keys -------------------------------
 const S = {
-  root: ["ok", "generated_at", "season", "today", "counts", "venues", "teams", "staff", "tournaments", "this_weekend", "links"],
+  root: ["ok", "generated_at", "season", "today", "counts", "venues", "teams", "staff", "tournaments", "this_weekend", "links", "training"],
   counts: ["teams", "athletes", "coaches", "tournaments", "planned_tournaments", "travel_tournaments", "qualifiers", "states"],
   venues: ["warehouse", "flex"],
   venue: ["key", "name", "address", "map_url"],
@@ -103,8 +103,11 @@ const S = {
   staff: ["slug", "name", "title", "bio", "photo_url", "leadership", "sort_order", "teams"],
   weekend: ["label", "start", "end", "tournaments"],
   links: ["hq", "hub"],
+  training: ["programs", "links"],
+  trainingProgram: ["name", "kind", "ages", "next_dates", "start_time", "end_time", "sessions_left", "venue", "register_url"],
+  trainingLinks: ["volleyball", "pods", "reach", "calendar"],
 };
-const OPTIONAL = { live: new Set(["record", "finish", "next", "updated_at"]), phase: new Set(["note"]), session: new Set(["from", "to"]) };
+const OPTIONAL = { root: new Set(["training"]), live: new Set(["record", "finish", "next", "updated_at"]), phase: new Set(["note"]), session: new Set(["from", "to"]) };
 function keys(obj, type, where) {
   if (obj == null || typeof obj !== "object" || Array.isArray(obj)) { fail(`${where}: expected an object`); return; }
   const allowed = S[type];
@@ -375,6 +378,43 @@ if (urlArg) {
     } else liveNotes.push("site-optin test-mode check skipped (no SITE_TEST_TOKEN)");
   }
 }
+
+// ---- training: upcoming volleyball sessions only, whitelisted, Playbook links only ----------
+if (data.training !== undefined) {
+  const T = data.training;
+  keys(T, "training", "training");
+  keys(T.links, "trainingLinks", "training.links");
+  const PB = "https://drippingsports.playbookapi.com/programs/";
+  ok(T.links.volleyball === PB + "register/volleyball/" && T.links.pods === PB + "register/volleyball_pods/" && T.links.reach === PB + "register/reach_performance/" && T.links.calendar === PB + "calendar", "training.links are not the expected Playbook URLs");
+  ok(Array.isArray(T.programs) && T.programs.length >= 1 && T.programs.length <= 12, "training.programs must hold 1-12 programs");
+  const clin = must(await sb.from("dssc_clinics").select("name, sport, coach_name, assistants"), "dssc_clinics");
+  const bball = new Set(clin.filter((c) => c.sport === "basketball").map((c) => String(c.name).trim().toLowerCase()));
+  const people = new Set(clin.flatMap((c) => [c.coach_name, ...String(c.assistants || "").split(/[,;&]/)]).map((s) => String(s || "").trim().toLowerCase()).filter((s) => s.length > 3));
+  const volley = new Set(clin.filter((c) => c.sport !== "basketball").map((c) => String(c.name).trim().toLowerCase()));
+  const lo = data.today, hi = new Date(Date.parse(lo + "T12:00:00Z") + 75 * 86400000).toISOString().slice(0, 10);
+  const seen = new Set();
+  T.programs.forEach((p, i) => {
+    const w = `training.programs[${i}] ${p.name}`;
+    keys(p, "trainingProgram", w);
+    ok(!seen.has(p.name.toLowerCase()), `${w}: duplicate program`); seen.add(p.name.toLowerCase());
+    ok(p.name === p.name.trim() && p.name.length > 0, `${w}: name not trimmed`);
+    ok(!bball.has(p.name.toLowerCase()) || volley.has(p.name.toLowerCase()), `${w}: basketball program`);
+    ok(!/basketball/i.test(p.name), `${w}: basketball in name`);
+    ok(["pod", "camp", "clinic", "program"].includes(p.kind), `${w}: bad kind ${p.kind}`);
+    ok(p.venue === null || p.venue === "warehouse" || p.venue === "flex", `${w}: bad venue`);
+    ok(Array.isArray(p.next_dates) && p.next_dates.length >= 1 && p.next_dates.length <= 4, `${w}: next_dates length`);
+    ok(p.next_dates.every((d, j) => /^\d{4}-\d{2}-\d{2}$/.test(d) && d >= lo && d <= hi && (!j || d > p.next_dates[j - 1])), `${w}: next_dates outside window or unsorted`);
+    ok(p.sessions_left >= p.next_dates.length, `${w}: sessions_left < next_dates`);
+    for (const t of [p.start_time, p.end_time]) ok(t === null || /^([01]\d|2[0-3]):[0-5]\d$/.test(t), `${w}: bad time ${t}`);
+    ok(p.ages === null || (typeof p.ages === "string" && p.ages.length < 40), `${w}: bad ages`);
+    ok([T.links.volleyball, T.links.pods, T.links.reach].includes(p.register_url), `${w}: register_url isn't a Playbook register page`);
+    ok(p.kind !== "pod" || p.register_url === T.links.pods, `${w}: pod not linked to PODs page`);
+    const txt = JSON.stringify(p).toLowerCase();
+    for (const who of people) ok(!txt.includes(who), `${w}: contains a coach name`);
+  });
+  for (let i = 1; i < T.programs.length; i++) ok(T.programs[i - 1].next_dates[0] <= T.programs[i].next_dates[0], "training.programs not sorted by next date");
+  console.log(`training: ${T.programs.length} programs (${T.programs.map((p) => p.kind).join(",")})`);
+} else console.log("training: omitted (nothing upcoming or query failed)");
 
 // ---- report -------------------------------------------------------------------------------
 console.log(`teams ${data.teams.length} (public ${publicTeams.length}; event teams hidden: ${eventTeams.join(", ") || "none"})`);

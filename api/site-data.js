@@ -32,7 +32,10 @@
 //     venues: { warehouse: Venue, flex: Venue },
 //     teams: Team[], staff: Staff[], tournaments: Tournament[],
 //     this_weekend: { label: 'This weekend'|'Next up', start, end, tournaments } | null,
-//     links: { hq, hub } }
+//     links: { hq, hub },
+//     training?: { programs: Program[], links: { volleyball, pods, reach, calendar } } }   (omitted when nothing upcoming / query fails)
+//   Program    { name, kind: pod|camp|clinic|program, ages, next_dates (<=4 YYYY-MM-DD), start_time, end_time (HH:MM Central, next session),
+//                sessions_left, venue: warehouse|flex|null, register_url } - upcoming volleyball sessions, next 75 days (api/_lib/site-training.js)
 //   counts.tournaments / travel_tournaments / qualifiers / states are over events with at least one
 //   CONFIRMED public-team entry; planned_tournaments = events whose public entries are all tentative.
 //   Venue      { key, name, address, map_url }
@@ -67,6 +70,7 @@ import { PROD_ORIGIN } from "../shared/app-origin.js";
 import { personSlug } from "../shared/site-slug.js";
 import { seasonForDate } from "./_lib/season.js";
 import { slugOf } from "./hub-data.js";
+import { loadTraining } from "./_lib/site-training.js";
 
 const APP = PROD_ORIGIN;
 // Same buildings and addresses as api/calendar.js (the ICS feeds).
@@ -583,6 +587,7 @@ export async function buildSiteData(sb, { now = new Date() } = {}) {
   // (a confirmed entry); events every team still has "planned" are counted apart.
   const going = allTn.filter((t) => t.teams.some((e) => e.status === "confirmed"));
   const states = new Set(going.map((t) => stateOf(t.city)).filter(Boolean));
+  const training = await loadTraining(sb, today);
   return {
     ok: true, generated_at: new Date(now).toISOString(), season, today,
     counts: {
@@ -593,6 +598,7 @@ export async function buildSiteData(sb, { now = new Date() } = {}) {
     venues: { warehouse: venueOut(VENUES.warehouse), flex: venueOut(VENUES.flex) },
     teams, staff, tournaments: allTn, this_weekend,
     links: { hq: APP, hub: `${APP}/hub` },
+    ...(training ? { training } : {}),
   };
 }
 
