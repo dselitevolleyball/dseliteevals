@@ -80,7 +80,7 @@ export const REACH_COPY = {
   // email recommends; Foundation is one session a week.
   signup_note: "Sign up from your own DSSC account and add {player_first} as the participant.",
   memberships: [
-    { name: "Reach Elite", price: "$400/month", detail: "16 Elite Athlete Development sessions a month — the 2x-a-week plan we recommend",
+    { name: "Reach Elite", price: "$400/month", detail: "Unlimited monthly training sessions with Reach Performance",
       link: "https://drippingsports.playbookapi.com/subscribe/subscription_registration/?subscription_id=6530", recommended: true },
     { name: "Reach Foundation", price: "$250/month", detail: "4 Elite Athlete Development sessions a month (1 per week)",
       link: "https://drippingsports.playbookapi.com/subscribe/subscription_registration/?subscription_id=6529" },
