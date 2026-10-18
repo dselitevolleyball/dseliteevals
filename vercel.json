@@ -48,6 +48,10 @@
       "destination": "/api/privates-form"
     },
     {
+      "source": "/poll",
+      "destination": "/api/poll-form"
+    },
+    {
       "source": "/coach-guide",
       "destination": "/coach-guide.html"
     },
