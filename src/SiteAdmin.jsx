@@ -63,6 +63,7 @@ export default function SiteAdmin({ coach }) {
   const [staffRows, setStaffRows] = useState([]);
   const [players, setPlayers] = useState([]);
   const [inquiries, setInquiries] = useState([]);
+  const [feedback, setFeedback] = useState([]);
   const [err, setErr] = useState("");
   const me = coach?.display_name || coach?.email || "HQ";
   const season = seasonNow();
@@ -89,10 +90,16 @@ export default function SiteAdmin({ coach }) {
     if (error) setErr(error.message);
     setInquiries(data || []);
   }, []);
-  useEffect(() => { loadStaff(); loadPlayers(); loadInquiries(); }, [loadStaff, loadPlayers, loadInquiries]);
+  const loadFeedback = useCallback(async () => {
+    const { data, error } = await supabase.from("site_feedback").select("*").eq("is_test", false).order("created_at", { ascending: false }).limit(500);
+    if (error) setErr(error.message);
+    setFeedback(data || []);
+  }, []);
+  useEffect(() => { loadStaff(); loadPlayers(); loadInquiries(); loadFeedback(); }, [loadStaff, loadPlayers, loadInquiries, loadFeedback]);
 
   const openCount = inquiries.filter((q) => !q.handled).length;
-  const tabs = [["staff", "Staff profiles"], ["roster", "Roster visibility"], ["inquiries", "Inquiries" + (openCount ? ` (${openCount})` : "")]];
+  const newFeedback = feedback.filter((x) => !x.reviewed).length;
+  const tabs = [["staff", "Staff profiles"], ["roster", "Roster visibility"], ["inquiries", "Inquiries" + (openCount ? ` (${openCount})` : "")], ["feedback", "Feedback" + (newFeedback ? ` (${newFeedback})` : "")]];
 
   return (
     <div style={{ padding: "16px 16px 48px", maxWidth: 980, margin: "0 auto" }}>
@@ -113,6 +120,7 @@ export default function SiteAdmin({ coach }) {
       {!teams ? <div style={{ color: C.mut, padding: 12 }}>Loading…</div>
         : tab === "staff" ? <StaffTab teams={teams} rows={staffRows} me={me} onSaved={loadStaff} setErr={setErr} />
         : tab === "roster" ? <RosterTab teams={teams} players={players} setPlayers={setPlayers} setErr={setErr} season={season} />
+        : tab === "feedback" ? <FeedbackTab rows={feedback} setRows={setFeedback} setErr={setErr} />
         : <InquiriesTab rows={inquiries} setRows={setInquiries} me={me} setErr={setErr} reload={loadInquiries} />}
     </div>
   );
@@ -332,6 +340,44 @@ export function RosterTab({ teams, players, setPlayers, setErr, season }) {
 
 // ── Inquiries ──────────────────────────────────────────────────────────────────
 const TOPIC = { tryouts: "Tryouts", general: "General", coaching: "Coaching", other: "Other" };
+// ── Feedback: the website's "thanks for visiting" pop-up (/api/site-feedback) ─────
+export function FeedbackTab({ rows, setRows, setErr }) {
+  const n = rows.length, avg = n ? rows.reduce((t, r) => t + r.rating, 0) / n : 0;
+  const dist = [5, 4, 3, 2, 1].map((k) => [k, rows.filter((r) => r.rating === k).length]);
+  const mark = async (r) => {
+    const { error } = await supabase.from("site_feedback").update({ reviewed: !r.reviewed }).eq("id", r.id);
+    if (error) return setErr(error.message);
+    setRows((xs) => xs.map((x) => (x.id === r.id ? { ...x, reviewed: !r.reviewed } : x)));
+  };
+  const stars = (k) => "★".repeat(k) + "☆".repeat(5 - k);
+  return (
+    <div>
+      <div style={{ background: C.card, border: "1px solid " + C.border, borderRadius: 12, padding: 14, marginBottom: 12, display: "flex", gap: 22, flexWrap: "wrap", alignItems: "center" }}>
+        <div><div style={{ fontSize: 30, fontWeight: 900, color: C.gold }}>{n ? avg.toFixed(1) : "–"}</div><div style={{ fontSize: 12, color: C.mut }}>average of {n} rating{n === 1 ? "" : "s"}</div></div>
+        <div style={{ flex: 1, minWidth: 200 }}>{dist.map(([k, c]) => (
+          <div key={k} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: C.mut, margin: "2px 0" }}>
+            <span style={{ width: 18 }}>{k}★</span>
+            <div style={{ flex: 1, height: 8, background: "#222", borderRadius: 4 }}><div style={{ width: (n ? (100 * c) / n : 0) + "%", height: 8, background: C.gold, borderRadius: 4 }} /></div>
+            <span style={{ width: 24, textAlign: "right" }}>{c}</span>
+          </div>))}
+        </div>
+      </div>
+      {!n ? <div style={{ color: C.mut, padding: 12 }}>No feedback yet. The pop-up asks visitors after they have spent a little time on dselitevolleyball.com.</div>
+        : rows.map((r) => (
+          <div key={r.id} style={{ background: C.card, border: "1px solid " + C.border, borderRadius: 12, padding: 12, marginBottom: 8, opacity: r.reviewed ? 0.55 : 1 }}>
+            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              <span style={{ color: C.gold, fontSize: 16, letterSpacing: 1 }}>{stars(r.rating)}</span>
+              <span style={{ fontSize: 12, color: C.mut }}>{ago(r.created_at)}{r.page ? " · " + r.page : ""}</span>
+              <button onClick={() => mark(r)} style={{ ...btn("ghost"), marginLeft: "auto", padding: "4px 10px", fontSize: 12 }}>{r.reviewed ? "Mark unread" : "Mark reviewed"}</button>
+            </div>
+            {r.navigation && <div style={{ marginTop: 8, fontSize: 13 }}><span style={{ color: C.mut }}>Navigation: </span>{r.navigation}</div>}
+            {r.needs_help && <div style={{ marginTop: 6, fontSize: 13 }}><span style={{ color: C.mut }}>Could use help: </span>{r.needs_help}</div>}
+          </div>
+        ))}
+    </div>
+  );
+}
+
 export function InquiriesTab({ rows, setRows, me, setErr, reload }) {
   const [show, setShow] = useState("open");
   const list = rows.filter((q) => (show === "all" ? true : !q.handled));
