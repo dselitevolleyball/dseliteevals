@@ -26683,7 +26683,8 @@ export default function App() {
         // an older plan's player id.
         const role = (sl) => { const p = pPos(sl.id); return p==="RS" ? "RS" : p==="OH" ? "OH" : sl.n===2 ? "RS" : "OH"; };
         const v = (set.srFront||{})[rr] ?? (set.srFront||{})[rr%6];
-        const chosen = ((v==="RS"||v==="OH") ? pins.find(sl => role(sl)===v) : pins.find(sl => sl.id===v)) || pins.find(sl => role(sl)==="OH") || pins[0];
+        ((set.srOff||{})[rr] ?? (set.srOff||{})[rr%6] ?? []).forEach(id => out.delete(id));   // taken off for this rotation
+        const chosen = v==="none" ? null : (((v==="RS"||v==="OH") ? pins.find(sl => role(sl)===v) : pins.find(sl => sl.id===v)) || pins.find(sl => role(sl)==="OH") || pins[0]);
         if (chosen) out.add(chosen.id);
         return out;
       })();
@@ -27268,10 +27269,16 @@ export default function App() {
             const pullPick = ro => {
               const cands = frontPins(ro);
               const v = srPickFor(ro.r);
+              if (v==="none") return null;                                             // coach unticked it: no front pin passes
               const chosen = (v==="RS"||v==="OH") ? cands.find(s => pinRole(s.id, s)===v) : cands.find(s => s.id===v);
               return chosen || cands.find(s => pinRole(s.id, s)==="OH") || cands[0] || null; // default: the OH
             };
             const setPull = (r, role) => updateDraft(d => { const t=d.sets[setIdx]; t.srFront={...(t.srFront||{}),[r]:role}; });
+            // Taking a libero / back-row passer OFF serve-receive for one rotation
+            // (Drew, Oct 18 2026: "trouble unselecting players I don't want on s/r").
+            // set.srOff[r] = player ids; R7-R12 fall back to their first-pass list.
+            const srOffFor = r => (set.srOff||{})[r] ?? (set.srOff||{})[r%6] ?? [];
+            const toggleOff = (r, id) => updateDraft(d => { const t=d.sets[setIdx]; const cur=((t.srOff||{})[r] ?? (t.srOff||{})[r%6] ?? []); t.srOff={...(t.srOff||{}),[r]: cur.includes(id) ? cur.filter(x=>x!==id) : [...cur, id]}; });
             // Tap-to-cycle subs. A court spot's "group" is its starting player
             // plus everyone ever subbed in for them (and for those subs) in this
             // set. Once a spot has a group, tapping the box steps to the next
@@ -27344,6 +27351,7 @@ export default function App() {
                 if(s.id===liberoId){ out.add(s.id); return; }                        // libero: always
                 if(s.row==="back" && !isMiddle(s.id) && !isSetter(s.id)) out.add(s.id); // back-row OH/DS: always
               });
+              srOffFor(ro.r).forEach(id => out.delete(id));                         // taken off by the coach for this rotation
               const pull = pullPick(ro);
               if(pull) out.add(pull.id);                                              // chosen front pin pulled back
               return out;
@@ -27357,6 +27365,7 @@ export default function App() {
               const isPass = phase==="receive" && slot.id && ro.passers && ro.passers.has(slot.id);
               const isRecvPin = phase==="receive" && slot.id && slot.row==="front" && !isMiddle(slot.id) && !isSetter(slot.id); // the RS / OH the coach can pull back (never the setter)
               const pinSel = isRecvPin && ro.passers && ro.passers.has(slot.id);                          // this pin is the one pulled back
+              const isBackCand = phase==="receive" && slot.id && slot.row==="back" && (slot.id===liberoId || (!isMiddle(slot.id) && !isSetter(slot.id))); // passes unless taken off
               const liberoServing = phase==="serve" && slot.n===1 && slot.id===liberoId && !!slot.libFor; // libero serving in for the middle
               const libSwitch = (slot.id && ro.switchIds && ro.switchIds.has(slot.id)) || liberoServing; // the half the libero⇄middle switch happens (incl. serving for the middle)
               const enteredHere = slot.id && !libSwitch && ro.entered && ro.entered.has(slot.id); // rotated / subbed in
@@ -27389,7 +27398,14 @@ export default function App() {
                       {isRecvPin && (
                         <label title="Pull this front-row player back to pass in serve-receive" onClick={e=>e.stopPropagation()}
                           style={{position:"absolute",bottom:1,right:2,display:"flex",alignItems:"center",gap:1,fontSize:8,fontWeight:800,cursor:"pointer",lineHeight:1,opacity:pinSel?1:0.4,color:pinSel?C.grn:C.mut}}>
-                          <input type="checkbox" checked={!!pinSel} onChange={e=>{ e.stopPropagation(); setPull(ro.r, pinRole(slot.id, slot)); }} style={{width:11,height:11,accentColor:C.grn,cursor:"pointer",margin:0}} />
+                          <input type="checkbox" checked={!!pinSel} onChange={e=>{ e.stopPropagation(); setPull(ro.r, pinSel ? "none" : pinRole(slot.id, slot)); }} style={{width:11,height:11,accentColor:C.grn,cursor:"pointer",margin:0}} />
+                          s/r
+                        </label>
+                      )}
+                      {isBackCand && (
+                        <label title={isPass ? "Passing in serve-receive - untick to take her off for this rotation" : "Not passing this rotation - tick to put her back on serve-receive"} onClick={e=>e.stopPropagation()}
+                          style={{position:"absolute",bottom:1,right:2,display:"flex",alignItems:"center",gap:1,fontSize:8,fontWeight:800,cursor:"pointer",lineHeight:1,opacity:isPass?1:0.4,color:isPass?C.grn:C.mut}}>
+                          <input type="checkbox" checked={!!isPass} onChange={e=>{ e.stopPropagation(); toggleOff(ro.r, slot.id); }} style={{width:11,height:11,accentColor:C.grn,cursor:"pointer",margin:0}} />
                           s/r
                         </label>
                       )}
@@ -27398,7 +27414,7 @@ export default function App() {
                         <div style={{fontSize:9.5,lineHeight:1,whiteSpace:"nowrap",fontWeight:800}}>
                           {isServer && <span style={{color:"#f59e0b"}}>serve</span>}
                           {isSetF && <span style={{color:"#f59e0b"}}>{isServer?" · ":""}rs</span>}
-                          {isPass && !isRecvPin && <span style={{color:C.grn}}>{(isServer||isSetF)?" · ":""}SR</span>}
+                          {isPass && !isRecvPin && !isBackCand && <span style={{color:C.grn}}>{(isServer||isSetF)?" · ":""}SR</span>}
                         </div>
                       </div>
                     </>
@@ -27514,7 +27530,7 @@ export default function App() {
                   </div>
                   <span style={{fontSize:10,color:C.mut}}>#num top-left · position top-right · ▲ = rotates in · SR = passer</span>
                 </div>
-                <div style={{fontSize:10,color:C.mut,margin:"6px 0 2px"}}>Serve-receive: libero + back-row OH/DS always pass. Tick the <b style={{color:C.grn}}>s/r</b> box on the front-row RS or OH to pull that one back as the third passer (one per rotation).</div>
+                <div style={{fontSize:10,color:C.mut,margin:"6px 0 2px"}}>Serve-receive: the libero and back-row OH/DS pass unless you untick their <b style={{color:C.grn}}>s/r</b> box. Tick the box on the front-row RS or OH to pull that one back as a passer (one per rotation); untick it and no front-row player passes. Each rotation is set on its own.</div>
                 {passBlock("First pass · R1–R6", 0, 6)}
                 {passBlock("Second pass · R7–R12", 6, 12)}
                 {/* Legend row: colors + roster positions */}
