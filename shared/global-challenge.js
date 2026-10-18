@@ -1,4 +1,4 @@
-// Girls Global Challenge (Croatia, summer 2027) — the interest form's facts and
+// Girls Global Challenge (Croatia, July 2027) — the interest form's facts and
 // answer options, in one place so the public page (api/global-form.js), the
 // send script and the app's Waiting on screen all say the same thing.
 //
@@ -17,7 +17,12 @@ export const GC_SINGLE_SUPPLEMENT = 700;
 // Parents and family who come along (Drew, 28 Sep 2026).
 export const GC_FAMILY_PRICE = 2495;
 
-// July 2027, per Cory's 27 Aug 2026 email.
+// When the trip is. Drew (18 Oct 2026): always call it "July 2027" wherever the
+// date comes up, never "next July" or "summer 2027".
+export const GC_WHEN = "July 2027";
+
+// July 2027, per Cory's 27 Aug 2026 email. The lines carry no year because the
+// form's date column is narrow; the list is headed "The plan · July 2027".
 export const GC_ITINERARY = [
   { when: "July 7", what: "Leave the US as a team" },
   { when: "July 8–10", what: "Three days in our pre-tour city: practices, scrimmages against local clubs, and group sightseeing" },

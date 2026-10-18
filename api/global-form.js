@@ -16,7 +16,7 @@
 import { createClient } from "@supabase/supabase-js";
 import {
   GC_PRICE, GC_SINGLE_SUPPLEMENT, GC_FAMILY_PRICE, GC_ITINERARY, GC_CITIES, GC_INTEREST,
-  GC_POSITIONS, GC_TRAVEL,
+  GC_POSITIONS, GC_TRAVEL, GC_WHEN,
 } from "../shared/global-challenge.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -224,7 +224,7 @@ export default async function handler(req, res) {
   const qs = preview ? "?preview=1" : "?t=" + esc(token);
 
   return res.status(problem ? 400 : 200).send(page(`
-    <span class="eyebrow">DS Elite Volleyball · Summer 2027</span>
+    <span class="eyebrow">DS Elite Volleyball · ${GC_WHEN}</span>
     <h1>Girls Global Challenge</h1>
     <p class="sub">Croatia · July 7–18, 2027 · for <b style="color:var(--ink)">${who} ${esc(player.last_name)}</b>${
       player.team_assignment ? " · " + esc(player.team_assignment) : ""}${
@@ -243,7 +243,7 @@ export default async function handler(req, res) {
         Mick Haley (Hunter's dad) has been at it every year for the last six.</p>
       <p>We'd enter the <b style="color:var(--ink)">U17 division</b>, so we're inviting our 14 and 15 National team
         players first to see if there are enough to field a team.</p>
-      <p>The timing is ideal for Texas club players. It starts right after club tryouts and gets everyone
+      <p>The ${GC_WHEN} timing is ideal for Texas club players. It starts right after club tryouts and gets everyone
         home before school tryouts.</p>
       <p>Think of it as a school trip more than a family vacation. The girls travel, eat, play and
         sightsee together as a team. Coach Drew and/or Coach Hunter will lead the team, with a dedicated
@@ -254,7 +254,7 @@ export default async function handler(req, res) {
     </div>
 
     <div class="card">
-      <p class="sect">The plan</p>
+      <p class="sect">The plan · ${GC_WHEN}</p>
       <ul class="it">${GC_ITINERARY.map((d) => `<li><span class="d">${esc(d.when)}</span><span>${esc(d.what)}</span></li>`).join("")}</ul>
     </div>
 
@@ -327,7 +327,7 @@ export default async function handler(req, res) {
       <button class="go" type="submit">Send our answer</button>
     </form>
 
-    <div class="foot">DS Elite Volleyball · Girls Global Challenge 2027<br>
+    <div class="foot">DS Elite Volleyball · Girls Global Challenge · ${GC_WHEN}<br>
       Questions? Drew Rose · <a href="mailto:drew@dselitevolleyball.com">drew@dselitevolleyball.com</a></div>
     <script>${script}</script>`,
     { title: player.first_name + " · Girls Global Challenge · DS Elite" }));

@@ -22,7 +22,7 @@ const [{ data: players }, { data: outs }] = await Promise.all([
   sb.from("sms_optouts").select("phone"),
 ]);
 const out = new Set((outs || []).map(o => last10(o.phone)));
-const TEXT = `Hi {first}, here is the Zoom link for today's DS Elite Europe trip (Croatia 2027) meeting at 3:30pm: ${ZOOM}\nMeeting ID: 619 105 8815. Talk to you then!\n- Drew, DS Elite`;
+const TEXT = `Hi {first}, here is the Zoom link for today's DS Elite Europe trip (Croatia, July 2027) meeting at 3:30pm: ${ZOOM}\nMeeting ID: 619 105 8815. Talk to you then!\n- Drew, DS Elite`;
 const texts = [], emails = [];
 for (const p of players) {
   const seen = new Set();
@@ -36,8 +36,8 @@ for (const p of players) {
 }
 if (/[^\x20-\x7E\n]/.test(TEXT) || TEXT.length > 600) throw new Error("bad text");
 const subject = "Zoom link: Europe trip meeting today at 3:30pm";
-const body = (hi) => `${hi}\n\nThanks for joining us on Zoom for today's Europe trip (Croatia 2027) interest meeting.\n\nSunday, October 11 at 3:30pm (Central)\nJoin Zoom: ${ZOOM}\nMeeting ID: 619 105 8815\n\nOne tap mobile:\n+13462487799,,6191058815# US (Houston)\n+12532050468,,6191058815# US\n\nTalk to you then.\n\n- Drew`;
-const html = (hi) => `<div style="font-family:-apple-system,Segoe UI,sans-serif;font-size:15px;line-height:1.6;color:#1a1a1a;max-width:600px"><p style="margin:0 0 14px">${hi}</p><p style="margin:0 0 14px">Thanks for joining us on Zoom for today&rsquo;s Europe trip (Croatia 2027) interest meeting.</p><p style="margin:0 0 16px"><b>Sunday, October 11 at 3:30pm (Central)</b></p><p style="margin:0 0 8px"><a href="${ZOOM}" style="display:inline-block;background:#e91e8c;color:#fff;padding:13px 22px;border-radius:8px;text-decoration:none;font-weight:700;font-size:16px">Join the Zoom meeting &rarr;</a></p><p style="margin:0 0 16px;font-size:13px;color:#555">${ZOOM}<br>Meeting ID: 619 105 8815</p><p style="margin:0 0 16px;font-size:14px">One tap mobile:<br>+13462487799,,6191058815# US (Houston)<br>+12532050468,,6191058815# US</p><p style="margin:0 0 14px">Talk to you then.</p><p style="margin:0">&mdash; Drew</p></div>`;
+const body = (hi) => `${hi}\n\nThanks for joining us on Zoom for today's Europe trip (Croatia, July 2027) interest meeting.\n\nSunday, October 11 at 3:30pm (Central)\nJoin Zoom: ${ZOOM}\nMeeting ID: 619 105 8815\n\nOne tap mobile:\n+13462487799,,6191058815# US (Houston)\n+12532050468,,6191058815# US\n\nTalk to you then.\n\n- Drew`;
+const html = (hi) => `<div style="font-family:-apple-system,Segoe UI,sans-serif;font-size:15px;line-height:1.6;color:#1a1a1a;max-width:600px"><p style="margin:0 0 14px">${hi}</p><p style="margin:0 0 14px">Thanks for joining us on Zoom for today&rsquo;s Europe trip (Croatia, July 2027) interest meeting.</p><p style="margin:0 0 16px"><b>Sunday, October 11 at 3:30pm (Central)</b></p><p style="margin:0 0 8px"><a href="${ZOOM}" style="display:inline-block;background:#e91e8c;color:#fff;padding:13px 22px;border-radius:8px;text-decoration:none;font-weight:700;font-size:16px">Join the Zoom meeting &rarr;</a></p><p style="margin:0 0 16px;font-size:13px;color:#555">${ZOOM}<br>Meeting ID: 619 105 8815</p><p style="margin:0 0 16px;font-size:14px">One tap mobile:<br>+13462487799,,6191058815# US (Houston)<br>+12532050468,,6191058815# US</p><p style="margin:0 0 14px">Talk to you then.</p><p style="margin:0">&mdash; Drew</p></div>`;
 console.log(`${players.length} families on Zoom: ${texts.length} texts, ${emails.length} emails`);
 if (!doSend) { console.log("\n" + TEXT.replace("{first}", (texts[0]?.name || "").split(" ")[0]) + "\n\nSUBJECT: " + subject + "\n" + body(emails[0]?.hi || "Hi,") + "\n\nDRY RUN"); process.exit(0); }
 let e = 0, t = 0;

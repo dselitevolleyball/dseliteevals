@@ -7,7 +7,7 @@ import { planRooms, pairCoaches, planRoomsByTeam, UNASSIGNED } from "../shared/r
 import { PLAYER_CLAUSES, PARENT_CLAUSES, isFullySigned } from "../shared/commitment.js";
 import { isEventTeam } from "../shared/event-teams.js";
 import { isAustinArea } from "../shared/austin-area.js";
-import { GC_TEAMS, GC_INTEREST, GC_POSITIONS, GC_TRAVEL, GC_CITIES, labelOf as gcLabel } from "../shared/global-challenge.js";
+import { GC_TEAMS, GC_INTEREST, GC_POSITIONS, GC_TRAVEL, GC_CITIES, GC_WHEN, labelOf as gcLabel } from "../shared/global-challenge.js";
 import { parseSaleRows, matchInvoicesToPlayers } from "../shared/shoe-invoices.js";
 import { parseSportsEngineRows, matchMembersToPlayers, playerPatchFor } from "../shared/sportsengine.js";
 import { SCHOOL_DIVS } from "../shared/school-divs.js";
@@ -11338,12 +11338,12 @@ export default function App() {
         text: (p) => { const c = commitBy.get(p.id); const who = c && c.player_signed_at ? "a parent's signature" : c && c.parent_signed_at ? girlOf(p) + "'s signature" : girlOf(p) + "'s and a parent's signatures";
           return hiText(p) + " " + girlOf(p) + "'s DS Elite commitment still needs " + who + ": " + base + "/commitment?t=" + p.commitment_token + signText; } },
       { key: "global", label: "Global Challenge interest", icon: "🌍", color: "#2dd4bf",
-        scope: "Croatia, July 2027 · 14 & 15 National (Diamond and Ruby) · interest only, answers at the bottom of this screen",
+        scope: "Croatia, " + GC_WHEN + " · 14 & 15 National (Diamond and Ruby) · interest only, answers at the bottom of this screen",
         rows: rostered.filter(p => GC_TEAMS.includes(p.team_assignment) && !gcBy.has(p.id))
           .map(p => ({ p, detail: "hasn't answered", canNudge: !!p.global_token })),
-        subject: (p) => "Quick question: " + girl(p) + " and the Girls Global Challenge in Croatia",
-        body: (p) => greet(p) + "\n\nWe haven't heard back yet about the Girls Global Challenge, the U17 tournament in Croatia next July. We're trying to see whether we have enough players to take a team, and an answer helps even if it's a no:\n\n" + base + "/global?t=" + p.global_token + "\n\nIt's interest only. Nothing is owed and nobody is signed up by answering." + sign,
-        text: (p) => hiText(p) + " is " + girlOf(p) + " interested in the Girls Global Challenge in Croatia next July? Interest only, takes a minute, and a no helps too: " + base + "/global?t=" + p.global_token + signText },
+        subject: (p) => "Quick question: " + girl(p) + " and the Girls Global Challenge in Croatia (" + GC_WHEN + ")",
+        body: (p) => greet(p) + "\n\nWe haven't heard back yet about the Girls Global Challenge, the U17 tournament in Croatia in " + GC_WHEN + ". We're trying to see whether we have enough players to take a team, and an answer helps even if it's a no:\n\n" + base + "/global?t=" + p.global_token + "\n\nIt's interest only. Nothing is owed and nobody is signed up by answering." + sign,
+        text: (p) => hiText(p) + " is " + girlOf(p) + " interested in the Girls Global Challenge in Croatia in " + GC_WHEN + "? Interest only, takes a minute, and a no helps too: " + base + "/global?t=" + p.global_token + signText },
     ];
 
     // A text goes to each parent mobile as its own message from the club

@@ -18,7 +18,7 @@
 
 import { readFileSync } from "node:fs";
 import { createClient } from "@supabase/supabase-js";
-import { GC_TEAMS, GC_PRICE, GC_FAMILY_PRICE } from "../shared/global-challenge.js";
+import { GC_TEAMS, GC_PRICE, GC_FAMILY_PRICE, GC_WHEN } from "../shared/global-challenge.js";
 
 const APP_URL = "https://dseliteevals.vercel.app";
 const SENDER = { name: "Drew Rose", email: "drew@dselitevolleyball.com" };
@@ -77,11 +77,11 @@ const greeting = (p) => {
 
 const bodyFor = (p) => `${greeting(p)}
 
-We've been invited to bring a DS Elite team to the Girls Global Challenge in Croatia next summer, July 7–18, 2027, and we're inviting our 14 and 15 National team players to see if there's enough interest to take one.
+We've been invited to bring a DS Elite team to the Girls Global Challenge in Croatia in ${GC_WHEN} (July 7–18), and we're inviting our 14 and 15 National team players to see if there's enough interest to take one.
 
 The tournament has run for more than 20 years and draws teams from across Europe and beyond. Most of them speak English. Mick Haley, Coach Hunter's dad, has been there every year for the last six.
 
-The timing is ideal for Texas club players. It starts right after club tryouts and gets everyone home before school tryouts.
+The ${GC_WHEN} timing is ideal for Texas club players. It starts right after club tryouts and gets everyone home before school tryouts.
 
 How it works:
 
@@ -113,7 +113,7 @@ DS Elite Volleyball`;
 const jobs = targets.map((p) => ({
   player: p,
   recipients: emailsOf(p),
-  subject: `${p.first_name} and the Girls Global Challenge in Croatia, summer 2027`,
+  subject: `${p.first_name} and the Girls Global Challenge in Croatia, ${GC_WHEN}`,
   body: bodyFor(p),
 })).filter((j) => j.recipients.length);
 const noEmail = targets.filter((p) => !emailsOf(p).length);

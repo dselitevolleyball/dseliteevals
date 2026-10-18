@@ -50,7 +50,7 @@ export default async function handler(req, res) {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.setHeader("X-Robots-Tag", "noindex, nofollow");
   return res.status(200).send(page("Europe trip meeting", `
-<div class="kicker">DS Elite · Europe 2027</div>
+<div class="kicker">DS Elite · Europe · July 2027</div>
 <h1>Europe trip interest meeting</h1>
 <div class="card">
   <div class="row"><b>Sunday, October 11 · 3:30pm</b></div>
