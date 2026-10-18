@@ -88,6 +88,7 @@ export default function AskHQ({ open, onClose, view, coach }) {
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d.error || ("HTTP " + r.status));
       setMsgs(m => [...m, { role: "assistant", content: d.answer || "", tools: d.tools || [], drafts: (d.drafts || []).map(x => ({ ...x, sent: false })),
+        texts: (d.texts || []).map(x => ({ ...x, state: "draft" })),
         proposals: (d.proposals || []).map(x => ({ ...x, picked: x.changes.map((_, i) => i), state: "pending" })), ms: d.ms }]);
     } catch (e) {
       setMsgs(m => [...m, { role: "assistant", content: "Couldn't answer: " + (e.message || "error"), error: true }]);
@@ -113,6 +114,33 @@ export default function AskHQ({ open, onClose, view, coach }) {
       const ok = r.ok;
       setMsgs(m => m.map((x, i) => i === mi ? { ...x, drafts: x.drafts.map((y, j) => j === di ? { ...y, sent: ok, failed: !ok } : y) } : x));
     }
+  };
+
+  // ── text messages ─────────────────────────────────────────────────────
+  // Ask HQ only drafts a text; this tap sends it, through /api/send-sms (the
+  // one door every text goes through: plain characters, ~600-char parts,
+  // "Hi {first}," filled per person, STOP replies skipped). Big groups go in
+  // batches of 150 under one broadcast so the inbox shows a single send.
+  const setText = (mi, ti, fn) => setMsgs(m => m.map((x, i) => i === mi ? { ...x, texts: x.texts.map((y, j) => j === ti ? fn(y) : y) } : x));
+  const sendText = async (mi, ti) => {
+    const t = msgs[mi].texts[ti];
+    if (!window.confirm(`Text ${t.recipients.length} ${t.recipients.length === 1 ? "person" : "people"} from ${t.brand === "dssc" ? "the DSSC number" : "the DS Elite number"}?\n\nEach gets their own copy, greeted by first name.`)) return;
+    setText(mi, ti, y => ({ ...y, state: "sending", sent: 0, failed: [] }));
+    const { data: { session } } = await supabase.auth.getSession();
+    let broadcastId = null, sent = 0, failed = [], error = null;
+    for (let i = 0; i < t.recipients.length; i += 150) {
+      try {
+        const r = await fetch("/api/send-sms", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + (session?.access_token || "") },
+          body: JSON.stringify({ brand: t.brand, body: t.body, broadcast_id: broadcastId, total_recipients: t.recipients.length, audience: t.label || "Ask HQ",
+            sent_by_label: "Ask HQ - " + (coach?.display_name || coach?.email || "admin"),
+            recipients: t.recipients.slice(i, i + 150).map(x => ({ to: x.to, name: x.name, kind: x.kind, team_name: x.team })) }) });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { error = d.error || "HTTP " + r.status; break; }
+        broadcastId = d.broadcast_id || broadcastId; sent += d.sent || 0; failed = failed.concat(d.failed || []);
+        setText(mi, ti, y => ({ ...y, sent, failed }));
+      } catch (e) { error = e.message; break; }
+    }
+    setText(mi, ti, y => ({ ...y, state: error ? "error" : "sent", sent, failed, error }));
   };
 
   // ── proposals from an uploaded document ────────────────────────────────
@@ -215,7 +243,7 @@ export default function AskHQ({ open, onClose, view, coach }) {
         )}
         {!msgs.length && (
           <div>
-            <div style={{ fontSize: 13, color: C.mut, marginBottom: 10, lineHeight: 1.5 }}>Ask about players, rosters, coaches, hours, tournaments, housing, clinics, emails — anything in HQ. It looks the answer up and shows its work. Ask it to draft an email and you get a Send button. Attach a spreadsheet (Excel, CSV or PDF) and say "update HQ from this": you'll see every change before anything is saved.</div>
+            <div style={{ fontSize: 13, color: C.mut, marginBottom: 10, lineHeight: 1.5 }}>Ask about players, rosters, coaches, hours, tournaments, housing, clinics, emails — anything in HQ. It looks the answer up and shows its work. Ask it to draft an email or a text ("text the 14 Diamond parents that practice moved to 6pm") and you get a Send button. Attach a spreadsheet (Excel, CSV or PDF) and say "update HQ from this": you'll see every change before anything is saved.</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {suggestions.map(s => <button key={s} onClick={() => s.startsWith("📎") ? fileRef.current?.click() : ask(s)} style={{ textAlign: "left", padding: "9px 12px", borderRadius: 10, border: "1px solid " + C.border, background: C.card, color: C.text, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>{s}</button>)}
             </div>
@@ -235,6 +263,34 @@ export default function AskHQ({ open, onClose, view, coach }) {
                 )}
                 <Md text={m.content} />
                 {m.proposals?.map((pr, pi) => <ProposalCard key={pr.id} pr={pr} mi={mi} pi={pi} />)}
+                {m.texts?.map((t, ti) => {
+                  const first = String(t.recipients[0]?.name || "").trim().replace(/^coach\s+/i, "").split(/\s+/)[0] || "there";
+                  const parts = Math.max(1, Math.ceil(t.body.length / 600));
+                  return (
+                    <div key={"t" + ti} style={{ border: "1px solid " + (t.state === "sent" ? C.grn : C.border), borderRadius: 10, padding: 10, marginTop: 8, background: C.bg }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                        <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.4, textTransform: "uppercase", color: C.gold }}>💬 Text · {t.brand === "dssc" ? "DSSC number" : "DS Elite number"}</span>
+                        <div style={{ flex: 1 }} />
+                        <span style={{ fontSize: 11, color: t.body.length > 600 ? C.amber : C.mut }}>{t.body.length} chars{parts > 1 ? ` · ${parts} texts` : ""}</span>
+                      </div>
+                      {t.label && <div style={{ fontSize: 12, color: C.mut, marginBottom: 4 }}>{t.label}</div>}
+                      <details style={{ marginBottom: 6 }}>
+                        <summary style={{ fontSize: 12, color: C.text, cursor: "pointer" }}>To: <b>{t.recipients.length}</b> {t.recipients.length === 1 ? "person" : "people"} (tap to see)</summary>
+                        <div style={{ maxHeight: 160, overflowY: "auto", fontSize: 12, color: C.mut, marginTop: 4 }}>{t.recipients.map((r, i) => <div key={i}>{r.name || "(no name)"}{r.team ? " · " + r.team : ""} · {r.to.replace(/^\+1(\d{3})(\d{3})(\d{4})$/, "($1) $2-$3")}</div>)}</div>
+                      </details>
+                      <div style={{ fontSize: 13, whiteSpace: "pre-wrap", lineHeight: 1.45, background: C.card, border: "1px solid " + C.border, borderRadius: 12, padding: "8px 10px" }}>{t.body.replace(/\{first\}/gi, first)}</div>
+                      <div style={{ fontSize: 11, color: C.mut, marginTop: 4 }}>Shown as {first} would get it; everyone is greeted by their own first name.</div>
+                      <div style={{ display: "flex", gap: 6, marginTop: 8, alignItems: "center", flexWrap: "wrap" }}>
+                        {t.state === "sent" ? <span style={{ color: C.grn, fontSize: 12, fontWeight: 700 }}>✓ Sent to {t.sent}{t.failed?.length ? ` · ${t.failed.length} failed` : ""}</span>
+                          : t.state === "sending" ? <span style={{ color: C.mut, fontSize: 12 }}>Sending… {t.sent || 0}/{t.recipients.length}</span>
+                          : <button onClick={() => sendText(mi, ti)} style={{ padding: "5px 11px", borderRadius: 8, border: "none", background: C.gold, color: "#000", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>{t.state === "error" ? "Try again" : "Send text"}</button>}
+                        {t.state === "error" && <span style={{ color: C.red, fontSize: 12 }}>{t.error}{t.sent ? ` (${t.sent} already sent)` : ""}</span>}
+                        <button onClick={() => navigator.clipboard?.writeText(t.body)} style={{ padding: "5px 11px", borderRadius: 8, border: "1px solid " + C.border, background: "transparent", color: C.text, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Copy</button>
+                      </div>
+                      {t.failed?.length > 0 && <div style={{ fontSize: 11, color: C.red, marginTop: 4 }}>Didn't go: {t.failed.slice(0, 8).map(f => (f.name || f.to) + " (" + (f.error || "failed") + ")").join(", ")}</div>}
+                    </div>
+                  );
+                })}
                 {m.drafts?.length > 0 && (
                   <div style={{ marginTop: 8 }}>
                     {m.drafts.length > 1 && <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}><span style={{ fontSize: 12, color: C.mut }}>{m.drafts.length} drafts</span><div style={{ flex: 1 }} />{m.drafts.some(d => !d.sent) && <button onClick={() => sendAll(mi)} style={{ padding: "5px 11px", borderRadius: 8, border: "none", background: C.gold, color: "#000", fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>Send all</button>}</div>}

@@ -17,7 +17,8 @@
 //        CSV/text files are read and passed inline (first 200KB);
 //        Excel workbooks are converted to one CSV per sheet.
 //   Authorization: Bearer <Supabase session token of an owner/admin>
-// Response { answer, tools: [{name, summary}], drafts: [{to, subject, body}], proposals: [{id, summary, changes, skipped}], usage }
+// Response { answer, tools: [{name, summary}], drafts: [{to, subject, body}], texts: [{recipients, body, brand, label}], proposals: [{id, summary, changes, skipped}], usage }
+// Texts, like emails, are only drafted here: the admin's Send tap posts them to /api/send-sms.
 //
 // Env: ANTHROPIC_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 
@@ -25,6 +26,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@supabase/supabase-js";
 import * as XLSX from "xlsx";
 import { checkChanges, MAX_CHANGES } from "./_lib/hq-changes.js";
+import { smsPlain, splitSms, SMS_MAX } from "../shared/sms-split.js";
 
 export const config = { maxDuration: 300 };   // a big upload can take a few minutes of lookups
 
@@ -82,6 +84,14 @@ Find the exact rows with sql, then call propose_changes with everything the requ
 Who shows on a tournament's travel page: everyone the tournament_assignments rows for that tournament resolve to (head_override / asst_override / sub_coach, else the team's practice_teams head_coach / assistant_coach), plus any coach_travel row for that tournament. So taking someone off a trip means BOTH clearing the override that puts them there (set it to null so the team's regular coach applies, unless the admin names a replacement; also update that row's notes if they mention the person) AND deleting their coach_travel row — deleting the travel row alone makes them reappear as "added by hand", and clearing the override alone leaves the travel row. If they're there as a team's regular head/assistant coach, say so: that's a staffing change on the team, not a trip change. Flag a flight_purchased or room already booked for them.
 When something can't be done through a proposal (a refused delete, a core record, a login), never stop at "I can't": tell the admin exactly how to do it in the app, step by step — e.g. on the Travel screen a person added by hand has a red × beside their name that removes their travel row; a team's coach for one tournament is changed on that tournament's card (head/assistant override); a player is deleted only from the Danger Zone at the bottom of their player profile (usually a departing player should be marked declined instead, which you can propose). Keep each propose_changes call to about 60 changes (the hard cap is ${MAX_CHANGES}); for more, make several calls, e.g. one per team. Keep reason short (a few words).
 
+TEXT MESSAGES (draft_text)
+When the admin asks you to text people, look up their phones with sql and call draft_text; the app shows the text with a Send button and nothing goes out until they tap it. Phones: players.parent_phone and parent2_phone (the two parents; text both unless asked otherwise), players.player_phone (the athlete herself), coach_roster.phone (coaches), dssc_contacts.phone (DSSC families), dssc_pod_roster.parent_phone (a DSSC class). Use the current-roster rule for a team's families. Pass each recipient's own first name so "{first}" fills in per person.
+- Start every text with "Hi {first}," — the app fills in each recipient's first name, so a text never greets both parents.
+- Plain characters only: no emoji, no curly quotes or long dashes (carriers block them). Keep it under about 600 characters; say the essentials and put details behind a link.
+- One draft_text for one message to a group (it goes to each person separately, as their own thread). Make separate drafts only when the words differ.
+- brand: "dse" (DS Elite's number) for DS Elite teams, families and coaches; "dssc" (the club's number) for DSSC classes, pods, Reach and club families.
+- Families agreed to texts at registration; anyone who replied STOP is skipped automatically when it sends.
+
 If you need a table's columns, call describe_table. Tables you don't know about exist too (list them with describe_table on '').`;
 
 const tools = [
@@ -95,6 +105,11 @@ const tools = [
       set: { type: "object", description: "column → new value (omit for a delete)" },
       label: { type: "string", description: "who/what this row is, e.g. 'Mia Paz · 14 Diamond'" },
       reason: { type: "string", description: "what in the document says so" } }, required: ["table", "action", "label"] } } }, required: ["summary", "changes"] } },
+  { name: "draft_text", description: "Hand the admin a ready-to-send TEXT MESSAGE (SMS) to one person or a group. Use it when they ask you to text people. You do not send it — the app shows it with a Send button. Each recipient gets their own copy; {first} in the body becomes that recipient's first name.", input_schema: { type: "object", properties: {
+      recipients: { type: "array", items: { type: "object", properties: { phone: { type: "string" }, name: { type: "string", description: "the recipient's own name, e.g. the parent, not the player" }, kind: { type: "string", description: "parent, player, coach or contact" }, team: { type: "string" } }, required: ["phone"] } },
+      body: { type: "string", description: "plain text, starting 'Hi {first},'" },
+      brand: { type: "string", enum: ["dse", "dssc"], description: "dse = DS Elite's number, dssc = the club's number" },
+      label: { type: "string", description: "who this is for, e.g. '14 Diamond parents (22 phones)'" } }, required: ["recipients", "body"] } },
   { name: "draft_email", description: "Hand the admin a ready-to-send email. Use it when they ask you to write, draft, email, remind or message people. You do not send it — the app shows it with a Send button. One draft per distinct message; for a per-family message with different names, produce one draft per family (max 40).", input_schema: { type: "object", properties: { to: { type: "array", items: { type: "string" }, description: "recipient email addresses" }, subject: { type: "string" }, body: { type: "string", description: "plain text" }, label: { type: "string", description: "who this is for, e.g. 'Jauregui family (Brooklyn, 15 Diamond)'" } }, required: ["to", "subject", "body"] } },
 ];
 
@@ -135,6 +150,25 @@ async function runTool(sb, name, input, drafts, ctx = {}) {
     if (error) return { error: error.message };
     return { data: scrub((data || []).filter(r => !SECRET_KEY.test(r.column_name || ""))) };
   }
+  if (name === "draft_text") {
+    // One entry per phone (a parent listed under two daughters gets one text).
+    const seen = new Set(), recipients = [], bad = [];
+    for (const r of Array.isArray(input.recipients) ? input.recipients : []) {
+      const d = String(r?.phone || "").replace(/\D/g, "");
+      const to = d.length === 10 ? "+1" + d : d.length === 11 && d[0] === "1" ? "+" + d : null;
+      if (!to) { bad.push(String(r?.phone || "") + (r?.name ? " (" + r.name + ")" : "")); continue; }
+      if (seen.has(to)) continue; seen.add(to);
+      recipients.push({ to, name: String(r?.name || "").trim().slice(0, 80) || null, kind: String(r?.kind || "").trim().slice(0, 20) || null, team: String(r?.team || "").trim().slice(0, 40) || null });
+    }
+    if (!recipients.length) return { error: "No valid phone numbers." + (bad.length ? " Unusable: " + bad.slice(0, 10).join(", ") : "") };
+    if (recipients.length > 500) return { error: "That's " + recipients.length + " phones; split it into groups of 500 or fewer." };
+    if ((ctx.texts || []).length >= 40) return { error: "Text draft limit reached." };
+    const body = smsPlain(String(input.body || "")).trim();
+    if (!body) return { error: "The text is empty." };
+    const brand = ctx.dsscAdmin ? "dssc" : (input.brand === "dssc" ? "dssc" : "dse");
+    ctx.texts.push({ recipients, body, brand, label: String(input.label || "") });
+    return { ok: true, phones: recipients.length, skipped_bad_numbers: bad.slice(0, 20), characters: body.length, parts: splitSms(body).length, note: body.length > SMS_MAX ? "Over " + SMS_MAX + " characters: it will go as " + splitSms(body).length + " numbered texts. Shorter is better." : undefined };
+  }
   if (name === "draft_email") {
     const to = (Array.isArray(input.to) ? input.to : []).map(s => String(s).trim().toLowerCase()).filter(s => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s));
     if (!to.length) return { error: "No valid recipient address." };
@@ -159,7 +193,9 @@ async function handle(req, res) {
   const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
 
   const bearer = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
-  const { data: { user } = {} } = bearer ? await sb.auth.getUser(bearer).catch(() => ({ data: {} })) : { data: {} };
+  // The service-role key (server scripts, tests) asks as Drew.
+  const { data: { user } = {} } = bearer && bearer === process.env.SUPABASE_SERVICE_ROLE_KEY ? { data: { user: { email: OWNER_EMAILS[0] } } }
+    : bearer ? await sb.auth.getUser(bearer).catch(() => ({ data: {} })) : { data: {} };
   const email = String(user?.email || "").trim().toLowerCase();
   if (!email) return res.status(401).json({ error: "Sign in first" });
   let who = email, dsscAdmin = false;
@@ -219,8 +255,8 @@ async function handle(req, res) {
   const messages = [...history, { role: "user", content: blocks.length ? [...blocks, { type: "text", text: userText }] : userText }];
   const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
   const started = Date.now();
-  const trail = [], drafts = [], proposals = [];
-  const ctx = { who, files: attachments.map(a => ({ name: a.name, path: a.path })), proposals };
+  const trail = [], drafts = [], proposals = [], texts = [];
+  const ctx = { who, files: attachments.map(a => ({ name: a.name, path: a.path })), proposals, texts, dsscAdmin };
   let usage = { input: 0, output: 0 }, answer = "", turns = 0, cutOff = false;
   try {
     while (turns++ < MAX_TURNS) {
@@ -257,17 +293,17 @@ async function handle(req, res) {
       for (const u of uses) {
         const t0 = Date.now();
         const out = await runTool(sb, u.name, u.input || {}, drafts, ctx);
-        trail.push({ name: u.name, input: u.name === "sql" ? String(u.input?.query || "").slice(0, 400) : (u.name === "describe_table" ? u.input?.table : u.name === "propose_changes" ? (u.input?.summary || "") + " · " + (out.accepted ?? 0) + " changes" : u.input?.label || u.input?.subject), ms: Date.now() - t0, rows: out.rows ?? (out.data ? out.data.length : undefined), error: out.error });
+        trail.push({ name: u.name, input: u.name === "sql" ? String(u.input?.query || "").slice(0, 400) : (u.name === "describe_table" ? u.input?.table : u.name === "propose_changes" ? (u.input?.summary || "") + " · " + (out.accepted ?? 0) + " changes" : u.name === "draft_text" ? (u.input?.label || "text") + " · " + (out.phones ?? 0) + " phones" : u.input?.label || u.input?.subject), ms: Date.now() - t0, rows: out.rows ?? (out.data ? out.data.length : undefined), error: out.error });
         results.push({ type: "tool_result", tool_use_id: u.id, content: JSON.stringify(out).slice(0, 60000), is_error: !!out.error });
       }
       messages.push({ role: "user", content: results });
     }
-    if (!answer) answer = proposals.length ? "Proposed changes are below — review and tap Apply." : drafts.length ? "Drafted — see below." : cutOff ? "My answer kept running past the length limit. Try one team or one part of the file at a time." : "I hit the limit of " + MAX_TURNS + " lookups before finishing. Try narrowing the question.";
+    if (!answer) answer = proposals.length ? "Proposed changes are below — review and tap Apply." : (drafts.length || texts.length) ? "Drafted — see below." : cutOff ? "My answer kept running past the length limit. Try one team or one part of the file at a time." : "I hit the limit of " + MAX_TURNS + " lookups before finishing. Try narrowing the question.";
   } catch (e) {
     const msg = e instanceof Anthropic.APIError ? `Claude API ${e.status}: ${e.message}` : (e.message || String(e));
     await log(sb, { asked_by: who, question, answer: "ERROR " + msg, tool_calls: trail, view, ms: Date.now() - started });
     return res.status(502).json({ error: msg });
   }
   await log(sb, { asked_by: who, question, answer, tool_calls: trail, view, attachments: attachments.map(a => ({ name: a.name, path: a.path })), input_tokens: usage.input, output_tokens: usage.output, ms: Date.now() - started });
-  return res.status(200).json({ answer, tools: trail, drafts, proposals, usage, ms: Date.now() - started });
+  return res.status(200).json({ answer, tools: trail, drafts, texts, proposals, usage, ms: Date.now() - started });
 }
