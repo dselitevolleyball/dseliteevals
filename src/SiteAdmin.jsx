@@ -99,7 +99,7 @@ export default function SiteAdmin({ coach }) {
 
   const openCount = inquiries.filter((q) => !q.handled).length;
   const newFeedback = feedback.filter((x) => !x.reviewed).length;
-  const tabs = [["staff", "Staff profiles"], ["roster", "Roster visibility"], ["inquiries", "Inquiries" + (openCount ? ` (${openCount})` : "")], ["feedback", "Feedback" + (newFeedback ? ` (${newFeedback})` : "")]];
+  const tabs = [["staff", "Staff profiles"], ["roster", "Roster visibility"], ["inquiries", "Inquiries" + (openCount ? ` (${openCount})` : "")], ["feedback", "Feedback" + (newFeedback ? ` (${newFeedback})` : "")], ["visitors", "Visitors"], ["leads", "Email list"]];
 
   return (
     <div style={{ padding: "16px 16px 48px", maxWidth: 980, margin: "0 auto" }}>
@@ -120,6 +120,8 @@ export default function SiteAdmin({ coach }) {
       {!teams ? <div style={{ color: C.mut, padding: 12 }}>Loading…</div>
         : tab === "staff" ? <StaffTab teams={teams} rows={staffRows} me={me} onSaved={loadStaff} setErr={setErr} />
         : tab === "roster" ? <RosterTab teams={teams} players={players} setPlayers={setPlayers} setErr={setErr} season={season} />
+        : tab === "visitors" ? <VisitorsTab setErr={setErr} />
+        : tab === "leads" ? <LeadsTab setErr={setErr} />
         : tab === "feedback" ? <FeedbackTab rows={feedback} setRows={setFeedback} setErr={setErr} />
         : <InquiriesTab rows={inquiries} setRows={setInquiries} me={me} setErr={setErr} reload={loadInquiries} />}
     </div>
@@ -340,6 +342,116 @@ export function RosterTab({ teams, players, setPlayers, setErr, season }) {
 
 // ── Inquiries ──────────────────────────────────────────────────────────────────
 const TOPIC = { tryouts: "Tryouts", general: "General", coaching: "Coaching", other: "Other" };
+// ── Visitors: cookie-free analytics (site_events via site_stats()) + monthly reports (api/site-report.js) ─────
+export function VisitorsTab({ setErr }) {
+  const [days, setDays] = useState(30);
+  const [st, setSt] = useState(null);
+  const [reports, setReports] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(async () => {
+    const to = new Date(), from = new Date(to.getTime() - days * 864e5);
+    const [a, b] = await Promise.all([
+      supabase.rpc("site_stats", { p_from: from.toISOString(), p_to: to.toISOString() }),
+      supabase.from("site_reports").select("*").order("month", { ascending: false }).limit(24),
+    ]);
+    if (a.error || b.error) setErr((a.error || b.error).message);
+    setSt(a.data || null); setReports(b.data || []);
+  }, [days, setErr]);
+  useEffect(() => { load(); }, [load]);
+  const generate = async () => {
+    setBusy(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const month = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Chicago", year: "numeric", month: "2-digit" }).format(new Date()).slice(0, 7);
+      const r = await fetch("/api/site-report", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + (session?.access_token || "") }, body: JSON.stringify({ month }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || "Report failed");
+      await load();
+    } catch (e) { setErr(e.message); }
+    setBusy(false);
+  };
+  const n = (x) => (x == null ? "–" : Number(x).toLocaleString());
+  const card = { background: C.card, border: "1px solid " + C.border, borderRadius: 12, padding: 14, marginBottom: 12 };
+  const list = (title, rows, cols) => (
+    <div style={{ ...card, flex: "1 1 280px", marginBottom: 0 }}>
+      <div style={{ fontWeight: 800, marginBottom: 6 }}>{title}</div>
+      {!rows?.length ? <div style={{ color: C.mut, fontSize: 12 }}>Nothing yet.</div> : rows.map((r, i) => (
+        <div key={i} style={{ display: "flex", gap: 8, fontSize: 12, padding: "3px 0", borderTop: i ? "1px solid " + C.border : "none" }}>
+          <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cols[0](r)}</span>
+          <span style={{ color: C.mut }}>{cols[1](r)}</span>
+        </div>))}
+    </div>);
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
+        {[7, 30, 90].map((d) => <button key={d} onClick={() => setDays(d)} style={{ ...btn(days === d ? "" : "ghost"), padding: "5px 10px", fontSize: 12 }}>Last {d} days</button>)}
+        <span style={{ fontSize: 12, color: C.mut, marginLeft: 6 }}>Cookie-free tracking on dselitevolleyball.com; no names or emails are recorded.</span>
+      </div>
+      {!st ? <div style={{ color: C.mut, padding: 12 }}>Loading…</div> : (<>
+        <div style={{ ...card, display: "flex", gap: 24, flexWrap: "wrap" }}>
+          {[["Visitors", st.visitors], ["Page views", st.views], ["Pages / visit", st.pages_per_session], ["Email sign-ups", st.signups], ["Email list", st.list_size], ["Avg rating", st.feedback?.avg]].map(([k, v]) => (
+            <div key={k}><div style={{ fontSize: 24, fontWeight: 900, color: C.gold }}>{n(v)}</div><div style={{ fontSize: 11, color: C.mut }}>{k}</div></div>))}
+        </div>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
+          {list("Top pages", st.top_pages, [(r) => r.path, (r) => n(r.views) + " views"])}
+          {list("Where visitors come from", st.referrers, [(r) => r.source, (r) => n(r.visitors)])}
+          {list("Most clicked", st.clicks, [(r) => r.label + " (" + r.path + ")", (r) => n(r.clicks)])}
+          {list("Pages people leave from", st.exit_pages, [(r) => r.path, (r) => n(r.sessions)])}
+          {list("Sign-ups by page", st.signups_by_page, [(r) => r.path, (r) => n(r.signups)])}
+          {list("Devices", Object.entries(st.devices || {}), [(r) => r[0], (r) => n(r[1])])}
+        </div>
+      </>)}
+      <div style={card}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
+          <div style={{ fontWeight: 800, flex: 1 }}>Monthly reports and recommendations</div>
+          <button onClick={generate} disabled={busy} style={{ ...btn(), opacity: busy ? 0.6 : 1 }}>{busy ? "Writing…" : "Generate for this month so far"}</button>
+        </div>
+        <div style={{ fontSize: 12, color: C.mut, marginBottom: 8 }}>A report for the month before is written and emailed to Drew on the 1st of every month.</div>
+        {!reports.length ? <div style={{ color: C.mut, fontSize: 13 }}>No reports yet.</div> : reports.map((r) => (
+          <details key={r.month} style={{ borderTop: "1px solid " + C.border, padding: "8px 0" }} open={r === reports[0]}>
+            <summary style={{ cursor: "pointer", fontWeight: 700 }}>{r.month} · {n(r.stats?.visitors)} visitors · {n(r.stats?.signups)} sign-ups{r.emailed_at ? " · emailed" : ""}</summary>
+            <div style={{ whiteSpace: "pre-wrap", fontSize: 13, lineHeight: 1.5, marginTop: 8 }}>{r.recommendations || "No recommendations (not enough data)."}</div>
+          </details>))}
+      </div>
+    </div>
+  );
+}
+
+// ── Email list: "Get club news by email" sign-ups from the website (site_leads, api/site-lead.js) ─────
+export function LeadsTab({ setErr }) {
+  const [rows, setRows] = useState(null);
+  useEffect(() => { (async () => {
+    const { data, error } = await supabase.from("site_leads").select("*").eq("is_test", false).order("created_at", { ascending: false }).limit(5000);
+    if (error) setErr(error.message);
+    setRows(data || []);
+  })(); }, [setErr]);
+  if (!rows) return <div style={{ color: C.mut, padding: 12 }}>Loading…</div>;
+  const active = rows.filter((r) => !r.unsubscribed_at);
+  const csv = () => {
+    const q = (v) => '"' + String(v ?? "").replace(/"/g, '""') + '"';
+    const lines = [["email", "first_name", "player_age", "interest", "signed_up", "page", "source"].join(",")].concat(
+      active.map((r) => [r.email, r.first_name, r.player_age, r.interest, (r.created_at || "").slice(0, 10), r.source_path, r.utm_source || r.ref_host].map(q).join(",")));
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv" }));
+    a.download = "ds-elite-email-list.csv"; a.click();
+  };
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
+        <div style={{ flex: 1, fontSize: 13, color: C.mut }}>{active.length} subscribed{rows.length - active.length ? ` · ${rows.length - active.length} unsubscribed` : ""}. Each person got a welcome email with an unsubscribe link.</div>
+        <button onClick={csv} disabled={!active.length} style={btn("ghost")}>Download CSV</button>
+      </div>
+      {!rows.length ? <div style={{ color: C.mut, padding: 12 }}>No sign-ups yet. The sign-up box is above the footer on every page of the website.</div> : rows.map((r) => (
+        <div key={r.id} style={{ display: "flex", gap: 10, flexWrap: "wrap", fontSize: 13, padding: "7px 0", borderTop: "1px solid " + C.border, opacity: r.unsubscribed_at ? 0.45 : 1 }}>
+          <span style={{ fontWeight: 700, minWidth: 220 }}>{r.email}</span>
+          <span>{r.first_name || ""}</span>
+          <span style={{ color: C.mut }}>{[r.player_age, r.interest, r.source_path, r.unsubscribed_at ? "unsubscribed" : null].filter(Boolean).join(" · ")}</span>
+          <span style={{ color: C.mut, marginLeft: "auto" }}>{ago(r.created_at)}</span>
+        </div>))}
+    </div>
+  );
+}
+
 // ── Feedback: the website's "thanks for visiting" pop-up (/api/site-feedback) ─────
 export function FeedbackTab({ rows, setRows, setErr }) {
   const n = rows.length, avg = n ? rows.reduce((t, r) => t + r.rating, 0) / n : 0;

@@ -219,6 +219,10 @@
     {
       "path": "/api/staff-clock-reminder",
       "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/site-report",
+      "schedule": "0 14 1 * *"
     }
   ],
   "functions": {
