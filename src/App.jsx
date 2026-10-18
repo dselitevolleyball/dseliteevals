@@ -27274,6 +27274,10 @@ export default function App() {
               return chosen || cands.find(s => pinRole(s.id, s)==="OH") || cands[0] || null; // default: the OH
             };
             const setPull = (r, role) => updateDraft(d => { const t=d.sets[setIdx]; t.srFront={...(t.srFront||{}),[r]:role}; });
+            // Save the role when it names one pin; when two front pins share a role
+            // (e.g. a player with no position reads as OH), save the player so the
+            // tick sticks to who the coach picked (Drew, Oct 18 2026: Charlee/Charlotte).
+            const pickKey = (ro, slot) => { const role = pinRole(slot.id, slot); return frontPins(ro).filter(p => pinRole(p.id, p)===role).length > 1 ? slot.id : role; };
             // Taking a libero / back-row passer OFF serve-receive for one rotation
             // (Drew, Oct 18 2026: "trouble unselecting players I don't want on s/r").
             // set.srOff[r] = player ids; R7-R12 fall back to their first-pass list.
@@ -27398,7 +27402,7 @@ export default function App() {
                       {isRecvPin && (
                         <label title="Pull this front-row player back to pass in serve-receive" onClick={e=>e.stopPropagation()}
                           style={{position:"absolute",bottom:1,right:2,display:"flex",alignItems:"center",gap:1,fontSize:8,fontWeight:800,cursor:"pointer",lineHeight:1,opacity:pinSel?1:0.4,color:pinSel?C.grn:C.mut}}>
-                          <input type="checkbox" checked={!!pinSel} onChange={e=>{ e.stopPropagation(); setPull(ro.r, pinSel ? "none" : pinRole(slot.id, slot)); }} style={{width:11,height:11,accentColor:C.grn,cursor:"pointer",margin:0}} />
+                          <input type="checkbox" checked={!!pinSel} onChange={e=>{ e.stopPropagation(); setPull(ro.r, pinSel ? "none" : pickKey(ro, slot)); }} style={{width:11,height:11,accentColor:C.grn,cursor:"pointer",margin:0}} />
                           s/r
                         </label>
                       )}
@@ -27442,9 +27446,9 @@ export default function App() {
                             const pins = frontPins(ro); const cur = pullPick(ro);
                             if (!cur) return null;
                             const curRole = pinRole(cur.id, cur);
-                            const other = pins.find(p => pinRole(p.id, p)!==curRole);
+                            const other = pins.find(p => p.id!==cur.id);
                             return (
-                              <button onClick={() => other && setPull(ro.r, pinRole(other.id, other))} disabled={!other}
+                              <button onClick={() => other && setPull(ro.r, pickKey(ro, other))} disabled={!other}
                                 title={other ? "Pulling back: "+pname(cur.id)+" ("+curRole+"). Tap to pull "+pname(other.id)+" instead." : "Only "+pname(cur.id)+" can pull back this rotation"}
                                 style={{marginTop:2,background:"rgba(34,197,94,0.14)",border:"1px solid "+C.grn,color:C.grn,borderRadius:6,fontSize:9,fontWeight:800,padding:"1px 6px",cursor:other?"pointer":"default",fontFamily:"inherit",whiteSpace:"nowrap"}}>
                                 SR: {curRole} {pfirst(cur.id)}{other ? " ⇄" : ""}
