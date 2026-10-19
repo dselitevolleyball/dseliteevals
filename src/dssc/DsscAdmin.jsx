@@ -374,7 +374,7 @@ export default function DsscAdmin({
                       <span style={{ fontWeight: 800, color: d.registrations_error ? DS.orange : DS.lime }}>{d.registrations_error ? "⚠ Auto-pull failing" : "Auto-pull every hour"}</span>
                       {d.registrations_error
                         ? <span style={{ color: DS.orange }}>{d.registrations_error}</span>
-                        : at ? <span style={{ color: DS.mut }}>last {at.toLocaleDateString(undefined, { month: "short", day: "numeric" })} {at.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}{sm ? ` · +${sm.added} new · ${sm.matched} matched${sm.noSession ? ` · ${sm.noSession} waiting on a calendar sync` : ""}` : ""}</span>
+                        : at ? <span style={{ color: DS.mut }}>last {at.toLocaleDateString(undefined, { month: "short", day: "numeric" })} {at.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}{sm ? ` · +${sm.added} new · ${sm.matched} matched${sm.noSession ? ` · ${sm.noSession} waiting on a calendar sync` : ""}${sm.beforeHq ? ` · ${sm.beforeHq} from dates before HQ had the class (not needed)` : ""}` : ""}</span>
                         : <span style={{ color: DS.mut }}>hasn't run yet — needs the Playbook sync login in Vercel</span>}
                     </div>
                   );

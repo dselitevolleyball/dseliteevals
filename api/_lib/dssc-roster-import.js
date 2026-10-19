@@ -20,7 +20,19 @@ export async function importRoster(supabase, rows, { dry = false, addedBy = "pla
   if (error) return { error: error.message };
   const byRef = new Map(clinics.filter(c => c.source_ref).map(c => [String(c.source_ref), c]));
 
-  const out = [], skipped = new Map(), noSession = [];
+  const out = [], skipped = new Map(), noSession = [], beforeHq = [];
+  // A sign-up whose class date HQ doesn't have is only "waiting" if the calendar
+  // sync can still bring that date in: anything today or later, or a gap inside
+  // the dates HQ already has for the class, is a real miss. Past dates
+  // from before HQ had the class (basketball arrived Oct 14, 2026, so its Sep 28 -
+  // Oct 12 sign-ups) never attach, and alerting on them every hour was noise.
+  // They're still in DSSC People (dssc-crm.js reads every row).
+  const cutoff = new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });   // today, Central
+  const firstOf = (c) => (c.sessions || []).map(x => x.date).filter(Boolean).sort()[0] || null;
+  const miss = (c, date, player) => {
+    const first = firstOf(c);
+    (date && date < cutoff && (!first || date < first) ? beforeHq : noSession).push({ program: c.name, date, player });
+  };
   for (const r of rows) {
     const c = byRef.get(String(r.source_pk || "").trim());
     if (!c) { const k = clean(r.source); skipped.set(k, (skipped.get(k) || 0) + 1); continue; }
@@ -45,12 +57,12 @@ export async function importRoster(supabase, rows, { dry = false, addedBy = "pla
       const seen = new Set();
       const list = (c.sessions || []).filter(x => x.date && x.date >= from && !seen.has(x.date) && seen.add(x.date))
         .sort((a, b) => a.date.localeCompare(b.date));
-      if (!list.length) { noSession.push({ program: c.name, date, player: base.player_name }); continue; }
+      if (!list.length) { miss(c, from === "0000-00-00" ? date : from, base.player_name); continue; }
       list.forEach((s, i) => out.push({ ...base, session_id: String(s.id), source_ref: i === 0 ? String(r.registration_pk) : String(r.registration_pk) + "@" + s.id }));
       continue;
     }
     const s = (c.sessions || []).find(x => x.date === date);
-    if (!s) { noSession.push({ program: c.name, date, player: base.player_name }); continue; }
+    if (!s) { miss(c, date, base.player_name); continue; }
     out.push({ ...base, session_id: String(s.id), source_ref: String(r.registration_pk) });
   }
   const perProgram = {};
@@ -77,6 +89,6 @@ export async function importRoster(supabase, rows, { dry = false, addedBy = "pla
     ok: true, dry, rows: rows.length, matched: out.length, written, added,
     programs: Object.entries(perProgram).sort((a, b) => b[1] - a[1]).map(([name, n]) => ({ name, n })),
     skippedRows: [...skipped.values()].reduce((a, b) => a + b, 0), skippedPrograms: skipped.size,
-    noSession,
+    noSession, beforeHq,
   };
 }

@@ -109,7 +109,9 @@ export default async function handler(req, res) {
   let people = null;
   if (!dry) { try { people = await importPlaybookRegistrations(sb, rows); } catch (e) { people = { error: e.message }; } }
 
-  const summary = { added: out.added, matched: out.matched, rows: out.rows, noSession: out.noSession.length,
+  // beforeHq = sign-ups for dates before HQ had the class (they'll never attach);
+  // counted, never alerted on.
+  const summary = { added: out.added, matched: out.matched, rows: out.rows, noSession: out.noSession.length, beforeHq: (out.beforeHq || []).length,
     waiting: [...new Set(out.noSession.map(x => x.program + " " + x.date))].slice(0, 12), people };
   if (!dry) {
     await sb.from("dssc_sync").upsert({ id: 1, registrations_at: now, registrations_summary: summary, registrations_error: null, registrations_error_at: null }, { onConflict: "id" });
