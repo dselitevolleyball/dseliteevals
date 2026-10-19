@@ -72,7 +72,7 @@ const env = loadEnv();
 const sb = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
 
 const [{ data: teams }, { data: assigns }, { data: tourns }, { data: travel }] = await Promise.all([
-  sb.from("practice_teams").select("team_name, head_coach, assistant_coach, third_coach"),
+  sb.from("practice_teams").select("team_name, head_coach, assistant_coach, third_coach, third_coach_travels"),
   sb.from("tournament_assignments").select("team_id, tournament_id, head_override, asst_override, sub_coach"),
   sb.from("tournaments").select("id, name, start_date, end_date, location, stay_over, cancelled"),
   sb.from("coach_travel").select("tournament_id, coach_name, flight_purchased, room_id, no_room_needed"),
@@ -86,7 +86,9 @@ const booked = new Set((travel || []).map(r => r.tournament_id + "|" + norm(r.co
 const dueAt = (a, team) => [
   a.head_override || team.head_coach,
   a.asst_override || team.assistant_coach,
-  team.third_coach,
+  // A third coach who doesn't travel with the team (practice_teams.third_coach_travels =
+  // false: 12 Diamond's Rene, 15 Diamond's JD) is only due where the tournament names them.
+  team.third_coach_travels === false ? null : team.third_coach,
   a.sub_coach,
 ].filter(c => !isPlaceholder(c));
 
