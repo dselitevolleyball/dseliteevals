@@ -226,6 +226,28 @@ export async function importPlaybookRegistrations(sb, rows) {
   return out;
 }
 
+// A court booking deleted in Playbook drops out of the registrations report,
+// but the import above only ever adds - so Court Availability kept showing it
+// (Drew, Oct 20 2026: ACES deleted from the DSSC calendar, still on Court
+// Availability). Future facility reservations the full report no longer has
+// are removed. Past rows stay as history. Guards: the report must look
+// complete, and a sweep that would remove a lot is refused (a bad export
+// shouldn't wipe the courts).
+export async function pruneDeletedReservations(sb, rows, { dry = false } = {}) {
+  if (!Array.isArray(rows) || rows.length < 500) return { pruned: 0, skipped: "report looks partial (" + (rows?.length || 0) + " rows)" };
+  const live = new Set(rows.map(r => clean(r.registration_pk)).filter(Boolean));
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
+  const { data, error } = await sb.from("dssc_participation").select("id, source_ref, program, event_date").eq("source", "playbook").eq("category", "facility").gte("event_date", today);
+  if (error) throw new Error("reservation lookup: " + error.message);
+  const gone = (data || []).filter(d => d.source_ref && !live.has(d.source_ref));
+  if (gone.length > 60) return { pruned: 0, skipped: gone.length + " reservations missing from the report - too many to remove automatically" };
+  if (!dry) for (let i = 0; i < gone.length; i += 100) {
+    const { error: e } = await sb.from("dssc_participation").delete().in("id", gone.slice(i, i + 100).map(d => d.id));
+    if (e) throw new Error("reservation prune: " + e.message);
+  }
+  return { pruned: gone.length, removed: gone.slice(0, 20).map(d => d.program + " " + d.event_date) };
+}
+
 // ── DS Elite roster ──────────────────────────────────────────────────────────
 // Rise / Regional / National from the practice_teams level, falling back to the
 // name (Diamond = National, Rise = Rise, the other gems = Regional).

@@ -4,8 +4,10 @@
 // plain GET that a signed-in session can fetch, and its sign-in is an ordinary
 // Django form (csrf cookie + hidden token, email, password — no captcha). So
 // this signs in as the HQ sync login, fetches the report, and runs it through
-// the same importer the admin upload and the bookmarklet use. Nothing is ever
-// removed by this — it only adds sign-ups for classes that exist in HQ.
+// the same importer the admin upload and the bookmarklet use. Class rosters are
+// only ever added to. The one removal: a future court reservation that's no
+// longer on the report was deleted in Playbook, so it comes off Court
+// Availability (pruneDeletedReservations, with guards against a bad export).
 //
 // Registrations for classes HQ doesn't have yet (a month not synced on the
 // calendar) are counted and reported once, so the director knows to run the
@@ -21,7 +23,7 @@
 import { createClient } from "@supabase/supabase-js";
 import Papa from "papaparse";
 import { importRoster } from "./_lib/dssc-roster-import.js";
-import { importPlaybookRegistrations } from "./_lib/dssc-crm.js";
+import { importPlaybookRegistrations, pruneDeletedReservations } from "./_lib/dssc-crm.js";
 import { appOrigin } from "../shared/app-origin.js";
 
 const BASE = "https://drippingsports.playbookapi.com";
@@ -108,11 +110,14 @@ export default async function handler(req, res) {
   // is reported in the summary but never fails the roster pull.
   let people = null;
   if (!dry) { try { people = await importPlaybookRegistrations(sb, rows); } catch (e) { people = { error: e.message }; } }
+  // Court bookings deleted in Playbook come off Court Availability.
+  let reservations = null;
+  try { reservations = await pruneDeletedReservations(sb, rows, { dry }); } catch (e) { reservations = { error: e.message }; }
 
   // beforeHq = sign-ups for dates before HQ had the class (they'll never attach);
   // counted, never alerted on.
   const summary = { added: out.added, matched: out.matched, rows: out.rows, noSession: out.noSession.length, beforeHq: (out.beforeHq || []).length,
-    waiting: [...new Set(out.noSession.map(x => x.program + " " + x.date))].slice(0, 12), people };
+    waiting: [...new Set(out.noSession.map(x => x.program + " " + x.date))].slice(0, 12), people, reservations };
   if (!dry) {
     await sb.from("dssc_sync").upsert({ id: 1, registrations_at: now, registrations_summary: summary, registrations_error: null, registrations_error_at: null }, { onConflict: "id" });
     // Tell the director once when registrations are piling up for classes HQ
