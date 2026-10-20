@@ -227,6 +227,10 @@
     {
       "path": "/api/site-report",
       "schedule": "0 14 1 * *"
+    },
+    {
+      "path": "/api/site-inbox-poll",
+      "schedule": "*/15 * * * *"
     }
   ],
   "functions": {

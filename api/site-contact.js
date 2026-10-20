@@ -1,8 +1,9 @@
 // POST /api/site-contact — the website's contact form.
 //
-// Saves the message in site_inquiries (HQ → Website → Inquiries) and emails it
-// to Drew (Resend, from DSE_FROM_EMAIL) with Reply-To = the sender, so a reply
-// from his inbox goes straight back to the family.
+// Saves the message in site_inquiries (HQ → Website → Inquiries, and the shared
+// DSSC → Inbox as a 'dselite' thread) and emails it to Drew (Resend, from
+// DSE_FROM_EMAIL) with Reply-To = the sender, so a reply from his inbox goes
+// straight back to the family.
 //
 //   body  { name, email, phone?, player_name?, age_group?, topic: 'tryouts'|'general'|'coaching'|'other', message, company? }
 //   200   { ok: true, message }            (+ id and test: true for a test)
@@ -52,11 +53,16 @@ export default async function handler(req, res) {
   if (!sb) return res.status(500).json({ ok: false, error: "The contact form isn't available right now. Please email drew@dselitevolleyball.com." });
   let id;
   try {
-    const { data, error } = await sb.from("site_inquiries").insert({
-      name, email, phone, player_name: player, age_group: age, topic, message, ip, is_test: test,
-    }).select("id").single();
-    if (error) throw new Error(error.message);
-    id = data.id;
+    const row = { name, email, phone, player_name: player, age_group: age, topic, message, ip, is_test: test };
+    // The row is also a thread in the shared Inbox (migrations/20261020_site_inbox.sql:
+    // site 'dselite', kind = topic, first message). Until that migration has run
+    // the extra columns don't exist, so the plain insert is the fallback.
+    let ins = await sb.from("site_inquiries").insert({ ...row, site: "dselite", kind: topic }).select("id").single();
+    if (ins.error && /column/i.test(ins.error.message)) ins = await sb.from("site_inquiries").insert(row).select("id").single();
+    if (ins.error) throw new Error(ins.error.message);
+    id = ins.data.id;
+    const { error: mErr } = await sb.from("site_inbox_messages").insert({ inquiry_id: id, direction: "in", from_name: name, from_email: email, to_email: str(process.env.SITE_CONTACT_TO, 200) || DEFAULT_TO, subject: `Website: ${TOPICS[topic]} — ${name}`, body_text: message });
+    if (mErr && !/relation|does not exist|schema cache/i.test(mErr.message)) console.error("site-contact inbox message", id, mErr.message);
   } catch (e) {
     console.error("site-contact insert", e);
     return res.status(500).json({ ok: false, error: "Something went wrong sending that. Please try again, or email drew@dselitevolleyball.com." });
