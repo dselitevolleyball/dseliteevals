@@ -57,7 +57,7 @@ function shrinkImage(file) {
   });
 }
 
-export default function SiteAdmin({ coach }) {
+export default function SiteAdmin({ coach, onOpenInbox }) {
   const [tab, setTab] = useState(() => { try { return localStorage.getItem("dse.website.tab") || "staff"; } catch { return "staff"; } });
   const [teams, setTeams] = useState(null);
   const [staffRows, setStaffRows] = useState([]);
@@ -123,7 +123,7 @@ export default function SiteAdmin({ coach }) {
         : tab === "visitors" ? <VisitorsTab setErr={setErr} />
         : tab === "leads" ? <LeadsTab setErr={setErr} />
         : tab === "feedback" ? <FeedbackTab rows={feedback} setRows={setFeedback} setErr={setErr} />
-        : <InquiriesTab rows={inquiries} setRows={setInquiries} me={me} setErr={setErr} reload={loadInquiries} />}
+        : <InquiriesTab rows={inquiries} setRows={setInquiries} me={me} setErr={setErr} reload={loadInquiries} onOpenInbox={onOpenInbox} />}
     </div>
   );
 }
@@ -490,7 +490,10 @@ export function FeedbackTab({ rows, setRows, setErr }) {
   );
 }
 
-export function InquiriesTab({ rows, setRows, me, setErr, reload }) {
+// Superseded by the shared Inbox (DSSC -> Inbox, src/dssc/DsscInbox.jsx), which
+// holds these same rows with replies, notes, an assignee and a status. This
+// tab stays as the quick "handled" list and points there.
+export function InquiriesTab({ rows, setRows, me, setErr, reload, onOpenInbox }) {
   const [show, setShow] = useState("open");
   const list = rows.filter((q) => (show === "all" ? true : !q.handled));
   const toggle = async (q) => {
@@ -504,6 +507,12 @@ export function InquiriesTab({ rows, setRows, me, setErr, reload }) {
       <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
         {[["open", "Open"], ["all", "All"]].map(([k, t]) => <button key={k} onClick={() => setShow(k)} style={{ ...btn(show === k ? "" : "ghost"), padding: "6px 10px", fontSize: 12 }}>{t}</button>)}
         <span style={{ fontSize: 12, color: C.mut, marginLeft: 6 }}>Messages from the website's contact form, newest first. Each one is also emailed to Drew (reply goes straight to the sender).</span>
+      </div>
+      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", background: C.card, border: "1px solid " + C.gold, borderRadius: 12, padding: "10px 12px", marginBottom: 10 }}>
+        <div style={{ fontSize: 13, flex: 1, minWidth: 220 }}><b>These now live in the shared Inbox.</b> Reply to a family, leave notes, assign a director and track status there — this list only marks a message handled.</div>
+        {onOpenInbox
+          ? <button onClick={onOpenInbox} style={{ ...btn(""), padding: "6px 12px", fontSize: 12 }}>Open the Inbox →</button>
+          : <a href="?view=dsscinbox" style={{ ...btn(""), padding: "6px 12px", fontSize: 12, textDecoration: "none" }}>Open the Inbox →</a>}
       </div>
       {!list.length && <div style={{ color: C.mut, fontSize: 13, padding: "8px 2px" }}>{rows.length ? "Nothing here." : "No messages yet."}</div>}
       <div style={{ display: "grid", gap: 8 }}>

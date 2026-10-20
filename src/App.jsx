@@ -37,6 +37,7 @@ import DsscCamp from "./dssc/DsscCamp.jsx";
 import DsscCrm from "./dssc/DsscCrm.jsx";
 import { HQ_DSSC } from "./hq-base.js";
 import DsscPeople from "./dssc/DsscPeople.jsx";
+import DsscInbox from "./dssc/DsscInbox.jsx";
 import { StaffClock, StaffHoursAdmin } from "./dssc/DsscStaff.jsx";
 import { parentMailings, greetingFor } from "../shared/parent-mail.js";
 import { mergePay, TIER_KEYS as PAY_TIER_KEYS, isPodClinic as isPodClinicPay, podPay as podPayShared, classRateFor, staffRateFor, personKey as payKey } from "../shared/dssc-pay.js";
@@ -1906,6 +1907,7 @@ export default function App() {
   const [dsscHubSel, setDsscHubSel]     = useState(null);   // {clinicId, sessionId} the admin board asked the coach hub to open
   const [dsscHubBack, setDsscHubBack]   = useState(false);  // that class was opened from the admin board, so "back" returns there
   const [dsscTextsInit, setDsscTextsInit] = useState(null); // {clinicId, sessionId} — open DSSC Texts with a class already picked
+  const [dsscInboxInit, setDsscInboxInit] = useState(null); // inquiry id — open the DSSC Inbox on one thread (?view=dsscinbox&inquiry=<id>)
   const [swSyncTok, setSwSyncTok]       = useState(null);   // SportWrench sync bookmarklet {href} | {configured:false} | {error}
   const [syPostTok, setSyPostTok]       = useState(null);   // SportsYou post bookmarklet {href} | {configured:false} | {error}
   const [syOutbox, setSyOutbox]         = useState([]);     // sportsyou_outbox rows (pending + recently posted)
@@ -2025,6 +2027,7 @@ export default function App() {
     return () => clearTimeout(t);
   }, [smsSearch]);
   const [smsUnread, setSmsUnread]                     = useState({ dse: 0, dssc: 0 }); // header badges: unread texts per brand
+  const [inboxNew, setInboxNew]                       = useState(0); // DSSC Inbox badge: threads nobody has picked up (status 'new')
   const [smsConsents, setSmsConsents]                 = useState([]);     // sms_consents — who opted in to texts
   const [smsConsentPaste, setSmsConsentPaste]         = useState("");
   // SportsYou coach-comms inbox state
@@ -2317,7 +2320,7 @@ export default function App() {
   // colors, navigation, home — between DS Elite and Dripping Springs Sports
   // Club, instead of DSSC living as a tab inside DS Elite. Opening a DSSC
   // screen by any route (a push link, the home card) flips it too.
-  const DSSC_VIEWS = new Set(["dssc","clinics","dssctexts","dssccrm","dssccal","dssctime","pods","privates","dssccamp","courts","dsscplan","staffhours","staffadmin","dsscpeople","dsscpay","projects"]);
+  const DSSC_VIEWS = new Set(["dssc","clinics","dssctexts","dssccrm","dsscinbox","dssccal","dssctime","pods","privates","dssccamp","courts","dsscplan","staffhours","staffadmin","dsscpeople","dsscpay","projects"]);
   // Screens a DSSC-only login may open: DSSC's own plus the shared basics.
   const DSSC_ONLY_OK = new Set([...DSSC_VIEWS, "home", "notifications", "activity", "faq"]);
   const [workspace, setWorkspace] = useState(() => { if (HQ_DSSC) return "dssc"; try { return localStorage.getItem("dse.workspace") === "dssc" ? "dssc" : "dse"; } catch { return "dse"; } });
@@ -2357,10 +2360,13 @@ export default function App() {
       // thing itself rather than on a list the reader still has to search.
       const msg = p.get("msg");
       if (msg) { setOpenMsgId(Number(msg) || null); if (!v) setView("notifications"); }
+      // A DSSC Inbox email links to one thread: /?view=dsscinbox&inquiry=<id>
+      const inquiryQ = Number(p.get("inquiry"));
+      if (inquiryQ) { setDsscInboxInit(inquiryQ); if (!v) setView("dsscinbox"); }
       // Keep ?view= (so Back and reload work) but drop the one-time bits.
       deepLinkDone.current = true;
-      const landed = v || (msg ? "notifications" : null);
-      if (v || tab || open || msg || clinicQ) window.history.replaceState({ view: landed || "home" }, "", window.location.pathname + (landed && landed !== "home" ? "?view=" + encodeURIComponent(landed) : ""));
+      const landed = v || (msg ? "notifications" : inquiryQ ? "dsscinbox" : null);
+      if (v || tab || open || msg || clinicQ || inquiryQ) window.history.replaceState({ view: landed || "home" }, "", window.location.pathname + (landed && landed !== "home" ? "?view=" + encodeURIComponent(landed) : ""));
     } catch { /* ignore */ }
   }, [isApproved]); // eslint-disable-line react-hooks/exhaustive-deps
   // The gear modal renders nothing without a draft form, and only openGear()
@@ -4745,6 +4751,20 @@ export default function App() {
     if (isApproved && view === "messages") loadSmsConsents();
   }, [isApproved, view, loadSmsThreads, loadSmsConsents]);
   useEffect(() => { loadSmsMessages(selectedThreadId); }, [selectedThreadId, loadSmsMessages]);
+  // The DSSC Inbox badge: threads nobody has picked up yet. Directors only
+  // (RLS turns everyone else away anyway); once a minute, and whenever the
+  // Inbox screen changes something.
+  const loadInboxNew = useCallback(async () => {
+    if (!isDsscDirector) return;
+    const { count, error } = await supabase.from("site_inquiries").select("id", { count: "exact", head: true }).eq("status", "new").eq("is_test", false);
+    if (!error) setInboxNew(count || 0);
+  }, [isDsscDirector]);
+  useEffect(() => {
+    if (!isApproved || !isDsscDirector) return;
+    loadInboxNew();
+    const iv = setInterval(loadInboxNew, 60000);
+    return () => clearInterval(iv);
+  }, [isApproved, isDsscDirector, loadInboxNew]);
   // Unread texts for the header badges — both brands, whatever screen you're
   // on. The inboxes only load their threads when opened, so this is its own
   // tiny query, refreshed by the realtime feed below and once a minute.
@@ -32859,7 +32879,7 @@ export default function App() {
   const navCtx = {
     workspace, canOps, isAdmin, isOwner, canViewTeams, hasTeams: myTeamNames.length > 0, canSendReports, isDsscDirector, dsscOnly, isDsscStaff, canSeeStaffHours, canEditPay, pins: navPins,
     counts: {
-      smsDse: smsUnread.dse, smsDssc: smsUnread.dssc, notif: unreadCount,
+      smsDse: smsUnread.dse, smsDssc: smsUnread.dssc, inboxNew, notif: unreadCount,
       issuesOpen: incidents.filter(r => r.status === "open").length,
       issuesMine: incidents.filter(r => incidentVisible(r) && r.status !== "resolved").length,
       kickoffs: kickoffOutstanding, claims: pendingClaimCount, reqs: coachRequests.filter(r => r.status === "pending").length,
@@ -33141,6 +33161,9 @@ export default function App() {
         {view==="dssccrm" && (isDsscDirector
           ? <DsscCrm coach={coach} isDirector={isDsscDirector} onText={(recipients)=>{ setDsscTextsInit({ recipients }); setView("dssctexts"); }} />
           : <div style={{padding:24,color:C.mut,textAlign:"center"}}>DSSC People is for the club's directors.</div>)}
+        {view==="dsscinbox" && (isDsscDirector
+          ? <DsscInbox coach={coach} initialId={dsscInboxInit} onConsumedInitial={()=>setDsscInboxInit(null)} onChanged={loadInboxNew} />
+          : opsDenied)}
         {view==="dssccamp" && (isDsscDirector
           ? <DsscCamp coach={coach} />
           : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Summer camp planning is for the club's directors.</div>)}
@@ -33151,7 +33174,7 @@ export default function App() {
           teamNames={((canViewTeams || canOps) ? teamsList.filter(t => t.active).map(t => t.id) : myTeamNames.filter(t => teamsList.some(x => x.id === t))).slice().sort((a, b) => (parseInt(a) || 99) - (parseInt(b) || 99) || a.localeCompare(b))} />}
         {view==="hub" && <TournamentHub supabase={supabase} C={C} tournaments={tournaments} tournamentAssignments={tournamentAssignments} practiceTeams={practiceTeams} practiceTeamsAll={practiceTeamsAll}
           isOps={canOps} myTeamNames={myTeamNames} initialTournamentId={hubTn} onConsumedInitial={()=>setHubTn(null)} session={session} />}
-        {view==="website" && (isAdmin ? <SiteAdmin coach={coach} /> : <div style={{padding:24,color:C.mut,textAlign:"center"}}>The website screen is admin-only.</div>)}
+        {view==="website" && (isAdmin ? <SiteAdmin coach={coach} onOpenInbox={()=>setView("dsscinbox")} /> : <div style={{padding:24,color:C.mut,textAlign:"center"}}>The website screen is admin-only.</div>)}
         {view==="testboard" && <TestingBoard players={players} />}
         {view==="testreports" && (canSendReports ? <StatReports coach={coach} players={players} session={session} /> : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Testing reports are for admins and the performance coach.</div>)}
         {view==="lineups" && renderLineups()}
