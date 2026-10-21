@@ -10,7 +10,7 @@ export async function loadDseCourtInputs(sb, dates) {
   const [days, scrR, evR] = await Promise.all([
     Promise.all(dates.map(d => daySchedule(sb, d))),
     sb.from("practice_scrimmages").select("practice_date, slot, teams, court").gte("practice_date", first).lte("practice_date", last),
-    sb.from("team_events").select("event_date, start_time, duration_min, location, title").gte("event_date", first).lte("event_date", last).ilike("title", "Tournament%"),
+    sb.from("team_events").select("team_name, event_date, start_time, duration_min, location, title").gte("event_date", first).lte("event_date", last).or("title.ilike.Tournament%,title.ilike.Practice%"),
   ]);
   // A failed read must not look like an empty (all-free) day.
   if (scrR.error || evR.error) throw new Error("DS Elite schedule didn't load: " + (scrR.error || evR.error).message);
@@ -25,7 +25,18 @@ export async function loadDseCourtInputs(sb, dates) {
       .filter(s => s.start < 99);
     // In-house tournament: one booking per court per match time.
     const seen = new Set(), tourn = [];
-    for (const e of (evR.data || []).filter(x => x.event_date === d)) {
+    // One-off practices (team_events titled "Practice", Drew Oct 21 2026: 14 Diamond's
+    // extra Thursdays) take the courts their location names: "Courts 5 & 6", "Court 3".
+    for (const e of (evR.data || []).filter(x => x.event_date === d && /^Practice/i.test(x.title || ""))) {
+      const m = /^(\d{1,2}):(\d{2})/.exec(e.start_time || ""); if (!m) continue;
+      const cm = /courts?\s*([\d\s,&and-]+)/i.exec(e.location || ""); const nums = cm ? cm[1].match(/\d+/g) || [] : [];
+      const lo = nums.length === 2 && /-/.test(cm[1]) ? Math.min(...nums.map(Number)) : null, hi = lo != null ? Math.max(...nums.map(Number)) : null;
+      const courts = (lo != null ? Array.from({ length: hi - lo + 1 }, (_, i) => lo + i) : nums.map(Number)).filter(n => n >= 1 && n <= 6).map(n => "V" + n);
+      if (!courts.length) continue;
+      const st = +m[1] + +m[2] / 60;
+      tourn.push({ courts, start: st, end: st + (Number(e.duration_min) || 120) / 60, kind: "dse", label: (e.team_name || "DS Elite") + " practice", detail: "Extra practice" });
+    }
+    for (const e of (evR.data || []).filter(x => x.event_date === d && /^Tournament/i.test(x.title || ""))) {
       const n = Number(String(e.location || "").replace(/\D/g, "")); const m = /^(\d{1,2}):(\d{2})/.exec(e.start_time || "");
       if (!(n >= 1 && n <= 6) || !m) continue;
       const s = +m[1] + +m[2] / 60, k = n + "|" + s; if (seen.has(k)) continue; seen.add(k);
