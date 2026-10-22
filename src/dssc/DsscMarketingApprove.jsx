@@ -4,17 +4,18 @@
 // "Approve all ready" walks every ready draft in the week. Nothing goes out
 // until it's approved; the cron publishes approved items at their time.
 
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { supabase } from "../supabase";
 import { DS, Btn, Tag, inputStyle, Grow, Field, fetchAll } from "./DsscHub.jsx";
 import { segmentsOf } from "../../shared/campaign-audience.js";
+import EmailAudiencePicker, { emailAudienceLabel, useSegments } from "./DsscEmailAudience.jsx";
 import { TEMPLATES, FORMATS } from "../../shared/marketing-graphics.js";
 import { photoHaystack } from "../../shared/marketing-photos.js";
 import ReelBox from "./DsscMarketingReel.jsx";
 import {
   mktApi, isMissingTable, MIGRATION_MSG, lineMeta, lineLabel, LineChip, ANGLES, STATUS_META, CHANNEL_META, KIND_LABEL, kindOf,
   mondayOf, addDays, fmtDate, fmtWhen, timeOf, dayOf, weekLabel, specOf, hasGraphic, GraphicPreview,
-  approveItem, readyIssue, chipStyle, Msg, Panel, H,
+  approveItem, readyIssue, chipStyle, Msg, Panel, H, uploadImage, isImageFile,
 } from "./DsscMarketingKit.jsx";
 
 const bigBtn = (narrow) => narrow ? { fontSize: 15, padding: "12px 16px", minHeight: 46, borderRadius: 10 } : {};
@@ -216,7 +217,8 @@ function EmptyWeek({ plan, week }) {
 }
 
 // ── One item ────────────────────────────────────────────────────────────────
-function ItemCard({ item: it, week, narrow, onPatch, onReplace, reload, onChanged, onPickPhoto }) {
+export function ItemCard({ item: it, week, narrow, onPatch, onReplace, reload, onChanged, onPickPhoto }) {
+  const segs = useSegments();
   const [busy, setBusy] = useState("");
   const [step, setStep] = useState("");
   const [msg, setMsg] = useState(null);
@@ -225,12 +227,33 @@ function ItemCard({ item: it, week, narrow, onPatch, onReplace, reload, onChange
   const [showGraphic, setShowGraphic] = useState(false);
   const [preview, setPreview] = useState(null); // story preview toggle
   const [showRev, setShowRev] = useState(false);
+  const fileRef = useRef(null);
+  const [upMode, setUpMode] = useState(null);   // "photo" | "custom" while the file picker is open
   const editable = it.status === "draft" || it.status === "rejected" || it.status === "failed";
   const g = it.graphic && typeof it.graphic === "object" ? it.graphic : {};
   const spec = specOf(it, preview ? { format: preview } : {});
   const [sLabel, sColor] = STATUS_META[it.status] || STATUS_META.draft;
   const issue = readyIssue(it);
   const setG = (patch) => onPatch(it, { graphic: { ...g, ...patch } });
+  // Your own image: as the photo behind the club's text (and into the photo
+  // library for next time), or a finished graphic posted exactly as is.
+  const pickFile = (mode) => { setUpMode(mode); fileRef.current?.click(); };
+  const onFile = async (file) => {
+    if (fileRef.current) fileRef.current.value = "";
+    if (!file) return;
+    if (!isImageFile(file)) { setMsg({ err: "That isn't an image — pick a JPG, PNG or WebP." }); return; }
+    setBusy("upload"); setMsg(null);
+    try {
+      const up = await uploadImage(file);
+      if (upMode === "custom") setG({ template: "custom", custom_url: up.url, photo_url: up.url, photo_key: up.path });
+      else {
+        setG({ photo_url: up.url, photo_key: up.path, template: g.template === "custom" ? "photo" : (g.template || "photo") });
+        await supabase.from("mkt_photos").insert({ url: up.url, source: "upload", key: up.path, filename: file.name, tags: [], line: it.line || null, alt: file.name.replace(/\.[^.]+$/, "").replace(/[-_]+/g, " "), width: up.w, height: up.h, active: true }).then(() => {}, () => {});
+      }
+      setMsg({ ok: upMode === "custom" ? "Your graphic is in — it posts exactly as shown." : "Your photo is in — the club's text sits on top. It's in the photo library now too." });
+    } catch (e) { setMsg({ err: e.message }); }
+    setBusy(""); setUpMode(null);
+  };
 
   const run = async (key, fn, okText) => {
     setBusy(key); setMsg(null); setStep("");
@@ -282,13 +305,16 @@ function ItemCard({ item: it, week, narrow, onPatch, onReplace, reload, onChange
     <div>
       <GraphicPreview spec={spec} onClick={editable ? () => setShowGraphic(s => !s) : undefined} />
       {editable && <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
-        {TEMPLATES.map(([k, l]) => <button key={k} onClick={() => setG({ template: k })} style={chipStyle((g.template || "photo") === k, DS.lime, narrow)}>{l}</button>)}
+        {[...TEMPLATES, ...(g.custom_url ? [["custom", "As uploaded"]] : [])].map(([k, l]) => <button key={k} onClick={() => setG(k === "custom" ? { template: "custom", photo_url: g.custom_url } : { template: k, ...(g.template === "custom" && g.photo_url === g.custom_url ? { photo_url: null } : {}) })} style={chipStyle((g.template || "photo") === k, DS.lime, narrow)}>{l}</button>)}
       </div>}
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
         {it.channel === "social" && (isStoryItem ? ["story"] : ["post", "square"]).map(f => <button key={f} disabled={!editable} onClick={() => { setPreview(null); setG({ format: f }); }} style={chipStyle(!preview && spec.format === f, "#7FD1C3")}>{FORMATS[f].label}</button>)}
         {it.channel === "social" && !isStoryItem && <button onClick={() => setPreview(p => p ? null : "story")} style={chipStyle(preview === "story", "#7FD1C3")}>Story preview</button>}
         {editable && <button onClick={onPickPhoto} style={chipStyle(false, DS.lime, narrow)}>Swap photo</button>}
-        {editable && <button onClick={() => setShowGraphic(s => !s)} style={chipStyle(showGraphic, DS.lime, narrow)}>{showGraphic ? "Done with text" : "Edit graphic text"}</button>}
+        {editable && <button disabled={busy === "upload"} onClick={() => pickFile("photo")} style={chipStyle(false, DS.lime, narrow)} title="Your photo, with the club's headline and logo on top">{busy === "upload" && upMode === "photo" ? "Uploading…" : "⬆ Upload photo"}</button>}
+        {editable && <button disabled={busy === "upload"} onClick={() => pickFile("custom")} style={chipStyle(g.template === "custom", "#F5C542", narrow)} title="A finished graphic (Canva, a flyer) — posted exactly as is">{busy === "upload" && upMode === "custom" ? "Uploading…" : "⬆ Use my own graphic"}</button>}
+        <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }} onChange={e => onFile(e.target.files?.[0])} />
+        {editable && g.template !== "custom" && <button onClick={() => setShowGraphic(s => !s)} style={chipStyle(showGraphic, DS.lime, narrow)}>{showGraphic ? "Done with text" : "Edit graphic text"}</button>}
       </div>
       {it.asset_url && <div style={{ fontSize: 11, color: DS.dim, marginTop: 6 }}><a href={it.asset_url} target="_blank" rel="noreferrer" style={{ color: DS.mut }}>Uploaded image</a>{it.asset_story_url && <> · <a href={it.asset_story_url} target="_blank" rel="noreferrer" style={{ color: DS.mut }}>story</a></>}</div>}
       {showGraphic && editable && (
@@ -324,6 +350,8 @@ function ItemCard({ item: it, week, narrow, onPatch, onReplace, reload, onChange
         <div style={fieldLbl}>Preheader (the grey line after the subject)</div>
         <Field readOnly={!editable} value={it.email_preheader || ""} onSave={v => onPatch(it, { email_preheader: v })} />
         {(it.programs || []).length > 0 && <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>{it.programs.map((p, i) => <Tag key={p.id || i} color={DS.mut}>{p.name}</Tag>)}</div>}
+        <div style={fieldLbl}>To</div>
+        {editable ? <EmailAudiencePicker value={it.audience} onChange={v => onPatch(it, { audience: v || { source: "dssc_contacts" } })} narrow={narrow} /> : <div style={{ fontSize: 13, color: DS.mut }}>{emailAudienceLabel(it.audience, segs)}</div>}
       </>}
       {it.channel === "sms" && <>
         <div style={fieldLbl}>Text</div>
@@ -426,7 +454,7 @@ function audienceSummary(a) {
 }
 
 // ── Swap photo ─────────────────────────────────────────────────────────────
-function PhotoPicker({ item, narrow, onPick, onClose }) {
+export function PhotoPicker({ item, narrow, onPick, onClose }) {
   const [photos, setPhotos] = useState(null);
   const [err, setErr] = useState("");
   const [scope, setScope] = useState(item.line ? "line" : "all");

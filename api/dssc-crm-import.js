@@ -3,15 +3,20 @@
 // POST { files: [{ name, rows }] }   CSVs parsed in the browser; each is
 //                                    recognised by its columns:
 //                                    Playbook participants (student_pk…),
+//                                    Playbook registrations with prices
+//                                    (invoice_number… → spend),
 //                                    Upper Hand contacts_list / contact_list /
-//                                    order_list / attendance
+//                                    order_list / attendance,
+//                                    or an old mailing list ({ name, rows,
+//                                    list: "Mailchimp 2023" } - any CSV with
+//                                    an email column)
 // POST { sync: true }                Playbook class rosters + DS Elite roster
 //   Authorization: Bearer <Supabase session token of an owner/admin/DSSC director>
 // Same loaders as scripts/import-dssc-crm.mjs (api/_lib/dssc-crm.js).
 
 import { createClient } from "@supabase/supabase-js";
 import Papa from "papaparse";
-import { importUpperHand, importPlaybookParticipants, importPlaybookRegistrations, syncPlaybook, syncDsElite, parseUpperHandEvent } from "./_lib/dssc-crm.js";
+import { importUpperHand, importPlaybookParticipants, importPlaybookRegistrations, importPlaybookSpend, isPlaybookSpendExport, importMailingList, syncPlaybook, syncDsElite, parseUpperHandEvent } from "./_lib/dssc-crm.js";
 
 export const config = { maxDuration: 300 };
 const OWNER_EMAILS = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"];
@@ -45,11 +50,18 @@ export default async function handler(req, res) {
     for (const f of files) {
       // A per-event export has metadata rows above its header; the browser's
       // header-based parse can't read it, so it also sends the raw text.
+      if (f.list) {
+        const st = /unsub|opt.?out/i.test(f.name || "") ? "unsubscribed" : /clean|bounce/i.test(f.name || "") ? "bounced" : "ok";
+        const r = await importMailingList(sb, Array.isArray(f.rows) ? f.rows : [], { list: f.list, status: st });
+        parts.push(`${f.name} → list "${r.list}": ${r.contacts} addresses${r.unsubscribed ? `, ${r.unsubscribed} unsubscribed` : ""}${r.bounced ? `, ${r.bounced} bounced` : ""}${r.invalid ? `, ${r.invalid} not valid` : ""}`);
+        continue;
+      }
       const ev = typeof f.text === "string" ? parseUpperHandEvent(f.text, Papa) : null;
       if (ev) { uh.attendance.push(...ev); events++; parts.push(`${f.name}: event "${ev[0]?.event || "?"}" · ${ev.length} attendees`); continue; }
       const rows = Array.isArray(f.rows) ? f.rows : [];
       const cols = Object.keys(rows[0] || {});
-      if (cols.includes("student_pk") && cols.includes("guardian_email")) { const r = await importPlaybookParticipants(sb, rows); parts.push(`${f.name}: ${r.participants} players under ${r.contacts} families (${r.rosterPhones} roster phones filled)`); }
+      if (isPlaybookSpendExport(cols)) { const r = await importPlaybookSpend(sb, rows); parts.push(`${f.name}: ${r.purchases} Playbook purchases, $${Math.round(r.cents / 100).toLocaleString("en-US")} at list price${r.from ? ` (${r.from} to ${r.to})` : ""}, ${r.contacts} families, ${r.participants} people`); }
+      else if (cols.includes("student_pk") && cols.includes("guardian_email")) { const r = await importPlaybookParticipants(sb, rows); parts.push(`${f.name}: ${r.participants} players under ${r.contacts} families (${r.rosterPhones} roster phones filled)`); }
       else if (cols.includes("registration_pk") && cols.includes("source_pk")) { const r = await importPlaybookRegistrations(sb, rows); parts.push(`${f.name}: ${r.new} new Playbook sign-ups (${r.participation} program records, ${r.participants} people)`); }
       else if (cols.includes("phone_number") && cols.includes("added_date")) uh.contacts.push(...rows);
       else if (cols.includes("gender") && cols.includes("date_of_birth") && cols.includes("phone")) uh.participants.push(...rows);

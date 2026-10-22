@@ -22,7 +22,7 @@ export const log = (sb, item_id, kind, detail = {}) => sb.from("mkt_log").insert
 
 // ── settings / priorities / history ──────────────────────────────────────────
 export const SETTINGS_DEFAULTS = {
-  id: 1, voice: "", weights: DEFAULT_WEIGHTS, cadence: DEFAULT_CADENCE, themes: {}, flair: 1, scout: { enabled: true, day: "sat", web: true, spotlight_every_weeks: 2, via: ["email", "sms"] }, auto_generate: true, generate_day: "sun",
+  id: 1, voice: "", weights: DEFAULT_WEIGHTS, cadence: DEFAULT_CADENCE, themes: {}, flair: 1, scout: { enabled: true, day: "sat", web: true, spotlight_every_weeks: 2, via: ["email", "sms"] }, auto_generate: true, generate_day: "sun", plan_ahead: 2,
   email_audience: { source: "dssc_contacts" }, sms_filters: {}, notify_emails: ["drew@drippingsportsclub.com"],
 };
 export async function loadSettings(sb) {
@@ -159,21 +159,23 @@ function singleSlot({ weekOf, today, feed, settings, single, instruction, taken 
 }
 
 // ── digest to the directors ──────────────────────────────────────────────────
-export async function sendDigest(sb, settings, weekOf, items) {
+export async function sendDigest(sb, settings, weekOf, items, { reminder = false } = {}) {
   const to = (settings.notify_emails || []).filter(isEmailish);
   if (!to.length || !items.length) return { ok: false, error: "nobody to tell" };
   const link = HQ_MARKETING_URL(weekOf);
   const label = (i) => KIND_LABEL[kindOf(i)] || i.channel;
   const rows = items.slice().sort((a, b) => String(a.scheduled_at).localeCompare(String(b.scheduled_at)))
     .map(i => [fmtDay(new Date(i.scheduled_at).toLocaleDateString("en-CA", { timeZone: "America/Chicago" })), label(i), lineLabel(i.line), i.channel === "email" ? i.email_subject : i.headline]);
-  const subject = `${items.length} marketing draft${items.length === 1 ? "" : "s"} ready for the week of ${fmtDay(weekOf)} — approve in HQ`;
+  const subject = reminder
+    ? `Next week's marketing: ${items.length} draft${items.length === 1 ? "" : "s"} still waiting for approval — week of ${fmtDay(weekOf)}`
+    : `${items.length} marketing draft${items.length === 1 ? "" : "s"} ready for the week of ${fmtDay(weekOf)} — approve in HQ`;
   const html = `<div style="font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:14px;line-height:1.5;color:#061a18;max-width:640px">
-<p style="margin:0 0 10px"><b>${esc(items.length)} drafts are ready</b> for the week of ${esc(fmtDay(weekOf))}. Nothing goes out until a director approves it.</p>
+<p style="margin:0 0 10px"><b>${esc(items.length)} ${reminder ? "drafts are still waiting" : "drafts are ready"}</b> for the week of ${esc(fmtDay(weekOf))}. Nothing goes out until a director approves it — open the week, edit what you like, then "Approve all".</p>
 <table style="border-collapse:collapse;font-size:14px">${rows.map(r => `<tr>${r.map((c, j) => `<td style="padding:3px 12px 3px 0;${j < 3 ? "color:#104946;white-space:nowrap" : ""}">${esc(c)}</td>`).join("")}</tr>`).join("")}</table>
 <p style="margin:18px 0"><a href="${link}" style="display:inline-block;background:#B2D049;color:#061a18;padding:11px 20px;text-decoration:none;font-weight:700">Review and approve in HQ →</a></p></div>`;
   const text = `${items.length} drafts are ready for the week of ${fmtDay(weekOf)}. Nothing goes out until a director approves it.\n\n${rows.map(r => r.join(" · ")).join("\n")}\n\nReview and approve in HQ: ${link}`;
   const r = await sendResend({ from: dsscFrom(), to, subject, html, text });
-  await log(sb, null, "digest", { week_of: weekOf, to, ok: r.ok, error: r.error || null });
+  await log(sb, null, reminder ? "review_reminder" : "digest", { week_of: weekOf, to, ok: r.ok, error: r.error || null });
   return r;
 }
 

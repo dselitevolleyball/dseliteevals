@@ -27,6 +27,7 @@ import { createHmac } from "node:crypto";
 import { sendResend, dsscFrom, resendKey, nrm, isEmailish, safeEqual, inboxAddress, DSSC_DIRECTORS } from "./site-inbox.js";
 import { twilioReady, notReadyMessage, sendOneSms } from "./sms.js";
 import { EMPTY_FILTERS } from "../../shared/campaign-audience.js";
+import { loadSegmentData, buildFamilies, resolveSegment } from "../../shared/crm-segments.js";
 import { buildEmail, withHero, UNSUB_TOKEN } from "./marketing-ai.js";
 import { resendKeyFor } from "./resend-key.js";
 
@@ -144,22 +145,42 @@ export async function postFacebookStory(item) {
 }
 
 // ── email ────────────────────────────────────────────────────────────────────
-// Who the marketing email goes to: { source: 'dssc_contacts' } (default) -
-// every DSSC contact with an email; 'directors' - the directors only (a soft
-// launch); emails: [...] - exactly these. Unsubscribed addresses are removed.
-export async function emailAudience(sb, audience) {
+// Who the marketing email goes to:
+//   { source: 'dssc_contacts' } (default) - every DSSC contact with an email
+//   { source: 'directors' }               - the directors only (a soft launch)
+//   { emails: [...] }                     - exactly these
+//   { segment_id } / { segment: {...} }   - a saved People segment, or filters
+//                                            inline (shared/crm-segments.js)
+//   + cold_cap: N                          - at most N "cold" addresses (from an
+//                                            old list, never bought, never
+//                                            emailed) per send, to warm a list up
+// Unsubscribed and bounced / complained addresses are never included.
+export async function emailAudience(sb, audience, { coldUsed = 0 } = {}) {
   const a = audience && typeof audience === "object" ? audience : { source: "dssc_contacts" };
   let list = [];
+  const badStatus = new Set();
   if (Array.isArray(a.emails) && a.emails.length) list = a.emails.map(e => ({ email: nrm(e), first_name: "" }));
   else if (a.source === "directors") list = DSSC_DIRECTORS.map(d => ({ email: d.email, first_name: d.name.split(" ")[0] }));
-  else {
+  else if (a.segment_id || (a.segment && typeof a.segment === "object")) {
+    let seg = a.segment;
+    if (a.segment_id) {
+      const { data, error } = await sb.from("dssc_segments").select("id, name, filters").eq("id", a.segment_id).maybeSingle();
+      if (error) throw new Error("dssc_segments: " + error.message);
+      if (!data) throw new Error(`Segment ${a.segment_id} no longer exists - pick another audience`);
+      seg = data.filters || {};
+    }
+    const index = buildFamilies(await loadSegmentData(sb), new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" }));
+    const { recipients } = resolveSegment(index, seg);
+    list = recipients;
+  } else {
     for (let from = 0; ; from += 1000) {
-      const { data, error } = await sb.from("dssc_contacts").select("id, email, first_name").not("email", "is", null).order("id").range(from, from + 999);
+      const { data, error } = await sb.from("dssc_contacts").select("id, email, first_name, email_status").not("email", "is", null).order("id").range(from, from + 999);
       if (error) throw new Error("dssc_contacts: " + error.message);
       list.push(...(data || []));
       if (!data || data.length < 1000) break;
     }
   }
+  for (const r of list) if (r.email_status && r.email_status !== "ok") badStatus.add(nrm(r.email));
   const unsub = new Set();
   for (let from = 0; ; from += 1000) {
     const { data, error } = await sb.from("mkt_unsubscribes").select("email").order("email").range(from, from + 999);
@@ -168,16 +189,21 @@ export async function emailAudience(sb, audience) {
     if (!data || data.length < 1000) break;
   }
   const seen = new Set(), out = [];
-  let skipped = 0;
+  let skipped = 0, bounced = 0, held = 0;
+  // A resumed send has already used some of the cap (those are warm now).
+  const cap = Number.isFinite(+a.cold_cap) && a.cold_cap !== "" && a.cold_cap != null ? Math.max(0, +a.cold_cap - coldUsed) : null;
+  let cold = 0;
   for (const r of list) {
     const e = nrm(r.email);
     if (!isEmailish(e) || seen.has(e)) continue;
     seen.add(e);
     if (unsub.has(e)) { skipped++; continue; }
-    out.push({ email: e, first_name: r.first_name || "" });
+    if (badStatus.has(e)) { bounced++; continue; }
+    if (r.cold && cap != null) { if (cold >= cap) { held++; continue; } cold++; }
+    out.push({ email: e, first_name: r.first_name || "", cold: !!r.cold });
   }
   out.sort((x, y) => x.email.localeCompare(y.email));
-  return { recipients: out, unsubscribed: skipped };
+  return { recipients: out, unsubscribed: skipped, bounced, held_cold: held };
 }
 
 export function emailParts(item) {
@@ -201,28 +227,32 @@ async function resendBatch(payload, idem) {
 export async function sendEmailItem(sb, item, { deadline = Date.now() + 60000, dry = false } = {}) {
   if (!resendKey() || !dsscFrom()) throw new Error("Email isn't connected (RESEND_API_KEY, DSSC_FROM_EMAIL)");
   if (!unsubSecret()) throw new Error("Set MARKETING_UNSUB_SECRET (or CRON_SECRET) so every email can carry an unsubscribe link");
-  const { recipients, unsubscribed } = await emailAudience(sb, item.audience);
   const prog = { ...(item.external_ids?.email || {}) };
+  const { recipients, unsubscribed, bounced, held_cold } = await emailAudience(sb, item.audience, { coldUsed: prog.cold_sent || 0 });
   const cursor = prog.cursor || "";
   const todo = recipients.filter(r => r.email > cursor);
-  if (dry) return { done: false, dry: true, total: recipients.length, remaining: todo.length, unsubscribed };
+  if (dry) return { done: false, dry: true, total: recipients.length, remaining: todo.length, unsubscribed, bounced, held_cold };
   const { html, text, subject } = emailParts(item);
   const from = dsscFrom(), reply_to = inboxAddress();
-  prog.total = recipients.length; prog.sent = prog.sent || 0; prog.failed = prog.failed || 0; prog.unsubscribed = unsubscribed;
+  prog.total = recipients.length; prog.sent = prog.sent || 0; prog.failed = prog.failed || 0; prog.unsubscribed = unsubscribed; prog.bounced = bounced; prog.held_cold = held_cold; prog.cold_sent = prog.cold_sent || 0;
   let error = null;
   for (let i = 0; i < todo.length; i += 100) {
     if (Date.now() > deadline) break;
     const chunk = todo.slice(i, i + 100);
     const payload = chunk.map(r => {
       const u = unsubUrl(r.email);
-      return { from, to: [r.email], reply_to, subject, html: personalize(html, r.email), text: personalize(text, r.email), headers: { "List-Unsubscribe": `<${u}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" } };
+      return { from, to: [r.email], reply_to, subject, html: personalize(html, r.email), text: personalize(text, r.email), headers: { "List-Unsubscribe": `<${u}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" }, tags: [{ name: "mkt_item", value: String(item.id) }] };
     });
     let res = await resendBatch(payload, `mkt-${item.id}-${chunk[0].email}`.slice(0, 250));
     if (res.status === 429) { await sleep(1500); res = await resendBatch(payload, `mkt-${item.id}-${chunk[0].email}`.slice(0, 250)); }
     if (!res.ok) {
       if ([401, 403, 422].includes(res.status)) { error = res.error; break; }   // the whole send is wrong - stop
       prog.failed += chunk.length; prog.last_error = res.error;
-    } else prog.sent += chunk.length;
+    } else {
+      prog.sent += chunk.length; prog.cold_sent += chunk.filter(r => r.cold).length;
+      // When each family last got a marketing email (People, "never opened", warm-up).
+      await sb.from("dssc_contacts").update({ last_emailed_at: new Date().toISOString() }).in("email", chunk.map(r => r.email)).then(() => {}, () => {});
+    }
     prog.cursor = chunk[chunk.length - 1].email;
     await sb.from("mkt_items").update({ external_ids: { ...(item.external_ids || {}), email: prog } }).eq("id", item.id);
     item.external_ids = { ...(item.external_ids || {}), email: prog };

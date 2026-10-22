@@ -15,27 +15,12 @@ import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { supabase } from "../supabase";
 import { DS, Btn, Tag, inputStyle, Grow, fetchAll } from "./DsscHub.jsx";
 import { CATEGORIES, EMPTY_FILTERS } from "../../shared/campaign-audience.js";
-import { mktApi, isMissingTable, MIGRATION_MSG, LINES, lineMeta, LineChip, DEFAULT_WEIGHTS, DEFAULT_CADENCE, DAYS, DAY_LABEL, chipStyle, Msg, Panel, H } from "./DsscMarketingKit.jsx";
+import EmailAudiencePicker from "./DsscEmailAudience.jsx";
+import { mktApi, isMissingTable, MIGRATION_MSG, LINES, lineMeta, LineChip, DEFAULT_WEIGHTS, DEFAULT_CADENCE, DAYS, DAY_LABEL, chipStyle, Msg, Panel, H, downscale, isImageFile } from "./DsscMarketingKit.jsx";
 import { DEFAULT_RHYTHM, DEFAULT_THEMES, normRhythm } from "../../shared/marketing-plan.js";
 import { PHOTO_TAGS_CORE, PHOTO_TAGS_ALL, PHOTO_USES, USE_LABEL, PEOPLE_LABEL, SETTING_LABEL, tagLabel, orientationOf, photoHaystack } from "../../shared/marketing-photos.js";
 
 // ── Photos ──────────────────────────────────────────────────────────────────
-async function downscale(file, max = 2000) {
-  const url = URL.createObjectURL(file);
-  try {
-    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error("Couldn't read " + file.name)); i.src = url; });
-    const s = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
-    const w = Math.round(img.naturalWidth * s), h = Math.round(img.naturalHeight * s);
-    if (s === 1 && /jpe?g|webp/i.test(file.type) && file.size < 3.5e6) return { blob: file, w, h, type: file.type };
-    const c = document.createElement("canvas"); c.width = w; c.height = h;
-    c.getContext("2d").drawImage(img, 0, 0, w, h);
-    const blob = await new Promise(r => c.toBlob(r, "image/jpeg", 0.86));
-    if (!blob) throw new Error("Couldn't convert " + file.name);
-    return { blob, w, h, type: "image/jpeg" };
-  } finally { URL.revokeObjectURL(url); }
-}
-
-const isImageFile = (f) => /^image\//.test(f.type) || /\.(jpe?g|png|webp|heic)$/i.test(f.name);
 // Kids are recognizable and nobody has said it's OK to post them yet.
 const needsRelease = (p) => p.minors === true && p.release_ok == null;
 const SHAPES = [["portrait", "Tall"], ["landscape", "Wide"], ["square", "Square"]];
@@ -352,6 +337,7 @@ export function MarketingSettings({ status, narrow, reloadStatus, onChanged }) {
         cadence: { social: { ...DEFAULT_CADENCE.social, ...(cad.social || {}) }, email: { ...DEFAULT_CADENCE.email, ...(cad.email || {}) }, sms: { ...DEFAULT_CADENCE.sms, ...(cad.sms || {}) } },
         auto_generate: row.auto_generate !== false,
         generate_day: row.generate_day || "sun",
+        plan_ahead: Number.isFinite(+row.plan_ahead) ? +row.plan_ahead : 2,
         notify_emails: (row.notify_emails || ["drew@drippingsportsclub.com"]).join(", "),
         sms_filters: { ...EMPTY_FILTERS, ...(row.sms_filters || {}) },
         email_audience: row.email_audience || { source: "dssc_contacts" },
@@ -375,7 +361,7 @@ export function MarketingSettings({ status, narrow, reloadStatus, onChanged }) {
     try {
       const emails = s.notify_emails.split(/[\s,;]+/).map(e => e.trim().toLowerCase()).filter(e => /@/.test(e));
       const themes = Object.fromEntries(Object.entries(s.themes || {}).map(([k, v]) => [k, String(v || "").split("\n").map(x => x.trim()).filter(Boolean)]));
-      const patch = { voice: s.voice, weights: s.weights, cadence: s.cadence, themes, flair: s.flair, scout: s.scout, auto_generate: s.auto_generate, generate_day: s.generate_day, notify_emails: emails, sms_filters: s.sms_filters, email_audience: s.email_audience };
+      const patch = { voice: s.voice, weights: s.weights, cadence: s.cadence, themes, flair: s.flair, scout: s.scout, auto_generate: s.auto_generate, generate_day: s.generate_day, plan_ahead: s.plan_ahead, notify_emails: emails, sms_filters: s.sms_filters, email_audience: s.email_audience };
       await mktApi("settings_save", { patch });
       setOrig(JSON.stringify(s)); setMsg({ ok: "Saved." }); reloadStatus?.(); onChanged?.();
     } catch (e) { setMsg({ err: e.message }); }
@@ -543,22 +529,23 @@ export function MarketingSettings({ status, narrow, reloadStatus, onChanged }) {
           <H>Automation</H>
           <label style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 14, cursor: "pointer" }}>
             <input type="checkbox" checked={s.auto_generate} onChange={e => set("auto_generate", e.target.checked)} style={{ width: 22, height: 22, accentColor: DS.lime }} />
-            Draft next week automatically
+            Keep the coming weeks drafted automatically
           </label>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 8, opacity: s.auto_generate ? 1 : 0.5 }}>
-            <span style={{ fontSize: 13, color: DS.mut }}>every</span>
+            <span style={{ fontSize: 13, color: DS.mut }}>always have</span>
+            <select disabled={!s.auto_generate} value={s.plan_ahead} onChange={e => set("plan_ahead", +e.target.value)} style={sel}>{[1, 2, 3, 4].map(n => <option key={n} value={n}>{n} week{n === 1 ? "" : "s"}</option>)}</select>
+            <span style={{ fontSize: 13, color: DS.mut }}>ahead drafted and waiting on the Calendar — posts, the weekly email and texts.</span>
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 8, opacity: s.auto_generate ? 1 : 0.5 }}>
+            <span style={{ fontSize: 13, color: DS.mut }}>Remind me every</span>
             <select disabled={!s.auto_generate} value={s.generate_day} onChange={e => set("generate_day", e.target.value)} style={sel}>{DAYS.map(d => <option key={d} value={d}>{DAY_LABEL[d]}</option>)}</select>
-            <span style={{ fontSize: 13, color: DS.mut }}>after 5 pm — nothing is posted until a director approves it.</span>
+            <span style={{ fontSize: 13, color: DS.mut }}>after 5 pm if next week still has drafts waiting. Nothing is posted until a director approves it.</span>
           </div>
           <div style={lbl}>Email "drafts ready" to</div>
           <input value={s.notify_emails} onChange={e => set("notify_emails", e.target.value)} placeholder="drew@drippingsportsclub.com" style={{ ...inputStyle, fontSize: narrow ? 16 : 14 }} />
           <div style={lbl}>Weekly email goes to</div>
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            <button onClick={() => set("email_audience", { source: "dssc_contacts" })} style={chipStyle(s.email_audience?.source === "dssc_contacts", DS.lime, narrow)}>Everyone in DSSC People</button>
-            <button onClick={() => set("email_audience", { source: "directors" })} style={chipStyle(s.email_audience?.source === "directors", DS.orange, narrow)}>Directors only (soft launch)</button>
-            {Array.isArray(s.email_audience?.emails) && <span style={{ fontSize: 12, color: DS.mut, alignSelf: "center" }}>{s.email_audience.emails.length} set addresses</span>}
-          </div>
-          <div style={{ fontSize: 12, color: DS.dim, marginTop: 4 }}>{s.email_audience?.source === "directors" ? "Marketing emails go only to the directors until you switch this to everyone." : "Everyone in DSSC People with an email address, minus anyone who unsubscribed."}</div>
+          <EmailAudiencePicker value={s.email_audience} onChange={v => set("email_audience", v || { source: "dssc_contacts" })} narrow={narrow} />
+          <div style={{ fontSize: 12, color: DS.dim, marginTop: 4 }}>{s.email_audience?.source === "directors" ? "Marketing emails go only to the directors until you switch this." : "New emails start with this audience; each email can be changed before you approve it. Unsubscribed and bounced addresses are always left out."}</div>
         </Panel>
 
         <Panel style={{ marginBottom: 14 }}>

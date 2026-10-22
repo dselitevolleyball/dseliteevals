@@ -9,6 +9,35 @@ import * as PLAN from "../../shared/marketing-plan.js";
 import { ensureFonts, loadGraphicImages, renderGraphic, renderGraphicBlob } from "../../shared/marketing-graphics.js";
 
 export const NARROW = 760;
+
+// Phone photos are big: scale to 2000px JPEG before upload (PNG/WebP under
+// 3.5 MB and already small enough go up as they are).
+export async function downscale(file, max = 2000) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error("Couldn't read " + file.name)); i.src = url; });
+    const s = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+    const w = Math.round(img.naturalWidth * s), h = Math.round(img.naturalHeight * s);
+    if (s === 1 && /jpe?g|webp/i.test(file.type) && file.size < 3.5e6) return { blob: file, w, h, type: file.type };
+    const c = document.createElement("canvas"); c.width = w; c.height = h;
+    c.getContext("2d").drawImage(img, 0, 0, w, h);
+    const blob = await new Promise(r => c.toBlob(r, "image/jpeg", 0.86));
+    if (!blob) throw new Error("Couldn't convert " + file.name);
+    return { blob, w, h, type: "image/jpeg" };
+  } finally { URL.revokeObjectURL(url); }
+}
+
+export const isImageFile = (f) => /^image\//.test(f.type) || /\.(jpe?g|png|webp|heic)$/i.test(f.name);
+// Upload one image to the marketing bucket (uploads/…) → { url, path, w, h }.
+export async function uploadImage(file) {
+  const { blob, w, h, type } = await downscale(file);
+  const ext = type === "image/png" ? "png" : type === "image/webp" ? "webp" : "jpg";
+  const slug = file.name.replace(/\.[^.]+$/, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "image";
+  const path = `uploads/${Date.now()}-${slug}.${ext}`;
+  const up = await supabase.storage.from("marketing").upload(path, blob, { contentType: type, cacheControl: "31536000" });
+  if (up.error) throw new Error("Upload failed: " + up.error.message);
+  return { url: supabase.storage.from("marketing").getPublicUrl(path).data.publicUrl, path, w, h };
+}
 export const MIGRATION_MSG = "The marketing tables aren't set up yet — run migrations/20261022_marketing.sql.";
 export const isMissingTable = (err) => !!err && (err.code === "42P01" || err.code === "PGRST205" || /mkt_\w+|schema cache|does not exist/i.test(err.message || ""));
 

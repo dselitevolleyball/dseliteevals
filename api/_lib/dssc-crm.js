@@ -29,9 +29,9 @@ export function categoryOf(name) {
   const n = lower(name);
   // Rentals first: "Volleyball Court 2" and "Basketball Court 1" are court time, not a program.
   if (/\bcourts?\b|rental|dssc flex|warehouse|open gym|membership|birthday|parent'?s night/.test(n)) return "facility";
-  if (/volley|vball|setter|libero|hitter|passing|middles|pins|serve|elite tots|ds elite|rise|guaranteed to|skill lab v/.test(n)) return "volleyball";
-  if (/basket|hoop|shooting|point guard|playmaker|dribbl/.test(n)) return "basketball";
-  if (/reach|performance|strength|speed|agility|s&a/.test(n)) return "reach";
+  if (/volley|vball|setter|libero|hitter|hitting|passing|middles|pins|serve|elite tots|ds elite|rise|guaranteed to|skill lab v|\bpods?\b|all-skills|love the floor|private lesson/.test(n)) return "volleyball";
+  if (/basket|hoop|shooting|point guard|playmaker|dribbl|skill lab|3v3|4qa|4th quarter/.test(n)) return "basketball";
+  if (/reach|performance|strength|speed|agility|s&a|athlete development|small group training/.test(n)) return "reach";
   if (/rental|court|open gym|party|membership/.test(n)) return "facility";
   return "other";
 }
@@ -66,7 +66,12 @@ async function upsertParticipants(sb, rows) {
   // rows: [{ contact_id, first_name, last_name, dob, gender, is_contact, dse_player_id, sources }]
   const seen = new Map();
   for (const r of rows) { if (!r.contact_id || !clean(r.first_name)) continue; const k = r.contact_id + "|" + nameKey(r.first_name, r.last_name); const cur = seen.get(k); seen.set(k, cur ? { ...cur, ...Object.fromEntries(Object.entries(r).filter(([, v]) => v != null && v !== "")), sources: [...new Set([...(cur.sources || []), ...(r.sources || [])])] } : { ...r, name_key: nameKey(r.first_name, r.last_name) }); }
-  const list = [...seen.values()].map(r => ({ contact_id: r.contact_id, first_name: cap(r.first_name), last_name: cap(r.last_name), name_key: r.name_key, dob: r.dob || null, gender: r.gender || null, is_contact: !!r.is_contact, dse_player_id: r.dse_player_id || null, sources: r.sources || [], updated_at: new Date().toISOString() }));
+  // What's already on file: an export without a birthday (or from one source)
+  // mustn't blank the birthday, gender, DS Elite link or sources another gave.
+  const have = new Map();
+  const cids = [...new Set([...seen.values()].map(r => r.contact_id))];
+  for (let i = 0; i < cids.length; i += 300) { const { data } = await sb.from("dssc_participants").select("contact_id, name_key, dob, gender, dse_player_id, sources").in("contact_id", cids.slice(i, i + 300)); for (const p of data || []) have.set(p.contact_id + "|" + p.name_key, p); }
+  const list = [...seen.values()].map(r => { const e = have.get(r.contact_id + "|" + r.name_key) || {}; return { contact_id: r.contact_id, first_name: cap(r.first_name), last_name: cap(r.last_name), name_key: r.name_key, dob: r.dob || e.dob || null, gender: r.gender || e.gender || null, is_contact: !!r.is_contact, dse_player_id: r.dse_player_id || e.dse_player_id || null, sources: [...new Set([...(e.sources || []), ...(r.sources || [])])], updated_at: new Date().toISOString() }; });
   for (let i = 0; i < list.length; i += 300) {
     const { error } = await sb.from("dssc_participants").upsert(list.slice(i, i + 300), { onConflict: "contact_id,name_key", ignoreDuplicates: false });
     if (error) throw new Error("participants: " + error.message);
@@ -314,5 +319,128 @@ export async function importPlaybookParticipants(sb, rows) {
   const phoneByEmail = new Map(contacts.filter(c => c.phone).map(c => [c.email, c.phone]));
   const { data: roster } = await sb.from("dssc_pod_roster").select("id, parent_email, parent_phone").is("parent_phone", null);
   for (const r of roster || []) { const ph = phoneByEmail.get(lower(r.parent_email)); if (ph) { const { error } = await sb.from("dssc_pod_roster").update({ parent_phone: ph }).eq("id", r.id); if (!error) out.rosterPhones++; } }
+  return out;
+}
+
+// ── Playbook spend (Reports → Registrations, the export with prices) ────────
+// One row per registration with invoice_number and registration_base_price —
+// a package's price arrives split across its sessions ($200 over 6 sessions =
+// $33.33 × 6), so the rows add up to what was charged at list price (before
+// credits, discounts or refunds, which Playbook doesn't export here). Rows are
+// folded into one purchase per invoice × person × program; source_ref is that
+// key, so re-importing an overlapping date range replaces instead of doubling.
+// It also carries what the hourly export doesn't: the parent's phone and the
+// kid's birthday and gender, which top up People.
+const MON = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
+const dmy = (s) => { const m = /^(\d{1,2})-([A-Za-z]{3})-(\d{4})/.exec(clean(s)); return m && MON[m[2].toLowerCase()] != null ? { y: +m[3], mo: MON[m[2].toLowerCase()], d: +m[1], rest: clean(s).slice(m[0].length) } : null; };
+const pbDate = (s) => { const p = dmy(s); return p ? `${p.y}-${String(p.mo + 1).padStart(2, "0")}-${String(p.d).padStart(2, "0")}` : isoDate(s); };
+// "22-Oct-2026, 12:15 PM" is Central time; CDT or CST depending on the date.
+export function pbTimestamp(s) {
+  const p = dmy(s); if (!p) return null;
+  const t = /(\d{1,2}):(\d{2})\s*(am|pm)/i.exec(p.rest); let h = 0, mi = 0;
+  if (t) { h = +t[1] % 12 + (/pm/i.test(t[3]) ? 12 : 0); mi = +t[2]; }
+  let ms = Date.UTC(p.y, p.mo, p.d, h + 6, mi);   // CST guess
+  const hh = +new Intl.DateTimeFormat("en-US", { timeZone: "America/Chicago", hour: "numeric", hourCycle: "h23" }).format(new Date(ms));
+  if (hh !== h) ms -= 3600000;                     // daylight time
+  return new Date(ms).toISOString();
+}
+const cents = (s) => { const n = Number(String(s || "").replace(/[^0-9.-]/g, "")); return Number.isFinite(n) ? Math.round(n * 100) : 0; };
+export const isPlaybookSpendExport = (cols) => cols.includes("invoice_number") && cols.includes("registration_base_price");
+
+export async function importPlaybookSpend(sb, rows) {
+  const out = { rows: rows.length, purchases: 0, contacts: 0, participants: 0, cents: 0, from: null, to: null };
+  const regs = rows.filter(r => clean(r.invoice_number) && clean(r.source) && EMAIL_RE.test(lower(r.user_email)));
+  if (!regs.length) return out;
+  const ids = await upsertContacts(sb, regs.map(r => ({ email: lower(r.user_email), first_name: cap(r.user_first_name), last_name: cap(r.user_last_name), phone: e164(r.user_phone), sources: ["playbook"] })));
+  out.contacts = ids.size;
+  const split = (n) => { const [f, ...l] = clean(n).split(" "); return [f || "", l.join(" ")]; };
+  const g = (x) => /^f/i.test(x || "") ? "female" : /^m/i.test(x || "") ? "male" : null;
+  const parts = regs.map(r => {
+    const cid = ids.get(lower(r.user_email)); const [f, l] = split(r.participant_name);
+    return cid && f ? { contact_id: cid, first_name: f, last_name: l, dob: pbDate(r.participant_DOB), gender: g(r.participant_gender), is_contact: nameKey(f, l) === nameKey(r.user_first_name, r.user_last_name), sources: ["playbook"] } : null;
+  }).filter(Boolean);
+  const pids = await upsertParticipants(sb, parts);
+  out.participants = pids.size;
+  const buys = new Map();
+  for (const r of regs) {
+    const cid = ids.get(lower(r.user_email)); if (!cid) continue;
+    const [f, l] = split(r.participant_name);
+    const program = clean(r.source).replace(/\s*\(\d+\)\s*$/, "");
+    const invoice = clean(r.invoice_number).replace(/^invoice\s*#?/i, "");
+    const key = [invoice, nameKey(f, l) || lower(r.user_email), lower(program)].join("|");
+    const at = pbTimestamp(r.date_created);
+    const b = buys.get(key) || { source: "playbook", source_ref: key, contact_id: cid, participant_id: pids.get(cid + "|" + nameKey(f, l)) || null, invoice, program, category: categoryOf(program), kind: clean(r.type) || null, sessions: 0, amount_cents: 0, purchased_at: at };
+    b.sessions++; b.amount_cents += cents(r.registration_base_price);
+    if (at && (!b.purchased_at || at < b.purchased_at)) b.purchased_at = at;
+    buys.set(key, b);
+  }
+  const list = [...buys.values()];
+  for (let i = 0; i < list.length; i += 300) { const { error } = await sb.from("dssc_purchases").upsert(list.slice(i, i + 300), { onConflict: "source,source_ref" }); if (error) throw new Error("purchases: " + error.message); }
+  out.purchases = list.length;
+  out.cents = list.reduce((s, b) => s + b.amount_cents, 0);
+  const days = list.map(b => (b.purchased_at || "").slice(0, 10)).filter(Boolean).sort();
+  out.from = days[0] || null; out.to = days[days.length - 1] || null;
+  return out;
+}
+
+// ── Old mailing lists (Mailchimp, Constant Contact, a spreadsheet…) ─────────
+// Any CSV with an email column. Each address becomes (or tops up) a contact,
+// tagged with the list it came from (dssc_contacts.lists) and source 'list'.
+// A status column saying unsubscribed / opted out goes to mkt_unsubscribes; one
+// saying cleaned / bounced / invalid marks the address bounced. Neither is ever
+// emailed. Mailchimp's separate "unsubscribed" / "cleaned" exports work too:
+// the file name says what they are (opts.status).
+const col = (cols, ...res) => cols.find(c => res.some(re => re.test(String(c).trim())));
+export function mailingListColumns(cols) {
+  return {
+    email: col(cols, /^e-?mail(\s*address)?$/i, /e-?mail/i),
+    first: col(cols, /^first[\s_]*name$/i, /^fname$/i, /^first$/i, /^given/i),
+    last: col(cols, /^last[\s_]*name$/i, /^lname$/i, /^last$/i, /^surname$/i, /^family name$/i),
+    name: col(cols, /^(full[\s_]*)?name$/i, /^contact(\s*name)?$/i, /^parent(\s*name)?$/i),
+    phone: col(cols, /mobile|cell/i, /phone/i),
+    city: col(cols, /^city$/i),
+    zip: col(cols, /zip|postal/i),
+    status: col(cols, /^(member\s*)?status$/i, /e-?mail\s*(status|permission)/i, /subscri/i, /opt/i),
+  };
+}
+export const statusOf = (v) => /unsub|opt(ed)?[\s_-]*out|do\s*not|revoked/i.test(v || "") ? "unsubscribed" : /clean|bounc|invalid|undeliver|non-?deliver/i.test(v || "") ? "bounced" : "ok";
+
+export async function importMailingList(sb, rows, { list, status: fileStatus = "ok" } = {}) {
+  const name = clean(list) || "Imported list";
+  const c = mailingListColumns(Object.keys(rows[0] || {}));
+  if (!c.email) throw new Error(`${name}: no email column`);
+  const out = { list: name, rows: rows.length, contacts: 0, unsubscribed: 0, bounced: 0, invalid: 0 };
+  const byEmail = new Map();
+  for (const r of rows) {
+    const email = lower(r[c.email]);
+    if (!EMAIL_RE.test(email)) { out.invalid++; continue; }
+    let [f, l] = [clean(r[c.first]), clean(r[c.last])];
+    if (!f && c.name) { const [a, ...b] = clean(r[c.name]).split(" "); f = a || ""; l = l || b.join(" "); }
+    const st = fileStatus !== "ok" ? fileStatus : statusOf(c.status ? r[c.status] : "");
+    const cur = byEmail.get(email);
+    byEmail.set(email, { email, first_name: cap(f) || cur?.first_name || null, last_name: cap(l) || cur?.last_name || null, phone: e164(c.phone ? r[c.phone] : "") || cur?.phone || null, city: cap(c.city ? r[c.city] : "") || cur?.city || null, zip: clean(c.zip ? r[c.zip] : "").slice(0, 10) || cur?.zip || null, sources: ["list"], st: cur?.st && cur.st !== "ok" ? cur.st : st });
+  }
+  const all = [...byEmail.values()];
+  // An old list never overwrites what People already has on a family (a
+  // customer's name and phone from Playbook beat a 2019 spreadsheet): for
+  // addresses already on file only blanks are filled.
+  const known = new Map();
+  for (let i = 0; i < all.length; i += 150) { const { data } = await sb.from("dssc_contacts").select("email, first_name, last_name, phone").in("email", all.slice(i, i + 150).map(r => r.email)); for (const k of data || []) known.set(k.email, k); }
+  const ids = await upsertContacts(sb, all.map(({ st, city, zip, ...r }) => { const k = known.get(r.email); return k ? { ...r, first_name: k.first_name || r.first_name, last_name: k.last_name || r.last_name, phone: k.phone || r.phone } : r; }));
+  out.contacts = ids.size;
+  const emails = all.map(r => r.email);
+  for (let i = 0; i < emails.length; i += 500) { const { error } = await sb.rpc("dssc_add_list", { p_emails: emails.slice(i, i + 500), p_list: name }); if (error) throw new Error("lists: " + error.message); }
+  const fill = all.filter(r => r.city || r.zip);
+  for (let i = 0; i < fill.length; i += 150) {
+    const chunk = fill.slice(i, i + 150);
+    const { data } = await sb.from("dssc_contacts").select("id, email, city, zip").in("email", chunk.map(r => r.email));
+    for (const row of data || []) { const r = byEmail.get(row.email); const patch = {}; if (!row.city && r.city) patch.city = r.city; if (!row.zip && r.zip) patch.zip = r.zip; if (Object.keys(patch).length) await sb.from("dssc_contacts").update(patch).eq("id", row.id); }
+  }
+  const unsub = all.filter(r => r.st === "unsubscribed").map(r => ({ email: r.email }));
+  for (let i = 0; i < unsub.length; i += 500) { const { error } = await sb.from("mkt_unsubscribes").upsert(unsub.slice(i, i + 500), { onConflict: "email", ignoreDuplicates: true }); if (error) throw new Error("unsubscribes: " + error.message); }
+  out.unsubscribed = unsub.length;
+  const bounced = all.filter(r => r.st === "bounced").map(r => r.email);
+  for (let i = 0; i < bounced.length; i += 150) { const { error } = await sb.from("dssc_contacts").update({ email_status: "bounced", email_status_at: new Date().toISOString() }).in("email", bounced.slice(i, i + 150)).neq("email_status", "complained"); if (error) throw new Error("bounced: " + error.message); }
+  out.bounced = bounced.length;
   return out;
 }

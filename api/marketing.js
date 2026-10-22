@@ -368,6 +368,7 @@ export async function run(sb, { me, name }, b) {
       }
       if ("themes" in p) { row.themes = {}; for (const k of LINE_KEYS) { const v = (Array.isArray(p.themes?.[k]) ? p.themes[k] : String(p.themes?.[k] || "").split(/\n+/)).map(x => String(x).trim().slice(0, 300)).filter(Boolean).slice(0, 20); if (v.length) row.themes[k] = v; } }
       if ("auto_generate" in p) row.auto_generate = !!p.auto_generate;
+      if ("plan_ahead" in p) row.plan_ahead = Math.max(0, Math.min(6, Math.round(+p.plan_ahead || 0)));
       if ("generate_day" in p) { const d = String(p.generate_day || "").slice(0, 3).toLowerCase(); if (!["mon", "tue", "wed", "thu", "fri", "sat", "sun"].includes(d)) throw fail(400, "generate_day must be mon..sun"); row.generate_day = d; }
       if ("email_audience" in p) row.email_audience = p.email_audience && typeof p.email_audience === "object" ? p.email_audience : { source: "dssc_contacts" };
       if ("sms_filters" in p) row.sms_filters = p.sms_filters && typeof p.sms_filters === "object" ? p.sms_filters : {};
