@@ -23,6 +23,9 @@
 //                 marketing bucket (items/<id>/reel-<ts>.mp4).
 
 import { spawn } from "node:child_process";
+import { createServer } from "node:http";
+import { randomUUID } from "node:crypto";
+import { Readable } from "node:stream";
 import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -39,7 +42,47 @@ const MAX_FRAMES = 96, PER_SHEET = 12, COLS = 4, ROWS = 3, TILE_W = 360;
 export const MOMENT_TAGS = ["volleyball", "basketball", "reach", "camp", "parties", "kids", "teens", "adults", "action", "celebration", "teamwork", "coach", "funny", "skill", "game", "drill", "crowd", "facility", "behind_the_scenes"];
 
 // ── ffmpeg ───────────────────────────────────────────────────────────────────
-export function ffmpeg(args, { timeoutMs = 240000 } = {}) {
+// The static ffmpeg build crashes (segfault) looking up a host name, so it
+// never opens a URL itself: each http(s) input goes through a relay on
+// 127.0.0.1 for the length of the run, and Node does the real request -
+// Range requests pass through, so seeking a long video still works and
+// nothing is copied to disk.
+export async function ffmpeg(args, opts = {}) {
+  const at = args.flatMap((a, i) => args[i - 1] === "-i" && /^https?:\/\//i.test(a) ? [i] : []);
+  if (!at.length) return runFfmpeg(args, opts);
+  const relay = await startRelay();
+  try { const a = args.slice(); for (const i of at) a[i] = relay.add(a[i]); return await runFfmpeg(a, opts); }
+  finally { relay.close(); }
+}
+
+export function startRelay() {
+  const urls = new Map(), live = new Set();
+  const server = createServer(async (req, res) => {
+    const up = urls.get(req.url.split("/")[1]);
+    if (!up) { res.writeHead(404); return res.end(); }
+    const ac = new AbortController();
+    res.on("close", () => ac.abort());
+    try {
+      const r = await fetch(up, { method: req.method === "HEAD" ? "HEAD" : "GET", headers: req.headers.range ? { range: req.headers.range } : {}, signal: ac.signal });
+      const h = {};
+      for (const k of ["content-type", "content-length", "content-range", "accept-ranges", "last-modified", "etag"]) if (r.headers.get(k)) h[k] = r.headers.get(k);
+      if (r.headers.get("content-encoding")) delete h["content-length"];
+      res.writeHead(r.status, h);
+      if (!r.body || req.method === "HEAD") return res.end();
+      Readable.fromWeb(r.body).on("error", () => res.destroy()).pipe(res);
+    } catch { if (!res.headersSent) res.writeHead(502); res.end(); }
+  });
+  server.on("connection", (s) => { live.add(s); s.on("close", () => live.delete(s)); });
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => resolve({
+      add(url) { const id = randomUUID(); urls.set(id, url); const file = (new URL(url).pathname.split("/").pop() || "in").replace(/[^\w.-]/g, ""); return `http://127.0.0.1:${server.address().port}/${id}/${file}`; },
+      close() { for (const s of live) s.destroy(); server.close(); },
+    }));
+  });
+}
+
+function runFfmpeg(args, { timeoutMs = 240000 } = {}) {
   return new Promise((resolve) => {
     const p = spawn(ffmpegPath, ["-hide_banner", "-nostdin", ...args], { stdio: ["ignore", "ignore", "pipe"] });
     let err = "";

@@ -13,8 +13,10 @@ import { fakeSupabase } from "./lib/fake-supabase.mjs";
 
 process.env.ANTHROPIC_API_KEY = "sk-test";
 const calls = [];
+const realFetch = globalThis.fetch;
 globalThis.fetch = async (url, init = {}) => {
   const u = String(url);
+  if (/^http:\/\/(localhost|127\.0\.0\.1)[:/]/.test(u)) return realFetch(url, init);   // the test's own file server
   if (!u.startsWith("https://api.anthropic.com/")) throw new Error("Unexpected fetch: " + u);
   const req = JSON.parse(init.body); calls.push(req);
   const base = { id: "msg", type: "message", role: "assistant", model: "claude-opus-5-5", usage: { input_tokens: 1, output_tokens: 1 }, stop_reason: "end_turn" };
@@ -126,6 +128,29 @@ check(ig.body.media_type === "REELS" && ig.body.video_url === "https://x/reel.mp
 check(graph.find(g => g.path.endsWith("/111/videos")).body.file_url === "https://x/reel.mp4", "FB posts the MP4 by URL");
 const r2 = await pub.publishItem(sb, sb.db.mkt_items[0], { resume: true, deadline: Date.now() + 60000 });
 check(r2.status === "published" && sb.db.mkt_items[0].external_ids.instagram === "ig_reel_1" && !sb.db.mkt_items[0].external_ids.instagram_container && graph.filter(g => g.path.endsWith("/111/videos")).length === 1 && graph.filter(g => g.path.endsWith("/222/media")).length === 1, "run 2: Instagram published from the same container; nothing posted twice");
+
+console.log("\n== inputs by URL (the static ffmpeg can't look up host names) ==");
+// Production reads the raw video, the cards and the music over https; the
+// static ffmpeg segfaults resolving a host name, so URLs go through a relay.
+const { createServer } = await import("node:http");
+const { statSync, createReadStream } = await import("node:fs");
+const files = { "/glasses.mp4": src, "/music.mp3": join(dir, "music.mp3"), "/intro.png": join(dir, "intro.png") };
+const web = createServer((req, res) => {
+  const f = files[req.url]; if (!f) { res.writeHead(404); return res.end(); }
+  const size = statSync(f).size, m = /bytes=(\d*)-(\d*)/.exec(req.headers.range || "");
+  const a = m && m[1] ? +m[1] : 0, b = m && m[2] ? +m[2] : size - 1;
+  res.writeHead(m ? 206 : 200, { "content-length": b - a + 1, "accept-ranges": "bytes", ...(m ? { "content-range": `bytes ${a}-${b}/${size}` } : {}) });
+  createReadStream(f, { start: a, end: b }).pipe(res);
+});
+await new Promise(r => web.listen(0, "127.0.0.1", r));
+const base = `http://localhost:${web.address().port}`;
+const pu = await V.probe(base + "/glasses.mp4");
+check(Math.abs(pu.duration - 20) < 0.2 && pu.has_audio, `probe by URL with a host name: ${pu.duration}s`);
+const urlArgs = V.reelArgs({ cards: { intro: base + "/intro.png" }, clips: [{ url: base + "/glasses.mp4", start: 12, end: 15, has_audio: true }], music: { url: base + "/music.mp3", volume: 0.3 }, out: join(dir, "url.mp4") });
+const ur = await V.ffmpeg(urlArgs.args, { timeoutMs: 60000 });
+const uo = V.parseProbe((await V.ffmpeg(["-i", join(dir, "url.mp4")])).stderr);
+check(ur.code === 0 && Math.abs(uo.duration - urlArgs.duration) < 0.25, `a reel from URLs (clip, card, looped music): exit ${ur.code}, ${uo.duration?.toFixed(2)} s`);
+web.close();
 
 console.log("\n== the scout suggests a reel ==");
 const scout = await import("../api/_lib/marketing-scout.js");
