@@ -272,13 +272,19 @@
       "maxDuration": 120
     },
     "api/marketing-cron.js": {
-      "maxDuration": 300
+      "maxDuration": 300,
+      "includeFiles": "node_modules/ffmpeg-static/ffmpeg"
     },
     "api/spotlight-form.js": {
       "maxDuration": 30
     },
     "api/marketing-act.js": {
       "maxDuration": 120
+    },
+    "api/marketing-video.js": {
+      "maxDuration": 300,
+      "memory": 3009,
+      "includeFiles": "node_modules/ffmpeg-static/ffmpeg"
     }
   },
   "headers": [

@@ -32,7 +32,7 @@ import { actUrl } from "./marketing-links.js";
 import { sendResend, dsscFrom, isEmailish, esc } from "./site-inbox.js";
 
 export const IDEA_KINDS = ["season", "holiday", "local", "club", "program", "spotlight", "fun"];
-export const KIND_LABEL = { season: "Season", holiday: "Holiday", local: "Local news", club: "Club news", program: "Program", spotlight: "Coach spotlight", fun: "Just for fun" };
+export const KIND_LABEL = { season: "Season", holiday: "Holiday", local: "Local news", club: "Club news", program: "Program", spotlight: "Coach spotlight", reel: "Reel", fun: "Just for fun" };
 const WINDOW = 35;
 export const SCOUT_DEFAULTS = { enabled: true, day: "sat", web: true, spotlight_every_weeks: 2, via: ["email", "sms"] };
 export const scoutSettings = (s) => ({ ...SCOUT_DEFAULTS, ...(s?.scout && typeof s.scout === "object" ? s.scout : {}) });
@@ -201,6 +201,10 @@ export async function runScout(sb, { now = new Date(), by = "scout", ask = "", w
     }
   }
 
+  // New videos since the last reel -> suggest cutting one.
+  let reel = null;
+  if (!ask) { try { reel = await reelIdea(sb, today); } catch (e) { error = [error, "reel: " + e.message].filter(Boolean).join(" · "); } }
+
   // Old suggestions nobody acted on lapse; this run's go in.
   await sb.from("mkt_ideas").update({ status: "expired" }).eq("status", "new").lt("best_day", today);
   const batch = ask ? `ask:${now.toISOString()}` : today;
@@ -211,10 +215,34 @@ export async function runScout(sb, { now = new Date(), by = "scout", ask = "", w
     pitch: `Interview ${spotlight.name}${spotlight.role ? ` (${spotlight.role})` : ""} for the next "${SERIES}" - ${spotlight.questions.length} fun questions and a few photos by ${[spotlight.email ? "email" : null, spotlight.phone ? "text" : null].filter(Boolean).join(" and ") || "a link you share"}. Their answers become a quote post, a story and an email.`,
     hook: spotlight.questions[0]?.q || null,
   });
+  if (reel) rows.push({ ...reel, batch, status: "new", created_by: by, spotlight_id: null });
   const { data: saved, error: insErr } = rows.length ? await sb.from("mkt_ideas").insert(rows).select("*") : { data: [] };
   if (insErr) throw new Error("Saving ideas: " + insErr.message);
   await log(sb, null, ask ? "scout_ask" : "scout", { by, today, ideas: (saved || []).length, spotlight: spotlight?.id || null, local: ctx.local ? { found: ctx.local.sources.length, error: ctx.local.error } : null, error, ask: ctx.ask || null });
   return { ideas: saved || [], spotlight, local: ctx.local ? { found: ctx.local.sources.length, error: ctx.local.error } : null, error };
+}
+
+// A reel idea when videos have come in since the last reel (and none is
+// already suggested) - the pitch names the best moments the AI found.
+export async function reelIdea(sb, today) {
+  const [vidsQ, reelsQ, openQ] = await Promise.all([
+    sb.from("mkt_videos").select("id, line, created_at, release_ok, moments").eq("status", "ready").eq("active", true).gte("created_at", addDays(today, -21)).order("created_at", { ascending: false }).limit(30),
+    sb.from("mkt_items").select("id, created_at").eq("kind", "reel").neq("status", "rejected").order("created_at", { ascending: false }).limit(1),
+    sb.from("mkt_ideas").select("id").eq("kind", "reel").eq("status", "new").limit(1),
+  ]);
+  if ((openQ.data || []).length) return null;
+  const since = (reelsQ.data || [])[0]?.created_at || "";
+  const fresh = (vidsQ.data || []).filter(v => v.release_ok !== false && String(v.created_at) > String(since));
+  const moments = fresh.flatMap(v => (v.moments || []).filter(m => !m.skip).map(m => ({ ...m, line: v.line })));
+  if (moments.length < 3) return null;
+  const best = moments.sort((a, b) => b.score - a.score).slice(0, 3);
+  const counts = {}; for (const v of fresh) if (v.line) counts[v.line] = (counts[v.line] || 0) + 1;
+  const line = Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0] || "club";
+  return {
+    kind: "reel", title: "Cut a reel from the new videos", line, channel: "social", format: "reel", best_day: addDays(today, 2), sources: [],
+    pitch: `${fresh.length} new video${fresh.length === 1 ? "" : "s"} since the last reel - ${moments.length} usable moments. The best: ${best.map(m => m.label).join(", ")}. One tap cuts a 20-30 second reel with music; you check the cut before it posts.`,
+    hook: best[0]?.description || best[0]?.label || null,
+  };
 }
 
 // ── 4. the digest - one tap from the inbox ───────────────────────────────────
@@ -228,7 +256,7 @@ export async function sendIdeasDigest(sb, settings, ideas, spotlight) {
 <div style="font-size:17px;font-weight:700;margin:2px 0 4px">${esc(i.title)}</div>
 <div style="margin:0 0 4px">${esc(i.pitch)}</div>
 ${i.hook ? `<div style="color:#104946;margin:0 0 8px"><i>Try: ${esc(i.hook)}</i></div>` : ""}
-${i.kind === "spotlight" && i.spotlight_id ? btn(actUrl("spot_send", i.spotlight_id), "Send the interview") : btn(actUrl("idea", i.id), "Make this post")}
+${i.kind === "spotlight" && i.spotlight_id ? btn(actUrl("spot_send", i.spotlight_id), "Send the interview") : btn(actUrl("idea", i.id), i.format === "reel" ? "Cut the reel" : "Make this post")}
 </td></tr>`;
   const list = [...ideas].sort((a, b) => (a.kind === "spotlight" ? -1 : 0) - (b.kind === "spotlight" ? -1 : 0) || String(a.best_day).localeCompare(String(b.best_day)));
   const subject = `${ideas.length} marketing ideas for the next few weeks${spotlight ? ` + a coach spotlight (${spotlight.name})` : ""}`;
@@ -255,6 +283,14 @@ export async function acceptIdea(sb, id, { by = "a director", instruction = "", 
   }
   const today = now.toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
   const day = idea.best_day && String(idea.best_day) >= today ? String(idea.best_day).slice(0, 10) : addDays(today, 1);
+  if (idea.format === "reel") {
+    const { createReel } = await import("./marketing-video.js");
+    const item = await createReel(sb, { day, by, instruction: String(instruction || "").trim(), settings: await loadSettings(sb), today })
+      .catch(e => { throw Object.assign(e, { status: 400 }); });
+    const { data: saved } = await sb.from("mkt_ideas").update({ status: "accepted", item_id: item.id, decided_by: by, decided_at: new Date().toISOString(), feedback: String(instruction || "").trim() || null }).eq("id", idea.id).select("*").single();
+    await log(sb, item.id, "idea_accept", { idea: idea.id, by, reel: true });
+    return { idea: saved || idea, item };
+  }
   const r = await generateWeek(sb, {
     weekOf: mondayOfDay(day), by,
     single: { line: idea.line, channel: idea.channel, format: idea.format, day, theme: idea.hook ? `${idea.title} - try: ${idea.hook}` : idea.title, reason: `Idea (${KIND_LABEL[idea.kind] || idea.kind}): ${idea.title}` },

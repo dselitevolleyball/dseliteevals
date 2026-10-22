@@ -16,6 +16,8 @@
 //      answer gets one reminder.
 //   6. Weekly, on settings.scout.day after 9 am Central: the idea scout runs
 //      and emails the directors its ideas with one-tap buttons.
+//   7. A video whose sorting never finished (the page was closed mid-way) is
+//      sorted here - one per run.
 //
 //   ?dry=1           list what it would do; writes nothing, sends nothing
 //   ?at=<ISO time>   (with dry=1) pretend it's that time - to check step 2
@@ -31,6 +33,7 @@ import { serviceSb, loadSettings, generateWeek, sendDigest, syncPhotos, log } fr
 import { tagPhotos } from "./_lib/marketing-photos-ai.js";
 import { runScout, sendIdeasDigest, scoutSettings, sendSpotlightReady } from "./_lib/marketing-scout.js";
 import { sendSpotlight, draftSpotlight } from "./_lib/marketing-spotlight.js";
+import { analyzeVideo } from "./_lib/marketing-video.js";
 import { aiReady } from "./_lib/marketing-ai.js";
 
 const TZ = "America/Chicago";
@@ -70,10 +73,15 @@ export async function runCron(sb, { now = new Date(), dry = false, deadline = Da
   const { data: due, error } = await sb.from("mkt_items").select("*").eq("status", "approved").lte("scheduled_at", nowIso).order("scheduled_at").limit(25);
   if (error) throw new Error("mkt_items: " + error.message);
   const tenAgo = new Date(now.getTime() - 10 * 60e3).toISOString();
-  const { data: stuck } = await sb.from("mkt_items").select("*").eq("status", "publishing").lt("updated_at", tenAgo).limit(25);
+  const twoAgo = new Date(now.getTime() - 2 * 60e3).toISOString();
+  const { data: stuck0 } = await sb.from("mkt_items").select("*").eq("status", "publishing").lt("updated_at", twoAgo).limit(25);
+  // Emails and posts get 10 minutes before they count as stuck; a reel waiting on Instagram is checked every run.
+  const stuck = (stuck0 || []).filter(it => (it.kind === "reel" && it.external_ids?.instagram_container) || it.updated_at < tenAgo);
   const resume = [];
   for (const it of stuck || []) {
     if (it.channel === "email") { resume.push(it); continue; }
+    // A reel Instagram is still processing: check on it again (for up to 3 hours).
+    if (it.kind === "reel" && it.external_ids?.instagram_container && Date.now() - new Date(it.scheduled_at || it.updated_at).getTime() < 3 * 3600e3) { resume.push(it); continue; }
     out.stuck.push({ id: it.id, channel: it.channel });
     if (!dry) {
       await sb.from("mkt_items").update({ status: "failed", error: "Publishing was interrupted - check Facebook / Instagram (or the text campaign) before trying again" }).eq("id", it.id).eq("status", "publishing");
@@ -146,6 +154,14 @@ export async function runCron(sb, { now = new Date(), dry = false, deadline = Da
         if (r.ideas.length) out.scout.digest = await sendIdeasDigest(sb, settings, r.ideas, r.spotlight).then(x => ({ ok: x.ok, error: x.error || null }));
       } catch (e) { out.scout.error = e.message; await log(sb, null, "scout_error", { error: e.message }); }
     } else out.scout.deferred = "out of time - next run";
+  }
+
+  // ── 7. videos left half-sorted ──
+  const eightAgo = new Date(now.getTime() - 8 * 60e3).toISOString();
+  const { data: stale } = await sb.from("mkt_videos").select("*").eq("status", "analyzing").is("ai_at", null).lt("updated_at", eightAgo).limit(1);
+  if (stale?.length) {
+    if (dry) out.videos = { would: `sort video #${stale[0].id}` };
+    else if (Date.now() < deadline - 150000) out.videos = await analyzeVideo(sb, stale[0], { deadline: Math.min(deadline - 20000, Date.now() + 200000), settings }).then(v => ({ id: v.id, status: v.status, moments: (v.moments || []).length }), e => ({ id: stale[0].id, error: e.message }));
   }
 
   // ── 4. the AI librarian ──

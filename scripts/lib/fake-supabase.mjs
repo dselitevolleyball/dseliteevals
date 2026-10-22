@@ -84,8 +84,13 @@ export function fakeSupabase(seed = {}) {
     }
     then(res, rej) { try { return Promise.resolve(this.run()).then(res, rej); } catch (e) { return Promise.reject(e).then(res, rej); } }
   }
-  const storage = { from: (bucket) => ({
+  // files: "<bucket>/<path>" -> a local file path (what createSignedUrl hands
+  // back, so ffmpeg can read it) or the uploaded bytes.
+  const files = {};
+  const storage = { files, from: (bucket) => ({
     createSignedUploadUrl: async (path) => ({ data: { signedUrl: `https://fake.supabase.co/storage/v1/upload/sign/${bucket}/${path}?token=t`, token: "t", path }, error: null }),
+    createSignedUrl: async (path) => files[`${bucket}/${path}`] ? { data: { signedUrl: typeof files[`${bucket}/${path}`] === "string" ? files[`${bucket}/${path}`] : `https://fake.supabase.co/sign/${bucket}/${path}` }, error: null } : { data: null, error: { message: "Object not found" } },
+    upload: async (path, body, opts = {}) => { files[`${bucket}/${path}`] = { body, contentType: opts.contentType }; return { data: { path }, error: null }; },
     getPublicUrl: (path) => ({ data: { publicUrl: `https://fake.supabase.co/storage/v1/object/public/${bucket}/${path}` } }),
   }) };
   return { db, inserted, storage, from: (t) => new Q(t), auth: { getUser: async () => ({ data: { user: null } }) } };

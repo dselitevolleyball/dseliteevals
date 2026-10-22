@@ -113,8 +113,8 @@ export const DEFAULT_THEMES = {
     "Thank the families who make DSSC what it is - where Dripping Springs plays.",
   ],
 };
-export const KINDS = ["post", "story", "follow_up", "preview", "roundup", "dedicated", "text", "spotlight"];
-export const KIND_LABEL = { post: "Post", story: "Story", follow_up: "Follow-up story", preview: "Month preview", roundup: "Weekly email", dedicated: "Dedicated email", text: "Text", spotlight: "Coach spotlight" };
+export const KINDS = ["post", "story", "follow_up", "preview", "roundup", "dedicated", "text", "spotlight", "reel"];
+export const KIND_LABEL = { post: "Post", story: "Story", follow_up: "Follow-up story", preview: "Month preview", roundup: "Weekly email", dedicated: "Dedicated email", text: "Text", spotlight: "Coach spotlight", reel: "Reel" };
 const STORY_PLATFORMS = ["instagram_story", "facebook_story"];
 const POST_PLATFORMS = ["facebook", "instagram"];
 

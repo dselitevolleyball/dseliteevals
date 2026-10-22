@@ -139,7 +139,7 @@ console.log("\n== 2. generateWeek (fake DB) ==");
 const sb = fakeSupabase({
   mkt_settings: [{ id: 1, ...core.SETTINGS_DEFAULTS }],
   mkt_priorities: [THANKSGIVING],
-  mkt_items: [], mkt_photos: [], mkt_log: [], mkt_unsubscribes: [{ email: "gone@example.com" }], mkt_spotlights: [], mkt_ideas: [],
+  mkt_items: [], mkt_photos: [], mkt_log: [], mkt_unsubscribes: [{ email: "gone@example.com" }], mkt_spotlights: [], mkt_ideas: [], mkt_videos: [],
   dssc_contacts: Array.from({ length: 230 }, (_, i) => ({ id: i + 1, email: i === 5 ? "GONE@example.com" : i === 7 ? null : `family${i}@example.com`, first_name: "F" + i })),
   sms_campaigns: [],
 });

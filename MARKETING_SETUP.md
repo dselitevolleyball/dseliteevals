@@ -174,6 +174,46 @@ node scripts/run-sql.mjs migrations/20261024_marketing_ideas_spotlights.sql
 - Offline checks: `node scripts/test-marketing-ideas.mjs` (scout, spotlights, the coach page, one-tap
   links, the cron steps - Claude, Resend and Twilio stubbed).
 
+## Videos and reels (Marketing → Videos)
+Run once (after the ideas migration):
+```
+node scripts/run-sql.mjs migrations/20261025_marketing_video.sql
+```
+- **Storage.** Raw videos go to the private `marketing-video` bucket with resumable uploads (6 MB
+  chunks, so a dropped gym-wifi connection picks up where it left off). Supabase's **free plan caps
+  every file at 50 MB and the project at 1 GB**, which is less than a minute of glasses video. Upgrade
+  the HQ Supabase org to **Pro** (Dashboard → Organization → Billing), then raise the per-file limit.
+  Claude can do it, or run:
+  ```
+  curl -X PATCH "https://api.supabase.com/v1/projects/tbkogifobjjlnvcxagpk/config/storage" \
+    -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" -H "Content-Type: application/json" \
+    -d '{"fileSizeLimit": 2147483648}'
+  ```
+  Until then, an upload over the limit says "upgrade Supabase". Rendered reels (around 10–20 MB) go to the
+  public `marketing` bucket.
+- **Upload** from a phone or computer: drag files in, or tap **Upload videos**. Each video is sorted
+  within about a minute (`api/_lib/marketing-video.js`, ffmpeg on Vercel). Frames every half-second
+  (fewer for long videos) become contact sheets, and Claude picks the 3–8 best moments with a score and a label, guesses the line,
+  and flags kids who can be recognized. If you leave the page, the cron finishes the sorting.
+- **Kids.** A video with recognizable kids shows "kids — release?". **Don't post publicly** keeps it out
+  of every reel, the same as the photo release flag.
+- **Make a reel.** You can tick moments across any videos and press **Make a reel from N**, use **Make a
+  reel from this video**, or use **Best of the last 3 weeks**. Claude orders the clips (strongest first, a
+  smile at the end) and writes the headline, caption and hashtags. Clips are at most 5 s each and 30 s in
+  total, with an intro card, the words over the first clip, and the end card.
+- **In Approve**, a reel shows its cut. You can nudge in/out points, reorder, remove or add clips, edit the
+  words, set the original-sound and music volumes, then **Render the reel**: the cards are drawn in the
+  browser and the server cuts a 1080×1920 H.264 MP4. Approving renders it first if needed. It posts as an
+  **Instagram Reel** (shared to the feed, with the intro card as the cover) and a **Facebook video**. If
+  Instagram is still processing, the cron finishes the post on its next run, and nothing is posted twice.
+- **Music library.** Only tracks the club has the rights to use (royalty-free or a licence such as
+  Epidemic Sound or Artlist). Adding one requires ticking the rights box. Instagram's in-app music can't
+  be added to posts made through the API. The machine picks a track by mood, and you can change it per reel.
+- **The scout** suggests "Cut a reel from the new videos" when videos have come in since the last reel.
+  **Cut the reel** in the email makes the draft.
+- Offline checks: `node scripts/test-marketing-video.mjs` (real ffmpeg: probe, sorting, the cut, the
+  render, Reels publishing, the scout's reel idea - Claude and Meta stubbed).
+
 ## Testing it safely
 - Use **Test** on an email to send it to yourself with `[TEST]` in the subject. Test on a text sends
   it to your phone. Test on a post shows the exact caption and image without posting.

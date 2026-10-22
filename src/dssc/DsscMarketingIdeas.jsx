@@ -132,7 +132,7 @@ function IdeaCard({ idea: i, narrow, busy, onMake, onDismiss }) {
       <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 4 }}>
         <Tag color={kc}>{k}</Tag>
         <LineChip line={i.line} />
-        <span style={{ fontSize: 12, color: DS.mut }}>{i.channel === "email" ? "✉️ Email" : i.format === "story" ? "📱 Story" : "📱 Post"} · {fmtDate(String(i.best_day || "").slice(0, 10), { weekday: "short", month: "short", day: "numeric" })}</span>
+        <span style={{ fontSize: 12, color: DS.mut }}>{i.channel === "email" ? "✉️ Email" : i.format === "reel" ? "🎬 Reel" : i.format === "story" ? "📱 Story" : "📱 Post"} · {fmtDate(String(i.best_day || "").slice(0, 10), { weekday: "short", month: "short", day: "numeric" })}</span>
       </div>
       <div style={{ fontSize: 16, fontWeight: 800, marginBottom: 2 }}>{i.title}</div>
       <div style={{ fontSize: 14, color: DS.text, lineHeight: 1.5 }}>{i.pitch}</div>

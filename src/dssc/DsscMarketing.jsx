@@ -7,7 +7,7 @@
 // changes and approves — from a phone, in a couple of taps. Nothing goes out
 // without approval; the cron publishes approved items at their time.
 //
-// Tabs: Approve (default) · Ideas (the idea scout + "Meet the Coaches") · Plan & flow · Priorities · Photos · Settings.
+// Tabs: Approve (default) · Ideas (the idea scout + "Meet the Coaches") · Plan & flow · Priorities · Photos · Videos (reels) · Settings.
 // Spec: docs/MARKETING_CONTRACT.md. Server: api/marketing.js (POST {action}).
 // Reads (and a few simple writes) go straight to Supabase — RLS lets the
 // directors at the mkt_* tables (public.is_dssc_director()).
@@ -20,8 +20,9 @@ import MarketingApprove from "./DsscMarketingApprove.jsx";
 import { MarketingPlan, MarketingPriorities } from "./DsscMarketingPlan.jsx";
 import { MarketingPhotos, MarketingSettings } from "./DsscMarketingLibrary.jsx";
 import MarketingIdeas from "./DsscMarketingIdeas.jsx";
+import MarketingVideos from "./DsscMarketingVideos.jsx";
 
-const TABS = [["approve", "Approve"], ["ideas", "Ideas"], ["plan", "Plan & flow"], ["priorities", "Priorities"], ["photos", "Photos"], ["settings", "Settings"]];
+const TABS = [["approve", "Approve"], ["ideas", "Ideas"], ["plan", "Plan & flow"], ["priorities", "Priorities"], ["photos", "Photos"], ["videos", "Videos"], ["settings", "Settings"]];
 const TAB_KEY = "dssc.marketing.tab";
 
 export default function DsscMarketing({ coach, initialWeek, initialTab, onConsumedInitial, onChanged }) {
@@ -75,6 +76,7 @@ export default function DsscMarketing({ coach, initialWeek, initialTab, onConsum
         {tab === "plan" && <MarketingPlan week={week} status={status} narrow={narrow} onOpenWeek={(w) => { setWeek(mondayOf(w)); setTab("approve"); }} />}
         {tab === "priorities" && <MarketingPriorities narrow={narrow} onChanged={() => { loadStatus(); changed(); }} />}
         {tab === "photos" && <MarketingPhotos narrow={narrow} />}
+        {tab === "videos" && <MarketingVideos narrow={narrow} onOpenWeek={(w) => { setWeek(mondayOf(w)); setTab("approve"); }} onChanged={changed} />}
         {tab === "settings" && <MarketingSettings status={status} narrow={narrow} reloadStatus={loadStatus} onChanged={changed} />}
       </div>
     </div>

@@ -176,6 +176,8 @@ export async function run(sb, { me, name }, b) {
         const next = { ...item, ...patch };
         patch.email_html = withHero(buildEmail(next).html, next.asset_url);
       }
+      // A reel's words are burned into its cards: new words, new render.
+      if (item.kind === "reel" && ["headline", "graphic"].some(k => k in patch)) patch.render_status = "needs_render";
       let unapproved = false;
       if (item.status === "approved" && CONTENT.some(k => k in patch)) { Object.assign(patch, { status: "draft", approved_by: null, approved_at: null }); unapproved = true; }
       const { data, error } = await sb.from("mkt_items").update(patch).eq("id", item.id).select("*").single();
@@ -191,6 +193,7 @@ export async function run(sb, { me, name }, b) {
       const items = [], errors = [];
       for (const it of rows || []) {
         const why = !["draft", "failed"].includes(it.status) ? `already ${it.status}`
+          : it.kind === "reel" && (!it.asset_video_url || it.render_status !== "rendered") ? "the reel hasn't been rendered"
           : it.channel === "social" && !it.asset_url ? "the graphic hasn't been rendered (asset_url)"
           : it.channel === "social" && !(it.platforms || []).length ? "no platform picked"
           : !String(it.body || "").trim() ? "no text"

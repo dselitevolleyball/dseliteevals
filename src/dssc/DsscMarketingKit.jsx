@@ -97,6 +97,19 @@ export async function mktApi(action, payload = {}) {
   return d;
 }
 
+// The video desk: POST /api/marketing-video (sorting videos, cutting reels).
+export async function videoApi(action, payload = {}) {
+  const { data: { session } } = await supabase.auth.getSession();
+  let r;
+  try {
+    r = await fetch("/api/marketing-video", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + (session?.access_token || "") }, body: JSON.stringify({ action, ...payload }) });
+  } catch (e) { throw new Error("Couldn't reach the server — " + e.message); }
+  const text = await r.text();
+  let d = {}; try { d = text ? JSON.parse(text) : {}; } catch { d = {}; }
+  if (!r.ok || d.error && !d.video) throw Object.assign(new Error(d.error || (r.status === 504 ? "The server took too long — try again." : `HTTP ${r.status}`)), { status: r.status, data: d });
+  return d;
+}
+
 // ── Graphics ────────────────────────────────────────────────────────────────
 // The spec the renderer draws for an item: its stored graphic, plus the line
 // (4QA mark on basketball) and the call to action.
@@ -142,8 +155,27 @@ async function uploadPng(id, blob, suffix = "") {
   if (error) throw new Error("Upload failed: " + error.message + (/bucket/i.test(error.message) ? " (run migrations/20261022_marketing.sql — it creates the bucket)" : ""));
   return supabase.storage.from("marketing").getPublicUrl(path).data.publicUrl;
 }
+// A reel's three cards (cover/intro, the headline overlay, the end card),
+// drawn here with the club's renderer, then the server renders the MP4.
+export async function renderReelItem(item, onStep) {
+  const spec = specOf(item, { format: "story" });
+  onStep?.("Drawing the cards…");
+  const [intro, overlay, outro] = await Promise.all([
+    renderGraphicBlob({ ...spec, template: spec.template === "overlay" || spec.template === "endcard" ? "photo" : spec.template }, { format: "story" }),
+    renderGraphicBlob({ ...spec, template: "overlay", photo_url: null }, { format: "story" }),
+    renderGraphicBlob({ ...spec, template: "endcard", photo_url: null }, { format: "story" }),
+  ]);
+  onStep?.("Uploading the cards…");
+  const cards = { intro: await uploadPng(item.id, intro, "-intro"), overlay: await uploadPng(item.id, overlay, "-overlay"), outro: await uploadPng(item.id, outro, "-outro") };
+  onStep?.("Cutting the reel… (up to a minute)");
+  const d = await videoApi("reel_render", { id: item.id, cards });
+  return d.item;
+}
+
 export async function approveItem(item, onStep) {
-  if (hasGraphic(item)) {
+  if (item.kind === "reel") {
+    if (item.render_status !== "rendered" || !item.asset_video_url) item = await renderReelItem(item, onStep);
+  } else if (hasGraphic(item)) {
     const spec = specOf(item);
     onStep?.("Drawing the graphic…");
     const blob = await renderGraphicBlob(spec, { format: spec.format });

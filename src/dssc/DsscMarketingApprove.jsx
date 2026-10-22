@@ -10,6 +10,7 @@ import { DS, Btn, Tag, inputStyle, Grow, Field, fetchAll } from "./DsscHub.jsx";
 import { segmentsOf } from "../../shared/campaign-audience.js";
 import { TEMPLATES, FORMATS } from "../../shared/marketing-graphics.js";
 import { photoHaystack } from "../../shared/marketing-photos.js";
+import ReelBox from "./DsscMarketingReel.jsx";
 import {
   mktApi, isMissingTable, MIGRATION_MSG, lineMeta, lineLabel, LineChip, ANGLES, STATUS_META, CHANNEL_META, KIND_LABEL, kindOf,
   mondayOf, addDays, fmtDate, fmtWhen, timeOf, dayOf, weekLabel, specOf, hasGraphic, GraphicPreview,
@@ -20,6 +21,7 @@ const bigBtn = (narrow) => narrow ? { fontSize: 15, padding: "12px 16px", minHei
 const fieldLbl = { fontSize: 11, fontWeight: 700, color: DS.mut, margin: "10px 0 4px", letterSpacing: "0.03em" };
 const PLATFORMS = [["facebook", "Facebook", "#60A5FA"], ["instagram", "Instagram", "#F06BB4"], ["instagram_story", "IG story", "#F5A3CF"], ["facebook_story", "FB story", "#93C5FD"]];
 const PLAT_TAG = { facebook: ["FB", "#60A5FA"], instagram: ["IG", "#F06BB4"], instagram_story: ["IG story", "#F5A3CF"], facebook_story: ["FB story", "#93C5FD"] };
+const REEL_PLAT_TAG = { facebook: ["FB video", "#60A5FA"], instagram: ["IG reel", "#F06BB4"] };
 const tagsToArr = (s) => String(s || "").split(/[\s,]+/).map(t => t.trim()).filter(Boolean).map(t => t.startsWith("#") ? t : "#" + t);
 const aiNote = (d) => d?.ai && d.ai.used === false ? ` (Plain template copy — the AI writer wasn't available${d.ai.error ? ": " + d.ai.error : ""}.)` : "";
 const daysOfWeek = (wk) => Array.from({ length: 7 }, (_, i) => addDays(wk, i));
@@ -252,7 +254,7 @@ function ItemCard({ item: it, week, narrow, onPatch, onReplace, reload, onChange
   const head = (
     <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
       <span style={{ fontSize: 16 }} title={CHANNEL_META[it.channel]?.[0]}>{CHANNEL_META[it.channel]?.[1]}</span>
-      {it.channel === "social" ? (it.platforms || []).map(p => <Tag key={p} color={(PLAT_TAG[p] || [p, DS.mut])[1]}>{(PLAT_TAG[p] || [p])[0]}</Tag>) : null}
+      {it.channel === "social" ? (it.platforms || []).map(p => { const t = (it.kind === "reel" ? REEL_PLAT_TAG : PLAT_TAG)[p] || [p, DS.mut]; return <Tag key={p} color={t[1]}>{t[0]}</Tag>; }) : null}
       <Tag color={DS.mut}>{KIND_LABEL[kindOf(it)] || CHANNEL_META[it.channel]?.[0]}</Tag>
       <LineChip line={it.line} />
       {it.angle && <span style={{ fontSize: 11, color: DS.mut }}>{ANGLES[it.angle] || it.angle}</span>}
@@ -400,7 +402,7 @@ function ItemCard({ item: it, week, narrow, onPatch, onReplace, reload, onChange
       {timeRow}
       {hasGraphic(it)
         ? <div style={narrow ? { marginTop: 12 } : { display: "grid", gridTemplateColumns: "minmax(240px, 360px) minmax(0, 1fr)", gap: 16, marginTop: 12, alignItems: "start" }}>
-            {graphicBox}
+            {it.kind === "reel" ? <ReelBox item={it} editable={editable} narrow={narrow} onReplace={onReplace} onPatch={onPatch} /> : graphicBox}
             <div style={narrow ? { marginTop: 4 } : {}}>{copyBox}</div>
           </div>
         : <div style={{ marginTop: 6 }}>{copyBox}</div>}

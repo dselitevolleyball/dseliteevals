@@ -100,6 +100,39 @@ export async function postInstagram(item, { story = false } = {}) {
   return p.id;
 }
 
+// A reel. Instagram: a REELS container from the rendered MP4 (cover = the
+// intro card), then media_publish once Instagram has processed the video -
+// which can take a few minutes, so a container still IN_PROGRESS after ~45 s
+// is handed back as { pending } and the next cron run finishes it.
+export async function postInstagramReel(item, { containerId = null, waitMs = 45000 } = {}) {
+  const { META_PAGE_ACCESS_TOKEN, META_IG_USER_ID } = env();
+  if (!META_PAGE_ACCESS_TOKEN || !META_IG_USER_ID) throw new Error("Instagram isn't connected (META_PAGE_ACCESS_TOKEN, META_IG_USER_ID)");
+  if (!item.asset_video_url) throw new Error("The reel hasn't been rendered");
+  let id = containerId;
+  if (!id) {
+    const params = { media_type: "REELS", video_url: item.asset_video_url, caption: captionFor(item), share_to_feed: "true" };
+    if (item.asset_url) params.cover_url = item.asset_url;
+    id = (await graph(`${META_IG_USER_ID}/media`, params)).id;
+  }
+  const until = Date.now() + waitMs;
+  for (;;) {
+    const s = await graph(id, { fields: "status_code" }, { method: "GET" }).catch(() => ({}));
+    if (s.status_code === "FINISHED") break;
+    if (s.status_code === "ERROR" || s.status_code === "EXPIRED") throw new Error(`Instagram couldn't process the video (${s.status_code})`);
+    if (Date.now() > until) return { pending: id };
+    await sleep(3000);
+  }
+  return { id: (await graph(`${META_IG_USER_ID}/media_publish`, { creation_id: id })).id };
+}
+// Facebook: the Page posts the MP4 by URL (vertical video shows as a reel).
+export async function postFacebookVideo(item) {
+  const { META_PAGE_ACCESS_TOKEN, META_PAGE_ID } = env();
+  if (!META_PAGE_ACCESS_TOKEN || !META_PAGE_ID) throw new Error("Facebook isn't connected (META_PAGE_ACCESS_TOKEN, META_PAGE_ID)");
+  if (!item.asset_video_url) throw new Error("The reel hasn't been rendered");
+  const j = await graph(`${META_PAGE_ID}/videos`, { file_url: item.asset_video_url, description: captionFor(item), published: "true" });
+  return j.id;
+}
+
 // A Facebook Page story: the story PNG goes up as an unpublished photo, then
 // becomes the story (POST /{page}/photo_stories {photo_id}).
 export async function postFacebookStory(item) {
@@ -234,7 +267,20 @@ export async function publishItem(sb, item, { settings = {}, dry = false, deadli
   const errors = [];
   let status = "published";
   try {
-    if (item.channel === "social") {
+    if (item.channel === "social" && item.kind === "reel") {
+      if (!item.asset_video_url) throw new Error("The reel hasn't been rendered - open it in HQ and approve again");
+      for (const p of item.platforms || []) {
+        if (ext[p]) continue;
+        try {
+          if (p === "instagram") {
+            const r = await postInstagramReel(item, { containerId: ext.instagram_container || null, waitMs: Math.max(5000, Math.min(45000, deadline - Date.now() - 10000)) });
+            if (r.pending) { ext.instagram_container = r.pending; status = "publishing"; }
+            else { ext.instagram = r.id; delete ext.instagram_container; }
+          } else if (p === "facebook") ext.facebook = await postFacebookVideo(item);
+        } catch (e) { errors.push(e.message); }
+      }
+      if (errors.length) status = "failed";
+    } else if (item.channel === "social") {
       if (!item.asset_url) throw new Error("No graphic - open it in HQ and approve again so the graphic is rendered");
       for (const p of item.platforms || []) {
         if (ext[p]) continue;

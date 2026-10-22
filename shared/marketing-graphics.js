@@ -12,6 +12,9 @@
 // spec = mkt_items.graphic (+ optional `line` and `cta`):
 //   { template: 'photo'|'starts'|'list'|'countdown'|'quote', format: 'post'|'square'|'story'|'email',
 //     photo_url, headline, accent, sub, tag, date_label, items: [string], quote?, line?, cta? }
+// 'overlay' and 'endcard' (reels, story format): the overlay is transparent
+// apart from a dark fade at the top behind the tag and headline, laid over the
+// clips; the end card is the club lockup, the call to action and the site.
 // 'quote' (coach spotlights): the photo, a big lime quotation mark, the
 // quote in bold body type, then the headline (the person) and sub (their role).
 //
@@ -599,6 +602,33 @@ function tQuote(ctx, spec, imgs, F) {
   drawFooter(ctx, spec, imgs, m, footY, land ? cw : W - 2 * m, footH, u);
 }
 
+function tOverlay(ctx, spec, imgs, F) {
+  const { W, u, m, top } = F;
+  const cw = W - 2 * m;
+  const head = fitHead(ctx, headWords(spec.headline, spec.accent), cw, 300 * u, { max: 132 * u, min: 60 * u, maxLines: 3 });
+  const tagH = Math.round(30 * 1.9 * u);
+  const headTop = top + (spec.tag ? tagH + 26 * u : 0);
+  vScrim(ctx, 0, 0, W, headTop + head.height + 170 * u, [[0, 0.72], [0.62, 0.5], [1, 0]]);
+  if (spec.tag) drawTag(ctx, spec.tag, m, top, u, cw);
+  drawHead(ctx, head, m, headTop);
+}
+function tEndcard(ctx, spec, imgs, F) {
+  const { W, H, u, m } = F;
+  ctx.fillStyle = BRAND.ink; ctx.fillRect(0, 0, W, H);
+  if (imgs.shieldImg) { const sh = H * 0.62, sw = sh * imgs.shieldImg.width / imgs.shieldImg.height; ctx.globalAlpha = 0.06; ctx.drawImage(imgs.shieldImg, (W - sw) / 2, (H - sh) / 2, sw, sh); ctx.globalAlpha = 1; }
+  const cw = W - 2 * m;
+  const head = fitHead(ctx, headWords("Where Dripping Springs plays.", "plays."), cw, 380 * u, { max: 150 * u, min: 70 * u, maxLines: 3 });
+  const logoH = 120 * u, lw = lockupWidth(imgs, logoH);
+  const ctaH = 96 * u;
+  const site = fitBody(ctx, "drippingsportsclub.com", cw, { size: 40 * u, min: 30 * u, maxLines: 1, weight: 700 });
+  const block = logoH + 90 * u + head.height + 70 * u + ctaH + 40 * u + site.height;
+  let y = (H - block) / 2;
+  drawLockup(ctx, imgs, (W + Math.min(lw, cw)) / 2, y + logoH / 2, logoH); y += logoH + 90 * u;
+  drawHead(ctx, head, m, y); y += head.height + 70 * u;
+  drawCta(ctx, spec.cta || "See what's coming up", m, y, ctaH, cw, u); y += ctaH + 40 * u;
+  drawBody(ctx, site, m, y, BRAND.lime);
+}
+
 // ── Public ─────────────────────────────────────────────────────────────────
 // Draws `spec` on `canvas` (resized to the format). Synchronous: load fonts
 // (ensureFonts) and images (loadGraphicImages) first.
@@ -618,6 +648,8 @@ export function renderGraphic(canvas, spec = {}, imgs = {}) {
   else if (t === "list") tList(ctx, s, imgs, F);
   else if (t === "countdown") tPhoto(ctx, s, imgs, F, true);
   else if (t === "quote") tQuote(ctx, s, imgs, F);
+  else if (t === "overlay") tOverlay(ctx, s, imgs, F);
+  else if (t === "endcard") tEndcard(ctx, s, imgs, F);
   else tPhoto(ctx, s, imgs, F, false);
   ctx.restore();
   return canvas;
