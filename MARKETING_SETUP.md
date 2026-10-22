@@ -54,6 +54,9 @@ Without the key, drafts still get made from plain templates.
 6. While the app is in Development mode, your own admin account can post to your own Page and
    Instagram, which is all this needs. You don't need App Review.
 
+If you paste the long-lived *user* token by mistake, HQ trades it for the Page token itself. A
+"(#200) Permissions error" on Facebook names the Page the token actually belongs to.
+
 The Page token stops working if you change your Facebook password or remove the app. When that
 happens, Marketing → Settings shows Facebook/Instagram as not connected; repeat steps 3–5.
 

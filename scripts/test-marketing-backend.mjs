@@ -46,6 +46,7 @@ globalThis.fetch = async (url, init = {}) => {
   }
   if (u.startsWith("https://graph.facebook.com/")) {
     calls.push({ to: "meta", url: u.split("?")[0], body: init.body ? String(init.body) : null });
+    if (/\/111\?fields=access_token/.test(u)) return new Response(JSON.stringify({ access_token: "page-token", id: "111" }));
     if (u.includes("/photo_stories")) return new Response(JSON.stringify({ success: true, post_id: "111_story" }));
     if (u.includes("/photos")) return new Response(JSON.stringify({ id: "ph1", post_id: "111_999" }));
     if (u.includes("/media_publish")) return new Response(JSON.stringify({ id: "ig_media_1" }));
@@ -187,6 +188,7 @@ const metaCalls = calls.filter(c => c.to === "meta").map(c => c.url.replace("htt
 check(metaCalls.includes("v26.0/111/photos") && metaCalls.includes("v26.0/222/media") && metaCalls.includes("v26.0/222/media_publish"), `Graph calls: ${metaCalls.join(", ")}`);
 check(byId(story.id).status === "published" && byId(story.id).external_ids.instagram_story === "ig_media_1" && byId(story.id).external_ids.facebook_story === "111_story" && metaCalls.includes("v26.0/111/photo_stories"), `story published to IG + FB stories: ${JSON.stringify(byId(story.id).external_ids)}`);
 const fbBody = new URLSearchParams(calls.find(c => c.url.endsWith("/111/photos")).body);
+check(fbBody.get("access_token") === "page-token" && new URLSearchParams(calls.find(c => c.url.endsWith("/222/media")).body).get("access_token") === "test-token", "FB posts with the Page token traded from META_PAGE_ACCESS_TOKEN; IG uses the configured token");
 check(fbBody.get("url") === soc.asset_url && fbBody.get("caption").includes(soc.cta_url) && /#DrippingSprings/.test(fbBody.get("caption")), "FB post carries the rendered PNG, the caption with link and hashtags");
 const rs = calls.filter(c => c.to === "resend");
 check(byId(em.id).status === "published" && byId(em.id).external_ids.email.sent === 228 && rs.length === 3, `email published to ${byId(em.id).external_ids.email.sent} (230 contacts - 1 no email - 1 unsubscribed) in ${rs.length} batches of ≤100`);

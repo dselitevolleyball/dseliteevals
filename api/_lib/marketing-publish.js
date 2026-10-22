@@ -64,8 +64,7 @@ export function captionFor(item) {
   return [body, link, tags].filter(Boolean).join("\n\n").slice(0, 2200);
 }
 
-async function graph(path, params, { method = "POST" } = {}) {
-  const token = env().META_PAGE_ACCESS_TOKEN;
+async function graph(path, params, { method = "POST", token = env().META_PAGE_ACCESS_TOKEN } = {}) {
   const url = new URL(`https://graph.facebook.com/${graphVersion()}/${path}`);
   const body = new URLSearchParams({ ...params, access_token: token });
   const r = method === "GET"
@@ -77,10 +76,36 @@ async function graph(path, params, { method = "POST" } = {}) {
 }
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+// Page posts must be made with the Page's own token. If META_PAGE_ACCESS_TOKEN
+// holds the long-lived *user* token instead (an easy mix-up in the Graph API
+// Explorer), trade it for the Page token; a Page token passes through as is.
+let pageTokenMemo = null;
+async function pageToken() {
+  const { META_PAGE_ACCESS_TOKEN: t, META_PAGE_ID: id } = env();
+  if (pageTokenMemo?.from === t) return pageTokenMemo.token;
+  const j = await graph(id, { fields: "access_token" }, { method: "GET" }).catch(() => ({}));
+  pageTokenMemo = { from: t, token: j.access_token || t };
+  return pageTokenMemo.token;
+}
+
+// A Facebook "(#200) permissions error" almost always means the token is for
+// another Page; say which one so it can be fixed in Vercel.
+async function pageCall(path, params) {
+  try { return await graph(path, params, { token: await pageToken() }); }
+  catch (e) {
+    if (!/#200|permission/i.test(e.message)) throw e;
+    const me = await graph("me", { fields: "id,name" }, { method: "GET" }).catch(() => null);
+    const id = env().META_PAGE_ID;
+    throw new Error(me?.id && me.id !== id
+      ? `${e.message} - META_PAGE_ACCESS_TOKEN is for "${me.name}" (${me.id}), not Page ${id}. Put that Page's token in Vercel and redeploy.`
+      : e.message);
+  }
+}
+
 export async function postFacebook(item) {
   const { META_PAGE_ACCESS_TOKEN, META_PAGE_ID } = env();
   if (!META_PAGE_ACCESS_TOKEN || !META_PAGE_ID) throw new Error("Facebook isn't connected (META_PAGE_ACCESS_TOKEN, META_PAGE_ID)");
-  const j = await graph(`${META_PAGE_ID}/photos`, { url: item.asset_url, caption: captionFor(item), published: "true" });
+  const j = await pageCall(`${META_PAGE_ID}/photos`, { url: item.asset_url, caption: captionFor(item), published: "true" });
   return j.post_id || j.id;
 }
 
@@ -105,8 +130,8 @@ export async function postInstagram(item, { story = false } = {}) {
 export async function postFacebookStory(item) {
   const { META_PAGE_ACCESS_TOKEN, META_PAGE_ID } = env();
   if (!META_PAGE_ACCESS_TOKEN || !META_PAGE_ID) throw new Error("Facebook isn't connected (META_PAGE_ACCESS_TOKEN, META_PAGE_ID)");
-  const ph = await graph(`${META_PAGE_ID}/photos`, { url: item.asset_story_url, published: "false" });
-  const st = await graph(`${META_PAGE_ID}/photo_stories`, { photo_id: ph.id });
+  const ph = await pageCall(`${META_PAGE_ID}/photos`, { url: item.asset_story_url, published: "false" });
+  const st = await pageCall(`${META_PAGE_ID}/photo_stories`, { photo_id: ph.id });
   return st.post_id || st.id || ph.id;
 }
 
