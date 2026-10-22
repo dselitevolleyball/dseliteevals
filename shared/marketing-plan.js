@@ -136,7 +136,7 @@ export const lineUrl = (line) => { const l = LINE_LINKS[line] || LINE_LINKS.club
 
 const EVERGREEN = ["parties", "rentals", "open_gym"];
 const DATED = ["camp_elevate"]; // lines that exist only around their program dates
-const DAY_KEYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+export const DAY_KEYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
 
 // ── dates ────────────────────────────────────────────────────────────────────
 const toD = (s) => new Date(String(s).slice(0, 10) + "T00:00:00Z");

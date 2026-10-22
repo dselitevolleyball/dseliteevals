@@ -16,6 +16,7 @@ import { supabase } from "../supabase";
 import { DS, Btn, Tag, inputStyle, Grow, fetchAll } from "./DsscHub.jsx";
 import { CATEGORIES, EMPTY_FILTERS } from "../../shared/campaign-audience.js";
 import EmailAudiencePicker from "./DsscEmailAudience.jsx";
+import MarketingTiming from "./DsscMarketingTiming.jsx";
 import { mktApi, isMissingTable, MIGRATION_MSG, LINES, lineMeta, LineChip, DEFAULT_WEIGHTS, DEFAULT_CADENCE, DAYS, DAY_LABEL, chipStyle, Msg, Panel, H, downscale, isImageFile } from "./DsscMarketingKit.jsx";
 import { DEFAULT_RHYTHM, DEFAULT_THEMES, normRhythm } from "../../shared/marketing-plan.js";
 import { PHOTO_TAGS_CORE, PHOTO_TAGS_ALL, PHOTO_USES, USE_LABEL, PEOPLE_LABEL, SETTING_LABEL, tagLabel, orientationOf, photoHaystack } from "../../shared/marketing-photos.js";
@@ -394,6 +395,7 @@ export function MarketingSettings({ status, narrow, reloadStatus, onChanged }) {
       </Panel>
 
       {!s ? <div style={{ color: DS.mut }}>Loading…</div> : <>
+        <MarketingTiming cadence={s.cadence} narrow={narrow} onApplied={(cad) => { const v = { ...s, cadence: { social: { ...s.cadence.social, ...cad.social, rhythm: normRhythm(cad.social?.rhythm || s.cadence.social.rhythm) }, email: { ...s.cadence.email, ...cad.email }, sms: { ...s.cadence.sms, ...cad.sms } } }; setS(v); setOrig(JSON.stringify(v)); reloadStatus?.(); onChanged?.(); }} />
         <Panel style={{ marginBottom: 14 }}>
           <H>Weekly rhythm</H>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 6 }}>
@@ -419,6 +421,7 @@ export function MarketingSettings({ status, narrow, reloadStatus, onChanged }) {
                     {!(e.lines || []).length && <span style={{ fontSize: 12, color: DS.dim, alignSelf: "center" }}>any line</span>}
                   </div>
                 )}
+                <input type="time" value={e.time || s.cadence.social.time || "18:30"} onChange={ev => setEntry(i, { time: ev.target.value || undefined })} style={sel} aria-label="Time" title="When this day's item goes out" />
                 <Btn small kind="quiet" onClick={() => setRhythm(rhythm.filter((_, j) => j !== i))} style={narrow ? { minHeight: 38 } : {}} aria-label="Remove">✕</Btn>
               </div>
             ))}
@@ -440,7 +443,7 @@ export function MarketingSettings({ status, narrow, reloadStatus, onChanged }) {
               {DAYS.map(d => { const on = (s.cadence.social.days || []).includes(d); return <button key={d} onClick={() => setCad("social", "days", on ? s.cadence.social.days.filter(x => x !== d) : DAYS.filter(x => x === d || (s.cadence.social.days || []).includes(x)))} style={chipStyle(on, DS.lime, narrow)}>{DAY_LABEL[d]}</button>; })}
             </div>
           </>}
-          <div style={lbl}>Posts go out at</div>
+          <div style={lbl}>Other posts go out at (a day above with its own time keeps it)</div>
           <input type="time" value={s.cadence.social.time || "18:30"} onChange={e => setCad("social", "time", e.target.value)} style={sel} />
         </Panel>
 

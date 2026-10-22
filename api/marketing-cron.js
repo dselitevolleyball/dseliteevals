@@ -36,6 +36,27 @@ import { runScout, sendIdeasDigest, scoutSettings, sendSpotlightReady } from "./
 import { sendSpotlight, draftSpotlight } from "./_lib/marketing-spotlight.js";
 import { analyzeVideo } from "./_lib/marketing-video.js";
 import { aiReady } from "./_lib/marketing-ai.js";
+import { registrationHeatmap, recommendCadence } from "../shared/marketing-timing.js";
+
+// Recompute the schedule from Playbook purchases and save it when it changed.
+async function retimeFromRegistrations(sb, settings, { dry = false } = {}) {
+  const rows = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await sb.from("dssc_purchases").select("id, invoice, program, category, amount_cents, purchased_at").order("id").range(from, from + 999);
+    if (error) throw new Error("dssc_purchases: " + error.message);
+    rows.push(...(data || [])); if (!data || data.length < 1000) break;
+  }
+  const rec = recommendCadence(registrationHeatmap(rows), settings.cadence);
+  if (!rec.ok) return { skipped: rec.reason };
+  if (!rec.changes.length) { if (!dry) await log(sb, null, "timing", { changes: [] }); return { changes: [] }; }
+  const cadence = { ...rec.cadence, social: { ...rec.cadence.social, auto_times: true } };
+  if (!dry) {
+    const { error } = await sb.from("mkt_settings").update({ cadence }).eq("id", 1);
+    if (error) throw new Error("mkt_settings: " + error.message);
+    await log(sb, null, "timing", { changes: rec.changes, summary: rec.summary });
+  }
+  return { changes: rec.changes, cadence: dry ? undefined : cadence };
+}
 
 const TZ = "America/Chicago";
 export const centralClock = (d) => ({
@@ -92,6 +113,16 @@ export async function runCron(sb, { now = new Date(), dry = false, deadline = Da
   for (const it of [...resume, ...(due || [])]) {
     if (Date.now() > deadline - 20000) { out.published.push({ id: it.id, channel: it.channel, status: "deferred", error: "out of time - next run" }); continue; }
     out.published.push(await publishItem(sb, it, { settings, dry, deadline: Math.min(deadline - 15000, Date.now() + 120000), resume: it.status === "publishing" }).catch(e => ({ id: it.id, channel: it.channel, status: "error", error: e.message })));
+  }
+
+  // ── 1b. best times, re-checked every Sunday morning (Settings: keep optimizing) ──
+  const ctT = centralClock(now);
+  if (settings.cadence?.social?.auto_times && ctT.dow === "sun" && ctT.hour >= 6) {
+    const { data: tl } = await sb.from("mkt_log").select("id").eq("kind", "timing").gte("at", new Date(now.getTime() - 5 * 86400e3).toISOString()).limit(1);
+    if (!tl?.length) {
+      out.timing = await retimeFromRegistrations(sb, settings, { dry }).catch(e => ({ error: e.message }));
+      if (out.timing?.cadence && !dry) settings.cadence = out.timing.cadence;
+    }
   }
 
   // ── 2. keep the coming weeks drafted ──

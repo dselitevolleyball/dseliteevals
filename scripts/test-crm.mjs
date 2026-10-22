@@ -10,6 +10,7 @@ import { createHmac } from "node:crypto";
 import { fakeSupabase } from "./fake-supabase.mjs";
 import { importPlaybookSpend, importMailingList, pbTimestamp, categoryOf, statusOf } from "../api/_lib/dssc-crm.js";
 import { buildFamilies, resolveSegment, gradeOf, ageOn, describeSegment, EMPTY_SEGMENT } from "../shared/crm-segments.js";
+import { registrationHeatmap, recommendCadence, bestTimeFor, lineOfPurchase } from "../shared/marketing-timing.js";
 
 Object.assign(process.env, { RESEND_API_KEY: "re_test", DSSC_FROM_EMAIL: "Dripping Springs Sports Club <hello@drippingsportsclub.com>", MARKETING_UNSUB_SECRET: "unit-test-secret" });
 const { emailAudience, sendEmailItem } = await import("../api/_lib/marketing-publish.js");
@@ -170,6 +171,40 @@ check(eventEffect({ type: "email.bounced", data: { to: ["x@y.com"], bounce: { ty
 const ec = eventEffect({ type: "email.complained", data: { to: ["x@y.com"], tags: [{ name: "mkt_item", value: "9" }] } });
 check(ec.unsubscribe && ec.patch.email_status === "complained" && ec.item_id === 9, "spam complaint → complained + unsubscribed (array-style tags too)");
 check(eventEffect({ type: "email.clicked", created_at: "2026-10-22T21:00:00Z", data: { to: ["x@y.com"], click: { link: "https://a" } } }).patch.last_clicked_at === "2026-10-22T21:00:00Z", "click → last_clicked_at");
+
+
+// ── 6. Best times from registrations ─────────────────────────────────────────
+console.log("== 6. best times ==");
+// Basketball families sign up Mondays 4–7 pm; volleyball Wednesdays 11 am–2 pm; a few others scattered.
+const at = (date, hCentral) => new Date(Date.UTC(+date.slice(0, 4), +date.slice(5, 7) - 1, +date.slice(8, 10), hCentral + 5, 10)).toISOString();   // CDT
+const buys = [];
+let inv = 1;
+for (let w = 0; w < 6; w++) {
+  const mon = `2026-09-${String(7 + 7 * w).padStart(2, "0")}`.replace("2026-09-42", "2026-10-12").replace("2026-09-35", "2026-10-05");
+  const day = (n) => { const d = new Date(mon + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+  for (let i = 0; i < 12; i++) buys.push({ id: inv, invoice: String(inv++), program: "Shooting Lab", category: "basketball", amount_cents: 4000, purchased_at: at(day(0), 16 + (i % 3)) });
+  for (let i = 0; i < 18; i++) buys.push({ id: inv, invoice: String(inv++), program: "U13-15 Pins", category: "volleyball", amount_cents: 9000, purchased_at: at(day(2), 11 + (i % 3)) });
+  for (let i = 0; i < 3; i++) buys.push({ id: inv, invoice: String(inv++), program: "Reach Youth", category: "reach", amount_cents: 2500, purchased_at: at(day(4), 9) });
+  buys.push({ id: inv, invoice: String(inv++), program: "Volleyball Court 2", category: "facility", amount_cents: 26000, purchased_at: at(day(5), 8) });
+  buys.push({ id: inv, invoice: String(inv++), program: "Elite Athlete Development", category: "reach", amount_cents: 0, purchased_at: at(day(6), 7) });
+}
+buys.push({ ...buys[0], id: 9999 });   // same invoice twice: one checkout
+const heat = registrationHeatmap(buys);
+check(heat.total === 6 * 33 && heat.lines.rentals?.total === 6 && !heat.lines.club, `counts paid program checkouts once each, rentals kept apart, $0 left out (${heat.total})`);
+check(heat.lines.basketball.m[0][16] === 24 && heat.lines.volleyball.m[2][11] === 36, "Central-time day and hour");
+check(lineOfPurchase({ program: "Camp Elevate - Thanksgiving", category: "other" }) === "camp_elevate" && lineOfPurchase({ program: "Birthday Party Package", category: "facility" }) === "parties", "camp / parties lines");
+const cad0 = { social: { mode: "rhythm", time: "18:30", month_preview: true, preview_day: "sat", rhythm: [{ day: "mon", lines: ["basketball"], format: "post" }, { day: "tue", follow: "mon", format: "story" }, { day: "thu", lines: ["volleyball"], format: "post" }, { day: "fri", follow: "thu", format: "story" }] }, email: { day: "fri", time: "07:30", dedicated_day: "sat" }, sms: { time: "17:30" } };
+const rec = recommendCadence(heat, cad0);
+const r = rec.cadence.social.rhythm;
+const bb = r.find(e => e.lines?.includes("basketball")), vb = r.find(e => e.lines?.includes("volleyball"));
+check(rec.ok && bb.day === "mon" && bb.time === "15:00" && vb.day === "wed" && vb.time === "10:00", `basketball Mon 3 pm (an hour before 4–7), volleyball moves to Wed 10 am: ${JSON.stringify(r)}`);
+const fol = r.filter(e => e.follow);
+check(fol.length === 2 && fol.every(f => ["mon", "tue", "wed", "thu", "fri", "sat", "sun"].indexOf(f.day) > ["mon", "tue", "wed", "thu", "fri", "sat", "sun"].indexOf(f.follow) && r.some(p => !p.follow && p.day === f.follow)), "each follow-up story comes after its post");
+check(!r.some(e => e.day === "sat"), "the month-preview day stays free");
+check(rec.cadence.email.day === "wed" && rec.cadence.email.dedicated_day === "mon" && /^0[67]:30$/.test(rec.cadence.email.time), `emails on the biggest days: weekly ${rec.cadence.email.day} ${rec.cadence.email.time}, dedicated ${rec.cadence.email.dedicated_day}`);
+check(rec.changes.some(c => /volleyball post: Thu 18:30 → Wed 10:00/.test(c)), `changes listed: ${rec.changes.join(" | ")}`);
+check(bestTimeFor(heat, "basketball", "mon", "social") === "15:00" && bestTimeFor(heat, "volleyball", "wed", "email") === "07:30", "one item's best time");
+check(!recommendCadence(registrationHeatmap(buys.slice(0, 40)), cad0).ok, "too little data: no recommendation");
 
 console.log(failed ? `\n${failed} FAILED` : "\nall checks passed");
 process.exit(failed ? 1 : 0);
