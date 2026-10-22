@@ -80,6 +80,7 @@ const IT = {
   dssctexts:     ["DSSC Texts", "💬", "dir", "sms text messages", "Texts"],
   dssccrm:       ["People", "📇", "dir", "crm families contacts", "People"],
   dsscinbox:     ["Inbox", "📬", "dir", "inbox email info@ families website rental party reply messages questions", "Inbox"],
+  dsscmarketing: ["Marketing", "📣", "dir", "marketing social facebook instagram posts email newsletter campaign graphics approve drafts promote", "Marketing"],
   dssc:          ["Coach Hub", "🏠", "coach", "hub", "Hub"],
   dssccal:       ["Coverage Calendar", "📅", "dir", "coverage calendar shifts assign coaches", "Coverage"],
   dssctime:      ["DSSC Time Cards", "🕒", "coach", "payroll hours approve", "Time"],
@@ -115,11 +116,12 @@ const DSSC_SECS = [
   ["projectsec", "Projects", "📌", ["projects"]],
   ["programs", "Programs", "🏕", ["clinics", "courts", "dsscplan", "dssccamp", "pods", "privates"]],
   ["people", "Inbox, texts & people", "💬", ["dsscinbox", "dssctexts", "dssccrm"]],
+  ["marketing", "Marketing", "📣", ["dsscmarketing"]],
   ["dsscstaff", "Coaches & pay", "🗓", ["dssc", "dssccal", "dssctime", "staffhours", "staffadmin", "dsscpeople", "dsscpay"]],
 ];
 const FOOTER = ["activity", "faq", "askai"];
 
-const ACTION_BADGES = { messages: "smsDse", dssctexts: "smsDssc", dsscinbox: "inboxNew", notifications: "notif", incidentboard: "issuesOpen", incidents: "issuesMine", kickoff: "kickoffs", claims: "claims", requests: "reqs", gear: "gear" };
+const ACTION_BADGES = { messages: "smsDse", dssctexts: "smsDssc", dsscinbox: "inboxNew", dsscmarketing: "mktDrafts", notifications: "notif", incidentboard: "issuesOpen", incidents: "issuesMine", kickoff: "kickoffs", claims: "claims", requests: "reqs", gear: "gear" };
 const INFO_BADGES = { favorites: "favorites" };
 
 export function buildNav(ctx) {
@@ -150,7 +152,7 @@ export function buildNav(ctx) {
   // Menu badge on the phone: everything the bottom-bar slots don't already show.
   const restTotal = (shown) => sections.reduce((sum, s) => sum + s.items.reduce((t, v) => t + (!shown.includes(v) && counts(s, v) ? badge(v) : 0), 0), 0);
   const defaults = ws === "dssc"
-    ? (isDsscDirector ? (dsscOnly ? ["dsscinbox", "clinics", "dssccal", "dssctime", "staffadmin", "dsscpeople"] : ["dsscinbox", "clinics", "dssctexts", "dssccal", "dssctime", "dssccrm"]) : isDsscStaff ? (canSeeStaffHours ? ["staffhours", "staffadmin"] : ["staffhours"]) : ["dssc", "dssctime", "notifications"])
+    ? (isDsscDirector ? (dsscOnly ? ["dsscinbox", "dsscmarketing", "clinics", "dssccal", "dssctime", "staffadmin", "dsscpeople"] : ["dsscinbox", "dsscmarketing", "clinics", "dssctexts", "dssccal", "dssctime", "dssccrm"]) : isDsscStaff ? (canSeeStaffHours ? ["staffhours", "staffadmin"] : ["staffhours"]) : ["dssc", "dssctime", "notifications"])
     : (canOps ? ["home", "messages", isAdmin ? "dayschedule" : "coverage", "practice", "tournaments", "waiting"] : ["home", "clockin", "lineups", "practiceplan"]);
   const stored = ctx.pins && Array.isArray(ctx.pins[ws]) ? ctx.pins[ws] : null;
   const pinsBase = [...new Set(stored || defaults)];

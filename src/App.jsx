@@ -38,6 +38,7 @@ import DsscCrm from "./dssc/DsscCrm.jsx";
 import { HQ_DSSC } from "./hq-base.js";
 import DsscPeople from "./dssc/DsscPeople.jsx";
 import DsscInbox from "./dssc/DsscInbox.jsx";
+import DsscMarketing from "./dssc/DsscMarketing.jsx";
 import { StaffClock, StaffHoursAdmin } from "./dssc/DsscStaff.jsx";
 import { parentMailings, greetingFor } from "../shared/parent-mail.js";
 import { mergePay, TIER_KEYS as PAY_TIER_KEYS, isPodClinic as isPodClinicPay, podPay as podPayShared, classRateFor, staffRateFor, personKey as payKey } from "../shared/dssc-pay.js";
@@ -1908,6 +1909,7 @@ export default function App() {
   const [dsscHubBack, setDsscHubBack]   = useState(false);  // that class was opened from the admin board, so "back" returns there
   const [dsscTextsInit, setDsscTextsInit] = useState(null); // {clinicId, sessionId} — open DSSC Texts with a class already picked
   const [dsscInboxInit, setDsscInboxInit] = useState(null); // inquiry id — open the DSSC Inbox on one thread (?view=dsscinbox&inquiry=<id>)
+  const [dsscMktWeek, setDsscMktWeek] = useState(null);     // YYYY-MM-DD — open DSSC Marketing on one week (?view=dsscmarketing&week=<monday>)
   const [swSyncTok, setSwSyncTok]       = useState(null);   // SportWrench sync bookmarklet {href} | {configured:false} | {error}
   const [syPostTok, setSyPostTok]       = useState(null);   // SportsYou post bookmarklet {href} | {configured:false} | {error}
   const [syOutbox, setSyOutbox]         = useState([]);     // sportsyou_outbox rows (pending + recently posted)
@@ -2028,6 +2030,7 @@ export default function App() {
   }, [smsSearch]);
   const [smsUnread, setSmsUnread]                     = useState({ dse: 0, dssc: 0 }); // header badges: unread texts per brand
   const [inboxNew, setInboxNew]                       = useState(0); // DSSC Inbox badge: threads nobody has picked up (status 'new')
+  const [mktDrafts, setMktDrafts]                     = useState(0); // DSSC Marketing badge: drafts waiting for approval (this + next week)
   const [smsConsents, setSmsConsents]                 = useState([]);     // sms_consents — who opted in to texts
   const [smsConsentPaste, setSmsConsentPaste]         = useState("");
   // SportsYou coach-comms inbox state
@@ -2320,7 +2323,7 @@ export default function App() {
   // colors, navigation, home — between DS Elite and Dripping Springs Sports
   // Club, instead of DSSC living as a tab inside DS Elite. Opening a DSSC
   // screen by any route (a push link, the home card) flips it too.
-  const DSSC_VIEWS = new Set(["dssc","clinics","dssctexts","dssccrm","dsscinbox","dssccal","dssctime","pods","privates","dssccamp","courts","dsscplan","staffhours","staffadmin","dsscpeople","dsscpay","projects"]);
+  const DSSC_VIEWS = new Set(["dssc","clinics","dssctexts","dssccrm","dsscinbox","dsscmarketing","dssccal","dssctime","pods","privates","dssccamp","courts","dsscplan","staffhours","staffadmin","dsscpeople","dsscpay","projects"]);
   // Screens a DSSC-only login may open: DSSC's own plus the shared basics.
   const DSSC_ONLY_OK = new Set([...DSSC_VIEWS, "home", "notifications", "activity", "faq"]);
   const [workspace, setWorkspace] = useState(() => { if (HQ_DSSC) return "dssc"; try { return localStorage.getItem("dse.workspace") === "dssc" ? "dssc" : "dse"; } catch { return "dse"; } });
@@ -2363,6 +2366,9 @@ export default function App() {
       // A DSSC Inbox email links to one thread: /?view=dsscinbox&inquiry=<id>
       const inquiryQ = Number(p.get("inquiry"));
       if (inquiryQ) { setDsscInboxInit(inquiryQ); if (!v) setView("dsscinbox"); }
+      // The "drafts ready" email links to one week of Marketing: /?view=dsscmarketing&week=YYYY-MM-DD
+      const weekQ = p.get("week");
+      if (v === "dsscmarketing" && /^\d{4}-\d{2}-\d{2}$/.test(weekQ || "")) setDsscMktWeek(weekQ);
       // Keep ?view= (so Back and reload work) but drop the one-time bits.
       deepLinkDone.current = true;
       const landed = v || (msg ? "notifications" : inquiryQ ? "dsscinbox" : null);
@@ -4765,6 +4771,22 @@ export default function App() {
     const iv = setInterval(loadInboxNew, 60000);
     return () => clearInterval(iv);
   }, [isApproved, isDsscDirector, loadInboxNew]);
+  // The DSSC Marketing badge: drafts for this week and next that still need a
+  // director's approval. Same rhythm as the Inbox badge.
+  const loadMktDrafts = useCallback(async () => {
+    if (!isDsscDirector) return;
+    const d = new Date(); d.setHours(12, 0, 0, 0); d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+    const iso = (x) => new Date(x.getTime() - x.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+    const thisMon = iso(d); d.setDate(d.getDate() + 7); const nextMon = iso(d);
+    const { count, error } = await supabase.from("mkt_items").select("id", { count: "exact", head: true }).eq("status", "draft").in("week_of", [thisMon, nextMon]);
+    if (!error) setMktDrafts(count || 0);
+  }, [isDsscDirector]);
+  useEffect(() => {
+    if (!isApproved || !isDsscDirector) return;
+    loadMktDrafts();
+    const iv = setInterval(loadMktDrafts, 120000);
+    return () => clearInterval(iv);
+  }, [isApproved, isDsscDirector, loadMktDrafts]);
   // Unread texts for the header badges — both brands, whatever screen you're
   // on. The inboxes only load their threads when opened, so this is its own
   // tiny query, refreshed by the realtime feed below and once a minute.
@@ -32879,7 +32901,7 @@ export default function App() {
   const navCtx = {
     workspace, canOps, isAdmin, isOwner, canViewTeams, hasTeams: myTeamNames.length > 0, canSendReports, isDsscDirector, dsscOnly, isDsscStaff, canSeeStaffHours, canEditPay, pins: navPins,
     counts: {
-      smsDse: smsUnread.dse, smsDssc: smsUnread.dssc, inboxNew, notif: unreadCount,
+      smsDse: smsUnread.dse, smsDssc: smsUnread.dssc, inboxNew, mktDrafts, notif: unreadCount,
       issuesOpen: incidents.filter(r => r.status === "open").length,
       issuesMine: incidents.filter(r => incidentVisible(r) && r.status !== "resolved").length,
       kickoffs: kickoffOutstanding, claims: pendingClaimCount, reqs: coachRequests.filter(r => r.status === "pending").length,
@@ -33163,6 +33185,9 @@ export default function App() {
           : <div style={{padding:24,color:C.mut,textAlign:"center"}}>DSSC People is for the club's directors.</div>)}
         {view==="dsscinbox" && (isDsscDirector
           ? <DsscInbox coach={coach} initialId={dsscInboxInit} onConsumedInitial={()=>setDsscInboxInit(null)} onChanged={loadInboxNew} />
+          : opsDenied)}
+        {view==="dsscmarketing" && (isDsscDirector
+          ? <DsscMarketing coach={coach} initialWeek={dsscMktWeek} onConsumedInitial={()=>setDsscMktWeek(null)} onChanged={loadMktDrafts} />
           : opsDenied)}
         {view==="dssccamp" && (isDsscDirector
           ? <DsscCamp coach={coach} />
