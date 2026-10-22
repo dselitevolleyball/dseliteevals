@@ -231,6 +231,10 @@
     {
       "path": "/api/site-inbox-poll",
       "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/marketing-cron",
+      "schedule": "*/15 * * * *"
     }
   ],
   "functions": {
@@ -263,6 +267,12 @@
     },
     "api/courts-public.js": {
       "maxDuration": 60
+    },
+    "api/marketing.js": {
+      "maxDuration": 120
+    },
+    "api/marketing-cron.js": {
+      "maxDuration": 300
     }
   },
   "headers": [

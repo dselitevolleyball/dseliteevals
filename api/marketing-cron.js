@@ -1,0 +1,104 @@
+// GET /api/marketing-cron — the Marketing Machine's clock (Vercel Cron, every 15 min).
+//
+//   1. Publish what's due: approved mkt_items with scheduled_at <= now
+//      (social -> Facebook/Instagram, email -> Resend, text -> an sms_campaigns
+//      row the texts cron sends). An email cut short mid-send resumes; a post
+//      stuck in 'publishing' for 10+ minutes is marked failed so nobody
+//      double-posts it blind.
+//   2. Auto-generate: on settings.generate_day after 5 pm Central, if
+//      auto_generate is on and next week has no items yet, draft next week
+//      and email settings.notify_emails a digest with the HQ link.
+//   3. Once a day: pull the website's photos.json into mkt_photos.
+//
+//   ?dry=1           list what it would do; writes nothing, sends nothing
+//   ?at=<ISO time>   (with dry=1) pretend it's that time - to check step 2
+//
+// Auth: Authorization: Bearer <CRON_SECRET> (Vercel Cron), ?token=<CRON_SECRET>,
+// or the service-role key.
+// Env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, CRON_SECRET + what api/_lib/marketing-publish.js needs.
+
+import { safeEqual } from "./_lib/site-inbox.js";
+import { mondayOf, addDays } from "../shared/marketing-plan.js";
+import { publishItem } from "./_lib/marketing-publish.js";
+import { serviceSb, loadSettings, generateWeek, sendDigest, syncPhotos, log } from "./_lib/marketing-core.js";
+
+const TZ = "America/Chicago";
+export const centralClock = (d) => ({
+  date: d.toLocaleDateString("en-CA", { timeZone: TZ }),
+  dow: d.toLocaleDateString("en-US", { timeZone: TZ, weekday: "short" }).toLowerCase().slice(0, 3),
+  hour: Number(d.toLocaleString("en-US", { timeZone: TZ, hour: "numeric", hourCycle: "h23" })),
+});
+
+export default async function handler(req, res) {
+  res.setHeader("Cache-Control", "no-store");
+  const { CRON_SECRET, SUPABASE_SERVICE_ROLE_KEY } = process.env;
+  const url = (() => { try { return new URL(req.url, "https://x"); } catch { return null; } })();
+  const bearer = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "").trim();
+  const token = url?.searchParams.get("token") || "";
+  const ok = (CRON_SECRET && (safeEqual(bearer, CRON_SECRET) || safeEqual(token, CRON_SECRET))) || (SUPABASE_SERVICE_ROLE_KEY && safeEqual(bearer, SUPABASE_SERVICE_ROLE_KEY));
+  if (!ok) return res.status(403).json({ error: "Forbidden" });
+  const sb = serviceSb();
+  if (!sb) return res.status(500).json({ error: "Server not configured" });
+  const dry = /^(1|true|yes)$/i.test(url?.searchParams.get("dry") || "");
+  const atParam = dry ? url?.searchParams.get("at") : null;
+  const now = atParam && !isNaN(new Date(atParam)) ? new Date(atParam) : new Date();
+  try {
+    return res.status(200).json({ ok: true, ...(await runCron(sb, { now, dry, deadline: Date.now() + 240000 })) });
+  } catch (e) {
+    console.error("marketing-cron", e);
+    return res.status(500).json({ error: e.message || String(e) });
+  }
+}
+
+export async function runCron(sb, { now = new Date(), dry = false, deadline = Date.now() + 240000 } = {}) {
+  const out = { now: now.toISOString(), dry, published: [], stuck: [], auto: null, photos: null };
+  const settings = await loadSettings(sb);
+  const nowIso = now.toISOString();
+
+  // ── 1. publish ──
+  const { data: due, error } = await sb.from("mkt_items").select("*").eq("status", "approved").lte("scheduled_at", nowIso).order("scheduled_at").limit(25);
+  if (error) throw new Error("mkt_items: " + error.message);
+  const tenAgo = new Date(now.getTime() - 10 * 60e3).toISOString();
+  const { data: stuck } = await sb.from("mkt_items").select("*").eq("status", "publishing").lt("updated_at", tenAgo).limit(25);
+  const resume = [];
+  for (const it of stuck || []) {
+    if (it.channel === "email") { resume.push(it); continue; }
+    out.stuck.push({ id: it.id, channel: it.channel });
+    if (!dry) {
+      await sb.from("mkt_items").update({ status: "failed", error: "Publishing was interrupted - check Facebook / Instagram (or the text campaign) before trying again" }).eq("id", it.id).eq("status", "publishing");
+      await log(sb, it.id, "publish_error", { interrupted: true });
+    }
+  }
+  for (const it of [...resume, ...(due || [])]) {
+    if (Date.now() > deadline - 20000) { out.published.push({ id: it.id, channel: it.channel, status: "deferred", error: "out of time - next run" }); continue; }
+    out.published.push(await publishItem(sb, it, { settings, dry, deadline: Math.min(deadline - 15000, Date.now() + 120000), resume: it.status === "publishing" }).catch(e => ({ id: it.id, channel: it.channel, status: "error", error: e.message })));
+  }
+
+  // ── 2. auto-generate next week ──
+  const ct = centralClock(now);
+  const nextWeek = addDays(mondayOf(ct.date), 7);
+  out.auto = { day: ct.dow, hour: ct.hour, generate_day: settings.generate_day, enabled: !!settings.auto_generate, week_of: nextWeek, ran: false };
+  if (settings.auto_generate && ct.dow === String(settings.generate_day || "sun").slice(0, 3) && ct.hour >= 17) {
+    const { count } = await sb.from("mkt_items").select("id", { count: "exact", head: true }).eq("week_of", nextWeek);
+    const { data: done } = await sb.from("mkt_log").select("id").eq("kind", "auto_generate").contains("detail", { week_of: nextWeek }).limit(1);
+    out.auto.existing = count || 0;
+    out.auto.already = !!done?.length;
+    if (!count && !done?.length) {
+      if (dry) out.auto.would = `generate the week of ${nextWeek} and email ${(settings.notify_emails || []).join(", ")}`;
+      else if (Date.now() < deadline - 110000) {
+        try {
+          const r = await generateWeek(sb, { weekOf: nextWeek, by: "auto", timeoutMs: Math.max(30000, Math.min(95000, deadline - Date.now() - 20000)) });
+          out.auto.ran = true; out.auto.created = r.items.length; out.auto.ai = r.ai && { used: r.ai.used, error: r.ai.error };
+          if (r.items.length) out.auto.digest = await sendDigest(sb, settings, nextWeek, r.items).then(x => ({ ok: x.ok, error: x.error || null }));
+        } catch (e) { out.auto.error = e.message; await log(sb, null, "auto_generate_error", { week_of: nextWeek, error: e.message }); }
+      } else out.auto.deferred = "out of time - next run";
+    }
+  }
+
+  // ── 3. photo library, once a day ──
+  const dayAgo = new Date(now.getTime() - 20 * 3600e3).toISOString();
+  const { data: synced } = await sb.from("mkt_log").select("id").eq("kind", "photos_sync").gte("at", dayAgo).limit(1);
+  if (!synced?.length) out.photos = await syncPhotos(sb, { dry }).catch(e => ({ ok: false, error: e.message }));
+  else out.photos = { skipped: "synced in the last 20 hours" };
+  return out;
+}
