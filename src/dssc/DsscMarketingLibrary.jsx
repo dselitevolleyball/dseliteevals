@@ -356,6 +356,8 @@ export function MarketingSettings({ status, narrow, reloadStatus, onChanged }) {
         sms_filters: { ...EMPTY_FILTERS, ...(row.sms_filters || {}) },
         email_audience: row.email_audience || { source: "dssc_contacts" },
         themes: Object.fromEntries(Object.entries(row.themes || {}).map(([k, v]) => [k, Array.isArray(v) ? v.join("\n") : String(v || "")])),
+        flair: Number.isFinite(+row.flair) ? +row.flair : 1,
+        scout: { enabled: true, day: "sat", web: true, spotlight_every_weeks: 2, via: ["email", "sms"], ...(row.scout || {}) },
       };
       v.cadence.social.rhythm = normRhythm(v.cadence.social.rhythm);
       setS(v); setOrig(JSON.stringify(v));
@@ -373,7 +375,7 @@ export function MarketingSettings({ status, narrow, reloadStatus, onChanged }) {
     try {
       const emails = s.notify_emails.split(/[\s,;]+/).map(e => e.trim().toLowerCase()).filter(e => /@/.test(e));
       const themes = Object.fromEntries(Object.entries(s.themes || {}).map(([k, v]) => [k, String(v || "").split("\n").map(x => x.trim()).filter(Boolean)]));
-      const patch = { voice: s.voice, weights: s.weights, cadence: s.cadence, themes, auto_generate: s.auto_generate, generate_day: s.generate_day, notify_emails: emails, sms_filters: s.sms_filters, email_audience: s.email_audience };
+      const patch = { voice: s.voice, weights: s.weights, cadence: s.cadence, themes, flair: s.flair, scout: s.scout, auto_generate: s.auto_generate, generate_day: s.generate_day, notify_emails: emails, sms_filters: s.sms_filters, email_audience: s.email_audience };
       await mktApi("settings_save", { patch });
       setOrig(JSON.stringify(s)); setMsg({ ok: "Saved." }); reloadStatus?.(); onChanged?.();
     } catch (e) { setMsg({ err: e.message }); }
@@ -480,6 +482,32 @@ export function MarketingSettings({ status, narrow, reloadStatus, onChanged }) {
             <span style={{ fontSize: 12, color: DS.mut }}>at</span>
             <input type="time" value={s.cadence.sms.time || "17:30"} onChange={e => setCad("sms", "time", e.target.value)} style={sel} />
           </div>
+        </Panel>
+
+        <Panel style={{ marginBottom: 14 }}>
+          <H>Flair and the idea scout</H>
+          <div style={lbl}>How much personality the copy gets</div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {[[0, "Plain"], [1, "Some personality"], [2, "Bold & fun"]].map(([n, l]) => <button key={n} onClick={() => set("flair", n)} style={chipStyle(s.flair === n, DS.lime, narrow)}>{l}</button>)}
+          </div>
+          <div style={{ fontSize: 12, color: DS.dim, marginTop: 4 }}>{["Clear and warm, no gimmicks.", "A scroll-stopping first line and a fun format (POV, this-or-that, countdowns) when it fits.", "Hooks every time, playful formats, wordplay and energy. Facts never bend."][s.flair] || ""}</div>
+          <label style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 14, cursor: "pointer", marginTop: 14, flexWrap: "wrap" }}>
+            <input type="checkbox" checked={s.scout.enabled !== false} onChange={e => set("scout", { ...s.scout, enabled: e.target.checked })} style={{ width: 20, height: 20, accentColor: DS.lime }} />
+            Suggest ideas every
+            <select disabled={s.scout.enabled === false} value={s.scout.day || "sat"} onChange={e => set("scout", { ...s.scout, day: e.target.value })} style={sel}>{DAYS.map(d => <option key={d} value={d}>{DAY_LABEL[d]}</option>)}</select>
+            morning and email them
+          </label>
+          <label style={{ display: "flex", gap: 10, alignItems: "center", fontSize: 14, cursor: "pointer", marginTop: 8 }}>
+            <input type="checkbox" checked={s.scout.web !== false} onChange={e => set("scout", { ...s.scout, web: e.target.checked })} style={{ width: 20, height: 20, accentColor: DS.lime }} />
+            Look up what's happening around Dripping Springs (web search)
+          </label>
+          <div style={lbl}>"Meet the Coaches" — line up the next coach every</div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <input type="number" min={0} max={12} value={s.scout.spotlight_every_weeks ?? 2} onChange={e => set("scout", { ...s.scout, spotlight_every_weeks: Math.max(0, Math.min(12, Number(e.target.value) || 0)) })} style={num} />
+            <span style={{ fontSize: 12, color: DS.mut }}>weeks (0 = only when you start one) · send interviews by</span>
+            {[["email", "Email"], ["sms", "Text"]].map(([k, l]) => { const on = (s.scout.via || []).includes(k); return <button key={k} onClick={() => set("scout", { ...s.scout, via: on ? s.scout.via.filter(x => x !== k) : [...(s.scout.via || []), k] })} style={chipStyle(on, DS.lime, narrow)}>{l}</button>; })}
+          </div>
+          <div style={{ fontSize: 12, color: DS.dim, marginTop: 4 }}>Interviews only go out when a director presses Send (in HQ or the one-tap button in the ideas email).</div>
         </Panel>
 
         <Panel style={{ marginBottom: 14 }}>

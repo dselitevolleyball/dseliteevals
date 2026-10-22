@@ -7,7 +7,7 @@
 // changes and approves — from a phone, in a couple of taps. Nothing goes out
 // without approval; the cron publishes approved items at their time.
 //
-// Tabs: Approve (default) · Plan & flow · Priorities · Photos · Settings.
+// Tabs: Approve (default) · Ideas (the idea scout + "Meet the Coaches") · Plan & flow · Priorities · Photos · Settings.
 // Spec: docs/MARKETING_CONTRACT.md. Server: api/marketing.js (POST {action}).
 // Reads (and a few simple writes) go straight to Supabase — RLS lets the
 // directors at the mkt_* tables (public.is_dssc_director()).
@@ -19,13 +19,14 @@ import { mktApi, isMissingTable, MIGRATION_MSG, mondayOf, useNarrow } from "./Ds
 import MarketingApprove from "./DsscMarketingApprove.jsx";
 import { MarketingPlan, MarketingPriorities } from "./DsscMarketingPlan.jsx";
 import { MarketingPhotos, MarketingSettings } from "./DsscMarketingLibrary.jsx";
+import MarketingIdeas from "./DsscMarketingIdeas.jsx";
 
-const TABS = [["approve", "Approve"], ["plan", "Plan & flow"], ["priorities", "Priorities"], ["photos", "Photos"], ["settings", "Settings"]];
+const TABS = [["approve", "Approve"], ["ideas", "Ideas"], ["plan", "Plan & flow"], ["priorities", "Priorities"], ["photos", "Photos"], ["settings", "Settings"]];
 const TAB_KEY = "dssc.marketing.tab";
 
-export default function DsscMarketing({ coach, initialWeek, onConsumedInitial, onChanged }) {
+export default function DsscMarketing({ coach, initialWeek, initialTab, onConsumedInitial, onChanged }) {
   const narrow = useNarrow();
-  const [tab, setTabState] = useState(() => { if (initialWeek) return "approve"; try { const t = sessionStorage.getItem(TAB_KEY); return TABS.some(([k]) => k === t) ? t : "approve"; } catch { return "approve"; } });
+  const [tab, setTabState] = useState(() => { if (TABS.some(([k]) => k === initialTab)) return initialTab; if (initialWeek) return "approve"; try { const t = sessionStorage.getItem(TAB_KEY); return TABS.some(([k]) => k === t) ? t : "approve"; } catch { return "approve"; } });
   const setTab = (t) => { setTabState(t); try { sessionStorage.setItem(TAB_KEY, t); } catch { /* ignore */ } };
   const [week, setWeek] = useState(() => /^\d{4}-\d{2}-\d{2}$/.test(initialWeek || "") ? mondayOf(initialWeek) : mondayOf());
   const [status, setStatus] = useState(null);
@@ -34,10 +35,11 @@ export default function DsscMarketing({ coach, initialWeek, onConsumedInitial, o
 
   // Deep link from the "drafts ready" email: ?view=dsscmarketing&week=YYYY-MM-DD
   useEffect(() => {
-    if (!initialWeek) return;
-    if (/^\d{4}-\d{2}-\d{2}$/.test(initialWeek)) { setWeek(mondayOf(initialWeek)); setTab("approve"); }
+    if (!initialWeek && !initialTab) return;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(initialWeek || "")) { setWeek(mondayOf(initialWeek)); setTab("approve"); }
+    if (TABS.some(([k]) => k === initialTab)) setTab(initialTab);
     onConsumedInitial?.();
-  }, [initialWeek]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [initialWeek, initialTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadStatus = useCallback(async () => {
     try { setStatus(await mktApi("status")); setStatusErr(""); }
@@ -69,6 +71,7 @@ export default function DsscMarketing({ coach, initialWeek, onConsumedInitial, o
         </div>
 
         {tab === "approve" && <MarketingApprove week={week} setWeek={setWeek} status={status} narrow={narrow} onChanged={changed} coach={coach} />}
+        {tab === "ideas" && <MarketingIdeas narrow={narrow} onOpenWeek={(w) => { setWeek(mondayOf(w)); setTab("approve"); }} onChanged={changed} />}
         {tab === "plan" && <MarketingPlan week={week} status={status} narrow={narrow} onOpenWeek={(w) => { setWeek(mondayOf(w)); setTab("approve"); }} />}
         {tab === "priorities" && <MarketingPriorities narrow={narrow} onChanged={() => { loadStatus(); changed(); }} />}
         {tab === "photos" && <MarketingPhotos narrow={narrow} />}

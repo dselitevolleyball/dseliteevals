@@ -142,6 +142,38 @@ Redeploy after you add them. **Marketing → Settings** lists anything still mis
 - Copy rules: no prices, no "spots left", no made-up facts, never the Flex. Links always come from the
   feed or the club's pages. If Claude breaks a rule, that item falls back to template copy.
 
+## Ideas and "Meet the Coaches" (Marketing → Ideas)
+Run once (after the other two marketing migrations):
+```
+node scripts/run-sql.mjs migrations/20261024_marketing_ideas_spotlights.sql
+```
+- **The idea scout** (`api/_lib/marketing-scout.js`) suggests 5–7 posts the weekly rhythm wouldn't make
+  on its own: holidays and school breaks (`shared/marketing-seasons.js`), the season, what's on around
+  Dripping Springs (a web search - community events, the ISD calendar, local teams' big moments; a
+  local idea is only kept when search actually found it, and links its source), the club's own news,
+  and just-for-fun formats. Each idea has a pitch, a hook ("POV: your setter is a T. rex"), a line, a
+  format and a best day. It runs every **Saturday morning** (Settings → Flair and the idea scout) and
+  emails `notify_emails` with a **Make this post** button per idea; in HQ there's **Get fresh ideas** and
+  **Ask the scout** ("something fun for Halloween").
+- **Make it** turns an idea into a draft on its best day (it still needs approving). **Not this** asks
+  why ("Not our vibe", "Wrong timing"…); the reasons go into the next run, so the scout learns.
+- **Meet the Coaches** (`api/_lib/marketing-spotlight.js`): every 2 weeks (Settings) the scout lines up
+  the next person - the line featured longest ago, nobody spotlighted in the last 6 months, from the
+  directors, logins with a DSSC role and DSSC people - and Claude writes 6–8 questions. You check them
+  and press **Send** (or **Send the interview** in the ideas email). The coach gets an email and a text
+  with their own page (`www.drippingsportsclub.com/hq/api/spotlight-form?t=…`): answer the questions,
+  add up to 8 photos (phones' HEIC is converted to JPEG on the phone), tick "OK to share". No answer in
+  3 days → one reminder. Within 15 minutes of an answer the cron drafts a **quote post** (their photo +
+  their own words - Claude may tidy, never add facts; a quote that isn't theirs is replaced), a
+  **story**, and the **"Meet the Coaches #n" email** (the Q&A), and emails you to review them. Their photos
+  join the photo library. Answers that came back by text? **Type in answers** on the spotlight.
+- **One-tap buttons** in these emails are signed and expire after 7 days. Each opens a "Yes, do it"
+  page, so a mail scanner opening the link can't post anything or text a coach.
+- **Flair** (Settings): Plain · Some personality (default) · Bold & fun. It shapes every draft and idea;
+  the facts rules never bend.
+- Offline checks: `node scripts/test-marketing-ideas.mjs` (scout, spotlights, the coach page, one-tap
+  links, the cron steps - Claude, Resend and Twilio stubbed).
+
 ## Testing it safely
 - Use **Test** on an email to send it to yourself with `[TEST]` in the subject. Test on a text sends
   it to your phone. Test on a post shows the exact caption and image without posting.

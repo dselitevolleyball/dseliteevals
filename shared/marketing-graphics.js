@@ -10,8 +10,10 @@
 //   const blob = await renderGraphicBlob(spec);        // → image/png Blob
 //
 // spec = mkt_items.graphic (+ optional `line` and `cta`):
-//   { template: 'photo'|'starts'|'list'|'countdown', format: 'post'|'square'|'story'|'email',
-//     photo_url, headline, accent, sub, tag, date_label, items: [string], line?, cta? }
+//   { template: 'photo'|'starts'|'list'|'countdown'|'quote', format: 'post'|'square'|'story'|'email',
+//     photo_url, headline, accent, sub, tag, date_label, items: [string], quote?, line?, cta? }
+// 'quote' (coach spotlights): the photo, a big lime quotation mark, the
+// quote in bold body type, then the headline (the person) and sub (their role).
 //
 // Every piece of text is fitted: headlines shrink and wrap, body lines wrap
 // and end with "…" — nothing ever runs off the canvas. Images load with
@@ -30,6 +32,7 @@ export const TEMPLATES = [
   ["starts", "Starts"],
   ["list", "List"],
   ["countdown", "Countdown"],
+  ["quote", "Quote"],
 ];
 export const BRAND = {
   ink: "#061a18", ink2: "#0a2422", evergreen: "#104946", teal: "#0F8B76",
@@ -554,6 +557,48 @@ function tList(ctx, spec, imgs, F) {
   drawFooter(ctx, spec, imgs, m, footY, W - 2 * m, footH, u);
 }
 
+function tQuote(ctx, spec, imgs, F) {
+  const { W, H, u, land, m, top, bottom } = F;
+  ctx.fillStyle = BRAND.ink; ctx.fillRect(0, 0, W, H);
+  const footH = Math.round((land ? 96 : 84) * u);
+  const footY = H - bottom - footH;
+  const tagH = Math.round(30 * 1.9 * u);
+  let cw, qTop;
+  if (land) {
+    const px = W * 0.56;
+    drawPhoto(ctx, imgs.photoImg, px, 0, W - px, H, imgs.shieldImg, 0.3);
+    hScrim(ctx, px, 0, W - px, H, [[0, 1], [0.3, 0.45], [1, 0]]);
+    drawTag(ctx, spec.tag, m, m, u, px - 2 * m);
+    cw = px - m - 24 * u; qTop = m + tagH + 18 * u;
+  } else {
+    const ph = Math.round(H * (H > 1500 ? 0.46 : 0.5));
+    drawPhoto(ctx, imgs.photoImg, 0, 0, W, ph, imgs.shieldImg, 0.28);
+    vScrim(ctx, 0, ph * 0.5, W, ph * 0.5 + 2, [[0, 0], [1, 1]]);
+    vScrim(ctx, 0, 0, W, top + 160 * u, [[0, 0.5], [1, 0]]);
+    drawTag(ctx, spec.tag, m, top, u, W - 2 * m);
+    cw = W - 2 * m; qTop = ph - 70 * u;
+  }
+  const sub = fitBody(ctx, spec.sub, cw, { size: 32 * u, min: 24 * u, maxLines: 1, weight: 500 });
+  const name = fitHead(ctx, headWords(spec.headline, spec.accent), cw, 150 * u, { max: (land ? 80 : 96) * u, min: 40 * u, maxLines: 2 });
+  const nameTop = footY - 36 * u - (sub.lines.length ? sub.height + 12 * u : 0) - name.height;
+  const markS = (land ? 220 : 300) * u;
+  const qText = qTop + markS * 0.42;
+  const avail = nameTop - 64 * u - qText;
+  const qSize = (land ? 52 : 76) * u;
+  // The biggest size whose wrapped quote fits the space above the name.
+  let q = null;
+  for (let sz = qSize; sz >= 26 * u; sz -= 2 * u) {
+    q = fitBody(ctx, spec.quote || "", cw, { size: sz, min: sz, maxLines: 8, weight: 700, lh: 1.22 });
+    if (q.height <= avail) break;
+  }
+  ctx.font = `900 ${markS}px ${HEAD}`; ctx.fillStyle = BRAND.lime; ctx.textBaseline = "alphabetic";
+  ctx.fillText("\u201C", m - 8 * u, qTop + markS * 0.72);
+  drawBody(ctx, q, m, qText + Math.max(0, Math.min(40 * u, (avail - q.height) / 2)), "#fff");
+  drawHead(ctx, name, m, nameTop, { accent: BRAND.lime });
+  drawBody(ctx, sub, m, nameTop + name.height + 12 * u, BRAND.mute);
+  drawFooter(ctx, spec, imgs, m, footY, land ? cw : W - 2 * m, footH, u);
+}
+
 // ── Public ─────────────────────────────────────────────────────────────────
 // Draws `spec` on `canvas` (resized to the format). Synchronous: load fonts
 // (ensureFonts) and images (loadGraphicImages) first.
@@ -572,6 +617,7 @@ export function renderGraphic(canvas, spec = {}, imgs = {}) {
   if (t === "starts") tStarts(ctx, s, imgs, F);
   else if (t === "list") tList(ctx, s, imgs, F);
   else if (t === "countdown") tPhoto(ctx, s, imgs, F, true);
+  else if (t === "quote") tQuote(ctx, s, imgs, F);
   else tPhoto(ctx, s, imgs, F, false);
   ctx.restore();
   return canvas;

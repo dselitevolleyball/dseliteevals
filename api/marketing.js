@@ -17,6 +17,11 @@
 //   publish_now { id }                      publish an approved (or failed) item now
 //   test        { id, to? }                 email -> you; text -> your phone; social -> preview only
 //   photos_sync · settings_save { patch } · priority_save { priority } · priority_delete { id }
+//   ideas_refresh { ask?, web? }            the idea scout runs now (an ask: "something fun for Halloween")
+//   idea_accept { id, instruction? }        the idea becomes a draft on its best day
+//   idea_dismiss { id, feedback? }          turned down - the reason goes back to the scout
+//   spotlight_candidates · spotlight_create { person } · spotlight_update { id, patch }
+//   spotlight_send { id, via? } · spotlight_remind { id } · spotlight_draft { id } · spotlight_cancel { id }
 //   photos_tag  { ids?, mode? }             Claude catalogues photos (line, tags, description,
 //                                           uses, quality, kids visible); no ids = the next
 //                                           untagged ones. mode "replace" overwrites line/tags/alt.
@@ -36,6 +41,8 @@ import { reviseItem, buildEmail, withHero, aiReady, ctToday } from "./_lib/marke
 import { connections, publishItem, captionFor, testEmail, testSms } from "./_lib/marketing-publish.js";
 import { serviceSb, loadSettings, loadPriorities, loadHistory, loadPhotos, fetchPrograms, syncPhotos, generateWeek, log } from "./_lib/marketing-core.js";
 import { tagPhotos } from "./_lib/marketing-photos-ai.js";
+import { runScout, acceptIdea, dismissIdea } from "./_lib/marketing-scout.js";
+import { candidates, createSpotlight, sendSpotlight, draftSpotlight } from "./_lib/marketing-spotlight.js";
 
 const fail = (status, error) => Object.assign(new Error(error), { status });
 const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ""));
@@ -58,6 +65,15 @@ export default async function handler(req, res) {
     console.error("marketing", body?.action, e);
     return res.status(e.status || 500).json({ error: e.message || String(e) });
   }
+}
+
+async function getSpotlight(sb, id) {
+  const n = Number(id);
+  if (!Number.isInteger(n) || n <= 0) throw fail(400, "id is required");
+  const { data, error } = await sb.from("mkt_spotlights").select("*").eq("id", n).maybeSingle();
+  if (error) throw fail(500, error.message);
+  if (!data) throw fail(404, "That spotlight no longer exists");
+  return data;
 }
 
 async function getItem(sb, id) {
@@ -255,6 +271,73 @@ export async function run(sb, { me, name }, b) {
     case "photos_sync":
       return { sync: await syncPhotos(sb) };
 
+    case "ideas_refresh": {
+      if (!aiReady() && b.ask) throw fail(503, "Claude isn't connected (ANTHROPIC_API_KEY)");
+      const r = await runScout(sb, { by: me, ask: String(b.ask || "").slice(0, 500), web: b.web == null ? null : !!b.web, deadline: Date.now() + 110000 });
+      return r;
+    }
+
+    case "idea_accept": {
+      const r = await acceptIdea(sb, b.id, { by: me, instruction: String(b.instruction || "").slice(0, 1000) });
+      return r;
+    }
+
+    case "idea_dismiss":
+      return { idea: await dismissIdea(sb, b.id, { by: me, feedback: b.feedback }) };
+
+    case "spotlight_candidates":
+      return { candidates: await candidates(sb) };
+
+    case "spotlight_create": {
+      const settings = await loadSettings(sb);
+      return { spotlight: await createSpotlight(sb, b.person || {}, { by: me, flair: settings.flair }) };
+    }
+
+    case "spotlight_update": {
+      const sp = await getSpotlight(sb, b.id);
+      const p = b.patch && typeof b.patch === "object" ? b.patch : {};
+      const row = {};
+      for (const k of ["name", "role", "intro"]) if (k in p) row[k] = String(p[k] || "").trim().slice(0, k === "intro" ? 1200 : 120) || null;
+      if ("email" in p) row.email = isEmailish(p.email) ? nrm(p.email) : null;
+      if ("phone" in p) row.phone = normalizePhone(p.phone || "") || null;
+      if ("line" in p) row.line = LINE_KEYS.includes(p.line) ? p.line : "club";
+      if ("questions" in p) row.questions = (Array.isArray(p.questions) ? p.questions : []).map(x => typeof x === "string" ? { q: x } : x).filter(x => String(x?.q || "").trim()).slice(0, 10).map(x => ({ q: String(x.q).trim().slice(0, 300), ...(x.a ? { a: String(x.a).trim().slice(0, 1500) } : {}) }));
+      // A director types in answers that came back another way (a text, a chat).
+      if (p.mark_answered) { if (!(row.questions || sp.questions).some(x => String(x.a || "").trim())) throw fail(400, "Add at least one answer"); Object.assign(row, { status: "answered", answered_at: new Date().toISOString(), consent: true }); }
+      if (["drafted", "cancelled"].includes(sp.status) && Object.keys(row).length) throw fail(409, `It's ${sp.status} - it can't be changed`);
+      if (!Object.keys(row).length) throw fail(400, "Nothing to change");
+      const { data, error } = await sb.from("mkt_spotlights").update(row).eq("id", sp.id).select("*").single();
+      if (error) throw fail(500, error.message);
+      return { spotlight: data };
+    }
+
+    case "spotlight_send":
+    case "spotlight_remind": {
+      const sp = await getSpotlight(sb, b.id);
+      const settings = await loadSettings(sb);
+      const via = Array.isArray(b.via) && b.via.length ? b.via.filter(v => ["email", "sms"].includes(v)) : (settings.scout?.via || ["email", "sms"]);
+      const r = await sendSpotlight(sb, sp, { via, by: me, byName: String(name || me).split(/[\s@]/)[0], reminder: b.action === "spotlight_remind" }).catch(e => { throw fail(400, e.message); });
+      if (b.action === "spotlight_send") await sb.from("mkt_ideas").update({ status: "accepted", decided_by: me, decided_at: new Date().toISOString() }).eq("spotlight_id", sp.id).eq("status", "new");
+      await log(sb, null, b.action, { id: sp.id, by: me, sent: r.sent, errors: r.errors });
+      return r;
+    }
+
+    case "spotlight_draft": {
+      const sp = await getSpotlight(sb, b.id);
+      if (sp.status === "drafted" && (sp.item_ids || []).length && !b.again) throw fail(409, "The drafts are already made - they're in the Approve tab");
+      const settings = await loadSettings(sb);
+      const r = await draftSpotlight(sb, { ...sp, status: "answered" }, { settings, by: me }).catch(e => { throw fail(400, e.message); });
+      return r;
+    }
+
+    case "spotlight_cancel": {
+      const sp = await getSpotlight(sb, b.id);
+      const { data, error } = await sb.from("mkt_spotlights").update({ status: "cancelled" }).eq("id", sp.id).select("*").single();
+      if (error) throw fail(500, error.message);
+      await sb.from("mkt_ideas").update({ status: "dismissed", feedback: "Spotlight cancelled", decided_by: me, decided_at: new Date().toISOString() }).eq("spotlight_id", sp.id).eq("status", "new");
+      return { spotlight: data };
+    }
+
     case "photos_tag": {
       if (!aiReady()) throw fail(503, "Claude isn't connected (ANTHROPIC_API_KEY)");
       const ids = (Array.isArray(b.ids) ? b.ids : []).map(Number).filter(n => Number.isInteger(n) && n > 0).slice(0, 8);
@@ -285,6 +368,12 @@ export async function run(sb, { me, name }, b) {
       if ("generate_day" in p) { const d = String(p.generate_day || "").slice(0, 3).toLowerCase(); if (!["mon", "tue", "wed", "thu", "fri", "sat", "sun"].includes(d)) throw fail(400, "generate_day must be mon..sun"); row.generate_day = d; }
       if ("email_audience" in p) row.email_audience = p.email_audience && typeof p.email_audience === "object" ? p.email_audience : { source: "dssc_contacts" };
       if ("sms_filters" in p) row.sms_filters = p.sms_filters && typeof p.sms_filters === "object" ? p.sms_filters : {};
+      if ("flair" in p) row.flair = Math.max(0, Math.min(2, Math.round(+p.flair || 0)));
+      if ("scout" in p && p.scout && typeof p.scout === "object") {
+        const sc = { ...(cur.scout || {}), ...p.scout };
+        row.scout = { enabled: sc.enabled !== false, day: ["mon", "tue", "wed", "thu", "fri", "sat", "sun"].includes(sc.day) ? sc.day : "sat", web: sc.web !== false,
+          spotlight_every_weeks: Math.max(0, Math.min(12, Math.round(+sc.spotlight_every_weeks || 0))), via: (Array.isArray(sc.via) ? sc.via : ["email", "sms"]).filter(v => ["email", "sms"].includes(v)) };
+      }
       if ("notify_emails" in p) row.notify_emails = (Array.isArray(p.notify_emails) ? p.notify_emails : String(p.notify_emails || "").split(/[\s,;]+/)).map(nrm).filter(isEmailish);
       const { data, error } = await sb.from("mkt_settings").upsert(row, { onConflict: "id" }).select("*").single();
       if (error) throw fail(500, error.message);

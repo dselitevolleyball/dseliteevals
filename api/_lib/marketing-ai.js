@@ -298,12 +298,19 @@ const ITEM_PROPS = {
 const ITEM = { type: "object", additionalProperties: false, required: Object.keys(ITEM_PROPS), properties: ITEM_PROPS };
 const WEEK_SCHEMA = { type: "object", additionalProperties: false, required: ["items"], properties: { items: { type: "array", items: ITEM } } };
 
-function voiceBlock(voice) {
+// How much personality the copy gets (settings.flair). Facts rules never bend.
+export const FLAIR = [
+  "Flair: plain. Clear, warm and informative; no gimmicks.",
+  "Flair: some personality. Open with a hook that stops the scroll, keep it playful but clear, and use a fun format (POV, this-or-that, a countdown, \"tag someone who...\") when it fits the slot - not every time.",
+  "Flair: bold. Every piece opens with a scroll-stopping hook; lean into fun formats (POV, this-or-that, hot takes about drills, \"tag a friend who...\", challenges), wordplay and energy. Still short, still kind, still no invented facts.",
+];
+export const flairText = (n) => FLAIR[Math.max(0, Math.min(2, Number.isFinite(+n) ? Math.round(+n) : 1))];
+function voiceBlock(voice, flair = 1) {
   const v = String(voice || "").trim();
-  return v ? `Extra notes from the club's directors about voice and brand (follow them unless they conflict with the facts rules):\n${v.slice(0, 4000)}` : "No extra voice notes from the directors.";
+  return `${flairText(flair)}\n\n` + (v ? `Extra notes from the club's directors about voice and brand (follow them unless they conflict with the facts rules):\n${v.slice(0, 4000)}` : "No extra voice notes from the directors.");
 }
 
-async function callClaude(userText, { voice, timeoutMs = 95000 } = {}) {
+async function callClaude(userText, { voice, flair, timeoutMs = 95000 } = {}) {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: timeoutMs, maxRetries: 0 });
   const msg = await client.beta.messages.create({
     model: AI_MODEL,
@@ -313,7 +320,7 @@ async function callClaude(userText, { voice, timeoutMs = 95000 } = {}) {
     output_config: { effort: "medium", format: { type: "json_schema", schema: WEEK_SCHEMA } },
     system: [
       { type: "text", text: SYSTEM },
-      { type: "text", text: voiceBlock(voice), cache_control: { type: "ephemeral" } },
+      { type: "text", text: voiceBlock(voice, flair), cache_control: { type: "ephemeral" } },
     ],
     messages: [{ role: "user", content: userText }],
   });
@@ -460,7 +467,7 @@ export async function composeItems({ slots, weekOf, programs = [], priorities = 
       slots: slots.map((s, i) => slotForAi(s, i, feedById)),
     };
     try {
-      const r = await callClaude("Write the drafts for these slots. Request (JSON):\n" + JSON.stringify(req, null, 1), { voice: settings.voice, timeoutMs });
+      const r = await callClaude("Write the drafts for these slots. Request (JSON):\n" + JSON.stringify(req, null, 1), { voice: settings.voice, flair: settings.flair, timeoutMs });
       ai.model = r.model || null; ai.error = r.error || null; aiItems = r.items; ai.usage = r.usage;
     } catch (e) {
       ai.error = e?.message || String(e);
@@ -528,7 +535,7 @@ export async function reviseItem({ item, instruction, programs = [], settings = 
   const req = { director_instruction: String(instruction || "").trim(), slot: slotForAi(slot, 0, feedById), current_draft: current };
   let r;
   try {
-    r = await callClaude("Rewrite this one draft following the director's instruction. Keep what the instruction doesn't touch. Return exactly one item with slot 0. Request (JSON):\n" + JSON.stringify(req, null, 1), { voice: settings.voice, timeoutMs });
+    r = await callClaude("Rewrite this one draft following the director's instruction. Keep what the instruction doesn't touch. Return exactly one item with slot 0. Request (JSON):\n" + JSON.stringify(req, null, 1), { voice: settings.voice, flair: settings.flair, timeoutMs });
   } catch (e) { return { patch: null, error: e?.message || String(e) }; }
   const raw = (r.items || []).find(x => Number(x.slot) === 0) || (r.items || [])[0];
   if (!raw) return { patch: null, model: r.model, error: r.error || "No rewrite came back" };

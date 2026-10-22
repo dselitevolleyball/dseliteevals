@@ -273,6 +273,12 @@
     },
     "api/marketing-cron.js": {
       "maxDuration": 300
+    },
+    "api/spotlight-form.js": {
+      "maxDuration": 30
+    },
+    "api/marketing-act.js": {
+      "maxDuration": 120
     }
   },
   "headers": [

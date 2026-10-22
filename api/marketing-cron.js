@@ -11,6 +11,11 @@
 //   3. Once a day: pull the website's photos.json into mkt_photos.
 //   4. Every run: Claude catalogues up to 6 photos nobody has had looked at
 //      yet (new uploads are usually done by HQ right away; this catches the rest).
+//   5. Coach spotlights: answered interviews become drafts (and the directors
+//      get a "drafts ready" email); an interview sent 3+ days ago with no
+//      answer gets one reminder.
+//   6. Weekly, on settings.scout.day after 9 am Central: the idea scout runs
+//      and emails the directors its ideas with one-tap buttons.
 //
 //   ?dry=1           list what it would do; writes nothing, sends nothing
 //   ?at=<ISO time>   (with dry=1) pretend it's that time - to check step 2
@@ -24,6 +29,8 @@ import { mondayOf, addDays } from "../shared/marketing-plan.js";
 import { publishItem } from "./_lib/marketing-publish.js";
 import { serviceSb, loadSettings, generateWeek, sendDigest, syncPhotos, log } from "./_lib/marketing-core.js";
 import { tagPhotos } from "./_lib/marketing-photos-ai.js";
+import { runScout, sendIdeasDigest, scoutSettings, sendSpotlightReady } from "./_lib/marketing-scout.js";
+import { sendSpotlight, draftSpotlight } from "./_lib/marketing-spotlight.js";
 import { aiReady } from "./_lib/marketing-ai.js";
 
 const TZ = "America/Chicago";
@@ -104,6 +111,42 @@ export async function runCron(sb, { now = new Date(), dry = false, deadline = Da
   const { data: synced } = await sb.from("mkt_log").select("id").eq("kind", "photos_sync").gte("at", dayAgo).limit(1);
   if (!synced?.length) out.photos = await syncPhotos(sb, { dry }).catch(e => ({ ok: false, error: e.message }));
   else out.photos = { skipped: "synced in the last 20 hours" };
+
+  // ── 5. coach spotlights ──
+  out.spotlights = { drafted: [], reminded: [] };
+  const { data: answered } = await sb.from("mkt_spotlights").select("*").eq("status", "answered").limit(3);
+  for (const sp of answered || []) {
+    if (dry) { out.spotlights.drafted.push({ id: sp.id, would: "draft" }); continue; }
+    if (Date.now() > deadline - 100000) break;
+    try {
+      const r = await draftSpotlight(sb, sp, { settings, today: centralClock(now).date });
+      out.spotlights.drafted.push({ id: sp.id, items: r.items.length, ai: r.ai });
+      await sendSpotlightReady(sb, settings, r.spotlight, r.items).catch(() => null);
+    } catch (e) { out.spotlights.drafted.push({ id: sp.id, error: e.message }); await sb.from("mkt_spotlights").update({ error: e.message.slice(0, 300) }).eq("id", sp.id); }
+  }
+  const threeDays = new Date(now.getTime() - 3 * 86400e3).toISOString();
+  const { data: quiet } = await sb.from("mkt_spotlights").select("*").eq("status", "sent").is("reminded_at", null).lt("sent_at", threeDays).limit(3);
+  for (const sp of quiet || []) {
+    if (dry) { out.spotlights.reminded.push({ id: sp.id, would: "remind" }); continue; }
+    const r = await sendSpotlight(sb, sp, { via: sp.sent_via?.length ? sp.sent_via : ["email", "sms"], by: "auto", reminder: true }).catch(e => ({ error: e.message }));
+    out.spotlights.reminded.push({ id: sp.id, sent: r.sent || null, error: r.error || null });
+  }
+
+  // ── 6. the weekly idea scout ──
+  const sc = scoutSettings(settings);
+  out.scout = { day: sc.day, enabled: sc.enabled, ran: false };
+  if (sc.enabled && ct.dow === sc.day && ct.hour >= 9) {
+    const { data: ran } = await sb.from("mkt_log").select("id").eq("kind", "scout").gte("at", new Date(now.getTime() - 5 * 86400e3).toISOString()).limit(1);
+    if (ran?.length) out.scout.already = true;
+    else if (dry) out.scout.would = `suggest ideas and email ${(settings.notify_emails || []).join(", ")}`;
+    else if (Date.now() < deadline - 120000) {
+      try {
+        const r = await runScout(sb, { now, by: "scout", deadline: Math.min(deadline - 15000, Date.now() + 110000) });
+        out.scout = { ...out.scout, ran: true, ideas: r.ideas.length, spotlight: r.spotlight?.id || null, error: r.error || null };
+        if (r.ideas.length) out.scout.digest = await sendIdeasDigest(sb, settings, r.ideas, r.spotlight).then(x => ({ ok: x.ok, error: x.error || null }));
+      } catch (e) { out.scout.error = e.message; await log(sb, null, "scout_error", { error: e.message }); }
+    } else out.scout.deferred = "out of time - next run";
+  }
 
   // ── 4. the AI librarian ──
   if (aiReady() && !dry && Date.now() < deadline - 60000) {

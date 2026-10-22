@@ -22,7 +22,7 @@ export const log = (sb, item_id, kind, detail = {}) => sb.from("mkt_log").insert
 
 // ── settings / priorities / history ──────────────────────────────────────────
 export const SETTINGS_DEFAULTS = {
-  id: 1, voice: "", weights: DEFAULT_WEIGHTS, cadence: DEFAULT_CADENCE, themes: {}, auto_generate: true, generate_day: "sun",
+  id: 1, voice: "", weights: DEFAULT_WEIGHTS, cadence: DEFAULT_CADENCE, themes: {}, flair: 1, scout: { enabled: true, day: "sat", web: true, spotlight_every_weeks: 2, via: ["email", "sms"] }, auto_generate: true, generate_day: "sun",
   email_audience: { source: "dssc_contacts" }, sms_filters: {}, notify_emails: ["drew@drippingsportsclub.com"],
 };
 export async function loadSettings(sb) {
@@ -144,13 +144,17 @@ function singleSlot({ weekOf, today, feed, settings, single, instruction, taken 
   const cad = settings.cadence || DEFAULT_CADENCE;
   const postDays = cad.social?.mode === "balance" ? (cad.social?.days || DEFAULT_CADENCE.social.days) : normRhythm(cad.social?.rhythm).filter(e => !e.follow).map(e => e.day);
   const cands = channel === "social" ? postDays.map(d => addDays(weekOf, DAY.indexOf(d))).filter(d => d >= today) : [];
-  const day = cands.find(d => !taken.has(`social:${d}:post`)) || cands[0] || (today > weekOf ? today : weekOf);
+  // An idea brings its own day (in this week, not past) and format.
+  const asked = /^\d{4}-\d{2}-\d{2}$/.test(String(single.day || "")) && single.day >= today && single.day >= weekOf && single.day <= addDays(weekOf, 6) ? single.day : null;
+  const day = asked || cands.find(d => !taken.has(`social:${d}:post`)) || cands[0] || (today > weekOf ? today : weekOf);
   const time = channel === "social" ? cad.social?.time || "18:30" : channel === "email" ? cad.email?.time || "07:30" : cad.sms?.time || "17:30";
+  const story = channel === "social" && single.format === "story";
   return {
-    channel, kind: channel === "social" ? "post" : channel === "email" ? "dedicated" : "text", platforms: channel === "social" ? ["facebook", "instagram"] : undefined, day, time, line,
+    channel, kind: channel === "social" ? (story ? "story" : "post") : channel === "email" ? "dedicated" : "text", format: story ? "story" : undefined,
+    platforms: channel === "social" ? (story ? ["instagram_story", "facebook_story"] : ["facebook", "instagram"]) : undefined, day, time, line,
     program: programRef(p), programs: channel === "email" && p ? [{ ...programRef(p), angle: sig?.angle || "evergreen" }] : channel === "email" ? [] : undefined,
-    angle: sig?.angle || "evergreen",
-    reason: [`Requested by a director`, String(instruction || "").trim() ? `"${String(instruction).trim().slice(0, 140)}"` : null, sig?.reason].filter(Boolean).join(" · "),
+    angle: sig?.angle || "evergreen", theme: single.theme || null,
+    reason: [single.reason || `Requested by a director`, !single.reason && String(instruction || "").trim() ? `"${String(instruction).trim().slice(0, 140)}"` : null, sig?.reason].filter(Boolean).join(" · "),
   };
 }
 

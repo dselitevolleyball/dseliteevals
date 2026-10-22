@@ -1909,7 +1909,8 @@ export default function App() {
   const [dsscHubBack, setDsscHubBack]   = useState(false);  // that class was opened from the admin board, so "back" returns there
   const [dsscTextsInit, setDsscTextsInit] = useState(null); // {clinicId, sessionId} — open DSSC Texts with a class already picked
   const [dsscInboxInit, setDsscInboxInit] = useState(null); // inquiry id — open the DSSC Inbox on one thread (?view=dsscinbox&inquiry=<id>)
-  const [dsscMktWeek, setDsscMktWeek] = useState(null);     // YYYY-MM-DD — open DSSC Marketing on one week (?view=dsscmarketing&week=<monday>)
+  const [dsscMktWeek, setDsscMktWeek] = useState(null);
+  const [dsscMktTab, setDsscMktTab] = useState(null);       // open DSSC Marketing on a tab (?view=dsscmarketing&mtab=ideas)     // YYYY-MM-DD — open DSSC Marketing on one week (?view=dsscmarketing&week=<monday>)
   const [swSyncTok, setSwSyncTok]       = useState(null);   // SportWrench sync bookmarklet {href} | {configured:false} | {error}
   const [syPostTok, setSyPostTok]       = useState(null);   // SportsYou post bookmarklet {href} | {configured:false} | {error}
   const [syOutbox, setSyOutbox]         = useState([]);     // sportsyou_outbox rows (pending + recently posted)
@@ -2369,6 +2370,9 @@ export default function App() {
       // The "drafts ready" email links to one week of Marketing: /?view=dsscmarketing&week=YYYY-MM-DD
       const weekQ = p.get("week");
       if (v === "dsscmarketing" && /^\d{4}-\d{2}-\d{2}$/.test(weekQ || "")) setDsscMktWeek(weekQ);
+      // The idea scout's email links to the Ideas tab: /?view=dsscmarketing&mtab=ideas
+      const mtabQ = p.get("mtab");
+      if (v === "dsscmarketing" && /^[a-z]{3,12}$/.test(mtabQ || "")) setDsscMktTab(mtabQ);
       // Keep ?view= (so Back and reload work) but drop the one-time bits.
       deepLinkDone.current = true;
       const landed = v || (msg ? "notifications" : inquiryQ ? "dsscinbox" : null);
@@ -33187,7 +33191,7 @@ export default function App() {
           ? <DsscInbox coach={coach} initialId={dsscInboxInit} onConsumedInitial={()=>setDsscInboxInit(null)} onChanged={loadInboxNew} />
           : opsDenied)}
         {view==="dsscmarketing" && (isDsscDirector
-          ? <DsscMarketing coach={coach} initialWeek={dsscMktWeek} onConsumedInitial={()=>setDsscMktWeek(null)} onChanged={loadMktDrafts} />
+          ? <DsscMarketing coach={coach} initialWeek={dsscMktWeek} initialTab={dsscMktTab} onConsumedInitial={()=>{ setDsscMktWeek(null); setDsscMktTab(null); }} onChanged={loadMktDrafts} />
           : opsDenied)}
         {view==="dssccamp" && (isDsscDirector
           ? <DsscCamp coach={coach} />
