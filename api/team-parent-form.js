@@ -88,7 +88,7 @@ function form(me, others, preview) {
     </div>`).join("");
   return page(`
 <span class="eyebrow">DS Elite Volleyball · ${esc(me.team_name)}</span>
-<h1>Team parent check-in</h1>
+<h1>Team parent <span style="white-space:nowrap">check-in</span></h1>
 <p class="sub">Hi ${esc(first)}! We're making sure every team has its team parent and that we have the right contact details. It takes about a minute.</p>
 <form id="f" novalidate>
   <div class="card">
