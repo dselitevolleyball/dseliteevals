@@ -23,6 +23,14 @@ This creates the `mkt_*` tables, the public storage bucket `marketing` and the
 policies (directors only, via `is_dssc_director()`). It also seeds the settings
 and the **Thanksgiving break — push Camp Elevate** priority. It's safe to run twice.
 
+Then the second one (the weekly rhythm and the AI photo library):
+```
+node scripts/run-sql.mjs migrations/20261023_marketing_rhythm_photos.sql
+```
+It adds the photo librarian's columns to `mkt_photos` (description, people, setting, uses,
+quality, kids visible, release OK), `kind` and `theme` to `mkt_items`, and `themes` to
+`mkt_settings`. Photos already on the club website are marked release OK. Also safe to run twice.
+
 ### 2. Claude
 `ANTHROPIC_API_KEY` is already set for other features, so there's nothing to do.
 Without the key, drafts still get made from plain templates.
@@ -73,7 +81,7 @@ Settings). There are at most 2 texts a month.
 | `META_PAGE_ID` | for Facebook | The club Page's id |
 | `META_IG_USER_ID` | for Instagram | The Instagram business account id |
 | `MARKETING_UNSUB_SECRET` | for email | Signs unsubscribe links (falls back to `CRON_SECRET`) |
-| `META_GRAPH_VERSION` | no | Default `v21.0` |
+| `META_GRAPH_VERSION` | no | Default `v26.0` |
 | `MARKETING_PUBLIC_BASE` | no | Where the unsubscribe link points; default `https://www.drippingsportsclub.com/hq` |
 | `DSSC_FROM_EMAIL` | for email | `Dripping Springs Sports Club <info@drippingsportsclub.com>` (sent with `DSSC_RESEND_API_KEY`) |
 | `ANTHROPIC_API_KEY`, `RESEND_API_KEY`, `DSSC_RESEND_API_KEY`, `CRON_SECRET`, `TWILIO_*`, `DSSC_TWILIO_FROM_NUMBER` | — | Already set |
@@ -84,12 +92,45 @@ Redeploy after you add them. **Marketing → Settings** lists anything still mis
 - **Every Sunday after 5 pm CT** (Settings: auto-generate, day): if next week is empty, the machine
   drafts it and emails `notify_emails` "N drafts ready — approve in HQ" with a link to that week.
   You can also press **Generate this week** at any time.
-- **Planning:** each line has a weight (Settings) and gets a boost from active priorities (the first
+- **The weekly rhythm** (Settings → Weekly rhythm, "Follow our calendar") comes from the club's
+  marketing calendar (Annual_Marketing_Table.xlsx):
+  | Day | What | Platforms |
+  |-----|------|-----------|
+  | Mon | Basketball post | Facebook + Instagram |
+  | Tue | Follow-up story: Monday's line broken out program by program | IG + FB stories |
+  | Wed | Reach / birthday parties / Camp Elevate / rentals / open gym — the best of them that week | Facebook + Instagram |
+  | Thu | Volleyball post | Facebook + Instagram |
+  | Fri | Follow-up story on Thursday's volleyball | IG + FB stories |
+  | Last Sat of the month | "Coming in <next month>" preview post | Facebook + Instagram |
+  Posts go out at 6:30 pm. Each day can list several lines (the machine picks the best that week) or
+  none (any line); days can be added, removed or changed in Settings, and "Reset to the club
+  calendar" puts this table back. An active priority of weight 4–5 gets its line onto a day that
+  lists it, or takes over the weakest day when none does; "less X" in the week's note opens X's day
+  to the other lines. **Balance automatically** is the old layout (N posts on chosen days, the
+  best-scoring lines first).
+- **Email:** the weekly roundup ("what's happening now + what's coming") on Tuesday 7:30 am, plus
+  **dedicated emails** on one line each — a priority's line (its own email at most every 2 weeks), or
+  the next line due from Settings → Dedicated emails (default birthday parties and Reach, about once a
+  month each), at most 2 a month, on Fridays. The roundup never leads with the dedicated email's line.
+- **Content ideas** (Settings → Content ideas): every post carries an idea for its line, rotating
+  week to week — "Sell the why of 3v3", "POV: you're a kid at a DSSC birthday party", "Break it out by
+  who it's for"… taken from the calendar's notes. Write your own per line to replace them. Claude
+  uses the idea as the angle; facts still come only from the programs feed.
+- **Scoring:** each line has a weight (Settings) and gets a boost from active priorities (the first
   line listed gets the most) and from program dates (last call, starting soon, new, just started).
-  Lines that were posted a lot recently score lower. Parties, rentals and open gym each come up at
-  least every 3 weeks. Camp Elevate is only posted before a camp starts. The default schedule is 4
-  social posts a week (Mon/Wed/Fri/Sat 6:30 pm), the email on Thursday 7:30 am, and at most 2 texts a
-  month (only for a priority starting within 2 weeks, or a last call).
+  Lines that were posted a lot recently score lower; a line unseen for 3+ weeks scores higher. Camp
+  Elevate is only posted before a camp starts. At most 2 texts a month (only for a priority starting
+  within 2 weeks, or a last call).
+- **Photos** (Marketing → Photos): drag photos in (or Upload). Each one is scaled down, stored with a
+  permanent public link, and sorted by Claude: program line, tags, a searchable description, what it's
+  good for (post, story, email banner, website hero, program card), quality 1–5, and whether kids can
+  be recognized. Photos with recognizable kids show **kids — release?** until a director presses
+  *Release OK* or *Don't post publicly*; the machine never uses a "don't post" photo. Search ("girls
+  volleyball action"), filter by line, tag, use, shape and quality, then **Copy link**, **Download** or
+  **Copy for website** (an `<img>` tag with the alt text) to use a photo in an email, on the website or
+  on a Playbook program page. The machine prefers high-quality photos, tall ones for stories and wide
+  ones for email banners. Photos nobody has sorted yet (e.g. the website's) are sorted by the cron, 6
+  every 15 minutes — or press **Sort N with AI**.
 - **Your input:** "Tell the machine what matters this week…" saves your note as a one-week priority
   (e.g. "more Reach, less volleyball") and redrafts that week's untouched drafts. **Ask for a change**
   on one item has Claude rewrite just that item. Anything you edited by hand is never replaced.

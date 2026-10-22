@@ -48,7 +48,10 @@ export const lineMeta = (k) => {
 export const lineColor = (k) => lineMeta(k).color || DS.mut;
 export const lineLabel = (k) => lineMeta(k).label || k;
 
-export const ANGLES = { starting_soon: "Starting soon", new: "New", just_started: "Just started", evergreen: "Evergreen", priority: "Priority", reminder: "Reminder", last_call: "Last call" };
+export const ANGLES = { starting_soon: "Starting soon", new: "New", just_started: "Just started", evergreen: "Evergreen", priority: "Priority", reminder: "Reminder", last_call: "Last call", follow_up: "Follow-up", preview: "Month preview" };
+// What a slot / item is (shared/marketing-plan.js KINDS); old rows have none.
+export const KIND_LABEL = PLAN.KIND_LABEL || { post: "Post", story: "Story", follow_up: "Follow-up story", preview: "Month preview", roundup: "Weekly email", dedicated: "Dedicated email", text: "Text" };
+export const kindOf = (x) => x?.kind || (x?.channel === "email" ? "roundup" : x?.channel === "sms" ? "text" : "post");
 export const STATUS_META = {
   draft: ["Draft", DS.mut], approved: ["Approved", DS.lime], publishing: ["Publishing", "#60A5FA"],
   published: ["Published", "#7FD1C3"], failed: ["Failed", DS.orange], rejected: ["Rejected", DS.dim],

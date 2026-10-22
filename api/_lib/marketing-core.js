@@ -4,8 +4,8 @@
 // ready" digest email.
 
 import { createClient } from "@supabase/supabase-js";
-import { planWeek, signalsFor, lineOf, programRef, mondayOf, addDays, fmtDay, lineLabel, LINE_KEYS, DEFAULT_WEIGHTS, DEFAULT_CADENCE } from "../../shared/marketing-plan.js";
-import { composeItems, ctToday, ctIso } from "./marketing-ai.js";
+import { planWeek, signalsFor, lineOf, programRef, mondayOf, addDays, fmtDay, lineLabel, LINE_KEYS, DEFAULT_WEIGHTS, DEFAULT_CADENCE, KIND_LABEL, normRhythm } from "../../shared/marketing-plan.js";
+import { composeItems, ctToday, ctIso, kindOf } from "./marketing-ai.js";
 import { sendResend, dsscFrom, isEmailish, esc } from "./site-inbox.js";
 import { EMPTY_FILTERS } from "../../shared/campaign-audience.js";
 
@@ -22,7 +22,7 @@ export const log = (sb, item_id, kind, detail = {}) => sb.from("mkt_log").insert
 
 // ── settings / priorities / history ──────────────────────────────────────────
 export const SETTINGS_DEFAULTS = {
-  id: 1, voice: "", weights: DEFAULT_WEIGHTS, cadence: DEFAULT_CADENCE, auto_generate: true, generate_day: "sun",
+  id: 1, voice: "", weights: DEFAULT_WEIGHTS, cadence: DEFAULT_CADENCE, themes: {}, auto_generate: true, generate_day: "sun",
   email_audience: { source: "dssc_contacts" }, sms_filters: {}, notify_emails: ["drew@drippingsportsclub.com"],
 };
 export async function loadSettings(sb) {
@@ -31,6 +31,7 @@ export async function loadSettings(sb) {
   const s = { ...SETTINGS_DEFAULTS, ...(data || {}) };
   s.weights = { ...DEFAULT_WEIGHTS, ...(s.weights || {}) };
   s.cadence = { social: { ...DEFAULT_CADENCE.social, ...(s.cadence?.social || {}) }, email: { ...DEFAULT_CADENCE.email, ...(s.cadence?.email || {}) }, sms: { ...DEFAULT_CADENCE.sms, ...(s.cadence?.sms || {}) } };
+  s.themes = s.themes && typeof s.themes === "object" && !Array.isArray(s.themes) ? s.themes : {};
   return s;
 }
 export async function loadPriorities(sb) {
@@ -40,14 +41,14 @@ export async function loadPriorities(sb) {
 }
 // Items from the 4 weeks before `weekOf` - what the planner calls history.
 export async function loadHistory(sb, weekOf) {
-  const { data, error } = await sb.from("mkt_items").select("week_of, channel, line, status, scheduled_at")
+  const { data, error } = await sb.from("mkt_items").select("week_of, channel, kind, line, status, scheduled_at")
     .gte("week_of", addDays(weekOf, -28)).lt("week_of", weekOf).neq("status", "rejected");
   if (error) throw new Error("mkt_items: " + error.message);
   return data || [];
 }
 export async function loadPhotos(sb) {
-  const { data } = await sb.from("mkt_photos").select("id, url, key, tags, line, alt, width, height, active, used_count, last_used_at").eq("active", true).limit(2000);
-  return data || [];
+  const { data } = await sb.from("mkt_photos").select("id, url, key, tags, line, alt, width, height, active, used_count, last_used_at, quality, uses, release_ok, description").eq("active", true).limit(2000);
+  return (data || []).filter(p => p.release_ok !== false);
 }
 
 // ── programs feed (5-minute memo per warm function) ──────────────────────────
@@ -100,7 +101,7 @@ export async function generateWeek(sb, { weekOf, replaceDrafts = false, instruct
   const today = ctToday();
   if (addDays(weekOf, 6) < today) throw new Error("That week is over");
   const [feed, settings, priorities, history, photos] = await Promise.all([fetchPrograms(), loadSettings(sb), loadPriorities(sb), loadHistory(sb, weekOf), loadPhotos(sb)]);
-  const { data: existing, error: exErr } = await sb.from("mkt_items").select("id, channel, scheduled_at, status, revisions, asset_url, created_at, updated_at").eq("week_of", weekOf).neq("status", "rejected");
+  const { data: existing, error: exErr } = await sb.from("mkt_items").select("id, channel, kind, scheduled_at, status, revisions, asset_url, created_at, updated_at").eq("week_of", weekOf).neq("status", "rejected");
   if (exErr) throw new Error("mkt_items: " + exErr.message);
   let keep = existing || [];
   let removed = 0;
@@ -114,13 +115,15 @@ export async function generateWeek(sb, { weekOf, replaceDrafts = false, instruct
     }
   }
   const dayOf = (iso) => iso ? new Date(iso).toLocaleDateString("en-CA", { timeZone: "America/Chicago" }) : null;
-  const taken = new Set(keep.map(i => i.channel === "social" ? `social:${dayOf(i.scheduled_at)}` : i.channel));
+  // What's already in the week: posts by day and kind, one email of each kind, one text.
+  const keyOf = (x, day) => x.channel === "social" ? `social:${day}:${["story", "follow_up"].includes(kindOf(x)) ? "story" : kindOf(x)}` : x.channel === "email" ? `email:${kindOf(x)}` : x.channel;
+  const taken = new Set(keep.map(i => keyOf(i, dayOf(i.scheduled_at))));
   const plan = planWeek({ weekOf, programs: feed.programs, priorities, settings, history, today: today > weekOf ? today : null });
   let slots;
   if (single) {
     slots = [singleSlot({ weekOf, today, feed, settings, single, instruction, taken })];
   } else {
-    slots = plan.slots.filter(s => !taken.has(s.channel === "social" ? `social:${s.day}` : s.channel));
+    slots = plan.slots.filter(s => !taken.has(keyOf(s, s.day)));
   }
   if (!slots.length) return { items: [], kept: keep.length, removed, ai: null, notes: [...plan.notes, "Nothing new to add - every planned slot already has an item"], plan };
   const { rows, ai } = await composeItems({ slots, weekOf, programs: feed.programs, priorities, settings, photos, instruction, by, timeoutMs });
@@ -139,11 +142,12 @@ function singleSlot({ weekOf, today, feed, settings, single, instruction, taken 
   const sig = p ? signalsFor([p], ref)[0] : null;
   const DAY = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
   const cad = settings.cadence || DEFAULT_CADENCE;
-  const cands = channel === "social" ? (cad.social?.days || DEFAULT_CADENCE.social.days).map(d => addDays(weekOf, DAY.indexOf(d))).filter(d => d >= today) : [];
-  const day = cands.find(d => !taken.has(`social:${d}`)) || cands[0] || (today > weekOf ? today : weekOf);
+  const postDays = cad.social?.mode === "balance" ? (cad.social?.days || DEFAULT_CADENCE.social.days) : normRhythm(cad.social?.rhythm).filter(e => !e.follow).map(e => e.day);
+  const cands = channel === "social" ? postDays.map(d => addDays(weekOf, DAY.indexOf(d))).filter(d => d >= today) : [];
+  const day = cands.find(d => !taken.has(`social:${d}:post`)) || cands[0] || (today > weekOf ? today : weekOf);
   const time = channel === "social" ? cad.social?.time || "18:30" : channel === "email" ? cad.email?.time || "07:30" : cad.sms?.time || "17:30";
   return {
-    channel, platforms: channel === "social" ? ["facebook", "instagram"] : undefined, day, time, line,
+    channel, kind: channel === "social" ? "post" : channel === "email" ? "dedicated" : "text", platforms: channel === "social" ? ["facebook", "instagram"] : undefined, day, time, line,
     program: programRef(p), programs: channel === "email" && p ? [{ ...programRef(p), angle: sig?.angle || "evergreen" }] : channel === "email" ? [] : undefined,
     angle: sig?.angle || "evergreen",
     reason: [`Requested by a director`, String(instruction || "").trim() ? `"${String(instruction).trim().slice(0, 140)}"` : null, sig?.reason].filter(Boolean).join(" · "),
@@ -155,9 +159,9 @@ export async function sendDigest(sb, settings, weekOf, items) {
   const to = (settings.notify_emails || []).filter(isEmailish);
   if (!to.length || !items.length) return { ok: false, error: "nobody to tell" };
   const link = HQ_MARKETING_URL(weekOf);
-  const label = { social: "Post", email: "Email", sms: "Text" };
+  const label = (i) => KIND_LABEL[kindOf(i)] || i.channel;
   const rows = items.slice().sort((a, b) => String(a.scheduled_at).localeCompare(String(b.scheduled_at)))
-    .map(i => [fmtDay(new Date(i.scheduled_at).toLocaleDateString("en-CA", { timeZone: "America/Chicago" })), label[i.channel] || i.channel, lineLabel(i.line), i.channel === "email" ? i.email_subject : i.headline]);
+    .map(i => [fmtDay(new Date(i.scheduled_at).toLocaleDateString("en-CA", { timeZone: "America/Chicago" })), label(i), lineLabel(i.line), i.channel === "email" ? i.email_subject : i.headline]);
   const subject = `${items.length} marketing draft${items.length === 1 ? "" : "s"} ready for the week of ${fmtDay(weekOf)} — approve in HQ`;
   const html = `<div style="font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:14px;line-height:1.5;color:#061a18;max-width:640px">
 <p style="margin:0 0 10px"><b>${esc(items.length)} drafts are ready</b> for the week of ${esc(fmtDay(weekOf))}. Nothing goes out until a director approves it.</p>

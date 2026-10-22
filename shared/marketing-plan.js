@@ -20,6 +20,24 @@
 //   + rotation debt                         +2 when the line hasn't been seen in 3+ weeks
 // Parties, rentals and open gym are evergreen: one of them is put in every
 // week in rotation, and any that would otherwise go 3 weeks unseen is forced.
+//
+// Two ways to lay out the week's social posts (settings.cadence.social.mode):
+//   "rhythm" (default) - the club's own calendar (Annual_Marketing_Table.xlsx):
+//     each day belongs to a line or a set of lines - Mon basketball, Wed Reach /
+//     parties / camp / rentals / open gym, Thu volleyball - and a story the next
+//     day follows up each spotlight, breaking it out program by program
+//     ("don't simply repost Monday"). The scores above pick the line on days
+//     that allow several, and which program each post is about. An active
+//     priority (weight 4+) gets its headline line onto a day that lists it, or
+//     takes over the weakest day when none does; "less X" opens X's day to the
+//     other lines. The last week of a month adds a "what's coming in <month>"
+//     preview post.
+//   "balance" - the original: per_week posts on cadence days, best lines first.
+// Email: the weekly roundup ("what's happening now + what's coming"), plus a
+// dedicated email on one line when a priority asks for it or a line in
+// cadence.email.dedicated_lines is due (at most dedicated_per_month).
+// Every post carries a theme - a content idea for its line from the
+// calendar's notes (DEFAULT_THEMES), or the directors' own (settings.themes).
 
 export const LINES = [
   { key: "volleyball",   label: "Volleyball",        color: "#0F8B76" },
@@ -36,11 +54,69 @@ export const lineLabel = (k) => (LINES.find(l => l.key === k) || {}).label || St
 
 export const DEFAULT_WEIGHTS = { volleyball: 3, basketball: 3, reach: 2, camp_elevate: 2, parties: 2, rentals: 1, open_gym: 1, club: 1 };
 
+// The week from the club's marketing calendar. A `follow` entry is a story
+// that follows up the post made on that day.
+export const DEFAULT_RHYTHM = [
+  { day: "mon", lines: ["basketball"], format: "post" },
+  { day: "tue", follow: "mon", format: "story" },
+  { day: "wed", lines: ["reach", "parties", "camp_elevate", "rentals", "open_gym"], format: "post" },
+  { day: "thu", lines: ["volleyball"], format: "post" },
+  { day: "fri", follow: "thu", format: "story" },
+];
+
 export const DEFAULT_CADENCE = {
-  social: { per_week: 4, days: ["mon", "wed", "fri", "sat"], time: "18:30" },
-  email: { day: "thu", time: "07:30" },
+  social: { mode: "rhythm", rhythm: DEFAULT_RHYTHM, month_preview: true, preview_day: "sat", per_week: 4, days: ["mon", "wed", "fri", "sat"], time: "18:30" },
+  email: { day: "tue", time: "07:30", dedicated_per_month: 2, dedicated_day: "fri", dedicated_lines: ["parties", "reach"] },
   sms: { per_month: 2, time: "17:30" },
 };
+
+// Content ideas per line, from the notes in the club's marketing calendar.
+// Ideas the machine can write from the programs feed alone; anything that
+// needs footage or a person (a Q&A, a staff interview) stays a director's job.
+export const DEFAULT_THEMES = {
+  volleyball: [
+    "Break it out by who it's for: younger beginners, developing youth players and adults - each to the program that fits them.",
+    "What's next in volleyball: the programs families can still join this season.",
+    "Pods: small-group, position-specific development with a low athlete-to-coach ratio.",
+    "Women's Academy: for women who want to learn, return to the game, get a workout or simply play again. Beginner and intermediate friendly.",
+  ],
+  basketball: [
+    "Multiple ways to train this season: clinics, 3v3 and pods - then register.",
+    "Sell the why of 3v3: more touches, decision-making, spacing, reads and live game reps.",
+    "Weekly Skill Lab and Shooting Lab: consistent development, high reps - shooting, ball handling, finishing, game-ready skills.",
+    "Need a team? Individual registration and team or coach requests are welcome.",
+  ],
+  reach: [
+    "Sell the why: strength, speed, explosiveness, movement and performance - not just \"we offer training\".",
+    "Training that complements their sport season.",
+    "Answer one question parents ask about speed and strength training for young athletes.",
+  ],
+  camp_elevate: [
+    "Three days of activity when school's out - pick one day or all three.",
+    "What a day at Camp Elevate looks like: every sport, games, friends, a full day of moving.",
+  ],
+  parties: [
+    "POV: you're a kid at a DSSC birthday party.",
+    "A place to actually DO something for a birthday - host-led activities, not another generic party venue.",
+    "Fall and holiday birthdays: book the date early.",
+  ],
+  rentals: [
+    "Need a court? Teams, practices and pickup games - book online.",
+    "Your team's home court for the season: regular practice times at the Warehouse.",
+  ],
+  open_gym: [
+    "Open gym: come play this week.",
+  ],
+  club: [
+    "What's happening now and what's coming at DSSC.",
+    "A motivational line for athletes and their families.",
+    "Thank the families who make DSSC what it is - where Dripping Springs plays.",
+  ],
+};
+export const KINDS = ["post", "story", "follow_up", "preview", "roundup", "dedicated", "text"];
+export const KIND_LABEL = { post: "Post", story: "Story", follow_up: "Follow-up story", preview: "Month preview", roundup: "Weekly email", dedicated: "Dedicated email", text: "Text" };
+const STORY_PLATFORMS = ["instagram_story", "facebook_story"];
+const POST_PLATFORMS = ["facebook", "instagram"];
 
 const SITE = "https://www.drippingsportsclub.com";
 const PB = "https://drippingsports.playbookapi.com/programs";
@@ -152,8 +228,55 @@ function normSettings(s) {
   if (!cadence.social.days.length) cadence.social.days = DEFAULT_CADENCE.social.days.slice();
   cadence.social.days.sort((a, b) => DAY_KEYS.indexOf(a) - DAY_KEYS.indexOf(b));
   cadence.sms.per_month = Math.max(0, Math.round(+cadence.sms.per_month || 0));
-  return { weights: w, cadence, emailOn: cadence.email.day !== "off" && cadence.email.enabled !== false };
+  cadence.social.mode = cadence.social.mode === "balance" ? "balance" : "rhythm";
+  cadence.social.rhythm = normRhythm(cadence.social.rhythm);
+  cadence.social.preview_day = DAY_KEYS.includes(cadence.social.preview_day) ? cadence.social.preview_day : "sat";
+  cadence.email.dedicated_per_month = Math.max(0, Math.min(8, Math.round(+cadence.email.dedicated_per_month || 0)));
+  cadence.email.dedicated_day = DAY_KEYS.includes(cadence.email.dedicated_day) ? cadence.email.dedicated_day : "fri";
+  cadence.email.dedicated_lines = (Array.isArray(cadence.email.dedicated_lines) ? cadence.email.dedicated_lines : []).filter(l => LINE_KEYS.includes(l));
+  return { weights: w, cadence, emailOn: cadence.email.day !== "off" && cadence.email.enabled !== false, themes: normThemes(st.themes) };
 }
+
+// A rhythm entry: { day, lines: [line] (empty = any line), format: post|story,
+// time? } or a follow-up story { day, follow: <day of the post it follows>,
+// format: story }. Unknown days / lines are dropped; a follow-up whose post
+// isn't earlier in the week is dropped too.
+export function normRhythm(r) {
+  const src = Array.isArray(r) && r.length ? r : DEFAULT_RHYTHM;
+  const out = [];
+  for (const e of src.slice(0, 14)) {
+    const day = String(e?.day || "").slice(0, 3).toLowerCase();
+    if (!DAY_KEYS.includes(day)) continue;
+    const time = /^\d{2}:\d{2}$/.test(String(e?.time || "")) ? e.time : undefined;
+    if (e?.follow) {
+      const f = String(e.follow).slice(0, 3).toLowerCase();
+      if (DAY_KEYS.indexOf(f) >= 0 && DAY_KEYS.indexOf(f) < DAY_KEYS.indexOf(day)) out.push({ day, follow: f, format: "story", ...(time ? { time } : {}) });
+      continue;
+    }
+    const lines = (Array.isArray(e?.lines) ? e.lines : []).filter(l => LINE_KEYS.includes(l));
+    out.push({ day, lines: [...new Set(lines)], format: e?.format === "story" ? "story" : "post", ...(time ? { time } : {}) });
+  }
+  out.sort((a, b) => DAY_KEYS.indexOf(a.day) - DAY_KEYS.indexOf(b.day));
+  return out.filter(e => !e.follow || out.some(m => !m.follow && m.day === e.follow));
+}
+
+// settings.themes over DEFAULT_THEMES, line by line (an empty list = defaults).
+export function normThemes(t) {
+  const out = {};
+  for (const l of LINE_KEYS) {
+    const own = Array.isArray(t?.[l]) ? t[l].map(x => String(x || "").trim()).filter(Boolean).slice(0, 20) : [];
+    out[l] = own.length ? own : (DEFAULT_THEMES[l] || []);
+  }
+  return out;
+}
+const weekNo = (weekOf) => Math.floor(daysBetween("2026-01-05", weekOf) / 7);
+// The idea a line's n-th post this week uses; rotates week to week.
+function themeFor(themes, line, weekOf, n = 0) {
+  const ideas = themes[line] || [];
+  return ideas.length ? ideas[((weekNo(weekOf) + n) % ideas.length + ideas.length) % ideas.length] : null;
+}
+const DAY_NAME = { mon: "Monday", tue: "Tuesday", wed: "Wednesday", thu: "Thursday", fri: "Friday", sat: "Saturday", sun: "Sunday" };
+const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
 // Priorities in effect for a week (any overlap with Monday-Sunday) on a channel.
 function activePriorities(priorities, weekOf, channel) {
@@ -248,17 +371,27 @@ function socialDays(weekOf, cadence, n, today) {
 export function planWeek({ weekOf, programs = [], priorities = [], settings = {}, history = [], today = null } = {}) {
   weekOf = mondayOf(weekOf);
   if (!weekOf) return { slots: [], scores: {}, notes: ["No week given"] };
-  const { weights, cadence, emailOn } = normSettings(settings);
+  const { weights, cadence, emailOn, themes } = normSettings(settings);
   const ref = today && isYmd(today) && today > weekOf ? today : weekOf;
   const live = (programs || []).filter(p => p && isYmd(p.first_date) && ((isYmd(p.last_date) ? p.last_date : p.first_date) >= weekOf));
   const signals = signalsFor(live, ref);
   const notes = [];
   const slots = [];
+  // A dated line (Camp Elevate) is only posted on days before one of its
+  // programs starts - never after camp is over, never with no camp on the books.
+  const lastDay = {};
+  for (const l of DATED) lastDay[l] = live.filter(p => lineOf(p) === l).map(p => p.first_date).sort().pop() || "";
+  const allowedOn = (l, day) => !DATED.includes(l) || (lastDay[l] && day <= lastDay[l]);
 
   // ── social ──
   const sPrios = activePriorities(priorities, weekOf, "social");
   for (const pr of sPrios) notes.push(`Priority in effect: "${pr.title}" (weight ${pr.weight}) - ${pr.lines.map(lineLabel).join(", ") || "no lines"}${pr.avoid_lines.length ? `; less ${pr.avoid_lines.map(lineLabel).join(", ")}` : ""}`);
   const { scores, why } = lineScores({ weekOf, ref, programs: live, prios: sPrios, weights, history, channel: "social", signals });
+  if (cadence.social.mode === "rhythm") {
+    const r = rhythmSocial({ weekOf, ref, today, live, signals, sPrios, scores, why, cadence, themes, allowedOn });
+    slots.push(...r.slots); notes.push(...r.notes);
+  } else balanceSocial();
+  function balanceSocial() {
   const days = socialDays(weekOf, cadence, cadence.social.per_week, today && today > weekOf ? today : null);
   const n = days.length;
   const maxPer = Math.max(1, Math.ceil(n / 2));
@@ -272,11 +405,6 @@ export function planWeek({ weekOf, programs = [], priorities = [], settings = {}
     for (const e of forced) { picks.push(e.l); forcedWhy[e.l] = `${lineLabel(e.l)} is evergreen and due (${e.since >= 3 ? `${e.since} weeks unseen` : "rotation"})`; }
     if (forced.length) notes.push(`Evergreen rotation: ${forced.map(e => lineLabel(e.l)).join(", ")} this week`);
   }
-  // A dated line (Camp Elevate) is only posted on days before one of its
-  // programs starts - never after camp is over, never with no camp on the books.
-  const lastDay = {};
-  for (const l of DATED) lastDay[l] = live.filter(p => lineOf(p) === l).map(p => p.first_date).sort().pop() || "";
-  const allowedOn = (l, day) => !DATED.includes(l) || (lastDay[l] && day <= lastDay[l]);
   const slotsFor = (l) => days.filter(d => allowedOn(l, d)).length;
   const count = (l) => picks.filter(x => x === l).length;
   for (const l of [...picks]) if (!slotsFor(l)) picks.splice(picks.indexOf(l), 1);
@@ -318,15 +446,20 @@ export function planWeek({ weekOf, programs = [], priorities = [], settings = {}
     if (lineUses[line] > 1 && !pick?.angle && !again) angle = pr ? "priority" : "reminder";
     const reason = [forcedWhy[line] && lineUses[line] === 1 ? forcedWhy[line] : null, pr ? `Priority "${pr.title}"` : null, again ? `second post this week on ${lineLabel(line)}` : null, pick?.reason, ...(why[line] || []).filter(w => !/^priority|starts|started|is new|runs year/.test(w))]
       .filter(Boolean).filter((v, j, a) => a.indexOf(v) === j).join(" · ") || `${lineLabel(line)} - balance (weight ${weights[line]})`;
-    slots.push({ channel: "social", platforms: ["facebook", "instagram"], day: days[i], time: cadence.social.time, line, program: programRef(pick?.program), angle, reason });
+    slots.push({ channel: "social", kind: "post", format: "post", platforms: POST_PLATFORMS.slice(), day: days[i], time: cadence.social.time, line, program: programRef(pick?.program), angle, reason, theme: themeFor(themes, line, weekOf, lineUses[line] - 1) });
   });
+  }
 
   // ── email ──
   const ePrios = activePriorities(priorities, weekOf, "email");
   const eDay = addDays(weekOf, Math.max(0, DAY_KEYS.indexOf(String(cadence.email.day).slice(0, 3))));
+  const ded = emailOn ? dedicatedEmail({ weekOf, ref, today, live, signals, ePrios, history, cadence, themes, allowedOn }) : { slot: null, note: null };
+  if (ded.slot) slots.push(ded.slot);
+  if (ded.note) notes.push(ded.note);
   if (emailOn && DAY_KEYS.includes(String(cadence.email.day).slice(0, 3)) && (!today || eDay >= today)) {
     const { scores: es } = lineScores({ weekOf, ref, programs: live, prios: ePrios, weights, history, channel: "email", signals });
-    const featured = LINE_KEYS.filter(l => l !== "club" && es[l] > -50 && allowedOn(l, eDay) && (!EVERGREEN.includes(l) || ePrios.some(p => p.lines[0] === l))).sort((a, b) => es[b] - es[a] || LINE_KEYS.indexOf(a) - LINE_KEYS.indexOf(b))[0] || "club";
+    // The roundup leads with something other than this week's dedicated email.
+    const featured = LINE_KEYS.filter(l => l !== "club" && l !== ded.slot?.line && es[l] > -50 && allowedOn(l, eDay) && (!EVERGREEN.includes(l) || ePrios.some(p => p.lines[0] === l))).sort((a, b) => es[b] - es[a] || LINE_KEYS.indexOf(a) - LINE_KEYS.indexOf(b))[0] || "club";
     const fpick = pickProgram(featured, signals, live, new Set(), ref);
     const soon = signals.filter(s => ["last_call", "starting_soon", "new", "just_started"].includes(s.angle));
     const list = [];
@@ -346,7 +479,7 @@ export function planWeek({ weekOf, programs = [], priorities = [], settings = {}
     const evOn = EVERGREEN.filter(l => (weights[l] ?? 0) > 0 && l !== featured);
     const ever = evOn.length ? evOn[Math.floor(daysBetween("2026-01-05", weekOf) / 7) % evOn.length] : null;
     slots.push({
-      channel: "email", day: eDay, time: cadence.email.time, line: featured, program: programRef(fpick?.program), programs: list, evergreen: ever,
+      channel: "email", kind: "roundup", day: eDay, time: cadence.email.time, line: featured, program: programRef(fpick?.program), programs: list, evergreen: ever,
       angle: fpick?.angle || (ep ? "priority" : "evergreen"),
       reason: [ep ? `Priority "${ep.title}"` : `Top line this week: ${lineLabel(featured)}`, fpick?.reason, list.length > 1 ? `${list.length} programs starting soon` : null, ever ? `plus ${lineLabel(ever)}` : null].filter(Boolean).join(" · "),
     });
@@ -359,6 +492,144 @@ export function planWeek({ weekOf, programs = [], priorities = [], settings = {}
 
   slots.sort((a, b) => a.day.localeCompare(b.day) || ["email", "social", "sms"].indexOf(a.channel) - ["email", "social", "sms"].indexOf(b.channel));
   return { slots, scores, notes };
+}
+
+// ── the calendar's rhythm ────────────────────────────────────────────────────
+// -> { slots, notes }. Lines are assigned to every post of the week (so a
+// follow-up knows what it follows), but only days from `today` on are planned.
+function rhythmSocial({ weekOf, ref, today, live, signals, sPrios, scores, why, cadence, themes, allowedOn }) {
+  const notes = [], slots = [];
+  const entries = cadence.social.rhythm.map(e => ({ ...e, date: addDays(weekOf, DAY_KEYS.indexOf(e.day)) }));
+  const main = entries.filter(e => !e.follow);
+  const avoid = new Set(sPrios.flatMap(p => p.avoid_lines));
+  const usable = (l, e) => scores[l] > -50 && allowedOn(l, e.date);
+  const own = (e) => (e.lines.length ? e.lines : LINE_KEYS).filter(l => usable(l, e));
+  const assign = new Map();                 // entry -> { line, why }
+  const used = (l) => [...assign.values()].filter(a => a.line === l).length;
+
+  // 1. Priorities (weight 4+) first: the headline line goes on a day that
+  //    lists it (the most flexible one); with none, it takes over the day
+  //    whose own best line scores lowest.
+  for (const pr of sPrios.slice().sort((a, b) => b.weight - a.weight)) {
+    const L = pr.lines[0];
+    if (!L || pr.weight < 4 || used(L) || avoid.has(L)) continue;
+    const free = main.filter(e => !assign.has(e) && allowedOn(L, e.date));
+    const natural = free.filter(e => e.lines.includes(L)).sort((a, b) => b.lines.length - a.lines.length)[0]
+      || free.filter(e => !e.lines.length)[0];
+    if (natural) { assign.set(natural, { line: L, why: `Priority "${pr.title}"` }); continue; }
+    const weakest = free.map(e => ({ e, best: Math.max(-99, ...own(e).map(l => scores[l])) })).sort((a, b) => a.best - b.best)[0];
+    if (weakest) assign.set(weakest.e, { line: L, why: `Priority "${pr.title}" takes ${DAY_NAME[weakest.e.day]}'s spot` });
+  }
+  // 2. Every other day: its best line, a repeat costing DECAY, never the same
+  //    line as the post before. A day whose lines are all "less of" opens up.
+  let prev = null;
+  for (const e of main) {
+    if (assign.has(e)) { prev = assign.get(e).line; continue; }
+    let cands = own(e).filter(l => !avoid.has(l));
+    let opened = false;
+    if (!cands.length) { cands = LINE_KEYS.filter(l => usable(l, e) && !avoid.has(l)); opened = !!e.lines.length; }
+    const best = cands.map(l => ({ l, s: scores[l] - used(l) * DECAY - (l === prev ? 50 : 0) }))
+      .sort((a, b) => b.s - a.s || LINE_KEYS.indexOf(a.l) - LINE_KEYS.indexOf(b.l))[0];
+    if (!best) { notes.push(`${DAY_NAME[e.day]}: nothing to post`); continue; }
+    assign.set(e, { line: best.l, why: opened ? `${e.lines.map(lineLabel).join("/")} is on "less" this week` : e.lines.length > 1 ? `best of ${e.lines.map(lineLabel).join(", ")} this week` : null });
+    prev = best.l;
+  }
+  notes.push("Weekly rhythm: " + entries.map(e => `${DAY_NAME[e.day]} ${e.follow ? "follow-up story" : assign.has(e) ? lineLabel(assign.get(e).line) + (e.format === "story" ? " story" : "") : "-"}`).join(" · "));
+
+  // 3. Programs, angles, themes - post by post.
+  const usedPrograms = new Set(), lineUses = {}, made = new Map();
+  for (const e of main) {
+    const a = assign.get(e);
+    if (!a) continue;
+    const line = a.line;
+    lineUses[line] = (lineUses[line] || 0) + 1;
+    const ref_i = e.date > ref ? e.date : ref;
+    let pick = pickProgram(line, signals, live.filter(p => !DATED.includes(line) || p.first_date >= e.date), usedPrograms, ref_i);
+    if (pick?.program && DATED.includes(line) && pick.program.first_date < e.date) pick = null;
+    if (pick?.program) usedPrograms.add(String(pick.program.id));
+    const pr = sPrios.find(p => p.lines.includes(line));
+    const angle = pick?.angle || (pr ? "priority" : "evergreen");
+    const reason = [`${DAY_NAME[e.day]} is ${e.lines.length ? e.lines.map(lineLabel).join("/") : "open"} on the calendar`, a.why, pr && !/^Priority/.test(a.why || "") ? `Priority "${pr.title}"` : null, pick?.reason,
+      ...(why[line] || []).filter(w => !/^priority|starts|started|is new|runs year/.test(w))].filter(Boolean).filter((v, j, arr) => arr.indexOf(v) === j).join(" · ");
+    const slot = {
+      channel: "social", kind: e.format === "story" ? "story" : "post", format: e.format, platforms: (e.format === "story" ? STORY_PLATFORMS : POST_PLATFORMS).slice(),
+      day: e.date, time: e.time || cadence.social.time, line, program: programRef(pick?.program), angle, reason, theme: themeFor(themes, line, weekOf, lineUses[line] - 1),
+    };
+    made.set(e.day, slot);
+    if (!today || e.date >= today) slots.push(slot);
+  }
+  // 4. Follow-up stories: the same line, broken out program by program.
+  for (const e of entries.filter(x => x.follow)) {
+    const src = made.get(e.follow);
+    if (!src || (today && e.date < today)) continue;
+    const others = live.filter(p => lineOf(p) === src.line && String(p.id) !== String(src.program?.id || "") && (p.ongoing || (isYmd(p.last_date) ? p.last_date : p.first_date) >= e.date) && (!DATED.includes(src.line) || p.first_date >= e.date))
+      .sort((a, b) => String(a.first_date).localeCompare(String(b.first_date))).slice(0, 3);
+    slots.push({
+      channel: "social", kind: "follow_up", format: "story", platforms: STORY_PLATFORMS.slice(), day: e.date, time: e.time || cadence.social.time,
+      line: src.line, program: src.program, programs: [src.program, ...others.map(programRef)].filter(Boolean), angle: "follow_up", follows: e.follow,
+      reason: `Follows up ${DAY_NAME[e.follow]}'s ${lineLabel(src.line)} post - break it out, don't repeat it`, theme: src.theme,
+    });
+  }
+  // 5. The last week of the month previews the next one.
+  if (cadence.social.month_preview !== false) {
+    const d = addDays(weekOf, DAY_KEYS.indexOf(cadence.social.preview_day));
+    const next = addDays(d, 7).slice(0, 7);
+    if (next !== d.slice(0, 7) && (!today || d >= today)) {
+      const mName = MONTHS[+next.slice(5, 7) - 1];
+      const coming = live.filter(p => String(p.first_date).slice(0, 7) === next).sort((a, b) => a.first_date.localeCompare(b.first_date));
+      const pickLines = []; const list = [];
+      for (const p of coming) { if (list.length >= 4) break; const l = lineOf(p); if (pickLines.includes(l) && coming.some(q => !pickLines.includes(lineOf(q)))) continue; pickLines.push(l); list.push(programRef(p)); }
+      for (const p of coming) { if (list.length >= 4) break; if (!list.some(x => x.id === String(p.id))) list.push(programRef(p)); }
+      slots.push({
+        channel: "social", kind: "preview", format: "post", platforms: POST_PLATFORMS.slice(), day: d, time: cadence.social.time, line: "club", program: null, programs: list,
+        angle: "preview", reason: `Last week of the month: what's coming in ${mName}${coming.length ? ` (${coming.length} program${coming.length === 1 ? "" : "s"} start)` : ""}`,
+        theme: `Month preview: what's coming at DSSC in ${mName} - holiday events, camps, what opens for registration.`,
+      });
+    }
+  }
+  return { slots, notes };
+}
+
+// A dedicated email on one line: a priority's headline line (no dedicated
+// email on it in 14 days), else the next due line from dedicated_lines (none
+// on it for 4 weeks). At most dedicated_per_month a calendar month.
+function dedicatedEmail({ weekOf, ref, today, live, signals, ePrios, history, cadence, themes, allowedOn }) {
+  const cap = cadence.email.dedicated_per_month;
+  if (!cap) return { slot: null, note: null };
+  const day = addDays(weekOf, DAY_KEYS.indexOf(cadence.email.dedicated_day));
+  if (today && day < today) return { slot: null, note: null };
+  const isDed = (h) => counted(h) && h.channel === "email" && h.kind === "dedicated";
+  const lastOn = (l) => (history || []).filter(h => isDed(h) && h.line === l).map(h => String(h.scheduled_at || h.week_of).slice(0, 10)).sort().pop() || null;
+  const month = day.slice(0, 7);
+  const usedMonth = (history || []).filter(h => isDed(h) && monthOf(h) === month).length;
+  if (usedMonth >= cap) return { slot: null, note: `Dedicated email skipped: ${usedMonth} of ${cap} this month already` };
+  let line = null, reason = null, pr = null;
+  for (const p of ePrios.slice().sort((a, b) => b.weight - a.weight)) {
+    const L = p.lines[0];
+    if (!L || p.weight < 4 || !allowedOn(L, day)) continue;
+    const last = lastOn(L);
+    if (last && daysBetween(last, day) < 14) continue;
+    line = L; pr = p; reason = `Priority "${p.title}" - its own email`; break;
+  }
+  if (!line) {
+    const due = cadence.email.dedicated_lines.filter(l => allowedOn(l, day)).map(l => ({ l, last: lastOn(l) }))
+      .filter(x => !x.last || daysBetween(x.last, day) >= 28)
+      .sort((a, b) => String(a.last || "").localeCompare(String(b.last || "")))[0];
+    if (due) { line = due.l; reason = `${lineLabel(due.l)} is due its own email${due.last ? ` (last one ${fmtDay(due.last)})` : ""}`; }
+  }
+  if (!line) return { slot: null, note: null };
+  const sigs = signals.filter(s => s.line === line);
+  const lead = sigs.find(s => s.angle !== "evergreen") || sigs[0] || null;
+  const list = [];
+  for (const s of sigs) { if (list.length >= 4) break; list.push({ ...programRef(s.program), angle: s.angle }); }
+  if (!list.length) for (const p of live.filter(p => lineOf(p) === line && p.first_date >= ref).sort((a, b) => a.first_date.localeCompare(b.first_date)).slice(0, 4)) list.push({ ...programRef(p), angle: "starting_soon" });
+  return {
+    slot: {
+      channel: "email", kind: "dedicated", day, time: cadence.email.time, line, program: programRef(lead?.program) || (list[0] ? { ...list[0] } : null), programs: list, evergreen: null,
+      angle: lead?.angle || (pr ? "priority" : "evergreen"), reason: [reason, lead?.reason].filter(Boolean).join(" · "), theme: themeFor(themes, line, weekOf, 1),
+    },
+    note: null,
+  };
 }
 
 // A priority text is due on a week when the priority's first line has a
@@ -396,7 +667,7 @@ function smsSlot({ weekOf, ref, today, live, signals, priorities, history, caden
   let reserved = 0;
   if (!cand.priority) for (let w = addDays(weekOf, 7); w.slice(0, 7) <= month && w <= addDays(weekOf, 35); w = addDays(w, 7)) if (addDays(w, 1).slice(0, 7) === month && priorityTextFor(priorities, w, live)) reserved++;
   if (used + reserved >= cap) return { slot: null, note: `Text skipped: ${used} of ${cap} this month already${reserved ? `, ${reserved} kept for a priority later in the month` : ""}` };
-  return { slot: { channel: "sms", day, time: cadence.sms.time, line: cand.line, program: programRef(cand.program), angle: cand.angle, reason: cand.reason }, note: null };
+  return { slot: { channel: "sms", kind: "text", day, time: cadence.sms.time, line: cand.line, program: programRef(cand.program), angle: cand.angle, reason: cand.reason }, note: null };
 }
 
 // planFlow({ startWeek, weeks = 6, programs, priorities, settings, history })
@@ -418,7 +689,7 @@ export function planFlow({ startWeek, weeks = 6, programs = [], priorities = [],
       sms: plan.slots.find(s => s.channel === "sms")?.line || null,
       slots: plan.slots,
     });
-    hist = hist.concat(plan.slots.map(s => ({ week_of: w, channel: s.channel, line: s.line, status: "planned", scheduled_at: s.day })));
+    hist = hist.concat(plan.slots.map(s => ({ week_of: w, channel: s.channel, kind: s.kind, line: s.line, status: "planned", scheduled_at: s.day })));
   }
   return out;
 }

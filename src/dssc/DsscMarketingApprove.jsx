@@ -9,16 +9,17 @@ import { supabase } from "../supabase";
 import { DS, Btn, Tag, inputStyle, Grow, Field, fetchAll } from "./DsscHub.jsx";
 import { segmentsOf } from "../../shared/campaign-audience.js";
 import { TEMPLATES, FORMATS } from "../../shared/marketing-graphics.js";
+import { photoHaystack } from "../../shared/marketing-photos.js";
 import {
-  mktApi, isMissingTable, MIGRATION_MSG, lineMeta, lineLabel, LineChip, ANGLES, STATUS_META, CHANNEL_META,
+  mktApi, isMissingTable, MIGRATION_MSG, lineMeta, lineLabel, LineChip, ANGLES, STATUS_META, CHANNEL_META, KIND_LABEL, kindOf,
   mondayOf, addDays, fmtDate, fmtWhen, timeOf, dayOf, weekLabel, specOf, hasGraphic, GraphicPreview,
   approveItem, readyIssue, chipStyle, Msg, Panel, H,
 } from "./DsscMarketingKit.jsx";
 
 const bigBtn = (narrow) => narrow ? { fontSize: 15, padding: "12px 16px", minHeight: 46, borderRadius: 10 } : {};
 const fieldLbl = { fontSize: 11, fontWeight: 700, color: DS.mut, margin: "10px 0 4px", letterSpacing: "0.03em" };
-const PLATFORMS = [["facebook", "Facebook", "#60A5FA"], ["instagram", "Instagram", "#F06BB4"], ["instagram_story", "IG story", "#F5A3CF"]];
-const PLAT_TAG = { facebook: ["FB", "#60A5FA"], instagram: ["IG", "#F06BB4"], instagram_story: ["IG story", "#F5A3CF"] };
+const PLATFORMS = [["facebook", "Facebook", "#60A5FA"], ["instagram", "Instagram", "#F06BB4"], ["instagram_story", "IG story", "#F5A3CF"], ["facebook_story", "FB story", "#93C5FD"]];
+const PLAT_TAG = { facebook: ["FB", "#60A5FA"], instagram: ["IG", "#F06BB4"], instagram_story: ["IG story", "#F5A3CF"], facebook_story: ["FB story", "#93C5FD"] };
 const tagsToArr = (s) => String(s || "").split(/[\s,]+/).map(t => t.trim()).filter(Boolean).map(t => t.startsWith("#") ? t : "#" + t);
 const aiNote = (d) => d?.ai && d.ai.used === false ? ` (Plain template copy — the AI writer wasn't available${d.ai.error ? ": " + d.ai.error : ""}.)` : "";
 const daysOfWeek = (wk) => Array.from({ length: 7 }, (_, i) => addDays(wk, i));
@@ -201,10 +202,10 @@ function EmptyWeek({ plan, week }) {
       {slots.map((s, i) => (
         <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", padding: "8px 0", borderTop: "1px solid " + DS.line, fontSize: 13 }}>
           <b style={{ width: 92 }}>{fmtDate(s.day, { weekday: "short", month: "short", day: "numeric" })}</b>
-          <span>{CHANNEL_META[s.channel]?.[1]} {CHANNEL_META[s.channel]?.[0]}</span>
+          <span>{CHANNEL_META[s.channel]?.[1]} {KIND_LABEL[kindOf(s)] || CHANNEL_META[s.channel]?.[0]}</span>
           <LineChip line={s.line} />
           {s.angle && <span style={{ color: DS.mut, fontSize: 12 }}>{ANGLES[s.angle] || s.angle}</span>}
-          <span style={{ color: DS.dim, fontSize: 12, flexBasis: "100%" }}>{s.program?.name ? s.program.name + " — " : ""}{s.reason}</span>
+          <span style={{ color: DS.dim, fontSize: 12, flexBasis: "100%" }}>{s.program?.name ? s.program.name + " — " : ""}{s.reason}{s.theme ? <><br /><span style={{ color: DS.mut }}>Idea: </span>{s.theme}</> : null}</span>
         </div>
       ))}
       {(plan?.notes || []).length > 0 && <div style={{ fontSize: 12, color: DS.mut, marginTop: 8 }}>{plan.notes.join(" · ")}</div>}
@@ -251,7 +252,8 @@ function ItemCard({ item: it, week, narrow, onPatch, onReplace, reload, onChange
   const head = (
     <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
       <span style={{ fontSize: 16 }} title={CHANNEL_META[it.channel]?.[0]}>{CHANNEL_META[it.channel]?.[1]}</span>
-      {it.channel === "social" ? (it.platforms || []).map(p => <Tag key={p} color={(PLAT_TAG[p] || [p, DS.mut])[1]}>{(PLAT_TAG[p] || [p])[0]}</Tag>) : <Tag color={DS.mut}>{CHANNEL_META[it.channel]?.[0]}</Tag>}
+      {it.channel === "social" ? (it.platforms || []).map(p => <Tag key={p} color={(PLAT_TAG[p] || [p, DS.mut])[1]}>{(PLAT_TAG[p] || [p])[0]}</Tag>) : null}
+      <Tag color={DS.mut}>{KIND_LABEL[kindOf(it)] || CHANNEL_META[it.channel]?.[0]}</Tag>
       <LineChip line={it.line} />
       {it.angle && <span style={{ fontSize: 11, color: DS.mut }}>{ANGLES[it.angle] || it.angle}</span>}
       <span style={{ flex: 1 }} />
@@ -273,6 +275,7 @@ function ItemCard({ item: it, week, narrow, onPatch, onReplace, reload, onChange
     </div>
   );
 
+  const isStoryItem = ["story", "follow_up"].includes(kindOf(it));
   const graphicBox = hasGraphic(it) && (
     <div>
       <GraphicPreview spec={spec} onClick={editable ? () => setShowGraphic(s => !s) : undefined} />
@@ -280,8 +283,8 @@ function ItemCard({ item: it, week, narrow, onPatch, onReplace, reload, onChange
         {TEMPLATES.map(([k, l]) => <button key={k} onClick={() => setG({ template: k })} style={chipStyle((g.template || "photo") === k, DS.lime, narrow)}>{l}</button>)}
       </div>}
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
-        {it.channel === "social" && ["post", "square"].map(f => <button key={f} disabled={!editable} onClick={() => { setPreview(null); setG({ format: f }); }} style={chipStyle(!preview && spec.format === f, "#7FD1C3")}>{FORMATS[f].label}</button>)}
-        {it.channel === "social" && <button onClick={() => setPreview(p => p ? null : "story")} style={chipStyle(preview === "story", "#7FD1C3")}>Story preview</button>}
+        {it.channel === "social" && (isStoryItem ? ["story"] : ["post", "square"]).map(f => <button key={f} disabled={!editable} onClick={() => { setPreview(null); setG({ format: f }); }} style={chipStyle(!preview && spec.format === f, "#7FD1C3")}>{FORMATS[f].label}</button>)}
+        {it.channel === "social" && !isStoryItem && <button onClick={() => setPreview(p => p ? null : "story")} style={chipStyle(preview === "story", "#7FD1C3")}>Story preview</button>}
         {editable && <button onClick={onPickPhoto} style={chipStyle(false, DS.lime, narrow)}>Swap photo</button>}
         {editable && <button onClick={() => setShowGraphic(s => !s)} style={chipStyle(showGraphic, DS.lime, narrow)}>{showGraphic ? "Done with text" : "Edit graphic text"}</button>}
       </div>
@@ -392,6 +395,7 @@ function ItemCard({ item: it, week, narrow, onPatch, onReplace, reload, onChange
       {head}
       <div style={{ fontSize: 17, fontWeight: 800, marginTop: 8, lineHeight: 1.25 }}>{title}</div>
       {it.reason && <div style={{ fontSize: 12, color: DS.mut, marginTop: 4, lineHeight: 1.45 }}><span style={{ color: DS.dim }}>Why: </span>{it.reason}</div>}
+      {it.theme && <div style={{ fontSize: 12, color: DS.mut, marginTop: 2, lineHeight: 1.45 }}><span style={{ color: DS.dim }}>Idea: </span>{it.theme}</div>}
       {it.program?.name && <div style={{ fontSize: 12, color: DS.dim, marginTop: 2 }}>{it.program.url ? <a href={it.program.url} target="_blank" rel="noreferrer" style={{ color: DS.mut }}>{it.program.name} ↗</a> : it.program.name}{it.program.first_date ? " · starts " + fmtDate(it.program.first_date) : ""}</div>}
       {timeRow}
       {hasGraphic(it)
@@ -425,14 +429,17 @@ function PhotoPicker({ item, narrow, onPick, onClose }) {
   const [err, setErr] = useState("");
   const [scope, setScope] = useState(item.line ? "line" : "all");
   const [tag, setTag] = useState("");
+  const [q, setQ] = useState("");
   useEffect(() => {
     fetchAll(() => supabase.from("mkt_photos").select("*").eq("active", true)).then(setPhotos).catch(e => { setErr(isMissingTable(e) ? MIGRATION_MSG : e.message); setPhotos([]); });
   }, []);
   const lm = lineMeta(item.line);
   const sportTag = { volleyball: "volleyball", basketball: "basketball", reach: "reach", camp_elevate: "camp", parties: "parties", rentals: "facility", open_gym: "facility", club: "flagship" }[item.line];
   const tags = useMemo(() => [...new Set((photos || []).flatMap(p => p.tags || []))].sort(), [photos]);
-  const list = (photos || []).filter(p => (scope === "all" || p.line === item.line || (sportTag && (p.tags || []).includes(sportTag))) && (!tag || (p.tags || []).includes(tag)))
-    .sort((a, b) => (a.used_count || 0) - (b.used_count || 0));
+  const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const list = (photos || []).filter(p => p.release_ok !== false && (scope === "all" || p.line === item.line || (sportTag && (p.tags || []).includes(sportTag))) && (!tag || (p.tags || []).includes(tag))
+      && (!words.length || (h => words.every(w => h.includes(w)))(photoHaystack(p, k => lineMeta(k).label))))
+    .sort((a, b) => (b.quality || 3) - (a.quality || 3) || (a.used_count || 0) - (b.used_count || 0));
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 80, display: "flex", alignItems: narrow ? "stretch" : "flex-start", justifyContent: "center", padding: narrow ? 0 : "5vh 16px", overflowY: "auto" }}>
       <div onClick={e => e.stopPropagation()} style={{ background: DS.bg, border: narrow ? "none" : "1px solid " + DS.lineStrong, borderRadius: narrow ? 0 : 14, width: "100%", maxWidth: 900, padding: 14, boxSizing: "border-box", minHeight: narrow ? "100%" : undefined }}>
@@ -445,6 +452,7 @@ function PhotoPicker({ item, narrow, onPick, onClose }) {
           <button onClick={() => setScope("all")} style={chipStyle(scope === "all", DS.lime, narrow)}>All photos</button>
           {tags.map(t => <button key={t} onClick={() => setTag(tag === t ? "" : t)} style={chipStyle(tag === t, "#7FD1C3", narrow)}>{t}</button>)}
         </div>
+        <input value={q} onChange={e => setQ(e.target.value)} placeholder='Search photos — "girls serving", "party cake"' style={{ ...inputStyle, margin: "4px 0 6px", fontSize: narrow ? 16 : 14 }} />
         {err && <div style={{ color: DS.orange, fontSize: 13, margin: "8px 0" }}>{err}</div>}
         {photos == null ? <div style={{ color: DS.mut, padding: 16 }}>Loading…</div>
           : !list.length ? <div style={{ color: DS.mut, padding: 16 }}>No photos here{photos.length ? " — try All photos" : " yet — sync them from the website on the Photos tab"}.</div>

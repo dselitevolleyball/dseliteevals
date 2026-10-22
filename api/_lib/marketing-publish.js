@@ -4,7 +4,9 @@
 //
 //   social -> Meta Graph API: Facebook Page photo post (POST /{page}/photos
 //             {url, caption}) and Instagram (POST /{ig}/media {image_url,
-//             caption} -> /{ig}/media_publish {creation_id}). A platform that
+//             caption} -> /{ig}/media_publish {creation_id}); stories go to
+//             Instagram (media_type STORIES) and the Page's stories
+//             (photo_stories) from the 1080x1920 render. A platform that
 //             already has an id in external_ids is skipped, so a retry after a
 //             half-failure never double-posts.
 //   email  -> Resend batch (/emails/batch, 100 per request) to dssc_contacts
@@ -17,7 +19,7 @@
 //             do-not-text are handled there.
 //
 // Env: META_PAGE_ACCESS_TOKEN, META_PAGE_ID, META_IG_USER_ID, META_GRAPH_VERSION
-//      (default v21.0); RESEND_API_KEY, DSSC_FROM_EMAIL, MARKETING_UNSUB_SECRET
+//      (default v26.0); RESEND_API_KEY, DSSC_FROM_EMAIL, MARKETING_UNSUB_SECRET
 //      (falls back to CRON_SECRET), MARKETING_PUBLIC_BASE (default
 //      https://www.drippingsportsclub.com/hq); TWILIO_* / DSSC_TWILIO_* (sms).
 
@@ -29,7 +31,7 @@ import { buildEmail, withHero, UNSUB_TOKEN } from "./marketing-ai.js";
 import { resendKeyFor } from "./resend-key.js";
 
 const env = () => process.env;
-export const graphVersion = () => env().META_GRAPH_VERSION || "v21.0";
+export const graphVersion = () => env().META_GRAPH_VERSION || "v26.0";
 export const publicBase = () => String(env().MARKETING_PUBLIC_BASE || "https://www.drippingsportsclub.com/hq").replace(/\/+$/, "");
 
 // ── what's connected ─────────────────────────────────────────────────────────
@@ -96,6 +98,16 @@ export async function postInstagram(item, { story = false } = {}) {
   }
   const p = await graph(`${META_IG_USER_ID}/media_publish`, { creation_id: c.id });
   return p.id;
+}
+
+// A Facebook Page story: the story PNG goes up as an unpublished photo, then
+// becomes the story (POST /{page}/photo_stories {photo_id}).
+export async function postFacebookStory(item) {
+  const { META_PAGE_ACCESS_TOKEN, META_PAGE_ID } = env();
+  if (!META_PAGE_ACCESS_TOKEN || !META_PAGE_ID) throw new Error("Facebook isn't connected (META_PAGE_ACCESS_TOKEN, META_PAGE_ID)");
+  const ph = await graph(`${META_PAGE_ID}/photos`, { url: item.asset_story_url, published: "false" });
+  const st = await graph(`${META_PAGE_ID}/photo_stories`, { photo_id: ph.id });
+  return st.post_id || st.id || ph.id;
 }
 
 // ── email ────────────────────────────────────────────────────────────────────
@@ -230,6 +242,7 @@ export async function publishItem(sb, item, { settings = {}, dry = false, deadli
           if (p === "facebook") ext.facebook = await postFacebook(item);
           else if (p === "instagram") ext.instagram = await postInstagram(item);
           else if (p === "instagram_story" && item.asset_story_url) ext.instagram_story = await postInstagram(item, { story: true });
+          else if (p === "facebook_story" && item.asset_story_url) ext.facebook_story = await postFacebookStory(item);
         } catch (e) { errors.push(e.message); }
       }
       if (errors.length) status = "failed";

@@ -17,8 +17,9 @@
 // the week, programs and priorities go in the user message.
 
 import Anthropic from "@anthropic-ai/sdk";
-import { LINES, LINE_LINKS, lineLabel, lineOf, lineUrl, programRef, addDays, daysBetween, fmtDay } from "../../shared/marketing-plan.js";
+import { LINES, LINE_LINKS, lineLabel, lineOf, lineUrl, programRef, addDays, daysBetween, fmtDay, KIND_LABEL } from "../../shared/marketing-plan.js";
 import { EMPTY_FILTERS, asciiize } from "../../shared/campaign-audience.js";
+import { orientationOf } from "../../shared/marketing-photos.js";
 
 export const AI_MODEL = "claude-opus-5-5";
 export const aiReady = () => !!process.env.ANTHROPIC_API_KEY;
@@ -64,6 +65,13 @@ const noEmoji = (s) => String(s || "").replace(EMOJI, "").replace(/\u{FE0F}/gu, 
 const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 const daysText = (days) => { const d = (days || []).filter(Boolean); if (!d.length) return ""; if (d.length === 1) return DOWL[d[0]] ? DOWL[d[0]] + "s" : d[0]; return d.join("/"); };
 const scheduleBits = (p) => [daysText(p?.days), p?.time].filter(Boolean).join(" · ");
+// A slot or item's kind; rows from before kinds existed are posts / roundups / texts.
+export const kindOf = (s) => s?.kind || (s?.channel === "email" ? "roundup" : s?.channel === "sms" ? "text" : "post");
+const isStory = (s) => ["story", "follow_up"].includes(kindOf(s));
+const MONTH_FULL = ["JANUARY", "FEBRUARY", "MARCH", "APRIL", "MAY", "JUNE", "JULY", "AUGUST", "SEPTEMBER", "OCTOBER", "NOVEMBER", "DECEMBER"];
+// "MON · Skill Lab 3-5th" (running: its day) / "NOV 23 · Camp Elevate" (not
+// started by `day`: its start date) - one row of a list graphic.
+const listRow = (x, day) => `${(!day || !x.first_date || x.first_date <= day) && (x.days || [])[0] ? String(x.days[0]).toUpperCase() : md(x.first_date).toUpperCase()} · ${shortName(x.name)}`.slice(0, 48);
 
 // Central time "YYYY-MM-DD" + "HH:MM" -> UTC ISO string.
 export function ctIso(day, time = "12:00") {
@@ -93,12 +101,23 @@ export function programFacts(p) {
 // ── photos ───────────────────────────────────────────────────────────────────
 // The library photo for a line: line match, then tag overlap (plus hinted
 // tags), least used first, not one already used in this batch.
-export function pickPhoto(photos, line, { used = new Set(), hints = [], exclude = null, seed = "" } = {}) {
+// The AI librarian's fields help when present: quality (1-5), the photo's
+// shape against the graphic's (a story wants a tall photo, an email banner a
+// wide one), and what it's good for. A photo a director marked "don't post"
+// (release_ok false) is never picked.
+export function pickPhoto(photos, line, { used = new Set(), hints = [], exclude = null, seed = "", format = "post" } = {}) {
   const want = LINE_TAGS[line] || [];
   const hash = (s) => { let h = 2166136261; for (const c of String(s)) h = Math.imul(h ^ c.charCodeAt(0), 16777619); return (h >>> 0) / 4294967295; };
-  const scored = (photos || []).filter(p => p && p.url && p.active !== false && p.url !== exclude).map(p => {
+  const shape = format === "story" ? "portrait" : format === "email" ? "landscape" : null;
+  const use = format === "story" ? "story" : format === "email" ? "email_banner" : "social_post";
+  const scored = (photos || []).filter(p => p && p.url && p.active !== false && p.release_ok !== false && p.url !== exclude).map(p => {
     const tags = p.tags || [];
     let s = (p.line === line ? 4 : 0) + tags.filter(t => want.includes(t)).length * 2 + tags.filter(t => hints.includes(t)).length * 3;
+    if (p.quality) s += (p.quality - 3) * 1.5;
+    const o = orientationOf(p);
+    if (shape && o === shape) s += 2.5;
+    else if (format === "story" && o === "landscape") s -= 1;     // a wide photo crops badly to 9:16
+    if ((p.uses || []).includes(use)) s += 1;
     s -= Math.min(3, (p.used_count || 0) * 0.25);
     if (used.has(p.url)) s -= 3;                       // repeat a photo before borrowing another line's
     if (p.line && p.line !== line) s -= 4;
@@ -156,7 +175,20 @@ export function templateCopy(slot, { program = null, programs = [], feedById = n
     return { headline: name, accent: "", sub: "", tag: "", body: txt, cta_text: "Register", hashtags: [], email_subject: "", email_preheader: "", email_blocks: [], photo_tags: [] };
   }
 
-  // social
+  // social: the month preview and follow-up stories list programs
+  const listed = (slot.programs || []).map(r => feedById.get(String(r.id)) || r).filter(x => x && x.name);
+  if (kindOf(slot) === "preview") {
+    const month = MONTH_FULL[+String(addDays(slot.day, 7)).slice(5, 7) - 1] || "NEXT MONTH";
+    headline = `COMING IN ${month}`; accent = month;
+    body = listed.length ? `Coming up at DSSC in ${month[0] + month.slice(1).toLowerCase()}: ${listed.map(x => `${shortName(x.name)} (${md(x.first_date)})`).join(", ")}. See everything that's coming on our site.` : `${month[0] + month.slice(1).toLowerCase()} at DSSC: see what's coming up on our site.`;
+    return { headline, accent, sub: "Where Dripping Springs plays.", tag: "NEXT MONTH", body, cta_text: "See what's coming", hashtags, email_subject: "", email_preheader: "", email_blocks: [], photo_tags: [] };
+  }
+  if (kindOf(slot) === "follow_up" && listed.length >= 2) {
+    const H2 = { volleyball: "WAYS TO PLAY", basketball: "WAYS TO TRAIN", reach: "WAYS TO TRAIN", camp_elevate: "CAMP ELEVATE", parties: "PARTY DAY", rentals: "BOOK A COURT", open_gym: "OPEN GYM", club: "AT DSSC" };
+    headline = H2[line] || "WAYS TO PLAY"; accent = accentOf(headline);
+    body = listed.map(x => `${shortName(x.name)}: ${[x.first_date ? (x.first_date <= slot.day ? "running now" : `starts ${md(x.first_date)}`) : "", scheduleBits(x), x.ages ? `for ${x.ages}` : ""].filter(Boolean).join(", ")}.`).join(" ") + " Details on our site.";
+    return { headline, accent, sub: listed.map(x => shortName(x.name)).slice(0, 3).join(" - ").slice(0, 50), tag: lineLabel(line).toUpperCase(), body, cta_text: linkCta, hashtags, email_subject: "", email_preheader: "", email_blocks: [], photo_tags: [] };
+  }
   tag = slot.angle === "last_call" ? "LAST CALL" : slot.angle === "new" ? "NEW" : lineLabel(line).toUpperCase();
   if (p) {
     headline = isCamp ? "CAMP ELEVATE" : name.toUpperCase().split(/\s+/).slice(0, 5).join(" ");
@@ -244,7 +276,17 @@ Fields by channel:
 - social: headline = the big words on the graphic, 2 to 5 words; accent = ONE word from the headline to color; sub = a short line under it (dates/times), at most 50 characters; tag = a 1-3 word label (e.g. "CAMP ELEVATE", "LAST CALL", "NEW"); body = the caption, 2 to 5 short sentences, no URL, no hashtags; cta_text = the button words (2 to 5 words, e.g. "Register now", "Book a party"); hashtags = 3 to 5 tags without the # sign (always include DrippingSprings); email_subject, email_preheader = ""; email_blocks = []; photo_tags = 0 to 2 tags describing the ideal photo.
 - email: headline = the email's big headline, 2 to 6 words; accent = one word of it; sub = a short line under the headline; tag = a 1-3 word label; body = the opening, 2 to 4 sentences that lead with the featured program and why it matters this week; cta_text = the main button words; email_subject = under 60 characters, specific (name the featured program and its date); email_preheader = under 90 characters, adds to the subject; email_blocks = one entry per listed program (ref = the program id) and one for the evergreen line if given (ref = the line key), each blurb 1 to 2 sentences built from that program's facts; hashtags = []; photo_tags as above.
 - sms: body = the whole text, under 230 characters, starting with "DSSC:", plain characters only, no URL and no opt-out line (both are added); headline = the program name; accent, sub, tag, email_subject, email_preheader = ""; cta_text = "Register"; email_blocks = []; hashtags = []; photo_tags = [].
-Keep the club's priorities in mind: the request lists what the directors want pushed this week and why each slot was planned. When one slot repeats a line from earlier in the week, take a different angle so the two posts don't read alike.`;
+Keep the club's priorities in mind: the request lists what the directors want pushed this week and why each slot was planned. When one slot repeats a line from earlier in the week, take a different angle so the two posts don't read alike.
+
+Each slot has a kind:
+- post: a Facebook + Instagram feed post.
+- story: a full-screen Instagram/Facebook story. Stories show no caption - the graphic carries the message, so make the headline and sub do the work (sub = the key date or time). body = one or two short sentences.
+- follow_up: a story the day after a post on the same line. Do not repeat the post - break it out: the slot's "programs" are the ways to take part, so the sub names them in order (e.g. "Clinics - 3v3 - Pods") and the body gives each one a quick frame (who it's for, when), ending on how to register.
+- preview: the month-preview post - what's coming at DSSC next month: the programs in "programs" with their dates, plus anything the priorities mention. Headline like "COMING IN NOVEMBER".
+- roundup: the weekly email - what's happening now and what's coming, without making it long.
+- dedicated: an email about ONE line only - sell the why to families, cover that line's programs in "programs", one call to action. The subject names the line or its lead program.
+- text: a text message.
+A slot may carry a "theme": a content idea from the directors' marketing calendar. Use it as the angle when it fits the facts you were given; never invent a fact to make it fit.`;
 
 const BLOCK = { type: "object", additionalProperties: false, required: ["ref", "blurb"], properties: { ref: { type: "string" }, blurb: { type: "string" } } };
 const ITEM_PROPS = {
@@ -289,9 +331,10 @@ async function callClaude(userText, { voice, timeoutMs = 95000 } = {}) {
 function slotForAi(slot, i, feedById) {
   const full = slot.program ? feedById.get(String(slot.program.id)) || slot.program : null;
   return {
-    slot: i, channel: slot.channel, day: slot.day, day_label: fmtDay(slot.day), line: slot.line, line_label: lineLabel(slot.line), angle: slot.angle, why_planned: slot.reason,
+    slot: i, channel: slot.channel, kind: slot.kind || kindOf(slot), day: slot.day, day_label: fmtDay(slot.day), line: slot.line, line_label: lineLabel(slot.line), angle: slot.angle, why_planned: slot.reason,
+    theme: slot.theme || undefined,
     program: programFacts(full),
-    programs: slot.channel === "email" ? (slot.programs || []).map(r => programFacts(feedById.get(String(r.id)) || r)) : undefined,
+    programs: (slot.programs || []).length ? (slot.programs || []).map(r => programFacts(feedById.get(String(r.id)) || r)) : undefined,
     evergreen: slot.channel === "email" && slot.evergreen ? { ref: slot.evergreen, line: lineLabel(slot.evergreen), about: LINE_BLURB[slot.evergreen] } : undefined,
     line_about: LINE_BLURB[slot.line],
   };
@@ -381,8 +424,11 @@ export function graphicFor(slot, copy, photo, { programs = [] } = {}) {
   let template = "photo";
   let date_label = p?.first_date ? md(p.first_date).toUpperCase() : "";
   let items = [];
+  const listed = (slot.programs || []).filter(x => x && x.name);
   if (slot.channel === "email") template = "photo";
-  else if (p && (slot.angle === "last_call" || (["priority", "reminder"].includes(slot.angle) && daysOut != null && daysOut >= 0 && daysOut <= 10))) {
+  else if (["preview", "follow_up"].includes(kindOf(slot)) && listed.length >= 2) {
+    template = "list"; items = listed.slice(0, 4).map(x => listRow(x, kindOf(slot) === "preview" ? "0000-00-00" : slot.day));
+  } else if (p && (slot.angle === "last_call" || (["priority", "reminder"].includes(slot.angle) && daysOut != null && daysOut >= 0 && daysOut <= 10))) {
     template = "countdown";
     date_label = daysOut <= 0 ? "TODAY" : daysOut === 1 ? "TOMORROW" : daysOut <= 7 ? `${daysOut} DAYS` : "LAST CALL";
   } else if (p && ["starting_soon", "new", "priority", "reminder"].includes(slot.angle)) template = "starts";
@@ -391,7 +437,7 @@ export function graphicFor(slot, copy, photo, { programs = [] } = {}) {
     if (same.length >= 2) { template = "list"; items = same.map(x => `${(x.days || [])[0] ? String(x.days[0]).toUpperCase() : md(x.first_date).toUpperCase()} · ${shortName(x.name)}`.slice(0, 48)); }
   }
   return {
-    template, format: slot.channel === "email" ? "email" : "post",
+    template, format: slot.channel === "email" ? "email" : isStory(slot) ? "story" : "post",
     photo_url: photo?.url || null, photo_key: photo?.key || null,
     headline: copy.headline, accent: copy.accent, sub: copy.sub, tag: copy.tag, date_label, items,
   };
@@ -434,12 +480,12 @@ export async function composeItems({ slots, weekOf, programs = [], priorities = 
 }
 
 export function rowFor(slot, copy, { weekOf, feedById = new Map(), photos = [], used = new Set(), settings = {}, programs = [], by = "auto", seed = "" }) {
-  const photo = slot.channel === "sms" ? null : pickPhoto(photos, slot.line, { used, hints: copy.photo_tags || [], seed });
+  const photo = slot.channel === "sms" ? null : pickPhoto(photos, slot.line, { used, hints: copy.photo_tags || [], seed, format: slot.channel === "email" ? "email" : isStory(slot) ? "story" : "post" });
   if (photo) used.add(photo.url);
   const cta_url = slot.program?.url || lineUrl(slot.line);
   const graphic = graphicFor(slot, copy, photo, { programs });
   const row = {
-    week_of: weekOf, channel: slot.channel, platforms: slot.channel === "social" ? (slot.platforms || ["facebook", "instagram"]) : [],
+    week_of: weekOf, channel: slot.channel, kind: kindOf(slot), theme: slot.theme || null, platforms: slot.channel === "social" ? (slot.platforms || ["facebook", "instagram"]) : [],
     line: slot.line, program: slot.program || null, programs: slot.programs || [], reason: slot.reason, angle: slot.angle,
     status: "draft", scheduled_at: ctIso(slot.day, slot.time),
     headline: copy.headline, body: copy.body, cta_text: copy.cta_text, cta_url, hashtags: copy.hashtags || [],
@@ -469,7 +515,7 @@ export const smsCore = (body) => stripUrls(String(body || "").replace(/\s*reply 
 export async function reviseItem({ item, instruction, programs = [], settings = {}, photos = [], timeoutMs } = {}) {
   if (!aiReady()) return { patch: null, error: "ANTHROPIC_API_KEY is not set - edit the text directly" };
   const feedById = new Map((programs || []).map(p => [String(p.id), p]));
-  const slot = { channel: item.channel, day: String(item.scheduled_at ? new Date(item.scheduled_at).toLocaleDateString("en-CA", { timeZone: "America/Chicago" }) : item.week_of), line: item.line, angle: item.angle, reason: item.reason, program: item.program, programs: item.programs || [], evergreen: (item.email_blocks || []).find(b => !b.program_id && b.line)?.line || null };
+  const slot = { channel: item.channel, kind: kindOf(item), theme: item.theme || null, day: String(item.scheduled_at ? new Date(item.scheduled_at).toLocaleDateString("en-CA", { timeZone: "America/Chicago" }) : item.week_of), line: item.line, angle: item.angle, reason: item.reason, program: item.program, programs: item.programs || [], evergreen: (item.email_blocks || []).find(b => !b.program_id && b.line)?.line || null };
   const current = {
     headline: item.headline, accent: item.graphic?.accent || "", sub: item.graphic?.sub || "", tag: item.graphic?.tag || "",
     body: item.channel === "sms" ? smsCore(item.body) : item.body, cta_text: item.cta_text, hashtags: item.hashtags || [],
@@ -488,7 +534,7 @@ export async function reviseItem({ item, instruction, programs = [], settings = 
   if (!copy) return { patch: null, model: r.model, error: `The rewrite broke a rule (${problems.join(", ")}) - try different wording` };
   const wantsPhoto = /\b(photo|picture|pic|image|shot)\b/i.test(instruction || "");
   let photo = item.graphic?.photo_url ? { url: item.graphic.photo_url, key: item.graphic.photo_key } : null;
-  if (wantsPhoto && item.channel !== "sms") photo = pickPhoto(photos, item.line, { hints: copy.photo_tags, exclude: item.graphic?.photo_url, seed: String(Date.now()) }) || photo;
+  if (wantsPhoto && item.channel !== "sms") photo = pickPhoto(photos, item.line, { hints: copy.photo_tags, exclude: item.graphic?.photo_url, seed: String(Date.now()), format: item.graphic?.format || "post" }) || photo;
   const graphic = item.channel === "sms" ? null : { ...(item.graphic || {}), headline: copy.headline, accent: copy.accent, sub: copy.sub, tag: copy.tag, photo_url: photo?.url || null, photo_key: photo?.key || null };
   const patch = { headline: copy.headline, body: copy.body, cta_text: copy.cta_text, hashtags: copy.hashtags, graphic };
   if (item.channel === "sms") patch.body = smsBody(copy.body, item.cta_url);

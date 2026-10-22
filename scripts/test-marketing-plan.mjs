@@ -5,12 +5,16 @@
 //   NODE_USE_ENV_PROXY=1 node scripts/test-marketing-plan.mjs [--json]
 //   node scripts/test-marketing-plan.mjs --feed path/to/programs.json
 //
-// Asserts: Camp Elevate is the most-posted social line in those weeks; parties
-// and rentals each appear at least once in every 3 consecutive weeks; no line
-// twice in a row on social; at most cadence.sms.per_month texts a month.
+// Asserts (balance mode): Camp Elevate is the most-posted social line in those
+// weeks; parties and rentals each appear at least once in every 3 consecutive
+// weeks; no line twice in a row on social; at most cadence.sms.per_month texts
+// a month. Rhythm mode (the club calendar): Monday basketball / Thursday
+// volleyball posts, follow-up stories on the same line, a month preview in the
+// last week of a month, dedicated emails capped per month and never the same
+// line as that week's roundup.
 
 import { readFileSync } from "node:fs";
-import { planWeek, planFlow, signalsFor, lineOf, mondayOf, parseBrief, LINES, DEFAULT_CADENCE, LINE_LINKS } from "../shared/marketing-plan.js";
+import { planWeek, planFlow, signalsFor, lineOf, mondayOf, parseBrief, normRhythm, LINES, DEFAULT_CADENCE, LINE_LINKS } from "../shared/marketing-plan.js";
 
 const args = process.argv.slice(2);
 const feedPath = args.includes("--feed") ? args[args.indexOf("--feed") + 1] : null;
@@ -22,11 +26,14 @@ const THANKSGIVING = {
   notes: "Thanksgiving break (Nov 23–25): push Camp Elevate hard, plus the volleyball and basketball break camps/clinics. Camp Elevate is a full-day, every-sport camp — pick one day or all three.",
   lines: ["camp_elevate", "volleyball", "basketball"], weight: 5, starts_on: "2026-10-26", ends_on: "2026-11-24", channels: ["social", "email", "sms"], active: true,
 };
-const settings = { weights: {}, cadence: DEFAULT_CADENCE };
+// The original "balance" layout (4 posts on cadence days); the calendar's
+// rhythm (the default) is checked further down.
+const settings = { weights: {}, cadence: { ...DEFAULT_CADENCE, social: { ...DEFAULT_CADENCE.social, mode: "balance" } } };
 const WEEKS = ["2026-10-26", "2026-11-02", "2026-11-09", "2026-11-16"];
 
 let fails = 0;
 const check = (ok, msg) => { console.log(`${ok ? "PASS" : "FAIL"}  ${msg}`); if (!ok) fails++; };
+const addDaysT = (s, n) => { const d = new Date(s + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 const label = (k) => LINES.find(l => l.key === k)?.label || k;
 
 console.log(`Feed: ${feed.programs.length} programs, today ${feed.today}`);
@@ -55,8 +62,10 @@ for (const w of WEEKS) {
   const counts = {}; for (const l of soc) counts[l] = (counts[l] || 0) + 1;
   const top = Math.max(...Object.values(counts));
   check(counts.camp_elevate === top, `${w}: Camp Elevate leads social (${counts.camp_elevate || 0} of ${soc.length}; ${JSON.stringify(counts)})`);
-  const email = plan.slots.find(s => s.channel === "email");
-  check(email && email.line === "camp_elevate", `${w}: email features ${email?.line}`);
+  // Camp Elevate gets an email of its own (or leads the roundup when the
+  // monthly cap on dedicated emails is used up).
+  const emails = plan.slots.filter(s => s.channel === "email");
+  check(emails.some(e => e.line === "camp_elevate") || (emails.find(e => e.kind === "roundup")?.programs || []).some(p => p.line === "camp_elevate"), `${w}: email covers Camp Elevate (${emails.map(e => e.kind + ":" + e.line).join(", ")})`);
   for (const s of plan.slots.filter(s => s.channel === "sms")) smsByMonth[s.day.slice(0, 7)] = (smsByMonth[s.day.slice(0, 7)] || 0) + 1;
   for (const s of plan.slots) if (s.program) check(/^https:\/\//.test(s.program.url), `${w}: ${s.channel} ${s.program.name} has a real URL`);
   history = history.concat(plan.slots.map(s => ({ week_of: w, channel: s.channel, line: s.line, status: "draft", scheduled_at: s.day })));
@@ -90,6 +99,42 @@ check(cur.slots.every(s => s.day >= "2026-10-22"), `current week drops past days
 for (const t of ["more Reach, less volleyball", "push Camp Elevate harder", "Thanksgiving: push Camp Elevate hard + volleyball and basketball camps", "no parties this week, focus on open gym"]) console.log("parseBrief:", JSON.stringify(t), "->", JSON.stringify(parseBrief(t)));
 check(JSON.stringify(parseBrief("more Reach, less volleyball")) === JSON.stringify({ lines: ["reach"], avoid_lines: ["volleyball"] }), "parseBrief more/less");
 check(Object.values(LINE_LINKS).every(l => /^https:\/\//.test(l.page)), "every line has a public page");
+
+// ── Rhythm mode: the club's marketing calendar (the default) ──
+console.log("\n=== Rhythm mode ===");
+const rset = { weights: {}, cadence: DEFAULT_CADENCE };
+let rh = [];
+const dedByMonth = {};
+for (const w of [...WEEKS, "2026-11-23", "2026-11-30", "2026-12-07"]) {
+  const plan = planWeek({ weekOf: w, programs: feed.programs, priorities: [THANKSGIVING], settings: rset, history: rh });
+  const posts = plan.slots.filter(s => s.channel === "social" && s.kind === "post");
+  console.log(`  ${w}: ${plan.slots.map(s => `${s.day.slice(5)} ${s.kind}:${s.line}`).join(", ")}`);
+  const mon = posts.find(s => s.day === w), thu = posts.find(s => s.day === addDaysT(w, 3));
+  if (w !== "2026-11-23") check(mon?.line === "basketball", `${w}: Monday post is basketball (${mon?.line})`);
+  check(thu?.line === "volleyball", `${w}: Thursday post is volleyball (${thu?.line})`);
+  for (const f of plan.slots.filter(s => s.kind === "follow_up")) {
+    const src = posts.find(s => s.day === addDaysT(f.day, -1));
+    check(src && src.line === f.line && f.platforms.includes("instagram_story") && !f.platforms.includes("instagram"), `${w}: ${f.day} follow-up story is on ${f.line}, story platforms only`);
+  }
+  for (let i = 1; i < posts.length; i++) if (posts[i].line === posts[i - 1].line) check(false, `${w}: ${posts[i].line} twice in a row`);
+  const ded = plan.slots.find(s => s.kind === "dedicated"), rnd = plan.slots.find(s => s.kind === "roundup");
+  check(!!rnd, `${w}: weekly roundup email planned (${rnd?.day})`);
+  if (ded) { dedByMonth[ded.day.slice(0, 7)] = (dedByMonth[ded.day.slice(0, 7)] || 0) + 1; check(ded.line !== rnd?.line, `${w}: dedicated email (${ded.line}) isn't the roundup's line (${rnd?.line})`); }
+  check(plan.slots.every(s => s.channel === "sms" || s.channel === "email" || s.theme), `${w}: every post has a theme`);
+  const prev = plan.slots.filter(s => s.kind === "preview");
+  check(prev.length === (["2026-10-26", "2026-11-23"].includes(w) ? 1 : 0), `${w}: ${prev.length} month preview(s)`);
+  rh = rh.concat(plan.slots.map(s => ({ week_of: w, channel: s.channel, kind: s.kind, line: s.line, status: "draft", scheduled_at: s.day })));
+}
+for (const [m, n] of Object.entries(dedByMonth)) check(n <= DEFAULT_CADENCE.email.dedicated_per_month, `dedicated emails in ${m}: ${n}`);
+check(Object.keys(dedByMonth).length > 0, `dedicated emails planned (${JSON.stringify(dedByMonth)})`);
+// "less volleyball" opens Thursday to the other lines; "more Reach" puts Reach on Wednesday.
+const less = planWeek({ weekOf: "2026-12-07", programs: feed.programs, settings: rset, priorities: [{ title: "x", lines: ["reach"], avoid_lines: ["volleyball"], weight: 4, starts_on: "2026-12-07", ends_on: "2026-12-13", channels: ["social", "email"], active: true }] });
+const lp = less.slots.filter(s => s.kind === "post");
+check(!lp.some(s => s.line === "volleyball") && lp.find(s => s.day === "2026-12-09")?.line === "reach", `brief "more Reach, less volleyball": ${lp.map(s => s.day.slice(5) + ":" + s.line).join(", ")}`);
+const nr = normRhythm([{ day: "TUE", follow: "mon" }, { day: "mon", lines: ["basketball", "nope"] }, { day: "xyz" }, { day: "wed", follow: "fri" }]);
+check(JSON.stringify(nr) === JSON.stringify([{ day: "mon", lines: ["basketball"], format: "post" }, { day: "tue", follow: "mon", format: "story" }]), `normRhythm cleans entries: ${JSON.stringify(nr)}`);
+const bal = planWeek({ weekOf: "2026-12-07", programs: feed.programs, settings, priorities: [] });
+check(bal.slots.filter(s => s.channel === "social").length === 4 && bal.slots.every(s => s.kind), "balance mode still makes 4 posts, every slot has a kind");
 
 console.log(`\n${fails ? fails + " FAILED" : "all checks passed"}`);
 process.exit(fails ? 1 : 0);

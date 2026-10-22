@@ -17,6 +17,9 @@
 //   publish_now { id }                      publish an approved (or failed) item now
 //   test        { id, to? }                 email -> you; text -> your phone; social -> preview only
 //   photos_sync · settings_save { patch } · priority_save { priority } · priority_delete { id }
+//   photos_tag  { ids?, mode? }             Claude catalogues photos (line, tags, description,
+//                                           uses, quality, kids visible); no ids = the next
+//                                           untagged ones. mode "replace" overwrites line/tags/alt.
 //
 // Nothing reaches families without an approved item: generate/revise/brief
 // only write drafts, and publishing (here or in api/marketing-cron.js) only
@@ -28,10 +31,11 @@
 import { readBody } from "./_lib/site-forms.js";
 import { verifyDirector, isEmailish, nrm } from "./_lib/site-inbox.js";
 import { normalizePhone } from "./_lib/sms.js";
-import { planWeek, planFlow, signalsFor, mondayOf, addDays, parseBrief, fmtDay, LINE_KEYS } from "../shared/marketing-plan.js";
+import { planWeek, planFlow, signalsFor, mondayOf, addDays, parseBrief, fmtDay, normRhythm, LINE_KEYS } from "../shared/marketing-plan.js";
 import { reviseItem, buildEmail, withHero, aiReady, ctToday } from "./_lib/marketing-ai.js";
 import { connections, publishItem, captionFor, testEmail, testSms } from "./_lib/marketing-publish.js";
 import { serviceSb, loadSettings, loadPriorities, loadHistory, loadPhotos, fetchPrograms, syncPhotos, generateWeek, log } from "./_lib/marketing-core.js";
+import { tagPhotos } from "./_lib/marketing-photos-ai.js";
 
 const fail = (status, error) => Object.assign(new Error(error), { status });
 const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ""));
@@ -149,7 +153,7 @@ export async function run(sb, { me, name }, b) {
       if ("scheduled_at" in patch && patch.scheduled_at && isNaN(new Date(patch.scheduled_at))) throw fail(400, "scheduled_at isn't a date");
       if ("cta_url" in patch && patch.cta_url && !/^https:\/\/\S+$/.test(patch.cta_url)) throw fail(400, "The link must start with https://");
       if ("hashtags" in patch) patch.hashtags = (Array.isArray(patch.hashtags) ? patch.hashtags : String(patch.hashtags || "").split(/[\s,]+/)).map(h => String(h).replace(/[^A-Za-z0-9_]/g, "")).filter(Boolean).slice(0, 10);
-      if ("platforms" in patch) patch.platforms = (patch.platforms || []).filter(x => ["facebook", "instagram", "instagram_story"].includes(x));
+      if ("platforms" in patch) patch.platforms = (patch.platforms || []).filter(x => ["facebook", "instagram", "instagram_story", "facebook_story"].includes(x));
       if (!Object.keys(patch).length) throw fail(400, "Nothing to change");
       // An email's HTML follows its fields unless the HTML itself was edited.
       if (item.channel === "email" && !("email_html" in patch) && ["headline", "body", "email_subject", "email_preheader", "email_blocks", "cta_text", "cta_url", "graphic"].some(k => k in patch)) {
@@ -251,13 +255,32 @@ export async function run(sb, { me, name }, b) {
     case "photos_sync":
       return { sync: await syncPhotos(sb) };
 
+    case "photos_tag": {
+      if (!aiReady()) throw fail(503, "Claude isn't connected (ANTHROPIC_API_KEY)");
+      const ids = (Array.isArray(b.ids) ? b.ids : []).map(Number).filter(n => Number.isInteger(n) && n > 0).slice(0, 8);
+      let q = sb.from("mkt_photos").select("*");
+      q = ids.length ? q.in("id", ids) : q.is("ai_at", null).eq("active", true).order("id").limit(6);
+      const { data, error } = await q;
+      if (error) throw fail(500, error.message);
+      const r = await tagPhotos(sb, data || [], { mode: b.mode === "replace" ? "replace" : "fill", deadline: Date.now() + 100000 });
+      const { count } = await sb.from("mkt_photos").select("id", { count: "exact", head: true }).is("ai_at", null).eq("active", true);
+      if (r.photos.length) await log(sb, null, "photos_tag", { by: me, tagged: r.photos.length, errors: r.errors.length });
+      return { ...r, remaining: count || 0 };
+    }
+
     case "settings_save": {
       const p = b.patch && typeof b.patch === "object" ? b.patch : {};
       const cur = await loadSettings(sb);
       const row = { id: 1, updated_by: me };
       if ("voice" in p) row.voice = String(p.voice || "").slice(0, 4000);
       if ("weights" in p) { row.weights = { ...cur.weights }; for (const k of LINE_KEYS) if (p.weights && k in p.weights) row.weights[k] = Math.max(0, Math.min(10, Math.round(+p.weights[k] || 0))); }
-      if ("cadence" in p && p.cadence && typeof p.cadence === "object") row.cadence = { social: { ...cur.cadence.social, ...(p.cadence.social || {}) }, email: { ...cur.cadence.email, ...(p.cadence.email || {}) }, sms: { ...cur.cadence.sms, ...(p.cadence.sms || {}) } };
+      if ("cadence" in p && p.cadence && typeof p.cadence === "object") {
+        row.cadence = { social: { ...cur.cadence.social, ...(p.cadence.social || {}) }, email: { ...cur.cadence.email, ...(p.cadence.email || {}) }, sms: { ...cur.cadence.sms, ...(p.cadence.sms || {}) } };
+        row.cadence.social.rhythm = normRhythm(row.cadence.social.rhythm);
+        row.cadence.social.mode = row.cadence.social.mode === "balance" ? "balance" : "rhythm";
+        row.cadence.email.dedicated_lines = (row.cadence.email.dedicated_lines || []).filter(l => LINE_KEYS.includes(l));
+      }
+      if ("themes" in p) { row.themes = {}; for (const k of LINE_KEYS) { const v = (Array.isArray(p.themes?.[k]) ? p.themes[k] : String(p.themes?.[k] || "").split(/\n+/)).map(x => String(x).trim().slice(0, 300)).filter(Boolean).slice(0, 20); if (v.length) row.themes[k] = v; } }
       if ("auto_generate" in p) row.auto_generate = !!p.auto_generate;
       if ("generate_day" in p) { const d = String(p.generate_day || "").slice(0, 3).toLowerCase(); if (!["mon", "tue", "wed", "thu", "fri", "sat", "sun"].includes(d)) throw fail(400, "generate_day must be mon..sun"); row.generate_day = d; }
       if ("email_audience" in p) row.email_audience = p.email_audience && typeof p.email_audience === "object" ? p.email_audience : { source: "dssc_contacts" };

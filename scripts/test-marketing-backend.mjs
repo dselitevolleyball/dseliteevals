@@ -46,6 +46,7 @@ globalThis.fetch = async (url, init = {}) => {
   }
   if (u.startsWith("https://graph.facebook.com/")) {
     calls.push({ to: "meta", url: u.split("?")[0], body: init.body ? String(init.body) : null });
+    if (u.includes("/photo_stories")) return new Response(JSON.stringify({ success: true, post_id: "111_story" }));
     if (u.includes("/photos")) return new Response(JSON.stringify({ id: "ph1", post_id: "111_999" }));
     if (u.includes("/media_publish")) return new Response(JSON.stringify({ id: "ig_media_1" }));
     if (u.includes("/media")) return new Response(JSON.stringify({ id: "container_1" }));
@@ -71,6 +72,11 @@ let anthropicMode = "ok";
 function anthropicReply(req) {
   const base = { id: "msg_test", type: "message", role: "assistant", model: "claude-opus-5-5", usage: { input_tokens: 10, output_tokens: 10 } };
   if (anthropicMode === "refusal") return { ...base, content: [], stop_reason: "refusal", stop_details: { type: "refusal", category: null } };
+  if (Array.isArray(req.messages[0].content)) {      // the photo librarian
+    const url = req.messages[0].content.find(b => b.type === "image")?.source?.url || "";
+    const ai = /bad/.test(url) ? null : { line: "basketball", tags: ["basketball", "kids", "action", "made_up_tag"], description: "Kids in a basketball skill lab shooting layups.", alt: "Kids shooting layups at DSSC", people: "kids", setting: "court", uses: ["social_post", "story", "nope"], quality: 4, minors: true };
+    return ai ? { ...base, content: [{ type: "text", text: JSON.stringify(ai) }], stop_reason: "end_turn" } : { ...base, content: [], stop_reason: "refusal", stop_details: { type: "refusal", category: null } };
+  }
   const reqJson = JSON.parse(req.messages[0].content.slice(req.messages[0].content.indexOf("{")));
   const slots = reqJson.slots || [reqJson.slot];
   const items = slots.map((s, i) => ({
@@ -107,6 +113,7 @@ function fakeSupabase(seed = {}) {
       return this;
     }
     ilike(k, v) { this.f.push(r => String(r[k] || "").toLowerCase() === String(v).toLowerCase()); return this; }
+    is(k, v) { this.f.push(r => v === null ? r[k] == null : r[k] === v); return this; }
     contains(k, obj) { this.f.push(r => Object.entries(obj).every(([a, b]) => r[k]?.[a] === b)); return this; }
     order(k, o = {}) { this.ord.push([k, o.ascending !== false]); return this; }
     limit(n) { this.lim = n; return this; }
@@ -211,6 +218,11 @@ check(ps.ok && ps.added === 5 && sb.db.mkt_photos.length === 5, `photos_sync add
 const g1 = await core.generateWeek(sb, { weekOf: "2026-11-02", by: "drew@drippingsportsclub.com" });
 check(g1.items.length >= 5 && g1.items.every(i => i.status === "draft"), `generated ${g1.items.length} drafts for 2026-11-02 (ai: ${g1.ai.error})`);
 check(g1.items.filter(i => i.channel === "social").every(i => i.graphic?.photo_url), "every social draft has a library photo");
+const kinds = g1.items.map(i => i.kind);
+check(["post", "follow_up", "roundup"].every(k => kinds.includes(k)) && g1.items.every(i => i.kind), `calendar rhythm kinds: ${kinds.join(", ")}`);
+const fu = g1.items.filter(i => i.kind === "follow_up");
+check(fu.length && fu.every(i => i.graphic.format === "story" && i.platforms.join() === "instagram_story,facebook_story" && i.theme), `follow-up stories: story format, story platforms, a theme (${fu.map(i => i.graphic.template).join(", ")})`);
+check(g1.items.filter(i => i.kind === "post").every(i => i.graphic.format === "post" && i.platforms.join() === "facebook,instagram"), "posts stay feed posts");
 const g2 = await core.generateWeek(sb, { weekOf: "2026-11-02", by: "drew@drippingsportsclub.com" });
 check(g2.items.length === 0, `generate again without replace adds nothing (${g2.notes.slice(-1)[0]})`);
 const edited = sb.db.mkt_items.find(i => i.channel === "social");
@@ -227,6 +239,8 @@ const past = new Date(Date.now() - 3600e3).toISOString();
 const pick = (ch) => sb.db.mkt_items.find(i => i.channel === ch && i.status === "draft");
 const soc = pick("social"), em = pick("email"), tx = pick("sms") || (sb.db.mkt_items.push({ id: 5000, week_of: "2026-11-02", channel: "sms", line: "camp_elevate", status: "draft", body: "DSSC: Camp Elevate test https://x Reply STOP to opt out.", audience: {}, external_ids: {}, revisions: [], created_at: past, updated_at: past }), sb.db.mkt_items.find(i => i.id === 5000));
 for (const it of [soc, em, tx]) Object.assign(it, { status: "approved", approved_by: "drew@drippingsportsclub.com", scheduled_at: past, asset_url: it.channel === "social" ? "https://example.supabase.co/storage/v1/object/public/marketing/items/1/1.png" : it.asset_url });
+const story = sb.db.mkt_items.find(i => i.kind === "follow_up" && i.status === "draft");
+Object.assign(story, { status: "approved", approved_by: "drew@drippingsportsclub.com", scheduled_at: past, asset_url: "https://x/story.png", asset_story_url: "https://x/story-s.png" });
 const later = pick("social"); Object.assign(later, { status: "approved", asset_url: "https://x/y.png", scheduled_at: new Date(Date.now() + 86400e3).toISOString() });
 const before = JSON.stringify(sb.db);
 const dry = await runCron(sb, { dry: true });
@@ -236,7 +250,8 @@ const live = await runCron(sb, { deadline: Date.now() + 120000 });
 const byId = (id) => sb.db.mkt_items.find(i => i.id === id);
 check(byId(soc.id).status === "published" && byId(soc.id).external_ids.facebook === "111_999" && byId(soc.id).external_ids.instagram === "ig_media_1", `social published: ${JSON.stringify(byId(soc.id).external_ids)}`);
 const metaCalls = calls.filter(c => c.to === "meta").map(c => c.url.replace("https://graph.facebook.com/", ""));
-check(metaCalls.includes("v21.0/111/photos") && metaCalls.includes("v21.0/222/media") && metaCalls.includes("v21.0/222/media_publish"), `Graph calls: ${metaCalls.join(", ")}`);
+check(metaCalls.includes("v26.0/111/photos") && metaCalls.includes("v26.0/222/media") && metaCalls.includes("v26.0/222/media_publish"), `Graph calls: ${metaCalls.join(", ")}`);
+check(byId(story.id).status === "published" && byId(story.id).external_ids.instagram_story === "ig_media_1" && byId(story.id).external_ids.facebook_story === "111_story" && metaCalls.includes("v26.0/111/photo_stories"), `story published to IG + FB stories: ${JSON.stringify(byId(story.id).external_ids)}`);
 const fbBody = new URLSearchParams(calls.find(c => c.url.endsWith("/111/photos")).body);
 check(fbBody.get("url") === soc.asset_url && fbBody.get("caption").includes(soc.cta_url) && /#DrippingSprings/.test(fbBody.get("caption")), "FB post carries the rendered PNG, the caption with link and hashtags");
 const rs = calls.filter(c => c.to === "resend");
@@ -288,6 +303,30 @@ anthropicMode = "ok";
 const { reviseItem } = await import("../api/_lib/marketing-ai.js");
 const rv = await reviseItem({ item: { ...ra.rows[0], id: 1, graphic: { ...ra.rows[0].graphic } }, instruction: "Shorter, and use a different photo", programs: feed.programs, settings, photos });
 check(rv.patch && rv.patch.headline === "Camp Elevate Is Back" && rv.patch.graphic.photo_url !== ra.rows[0].graphic.photo_url && rv.patch.asset_url === null, `revise: new copy, new photo (${rv.patch?.graphic?.photo_url}), asset cleared for re-render`);
+
+// The AI photo librarian.
+const { tagPhotos, photoPatch } = await import("../api/_lib/marketing-photos-ai.js");
+const { pickPhoto } = await import("../api/_lib/marketing-ai.js");
+const psb = fakeSupabase({ mkt_photos: [
+  { id: 1, url: "https://x.supabase.co/storage/v1/object/public/marketing/uploads/1-img-4821.jpg", source: "upload", filename: "IMG_4821.jpg", alt: "IMG 4821", tags: [], line: null, active: true },
+  { id: 2, url: "https://www.drippingsportsclub.com/photos/vb1.jpg", source: "site", alt: "Volleyball pods", tags: ["volleyball"], line: "volleyball", active: true, release_ok: true },
+  { id: 3, url: "https://x/bad.jpg", source: "upload", alt: "", tags: [], line: null, active: true },
+] });
+const tp = await tagPhotos(psb, psb.db.mkt_photos.slice(), { mode: "fill" });
+const pcall = calls.filter(c => c.to === "anthropic" && Array.isArray(c.req.messages[0].content)).pop();
+check(pcall && pcall.req.model === "claude-opus-5-5" && pcall.req.output_config?.effort === "low" && pcall.req.output_config?.format?.type === "json_schema" && pcall.req.fallbacks === "default" && pcall.req.messages[0].content[0].source.type === "url" && !("temperature" in pcall.req), "photo request: Opus 5.5, effort low, json_schema, fallbacks, image by URL");
+const p1 = psb.db.mkt_photos.find(p => p.id === 1), p2 = psb.db.mkt_photos.find(p => p.id === 2), p3 = psb.db.mkt_photos.find(p => p.id === 3);
+check(tp.photos.length === 2 && p1.line === "basketball" && p1.alt === "Kids shooting layups at DSSC" && p1.quality === 4 && p1.minors === true && p1.uses.join() === "social_post,story" && !p1.tags.includes("made_up_tag") && p1.ai_at, `upload catalogued: ${p1.line}, "${p1.alt}", tags ${p1.tags.join(",")}`);
+check(p2.line === "volleyball" && p2.alt === "Volleyball pods" && p2.tags.includes("volleyball") && p2.tags.includes("action") && p2.release_ok === true, "fill mode keeps a site photo's line, alt text and tags (adds to them)");
+check(tp.errors.length === 1 && tp.errors[0].id === 3 && /declined/.test(p3.ai_error) && p3.line === null, `a refusal leaves the photo alone with ai_error (${p3.ai_error})`);
+const rep2 = photoPatch(p2, { line: "club", tags: ["community"], alt: "New alt", people: "mixed", setting: "event", uses: [], quality: 2, minors: false }, { mode: "replace" });
+check(rep2.line === "club" && rep2.tags.join() === "community" && rep2.alt === "New alt", "replace mode overwrites line, tags and alt text");
+const lib = [
+  { url: "https://x/a.jpg", line: "basketball", tags: ["basketball"], width: 1600, height: 1067, quality: 5, active: true },
+  { url: "https://x/b.jpg", line: "basketball", tags: ["basketball"], width: 1067, height: 1600, quality: 3, active: true, uses: ["story"] },
+  { url: "https://x/c.jpg", line: "basketball", tags: ["basketball"], width: 1600, height: 1067, quality: 5, active: true, release_ok: false },
+];
+check(pickPhoto(lib, "basketball", { format: "post" }).url === "https://x/a.jpg" && pickPhoto(lib, "basketball", { format: "story" }).url === "https://x/b.jpg" && ![1, 2, 3, 4, 5].some(i => pickPhoto(lib, "basketball", { seed: String(i) }).url === "https://x/c.jpg"), "photo pick: quality wins for posts, a tall photo for stories, never a 'don't post' photo");
 delete process.env.ANTHROPIC_API_KEY;
 
 // ── 6. POST /api/marketing actions (run() against the fake DB) ──────────────
@@ -349,6 +388,10 @@ const one2 = await A("generate", { week_of: "2026-11-09", program_id: "72263", i
 check(one2.items.length === 1 && one2.items[0].line === "reach", "generate with program_id -> one draft");
 let rv2 = null; try { await A("revise", { id: one2.items[0].id, instruction: "shorter" }); } catch (e) { rv2 = e; }
 check(rv2?.status === 503, "revise without ANTHROPIC_API_KEY -> 503 with a clear message");
+const ss2 = await A("settings_save", { patch: { cadence: { social: { mode: "weird", rhythm: [{ day: "wed", lines: ["reach", "x"] }, { day: "thu", follow: "wed" }, { day: "mon", follow: "fri" }] }, email: { dedicated_lines: ["parties", "zzz"] } }, themes: { reach: "Sell the why\n\nSpeed and strength", nope: ["x"] } } });
+check(ss2.settings.cadence.social.mode === "rhythm" && JSON.stringify(ss2.settings.cadence.social.rhythm) === '[{"day":"wed","lines":["reach"],"format":"post"},{"day":"thu","follow":"wed","format":"story"}]' && JSON.stringify(ss2.settings.cadence.email.dedicated_lines) === '["parties"]' && JSON.stringify(ss2.settings.themes) === '{"reach":["Sell the why","Speed and strength"]}', "settings_save cleans the rhythm, dedicated lines and themes");
+let pt = null; try { await A("photos_tag", { ids: [1] }); } catch (e) { pt = e; }
+check(pt?.status === 503, "photos_tag without ANTHROPIC_API_KEY -> 503");
 let unk = null; try { await A("nope"); } catch (e) { unk = e; }
 check(unk?.status === 400, "unknown action -> 400");
 

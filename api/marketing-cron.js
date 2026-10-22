@@ -9,6 +9,8 @@
 //      auto_generate is on and next week has no items yet, draft next week
 //      and email settings.notify_emails a digest with the HQ link.
 //   3. Once a day: pull the website's photos.json into mkt_photos.
+//   4. Every run: Claude catalogues up to 6 photos nobody has had looked at
+//      yet (new uploads are usually done by HQ right away; this catches the rest).
 //
 //   ?dry=1           list what it would do; writes nothing, sends nothing
 //   ?at=<ISO time>   (with dry=1) pretend it's that time - to check step 2
@@ -21,6 +23,8 @@ import { safeEqual } from "./_lib/site-inbox.js";
 import { mondayOf, addDays } from "../shared/marketing-plan.js";
 import { publishItem } from "./_lib/marketing-publish.js";
 import { serviceSb, loadSettings, generateWeek, sendDigest, syncPhotos, log } from "./_lib/marketing-core.js";
+import { tagPhotos } from "./_lib/marketing-photos-ai.js";
+import { aiReady } from "./_lib/marketing-ai.js";
 
 const TZ = "America/Chicago";
 export const centralClock = (d) => ({
@@ -100,5 +104,14 @@ export async function runCron(sb, { now = new Date(), dry = false, deadline = Da
   const { data: synced } = await sb.from("mkt_log").select("id").eq("kind", "photos_sync").gte("at", dayAgo).limit(1);
   if (!synced?.length) out.photos = await syncPhotos(sb, { dry }).catch(e => ({ ok: false, error: e.message }));
   else out.photos = { skipped: "synced in the last 20 hours" };
+
+  // ── 4. the AI librarian ──
+  if (aiReady() && !dry && Date.now() < deadline - 60000) {
+    const { data: todo } = await sb.from("mkt_photos").select("*").is("ai_at", null).eq("active", true).order("id").limit(6);
+    if (todo?.length) {
+      const r = await tagPhotos(sb, todo, { mode: "fill", deadline: Math.min(deadline - 10000, Date.now() + 90000) });
+      out.photo_ai = { tagged: r.photos.length, errors: r.errors.length };
+    }
+  }
   return out;
 }
