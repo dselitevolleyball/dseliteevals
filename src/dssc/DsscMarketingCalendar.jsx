@@ -101,14 +101,23 @@ export default function MarketingCalendar({ narrow, status, onOpenWeek, onChange
   const chip = (it, big) => {
     const lm = lineMeta(it.line); const [sl, sc] = STATUS_META[it.status] || STATUS_META.draft;
     const picked = sel.has(it.id);
+    // Readable in the grid: what it is and when on top, the whole title (wrapping), then the start of the copy.
+    const isEmail = it.channel === "email";
+    const copy = String((isEmail ? it.email_preheader || it.body : it.body) || "").replace(/\s+/g, " ").trim();
+    const clamp = (n) => ({ display: "-webkit-box", WebkitLineClamp: n, WebkitBoxOrient: "vertical", overflow: "hidden", overflowWrap: "anywhere" });
     return (
       <div key={it.id} onClick={() => selecting ? toggleSel(it.id) : setOpenId(it.id)} title={`${KIND_LABEL[kindOf(it)] || it.channel} · ${lm.label} · ${sl}\n${titleOf(it)}`}
-        style={{ display: "flex", gap: 5, alignItems: "center", cursor: "pointer", background: picked ? DS.limeSoft : it.status === "draft" ? "transparent" : "rgba(255,255,255,0.04)", border: "1px solid " + (picked ? DS.lime : DS.line), borderLeft: "4px solid " + lm.color, borderRadius: 6, padding: big ? "6px 8px" : "3px 5px", marginTop: 4, fontSize: big ? 13 : 11, lineHeight: 1.25, minWidth: 0 }}>
-        {selecting && <input type="checkbox" readOnly checked={picked} style={{ margin: 0, accentColor: DS.lime }} />}
-        <span style={{ flex: "none" }}>{CHANNEL_META[it.channel]?.[1]}</span>
-        <span style={{ color: DS.mut, flex: "none" }}>{timeOf(it.scheduled_at)}</span>
-        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>{titleOf(it)}</span>
-        <span style={{ color: sc, fontWeight: 800, flex: "none" }} title={sl}>{STATUS_ICON[it.status] || ""}</span>
+        style={{ cursor: "pointer", background: picked ? DS.limeSoft : isEmail ? "rgba(96,165,250,0.12)" : it.status === "draft" ? "rgba(255,255,255,0.02)" : "rgba(255,255,255,0.05)", border: "1px solid " + (picked ? DS.lime : isEmail ? "rgba(96,165,250,0.45)" : DS.line), borderLeft: "4px solid " + lm.color, borderRadius: 6, padding: big ? "7px 9px" : "5px 6px", marginTop: 5, fontSize: big ? 13 : 12, lineHeight: 1.3, minWidth: 0 }}>
+        <div style={{ display: "flex", gap: 4, alignItems: "center", fontSize: 11, color: DS.mut, minWidth: 0 }}>
+          {selecting && <input type="checkbox" readOnly checked={picked} style={{ margin: 0, accentColor: DS.lime }} />}
+          <span style={{ flex: "none" }}>{CHANNEL_META[it.channel]?.[1]}</span>
+          <span style={{ fontWeight: 800, color: isEmail ? "#93C5FD" : DS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{KIND_LABEL[kindOf(it)] || CHANNEL_META[it.channel]?.[0]}</span>
+          <span style={{ flex: "none" }}>{timeOf(it.scheduled_at)}</span>
+          <span style={{ flex: 1 }} />
+          <span style={{ color: sc, fontWeight: 800, flex: "none" }} title={sl}>{STATUS_ICON[it.status] || ""}</span>
+        </div>
+        <div style={{ fontWeight: 700, marginTop: 3, color: DS.text, ...clamp(3) }}>{titleOf(it)}</div>
+        {copy && <div style={{ fontSize: 11, color: DS.mut, marginTop: 2, ...clamp(2) }}>{copy}</div>}
       </div>
     );
   };
