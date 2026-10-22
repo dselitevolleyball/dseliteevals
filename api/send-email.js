@@ -35,6 +35,7 @@ const escapeHtml = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
 export const config = { maxDuration: 300 };
 
 import { appOrigin } from "../shared/app-origin.js";
+import { resendKeyFor } from "./_lib/resend-key.js";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -153,6 +154,8 @@ export default async function handler(req, res) {
   const fromAddr = body?.brand === "dssc"
     ? (process.env.DSSC_FROM_EMAIL || ("Dripping Springs Sports Club <" + extractAddress(DSE_FROM_EMAIL) + ">"))
     : DSE_FROM_EMAIL;
+  // drippingsportsclub.com sends with the DSSC Resend account's key.
+  const SEND_KEY = resendKeyFor(fromAddr);
 
   let sent = 0;
   // Resend message ids, returned for scheduled sends so they can be cancelled
@@ -181,7 +184,7 @@ export default async function handler(req, res) {
         try {
           const r = await fetch(RESEND_SINGLE, {
             method: "POST",
-            headers: { Authorization: "Bearer " + RESEND_API_KEY, "Content-Type": "application/json" },
+            headers: { Authorization: "Bearer " + SEND_KEY, "Content-Type": "application/json" },
             body: JSON.stringify(msgFor(email)),
           });
           if (r.ok) { sent++; const d = await r.json().catch(() => null); if (d?.id) ids.push(d.id); continue; }
@@ -190,7 +193,7 @@ export default async function handler(req, res) {
             await new Promise(res => setTimeout(res, 1100));
             const again = await fetch(RESEND_SINGLE, {
               method: "POST",
-              headers: { Authorization: "Bearer " + RESEND_API_KEY, "Content-Type": "application/json" },
+              headers: { Authorization: "Bearer " + SEND_KEY, "Content-Type": "application/json" },
               body: JSON.stringify(msgFor(email)),
             });
             if (again.ok) { sent++; const d = await again.json().catch(() => null); if (d?.id) ids.push(d.id); continue; }
@@ -209,7 +212,7 @@ export default async function handler(req, res) {
       try {
         const r = await fetch(RESEND_BATCH, {
           method: "POST",
-          headers: { Authorization: "Bearer " + RESEND_API_KEY, "Content-Type": "application/json" },
+          headers: { Authorization: "Bearer " + SEND_KEY, "Content-Type": "application/json" },
           body: JSON.stringify(group.map(msgFor)),
         });
         const data = await r.json().catch(() => ({}));

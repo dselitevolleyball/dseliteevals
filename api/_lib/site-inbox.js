@@ -9,6 +9,7 @@
 
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { esc } from "./site-forms.js";
+import { resendKeyFor } from "./resend-key.js";
 import {
   DSSC_DIRECTORS, DSSC_INBOX_ADDRESS, directorByEmail, directorEmails, isDirectorEmail, directorName, canonicalDirectorEmail,
   KIND_LABELS, KINDS, kindLabel, SPORT_LABELS, normSport, inquirySport, routeInquiry, inboxThreadUrl,
@@ -61,7 +62,7 @@ export function newMessageId() {
 
 // One Resend send. Returns { ok, id, status, error }.
 export async function sendResend({ from, to, cc, reply_to, subject, html, text, headers }) {
-  const key = resendKey();
+  const key = resendKeyFor(from);
   if (!key) return { ok: false, error: "RESEND_API_KEY is not set" };
   if (!from) return { ok: false, error: "DSSC_FROM_EMAIL / DSE_FROM_EMAIL is not set" };
   const list = (v) => (Array.isArray(v) ? v : v ? [v] : []).map(nrm).filter(isEmailish);

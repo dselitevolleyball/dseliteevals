@@ -30,6 +30,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { appOrigin } from "../shared/app-origin.js";
 import { sendOneSms, twilioReady } from "./_lib/sms.js";
+import { resendKeyFor } from "./_lib/resend-key.js";
 import Anthropic from "@anthropic-ai/sdk";
 
 const DRAFT_SYSTEM = `You write the short "note to parents" a Dripping Springs Sports Club (DSSC) volleyball or basketball coach sends the families of one class (a clinic or pod session) about today's practice. Parents are not coaches: turn the coach's practice plan into plain language about what their child will work on and why it helps them.
@@ -167,8 +168,8 @@ export default async function handler(req, res) {
   let emailsSent = 0; const emailErrors = [];
   if (emails.size) {
     if (!RESEND_API_KEY || !(DSSC_FROM_EMAIL || DSE_FROM_EMAIL)) return res.status(500).json({ error: "Email isn't configured on the server." });
-    // The club doesn't have its own verified sending domain in Resend yet, so
-    // mail goes out from the DS Elite address under the club's name.
+    // Without DSSC_FROM_EMAIL, mail goes out from the DS Elite address under
+    // the club's name; an @drippingsportsclub.com sender uses the DSSC Resend key.
     const from = DSSC_FROM_EMAIL || ("Dripping Springs Sports Club <" + (DSE_FROM_EMAIL.match(/<([^>]+)>/)?.[1] || DSE_FROM_EMAIL) + ">");
     const imgs = media.filter(m => m.kind === "image");
     const vids = media.filter(m => m.kind !== "image");
@@ -190,7 +191,7 @@ export default async function handler(req, res) {
       while (cursor < list.length) {
         const to = list[cursor++];
         try {
-          const r = await fetch(RESEND_SINGLE, { method: "POST", headers: { Authorization: "Bearer " + RESEND_API_KEY, "Content-Type": "application/json" },
+          const r = await fetch(RESEND_SINGLE, { method: "POST", headers: { Authorization: "Bearer " + resendKeyFor(from), "Content-Type": "application/json" },
             body: JSON.stringify({ from, to: [to], reply_to: replyTo, subject, html, text: plain }) });
           if (r.ok) emailsSent++; else emailErrors.push(to + ": " + (await r.text()).slice(0, 120));
         } catch (e) { emailErrors.push(to + ": " + e.message); }

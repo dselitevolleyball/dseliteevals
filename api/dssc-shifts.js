@@ -18,6 +18,7 @@ import { createClient } from "@supabase/supabase-js";
 import { appOrigin } from "../shared/app-origin.js";
 import webpush from "web-push";
 import crypto from "node:crypto";
+import { resendKeyFor } from "./_lib/resend-key.js";
 
 // Same signing scheme as dssc-approve.js, so the digest's buttons are the same
 // one-tap links as the instant notification. A digest that only says "go and
@@ -124,7 +125,7 @@ export default async function handler(req, res) {
   const mail = async (to, subject, text, html) => {
     if (!RESEND_API_KEY || !DSE_FROM_EMAIL || !to.length) return;
     await fetch("https://api.resend.com/emails", {
-      method: "POST", headers: { Authorization: `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
+      method: "POST", headers: { Authorization: `Bearer ${resendKeyFor(FROM)}`, "Content-Type": "application/json" },
       body: JSON.stringify({ from: FROM, to, subject, text, html }),
     }).catch(() => {});
   };

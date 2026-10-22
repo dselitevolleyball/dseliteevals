@@ -5,6 +5,7 @@
 // staff, coach) - the people projects get assigned to. Managers (owners,
 // admins, DSSC admins, the DSSC directors) create and edit projects and the
 // Slack/email settings; everyone in can work their cards.
+import { resendKeyFor } from "./resend-key.js";
 
 export const OWNER_EMAILS = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"];
 const DIRECTOR_EMAILS = ["hunterhaleysc10@gmail.com", "hunter@drippingsportsclub.com"];
@@ -69,9 +70,9 @@ export const slackText = slackEsc;
 
 // Email from the DSSC address (Resend), one message per recipient.
 export async function sendMail({ to, subject, html, text, replyTo }) {
-  const key = process.env.RESEND_API_KEY || process.env.resend_api_key;
   const { DSSC_FROM_EMAIL, DSE_FROM_EMAIL } = process.env;
   const from = DSSC_FROM_EMAIL || (DSE_FROM_EMAIL ? "Dripping Springs Sports Club <" + ((DSE_FROM_EMAIL.match(/<([^>]+)>/) || [])[1] || DSE_FROM_EMAIL) + ">" : "");
+  const key = resendKeyFor(from);
   if (!key || !from) return { ok: false, error: "Email isn't configured on the server." };
   const r = await fetch("https://api.resend.com/emails", {
     method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },

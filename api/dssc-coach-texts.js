@@ -43,6 +43,7 @@ import { createClient } from "@supabase/supabase-js";
 import { appOrigin } from "../shared/app-origin.js";
 import { sessionStaff, parseClock } from "../shared/dssc-clinics.js";
 import { sendOneSms, normalizePhone, twilioReady } from "./_lib/sms.js";
+import { resendKeyFor } from "./_lib/resend-key.js";
 
 const TZ = "America/Chicago";
 const DREW_PHONE = "+15122029099";
@@ -275,7 +276,7 @@ export default async function handler(req, res) {
       ${podsYesterday.length ? `<table style="border-collapse:collapse;width:100%">${"<tr>" + th("Pod") + th("Coach") + th("Recap") + "</tr>"}${rowsYest}</table>` : "<p style='color:#667'>No pods yesterday.</p>"}
       <p style="color:#667;margin-top:18px">Coaches on today's classes were texted at noon with their player counts${podsToday.length ? " and what's still missing" : ""}; pod leads from yesterday were texted for their recap.</p></div>`;
     const from = DSSC_FROM_EMAIL || ("Dripping Springs Sports Club <" + ((DSE_FROM_EMAIL || "").match(/<([^>]+)>/)?.[1] || DSE_FROM_EMAIL) + ">");
-    const r = await fetch("https://api.resend.com/emails", { method: "POST", headers: { Authorization: `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
+    const r = await fetch("https://api.resend.com/emails", { method: "POST", headers: { Authorization: `Bearer ${resendKeyFor(from)}`, "Content-Type": "application/json" },
       body: JSON.stringify({ from, to: test ? ["drew@dselitevolleyball.com"] : directors, subject: `${test ? "[TEST] " : ""}${toCancel.length ? toCancel.length + " cancelled (no sign-ups) · " : ""}DSSC pods today: plans ${plansDone}/${podsToday.length}, notes ${notesSent}/${podsToday.length} · recaps ${recapsIn}/${podsYesterday.length}`, html }) }).catch(() => null);
     emailed = !!(r && r.ok);
     if (emailed && !test) await sb.from("dssc_coach_texts").upsert({ coach_key: "directors", coach_name: "DSSC directors", for_date: today, kind: "email", items: { podsToday: podsToday.length, podsYesterday: podsYesterday.length }, status: "sent", is_test: false }, { onConflict: "coach_key,for_date,kind" });

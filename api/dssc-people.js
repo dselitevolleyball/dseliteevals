@@ -11,6 +11,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { sendOneSms, normalizePhone, twilioReady } from "./_lib/sms.js";
+import { resendKeyFor } from "./_lib/resend-key.js";
 
 export const DSSC_APP_URL = "https://www.drippingsportsclub.com/hq";
 const OWNER_EMAILS = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"];
@@ -103,7 +104,7 @@ export default async function handler(req, res) {
           <p>${step} On your phone, use "Add to Home Screen" so it opens like an app.</p>
           <p>It's brand new, so please poke around and tell us what's confusing, missing or wrong - just reply to this email.</p>
           <p style="color:#667;font-size:13px">Questions? Reply to this email.<br>- Dripping Springs Sports Club</p></div></div>`;
-      const r = await fetch("https://api.resend.com/emails", { method: "POST", headers: { Authorization: `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
+      const r = await fetch("https://api.resend.com/emails", { method: "POST", headers: { Authorization: `Bearer ${resendKeyFor(from)}`, "Content-Type": "application/json" },
         body: JSON.stringify({ from, to: [p.email], reply_to: "drew@drippingsportsclub.com", subject: "You're set up in DSSC HQ", html }) }).catch(() => null);
       sent.email = !!(r && r.ok);
     }

@@ -44,9 +44,11 @@ Forwarding and POP/IMAP → **IMAP enabled**.
 
 ### 3. Resend
 `DSSC_FROM_EMAIL` must be an address on a domain verified in Resend, e.g.
-`Dripping Springs Sports Club <info@drippingsportsclub.com>` (verify
-drippingsportsclub.com under Resend → Domains if it isn't yet). Without it the
-inbox borrows `DSE_FROM_EMAIL` under the club's name.
+`Dripping Springs Sports Club <info@drippingsportsclub.com>`.
+drippingsportsclub.com is verified on the DSSC Resend account, so an
+@drippingsportsclub.com sender goes out with `DSSC_RESEND_API_KEY`
+(api/_lib/resend-key.js); other senders use `RESEND_API_KEY`. Without
+`DSSC_FROM_EMAIL` the inbox borrows `DSE_FROM_EMAIL` under the club's name.
 
 ### 4. Environment variables — HQ Vercel project (dseliteevals)
 | Var | Required | What it is |

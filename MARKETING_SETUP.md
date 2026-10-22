@@ -50,8 +50,9 @@ The Page token stops working if you change your Facebook password or remove the 
 happens, Marketing → Settings shows Facebook/Instagram as not connected; repeat steps 3–5.
 
 ### 4. Email
-- `DSSC_FROM_EMAIL` is already set and verified in Resend (the inbox uses it), and so is
-  `RESEND_API_KEY`. Replies to marketing email go to info@, which lands in the shared Inbox.
+- `DSSC_FROM_EMAIL` = `Dripping Springs Sports Club <info@drippingsportsclub.com>`. drippingsportsclub.com is
+  verified on the DSSC Resend account, so mail from it goes out with `DSSC_RESEND_API_KEY`
+  (api/_lib/resend-key.js picks the key by the From domain). Replies to marketing email go to info@, which lands in the shared Inbox.
 - Set **`MARKETING_UNSUB_SECRET`** to a long random string (`openssl rand -hex 32`). It signs
   every email's unsubscribe link. Don't change it later, or links in emails already sent stop working.
 - The audience is every `dssc_contacts` row with an email, minus anyone who unsubscribed
@@ -74,7 +75,8 @@ Settings). There are at most 2 texts a month.
 | `MARKETING_UNSUB_SECRET` | for email | Signs unsubscribe links (falls back to `CRON_SECRET`) |
 | `META_GRAPH_VERSION` | no | Default `v21.0` |
 | `MARKETING_PUBLIC_BASE` | no | Where the unsubscribe link points; default `https://www.drippingsportsclub.com/hq` |
-| `ANTHROPIC_API_KEY`, `RESEND_API_KEY`, `DSSC_FROM_EMAIL`, `CRON_SECRET`, `TWILIO_*`, `DSSC_TWILIO_FROM_NUMBER` | — | Already set |
+| `DSSC_FROM_EMAIL` | for email | `Dripping Springs Sports Club <info@drippingsportsclub.com>` (sent with `DSSC_RESEND_API_KEY`) |
+| `ANTHROPIC_API_KEY`, `RESEND_API_KEY`, `DSSC_RESEND_API_KEY`, `CRON_SECRET`, `TWILIO_*`, `DSSC_TWILIO_FROM_NUMBER` | — | Already set |
 
 Redeploy after you add them. **Marketing → Settings** lists anything still missing.
 

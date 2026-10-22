@@ -26,6 +26,7 @@ import { sendResend, dsscFrom, resendKey, nrm, isEmailish, safeEqual, inboxAddre
 import { twilioReady, notReadyMessage, sendOneSms } from "./sms.js";
 import { EMPTY_FILTERS } from "../../shared/campaign-audience.js";
 import { buildEmail, withHero, UNSUB_TOKEN } from "./marketing-ai.js";
+import { resendKeyFor } from "./resend-key.js";
 
 const env = () => process.env;
 export const graphVersion = () => env().META_GRAPH_VERSION || "v21.0";
@@ -144,7 +145,7 @@ const personalize = (s, email) => String(s).split(UNSUB_TOKEN).join(unsubUrl(ema
 async function resendBatch(payload, idem) {
   const r = await fetch("https://api.resend.com/emails/batch", {
     method: "POST",
-    headers: { Authorization: `Bearer ${resendKey()}`, "Content-Type": "application/json", "Idempotency-Key": idem },
+    headers: { Authorization: `Bearer ${resendKeyFor(payload[0]?.from)}`, "Content-Type": "application/json", "Idempotency-Key": idem },
     body: JSON.stringify(payload),
   });
   const d = await r.json().catch(() => ({}));

@@ -51,6 +51,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { makeRateResolver, makeNameResolver, lastPayWeek, norm } from "../shared/coach-pay.js";
+import { resendKeyFor } from "./_lib/resend-key.js";
 
 const OWNER_EMAILS = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"];
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -228,12 +229,13 @@ ${club === "dssc" ? "Dripping Springs Sports Club" : "Drew Rose\nDS Elite Volley
       + `<p style="margin:0 0 14px">Thanks for the work.</p>`
       + (club === "dssc" ? '<p style="margin:0">Dripping Springs Sports Club</p></div>' : '<p style="margin:0">Drew Rose<br>DS Elite Volleyball</p></div>');
 
+    const from = club === "dssc" ? (process.env.DSSC_FROM_EMAIL || ("Dripping Springs Sports Club <" + (String(DSE_FROM_EMAIL).match(/<([^>]+)>/)?.[1] || DSE_FROM_EMAIL) + ">")) : DSE_FROM_EMAIL;
     try {
       const resp = await fetch("https://api.resend.com/emails", {
         method: "POST",
-        headers: { Authorization: `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
+        headers: { Authorization: `Bearer ${resendKeyFor(from)}`, "Content-Type": "application/json" },
         body: JSON.stringify({
-          from: club === "dssc" ? (process.env.DSSC_FROM_EMAIL || ("Dripping Springs Sports Club <" + (String(DSE_FROM_EMAIL).match(/<([^>]+)>/)?.[1] || DSE_FROM_EMAIL) + ">")) : DSE_FROM_EMAIL,
+          from,
           to: [r.to], reply_to: club === "dssc" ? (process.env.DSSC_REPLY_TO || "hunter@drippingsportsclub.com") : replyTo,
           subject: `Your ${club === "dssc" ? "DSSC" : "DS Elite"} hours: ${fmtDay(start)} – ${fmtDay(end)} (${hrs(r.total)})`,
           text, html,
