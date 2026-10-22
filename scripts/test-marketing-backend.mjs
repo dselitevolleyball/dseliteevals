@@ -188,7 +188,7 @@ check(metaCalls.includes("v26.0/111/photos") && metaCalls.includes("v26.0/222/me
 check(byId(story.id).status === "published" && byId(story.id).external_ids.instagram_story === "ig_media_1" && byId(story.id).external_ids.facebook_story === "111_story" && metaCalls.includes("v26.0/111/photo_stories"), `story published to IG + FB stories: ${JSON.stringify(byId(story.id).external_ids)}`);
 const fbBody = new URLSearchParams(calls.find(c => c.url.endsWith("/111/photos")).body);
 check(fbBody.get("url") === soc.asset_url && fbBody.get("caption").includes(soc.cta_url) && /#DrippingSprings/.test(fbBody.get("caption")), "FB post carries the rendered PNG, the caption with link and hashtags");
-const rs = calls.filter(c => c.to === "resend");
+const rs = calls.filter(c => c.to === "resend" && c.url.endsWith("/emails/batch"));
 check(byId(em.id).status === "published" && byId(em.id).external_ids.email.sent === 228 && rs.length === 3, `email published to ${byId(em.id).external_ids.email.sent} (230 contacts - 1 no email - 1 unsubscribed) in ${rs.length} batches of ≤100`);
 const s0 = rs[0].sample;
 check(s0.headers["List-Unsubscribe"].includes("/hq/api/marketing-unsubscribe?e=") && s0.html.includes("marketing-unsubscribe?e=" + encodeURIComponent(s0.to[0])) && !s0.html.includes("{{unsubscribe_url}}") && s0.reply_to === "info@drippingsportsclub.com", "each email has its own unsubscribe link + header, replies go to info@");
@@ -204,15 +204,32 @@ check(live.photos?.skipped || live.photos?.ok, `photos step: ${JSON.stringify(li
 // Auto-generate: a Sunday after 5 pm CT, next week empty.
 const sunday = new Date("2026-11-08T23:30:00Z"); // Sun Nov 8, 5:30 pm CST
 const autoDry = await runCron(sb, { now: sunday, dry: true });
-check(autoDry.auto && autoDry.auto.week_of === "2026-11-09" && /generate the week of 2026-11-09/.test(autoDry.auto.would || ""), `auto-generate (dry) on Sunday 5:30 pm CT: ${autoDry.auto.would}`);
+check(autoDry.auto && autoDry.auto.week_of === "2026-11-09" && /draft the week of 2026-11-09/.test(autoDry.auto.would || ""), `auto-generate (dry) on Sunday 5:30 pm CT: ${autoDry.auto.would}`);
 const auto = await runCron(sb, { now: sunday, deadline: Date.now() + 200000 });
 check(auto.auto.ran && auto.auto.created > 0 && auto.auto.digest?.ok, `auto-generated ${auto.auto.created} drafts for 2026-11-09 and sent the digest`);
 const digest = calls.filter(c => c.to === "resend" && !Array.isArray(c.sample?.to) || (c.to === "resend" && c.count === 1 && /drafts? ready/.test(c.sample.subject || ""))).pop();
 check(digest && /drafts? ready for the week of Mon, Nov 9/.test(digest.sample.subject) && digest.sample.html.includes("view=dsscmarketing&week=2026-11-09"), `digest: "${digest?.sample.subject}"`);
+// The horizon (plan_ahead 2 = next week and the one after) fills one week per run; nothing is drafted twice.
+let fill, guard = 0;
+do { fill = await runCron(sb, { now: sunday, deadline: Date.now() + 200000 }); guard++; } while (fill.auto.ran && guard < 4);
+check(!fill.auto.ran && fill.auto.weeks.length === 2 && fill.auto.weeks.every(w => w.items > 0 || w.already), `horizon full after ${guard} run(s): ${JSON.stringify(fill.auto.weeks)}`);
+check(!fill.auto.reminder, "no 'still waiting' reminder right after the 'drafts ready' email");
+// Half an hour later (still Sunday evening): nothing new to draft; next week's drafts are waiting -> one reminder.
 const auto2 = await runCron(sb, { now: new Date("2026-11-09T00:00:00Z") });
 check(!auto2.auto.ran, "auto-generate doesn't run twice for the same week");
-const mon = await runCron(sb, { now: new Date("2026-11-09T23:30:00Z"), dry: true });
-check(!mon.auto.would, "nothing auto-generated on a Monday");
+await runCron(sb, { now: new Date("2026-11-09T01:00:00Z") });
+const remMails = calls.filter(c => c.to === "resend" && /still waiting/.test(c.sample?.subject || ""));
+check(remMails.length === 1 && /week of Mon, Nov 9/.test(remMails[0].sample.subject), `one review reminder: "${remMails[0]?.sample.subject}" (${remMails.length} sent)`);
+// Drafts made in the last 20 hours don't get a reminder yet.
+const sbNow = new Date("2026-11-22T23:30:00Z");
+for (const i of sb.db.mkt_items.filter(x => x.week_of === "2026-11-23")) i.created_at = new Date(sbNow.getTime() - 3600e3).toISOString();
+const freshRun = await runCron(sb, { now: sbNow, dry: true });
+check(!freshRun.auto.would_remind || !sb.db.mkt_items.some(x => x.week_of === "2026-11-23" && x.status === "draft"), `no reminder for drafts made an hour ago (${freshRun.auto.would_remind || "none"})`);
+const off = await runCron(sb, { now: sunday, dry: true }).then(r => r.auto);
+check(off.plan_ahead === 2 && off.enabled, `plan-ahead reported: ${JSON.stringify({ plan_ahead: off.plan_ahead, enabled: off.enabled })}`);
+sb.db.mkt_items = sb.db.mkt_items.filter(i => i.week_of !== "2026-11-16");
+const cleared = await runCron(sb, { now: new Date("2026-11-10T15:00:00Z"), dry: true });
+check(!/2026-11-16/.test(cleared.auto.would || ""), `a week the machine drafted once isn't redrafted after someone cleared it (would: ${cleared.auto.would || "nothing"})`);
 
 // ── 5. Claude request shape + fallbacks (fake API) ───────────────────────────
 console.log("\n== 5. Claude call (stubbed API) ==");

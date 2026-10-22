@@ -5,9 +5,10 @@
 //      row the texts cron sends). An email cut short mid-send resumes; a post
 //      stuck in 'publishing' for 10+ minutes is marked failed so nobody
 //      double-posts it blind.
-//   2. Auto-generate: on settings.generate_day after 5 pm Central, if
-//      auto_generate is on and next week has no items yet, draft next week
-//      and email settings.notify_emails a digest with the HQ link.
+//   2. Auto-draft: with auto_generate on, every empty week in the next
+//      settings.plan_ahead weeks (default 2) is drafted (one per run) and
+//      settings.notify_emails get a digest with the HQ link; on generate_day
+//      after 5 pm Central, a reminder if next week still has drafts waiting.
 //   3. Once a day: pull the website's photos.json into mkt_photos.
 //   4. Every run: Claude catalogues up to 6 photos nobody has had looked at
 //      yet (new uploads are usually done by HQ right away; this catches the rest).
@@ -85,24 +86,43 @@ export async function runCron(sb, { now = new Date(), dry = false, deadline = Da
     out.published.push(await publishItem(sb, it, { settings, dry, deadline: Math.min(deadline - 15000, Date.now() + 120000), resume: it.status === "publishing" }).catch(e => ({ id: it.id, channel: it.channel, status: "error", error: e.message })));
   }
 
-  // ── 2. auto-generate next week ──
+  // ── 2. keep the coming weeks drafted ──
+  // Every empty week inside the horizon (settings.plan_ahead, default 2: next
+  // week and the one after) is drafted - one week per run, each takes about a
+  // minute - and the directors get the "drafts ready" email. A week the
+  // machine already drafted once isn't redrafted if someone cleared it. On
+  // generate_day after 5 pm, if next week still has drafts waiting, one
+  // reminder goes out.
   const ct = centralClock(now);
-  const nextWeek = addDays(mondayOf(ct.date), 7);
-  out.auto = { day: ct.dow, hour: ct.hour, generate_day: settings.generate_day, enabled: !!settings.auto_generate, week_of: nextWeek, ran: false };
-  if (settings.auto_generate && ct.dow === String(settings.generate_day || "sun").slice(0, 3) && ct.hour >= 17) {
-    const { count } = await sb.from("mkt_items").select("id", { count: "exact", head: true }).eq("week_of", nextWeek);
-    const { data: done } = await sb.from("mkt_log").select("id").eq("kind", "auto_generate").contains("detail", { week_of: nextWeek }).limit(1);
-    out.auto.existing = count || 0;
-    out.auto.already = !!done?.length;
-    if (!count && !done?.length) {
-      if (dry) out.auto.would = `generate the week of ${nextWeek} and email ${(settings.notify_emails || []).join(", ")}`;
-      else if (Date.now() < deadline - 110000) {
-        try {
-          const r = await generateWeek(sb, { weekOf: nextWeek, by: "auto", timeoutMs: Math.max(30000, Math.min(95000, deadline - Date.now() - 20000)) });
-          out.auto.ran = true; out.auto.created = r.items.length; out.auto.ai = r.ai && { used: r.ai.used, error: r.ai.error };
-          if (r.items.length) out.auto.digest = await sendDigest(sb, settings, nextWeek, r.items).then(x => ({ ok: x.ok, error: x.error || null }));
-        } catch (e) { out.auto.error = e.message; await log(sb, null, "auto_generate_error", { week_of: nextWeek, error: e.message }); }
-      } else out.auto.deferred = "out of time - next run";
+  const thisMon = mondayOf(ct.date);
+  const ahead = Math.max(0, Math.min(6, Number.isFinite(+settings.plan_ahead) ? +settings.plan_ahead : 2));
+  out.auto = { enabled: !!settings.auto_generate, plan_ahead: ahead, weeks: [], ran: false };
+  if (settings.auto_generate) {
+    for (let i = 1; i <= ahead; i++) {
+      const wk = addDays(thisMon, 7 * i);
+      const { count } = await sb.from("mkt_items").select("id", { count: "exact", head: true }).eq("week_of", wk);
+      const { data: done } = await sb.from("mkt_log").select("id").eq("kind", "auto_generate").contains("detail", { week_of: wk }).limit(1);
+      if (count || done?.length) { out.auto.weeks.push({ week_of: wk, items: count || 0, already: !!done?.length }); continue; }
+      out.auto.week_of = wk;
+      if (dry) { out.auto.would = `draft the week of ${wk} and email ${(settings.notify_emails || []).join(", ")}`; break; }
+      if (Date.now() > deadline - 110000) { out.auto.deferred = "out of time - next run"; break; }
+      try {
+        const r = await generateWeek(sb, { weekOf: wk, by: "auto", timeoutMs: Math.max(30000, Math.min(95000, deadline - Date.now() - 20000)) });
+        out.auto.ran = true; out.auto.created = r.items.length; out.auto.ai = r.ai && { used: r.ai.used, error: r.ai.error };
+        if (r.items.length) out.auto.digest = await sendDigest(sb, settings, wk, r.items).then(x => ({ ok: x.ok, error: x.error || null }));
+      } catch (e) { out.auto.error = e.message; await log(sb, null, "auto_generate_error", { week_of: wk, error: e.message }); }
+      break;
+    }
+    const nextWeek = addDays(thisMon, 7);
+    if (ct.dow === String(settings.generate_day || "sun").slice(0, 3) && ct.hour >= 17) {
+      const { data: waiting } = await sb.from("mkt_items").select("*").eq("week_of", nextWeek).eq("status", "draft");
+      const { data: sent } = await sb.from("mkt_log").select("id").eq("kind", "review_reminder").contains("detail", { week_of: nextWeek }).limit(1);
+      // Not on the heels of the "drafts ready" email: drafts made in the last 20 hours don't need a reminder yet.
+      const justDrafted = (out.auto.ran && out.auto.week_of === nextWeek) || (waiting || []).some(i => i.created_at && now - new Date(i.created_at) < 20 * 3600e3);
+      if (waiting?.length && !sent?.length && !justDrafted) {
+        if (dry) out.auto.would_remind = `${waiting.length} drafts waiting for the week of ${nextWeek}`;
+        else out.auto.reminder = await sendDigest(sb, settings, nextWeek, waiting, { reminder: true }).then(x => ({ ok: x.ok, error: x.error || null }));
+      }
     }
   }
 

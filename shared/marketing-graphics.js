@@ -602,6 +602,22 @@ function tQuote(ctx, spec, imgs, F) {
 // ── Public ─────────────────────────────────────────────────────────────────
 // Draws `spec` on `canvas` (resized to the format). Synchronous: load fonts
 // (ensureFonts) and images (loadGraphicImages) first.
+// "Custom": a finished graphic Drew uploaded (made in Canva, a flyer…) posted
+// exactly as is — no brand text on top. Filled edge to edge when its shape is
+// close to the format; otherwise shown whole on the brand ink (a 4:5 post in
+// a 9:16 story, say) rather than cropped.
+function tCustom(ctx, imgs, F) {
+  const { W, H } = F;
+  ctx.fillStyle = BRAND.ink; ctx.fillRect(0, 0, W, H);
+  const img = imgs.photoImg;
+  if (!img) { drawPhotoFallback(ctx, 0, 0, W, H, imgs.shieldImg); return; }
+  const r = (img.width / img.height) / (W / H);
+  if (r > 0.92 && r < 1.08) { drawCover(ctx, img, 0, 0, W, H, 0.5); return; }
+  const s = Math.min(W / img.width, H / img.height);
+  const w = img.width * s, h = img.height * s;
+  ctx.drawImage(img, (W - w) / 2, (H - h) / 2, w, h);
+}
+
 export function renderGraphic(canvas, spec = {}, imgs = {}) {
   const fmt = FORMATS[spec.format] ? spec.format : "post";
   const F = frame(fmt);
@@ -614,7 +630,8 @@ export function renderGraphic(canvas, spec = {}, imgs = {}) {
   ctx.textAlign = "left"; ctx.textBaseline = "alphabetic"; setSpacing(ctx, 0);
   const s = { ...spec, tag: spec.tag ?? "", headline: spec.headline || "Where Dripping Springs plays" };
   const t = spec.template;
-  if (t === "starts") tStarts(ctx, s, imgs, F);
+  if (t === "custom") tCustom(ctx, imgs, F);
+  else if (t === "starts") tStarts(ctx, s, imgs, F);
   else if (t === "list") tList(ctx, s, imgs, F);
   else if (t === "countdown") tPhoto(ctx, s, imgs, F, true);
   else if (t === "quote") tQuote(ctx, s, imgs, F);
