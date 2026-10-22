@@ -92,12 +92,13 @@ function anthropicReply(req) {
 function fakeSupabase(seed = {}) {
   const db = Object.fromEntries(Object.entries(seed).map(([k, v]) => [k, v.map(r => ({ ...r }))]));
   const ids = {};
+  const inserted = {};                 // raw insert payloads, as PostgREST would get them
   const T = (t) => (db[t] ||= []);
   const now = () => new Date().toISOString();
   class Q {
     constructor(t) { this.t = t; this.f = []; this.op = "select"; this.ord = []; this.lim = null; this.rng = null; this.one = null; this.ret = false; this.opts = {}; }
     select(_c, opts = {}) { if (this.op === "select") this.opts = opts; else this.ret = true; return this; }
-    insert(rows) { this.op = "insert"; this.rows = [].concat(rows); return this; }
+    insert(rows) { this.op = "insert"; this.rows = [].concat(rows); (inserted[this.t] ||= []).push(...this.rows.map(r => ({ ...r }))); return this; }
     upsert(rows, o = {}) { this.op = "upsert"; this.rows = [].concat(rows); this.uo = o; return this; }
     update(p) { this.op = "update"; this.patch = p; return this; }
     delete() { this.op = "delete"; return this; }
@@ -157,7 +158,7 @@ function fakeSupabase(seed = {}) {
     }
     then(res, rej) { try { return Promise.resolve(this.run()).then(res, rej); } catch (e) { return Promise.reject(e).then(res, rej); } }
   }
-  return { db, from: (t) => new Q(t), auth: { getUser: async () => ({ data: { user: null } }) } };
+  return { db, inserted, from: (t) => new Q(t), auth: { getUser: async () => ({ data: { user: null } }) } };
 }
 
 let fails = 0;
@@ -217,6 +218,10 @@ const ps = await core.syncPhotos(sb);
 check(ps.ok && ps.added === 5 && sb.db.mkt_photos.length === 5, `photos_sync added ${ps.added} of ${ps.total}`);
 const g1 = await core.generateWeek(sb, { weekOf: "2026-11-02", by: "drew@drippingsportsclub.com" });
 check(g1.items.length >= 5 && g1.items.every(i => i.status === "draft"), `generated ${g1.items.length} drafts for 2026-11-02 (ai: ${g1.ai.error})`);
+// PostgREST inserts a batch with the union of its rows' keys and NULL for a
+// missing one, so every row must carry the same keys (email_blocks is NOT NULL).
+const keySets = new Set(sb.inserted.mkt_items.map(r => Object.keys(r).sort().join(",")));
+check(keySets.size === 1 && sb.inserted.mkt_items.every(r => Array.isArray(r.email_blocks)), `every drafted row has the same columns (${keySets.size} shape${keySets.size === 1 ? "" : "s"}) and an email_blocks array`);
 check(g1.items.filter(i => i.channel === "social").every(i => i.graphic?.photo_url), "every social draft has a library photo");
 const kinds = g1.items.map(i => i.kind);
 check(["post", "follow_up", "roundup"].every(k => kinds.includes(k)) && g1.items.every(i => i.kind), `calendar rhythm kinds: ${kinds.join(", ")}`);

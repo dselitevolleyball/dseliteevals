@@ -490,6 +490,9 @@ export function rowFor(slot, copy, { weekOf, feedById = new Map(), photos = [], 
     status: "draft", scheduled_at: ctIso(slot.day, slot.time),
     headline: copy.headline, body: copy.body, cta_text: copy.cta_text, cta_url, hashtags: copy.hashtags || [],
     graphic, audience: null, created_by: by,
+    // Every row carries every column: a batch insert sends the union of the
+    // rows' keys, and a key a row lacks goes in as NULL (email_blocks is NOT NULL).
+    email_subject: null, email_preheader: null, email_html: null, email_blocks: [],
   };
   if (slot.channel === "email") {
     row.email_subject = copy.email_subject; row.email_preheader = copy.email_preheader;
