@@ -32,6 +32,10 @@
       "destination": "/api/kickoff-form"
     },
     {
+      "source": "/team-parent",
+      "destination": "/api/team-parent-form"
+    },
+    {
       "source": "/commitment",
       "destination": "/api/commitment-form"
     },
