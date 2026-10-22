@@ -147,7 +147,7 @@ function singleSlot({ weekOf, today, feed, settings, single, instruction, taken 
   // An idea brings its own day (in this week, not past) and format.
   const asked = /^\d{4}-\d{2}-\d{2}$/.test(String(single.day || "")) && single.day >= today && single.day >= weekOf && single.day <= addDays(weekOf, 6) ? single.day : null;
   const day = asked || cands.find(d => !taken.has(`social:${d}:post`)) || cands[0] || (today > weekOf ? today : weekOf);
-  const time = channel === "social" ? cad.social?.time || "18:30" : channel === "email" ? cad.email?.time || "07:30" : cad.sms?.time || "17:30";
+  const time = /^\d{2}:\d{2}$/.test(String(single.time || "")) ? single.time : channel === "social" ? cad.social?.time || "18:30" : channel === "email" ? cad.email?.time || "07:30" : cad.sms?.time || "17:30";
   const story = channel === "social" && single.format === "story";
   return {
     channel, kind: channel === "social" ? (story ? "story" : "post") : channel === "email" ? "dedicated" : "text", format: story ? "story" : undefined,

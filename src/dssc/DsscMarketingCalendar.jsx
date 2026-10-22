@@ -6,12 +6,16 @@
 // selection, in one go. The cron keeps the coming weeks drafted (Settings →
 // Automation), so Monday is "look, tweak, approve all".
 //
-// Two views: Month (the grid) and List (every item of the visible weeks with
-// its picture and copy, for reading the week top to bottom). Phones get List.
+// Three views: Month (the grid), Week (one week, big cards, each with its
+// time to change in place) and List (every item with its picture and copy,
+// for reading the week top to bottom). Phones get List. In Month and Week,
+// drag an item to another day to move it (it keeps its time), and the + on a
+// day turns an idea into a draft for that day (Claude writes it; it lands on
+// the calendar like everything else).
 
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { supabase } from "../supabase";
-import { DS, Btn, Tag } from "./DsscHub.jsx";
+import { DS, Btn, Tag, Grow, inputStyle } from "./DsscHub.jsx";
 import {
   mktApi, isMissingTable, MIGRATION_MSG, lineMeta, lineLabel, LineChip, ANGLES, STATUS_META, CHANNEL_META, KIND_LABEL, kindOf,
   mondayOf, addDays, fmtDate, timeOf, dayOf, approveItem, readyIssue, chipStyle, Msg, Panel, LINES, GraphicPreview, specOf, hasGraphic,
@@ -25,6 +29,9 @@ const todayIso = () => new Date().toLocaleDateString("en-CA");
 const DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const titleOf = (it) => (it.channel === "email" ? it.email_subject : it.graphic?.headline) || it.headline || it.program?.name || lineLabel(it.line);
 const thumbOf = (it) => it.asset_url || it.graphic?.custom_url || it.graphic?.photo_url || null;
+const canMove = (it) => !["publishing", "published"].includes(it.status);
+const KINDS_ADD = [["post", "📱 Post", "social"], ["story", "📱 Story", "social"], ["email", "✉️ Email", "email"], ["text", "💬 Text", "sms"]];
+const DEFAULT_TIME = { post: "18:30", story: "18:30", email: "07:30", text: "17:30" };
 const STATUS_ICON = { draft: "○", approved: "✓", publishing: "…", published: "✓✓", failed: "!", rejected: "✕" };
 
 export default function MarketingCalendar({ narrow, status, onOpenWeek, onChanged }) {
@@ -40,14 +47,20 @@ export default function MarketingCalendar({ narrow, status, onOpenWeek, onChange
   const [sel, setSel] = useState(() => new Set());
   const [chan, setChan] = useState("all");
   const [only, setOnly] = useState("all");      // all | todo
+  const [weekStart, setWeekStart] = useState(() => mondayOf(todayIso()));
+  const [addFor, setAddFor] = useState(null);   // the day the "+" was pressed on
+  const [dropDay, setDropDay] = useState(null);
+  const dragId = useRef(null);
   useEffect(() => { if (narrow) setView("list"); }, [narrow]);
 
-  // The weeks on screen: Monday on/before the 1st through the Sunday on/after month end.
+  // The weeks on screen: Monday on/before the 1st through the Sunday on/after
+  // month end — or the one week in Week view.
   const weeks = useMemo(() => {
+    if (view === "week") return [weekStart];
     const start = mondayOf(month), end = addDays(addMonths(month, 1), -1);
     const out = []; for (let w = start; w <= end; w = addDays(w, 7)) out.push(w);
     return out;
-  }, [month]);
+  }, [month, view, weekStart]);
 
   const load = useCallback(async () => {
     const { data, error } = await supabase.from("mkt_items").select("*").gte("week_of", weeks[0]).lte("week_of", weeks[weeks.length - 1]).order("scheduled_at", { ascending: true, nullsFirst: false }).order("id");
@@ -91,6 +104,28 @@ export default function MarketingCalendar({ narrow, status, onOpenWeek, onChange
     catch (e) { setMsg({ err: e.message }); }
     setBusy("");
   };
+  // Move to another day (keeps its time) or change the time; an approved item stays approved.
+  const moveTo = (it, day, hhmm) => {
+    const t = hhmm || timeOf(it.scheduled_at) || DEFAULT_TIME[kindOf(it) === "text" ? "text" : it.channel === "email" ? "email" : "post"];
+    const at = new Date(`${day}T${t}:00`).toISOString();
+    if (at === it.scheduled_at) return;
+    patchItem(it, { scheduled_at: at });
+  };
+  const onDrop = (day) => (e) => {
+    e.preventDefault(); setDropDay(null);
+    const id = Number(e.dataTransfer.getData("text/plain") || dragId.current); dragId.current = null;
+    const it = (items || []).find(x => x.id === id);
+    if (it && canMove(it) && (dayOf(it.scheduled_at) || it.week_of) !== day) moveTo(it, day);
+  };
+  const dropProps = (day) => ({
+    onDragOver: (e) => { if (dragId.current != null) { e.preventDefault(); if (dropDay !== day) setDropDay(day); } },
+    onDragLeave: () => setDropDay(d => d === day ? null : d),
+    onDrop: onDrop(day),
+  });
+  const plusBtn = (day) => day >= today && (
+    <button onClick={(e) => { e.stopPropagation(); setAddFor(day); }} title="Add an idea for this day" aria-label={"Add something on " + day}
+      style={{ marginLeft: "auto", width: 22, height: 22, lineHeight: "18px", borderRadius: 999, border: "1px solid " + DS.lineStrong, background: "transparent", color: DS.lime, fontWeight: 900, fontSize: 15, cursor: "pointer", padding: 0 }}>+</button>
+  );
   const toggleSel = (id) => setSel(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const open = openId ? (items || []).find(x => x.id === openId) : null;
   const selItems = (items || []).filter(it => sel.has(it.id));
@@ -106,16 +141,19 @@ export default function MarketingCalendar({ narrow, status, onOpenWeek, onChange
     const copy = String((isEmail ? it.email_preheader || it.body : it.body) || "").replace(/\s+/g, " ").trim();
     const clamp = (n) => ({ display: "-webkit-box", WebkitLineClamp: n, WebkitBoxOrient: "vertical", overflow: "hidden", overflowWrap: "anywhere" });
     return (
-      <div key={it.id} onClick={() => selecting ? toggleSel(it.id) : setOpenId(it.id)} title={`${KIND_LABEL[kindOf(it)] || it.channel} · ${lm.label} · ${sl}\n${titleOf(it)}`}
+      <div key={it.id} onClick={() => selecting ? toggleSel(it.id) : setOpenId(it.id)} title={`${KIND_LABEL[kindOf(it)] || it.channel} · ${lm.label} · ${sl}\n${titleOf(it)}${canMove(it) ? "\nDrag to another day to move it" : ""}`}
+        draggable={!selecting && canMove(it)} onDragStart={(e) => { dragId.current = it.id; e.dataTransfer.setData("text/plain", String(it.id)); e.dataTransfer.effectAllowed = "move"; }} onDragEnd={() => { dragId.current = null; setDropDay(null); }}
         style={{ cursor: "pointer", background: picked ? DS.limeSoft : isEmail ? "rgba(96,165,250,0.12)" : it.status === "draft" ? "rgba(255,255,255,0.02)" : "rgba(255,255,255,0.05)", border: "1px solid " + (picked ? DS.lime : isEmail ? "rgba(96,165,250,0.45)" : DS.line), borderLeft: "4px solid " + lm.color, borderRadius: 6, padding: big ? "7px 9px" : "5px 6px", marginTop: 5, fontSize: big ? 13 : 12, lineHeight: 1.3, minWidth: 0 }}>
         <div style={{ display: "flex", gap: 4, alignItems: "center", fontSize: 11, color: DS.mut, minWidth: 0 }}>
           {selecting && <input type="checkbox" readOnly checked={picked} style={{ margin: 0, accentColor: DS.lime }} />}
           <span style={{ flex: "none" }}>{CHANNEL_META[it.channel]?.[1]}</span>
           <span style={{ fontWeight: 800, color: isEmail ? "#93C5FD" : DS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{KIND_LABEL[kindOf(it)] || CHANNEL_META[it.channel]?.[0]}</span>
-          <span style={{ flex: "none" }}>{timeOf(it.scheduled_at)}</span>
+          {!(big && canMove(it)) && <span style={{ flex: "none" }}>{timeOf(it.scheduled_at)}</span>}
           <span style={{ flex: 1 }} />
           <span style={{ color: sc, fontWeight: 800, flex: "none" }} title={sl}>{STATUS_ICON[it.status] || ""}</span>
         </div>
+        {big && canMove(it) && <input type="time" value={timeOf(it.scheduled_at)} onClick={e => e.stopPropagation()} onChange={e => e.target.value && moveTo(it, dayOf(it.scheduled_at) || it.week_of, e.target.value)} title="Change the time"
+          style={{ ...inputStyle, width: "100%", maxWidth: 130, marginTop: 4, padding: "2px 6px", fontSize: 12, colorScheme: "dark" }} />}
         <div style={{ fontWeight: 700, marginTop: 3, color: DS.text, ...clamp(3) }}>{titleOf(it)}</div>
         {copy && <div style={{ fontSize: 11, color: DS.mut, marginTop: 2, ...clamp(2) }}>{copy}</div>}
       </div>
@@ -147,12 +185,12 @@ export default function MarketingCalendar({ narrow, status, onOpenWeek, onChange
     <div>
       {/* Month nav + views */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
-        <Btn kind="ghost" onClick={() => setMonth(addMonths(month, -1))} style={{ minHeight: 40 }} aria-label="Previous month">←</Btn>
-        <div style={{ fontSize: 18, fontWeight: 800, minWidth: 150, textAlign: "center" }}>{monthLabel(month)}</div>
-        <Btn kind="ghost" onClick={() => setMonth(addMonths(month, 1))} style={{ minHeight: 40 }} aria-label="Next month">→</Btn>
-        {month !== firstOfMonth(today) && <Btn kind="link" small onClick={() => setMonth(firstOfMonth(today))}>Today</Btn>}
+        <Btn kind="ghost" onClick={() => view === "week" ? setWeekStart(addDays(weekStart, -7)) : setMonth(addMonths(month, -1))} style={{ minHeight: 40 }} aria-label={view === "week" ? "Previous week" : "Previous month"}>←</Btn>
+        <div style={{ fontSize: 18, fontWeight: 800, minWidth: 150, textAlign: "center" }}>{view === "week" ? `Week of ${fmtDate(weekStart)}` : monthLabel(month)}</div>
+        <Btn kind="ghost" onClick={() => view === "week" ? setWeekStart(addDays(weekStart, 7)) : setMonth(addMonths(month, 1))} style={{ minHeight: 40 }} aria-label={view === "week" ? "Next week" : "Next month"}>→</Btn>
+        {(view === "week" ? weekStart !== mondayOf(today) : month !== firstOfMonth(today)) && <Btn kind="link" small onClick={() => { setMonth(firstOfMonth(today)); setWeekStart(mondayOf(today)); }}>Today</Btn>}
         <span style={{ flex: 1 }} />
-        {!narrow && [["month", "Month"], ["list", "List"]].map(([k, l]) => <button key={k} onClick={() => setView(k)} style={chipStyle(view === k, DS.lime)}>{l}</button>)}
+        {!narrow && [["month", "Month"], ["week", "Week"], ["list", "List"]].map(([k, l]) => <button key={k} onClick={() => setView(k)} style={chipStyle(view === k, DS.lime)}>{l}</button>)}
         <button onClick={() => { setSelecting(s => !s); setSel(new Set()); }} style={chipStyle(selecting, DS.orange, narrow)}>{selecting ? "Done selecting" : "Select"}</button>
       </div>
 
@@ -195,8 +233,8 @@ export default function MarketingCalendar({ narrow, status, onOpenWeek, onChange
                     const inMonth = d.slice(0, 7) === month.slice(0, 7);
                     const list = byDay.get(d) || [];
                     return (
-                      <div key={d} style={{ minHeight: 96, padding: 6, borderLeft: "1px solid " + DS.line, background: d === today ? "rgba(178,208,73,0.07)" : "transparent", opacity: inMonth ? 1 : 0.5, minWidth: 0 }}>
-                        <div style={{ fontSize: 12, fontWeight: 800, color: d === today ? DS.lime : DS.mut }}>{+d.slice(8)}</div>
+                      <div key={d} {...dropProps(d)} style={{ minHeight: 96, padding: 6, borderLeft: "1px solid " + DS.line, background: dropDay === d ? "rgba(178,208,73,0.18)" : d === today ? "rgba(178,208,73,0.07)" : "transparent", outline: dropDay === d ? "2px dashed " + DS.lime : "none", outlineOffset: -3, opacity: inMonth ? 1 : 0.5, minWidth: 0 }}>
+                        <div style={{ display: "flex", alignItems: "center", fontSize: 12, fontWeight: 800, color: d === today ? DS.lime : DS.mut }}>{+d.slice(8)}{plusBtn(d)}</div>
                         {list.map(it => chip(it, false))}
                       </div>
                     );
@@ -204,6 +242,18 @@ export default function MarketingCalendar({ narrow, status, onOpenWeek, onChange
                 </div>
               </div>
             ))}
+          </div>
+        ) : view === "week" ? (
+          <div style={{ border: "1px solid " + DS.line, borderRadius: 12, overflow: "hidden" }}>
+            <div style={{ padding: "8px 10px", background: DS.panel }}>{weekBar(weekStart)}</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))" }}>
+              {Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)).map((d, i) => (
+                <div key={d} {...dropProps(d)} style={{ minHeight: 420, padding: 8, borderLeft: i ? "1px solid " + DS.line : "none", background: dropDay === d ? "rgba(178,208,73,0.18)" : d === today ? "rgba(178,208,73,0.07)" : "transparent", outline: dropDay === d ? "2px dashed " + DS.lime : "none", outlineOffset: -3, minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 800, color: d === today ? DS.lime : DS.mut, textTransform: "uppercase", letterSpacing: "0.04em" }}>{DOW[i]} {+d.slice(8)}{plusBtn(d)}</div>
+                  {(byDay.get(d) || []).map(it => chip(it, true))}
+                </div>
+              ))}
+            </div>
           </div>
         ) : (
           weeks.map(wk => {
@@ -232,6 +282,7 @@ export default function MarketingCalendar({ narrow, status, onOpenWeek, onChange
           </div>
         </div>
       )}
+      {addFor && <AddIdea day={addFor} narrow={narrow} onClose={() => setAddFor(null)} onMade={async (item) => { setAddFor(null); setMsg({ ok: `Added to ${fmtDate(addFor, { weekday: "long", month: "short", day: "numeric" })} — have a look.` }); await load(); onChanged?.(); if (item?.id) setOpenId(item.id); }} />}
       {picker && <PhotoPicker item={picker} narrow={narrow} onClose={() => setPicker(null)} onPick={(p) => { const it = picker; setPicker(null); patchItem(it, { graphic: { ...(it.graphic || {}), photo_url: p?.url || null, photo_key: p?.key || null } }); }} />}
     </div>
   );
@@ -263,6 +314,58 @@ function ListRow({ it, narrow, selecting, picked, onToggle, onOpen }) {
         <div style={{ fontSize: 15, fontWeight: 800, marginTop: 4, lineHeight: 1.25 }}>{titleOf(it)}</div>
         {text && <div style={{ fontSize: 13, color: DS.mut, marginTop: 3, lineHeight: 1.45, display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden", whiteSpace: "pre-line" }}>{text}</div>}
         {it.status === "draft" && readyIssue(it) && <div style={{ fontSize: 11, color: DS.orange, marginTop: 3 }}>Needs: {readyIssue(it)}</div>}
+      </div>
+    </div>
+  );
+}
+
+// The "+" on a day: say the idea, pick what it is (post, story, email, text)
+// and when; Claude writes it as a draft for that day using the club's
+// programs and voice, with a graphic, ready to edit and approve.
+function AddIdea({ day, narrow, onClose, onMade }) {
+  const [idea, setIdea] = useState("");
+  const [kind, setKind] = useState("post");
+  const [line, setLine] = useState("");
+  const [time, setTime] = useState(DEFAULT_TIME.post);
+  const [d, setD] = useState(day);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const pickKind = (k) => { setKind(k); setTime(DEFAULT_TIME[k]); };
+  const make = async () => {
+    const text = idea.trim(); if (text.length < 3) return;
+    setBusy(true); setErr("");
+    try {
+      const [, , channel] = KINDS_ADD.find(x => x[0] === kind);
+      const r = await mktApi("generate", { week_of: mondayOf(d), day: d, time, channel, format: kind === "story" ? "story" : undefined, line: line || undefined, instruction: text, theme: text, reason: "Added on the calendar" });
+      onMade((r.items || [])[0]);
+    } catch (e) { setErr(e.message); setBusy(false); }
+  };
+  return (
+    <div onClick={busy ? undefined : onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)", zIndex: 75, display: "flex", justifyContent: "center", alignItems: narrow ? "stretch" : "flex-start", padding: narrow ? 0 : "10vh 16px" }}>
+      <div onClick={e => e.stopPropagation()} style={{ width: "100%", maxWidth: 560, background: DS.bg, border: narrow ? "none" : "1px solid " + DS.lineStrong, borderRadius: narrow ? 0 : 14, padding: 16, boxSizing: "border-box" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ fontSize: 18, fontWeight: 800, flex: 1 }}>Add to {fmtDate(d, { weekday: "long", month: "short", day: "numeric" })}</div>
+          <Btn kind="ghost" small onClick={onClose} disabled={busy}>Close</Btn>
+        </div>
+        <div style={{ fontSize: 12, color: DS.mut, margin: "10px 0 6px" }}>What's the idea?</div>
+        <Grow autoFocus value={idea} onChange={e => setIdea(e.target.value)} minRows={3} style={{ fontSize: narrow ? 16 : 14 }}
+          placeholder={'e.g. "Hype the Coach Chang hitting pod — 3 spots left, show the girls blocking" or "Thanksgiving: Camp Elevate is almost full"'}
+          onKeyDown={e => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") make(); }} />
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 }}>
+          {KINDS_ADD.map(([k, l]) => <button key={k} onClick={() => pickKind(k)} style={chipStyle(kind === k, DS.lime, narrow)}>{l}</button>)}
+        </div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+          <button onClick={() => setLine("")} style={chipStyle(!line, DS.mut, narrow)}>Focus: figure it out</button>
+          {LINES.map(l => <button key={l.key} onClick={() => setLine(l.key)} style={chipStyle(line === l.key, lineMeta(l.key).color, narrow)}>{lineMeta(l.key).label}</button>)}
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 10 }}>
+          <input type="date" value={d} min={todayIso()} onChange={e => e.target.value && setD(e.target.value)} style={{ ...inputStyle, width: "auto", padding: "6px 8px", colorScheme: "dark" }} />
+          <input type="time" value={time} onChange={e => e.target.value && setTime(e.target.value)} style={{ ...inputStyle, width: "auto", padding: "6px 8px", colorScheme: "dark" }} />
+          <span style={{ flex: 1 }} />
+          <Btn kind="primary" disabled={busy || idea.trim().length < 3} onClick={make}>{busy ? "Writing it…" : "Add to the plan"}</Btn>
+        </div>
+        {busy && <div style={{ fontSize: 12, color: DS.mut, marginTop: 8 }}>Writing the copy and the graphic — about 20 seconds.</div>}
+        {err && <div style={{ fontSize: 13, color: DS.orange, marginTop: 8 }}>{err}</div>}
       </div>
     </div>
   );

@@ -121,7 +121,9 @@ export async function run(sb, { me, name }, b) {
 
     case "generate": {
       const weekOf = mondayOf(b.week_of || today);
-      const single = b.program_id || b.line || b.single ? { program_id: b.program_id || null, line: b.line || null, channel: b.channel || "social" } : null;
+      // One item: a program, a line, or an idea typed on a calendar day (day, time, format, the idea as its theme).
+      const ideaLine = !b.line && !b.program_id && b.instruction ? (parseBrief(String(b.instruction)).lines || [])[0] || null : null;
+      const single = b.program_id || b.line || b.single || b.day ? { program_id: b.program_id || null, line: b.line || ideaLine, channel: b.channel || "social", day: b.day || null, time: b.time || null, format: b.format || null, theme: b.theme ? String(b.theme).slice(0, 300) : null, reason: b.reason ? String(b.reason).slice(0, 200) : null } : null;
       const r = await generateWeek(sb, { weekOf, replaceDrafts: !!b.replace_drafts, instruction: String(b.instruction || "").slice(0, 1000), by: me, single });
       return { week_of: weekOf, items: r.items, kept: r.kept, removed: r.removed, notes: r.notes, ai: r.ai && { used: r.ai.used, model: r.ai.model, error: r.ai.error, fallbacks: r.ai.fallbacks } };
     }
@@ -167,6 +169,8 @@ export async function run(sb, { me, name }, b) {
       const patch = {};
       for (const k of EDITABLE) if (k in p) patch[k] = p[k];
       if ("scheduled_at" in patch && patch.scheduled_at && isNaN(new Date(patch.scheduled_at))) throw fail(400, "scheduled_at isn't a date");
+      // Moved to another week on the calendar: it belongs to that week now.
+      if (patch.scheduled_at) patch.week_of = mondayOf(new Date(patch.scheduled_at).toLocaleDateString("en-CA", { timeZone: "America/Chicago" }));
       if ("cta_url" in patch && patch.cta_url && !/^https:\/\/\S+$/.test(patch.cta_url)) throw fail(400, "The link must start with https://");
       if ("hashtags" in patch) patch.hashtags = (Array.isArray(patch.hashtags) ? patch.hashtags : String(patch.hashtags || "").split(/[\s,]+/)).map(h => String(h).replace(/[^A-Za-z0-9_]/g, "")).filter(Boolean).slice(0, 10);
       if ("platforms" in patch) patch.platforms = (patch.platforms || []).filter(x => ["facebook", "instagram", "instagram_story", "facebook_story"].includes(x));
