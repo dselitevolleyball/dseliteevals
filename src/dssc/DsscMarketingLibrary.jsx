@@ -15,6 +15,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { supabase } from "../supabase";
 import { DS, Btn, Tag, inputStyle, Grow, fetchAll } from "./DsscHub.jsx";
 import { CATEGORIES, EMPTY_FILTERS } from "../../shared/campaign-audience.js";
+import EmailAudiencePicker from "./DsscEmailAudience.jsx";
 import { mktApi, isMissingTable, MIGRATION_MSG, LINES, lineMeta, LineChip, DEFAULT_WEIGHTS, DEFAULT_CADENCE, DAYS, DAY_LABEL, chipStyle, Msg, Panel, H } from "./DsscMarketingKit.jsx";
 import { DEFAULT_RHYTHM, DEFAULT_THEMES, normRhythm } from "../../shared/marketing-plan.js";
 import { PHOTO_TAGS_CORE, PHOTO_TAGS_ALL, PHOTO_USES, USE_LABEL, PEOPLE_LABEL, SETTING_LABEL, tagLabel, orientationOf, photoHaystack } from "../../shared/marketing-photos.js";
@@ -553,12 +554,8 @@ export function MarketingSettings({ status, narrow, reloadStatus, onChanged }) {
           <div style={lbl}>Email "drafts ready" to</div>
           <input value={s.notify_emails} onChange={e => set("notify_emails", e.target.value)} placeholder="drew@drippingsportsclub.com" style={{ ...inputStyle, fontSize: narrow ? 16 : 14 }} />
           <div style={lbl}>Weekly email goes to</div>
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            <button onClick={() => set("email_audience", { source: "dssc_contacts" })} style={chipStyle(s.email_audience?.source === "dssc_contacts", DS.lime, narrow)}>Everyone in DSSC People</button>
-            <button onClick={() => set("email_audience", { source: "directors" })} style={chipStyle(s.email_audience?.source === "directors", DS.orange, narrow)}>Directors only (soft launch)</button>
-            {Array.isArray(s.email_audience?.emails) && <span style={{ fontSize: 12, color: DS.mut, alignSelf: "center" }}>{s.email_audience.emails.length} set addresses</span>}
-          </div>
-          <div style={{ fontSize: 12, color: DS.dim, marginTop: 4 }}>{s.email_audience?.source === "directors" ? "Marketing emails go only to the directors until you switch this to everyone." : "Everyone in DSSC People with an email address, minus anyone who unsubscribed."}</div>
+          <EmailAudiencePicker value={s.email_audience} onChange={v => set("email_audience", v || { source: "dssc_contacts" })} narrow={narrow} />
+          <div style={{ fontSize: 12, color: DS.dim, marginTop: 4 }}>{s.email_audience?.source === "directors" ? "Marketing emails go only to the directors until you switch this." : "New emails start with this audience; each email can be changed before you approve it. Unsubscribed and bounced addresses are always left out."}</div>
         </Panel>
 
         <Panel style={{ marginBottom: 14 }}>

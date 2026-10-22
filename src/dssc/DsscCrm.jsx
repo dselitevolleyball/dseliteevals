@@ -9,11 +9,18 @@
 // Filters run on players (age, gender, what they did), results are shown as
 // families (the parent is who gets the text), so a family appears once with
 // the players that matched.
+//
+// The Email segments tab (DsscCrmSegments.jsx) builds saved email audiences —
+// spend, lapsed families, grades, old mailing lists — for Marketing emails.
+// Spend = Playbook purchases (the registrations export with prices) + Upper
+// Hand orders. Import also takes old mailing lists: any CSV with an email
+// column, named on upload.
 
 import { useState, useEffect, useMemo, useRef } from "react";
 import { supabase } from "../supabase";
 import { DS, nrm, Btn, Card, Label, Tag, inputStyle, Field } from "./DsscHub.jsx";
 import Papa from "papaparse";
+import DsscCrmSegments from "./DsscCrmSegments.jsx";
 
 const today = new Date();
 const ageOf = (dob) => { if (!dob) return null; const d = new Date(dob + "T12:00:00"); let a = today.getFullYear() - d.getFullYear(); if (today < new Date(today.getFullYear(), d.getMonth(), d.getDate())) a--; return a; };
@@ -25,15 +32,19 @@ const last10 = (s) => String(s || "").replace(/\D/g, "").slice(-10);
 const POS_GROUPS = [["Setter", /set/i], ["Hitter", /pin|hit|outside|right|opp|oh|rs/i], ["Middle", /mid|mb/i], ["Libero/DS", /lib|ds|def/i]];
 const posGroup = (v) => { const g = POS_GROUPS.find(([, re]) => re.test(String(v || ""))); return g ? g[0] : (v ? "Other" : null); };
 const teamAge = (t) => { const m = /^(\d{1,2})\b/.exec(t || ""); return m ? +m[1] : null; };
+// The club's own exports (api/dssc-crm-import.js recognises these); anything else with an email column is a mailing list.
+const KNOWN_EXPORT = (cols) => (cols.includes("student_pk") && cols.includes("guardian_email")) || (cols.includes("registration_pk") && cols.includes("source_pk")) || (cols.includes("invoice_number") && cols.includes("registration_base_price")) || (cols.includes("phone_number") && cols.includes("added_date")) || (cols.includes("gender") && cols.includes("date_of_birth") && cols.includes("phone")) || (cols.includes("Order Number") && cols.includes("Buyer")) || cols.some(c => /event|attend|product|item|program|class/i.test(c));
 
 export default function DsscCrm({ coach, onText, isDirector }) {
   const [contacts, setContacts] = useState([]);
   const [parts, setParts] = useState([]);
   const [partic, setPartic] = useState([]);
   const [orders, setOrders] = useState([]);
+  const [buys, setBuys] = useState([]);
+  const [view, setView] = useState("families");
   const [optouts, setOptouts] = useState([]);
   const [loading, setLoading] = useState(true);
-  const blankF = { q: "", ages: new Set(), levels: new Set(), pos: new Set(), gender: "", cat: "", program: "", since: "", notSince: "", source: "", city: "", phone: false, optout: false, tag: "" };
+  const blankF = { q: "", ages: new Set(), levels: new Set(), pos: new Set(), gender: "", cat: "", program: "", since: "", notSince: "", source: "", city: "", phone: false, optout: false, tag: "", list: "" };
   const [f, setF] = useState(blankF);
   const [openId, setOpenId] = useState(null);
   const [picked, setPicked] = useState(() => new Set());
@@ -42,9 +53,11 @@ export default function DsscCrm({ coach, onText, isDirector }) {
 
   const loadAll = async () => {
     setLoading(true);
-    const page = async (table, sel, order) => { const out = []; for (let from = 0; ; from += 1000) { const { data } = await supabase.from(table).select(sel).order(order || "id").range(from, from + 999); out.push(...(data || [])); if (!data || data.length < 1000) break; } return out; };
+    const page = async (table, sel, order) => { const out = []; for (let from = 0; ; from += 1000) { const { data, error } = await supabase.from(table).select(sel).order(order || "id").range(from, from + 999); if (error && table === "dssc_purchases") throw error; out.push(...(data || [])); if (!data || data.length < 1000) break; } return out; };
     const [c, p, pp, o, cs] = await Promise.all([page("dssc_contacts", "*"), page("dssc_participants", "*"), page("dssc_participation", "id, participant_id, contact_id, program, category, event_date, source"), page("dssc_orders", "id, contact_id, total_cents, ordered_at"), supabase.from("sms_optouts").select("phone").eq("brand", "dssc").then(r => r.data || [])]);
-    setContacts(c); setParts(p); setPartic(pp); setOrders(o); setOptouts(cs); setLoading(false);
+    // Playbook purchases are directors-only (RLS) and need the 20261025 migration; without them spend is Upper Hand only.
+    const b = await page("dssc_purchases", "id, contact_id, participant_id, program, category, invoice, sessions, amount_cents, purchased_at").catch(() => []);
+    setContacts(c); setParts(p); setPartic(pp); setOrders(o); setBuys(b); setOptouts(cs); setLoading(false);
   };
   useEffect(() => { loadAll(); }, []);
 
@@ -53,8 +66,9 @@ export default function DsscCrm({ coach, onText, isDirector }) {
   const partsByC = useMemo(() => { const m = new Map(); for (const p of parts) { if (!m.has(p.contact_id)) m.set(p.contact_id, []); m.get(p.contact_id).push(p); } return m; }, [parts]);
   const particByP = useMemo(() => { const m = new Map(); for (const x of partic) { const k = x.participant_id || ("c" + x.contact_id); if (!m.has(k)) m.set(k, []); m.get(k).push(x); } return m; }, [partic]);
   const particByC = useMemo(() => { const m = new Map(); for (const x of partic) { if (!m.has(x.contact_id)) m.set(x.contact_id, []); m.get(x.contact_id).push(x); } return m; }, [partic]);
-  const spendByC = useMemo(() => { const m = new Map(); for (const o of orders) if (o.contact_id) m.set(o.contact_id, (m.get(o.contact_id) || 0) + (o.total_cents || 0)); return m; }, [orders]);
-  const lastByC = useMemo(() => { const m = new Map(); for (const x of partic) if (x.event_date && (!m.has(x.contact_id) || m.get(x.contact_id) < x.event_date)) m.set(x.contact_id, x.event_date); for (const o of orders) { const d = (o.ordered_at || "").slice(0, 10); if (o.contact_id && d && (!m.has(o.contact_id) || m.get(o.contact_id) < d)) m.set(o.contact_id, d); } return m; }, [partic, orders]);
+  const spendByC = useMemo(() => { const m = new Map(); for (const o of orders) if (o.contact_id) m.set(o.contact_id, (m.get(o.contact_id) || 0) + (o.total_cents || 0)); for (const b of buys) if (b.contact_id) m.set(b.contact_id, (m.get(b.contact_id) || 0) + (b.amount_cents || 0)); return m; }, [orders, buys]);
+  const lastByC = useMemo(() => { const m = new Map(); const bump = (cid, d) => { if (cid && d && (!m.has(cid) || m.get(cid) < d)) m.set(cid, d); }; for (const x of partic) bump(x.contact_id, x.event_date); for (const o of orders) bump(o.contact_id, (o.ordered_at || "").slice(0, 10)); for (const b of buys) bump(b.contact_id, (b.purchased_at || "").slice(0, 10)); return m; }, [partic, orders, buys]);
+  const lists = useMemo(() => [...new Set(contacts.flatMap(c => c.lists || []))].sort(), [contacts]);
   const tags = useMemo(() => [...new Set(contacts.flatMap(c => c.tags || []))].sort(), [contacts]);
   const cities = useMemo(() => [...new Set(contacts.map(c => c.city).filter(Boolean))].sort(), [contacts]);
   const lvlTag = (p) => p.dse_level ? <Tag color={p.dse_level === "national" ? DS.lime : p.dse_level === "rise" ? DS.orange : DS.mut}>{p.dse_team || p.dse_level}</Tag> : null;
@@ -69,6 +83,7 @@ export default function DsscCrm({ coach, onText, isDirector }) {
       if (f.phone && !c.phone) continue;
       if (f.optout && !(c.do_not_text || (c.phone && optedOut.has(last10(c.phone))))) continue;
       if (f.tag && !(c.tags || []).includes(f.tag)) continue;
+      if (f.list && !(c.lists || []).includes(f.list)) continue;
       const kids = partsByC.get(c.id) || [];
       const matchP = (p) => {
         // An age chip matches on real age, or on the DS Elite team age ("12 Diamond" = 12s) —
@@ -119,12 +134,38 @@ export default function DsscCrm({ coach, onText, isDirector }) {
     const list = [...(files || [])]; if (!list.length) return;
     setImp({ loading: true });
     try {
-      const parsed = await Promise.all(list.map(async file => { const text = await file.text(); const r = Papa.parse(text, { header: true, skipEmptyLines: true }); return { name: file.name, rows: r.data, text: text.length < 4_000_000 ? text : undefined }; }));
+      const parsed = [];
+      for (const file of list) {
+        const text = await file.text(); const rows = Papa.parse(text, { header: true, skipEmptyLines: true }).data;
+        const cols = Object.keys(rows[0] || {});
+        // Not one of the club's own exports but has an email column → an old mailing list; ask what to call it.
+        let listName;
+        if (!KNOWN_EXPORT(cols) && cols.some(c => /e-?mail/i.test(c))) {
+          listName = window.prompt(`"${file.name}" looks like a mailing list (${rows.length.toLocaleString()} rows). Which list is it? Everyone on it gets this list name in People.`, file.name.replace(/\.csv$/i, "").replace(/[_-]+/g, " ").replace(/\s*\d{4}[\s_-]\d{2}[\s_-]\d{2}.*$/, "").trim());
+          if (listName == null) continue;
+        }
+        parsed.push({ name: file.name, rows, list: listName || undefined, text: !listName && text.length < 300_000 ? text : undefined });
+      }
+      if (!parsed.length) { setImp(null); return; }
+      // Big files go up in parts (Vercel takes ~4 MB a request). A Playbook
+      // spend export is cut between invoices, so no purchase is split.
+      const parts = [];
+      for (const p of parsed) {
+        if (p.rows.length <= 2500) { parts.push(p); continue; }
+        let cur = [], key = null;
+        for (const r of p.rows) { const k = r.invoice_number || null; if (cur.length >= 2500 && (!k || k !== key)) { parts.push({ ...p, rows: cur, text: undefined }); cur = []; } cur.push(r); key = k; }
+        if (cur.length) parts.push({ ...p, rows: cur, text: undefined });
+      }
       const { data: { session } } = await supabase.auth.getSession();
-      const r = await fetch("/api/dssc-crm-import", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + (session?.access_token || "") }, body: JSON.stringify({ files: parsed }) });
-      const d = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(d.error || ("HTTP " + r.status));
-      setImp(d); loadAll();
+      const summaries = [];
+      for (let i = 0; i < parts.length; i++) {
+        if (parts.length > 1) setImp({ loading: true, step: `${i + 1} of ${parts.length}` });
+        const r = await fetch("/api/dssc-crm-import", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + (session?.access_token || "") }, body: JSON.stringify({ files: [parts[i]] }) });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error((summaries.length ? summaries.join(" · ") + " · then " : "") + (d.error || ("HTTP " + r.status)));
+        summaries.push(d.summary);
+      }
+      setImp({ ok: true, summary: summaries.join(" · ") }); loadAll();
     } catch (e) { setImp({ error: e.message }); }
     if (fileRef.current) fileRef.current.value = "";
   };
@@ -167,14 +208,16 @@ export default function DsscCrm({ coach, onText, isDirector }) {
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
           <img src={import.meta.env.BASE_URL + "dssc/logo-horizontal-white.png"} alt="Dripping Springs Sports Club" style={{ height: 30 }} />
           <Tag color={DS.lime}>People</Tag>
-          <span style={{ fontSize: 12, color: DS.mut }}>{contacts.length.toLocaleString()} families · {parts.length.toLocaleString()} players · {partic.length.toLocaleString()} program records</span>
+          {[["families", "Families"], ["segments", "Email segments"]].map(([k, l]) => <button key={k} onClick={() => setView(k)} style={{ fontFamily: DS.font, fontSize: 13, fontWeight: 800, padding: "5px 12px", borderRadius: 999, cursor: "pointer", border: "1px solid " + (view === k ? DS.lime : DS.lineStrong), background: view === k ? DS.lime : "transparent", color: view === k ? DS.bg : DS.text }}>{l}</button>)}
+          <span style={{ fontSize: 12, color: DS.mut }}>{contacts.length.toLocaleString()} families · {parts.length.toLocaleString()} players · {partic.length.toLocaleString()} program records{buys.length ? ` · ${buys.length.toLocaleString()} purchases` : ""}</span>
           <div style={{ flex: 1 }} />
           <input ref={fileRef} type="file" accept=".csv" multiple style={{ display: "none" }} onChange={e => upload(e.target.files)} />
-          <Btn small onClick={() => fileRef.current?.click()} disabled={!!imp?.loading} title="Playbook participants · Upper Hand contacts / contact list / orders · Upper Hand per-event client lists (as many at once as you like)">{imp?.loading ? "Importing…" : "⬆ Import CSV"}</Btn>
+          <Btn small onClick={() => fileRef.current?.click()} disabled={!!imp?.loading} title="Playbook participants · Playbook registrations report with prices (spend) · Upper Hand contacts / contact list / orders · Upper Hand per-event client lists · old mailing lists (Mailchimp, Constant Contact, any CSV with an email column)">{imp?.loading ? (imp.step ? `Importing ${imp.step}…` : "Importing…") : "⬆ Import CSV"}</Btn>
           <Btn small onClick={syncRosters} disabled={!!imp?.loading} title="Pull the current Playbook class rosters and the DS Elite roster in as participation">↻ Sync rosters</Btn>
         </div>
         {imp && !imp.loading && <div style={{ ...{ background: DS.panel, border: "1px solid " + (imp.error ? DS.orange : DS.lime), borderRadius: 12, padding: "10px 14px", marginBottom: 12, fontSize: 13 } }}>{imp.error ? <span style={{ color: DS.orange }}>{imp.error}</span> : <span style={{ color: DS.lime, fontWeight: 700 }}>✓ {imp.summary || JSON.stringify(imp)}</span>}<button onClick={() => setImp(null)} style={{ float: "right", background: "none", border: "none", color: DS.mut, cursor: "pointer" }}>✕</button></div>}
 
+        {view === "segments" ? <DsscCrmSegments coach={coach} /> : <>
         {/* Filters */}
         <Card accent={DS.lime}>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
@@ -192,6 +235,7 @@ export default function DsscCrm({ coach, onText, isDirector }) {
             <select value={f.source} onChange={e => set("source", e.target.value)} style={sel}><option value="">any source</option><option value="playbook">Playbook</option><option value="upperhand">Upper Hand</option><option value="dse">DS Elite</option><option value="form">opt-in form</option></select>
             <select value={f.city} onChange={e => set("city", e.target.value)} style={sel}><option value="">any city</option>{cities.map(c => <option key={c}>{c}</option>)}</select>
             {tags.length > 0 && <select value={f.tag} onChange={e => set("tag", e.target.value)} style={sel}><option value="">any tag</option>{tags.map(t => <option key={t}>{t}</option>)}</select>}
+            {lists.length > 0 && <select value={f.list} onChange={e => set("list", e.target.value)} style={sel}><option value="">any mailing list</option>{lists.map(t => <option key={t}>{t}</option>)}</select>}
             <label style={{ fontSize: 12, display: "flex", gap: 5, alignItems: "center" }}><input type="checkbox" checked={f.phone} onChange={e => set("phone", e.target.checked)} /> has phone</label>
             <label style={{ fontSize: 12, display: "flex", gap: 5, alignItems: "center" }}><input type="checkbox" checked={f.optout} onChange={e => set("optout", e.target.checked)} /> opted out only</label>
             <Btn kind="link" small onClick={() => { setF(blankF); setPicked(new Set()); }}>clear</Btn>
@@ -238,17 +282,21 @@ export default function DsscCrm({ coach, onText, isDirector }) {
           </div>
           {results.length > 400 && <div style={{ padding: "8px 12px", fontSize: 12, color: DS.mut }}>Showing 400 of {results.length} — narrow the filters or export the CSV for the full list.</div>}
         </Card>
+        </>}
 
         {/* Family detail */}
         {open && (() => {
           const kids = partsByC.get(open.id) || [], hist = (particByC.get(open.id) || []).slice().sort((a, b) => (b.event_date || "").localeCompare(a.event_date || ""));
           const os = orders.filter(o => o.contact_id === open.id).sort((a, b) => (b.ordered_at || "").localeCompare(a.ordered_at || ""));
+          const bs = buys.filter(b => b.contact_id === open.id).sort((a, b) => (b.purchased_at || "").localeCompare(a.purchased_at || ""));
+          const em = open.email_status && open.email_status !== "ok" ? open.email_status : null;
           const out = open.do_not_text || (open.phone && optedOut.has(last10(open.phone)));
           return (
             <div onClick={() => setOpenId(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 50, display: "flex", justifyContent: "flex-end" }}>
               <div onClick={e => e.stopPropagation()} style={{ width: "min(560px, 100vw)", background: DS.bg, borderLeft: "1px solid " + DS.line, height: "100%", overflowY: "auto", padding: 18, fontFamily: DS.font }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}><div style={{ fontSize: 22, fontWeight: 800, flex: 1 }}>{((open.first_name || "") + " " + (open.last_name || "")).trim() || open.email}</div><Btn small onClick={() => setOpenId(null)}>✕</Btn></div>
-                <div style={{ fontSize: 13, color: DS.mut, marginBottom: 10 }}>{open.email} · {(open.sources || []).join(", ")}{open.city ? " · " + open.city : ""}{open.uh_added_at ? " · Upper Hand since " + fmtD(open.uh_added_at) : ""}</div>
+                <div style={{ fontSize: 13, color: DS.mut, marginBottom: 4 }}>{open.email} · {(open.sources || []).join(", ")}{open.city ? " · " + open.city : ""}{open.uh_added_at ? " · Upper Hand since " + fmtD(open.uh_added_at) : ""}</div>
+                <div style={{ fontSize: 12, color: em ? DS.orange : DS.mut, marginBottom: 10 }}>{em ? `Email ${em} — never emailed` : "Email ok"}{open.last_emailed_at ? ` · last marketing email ${fmtD(open.last_emailed_at.slice(0, 10))}` : ""}{open.last_opened_at ? ` · opened ${fmtD(open.last_opened_at.slice(0, 10))}` : ""}{(open.lists || []).length ? ` · lists: ${open.lists.join(", ")}` : ""}</div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
                   <div><Label>Mobile</Label><Field value={open.phone || ""} onSave={v => saveContact(open.id, { phone: v.replace(/\D/g, "").length >= 10 ? "+1" + v.replace(/\D/g, "").slice(-10) : null })} placeholder="(512) 555-0100" /><div style={{ fontSize: 11, color: out ? DS.orange : DS.lime, marginTop: 3 }}>{open.phone ? (out ? "opted out of club texts" : "✓ can be texted") : ""}</div></div>
                   <div><Label>Tags</Label><Field value={(open.tags || []).join(", ")} onSave={v => saveContact(open.id, { tags: v.split(",").map(s => s.trim()).filter(Boolean) })} placeholder="e.g. hot lead, camp 2025" /><label style={{ fontSize: 12, color: DS.orange, display: "flex", gap: 6, alignItems: "center", marginTop: 6 }}><input type="checkbox" checked={!!open.do_not_text} onChange={e => saveContact(open.id, { do_not_text: e.target.checked })} /> do not text</label></div>
@@ -256,6 +304,7 @@ export default function DsscCrm({ coach, onText, isDirector }) {
                 <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>{open.phone && !out && <Btn small kind="primary" onClick={() => onText([{ to: open.phone, name: ((open.first_name || "") + " " + (open.last_name || "")).trim(), kind: "parent", players: kids.filter(p => !p.is_contact).map(p => p.first_name + " " + p.last_name), programs: [...new Set(hist.map(h => h.program))].slice(0, 3), contact_id: open.id }])}>💬 Text</Btn>}{spendByC.get(open.id) ? <Tag color={DS.mut}>{money(spendByC.get(open.id))} lifetime</Tag> : null}</div>
                 <Card><Label>Players</Label>{kids.length ? kids.map(p => <div key={p.id} style={{ fontSize: 14, padding: "3px 0" }}><b>{p.first_name} {p.last_name}</b>{p.is_contact && <span style={{ color: DS.mut }}> (self)</span>}{ageOf(p.dob) != null && <span style={{ color: DS.mut }}> · {ageOf(p.dob)} · born {fmtD(p.dob)}</span>}{p.gender && <span style={{ color: DS.mut }}> · {p.gender}</span>}{p.position && <span style={{ color: DS.mut }}> · {p.position}{p.position2 ? "/" + p.position2 : ""}</span>}{lvlTag(p)}{p.waiver_signed && <span style={{ color: DS.mut, fontSize: 11 }}> · waiver ✓</span>}</div>) : <div style={{ fontSize: 13, color: DS.mut }}>No players on file.</div>}</Card>
                 <Card><Label>Programs & events</Label>{hist.length ? hist.map(h => <div key={h.id} style={{ fontSize: 13, padding: "3px 0", display: "flex", gap: 8 }}><span style={{ color: DS.mut, minWidth: 80 }}>{fmtD(h.event_date) || "—"}</span><span style={{ flex: 1 }}>{h.program}{h.participant_id && kids.find(p => p.id === h.participant_id) ? <span style={{ color: DS.mut }}> · {kids.find(p => p.id === h.participant_id).first_name}</span> : null}</span><Tag color={DS.mut}>{h.category || "?"}</Tag></div>) : <div style={{ fontSize: 13, color: DS.mut }}>Nothing recorded yet.</div>}</Card>
+                {bs.length > 0 && <Card><Label>Purchases (Playbook, list price)</Label>{bs.slice(0, 25).map(b => <div key={b.id} style={{ fontSize: 13, padding: "2px 0", display: "flex", gap: 8 }}><span style={{ color: DS.mut, minWidth: 80 }}>{fmtD((b.purchased_at || "").slice(0, 10))}</span><span style={{ flex: 1 }}>{b.program}{b.participant_id && kids.find(p => p.id === b.participant_id) ? <span style={{ color: DS.mut }}> · {kids.find(p => p.id === b.participant_id).first_name}</span> : null}{b.sessions > 1 ? <span style={{ color: DS.mut }}> · {b.sessions} sessions</span> : null}</span><span>{money(b.amount_cents)}</span></div>)}{bs.length > 25 && <div style={{ fontSize: 12, color: DS.mut }}>+{bs.length - 25} more</div>}</Card>}
                 {os.length > 0 && <Card><Label>Orders (Upper Hand)</Label>{os.slice(0, 15).map(o => <div key={o.id} style={{ fontSize: 13, padding: "2px 0", display: "flex", gap: 8 }}><span style={{ color: DS.mut, minWidth: 80 }}>{fmtD((o.ordered_at || "").slice(0, 10))}</span><span style={{ flex: 1 }} /><span>{money(o.total_cents)}</span></div>)}{os.length > 15 && <div style={{ fontSize: 12, color: DS.mut }}>+{os.length - 15} more</div>}</Card>}
                 <Card><Label>Notes</Label><Field value={open.notes || ""} onSave={v => saveContact(open.id, { notes: v })} multiline minRows={2} placeholder="Anything worth remembering about this family…" /></Card>
               </div>

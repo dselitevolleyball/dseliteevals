@@ -8,6 +8,7 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 import { supabase } from "../supabase";
 import { DS, Btn, Tag, inputStyle, Grow, Field, fetchAll } from "./DsscHub.jsx";
 import { segmentsOf } from "../../shared/campaign-audience.js";
+import EmailAudiencePicker, { emailAudienceLabel, useSegments } from "./DsscEmailAudience.jsx";
 import { TEMPLATES, FORMATS } from "../../shared/marketing-graphics.js";
 import { photoHaystack } from "../../shared/marketing-photos.js";
 import {
@@ -215,6 +216,7 @@ function EmptyWeek({ plan, week }) {
 
 // ── One item ────────────────────────────────────────────────────────────────
 function ItemCard({ item: it, week, narrow, onPatch, onReplace, reload, onChanged, onPickPhoto }) {
+  const segs = useSegments();
   const [busy, setBusy] = useState("");
   const [step, setStep] = useState("");
   const [msg, setMsg] = useState(null);
@@ -322,6 +324,8 @@ function ItemCard({ item: it, week, narrow, onPatch, onReplace, reload, onChange
         <div style={fieldLbl}>Preheader (the grey line after the subject)</div>
         <Field readOnly={!editable} value={it.email_preheader || ""} onSave={v => onPatch(it, { email_preheader: v })} />
         {(it.programs || []).length > 0 && <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>{it.programs.map((p, i) => <Tag key={p.id || i} color={DS.mut}>{p.name}</Tag>)}</div>}
+        <div style={fieldLbl}>To</div>
+        {editable ? <EmailAudiencePicker value={it.audience} onChange={v => onPatch(it, { audience: v || { source: "dssc_contacts" } })} narrow={narrow} /> : <div style={{ fontSize: 13, color: DS.mut }}>{emailAudienceLabel(it.audience, segs)}</div>}
       </>}
       {it.channel === "sms" && <>
         <div style={fieldLbl}>Text</div>
