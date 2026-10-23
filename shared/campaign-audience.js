@@ -31,6 +31,14 @@ export const MERGE_FIELDS = [
 ];
 export const EMPTY_FILTERS = { target: "parents", dse: "any", levels: [], teams: [], ageGroups: [], positions: [], gender: "", categories: [], program: "", since: "", current: false, minAge: "", maxAge: "", exclude: [] };
 
+// Reach texts (Coach Brandon, Oct 2026): a campaign with scope "reach" only
+// ever reaches families (or adult athletes) with a Reach sign-up - ever, since
+// a date, or in one Reach program. resolveAudience forces it, so the screen's
+// count and the server's send agree and no other filter can widen it.
+export const reachFilters = (f = {}) => ({ ...EMPTY_FILTERS, since: f.since || "", program: f.program || "", exclude: Array.isArray(f.exclude) ? f.exclude : [], scope: "reach", target: "parents", categories: ["reach"] });
+// Reach staff: an approved login whose sports or staff department is Reach.
+export const isReachStaff = (c) => !!c && c.is_approved !== false && [...[].concat(c.sports || []), ...[].concat(c.staff_view || [])].includes("reach");
+
 const last10 = (s) => String(s || "").replace(/\D/g, "").slice(-10);
 const e164 = (s) => { const d = String(s || "").replace(/\D/g, ""); if (d.length === 10) return "+1" + d; if (d.length === 11 && d.startsWith("1")) return "+" + d; return null; };
 const nrm = (v) => String(v || "").trim().toLowerCase().replace(/\s+/g, " ");
@@ -174,7 +182,7 @@ export function kidMatches(k, f) {
 
 // → { recipients: [{ to, name, first, kind, players:[...], team, program }], skipped: [{ name, to, reason }] }
 export function resolveAudience(people, filters, brand = "dssc") {
-  const f = { ...EMPTY_FILTERS, ...(filters || {}) };
+  const f = filters?.scope === "reach" ? reachFilters(filters) : { ...EMPTY_FILTERS, ...(filters || {}) };
   const out = new Map(), skipped = [];
   const excluded = new Set((f.exclude || []).map(last10));
   const opted = people.optouts[brand === "dse" ? "dse" : "dssc"];

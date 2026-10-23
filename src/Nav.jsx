@@ -78,6 +78,7 @@ const IT = {
   pods:          ["Skill Pods", "🧠", "ops", "pods", "Pods"],
   privates:      ["Privates", "🤝", "ops", "private lessons", "Privates"],
   dssctexts:     ["DSSC Texts", "💬", "dir", "sms text messages", "Texts"],
+  reachtexts:    ["Reach Texts", "💬", "reach", "reach text sms families athletes brandon", "Reach"],
   dssccrm:       ["People", "📇", "dir", "crm families contacts", "People"],
   dsscinbox:     ["Inbox", "📬", "dir", "inbox email info@ families website rental party reply messages questions", "Inbox"],
   dsscmarketing: ["Marketing", "📣", "dir", "marketing social facebook instagram posts email newsletter campaign graphics approve drafts promote", "Marketing"],
@@ -115,7 +116,7 @@ const DSE_COACH = [
 const DSSC_SECS = [
   ["projectsec", "Projects", "📌", ["projects"]],
   ["programs", "Programs", "🏕", ["clinics", "courts", "dsscplan", "dssccamp", "pods", "privates"]],
-  ["people", "Inbox, texts & people", "💬", ["dsscinbox", "dssctexts", "dssccrm"]],
+  ["people", "Inbox, texts & people", "💬", ["dsscinbox", "dssctexts", "reachtexts", "dssccrm"]],
   ["marketing", "Marketing", "📣", ["dsscmarketing"]],
   ["dsscstaff", "Coaches & pay", "🗓", ["dssc", "dssccal", "dssctime", "staffhours", "staffadmin", "dsscpeople", "dsscpay"]],
 ];
@@ -125,7 +126,7 @@ const ACTION_BADGES = { messages: "smsDse", dssctexts: "smsDssc", dsscinbox: "in
 const INFO_BADGES = { favorites: "favorites" };
 
 export function buildNav(ctx) {
-  const { canOps, isAdmin, isOwner, canViewTeams, hasTeams, canSendReports, isDsscDirector, dsscOnly, isDsscStaff, canSeeStaffHours, canEditPay } = ctx;
+  const { canOps, isAdmin, isOwner, canViewTeams, hasTeams, canSendReports, isDsscDirector, dsscOnly, isDsscStaff, canSeeStaffHours, canEditPay, isReachStaff } = ctx;
   const n = ctx.counts || {};
   const ok = {
     all: true, ops: !!canOps, admin: !!isAdmin, owner: !!isOwner, teams: !!canViewTeams,
@@ -133,6 +134,7 @@ export function buildNav(ctx) {
     opsMine: !!(canOps && (canViewTeams || hasTeams)), opsTeams: !!(canOps && canViewTeams), dir: !!isDsscDirector,
     // DSSC staff (interns) get the clock, not the coach screens.
     staff: !!(isDsscStaff || isDsscDirector), coach: !isDsscStaff || !!isDsscDirector, staffview: !!canSeeStaffHours, payedit: !!canEditPay,
+    reach: !!(isDsscDirector || isReachStaff),
   };
   const can = (v) => !!IT[v] && ok[IT[v][2]];
   const secsFor = (ws) => {
@@ -152,7 +154,7 @@ export function buildNav(ctx) {
   // Menu badge on the phone: everything the bottom-bar slots don't already show.
   const restTotal = (shown) => sections.reduce((sum, s) => sum + s.items.reduce((t, v) => t + (!shown.includes(v) && counts(s, v) ? badge(v) : 0), 0), 0);
   const defaults = ws === "dssc"
-    ? (isDsscDirector ? (dsscOnly ? ["dsscinbox", "dsscmarketing", "clinics", "dssccal", "dssctime", "staffadmin", "dsscpeople"] : ["dsscinbox", "dsscmarketing", "clinics", "dssctexts", "dssccal", "dssctime", "dssccrm"]) : isDsscStaff ? (canSeeStaffHours ? ["staffhours", "staffadmin"] : ["staffhours"]) : ["dssc", "dssctime", "notifications"])
+    ? (isDsscDirector ? (dsscOnly ? ["dsscinbox", "dsscmarketing", "clinics", "dssccal", "dssctime", "staffadmin", "dsscpeople"] : ["dsscinbox", "dsscmarketing", "clinics", "dssctexts", "dssccal", "dssctime", "dssccrm"]) : isDsscStaff ? [...(isReachStaff ? ["reachtexts"] : []), ...(canSeeStaffHours ? ["staffhours", "staffadmin"] : ["staffhours"])] : ["dssc", "dssctime", "notifications"])
     : (canOps ? ["home", "messages", isAdmin ? "dayschedule" : "coverage", "practice", "tournaments", "waiting"] : ["home", "clockin", "lineups", "practiceplan"]);
   const stored = ctx.pins && Array.isArray(ctx.pins[ws]) ? ctx.pins[ws] : null;
   const pinsBase = [...new Set(stored || defaults)];

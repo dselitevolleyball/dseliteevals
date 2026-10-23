@@ -19,7 +19,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { sendOneSms, twilioReady, notReadyMessage, normalizePhone } from "./_lib/sms.js";
-import { loadAudienceData, buildPeople, resolveAudience, renderBody } from "../shared/campaign-audience.js";
+import { loadAudienceData, buildPeople, resolveAudience, renderBody, isReachStaff } from "../shared/campaign-audience.js";
 
 const OWNERS = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"];
 const DIRECTORS = ["hunterhaleysc10@gmail.com", "hunter@drippingsportsclub.com"];
@@ -32,15 +32,17 @@ export default async function handler(req, res) {
   const url = (() => { try { return new URL(req.url, "https://x"); } catch { return null; } })();
   const bearer = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
   const isCron = !!CRON_SECRET && (bearer === CRON_SECRET || url?.searchParams.get("token") === CRON_SECRET);
-  let who = isCron ? "schedule" : "operator", whoEmail = "";
+  let who = isCron ? "schedule" : "operator", whoEmail = "", reachOnly = false;
   if (!isCron && bearer !== SUPABASE_SERVICE_ROLE_KEY) {
     if (!bearer) return res.status(401).json({ error: "Not signed in" });
     const { data: { user } = {} } = await sb.auth.getUser(bearer).catch(() => ({ data: {} }));
     const email = (user?.email || "").trim().toLowerCase();
     if (!email) return res.status(401).json({ error: "Not signed in" });
     let ok = OWNERS.includes(email) || DIRECTORS.includes(email);
-    const { data: c } = await sb.from("coaches").select("display_name, is_admin, is_approved, dssc_role").ilike("email", email).maybeSingle();
+    const { data: c } = await sb.from("coaches").select("display_name, is_admin, is_approved, dssc_role, sports, staff_view").ilike("email", email).maybeSingle();
     if (!ok) ok = !!(c && c.is_approved && (c.is_admin || c.dssc_role === "admin"));
+    // Reach staff send Reach texts only (scope "reach" campaigns, below).
+    if (!ok && c?.is_approved && isReachStaff(c)) ok = reachOnly = true;
     if (!ok) return res.status(403).json({ error: "Campaigns are for directors and admins" });
     who = c?.display_name || email; whoEmail = email;
   }
@@ -56,6 +58,7 @@ export default async function handler(req, res) {
   if (!id) return res.status(400).json({ error: "id required" });
   const { data: camp } = await sb.from("sms_campaigns").select("*").eq("id", id).maybeSingle();
   if (!camp) return res.status(404).json({ error: "Campaign not found" });
+  if (reachOnly && (camp.filters?.scope !== "reach" || camp.brand !== "dssc")) return res.status(403).json({ error: "Reach staff can send Reach texts only" });
   try {
     if (body.action === "test") return res.status(200).json(await sendTest(sb, camp, body.to, whoEmail, who));
     if (body.action === "send") { await startCampaign(sb, camp, who); return res.status(200).json(await processCampaign(sb, id, Date.now() + 45000)); }

@@ -33,6 +33,8 @@ import SiteAdmin from "./SiteAdmin.jsx";
 import RegistrationCheck, { RegBadges, loadRegistrationCheck } from "./RegistrationCheck.jsx";
 import EuropeRsvps from "./EuropeRsvps.jsx";
 import DsscTexts from "./dssc/DsscTexts.jsx";
+import DsscReachTexts from "./dssc/DsscReachTexts.jsx";
+import { isReachStaff as isReachStaffCoach } from "../shared/campaign-audience.js";
 import DsscCamp from "./dssc/DsscCamp.jsx";
 import DsscCrm from "./dssc/DsscCrm.jsx";
 import { HQ_DSSC } from "./hq-base.js";
@@ -2324,7 +2326,7 @@ export default function App() {
   // colors, navigation, home — between DS Elite and Dripping Springs Sports
   // Club, instead of DSSC living as a tab inside DS Elite. Opening a DSSC
   // screen by any route (a push link, the home card) flips it too.
-  const DSSC_VIEWS = new Set(["dssc","clinics","dssctexts","dssccrm","dsscinbox","dsscmarketing","dssccal","dssctime","pods","privates","dssccamp","courts","dsscplan","staffhours","staffadmin","dsscpeople","dsscpay","projects"]);
+  const DSSC_VIEWS = new Set(["dssc","clinics","dssctexts","reachtexts","dssccrm","dsscinbox","dsscmarketing","dssccal","dssctime","pods","privates","dssccamp","courts","dsscplan","staffhours","staffadmin","dsscpeople","dsscpay","projects"]);
   // Screens a DSSC-only login may open: DSSC's own plus the shared basics.
   const DSSC_ONLY_OK = new Set([...DSSC_VIEWS, "home", "notifications", "activity", "faq"]);
   const [workspace, setWorkspace] = useState(() => { if (HQ_DSSC) return "dssc"; try { return localStorage.getItem("dse.workspace") === "dssc" ? "dssc" : "dse"; } catch { return "dse"; } });
@@ -4942,7 +4944,7 @@ export default function App() {
   useEffect(() => {
     // Roster also drives the Tryout coach picker / Text Coaches lookup,
     // so make sure it's loaded whenever either tab opens.
-    if (isApproved && (view === "coaches" || view === "tryouts" || view === "home" || view === "clockin" || view === "teamdir" || view === "practice" || view === "timecards" || view === "clinics" || view === "dssc" || view === "dssccal" || view === "tournaments" || view === "kickoff" || view === "travel" || view === "housing" || view === "messages" || view === "dssctexts" || view === "privates" || view === "hub")) loadCoachRoster();
+    if (isApproved && (view === "coaches" || view === "tryouts" || view === "home" || view === "clockin" || view === "teamdir" || view === "practice" || view === "timecards" || view === "clinics" || view === "dssc" || view === "dssccal" || view === "tournaments" || view === "kickoff" || view === "travel" || view === "housing" || view === "messages" || view === "dssctexts" || view === "reachtexts" || view === "privates" || view === "hub")) loadCoachRoster();
   }, [isApproved, view, loadCoachRoster]);
   // The coach card edits coach_roster, so make sure it's loaded when one opens.
   useEffect(() => { if (isApproved && coachCardName) loadCoachRoster(); }, [isApproved, coachCardName, loadCoachRoster]);
@@ -32903,7 +32905,7 @@ export default function App() {
   // ── Navigation (src/Nav.jsx): one list drives the desktop sidebar, the phone
   // drawer, bottom bar and section chips, gated exactly like the screen guards.
   const navCtx = {
-    workspace, canOps, isAdmin, isOwner, canViewTeams, hasTeams: myTeamNames.length > 0, canSendReports, isDsscDirector, dsscOnly, isDsscStaff, canSeeStaffHours, canEditPay, pins: navPins,
+    workspace, canOps, isAdmin, isOwner, canViewTeams, hasTeams: myTeamNames.length > 0, canSendReports, isDsscDirector, dsscOnly, isDsscStaff, canSeeStaffHours, canEditPay, isReachStaff: isReachStaffCoach(coach), pins: navPins,
     counts: {
       smsDse: smsUnread.dse, smsDssc: smsUnread.dssc, inboxNew, mktDrafts, notif: unreadCount,
       issuesOpen: incidents.filter(r => r.status === "open").length,
@@ -33195,6 +33197,9 @@ export default function App() {
         {view==="dssccamp" && (isDsscDirector
           ? <DsscCamp coach={coach} />
           : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Summer camp planning is for the club's directors.</div>)}
+        {view==="reachtexts" && (isDsscDirector || isReachStaffCoach(coach)
+          ? <DsscReachTexts coach={coach} coachRoster={coachRoster} narrow={isNarrow} />
+          : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Reach texting is for Reach staff and the club's directors.</div>)}
         {view==="dssctexts" && (isDsscDirector
           ? <DsscTexts coach={coach} clinics={clinics} players={players} coachRoster={coachRoster} dsscAvail={dsscAvail} isDirector={isDsscDirector} initial={dsscTextsInit} onConsumedInitial={()=>setDsscTextsInit(null)} />
           : <div style={{padding:24,color:C.mut,textAlign:"center"}}>DSSC texting is for the club's directors.</div>)}

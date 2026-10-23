@@ -22,6 +22,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { sendOneSms, normalizePhone, twilioReady, brandOf, notReadyMessage } from "./_lib/sms.js";
+import { loadAudienceData, buildPeople, resolveAudience, isReachStaff } from "../shared/campaign-audience.js";
 const DSSC_DIRECTOR_EMAILS = ["hunterhaleysc10@gmail.com", "hunter@drippingsportsclub.com"];
 
 const LANES = 4;   // concurrent Twilio requests; Twilio queues per number anyway
@@ -47,6 +48,8 @@ export default async function handler(req, res) {
   // with the Twilio credentials live in production, anyone who found the URL
   // could text anyone from the club's number on the club's account. Same check
   // as api/sportsyou-outbox.js — an owner email, or an approved admin coach.
+  // Reach staff (Coach Brandon) may answer one Reach family at a time, below.
+  let reachOnly = false;
   {
     const bearer = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
     if (!bearer) return res.status(401).json({ error: "Not signed in" });
@@ -60,8 +63,9 @@ export default async function handler(req, res) {
     // DSSC's number is the director's to use too (Hunter isn't a DS Elite admin).
     if (!ok && brand === "dssc" && DSSC_DIRECTOR_EMAILS.includes(email)) ok = true;
     if (!ok) {
-      const { data: c } = await supabase.from("coaches").select("is_admin, is_approved, dssc_role").ilike("email", email).maybeSingle();
+      const { data: c } = await supabase.from("coaches").select("is_admin, is_approved, dssc_role, sports, staff_view").ilike("email", email).maybeSingle();
       ok = !!(c && c.is_approved && (c.is_admin || (brand === "dssc" && c.dssc_role === "admin")));
+      if (!ok && brand === "dssc" && c?.is_approved && isReachStaff(c)) ok = reachOnly = true;
     }
     if (!ok) return res.status(403).json({ error: "Admins only" });
   }
@@ -82,6 +86,13 @@ export default async function handler(req, res) {
   // One text per number, even if a parent is listed under two players.
   const seen = new Set();
   const recipients = valid.filter(r => (seen.has(r.to) ? false : seen.add(r.to)));
+
+  if (reachOnly) {
+    if (batch) return res.status(403).json({ error: "Reach group texts go through Reach Texts" });
+    const people = buildPeople(await loadAudienceData(supabase), new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" }));
+    const k = recipients[0].to.replace(/\D/g, "").slice(-10);
+    if (!resolveAudience(people, { scope: "reach" }, "dssc").recipients.some(r => r.to.replace(/\D/g, "").slice(-10) === k)) return res.status(403).json({ error: "That number isn't a Reach family" });
+  }
 
   if (!batch) {
     try { return res.status(200).json({ ok: true, ...(await sendOneSms(supabase, recipients[0], text, meta)) }); }
