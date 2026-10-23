@@ -1,7 +1,7 @@
 // DS Elite's own Playbook rentals are courts held for DS Elite on any day, and
 // HQ's practice schedule fills them by team name (shared/courts.js dseBlock).
 // Run: node scripts/test-court-blocks.mjs
-import { buildCourtDay, dseBlock, applyHides } from "../shared/courts.js";
+import { buildCourtDay, dseBlock, applyHides, describeChange } from "../shared/courts.js";
 
 let bad = 0;
 const check = (ok, msg) => { console.log((ok ? "PASS  " : "FAIL  ") + msg); if (!ok) bad++; };
@@ -48,6 +48,20 @@ const r2 = applyHides(mon, { reserved: held }, [H({ kind: "dse", label: null, st
 check(r2.length === 1 && r2[0].courts.join() === "V2", "hiding DS Elite's held Court 1 leaves Court 2 held");
 const gh = buildCourtDay({ bookings: [storm], reserved: held, startHour: 7, endHour: 22 });
 check(gh.cells.V3[gh.slots.indexOf(17)].hide?.label === "DS Storm" && gh.cells.V1[gh.slots.indexOf(17)].hide?.kind === "dse", "chart cells carry what a hide would match");
+
+// Moves: Volleyball 101 off Court 4 (DS Storm's) onto Court 5.
+const v101 = { date: mon, courts: ["V4"], start: 17, end: 18, kind: "dssc", label: "Volleyball 101", category: "Beginner Volleyball" };
+const mv = { id: 9, action: "move", kind: "booking", label: "Volleyball 101", start_h: 17, end_h: 18, courts: ["V4"], to_courts: ["V5"], to_start_h: 17, to_end_h: 18, date: mon, weekly: true };
+const moved = applyHides(mon, { bookings: [v101] }, [mv]).bookings;
+check(moved.length === 1 && moved[0].courts.join() === "V5" && moved[0].origin.courts.join() === "V4", "a moved booking is drawn on its new court and remembers where it was");
+check(/Moved in HQ from Court 4, 5pm-6pm/.test(moved[0].category), "the moved block says where it came from (" + moved[0].category + ")");
+const gm = buildCourtDay({ bookings: moved, startHour: 7, endHour: 22 });
+check(gm.cells.V5[gm.slots.indexOf(17)].change?.id === 9 && !gm.cells.V4[gm.slots.indexOf(17)], "on the chart: Court 5 has it (with its change row), Court 4 is free");
+const dm = applyHides(mon, { reserved: held }, [{ id: 3, action: "move", kind: "dse", start_h: 17, end_h: 21, courts: ["V1"], to_courts: ["V1"], to_start_h: 19, to_end_h: 21, date: "2026-11-30", weekly: true }]).reserved;
+check(dm.some(r => r.courts.join() === "V1" && r.start === 19) && dm.some(r => r.courts.join() === "V2" && r.start === 17), "DS Elite's Court 1 moved to 7-9pm every Monday; Court 2 unchanged");
+check(describeChange(mv).text === "Volleyball 101: move from Court 4, 5pm-6pm to Court 5, 5pm-6pm" && describeChange(mv).when === "Every Monday from Mon, Dec 7", "change log line for a weekly move: " + JSON.stringify(describeChange(mv)));
+check(describeChange({ action: "add", kind: "booking", label: "DS Storm", renter: "Tressa Aleshire", courts: ["V5", "V6"], start_h: 17, end_h: 19, date: "2027-01-19" }).text === "Add DS Storm (Tressa Aleshire): Courts 5 + 6, 5pm-7pm", "change log line for an added rental");
+check(describeChange(H()).text === "Remove DS Storm: Court 3, 5pm-8pm", "change log line for a hidden booking");
 
 console.log(bad ? `\n${bad} failed` : "\nall court block checks passed");
 process.exit(bad ? 1 : 0);

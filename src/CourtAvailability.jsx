@@ -8,7 +8,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Papa from "papaparse";
 import { supabase } from "./supabase";
 import { loadDseCourtInputs } from "../shared/court-inputs.js";
-import { COURTS, buildCourtDay, fmtHour, dseBlock, applyHides, hidesOn } from "../shared/courts.js";
+import { COURTS, buildCourtDay, fmtHour, dseBlock, applyHides, hidesOn, describeChange } from "../shared/courts.js";
 
 const C = { bg: "#0a0a0a", card: "#141414", border: "#2a2a2a", gold: "#e91e8c", text: "#ffffff", mut: "#999999", grn: "#22c55e" };
 const KIND = {
@@ -58,8 +58,12 @@ export const liveLoaders = {
     return o;
   },
   // Hide a block on the chart (one date, or every week on that weekday), or show it again.
-  hide: async (row) => postCourts({ action: "hide", ...row }),
-  unhide: async (id) => postCourts({ action: "unhide", id }),
+  hide: async (row) => postCourts({ action: "hide", ...row }),          // row.move = { courts, start, end } moves it instead
+  editMove: async (id, move) => postCourts({ action: "edit-move", id, move }),
+  unhide: async (id) => postCourts({ action: "unhide", id }),          // hidden: show again · moved: put back
+  // The change log for Playbook, and emailing it to Jonathan.
+  changes: async () => postCourts({ action: "changes" }),
+  sendChanges: async (keys, note) => postCourts({ action: "send-changes", keys, note }),
   // The no-login link for open-gym members (only open vs booked time).
   link: async () => {
     const { data: { session } = {} } = await supabase.auth.getSession();
@@ -86,8 +90,16 @@ export default function CourtAvailability({ loaders = liveLoaders, onOpenClass }
   const [cache, setCache] = useState(loaders === liveLoaders ? kept.cache : {});      // weekStart -> { bookings, dse, offCourt, at } | { error }
   useEffect(() => { kept.date = date; kept.mode = mode; if (loaders === liveLoaders) kept.cache = Object.fromEntries(Object.entries(cache).filter(([, v]) => !v.error)); }, [date, mode, cache]); // eslint-disable-line react-hooks/exhaustive-deps
   const [busy, setBusy] = useState(null);       // week being pulled
-  const [hideAsk, setHideAsk] = useState(null); // { date, hide, label } - the block about to be hidden
+  const [hideAsk, setHideAsk] = useState(null); // { date, hide, label, change } - the block being moved or hidden
   const [hideBusy, setHideBusy] = useState(false);
+  const [moveForm, setMoveForm] = useState(null); // { courts:[...], start, end }
+  const [pbChanges, setPbChanges] = useState(null); // { pending, sent } - the change log for Playbook
+  const [pbOpen, setPbOpen] = useState(false);
+  const [pbPick, setPbPick] = useState({});      // key -> false when unticked
+  const [pbNote, setPbNote] = useState("");
+  const [pbBusy, setPbBusy] = useState(false);
+  const loadPb = () => { if (loaders.changes) loaders.changes().then(setPbChanges).catch(() => {}); };
+  useEffect(loadPb, []); // eslint-disable-line react-hooks/exhaustive-deps
   const [reload, setReload] = useState(0);
   // Rentals upload (Drew, Oct 14 2026): Playbook's Events export carries every
   // Rented Session with its time and court, which nothing else gives HQ.
@@ -140,7 +152,7 @@ export default function CourtAvailability({ loaders = liveLoaders, onOpenClass }
     // Hidden blocks come off first, matched on Playbook's own labels.
     const shown = applyHides(d, { bookings: data.bookings.filter(b => b.date === d), reserved: dseBlock(d, data.reservations || []) }, data.hides || []);
     const bookings = shown.bookings.filter(b => (pub || showHolds || b.kind !== "hold") && !(dropEmpty && isEmpty(b)))
-      .map(b => ({ courts: b.courts, start: b.start, end: b.end, kind: isEmpty(b) ? "empty" : b.kind, label: b.label, detail: (b.signups != null ? b.signups + " signed up this date" + (b.category ? " · " : "") : "") + (b.category || ""), ref: b.clinicId ? { cid: b.clinicId, sid: b.sessionId } : null }))
+      .map(b => ({ courts: b.courts, start: b.start, end: b.end, kind: isEmpty(b) ? "empty" : b.kind, label: b.label, origin: b.origin, change: b.change, detail: (b.signups != null ? b.signups + " signed up this date" + (b.category ? " · " : "") : "") + (b.category || ""), ref: b.clinicId ? { cid: b.clinicId, sid: b.sessionId } : null }))
       .concat(dse.tourn || []);
     return { ...buildCourtDay({ bookings, teams: dse.teams, scrims: dse.scrims, reserved: shown.reserved, startHour: START_H, endHour: END_H }), cancelled: dse.cancelled, phase: dse.phase };
   };
@@ -236,8 +248,8 @@ export default function CourtAvailability({ loaders = liveLoaders, onOpenClass }
                           : cell
                           ? { boxSizing: "border-box", height: n * ROW - 4, overflow: "hidden", position: "relative", borderRadius: 6, background: k.bg, border: (cell.auto || k.dash ? "1px dashed " : "1px solid ") + (conflict ? "#ef4444" : k.bd), color: k.fg, cursor: cell.ref && onOpenClass ? "pointer" : undefined, padding: n === 1 ? "2px 5px" : "3px 5px", fontSize: 11, fontWeight: 700, lineHeight: 1.25 }
                           : { boxSizing: "border-box", height: n * ROW - 4, overflow: "hidden", borderRadius: 6, background: "rgba(34,197,94,0.07)", border: resOn[c.id].length ? "1px dashed " + KIND.hold.bd : "1px solid rgba(34,197,94,0.25)", color: "#4ade80", padding: "3px 5px", fontSize: 10, fontWeight: 700 }}>
-                          {!pub && cell?.hide && <button onClick={(e) => { e.stopPropagation(); setHideAsk({ date, hide: cell.hide, label: cell.label }); }} title="Hide this block" aria-label={"Hide " + cell.label}
-                            style={{ position: "absolute", top: 1, right: 2, width: 18, height: 18, padding: 0, border: "none", borderRadius: 4, background: "rgba(0,0,0,0.35)", color: "inherit", fontSize: 13, lineHeight: "18px", cursor: "pointer", opacity: 0.75 }}>×</button>}
+                          {!pub && cell?.hide && <button onClick={(e) => { e.stopPropagation(); openBlock({ date, hide: cell.hide, label: cell.label, change: cell.change, now: cell.change ? { courts: cell.change.to_courts, start: cell.change.to_start_h, end: cell.change.to_end_h } : null }); }} title="Move or hide this block" aria-label={"Move or hide " + cell.label}
+                            style={{ position: "absolute", top: 1, right: 2, width: 20, height: 18, padding: 0, border: "none", borderRadius: 4, background: "rgba(0,0,0,0.35)", color: "inherit", fontSize: 13, lineHeight: "16px", cursor: "pointer", opacity: 0.8 }}>⋯</button>}
                           {cell && pub ? "Booked" : cell ? <>{conflict ? "⚠ " : ""}{cell.kind === "empty" && n < 2 ? "0 · " : ""}{cell.label}{n >= 2 && cell.detail ? <div style={{ fontWeight: 500, opacity: 0.8 }}>{cell.detail}</div> : null}</> : (n >= 2 ? (pub ? "Open " : "Free ") + short(h) + "–" + short(g.slots[si + n - 1] + 0.5) : "")}{!cell && n >= 2 && resOn[c.id].length ? <div style={{ color: KIND.hold.fg, fontWeight: 600 }}>? reserved sometime today</div> : null}
                         </div>
                       </td>);
@@ -253,38 +265,77 @@ export default function CourtAvailability({ loaders = liveLoaders, onOpenClass }
     );
   };
 
-  // ── Hiding blocks ──────────────────────────────────────────────────────────
+  // ── Moving and hiding blocks ──────────────────────────────────────────────
+  // A move or hide is saved in HQ (court_block_hides) and listed under
+  // "Playbook changes" until it's emailed to Jonathan to make in Playbook.
   const weekdayOf = (d) => new Date(d + "T12:00:00").toLocaleDateString(undefined, { weekday: "long" });
   const spanText = (h) => short(h.start ?? h.start_h) + "–" + short(h.end ?? h.end_h);
-  const afterHideChange = () => { kept.cache = {}; setCache({}); setReload(r => r + 1); };
-  const doHide = async (weekly) => {
-    const a = hideAsk; if (!a) return;
+  const afterHideChange = () => { kept.cache = {}; setCache({}); setReload(r => r + 1); loadPb(); };
+  const openBlock = (a) => { setHideAsk(a); const at = a.now || a.hide; setMoveForm({ courts: [...at.courts], start: at.start, end: at.end }); };
+  const closeBlock = () => { if (!hideBusy) { setHideAsk(null); setMoveForm(null); } };
+  const busyDo = async (fn, what) => {
     setHideBusy(true);
-    try {
-      await loaders.hide({ kind: a.hide.kind, label: a.hide.label, start: a.hide.start, end: a.hide.end, courts: a.hide.courts, date: a.date, weekly });
-      setHideAsk(null); afterHideChange();
-    } catch (e) { window.alert("Couldn't hide it: " + e.message); }
+    try { await fn(); setHideAsk(null); setMoveForm(null); afterHideChange(); }
+    catch (e) { window.alert("Couldn't " + what + ": " + e.message); }
     finally { setHideBusy(false); }
   };
-  const showAgain = async (h) => {
-    if (h.weekly && !window.confirm("This shows it again on every " + weekdayOf(h.date) + ", not just today. Go ahead?")) return;
-    try { await loaders.unhide(h.id); afterHideChange(); }
-    catch (e) { window.alert("Couldn't show it again: " + e.message); }
+  const blockRow = (a, weekly, move) => ({ kind: a.hide.kind, label: a.hide.label, start: a.hide.start, end: a.hide.end, courts: a.hide.courts, date: a.date, weekly, ...(move ? { move } : {}) });
+  const doHide = (weekly) => busyDo(() => loaders.hide(blockRow(hideAsk, weekly)), "hide it");
+  const doMove = (weekly) => {
+    const m = moveForm, a = hideAsk;
+    if (!m.courts.length || !(m.end > m.start)) { window.alert("Pick at least one court and an end time after the start."); return; }
+    if (a.change) return busyDo(() => loaders.editMove(a.change.id, m), "move it");
+    return busyDo(() => loaders.hide(blockRow(a, weekly, m)), "move it");
   };
+  const showAgain = async (h) => {
+    const verb = h.action === "move" ? "puts it back" : "shows it again";
+    if (h.weekly && !window.confirm("This " + verb + " on every " + weekdayOf(h.date) + ", not just this day. Go ahead?")) return;
+    try { await loaders.unhide(h.id); afterHideChange(); }
+    catch (e) { window.alert("Couldn't undo it: " + e.message); }
+  };
+  const HALF = Array.from({ length: (23 - 6) * 2 + 1 }, (_, i) => 6 + i / 2);
   const hidePrompt = () => {
-    const a = hideAsk, wd = weekdayOf(a.date);
+    const a = hideAsk, wd = weekdayOf(a.date), m = moveForm || { courts: [], start: 0, end: 0 };
     const b2 = (primary) => ({ padding: "10px 12px", borderRadius: 8, border: primary ? "none" : "1px solid " + C.border, background: primary ? C.gold : "transparent", color: primary ? "#000" : C.text, fontFamily: "inherit", fontSize: 13, fontWeight: 800, cursor: hideBusy ? "default" : "pointer", textAlign: "left" });
+    const sel = { background: C.bg, color: C.text, border: "1px solid " + C.border, borderRadius: 8, padding: "7px 8px", fontFamily: "inherit", fontSize: 13, colorScheme: "dark" };
+    const sect = { fontSize: 11, fontWeight: 800, letterSpacing: 0.4, textTransform: "uppercase", color: C.mut, margin: "14px 0 6px" };
+    const toggleCourt = (id) => setMoveForm(f => ({ ...f, courts: f.courts.includes(id) ? f.courts.filter(x => x !== id) : COURTS.map(c => c.id).filter(x => x === id || f.courts.includes(x)) }));
     return (
-      <div onClick={() => !hideBusy && setHideAsk(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
-        <div onClick={(e) => e.stopPropagation()} style={{ background: C.card, border: "1px solid " + C.border, borderRadius: 12, padding: 16, width: "100%", maxWidth: 380 }}>
-          <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 4 }}>Hide “{a.label}”?</div>
-          <div style={{ fontSize: 12, color: C.mut, marginBottom: 12, lineHeight: 1.5 }}>
-            {spanText(a.hide)} · {courtNames(a.hide.courts)}. It comes off this chart and the members' open-gym page, and its courts show as free. Nothing changes in Playbook. You can show it again from the list under the chart.
+      <div onClick={closeBlock} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+        <div onClick={(e) => e.stopPropagation()} style={{ background: C.card, border: "1px solid " + C.border, borderRadius: 12, padding: 16, width: "100%", maxWidth: 420, maxHeight: "90vh", overflowY: "auto" }}>
+          <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 4 }}>{a.label}</div>
+          <div style={{ fontSize: 12, color: C.mut, lineHeight: 1.5 }}>
+            {a.change ? <>Moved in HQ from {courtNames(a.hide.courts)}, {spanText(a.hide)}{a.change.weekly ? " (every " + weekdayOf(a.change.date) + ")" : ""}.</> : <>{courtNames(a.hide.courts)}, {spanText(a.hide)} · {fmtDay(a.date)}</>}
+            {" "}Changes show on this chart and the members' page and go on the Playbook change list for Jonathan; Playbook itself doesn't change until he does it.
           </div>
+
+          <div style={sect}>{a.change ? "Move it somewhere else" : "Move to"}</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {COURTS.map(c => <button key={c.id} onClick={() => toggleCourt(c.id)} style={{ padding: "6px 9px", borderRadius: 8, fontFamily: "inherit", fontSize: 12, fontWeight: 700, cursor: "pointer", border: "1px solid " + (m.courts.includes(c.id) ? C.gold : C.border), background: m.courts.includes(c.id) ? "rgba(233,30,140,0.15)" : "transparent", color: C.text }}>{c.label}</button>)}
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8, fontSize: 12, color: C.mut }}>
+            <select value={m.start} onChange={e => setMoveForm(f => ({ ...f, start: +e.target.value }))} style={sel} aria-label="Start">{HALF.map(h => <option key={h} value={h}>{fmtHour(h)}</option>)}</select>
+            to
+            <select value={m.end} onChange={e => setMoveForm(f => ({ ...f, end: +e.target.value }))} style={sel} aria-label="End">{HALF.map(h => <option key={h} value={h}>{fmtHour(h)}</option>)}</select>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
+            {a.change
+              ? <button disabled={hideBusy} onClick={() => doMove(false)} style={b2(true)}>Save the move</button>
+              : <>
+                <button disabled={hideBusy} onClick={() => doMove(false)} style={b2(true)}>Move just {fmtDay(a.date)}</button>
+                <button disabled={hideBusy} onClick={() => doMove(true)} style={b2(false)}>Move every {wd} from {fmtMD(a.date)} on</button>
+              </>}
+          </div>
+
+          <div style={sect}>{a.change ? "Undo" : "Or hide it"}</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            <button disabled={hideBusy} onClick={() => doHide(false)} style={b2(true)}>Just {fmtDay(a.date)}</button>
-            <button disabled={hideBusy} onClick={() => doHide(true)} style={b2(false)}>Every {wd} from {fmtMD(a.date)} on</button>
-            <button disabled={hideBusy} onClick={() => setHideAsk(null)} style={{ ...b2(false), border: "none", color: C.mut, textAlign: "center" }}>Cancel</button>
+            {a.change
+              ? <button disabled={hideBusy} onClick={() => showAgain(a.change).then(() => { setHideAsk(null); setMoveForm(null); })} style={b2(false)}>Put it back where Playbook has it</button>
+              : <>
+                <button disabled={hideBusy} onClick={() => doHide(false)} style={b2(false)}>Hide just {fmtDay(a.date)}</button>
+                <button disabled={hideBusy} onClick={() => doHide(true)} style={b2(false)}>Hide every {wd} from {fmtMD(a.date)} on</button>
+              </>}
+            <button disabled={hideBusy} onClick={closeBlock} style={{ ...b2(false), border: "none", color: C.mut, textAlign: "center" }}>Cancel</button>
           </div>
         </div>
       </div>
@@ -293,11 +344,55 @@ export default function CourtAvailability({ loaders = liveLoaders, onOpenClass }
   const hiddenList = (d) => {
     const on = hidesOn(d, data?.hides || []);
     if (!on.length) return null;
+    const link = { background: "none", border: "none", padding: 0, color: C.gold, fontFamily: "inherit", fontSize: 12, fontWeight: 700, cursor: "pointer" };
+    const row = (h) => <span key={h.id}>{h.kind === "dse" ? "DS Elite courts" : h.label} {spanText(h)}, {courtNames(h.courts)}{h.action === "move" ? <> → {courtNames(h.to_courts)}, {short(h.to_start_h)}–{short(h.to_end_h)}</> : null}{h.weekly ? " (every " + weekdayOf(h.date) + ")" : ""}{" "}
+      <button onClick={() => showAgain(h)} style={link}>{h.action === "move" ? "Put back" : "Show again"}</button></span>;
+    const hid = on.filter(h => h.action !== "move"), mov = on.filter(h => h.action === "move");
     return (
       <div style={{ marginTop: 10, fontSize: 12, color: C.mut, lineHeight: 1.7 }}>
-        <b style={{ color: C.text }}>Hidden on this day:</b>{" "}
-        {on.map((h, i) => <span key={h.id}>{i ? " · " : ""}{h.kind === "dse" ? "DS Elite courts" : h.label} {spanText(h)}, {courtNames(h.courts)}{h.weekly ? " (every " + weekdayOf(h.date) + ")" : ""}{" "}
-          <button onClick={() => showAgain(h)} style={{ background: "none", border: "none", padding: 0, color: C.gold, fontFamily: "inherit", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Show again</button></span>)}
+        {mov.length > 0 && <div><b style={{ color: C.text }}>Moved on this day:</b> {mov.map((h, i) => <span key={h.id}>{i ? " · " : ""}{row(h)}</span>)}</div>}
+        {hid.length > 0 && <div><b style={{ color: C.text }}>Hidden on this day:</b> {hid.map((h, i) => <span key={h.id}>{i ? " · " : ""}{row(h)}</span>)}</div>}
+      </div>
+    );
+  };
+
+  // ── Playbook changes: the list for Jonathan ───────────────────────────────
+  const pbPanel = () => {
+    const pend = pbChanges?.pending || [], sent = pbChanges?.sent || [];
+    const picked = pend.filter(c => pbPick[c.key] !== false);
+    const send = async () => {
+      if (!picked.length) return;
+      if (!window.confirm("Email " + picked.length + " change" + (picked.length === 1 ? "" : "s") + " to Jonathan to make in Playbook? You get a copy.")) return;
+      setPbBusy(true);
+      try { const o = await loaders.sendChanges(picked.map(c => c.key), pbNote); setPbNote(""); setPbPick({}); loadPb(); window.alert("Sent to " + o.to + "."); }
+      catch (e) { window.alert(e.message); }
+      finally { setPbBusy(false); }
+    };
+    const line = (c) => { const l = c.line || describeChange(c); return <><b style={{ color: C.text }}>{l.when}:</b> {l.text}</>; };
+    return (
+      <div onClick={() => !pbBusy && setPbOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+        <div onClick={(e) => e.stopPropagation()} style={{ background: C.card, border: "1px solid " + C.border, borderRadius: 12, padding: 16, width: "100%", maxWidth: 560, maxHeight: "90vh", overflowY: "auto" }}>
+          <div style={{ fontSize: 16, fontWeight: 800 }}>Playbook changes</div>
+          <div style={{ fontSize: 12, color: C.mut, margin: "4px 0 12px", lineHeight: 1.5 }}>What's been moved, hidden or added here that Playbook doesn't have yet. Send it to Jonathan DelaRosa to make in Playbook; each change drops off this list once it's sent.</div>
+          {!pend.length && <div style={{ fontSize: 13, color: C.mut, padding: "8px 0" }}>Nothing waiting. Move or hide a block (⋯ on the chart) and it lands here.</div>}
+          {pend.map(c => (
+            <label key={c.key} style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 13, color: C.mut, padding: "7px 0", borderTop: "1px solid " + C.border, cursor: "pointer", lineHeight: 1.45 }}>
+              <input type="checkbox" checked={pbPick[c.key] !== false} onChange={e => setPbPick(p => ({ ...p, [c.key]: e.target.checked }))} style={{ accentColor: C.gold, marginTop: 3 }} />
+              <span>{line(c)}</span>
+            </label>
+          ))}
+          {pend.length > 0 && <>
+            <textarea value={pbNote} onChange={e => setPbNote(e.target.value)} rows={2} placeholder="Add a note for Jonathan (optional)" style={{ width: "100%", boxSizing: "border-box", marginTop: 10, background: C.bg, color: C.text, border: "1px solid " + C.border, borderRadius: 8, padding: "8px 10px", fontFamily: "inherit", fontSize: 13 }} />
+            <button disabled={pbBusy || !picked.length} onClick={send} style={{ width: "100%", marginTop: 10, padding: "11px", borderRadius: 10, border: "none", background: C.gold, color: "#000", fontFamily: "inherit", fontSize: 14, fontWeight: 800, cursor: pbBusy ? "default" : "pointer", opacity: picked.length ? 1 : 0.5 }}>
+              {pbBusy ? "Sending…" : "Email " + picked.length + " change" + (picked.length === 1 ? "" : "s") + " to Jonathan"}
+            </button>
+          </>}
+          {sent.length > 0 && <details style={{ marginTop: 14 }}>
+            <summary style={{ cursor: "pointer", fontSize: 12, fontWeight: 700, color: C.mut }}>Already sent ({sent.length})</summary>
+            {sent.map(c => <div key={c.key} style={{ fontSize: 12, color: C.mut, padding: "5px 0", borderTop: "1px solid " + C.border, lineHeight: 1.45 }}>{line(c)} <span style={{ opacity: 0.7 }}>· sent {new Date(c.sent_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span></div>)}
+          </details>}
+          <button onClick={() => setPbOpen(false)} disabled={pbBusy} style={{ width: "100%", marginTop: 10, padding: "9px", borderRadius: 10, border: "1px solid " + C.border, background: "transparent", color: C.text, fontFamily: "inherit", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Close</button>
+        </div>
       </div>
     );
   };
@@ -344,6 +439,8 @@ export default function CourtAvailability({ loaders = liveLoaders, onOpenClass }
         </div>
         <button onClick={async () => { try { const u = memberLink || await loaders.link(); setMemberLink(u); try { await navigator.clipboard.writeText(u); setCopied(true); } catch { setCopied(false); /* copy blocked: the link shows below */ } } catch (e) { window.alert(e.message); } }}
           title="The no-login link for open-gym members: open court time only, no names" style={{ ...btn(false), border: "1px solid " + C.border, borderRadius: 8 }}>🔗 Members&rsquo; link</button>
+        {!pub && loaders.changes && <button onClick={() => { loadPb(); setPbOpen(true); }} title="Moves, hides and added rentals to send to Jonathan for Playbook" style={{ ...btn(false), border: "1px solid " + ((pbChanges?.pending || []).length ? C.gold : C.border), borderRadius: 8 }}>📝 Playbook changes{(pbChanges?.pending || []).length ? " (" + pbChanges.pending.length + ")" : ""}</button>}
+        {pbOpen && pbPanel()}
         <button onClick={() => setPub(v => !v)} title="Show only open vs booked time - what members would see" style={{ ...btn(pub), border: "1px solid " + (pub ? C.gold : C.border), borderRadius: 8 }}>👁 Client view</button>
         {!pub && <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: C.mut, cursor: "pointer" }}><input type="checkbox" checked={showHolds} onChange={e => setShowHolds(e.target.checked)} style={{ accentColor: C.gold }} />Holds &amp; rentals</label>}
         {!pub && loaders.importRentals && <>

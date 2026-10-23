@@ -119,7 +119,7 @@ export async function publicWeek(sb, start, days) {
 // Hidden blocks that can touch [start, end): one-day hides in the range, and
 // every-week hides that began before it ends.
 export async function loadHides(sb, start, end) {
-  const { data, error } = await sb.from("court_block_hides").select("id, kind, label, start_h, end_h, courts, date, weekly, created_by, created_at").lt("date", end);
+  const { data, error } = await sb.from("court_block_hides").select("id, action, kind, label, start_h, end_h, courts, to_courts, to_start_h, to_end_h, date, weekly, created_by, created_at, sent_at").lt("date", end);
   if (error) return [];
-  return (data || []).filter(h => h.weekly || h.date >= start).map(h => ({ ...h, start_h: Number(h.start_h), end_h: Number(h.end_h) }));
+  return (data || []).filter(h => h.weekly || h.date >= start).map(h => ({ ...h, start_h: Number(h.start_h), end_h: Number(h.end_h), to_start_h: h.to_start_h == null ? null : Number(h.to_start_h), to_end_h: h.to_end_h == null ? null : Number(h.to_end_h) }));
 }

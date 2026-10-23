@@ -28,7 +28,9 @@
 import { createClient } from "@supabase/supabase-js";
 import { addDays, centralToday } from "./_lib/playbook-calendar.js";
 import { loadCourtBookings, courtsToken, loadHides } from "./_lib/court-data.js";
-import { COURTS } from "../shared/courts.js";
+import { COURTS, describeChange, clockHours } from "../shared/courts.js";
+import { sendMail, emailShell } from "./_lib/projects.js";
+import { DSSC_DIRECTORS } from "../shared/dssc-directors.js";
 import { importRentals, rentalsMeta } from "./_lib/court-rentals.js";
 import { appOrigin } from "../shared/app-origin.js";
 import { parseClock } from "../shared/dssc-clinics.js";
@@ -56,16 +58,52 @@ export default async function handler(req, res) {
   if (req.method === "POST") {
     let body = req.body;
     try { body = typeof body === "string" ? JSON.parse(body) : (body || {}); } catch { return res.status(400).json({ error: "Invalid JSON" }); }
-    // Hide a block (one date, or every week on that weekday from the date on).
+    // Hide or move a block (one date, or every week on that weekday from the date on).
+    const ids = COURTS.map(c => c.id);
+    const toPlace = (m) => m && { to_courts: [...new Set((m.courts || []).filter(c => ids.includes(c)))], to_start_h: Number(m.start), to_end_h: Number(m.end) };
+    const badPlace = (t) => !t.to_courts.length || !(t.to_end_h > t.to_start_h) || t.to_start_h < 6 || t.to_end_h > 23;
     if (body.action === "hide") {
-      const ids = COURTS.map(c => c.id);
-      const row = { kind: body.kind, label: body.kind === "booking" ? String(body.label || "").slice(0, 200) : null, start_h: Number(body.start), end_h: Number(body.end),
+      const move = toPlace(body.move);
+      if (move && badPlace(move)) return res.status(400).json({ error: "Pick at least one court and an end after the start" });
+      const row = { action: move ? "move" : "hide", ...(move || {}), kind: body.kind, label: body.kind === "booking" ? String(body.label || "").slice(0, 200) : null, start_h: Number(body.start), end_h: Number(body.end),
         courts: [...new Set((body.courts || []).filter(c => ids.includes(c)))], date: body.date, weekly: !!body.weekly, created_by: who };
       if (!["booking", "dse"].includes(row.kind) || !/^\d{4}-\d{2}-\d{2}$/.test(row.date || "") || !(row.end_h > row.start_h) || !row.courts.length || (row.kind === "booking" && !row.label))
         return res.status(400).json({ error: "That block can't be hidden" });
       const { data, error } = await sb.from("court_block_hides").insert(row).select("id").single();
       if (error) return res.status(500).json({ error: error.message });
       return res.status(200).json({ ok: true, id: data.id });
+    }
+    // Change where a moved block goes (not yet sent to Playbook, or sent - it's sent again).
+    if (body.action === "edit-move") {
+      const move = toPlace(body.move);
+      if (!move || badPlace(move)) return res.status(400).json({ error: "Pick at least one court and an end after the start" });
+      const { error } = await sb.from("court_block_hides").update({ ...move, sent_at: null, sent_to: null }).eq("id", Number(body.id)).eq("action", "move");
+      if (error) return res.status(500).json({ error: error.message });
+      return res.status(200).json({ ok: true });
+    }
+    // The change log for Playbook: what HQ has changed that Jonathan hasn't been sent.
+    if (body.action === "changes") return res.status(200).json({ ok: true, ...(await playbookChanges(sb)) });
+    if (body.action === "send-changes") {
+      const { pending } = await playbookChanges(sb);
+      const pick = Array.isArray(body.keys) ? pending.filter(c => body.keys.includes(c.key)) : pending;
+      if (!pick.length) return res.status(400).json({ error: "Nothing new to send" });
+      const to = DSSC_DIRECTORS.find(d => /jonathan/i.test(d.name))?.email || "jonathan@drippingsportsclub.com";
+      const sender = DSSC_DIRECTORS.find(d => d.email === who)?.name || (who === "HQ" ? "Drew Rose" : who);
+      const note = String(body.note || "").trim().slice(0, 2000);
+      const esc = (x) => String(x).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+      const lines = pick.map(c => describeChange(c));
+      const text = "Hi Jonathan,\n\nPlease make these changes in Playbook:\n\n" + lines.map(l => "- " + l.when + ": " + l.text).join("\n") + (note ? "\n\n" + note : "") + "\n\nThanks,\n" + sender;
+      const html = emailShell("<p>Hi Jonathan,</p><p>Please make these changes in Playbook:</p><ul>" + lines.map(l => "<li><b>" + esc(l.when) + ":</b> " + esc(l.text) + "</li>").join("") + "</ul>" + (note ? "<p>" + esc(note).replace(/\n/g, "<br>") + "</p>" : "") + "<p>Thanks,<br>" + esc(sender) + "</p>");
+      const replyTo = /@/.test(who) ? who : "drew@drippingsportsclub.com";
+      const subject = "Playbook changes: " + pick.length + " court change" + (pick.length === 1 ? "" : "s");
+      const sent = await sendMail({ to, subject, html, text, replyTo });
+      if (!sent.ok) return res.status(502).json({ error: "Email didn't send: " + sent.error });
+      await sendMail({ to: replyTo, subject: "Copy: " + subject, html, text });
+      const now = new Date().toISOString();
+      const hideIds = pick.filter(c => c.source === "change").map(c => c.id), rentIds = pick.filter(c => c.source === "rental").map(c => c.id);
+      if (hideIds.length) await sb.from("court_block_hides").update({ sent_at: now, sent_to: to }).in("id", hideIds);
+      if (rentIds.length) await sb.from("dssc_court_rentals").update({ playbook_sent_at: now }).in("id", rentIds);
+      return res.status(200).json({ ok: true, sent: pick.length, to });
     }
     if (body.action === "unhide") {
       const { error } = await sb.from("court_block_hides").delete().eq("id", Number(body.id));
@@ -131,4 +169,19 @@ async function attachSignups(sb, bookings) {
     b.clinicId = c.id; b.sessionId = s.id;
   }
   return sync?.registrations_at || null;
+}
+
+// Everything HQ has changed on the courts that Playbook should match: hides and
+// moves (court_block_hides) and rentals added in HQ (dssc_court_rentals with
+// source "hq"). pending = not sent to Jonathan yet; sent = the last 20 that were.
+async function playbookChanges(sb) {
+  const [{ data: ch }, { data: rent }] = await Promise.all([
+    sb.from("court_block_hides").select("id, action, kind, label, start_h, end_h, courts, to_courts, to_start_h, to_end_h, date, weekly, created_by, created_at, sent_at, sent_to").order("date"),
+    sb.from("dssc_court_rentals").select("id, date, start_time, end_time, courts, label, renter, imported_by, imported_at, playbook_sent_at").eq("source", "hq").order("date"),
+  ]);
+  const all = [
+    ...(ch || []).map(c => ({ ...c, key: "c" + c.id, source: "change", start_h: Number(c.start_h), end_h: Number(c.end_h), to_start_h: c.to_start_h == null ? null : Number(c.to_start_h), to_end_h: c.to_end_h == null ? null : Number(c.to_end_h) })),
+    ...(rent || []).map(r => ({ id: r.id, key: "r" + r.id, source: "rental", action: "add", kind: "booking", label: r.label, renter: r.renter, courts: r.courts, start_h: clockHours(r.start_time), end_h: clockHours(r.end_time), date: r.date, weekly: false, created_by: r.imported_by, created_at: r.imported_at, sent_at: r.playbook_sent_at })),
+  ].map(c => ({ ...c, line: describeChange(c) }));
+  return { pending: all.filter(c => !c.sent_at), sent: all.filter(c => c.sent_at).sort((a, b) => String(b.sent_at).localeCompare(String(a.sent_at))).slice(0, 20) };
 }

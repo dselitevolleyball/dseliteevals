@@ -191,11 +191,13 @@ export function buildCourtDay({ bookings = [], teams = [], scrims = [], reserved
   };
   // 0. Standing DS Elite reservations (the Sunday Warehouse block).
   // Each held court carries what a "hide" of it would match (applyHides).
-  reserved.forEach((r, n) => { for (const c of r.courts) for (const i of idx(r.start, r.end)) cells[c][i] = { kind: "dse", label: r.label, detail: r.detail || "", key: "r" + n, reserved: true, hide: { kind: "dse", start: r.start, end: r.end, courts: [c] } }; });
+  // A moved block carries its original place (origin) and the change row (change).
+  reserved.forEach((r, n) => { const o = r.origin || r; for (const c of r.courts) for (const i of idx(r.start, r.end)) cells[c][i] = { kind: "dse", label: r.label, detail: r.detail || "", key: "r" + n, reserved: true, hide: { kind: "dse", start: o.start, end: o.end, courts: r.origin ? o.courts : [c] }, change: r.change || null }; });
   // 1. Playbook bookings and the in-house tournament, exactly where they are.
   bookings.forEach((b, n) => {
-    const hide = b.kind === "tourn" ? null : { kind: "booking", label: b.hideLabel || b.label, start: b.start, end: b.end, courts: b.courts };
-    for (const c of b.courts) for (const i of idx(b.start, b.end)) put(c, i, { kind: b.kind, label: b.label, detail: b.detail || "", key: "b" + n, ref: b.ref || null, hide });
+    const o = b.origin || b;
+    const hide = b.kind === "tourn" ? null : { kind: "booking", label: b.hideLabel || b.label, start: o.start, end: o.end, courts: o.courts };
+    for (const c of b.courts) for (const i of idx(b.start, b.end)) put(c, i, { kind: b.kind, label: b.label, detail: b.detail || "", key: "b" + n, ref: b.ref || null, hide, change: b.change || null });
   });
 
   // 2. DS Elite: scrimmage pairs share one court; everyone else gets their own.
@@ -243,22 +245,53 @@ export function buildCourtDay({ bookings = [], teams = [], scrims = [], reserved
   return { slots, cells, free, issues };
 }
 
-// ── Hidden blocks (Drew, Oct 23 2026: "I want to be able to delete or hide
-// blocks"). court_block_hides rows take a booking or DS Elite's held courts off
-// the chart, on one date or every week on that weekday from a date on.
-//   hides: [{ id, kind: "booking"|"dse", label, start_h, end_h, courts, date, weekly }]
+// ── Hidden and moved blocks (Drew, Oct 23 2026: "I want to be able to delete
+// or hide blocks", then "move volleyball101 because it conflicts with the
+// court"). court_block_hides rows take a booking or DS Elite's held courts off
+// the chart (action "hide") or draw it somewhere else (action "move"), on one
+// date or every week on that weekday from a date on.
+//   rows: [{ id, action: "hide"|"move", kind: "booking"|"dse", label, start_h,
+//            end_h, courts, to_courts, to_start_h, to_end_h, date, weekly }]
 const near = (a, b) => Math.abs(Number(a) - Number(b)) < 0.01;
 const dowOf = (ymd) => new Date(ymd + "T12:00:00").getDay();
 export const hidesOn = (ymd, hides = []) => hides.filter(h => h.date === ymd || (h.weekly && ymd >= h.date && dowOf(ymd) === dowOf(h.date)));
 const hits = (h, x) => near(h.start_h, x.start) && near(h.end_h, x.end) && (x.courts || []).some(c => (h.courts || []).includes(c));
+const courtWord = (cs) => (cs || []).map(c => c.replace("V", "")).join(" + ");
+export const movedNote = (h) => "Moved in HQ from Court" + ((h.courts || []).length > 1 ? "s " : " ") + courtWord(h.courts) + ", " + fmtHour(h.start_h) + "-" + fmtHour(h.end_h);
 // The day's bookings (raw, with their own labels) and DS Elite's held blocks,
-// minus whatever is hidden that day.
+// with whatever is hidden that day taken off and whatever is moved redrawn.
 export function applyHides(ymd, { bookings = [], reserved = [] }, hides = []) {
   const on = hidesOn(ymd, hides);
   if (!on.length) return { bookings, reserved };
   const bk = on.filter(h => h.kind === "booking"), dk = on.filter(h => h.kind === "dse");
-  return {
-    bookings: bookings.filter(b => !bk.some(h => String(h.label || "") === String(b.label || "") && hits(h, b))),
-    reserved: reserved.map(r => ({ ...r, courts: r.courts.filter(c => !dk.some(h => hits(h, { ...r, courts: [c] }))) })).filter(r => r.courts.length),
-  };
+  const outB = [];
+  for (const b of bookings) {
+    const h = bk.find(x => String(x.label || "") === String(b.label || "") && hits(x, b));
+    if (!h) { outB.push(b); continue; }
+    if (h.action === "move") outB.push({ ...b, courts: h.to_courts, start: Number(h.to_start_h), end: Number(h.to_end_h), origin: { start: b.start, end: b.end, courts: b.courts }, change: h, category: [b.category, movedNote(h)].filter(Boolean).join(" · ") });
+  }
+  const outR = [];
+  for (const r of reserved) {
+    const keep = [];
+    for (const c of r.courts) {
+      const h = dk.find(x => hits(x, { ...r, courts: [c] }));
+      if (!h) keep.push(c);
+      else if (h.action === "move" && !outR.some(x => x.change === h)) outR.push({ ...r, courts: h.to_courts, start: Number(h.to_start_h), end: Number(h.to_end_h), origin: { start: r.start, end: r.end, courts: h.courts }, change: h, detail: movedNote(h) });
+    }
+    if (keep.length) outR.push({ ...r, courts: keep });
+  }
+  return { bookings: outB, reserved: outR };
+}
+
+// One line per change, the way Jonathan reads it to fix Playbook.
+//   change: a court_block_hides row, or { action: "add", ...dssc_court_rentals row (start/end as hours) }
+const fmtDate = (ymd) => new Date(ymd + "T12:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
+const weekdayName = (ymd) => new Date(ymd + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", timeZone: "UTC" });
+const place = (cs, s, e) => "Court" + ((cs || []).length > 1 ? "s " : " ") + courtWord(cs) + ", " + fmtHour(Number(s)) + "-" + fmtHour(Number(e));
+export function describeChange(c) {
+  const when = c.weekly ? "Every " + weekdayName(c.date) + " from " + fmtDate(c.date) : fmtDate(c.date);
+  const what = c.kind === "dse" ? "DS Elite courts" : (c.label || "Booking");
+  if (c.action === "add") return { when, text: "Add " + what + (c.renter ? " (" + c.renter + ")" : "") + ": " + place(c.courts, c.start_h, c.end_h) };
+  if (c.action === "move") return { when, text: what + ": move from " + place(c.courts, c.start_h, c.end_h) + " to " + place(c.to_courts, c.to_start_h, c.to_end_h) };
+  return { when, text: (c.kind === "dse" ? "Release " : "Remove ") + what + ": " + place(c.courts, c.start_h, c.end_h) };
 }
