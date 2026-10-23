@@ -11,6 +11,7 @@
 // Usage:
 //   node scripts/send-ncaa-tickets.mjs                      # dry run
 //   node scripts/send-ncaa-tickets.mjs --team "15 Diamond"  # dry run, one team
+//   node scripts/send-ncaa-tickets.mjs --player "Emma Blahnik"  # dry run, one family
 //   node scripts/send-ncaa-tickets.mjs --test drew@dselitevolleyball.com --send
 //                                  # the first family's email, sent only to that address
 //   node scripts/send-ncaa-tickets.mjs --send               # actually send
@@ -51,6 +52,7 @@ const includeDone = flag("all");
 const onlyTeam = value("team");
 const testTo = value("test");
 const testPhone = value("test-phone");
+const onlyPlayer = value("player");   // "First Last": just that player's family
 const doText = flag("text") || flag("both");
 const doEmail = !flag("text") || flag("both");
 
@@ -73,6 +75,7 @@ const rostered = players.filter((p) => String(p.team_assignment || "").trim() &&
   && !TERMINAL_OFFER.includes(p.offer_status || "") && !eventTeams.has(p.team_assignment));
 const fams = families(rostered)
   .filter((f) => !onlyTeam || f.some((p) => p.team_assignment === onlyTeam))
+  .filter((f) => !onlyPlayer || f.some((p) => (p.first_name + " " + p.last_name).toLowerCase() === onlyPlayer.toLowerCase()))
   .filter((f) => includeDone || !f.some((p) => answered.has(p.id)))
   .filter((f) => f.some((p) => p.global_token));
 
