@@ -8,6 +8,7 @@ import { PLAYER_CLAUSES, PARENT_CLAUSES, isFullySigned } from "../shared/commitm
 import { isEventTeam } from "../shared/event-teams.js";
 import { isAustinArea } from "../shared/austin-area.js";
 import { GC_TEAMS, GC_INTEREST, GC_POSITIONS, GC_TRAVEL, GC_CITIES, GC_WHEN, labelOf as gcLabel } from "../shared/global-challenge.js";
+import { NCAA_PRICE, NCAA_REPLY_BY, NCAA_SUBJECT, NCAA_ANSWERS, ncaaEmail, ncaaText, ncaaLabel, families as ncaaFamilies } from "../shared/ncaa-tickets.js";
 import { parseSaleRows, matchInvoicesToPlayers } from "../shared/shoe-invoices.js";
 import { parseSportsEngineRows, matchMembersToPlayers, playerPatchFor } from "../shared/sportsengine.js";
 import { SCHOOL_DIVS } from "../shared/school-divs.js";
@@ -1722,6 +1723,7 @@ export default function App() {
   const [schoolReports, setSchoolReports]             = useState([]);
   const [commitments, setCommitments]                 = useState([]);   // orientation-night signatures
   const [gcAnswers, setGcAnswers]                     = useState([]);   // Girls Global Challenge interest (/global)
+  const [ncaaAnswers, setNcaaAnswers]                 = useState([]);   // NCAA Championship group tickets (/ncaa), one row per family
   const [schoolFilter, setSchoolFilter]               = useState("all"); // all | in | waiting | none
   const [schoolGroup, setSchoolGroup]                 = useState("school"); // school | team | flat
   const [schoolEditId, setSchoolEditId]               = useState(null);    // player card: whose answer staff is correcting
@@ -2721,6 +2723,11 @@ export default function App() {
     if (error) { console.error("Load global_challenge_interest error:", error); return; }
     setGcAnswers(data || []);
   }, []);
+  const loadNcaaAnswers = useCallback(async () => {
+    const { data, error } = await supabase.from("ncaa_tickets").select("*");
+    if (error) { console.error("Load ncaa_tickets error:", error); return; }
+    setNcaaAnswers(data || []);
+  }, []);
   const loadSchoolGames = useCallback(async () => {
     const { data, error } = await supabase.from("school_games").select("*").order("game_date");
     if (error) { console.error("Load school_games error:", error); return; }
@@ -2918,6 +2925,7 @@ export default function App() {
   useEffect(() => { if (isApproved) loadSchoolReports(); }, [isApproved, loadSchoolReports]);
   useEffect(() => { if (isApproved) loadCommitments(); }, [isApproved, loadCommitments]);
   useEffect(() => { if (isApproved) loadGcAnswers(); }, [isApproved, loadGcAnswers]);
+  useEffect(() => { if (isApproved) loadNcaaAnswers(); }, [isApproved, loadNcaaAnswers]);
   const loadPlayerNudges = useCallback(async () => {
     const { data, error } = await supabase.from("player_nudges").select("player_id, need, channel, sent_at").order("sent_at", { ascending: false }).limit(2000);
     if (error) { console.error("Load player_nudges error:", error); return; }
@@ -11321,6 +11329,9 @@ export default function App() {
     const gearBy = new Map(gearOrders.map(r => [r.player_id, r]));
     const commitBy = new Map(commitments.map(c => [c.player_id, c]));
     const gcBy = new Map(gcAnswers.map(a => [a.player_id, a]));
+    // NCAA tickets: one answer per family, so one row (and one nudge) per family.
+    const ncaaAnswered = new Set(ncaaAnswers.map(a => a.player_id));
+    const ncaaFams = ncaaFamilies(rostered).filter(f => !f.some(p => ncaaAnswered.has(p.id)) && f.some(p => p.global_token));
     const shoeBy = new Map();
     for (const inv of shoeInvoices) { if (!inv.player_id) continue; (shoeBy.get(inv.player_id) || shoeBy.set(inv.player_id, []).get(inv.player_id)).push(inv); }
     const lastNudge = new Map();
@@ -11397,6 +11408,13 @@ export default function App() {
         subject: (p) => "Quick question: " + girl(p) + " and the Girls Global Challenge in Croatia (" + GC_WHEN + ")",
         body: (p) => greet(p) + "\n\nWe haven't heard back yet about the Girls Global Challenge, the U17 tournament in Croatia in " + GC_WHEN + ". We're trying to see whether we have enough players to take a team, and an answer helps even if it's a no:\n\n" + base + "/global?t=" + p.global_token + "\n\nIt's interest only. Nothing is owed and nobody is signed up by answering." + sign,
         text: (p) => hiText(p) + " is " + girlOf(p) + " interested in the Girls Global Challenge in Croatia in " + GC_WHEN + "? Interest only, takes a minute, and a no helps too: " + base + "/global?t=" + p.global_token + signText },
+      { key: "ncaa", label: "NCAA Championship tickets", icon: "🏟️", color: "#f97316",
+        scope: "Alamodome, Sun Dec 20 · $" + NCAA_PRICE + " group tickets · every family, one answer each, by " + NCAA_REPLY_BY + " · answers at the bottom of this screen",
+        rows: ncaaFams.map(f => { const lead = f.find(p => p.global_token);
+          return { p: lead, detail: f.length > 1 ? "hasn't answered · also " + f.filter(p => p.id !== lead.id).map(p => p.first_name).join(", ") : "hasn't answered", canNudge: true }; }),
+        subject: () => NCAA_SUBJECT,
+        body: (p) => ncaaEmail({ greeting: greet(p), link: base + "/ncaa?t=" + p.global_token, from: coach?.display_name || "Drew Rose" }),
+        text: (p) => ncaaText({ link: base + "/ncaa?t=" + p.global_token, from: String(coach?.display_name || "Drew Rose").split(/\s+/)[0] }) },
     ];
 
     // A text goes to each parent mobile as its own message from the club
@@ -11642,6 +11660,62 @@ export default function App() {
         <div style={{fontSize:11,color:C.mut,marginTop:6}}>A nudge is one email, or one text to each parent mobile, from you, with the link they need. Texts come from the club number and replies land in Messages (SMS); anyone who replied STOP is skipped. Every send is remembered here so you can see who has already been asked.</div>
         <EuropeRsvps players={players} gcAnswers={gcAnswers} />
         {renderGcAnswers()}
+        {renderNcaaAnswers()}
+      </div>
+    );
+  }
+
+  // NCAA Championship group tickets: the count to order, and who said what.
+  // One row per family (the form clears siblings' rows when it saves).
+  function renderNcaaAnswers() {
+    const byId = new Map(players.map(p => [p.id, p]));
+    const rows = ncaaAnswers.map(a => ({ a, p: byId.get(a.player_id) })).filter(r => r.p)
+      .filter(r => !waitTeam || r.p.team_assignment === waitTeam);
+    if (!rows.length) return null;
+    const ORDER = NCAA_ANSWERS.map(o => o.key);
+    const COL = { yes: C.grn, have: "#38bdf8", maybe: "#f59e0b", no: C.mut };
+    const sibs = (p) => players.filter(q => q.id !== p.id && q.team_assignment && [p.parent_email, p.parent_email2, p.parent_email3].filter(Boolean)
+      .some(e => [q.parent_email, q.parent_email2, q.parent_email3].some(x => x && x.trim().toLowerCase() === e.trim().toLowerCase())));
+    const kids = (p) => [p, ...sibs(p)].map(q => q.first_name + " (" + q.team_assignment + ")").join(", ");
+    const tickets = rows.reduce((n, r) => n + (r.a.tickets || 0), 0);
+    const already = rows.reduce((n, r) => n + (r.a.answer === "have" ? r.a.party || 0 : 0), 0);
+    const csv = () => {
+      const q = (v) => '"' + String(v ?? "").replace(/"/g, '""') + '"';
+      const lines = [["Family", "Players", "Answer", "Group tickets", "Cost", "Already have (people)", "Answered by", "Notes", "Answered"].map(q).join(",")];
+      for (const { a, p } of rows) lines.push([p.last_name, kids(p), ncaaLabel(a.answer, "short"), a.tickets ?? "", a.tickets ? a.tickets * NCAA_PRICE : "",
+        a.party ?? "", a.respondent_name, a.notes, (a.updated_at || "").slice(0, 10)].map(q).join(","));
+      const el = document.createElement("a");
+      el.href = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv" }));
+      el.download = "ncaa-tickets.csv"; el.click();
+    };
+    return (
+      <div style={{background:C.card,border:"1px solid #f97316",borderRadius:12,marginTop:18,padding:"12px 14px"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+          <span style={{fontSize:16}}>🏟️</span>
+          <div style={{flex:1,minWidth:200}}>
+            <div style={{fontSize:14,fontWeight:800,color:C.text}}>NCAA Championship tickets · <span style={{color:"#f97316"}}>{tickets} group ticket{tickets === 1 ? "" : "s"}</span> <span style={{color:C.mut,fontWeight:600}}>(${(tickets * NCAA_PRICE).toLocaleString()})</span></div>
+            <div style={{fontSize:11,color:C.mut,marginTop:1}}>
+              {ORDER.map(k => <span key={k} style={{marginRight:10}}><b style={{color:COL[k]}}>{rows.filter(r => r.a.answer === k).length}</b> {ncaaLabel(k, "short").toLowerCase()}</span>)}
+              {already > 0 && <> · {already} already have their own tickets</>}
+            </div>
+          </div>
+          <button onClick={csv} style={{padding:"6px 10px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontFamily:"inherit",fontSize:11,fontWeight:700,cursor:"pointer"}}>⬇ CSV</button>
+        </div>
+        <div style={{marginTop:10,borderTop:"1px solid "+C.border}}>
+          {rows.slice().sort((x, y) => ORDER.indexOf(x.a.answer) - ORDER.indexOf(y.a.answer) || x.p.last_name.localeCompare(y.p.last_name)).map(({ a, p }) => (
+            <div key={p.id} style={{display:"flex",gap:10,padding:"8px 0",borderBottom:"1px solid "+C.border,flexWrap:"wrap",alignItems:"baseline"}}>
+              <span style={{fontSize:11,fontWeight:800,color:COL[a.answer],width:84,textTransform:"uppercase"}}>{ncaaLabel(a.answer, "short")}</span>
+              <button onClick={()=>setProfileId(p.id)} style={{background:"none",border:"none",padding:0,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,color:C.text,minWidth:150,textAlign:"left"}}>{p.last_name} family</button>
+              <span style={{fontSize:11,color:C.mut,minWidth:120}}>{kids(p)}</span>
+              <span style={{fontSize:11,color:C.text,flex:1,minWidth:200}}>
+                {a.tickets ? <b>{a.tickets} ticket{a.tickets === 1 ? "" : "s"} (${a.tickets * NCAA_PRICE})</b> : null}
+                {a.answer === "have" && <>{a.tickets ? " · " : ""}{a.party} already going</>}
+                {a.notes && <div style={{color:C.mut,marginTop:2}}>“{a.notes}” — {a.respondent_name}</div>}
+                {!a.notes && a.respondent_name && <span style={{color:C.mut}}>{a.tickets || a.answer === "have" ? " · " : ""}{a.respondent_name}</span>}
+              </span>
+            </div>
+          ))}
+        </div>
       </div>
     );
   }

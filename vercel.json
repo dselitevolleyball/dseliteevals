@@ -64,6 +64,10 @@
       "destination": "/api/global-form"
     },
     {
+      "source": "/ncaa",
+      "destination": "/api/ncaa-form"
+    },
+    {
       "source": "/dssc-texts",
       "destination": "/api/dssc-texts-form"
     },
