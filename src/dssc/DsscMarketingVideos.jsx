@@ -10,7 +10,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import * as tus from "tus-js-client";
 import { supabase } from "../supabase";
 import { DS, Btn, Tag, inputStyle } from "./DsscHub.jsx";
-import { videoApi, isMissingTable, LINES, lineMeta, LineChip, chipStyle, Msg, Panel, H } from "./DsscMarketingKit.jsx";
+import { videoApi, mktApi, isMissingTable, LINES, lineMeta, LineChip, chipStyle, Msg, Panel, H } from "./DsscMarketingKit.jsx";
 
 const RAW = "marketing-video";
 const MOODS = ["upbeat", "hype", "chill", "warm", "epic", "fun"];
@@ -244,6 +244,7 @@ function VideoDetail({ v, narrow, picks, onTogglePick, onPatch, onClose, onResor
 function MusicLibrary({ narrow }) {
   const [tracks, setTracks] = useState(null);
   const [form, setForm] = useState(null);         // { file, title, artist, mood: [], rights_ok, rights_note }
+  const [finder, setFinder] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
   const fileRef = useRef(null);
@@ -271,11 +272,13 @@ function MusicLibrary({ narrow }) {
     <Panel style={{ marginTop: 16 }}>
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
         <H style={{ margin: 0, flex: 1 }}>Music library</H>
+        <Btn small kind="primary" onClick={() => setFinder(f => !f)} style={big(narrow)}>{finder ? "Close free music" : "♫ Find free music"}</Btn>
         <Btn small kind="ghost" onClick={() => fileRef.current?.click()} style={big(narrow)}>+ Add a track</Btn>
         <input ref={fileRef} type="file" accept="audio/*,.mp3,.m4a,.wav" style={{ display: "none" }} onChange={e => { pick(e.target.files?.[0]); e.target.value = ""; }} />
       </div>
       <div style={{ fontSize: 12, color: DS.mut, margin: "4px 0 8px" }}>Only tracks the club has the rights to use (royalty-free or licensed). Instagram's own music can't be added to posts made this way. The machine picks a track by mood; you can change it on each reel.</div>
       <Msg msg={msg} style={{ marginBottom: 6 }} />
+      {finder && <FreeMusicFinder narrow={narrow} have={new Set((tracks || []).map(t => t.external_id).filter(Boolean))} onAdded={(t) => { setMsg({ ok: `Added "${t.title}"${t.attribution ? " — its credit goes in the caption of any reel that uses it" : ""}.` }); load(); }} />}
       {form && <div style={{ background: DS.panel2, borderRadius: 10, padding: 12, marginBottom: 10 }}>
         <div style={{ display: "grid", gridTemplateColumns: narrow ? "1fr" : "1fr 1fr", gap: 8 }}>
           <input value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} placeholder="Title" style={{ ...inputStyle, fontSize: narrow ? 16 : 14 }} />
@@ -298,7 +301,8 @@ function MusicLibrary({ narrow }) {
           <div key={t.id} style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", padding: "8px 0", borderTop: "1px solid " + DS.line, opacity: t.active === false ? 0.5 : 1 }}>
             <div style={{ flex: "1 1 180px", minWidth: 0 }}>
               <div style={{ fontSize: 14, fontWeight: 700 }}>{t.title}{t.artist ? <span style={{ fontWeight: 400, color: DS.mut }}> — {t.artist}</span> : null}</div>
-              <div style={{ fontSize: 11, color: DS.dim }}>{(t.mood || []).join(", ")}{t.duration ? ` · ${fmtT(t.duration)}` : ""}{t.used_count ? ` · used ${t.used_count}×` : ""}{t.rights_note ? ` · ${t.rights_note}` : ""}</div>
+              <div style={{ fontSize: 11, color: DS.dim }}>{(t.mood || []).join(", ")}{t.duration ? ` · ${fmtT(t.duration)}` : ""}{t.used_count ? ` · used ${t.used_count}×` : ""}{t.rights_note ? ` · ${t.rights_note}` : ""}{t.source_url ? <> · <a href={t.source_url} target="_blank" rel="noreferrer" style={{ color: DS.mut }}>source</a></> : null}</div>
+              {t.attribution && <div style={{ fontSize: 11, color: DS.mut }}>Caption credit: {t.attribution}</div>}
             </div>
             <audio src={t.url} controls preload="none" style={{ height: 32, maxWidth: 240 }} />
             <Btn small kind="quiet" onClick={async () => { await supabase.from("mkt_music").update({ active: t.active === false }).eq("id", t.id); load(); }}>{t.active === false ? "Use again" : "Retire"}</Btn>
@@ -306,5 +310,55 @@ function MusicLibrary({ narrow }) {
           </div>
         ))}
     </Panel>
+  );
+}
+
+// Free music from Openverse - Creative Commons tracks the club can use
+// commercially (CC0, or CC BY with the artist credited in the caption).
+// Search by mood or words, listen, add the ones you like to the library.
+function FreeMusicFinder({ narrow, have, onAdded }) {
+  const [mood, setMood] = useState("upbeat");
+  const [q, setQ] = useState("");
+  const [res, setRes] = useState(null);
+  const [busy, setBusy] = useState("");
+  const [err, setErr] = useState("");
+  const search = async (m = mood, text = q) => {
+    setBusy("search"); setErr("");
+    try { const d = await mktApi("music_search", { mood: m, q: text.trim() }); setRes(d.results || []); if (d.error) setErr(d.error); }
+    catch (e) { setErr(e.message); setRes([]); }
+    setBusy("");
+  };
+  useEffect(() => { search("upbeat", ""); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const add = async (r) => {
+    setBusy(r.id); setErr("");
+    try { const d = await mktApi("music_add", { id: r.id, mood: [mood] }); onAdded?.(d.track); }
+    catch (e) { setErr(e.message); }
+    setBusy("");
+  };
+  return (
+    <div style={{ background: DS.panel2, borderRadius: 10, padding: 12, marginBottom: 10 }}>
+      <div style={{ fontSize: 12, color: DS.mut, marginBottom: 8, lineHeight: 1.5 }}>Free tracks from Openverse (Jamendo, Freesound, ccMixter) that allow use in club posts: <b>CC0</b> needs nothing; <b>CC BY</b> needs the artist credited, so HQ adds the credit line to the caption of any reel that uses it.</div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        {MOODS.map(m => <button key={m} onClick={() => { setMood(m); setQ(""); search(m, ""); }} style={chipStyle(mood === m && !q, DS.lime, narrow)}>{m}</button>)}
+      </div>
+      <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+        <input value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => e.key === "Enter" && search(mood, q)} placeholder='Or search: "drumline", "summer pop", "piano"' style={{ ...inputStyle, flex: 1, fontSize: narrow ? 16 : 14 }} />
+        <Btn small kind="ghost" disabled={busy === "search"} onClick={() => search(mood, q)} style={big(narrow)}>{busy === "search" ? "Searching…" : "Search"}</Btn>
+      </div>
+      {err && <div style={{ fontSize: 12, color: DS.orange, marginTop: 6 }}>{err}</div>}
+      {res == null ? <div style={{ fontSize: 13, color: DS.mut, marginTop: 8 }}>Searching…</div>
+        : !res.length ? <div style={{ fontSize: 13, color: DS.mut, marginTop: 8 }}>Nothing found — try another word.</div>
+        : res.map(r => (
+          <div key={r.id} style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", padding: "8px 0", borderTop: "1px solid " + DS.line }}>
+            <div style={{ flex: "1 1 200px", minWidth: 0 }}>
+              <div style={{ fontSize: 14, fontWeight: 700 }}>{r.title}{r.artist ? <span style={{ fontWeight: 400, color: DS.mut }}> — {r.artist}</span> : null}</div>
+              <div style={{ fontSize: 11, color: DS.dim }}>{r.duration ? fmtT(r.duration) + " · " : ""}{r.source}{r.landing ? <> · <a href={r.landing} target="_blank" rel="noreferrer" style={{ color: DS.mut }}>source</a></> : null}</div>
+            </div>
+            <audio src={r.preview} controls preload="none" style={{ height: 32, maxWidth: 220 }} />
+            <Tag color={r.license === "cc0" ? DS.lime : "#7FD1C3"}>{r.license === "cc0" ? "CC0" : r.license_label}</Tag>
+            {have.has(r.id) ? <Tag color={DS.mut}>in library</Tag> : <Btn small kind="primary" disabled={!!busy} onClick={() => add(r)} style={big(narrow)}>{busy === r.id ? "Adding…" : "Add"}</Btn>}
+          </div>
+        ))}
+    </div>
   );
 }

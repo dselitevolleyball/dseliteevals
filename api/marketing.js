@@ -17,6 +17,8 @@
 //   publish_now { id }                      publish an approved (or failed) item now
 //   test        { id, to? }                 email -> you; text -> your phone; social -> preview only
 //   photos_sync · settings_save { patch } · priority_save { priority } · priority_delete { id }
+//   music_search { q?, mood?, page? }        free music on Openverse (CC0 / CC BY) for reels
+//   music_add { id, mood? }                 copy one into the club's music library (credit kept)
 //   rule_interpret { text }                 the lines a rule in plain words keeps apart (Claude, keyword fallback)
 //   rules_check                             items from this week on that break a rule · rules_redo { ids } redraft them
 //   ideas_refresh { ask?, web? }            the idea scout runs now (an ask: "something fun for Halloween")
@@ -44,6 +46,7 @@ import { normRules } from "../shared/marketing-rules.js";
 import { connections, publishItem, captionFor, testEmail, testSms } from "./_lib/marketing-publish.js";
 import { serviceSb, loadSettings, loadPriorities, loadHistory, loadPhotos, fetchPrograms, syncPhotos, generateWeek, log, ruleIssues } from "./_lib/marketing-core.js";
 import { tagPhotos } from "./_lib/marketing-photos-ai.js";
+import { searchFreeMusic, addFreeTrack } from "./_lib/marketing-music.js";
 import { runScout, acceptIdea, dismissIdea } from "./_lib/marketing-scout.js";
 import { candidates, createSpotlight, sendSpotlight, draftSpotlight } from "./_lib/marketing-spotlight.js";
 
@@ -280,6 +283,15 @@ export async function run(sb, { me, name }, b) {
 
     case "photos_sync":
       return { sync: await syncPhotos(sb) };
+
+    // Free music for reels (Openverse: CC0 / CC BY only).
+    case "music_search":
+      return await searchFreeMusic({ q: b.q, mood: b.mood, page: b.page });
+    case "music_add": {
+      const r = await addFreeTrack(sb, b.id, { by: me, mood: Array.isArray(b.mood) ? b.mood : b.mood ? [b.mood] : [] }).catch(e => { throw fail(e.status || 500, e.message); });
+      await log(sb, null, "music_add", { by: me, id: b.id, title: r.track?.title, already: r.already });
+      return r;
+    }
 
     case "ideas_refresh": {
       if (!aiReady() && b.ask) throw fail(503, "Claude isn't connected (ANTHROPIC_API_KEY)");
