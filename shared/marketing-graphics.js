@@ -657,7 +657,7 @@ function tPov(ctx, spec, imgs, F) {
   const lineH = cap.size * cap.lh;
   const blockH = cap.lines.length * lineH;
   const cx = land ? m + (W * 0.62) / 2 : W / 2;
-  let y = Math.max(top + 40 * u, (H - bottom) * (land ? 0.5 : 0.42) - blockH / 2);
+  let y = Math.max(top + 40 * u, (H - bottom) * (land ? 0.5 : 0.27) - blockH / 2);
   ctx.font = cap.font; ctx.textBaseline = "middle"; ctx.textAlign = "center";
   const padX = 22 * u, padY = 6 * u, r = 14 * u;
   for (const l of cap.lines) {
