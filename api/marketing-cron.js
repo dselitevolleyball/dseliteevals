@@ -19,6 +19,9 @@
 //      and emails the directors its ideas with one-tap buttons.
 //   7. A video whose sorting never finished (the page was closed mid-way) is
 //      sorted here - one per run.
+//   8. Newsletter sign-ups on drippingsportsclub.com join People on the
+//      "Website newsletter" list; website unsubscribes stop HQ emails too
+//      (api/_lib/site-subscribers.js).
 //
 //   ?dry=1           list what it would do; writes nothing, sends nothing
 //   ?at=<ISO time>   (with dry=1) pretend it's that time - to check step 2
@@ -28,6 +31,7 @@
 // Env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, CRON_SECRET + what api/_lib/marketing-publish.js needs.
 
 import { safeEqual } from "./_lib/site-inbox.js";
+import { syncSiteSubscribers } from "./_lib/site-subscribers.js";
 import { mondayOf, addDays } from "../shared/marketing-plan.js";
 import { publishItem } from "./_lib/marketing-publish.js";
 import { serviceSb, loadSettings, generateWeek, sendDigest, syncPhotos, log } from "./_lib/marketing-core.js";
@@ -214,6 +218,10 @@ export async function runCron(sb, { now = new Date(), dry = false, deadline = Da
     if (dry) out.videos = { would: `sort video #${stale[0].id}` };
     else if (Date.now() < deadline - 150000) out.videos = await analyzeVideo(sb, stale[0], { deadline: Math.min(deadline - 20000, Date.now() + 200000), settings }).then(v => ({ id: v.id, status: v.status, moments: (v.moments || []).length }), e => ({ id: stale[0].id, error: e.message }));
   }
+
+  // ── 8. website newsletter sign-ups ──
+  out.site_subscribers = await syncSiteSubscribers(sb, { dry }).catch(e => ({ error: e.message }));
+  if (!dry && (out.site_subscribers.added?.length || out.site_subscribers.unsubscribed?.length)) await log(sb, null, "site_subscribers", out.site_subscribers);
 
   // ── 4. the AI librarian ──
   if (aiReady() && !dry && Date.now() < deadline - 60000) {
