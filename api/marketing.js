@@ -20,6 +20,7 @@
 //   music_search { q?, mood?, page? }        free music on Openverse (CC0 / CC BY) for reels
 //   music_add { id, mood? }                 copy one into the club's music library (credit kept)
 //   meta_check                              what the Meta token is and may do (no token returned)
+//   meta_connect { token, app_secret? }     reconnect Facebook/Instagram with a token from Graph API Explorer
 //   rule_interpret { text }                 the lines a rule in plain words keeps apart (Claude, keyword fallback)
 //   rules_check                             items from this week on that break a rule · rules_redo { ids } redraft them
 //   ideas_refresh { ask?, web? }            the idea scout runs now (an ask: "something fun for Halloween")
@@ -44,7 +45,7 @@ import { normalizePhone } from "./_lib/sms.js";
 import { planWeek, planFlow, signalsFor, mondayOf, addDays, parseBrief, fmtDay, normRhythm, LINE_KEYS } from "../shared/marketing-plan.js";
 import { reviseItem, buildEmail, withHero, aiReady, ctToday, interpretRule } from "./_lib/marketing-ai.js";
 import { normRules } from "../shared/marketing-rules.js";
-import { connections, metaCheck, publishItem, captionFor, testEmail, testSms } from "./_lib/marketing-publish.js";
+import { connections, metaCheck, connectMeta, hasStoredMetaToken, publishItem, captionFor, testEmail, testSms } from "./_lib/marketing-publish.js";
 import { serviceSb, loadSettings, loadPriorities, loadHistory, loadPhotos, fetchPrograms, syncPhotos, generateWeek, log, ruleIssues } from "./_lib/marketing-core.js";
 import { tagPhotos } from "./_lib/marketing-photos-ai.js";
 import { searchFreeMusic, addFreeTrack } from "./_lib/marketing-music.js";
@@ -96,12 +97,17 @@ export async function run(sb, { me, name }, b) {
   const today = ctToday();
   switch (b.action) {
     case "status": {
-      const [settings, priorities] = await Promise.all([loadSettings(sb), loadPriorities(sb)]);
-      return { ...connections(), settings, priorities };
+      const [settings, priorities, metaStored] = await Promise.all([loadSettings(sb), loadPriorities(sb), hasStoredMetaToken(sb).catch(() => false)]);
+      return { ...connections({ metaStored }), settings, priorities };
     }
 
     case "meta_check":
       return { meta: await metaCheck() };
+    case "meta_connect": {
+      const r = await connectMeta(sb, { token: b.token, appSecret: b.app_secret, by: me }).catch(e => { const f = fail(e.status || 500, e.message); f.check = e.check; throw f; });
+      await log(sb, null, "meta_connect", { by: me, page: r.check.page?.name || null, expires: r.check.expires, steps: r.steps });
+      return { meta: r.check, steps: r.steps };
+    }
 
     case "programs": {
       const feed = await fetchPrograms({ fresh: !!b.fresh });

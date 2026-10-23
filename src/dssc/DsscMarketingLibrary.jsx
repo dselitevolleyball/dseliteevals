@@ -393,6 +393,7 @@ export function MarketingSettings({ status, narrow, reloadStatus, onChanged }) {
             </div>
           );
         })}
+        {status && <MetaReconnect narrow={narrow} onDone={() => reloadStatus?.()} />}
         <div style={{ fontSize: 13, color: DS.mut, marginTop: 10, lineHeight: 1.5 }}>Instagram bio link — set it once (Instagram → Edit profile → Links): <b style={{ color: DS.text, userSelect: "all" }}>{BIO_LINK}</b>. Instagram captions can't hold a tappable link, so posts say "link in bio"; that page shows each post with its own sign-up button.</div>
         {status && <div style={{ fontSize: 12, color: DS.dim, marginTop: 8 }}>Step-by-step setup is in MARKETING_SETUP.md in the HQ repo.</div>}
       </Panel>
@@ -572,6 +573,54 @@ export function MarketingSettings({ status, narrow, reloadStatus, onChanged }) {
           <Msg msg={msg} />
         </div>
       </>}
+    </div>
+  );
+}
+
+// Facebook & Instagram: check what the connection can do, and reconnect by
+// pasting a token from Graph API Explorer (api/_lib/marketing-publish.js
+// connectMeta finds the club's Page token and keeps it in HQ - no Vercel).
+const META_PERMS = ["pages_show_list", "pages_read_engagement", "pages_manage_posts", "instagram_basic", "instagram_content_publish"];
+function MetaReconnect({ narrow, onDone }) {
+  const [open, setOpen] = useState(false);
+  const [token, setToken] = useState("");
+  const [secret, setSecret] = useState("");
+  const [busy, setBusy] = useState("");
+  const [res, setRes] = useState(null);     // { ok, text, problems }
+  const check = async () => {
+    setBusy("check"); setRes(null);
+    try { const { meta } = await mktApi("meta_check"); setRes(meta.ok ? { ok: true, text: `Connected to ${meta.page?.name || "the Page"} — can post to Facebook and Instagram. Token expires: ${meta.expires}.` } : { ok: false, problems: meta.problems }); if (!meta.ok) setOpen(true); }
+    catch (e) { setRes({ ok: false, problems: [e.message] }); }
+    setBusy("");
+  };
+  const connect = async () => {
+    setBusy("connect"); setRes(null);
+    try { const { meta, steps } = await mktApi("meta_connect", { token, app_secret: secret }); setToken(""); setSecret(""); setRes({ ok: true, text: `Reconnected to ${meta.page?.name || "the Page"}${meta.expires === "never" ? " — the token never expires" : ` — this token expires ${meta.expires}`}.${steps?.length ? " (" + steps.join("; ") + ")" : ""} Retry the failed post from the Calendar.` }); onDone?.(); }
+    catch (e) { setRes({ ok: false, problems: [e.message] }); }
+    setBusy("");
+  };
+  const code = { color: DS.text, background: DS.panel2, padding: "1px 5px", borderRadius: 4, wordBreak: "break-all", fontSize: 12 };
+  return (
+    <div style={{ marginTop: 10, padding: 12, borderRadius: 10, background: DS.panel2 }}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <b style={{ fontSize: 14 }}>Facebook &amp; Instagram</b>
+        <Btn small kind="ghost" disabled={!!busy} onClick={check} style={narrow ? { minHeight: 40 } : {}}>{busy === "check" ? "Checking…" : "Check the connection"}</Btn>
+        <Btn small kind={open ? "ghost" : "primary"} onClick={() => setOpen(o => !o)} style={narrow ? { minHeight: 40 } : {}}>{open ? "Close" : "Reconnect"}</Btn>
+      </div>
+      {res && (res.ok ? <div style={{ color: DS.lime, fontSize: 13, fontWeight: 700, marginTop: 8 }}>{res.text}</div>
+        : <div style={{ color: DS.orange, fontSize: 13, marginTop: 8, lineHeight: 1.5 }}>{res.problems.map((p, i) => <div key={i}>• {p}</div>)}</div>)}
+      {open && <div style={{ marginTop: 10, fontSize: 13, color: DS.mut, lineHeight: 1.6 }}>
+        <ol style={{ margin: "0 0 10px", paddingLeft: 20 }}>
+          <li>Open <a href="https://developers.facebook.com/tools/explorer/" target="_blank" rel="noreferrer" style={{ color: DS.lime }}>Graph API Explorer</a>, signed in as a Page admin. Under <b>Meta App</b> pick the HQ app; under <b>User or Page</b> pick <b>Get User Access Token</b>.</li>
+          <li>Under Permissions, make sure all five are there: {META_PERMS.map((p, i) => <span key={p}>{i ? ", " : ""}<code style={code}>{p}</code></span>)}.</li>
+          <li>Tap <b>Generate Access Token</b>. When Facebook asks, choose the <b>Dripping Springs Sports Club</b> Page and its Instagram account and allow everything.</li>
+          <li>Copy the token from the Access Token box and paste it here.</li>
+        </ol>
+        <textarea value={token} onChange={e => setToken(e.target.value.trim())} rows={3} placeholder="EAA…" style={{ ...inputStyle, fontFamily: "monospace", fontSize: narrow ? 16 : 12, wordBreak: "break-all" }} />
+        <div style={{ fontSize: 12, marginTop: 8 }}>Optional, once: the app's <b>App secret</b> (Meta app → App settings → Basic) lets HQ turn the token into one that never expires. Without it, first run the token through the <a href="https://developers.facebook.com/tools/debug/accesstoken/" target="_blank" rel="noreferrer" style={{ color: DS.lime }}>Access Token Debugger</a> → <b>Extend Access Token</b> and paste that one.</div>
+        <input value={secret} onChange={e => setSecret(e.target.value.trim())} placeholder="App secret (optional, saved in HQ)" type="password" autoComplete="off" style={{ ...inputStyle, marginTop: 6, fontSize: narrow ? 16 : 13 }} />
+        <div style={{ marginTop: 8 }}><Btn kind="primary" disabled={!!busy || token.length < 40} onClick={connect} style={narrow ? { minHeight: 44 } : {}}>{busy === "connect" ? "Connecting…" : "Connect"}</Btn></div>
+      </div>}
     </div>
   );
 }

@@ -18,12 +18,15 @@
 //             existing api/sms-campaigns.js cron sends - consent, STOP and
 //             do-not-text are handled there.
 //
+// The Page token: the one pasted in Marketing → Settings → Reconnect Facebook
+// (mkt_secrets 'meta_page_token', see connectMeta) wins over the env var.
 // Env: META_PAGE_ACCESS_TOKEN, META_PAGE_ID, META_IG_USER_ID, META_GRAPH_VERSION
 //      (default v26.0); RESEND_API_KEY, DSSC_FROM_EMAIL, MARKETING_UNSUB_SECRET
 //      (falls back to CRON_SECRET), MARKETING_PUBLIC_BASE (default
 //      https://www.drippingsportsclub.com/hq); TWILIO_* / DSSC_TWILIO_* (sms).
 
 import { createHmac } from "node:crypto";
+import { createClient } from "@supabase/supabase-js";
 import { sendResend, dsscFrom, resendKey, nrm, isEmailish, safeEqual, inboxAddress, DSSC_DIRECTORS } from "./site-inbox.js";
 import { twilioReady, notReadyMessage, sendOneSms } from "./sms.js";
 import { EMPTY_FILTERS } from "../../shared/campaign-audience.js";
@@ -37,8 +40,8 @@ export const graphVersion = () => env().META_GRAPH_VERSION || "v26.0";
 export const publicBase = () => String(env().MARKETING_PUBLIC_BASE || "https://www.drippingsportsclub.com/hq").replace(/\/+$/, "");
 
 // ── what's connected ─────────────────────────────────────────────────────────
-export function connections() {
-  const e = env();
+export function connections({ metaStored = false } = {}) {
+  const e = { ...env(), ...(metaStored ? { META_PAGE_ACCESS_TOKEN: "stored" } : {}) };
   const miss = (pairs) => pairs.filter(([ok]) => !ok).map(([, name]) => name);
   const missing = {
     ai: miss([[e.ANTHROPIC_API_KEY, "ANTHROPIC_API_KEY"]]),
@@ -73,8 +76,27 @@ export function captionFor(item, platform = "facebook") {
   return [body, link, credit, tags].filter(Boolean).join("\n\n").slice(0, 2200);
 }
 
+// ── the Meta Page token ──────────────────────────────────────────────────────
+let tokenCache = { at: 0, v: null };
+const secretsSb = () => env().SUPABASE_URL && env().SUPABASE_SERVICE_ROLE_KEY ? createClient(env().SUPABASE_URL, env().SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } }) : null;
+async function readSecret(key) {
+  const sb = secretsSb(); if (!sb) return null;
+  const { data } = await sb.from("mkt_secrets").select("value").eq("key", key).maybeSingle();
+  return data?.value || null;
+}
+export async function metaToken() {
+  if (Date.now() - tokenCache.at < 60000) return tokenCache.v;
+  const v = (await readSecret("meta_page_token").catch(() => null)) || env().META_PAGE_ACCESS_TOKEN || null;
+  tokenCache = { at: Date.now(), v };
+  return v;
+}
+export async function hasStoredMetaToken(sb) {
+  const { data } = await sb.from("mkt_secrets").select("key").eq("key", "meta_page_token").maybeSingle();
+  return !!data;
+}
+
 async function graph(path, params, { method = "POST" } = {}) {
-  const token = env().META_PAGE_ACCESS_TOKEN;
+  const token = await metaToken();
   const url = new URL(`https://graph.facebook.com/${graphVersion()}/${path}`);
   const body = new URLSearchParams({ ...params, access_token: token });
   const r = method === "GET"
@@ -90,9 +112,10 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 // with a permissions error, this says which permission or which id is wrong.
 // Never returns the token itself.
 export const META_SCOPES = ["pages_show_list", "pages_read_engagement", "pages_manage_posts", "instagram_basic", "instagram_content_publish"];
-export async function metaCheck() {
-  const { META_PAGE_ACCESS_TOKEN: t, META_PAGE_ID: pageId, META_IG_USER_ID: igId } = env();
-  if (!t) return { ok: false, problems: ["META_PAGE_ACCESS_TOKEN isn't set"] };
+export async function metaCheck(token = null) {
+  const { META_PAGE_ID: pageId, META_IG_USER_ID: igId } = env();
+  const t = token || await metaToken();
+  if (!t) return { ok: false, problems: ["No Facebook token yet - paste one under Reconnect Facebook"] };
   const get = async (path, params = {}) => {
     const u = new URL(`https://graph.facebook.com/${graphVersion()}/${path}`);
     for (const [k, v] of Object.entries({ ...params, access_token: t })) u.searchParams.set(k, v);
@@ -116,18 +139,61 @@ export async function metaCheck() {
   if (out.missing?.length) problems.push("Missing permissions: " + out.missing.join(", "));
   if (out.page?.instagram && igId && out.page.instagram !== igId) problems.push(`META_IG_USER_ID is ${igId} but the page's Instagram is ${out.page.instagram}`);
   if (out.error && !problems.length) problems.push(out.error);
+  if (out.expires !== "never" && !problems.length) problems.push(`The token runs out on ${out.expires} - use a long-lived one (see Reconnect Facebook)`);
   return { ok: !problems.length, problems, ...out };
 }
 
+// Reconnect: a director pastes a token from Graph API Explorer - their user
+// token (HQ finds the club's Page in /me/accounts) or the Page token itself.
+// A short-lived user token is first swapped for a long-lived one when the
+// app secret is known (pasted once, kept in mkt_secrets), so the Page token
+// that comes out never expires. Saved only if it can post to the Page.
+export async function connectMeta(sb, { token, appSecret = "", by = null }) {
+  const raw = String(token || "").trim().replace(/^Bearer\s+/i, "");
+  if (!/^[A-Za-z0-9_|-]{40,}$/.test(raw)) throw Object.assign(new Error("That doesn't look like a Facebook access token"), { status: 400 });
+  const pageId = env().META_PAGE_ID;
+  if (!pageId) throw Object.assign(new Error("META_PAGE_ID isn't set"), { status: 500 });
+  const G = `https://graph.facebook.com/${graphVersion()}`;
+  const get = (path, params) => { const u = new URL(`${G}/${path}`); for (const [k, v] of Object.entries(params)) u.searchParams.set(k, v); return fetch(u, { signal: AbortSignal.timeout(15000) }).then(r => r.json()).catch(e => ({ error: { message: e.message } })); };
+  const secret = String(appSecret || "").trim();
+  if (secret) await sb.from("mkt_secrets").upsert({ key: "meta_app_secret", value: secret, updated_at: new Date().toISOString(), updated_by: by });
+  const dbg = (await get("debug_token", { input_token: raw, access_token: raw })).data || {};
+  if (dbg.is_valid === false) throw Object.assign(new Error("Facebook says that token isn't valid any more - generate a new one"), { status: 400 });
+  let pageToken = raw;
+  const steps = [];
+  if (dbg.type !== "PAGE") {
+    let user = raw;
+    const appSecretNow = secret || await readSecret("meta_app_secret").catch(() => null);
+    if (dbg.expires_at && dbg.expires_at * 1000 - Date.now() < 7 * 86400e3 && appSecretNow && dbg.app_id) {
+      const ex = await get("oauth/access_token", { grant_type: "fb_exchange_token", client_id: dbg.app_id, client_secret: appSecretNow, fb_exchange_token: raw });
+      if (ex.access_token) { user = ex.access_token; steps.push("swapped for a long-lived token"); }
+      else steps.push("couldn't make it long-lived: " + (ex.error?.message || "unknown"));
+    }
+    const acc = await get("me/accounts", { fields: "id,name,access_token", limit: "100", access_token: user });
+    if (acc.error) throw Object.assign(new Error("Facebook: " + acc.error.message), { status: 400 });
+    const page = (acc.data || []).find(p => p.id === pageId);
+    if (!page) throw Object.assign(new Error(`That login doesn't manage the club's Page (${pageId}). Tick the DSSC page when Facebook asks which Pages to allow. Pages it can see: ${(acc.data || []).map(p => p.name).join(", ") || "none"}`), { status: 400 });
+    pageToken = page.access_token;
+    steps.push(`found the Page token for ${page.name}`);
+  }
+  const check = await metaCheck(pageToken);
+  const blocking = check.problems.filter(p => !/runs out on/.test(p));
+  if (blocking.length) throw Object.assign(new Error(blocking.join(" · ")), { status: 400, check });
+  const { error } = await sb.from("mkt_secrets").upsert({ key: "meta_page_token", value: pageToken, meta: { page: check.page, scopes: check.scopes, expires: check.expires }, updated_at: new Date().toISOString(), updated_by: by });
+  if (error) throw Object.assign(new Error("Saving the token: " + error.message), { status: 500 });
+  tokenCache = { at: 0, v: null };
+  return { check, steps };
+}
+
 export async function postFacebook(item) {
-  const { META_PAGE_ACCESS_TOKEN, META_PAGE_ID } = env();
+  const { META_PAGE_ID } = env(), META_PAGE_ACCESS_TOKEN = await metaToken();
   if (!META_PAGE_ACCESS_TOKEN || !META_PAGE_ID) throw new Error("Facebook isn't connected (META_PAGE_ACCESS_TOKEN, META_PAGE_ID)");
   const j = await graph(`${META_PAGE_ID}/photos`, { url: item.asset_url, caption: captionFor(item), published: "true" });
   return j.post_id || j.id;
 }
 
 export async function postInstagram(item, { story = false } = {}) {
-  const { META_PAGE_ACCESS_TOKEN, META_IG_USER_ID } = env();
+  const { META_IG_USER_ID } = env(), META_PAGE_ACCESS_TOKEN = await metaToken();
   if (!META_PAGE_ACCESS_TOKEN || !META_IG_USER_ID) throw new Error("Instagram isn't connected (META_PAGE_ACCESS_TOKEN, META_IG_USER_ID)");
   const params = story ? { image_url: item.asset_story_url, media_type: "STORIES" } : { image_url: item.asset_url, caption: captionFor(item, "instagram") };
   const c = await graph(`${META_IG_USER_ID}/media`, params);
@@ -147,7 +213,7 @@ export async function postInstagram(item, { story = false } = {}) {
 // which can take a few minutes, so a container still IN_PROGRESS after ~45 s
 // is handed back as { pending } and the next cron run finishes it.
 export async function postInstagramReel(item, { containerId = null, waitMs = 45000 } = {}) {
-  const { META_PAGE_ACCESS_TOKEN, META_IG_USER_ID } = env();
+  const { META_IG_USER_ID } = env(), META_PAGE_ACCESS_TOKEN = await metaToken();
   if (!META_PAGE_ACCESS_TOKEN || !META_IG_USER_ID) throw new Error("Instagram isn't connected (META_PAGE_ACCESS_TOKEN, META_IG_USER_ID)");
   if (!item.asset_video_url) throw new Error("The reel hasn't been rendered");
   let id = containerId;
@@ -168,7 +234,7 @@ export async function postInstagramReel(item, { containerId = null, waitMs = 450
 }
 // Facebook: the Page posts the MP4 by URL (vertical video shows as a reel).
 export async function postFacebookVideo(item) {
-  const { META_PAGE_ACCESS_TOKEN, META_PAGE_ID } = env();
+  const { META_PAGE_ID } = env(), META_PAGE_ACCESS_TOKEN = await metaToken();
   if (!META_PAGE_ACCESS_TOKEN || !META_PAGE_ID) throw new Error("Facebook isn't connected (META_PAGE_ACCESS_TOKEN, META_PAGE_ID)");
   if (!item.asset_video_url) throw new Error("The reel hasn't been rendered");
   const j = await graph(`${META_PAGE_ID}/videos`, { file_url: item.asset_video_url, description: captionFor(item), published: "true" });
@@ -178,7 +244,7 @@ export async function postFacebookVideo(item) {
 // A Facebook Page story: the story PNG goes up as an unpublished photo, then
 // becomes the story (POST /{page}/photo_stories {photo_id}).
 export async function postFacebookStory(item) {
-  const { META_PAGE_ACCESS_TOKEN, META_PAGE_ID } = env();
+  const { META_PAGE_ID } = env(), META_PAGE_ACCESS_TOKEN = await metaToken();
   if (!META_PAGE_ACCESS_TOKEN || !META_PAGE_ID) throw new Error("Facebook isn't connected (META_PAGE_ACCESS_TOKEN, META_PAGE_ID)");
   const ph = await graph(`${META_PAGE_ID}/photos`, { url: item.asset_story_url, published: "false" });
   const st = await graph(`${META_PAGE_ID}/photo_stories`, { photo_id: ph.id });
