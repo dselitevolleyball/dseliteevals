@@ -29,6 +29,7 @@ import { AI_MODEL, aiReady, flairText, ctToday } from "./marketing-ai.js";
 import { fetchPrograms, loadSettings, loadPriorities, log, generateWeek, HQ_MARKETING_URL } from "./marketing-core.js";
 import { candidates, pickNext, createSpotlight, SERIES } from "./marketing-spotlight.js";
 import { actUrl } from "./marketing-links.js";
+import { rulesText } from "../../shared/marketing-rules.js";
 import { sendResend, dsscFrom, isEmailish, esc } from "./site-inbox.js";
 
 export const IDEA_KINDS = ["season", "holiday", "local", "club", "program", "spotlight", "trend", "fun"];
@@ -154,7 +155,7 @@ export async function proposeIdeas(ctx, { timeoutMs = 70000 } = {}) {
   const msg = await client(timeoutMs).beta.messages.create({
     model: AI_MODEL, max_tokens: 16000, betas: ["server-side-fallback-2026-07-01"], fallbacks: "default",
     output_config: { effort: "medium", format: { type: "json_schema", schema: SCHEMA } },
-    system: [{ type: "text", text: SYSTEM }, { type: "text", text: `${flairText(settings.flair)}${settings.voice ? `\nDirectors' voice notes: ${String(settings.voice).slice(0, 1500)}` : ""}`, cache_control: { type: "ephemeral" } }],
+    system: [{ type: "text", text: SYSTEM }, { type: "text", text: `${flairText(settings.flair)}${settings.voice ? `\nDirectors' voice notes: ${String(settings.voice).slice(0, 1500)}` : ""}${rulesText(settings.rules) ? `\n\n${rulesText(settings.rules)}` : ""}`, cache_control: { type: "ephemeral" } }],
     messages: [{ role: "user", content: (ctx.ask ? `A director asked: "${ctx.ask}" - make the ideas answer that first.\n\n` : "") + "Suggest the ideas. Request (JSON):\n" + JSON.stringify(req, null, 1) }],
   });
   if (msg.stop_reason === "refusal") return { ideas: [], error: "Claude declined" };
@@ -255,11 +256,11 @@ export async function runScout(sb, { now = new Date(), by = "scout", ask = "", w
   // Same columns on every row: a batch insert NULLs a key a row lacks.
   const rows = ideas.map(i => ({ ...i, hook: i.hook || null, batch, status: "new", created_by: by, spotlight_id: null }));
   if (spotlight) rows.unshift({
-    batch, kind: "spotlight", title: `${SERIES}: ${spotlight.name}`, line: spotlight.line, channel: "email", format: "email", best_day: addDays(today, 7), sources: [], status: "new", created_by: by, spotlight_id: spotlight.id,
+    batch, kind: "spotlight", title: `${SERIES}: ${spotlight.name}`, line: spotlight.line, channel: "email", format: "email", best_day: addDays(today, 7), sources: [], status: "new", created_by: by, spotlight_id: spotlight.id, template: null, trend: null,
     pitch: `Interview ${spotlight.name}${spotlight.role ? ` (${spotlight.role})` : ""} for the next "${SERIES}" - ${spotlight.questions.length} fun questions and a few photos by ${[spotlight.email ? "email" : null, spotlight.phone ? "text" : null].filter(Boolean).join(" and ") || "a link you share"}. Their answers become a quote post, a story and an email.`,
     hook: spotlight.questions[0]?.q || null,
   });
-  if (reel) rows.push({ ...reel, batch, status: "new", created_by: by, spotlight_id: null });
+  if (reel) rows.push({ ...reel, batch, status: "new", created_by: by, spotlight_id: null, template: null, trend: null });
   const { data: saved, error: insErr } = rows.length ? await sb.from("mkt_ideas").insert(rows).select("*") : { data: [] };
   if (insErr) throw new Error("Saving ideas: " + insErr.message);
   await log(sb, null, ask ? "scout_ask" : "scout", { by, today, ideas: (saved || []).length, spotlight: spotlight?.id || null, local: ctx.local ? { found: ctx.local.sources.length, error: ctx.local.error } : null, trends: ctx.trends ? { found: ctx.trends.sources.length, error: ctx.trends.error } : null, error, ask: ctx.ask || null });

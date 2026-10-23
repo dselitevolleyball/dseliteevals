@@ -24,6 +24,7 @@ import { AI_MODEL, aiReady, flairText, ctIso, ctToday, buildEmail } from "./mark
 import { sendResend, dsscFrom, inboxAddress, isEmailish, nrm, esc } from "./site-inbox.js";
 import { sendOneSms, twilioReady, normalizePhone } from "./sms.js";
 import { publicBase } from "./marketing-publish.js";
+import { rulesText } from "../../shared/marketing-rules.js";
 
 export const SERIES = "Meet the Coaches";
 const SITE = "https://www.drippingsportsclub.com";
@@ -215,7 +216,7 @@ async function writeSpotlightCopy(sp, qa, ep, settings) {
 - intro: 2-3 sentences opening the email.
 - qa: the questions and the coach's answers (lightly edited), best first; drop a question they skipped; at least 3.
 - cta_text: button words, 2-5 words, about their program line.
-${flairText(settings?.flair)}${settings?.voice ? `\nDirectors' voice notes: ${String(settings.voice).slice(0, 1500)}` : ""}`,
+${flairText(settings?.flair)}${settings?.voice ? `\nDirectors' voice notes: ${String(settings.voice).slice(0, 1500)}` : ""}${rulesText(settings?.rules) ? `\n${rulesText(settings.rules)}` : ""}`,
       JSON.stringify({ coach: sp.name, role: sp.role, line: lineLabel(sp.line), episode: ep, answers: qa, photo_captions: (sp.photos || []).map(p => p.caption).filter(Boolean) }, null, 1),
       D_SCHEMA, { effort: "medium", timeoutMs: 80000 });
     const copy = { ...fallback, ...j };

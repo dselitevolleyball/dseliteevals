@@ -81,7 +81,8 @@ ideaReply = { ideas: [
 const now = new Date("2026-10-24T15:00:00Z");   // Saturday 10 am Central
 const r1 = await scout.runScout(sb, { now, by: "scout" });
 const web = calls.filter(c => c.to === "anthropic" && (c.req.tools || []).length);
-check(searchTurns === 2 && web[1].req.messages.length === 2 && web[1].req.messages[1].role === "assistant", "local scan: a paused web search is resumed by sending the assistant turn back");
+const localWeb = web.filter(c => !/trending on TikTok/.test(JSON.stringify(c.req.messages[0])));   // the trend scan searches too
+check(searchTurns >= 2 && localWeb.length === 2 && localWeb[1].req.messages.length === 2 && localWeb[1].req.messages[1].role === "assistant", "local scan: a paused web search is resumed by sending the assistant turn back");
 check(web[0].req.model === "claude-opus-5-5" && web[0].req.fallbacks === "default" && web[0].req.tools[0].user_location?.city === "Dripping Springs", "web search: Opus 5.5, fallbacks, located in Dripping Springs");
 const ideaCall = calls.filter(c => c.to === "anthropic" && c.req.output_config?.format?.schema?.properties?.ideas).pop();
 check(ideaCall && ideaCall.req.messages[0].content.includes("holiday lighting") && /bold/i.test(JSON.stringify(ideaCall.req.system)) && ideaCall.req.messages[0].content.includes("Halloween"), "ideas request carries the local scan, the calendar and the bold flair");

@@ -33,6 +33,7 @@ import ffmpegPath from "ffmpeg-static";
 import Anthropic from "@anthropic-ai/sdk";
 import { LINE_KEYS, LINE_LINKS, lineLabel, lineUrl, addDays, mondayOf } from "../../shared/marketing-plan.js";
 import { AI_MODEL, aiReady, flairText, ctIso, ctToday } from "./marketing-ai.js";
+import { rulesText, clash, fits } from "../../shared/marketing-rules.js";
 
 export const RAW_BUCKET = "marketing-video";
 export const PUBLIC_BUCKET = "marketing";
@@ -279,6 +280,12 @@ export async function createReel(sb, { picks = null, videoIds = null, line = nul
   const all = usable.flatMap(v => (v.moments || []).filter(m => !m.skip && !(m.minors && v.release_ok === false)).map(m => ({ ...m, video_id: v.id, v })));
   let chosen = picks?.length ? picks.map(p => all.find(m => m.video_id === Number(p.video_id) && m.id === p.moment_id)).filter(Boolean) : all.slice().sort((a, b) => b.score - a.score);
   if (!chosen.length) throw new Error(ids ? "Those clips aren't ready yet" : "No sorted videos from the last 3 weeks - upload some first");
+  // The directors' rules: lines kept apart never share a reel. Picked clips
+  // that mix them are refused; the machine's own picks follow the best clip's side.
+  const lines = [];
+  if (picks?.length) {
+    for (const m of chosen) { const l = m.v.line; const r = l && lines.map(x => clash(x, l, settings.rules)).find(Boolean); if (r) throw new Error(`Those clips mix ${lineLabel(lines.find(x => clash(x, l, settings.rules)))} and ${lineLabel(l)} - your rule: "${r.text}". Make two reels instead.`); if (l) lines.push(l); }
+  } else chosen = chosen.filter(m => { const l = m.v.line; if (!l || fits(l, lines, settings.rules)) { if (l) lines.push(l); return true; } return false; });
   const mainLine = line || mostCommon(chosen.map(m => m.v.line).filter(Boolean)) || "club";
   // Claude orders (and, when nobody picked, chooses) the moments and writes the words.
   let copy = null;
@@ -289,7 +296,7 @@ export async function createReel(sb, { picks = null, videoIds = null, line = nul
       const msg = await client.beta.messages.create({
         model: AI_MODEL, max_tokens: 6000, betas: ["server-side-fallback-2026-07-01"], fallbacks: "default",
         output_config: { effort: "low", format: { type: "json_schema", schema: R_SCHEMA } },
-        system: `You cut short social reels (15-30 seconds, vertical) for Dripping Springs Sports Club, "Where Dripping Springs plays." From the moments given, ${picks?.length ? "keep all of them, in the best order" : "pick the 3 to 6 that make the best reel"}: open with the strongest, build, end on a celebration or a smile. Then write: headline (2-5 words, the big words over the first seconds), accent (one word of it), sub (under 40 characters), tag (1-3 words), caption (2-4 short sentences, no URL, no hashtags in it), hashtags (3-5, no #, include DrippingSprings), mood (for the music). Only describe what the moments show; no names, no prices, never "the Flex". ${flairText(settings.flair)}`,
+        system: `You cut short social reels (15-30 seconds, vertical) for Dripping Springs Sports Club, "Where Dripping Springs plays." From the moments given, ${picks?.length ? "keep all of them, in the best order" : "pick the 3 to 6 that make the best reel"}: open with the strongest, build, end on a celebration or a smile. Then write: headline (2-5 words, the big words over the first seconds), accent (one word of it), sub (under 40 characters), tag (1-3 words), caption (2-4 short sentences, no URL, no hashtags in it), hashtags (3-5, no #, include DrippingSprings), mood (for the music). Only describe what the moments show; no names, no prices, never "the Flex". ${flairText(settings.flair)}${rulesText(settings.rules) ? `\n\n${rulesText(settings.rules)}` : ""}`,
         messages: [{ role: "user", content: JSON.stringify({ line: lineLabel(mainLine), director_instruction: String(instruction || "").trim() || undefined, moments: pool }, null, 1) }],
       });
       if (msg.stop_reason !== "refusal" && msg.stop_reason !== "max_tokens") copy = JSON.parse((msg.content || []).filter(b => b.type === "text").map(b => b.text).join(""));

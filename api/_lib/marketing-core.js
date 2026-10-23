@@ -8,6 +8,7 @@ import { planWeek, signalsFor, lineOf, programRef, mondayOf, addDays, fmtDay, li
 import { composeItems, ctToday, ctIso, kindOf } from "./marketing-ai.js";
 import { sendResend, dsscFrom, isEmailish, esc } from "./site-inbox.js";
 import { EMPTY_FILTERS } from "../../shared/campaign-audience.js";
+import { normRules, clash, rulesBroken } from "../../shared/marketing-rules.js";
 
 export const PROGRAMS_URL = () => process.env.MARKETING_PROGRAMS_URL || "https://www.drippingsportsclub.com/api/programs";
 export const PHOTOS_URL = () => process.env.MARKETING_PHOTOS_URL || "https://www.drippingsportsclub.com/photos.json";
@@ -22,7 +23,7 @@ export const log = (sb, item_id, kind, detail = {}) => sb.from("mkt_log").insert
 
 // ── settings / priorities / history ──────────────────────────────────────────
 export const SETTINGS_DEFAULTS = {
-  id: 1, voice: "", weights: DEFAULT_WEIGHTS, cadence: DEFAULT_CADENCE, themes: {}, flair: 1, scout: { enabled: true, day: "sat", web: true, spotlight_every_weeks: 2, via: ["email", "sms"] }, auto_generate: true, generate_day: "sun", plan_ahead: 2,
+  id: 1, voice: "", weights: DEFAULT_WEIGHTS, cadence: DEFAULT_CADENCE, themes: {}, flair: 1, scout: { enabled: true, day: "sat", web: true, spotlight_every_weeks: 2, via: ["email", "sms"] }, auto_generate: true, generate_day: "sun", plan_ahead: 2, rules: [],
   email_audience: { source: "dssc_contacts" }, sms_filters: {}, notify_emails: ["drew@drippingsportsclub.com"],
 };
 export async function loadSettings(sb) {
@@ -32,7 +33,22 @@ export async function loadSettings(sb) {
   s.weights = { ...DEFAULT_WEIGHTS, ...(s.weights || {}) };
   s.cadence = { social: { ...DEFAULT_CADENCE.social, ...(s.cadence?.social || {}) }, email: { ...DEFAULT_CADENCE.email, ...(s.cadence?.email || {}) }, sms: { ...DEFAULT_CADENCE.sms, ...(s.cadence?.sms || {}) } };
   s.themes = s.themes && typeof s.themes === "object" && !Array.isArray(s.themes) ? s.themes : {};
+  s.rules = normRules(s.rules);
   return s;
+}
+
+// What a draft does against the directors' rules: lines kept apart sharing
+// it, or its words mentioning a kept-apart line. -> [reason]
+export function ruleIssues(item, rules) {
+  const lines = [...new Set([item.line, ...(item.programs || []).map(p => p?.line), ...(item.email_blocks || []).map(b => b?.line)].filter(Boolean))];
+  const out = [];
+  for (let i = 0; i < lines.length; i++) for (let j = i + 1; j < lines.length; j++) {
+    const r = clash(lines[i], lines[j], rules);
+    if (r) out.push(`${r.text}: ${lineLabel(lines[i])} and ${lineLabel(lines[j])} in one ${item.channel === "email" ? "email" : "post"}`);
+  }
+  const words = [item.headline, item.body, item.email_subject, item.email_preheader, item.graphic?.sub, item.graphic?.tag, ...(item.email_blocks || []).map(b => b?.blurb)].join(" \n ");
+  for (const w of rulesBroken(words, lines, rules)) if (!out.some(o => o.startsWith(w.split(" (")[0]))) out.push(w);
+  return out;
 }
 export async function loadPriorities(sb) {
   const { data, error } = await sb.from("mkt_priorities").select("*").order("active", { ascending: false }).order("starts_on", { ascending: true, nullsFirst: true }).order("id");
@@ -95,7 +111,10 @@ const untouched = (it) => it.status === "draft" && !(it.revisions || []).length 
 
 // opts: { weekOf, replaceDrafts, instruction, by, single: { program_id?, line?, channel? }, timeoutMs }
 // -> { items (created rows), kept, removed, ai, notes, plan }
-export async function generateWeek(sb, { weekOf, replaceDrafts = false, instruction = "", by = "auto", single = null, timeoutMs } = {}) {
+// refill: [{ channel, kind, day }] - only redraft these (items just removed, e.g. by
+// Rules -> Redo): each takes the free planned slot of its channel and kind
+// nearest its old day, and nothing else in the week is added.
+export async function generateWeek(sb, { weekOf, replaceDrafts = false, instruction = "", by = "auto", single = null, refill = null, timeoutMs } = {}) {
   weekOf = mondayOf(weekOf);
   if (!weekOf) throw new Error("week_of must be a date (YYYY-MM-DD)");
   const today = ctToday();
@@ -124,6 +143,14 @@ export async function generateWeek(sb, { weekOf, replaceDrafts = false, instruct
     slots = [singleSlot({ weekOf, today, feed, settings, single, instruction, taken })];
   } else {
     slots = plan.slots.filter(s => !taken.has(keyOf(s, s.day)));
+    if (refill) {
+      const group = (x) => `${x.channel}:${["story", "follow_up"].includes(kindOf(x)) ? "story" : kindOf(x)}`;
+      const free = slots; slots = [];
+      for (const r of refill) {
+        const near = free.filter(s => !slots.includes(s) && group(s) === group(r)).sort((a, b) => Math.abs(Date.parse(a.day) - Date.parse(r.day)) - Math.abs(Date.parse(b.day) - Date.parse(r.day)))[0];
+        if (near) slots.push(near);
+      }
+    }
   }
   if (!slots.length) return { items: [], kept: keep.length, removed, ai: null, notes: [...plan.notes, "Nothing new to add - every planned slot already has an item"], plan };
   const { rows, ai } = await composeItems({ slots, weekOf, programs: feed.programs, priorities, settings, photos, instruction, by, timeoutMs });

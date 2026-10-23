@@ -142,6 +142,19 @@ Redeploy after you add them. **Marketing → Settings** lists anything still mis
 - Copy rules: no prices, no "spots left", no made-up facts, never the Flex. Links always come from the
   feed or the club's pages. If Claude breaks a rule, that item falls back to template copy.
 
+## Rules (Marketing → Rules)
+Run once: `node scripts/run-sql.mjs migrations/20261027_marketing_rules.sql` (adds `mkt_settings.rules`).
+- Standing rules in plain words, e.g. "Don't combine sport programming and birthday parties". Every
+  writer follows them: weekly drafts, rewrites, ideas, reels and spotlight drafts.
+- When a rule keeps programs apart, Claude reads which ones when you add it, and you can adjust them with
+  the chips. The planner then enforces it (`shared/marketing-rules.js`):
+  - the weekly roundup's programs and closing line, and the month preview's list, never mix the two sides;
+  - copy that mentions the other side is refused, and the plain template is used instead;
+  - reels: clips you pick that mix them are refused, and "Best of" keeps to one side.
+- After a change, the tab lists upcoming items that break a rule. **Redo N drafts** removes those drafts
+  and drafts just those slots again. Approved items are only listed: unapprove them first.
+- Offline checks: `node scripts/test-marketing-rules.mjs`.
+
 ## Ideas and "Meet the Coaches" (Marketing → Ideas)
 Run once (after the other two marketing migrations):
 ```

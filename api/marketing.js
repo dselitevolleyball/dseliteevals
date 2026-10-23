@@ -17,6 +17,8 @@
 //   publish_now { id }                      publish an approved (or failed) item now
 //   test        { id, to? }                 email -> you; text -> your phone; social -> preview only
 //   photos_sync · settings_save { patch } · priority_save { priority } · priority_delete { id }
+//   rule_interpret { text }                 the lines a rule in plain words keeps apart (Claude, keyword fallback)
+//   rules_check                             items from this week on that break a rule · rules_redo { ids } redraft them
 //   ideas_refresh { ask?, web? }            the idea scout runs now (an ask: "something fun for Halloween")
 //   idea_accept { id, instruction? }        the idea becomes a draft on its best day
 //   idea_dismiss { id, feedback? }          turned down - the reason goes back to the scout
@@ -37,9 +39,10 @@ import { readBody } from "./_lib/site-forms.js";
 import { verifyDirector, isEmailish, nrm } from "./_lib/site-inbox.js";
 import { normalizePhone } from "./_lib/sms.js";
 import { planWeek, planFlow, signalsFor, mondayOf, addDays, parseBrief, fmtDay, normRhythm, LINE_KEYS } from "../shared/marketing-plan.js";
-import { reviseItem, buildEmail, withHero, aiReady, ctToday } from "./_lib/marketing-ai.js";
+import { reviseItem, buildEmail, withHero, aiReady, ctToday, interpretRule } from "./_lib/marketing-ai.js";
+import { normRules } from "../shared/marketing-rules.js";
 import { connections, publishItem, captionFor, testEmail, testSms } from "./_lib/marketing-publish.js";
-import { serviceSb, loadSettings, loadPriorities, loadHistory, loadPhotos, fetchPrograms, syncPhotos, generateWeek, log } from "./_lib/marketing-core.js";
+import { serviceSb, loadSettings, loadPriorities, loadHistory, loadPhotos, fetchPrograms, syncPhotos, generateWeek, log, ruleIssues } from "./_lib/marketing-core.js";
 import { tagPhotos } from "./_lib/marketing-photos-ai.js";
 import { runScout, acceptIdea, dismissIdea } from "./_lib/marketing-scout.js";
 import { candidates, createSpotlight, sendSpotlight, draftSpotlight } from "./_lib/marketing-spotlight.js";
@@ -358,6 +361,31 @@ export async function run(sb, { me, name }, b) {
       return { ...r, remaining: count || 0 };
     }
 
+    case "rule_interpret":            // { text } -> { apart: [[lines], [lines]] | null }
+      return { apart: await interpretRule(b.text) };
+
+    case "rules_check": {             // drafts and approved items from this week on that break a rule
+      const settings = await loadSettings(sb);
+      const { data, error } = await sb.from("mkt_items").select("*").gte("week_of", mondayOf(today)).in("status", ["draft", "approved", "failed"]).order("scheduled_at");
+      if (error) throw fail(500, error.message);
+      return { items: (data || []).map(i => ({ id: i.id, week_of: i.week_of, status: i.status, channel: i.channel, kind: i.kind, line: i.line, headline: i.email_subject || i.headline, scheduled_at: i.scheduled_at, issues: ruleIssues(i, settings.rules) })).filter(i => i.issues.length) };
+    }
+
+    case "rules_redo": {              // { ids } drafts that break a rule: dropped, and their weeks planned again around the rules
+      const settings = await loadSettings(sb);
+      const ids = (Array.isArray(b.ids) ? b.ids : []).map(Number).filter(Boolean).slice(0, 60);
+      const { data } = ids.length ? await sb.from("mkt_items").select("*").in("id", ids).eq("status", "draft") : { data: [] };
+      const drop = (data || []).filter(i => ruleIssues(i, settings.rules).length);
+      if (!drop.length) return { removed: 0, items: [] };
+      const { error } = await sb.from("mkt_items").delete().in("id", drop.map(i => i.id)).eq("status", "draft");
+      if (error) throw fail(500, error.message);
+      const items = [];
+      const day = (iso) => new Date(iso).toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
+      for (const w of [...new Set(drop.map(i => i.week_of))].sort()) items.push(...(await generateWeek(sb, { weekOf: w, by: me, refill: drop.filter(i => i.week_of === w).map(i => ({ channel: i.channel, kind: i.kind, day: day(i.scheduled_at) })) })).items);
+      await log(sb, null, "rules_redo", { by: me, removed: drop.map(i => i.id), created: items.map(i => i.id) });
+      return { removed: drop.length, items };
+    }
+
     case "settings_save": {
       const p = b.patch && typeof b.patch === "object" ? b.patch : {};
       const cur = await loadSettings(sb);
@@ -382,6 +410,7 @@ export async function run(sb, { me, name }, b) {
         row.scout = { enabled: sc.enabled !== false, day: ["mon", "tue", "wed", "thu", "fri", "sat", "sun"].includes(sc.day) ? sc.day : "sat", web: sc.web !== false,
           spotlight_every_weeks: Math.max(0, Math.min(12, Math.round(+sc.spotlight_every_weeks || 0))), via: (Array.isArray(sc.via) ? sc.via : ["email", "sms"]).filter(v => ["email", "sms"].includes(v)) };
       }
+      if ("rules" in p) row.rules = normRules(p.rules);
       if ("notify_emails" in p) row.notify_emails = (Array.isArray(p.notify_emails) ? p.notify_emails : String(p.notify_emails || "").split(/[\s,;]+/)).map(nrm).filter(isEmailish);
       const { data, error } = await sb.from("mkt_settings").upsert(row, { onConflict: "id" }).select("*").single();
       if (error) throw fail(500, error.message);

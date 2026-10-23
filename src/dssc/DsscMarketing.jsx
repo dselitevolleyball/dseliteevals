@@ -9,7 +9,7 @@
 //
 // Tabs: Calendar (default: everything planned / drafted / approved / sent, by
 // day; click in to edit, approve a week or a selection) · Approve (one week,
-// every item open) · Ideas (the idea scout + "Meet the Coaches") · Plan & flow ·
+// every item open) · Ideas (the idea scout + "Meet the Coaches") · Plan & flow · Rules (the directors' standing rules) ·
 // Priorities · Photos · Videos (reels) · Settings.
 // Spec: docs/MARKETING_CONTRACT.md. Server: api/marketing.js (POST {action}).
 // Reads (and a few simple writes) go straight to Supabase — RLS lets the
@@ -24,9 +24,10 @@ import { MarketingPlan, MarketingPriorities } from "./DsscMarketingPlan.jsx";
 import { MarketingPhotos, MarketingSettings } from "./DsscMarketingLibrary.jsx";
 import MarketingIdeas from "./DsscMarketingIdeas.jsx";
 import MarketingVideos from "./DsscMarketingVideos.jsx";
+import MarketingRules from "./DsscMarketingRules.jsx";
 import MarketingCalendar from "./DsscMarketingCalendar.jsx";
 
-const TABS = [["calendar", "Calendar"], ["approve", "Week"], ["ideas", "Ideas"], ["plan", "Plan & flow"], ["priorities", "Priorities"], ["photos", "Photos"], ["videos", "Videos"], ["settings", "Settings"]];
+const TABS = [["calendar", "Calendar"], ["approve", "Week"], ["ideas", "Ideas"], ["plan", "Plan & flow"], ["priorities", "Priorities"], ["rules", "Rules"], ["photos", "Photos"], ["videos", "Videos"], ["settings", "Settings"]];
 const TAB_KEY = "dssc.marketing.tab";
 
 export default function DsscMarketing({ coach, initialWeek, initialTab, onConsumedInitial, onChanged }) {
@@ -80,6 +81,7 @@ export default function DsscMarketing({ coach, initialWeek, initialTab, onConsum
         {tab === "ideas" && <MarketingIdeas narrow={narrow} onOpenWeek={(w) => { setWeek(mondayOf(w)); setTab("approve"); }} onChanged={changed} />}
         {tab === "plan" && <MarketingPlan week={week} status={status} narrow={narrow} onOpenWeek={(w) => { setWeek(mondayOf(w)); setTab("approve"); }} />}
         {tab === "priorities" && <MarketingPriorities narrow={narrow} onChanged={() => { loadStatus(); changed(); }} />}
+        {tab === "rules" && <MarketingRules status={status} narrow={narrow} onChanged={() => { loadStatus(); changed(); }} />}
         {tab === "photos" && <MarketingPhotos narrow={narrow} />}
         {tab === "videos" && <MarketingVideos narrow={narrow} onOpenWeek={(w) => { setWeek(mondayOf(w)); setTab("approve"); }} onChanged={changed} />}
         {tab === "settings" && <MarketingSettings status={status} narrow={narrow} reloadStatus={loadStatus} onChanged={changed} />}

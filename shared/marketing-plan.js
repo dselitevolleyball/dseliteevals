@@ -39,6 +39,8 @@
 // Every post carries a theme - a content idea for its line from the
 // calendar's notes (DEFAULT_THEMES), or the directors' own (settings.themes).
 
+import { fits } from "./marketing-rules.js";
+
 export const LINES = [
   { key: "volleyball",   label: "Volleyball",        color: "#0F8B76" },
   { key: "basketball",   label: "Basketball",        color: "#FF7300" },
@@ -372,6 +374,7 @@ export function planWeek({ weekOf, programs = [], priorities = [], settings = {}
   weekOf = mondayOf(weekOf);
   if (!weekOf) return { slots: [], scores: {}, notes: ["No week given"] };
   const { weights, cadence, emailOn, themes } = normSettings(settings);
+  const rules = settings?.rules || [];
   const ref = today && isYmd(today) && today > weekOf ? today : weekOf;
   const live = (programs || []).filter(p => p && isYmd(p.first_date) && ((isYmd(p.last_date) ? p.last_date : p.first_date) >= weekOf));
   const signals = signalsFor(live, ref);
@@ -388,7 +391,7 @@ export function planWeek({ weekOf, programs = [], priorities = [], settings = {}
   for (const pr of sPrios) notes.push(`Priority in effect: "${pr.title}" (weight ${pr.weight}) - ${pr.lines.map(lineLabel).join(", ") || "no lines"}${pr.avoid_lines.length ? `; less ${pr.avoid_lines.map(lineLabel).join(", ")}` : ""}`);
   const { scores, why } = lineScores({ weekOf, ref, programs: live, prios: sPrios, weights, history, channel: "social", signals });
   if (cadence.social.mode === "rhythm") {
-    const r = rhythmSocial({ weekOf, ref, today, live, signals, sPrios, scores, why, cadence, themes, allowedOn });
+    const r = rhythmSocial({ weekOf, ref, today, live, signals, sPrios, scores, why, cadence, themes, allowedOn, rules });
     slots.push(...r.slots); notes.push(...r.notes);
   } else balanceSocial();
   function balanceSocial() {
@@ -466,17 +469,19 @@ export function planWeek({ weekOf, programs = [], priorities = [], settings = {}
     const seen = new Set(fpick?.program ? [String(fpick.program.id)] : []);
     const ep = ePrios.find(p => p.lines[0] === featured) || ePrios.find(p => p.lines.includes(featured));
     if (fpick?.program) list.push({ ...programRef(fpick.program), angle: fpick.angle || (ep ? "priority" : "evergreen") });
-    // One per line first (variety), then fill to 4 by urgency.
+    // One per line first (variety), then fill to 4 by urgency - never a line
+    // the directors' rules keep apart from what's already in.
+    const inEmail = () => [featured, ...list.map(x => x.line)];
     for (const pass of [0, 1]) for (const s of soon) {
       if (list.length >= 4) break;
       const id = String(s.program.id);
-      if (seen.has(id)) continue;
+      if (seen.has(id) || !fits(s.line, inEmail(), rules)) continue;
       if (pass === 0 && list.some(x => x.line === s.line)) continue;
       if (pass === 0 && !["last_call", "starting_soon"].includes(s.angle)) continue;
       seen.add(id); list.push({ ...programRef(s.program), angle: s.angle });
     }
     // The evergreen line the email closes with rotates week by week.
-    const evOn = EVERGREEN.filter(l => (weights[l] ?? 0) > 0 && l !== featured);
+    const evOn = EVERGREEN.filter(l => (weights[l] ?? 0) > 0 && l !== featured && fits(l, inEmail(), rules));
     const ever = evOn.length ? evOn[Math.floor(daysBetween("2026-01-05", weekOf) / 7) % evOn.length] : null;
     slots.push({
       channel: "email", kind: "roundup", day: eDay, time: cadence.email.time, line: featured, program: programRef(fpick?.program), programs: list, evergreen: ever,
@@ -497,7 +502,7 @@ export function planWeek({ weekOf, programs = [], priorities = [], settings = {}
 // ── the calendar's rhythm ────────────────────────────────────────────────────
 // -> { slots, notes }. Lines are assigned to every post of the week (so a
 // follow-up knows what it follows), but only days from `today` on are planned.
-function rhythmSocial({ weekOf, ref, today, live, signals, sPrios, scores, why, cadence, themes, allowedOn }) {
+function rhythmSocial({ weekOf, ref, today, live, signals, sPrios, scores, why, cadence, themes, allowedOn, rules }) {
   const notes = [], slots = [];
   const entries = cadence.social.rhythm.map(e => ({ ...e, date: addDays(weekOf, DAY_KEYS.indexOf(e.day)) }));
   const main = entries.filter(e => !e.follow);
@@ -578,8 +583,9 @@ function rhythmSocial({ weekOf, ref, today, live, signals, sPrios, scores, why, 
       const mName = MONTHS[+next.slice(5, 7) - 1];
       const coming = live.filter(p => String(p.first_date).slice(0, 7) === next).sort((a, b) => a.first_date.localeCompare(b.first_date));
       const pickLines = []; const list = [];
-      for (const p of coming) { if (list.length >= 4) break; const l = lineOf(p); if (pickLines.includes(l) && coming.some(q => !pickLines.includes(lineOf(q)))) continue; pickLines.push(l); list.push(programRef(p)); }
-      for (const p of coming) { if (list.length >= 4) break; if (!list.some(x => x.id === String(p.id))) list.push(programRef(p)); }
+      const ok = (p) => fits(lineOf(p), pickLines, rules);
+      for (const p of coming) { if (list.length >= 4) break; const l = lineOf(p); if (!ok(p) || (pickLines.includes(l) && coming.some(q => !pickLines.includes(lineOf(q))))) continue; pickLines.push(l); list.push(programRef(p)); }
+      for (const p of coming) { if (list.length >= 4) break; if (ok(p) && !list.some(x => x.id === String(p.id))) { list.push(programRef(p)); pickLines.push(lineOf(p)); } }
       slots.push({
         channel: "social", kind: "preview", format: "post", platforms: POST_PLATFORMS.slice(), day: d, time: cadence.social.time, line: "club", program: null, programs: list,
         angle: "preview", reason: `Last week of the month: what's coming in ${mName}${coming.length ? ` (${coming.length} program${coming.length === 1 ? "" : "s"} start)` : ""}`,

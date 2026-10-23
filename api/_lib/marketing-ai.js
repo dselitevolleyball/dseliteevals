@@ -20,6 +20,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { LINES, LINE_LINKS, lineLabel, lineOf, lineUrl, programRef, addDays, daysBetween, fmtDay, KIND_LABEL } from "../../shared/marketing-plan.js";
 import { EMPTY_FILTERS, asciiize } from "../../shared/campaign-audience.js";
 import { orientationOf } from "../../shared/marketing-photos.js";
+import { rulesText, rulesBroken, guessApart } from "../../shared/marketing-rules.js";
 
 export const AI_MODEL = "claude-opus-5-5";
 export const aiReady = () => !!process.env.ANTHROPIC_API_KEY;
@@ -227,11 +228,11 @@ export function ruleProblems(text) {
 const stripUrls = (s) => String(s || "").replace(/\s*(?:\b(?:at|here|via|on)\b\s*:?|:)?\s*\(?https?:\/\/[^\s)]*[^\s).,!?;:]\)?/gi, "").replace(/\blink in (?:our )?bio\b/gi, "").replace(/[ \t]{2,}/g, " ").replace(/ +([.,!?])/g, "$1").trim();
 
 // Normalise one copy object; null when it breaks a rule (caller falls back).
-export function cleanCopy(raw, slot, fallback) {
+export function cleanCopy(raw, slot, fallback, rules = []) {
   if (!raw || typeof raw !== "object") return { copy: null, problems: ["empty"] };
   const c = { ...fallback, ...Object.fromEntries(Object.entries(raw).filter(([, v]) => v != null && v !== "")) };
   const all = [c.headline, c.sub, c.body, c.email_subject, c.email_preheader, ...(c.email_blocks || []).map(b => b.blurb)].join(" \n ");
-  const problems = ruleProblems(all);
+  const problems = [...ruleProblems(all), ...rulesBroken(all, [slot.line, ...(slot.programs || []).map(p => p?.line), slot.evergreen], rules)];
   if (problems.length) return { copy: null, problems };
   c.headline = noEmoji(c.headline).replace(/\s+/g, " ").slice(0, ["pov", "note"].includes(slot?.template) ? 180 : 60).trim() || fallback.headline;
   c.accent = accentOf(c.headline, noEmoji(c.accent));
@@ -310,12 +311,13 @@ export const FLAIR = [
   "Flair: bold. Every piece opens with a scroll-stopping hook; lean into fun formats (POV, this-or-that, hot takes about drills, \"tag a friend who...\", challenges), wordplay and energy. Still short, still kind, still no invented facts.",
 ];
 export const flairText = (n) => FLAIR[Math.max(0, Math.min(2, Number.isFinite(+n) ? Math.round(+n) : 1))];
-function voiceBlock(voice, flair = 1) {
+function voiceBlock(voice, flair = 1, rules = []) {
   const v = String(voice || "").trim();
-  return `${flairText(flair)}\n\n` + (v ? `Extra notes from the club's directors about voice and brand (follow them unless they conflict with the facts rules):\n${v.slice(0, 4000)}` : "No extra voice notes from the directors.");
+  const r = rulesText(rules);
+  return `${flairText(flair)}\n\n${r ? r + "\n\n" : ""}` + (v ? `Extra notes from the club's directors about voice and brand (follow them unless they conflict with the facts rules):\n${v.slice(0, 4000)}` : "No extra voice notes from the directors.");
 }
 
-async function callClaude(userText, { voice, flair, timeoutMs = 95000 } = {}) {
+async function callClaude(userText, { voice, flair, rules, timeoutMs = 95000 } = {}) {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: timeoutMs, maxRetries: 0 });
   const msg = await client.beta.messages.create({
     model: AI_MODEL,
@@ -325,7 +327,7 @@ async function callClaude(userText, { voice, flair, timeoutMs = 95000 } = {}) {
     output_config: { effort: "medium", format: { type: "json_schema", schema: WEEK_SCHEMA } },
     system: [
       { type: "text", text: SYSTEM },
-      { type: "text", text: voiceBlock(voice, flair), cache_control: { type: "ephemeral" } },
+      { type: "text", text: voiceBlock(voice, flair, rules), cache_control: { type: "ephemeral" } },
     ],
     messages: [{ role: "user", content: userText }],
   });
@@ -476,7 +478,7 @@ export async function composeItems({ slots, weekOf, programs = [], priorities = 
       slots: slots.map((s, i) => slotForAi(s, i, feedById)),
     };
     try {
-      const r = await callClaude("Write the drafts for these slots. Request (JSON):\n" + JSON.stringify(req, null, 1), { voice: settings.voice, flair: settings.flair, timeoutMs });
+      const r = await callClaude("Write the drafts for these slots. Request (JSON):\n" + JSON.stringify(req, null, 1), { voice: settings.voice, flair: settings.flair, rules: settings.rules, timeoutMs });
       ai.model = r.model || null; ai.error = r.error || null; aiItems = r.items; ai.usage = r.usage;
     } catch (e) {
       ai.error = e?.message || String(e);
@@ -487,7 +489,7 @@ export async function composeItems({ slots, weekOf, programs = [], priorities = 
   const rows = slots.map((slot, i) => {
     let copy = templates[i];
     if (aiItems) {
-      const { copy: c, problems } = cleanCopy(bySlot.get(i), slot, templates[i]);
+      const { copy: c, problems } = cleanCopy(bySlot.get(i), slot, templates[i], settings.rules);
       if (c) { copy = c; ai.used = true; } else ai.fallbacks.push({ slot: i, why: problems.join(", ") });
     }
     return rowFor(slot, copy, { weekOf, feedById, photos, used, settings, programs, by, seed: weekOf + ":" + i });
@@ -544,12 +546,12 @@ export async function reviseItem({ item, instruction, programs = [], settings = 
   const req = { director_instruction: String(instruction || "").trim(), slot: slotForAi(slot, 0, feedById), current_draft: current };
   let r;
   try {
-    r = await callClaude("Rewrite this one draft following the director's instruction. Keep what the instruction doesn't touch. Return exactly one item with slot 0. Request (JSON):\n" + JSON.stringify(req, null, 1), { voice: settings.voice, flair: settings.flair, timeoutMs });
+    r = await callClaude("Rewrite this one draft following the director's instruction. Keep what the instruction doesn't touch. Return exactly one item with slot 0. Request (JSON):\n" + JSON.stringify(req, null, 1), { voice: settings.voice, flair: settings.flair, rules: settings.rules, timeoutMs });
   } catch (e) { return { patch: null, error: e?.message || String(e) }; }
   const raw = (r.items || []).find(x => Number(x.slot) === 0) || (r.items || [])[0];
   if (!raw) return { patch: null, model: r.model, error: r.error || "No rewrite came back" };
   const base = { ...current, hashtags: current.hashtags, email_blocks: current.email_blocks, photo_tags: [] };
-  const { copy, problems } = cleanCopy(raw, slot, base);
+  const { copy, problems } = cleanCopy(raw, slot, base, settings.rules);
   if (!copy) return { patch: null, model: r.model, error: `The rewrite broke a rule (${problems.join(", ")}) - try different wording` };
   const wantsPhoto = /\b(photo|picture|pic|image|shot)\b/i.test(instruction || "");
   let photo = item.graphic?.photo_url ? { url: item.graphic.photo_url, key: item.graphic.photo_key } : null;
@@ -565,4 +567,27 @@ export async function reviseItem({ item, instruction, programs = [], settings = 
   }
   if (graphic && (graphic.photo_url !== item.graphic?.photo_url || graphic.headline !== item.graphic?.headline)) { patch.asset_url = null; patch.asset_story_url = null; }
   return { patch, model: r.model, error: null };
+}
+
+// A director's rule in plain words -> the lines it keeps apart, if it is that
+// kind of rule ("Don't combine sport programming and birthday parties"
+// -> sports | parties). Falls back to a keyword reading without Claude.
+const RULE_SCHEMA = { type: "object", additionalProperties: false, required: ["keeps_apart", "side_a", "side_b"], properties: {
+  keeps_apart: { type: "boolean" }, side_a: { type: "array", items: { type: "string", enum: LINES.map(l => l.key) } }, side_b: { type: "array", items: { type: "string", enum: LINES.map(l => l.key) } } } };
+export async function interpretRule(text) {
+  const t = String(text || "").trim().slice(0, 300);
+  if (!t) return null;
+  if (!aiReady()) return guessApart(t);
+  try {
+    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 30000, maxRetries: 1 });
+    const msg = await client.beta.messages.create({
+      model: AI_MODEL, max_tokens: 2000, betas: ["server-side-fallback-2026-07-01"], fallbacks: "default",
+      output_config: { effort: "low", format: { type: "json_schema", schema: RULE_SCHEMA } },
+      system: `Dripping Springs Sports Club's marketing has these program lines: ${LINES.map(l => `${l.key} (${l.label})`).join(", ")}. Volleyball, basketball, Reach Performance and Camp Elevate are the sport programming. A director wrote a rule for the club's posts and emails. If the rule says two groups of lines must not appear together in the same post, story or email, set keeps_apart and list the two sides; otherwise keeps_apart is false and both sides are empty.`,
+      messages: [{ role: "user", content: t }],
+    });
+    if (msg.stop_reason === "refusal" || msg.stop_reason === "max_tokens") return guessApart(t);
+    const j = JSON.parse((msg.content || []).filter(b => b.type === "text").map(b => b.text).join(""));
+    return j.keeps_apart && j.side_a.length && j.side_b.length ? [j.side_a, j.side_b] : null;
+  } catch { return guessApart(t); }
 }
