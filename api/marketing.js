@@ -19,6 +19,7 @@
 //   photos_sync · settings_save { patch } · priority_save { priority } · priority_delete { id }
 //   music_search { q?, mood?, page? }        free music on Openverse (CC0 / CC BY) for reels
 //   music_add { id, mood? }                 copy one into the club's music library (credit kept)
+//   meta_check                              what the Meta token is and may do (no token returned)
 //   rule_interpret { text }                 the lines a rule in plain words keeps apart (Claude, keyword fallback)
 //   rules_check                             items from this week on that break a rule · rules_redo { ids } redraft them
 //   ideas_refresh { ask?, web? }            the idea scout runs now (an ask: "something fun for Halloween")
@@ -43,7 +44,7 @@ import { normalizePhone } from "./_lib/sms.js";
 import { planWeek, planFlow, signalsFor, mondayOf, addDays, parseBrief, fmtDay, normRhythm, LINE_KEYS } from "../shared/marketing-plan.js";
 import { reviseItem, buildEmail, withHero, aiReady, ctToday, interpretRule } from "./_lib/marketing-ai.js";
 import { normRules } from "../shared/marketing-rules.js";
-import { connections, publishItem, captionFor, testEmail, testSms } from "./_lib/marketing-publish.js";
+import { connections, metaCheck, publishItem, captionFor, testEmail, testSms } from "./_lib/marketing-publish.js";
 import { serviceSb, loadSettings, loadPriorities, loadHistory, loadPhotos, fetchPrograms, syncPhotos, generateWeek, log, ruleIssues } from "./_lib/marketing-core.js";
 import { tagPhotos } from "./_lib/marketing-photos-ai.js";
 import { searchFreeMusic, addFreeTrack } from "./_lib/marketing-music.js";
@@ -98,6 +99,9 @@ export async function run(sb, { me, name }, b) {
       const [settings, priorities] = await Promise.all([loadSettings(sb), loadPriorities(sb)]);
       return { ...connections(), settings, priorities };
     }
+
+    case "meta_check":
+      return { meta: await metaCheck() };
 
     case "programs": {
       const feed = await fetchPrograms({ fresh: !!b.fresh });

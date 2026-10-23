@@ -86,6 +86,39 @@ async function graph(path, params, { method = "POST" } = {}) {
 }
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+// What the Meta token in the env actually is and may do - when posting fails
+// with a permissions error, this says which permission or which id is wrong.
+// Never returns the token itself.
+export const META_SCOPES = ["pages_show_list", "pages_read_engagement", "pages_manage_posts", "instagram_basic", "instagram_content_publish"];
+export async function metaCheck() {
+  const { META_PAGE_ACCESS_TOKEN: t, META_PAGE_ID: pageId, META_IG_USER_ID: igId } = env();
+  if (!t) return { ok: false, problems: ["META_PAGE_ACCESS_TOKEN isn't set"] };
+  const get = async (path, params = {}) => {
+    const u = new URL(`https://graph.facebook.com/${graphVersion()}/${path}`);
+    for (const [k, v] of Object.entries({ ...params, access_token: t })) u.searchParams.set(k, v);
+    return fetch(u, { signal: AbortSignal.timeout(15000) }).then(r => r.json()).catch(e => ({ error: { message: e.message } }));
+  };
+  const [dbg, me, page] = await Promise.all([get("debug_token", { input_token: t }), get("me", { fields: "id,name" }), pageId ? get(pageId, { fields: "id,name,instagram_business_account" }) : null]);
+  const d = dbg.data || {};
+  const when = (s) => s ? new Date(s * 1000).toISOString().slice(0, 10) : "never";
+  const scopes = d.scopes || [];
+  const out = {
+    valid: d.is_valid ?? null, type: d.type || null, app: d.application || null, expires: when(d.expires_at), data_access_expires: when(d.data_access_expires_at),
+    scopes, missing: d.scopes ? META_SCOPES.filter(s => !scopes.includes(s)) : null,
+    token_is_for: me.error ? null : { id: me.id, name: me.name }, page_id_set: pageId || null,
+    page: page ? (page.error ? { error: page.error.message } : { id: page.id, name: page.name, instagram: page.instagram_business_account?.id || null }) : null, ig_id_set: igId || null,
+    error: dbg.error?.message || d.error?.message || me.error?.message || null,
+  };
+  const problems = [];
+  if (out.valid === false) problems.push(`The token is no longer valid${d.error?.message ? ": " + d.error.message : ""}`);
+  if (out.type && out.type !== "PAGE") problems.push(`It's a ${out.type} token - HQ needs the Page token (from /me/accounts)`);
+  if (out.token_is_for && pageId && out.token_is_for.id !== pageId) problems.push(`The token is for ${out.token_is_for.name} (${out.token_is_for.id}), not page ${pageId}`);
+  if (out.missing?.length) problems.push("Missing permissions: " + out.missing.join(", "));
+  if (out.page?.instagram && igId && out.page.instagram !== igId) problems.push(`META_IG_USER_ID is ${igId} but the page's Instagram is ${out.page.instagram}`);
+  if (out.error && !problems.length) problems.push(out.error);
+  return { ok: !problems.length, problems, ...out };
+}
+
 export async function postFacebook(item) {
   const { META_PAGE_ACCESS_TOKEN, META_PAGE_ID } = env();
   if (!META_PAGE_ACCESS_TOKEN || !META_PAGE_ID) throw new Error("Facebook isn't connected (META_PAGE_ACCESS_TOKEN, META_PAGE_ID)");
