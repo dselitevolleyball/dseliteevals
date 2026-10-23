@@ -12,7 +12,8 @@
 // Env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 
 import { createClient } from "@supabase/supabase-js";
-import { applyChanges } from "./_lib/hq-changes.js";
+import { applyChanges, testingOnly } from "./_lib/hq-changes.js";
+import { REPORT_SENDERS } from "./stat-report.js";
 
 const OWNER_EMAILS = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"];
 
@@ -26,10 +27,12 @@ export default async function handler(req, res) {
   const { data: { user } = {} } = bearer ? await sb.auth.getUser(bearer).catch(() => ({ data: {} })) : { data: {} };
   const email = String(user?.email || "").trim().toLowerCase();
   if (!email) return res.status(401).json({ error: "Sign in first" });
-  let name = email;
+  let name = email, testingStaff = false;
   if (!OWNER_EMAILS.includes(email)) {
     const { data: c } = await sb.from("coaches").select("is_admin, is_approved, display_name").ilike("email", email).maybeSingle();
-    if (!(c?.is_approved && c?.is_admin)) return res.status(403).json({ error: "Admins only." });
+    // The performance coach may apply testing numbers only (checked below).
+    testingStaff = !!(c?.is_approved && !c?.is_admin && REPORT_SENDERS.includes(email));
+    if (!(c?.is_approved && (c?.is_admin || testingStaff))) return res.status(403).json({ error: "Admins only." });
     name = c.display_name || email;
   } else name = "Drew Rose";
 
@@ -38,6 +41,7 @@ export default async function handler(req, res) {
   const id = String(body.proposal_id || "");
   const { data: prop, error } = await sb.from("hq_change_proposals").select("*").eq("id", id).maybeSingle();
   if (error || !prop) return res.status(404).json({ error: "That proposal doesn't exist." });
+  if (testingStaff && !testingOnly(prop.changes)) return res.status(403).json({ error: "You can apply testing numbers only — an admin needs to apply this one." });
   if (prop.status !== "pending") return res.status(409).json({ error: "Already " + prop.status + (prop.applied_by ? " by " + prop.applied_by : "") + "." });
 
   if (body.discard) {

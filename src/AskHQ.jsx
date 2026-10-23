@@ -27,6 +27,8 @@ const SUGGEST = {
   roster: ["List each team's roster with parent emails.", "Which players are missing a jersey number?"],
   coaches: ["Which coaches are on more than one team, and which teams?"],
   email: ["What emails went out in the last 7 days and to how many people?"],
+  // Brandon (Reach): testing numbers only.
+  testing: ["📎 Attach your broad jump sheet and say: add these broad jumps to each player's initial evaluation", "Which players have no broad jump on file yet, by team?", "Show 14 Diamond's testing numbers."],
 };
 
 function Md({ text }) {
@@ -45,7 +47,7 @@ function Md({ text }) {
   return <div style={{ fontSize: 14, lineHeight: 1.5 }}>{out}</div>;
 }
 
-export default function AskHQ({ open, onClose, view, coach }) {
+export default function AskHQ({ open, onClose, view, coach, testing }) {
   const [msgs, setMsgs] = useState(() => { try { return JSON.parse(sessionStorage.getItem(KEY) || "[]"); } catch { return []; } });
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
@@ -225,7 +227,7 @@ export default function AskHQ({ open, onClose, view, coach }) {
   };
 
   if (!open) return null;
-  const suggestions = SUGGEST[view] || SUGGEST.home;
+  const suggestions = testing ? SUGGEST.testing : SUGGEST[view] || SUGGEST.home;
   return (
     <div style={{ position: "fixed", top: 0, right: 0, bottom: 0, width: "min(520px, 100vw)", zIndex: 60, background: C.bg, borderLeft: "1px solid " + C.border, display: "flex", flexDirection: "column", boxShadow: "-12px 0 40px rgba(0,0,0,0.5)", fontFamily: "inherit", color: C.text }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 14px", borderBottom: "1px solid " + C.border }}>
@@ -243,7 +245,8 @@ export default function AskHQ({ open, onClose, view, coach }) {
         )}
         {!msgs.length && (
           <div>
-            <div style={{ fontSize: 13, color: C.mut, marginBottom: 10, lineHeight: 1.5 }}>Ask about players, rosters, coaches, hours, tournaments, housing, clinics, emails — anything in HQ. It looks the answer up and shows its work. Ask it to draft an email or a text ("text the 14 Diamond parents that practice moved to 6pm") and you get a Send button. Attach a spreadsheet (Excel, CSV or PDF) and say "update HQ from this": you'll see every change before anything is saved.</div>
+            {testing ? <div style={{ fontSize: 13, color: C.mut, marginBottom: 10, lineHeight: 1.5 }}>Attach a testing spreadsheet (Excel or CSV: a name column and the numbers, plus team or date if you have them) and say what it is. HQ matches every name to a player and shows each number it would add, before → after. Nothing is saved until you tap Apply; then the numbers show on the player cards and in Testing Reports.</div>
+            : <div style={{ fontSize: 13, color: C.mut, marginBottom: 10, lineHeight: 1.5 }}>Ask about players, rosters, coaches, hours, tournaments, housing, clinics, emails — anything in HQ. It looks the answer up and shows its work. Ask it to draft an email or a text ("text the 14 Diamond parents that practice moved to 6pm") and you get a Send button. Attach a spreadsheet (Excel, CSV or PDF) and say "update HQ from this": you'll see every change before anything is saved.</div>}
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {suggestions.map(s => <button key={s} onClick={() => s.startsWith("📎") ? fileRef.current?.click() : ask(s)} style={{ textAlign: "left", padding: "9px 12px", borderRadius: 10, border: "1px solid " + C.border, background: C.card, color: C.text, fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>{s}</button>)}
             </div>

@@ -32968,7 +32968,7 @@ export default function App() {
           )}
         </div>
         <div style={{display:"flex",gap:isNarrow?2:8,alignItems:"center",flex:isNarrow?"0 0 auto":"0 1 auto",flexWrap:isNarrow?"nowrap":"wrap",justifyContent:"flex-end",minWidth:0,marginLeft:"auto"}}>
-          {(canOps || dsscRole === "admin") && <button onClick={()=>setAskOpen(v=>!v)} title="Ask HQ — ask anything about the club's data" aria-label="Ask HQ"
+          {(canOps || dsscRole === "admin" || canSendReports) && <button onClick={()=>setAskOpen(v=>!v)} title="Ask HQ — ask anything about the club's data" aria-label="Ask HQ"
             style={{padding:isNarrow?"7px 10px":"6px 12px",borderRadius:8,border:"1px solid "+(askOpen?C.gold:C.border),background:askOpen?"rgba(233,30,140,0.12)":"transparent",color:C.gold,cursor:"pointer",fontFamily:"inherit",fontSize:isNarrow?14:12,fontWeight:800,marginRight:isNarrow?2:6}}>
             {isNarrow ? "✦" : "✦ Ask HQ"}
           </button>}
@@ -33178,7 +33178,6 @@ export default function App() {
         {view==="myexpenses" && renderMyExpenses()}
         {view==="claims" && canOps && renderClaims()}
         {view==="travel" && renderTravel()}
-        {(canOps || dsscRole === "admin") && <AskHQ open={askOpen} onClose={()=>setAskOpen(false)} view={view} coach={coach} />}
         {view==="housing" && (isAdmin ? <HousingView tournaments={tournaments} tournamentAssignments={tournamentAssignments} players={players} coachRoster={coachRoster} coach={coach} reloadTournaments={loadTournaments} /> : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Housing is admin-only.</div>)}
         {view==="faq" && renderFaq()}
         {view==="practiceplan" && renderPracticePlans()}
@@ -33210,6 +33209,8 @@ export default function App() {
         {view==="games" && renderGames()}
         {view==="askai" && renderAskAI()}
         </>}
+        {/* Brandon (Reach) gets Ask HQ for testing numbers only; api/ask-hq.js limits it. */}
+        {(canOps || dsscRole === "admin" || canSendReports) && <AskHQ open={askOpen} onClose={()=>setAskOpen(false)} view={view} coach={coach} testing={!canOps && dsscRole !== "admin"} />}
       </div>
       </div>
       {showPhoneNav && <BottomBar nav={nav} view={view} go={navGo} onMenu={()=>{ if (mobileNavOpen) closeNavDrawer(); else setMobileNavOpen(true); }} menuOpen={mobileNavOpen} C={C} />}

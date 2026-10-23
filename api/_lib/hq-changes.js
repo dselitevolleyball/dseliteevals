@@ -25,6 +25,11 @@ export const MAX_DELETES = 25;
 // Core records: removing one belongs on its own screen, where the app does the
 // clean-up that goes with it.
 const DENY_DELETE = /^(players|tournaments|teams|practice_teams|coach_roster|dssc_contacts|dssc_participants|dssc_clinics|dsysa_clinics)$/;
+// The performance coach (Brandon, not an HQ admin) proposes and applies
+// physical-testing numbers and nothing else (Drew, Oct 23 2026): updates and
+// new rows in player_stat_tests, never deletes.
+export const TESTING_TABLE = /^player_stat_tests$/;
+export const testingOnly = (changes) => (changes || []).length > 0 && changes.every(c => TESTING_TABLE.test(c?.table || "") && c?.action !== "delete");
 
 // Rows elsewhere that point at this one (any foreign key). A delete with
 // dependents is refused rather than cascading or orphaning them.
@@ -68,7 +73,8 @@ export async function tableInfo(sb, table) {
 }
 
 // Validate Claude's proposed changes. Returns { ok: [...], skipped: [{i, why}], noop }.
-export async function checkChanges(sb, changes) {
+// opts.testing: the performance coach's mode (player_stat_tests only, no deletes).
+export async function checkChanges(sb, changes, opts = {}) {
   const ok = [], skipped = [];
   let noop = 0, deletes = 0;
   const list = (Array.isArray(changes) ? changes : []).slice(0, MAX_CHANGES);
@@ -79,6 +85,7 @@ export async function checkChanges(sb, changes) {
     const set = c.set && typeof c.set === "object" && !Array.isArray(c.set) ? c.set : null;
     const skip = (why) => skipped.push({ i, label: c.label || null, why });
     if (!table || DENY_TABLE.test(table)) { skip(`table "${table}" can't be changed from Ask HQ`); continue; }
+    if (opts.testing && (!TESTING_TABLE.test(table) || action === "delete")) { skip("only testing numbers (player_stat_tests updates and new rows) can be changed here"); continue; }
     let info;
     try { info = await tableInfo(sb, table); } catch (e) { skip(e.message); continue; }
     if (!info.columns.size) { skip(`no table called "${table}"`); continue; }
@@ -127,6 +134,7 @@ export async function checkChanges(sb, changes) {
 export async function applyChanges(sb, changes, actor) {
   const results = [];
   for (const [i, c] of changes) {
+    let rowPlayer = null;   // player_id of an updated row, for change_log
     try {
       if (c.action === "delete") {
         const { data: rows, error } = await sb.from(c.table).select("*").match(c.pk).limit(2);
@@ -137,9 +145,11 @@ export async function applyChanges(sb, changes, actor) {
         const { error: e2 } = await sb.from(c.table).delete().match(c.pk);
         if (e2) throw new Error(e2.message);
       } else if (c.action === "update") {
-        const { data: rows, error } = await sb.from(c.table).select(Object.keys(c.set).join(",")).match(c.pk).limit(2);
+        const hasPlayer = (await tableInfo(sb, c.table)).columns.has("player_id");
+        const { data: rows, error } = await sb.from(c.table).select([...Object.keys(c.set), ...(hasPlayer ? ["player_id"] : [])].join(",")).match(c.pk).limit(2);
         if (error) throw new Error(error.message);
         if (!rows || rows.length !== 1) { results.push({ i, status: "missing", why: "row no longer exists" }); continue; }
+        rowPlayer = hasPlayer ? rows[0].player_id ?? null : null;
         const moved = Object.keys(c.before || {}).filter(k => !same(rows[0][k], c.before[k]));
         if (moved.length) { results.push({ i, status: "conflict", why: `${moved.join(", ")} changed in HQ since this was proposed` }); continue; }
         const { error: e2 } = await sb.from(c.table).update(c.set).match(c.pk);
@@ -152,7 +162,7 @@ export async function applyChanges(sb, changes, actor) {
       const field_changes = c.action === "delete"
         ? Object.fromEntries(Object.keys(c.before || {}).map(k => [k, { old: c.before[k] ?? null, new: null }]))
         : Object.fromEntries(Object.keys(c.set).map(k => [k, { old: c.before?.[k] ?? null, new: c.set[k] }]));
-      const player_id = c.table === "players" ? (c.pk?.id ?? null) : (c.set.player_id ?? c.pk?.player_id ?? c.before?.player_id ?? null);
+      const player_id = c.table === "players" ? (c.pk?.id ?? null) : (c.set.player_id ?? c.pk?.player_id ?? c.before?.player_id ?? rowPlayer);
       try { await sb.from("change_log").insert({ player_id, table_name: c.table, action: "hq " + c.action, field_changes, actor_email: actor.email, actor_name: actor.name }); } catch { /* the edit stands without its log row */ }
       results.push({ i, status: "applied" });
     } catch (e) {

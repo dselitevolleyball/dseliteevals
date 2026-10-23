@@ -17,6 +17,7 @@
 //        CSV/text files are read and passed inline (first 200KB);
 //        Excel workbooks are converted to one CSV per sheet.
 //   Authorization: Bearer <Supabase session token of an owner/admin>
+//   ...or of the performance coach (REPORT_SENDERS): testing numbers only.
 // Response { answer, tools: [{name, summary}], drafts: [{to, subject, body}], texts: [{recipients, body, brand, label}], proposals: [{id, summary, changes, skipped}], usage }
 // Texts, like emails, are only drafted here: the admin's Send tap posts them to /api/send-sms.
 //
@@ -27,6 +28,8 @@ import { createClient } from "@supabase/supabase-js";
 import * as XLSX from "xlsx";
 import { checkChanges, MAX_CHANGES } from "./_lib/hq-changes.js";
 import { smsPlain, splitSms, SMS_MAX } from "../shared/sms-split.js";
+import { matchPlayer, PLAYER_MATCH_COLUMNS } from "../shared/name-match.js";
+import { REPORT_SENDERS } from "./stat-report.js";
 
 export const config = { maxDuration: 300 };   // a big upload can take a few minutes of lookups
 
@@ -37,6 +40,10 @@ const SECRET_KEY = /token|secret|password|api_key|signed_ip|user_agent|raw_email
 
 // Added for a DSSC administrator who isn't an HQ admin.
 const DSSC_ADMIN_NOTE = "This person is a DSSC (Dripping Springs Sports Club) administrator, not a DS Elite Volleyball admin. Answer about DSSC: its clinics, camps, pods, class sign-ups and attendance, DSSC coaches and clock-ins, DSSC texts and the club's people (dssc_* tables), courts and the planning calendar. Don't share DS Elite players' or families' personal details (contact info, medical, money, evaluations); if they ask about DS Elite, give schedule-level answers or say an HQ admin can help. You can't change data for them: if they ask to change something, tell them where in the app to do it or that an HQ admin can make the change.";
+
+// Added for the performance coach (Brandon, Reach), who isn't an HQ admin:
+// testing numbers only (Drew, Oct 23 2026).
+const TESTING_NOTE = "This person is Coach Brandon, the performance coach (Reach Performance at DSSC), not an HQ admin. He works only with the players' physical testing numbers. Your tools here are match_players, team_tests and propose_changes, and propose_changes accepts player_stat_tests updates and new rows only (he applies them himself). Help him load and check testing numbers (see PHYSICAL TESTING NUMBERS). Don't give out anything else from HQ (families' contact details, money, evaluations, coaches' pay); if he asks, say an HQ admin can help.";
 
 const SYSTEM = `You are HQ, the assistant inside DS Elite HQ — the operations app for DS Elite Volleyball (a youth club volleyball program in Dripping Springs, TX) and its sister business Dripping Springs Sports Club (DSSC, a facility that runs clinics and skill pods). You are talking to a club administrator. Today's date is given in each question.
 
@@ -84,6 +91,15 @@ Find the exact rows with sql, then call propose_changes with everything the requ
 Who shows on a tournament's travel page: everyone the tournament_assignments rows for that tournament resolve to (head_override / asst_override / sub_coach, else the team's practice_teams head_coach / assistant_coach), plus any coach_travel row for that tournament. So taking someone off a trip means BOTH clearing the override that puts them there (set it to null so the team's regular coach applies, unless the admin names a replacement; also update that row's notes if they mention the person) AND deleting their coach_travel row — deleting the travel row alone makes them reappear as "added by hand", and clearing the override alone leaves the travel row. If they're there as a team's regular head/assistant coach, say so: that's a staffing change on the team, not a trip change. Flag a flight_purchased or room already booked for them.
 When something can't be done through a proposal (a refused delete, a core record, a login), never stop at "I can't": tell the admin exactly how to do it in the app, step by step — e.g. on the Travel screen a person added by hand has a red × beside their name that removes their travel row; a team's coach for one tournament is changed on that tournament's card (head/assistant override); a player is deleted only from the Danger Zone at the bottom of their player profile (usually a departing player should be marked declined instead, which you can propose). Keep each propose_changes call to about 60 changes (the hard cap is ${MAX_CHANGES}); for more, make several calls, e.g. one per team. Keep reason short (a few words).
 
+PHYSICAL TESTING NUMBERS (Coach Brandon / Reach)
+player_stat_tests(id, player_id, test_date, team_name, stand_reach, approach_touch, standing_touch, vertical, broad_jump, dash_10y, notes, recorded_by, source): one row per player per test date (unique player_id + test_date). Heights and broad jump in inches, dash_10y in seconds. vertical = approach_touch − stand_reach. The tryout baseline is on players (stand_reach, approach_touch, jump_touch = standing touch, sprint_10y; no broad jump). A player's "initial evaluation" with Brandon is her EARLIEST player_stat_tests row (first testing days were 2026-10-11 and 2026-10-18), not the tryout. These rows feed the Testing progress box on the player card and Testing Reports.
+When a testing sheet is attached (broad jump, vertical, reach, 10-yard…):
+1. Call match_players once with EVERY row of the sheet (name, plus team if the sheet has one). It matches the way the club's other importers do (nicknames, hyphenated names, current roster first) and returns each player's test rows. Don't match names with sql.
+2. Pick the row each number belongs to: the sheet's test date if it gives one; otherwise, for an initial-evaluation sheet, the player's earliest test row. If she has a row on that date, update it with only the columns the sheet gives. If she has none, insert {player_id, test_date, team_name: her team, the values}. If there's no date on the sheet and she has no test rows, don't guess a date: list her and ask.
+3. Convert to inches: 6'2" or 6-2 = 74; centimeters ÷ 2.54; two decimals. A broad jump outside 30–110 inches (or any number that looks like a typo) is listed for checking, not proposed. If you set approach_touch or stand_reach, also set vertical from the reach on that row (or the one before it).
+4. propose_changes on player_stat_tests: label "First Last · Team", reason the sheet's value (e.g. "sheet: 82 in").
+5. Answer: how many numbers you proposed (updates vs new rows), how many already matched HQ, then every sheet row you couldn't match or weren't sure about. End with "Review the changes below and tap Apply."
+
 TEXT MESSAGES (draft_text)
 When the admin asks you to text people, look up their phones with sql and call draft_text; the app shows the text with a Send button and nothing goes out until they tap it. Phones: players.parent_phone and parent2_phone (the two parents; text both unless asked otherwise), players.player_phone (the athlete herself), coach_roster.phone (coaches), dssc_contacts.phone (DSSC families), dssc_pod_roster.parent_phone (a DSSC class). Use the current-roster rule for a team's families. Pass each recipient's own first name so "{first}" fills in per person.
 - Start every text with "Hi {first}," — the app fills in each recipient's first name, so a text never greets both parents.
@@ -106,6 +122,9 @@ const tools = [
       set: { type: "object", description: "column → new value (omit for a delete)" },
       label: { type: "string", description: "who/what this row is, e.g. 'Mia Paz · 14 Diamond'" },
       reason: { type: "string", description: "what in the document says so" } }, required: ["table", "action", "label"] } } }, required: ["summary", "changes"] } },
+  { name: "match_players", description: "Match names from a sheet to DS Elite players (nicknames, hyphenated names, current roster first; ambiguous names are left unmatched with a note rather than guessed). Returns each row's player_id, roster name, team and her physical testing rows (player_stat_tests). Send every row of the sheet in one call (up to 300).", input_schema: { type: "object", properties: {
+      rows: { type: "array", items: { type: "object", properties: { name: { type: "string", description: "the name as the sheet has it" }, team: { type: "string", description: "team from the sheet, if any (breaks ties)" } }, required: ["name"] } } }, required: ["rows"] } },
+  { name: "team_tests", description: "A team's current roster with every physical testing row on file (player_stat_tests) and the tryout baseline. Pass an empty team for every team.", input_schema: { type: "object", properties: { team: { type: "string", description: "e.g. '14 Diamond'" } }, required: ["team"] } },
   { name: "draft_text", description: "Hand the admin a ready-to-send TEXT MESSAGE (SMS) to one person or a group. Use it when they ask you to text people. You do not send it — the app shows it with a Send button. Each recipient gets their own copy; {first} in the body becomes that recipient's first name.", input_schema: { type: "object", properties: {
       recipients: { type: "array", items: { type: "object", properties: { phone: { type: "string" }, name: { type: "string", description: "the recipient's own name, e.g. the parent, not the player" }, kind: { type: "string", description: "parent, player, coach or contact" }, team: { type: "string" } }, required: ["phone"] } },
       body: { type: "string", description: "plain text, starting 'Hi {first},'" },
@@ -125,9 +144,47 @@ const scrub = (v) => {
   return v;
 };
 
-async function runTool(sb, name, input, drafts, ctx = {}) {
+export async function runTool(sb, name, input, drafts, ctx = {}) {   // exported for scripts/tests
+  if (ctx.testing && !["match_players", "team_tests", "propose_changes"].includes(name)) return { error: "Not available here." };
+  if (name === "match_players") {
+    const rows = (Array.isArray(input.rows) ? input.rows : []).slice(0, 300);
+    if (!rows.length) return { error: "No rows to match." };
+    const { data: players, error } = await sb.from("players").select(PLAYER_MATCH_COLUMNS);
+    if (error) return { error: error.message };
+    const out = rows.map((r, i) => {
+      const team = String(r?.team || "").trim();
+      let m = matchPlayer(r?.name, players);
+      // A team on the sheet settles two girls with the same name.
+      if (!m.player && team) {
+        const onTeam = players.filter(p => String(p.team_assignment || "").toLowerCase() === team.toLowerCase());
+        const t = matchPlayer(r?.name, onTeam, { strict: true });
+        if (t.player) m = { player: t.player, note: "matched on " + team };
+      }
+      const p = m.player;
+      return { row: i, name: String(r?.name || ""), player_id: p?.id ?? null, player: p ? p.first_name + " " + p.last_name : null, team: p?.team_assignment || null,
+        offer_status: p?.offer_status || null, note: m.note || (p && team && team.toLowerCase() !== String(p.team_assignment || "").toLowerCase() ? "sheet says " + team : null) };
+    });
+    const ids = [...new Set(out.map(o => o.player_id).filter(Boolean))];
+    const { data: tests } = ids.length ? await sb.from("player_stat_tests").select("id, player_id, test_date, stand_reach, approach_touch, standing_touch, vertical, broad_jump, dash_10y").in("player_id", ids).order("test_date") : { data: [] };
+    for (const o of out) if (o.player_id) o.tests = (tests || []).filter(t => t.player_id === o.player_id).map(({ player_id, ...t }) => t);
+    return { matched: out.filter(o => o.player_id).length, unmatched: out.filter(o => !o.player_id).length, results: out };
+  }
+  if (name === "team_tests") {
+    const team = String(input.team || "").trim();
+    let q = sb.from("players").select("id, first_name, last_name, team_assignment, stand_reach, approach_touch, jump_touch, sprint_10y, stat_baseline_date")
+      .not("team_assignment", "is", null).or("offer_status.is.null,offer_status.not.in.(declined,not_invited,opted_out)");
+    if (team) q = q.ilike("team_assignment", team);
+    const { data: players, error } = await q.order("team_assignment").order("last_name");
+    if (error) return { error: error.message };
+    const ids = (players || []).map(p => p.id);
+    const { data: tests } = ids.length ? await sb.from("player_stat_tests").select("id, player_id, test_date, stand_reach, approach_touch, standing_touch, vertical, broad_jump, dash_10y").in("player_id", ids).order("test_date") : { data: [] };
+    return { players: (players || []).length, data: (players || []).map(p => ({ ...p, tests: (tests || []).filter(t => t.player_id === p.id).map(({ player_id, ...t }) => t) })) };
+  }
   if (name === "propose_changes") {
-    const { ok, skipped, noop } = await checkChanges(sb, input.changes);
+    // New testing rows say where they came from, like the /stats sheet's do.
+    const changes = (Array.isArray(input.changes) ? input.changes : []).map(c => c?.table === "player_stat_tests" && c?.action === "insert" && c.set && typeof c.set === "object"
+      ? { ...c, set: { recorded_by: ctx.who, source: "ask-hq", ...c.set } } : c);
+    const { ok, skipped, noop } = await checkChanges(sb, changes, { testing: ctx.testing });
     if (!ok.length) return { accepted: 0, no_change: noop, skipped, note: noop ? "Every change matched what HQ already has." : "Nothing valid to propose." };
     const { data, error } = await sb.from("hq_change_proposals").insert({ created_by: ctx.who, summary: String(input.summary || "").slice(0, 300), source_files: ctx.files || [], changes: ok }).select("id").single();
     if (error) return { error: "Couldn't save the proposal: " + error.message };
@@ -199,14 +256,17 @@ async function handle(req, res) {
     : bearer ? await sb.auth.getUser(bearer).catch(() => ({ data: {} })) : { data: {} };
   const email = String(user?.email || "").trim().toLowerCase();
   if (!email) return res.status(401).json({ error: "Sign in first" });
-  let who = email, dsscAdmin = false;
+  let who = email, dsscAdmin = false, testing = false;
   if (!OWNER_EMAILS.includes(email)) {
     const { data: c } = await sb.from("coaches").select("is_admin, is_approved, display_name, dssc_role").ilike("email", email).maybeSingle();
     // DSSC administrators (coaches.dssc_role = 'admin', e.g. Jonathan) get Ask HQ
     // too (Drew, Oct 14 2026) - for DSSC questions, and without propose_changes,
     // since only HQ admins can Apply a proposal.
     dsscAdmin = !!(c?.is_approved && !c?.is_admin && c?.dssc_role === "admin");
-    if (!(c?.is_approved && (c?.is_admin || dsscAdmin))) return res.status(403).json({ error: "Ask HQ is for admins." });
+    // The performance coach gets it for testing numbers only: no sql, no
+    // email/texts, proposals limited to player_stat_tests (Drew, Oct 23 2026).
+    testing = !!(c?.is_approved && !c?.is_admin && !dsscAdmin && REPORT_SENDERS.includes(email));
+    if (!(c?.is_approved && (c?.is_admin || dsscAdmin || testing))) return res.status(403).json({ error: "Ask HQ is for admins." });
     who = c.display_name || email;
   }
 
@@ -257,7 +317,9 @@ async function handle(req, res) {
   const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
   const started = Date.now();
   const trail = [], drafts = [], proposals = [], texts = [];
-  const ctx = { who, files: attachments.map(a => ({ name: a.name, path: a.path })), proposals, texts, dsscAdmin };
+  const ctx = { who, files: attachments.map(a => ({ name: a.name, path: a.path })), proposals, texts, dsscAdmin, testing };
+  const myTools = testing ? tools.filter(t => ["match_players", "team_tests", "propose_changes"].includes(t.name))
+    : dsscAdmin ? tools.filter(t => t.name !== "propose_changes") : tools;
   let usage = { input: 0, output: 0 }, answer = "", turns = 0, cutOff = false;
   try {
     while (turns++ < MAX_TURNS) {
@@ -267,8 +329,8 @@ async function handle(req, res) {
       const r = await client.messages.stream({
         model: MODEL, max_tokens: 32000,
         thinking: { type: "adaptive" }, output_config: { effort: "medium" },
-        system: [{ type: "text", text: SYSTEM, cache_control: { type: "ephemeral" } }, ...(dsscAdmin ? [{ type: "text", text: DSSC_ADMIN_NOTE }] : [])],
-        tools: dsscAdmin ? tools.filter(t => t.name !== "propose_changes") : tools, messages,
+        system: [{ type: "text", text: SYSTEM, cache_control: { type: "ephemeral" } }, ...(dsscAdmin ? [{ type: "text", text: DSSC_ADMIN_NOTE }] : []), ...(testing ? [{ type: "text", text: TESTING_NOTE }] : [])],
+        tools: myTools, messages,
       }).finalMessage();
       usage.input += r.usage?.input_tokens || 0; usage.output += r.usage?.output_tokens || 0;
       messages.push({ role: "assistant", content: r.content });
@@ -294,7 +356,7 @@ async function handle(req, res) {
       for (const u of uses) {
         const t0 = Date.now();
         const out = await runTool(sb, u.name, u.input || {}, drafts, ctx);
-        trail.push({ name: u.name, input: u.name === "sql" ? String(u.input?.query || "").slice(0, 400) : (u.name === "describe_table" ? u.input?.table : u.name === "propose_changes" ? (u.input?.summary || "") + " · " + (out.accepted ?? 0) + " changes" : u.name === "draft_text" ? (u.input?.label || "text") + " · " + (out.phones ?? 0) + " phones" : u.input?.label || u.input?.subject), ms: Date.now() - t0, rows: out.rows ?? (out.data ? out.data.length : undefined), error: out.error });
+        trail.push({ name: u.name, input: u.name === "sql" ? String(u.input?.query || "").slice(0, 400) : (u.name === "describe_table" ? u.input?.table : u.name === "propose_changes" ? (u.input?.summary || "") + " · " + (out.accepted ?? 0) + " changes" : u.name === "draft_text" ? (u.input?.label || "text") + " · " + (out.phones ?? 0) + " phones" : u.name === "match_players" ? (out.matched ?? 0) + " matched · " + (out.unmatched ?? 0) + " not" : u.name === "team_tests" ? (u.input?.team || "all teams") : u.input?.label || u.input?.subject), ms: Date.now() - t0, rows: out.rows ?? (out.data ? out.data.length : undefined), error: out.error });
         results.push({ type: "tool_result", tool_use_id: u.id, content: JSON.stringify(out).slice(0, 60000), is_error: !!out.error });
       }
       messages.push({ role: "user", content: results });
