@@ -17,6 +17,8 @@ import { DS, Btn, Tag, inputStyle, Grow, fetchAll } from "./DsscHub.jsx";
 import { CATEGORIES, EMPTY_FILTERS } from "../../shared/campaign-audience.js";
 import EmailAudiencePicker from "./DsscEmailAudience.jsx";
 import MarketingTiming from "./DsscMarketingTiming.jsx";
+
+const BIO_LINK = "https://www.drippingsportsclub.com/hq/api/links";
 import { mktApi, isMissingTable, MIGRATION_MSG, LINES, lineMeta, LineChip, DEFAULT_WEIGHTS, DEFAULT_CADENCE, DAYS, DAY_LABEL, chipStyle, Msg, Panel, H, downscale, isImageFile } from "./DsscMarketingKit.jsx";
 import { DEFAULT_RHYTHM, DEFAULT_THEMES, normRhythm } from "../../shared/marketing-plan.js";
 import { PHOTO_TAGS_CORE, PHOTO_TAGS_ALL, PHOTO_USES, USE_LABEL, PEOPLE_LABEL, SETTING_LABEL, tagLabel, orientationOf, photoHaystack } from "../../shared/marketing-photos.js";
@@ -391,6 +393,7 @@ export function MarketingSettings({ status, narrow, reloadStatus, onChanged }) {
             </div>
           );
         })}
+        <div style={{ fontSize: 13, color: DS.mut, marginTop: 10, lineHeight: 1.5 }}>Instagram bio link — set it once (Instagram → Edit profile → Links): <b style={{ color: DS.text, userSelect: "all" }}>{BIO_LINK}</b>. Instagram captions can't hold a tappable link, so posts say "link in bio"; that page shows each post with its own sign-up button.</div>
         {status && <div style={{ fontSize: 12, color: DS.dim, marginTop: 8 }}>Step-by-step setup is in MARKETING_SETUP.md in the HQ repo.</div>}
       </Panel>
 

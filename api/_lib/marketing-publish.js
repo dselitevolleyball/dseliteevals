@@ -27,6 +27,7 @@ import { createHmac } from "node:crypto";
 import { sendResend, dsscFrom, resendKey, nrm, isEmailish, safeEqual, inboxAddress, DSSC_DIRECTORS } from "./site-inbox.js";
 import { twilioReady, notReadyMessage, sendOneSms } from "./sms.js";
 import { EMPTY_FILTERS } from "../../shared/campaign-audience.js";
+import { lineSite } from "../../shared/marketing-plan.js";
 import { loadSegmentData, buildFamilies, resolveSegment } from "../../shared/crm-segments.js";
 import { buildEmail, withHero, UNSUB_TOKEN } from "./marketing-ai.js";
 import { resendKeyFor } from "./resend-key.js";
@@ -58,9 +59,14 @@ export const verifyUnsub = (email, t) => !!unsubSecret() && isEmailish(email) &&
 
 // ── social ───────────────────────────────────────────────────────────────────
 // The caption as posted: the approved text, the link line, the hashtags.
-export function captionFor(item) {
+// Facebook makes a link in a caption tappable. Instagram doesn't (and its
+// captions can't be copied), so there the call to action points to the link
+// in the bio - the club's links page, api/links.js - and gives the address to type.
+export function captionFor(item, platform = "facebook") {
   const body = String(item.body || "").trim();
-  const link = item.cta_url && !body.includes(item.cta_url) ? `${item.cta_text || "Details"}: ${item.cta_url}` : "";
+  const link = !item.cta_url ? ""
+    : /^instagram/.test(platform) ? `${item.cta_text || "Details"}: link in bio, or go to ${lineSite(item.line)}`
+    : !body.includes(item.cta_url) ? `${item.cta_text || "Details"}: ${item.cta_url}` : "";
   const tags = (item.hashtags || []).map(h => "#" + String(h).replace(/^#/, "")).filter(h => h.length > 1).join(" ");
   return [body, link, tags].filter(Boolean).join("\n\n").slice(0, 2200);
 }
@@ -88,7 +94,7 @@ export async function postFacebook(item) {
 export async function postInstagram(item, { story = false } = {}) {
   const { META_PAGE_ACCESS_TOKEN, META_IG_USER_ID } = env();
   if (!META_PAGE_ACCESS_TOKEN || !META_IG_USER_ID) throw new Error("Instagram isn't connected (META_PAGE_ACCESS_TOKEN, META_IG_USER_ID)");
-  const params = story ? { image_url: item.asset_story_url, media_type: "STORIES" } : { image_url: item.asset_url, caption: captionFor(item) };
+  const params = story ? { image_url: item.asset_story_url, media_type: "STORIES" } : { image_url: item.asset_url, caption: captionFor(item, "instagram") };
   const c = await graph(`${META_IG_USER_ID}/media`, params);
   // The container is usually ready at once for a photo; give it up to ~20s.
   for (let i = 0; i < 10; i++) {
@@ -111,7 +117,7 @@ export async function postInstagramReel(item, { containerId = null, waitMs = 450
   if (!item.asset_video_url) throw new Error("The reel hasn't been rendered");
   let id = containerId;
   if (!id) {
-    const params = { media_type: "REELS", video_url: item.asset_video_url, caption: captionFor(item), share_to_feed: "true" };
+    const params = { media_type: "REELS", video_url: item.asset_video_url, caption: captionFor(item, "instagram"), share_to_feed: "true" };
     if (item.asset_url) params.cover_url = item.asset_url;
     id = (await graph(`${META_IG_USER_ID}/media`, params)).id;
   }
@@ -285,7 +291,7 @@ export async function publishItem(sb, item, { settings = {}, dry = false, deadli
   if (!from.includes(item.status)) return { id: item.id, channel: item.channel, status: item.status, error: `Not approved (${item.status})` };
   if (dry) {
     const plan = item.channel === "social"
-      ? { platforms: (item.platforms || []).filter(p => !(item.external_ids || {})[p]), image: item.asset_url, caption: captionFor(item) }
+      ? { platforms: (item.platforms || []).filter(p => !(item.external_ids || {})[p]), image: item.asset_url, caption: captionFor(item), instagram_caption: captionFor(item, "instagram") }
       : item.channel === "email" ? await sendEmailItem(sb, item, { dry: true }).catch(e => ({ error: e.message }))
       : { sms_campaign: smsCampaignRow(item, settings) };
     return { id: item.id, channel: item.channel, status: item.status, dry: true, plan };

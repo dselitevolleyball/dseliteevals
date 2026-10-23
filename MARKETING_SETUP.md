@@ -54,6 +54,14 @@ Without the key, drafts still get made from plain templates.
 6. While the app is in Development mode, your own admin account can post to your own Page and
    Instagram, which is all this needs. You don't need App Review.
 
+7. **Instagram bio link** (once): Instagram → Edit profile → Links →
+   `https://www.drippingsportsclub.com/hq/api/links` (title e.g. "Sign up"). Instagram captions
+   can't hold a tappable link, so Instagram captions end "Register now: link in bio, or go to
+   drippingsportsclub.com/volleyball". The page (`api/links.js`) shows the posts from the last 45 days,
+   each with its own button, then every program page. Facebook captions keep the real link. Post and
+   story graphics show the call to action and the web address as text, with no button, because an image
+   can't be tapped. The email's graphic keeps its button, and the image links to the call to action.
+
 The Page token stops working if you change your Facebook password or remove the app. When that
 happens, Marketing → Settings shows Facebook/Instagram as not connected; repeat steps 3–5.
 

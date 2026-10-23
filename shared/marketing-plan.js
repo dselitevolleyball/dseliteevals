@@ -133,6 +133,8 @@ export const LINE_LINKS = {
   open_gym:     { page: `${SITE}/open-gym`,          book: null,                                cta: "See open gym times" },
   club:         { page: `${SITE}/programs`,          book: `${PB}/register/`,                   cta: "See what's coming up" },
 };
+// A line's page as people would type it: "drippingsportsclub.com/volleyball".
+export const lineSite = (line) => (LINE_LINKS[line] || LINE_LINKS.club).page.replace(/^https?:\/\/(www\.)?/, "");
 // The link an item's call to action uses for a line with no specific program.
 export const lineUrl = (line) => { const l = LINE_LINKS[line] || LINE_LINKS.club; return l.book || l.page; };
 

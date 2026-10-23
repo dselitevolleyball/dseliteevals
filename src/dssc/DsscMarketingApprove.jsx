@@ -11,6 +11,7 @@ import { segmentsOf } from "../../shared/campaign-audience.js";
 import EmailAudiencePicker, { emailAudienceLabel, useSegments } from "./DsscEmailAudience.jsx";
 import { TEMPLATES, FORMATS } from "../../shared/marketing-graphics.js";
 import { photoHaystack } from "../../shared/marketing-photos.js";
+import { lineSite } from "../../shared/marketing-plan.js";
 import ReelBox from "./DsscMarketingReel.jsx";
 import {
   mktApi, isMissingTable, MIGRATION_MSG, lineMeta, lineLabel, LineChip, ANGLES, STATUS_META, CHANNEL_META, KIND_LABEL, kindOf,
@@ -343,6 +344,7 @@ export function ItemCard({ item: it, week, narrow, onPatch, onReplace, reload, o
         <Field multiline minRows={4} readOnly={!editable} value={it.body || ""} onSave={v => onPatch(it, { body: v })} style={{ fontSize: narrow ? 16 : 14 }} />
         <div style={fieldLbl}>Hashtags</div>
         <Field readOnly={!editable} value={(it.hashtags || []).map(h => String(h).startsWith("#") ? h : "#" + h).join(" ")} onSave={v => onPatch(it, { hashtags: tagsToArr(v) })} placeholder="#DrippingSprings" />
+        {it.cta_url && <div style={{ fontSize: 12, color: DS.mut, marginTop: 6, lineHeight: 1.45 }}>Facebook adds the link. Instagram links can't be tapped, so there the caption ends “{it.cta_text || "Details"}: link in bio, or go to {lineSite(it.line)}” — the bio link shows this post with its button.</div>}
       </>}
       {it.channel === "email" && <>
         <div style={fieldLbl}>Subject</div>

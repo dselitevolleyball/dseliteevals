@@ -259,7 +259,7 @@ export async function run(sb, { me, name }, b) {
 
     case "test": {
       const item = await getItem(sb, b.id);
-      if (item.channel === "social") return { preview: { platforms: item.platforms, image: item.asset_url || item.graphic?.photo_url || null, caption: captionFor(item) } };
+      if (item.channel === "social") return { preview: { platforms: item.platforms, image: item.asset_url || item.graphic?.photo_url || null, caption: captionFor(item), instagram_caption: captionFor(item, "instagram") } };
       if (item.channel === "email") {
         const to = isEmailish(b.to) ? nrm(b.to) : me;
         const r = await testEmail(item, to);

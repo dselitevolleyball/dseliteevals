@@ -39,6 +39,8 @@ export const TEMPLATES = [
   ["pov", "POV caption"],
   ["note", "Handwritten note"],
 ];
+import { lineSite } from "./marketing-plan.js";
+
 export const BRAND = {
   ink: "#061a18", ink2: "#0a2422", evergreen: "#104946", teal: "#0F8B76",
   lime: "#B2D049", orange: "#FF7300", paper: "#F4F0E8", mute: "#a9b7b1",
@@ -302,6 +304,27 @@ function drawCta(ctx, text, x, y, h, maxW, u) {
   ctx.textBaseline = "alphabetic"; setSpacing(ctx, 0);
   return w;
 }
+// A post or story can't be tapped, so it gets no button: the call to action
+// as a label and the line's web address to type underneath. (An email keeps
+// the button - its image links to the same place.)
+export const siteFor = (spec) => spec.site || lineSite(spec.line);
+function drawLink(ctx, spec, x, y, h, maxW, u) {
+  const label = up(spec.cta || "Sign up"), site = siteFor(spec);
+  let ls = h * 0.36, ss = h * 0.44;
+  setSpacing(ctx, 1 * u); ctx.font = `800 ${ls}px ${HEAD}`;
+  while (ctx.measureText(label).width > maxW && ls > h * 0.22) { ls -= 1; ctx.font = `800 ${ls}px ${HEAD}`; }
+  const lt = ellipsize(ctx, label, maxW);
+  setSpacing(ctx, 0); ctx.font = `700 ${ss}px ${BODY}`;
+  while (ctx.measureText(site).width > maxW && ss > h * 0.2) { ss -= 1; ctx.font = `700 ${ss}px ${BODY}`; }
+  const st = ellipsize(ctx, site, maxW);
+  const gap = h * 0.06, top = y + (h - ls - gap - ss) / 2;
+  ctx.textBaseline = "top";
+  setSpacing(ctx, 1 * u); ctx.font = `800 ${ls}px ${HEAD}`; ctx.fillStyle = BRAND.lime; ctx.fillText(lt, x, top);
+  setSpacing(ctx, 0); ctx.font = `700 ${ss}px ${BODY}`; ctx.fillStyle = "#FFFFFF"; ctx.fillText(st, x, top + ls + gap);
+  ctx.textBaseline = "alphabetic";
+  return Math.max(ctx.measureText(st).width, maxW);
+}
+const drawAction = (ctx, spec, x, y, h, maxW, u) => spec.format === "email" ? drawCta(ctx, spec.cta, x, y, h, maxW, u) : drawLink(ctx, spec, x, y, h, maxW, u);
 // White DSSC lockup, right-aligned at (right, centerY); 4QA mark to its left
 // with a hairline divider for basketball. Returns the width used.
 function drawLockup(ctx, imgs, right, cy, h) {
@@ -335,8 +358,8 @@ function drawFooter(ctx, spec, imgs, x, y, w, h, u) {
   const logoH = h * 0.7;
   const lw = lockupWidth(imgs, logoH);
   const room = w - lw - 36 * u;
-  if (room >= w * 0.36) { drawCta(ctx, spec.cta, x, y, h, room, u); drawLockup(ctx, imgs, x + w, y + h / 2, logoH); }
-  else { drawCta(ctx, spec.cta, x, y, h, w, u); }
+  if (room >= w * 0.36) { drawAction(ctx, spec, x, y, h, room, u); drawLockup(ctx, imgs, x + w, y + h / 2, logoH); }
+  else { drawAction(ctx, spec, x, y, h, w, u); }
 }
 // Orange starburst ("3 DAYS" / "LAST CALL").
 function drawBurst(ctx, label, cx, cy, r, u) {
@@ -623,13 +646,14 @@ function tEndcard(ctx, spec, imgs, F) {
   const head = fitHead(ctx, headWords("Where Dripping Springs plays.", "plays."), cw, 380 * u, { max: 150 * u, min: 70 * u, maxLines: 3 });
   const logoH = 120 * u, lw = lockupWidth(imgs, logoH);
   const ctaH = 96 * u;
-  const site = fitBody(ctx, "drippingsportsclub.com", cw, { size: 40 * u, min: 30 * u, maxLines: 1, weight: 700 });
+  const site = fitBody(ctx, siteFor(spec), cw, { size: 44 * u, min: 30 * u, maxLines: 1, weight: 700 });
   const block = logoH + 90 * u + head.height + 70 * u + ctaH + 40 * u + site.height;
   let y = (H - block) / 2;
   drawLockup(ctx, imgs, (W + Math.min(lw, cw)) / 2, y + logoH / 2, logoH); y += logoH + 90 * u;
   drawHead(ctx, head, m, y); y += head.height + 70 * u;
-  drawCta(ctx, spec.cta || "See what's coming up", m, y, ctaH, cw, u); y += ctaH + 40 * u;
-  drawBody(ctx, site, m, y, BRAND.lime);
+  const label = fitBody(ctx, up(spec.cta || "See what's coming up"), cw, { size: 64 * u, min: 36 * u, maxLines: 1, weight: 800, family: HEAD });
+  drawBody(ctx, label, m, y + (ctaH - label.height) / 2, BRAND.lime); y += ctaH + 40 * u;
+  drawBody(ctx, site, m, y, "#FFFFFF");
 }
 
 // ── Public ─────────────────────────────────────────────────────────────────
