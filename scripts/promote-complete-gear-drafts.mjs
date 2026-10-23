@@ -26,7 +26,9 @@ import { createClient } from "@supabase/supabase-js";
 import { isRiseTeam } from "../shared/gear-teams.js";
 
 function loadEnv() {
-  const raw = readFileSync(new URL("../.env", import.meta.url), "utf8");
+  let raw = "";
+  try { raw = readFileSync(new URL("../.env", import.meta.url), "utf8"); }
+  catch { return { ...process.env }; }   // no .env: use the environment
   const env = {};
   for (const line of raw.split(/\r?\n/)) {
     const m = /^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/.exec(line);
@@ -59,8 +61,7 @@ function whatsMissing(r, rise = false) {
   const hasP2 = has(r.parent2_name) || has(r.parent2_phone) || has(r.parent2_email);
   if (!hasP2 && !r.single_parent) out.push("parent 2 (or the only-one tick)");
   if (hasP2 && !has(r.parent2_name)) out.push("parent 2 name");
-  if (hasP2 && !has(r.parent2_phone)) out.push("parent 2 phone");
-  if (hasP2 && !has(r.parent2_email)) out.push("parent 2 email");
+  if (hasP2 && !has(r.parent2_phone) && !has(r.parent2_email)) out.push("parent 2 mobile or email");
   for (const [k, label] of SIZES) if (!has(r[k]) && !(rise && k === "shoe_size")) out.push(label);
   if (!r.details_confirmed) out.push("the confirmation box");
   return out;

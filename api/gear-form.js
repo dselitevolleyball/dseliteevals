@@ -451,9 +451,11 @@ export default async function handler(req, res) {
     if (!row.parent1_email) missing.push("first parent's email");
     if (!hasParent2 && !row.single_parent) missing.push("the second parent — fill them in, or tick that there's only one");
 
+    // A second parent needs a name and one way to reach them. The roster
+    // pre-fills name and mobile but rarely an email, and demanding all three
+    // stranded families who had no second email to give (Oct 23 2026).
     if (hasParent2 && !row.parent2_name) missing.push("second parent's name");
-    if (hasParent2 && !row.parent2_phone) missing.push("second parent's phone");
-    if (hasParent2 && !row.parent2_email) missing.push("second parent's email");
+    if (hasParent2 && !row.parent2_phone && !row.parent2_email) missing.push("a mobile or email for the second parent");
     // A family asking to be measured cannot be asked for the measurements. The
     // contact details are still required — those are how we tell her when to
     // come in.
@@ -759,6 +761,7 @@ function renderForm(player, v, { error, preview, askSchool, school, askIntake } 
         <input type="email" name="parent1_email" value="${esc(p1.email)}" required autocomplete="off"></label>
 
       <p class="lb" style="color:var(--ink);font-size:13px;letter-spacing:.04em;margin-top:22px">Parent / guardian 2</p>
+      <p class="hint" style="margin-top:-4px">A name and a mobile or email is enough.</p>
       <label><span class="lb">Name</span>
         <input type="text" name="parent2_name" value="${esc(p2.name)}" autocomplete="off"></label>
       <label><span class="lb">Mobile</span>
