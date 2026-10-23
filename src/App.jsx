@@ -19500,7 +19500,8 @@ export default function App() {
       ],
       Thu: [
         { label:"5-7pm",  capacity:4 },
-        { label:"7-9pm",  capacity:4 },
+        // 6 courts (the Warehouse and the Flex) from 23 Oct 2026 (Drew).
+        { label:"7-9pm",  capacity:6 },
       ],
     };
     // Summer now uses the same 2-hour Sunday blocks as the regular season
