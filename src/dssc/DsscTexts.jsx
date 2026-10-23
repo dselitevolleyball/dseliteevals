@@ -296,25 +296,31 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
         {inboxMode === "replies" && (() => {
           if (!replies) return <div style={{ padding: 20, fontSize: 12, color: DS.mut, textAlign: "center" }}>Loading replies…</div>;
           if (replies.error) return <div style={{ padding: 20, fontSize: 12, color: DS.orange }}>Couldn't load replies: {replies.error}</div>;
-          if (!replies.list.length) return <div style={{ padding: 20, fontSize: 12, color: DS.mut, textAlign: "center" }}>No replies yet. Texts families and coaches send back show up here, newest first.</div>;
+          if (!replies.list.length) return <div style={{ padding: 20, fontSize: 12, color: DS.mut, textAlign: "center" }}>No replies yet. Texts families and coaches send back show up here, one row per person, newest first.</div>;
           const byId = new Map(threads.map(t => [t.id, t]));
-          const seen = new Map();   // thread id -> replies shown so far, to light up the unread ones
-          return replies.list.map(r => {
+          // One row per person, like Messages on a phone (Drew, Oct 23 2026):
+          // their newest reply on top, how many they've sent, and the unread
+          // count. Opening the row shows the whole conversation.
+          const per = new Map();   // thread id -> { r: newest reply, n: replies }
+          for (const r of replies.list) { const g = per.get(r.thread_id); if (g) g.n++; else per.set(r.thread_id, { r, n: 1 }); }
+          return [...per.values()].map(({ r, n }) => {
             const t = { ...r.sms_threads, ...(byId.get(r.thread_id) || {}) };
-            const n = (seen.get(r.thread_id) || 0) + 1; seen.set(r.thread_id, n);
-            const unread = n <= (t.unread_count || 0);
+            const unread = (t.unread_count || 0) > 0;
             // A one-off pick has no useful name, so show how the group text started instead.
             const bl = r.broadcast ? labelOfGroup(r.broadcast) : "", generic = /^(\d+ picked|custom|pick|Group)$/.test(bl), snip = String(r.broadcast?.body || "").replace(/\s+/g, " ").trim().slice(0, 50);
             const where = r.broadcast ? "📣 Reply to " + (generic ? "group text" + (snip ? ": “" + snip + "…”" : "") : bl) :t.contact_kind === "coach" ? "Coaches" : (t.dssc_program || "Direct text");
             return (
               <div key={r.id} onClick={() => openThread(r.thread_id)} style={{ padding: "9px 12px", borderBottom: "1px solid " + DS.line, cursor: "pointer", background: r.thread_id === selId ? DS.limeSoft : unread ? "rgba(178,208,73,0.06)" : "transparent" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 6 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6 }}>
                   <span style={{ fontSize: 13, fontWeight: 700, color: unread ? DS.lime : DS.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{labelOf(t)}</span>
-                  <span style={{ fontSize: 10, color: DS.mut, whiteSpace: "nowrap" }}>{fmtStamp(r.at)}</span>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                    <span style={{ fontSize: 10, color: DS.mut, whiteSpace: "nowrap" }}>{fmtStamp(r.at)}</span>
+                    {unread && <span title={t.unread_count + " unread"} style={{ minWidth: 18, height: 18, padding: "0 5px", boxSizing: "border-box", borderRadius: 9, background: DS.lime, color: DS.bg, fontSize: 10.5, fontWeight: 800, lineHeight: "18px", textAlign: "center" }}>{t.unread_count}</span>}
+                  </span>
                 </div>
                 {t.contact_name && <div style={{ fontSize: 10.5, color: DS.mut }}>{fmtPhone(t.phone)}</div>}
-                <div style={{ fontSize: 12, color: DS.text, marginTop: 3, lineHeight: 1.35, display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden", wordBreak: "break-word" }}>{(r.media_urls || []).length > 0 && <span style={{ color: DS.mut }}>📷 </span>}{r.body || ((r.media_urls || []).length ? <i style={{ color: DS.mut }}>photo</i> : <i style={{ color: DS.mut }}>(empty)</i>)}</div>
-                <div style={{ fontSize: 10.5, color: r.broadcast ? DS.lime : DS.mut, marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{where}</div>
+                <div style={{ fontSize: 12, color: DS.text, marginTop: 3, lineHeight: 1.35, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", wordBreak: "break-word" }}>{(r.media_urls || []).length > 0 && <span style={{ color: DS.mut }}>📷 </span>}{r.body || ((r.media_urls || []).length ? <i style={{ color: DS.mut }}>photo</i> : <i style={{ color: DS.mut }}>(empty)</i>)}</div>
+                <div style={{ fontSize: 10.5, color: r.broadcast ? DS.lime : DS.mut, marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{n > 1 && <span style={{ color: DS.mut }}>{n} replies · </span>}{where}</div>
               </div>
             );
           });
