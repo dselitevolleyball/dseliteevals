@@ -8,7 +8,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Papa from "papaparse";
 import { supabase } from "./supabase";
 import { loadDseCourtInputs } from "../shared/court-inputs.js";
-import { COURTS, buildCourtDay, fmtHour, sundayBlock } from "../shared/courts.js";
+import { COURTS, buildCourtDay, fmtHour, dseBlock } from "../shared/courts.js";
 
 const C = { bg: "#0a0a0a", card: "#141414", border: "#2a2a2a", gold: "#e91e8c", text: "#ffffff", mut: "#999999", grn: "#22c55e" };
 const KIND = {
@@ -123,7 +123,7 @@ export default function CourtAvailability({ loaders = liveLoaders, onOpenClass }
     const bookings = data.bookings.filter(b => b.date === d && (pub || showHolds || b.kind !== "hold") && !(dropEmpty && isEmpty(b)))
       .map(b => ({ courts: b.courts, start: b.start, end: b.end, kind: isEmpty(b) ? "empty" : b.kind, label: b.label, detail: (b.signups != null ? b.signups + " signed up this date" + (b.category ? " · " : "") : "") + (b.category || ""), ref: b.clinicId ? { cid: b.clinicId, sid: b.sessionId } : null }))
       .concat(dse.tourn || []);
-    return { ...buildCourtDay({ bookings, teams: dse.teams, scrims: dse.scrims, reserved: sundayBlock(d, data.reservations || []), startHour: START_H, endHour: END_H }), cancelled: dse.cancelled, phase: dse.phase };
+    return { ...buildCourtDay({ bookings, teams: dse.teams, scrims: dse.scrims, reserved: dseBlock(d, data.reservations || []), startHour: START_H, endHour: END_H }), cancelled: dse.cancelled, phase: dse.phase };
   };
 
   // Court time that only opens up if the empty classes are dropped, per court.
@@ -326,7 +326,7 @@ export default function CourtAvailability({ loaders = liveLoaders, onOpenClass }
       {data && !data.error && pub && <div style={{ fontSize: 11, color: C.mut, marginTop: 10 }}>Client view: open court time only. Booked time doesn't say who has the court.</div>}
       {data && !data.error && !pub && (
         <div style={{ fontSize: 11, color: C.mut, marginTop: 10, lineHeight: 1.6 }}>
-          From Playbook's public calendar{data.at ? " (pulled " + data.at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) + ")" : ""} plus DS Elite's practice schedule. Rentals (orange, with times) come from Playbook's Events export{data.rentals?.at ? ", last uploaded " + new Date(data.rentals.at).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : ""}; a reservation booked after the export (or on a day no upload covers) shows as "time?". DS Elite's Sunday block is the courts it has booked in Playbook (the whole Warehouse, 1–9pm, when nothing is booked). Sign-up counts are the Clinics & Camps board's (Playbook registrations{data.rosterAt ? ", pulled " + new Date(data.rosterAt).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" }) : ""}); basketball and other programs not on the board have no count. Reach Performance isn't on a court{data.offCourt ? ` (${data.offCourt} sessions this week left off)` : ""}. DS Elite practices without a court number are placed on a free court (dashed). Showing {fmtHour(START_H)}–{fmtHour(END_H)}.
+          From Playbook's public calendar{data.at ? " (pulled " + data.at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) + ")" : ""} plus DS Elite's practice schedule. Rentals (orange, with times) come from Playbook's Events export{data.rentals?.at ? ", last uploaded " + new Date(data.rentals.at).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : ""}; a reservation booked after the export (or on a day no upload covers) shows as "time?". DS Elite's courts are the ones it has booked in Playbook, and HQ's practice schedule says which team is on each (on a Sunday with nothing booked, the whole Warehouse, 1–9pm). Sign-up counts are the Clinics & Camps board's (Playbook registrations{data.rosterAt ? ", pulled " + new Date(data.rosterAt).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" }) : ""}); basketball and other programs not on the board have no count. Reach Performance isn't on a court{data.offCourt ? ` (${data.offCourt} sessions this week left off)` : ""}. DS Elite practices without a court number are placed on a free court (dashed). Showing {fmtHour(START_H)}–{fmtHour(END_H)}.
         </div>
       )}
     </div>

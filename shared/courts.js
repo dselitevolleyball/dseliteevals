@@ -74,23 +74,37 @@ export function courtsForName(name) {
 // gives those bookings their times (Oct 14) the block takes them; a Sunday with
 // nothing reserved yet falls back to the standing Warehouse rule above.
 const courtOrder = (cs) => { const order = COURTS.map(c => c.id); return [...new Set(cs)].sort((a, b) => order.indexOf(a) - order.indexOf(b)); };
-export function sundayBlock(ymd, reservations = []) {
-  if (new Date(ymd + "T12:00:00").getDay() !== 0) return [];
+//
+// Weeknights too (Drew, Oct 23 2026: "use DS HQ as the source of record for DS
+// Elite rentals, with their team names"). DS Elite's own timed rentals on any
+// day are courts held for DS Elite, not bookings: HQ's practice schedule places
+// its teams inside them by name, and a team only conflicts when the held courts
+// plus the free ones can't take it. Held courts no team uses stay held.
+export function dseBlock(ymd, reservations = []) {
+  const sunday = new Date(ymd + "T12:00:00").getDay() === 0;
+  const name = sunday ? "DS Elite Sunday block" : "DS Elite courts";
   const mine = reservations.filter(r => r.date === ymd && r.internal);
   const timed = mine.filter(r => r.start != null && r.end != null && r.end > r.start);
+  if (!sunday) return groupBlocks(timed, name);
   if (timed.length) {
-    const g = new Map();
-    for (const r of timed) { const k = r.start + "|" + r.end; if (!g.has(k)) g.set(k, { start: r.start, end: r.end, courts: [] }); g.get(k).courts.push(...r.courts); }
+    const out = groupBlocks(timed, name);
     // A court DS Elite has reserved with no time that the export doesn't
     // account for (booked after it - not "covered") still gets 1-9pm.
     const rest = mine.filter(r => !(r.start != null && r.end != null && r.end > r.start) && !r.covered).flatMap(r => r.courts);
-    const out = [...g.values()].map(x => ({ dow: 0, start: x.start, end: x.end, courts: courtOrder(x.courts), label: "DS Elite Sunday block", detail: "Reserved for DS Elite in Playbook, " + fmtHour(x.start) + "-" + fmtHour(x.end) }));
     if (rest.length) out.push({ dow: 0, start: 13, end: 21, courts: courtOrder(rest), label: "DS Elite Sunday block", detail: "Reserved for DS Elite in Playbook (time not on the export), 1-9pm" });
     return out;
   }
   const courts = mine.flatMap(r => r.courts);
   if (!courts.length) return reservedFor(ymd);
   return [{ dow: 0, start: 13, end: 21, courts: courtOrder(courts), label: "DS Elite Sunday block", detail: "Reserved for DS Elite in Playbook, 1-9pm" }];
+}
+// Older name, kept for callers that still use it.
+export const sundayBlock = dseBlock;
+// DS Elite's timed reservations, one block per time window.
+function groupBlocks(timed, label) {
+  const g = new Map();
+  for (const r of timed) { const k = r.start + "|" + r.end; if (!g.has(k)) g.set(k, { start: r.start, end: r.end, courts: [] }); g.get(k).courts.push(...r.courts); }
+  return [...g.values()].map(x => ({ start: x.start, end: x.end, courts: courtOrder(x.courts), label, detail: "Reserved for DS Elite in Playbook, " + fmtHour(x.start) + "-" + fmtHour(x.end) }));
 }
 
 // ── Rentals from Playbook's Events export (Drew, Oct 14 2026) ─────────────────

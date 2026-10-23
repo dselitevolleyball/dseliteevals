@@ -2,7 +2,7 @@
 // (api/court-availability.js) and the members' public page (api/courts-public.js).
 import crypto from "crypto";
 import { fetchPlaybookEvents, addDays } from "./playbook-calendar.js";
-import { courtsForEvent, courtsForName, eventLabel, eventCategory, hourOf, buildCourtDay, sundayBlock, COURTS } from "../../shared/courts.js";
+import { courtsForEvent, courtsForName, eventLabel, eventCategory, hourOf, buildCourtDay, dseBlock, COURTS } from "../../shared/courts.js";
 import { loadDseCourtInputs } from "../../shared/court-inputs.js";
 import { loadRentals, rentalWindows } from "./court-rentals.js";
 
@@ -43,12 +43,14 @@ export async function loadCourtBookings(sb, start, end) {
     reservations.push({ date: r.event_date, courts, name: r.program, internal, who: internal ? "DSSC / DS Elite" : BY_EMAIL[emailOf.get(r.contact_id)] || (PRIVATE.test(d) || !d ? "Private rental" : nice(d)), synced: r.created_at || null });
   }
   // Rentals with their times (Playbook's Events export, uploaded on the screen).
-  // DS Elite's own Sunday bookings are its Sunday block (teams are placed in
-  // it), so they join the reservations, timed; everything else is a booking.
+  // DS Elite's own bookings, any day, are courts held for DS Elite: HQ's
+  // practice schedule is the record of who is on them (teams are placed in
+  // them by name), so they join the reservations, timed; everything else is a
+  // booking.
   const rentals = await loadRentals(sb, start, end);
   for (const r of rentals) {
     if (!r.courts?.length) continue;
-    if (r.internal && new Date(r.date + "T12:00:00").getDay() === 0) {
+    if (r.internal) {
       reservations.push({ date: r.date, courts: r.courts, name: r.item || r.label, internal: true, who: "DSSC / DS Elite", start: r.start, end: r.end, timed: true });
       continue;
     }
@@ -94,7 +96,7 @@ export async function publicWeek(sb, start, days) {
   return dates.map(d => {
     const x = dse[d] || { teams: [], scrims: [], tourn: [] };
     const b = bookings.filter(k => k.date === d).map(k => ({ courts: k.courts, start: k.start, end: k.end, kind: k.kind, label: "x" })).concat(x.tourn || []);
-    const g = buildCourtDay({ bookings: b, teams: x.teams, scrims: x.scrims, reserved: sundayBlock(d, reservations), startHour: PUBLIC_START, endHour: PUBLIC_END });
+    const g = buildCourtDay({ bookings: b, teams: x.teams, scrims: x.scrims, reserved: dseBlock(d, reservations), startHour: PUBLIC_START, endHour: PUBLIC_END });
     const sun = new Date(d + "T12:00:00").getDay() === 0;
     // A DS Elite team with no court set was placed on a guess. For those half
     // hours members see no open courts at all, rather than a guessed court.
