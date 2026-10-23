@@ -19,6 +19,10 @@ const KIND = {
   tourn: { bg: "rgba(245,158,11,0.22)", bd: "#f59e0b", fg: "#fcd34d", name: "In-House Tournament" },
 };
 const START_H = 7, END_H = 22;
+// Pixels per half hour. Every block is exactly n rows tall (text that doesn't
+// fit is clipped; the full text is on hover), so a long label can't stretch
+// its rows and pull the courts out of line with the time column.
+const ROW = 24;
 const iso = (d) => d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
 const addDays = (ymd, n) => { const d = new Date(ymd + "T12:00:00"); d.setDate(d.getDate() + n); return iso(d); };
 const weekStart = (ymd) => { const d = new Date(ymd + "T12:00:00"); d.setDate(d.getDate() - d.getDay()); return iso(d); }; // Sunday
@@ -200,7 +204,7 @@ export default function CourtAvailability({ loaders = liveLoaders, onOpenClass }
             <tbody>
               {g.slots.map((h, si) => (
                 <tr key={h}>
-                  <td style={{ fontSize: 10, color: C.mut, padding: "0 6px", borderTop: Number.isInteger(h) ? "1px solid " + C.border : "1px dotted #1f1f1f", height: 22, verticalAlign: "top", whiteSpace: "nowrap" }}>{Number.isInteger(h) ? fmtHour(h) : ""}</td>
+                  <td style={{ fontSize: 10, color: C.mut, padding: "0 6px", borderTop: Number.isInteger(h) ? "1px solid " + C.border : "1px dotted #1f1f1f", height: ROW, boxSizing: "border-box", verticalAlign: "top", whiteSpace: "nowrap" }}>{Number.isInteger(h) ? fmtHour(h) : ""}</td>
                   {COURTS.map((c, ci) => {
                     const col = g.cells[c.id], cell = col[si];
                     const same = (a, b) => (!a && !b) || (a && b && (pub || a.key === b.key));
@@ -213,10 +217,10 @@ export default function CourtAvailability({ loaders = liveLoaders, onOpenClass }
                         onClick={!pub && cell?.ref && onOpenClass ? () => onOpenClass(cell.ref.cid, cell.ref.sid) : undefined}
                         style={{ padding: 2, borderLeft: ci === 4 ? "2px solid " + C.border : "1px solid #1a1a1a", verticalAlign: "top" }}>
                         <div style={cell && pub
-                          ? { height: "100%", minHeight: n * 22 - 4, borderRadius: 6, background: "#1c1c1c", border: "1px solid #3a3a3a", color: "#8a8a8a", padding: "3px 5px", fontSize: 11, fontWeight: 700 }
+                          ? { boxSizing: "border-box", height: n * ROW - 4, overflow: "hidden", borderRadius: 6, background: "#1c1c1c", border: "1px solid #3a3a3a", color: "#8a8a8a", padding: "3px 5px", fontSize: 11, fontWeight: 700 }
                           : cell
-                          ? { height: "100%", minHeight: n * 22 - 4, borderRadius: 6, background: k.bg, border: (cell.auto || k.dash ? "1px dashed " : "1px solid ") + (conflict ? "#ef4444" : k.bd), color: k.fg, cursor: cell.ref && onOpenClass ? "pointer" : undefined, padding: "3px 5px", fontSize: 11, fontWeight: 700, lineHeight: 1.25, overflow: "hidden" }
-                          : { height: "100%", minHeight: n * 22 - 4, borderRadius: 6, background: "rgba(34,197,94,0.07)", border: resOn[c.id].length ? "1px dashed " + KIND.hold.bd : "1px solid rgba(34,197,94,0.25)", color: "#4ade80", padding: "3px 5px", fontSize: 10, fontWeight: 700 }}>
+                          ? { boxSizing: "border-box", height: n * ROW - 4, overflow: "hidden", borderRadius: 6, background: k.bg, border: (cell.auto || k.dash ? "1px dashed " : "1px solid ") + (conflict ? "#ef4444" : k.bd), color: k.fg, cursor: cell.ref && onOpenClass ? "pointer" : undefined, padding: n === 1 ? "2px 5px" : "3px 5px", fontSize: 11, fontWeight: 700, lineHeight: 1.25 }
+                          : { boxSizing: "border-box", height: n * ROW - 4, overflow: "hidden", borderRadius: 6, background: "rgba(34,197,94,0.07)", border: resOn[c.id].length ? "1px dashed " + KIND.hold.bd : "1px solid rgba(34,197,94,0.25)", color: "#4ade80", padding: "3px 5px", fontSize: 10, fontWeight: 700 }}>
                           {cell && pub ? "Booked" : cell ? <>{conflict ? "⚠ " : ""}{cell.kind === "empty" && n < 2 ? "0 · " : ""}{cell.label}{n >= 2 && cell.detail ? <div style={{ fontWeight: 500, opacity: 0.8 }}>{cell.detail}</div> : null}</> : (n >= 2 ? (pub ? "Open " : "Free ") + short(h) + "–" + short(g.slots[si + n - 1] + 0.5) : "")}{!cell && n >= 2 && resOn[c.id].length ? <div style={{ color: KIND.hold.fg, fontWeight: 600 }}>? reserved sometime today</div> : null}
                         </div>
                       </td>);
