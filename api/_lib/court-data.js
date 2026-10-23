@@ -2,7 +2,7 @@
 // (api/court-availability.js) and the members' public page (api/courts-public.js).
 import crypto from "crypto";
 import { fetchPlaybookEvents, addDays } from "./playbook-calendar.js";
-import { courtsForEvent, courtsForName, eventLabel, eventCategory, hourOf, buildCourtDay, dseBlock, COURTS } from "../../shared/courts.js";
+import { courtsForEvent, courtsForName, eventLabel, eventCategory, hourOf, buildCourtDay, dseBlock, applyHides, COURTS } from "../../shared/courts.js";
 import { loadDseCourtInputs } from "../../shared/court-inputs.js";
 import { loadRentals, rentalWindows } from "./court-rentals.js";
 
@@ -88,15 +88,16 @@ export function courtsTokenOk(token, secret) {
 export const PUBLIC_START = 7, PUBLIC_END = 22;
 export async function publicWeek(sb, start, days) {
   const dates = Array.from({ length: days }, (_, i) => addDays(start, i));
-  const [{ bookings, reservations }, dse] = await Promise.all([loadCourtBookings(sb, start, addDays(start, days)), loadDseCourtInputs(sb, dates)]);
+  const [{ bookings, reservations }, dse, hides] = await Promise.all([loadCourtBookings(sb, start, addDays(start, days)), loadDseCourtInputs(sb, dates), loadHides(sb, start, addDays(start, days))]);
   // A whole week with nothing on any court means Playbook didn't really answer:
   // fail (no cache) rather than tell families every court is open.
   // Rentals come from the upload, not Playbook, so they don't count here.
   if (!bookings.some(b => !b.rental)) throw new Error("Playbook returned no court bookings for the week");
   return dates.map(d => {
     const x = dse[d] || { teams: [], scrims: [], tourn: [] };
-    const b = bookings.filter(k => k.date === d).map(k => ({ courts: k.courts, start: k.start, end: k.end, kind: k.kind, label: "x" })).concat(x.tourn || []);
-    const g = buildCourtDay({ bookings: b, teams: x.teams, scrims: x.scrims, reserved: dseBlock(d, reservations), startHour: PUBLIC_START, endHour: PUBLIC_END });
+    const shown = applyHides(d, { bookings: bookings.filter(k => k.date === d), reserved: dseBlock(d, reservations) }, hides);
+    const b = shown.bookings.map(k => ({ courts: k.courts, start: k.start, end: k.end, kind: k.kind, label: "x" })).concat(x.tourn || []);
+    const g = buildCourtDay({ bookings: b, teams: x.teams, scrims: x.scrims, reserved: shown.reserved, startHour: PUBLIC_START, endHour: PUBLIC_END });
     const sun = new Date(d + "T12:00:00").getDay() === 0;
     // A DS Elite team with no court set was placed on a guess. For those half
     // hours members see no open courts at all, rather than a guessed court.
@@ -113,4 +114,12 @@ export async function publicWeek(sb, start, days) {
       }),
     };
   });
+}
+
+// Hidden blocks that can touch [start, end): one-day hides in the range, and
+// every-week hides that began before it ends.
+export async function loadHides(sb, start, end) {
+  const { data, error } = await sb.from("court_block_hides").select("id, kind, label, start_h, end_h, courts, date, weekly, created_by, created_at").lt("date", end);
+  if (error) return [];
+  return (data || []).filter(h => h.weekly || h.date >= start).map(h => ({ ...h, start_h: Number(h.start_h), end_h: Number(h.end_h) }));
 }

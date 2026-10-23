@@ -6,7 +6,11 @@
 //   -> { ok, start, end, bookings:[{ id, kind:"dssc"|"hold", label, category,
 //        date, start, end, courts:[...] }], reservations:[{ date, courts, who,
 //        internal, name }], offCourt: n }
+//        + hides: court_block_hides rows that can touch the range (shared/courts.js applyHides)
 //   GET /api/court-availability?link=1  -> { url } the members' public link
+//   POST { action: "hide", kind: "booking"|"dse", label, start, end, courts, date, weekly }
+//        -> { id }  takes a block off the chart (one date, or every week on that weekday)
+//   POST { action: "unhide", id } -> shows it again
 //   POST { action: "import-rentals", rows: [...] } -> Playbook's Events export
 //        (events.csv, parsed with its header row), from/to = the dates it was
 //        exported for, exportedAt = the file's timestamp; replaces the timed
@@ -23,7 +27,8 @@
 // Auth: signed-in owner, approved admin, or DSSC director (Bearer access token).
 import { createClient } from "@supabase/supabase-js";
 import { addDays, centralToday } from "./_lib/playbook-calendar.js";
-import { loadCourtBookings, courtsToken } from "./_lib/court-data.js";
+import { loadCourtBookings, courtsToken, loadHides } from "./_lib/court-data.js";
+import { COURTS } from "../shared/courts.js";
 import { importRentals, rentalsMeta } from "./_lib/court-rentals.js";
 import { appOrigin } from "../shared/app-origin.js";
 import { parseClock } from "../shared/dssc-clinics.js";
@@ -51,6 +56,22 @@ export default async function handler(req, res) {
   if (req.method === "POST") {
     let body = req.body;
     try { body = typeof body === "string" ? JSON.parse(body) : (body || {}); } catch { return res.status(400).json({ error: "Invalid JSON" }); }
+    // Hide a block (one date, or every week on that weekday from the date on).
+    if (body.action === "hide") {
+      const ids = COURTS.map(c => c.id);
+      const row = { kind: body.kind, label: body.kind === "booking" ? String(body.label || "").slice(0, 200) : null, start_h: Number(body.start), end_h: Number(body.end),
+        courts: [...new Set((body.courts || []).filter(c => ids.includes(c)))], date: body.date, weekly: !!body.weekly, created_by: who };
+      if (!["booking", "dse"].includes(row.kind) || !/^\d{4}-\d{2}-\d{2}$/.test(row.date || "") || !(row.end_h > row.start_h) || !row.courts.length || (row.kind === "booking" && !row.label))
+        return res.status(400).json({ error: "That block can't be hidden" });
+      const { data, error } = await sb.from("court_block_hides").insert(row).select("id").single();
+      if (error) return res.status(500).json({ error: error.message });
+      return res.status(200).json({ ok: true, id: data.id });
+    }
+    if (body.action === "unhide") {
+      const { error } = await sb.from("court_block_hides").delete().eq("id", Number(body.id));
+      if (error) return res.status(500).json({ error: error.message });
+      return res.status(200).json({ ok: true });
+    }
     if (body.action !== "import-rentals" || !Array.isArray(body.rows)) return res.status(400).json({ error: "Unknown request" });
     if (body.rows.length > 10000) return res.status(413).json({ error: "That file is too big; export a few months at a time." });
     try { return res.status(200).json({ ok: true, ...(await importRentals(sb, body.rows, who, { from: body.from, to: body.to, exportedAt: body.exportedAt })) }); }
@@ -68,8 +89,8 @@ export default async function handler(req, res) {
   const end = addDays(start, days);
   try {
     const { bookings, reservations, offCourt } = await loadCourtBookings(sb, start, end);
-    const [rosterAt, rentals] = await Promise.all([attachSignups(sb, bookings), rentalsMeta(sb, start, end).catch(() => null)]);
-    return res.status(200).json({ ok: true, start, end, bookings, reservations, offCourt, rosterAt, rentals });
+    const [rosterAt, rentals, hides] = await Promise.all([attachSignups(sb, bookings), rentalsMeta(sb, start, end).catch(() => null), loadHides(sb, start, end)]);
+    return res.status(200).json({ ok: true, start, end, bookings, reservations, offCourt, rosterAt, rentals, hides });
   } catch (e) { return res.status(502).json({ error: "Couldn't load court data: " + e.message }); }
 }
 

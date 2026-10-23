@@ -8,7 +8,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Papa from "papaparse";
 import { supabase } from "./supabase";
 import { loadDseCourtInputs } from "../shared/court-inputs.js";
-import { COURTS, buildCourtDay, fmtHour, dseBlock } from "../shared/courts.js";
+import { COURTS, buildCourtDay, fmtHour, dseBlock, applyHides, hidesOn } from "../shared/courts.js";
 
 const C = { bg: "#0a0a0a", card: "#141414", border: "#2a2a2a", gold: "#e91e8c", text: "#ffffff", mut: "#999999", grn: "#22c55e" };
 const KIND = {
@@ -31,6 +31,14 @@ const fmtMD = (ymd) => new Date(ymd + "T12:00:00").toLocaleDateString(undefined,
 const short = (h) => fmtHour(h).replace(":00", "").replace("am", "a").replace("pm", "p");
 const windows = (w) => w.filter(([s, e]) => e - s >= 0.5).map(([s, e]) => short(s) + "–" + short(e));
 
+const postCourts = async (body) => {
+  const { data: { session } = {} } = await supabase.auth.getSession();
+  const r = await fetch("/api/court-availability", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + (session?.access_token || "") }, body: JSON.stringify(body) });
+  const o = await r.json().catch(() => ({}));
+  if (!r.ok || o.error) throw new Error(o.error || "Didn't save (" + r.status + ")");
+  return o;
+};
+
 // Live data: Playbook bookings for the week + DS Elite for each day.
 export const liveLoaders = {
   bookings: async (start, days) => {
@@ -49,6 +57,9 @@ export const liveLoaders = {
     if (!r.ok || o.error) throw new Error(o.error || "Upload failed (" + r.status + ")");
     return o;
   },
+  // Hide a block on the chart (one date, or every week on that weekday), or show it again.
+  hide: async (row) => postCourts({ action: "hide", ...row }),
+  unhide: async (id) => postCourts({ action: "unhide", id }),
   // The no-login link for open-gym members (only open vs booked time).
   link: async () => {
     const { data: { session } = {} } = await supabase.auth.getSession();
@@ -75,6 +86,8 @@ export default function CourtAvailability({ loaders = liveLoaders, onOpenClass }
   const [cache, setCache] = useState(loaders === liveLoaders ? kept.cache : {});      // weekStart -> { bookings, dse, offCourt, at } | { error }
   useEffect(() => { kept.date = date; kept.mode = mode; if (loaders === liveLoaders) kept.cache = Object.fromEntries(Object.entries(cache).filter(([, v]) => !v.error)); }, [date, mode, cache]); // eslint-disable-line react-hooks/exhaustive-deps
   const [busy, setBusy] = useState(null);       // week being pulled
+  const [hideAsk, setHideAsk] = useState(null); // { date, hide, label } - the block about to be hidden
+  const [hideBusy, setHideBusy] = useState(false);
   const [reload, setReload] = useState(0);
   // Rentals upload (Drew, Oct 14 2026): Playbook's Events export carries every
   // Rented Session with its time and court, which nothing else gives HQ.
@@ -109,7 +122,7 @@ export default function CourtAvailability({ loaders = liveLoaders, onOpenClass }
     if (cache[wk] && !reload) return;
     let live = true; const mine = wk; setBusy(mine);
     Promise.all([loaders.bookings(wk, 7), loaders.dse(dates)])
-      .then(([b, dse]) => { if (live) setCache(c => ({ ...c, [wk]: { bookings: b.bookings || [], reservations: b.reservations || [], offCourt: b.offCourt || 0, rosterAt: b.rosterAt || null, rentals: b.rentals || null, dse, at: new Date() } })); })
+      .then(([b, dse]) => { if (live) setCache(c => ({ ...c, [wk]: { bookings: b.bookings || [], reservations: b.reservations || [], hides: b.hides || [], offCourt: b.offCourt || 0, rosterAt: b.rosterAt || null, rentals: b.rentals || null, dse, at: new Date() } })); })
       .catch(e => { if (live) setCache(c => ({ ...c, [wk]: { error: e.message } })); })
       .finally(() => { setBusy(b => (b === mine ? null : b)); if (live) setReload(0); });
     return () => { live = false; };
@@ -124,10 +137,12 @@ export default function CourtAvailability({ loaders = liveLoaders, onOpenClass }
   const gridFor = (d, dropEmpty) => {
     if (!data || data.error) return null;
     const dse = data.dse[d] || { teams: [], scrims: [], tourn: [] };
-    const bookings = data.bookings.filter(b => b.date === d && (pub || showHolds || b.kind !== "hold") && !(dropEmpty && isEmpty(b)))
+    // Hidden blocks come off first, matched on Playbook's own labels.
+    const shown = applyHides(d, { bookings: data.bookings.filter(b => b.date === d), reserved: dseBlock(d, data.reservations || []) }, data.hides || []);
+    const bookings = shown.bookings.filter(b => (pub || showHolds || b.kind !== "hold") && !(dropEmpty && isEmpty(b)))
       .map(b => ({ courts: b.courts, start: b.start, end: b.end, kind: isEmpty(b) ? "empty" : b.kind, label: b.label, detail: (b.signups != null ? b.signups + " signed up this date" + (b.category ? " · " : "") : "") + (b.category || ""), ref: b.clinicId ? { cid: b.clinicId, sid: b.sessionId } : null }))
       .concat(dse.tourn || []);
-    return { ...buildCourtDay({ bookings, teams: dse.teams, scrims: dse.scrims, reserved: dseBlock(d, data.reservations || []), startHour: START_H, endHour: END_H }), cancelled: dse.cancelled, phase: dse.phase };
+    return { ...buildCourtDay({ bookings, teams: dse.teams, scrims: dse.scrims, reserved: shown.reserved, startHour: START_H, endHour: END_H }), cancelled: dse.cancelled, phase: dse.phase };
   };
 
   // Court time that only opens up if the empty classes are dropped, per court.
@@ -219,8 +234,10 @@ export default function CourtAvailability({ loaders = liveLoaders, onOpenClass }
                         <div style={cell && pub
                           ? { boxSizing: "border-box", height: n * ROW - 4, overflow: "hidden", borderRadius: 6, background: "#1c1c1c", border: "1px solid #3a3a3a", color: "#8a8a8a", padding: "3px 5px", fontSize: 11, fontWeight: 700 }
                           : cell
-                          ? { boxSizing: "border-box", height: n * ROW - 4, overflow: "hidden", borderRadius: 6, background: k.bg, border: (cell.auto || k.dash ? "1px dashed " : "1px solid ") + (conflict ? "#ef4444" : k.bd), color: k.fg, cursor: cell.ref && onOpenClass ? "pointer" : undefined, padding: n === 1 ? "2px 5px" : "3px 5px", fontSize: 11, fontWeight: 700, lineHeight: 1.25 }
+                          ? { boxSizing: "border-box", height: n * ROW - 4, overflow: "hidden", position: "relative", borderRadius: 6, background: k.bg, border: (cell.auto || k.dash ? "1px dashed " : "1px solid ") + (conflict ? "#ef4444" : k.bd), color: k.fg, cursor: cell.ref && onOpenClass ? "pointer" : undefined, padding: n === 1 ? "2px 5px" : "3px 5px", fontSize: 11, fontWeight: 700, lineHeight: 1.25 }
                           : { boxSizing: "border-box", height: n * ROW - 4, overflow: "hidden", borderRadius: 6, background: "rgba(34,197,94,0.07)", border: resOn[c.id].length ? "1px dashed " + KIND.hold.bd : "1px solid rgba(34,197,94,0.25)", color: "#4ade80", padding: "3px 5px", fontSize: 10, fontWeight: 700 }}>
+                          {!pub && cell?.hide && <button onClick={(e) => { e.stopPropagation(); setHideAsk({ date, hide: cell.hide, label: cell.label }); }} title="Hide this block" aria-label={"Hide " + cell.label}
+                            style={{ position: "absolute", top: 1, right: 2, width: 18, height: 18, padding: 0, border: "none", borderRadius: 4, background: "rgba(0,0,0,0.35)", color: "inherit", fontSize: 13, lineHeight: "18px", cursor: "pointer", opacity: 0.75 }}>×</button>}
                           {cell && pub ? "Booked" : cell ? <>{conflict ? "⚠ " : ""}{cell.kind === "empty" && n < 2 ? "0 · " : ""}{cell.label}{n >= 2 && cell.detail ? <div style={{ fontWeight: 500, opacity: 0.8 }}>{cell.detail}</div> : null}</> : (n >= 2 ? (pub ? "Open " : "Free ") + short(h) + "–" + short(g.slots[si + n - 1] + 0.5) : "")}{!cell && n >= 2 && resOn[c.id].length ? <div style={{ color: KIND.hold.fg, fontWeight: 600 }}>? reserved sometime today</div> : null}
                         </div>
                       </td>);
@@ -230,6 +247,57 @@ export default function CourtAvailability({ loaders = liveLoaders, onOpenClass }
             </tbody>
           </table>
         </div>
+        {!pub && hiddenList(date)}
+        {!pub && hideAsk && hidePrompt()}
+      </div>
+    );
+  };
+
+  // ── Hiding blocks ──────────────────────────────────────────────────────────
+  const weekdayOf = (d) => new Date(d + "T12:00:00").toLocaleDateString(undefined, { weekday: "long" });
+  const spanText = (h) => short(h.start ?? h.start_h) + "–" + short(h.end ?? h.end_h);
+  const afterHideChange = () => { kept.cache = {}; setCache({}); setReload(r => r + 1); };
+  const doHide = async (weekly) => {
+    const a = hideAsk; if (!a) return;
+    setHideBusy(true);
+    try {
+      await loaders.hide({ kind: a.hide.kind, label: a.hide.label, start: a.hide.start, end: a.hide.end, courts: a.hide.courts, date: a.date, weekly });
+      setHideAsk(null); afterHideChange();
+    } catch (e) { window.alert("Couldn't hide it: " + e.message); }
+    finally { setHideBusy(false); }
+  };
+  const showAgain = async (h) => {
+    if (h.weekly && !window.confirm("This shows it again on every " + weekdayOf(h.date) + ", not just today. Go ahead?")) return;
+    try { await loaders.unhide(h.id); afterHideChange(); }
+    catch (e) { window.alert("Couldn't show it again: " + e.message); }
+  };
+  const hidePrompt = () => {
+    const a = hideAsk, wd = weekdayOf(a.date);
+    const b2 = (primary) => ({ padding: "10px 12px", borderRadius: 8, border: primary ? "none" : "1px solid " + C.border, background: primary ? C.gold : "transparent", color: primary ? "#000" : C.text, fontFamily: "inherit", fontSize: 13, fontWeight: 800, cursor: hideBusy ? "default" : "pointer", textAlign: "left" });
+    return (
+      <div onClick={() => !hideBusy && setHideAsk(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+        <div onClick={(e) => e.stopPropagation()} style={{ background: C.card, border: "1px solid " + C.border, borderRadius: 12, padding: 16, width: "100%", maxWidth: 380 }}>
+          <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 4 }}>Hide “{a.label}”?</div>
+          <div style={{ fontSize: 12, color: C.mut, marginBottom: 12, lineHeight: 1.5 }}>
+            {spanText(a.hide)} · {courtNames(a.hide.courts)}. It comes off this chart and the members' open-gym page, and its courts show as free. Nothing changes in Playbook. You can show it again from the list under the chart.
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <button disabled={hideBusy} onClick={() => doHide(false)} style={b2(true)}>Just {fmtDay(a.date)}</button>
+            <button disabled={hideBusy} onClick={() => doHide(true)} style={b2(false)}>Every {wd} from {fmtMD(a.date)} on</button>
+            <button disabled={hideBusy} onClick={() => setHideAsk(null)} style={{ ...b2(false), border: "none", color: C.mut, textAlign: "center" }}>Cancel</button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+  const hiddenList = (d) => {
+    const on = hidesOn(d, data?.hides || []);
+    if (!on.length) return null;
+    return (
+      <div style={{ marginTop: 10, fontSize: 12, color: C.mut, lineHeight: 1.7 }}>
+        <b style={{ color: C.text }}>Hidden on this day:</b>{" "}
+        {on.map((h, i) => <span key={h.id}>{i ? " · " : ""}{h.kind === "dse" ? "DS Elite courts" : h.label} {spanText(h)}, {courtNames(h.courts)}{h.weekly ? " (every " + weekdayOf(h.date) + ")" : ""}{" "}
+          <button onClick={() => showAgain(h)} style={{ background: "none", border: "none", padding: 0, color: C.gold, fontFamily: "inherit", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Show again</button></span>)}
       </div>
     );
   };

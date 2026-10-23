@@ -190,9 +190,13 @@ export function buildCourtDay({ bookings = [], teams = [], scrims = [], reserved
     cells[court][i] = cell; return true;
   };
   // 0. Standing DS Elite reservations (the Sunday Warehouse block).
-  reserved.forEach((r, n) => { for (const c of r.courts) for (const i of idx(r.start, r.end)) cells[c][i] = { kind: "dse", label: r.label, detail: r.detail || "", key: "r" + n, reserved: true }; });
+  // Each held court carries what a "hide" of it would match (applyHides).
+  reserved.forEach((r, n) => { for (const c of r.courts) for (const i of idx(r.start, r.end)) cells[c][i] = { kind: "dse", label: r.label, detail: r.detail || "", key: "r" + n, reserved: true, hide: { kind: "dse", start: r.start, end: r.end, courts: [c] } }; });
   // 1. Playbook bookings and the in-house tournament, exactly where they are.
-  bookings.forEach((b, n) => { for (const c of b.courts) for (const i of idx(b.start, b.end)) put(c, i, { kind: b.kind, label: b.label, detail: b.detail || "", key: "b" + n, ref: b.ref || null }); });
+  bookings.forEach((b, n) => {
+    const hide = b.kind === "tourn" ? null : { kind: "booking", label: b.hideLabel || b.label, start: b.start, end: b.end, courts: b.courts };
+    for (const c of b.courts) for (const i of idx(b.start, b.end)) put(c, i, { kind: b.kind, label: b.label, detail: b.detail || "", key: "b" + n, ref: b.ref || null, hide });
+  });
 
   // 2. DS Elite: scrimmage pairs share one court; everyone else gets their own.
   const units = [];
@@ -237,4 +241,24 @@ export function buildCourtDay({ bookings = [], teams = [], scrims = [], reserved
     free[c.id] = w;
   }
   return { slots, cells, free, issues };
+}
+
+// ── Hidden blocks (Drew, Oct 23 2026: "I want to be able to delete or hide
+// blocks"). court_block_hides rows take a booking or DS Elite's held courts off
+// the chart, on one date or every week on that weekday from a date on.
+//   hides: [{ id, kind: "booking"|"dse", label, start_h, end_h, courts, date, weekly }]
+const near = (a, b) => Math.abs(Number(a) - Number(b)) < 0.01;
+const dowOf = (ymd) => new Date(ymd + "T12:00:00").getDay();
+export const hidesOn = (ymd, hides = []) => hides.filter(h => h.date === ymd || (h.weekly && ymd >= h.date && dowOf(ymd) === dowOf(h.date)));
+const hits = (h, x) => near(h.start_h, x.start) && near(h.end_h, x.end) && (x.courts || []).some(c => (h.courts || []).includes(c));
+// The day's bookings (raw, with their own labels) and DS Elite's held blocks,
+// minus whatever is hidden that day.
+export function applyHides(ymd, { bookings = [], reserved = [] }, hides = []) {
+  const on = hidesOn(ymd, hides);
+  if (!on.length) return { bookings, reserved };
+  const bk = on.filter(h => h.kind === "booking"), dk = on.filter(h => h.kind === "dse");
+  return {
+    bookings: bookings.filter(b => !bk.some(h => String(h.label || "") === String(b.label || "") && hits(h, b))),
+    reserved: reserved.map(r => ({ ...r, courts: r.courts.filter(c => !dk.some(h => hits(h, { ...r, courts: [c] }))) })).filter(r => r.courts.length),
+  };
 }

@@ -1,7 +1,7 @@
 // DS Elite's own Playbook rentals are courts held for DS Elite on any day, and
 // HQ's practice schedule fills them by team name (shared/courts.js dseBlock).
 // Run: node scripts/test-court-blocks.mjs
-import { buildCourtDay, dseBlock } from "../shared/courts.js";
+import { buildCourtDay, dseBlock, applyHides } from "../shared/courts.js";
 
 let bad = 0;
 const check = (ok, msg) => { console.log((ok ? "PASS  " : "FAIL  ") + msg); if (!ok) bad++; };
@@ -32,6 +32,22 @@ check(m.issues.length === 2 && m.issues.every((x) => /not enough free courts/.te
 const sun = dseBlock("2026-12-06", []);
 check(sun.length === 1 && sun[0].courts.length === 4 && sun[0].start === 13, "Sunday with nothing booked still holds the Warehouse 1-9pm");
 check(dseBlock(tue, [R(tue, ["V1"], 17, 21, false)]).length === 0, "another renter's booking isn't DS Elite's");
+
+// Hidden blocks: one date, every week, bookings and DS Elite's held courts.
+const storm = { date: mon, courts: ["V3", "V4"], start: 17, end: 20, kind: "hold", label: "DS Storm" };
+const held = dseBlock(mon, [R(mon, ["V1"], 17, 21), R(mon, ["V2"], 17, 21)]);
+const H = (o) => ({ id: 1, kind: "booking", label: "DS Storm", start_h: 17, end_h: 20, courts: ["V3"], date: mon, weekly: false, ...o });
+check(applyHides(mon, { bookings: [storm], reserved: held }, [H()]).bookings.length === 0, "hiding a booking from one of its courts takes the whole booking off");
+check(applyHides(mon, { bookings: [storm], reserved: held }, [H({ label: "Aces" })]).bookings.length === 1, "a hide only takes the booking with that label");
+const nextMon = "2026-12-14", nextTue = "2026-12-15";
+check(applyHides(nextMon, { bookings: [{ ...storm, date: nextMon }] }, [H({ weekly: true })]).bookings.length === 0, "an every-week hide reaches the next Monday");
+check(applyHides("2026-11-30", { bookings: [{ ...storm, date: "2026-11-30" }] }, [H({ weekly: true })]).bookings.length === 1, "an every-week hide doesn't reach back before its date");
+check(applyHides(nextTue, { bookings: [{ ...storm, date: nextTue }] }, [H({ weekly: true })]).bookings.length === 1, "an every-week Monday hide leaves Tuesday alone");
+check(applyHides(nextMon, { bookings: [{ ...storm, date: nextMon }] }, [H()]).bookings.length === 1, "a one-day hide is that day only");
+const r2 = applyHides(mon, { reserved: held }, [H({ kind: "dse", label: null, start_h: 17, end_h: 21, courts: ["V1"] })]).reserved;
+check(r2.length === 1 && r2[0].courts.join() === "V2", "hiding DS Elite's held Court 1 leaves Court 2 held");
+const gh = buildCourtDay({ bookings: [storm], reserved: held, startHour: 7, endHour: 22 });
+check(gh.cells.V3[gh.slots.indexOf(17)].hide?.label === "DS Storm" && gh.cells.V1[gh.slots.indexOf(17)].hide?.kind === "dse", "chart cells carry what a hide would match");
 
 console.log(bad ? `\n${bad} failed` : "\nall court block checks passed");
 process.exit(bad ? 1 : 0);
