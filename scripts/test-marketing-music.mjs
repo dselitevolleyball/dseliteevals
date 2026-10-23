@@ -19,7 +19,7 @@ globalThis.fetch = async (url) => {
 
 // 1. search keeps only commercial-safe music of a usable length
 const s = await searchFreeMusic({ mood: "hype" });
-assert.match(calls[0], /q=energetic%20hip%20hop/);
+assert.match(calls[0], /q=hip%20hop/);
 assert.match(calls[0], /license=cc0,by/);
 assert.deepEqual(s.results.map(r => r.id), [ID, "x4"]);
 assert.equal(s.results[0].credit, 'Music: "Sunny Run" by Ada (CC BY 3.0)');

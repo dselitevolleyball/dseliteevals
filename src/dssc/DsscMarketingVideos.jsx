@@ -346,7 +346,8 @@ function FreeMusicFinder({ narrow, have, onAdded }) {
         <Btn small kind="ghost" disabled={busy === "search"} onClick={() => search(mood, q)} style={big(narrow)}>{busy === "search" ? "Searching…" : "Search"}</Btn>
       </div>
       {err && <div style={{ fontSize: 12, color: DS.orange, marginTop: 6 }}>{err}</div>}
-      {res == null ? <div style={{ fontSize: 13, color: DS.mut, marginTop: 8 }}>Searching…</div>
+      {busy === "search" ? <div style={{ fontSize: 13, color: DS.mut, marginTop: 8 }}>Searching… a new search can take up to a minute; ones you've run before are instant.</div>
+        : res == null ? null
         : !res.length ? <div style={{ fontSize: 13, color: DS.mut, marginTop: 8 }}>Nothing found — try another word.</div>
         : res.map(r => (
           <div key={r.id} style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", padding: "8px 0", borderTop: "1px solid " + DS.line }}>
