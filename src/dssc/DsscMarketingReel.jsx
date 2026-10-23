@@ -3,12 +3,16 @@
 // with their in/out points, add/remove/reorder, the music and the volumes.
 // Edits save with reel_update (a new render is then needed); rendering draws
 // the cards here and has the server cut the MP4 (renderReelItem in the Kit).
+// "Hear it" plays the cut in the browser - the clips in order with their own
+// sound and the music at the chosen volumes - so the mix can be tried before
+// a render (SoundPreview below).
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { supabase } from "../supabase";
 import { DS, Btn, inputStyle } from "./DsscHub.jsx";
 import { videoApi, renderReelItem, specOf, GraphicPreview, chipStyle, Msg } from "./DsscMarketingKit.jsx";
 
+const INTRO = 1.2, OUTRO = 2.0;   // the cards' seconds in a render (api/_lib/marketing-video.js)
 const fmtT = (s) => { const n = Math.max(0, +s || 0); return `${Math.floor(n / 60)}:${String(Math.floor(n % 60)).padStart(2, "0")}${n % 1 >= 0.05 ? "." + Math.round((n % 1) * 10) : ""}`; };
 
 export default function ReelBox({ item: it, editable, narrow, onReplace, onPatch }) {
@@ -31,8 +35,8 @@ export default function ReelBox({ item: it, editable, narrow, onReplace, onPatch
   const ids = useMemo(() => [...new Set((it.video?.clips || []).map(c => Number(c.video_id)))].join(","), [it.video]);
   useEffect(() => {
     if (!ids) return;
-    supabase.from("mkt_videos").select("id, filename, duration, poster_url, moments, description").in("id", ids.split(",").map(Number)).then(({ data }) => setVideos(Object.fromEntries((data || []).map(x => [x.id, x]))));
-    supabase.from("mkt_music").select("id, title, artist, mood").eq("active", true).eq("rights_ok", true).order("title").then(({ data }) => setMusic(data || []));
+    supabase.from("mkt_videos").select("id, filename, duration, poster_url, moments, description, path, has_audio").in("id", ids.split(",").map(Number)).then(({ data }) => setVideos(Object.fromEntries((data || []).map(x => [x.id, x]))));
+    supabase.from("mkt_music").select("id, title, artist, mood, url").eq("active", true).eq("rights_ok", true).order("title").then(({ data }) => setMusic(data || []));
   }, [ids]);
 
   const dirty = JSON.stringify(clips) !== JSON.stringify(v.clips || []) || String(musicId || "") !== String(v.music_id || "") || +musicVol !== +(v.music_volume ?? 0.3) || +origVol !== +(v.original_volume ?? 1);
@@ -127,7 +131,126 @@ export default function ReelBox({ item: it, editable, narrow, onReplace, onPatch
           <b>{Math.round(musicVol * 100)}%</b>
         </> : null}
       </div>
+      <SoundPreview clips={clips} videos={videos} track={music.find(m => String(m.id) === String(musicId)) || null} musicVol={musicVol} origVol={origVol} cover={it.asset_url} narrow={narrow} />
       {!music.length && <div style={{ fontSize: 12, color: DS.dim, marginTop: 4 }}>No music in the library yet — add tracks the club has the rights to in Marketing → Videos.</div>}
+    </div>
+  );
+}
+
+// Plays the cut with its sound in the browser: the intro card's moment, each
+// clip from its in to its out point, the end card - with the music under it
+// all (fading in and out like the render). Volumes go through Web Audio, so the
+// sliders change the mix live, also on iPhones (where a video's own volume
+// can't be set), and the original sound can go above 100% as in the render.
+function SoundPreview({ clips, videos, track, musicVol, origVol, cover, narrow }) {
+  const vidRef = useRef(null), musRef = useRef(null);
+  const audio = useRef(null);          // { ctx, vGain, mGain }
+  const run = useRef(0);               // bumps to cancel a playing preview
+  const [urls, setUrls] = useState({});
+  const [state, setState] = useState(null);   // { phase: "intro"|"clip"|"outro", i, t, T } while playing
+  const [err, setErr] = useState("");
+  const vol = useRef({ musicVol, origVol });
+  vol.current = { musicVol, origVol };
+
+  const need = [...new Set(clips.map(c => c.video_id))].filter(id => videos[id]?.path && !urls[id]);
+  useEffect(() => {
+    if (!need.length) return;
+    Promise.all(need.map(id => supabase.storage.from("marketing-video").createSignedUrl(videos[id].path, 3600).then(({ data }) => [id, data?.signedUrl])))
+      .then(pairs => setUrls(u => ({ ...u, ...Object.fromEntries(pairs.filter(p => p[1])) })));
+  }, [need.join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => { run.current++; audio.current?.ctx.close().catch(() => {}); }, []);
+  // Live volume while it plays (the music's fade is applied in the loop below).
+  useEffect(() => { if (audio.current) audio.current.vGain.gain.value = clips[state?.i]?.video_id && videos[clips[state.i].video_id]?.has_audio === false ? 0 : origVol; }, [origVol, state?.i]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const T = INTRO + clips.reduce((s, c) => s + (c.end - c.start), 0) + OUTRO;
+  const ready = clips.length > 0 && clips.every(c => urls[c.video_id]);
+  // The first clip waits in the player, so the tap that starts the preview can start it (iPhone).
+  const first = ready ? urls[clips[0].video_id] : null;
+  useEffect(() => { const v = vidRef.current; if (v && first && !state && v.src !== first) v.src = first; }, [first]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const stop = () => {
+    run.current++;
+    vidRef.current?.pause(); musRef.current?.pause();
+    setState(null);
+  };
+  const play = () => {
+    const v = vidRef.current, mu = musRef.current;
+    if (!v || !ready) return;
+    setErr("");
+    // Everything that needs the tap happens before the first await (Safari).
+    if (!audio.current) {
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const vGain = ctx.createGain(), mGain = ctx.createGain();
+        ctx.createMediaElementSource(v).connect(vGain).connect(ctx.destination);
+        ctx.createMediaElementSource(mu).connect(mGain).connect(ctx.destination);
+        audio.current = { ctx, vGain, mGain };
+      } catch (e) { setErr("This browser can't preview the mix: " + e.message); return; }
+    }
+    const { ctx, vGain, mGain } = audio.current;
+    ctx.resume().catch(() => {});
+    mGain.gain.value = 0;
+    if (track?.url) { mu.currentTime = 0; mu.play().catch(() => {}); }
+    v.muted = false; v.play().then(() => v.pause()).catch(() => {});
+    const me = ++run.current;
+    const live = () => run.current === me;
+    // Where we are in the reel: a card counts by the clock, a clip by the video's own time
+    // (so loading a clip doesn't push the music's fade-out early).
+    const pos = { at: 0, since: performance.now(), clip: null };
+    const reelTime = () => pos.at + (pos.clip ? Math.max(0, v.currentTime - pos.clip.start) : (performance.now() - pos.since) / 1000);
+    const tick = () => {
+      if (!live()) return;
+      const e = Math.min(reelTime(), T);
+      const fade = Math.min(1, e / 0.6, Math.max(0, (T - e) / 1.5));
+      mGain.gain.value = track?.url ? vol.current.musicVol * fade : 0;
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+    const wait = (sec) => new Promise(r => setTimeout(r, sec * 1000));
+    const seek = (el, t) => new Promise(r => { if (Math.abs(el.currentTime - t) < 0.05) return r(); el.addEventListener("seeked", r, { once: true }); el.currentTime = t; setTimeout(r, 4000); });
+    const loaded = (el, src) => new Promise(r => { if (el.src === src && el.readyState >= 1) return r(); el.addEventListener("loadedmetadata", r, { once: true }); el.addEventListener("error", r, { once: true }); if (el.src !== src || el.error) { el.src = src; el.load(); } setTimeout(r, 15000); });
+    (async () => {
+      setState({ phase: "intro", i: -1 });
+      await wait(INTRO);
+      let at = INTRO;
+      for (let i = 0; i < clips.length && live(); i++) {
+        const c = clips[i];
+        Object.assign(pos, { at, clip: null, since: performance.now() + 1e9 });   // hold the music's place while the clip loads
+        await loaded(v, urls[c.video_id]); if (!live()) return;
+        if (v.error || v.readyState < 1) { setErr(`Clip ${i + 1} wouldn't load${v.error?.code === 4 ? " - this browser can't play that video's format (the render will still work)" : " - check the connection and try again"}.`); stop(); return; }
+        await seek(v, c.start); if (!live()) return;
+        vGain.gain.value = videos[c.video_id]?.has_audio === false ? 0 : vol.current.origVol;
+        pos.clip = c;
+        setState({ phase: "clip", i });
+        await v.play().catch(e => setErr("Couldn't play a clip: " + e.message));
+        await new Promise(r => { const f = () => { if (!live() || v.currentTime >= c.end || v.ended || v.paused) return r(); requestAnimationFrame(f); }; requestAnimationFrame(f); });
+        v.pause();
+        at += c.end - c.start;
+      }
+      if (!live()) return;
+      Object.assign(pos, { at, clip: null, since: performance.now() });
+      setState({ phase: "outro", i: clips.length });
+      await wait(OUTRO);
+      if (live()) stop();
+    })();
+  };
+
+  const playing = !!state;
+  return (
+    <div style={{ marginTop: 10 }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        {playing ? <Btn kind="ghost" onClick={stop} style={narrow ? { minHeight: 44 } : {}}>■ Stop</Btn>
+          : <Btn kind="ghost" disabled={!ready} onClick={play} style={narrow ? { minHeight: 44 } : {}}>{ready ? "▶ Hear it" : "Loading clips…"}</Btn>}
+        <span style={{ fontSize: 12, color: DS.mut }}>{playing ? (state.phase === "intro" ? "Intro card" : state.phase === "outro" ? "End card" : `Clip ${state.i + 1} of ${clips.length}`) + ` · ${Math.round(T)} s` : `Plays the cut with ${track ? `"${track.title}" under it` : "its own sound only"} — move the sliders while it plays.`}</span>
+      </div>
+      {err && <div style={{ fontSize: 12, color: DS.orange, marginTop: 4 }}>{err}</div>}
+      <div style={{ display: playing ? "block" : "none", position: "relative", maxWidth: 220, aspectRatio: "9 / 16", marginTop: 8, background: "#000", borderRadius: 8, overflow: "hidden" }}>
+        <video ref={vidRef} crossOrigin="anonymous" playsInline preload="metadata" style={{ width: "100%", height: "100%", objectFit: "cover", display: state?.phase === "clip" ? "block" : "none" }} />
+        {state && state.phase !== "clip" && (cover
+          ? <img src={cover} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+          : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: DS.mut, fontSize: 12 }}>{state.phase === "intro" ? "Intro card" : "End card"}</div>)}
+      </div>
+      <audio ref={musRef} src={track?.url || undefined} crossOrigin="anonymous" loop preload="auto" style={{ display: "none" }} />
     </div>
   );
 }
