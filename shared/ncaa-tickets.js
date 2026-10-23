@@ -46,7 +46,7 @@ export function families(players) {
 }
 
 // Answer by this date (the email, the text and the reminders all say it).
-export const NCAA_REPLY_BY = "Friday, November 6";
+export const NCAA_REPLY_BY = "Wednesday, October 28";
 
 // The words families get, shared by scripts/send-ncaa-tickets.mjs and the
 // Waiting on screen's reminders. `link` is that family's /ncaa?t= URL.
