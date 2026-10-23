@@ -21,7 +21,14 @@ import { createClient } from "@supabase/supabase-js";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 const clean = (v, max) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, max);
-const isEmail = (s) => /^[^\s@<>()]+@[^\s@<>()]+\.[a-z]{2,}$/i.test(s);
+const isEmail = (s) => /^[^\s@<>(),;]+@[^\s@<>(),;]+\.[a-z]{2,}$/i.test(s);
+// One or more addresses separated by commas, semicolons or spaces (several families keep two on file).
+// Returns the list joined with ", " (how team_volunteers stores two), "" for blank, or null if any part is bad.
+const emailList = (raw) => {
+  const parts = String(raw || "").toLowerCase().split(/[\s,;]+/).filter(Boolean);
+  if (!parts.length) return "";
+  return parts.every(isEmail) ? [...new Set(parts)].join(", ") : null;
+};
 const digits = (s) => String(s || "").replace(/\D/g, "");
 const usPhone = (s) => { const d = digits(s).replace(/^1(?=\d{10}$)/, ""); return d.length === 10 ? `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}` : null; };
 const firstName = (n) => String(n || "").split(/[\s/&,]+/)[0] || "there";
@@ -102,7 +109,8 @@ function form(me, others, preview) {
   <div class="card" id="contact">
     <p class="sect">2 · Your contact details</p>
     <label class="f"><span class="lb">Name</span><input type="text" name="name" value="${esc(me.name)}" maxlength="120" autocomplete="name"></label>
-    <label class="f"><span class="lb">Email</span><input type="email" name="email" value="${esc(me.email || "")}" maxlength="200" autocomplete="email" inputmode="email"></label>
+    <label class="f"><span class="lb">Email</span><input type="text" name="email" value="${esc(me.email || "")}" maxlength="300" autocomplete="email" inputmode="email" autocapitalize="off" spellcheck="false"></label>
+    <p style="margin:-6px 0 12px;color:var(--mut);font-size:.82rem">Two addresses are fine. Separate them with a comma.</p>
     <label class="f"><span class="lb">Mobile</span><input type="tel" name="phone" value="${esc(usPhone(me.phone) || me.phone || "")}" maxlength="40" autocomplete="tel" inputmode="tel"></label>
   </div>
   <div class="card">
@@ -123,7 +131,7 @@ function form(me, others, preview) {
 <p class="foot">DS Elite Volleyball · Questions? Reply to Drew's text or email.</p>
 <template id="addTpl"><div class="add"><div class="row">
   <input type="text" data-k="name" placeholder="Their name" maxlength="120">
-  <input type="email" data-k="email" placeholder="Their email (if you have it)" maxlength="200" inputmode="email">
+  <input type="text" data-k="email" placeholder="Their email (if you have it)" maxlength="300" inputmode="email" autocapitalize="off">
   <input type="tel" data-k="phone" placeholder="Their mobile (if you have it)" maxlength="40" inputmode="tel">
 </div></div></template>
 <script>
@@ -181,8 +189,9 @@ export default async function handler(req, res) {
     const answer = b?.answer === "yes" ? "yes" : b?.answer === "no" ? "no" : null;
     if (!answer) return res.status(400).json({ ok: false, error: "Please tap Yes or No for question 1" });
     const name = clean(b.name, 120) || me.name;
-    const emailIn = clean(b.email, 200).toLowerCase(), email = isEmail(emailIn) ? emailIn : (emailIn ? null : me.email);
-    if (emailIn && !email) return res.status(400).json({ ok: false, error: "That email address doesn't look right" });
+    const listIn = emailList(clean(b.email, 300));
+    if (listIn === null) return res.status(400).json({ ok: false, error: "One of those email addresses doesn't look right. Separate two addresses with a comma" });
+    const email = listIn || me.email;
     const phoneIn = clean(b.phone, 40), phone = phoneIn ? (usPhone(phoneIn) ? "+1" + digits(phoneIn).slice(-10) : null) : me.phone;
     if (phoneIn && !phone) return res.status(400).json({ ok: false, error: "That phone number doesn't look right. Use a 10-digit US number" });
     const now = new Date().toISOString();
@@ -200,7 +209,7 @@ export default async function handler(req, res) {
     for (const a of (Array.isArray(b.added) ? b.added : []).slice(0, 5)) {
       const an = clean(a?.name, 120); if (!an) continue;
       const ae = clean(a?.email, 200).toLowerCase(), ap = clean(a?.phone, 40);
-      const row = { team_name: me.team_name, name: an, role: "team_parent", email: isEmail(ae) ? ae : null, phone: usPhone(ap) ? "+1" + digits(ap).slice(-10) : null,
+      const row = { team_name: me.team_name, name: an, role: "team_parent", email: emailList(ae) || null, phone: usPhone(ap) ? "+1" + digits(ap).slice(-10) : null,
         note: `Added by ${name} (team parent check-in ${today()})`, confirmed: false };
       const exists = [...others, { name: me.name }].find((o) => o.name.toLowerCase() === an.toLowerCase());
       if (exists) { added.push({ name: an, email: row.email, phone: row.phone, existing: true }); continue; }
