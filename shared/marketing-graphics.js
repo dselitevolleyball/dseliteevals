@@ -36,6 +36,8 @@ export const TEMPLATES = [
   ["list", "List"],
   ["countdown", "Countdown"],
   ["quote", "Quote"],
+  ["pov", "POV caption"],
+  ["note", "Handwritten note"],
 ];
 export const BRAND = {
   ink: "#061a18", ink2: "#0a2422", evergreen: "#104946", teal: "#0F8B76",
@@ -48,9 +50,10 @@ export const BRAND_URLS = {
   mark4qa: SITE + "/brand/4qa-mark.png",       // 4th Quarter Athlete (basketball only)
   fallbackPhoto: SITE + "/brand/og.jpg",
 };
-const FONT_HREF = "https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@700;800;900&family=Schibsted+Grotesk:wght@400;500;700&display=swap";
+const FONT_HREF = "https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@700;800;900&family=Caveat:wght@600;700&family=Schibsted+Grotesk:wght@400;500;700&display=swap";
 const HEAD = '"Barlow Condensed", "Arial Narrow", "Roboto Condensed", Impact, sans-serif';
 const BODY = '"Schibsted Grotesk", "Helvetica Neue", Arial, sans-serif';
+const HAND = '"Caveat", "Bradley Hand", "Segoe Print", cursive';
 
 // ── Fonts ───────────────────────────────────────────────────────────────────
 let fontsP = null;
@@ -69,7 +72,7 @@ export function ensureFonts() {
     } else if (!link.sheet) {
       await new Promise(res => { link.addEventListener("load", res, { once: true }); link.addEventListener("error", res, { once: true }); setTimeout(res, 6000); });
     }
-    const faces = ['900 100px "Barlow Condensed"', '800 100px "Barlow Condensed"', '700 100px "Barlow Condensed"', '400 40px "Schibsted Grotesk"', '500 40px "Schibsted Grotesk"', '700 40px "Schibsted Grotesk"'];
+    const faces = ['700 60px "Caveat"', '900 100px "Barlow Condensed"', '800 100px "Barlow Condensed"', '700 100px "Barlow Condensed"', '400 40px "Schibsted Grotesk"', '500 40px "Schibsted Grotesk"', '700 40px "Schibsted Grotesk"'];
     await Promise.race([Promise.all(faces.map(f => document.fonts.load(f, "AZaz09 –·→").catch(() => null))), new Promise(r => setTimeout(r, 8000))]);
     const ok = document.fonts.check('900 100px "Barlow Condensed"') && document.fonts.check('400 40px "Schibsted Grotesk"');
     if (!ok) fontsP = null; // try again next time (offline, slow network)
@@ -632,6 +635,104 @@ function tEndcard(ctx, spec, imgs, F) {
 // ── Public ─────────────────────────────────────────────────────────────────
 // Draws `spec` on `canvas` (resized to the format). Synchronous: load fonts
 // (ensureFonts) and images (loadGraphicImages) first.
+// ── Trend looks ─────────────────────────────────────────────────────────────
+// "POV": the TikTok / Reels caption look — a full photo with the headline in
+// white boxes, one per line, black bold text, centred a little above the
+// middle (the "POV: you…" / "tell me you… without telling me" posts). The
+// sub, if any, sits under it in white; the club lockup and call to action
+// stay small at the bottom so it reads native, not like an ad.
+function roundBox(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y); ctx.arcTo(x + w, y, x + w, y + r, r);
+  ctx.lineTo(x + w, y + h - r); ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+  ctx.lineTo(x + r, y + h); ctx.arcTo(x, y + h, x, y + h - r, r);
+  ctx.lineTo(x, y + r); ctx.arcTo(x, y, x + r, y, r); ctx.closePath();
+}
+function tPov(ctx, spec, imgs, F) {
+  const { W, H, u, land, m, top, bottom } = F;
+  drawPhoto(ctx, imgs.photoImg, 0, 0, W, H, imgs.shieldImg, 0.35);
+  vScrim(ctx, 0, H * 0.7, W, H * 0.3 + 2, [[0, 0], [1, 0.75]]);
+  const cw = (land ? W * 0.62 : W - 2 * m) - 40 * u;
+  const cap = fitBody(ctx, spec.headline || "POV:", cw, { size: (land ? 50 : 60) * u, min: 32 * u, maxLines: land ? 4 : 6, weight: 700, lh: 1.32 });
+  const lineH = cap.size * cap.lh;
+  const blockH = cap.lines.length * lineH;
+  const cx = land ? m + (W * 0.62) / 2 : W / 2;
+  let y = Math.max(top + 40 * u, (H - bottom) * (land ? 0.5 : 0.42) - blockH / 2);
+  ctx.font = cap.font; ctx.textBaseline = "middle"; ctx.textAlign = "center";
+  const padX = 22 * u, padY = 6 * u, r = 14 * u;
+  for (const l of cap.lines) {
+    const w = ctx.measureText(l).width + padX * 2;
+    ctx.fillStyle = "#ffffff"; roundBox(ctx, cx - w / 2, y - padY, w, lineH + padY * 2 - 4 * u, r); ctx.fill();
+    y += lineH;
+  }
+  y -= blockH;
+  ctx.fillStyle = "#111111";
+  for (const l of cap.lines) { ctx.fillText(l, cx, y + lineH / 2); y += lineH; }
+  if (clean(spec.sub)) {
+    const sub = fitBody(ctx, spec.sub, cw, { size: 34 * u, min: 24 * u, maxLines: 3, weight: 700 });
+    ctx.save(); ctx.shadowColor = "rgba(0,0,0,0.75)"; ctx.shadowBlur = 10 * u;
+    drawBody(ctx, sub, cx, y + 26 * u, "#ffffff", "center");
+    ctx.restore();
+  }
+  ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+  const footH = Math.round((land ? 80 : 72) * u);
+  drawFooter(ctx, spec, imgs, m, H - bottom - footH, W - 2 * m, footH, u);
+}
+
+// "Note": the crumpled-paper note — a handwritten message on creased paper,
+// tilted a little, over the photo (darkened) or the club's ink. The headline
+// is the note, the sub a P.S., the tag the signature ("— Coach Hunter").
+function seeded(str) {
+  let h = 2166136261; for (const c of String(str || "dssc")) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619); }
+  return () => { h += 0x6D2B79F5; let t = h; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+}
+function tNote(ctx, spec, imgs, F) {
+  const { W, H, u, land, m, top, bottom } = F;
+  if (imgs.photoImg) { drawPhoto(ctx, imgs.photoImg, 0, 0, W, H, imgs.shieldImg, 0.4); ctx.fillStyle = "rgba(6,26,24,0.62)"; ctx.fillRect(0, 0, W, H); }
+  else { ctx.fillStyle = BRAND.evergreen; ctx.fillRect(0, 0, W, H); drawPhotoFallback(ctx, 0, 0, W, H, imgs.shieldImg); }
+  const footH = Math.round((land ? 80 : 72) * u);
+  const footY = H - bottom - footH;
+  const pw = land ? W * 0.5 : W - 2 * m - 30 * u;
+  const ph = Math.min(footY - top - 50 * u, pw * (land ? 0.78 : 1.12));
+  const pcx = land ? W * 0.38 : W / 2, pcy = top + 20 * u + ph / 2;
+  const rnd = seeded(spec.headline);
+  ctx.save();
+  ctx.translate(pcx, pcy); ctx.rotate((-2.2 + rnd() * 1.2) * Math.PI / 180);
+  const x0 = -pw / 2, y0 = -ph / 2;
+  ctx.shadowColor = "rgba(0,0,0,0.45)"; ctx.shadowBlur = 40 * u; ctx.shadowOffsetY = 18 * u;
+  ctx.fillStyle = "#F6F2E9"; ctx.fillRect(x0, y0, pw, ph);
+  ctx.shadowColor = "transparent";
+  // Creases: soft light/dark facets and a few fold lines.
+  ctx.save(); ctx.beginPath(); ctx.rect(x0, y0, pw, ph); ctx.clip();
+  for (let i = 0; i < 18; i++) {
+    const px = x0 + rnd() * pw, py = y0 + rnd() * ph, r = (60 + rnd() * 220) * u;
+    ctx.fillStyle = rnd() < 0.5 ? `rgba(0,0,0,${0.025 + rnd() * 0.04})` : `rgba(255,255,255,${0.2 + rnd() * 0.25})`;
+    ctx.beginPath(); ctx.moveTo(px, py);
+    for (let k = 0; k < 3; k++) ctx.lineTo(px + (rnd() - 0.5) * r * 2, py + (rnd() - 0.5) * r * 2);
+    ctx.closePath(); ctx.fill();
+  }
+  ctx.lineWidth = 1.6 * u;
+  for (let i = 0; i < 6; i++) {
+    ctx.strokeStyle = `rgba(0,0,0,${0.05 + rnd() * 0.06})`;
+    ctx.beginPath(); ctx.moveTo(x0 + rnd() * pw, y0); ctx.lineTo(x0 + rnd() * pw, y0 + ph); ctx.stroke();
+  }
+  ctx.restore();
+  // The handwriting.
+  const pad = 56 * u, tw = pw - pad * 2;
+  const sign = clean(spec.tag) ? "— " + clean(spec.tag).replace(/^[-—\s]+/, "") : "— DSSC";
+  const ps = clean(spec.sub) ? fitBody(ctx, spec.sub, tw, { size: 46 * u, min: 32 * u, maxLines: 3, weight: 600, lh: 1.08, family: HAND }) : null;
+  const room = ph - pad * 2 - 70 * u - (ps ? ps.height + 24 * u : 0);
+  let note = null;
+  for (let sz = (land ? 92 : 104) * u; sz >= 44 * u; sz -= 4 * u) { note = fitBody(ctx, spec.headline || "", tw, { size: sz, min: sz, maxLines: 9, weight: 700, lh: 1.02, family: HAND }); if (note.height <= room) break; }
+  drawBody(ctx, note, x0 + pad, y0 + pad, "#1B2B5E");
+  if (ps) drawBody(ctx, ps, x0 + pad, y0 + pad + note.height + 24 * u, "#2E3E73");
+  ctx.font = `700 ${50 * u}px ${HAND}`; ctx.fillStyle = "#1B2B5E"; ctx.textAlign = "right"; ctx.textBaseline = "alphabetic";
+  ctx.fillText(sign, x0 + pw - pad, y0 + ph - pad * 0.7);
+  ctx.textAlign = "left";
+  ctx.restore();
+  drawFooter(ctx, spec, imgs, m, footY, W - 2 * m, footH, u);
+}
+
 // "Custom": a finished graphic Drew uploaded (made in Canva, a flyer…) posted
 // exactly as is — no brand text on top. Filled edge to edge when its shape is
 // close to the format; otherwise shown whole on the brand ink (a 4:5 post in
@@ -661,6 +762,8 @@ export function renderGraphic(canvas, spec = {}, imgs = {}) {
   const s = { ...spec, tag: spec.tag ?? "", headline: spec.headline || "Where Dripping Springs plays" };
   const t = spec.template;
   if (t === "custom") tCustom(ctx, imgs, F);
+  else if (t === "pov") tPov(ctx, s, imgs, F);
+  else if (t === "note") tNote(ctx, s, imgs, F);
   else if (t === "starts") tStarts(ctx, s, imgs, F);
   else if (t === "list") tList(ctx, s, imgs, F);
   else if (t === "countdown") tPhoto(ctx, s, imgs, F, true);

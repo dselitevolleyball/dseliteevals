@@ -233,7 +233,7 @@ export function cleanCopy(raw, slot, fallback) {
   const all = [c.headline, c.sub, c.body, c.email_subject, c.email_preheader, ...(c.email_blocks || []).map(b => b.blurb)].join(" \n ");
   const problems = ruleProblems(all);
   if (problems.length) return { copy: null, problems };
-  c.headline = noEmoji(c.headline).replace(/\s+/g, " ").slice(0, 60).trim() || fallback.headline;
+  c.headline = noEmoji(c.headline).replace(/\s+/g, " ").slice(0, ["pov", "note"].includes(slot?.template) ? 180 : 60).trim() || fallback.headline;
   c.accent = accentOf(c.headline, noEmoji(c.accent));
   c.sub = noEmoji(c.sub).slice(0, 80);
   c.tag = noEmoji(c.tag).slice(0, 24);
@@ -286,7 +286,12 @@ Each slot has a kind:
 - roundup: the weekly email - what's happening now and what's coming, without making it long.
 - dedicated: an email about ONE line only - sell the why to families, cover that line's programs in "programs", one call to action. The subject names the line or its lead program.
 - text: a text message.
-A slot may carry a "theme": a content idea from the directors' marketing calendar. Use it as the angle when it fits the facts you were given; never invent a fact to make it fit.`;
+A slot may carry a "theme": a content idea from the directors' marketing calendar. Use it as the angle when it fits the facts you were given; never invent a fact to make it fit.
+
+A slot may carry a "look" - a trend-style graphic - and a "trend" it adapts:
+- look "pov": the TikTok / Reels caption look. headline = the on-screen caption in sentence case, written the way that trend is written ("POV: ...", "Tell me you ... without telling me", "Not all angels are in heaven... some are ...", "Things that just make sense: ..."), 6 to 16 words, funny or relatable for Dripping Springs families; accent = ""; sub = an optional short second line (or ""); tag = "".
+- look "note": a handwritten note on crumpled paper. headline = the note itself, 1 to 3 short sentences in sentence case, warm and personal; sub = a "P.S. ..." line or ""; tag = the signature - a coach's name only if the facts or theme give it, otherwise "DSSC".
+- trend: keep the trend's format recognizable but make it about the club. Never name a song or quote lyrics, and don't make it depend on a sound - the post has to work as a still image with its caption.`;
 
 const BLOCK = { type: "object", additionalProperties: false, required: ["ref", "blurb"], properties: { ref: { type: "string" }, blurb: { type: "string" } } };
 const ITEM_PROPS = {
@@ -340,6 +345,8 @@ function slotForAi(slot, i, feedById) {
   return {
     slot: i, channel: slot.channel, kind: slot.kind || kindOf(slot), day: slot.day, day_label: fmtDay(slot.day), line: slot.line, line_label: lineLabel(slot.line), angle: slot.angle, why_planned: slot.reason,
     theme: slot.theme || undefined,
+    look: ["pov", "note"].includes(slot.template) ? slot.template : undefined,
+    trend: slot.trend || undefined,
     program: programFacts(full),
     programs: (slot.programs || []).length ? (slot.programs || []).map(r => programFacts(feedById.get(String(r.id)) || r)) : undefined,
     evergreen: slot.channel === "email" && slot.evergreen ? { ref: slot.evergreen, line: lineLabel(slot.evergreen), about: LINE_BLURB[slot.evergreen] } : undefined,
@@ -439,7 +446,9 @@ export function graphicFor(slot, copy, photo, { programs = [] } = {}) {
     template = "countdown";
     date_label = daysOut <= 0 ? "TODAY" : daysOut === 1 ? "TOMORROW" : daysOut <= 7 ? `${daysOut} DAYS` : "LAST CALL";
   } else if (p && ["starting_soon", "new", "priority", "reminder"].includes(slot.angle)) template = "starts";
-  else if (!p) {
+  // A trend look asked for by an idea wins; otherwise a line-only post lists the line's programs.
+  if (["pov", "note"].includes(slot.template) && slot.channel === "social") { template = slot.template; items = []; }
+  else if (!p && slot.channel !== "email" && template === "photo") {
     const same = (programs || []).filter(x => lineOf(x) === slot.line && x.first_date && (x.ongoing || (x.last_date || x.first_date) >= slot.day)).slice(0, 4);
     if (same.length >= 2) { template = "list"; items = same.map(x => `${(x.days || [])[0] ? String(x.days[0]).toUpperCase() : md(x.first_date).toUpperCase()} · ${shortName(x.name)}`.slice(0, 48)); }
   }

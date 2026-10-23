@@ -154,6 +154,7 @@ function singleSlot({ weekOf, today, feed, settings, single, instruction, taken 
     platforms: channel === "social" ? (story ? ["instagram_story", "facebook_story"] : ["facebook", "instagram"]) : undefined, day, time, line,
     program: programRef(p), programs: channel === "email" && p ? [{ ...programRef(p), angle: sig?.angle || "evergreen" }] : channel === "email" ? [] : undefined,
     angle: sig?.angle || "evergreen", theme: single.theme || null,
+    template: ["pov", "note"].includes(single.template) ? single.template : undefined, trend: single.trend ? String(single.trend).slice(0, 120) : undefined,
     reason: [single.reason || `Requested by a director`, !single.reason && String(instruction || "").trim() ? `"${String(instruction).trim().slice(0, 140)}"` : null, sig?.reason].filter(Boolean).join(" · "),
   };
 }

@@ -31,8 +31,9 @@ import { candidates, pickNext, createSpotlight, SERIES } from "./marketing-spotl
 import { actUrl } from "./marketing-links.js";
 import { sendResend, dsscFrom, isEmailish, esc } from "./site-inbox.js";
 
-export const IDEA_KINDS = ["season", "holiday", "local", "club", "program", "spotlight", "fun"];
-export const KIND_LABEL = { season: "Season", holiday: "Holiday", local: "Local news", club: "Club news", program: "Program", spotlight: "Coach spotlight", reel: "Reel", fun: "Just for fun" };
+export const IDEA_KINDS = ["season", "holiday", "local", "club", "program", "spotlight", "trend", "fun"];
+export const KIND_LABEL = { season: "Season", holiday: "Holiday", local: "Local news", club: "Club news", program: "Program", spotlight: "Coach spotlight", reel: "Reel", trend: "Trend", fun: "Just for fun" };
+export const LOOKS = ["photo", "pov", "note"];
 const WINDOW = 35;
 export const SCOUT_DEFAULTS = { enabled: true, day: "sat", web: true, spotlight_every_weeks: 2, via: ["email", "sms"] };
 export const scoutSettings = (s) => ({ ...SCOUT_DEFAULTS, ...(s?.scout && typeof s.scout === "object" ? s.scout : {}) });
@@ -70,10 +71,40 @@ Then list up to 10 items, one per line: the date (or "ongoing"), what it is, and
   }
 }
 
+// ── 1b. what's trending on TikTok / Instagram Reels (web search) ─────────────
+// Formats, memes and caption templates trending right now that a youth sports
+// club could make its own - as a still (a POV caption over a photo, a
+// handwritten note, a photo) or a short clip. -> { text, sources, error }
+export async function trendScan(today, { timeoutMs = 55000 } = {}) {
+  const prompt = `Today is ${fmtDay(today)} (${today}). Search the web for what is trending on TikTok and Instagram Reels this week and this month: post formats, memes, caption templates ("POV: ...", fill-in-the-blank lines, "tell me you ... without telling me", photo-dump and note formats) and seasonal trends - the kind a youth sports club (volleyball, basketball, speed & strength training, a kids' camp, birthday parties) could adapt for families.
+Then list up to 8 trends, one per line: the trend's name, how it works in one sentence, how a youth sports club could do it, whether it works as a still image (a caption over a photo, a handwritten note) or needs video - each with its source URL. Only list trends the search results actually describe as current. Skip anything that depends on a copyrighted song to work, anything mean-spirited, political or not kid-safe.`;
+  const messages = [{ role: "user", content: prompt }];
+  const sources = new Map();
+  let msg = null;
+  try {
+    for (let turn = 0; turn < 4; turn++) {
+      msg = await client(timeoutMs).beta.messages.create({
+        model: AI_MODEL, max_tokens: 6000, betas: ["server-side-fallback-2026-07-01"], fallbacks: "default",
+        output_config: { effort: "low" },
+        tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 5 }],
+        messages,
+      });
+      for (const b of msg.content || []) if (b.type === "web_search_tool_result" && Array.isArray(b.content)) for (const r of b.content) if (r?.url) sources.set(r.url, { title: String(r.title || r.url).slice(0, 160), url: r.url });
+      if (msg.stop_reason !== "pause_turn") break;
+      messages.push({ role: "assistant", content: msg.content });
+    }
+    if (msg.stop_reason === "refusal") return { text: "", sources: [], error: "Claude declined the trend search" };
+    const text = (msg.content || []).filter(b => b.type === "text").map(b => b.text).join("").trim();
+    return { text: text.slice(0, 5000), sources: [...sources.values()].slice(0, 20), error: null };
+  } catch (e) {
+    return { text: "", sources: [], error: e?.message || String(e) };
+  }
+}
+
 // ── 2. the ideas ─────────────────────────────────────────────────────────────
 const IDEA = {
   type: "object", additionalProperties: false,
-  required: ["kind", "title", "pitch", "hook", "line", "channel", "format", "best_day", "source_urls"],
+  required: ["kind", "title", "pitch", "hook", "line", "channel", "format", "best_day", "source_urls", "look", "trend"],
   properties: {
     kind: { type: "string", enum: IDEA_KINDS.filter(k => k !== "spotlight") },
     title: { type: "string" }, pitch: { type: "string" }, hook: { type: "string" },
@@ -82,6 +113,8 @@ const IDEA = {
     format: { type: "string", enum: ["post", "story", "email"] },
     best_day: { type: "string" },
     source_urls: { type: "array", items: { type: "string" } },
+    look: { type: "string", enum: LOOKS },
+    trend: { type: "string" },
   },
 };
 const SCHEMA = { type: "object", additionalProperties: false, required: ["ideas"], properties: { ideas: { type: "array", items: IDEA } } };
@@ -98,6 +131,8 @@ Rules:
 - Spread the ideas across the next five weeks and across the lines; best_day is a date (YYYY-MM-DD) within the window that gives the idea the right lead time (a holiday-break camp idea goes up 1-3 weeks before the break).
 - pitch: 1-2 sentences - what to post and why now. hook: the flair - the opening line or format to try (a POV, a this-or-that, a countdown, a challenge, a "tag someone who...", a question to the audience). title: 3-8 words.
 - channel/format: social + post or story, or email + email (only for something worth its own email).
+- Trends: when the request has a trend scan, make 2 of the ideas kind "trend" - a current TikTok / Reels trend from the scan made DSSC's own. trend = the trend's name; source_urls = its source from the scan; look = "pov" (the trend's caption over a club photo - put the exact caption in hook, e.g. "POV: you finally landed the jump serve"), "note" (a handwritten note - put the note's words in hook) or "photo". Pick trends that work as a still image; never one that depends on a song. Keep it kind and kid-safe - laugh with the families, never at a kid.
+- Every other idea: look = "photo" unless a POV caption or a note would clearly land better; trend = "".
 Return 5 to 7 ideas.`;
 
 // -> { ideas: [...validated], error }
@@ -108,6 +143,8 @@ export async function proposeIdeas(ctx, { timeoutMs = 70000 } = {}) {
     calendar: ctx.calendar.map(m => ({ name: m.name, kind: m.kind, start: m.start, end: m.end, approx: m.approx || undefined, lines: m.lines, idea: m.idea })),
     local_scan: ctx.local?.text || null,
     local_sources: (ctx.local?.sources || []).map(s => s.url),
+    trend_scan: ctx.trends?.text || null,
+    trend_sources: (ctx.trends?.sources || []).map(s => s.url),
     programs: ctx.signals.slice(0, 18).map(s => ({ line: s.line, name: s.program.name, starts: s.program.first_date, angle: s.angle, why: s.reason })),
     priorities: ctx.priorities.map(p => ({ title: p.title, notes: p.notes || "", lines: p.lines, from: p.starts_on, to: p.ends_on })),
     recent_posts: ctx.recent.map(i => ({ day: String(i.scheduled_at || i.week_of).slice(0, 10), kind: i.kind, line: i.line, headline: i.headline })),
@@ -127,8 +164,9 @@ export async function proposeIdeas(ctx, { timeoutMs = 70000 } = {}) {
 }
 
 const BANNED = /\$\s?\d|\bspots?\s+(left|remaining)\b|\bsold\s+out\b|\bflex\b/i;
-export function cleanIdeas(list, { today, local }) {
-  const known = new Set((local?.sources || []).map(s => s.url));
+export function cleanIdeas(list, { today, local, trends }) {
+  const allSources = [...(local?.sources || []), ...(trends?.sources || [])];
+  const known = new Set(allSources.map(s => s.url));
   const end = addDays(today, WINDOW);
   return (Array.isArray(list) ? list : []).map(x => {
     const kind = IDEA_KINDS.includes(x?.kind) ? x.kind : "fun";
@@ -136,12 +174,14 @@ export function cleanIdeas(list, { today, local }) {
     let day = /^\d{4}-\d{2}-\d{2}$/.test(String(x?.best_day || "")) ? x.best_day : null;
     if (!day || day < today) day = addDays(today, 2);
     if (day > end) day = end;
-    const sources = (Array.isArray(x?.source_urls) ? x.source_urls : []).filter(u => known.has(u)).slice(0, 3).map(url => ({ url, title: (local.sources.find(s => s.url === url) || {}).title || url }));
+    const sources = (Array.isArray(x?.source_urls) ? x.source_urls : []).filter(u => known.has(u)).slice(0, 3).map(url => ({ url, title: (allSources.find(s => s.url === url) || {}).title || url }));
     return {
       kind, title: String(x?.title || "").trim().slice(0, 120), pitch: String(x?.pitch || "").trim().slice(0, 600), hook: String(x?.hook || "").trim().slice(0, 300) || null,
       line: LINE_KEYS.includes(x?.line) ? x.line : "club", channel, format: channel === "email" ? "email" : x?.format === "story" ? "story" : "post", best_day: day, sources,
+      template: channel === "social" && LOOKS.includes(x?.look) && x.look !== "photo" ? x.look : null,
+      trend: kind === "trend" ? String(x?.trend || "").trim().slice(0, 120) || null : null,
     };
-  }).filter(x => x.title && x.pitch && !BANNED.test(`${x.title} ${x.pitch} ${x.hook || ""}`) && (x.kind !== "local" || x.sources.length)).slice(0, 8);
+  }).filter(x => x.title && x.pitch && !BANNED.test(`${x.title} ${x.pitch} ${x.hook || ""}`) && (x.kind !== "local" || x.sources.length) && (x.kind !== "trend" || x.trend)).slice(0, 8);
 }
 
 // Without Claude: the calendar's moments as ideas.
@@ -149,7 +189,7 @@ export function calendarIdeas(calendar, today) {
   return calendar.filter(m => m.kind !== "season" || m.start >= today).slice(0, 6).map(m => ({
     kind: m.kind === "holiday" || m.kind === "day" ? "holiday" : m.kind === "fun" ? "fun" : "season",
     title: m.name, pitch: m.idea, hook: null, line: m.lines[0] || "club", channel: "social", format: "post",
-    best_day: leadDay(m, today), sources: [],
+    best_day: leadDay(m, today), sources: [], template: null, trend: null,
   }));
 }
 // A school break gets ~10 days' notice, anything else the day before; never in the past.
@@ -175,11 +215,15 @@ export async function runScout(sb, { now = new Date(), by = "scout", ask = "", w
     today, settings, ask: String(ask || "").trim().slice(0, 500),
     calendar: moments(today, WINDOW), signals: signalsFor(feed.programs || [], today),
     priorities: priorities.filter(p => p.active !== false && (!p.ends_on || p.ends_on >= today)),
-    recent: recentQ.data || [], past: pastQ.data || [], local: null,
+    recent: recentQ.data || [], past: pastQ.data || [], local: null, trends: null,
   };
   let ideas = [], error = null;
   if (aiReady()) {
-    if (useWeb && Date.now() < deadline - 80000) ctx.local = await localScan(today, { timeoutMs: Math.min(55000, deadline - Date.now() - 70000) });
+    if (useWeb && Date.now() < deadline - 80000) {
+      // The local scan and the trend scan run side by side.
+      const t = Math.min(55000, deadline - Date.now() - 70000);
+      [ctx.local, ctx.trends] = await Promise.all([localScan(today, { timeoutMs: t }), trendScan(today, { timeoutMs: t })]);
+    }
     try {
       const r = await proposeIdeas(ctx, { timeoutMs: Math.max(20000, Math.min(70000, deadline - Date.now() - 8000)) });
       ideas = r.ideas; error = r.error;
@@ -218,7 +262,7 @@ export async function runScout(sb, { now = new Date(), by = "scout", ask = "", w
   if (reel) rows.push({ ...reel, batch, status: "new", created_by: by, spotlight_id: null });
   const { data: saved, error: insErr } = rows.length ? await sb.from("mkt_ideas").insert(rows).select("*") : { data: [] };
   if (insErr) throw new Error("Saving ideas: " + insErr.message);
-  await log(sb, null, ask ? "scout_ask" : "scout", { by, today, ideas: (saved || []).length, spotlight: spotlight?.id || null, local: ctx.local ? { found: ctx.local.sources.length, error: ctx.local.error } : null, error, ask: ctx.ask || null });
+  await log(sb, null, ask ? "scout_ask" : "scout", { by, today, ideas: (saved || []).length, spotlight: spotlight?.id || null, local: ctx.local ? { found: ctx.local.sources.length, error: ctx.local.error } : null, trends: ctx.trends ? { found: ctx.trends.sources.length, error: ctx.trends.error } : null, error, ask: ctx.ask || null });
   return { ideas: saved || [], spotlight, local: ctx.local ? { found: ctx.local.sources.length, error: ctx.local.error } : null, error };
 }
 
@@ -293,7 +337,7 @@ export async function acceptIdea(sb, id, { by = "a director", instruction = "", 
   }
   const r = await generateWeek(sb, {
     weekOf: mondayOfDay(day), by,
-    single: { line: idea.line, channel: idea.channel, format: idea.format, day, theme: idea.hook ? `${idea.title} - try: ${idea.hook}` : idea.title, reason: `Idea (${KIND_LABEL[idea.kind] || idea.kind}): ${idea.title}` },
+    single: { line: idea.line, channel: idea.channel, format: idea.format, day, theme: idea.hook ? `${idea.title} - try: ${idea.hook}` : idea.title, reason: `Idea (${KIND_LABEL[idea.kind] || idea.kind}): ${idea.title}`, template: idea.template || null, trend: idea.trend || null },
     instruction: [`Idea: ${idea.title}. ${idea.pitch}`, idea.hook ? `Hook / format to try: ${idea.hook}` : null, (idea.sources || []).length ? `Source: ${idea.sources.map(s => s.title).join("; ")}` : null, String(instruction || "").trim() || null].filter(Boolean).join("\n"),
   });
   const item = r.items[0] || null;

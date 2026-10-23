@@ -14,7 +14,7 @@ import { mktApi, isMissingTable, MIGRATION_MSG, LINES, lineMeta, LineChip, chipS
 
 const KIND = {
   season: ["Season", "#7FD1C3"], holiday: ["Holiday", "#F5C542"], local: ["Local news", "#60A5FA"], club: ["Club news", DS.lime],
-  program: ["Program", "#A9C7C3"], spotlight: ["Coach spotlight", "#F06BB4"], fun: ["Just for fun", "#FF9F5A"],
+  program: ["Program", "#A9C7C3"], spotlight: ["Coach spotlight", "#F06BB4"], trend: ["Trend", "#C084FC"], fun: ["Just for fun", "#FF9F5A"],
 };
 const REASONS = ["Not our vibe", "Wrong timing", "Already covered", "Too salesy", "Too silly"];
 const SP_STATUS = { draft: ["Ready to send", DS.orange], sent: ["Waiting on the coach", "#60A5FA"], answered: ["Answered", DS.lime], drafted: ["Drafts made", "#7FD1C3"], declined: ["Declined", DS.dim], cancelled: ["Cancelled", DS.dim] };
@@ -137,6 +137,7 @@ function IdeaCard({ idea: i, narrow, busy, onMake, onDismiss }) {
       <div style={{ fontSize: 16, fontWeight: 800, marginBottom: 2 }}>{i.title}</div>
       <div style={{ fontSize: 14, color: DS.text, lineHeight: 1.5 }}>{i.pitch}</div>
       {i.hook && <div style={{ fontSize: 13, color: DS.lime, marginTop: 4 }}>Try: {i.hook}</div>}
+      {(i.trend || i.template) && <div style={{ fontSize: 12, color: "#C084FC", marginTop: 4 }}>{i.trend ? `Trend: ${i.trend}` : ""}{i.trend && i.template ? " · " : ""}{i.template === "pov" ? "Look: POV caption over a photo" : i.template === "note" ? "Look: handwritten note" : ""}</div>}
       {(i.sources || []).length > 0 && <div style={{ fontSize: 12, marginTop: 4 }}>{i.sources.map(s => <a key={s.url} href={s.url} target="_blank" rel="noreferrer" style={{ color: DS.mut, marginRight: 10 }}>{s.title} ↗</a>)}</div>}
       {mode === "tweak" && <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
         <input value={text} onChange={e => setText(e.target.value)} placeholder='e.g. "make it a story", "mention the 3v3 league"' style={{ ...inputStyle, flex: "1 1 240px", fontSize: narrow ? 16 : 14 }} />

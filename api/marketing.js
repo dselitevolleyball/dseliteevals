@@ -123,7 +123,7 @@ export async function run(sb, { me, name }, b) {
       const weekOf = mondayOf(b.week_of || today);
       // One item: a program, a line, or an idea typed on a calendar day (day, time, format, the idea as its theme).
       const ideaLine = !b.line && !b.program_id && b.instruction ? (parseBrief(String(b.instruction)).lines || [])[0] || null : null;
-      const single = b.program_id || b.line || b.single || b.day ? { program_id: b.program_id || null, line: b.line || ideaLine, channel: b.channel || "social", day: b.day || null, time: b.time || null, format: b.format || null, theme: b.theme ? String(b.theme).slice(0, 300) : null, reason: b.reason ? String(b.reason).slice(0, 200) : null } : null;
+      const single = b.program_id || b.line || b.single || b.day ? { program_id: b.program_id || null, line: b.line || ideaLine, channel: b.channel || "social", day: b.day || null, time: b.time || null, format: b.format || null, theme: b.theme ? String(b.theme).slice(0, 300) : null, reason: b.reason ? String(b.reason).slice(0, 200) : null, template: b.template || null, trend: b.trend || null } : null;
       const r = await generateWeek(sb, { weekOf, replaceDrafts: !!b.replace_drafts, instruction: String(b.instruction || "").slice(0, 1000), by: me, single });
       return { week_of: weekOf, items: r.items, kept: r.kept, removed: r.removed, notes: r.notes, ai: r.ai && { used: r.ai.used, model: r.ai.model, error: r.ai.error, fallbacks: r.ai.fallbacks } };
     }

@@ -206,5 +206,25 @@ check(rec.changes.some(c => /volleyball post: Thu 18:30 → Wed 10:00/.test(c)),
 check(bestTimeFor(heat, "basketball", "mon", "social") === "15:00" && bestTimeFor(heat, "volleyball", "wed", "email") === "07:30", "one item's best time");
 check(!recommendCadence(registrationHeatmap(buys.slice(0, 40)), cad0).ok, "too little data: no recommendation");
 
+
+// ── 7. Trend ideas and looks ─────────────────────────────────────────────────
+console.log("== 7. trends ==");
+const { cleanIdeas } = await import("../api/_lib/marketing-scout.js");
+const { graphicFor } = await import("../api/_lib/marketing-ai.js");
+const trendsCtx = { today: "2026-10-23", local: { sources: [] }, trends: { sources: [{ url: "https://example.com/oct-trends", title: "October trends" }] } };
+const ideas = cleanIdeas([
+  { kind: "trend", title: "Libero angels", pitch: "Fill-in-the-blank trend for our liberos.", hook: "Not all angels are in heaven... some are liberos", line: "volleyball", channel: "social", format: "post", best_day: "2026-10-28", source_urls: ["https://example.com/oct-trends"], look: "pov", trend: "Not all angels are in heaven" },
+  { kind: "trend", title: "No trend name", pitch: "x", hook: "", line: "club", channel: "social", format: "post", best_day: "2026-10-28", source_urls: [], look: "pov", trend: "" },
+  { kind: "fun", title: "Coach note", pitch: "A note from camp.", hook: "Thanksgiving is covered.", line: "camp_elevate", channel: "social", format: "post", best_day: "2026-10-30", source_urls: [], look: "note", trend: "" },
+  { kind: "club", title: "Email idea", pitch: "An email.", hook: "", line: "club", channel: "email", format: "email", best_day: "2026-10-30", source_urls: [], look: "pov", trend: "" },
+], trendsCtx);
+check(ideas.length === 3 && ideas[0].template === "pov" && ideas[0].trend === "Not all angels are in heaven" && ideas[0].sources[0]?.title === "October trends", "a trend idea keeps its look, trend name and trend-scan source");
+check(ideas[1].template === "note" && ideas[1].trend === null && ideas[2].template === null, "a trend idea needs a trend name; non-trend ideas keep a note look; emails never get a look");
+const slot = { channel: "social", kind: "post", day: "2026-10-28", line: "volleyball", template: "pov", programs: [] };
+const g1 = graphicFor(slot, { headline: "POV: you finally landed the jump serve", accent: "", sub: "", tag: "" }, { url: "https://x/p.jpg" }, { programs: [] });
+check(g1.template === "pov" && g1.headline.startsWith("POV:") && g1.photo_url === "https://x/p.jpg", "a slot with a look gets that graphic");
+const g2 = graphicFor({ ...slot, template: undefined, channel: "email" }, { headline: "H" }, null, {});
+check(g2.template === "photo", "emails keep the photo header");
+
 console.log(failed ? `\n${failed} FAILED` : "\nall checks passed");
 process.exit(failed ? 1 : 0);
