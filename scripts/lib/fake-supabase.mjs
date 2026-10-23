@@ -41,6 +41,11 @@ export function fakeSupabase(seed = {}) {
     like(k, v) { const re = new RegExp("^" + String(v).replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/%/g, ".*") + "$"); this.f.push(r => re.test(String(r[k] ?? ""))); return this; }
     ilike(k, v) { this.f.push(r => String(r[k] || "").toLowerCase() === String(v).toLowerCase()); return this; }
     is(k, v) { this.f.push(r => v === null ? r[k] == null : r[k] === v); return this; }
+    // PostgREST or(): "a.not.is.null,b.eq.3" - any one of them.
+    or(expr) {
+      const parts = String(expr).split(",").map(p => { const [k, ...rest] = p.split("."); const op = rest.join("."); return (r) => op === "not.is.null" ? r[k] != null : op === "is.null" ? r[k] == null : op.startsWith("eq.") ? String(r[k]) === op.slice(3) : false; });
+      this.f.push(r => parts.some(fn => fn(r))); return this;
+    }
     contains(k, obj) { this.f.push(r => Object.entries(obj).every(([a, b]) => r[k]?.[a] === b)); return this; }
     order(k, o = {}) { this.ord.push([k, o.ascending !== false]); return this; }
     limit(n) { this.lim = n; return this; }
@@ -55,7 +60,8 @@ export function fakeSupabase(seed = {}) {
         out = [];
         for (const r0 of this.rows) {
           const key = this.uo?.onConflict;
-          const ex = key ? rows.find(r => String(r[key]) === String(r0[key])) : null;
+          const ks = key ? String(key).split(",").map(x => x.trim()) : [];   // "player_id,test_date" = all of them
+          const ex = key ? rows.find(r => ks.every(k => String(r[k]) === String(r0[k]))) : null;
           if (ex) { if (!this.uo.ignoreDuplicates) Object.assign(ex, r0, this.t === "mkt_settings" ? { updated_at: now() } : {}); out.push(ex); continue; }
           const pk = this.t === "mkt_unsubscribes" ? null : (r0.id ?? (ids[this.t] = (ids[this.t] || 1000) + 1));
           const r = { created_at: now(), updated_at: now(), revisions: [], external_ids: {}, ...(DEFAULTS[this.t] ? DEFAULTS[this.t]() : {}), ...r0 };

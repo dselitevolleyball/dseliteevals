@@ -36,6 +36,7 @@ import { createClient } from "@supabase/supabase-js";
 import { appOrigin } from "../shared/app-origin.js";
 import { parentMailings } from "../shared/parent-mail.js";
 import { buildReport, statFlags, reviewFlags, statPeerStats, flaggedReportKeys, METRICS, SAMPLE_PLAYER, SAMPLE_TESTS, SAMPLE_DRAFT, SAMPLE_TEAM } from "../shared/stat-report.js";
+import { loadCustomMetrics } from "./_lib/stat-metrics.js";
 
 // A team of ~14 at Resend's 2 a second, plus the season read.
 export const config = { maxDuration: 120 };
@@ -61,9 +62,9 @@ const flagPrint = (flags, k) => {
 };
 const ackOf = (flags, k) => `ok:${k}:${flagPrint(flags, k)}`;
 // The columns statFlags / teamStanding read, for the season pool + teammates.
-const STAT_COLS = "id, first_name, team_assignment, season, usav_div, offer_status, stand_reach, approach_touch, jump_touch, sprint_10y, stat_baseline_date";
+const STAT_COLS = "id, first_name, team_assignment, season, usav_div, offer_status, stand_reach, approach_touch, jump_touch, sprint_10y, sprint_mph, stat_baseline_date";
 // Everything the email needs about the girl herself.
-const PLAYER_COLS = "id, first_name, last_name, team_assignment, season, usav_div, offer_status, parent_name, parent2_name, parent_email, parent_email2, parent_email3, parents_separate, stand_reach, approach_touch, jump_touch, sprint_10y, stat_baseline_date";
+const PLAYER_COLS = "id, first_name, last_name, team_assignment, season, usav_div, offer_status, parent_name, parent2_name, parent_email, parent_email2, parent_email3, parents_separate, stand_reach, approach_touch, jump_touch, sprint_10y, sprint_mph, stat_baseline_date";
 // Every row, past PostgREST's 1,000-row page.
 const every = async (q) => { const out = []; for (let from = 0; ; from += 1000) { const { data, error } = await q().range(from, from + 999); if (error) throw error; out.push(...(data || [])); if (!data || data.length < 1000) return out; } };
 
@@ -73,6 +74,7 @@ export default async function handler(req, res) {
   const DSSC_RESEND = process.env.DSSC_RESEND_API_KEY;
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return res.status(500).json({ error: "Server not configured" });
   const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
+  await loadCustomMetrics(sb);   // tests added in HQ join METRICS
 
   let b = req.body; try { b = typeof b === "string" ? JSON.parse(b) : (b || {}); } catch { return res.status(400).json({ error: "Invalid JSON" }); }
   const bearer = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");

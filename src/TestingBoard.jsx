@@ -24,16 +24,28 @@
 import { useState, useEffect, useMemo } from "react";
 import { supabase } from "./supabase";
 import StatReports from "./StatReports.jsx";
-import { METRICS, metricRows, fmtMetric, fmtChange, allStatFlags, reviewFlags, flaggedReportKeys } from "../shared/stat-report.js";
+import { METRICS, BUILT_IN_METRICS, metricRows, fmtMetric, fmtChange, allStatFlags, reviewFlags, flaggedReportKeys, gainMin } from "../shared/stat-report.js";
+import { loadStatMetrics } from "./statMetrics.js";
+import DsscReach from "./dssc/DsscReach.jsx";
 
 const C = { bg: "#0a0a0a", card: "#141414", border: "#2a2a2a", gold: "#e91e8c", text: "#ffffff", mut: "#999999", red: "#ef4444", grn: "#22c55e", amb: "#f59e0b" };
 const inp = { background: "#0f0f0f", border: "1px solid " + C.border, borderRadius: 8, color: C.text, fontFamily: "inherit", fontSize: 13, padding: "7px 9px", boxSizing: "border-box" };
 const lbl = { fontSize: 10, fontWeight: 800, letterSpacing: 0.4, textTransform: "uppercase", color: C.mut, marginBottom: 4, display: "block" };
 const TERMINAL = ["declined", "not_invited", "opted_out"];
-// Board order: the jump numbers first, reach last (it's size, not training).
-const KEYS = ["approach_touch", "vertical", "standing_touch", "broad_jump", "dash_10y", "stand_reach"];
-const META = Object.fromEntries(METRICS.map(([k, label, unit, up]) => [k, { label, unit, up }]));
-const SHORT = { approach_touch: "Approach touch", vertical: "Vertical", standing_touch: "Standing touch", broad_jump: "Broad jump", dash_10y: "10-yd sprint", stand_reach: "Reach" };
+// Board order: the jump numbers first, the sprints, reach last (it's size, not
+// training), then the tests added in HQ (Reach Stats -> Tests). syncKeys()
+// re-reads METRICS once those have loaded (loadStatMetrics), before any render
+// that shows numbers.
+const BASE_KEYS = ["approach_touch", "vertical", "standing_touch", "broad_jump", "dash_10y", "sprint_mph", "stand_reach"];
+let KEYS = BASE_KEYS, META = {}, SHORT = {};
+const BASE_SHORT = { approach_touch: "Approach touch", vertical: "Vertical", standing_touch: "Standing touch", broad_jump: "Broad jump", dash_10y: "10-yd sprint", sprint_mph: "Sprint mph", stand_reach: "Reach" };
+function syncKeys() {
+  META = Object.fromEntries(METRICS.map(([k, label, unit, up]) => [k, { label, unit, up }]));
+  const extra = METRICS.map(m => m[0]).filter(k => !BUILT_IN_METRICS.includes(k));
+  KEYS = [...BASE_KEYS, ...extra];
+  SHORT = { ...BASE_SHORT, ...Object.fromEntries(extra.map(k => [k, META[k].label])) };
+}
+syncKeys();
 const POS = [["OH", "Outside"], ["RS", "Right side"], ["MB", "Middle"], ["S", "Setter"], ["L", "Libero"], ["DS", "Def. specialist"], ["U", "Utility"]];
 const LEVELS = [["National", "National"], ["Regional", "Regional"], ["Developmental", "Rise"]];
 const teamAge = (t) => parseInt(String(t || ""), 10) || null;
@@ -57,8 +69,9 @@ export function ReachHome({ coach, players, session }) {
     <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
       <button onClick={() => setTab("reports")} style={chip(tab === "reports")}>📈 Testing Reports</button>
       <button onClick={() => setTab("board")} style={chip(tab === "board")}>🏅 Stats Board</button>
+      <button onClick={() => setTab("reach")} style={chip(tab === "reach")}>🏃 Reach Stats</button>
     </div>
-    {tab === "reports" ? <StatReports coach={coach} players={players} session={session} /> : <TestingBoard players={players} />}
+    {tab === "reports" ? <StatReports coach={coach} players={players} session={session} /> : tab === "board" ? <TestingBoard players={players} /> : <div style={{ padding: "14px 18px 0" }}><DsscReach /></div>}
   </>);
 }
 
@@ -88,8 +101,10 @@ export default function TestingBoard({ players = [], initial }) {
       supabase.from("player_stat_tests").select("*").order("test_date"),
       supabase.from("practice_teams").select("team_name, level"),
       supabase.from("stat_flag_reviews").select("player_id, flag_id, decision"),
+      loadStatMetrics(),
     ]).then(([t, pt, rv]) => {
       if (!live) return;
+      syncKeys();
       setTests(t.data || []); setLevels(new Map((pt.data || []).map(r => [r.team_name, r.level]))); setReviews(rv.data || []);
     });
     return () => { live = false; };
@@ -237,7 +252,7 @@ export default function TestingBoard({ players = [], initial }) {
                 <td style={{ padding: "7px 8px", fontWeight: 700, whiteSpace: "nowrap" }}>{r.name}{!r.retested && <span title="Tryout numbers only" style={{ fontSize: 10, color: C.mut, fontWeight: 400 }}> · tryout</span>}</td>
                 <td style={{ padding: "7px 8px", whiteSpace: "nowrap" }}>{r.team.replace(/ 1$/, "")} <span style={{ fontSize: 10, color: C.mut }}>{r.level === "Developmental" ? "Rise" : r.level === "National" ? "Nat" : r.level === "Regional" ? "Reg" : ""}</span></td>
                 <td style={{ padding: "7px 8px", color: C.mut, whiteSpace: "nowrap", fontSize: 12 }}>{r.pos.join("/")}</td>
-                {KEYS.map(k => { const c = r.cells[k], v = valueOf(c, view); const good = view === "change" && v != null && k !== "stand_reach" && (META[k].up ? v >= 0.25 : v <= -0.02);
+                {KEYS.map(k => { const c = r.cells[k], v = valueOf(c, view); const good = view === "change" && v != null && k !== "stand_reach" && (META[k].up ? v >= gainMin(k) : v <= -gainMin(k));
                   return <td key={k} title={c ? (c.flagged ? "⚑ Looks like a data-entry slip — see Testing Reports. " : "") + (view === "now" ? c.from : view === "baseline" ? "Baseline" : "") : ""}
                     style={{ padding: "7px 8px", textAlign: "right", whiteSpace: "nowrap", fontWeight: sk === k ? 800 : 500, color: c?.flagged ? C.amb : good ? C.grn : v == null ? C.mut : C.text, opacity: c?.flagged && !withFlagged ? 0.6 : 1 }}>
                     {c?.flagged ? "⚑ " : ""}{show(k, c, view)}</td>; })}
@@ -269,7 +284,7 @@ function TeamChart({ shown, x, y, setX, setY, players, setPlayers, view, usable,
   const fx = (v) => { const f = (v - x0) / (x1 - x0 || 1); return L + (META[x].up ? f : 1 - f) * (W - L - R); };
   const fy = (v) => { const f = (v - y0) / (y1 - y0 || 1); return H - B - (META[y].up ? f : 1 - f) * (H - T - B); };
   const ticks = (lo, hi) => Array.from({ length: 6 }, (_, i) => lo + (i / 5) * (hi - lo));
-  const tick = (k, v) => view === "change" ? fmtChange(k, v) : META[k].unit === "sec" ? v.toFixed(2) + "s" : v.toFixed(1) + '"';
+  const tick = (k, v) => view === "change" ? fmtChange(k, v) : META[k].unit === "sec" ? v.toFixed(2) + "s" : META[k].unit === "in" ? v.toFixed(1) + '"' : v.toFixed(1) + (META[k].unit ? " " + META[k].unit : "");
   const fv = (k, v) => view === "change" ? fmtChange(k, v) : fmtMetric(k, v);
   // Labels sit right of their dot (left near the right edge). One that would
   // land on another label moves a line up or down; if there's no room that

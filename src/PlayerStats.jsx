@@ -11,7 +11,8 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { supabase } from "./supabase";
-import { statResultRows, metricRows, statFlags, reviewFlags, statPeerStats, fmtMetric, fmtChange } from "../shared/stat-report.js";
+import { statResultRows, metricRows, statFlags, reviewFlags, statPeerStats, fmtMetric, fmtChange, METRICS, BUILT_IN_METRICS, gainMin } from "../shared/stat-report.js";
+import { loadStatMetrics } from "./statMetrics.js";
 
 const C = { bg: "#0a0a0a", card: "#141414", border: "#2a2a2a", gold: "#e91e8c", text: "#ffffff", mut: "#999999", red: "#ef4444", grn: "#22c55e", amb: "#f59e0b" };
 // Staff see raw inches to the hundredth (90.16", the same unit as the tryout
@@ -22,10 +23,12 @@ const C = { bg: "#0a0a0a", card: "#141414", border: "#2a2a2a", gold: "#e91e8c", 
 // every key borrows those branches. Math.round put Elizabeth Stanley's 98.425 −
 // 83 (= 15.42499…) on the card as 15.42" while her email said 15.43", and a
 // retest to 17.50" then read "+2.07"" beside a visible 2.08 gap (Oct 12 2026).
-const fk = (k, n) => fmtMetric(k === "dash_10y" ? k : "vertical", n);
-// [key, label, higherIsBetter]
-const COLS = [["stand_reach", "Stand & reach", true], ["approach_touch", "Jump approach", true], ["standing_touch", "Standing jump", true], ["vertical", "Vertical", true], ["broad_jump", "Broad jump", true], ["dash_10y", "10 yd", false]];
-const LABEL = Object.fromEntries(COLS.map(([k, l]) => [k, l]));
+const LENGTHS = ["stand_reach", "approach_touch", "standing_touch", "vertical", "broad_jump"];
+const fk = (k, n) => fmtMetric(LENGTHS.includes(k) ? "vertical" : k, n);
+// [key, label, higherIsBetter]: the built-ins, then the tests added in HQ
+// (Reach Stats → Tests), read from METRICS once loadStatMetrics has run.
+const BASE_COLS = [["stand_reach", "Stand & reach", true], ["approach_touch", "Jump approach", true], ["standing_touch", "Standing jump", true], ["vertical", "Vertical", true], ["broad_jump", "Broad jump", true], ["dash_10y", "10 yd", false], ["sprint_mph", "Sprint mph", true]];
+const colsNow = () => [...BASE_COLS, ...METRICS.filter(m => !BUILT_IN_METRICS.includes(m[0])).map(([k, l, , up]) => [k, l, up])];
 
 // players (optional) = the club list from App: with it the card loads every
 // test on file so the "unusual for her age group" check (amber) matches HQ's
@@ -41,13 +44,14 @@ export function PlayerStatHistory({ player, players }) {
     let live = true;
     let q = supabase.from("player_stat_tests").select("*");
     if (!club) q = q.eq("player_id", player.id);
-    q.order("test_date").then(({ data }) => { if (live) setTests(data || []); });
+    Promise.all([q.order("test_date"), loadStatMetrics()]).then(([{ data }]) => { if (live) setTests(data || []); });
     supabase.from("stat_flag_reviews").select("player_id, flag_id, decision").eq("player_id", player.id).then(({ data }) => { if (live) setReviews(data || []); });
     return () => { live = false; };
   }, [player?.id, club]);
   const mine = useMemo(() => (tests || []).filter(t => t.player_id === player?.id), [tests, player?.id]);
   const peers = useMemo(() => (players && tests ? statPeerStats(players.filter(x => (x.season || "") === (player?.season || "")), tests) : null), [players, tests, player?.season]);
   if (!tests || !player) return null;
+  const COLS = colsNow(), LABEL = Object.fromEntries(COLS.map(([k, l]) => [k, l]));
   const all = statResultRows(player, mine).filter(r => COLS.some(([k]) => r[k] != null));
   if (!all.length) return null;
   const flags = reviewFlags(statFlags(player, mine, { peers }), reviews, player.id).open;
@@ -86,8 +90,8 @@ export function PlayerStatHistory({ player, players }) {
                 {COLS.map(([k, , up]) => {
                   const d = change.get(k);
                   if (d == null) return <td key={k} style={{ ...td, color: C.mut }}>—</td>;
-                  // Same noise floor as the email's "better": a quarter inch / two hundredths.
-                  const good = up ? d > 0 : d < 0, noise = Math.abs(d) < (k === "dash_10y" ? 0.02 : 0.25);
+                  // Same noise floor as the email's "better": a quarter inch, two hundredths of a second, 0.2 mph.
+                  const good = up ? d > 0 : d < 0, noise = Math.abs(d) < gainMin(k);
                   return <td key={k} style={{ ...td, fontWeight: 800, color: noise ? C.mut : good ? C.grn : C.red }}>{fmtChange(k, d)}</td>;
                 })}
               </tr>

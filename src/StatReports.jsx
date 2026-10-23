@@ -27,6 +27,7 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import { supabase } from "./supabase";
 import { buildReport, flagId, reviewFlags, metricRows, fmtMetric, fmtChange, baselineLabel, statResultRows, allStatFlags, flaggedReportKeys, DEFAULT_SETTINGS, METRICS, SAMPLE_PLAYER, SAMPLE_TESTS, SAMPLE_DRAFT, SAMPLE_TEAM } from "../shared/stat-report.js";
 import { StatsLinks } from "./PlayerStats.jsx";
+import { loadStatMetrics } from "./statMetrics.js";
 import { parentMailings } from "../shared/parent-mail.js";
 
 const C = { bg: "#0a0a0a", card: "#141414", border: "#2a2a2a", gold: "#e91e8c", text: "#ffffff", mut: "#999999", red: "#ef4444", grn: "#22c55e", amb: "#f59e0b" };
@@ -46,9 +47,9 @@ const LABEL = Object.fromEntries(METRICS.map(m => [m[0], m[1]]));
 // builder (fmtMetric's vertical / 10-yard branches are plain hundredths), so a
 // computed 15.42499… reads 15.43" here, in its reason and in the email alike —
 // Math.round gave 15.42" (Oct 12 2026; same helper as the player card's fk).
-const fv = (k, v) => fmtMetric(k === "dash_10y" ? k : "vertical", v);
+const fv = (k, v) => fmtMetric(k === "dash_10y" || k === "sprint_mph" ? k : "vertical", v);
 const flagC = (x) => (Array.isArray(x) ? x.some(f => f.level === "red") : x === "red") ? C.red : C.amb;
-const hasTryout = (p) => [p?.stand_reach, p?.approach_touch, p?.jump_touch, p?.sprint_10y].some(v => v != null && v !== "") || !!p?.stat_baseline_date;
+const hasTryout = (p) => [p?.stand_reach, p?.approach_touch, p?.jump_touch, p?.sprint_10y, p?.sprint_mph].some(v => v != null && v !== "") || !!p?.stat_baseline_date;
 // Ticking a flagged metric back in is saved in the draft's metrics array
 // (stat_report_drafts.metrics is TEXT[]) as "ok:<key>:<fingerprint of the
 // flags behind it>". It covers exactly those numbers: fix one, or a new test
@@ -64,8 +65,9 @@ const flagPrint = (flags, k) => {
 };
 const ackOf = (flags, k) => `ok:${k}:${flagPrint(flags, k)}`;
 // The fix box: which boxes a result has, and where tryout numbers live on players.
-const FIX_KEYS = ["stand_reach", "approach_touch", "standing_touch", "broad_jump", "dash_10y"];
-const TRYOUT_COL = { stand_reach: "stand_reach", approach_touch: "approach_touch", standing_touch: "jump_touch", dash_10y: "sprint_10y" };
+const FIX_KEYS = ["stand_reach", "approach_touch", "standing_touch", "broad_jump", "dash_10y", "sprint_mph"];
+const TRYOUT_COL = { stand_reach: "stand_reach", approach_touch: "approach_touch", standing_touch: "jump_touch", dash_10y: "sprint_10y", sprint_mph: "sprint_mph" };
+const PLAIN = new Set(["dash_10y", "sprint_mph"]);   // typed as plain numbers (seconds, mph), not feet-and-inches
 
 export default function StatReports({ coach, players = [], session }) {
   const [settings, setSettings] = useState(null);
@@ -102,6 +104,7 @@ export default function StatReports({ coach, players = [], session }) {
       supabase.from("stat_report_sends").select("player_id, sent_at, test, recipients, sent_by").order("sent_at", { ascending: false }),
       supabase.from("practice_assignments").select("team_name, day, slot, phase"),
       supabase.from("stat_flag_reviews").select("*"),
+      loadStatMetrics(),   // tests added in HQ join the metric chips and the emails
     ]);
     setReviews(rv.data || []);
     setSettings({ ...DEFAULT_SETTINGS, ...(s.data?.data || {}) });
@@ -264,8 +267,8 @@ export default function StatReports({ coach, players = [], session }) {
   const saveEntry = async () => {
     const e = entry;
     const row = { player_id: player.id, team_name: player.team_assignment, test_date: e.date, recorded_by: me, source: "app",
-      stand_reach: parseIn(e.stand_reach), approach_touch: parseIn(e.approach_touch), standing_touch: parseIn(e.standing_touch), broad_jump: parseIn(e.broad_jump), dash_10y: e.dash_10y ? parseFloat(e.dash_10y) : null, notes: e.notes || null };
-    if (!["stand_reach", "approach_touch", "standing_touch", "broad_jump", "dash_10y"].some(k => row[k] != null)) { setMsg({ err: "Enter at least one result." }); return; }
+      stand_reach: parseIn(e.stand_reach), approach_touch: parseIn(e.approach_touch), standing_touch: parseIn(e.standing_touch), broad_jump: parseIn(e.broad_jump), dash_10y: e.dash_10y ? parseFloat(e.dash_10y) : null, sprint_mph: e.sprint_mph ? parseFloat(e.sprint_mph) : null, notes: e.notes || null };
+    if (!["stand_reach", "approach_touch", "standing_touch", "broad_jump", "dash_10y", "sprint_mph"].some(k => row[k] != null)) { setMsg({ err: "Enter at least one result." }); return; }
     const reach = row.stand_reach ?? metricRows(player, testsBy.get(player.id) || []).find(r => r.key === "stand_reach")?.latest ?? (player.stand_reach != null ? +player.stand_reach : null);
     // Stored to the hundredth like api/stats-form.js (Oct 12 2026).
     if (row.approach_touch != null && reach != null) row.vertical = +(row.approach_touch - reach).toFixed(2);
@@ -284,7 +287,7 @@ export default function StatReports({ coach, players = [], session }) {
   const startFix = (row) => {
     const mine = testsBy.get(player.id) || [];
     const r = statResultRows(player, mine).find(x => x.row === row); if (!r) return;
-    const src = row === "tryout" ? { stand_reach: player.stand_reach, approach_touch: player.approach_touch, standing_touch: player.jump_touch, dash_10y: player.sprint_10y } : mine.find(t => "test:" + t.id === row) || {};
+    const src = row === "tryout" ? { stand_reach: player.stand_reach, approach_touch: player.approach_touch, standing_touch: player.jump_touch, dash_10y: player.sprint_10y, sprint_mph: player.sprint_mph } : mine.find(t => "test:" + t.id === row) || {};
     setFix({ row, from: r.from, vals: Object.fromEntries(FIX_KEYS.map(k => [k, num(src[k]) == null ? "" : String(num(src[k]))])) });
   };
   const saveFix = async () => {
@@ -293,13 +296,13 @@ export default function StatReports({ coach, players = [], session }) {
     for (const k of FIX_KEYS) {
       if (tryout && k === "broad_jump") continue;
       const s = String(fix.vals[k] ?? "").trim();
-      const n = s === "" ? null : k === "dash_10y" ? parseFloat(s) : parseIn(s);
+      const n = s === "" ? null : PLAIN.has(k) ? parseFloat(s) : parseIn(s);
       if (s !== "" && !Number.isFinite(n)) { setMsg({ err: `Couldn't read ${LABEL[k]} "${s}".` }); return; }
       v[k] = n;
     }
     const t0 = tryout ? null : mine.find(t => "test:" + t.id === row);
     if (!tryout && !t0) return;
-    const p2 = tryout ? { ...p, stand_reach: v.stand_reach, approach_touch: v.approach_touch, jump_touch: v.standing_touch, sprint_10y: v.dash_10y } : p;
+    const p2 = tryout ? { ...p, stand_reach: v.stand_reach, approach_touch: v.approach_touch, jump_touch: v.standing_touch, sprint_10y: v.dash_10y, sprint_mph: v.sprint_mph } : p;
     const tests2 = tryout ? mine : mine.map(t => t === t0 ? { ...t, ...v, vertical: null } : t);
     const before = new Map(statResultRows(p, mine).map(r => [r.row, r]));
     const now = new Date().toISOString(), testUpd = [];
@@ -559,7 +562,7 @@ export default function StatReports({ coach, players = [], session }) {
                 <div style={{ border: "1px solid " + C.gold, borderRadius: 10, padding: 10, marginBottom: 12 }}>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 8 }}>
                     <label><span style={lbl}>Test date</span><input type="date" value={entry.date} onChange={e => setEntry({ ...entry, date: e.target.value })} style={inp} /></label>
-                    {[["stand_reach", "Standing reach", "7'6 or 90"], ["approach_touch", "Approach touch", "9'7 or 115"], ["standing_touch", "Standing jump touch", "8'5"], ["broad_jump", "Broad jump (in)", "86"], ["dash_10y", "10-yard (sec)", "1.88"]].map(([k, l, ph]) => (
+                    {[["stand_reach", "Standing reach", "7'6 or 90"], ["approach_touch", "Approach touch", "9'7 or 115"], ["standing_touch", "Standing jump touch", "8'5"], ["broad_jump", "Broad jump (in)", "86"], ["dash_10y", "10-yard (sec)", "1.88"], ["sprint_mph", "Sprint speed (mph)", "17.5"]].map(([k, l, ph]) => (
                       <label key={k}><span style={lbl}>{l}</span><input value={entry[k] || ""} placeholder={ph} onChange={e => setEntry({ ...entry, [k]: e.target.value })} style={inp} /></label>
                     ))}
                   </div>

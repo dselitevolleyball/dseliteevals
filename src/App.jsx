@@ -41,6 +41,7 @@ import { HQ_DSSC } from "./hq-base.js";
 import DsscPeople from "./dssc/DsscPeople.jsx";
 import DsscInbox from "./dssc/DsscInbox.jsx";
 import DsscMarketing from "./dssc/DsscMarketing.jsx";
+import DsscReach from "./dssc/DsscReach.jsx";
 import { StaffClock, StaffHoursAdmin } from "./dssc/DsscStaff.jsx";
 import { parentMailings, greetingFor } from "../shared/parent-mail.js";
 import { mergePay, TIER_KEYS as PAY_TIER_KEYS, isPodClinic as isPodClinicPay, podPay as podPayShared, classRateFor, staffRateFor, personKey as payKey } from "../shared/dssc-pay.js";
@@ -434,6 +435,8 @@ if (HQ_DSSC) Object.assign(C, { bg:"#082C2A", card:"#0C3A37", border:"#1F5A55", 
 const OWNER_EMAILS = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"];
 // DSSC clinic directors — schedule/assign/oversee clinics alongside admins.
 const DSSC_DIRECTOR_EMAILS = ["hunterhaleysc10@gmail.com", "hunter@drippingsportsclub.com"];
+// Reach Performance's coach: his testing home in DS Elite, Reach Stats in DSSC HQ.
+const REACH_COACH_EMAILS = ["brandon@drippingsportsclub.com"];
 
 // ── DSSC Skill Pod economics ────────────────────────────────────────────────
 // A pod is position-specific small-group training, 2-4 players. Coaches are
@@ -2251,7 +2254,7 @@ export default function App() {
   // Brandon runs Reach and does no volleyball coaching: his login is the
   // testing screen and nothing else (Drew, Oct 9 2026).
   // ...but in DSSC HQ (/hq) he is Reach staff in the club app (Drew, 14 Oct 2026).
-  const isReachOnly = !HQ_DSSC && !canOps && ["brandon@drippingsportsclub.com"].includes(String(coach?.email || "").trim().toLowerCase());
+  const isReachOnly = !HQ_DSSC && !canOps && REACH_COACH_EMAILS.includes(String(coach?.email || "").trim().toLowerCase());
   // DSSC as its own app (Drew, 13 Oct 2026). The /hq build (drippingsportsclub.com/hq)
   // and anyone whose login is DSSC-only (coaches.dssc_only: basketball coaches,
   // interns, the DSSC administrators) only ever see DSSC. dssc_role: admin runs
@@ -2261,6 +2264,8 @@ export default function App() {
   const dsscOnly   = HQ_DSSC || !!coach?.dssc_only;
   const isDsscStaff = dsscRole === "staff";
   const isDsscDirector = canOps || dsscRole === "admin" || DSSC_DIRECTOR_EMAILS.includes(String(coach?.email || "").trim().toLowerCase());
+  // Reach Stats (DSSC → Reach Performance): Coach Brandon and the directors (Oct 23 2026).
+  const canReach = isDsscDirector || isReachStaffCoach(coach) || REACH_COACH_EMAILS.includes(String(coach?.email || "").trim().toLowerCase());
   // No sports set: a director sees both, a DS Elite coach coaches volleyball.
   const dsscSports = Array.isArray(coach?.sports) && coach.sports.length ? coach.sports : (isDsscDirector ? ["volleyball", "basketball"] : ["volleyball"]);
   // Whose staff hours this login sees (coaches.staff_view; Drew, 14 Oct 2026):
@@ -2326,7 +2331,7 @@ export default function App() {
   // colors, navigation, home — between DS Elite and Dripping Springs Sports
   // Club, instead of DSSC living as a tab inside DS Elite. Opening a DSSC
   // screen by any route (a push link, the home card) flips it too.
-  const DSSC_VIEWS = new Set(["dssc","clinics","dssctexts","reachtexts","dssccrm","dsscinbox","dsscmarketing","dssccal","dssctime","pods","privates","dssccamp","courts","dsscplan","staffhours","staffadmin","dsscpeople","dsscpay","projects"]);
+  const DSSC_VIEWS = new Set(["dssc","clinics","dssctexts","reachtexts","dssccrm","dsscinbox","dsscmarketing","reachstats","dssccal","dssctime","pods","privates","dssccamp","courts","dsscplan","staffhours","staffadmin","dsscpeople","dsscpay","projects"]);
   // Screens a DSSC-only login may open: DSSC's own plus the shared basics.
   const DSSC_ONLY_OK = new Set([...DSSC_VIEWS, "home", "notifications", "activity", "faq"]);
   const [workspace, setWorkspace] = useState(() => { if (HQ_DSSC) return "dssc"; try { return localStorage.getItem("dse.workspace") === "dssc" ? "dssc" : "dse"; } catch { return "dse"; } });
@@ -14164,6 +14169,7 @@ export default function App() {
                 <div><span style={lbl}>Approach Touch ({u})</span>{heightField("approach_touch","e.g. 108","e.g. 274")}</div>
                 <div><span style={lbl}>Vertical (auto, in)</span><div style={{...editInp,display:"flex",alignItems:"center",minHeight:36,fontWeight:800,color:verticalVal!=null?C.grn:C.mut,background:C.card}} title="Jump Touch − Stand &amp; Reach">{verticalVal!=null?verticalVal.toFixed(1)+'"':"—"}</div></div>
                 <div><span style={lbl}>10 Yard Run (sec)</span><DebouncedField style={editInp} placeholder='e.g. 1.85' value={p.sprint_10y==null?"":String(p.sprint_10y)} onCommit={v=>{const n=parseFloat(v); upd(p.id,{sprint_10y:(v.trim()===""||isNaN(n))?null:n});}} /></div>
+                <div><span style={lbl}>Sprint Speed (mph)</span><DebouncedField style={editInp} placeholder='e.g. 17.5' value={p.sprint_mph==null?"":String(p.sprint_mph)} onCommit={v=>{const n=parseFloat(v); upd(p.id,{sprint_mph:(v.trim()===""||isNaN(n))?null:n});}} /></div>
                 <div><span style={lbl}>Tryout Attended</span><label style={{display:"flex",alignItems:"center",gap:8,padding:"9px 4px",cursor:"pointer"}}><input type="checkbox" checked={!!p.tryout_attended} onChange={e=>upd(p.id,{tryout_attended:e.target.checked})} style={{width:18,height:18,accentColor:C.gold,cursor:"pointer"}} /><span style={{fontSize:13,fontWeight:600,color:p.tryout_attended?C.grn:C.mut}}>{p.tryout_attended?"Present":"Not marked"}</span></label></div>
                 <div><span style={lbl}>Rise Tryout</span><label style={{display:"flex",alignItems:"center",gap:8,padding:"9px 4px",cursor:"pointer"}}><input type="checkbox" checked={!!p.rise_tryout} onChange={e=>upd(p.id,{rise_tryout:e.target.checked})} style={{width:18,height:18,accentColor:C.gold,cursor:"pointer"}} /><span style={{fontSize:13,fontWeight:600,color:p.rise_tryout?C.gold:C.mut}}>{p.rise_tryout?"At Rise tryout":"No"}</span></label></div>
               </div>
@@ -32759,6 +32765,7 @@ export default function App() {
       vertical:       { label:"Vertical",       unit:'"', get:p=>vertical(p),                                                            lowerBetter:false, fmt:v=>v.toFixed(1) },
       broad_jump:     { label:"Broad Jump",     unit:'"', get:p=>{const v=ptBroad.get(p.id); return Number.isFinite(v)?v:null;}, lowerBetter:false, fmt:v=>v.toFixed(1) },
       sprint_10y:     { label:"10 Yard Run",    unit:"s", get:p=>{const v=parseFloat(p.sprint_10y);     return Number.isFinite(v)?v:null;}, lowerBetter:true,  fmt:v=>v.toFixed(2) },
+      sprint_mph:     { label:"Sprint Speed",   unit:" mph", get:p=>{const v=parseFloat(p.sprint_mph);  return Number.isFinite(v)?v:null;}, lowerBetter:false, fmt:v=>v.toFixed(1) },
       stand_reach:    { label:"Stand & Reach",  unit:'"', get:p=>{const v=parseFloat(p.stand_reach);    return Number.isFinite(v)?v:null;}, lowerBetter:false, fmt:v=>v.toFixed(1) },
     };
     const xCfg = METRICS[ptX], yCfg = METRICS[ptY];
@@ -32905,7 +32912,7 @@ export default function App() {
   // ── Navigation (src/Nav.jsx): one list drives the desktop sidebar, the phone
   // drawer, bottom bar and section chips, gated exactly like the screen guards.
   const navCtx = {
-    workspace, canOps, isAdmin, isOwner, canViewTeams, hasTeams: myTeamNames.length > 0, canSendReports, isDsscDirector, dsscOnly, isDsscStaff, canSeeStaffHours, canEditPay, isReachStaff: isReachStaffCoach(coach), pins: navPins,
+    workspace, canOps, isAdmin, isOwner, canViewTeams, hasTeams: myTeamNames.length > 0, canSendReports, isDsscDirector, dsscOnly, isDsscStaff, canSeeStaffHours, canEditPay, canReach, isReachStaff: isReachStaffCoach(coach), pins: navPins,
     counts: {
       smsDse: smsUnread.dse, smsDssc: smsUnread.dssc, inboxNew, mktDrafts, notif: unreadCount,
       issuesOpen: incidents.filter(r => r.status === "open").length,
@@ -33191,6 +33198,7 @@ export default function App() {
         {view==="dsscinbox" && (isDsscDirector
           ? <DsscInbox coach={coach} initialId={dsscInboxInit} onConsumedInitial={()=>setDsscInboxInit(null)} onChanged={loadInboxNew} />
           : opsDenied)}
+        {view==="reachstats" && (canReach ? <DsscReach /> : opsDenied)}
         {view==="dsscmarketing" && (isDsscDirector
           ? <DsscMarketing coach={coach} initialWeek={dsscMktWeek} initialTab={dsscMktTab} onConsumedInitial={()=>{ setDsscMktWeek(null); setDsscMktTab(null); }} onChanged={loadMktDrafts} />
           : opsDenied)}

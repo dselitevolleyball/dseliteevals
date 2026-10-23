@@ -18,6 +18,7 @@ import * as SR from "../shared/stat-report.js";
 import { writeCoachTake, positionNames, AI_MODEL } from "./_lib/stat-report-ai.js";
 import { REPORT_SENDERS } from "./stat-report.js";
 import { isYouthTeam } from "../shared/reach-plan.js";
+import { loadCustomMetrics } from "./_lib/stat-metrics.js";
 
 export const config = { maxDuration: 300 };
 
@@ -68,6 +69,7 @@ export default async function handler(req, res) {
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = process.env;
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return res.status(500).json({ error: "Server not configured" });
   const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
+  await loadCustomMetrics(sb);   // tests added in HQ join METRICS
 
   const bearer = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
   if (!bearer) return res.status(401).json({ error: "Sign in first" });
@@ -84,7 +86,7 @@ export default async function handler(req, res) {
   if (!playerId && !team) return res.status(400).json({ error: "player_id or team required" });
   const refresh = !!b.refresh || !!playerId, force = !!b.force, dry = !!b.dry;
 
-  const COLS = "id, first_name, last_name, team_assignment, offer_status, positions, stand_reach, approach_touch, jump_touch, sprint_10y, stat_baseline_date";
+  const COLS = "id, first_name, last_name, team_assignment, offer_status, positions, stand_reach, approach_touch, jump_touch, sprint_10y, sprint_mph, stat_baseline_date";
   let roster;
   if (playerId) {
     const { data: p, error } = await sb.from("players").select(COLS).eq("id", playerId).maybeSingle();

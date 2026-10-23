@@ -15,8 +15,8 @@
 // (unusual for her age group) needs the whole club's numbers and stays in HQ.
 // Checked flag-for-flag against statFlags on every real player plus 20,000
 // random histories (Oct 12 2026). Global on purpose so that check can load it.
-//   base  = { date: stat_baseline_date, stand_reach, approach_touch, standing_touch, dash_10y }
-//   tests = [{ id, date, stand_reach, approach_touch, standing_touch, vertical, broad_jump, dash_10y }]
+//   base  = { date: stat_baseline_date, stand_reach, approach_touch, standing_touch, dash_10y, sprint_mph }
+//   tests = [{ id, date, stand_reach, approach_touch, standing_touch, vertical, broad_jump, dash_10y, sprint_mph }]
 //   -> [{ key, from, date, row, value, level, reason, rule, related, prevRow? }], red first
 function statSheetFlags(R, L, base, tests) {
   function num(v) { var n = parseFloat(v); return isFinite(n) ? n : null; }
@@ -26,13 +26,13 @@ function statSheetFlags(R, L, base, tests) {
   function signed(d) { var h = hund(d); return (h > 0 ? "+" : h < 0 ? "−" : "±") + (Math.abs(h) / 100).toFixed(2); }
   function day(iso) { return new Date(String(iso).slice(0, 10) + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" }); }
   function has(a, x) { return a.indexOf(x) >= 0; }
-  var KEYS = ["stand_reach", "approach_touch", "standing_touch", "vertical", "broad_jump", "dash_10y"];
+  var KEYS = ["stand_reach", "approach_touch", "standing_touch", "vertical", "broad_jump", "dash_10y", "sprint_mph"];
   // Her results oldest first: the baseline, then each test (statResultRows).
   base = base || {};
   var sr = num(base.stand_reach), ap0 = num(base.approach_touch);
   var bd = /^\d{4}-\d{2}-\d{2}/.test(String(base.date || "")) ? String(base.date).slice(0, 10) : null;
   var rows = [{ row: "tryout", from: bd ? day(bd) : "Tryouts", date: bd, tryout: true,
-    stand_reach: sr, approach_touch: ap0, standing_touch: num(base.standing_touch), vertical: sr != null && ap0 != null ? ap0 - sr : null, broad_jump: null, dash_10y: num(base.dash_10y),
+    stand_reach: sr, approach_touch: ap0, standing_touch: num(base.standing_touch), vertical: sr != null && ap0 != null ? ap0 - sr : null, broad_jump: null, dash_10y: num(base.dash_10y), sprint_mph: num(base.sprint_mph),
     reach: sr, reachOwn: sr != null, reachRow: sr != null ? "tryout" : null, vertEntered: null }];
   var reach = sr, reachRow = rows[0].reachRow;
   (tests || []).slice().sort(function (a, b) { return String(a.date).localeCompare(String(b.date)) || (Number(a.id) || 0) - (Number(b.id) || 0); }).forEach(function (t, i) {
@@ -59,7 +59,12 @@ function statSheetFlags(R, L, base, tests) {
     Object.keys(R.range).forEach(function (k) {
       var v = r[k]; if (v == null) return;
       var lo = R.range[k][0], hi = R.range[k][1], Lk = L[k], why = null;
-      if (k === "dash_10y") {
+      if (k === "sprint_mph") {
+        if (v >= 100) why = Lk + " " + typed(v) + " mph: looks like it was typed without the decimal point (" + d2(v / (v >= 1000 ? 100 : 10)) + " mph?)";
+        else if (v > hi && v < 45) why = Lk + " " + d2(v) + " mph is faster than any youth athlete runs. Typed in km/h? (" + d2(v / 1.609) + " mph)";
+        else if (v >= 45) why = Lk + " " + d2(v) + " mph can't be right; likely a typo";
+        else if (v < lo) why = Lk + " " + d2(v) + " mph is slower than a jog; likely a typo";
+      } else if (k === "dash_10y") {
         if (v >= 100) why = Lk + " " + typed(v) + "s: looks like it was typed without the decimal point (" + d2(v / (v >= 1000 ? 1000 : 100)) + "s?)";
         else if (v >= 10) why = Lk + " " + typed(v) + "s: looks like a typo (" + d2(v / 10) + "s?)";
         else if (v < lo) why = Lk + " " + d2(v) + "s is faster than any youth player runs; likely a typo";
@@ -109,8 +114,9 @@ function statSheetFlags(R, L, base, tests) {
   // C. Change vs her previous result for that metric; the flag sits on the
   // later result and is skipped when a red flag at either end explains it.
   [["stand_reach", "stand_reach", ["stand_reach"], ["vertical"]], ["vertical", "vertical", ["vertical", "approach_touch", "stand_reach"], ["approach_touch"]],
-    ["standJump", "standing_touch", ["standing_touch", "stand_reach"], []], ["broad_jump", "broad_jump", ["broad_jump"], []], ["dash_10y", "dash_10y", ["dash_10y"], []]].forEach(function (c4) {
-    var m = c4[0], key = c4[1], deps = c4[2], related = c4[3], c = R.change[m], u = m === "dash_10y" ? "s" : '"', prev = null;
+    ["standJump", "standing_touch", ["standing_touch", "stand_reach"], []], ["broad_jump", "broad_jump", ["broad_jump"], []], ["dash_10y", "dash_10y", ["dash_10y"], []], ["sprint_mph", "sprint_mph", ["sprint_mph"], []]].forEach(function (c4) {
+    var m = c4[0], key = c4[1], deps = c4[2], related = c4[3], c = R.change[m], u = m === "dash_10y" ? "s" : m === "sprint_mph" ? " mph" : '"', prev = null;
+    if (!c) return;   // an older page cached before this test existed
     rows.forEach(function (r) {
       var v = r[m]; if (v == null) return;   // stand_reach is only her own, never a carried one
       if (prev) {
@@ -137,7 +143,9 @@ function statSheetFlags(R, L, base, tests) {
 (function () {
   var D = JSON.parse(document.getElementById("data").textContent);
   // [key, label, unit, higher is better]
-  var M = [["stand_reach", "Stand & reach", '"', 1], ["approach_touch", "Jump approach", '"', 1], ["standing_touch", "Standing jump", '"', 1], ["vertical", "Vertical", '"', 1], ["broad_jump", "Broad jump", '"', 1], ["dash_10y", "10 yd dash", "s", 0]];
+  var M = [["stand_reach", "Stand & reach", '"', 1], ["approach_touch", "Jump approach", '"', 1], ["standing_touch", "Standing jump", '"', 1], ["vertical", "Vertical", '"', 1], ["broad_jump", "Broad jump", '"', 1], ["dash_10y", "10 yd dash", "s", 0], ["sprint_mph", "Sprint speed", " mph", 1]]
+    // Tests added in HQ (Reach -> Tests), after the built-in boxes.
+    .concat((D.custom || []).map(function (c) { return [c[0], c[1], c[2] === "sec" ? "s" : c[2] === "in" ? '"' : c[2] ? " " + c[2] : "", c[3] ? 1 : 0]; }));
   var app = document.getElementById("app");
   var by = ""; try { by = localStorage.getItem("statsBy") || ""; } catch (e) { /* private mode */ }
   // Jump approach and standing jump can be typed in centimeters (Drew, Oct 2026 - same as the tryout
@@ -166,7 +174,7 @@ function statSheetFlags(R, L, base, tests) {
   function inch(v) {
     v = String(v || "").trim(); if (!v) return null;
     var m = /^(\d+)\s*(?:'|ft|feet|-)\s*(\d+(?:\.\d+)?)?\s*(?:"|in)?$/i.exec(v); if (m) return +m[1] * 12 + (m[2] ? +m[2] : 0);
-    m = /^(\d+(?:\.\d+)?)\s*(?:"|in|s|sec)?$/i.exec(v); return m ? +m[1] : NaN;
+    m = /^(\d+(?:\.\d+)?)\s*(?:"|in|s|sec|mph|[a-z]{1,6})?$/i.exec(v); return m ? +m[1] : NaN;
   }
   function fmtDate(d) { if (!d) return "Tryouts"; return new Date(d + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "2-digit" }); }
   // Vertical for every row, carrying the last stand & reach forward when it wasn't re-measured.
@@ -197,7 +205,7 @@ function statSheetFlags(R, L, base, tests) {
     app.innerHTML = (fromList ? '<a class="back" href="' + esc(document.referrer) + '" style="display:inline-block;text-decoration:none">‹ All teams</a>' : "") + "<h1>" + esc(D.team) + " — testing</h1>" +
       '<p class="hint">Latest result for each player. ▲▼ is the change from the test before — green is better (for the dash, faster is better). Tap a player to see every test and add new numbers.</p>' +
       '<div class="tw"><table class="list"><thead><tr><th>Player</th>' + M.map(function (m) { return "<th>" + m[1] + "</th>"; }).join("") + "<th></th></tr></thead><tbody>" +
-      (rows || '<tr><td colspan="8">No players on this team yet.</td></tr>') + "</tbody></table></div>";
+      (rows || '<tr><td colspan="' + (M.length + 2) + '">No players on this team yet.</td></tr>') + "</tbody></table></div>";
     app.querySelectorAll("tr[data-id]").forEach(function (tr) { tr.addEventListener("click", function () { detail(+tr.dataset.id); }); });
     window.scrollTo(0, 0);
   }
@@ -217,7 +225,7 @@ function statSheetFlags(R, L, base, tests) {
     function field(m) {
       if (m[0] === "vertical") return '<label><span>Vertical (auto)</span><div class="auto" id="vert">—</div><div class="cmp" id="c_vertical"></div><div id="w_vertical"></div></label>';
       var t = points(h, m[0]);
-      return '<label><span>' + m[1] + '</span><div class="iw"><input inputmode="decimal" name="' + m[0] + '" autocomplete="off" placeholder="' + (t[1] == null ? "" : (LEN[m[0]] ? inUnit(t[1]) : fv(t[1], m[2]))) + '"><em>' + (m[2] === "s" ? "sec" : LEN[m[0]] ? unit : "in") + '</em></div><div class="cmp" id="c_' + m[0] + '"></div><div id="w_' + m[0] + '"></div></label>';
+      return '<label><span>' + m[1] + '</span><div class="iw"><input inputmode="decimal" name="' + m[0] + '" autocomplete="off" placeholder="' + (t[1] == null ? "" : (LEN[m[0]] ? inUnit(t[1]) : fv(t[1], m[2]))) + '"><em>' + (m[2] === "s" ? "sec" : LEN[m[0]] ? unit : m[2] === '"' ? "in" : esc(m[2].trim())) + '</em></div><div class="cmp" id="c_' + m[0] + '"></div><div id="w_' + m[0] + '"></div></label>';
     }
     app.innerHTML = '<button class="back">‹ All players</button><h1>' + (p.num ? '<span class="no">#' + esc(p.num) + "</span> " : "") + esc(p.name) + "</h1>" +
       '<div class="tw"><table class="list hist"><thead><tr><th>Date</th>' + M.map(function (m) { return "<th>" + m[1] + "</th>"; }).join("") + "</tr></thead><tbody>" + histRows + "</tbody></table></div>" +

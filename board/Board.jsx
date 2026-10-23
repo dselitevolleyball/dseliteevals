@@ -17,7 +17,7 @@
 // Everything is drawn on a fixed 1920x1080 stage scaled to the screen.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { fmtMetric } from "../shared/stat-report.js";
+import { fmtMetric, fmtChange, gainMin, metricInfo, setCustomMetrics } from "../shared/stat-report.js";
 import LOGO from "../public/dssc/logo-horizontal-white.png";
 
 const STAGE_W = 1920, STAGE_H = 1080;
@@ -31,9 +31,9 @@ const API = import.meta.env.BASE_URL + "api/leaderboard";
 const ALL = { gender: "all", age: "all", team: "all" };
 const BOOT = Date.now();
 
-const GAIN_MIN = (k) => (k === "dash_10y" ? 0.02 : 0.25);
-const realGain = (k, g) => g != null && g >= GAIN_MIN(k);
-const fmtGain = (k, g) => (k === "dash_10y" ? "−" + g.toFixed(2) + "s" : "+" + g.toFixed(2) + '"');
+// gain = improvement (always positive when better): +2.50", −0.12s, +0.80 mph.
+const realGain = (k, g) => g != null && g >= gainMin(k);
+const fmtGain = (k, g) => fmtChange(k, metricInfo(k)?.up === false ? -g : g);
 const fmtDay = (iso) => (iso ? new Date(iso + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "Tryouts");
 const matches = (a, f) => (f.gender === "all" || a.g === f.gender) && (f.age === "all" || a.ag === f.age) && (f.team === "all" || a.t === f.team);
 const metaOf = (a) => [a.t, a.ag].filter(Boolean).join(" · ");
@@ -450,6 +450,7 @@ export default function Board() {
         if (!r.ok || !d.ok) throw new Error(d.error || "HTTP " + r.status);
         if (d.same) { if (dataRef.current) settle(dataRef.current); }
         else {
+          setCustomMetrics(d.custom || []);   // tests added in HQ: their units and direction for the numbers
           verRef.current = d.v; dataRef.current = d; settle(d); setData(d); setError(null);
           // First load: the ticker starts with today's results already on file.
           if (!tickerInit.current) {

@@ -24,6 +24,7 @@ import crypto from "crypto";
 import { createClient } from "@supabase/supabase-js";
 import { appOrigin } from "../shared/app-origin.js";
 import { METRICS, STAT_FLAG_RULES } from "../shared/stat-report.js";
+import { loadCustomMetrics } from "./_lib/stat-metrics.js";
 
 const OWNERS = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"];
 const b64url = (buf) => Buffer.from(buf).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
@@ -48,6 +49,7 @@ export default async function handler(req, res) {
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = process.env;
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return res.status(500).send("Not configured");
   const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
+  const customLive = (await loadCustomMetrics(sb)).filter(m => m.active !== false);   // tests added in HQ join METRICS
   const url = new URL(req.url, "https://x");
 
   // Admin: every team's link.
@@ -80,7 +82,7 @@ export default async function handler(req, res) {
       + list.map(t => '<a class="team" href="/stats?t=' + signTeam(t.team_name, SUPABASE_SERVICE_ROLE_KEY) + '"><b>' + esc(t.team_name) + '</b><span>' + n(t.team_name) + " players</span></a>").join("") + "</div>"));
   }
   if (!team) { res.setHeader("Content-Type", "text/html; charset=utf-8"); return res.status(403).send(page("Link not valid", `<h1>This link isn't valid</h1><p>Ask Drew for the team's testing link.</p>`)); }
-  const { data: players } = await sb.from("players").select("id, first_name, last_name, jersey_number, stand_reach, approach_touch, jump_touch, sprint_10y, stat_baseline_date, offer_status")
+  const { data: players } = await sb.from("players").select("id, first_name, last_name, jersey_number, stand_reach, approach_touch, jump_touch, sprint_10y, sprint_mph, stat_baseline_date, offer_status")
     .eq("team_assignment", team).order("last_name");
   const roster = (players || []).filter(p => !/declin|releas|withdr|cancel/i.test(p.offer_status || ""));
 
@@ -97,14 +99,16 @@ export default async function handler(req, res) {
     const rows = [], bad = [];
     for (const r of Array.isArray(body.rows) ? body.rows : []) {
       if (!ids.has(String(r.player_id))) continue;
-      const v = { stand_reach: inches(r.stand_reach), approach_touch: inches(r.approach_touch), standing_touch: inches(r.standing_touch), broad_jump: inches(r.broad_jump), dash_10y: secs(r.dash_10y) };
-      if (Object.values(v).some(x => Number.isNaN(x))) { bad.push(r.player_id); continue; }
-      if (Object.values(v).every(x => x == null) && !String(r.notes || "").trim()) continue;
+      const v = { stand_reach: inches(r.stand_reach), approach_touch: inches(r.approach_touch), standing_touch: inches(r.standing_touch), broad_jump: inches(r.broad_jump), dash_10y: secs(r.dash_10y), sprint_mph: secs(r.sprint_mph) };
+      // Tests added in HQ (stat_metrics) ride in extra: { key: number }.
+      const extra = Object.fromEntries(customLive.map(m => [m.key, m.unit === "in" ? inches(r[m.key]) : secs(r[m.key])]).filter(([, x]) => x != null));
+      if ([...Object.values(v), ...Object.values(extra)].some(x => Number.isNaN(x))) { bad.push(r.player_id); continue; }
+      if (Object.values(v).every(x => x == null) && !Object.keys(extra).length && !String(r.notes || "").trim()) continue;
       const reach = v.stand_reach ?? reachOf.get(String(r.player_id));
       // Hundredths, like every number in the reports (Drew, Oct 12 2026: "two
       // decimal points like 3.14") — 104.72 − 83 is 21.72", not 21.7".
       const vert = v.approach_touch != null && reach != null ? +(v.approach_touch - reach).toFixed(2) : null;
-      rows.push({ player_id: Number(r.player_id), test_date: date, team_name: team, ...v, vertical: vert, notes: String(r.notes || "").trim().slice(0, 300) || null, recorded_by: by, source: "stats-link", updated_at: new Date().toISOString() });
+      rows.push({ player_id: Number(r.player_id), test_date: date, team_name: team, ...v, extra, vertical: vert, notes: String(r.notes || "").trim().slice(0, 300) || null, recorded_by: by, source: "stats-link", updated_at: new Date().toISOString() });
     }
     if (bad.length) return res.status(400).json({ error: "Some numbers couldn't be read — check the highlighted players.", bad });
     if (!rows.length) return res.status(400).json({ error: "Nothing to save yet — enter at least one number." });
@@ -113,7 +117,8 @@ export default async function handler(req, res) {
     const { data: same } = await sb.from("player_stat_tests").select("*").eq("test_date", date).in("player_id", rows.map(r => r.player_id));
     for (const r of rows) {
       const old = (same || []).find(x => x.player_id === r.player_id); if (!old) continue;
-      for (const k of ["stand_reach", "approach_touch", "standing_touch", "broad_jump", "dash_10y", "notes"]) if (r[k] == null && old[k] != null) r[k] = old[k];
+      for (const k of ["stand_reach", "approach_touch", "standing_touch", "broad_jump", "dash_10y", "sprint_mph", "notes"]) if (r[k] == null && old[k] != null) r[k] = old[k];
+      r.extra = { ...(old.extra || {}), ...r.extra };
       const reach = r.stand_reach ?? reachOf.get(String(r.player_id));
       r.vertical = r.approach_touch != null && reach != null ? +(r.approach_touch - reach).toFixed(2) : null;
     }
@@ -136,13 +141,16 @@ export default async function handler(req, res) {
   const data = roster.map(p => ({
     id: p.id, name: ((p.first_name || "") + " " + (p.last_name || "")).trim(), num: p.jersey_number || "",
     base: /^\d{4}-\d{2}-\d{2}/.test(String(p.stat_baseline_date || "")) ? String(p.stat_baseline_date).slice(0, 10) : null,
-    hist: [{ date: "", stand_reach: num(p.stand_reach), approach_touch: num(p.approach_touch), standing_touch: num(p.jump_touch), broad_jump: null, dash_10y: num(p.sprint_10y) },
-      ...(done || []).filter(d => d.player_id === p.id).map(d => ({ id: d.id, date: d.test_date, by: d.recorded_by || "", stand_reach: num(d.stand_reach), approach_touch: num(d.approach_touch), standing_touch: num(d.standing_touch), vertical: num(d.vertical), broad_jump: num(d.broad_jump), dash_10y: num(d.dash_10y) }))],
+    hist: [{ date: "", stand_reach: num(p.stand_reach), approach_touch: num(p.approach_touch), standing_touch: num(p.jump_touch), broad_jump: null, dash_10y: num(p.sprint_10y), sprint_mph: num(p.sprint_mph) },
+      ...(done || []).filter(d => d.player_id === p.id).map(d => ({ id: d.id, date: d.test_date, by: d.recorded_by || "", stand_reach: num(d.stand_reach), approach_touch: num(d.approach_touch), standing_touch: num(d.standing_touch), vertical: num(d.vertical), broad_jump: num(d.broad_jump), dash_10y: num(d.dash_10y), sprint_mph: num(d.sprint_mph),
+        ...Object.fromEntries(customLive.map(m => [m.key, num(d.extra?.[m.key])])) }))],
   }));
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.setHeader("X-Robots-Tag", "noindex, nofollow");
-  const json = JSON.stringify({ team, today: centralToday(), players: data, rules: STAT_FLAG_RULES, labels: Object.fromEntries(METRICS.map(m => [m[0], m[1]])) }).replace(/</g, "\\u003c");
-  return res.status(200).send(page(team + " testing", '<div id="app"></div><script type="application/json" id="data">' + json + '</script><script src="/stats-sheet.js?v=7"></script>'));
+  // custom = the tests added in HQ, after the built-in boxes: [key, label, unit, higher is better].
+  const json = JSON.stringify({ team, today: centralToday(), players: data, rules: STAT_FLAG_RULES, labels: Object.fromEntries(METRICS.map(m => [m[0], m[1]])),
+    custom: customLive.map(m => [m.key, m.label, m.unit || "", m.higher_better !== false]) }).replace(/</g, "\\u003c");
+  return res.status(200).send(page(team + " testing", '<div id="app"></div><script type="application/json" id="data">' + json + '</script><script src="/stats-sheet.js?v=8"></script>'));
 }
 
 function page(title, inner) {

@@ -11,7 +11,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 // view -> [label, icon, gate, search aliases, short label for the phone bar]
-// Gates: all | ops | admin | owner | teams | mine | duty | reports | opsMine | opsTeams | dir
+// Gates: all | ops | admin | owner | teams | mine | duty | reports | opsMine | opsTeams | dir | reach (Coach Brandon + directors)
 const IT = {
   home:          ["Home", "🏠", "all", "dashboard start", "Home"],
   projects:      ["Projects", "📌", "staff", "projects tasks to do todos cards launch plan assign heatwave fall fest checklist", "Projects"],
@@ -81,6 +81,7 @@ const IT = {
   reachtexts:    ["Reach Texts", "💬", "reach", "reach text sms families athletes brandon", "Reach"],
   dssccrm:       ["People", "📇", "dir", "crm families contacts", "People"],
   dsscinbox:     ["Inbox", "📬", "dir", "inbox email info@ families website rental party reply messages questions", "Inbox"],
+  reachstats:    ["Reach Stats", "🏃", "reach", "reach performance stats testing athletes add athlete broad jump sprint speed mph 10 yard vertical approach leaderboard brandon", "Reach"],
   dsscmarketing: ["Marketing", "📣", "dir", "marketing social facebook instagram posts email newsletter campaign graphics approve drafts promote", "Marketing"],
   dssc:          ["Coach Hub", "🏠", "coach", "hub", "Hub"],
   dssccal:       ["Coverage Calendar", "📅", "dir", "coverage calendar shifts assign coaches", "Coverage"],
@@ -118,6 +119,7 @@ const DSSC_SECS = [
   ["programs", "Programs", "🏕", ["clinics", "courts", "dsscplan", "dssccamp", "pods", "privates"]],
   ["people", "Inbox, texts & people", "💬", ["dsscinbox", "dssctexts", "reachtexts", "dssccrm"]],
   ["marketing", "Marketing", "📣", ["dsscmarketing"]],
+  ["reach", "Reach Performance", "🏃", ["reachstats"]],
   ["dsscstaff", "Coaches & pay", "🗓", ["dssc", "dssccal", "dssctime", "staffhours", "staffadmin", "dsscpeople", "dsscpay"]],
 ];
 const FOOTER = ["activity", "faq", "askai"];
@@ -126,7 +128,7 @@ const ACTION_BADGES = { messages: "smsDse", dssctexts: "smsDssc", dsscinbox: "in
 const INFO_BADGES = { favorites: "favorites" };
 
 export function buildNav(ctx) {
-  const { canOps, isAdmin, isOwner, canViewTeams, hasTeams, canSendReports, isDsscDirector, dsscOnly, isDsscStaff, canSeeStaffHours, canEditPay, isReachStaff } = ctx;
+  const { canOps, isAdmin, isOwner, canViewTeams, hasTeams, canSendReports, isDsscDirector, dsscOnly, isDsscStaff, canSeeStaffHours, canEditPay, canReach, isReachStaff } = ctx;
   const n = ctx.counts || {};
   const ok = {
     all: true, ops: !!canOps, admin: !!isAdmin, owner: !!isOwner, teams: !!canViewTeams,
@@ -134,7 +136,7 @@ export function buildNav(ctx) {
     opsMine: !!(canOps && (canViewTeams || hasTeams)), opsTeams: !!(canOps && canViewTeams), dir: !!isDsscDirector,
     // DSSC staff (interns) get the clock, not the coach screens.
     staff: !!(isDsscStaff || isDsscDirector), coach: !isDsscStaff || !!isDsscDirector, staffview: !!canSeeStaffHours, payedit: !!canEditPay,
-    reach: !!(isDsscDirector || isReachStaff),
+    reach: !!(canReach || isReachStaff || isDsscDirector),
   };
   const can = (v) => !!IT[v] && ok[IT[v][2]];
   const secsFor = (ws) => {
@@ -154,7 +156,7 @@ export function buildNav(ctx) {
   // Menu badge on the phone: everything the bottom-bar slots don't already show.
   const restTotal = (shown) => sections.reduce((sum, s) => sum + s.items.reduce((t, v) => t + (!shown.includes(v) && counts(s, v) ? badge(v) : 0), 0), 0);
   const defaults = ws === "dssc"
-    ? (isDsscDirector ? (dsscOnly ? ["dsscinbox", "dsscmarketing", "clinics", "dssccal", "dssctime", "staffadmin", "dsscpeople"] : ["dsscinbox", "dsscmarketing", "clinics", "dssctexts", "dssccal", "dssctime", "dssccrm"]) : isDsscStaff ? [...(isReachStaff ? ["reachtexts"] : []), ...(canSeeStaffHours ? ["staffhours", "staffadmin"] : ["staffhours"])] : ["dssc", "dssctime", "notifications"])
+    ? (isDsscDirector ? (dsscOnly ? ["dsscinbox", "dsscmarketing", "clinics", "dssccal", "dssctime", "staffadmin", "dsscpeople"] : ["dsscinbox", "dsscmarketing", "clinics", "dssctexts", "dssccal", "dssctime", "dssccrm"]) : isDsscStaff ? [...(canReach || isReachStaff ? ["reachstats", "reachtexts"] : []), ...(canSeeStaffHours ? ["staffhours", "staffadmin"] : ["staffhours"])] : ["dssc", "dssctime", "notifications"])
     : (canOps ? ["home", "messages", isAdmin ? "dayschedule" : "coverage", "practice", "tournaments", "waiting"] : ["home", "clockin", "lineups", "practiceplan"]);
   const stored = ctx.pins && Array.isArray(ctx.pins[ws]) ? ctx.pins[ws] : null;
   const pinsBase = [...new Set(stored || defaults)];

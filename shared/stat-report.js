@@ -8,6 +8,8 @@
 //   statResultRows(player, tests) -> every result on file, oldest first (the baseline, then each test)
 //   statFlags(player, tests, { peers }) -> likely data-entry errors, staff only (see the block above it)
 //   statPeerStats(players, testsByPlayer) / allStatFlags(...) / flaggedReportKeys(...) -> HQ helpers
+//   setCustomMetrics(stat_metrics rows) -> tests added in HQ join METRICS everywhere
+//   parseMetric(key, typed) -> the number to store (8'4" -> 100), null blank, NaN unreadable
 //
 import { REACH_COPY, REACH_YOUTH_COPY, reachPlanFor, isYouthTeam } from "./reach-plan.js";
 
@@ -27,7 +29,40 @@ export const METRICS = [
   ["vertical", "Approach vertical", "in", true, null],
   ["broad_jump", "Broad jump", "in", true, null],
   ["dash_10y", "10-yard sprint", "sec", false, "sprint_10y"],
+  // Top sprint speed on a radar/laser (Drew, Oct 23 2026: "add miles per hour
+  // as a trackable measurement to all of my DS Elite athletes going forward").
+  ["sprint_mph", "Sprint speed", "mph", true, "sprint_mph"],
 ];
+export const BUILT_IN_METRICS = METRICS.map(m => m[0]);
+
+// Tests the staff add in HQ (Reach -> Tests; stat_metrics rows: key, label,
+// unit, higher_better, active) join METRICS in place, so every screen, email,
+// chart and board that walks METRICS shows them. Their numbers live in the test
+// row's `extra` ({ key: number }). Call it again whenever the list may have
+// changed; it replaces the custom part and leaves the built-ins alone.
+export function setCustomMetrics(defs) {
+  for (let i = METRICS.length - 1; i >= 0; i--) if (!BUILT_IN_METRICS.includes(METRICS[i][0])) METRICS.splice(i, 1);
+  const seen = new Set(BUILT_IN_METRICS);
+  for (const d of [...(defs || [])].filter(d => d && d.active !== false && /^[a-z][a-z0-9_]{1,40}$/.test(d.key || "")).sort((a, b) => (a.sort ?? 100) - (b.sort ?? 100) || String(a.label).localeCompare(String(b.label)))) {
+    if (seen.has(d.key)) continue;
+    seen.add(d.key);
+    METRICS.push([d.key, String(d.label || d.key), String(d.unit || "").trim(), d.higher_better !== false, null]);
+  }
+  return METRICS;
+}
+
+// A typed number -> what's stored: inches take 100, 100.5, 8'4, 8' 4", 8-4,
+// 8ft 4in; everything else a plain number. null = blank, NaN = unreadable.
+export function parseMetric(key, raw) {
+  const s = String(raw ?? "").trim().replace(/,/g, ".");
+  if (!s) return null;
+  if (unitOf(key) === "in") {
+    const m = /^(\d+(?:\.\d+)?)\s*(?:'|ft|feet)\s*(\d+(?:\.\d+)?)?\s*(?:"|in|inches)?$/i.exec(s) || /^(\d)\s*[-\s]\s*(\d+(?:\.\d+)?)\s*(?:"|in)?$/.exec(s);
+    if (m) return +m[1] * 12 + (m[2] ? +m[2] : 0);
+  }
+  const n = parseFloat(s.replace(/[^\d.\-]/g, ""));
+  return /^-?\d*\.?\d+\s*[a-z"'/]*$/i.test(s) && Number.isFinite(n) ? n : NaN;
+}
 
 export const DEFAULT_SETTINGS = {
   subject: "{player_first}'s performance testing results",
@@ -69,6 +104,12 @@ const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : nu
 const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const fmtDate = (iso) => { try { return new Date(String(iso).slice(0, 10) + "T12:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" }); } catch { return String(iso || ""); } };
 const unitOf = (key) => METRICS.find(m => m[0] === key)?.[2];
+// { label, unit, up } for a test, built-in or added in HQ (null when unknown).
+export const metricInfo = (key) => { const m = METRICS.find(x => x[0] === key); return m ? { label: m[1], unit: m[2], up: m[3] } : null; };
+// The smallest change that counts as real, not measuring noise.
+export const gainMin = (key) => { const u = unitOf(key); return u === "sec" ? 0.02 : u === "in" ? 0.25 : u === "mph" ? 0.2 : 0.01; };
+// The suffix a number and a change carry: 1.85s, 21.70", 17.20 mph, 225 lb.
+const suffix = (key) => { const u = unitOf(key); return u === "sec" ? "s" : u === "in" ? '"' : u ? " " + u : ""; };
 // Whole hundredths, half away from zero. The nudge stops float drift
 // (1.865 * 100 = 186.4999…) from rounding a typed 1.865 down to 1.86.
 const hund = (n) => Math.sign(n) * Math.round(Math.abs(n) * 100 + 1e-6);
@@ -79,16 +120,17 @@ const d2 = (n) => (hund(n) / 100).toFixed(2);
 const ftIn = (n) => { const h = hund(n), f = Math.floor(h / 1200), i = h - f * 1200; const s = i % 100 ? (i / 100).toFixed(2) : String(i / 100); return f ? `${f}' ${s}"` : `${s}"`; };
 export const fmtMetric = (key, v) => {
   if (v == null || !Number.isFinite(+v)) return "—";
-  if (unitOf(key) === "sec") return d2(+v) + "s";
-  if (key === "vertical" || key === "broad_jump") return d2(+v) + '"';   // 21.70"
-  return ftIn(+v);
+  const u = unitOf(key);
+  if (u === "in") return key === "vertical" || key === "broad_jump" || !BUILT_IN_METRICS.includes(key) ? d2(+v) + '"' : ftIn(+v);   // 21.70", 8' 4"
+  // A test added in HQ in its own unit drops the ".00" (225 lb, 12 reps).
+  return (BUILT_IN_METRICS.includes(key) || u === "sec" ? d2(+v) : String(hund(+v) / 100)) + suffix(key);   // 1.85s, 17.20 mph
 };
 // Every change shows exactly two decimals: +3.14", −0.12s, and ±0.00 when it
 // rounds to nothing (Drew, Oct 12 2026: "two decimal points like 3.14").
 export const fmtChange = (key, d) => {
   if (d == null || !Number.isFinite(+d)) return "";
   const h = hund(+d);
-  return (h > 0 ? "+" : h < 0 ? "−" : "±") + (Math.abs(h) / 100).toFixed(2) + (unitOf(key) === "sec" ? "s" : '"');
+  return (h > 0 ? "+" : h < 0 ? "−" : "±") + (Math.abs(h) / 100).toFixed(2) + suffix(key);
 };
 
 // What the baseline is labelled with: the day it was measured ("Jun 26"),
@@ -117,13 +159,13 @@ export function statResultRows(player, tests = []) {
   const sr = num(player?.stand_reach), ap = num(player?.approach_touch);
   const base = /^\d{4}-\d{2}-\d{2}/.test(String(player?.stat_baseline_date || "")) ? String(player.stat_baseline_date).slice(0, 10) : null;
   const rows = [{ row: "tryout", from: baselineLabel(player), date: base, tryout: true,
-    stand_reach: sr, approach_touch: ap, standing_touch: num(player?.jump_touch), vertical: sr != null && ap != null ? ap - sr : null, broad_jump: null, dash_10y: num(player?.sprint_10y),
+    ...Object.fromEntries(METRICS.map(([k, , , , col]) => [k, col ? num(player?.[col]) : null])), vertical: sr != null && ap != null ? ap - sr : null,
     reach: sr, reachOwn: sr != null, reachRow: sr != null ? "tryout" : null, vertEntered: null }];
   let reach = sr, reachRow = rows[0].reachRow;
   const sorted = [...(tests || [])].sort((a, b) => String(a.test_date).localeCompare(String(b.test_date)) || (Number(a.id) || 0) - (Number(b.id) || 0));
   sorted.forEach((t, i) => {
     const r = { row: "test:" + (t.id ?? i), from: fmtDate(t.test_date), date: String(t.test_date || "").slice(0, 10) || null, tryout: false };
-    for (const [k] of METRICS) r[k] = num(t[k]);
+    for (const [k] of METRICS) r[k] = num(t[k] ?? t.extra?.[k]);   // a test added in HQ lives in extra
     if (r.stand_reach != null) { reach = r.stand_reach; reachRow = r.row; }
     Object.assign(r, { reach, reachOwn: r.stand_reach != null, reachRow, vertEntered: r.vertical });
     if (r.approach_touch != null && reach != null) r.vertical = r.approach_touch - reach;
@@ -146,7 +188,7 @@ export function metricRows(player, tests = []) {
       latest: b ? b[key] : null, latestFrom: b ? b.from : null, latestDate: b ? b.date : null, latestRow: b ? b.row : null,
       // A real change, not noise: a quarter inch, or two hundredths of a second.
       // Standing reach is growth, not training, so it is never called "better".
-      change, better: (() => { if (change == null || key === "stand_reach") return null; const min = unit === "sec" ? 0.02 : 0.25; if (Math.abs(change) < min) return null; return up ? change > 0 : change < 0; })() };
+      change, better: (() => { if (change == null || key === "stand_reach") return null; const min = unit === "sec" ? 0.02 : unit === "in" ? 0.25 : unit === "mph" ? 0.2 : 0; if (Math.abs(change) < min || change === 0) return null; return up ? change > 0 : change < 0; })() };
   }).filter(Boolean);
 }
 
@@ -326,7 +368,10 @@ export const STAT_FLAG_RULES = {
   // real data spans reach 67–97, touches 79.5–116.5, broad jump 48–86 and
   // 10-yard 1.69–2.91. The unit bands are cut at the typos staff actually made
   // (10-yard 1770/245, cm 213–238 in an inches box, 8875/825/1052, reach 7).
-  range: { stand_reach: [58, 104], approach_touch: [70, 125], standing_touch: [68, 122], broad_jump: [30, 110], dash_10y: [1.45, 3.5] },
+  range: { stand_reach: [58, 104], approach_touch: [70, 125], standing_touch: [68, 122], broad_jump: [30, 110], dash_10y: [1.45, 3.5],
+    // Sprint top speed: youth athletes run about 10–20 mph, elite adults ~23.
+    // 28+ is km/h typed in the mph box (17 mph = 27.4 km/h).
+    sprint_mph: [6, 26] },
   // B. The same row against itself. Clean results: approach vertical 10.53–26.10
   // across 238 values (30" is national-team), standing jump from 9.94, approach
   // minus standing touch −0.79 to +6.70 (a 1 cm tie is common).
@@ -347,12 +392,13 @@ export const STAT_FLAG_RULES = {
     standJump: { amberDown: 5, redDown: 8, amberUp: 5, redUp: 8 },
     broad_jump: { amberDown: 8, redDown: 14, amberUp: 10, redUp: 16 },
     dash_10y: { amberDown: 0.25, redDown: 0.4, amberUp: 0.3, redUp: 0.5 },
+    sprint_mph: { amberDown: 2, redDown: 3.5, amberUp: 2.5, redUp: 4 },
   },
   // D. Unusual for her age group (amber only): robust z = (v − median) /
   // max(1.4826 × MAD, floor), flagged at |z| ≥ 4 in a pool of 15+. z ≥ 3 would
   // also catch real athletes (Brittan Bradford 2.18s, Ellie Wong 21.1", Kate
   // Stroop 48"). Small pools (most broad jumps today) wait for more tests.
-  peer: { z: 4, minN: 15, floor: { vertical: 1.5, standJump: 1.5, dash_10y: 0.06, broad_jump: 3, stand_reach: 1.5, approach_touch: 2, standing_touch: 2 } },
+  peer: { z: 4, minN: 15, floor: { vertical: 1.5, standJump: 1.5, dash_10y: 0.06, broad_jump: 3, stand_reach: 1.5, approach_touch: 2, standing_touch: 2, sprint_mph: 0.6 } },
   // The U14 jump station typed every touch 40 cm short from 17:24 to 17:48 on
   // Jun 26; Drew fixed the rest at 17:56 but missed three. He raised Denver
   // Dolch's by 10" on Oct 12 (15.75" would match her Oct 11 retest); Everly
@@ -372,7 +418,8 @@ const testsLookup = (x) => {
   if (Array.isArray(x)) { const m = new Map(); for (const t of x) { if (!m.has(t.player_id)) m.set(t.player_id, []); m.get(t.player_id).push(t); } return (id) => m.get(id) || []; }
   return (id) => (x && x[id]) || [];
 };
-const PEER_KEYS = ["vertical", "standJump", "dash_10y", "broad_jump", "stand_reach", "approach_touch", "standing_touch"];
+const PEER_KEYS = ["vertical", "standJump", "dash_10y", "sprint_mph", "broad_jump", "stand_reach", "approach_touch", "standing_touch"];
+const unitMark = (m) => m === "dash_10y" ? "s" : m === "sprint_mph" ? " mph" : '"';
 
 // Median + MAD of every result on file (baselines and all tests) per age group
 // and metric. Build once for the whole club and pass it to statFlags as peers.
@@ -399,7 +446,12 @@ export function statFlags(player, tests, { peers } = {}) {
     for (const [k, [lo, hi]] of Object.entries(R.range)) {
       const v = r[k]; if (v == null) continue;
       const L = FLAG_LABEL[k]; let why = null;
-      if (k === "dash_10y") {
+      if (k === "sprint_mph") {
+        if (v >= 100) why = `${L} ${typed(v)} mph: looks like it was typed without the decimal point (${d2(v / (v >= 1000 ? 100 : 10))} mph?)`;
+        else if (v > hi && v < 45) why = `${L} ${d2(v)} mph is faster than any youth athlete runs. Typed in km/h? (${d2(v / 1.609)} mph)`;
+        else if (v >= 45) why = `${L} ${d2(v)} mph can't be right; likely a typo`;
+        else if (v < lo) why = `${L} ${d2(v)} mph is slower than a jog; likely a typo`;
+      } else if (k === "dash_10y") {
         if (v >= 100) why = `${L} ${typed(v)}s: looks like it was typed without the decimal point (${d2(v / (v >= 1000 ? 1000 : 100))}s?)`;
         else if (v >= 10) why = `${L} ${typed(v)}s: looks like a typo (${d2(v / 10)}s?)`;
         else if (v < lo) why = `${L} ${d2(v)}s is faster than any youth player runs; likely a typo`;
@@ -453,9 +505,9 @@ export function statFlags(player, tests, { peers } = {}) {
   // and checking both would double-flag one typo. Skipped when either end
   // already has a red flag that explains it.
   const CHANGE = [["stand_reach", "stand_reach", ["stand_reach"], ["vertical"]], ["vertical", "vertical", ["vertical", "approach_touch", "stand_reach"], ["approach_touch"]],
-    ["standJump", "standing_touch", ["standing_touch", "stand_reach"], []], ["broad_jump", "broad_jump", ["broad_jump"], []], ["dash_10y", "dash_10y", ["dash_10y"], []]];
+    ["standJump", "standing_touch", ["standing_touch", "stand_reach"], []], ["broad_jump", "broad_jump", ["broad_jump"], []], ["dash_10y", "dash_10y", ["dash_10y"], []], ["sprint_mph", "sprint_mph", ["sprint_mph"], []]];
   for (const [m, key, deps, related] of CHANGE) {
-    const c = R.change[m], u = m === "dash_10y" ? "s" : '"';
+    const c = R.change[m], u = unitMark(m);
     let prev = null;
     for (const r of rows) {
       const v = r[m]; if (v == null) continue;   // stand_reach is only her own, never a carried one
@@ -480,16 +532,16 @@ export function statFlags(player, tests, { peers } = {}) {
   // athletes never flag; Lucy Brewer's lone short touches do.
   const g = statAgeGroup(player?.usav_div), P = peers && g ? peers[g] : null;
   if (P) for (const r of rows) {
-    const ks = ["vertical", "standJump", "dash_10y", "broad_jump"];
+    const ks = ["vertical", "standJump", "dash_10y", "sprint_mph", "broad_jump"];
     if (!(r.reach != null && (r.approach_touch != null || r.standing_touch != null))) ks.push(...SIZE);
     for (const m of ks) {
       const v = r[m], s = P[m]; if (v == null || !s || s.n < R.peer.minN) continue;
       const sd = Math.max(1.4826 * s.mad, R.peer.floor[m]), z = (v - s.median) / sd;
-      const key = m === "standJump" ? "standing_touch" : m, u = m === "dash_10y" ? "s" : '"';
+      const key = m === "standJump" ? "standing_touch" : m, u = unitMark(m);
       if (Math.abs(z) < R.peer.z || out.some(f => f.row === r.row && f.key === key && f.level === "red")) continue;
       const what = m === "standJump" ? `Standing jump (touch − reach) ${d2(v)}"` : `${FLAG_LABEL[m]} ${d2(v)}${u}`;
       const dir = m === "dash_10y" ? (z > 0 ? "slower than" : "faster than") : z > 0 ? "above" : "below";
-      const mend = z < 0 && m !== "dash_10y" && m !== "broad_jump" && m !== "stand_reach" && Math.abs((v + short - s.median) / sd) < R.peer.z;
+      const mend = z < 0 && m !== "dash_10y" && m !== "sprint_mph" && m !== "broad_jump" && m !== "stand_reach" && Math.abs((v + short - s.median) / sd) < R.peer.z;
       add(r, key, "amber", "peer:" + m, `${what} is far ${dir} other ${g} players (typical ${d2(s.median)}${u}). Double-check it${mend ? " (about 40 cm short?)" : ""}`, { z: Math.round(z * 10) / 10 });
     }
   }
