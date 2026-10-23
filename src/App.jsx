@@ -19487,7 +19487,8 @@ export default function App() {
       Sun: SEASON_SUN.map(label => ({ label, capacity: 6 })),
       Mon: [
         { label:"5-7pm",       capacity:2 },
-        { label:"7-9pm",       capacity:3 },
+        // 4 courts from 23 Oct 2026, when 14 Sapphire moved here from Wednesday (Drew).
+        { label:"7-9pm",       capacity:4 },
       ],
       Tue: [
         { label:"5-7pm",       capacity:4 },
