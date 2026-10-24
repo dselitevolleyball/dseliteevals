@@ -33,10 +33,11 @@ export async function metaHeadsUp(sb, settings, { now = new Date(), dry = false,
   // The connection is checked at most every 6 hours.
   const last = await recently(sb, "meta_health", 6);
   let health = last?.detail;
+  if (!health && dry) return { due: due.length, would_check: "the Meta connection" };
   if (!health) {
     const c = await check().catch(e => ({ ok: false, problems: [e.message] }));
     health = { ok: !!c.ok, problems: c.problems || [] };
-    if (!dry) await log(sb, null, "meta_health", health);
+    await log(sb, null, "meta_health", health);
   }
   if (health.ok) return { due: due.length, ok: true };
   if (await recently(sb, "meta_alert", 20)) return { due: due.length, ok: false, alerted: "in the last 20 hours" };
