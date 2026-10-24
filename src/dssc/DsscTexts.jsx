@@ -18,10 +18,11 @@ import { supabase } from "../supabase";
 import { DS, nrm, fmtDay, Btn, Card, Label, Tag, inputStyle, fetchAll } from "./DsscHub.jsx";
 import { localDateISO } from "../../shared/dssc-clinics.js";
 import { smsPreview } from "../../shared/sms-split.js";
+import { usE164 } from "../../shared/phone.js";
 import DsscCampaigns from "./DsscCampaigns.jsx";
 
 const last10 = (s) => String(s || "").replace(/\D/g, "").slice(-10);
-const e164 = (s) => { const d = String(s || "").replace(/\D/g, ""); if (d.length === 10) return "+1" + d; if (d.length === 11 && d.startsWith("1")) return "+" + d; return d.length > 10 ? "+" + d : ""; };
+const e164 = (s) => { const d = String(s || "").replace(/\D/g, ""); if (d.length === 10 || (d.length === 11 && d.startsWith("1"))) return usE164(d) || ""; return d.length > 11 ? "+" + d : ""; };
 const fmtPhone = (p) => { const s = String(p || "").replace(/\D/g, ""); if (s.length === 11 && s.startsWith("1")) return `(${s.slice(1, 4)}) ${s.slice(4, 7)}-${s.slice(7)}`; if (s.length === 10) return `(${s.slice(0, 3)}) ${s.slice(3, 6)}-${s.slice(6)}`; return p || ""; };
 const fmtWhen = (iso) => { if (!iso) return ""; const d = new Date(iso); return d.toDateString() === new Date().toDateString() ? d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : d.toLocaleDateString(undefined, { month: "short", day: "numeric" }); };
 const catOf = (c) => /pod/i.test(c?.category || "") || /pod/i.test(c?.name || "") ? "Pods" : /camp/i.test(c?.category || "") || /camp/i.test(c?.name || "") ? "Camps" : /adult/i.test(c?.category || "") ? "Adult" : "Clinics";

@@ -12,14 +12,14 @@
 // own.
 
 import { splitSms, smsPlain } from "../../shared/sms-split.js";
+import { isUsPhone } from "../../shared/phone.js";
 
+// "" for a US number that can't exist (shared/phone.js), so callers' checks refuse it.
 export const normalizePhone = (raw) => {
   if (!raw) return "";
   const digits = String(raw).replace(/[^\d+]/g, "");
-  if (digits.startsWith("+")) return digits;
-  if (digits.length === 10) return "+1" + digits;
-  if (digits.length === 11 && digits.startsWith("1")) return "+" + digits;
-  return digits.startsWith("+") ? digits : "+" + digits;
+  const out = digits.startsWith("+") ? digits : digits.length === 10 ? "+1" + digits : "+" + digits;
+  return /^\+1\d{10}$/.test(out) && !isUsPhone(out) ? "" : out;
 };
 const preview = (text) => (text.length > 140 ? text.slice(0, 137) + "…" : text);
 export const BRANDS = ["dse", "dssc"];

@@ -19,6 +19,8 @@
 // Opt-outs (sms_optouts for the brand) and do-not-text families are never
 // included.
 
+import { usE164 } from "./phone.js";
+
 export const LEVELS = ["National", "Regional", "Rise"];
 export const POSITIONS = [["S", "Setter"], ["OH", "Outside"], ["RS", "Right side"], ["M", "Middle"], ["L", "Libero / DS"]];
 export const CATEGORIES = ["volleyball", "basketball", "reach", "facility", "other"];
@@ -40,7 +42,7 @@ export const reachFilters = (f = {}) => ({ ...EMPTY_FILTERS, since: f.since || "
 export const isReachStaff = (c) => !!c && c.is_approved !== false && [...[].concat(c.sports || []), ...[].concat(c.staff_view || [])].includes("reach");
 
 const last10 = (s) => String(s || "").replace(/\D/g, "").slice(-10);
-const e164 = (s) => { const d = String(s || "").replace(/\D/g, ""); if (d.length === 10) return "+1" + d; if (d.length === 11 && d.startsWith("1")) return "+" + d; return null; };
+const e164 = usE164;   // null for anything that can't be a US number (shared/phone.js)
 const nrm = (v) => String(v || "").trim().toLowerCase().replace(/\s+/g, " ");
 const firstOf = (s) => String(s || "").trim().split(/\s+/)[0] || "";
 const levelOf = (l) => /develop|rise/i.test(l || "") ? "Rise" : /national/i.test(l || "") ? "National" : /regional/i.test(l || "") ? "Regional" : "";

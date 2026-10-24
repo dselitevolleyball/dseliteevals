@@ -14,11 +14,14 @@
 // event-attendance / registrations export, loaded through importUpperHand's
 // `attendance` rows when Drew has it.
 
+import { usE164 } from "../../shared/phone.js";
+
 const lower = (s) => String(s || "").trim().toLowerCase();
 const clean = (s) => String(s || "").replace(/\s+/g, " ").trim();
 const cap = (s) => clean(s).replace(/\b\w/g, c => c.toUpperCase());
 export const nameKey = (f, l) => lower(clean(f) + " " + clean(l)).replace(/[^a-z0-9 ]/g, "");
-export const e164 = (raw) => { const d = String(raw || "").replace(/\D/g, ""); if (d.length === 10) return "+1" + d; if (d.length === 11 && d.startsWith("1")) return "+" + d; return d.length > 10 ? "+" + d : null; };
+// A US number must be a real one (shared/phone.js); longer ones are international.
+export const e164 = (raw) => { const d = String(raw || "").replace(/\D/g, ""); if (d.length === 10 || (d.length === 11 && d.startsWith("1"))) return usE164(d); return d.length > 11 ? "+" + d : null; };
 const isoDate = (s) => { s = clean(s); if (!s) return null; let m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s); if (m) return m[0]; m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(s); if (m) return `${m[3]}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}`; return null; };
 const isoTs = (s) => { const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})\s*(am|pm)/i.exec(clean(s)); if (!m) return null; let h = +m[4] % 12; if (/pm/i.test(m[6])) h += 12; return new Date(Date.UTC(+m[3], +m[1] - 1, +m[2], h + 5, +m[5])).toISOString(); };
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;

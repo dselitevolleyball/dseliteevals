@@ -35,6 +35,7 @@ import RegistrationCheck, { RegBadges, loadRegistrationCheck } from "./Registrat
 import EuropeRsvps from "./EuropeRsvps.jsx";
 import DsscTexts from "./dssc/DsscTexts.jsx";
 import DsscReachTexts from "./dssc/DsscReachTexts.jsx";
+import { usE164 } from "../shared/phone.js";
 import { isReachStaff as isReachStaffCoach } from "../shared/campaign-audience.js";
 import DsscCamp from "./dssc/DsscCamp.jsx";
 import DsscCrm from "./dssc/DsscCrm.jsx";
@@ -28515,7 +28516,7 @@ export default function App() {
     };
     const TERMINAL = ["declined", "not_invited", "opted_out"];
     const last10 = (s) => String(s || "").replace(/\D/g, "").slice(-10);
-    const e164 = (s) => { const d = String(s || "").replace(/\D/g, ""); if (d.length === 10) return "+1" + d; if (d.length === 11 && d.startsWith("1")) return "+" + d; return d.length > 10 ? "+" + d : ""; };
+    const e164 = (s) => { const d = String(s || "").replace(/\D/g, ""); if (d.length === 10 || (d.length === 11 && d.startsWith("1"))) return usE164(d) || ""; return d.length > 11 ? "+" + d : ""; };
     const nmKey = (s) => String(s || "").toLowerCase().replace(/[^a-z]/g, "");
     const isPlaceholderName = (s) => /assistant coach|head coach|tbd|coach needed|floater/i.test(s || "");
     const playerById = new Map(players.map(p => [p.id, p]));
