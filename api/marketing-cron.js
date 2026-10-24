@@ -1,6 +1,8 @@
 // GET /api/marketing-cron — the Marketing Machine's clock (Vercel Cron, every 15 min).
 //
-//   1. Publish what's due: approved mkt_items with scheduled_at <= now
+//   1. Publish what's due (and email the directors what failed; a day ahead,
+//      warn them when an approved post is due but Facebook can't post -
+//      api/_lib/marketing-alerts.js): approved mkt_items with scheduled_at <= now
 //      (social -> Facebook/Instagram, email -> Resend, text -> an sms_campaigns
 //      row the texts cron sends). An email cut short mid-send resumes; a post
 //      stuck in 'publishing' for 10+ minutes is marked failed so nobody
@@ -32,6 +34,7 @@
 
 import { safeEqual } from "./_lib/site-inbox.js";
 import { syncSiteSubscribers } from "./_lib/site-subscribers.js";
+import { failureAlert, metaHeadsUp } from "./_lib/marketing-alerts.js";
 import { mondayOf, addDays } from "../shared/marketing-plan.js";
 import { publishItem } from "./_lib/marketing-publish.js";
 import { serviceSb, loadSettings, generateWeek, sendDigest, syncPhotos, log } from "./_lib/marketing-core.js";
@@ -118,6 +121,9 @@ export async function runCron(sb, { now = new Date(), dry = false, deadline = Da
     if (Date.now() > deadline - 20000) { out.published.push({ id: it.id, channel: it.channel, status: "deferred", error: "out of time - next run" }); continue; }
     out.published.push(await publishItem(sb, it, { settings, dry, deadline: Math.min(deadline - 15000, Date.now() + 120000), resume: it.status === "publishing" }).catch(e => ({ id: it.id, channel: it.channel, status: "error", error: e.message })));
   }
+  // Tell the directors what just failed, and warn a day ahead when Facebook can't post.
+  out.failure_alert = await failureAlert(sb, settings, [...out.published, ...out.stuck.map(s => ({ ...s, status: "failed", error: "Publishing was interrupted" }))], { dry }).catch(e => ({ error: e.message }));
+  out.meta_heads_up = await metaHeadsUp(sb, settings, { now, dry }).catch(e => ({ error: e.message }));
 
   // ── 1b. best times, re-checked every Sunday morning (Settings: keep optimizing) ──
   const ctT = centralClock(now);
