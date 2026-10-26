@@ -70,10 +70,13 @@ export default function DsscMarketing({ coach, initialWeek, initialTab, onConsum
         {setupErr && <div style={{ color: DS.orange, fontWeight: 700, fontSize: 13, margin: "8px 0 12px" }}>{setupErr}</div>}
         {statusErr && !setupErr && <div style={{ color: DS.orange, fontSize: 12, margin: "4px 0 10px" }}>Server: {statusErr}</div>}
 
-        {/* Tabs: a scrolling row of big targets on the phone. */}
-        <div style={{ display: "flex", gap: narrow ? 6 : 4, overflowX: "auto", WebkitOverflowScrolling: "touch", borderBottom: "1px solid " + DS.line, marginBottom: 14, scrollbarWidth: "none" }}>
+        {/* Tabs: on the phone all nine show as a 3-across grid (a scrolling
+            row hid Videos and Settings off the edge, with nothing to say so). */}
+        <div style={narrow ? { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, marginBottom: 14 } : { display: "flex", gap: 4, overflowX: "auto", borderBottom: "1px solid " + DS.line, marginBottom: 14, scrollbarWidth: "none" }}>
           {TABS.map(([k, l]) => (
-            <button key={k} onClick={() => setTab(k)} style={{ fontFamily: DS.font, fontSize: narrow ? 15 : 14, fontWeight: 800, padding: narrow ? "12px 12px" : "10px 14px", minHeight: 44, background: "none", border: "none", borderBottom: "3px solid " + (tab === k ? DS.lime : "transparent"), color: tab === k ? DS.text : DS.mut, cursor: "pointer", whiteSpace: "nowrap", flex: "none" }}>{l}</button>
+            <button key={k} onClick={() => setTab(k)} style={narrow
+              ? { fontFamily: DS.font, fontSize: 14, fontWeight: 800, padding: "10px 4px", minHeight: 44, borderRadius: 10, border: "1px solid " + (tab === k ? DS.lime : DS.line), background: tab === k ? DS.limeSoft : "transparent", color: tab === k ? DS.text : DS.mut, cursor: "pointer", whiteSpace: "nowrap" }
+              : { fontFamily: DS.font, fontSize: 14, fontWeight: 800, padding: "10px 14px", minHeight: 44, background: "none", border: "none", borderBottom: "3px solid " + (tab === k ? DS.lime : "transparent"), color: tab === k ? DS.text : DS.mut, cursor: "pointer", whiteSpace: "nowrap", flex: "none" }}>{l}</button>
           ))}
         </div>
 

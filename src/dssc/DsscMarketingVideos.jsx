@@ -10,7 +10,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import * as tus from "tus-js-client";
 import { supabase } from "../supabase";
 import { DS, Btn, Tag, inputStyle } from "./DsscHub.jsx";
-import { videoApi, mktApi, isMissingTable, LINES, lineMeta, LineChip, chipStyle, Msg, Panel, H } from "./DsscMarketingKit.jsx";
+import { videoApi, mktApi, isMissingTable, LINES, lineMeta, LineChip, chipStyle, Msg, Panel, H, VideoBox } from "./DsscMarketingKit.jsx";
 
 const RAW = "marketing-video";
 const MOODS = ["upbeat", "hype", "chill", "warm", "epic", "fun"];
@@ -188,7 +188,7 @@ function VideoDetail({ v, narrow, picks, onTogglePick, onPatch, onClose, onResor
     <Panel style={{ marginBottom: 12, borderColor: needsRelease(v) ? DS.orange : DS.lime }}>
       <div style={{ display: narrow ? "block" : "grid", gridTemplateColumns: "300px 1fr", gap: 16 }}>
         <div>
-          {src ? <video ref={ref} src={src} poster={v.poster_url || undefined} controls playsInline preload="metadata" onTimeUpdate={onTime} style={{ width: "100%", maxHeight: 520, background: "#000", borderRadius: 8, display: "block" }} />
+          {src ? <VideoBox ref={ref} src={src} poster={v.poster_url || undefined} controls playsInline preload="metadata" onTimeUpdate={onTime} style={{ width: "100%", maxHeight: 520, background: "#000", borderRadius: 8, display: "block" }} />
             : <div style={{ aspectRatio: "3 / 4", background: "#000", borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", color: DS.mut, fontSize: 12 }}>Loading the video…</div>}
           <div style={{ fontSize: 11, color: DS.dim, marginTop: 6 }}>{v.filename} · {fmtT(v.duration)} · {fmtMB(v.bytes)}{v.width ? ` · ${v.width}×${v.height}` : ""}{v.has_audio === false ? " · no sound" : ""}</div>
         </div>
@@ -278,7 +278,7 @@ function MusicLibrary({ narrow }) {
       </div>
       <div style={{ fontSize: 12, color: DS.mut, margin: "4px 0 8px" }}>Only tracks the club has the rights to use (royalty-free or licensed). Instagram's own music can't be added to posts made this way. The machine picks a track by mood; you can change it on each reel.</div>
       <Msg msg={msg} style={{ marginBottom: 6 }} />
-      {finder && <FreeMusicFinder narrow={narrow} have={new Set((tracks || []).map(t => t.external_id).filter(Boolean))} onAdded={(t) => { setMsg({ ok: `Added "${t.title}"${t.attribution ? " — its credit goes in the caption of any reel that uses it" : ""}.` }); load(); }} />}
+      {finder && <FreeMusicFinder narrow={narrow} have={new Set((tracks || []).map(t => t.external_id).filter(Boolean))} onAdded={(t) => { setMsg({ ok: `Added "${t.title}"${t.attribution ? " — its credit goes on the end card of any reel that uses it" : ""}.` }); load(); }} />}
       {form && <div style={{ background: DS.panel2, borderRadius: 10, padding: 12, marginBottom: 10 }}>
         <div style={{ display: "grid", gridTemplateColumns: narrow ? "1fr" : "1fr 1fr", gap: 8 }}>
           <input value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} placeholder="Title" style={{ ...inputStyle, fontSize: narrow ? 16 : 14 }} />
@@ -302,7 +302,7 @@ function MusicLibrary({ narrow }) {
             <div style={{ flex: "1 1 180px", minWidth: 0 }}>
               <div style={{ fontSize: 14, fontWeight: 700 }}>{t.title}{t.artist ? <span style={{ fontWeight: 400, color: DS.mut }}> — {t.artist}</span> : null}</div>
               <div style={{ fontSize: 11, color: DS.dim }}>{(t.mood || []).join(", ")}{t.duration ? ` · ${fmtT(t.duration)}` : ""}{t.used_count ? ` · used ${t.used_count}×` : ""}{t.rights_note ? ` · ${t.rights_note}` : ""}{t.source_url ? <> · <a href={t.source_url} target="_blank" rel="noreferrer" style={{ color: DS.mut }}>source</a></> : null}</div>
-              {t.attribution && <div style={{ fontSize: 11, color: DS.mut }}>Caption credit: {t.attribution}</div>}
+              {t.attribution && <div style={{ fontSize: 11, color: DS.mut }}>End-card credit: {t.attribution}</div>}
             </div>
             <audio src={t.url} controls preload="none" style={{ height: 32, maxWidth: 240 }} />
             <Btn small kind="quiet" onClick={async () => { await supabase.from("mkt_music").update({ active: t.active === false }).eq("id", t.id); load(); }}>{t.active === false ? "Use again" : "Retire"}</Btn>
@@ -337,7 +337,7 @@ function FreeMusicFinder({ narrow, have, onAdded }) {
   };
   return (
     <div style={{ background: DS.panel2, borderRadius: 10, padding: 12, marginBottom: 10 }}>
-      <div style={{ fontSize: 12, color: DS.mut, marginBottom: 8, lineHeight: 1.5 }}>Free tracks from Openverse (Jamendo, Freesound, ccMixter) that allow use in club posts: <b>CC0</b> needs nothing; <b>CC BY</b> needs the artist credited, so HQ adds the credit line to the caption of any reel that uses it.</div>
+      <div style={{ fontSize: 12, color: DS.mut, marginBottom: 8, lineHeight: 1.5 }}>Free tracks from Openverse (Jamendo, Freesound, ccMixter) that allow use in club posts: <b>CC0</b> needs nothing; <b>CC BY</b> needs the artist credited, so HQ puts the credit in small type on the end card of any reel that uses it (never in the caption).</div>
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
         {MOODS.map(m => <button key={m} onClick={() => { setMood(m); setQ(""); search(m, ""); }} style={chipStyle(mood === m && !q, DS.lime, narrow)}>{m}</button>)}
       </div>

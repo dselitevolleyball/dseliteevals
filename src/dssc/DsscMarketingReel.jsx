@@ -10,7 +10,7 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { supabase } from "../supabase";
 import { DS, Btn, inputStyle } from "./DsscHub.jsx";
-import { videoApi, renderReelItem, specOf, GraphicPreview, chipStyle, Msg } from "./DsscMarketingKit.jsx";
+import { videoApi, renderReelItem, specOf, GraphicPreview, VideoBox, chipStyle, Msg } from "./DsscMarketingKit.jsx";
 
 const INTRO = 1.2, OUTRO = 2.0;   // the cards' seconds in a render (api/_lib/marketing-video.js)
 const fmtT = (s) => { const n = Math.max(0, +s || 0); return `${Math.floor(n / 60)}:${String(Math.floor(n % 60)).padStart(2, "0")}${n % 1 >= 0.05 ? "." + Math.round((n % 1) * 10) : ""}`; };
@@ -64,7 +64,7 @@ export default function ReelBox({ item: it, editable, narrow, onReplace, onPatch
   return (
     <div>
       {fresh
-        ? <video key={it.asset_video_url} src={it.asset_video_url} poster={it.asset_url || undefined} controls playsInline preload="metadata" style={{ width: "100%", maxWidth: 360, maxHeight: narrow ? 560 : 640, aspectRatio: "9 / 16", background: "#000", borderRadius: 8, display: "block" }} />
+        ? <VideoBox key={it.asset_video_url} src={it.asset_video_url} poster={it.asset_url || undefined} controls playsInline preload="metadata" style={{ width: "100%", maxWidth: 360, maxHeight: narrow ? 560 : 640, aspectRatio: "9 / 16", background: "#000", borderRadius: 8, display: "block" }} />
         : <div style={{ position: "relative", maxWidth: 360 }}>
             <GraphicPreview spec={specOf(it, { format: "story" })} />
             <div style={{ position: "absolute", left: 8, top: 8, fontSize: 11, fontWeight: 700, background: "rgba(6,26,24,0.85)", color: it.render_status === "failed" ? DS.orange : DS.lime, padding: "3px 8px", borderRadius: 4 }}>{it.render_status === "failed" ? "Render failed" : dirty ? "Changed — render again" : "The cover · not rendered yet"}</div>

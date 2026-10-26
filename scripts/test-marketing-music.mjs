@@ -1,5 +1,5 @@
 // Free music: Openverse search filtering, copying a track into the library,
-// and the CC BY credit line in reel captions. Run: node scripts/test-marketing-music.mjs
+// and that the CC BY credit stays out of reel captions (it's on the end card). Run: node scripts/test-marketing-music.mjs
 import assert from "node:assert/strict";
 import { searchFreeMusic, addFreeTrack, creditLine } from "../api/_lib/marketing-music.js";
 import { captionFor } from "../api/_lib/marketing-publish.js";
@@ -51,10 +51,9 @@ assert.equal(b.already, true); assert.equal(rows.length, 1);
 await assert.rejects(() => addFreeTrack(sb, "not-an-id"), /Unknown track/);
 console.log("2 add + dedupe ok");
 
-// 3. the credit goes into the caption, before the hashtags
-const cap = captionFor({ copy: "Big week at the club!", hashtags: ["#dssc"], music_credit: creditLine(ov()) }, "instagram");
-assert.match(cap, /Music: "Sunny Run" by Ada \(CC BY 3\.0\)/);
-assert.ok(cap.indexOf("Music:") < cap.indexOf("#dssc") || !cap.includes("#dssc"));
-assert.doesNotMatch(captionFor({ copy: "No music here" }), /Music:/);
-console.log("3 caption credit ok");
+// 3. the credit never goes in the caption (the reel's end card carries it)
+const cap = captionFor({ body: "Big week at the club!", hashtags: ["#dssc"], music_credit: creditLine(ov()), kind: "reel" }, "instagram");
+assert.doesNotMatch(cap, /Music:/);
+assert.match(cap, /Big week at the club!/);
+console.log("3 no caption credit ok");
 console.log("all music tests passed");

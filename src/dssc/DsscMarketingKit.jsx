@@ -2,7 +2,7 @@
 // call, line labels/colours, week maths, the setup check, the live graphic
 // preview and the approve pipeline (render → upload → update → approve).
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, forwardRef } from "react";
 import { supabase } from "../supabase";
 import { DS } from "./DsscHub.jsx";
 import * as PLAN from "../../shared/marketing-plan.js";
@@ -156,6 +156,11 @@ export const hasGraphic = (item) => item && item.channel !== "sms";
 // there. onEdit gets a graphic patch, e.g. { headline, accent }.
 const EDIT_LABEL = { headline: "Headline", sub: "Sub line", tag: "Tag", cta: "Button", date_label: "Date", items: "Rows (one per line)", quote: "Quote" };
 const MULTI = new Set(["items", "quote"]);
+// Every preview draws full size into this one scratch canvas, then copies a
+// copy sized to the screen. A full-size canvas per preview (1080×1350, ~6 MB
+// each) ran past an iPhone's canvas memory on the Week and Calendar screens,
+// and Safari then showed the graphics - or the whole page - white.
+let scratch = null;
 export function GraphicPreview({ spec, style, onClick, onEdit }) {
   const ref = useRef(null);
   const [state, setState] = useState("loading");
@@ -172,12 +177,23 @@ export function GraphicPreview({ spec, style, onClick, onEdit }) {
       const imgs = await loadGraphicImages(spec);
       if (dead || !ref.current) return;
       const found = [];
-      renderGraphic(ref.current, spec, imgs, { hits: found });
-      setHits(found); setSize({ W: ref.current.width, H: ref.current.height });
+      scratch = scratch || document.createElement("canvas");
+      renderGraphic(scratch, spec, imgs, { hits: found });
+      const W = scratch.width, H = scratch.height;
+      const cssW = ref.current.parentElement?.clientWidth || 360;
+      const w = Math.min(W, Math.max(240, Math.ceil(cssW * Math.min(2, window.devicePixelRatio || 1))));
+      const h = Math.round(H * w / W);
+      if (ref.current.width !== w) ref.current.width = w;
+      if (ref.current.height !== h) ref.current.height = h;
+      const c = ref.current.getContext("2d"); c.imageSmoothingQuality = "high";
+      c.clearRect(0, 0, w, h); c.drawImage(scratch, 0, 0, w, h);
+      setHits(found); setSize({ W, H });
       setState(spec.photo_url && !imgs.photoImg ? "nophoto" : "ok");
     })().catch(() => !dead && setState("err"));
     return () => { dead = true; };
   }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Hand the canvas memory back as soon as the preview goes (iPhone Safari is slow to).
+  useEffect(() => () => { const c = ref.current; if (c) { c.width = 0; c.height = 0; } }, []);
   const pct = (v, of) => (v / of) * 100 + "%";
   const start = (h) => setEditing({ field: h.field, box: h, value: h.field === "items" ? (spec.items || []).join("\n") : String(spec[h.field] || ""), accent: spec.accent || "" });
   const save = () => {
@@ -225,6 +241,20 @@ export function GraphicPreview({ spec, style, onClick, onEdit }) {
   );
 }
 
+// A <video> that says so when it can't play (a blank or white box before),
+// with the file to open in the phone's own player instead.
+export const VideoBox = forwardRef(function VideoBox({ src, poster, style, ...rest }, ref) {
+  const [bad, setBad] = useState(false);
+  useEffect(() => setBad(false), [src]);
+  if (bad) return (
+    <div style={{ ...style, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: 16, textAlign: "center", background: "#000", color: DS.mut, fontSize: 13, minHeight: 200, boxSizing: "border-box" }}>
+      <div>This video won't play in this browser.</div>
+      <a href={src} target="_blank" rel="noreferrer" style={{ color: DS.lime, fontWeight: 700 }}>Open the video ↗</a>
+    </div>
+  );
+  return <video ref={ref} src={src} poster={poster} style={style} onError={() => setBad(true)} {...rest} />;
+});
+
 // Approve one item: render its graphic(s) at full size, upload to the
 // `marketing` bucket, store the URLs on the item, then approve it.
 async function uploadPng(id, blob, suffix = "") {
@@ -237,6 +267,11 @@ async function uploadPng(id, blob, suffix = "") {
 // drawn here with the club's renderer, then the server renders the MP4.
 export async function renderReelItem(item, onStep) {
   const spec = specOf(item, { format: "story" });
+  // CC BY music is credited in small type on the end card (not the caption).
+  if (item.video?.music_id && Number(item.video.music_volume ?? 0.3) > 0) {
+    const { data: mu } = await supabase.from("mkt_music").select("attribution").eq("id", item.video.music_id).maybeSingle();
+    if (mu?.attribution) spec.music_credit = mu.attribution;
+  }
   onStep?.("Drawing the cards…");
   const [intro, overlay, outro] = await Promise.all([
     renderGraphicBlob({ ...spec, template: spec.template === "overlay" || spec.template === "endcard" ? "photo" : spec.template }, { format: "story" }),

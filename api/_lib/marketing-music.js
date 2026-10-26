@@ -2,8 +2,8 @@
 // across Creative Commons audio (Jamendo, Freesound, ccMixter, Wikimedia).
 // Only licences that allow commercial use without changes or share-alike:
 // CC0 (public domain) and CC BY (credit the artist). A CC BY track carries its
-// credit line ("Music: "Title" by Artist (CC BY 3.0)"), and the publisher adds
-// it to the caption of any reel that uses it - that's the licence's one ask.
+// credit line ("Music: "Title" by Artist (CC BY 3.0)"), drawn in small type on
+// the end card of any reel that uses it (never the caption) - the licence's one ask.
 //
 // Instagram's and TikTok's own music libraries can't be used here: their APIs
 // don't let a business account attach a song to a post. This is the music
@@ -69,7 +69,7 @@ export async function addFreeTrack(sb, id, { by = null, mood = [] } = {}) {
   const r = toResult(d);
   const row = {
     title: r.title, artist: r.artist, url, path, duration: r.duration, mood: (Array.isArray(mood) ? mood : []).filter(Boolean).slice(0, 4),
-    rights_ok: true, rights_note: `${r.license_label} via Openverse (${r.source || "Creative Commons"})${r.credit ? " - credit added to captions" : ""}`,
+    rights_ok: true, rights_note: `${r.license_label} via Openverse (${r.source || "Creative Commons"})${r.credit ? " - credit shown on the reel's end card" : ""}`,
     active: true, created_by: by, external_id: id, source: `openverse:${r.source || ""}`, source_url: r.landing, license: r.license_label, attribution: r.credit,
   };
   const { data, error } = await sb.from("mkt_music").insert(row).select("*").single();

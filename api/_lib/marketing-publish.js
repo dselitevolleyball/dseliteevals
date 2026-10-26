@@ -71,9 +71,8 @@ export function captionFor(item, platform = "facebook") {
     : /^instagram/.test(platform) ? `${item.cta_text || "Details"}: link in bio, or go to ${lineSite(item.line)}`
     : !body.includes(item.cta_url) ? `${item.cta_text || "Details"}: ${item.cta_url}` : "";
   const tags = (item.hashtags || []).map(h => "#" + String(h).replace(/^#/, "")).filter(h => h.length > 1).join(" ");
-  // A reel's CC BY music needs its credit in the caption (set by publishItem).
-  const credit = item.music_credit ? String(item.music_credit).slice(0, 200) : "";
-  return [body, link, credit, tags].filter(Boolean).join("\n\n").slice(0, 2200);
+  // A reel's CC BY music is credited on its end card, not here.
+  return [body, link, tags].filter(Boolean).join("\n\n").slice(0, 2200);
 }
 
 // ── the Meta Page token ──────────────────────────────────────────────────────
@@ -406,10 +405,6 @@ export async function publishItem(sb, item, { settings = {}, dry = false, deadli
   try {
     if (item.channel === "social" && item.kind === "reel") {
       if (!item.asset_video_url) throw new Error("The reel hasn't been rendered - open it in HQ and approve again");
-      if (item.video?.music_id && Number(item.video.music_volume) > 0) {
-        const { data: mu } = await sb.from("mkt_music").select("attribution").eq("id", item.video.music_id).maybeSingle();
-        if (mu?.attribution) item = { ...item, music_credit: mu.attribution };
-      }
       for (const p of item.platforms || []) {
         if (ext[p]) continue;
         try {

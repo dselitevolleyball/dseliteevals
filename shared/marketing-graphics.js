@@ -684,6 +684,11 @@ function tEndcard(ctx, spec, imgs, F) {
   const label = fitBody(ctx, up(spec.cta || "See what's coming up"), cw, { size: 64 * u, min: 36 * u, maxLines: 1, weight: 800, family: HEAD });
   drawBody(ctx, label, m, y + (ctaH - label.height) / 2, BRAND.lime); markBody(ctx, "cta", label, m, y + (ctaH - label.height) / 2); y += ctaH + 40 * u;
   drawBody(ctx, site, m, y, "#FFFFFF");
+  // A reel's CC BY music credit, small at the foot of the card.
+  if (clean(spec.music_credit)) {
+    const cr = fitBody(ctx, spec.music_credit, cw, { size: 26 * u, min: 18 * u, maxLines: 2, weight: 500 });
+    drawBody(ctx, cr, W / 2, H - F.bottom - cr.height, BRAND.mute, "center");
+  }
 }
 
 // ── Public ─────────────────────────────────────────────────────────────────
