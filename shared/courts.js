@@ -194,6 +194,7 @@ export function buildCourtDay({ bookings = [], teams = [], scrims = [], reserved
   // Each held court carries what a "hide" of it would match (applyHides).
   // A moved block carries its original place (origin) and the change row (change).
   reserved.forEach((r, n) => { const o = r.origin || r; for (const c of r.courts) for (const i of idx(r.start, r.end)) cells[c][i] = { kind: "dse", label: r.label, detail: r.detail || "", key: "r" + n, reserved: true, hide: { kind: "dse", start: o.start, end: o.end, courts: r.origin ? o.courts : [c] }, change: r.change || null }; });
+  const heldCells = COURTS.reduce((a, c) => a + cells[c.id].filter(x => x && x.reserved).length, 0);
   // 1. Playbook bookings and the in-house tournament, exactly where they are.
   bookings.forEach((b, n) => {
     const o = b.origin || b;
@@ -227,7 +228,6 @@ export function buildCourtDay({ bookings = [], teams = [], scrims = [], reserved
       pieces.forEach((pc, q) => units.push({ label: t.team, detail: "DS Elite practice", start: pc.start, end: pc.end, court: pc.court, venue: t.venue, key: "t" + n + "_" + k + "_" + j + "_" + q, kind: "dse" }));
     });
   }));
-  const heldCells = COURTS.reduce((a, c) => a + cells[c.id].filter(x => x && x.reserved).length, 0);
   const teamCell = (u, extra = {}) => ({ kind: "dse", label: u.label, detail: u.detail, key: u.key, team: [u.label], ...extra });
   // Fixed courts first. Two teams set to the same court at the same time share
   // it ("13 Ruby + 14 Topaz"). A court taken by a class, rental or the
@@ -262,7 +262,8 @@ export function buildCourtDay({ bookings = [], teams = [], scrims = [], reserved
 
   // What DS Elite actually uses vs holds, in court-hours: a shared court counts once.
   const count = (f) => COURTS.reduce((a, c) => a + cells[c.id].filter(f).length, 0) * step;
-  const usage = { used: count(x => x && x.team), held: heldCells * step, heldUnused: count(x => x && x.reserved) };
+  // In use: DS Elite teams, their extra practices and the in-house tournament.
+  const usage = { used: count(x => x && !x.reserved && !x.open && (x.team || x.kind === "dse" || x.kind === "tourn")), held: heldCells * step, heldUnused: count(x => x && x.reserved) };
   // On the staff chart, held courts no team uses show as open: DS Elite won't
   // pay for them (Drew, Oct 26 2026). The members' page keeps them booked.
   if (releaseHeld) for (const c of COURTS) cells[c.id] = cells[c.id].map((x, i) => x && x.reserved
