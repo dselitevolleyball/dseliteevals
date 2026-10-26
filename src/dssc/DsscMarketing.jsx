@@ -34,6 +34,7 @@ export default function DsscMarketing({ coach, initialWeek, initialTab, onConsum
   const narrow = useNarrow();
   const [tab, setTabState] = useState(() => { if (TABS.some(([k]) => k === initialTab)) return initialTab; if (initialWeek) return "approve"; try { const t = sessionStorage.getItem(TAB_KEY); return TABS.some(([k]) => k === t) ? t : "calendar"; } catch { return "calendar"; } });
   const setTab = (t) => { setTabState(t); try { sessionStorage.setItem(TAB_KEY, t); } catch { /* ignore */ } };
+  const [calFocus, setCalFocus] = useState(null);   // { id, day } - open the Calendar on this item
   const [week, setWeek] = useState(() => /^\d{4}-\d{2}-\d{2}$/.test(initialWeek || "") ? mondayOf(initialWeek) : mondayOf());
   const [status, setStatus] = useState(null);
   const [statusErr, setStatusErr] = useState("");
@@ -76,8 +77,8 @@ export default function DsscMarketing({ coach, initialWeek, initialTab, onConsum
           ))}
         </div>
 
-        {tab === "calendar" && <MarketingCalendar narrow={narrow} status={status} onOpenWeek={(w) => { setWeek(mondayOf(w)); setTab("approve"); }} onChanged={changed} />}
-        {tab === "approve" && <MarketingApprove week={week} setWeek={setWeek} status={status} narrow={narrow} onChanged={changed} coach={coach} />}
+        {tab === "calendar" && <MarketingCalendar narrow={narrow} status={status} focus={calFocus} onOpenWeek={(w) => { setWeek(mondayOf(w)); setTab("approve"); }} onChanged={changed} />}
+        {tab === "approve" && <MarketingApprove week={week} setWeek={setWeek} status={status} narrow={narrow} onChanged={changed} coach={coach} onShowOnCalendar={(id, day) => { setCalFocus({ id, day, n: Date.now() }); setTab("calendar"); }} />}
         {tab === "ideas" && <MarketingIdeas narrow={narrow} onOpenWeek={(w) => { setWeek(mondayOf(w)); setTab("approve"); }} onChanged={changed} />}
         {tab === "plan" && <MarketingPlan week={week} status={status} narrow={narrow} onOpenWeek={(w) => { setWeek(mondayOf(w)); setTab("approve"); }} />}
         {tab === "priorities" && <MarketingPriorities narrow={narrow} onChanged={() => { loadStatus(); changed(); }} />}

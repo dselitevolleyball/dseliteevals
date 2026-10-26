@@ -28,12 +28,19 @@ const tagsToArr = (s) => String(s || "").split(/[\s,]+/).map(t => t.trim()).filt
 const aiNote = (d) => d?.ai && d.ai.used === false ? ` (Plain template copy — the AI writer wasn't available${d.ai.error ? ": " + d.ai.error : ""}.)` : "";
 const daysOfWeek = (wk) => Array.from({ length: 7 }, (_, i) => addDays(wk, i));
 
-export default function MarketingApprove({ week, setWeek, status, narrow, onChanged }) {
+// What the machine is doing while a brief runs (one request, about a minute).
+const BRIEF_STEPS = [[0, "Saving it as this week's priority…"], [3, "Planning the week around it…"], [15, "Writing the posts and the email…"], [45, "Placing the programs you named on their days…"], [80, "Almost there - finishing the last drafts…"]];
+
+export default function MarketingApprove({ week, setWeek, status, narrow, onChanged, onShowOnCalendar }) {
   const [items, setItems] = useState(null);
   const [msg, setMsg] = useState(null);
   const [busy, setBusy] = useState("");
   const [progress, setProgress] = useState(null);
   const [brief, setBrief] = useState("");
+  const [briefRun, setBriefRun] = useState(null);      // { text, started } while the machine works
+  const [briefDone, setBriefDone] = useState(null);    // the result: { text, items, placed, named }
+  const [, setTick] = useState(0);
+  useEffect(() => { if (!briefRun) return; const t = setInterval(() => setTick(x => x + 1), 1000); return () => clearInterval(t); }, [briefRun]);
   const [plan, setPlan] = useState(null);
   const [picker, setPicker] = useState(null);       // item whose photo is being swapped
   const [filter, setFilter] = useState("all");
@@ -90,13 +97,14 @@ export default function MarketingApprove({ week, setWeek, status, narrow, onChan
   };
   const sendBrief = async () => {
     const t = brief.trim(); if (t.length < 3) return;
-    setBusy("brief"); setMsg(null);
+    setBusy("brief"); setMsg(null); setBriefDone(null); setBriefRun({ text: t, started: Date.now() });
     try {
       const d = await mktApi("brief", { week_of: week, instruction: t });
-      setBrief(""); setMsg({ ok: `Got it — saved as a priority for this week and ${(d.items || []).length} drafts were rewritten.${aiNote(d)}` });
+      setBrief(""); setBriefDone({ text: t, items: d.items || [], placed: d.placed || [], named: d.named || [], ai: d.ai });
+      if (d.ai?.used === false) setMsg({ ok: aiNote(d).trim() });
       await load(); onChanged?.();
     } catch (e) { setMsg({ err: e.message }); }
-    setBusy("");
+    setBusy(""); setBriefRun(null);
   };
   const approveAll = async () => {
     const ready = (items || []).filter(it => !readyIssue(it));
@@ -168,6 +176,39 @@ export default function MarketingApprove({ week, setWeek, status, narrow, onChan
             <Btn kind="primary" disabled={!!busy || brief.trim().length < 3} onClick={sendBrief} style={bigBtn(narrow)}>{busy === "brief" ? "Rewriting the week…" : "Send to the machine"}</Btn>
             <span style={{ fontSize: 12, color: DS.dim, flex: 1, minWidth: 180 }}>Saved as a one-week priority, then this week's drafts are rewritten around it.</span>
           </div>
+          {briefRun && (() => {
+            const secs = Math.floor((Date.now() - briefRun.started) / 1000);
+            const step = [...BRIEF_STEPS].reverse().find(([s]) => secs >= s)[1];
+            return (
+              <div style={{ marginTop: 10, padding: "10px 12px", borderRadius: 10, background: DS.panel2, border: "1px solid " + DS.line }}>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13 }}>
+                  <span style={{ width: 10, height: 10, borderRadius: 5, background: DS.lime, animation: "mktpulse 1s ease-in-out infinite alternate" }} />
+                  <b>{step}</b><span style={{ color: DS.mut }}>{secs}s</span>
+                </div>
+                <div style={{ fontSize: 12, color: DS.mut, marginTop: 4 }}>"{briefRun.text.slice(0, 140)}" — usually about a minute. You can keep using the page; the new drafts appear here when it's done.</div>
+                <div style={{ height: 4, background: DS.line, borderRadius: 2, marginTop: 8, overflow: "hidden" }}><div style={{ width: Math.min(95, secs * 1.2) + "%", height: "100%", background: DS.lime, transition: "width 1s linear" }} /></div>
+                <style>{"@keyframes mktpulse{from{opacity:.35}to{opacity:1}}"}</style>
+              </div>
+            );
+          })()}
+          {briefDone && <div style={{ marginTop: 10, padding: "10px 12px", borderRadius: 10, border: "1px solid " + DS.lime, background: DS.limeSoft }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
+              <b style={{ fontSize: 14 }}>Done — {briefDone.items.length} new draft{briefDone.items.length === 1 ? "" : "s"} placed on the calendar</b>
+              <span style={{ flex: 1 }} /><Btn small kind="quiet" onClick={() => setBriefDone(null)}>Close</Btn>
+            </div>
+            {briefDone.named.length > 0 && <div style={{ fontSize: 12, color: DS.mut, marginTop: 2 }}>Programs you named: {briefDone.named.map(n => `${n.name}${n.day ? " (" + fmtDate(n.day, { weekday: "short" }) + ")" : ""}`).join(" · ")}</div>}
+            {briefDone.items.slice().sort((a, b) => String(a.scheduled_at).localeCompare(String(b.scheduled_at))).map(it => {
+              const fromBrief = briefDone.placed.find(x => x.id === it.id);
+              return (
+                <div key={it.id} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", padding: "7px 0", borderTop: "1px solid " + DS.line }}>
+                  <span style={{ fontSize: 12, fontWeight: 800, minWidth: 92 }}>{fmtWhen(it.scheduled_at)}</span>
+                  <Tag color={DS.mut}>{KIND_LABEL[kindOf(it)] || it.channel}</Tag>
+                  <span style={{ fontSize: 13, flex: 1, minWidth: 140 }}>{it.channel === "email" ? it.email_subject || it.headline : it.headline}{fromBrief ? <span style={{ color: DS.lime, fontWeight: 700 }}> · from your brief</span> : null}</span>
+                  {onShowOnCalendar && <Btn small kind="ghost" onClick={() => onShowOnCalendar(it.id, dayOf(it.scheduled_at))} style={narrow ? { minHeight: 40 } : {}}>Show on calendar →</Btn>}
+                </div>
+              );
+            })}
+          </div>}
           {activePri.length > 0 && <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10, alignItems: "center" }}>
             <span style={{ fontSize: 11, color: DS.mut }}>Priorities this week:</span>
             {activePri.map(p => <Tag key={p.id} color={DS.orange}>{p.title} · {p.weight}</Tag>)}

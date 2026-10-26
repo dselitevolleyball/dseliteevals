@@ -47,7 +47,7 @@ import { reviseItem, buildEmail, withHero, aiReady, ctToday, interpretRule } fro
 import { normRules } from "../shared/marketing-rules.js";
 import { metaHealth } from "./_lib/marketing-alerts.js";
 import { connections, metaCheck, connectMeta, hasStoredMetaToken, publishItem, captionFor, testEmail, testSms } from "./_lib/marketing-publish.js";
-import { serviceSb, loadSettings, loadPriorities, loadHistory, loadPhotos, fetchPrograms, syncPhotos, generateWeek, log, ruleIssues } from "./_lib/marketing-core.js";
+import { serviceSb, loadSettings, loadPriorities, loadHistory, loadPhotos, fetchPrograms, syncPhotos, generateWeek, log, ruleIssues, briefTargets, untouched } from "./_lib/marketing-core.js";
 import { tagPhotos } from "./_lib/marketing-photos-ai.js";
 import { searchFreeMusic, addFreeTrack } from "./_lib/marketing-music.js";
 import { runScout, acceptIdea, dismissIdea } from "./_lib/marketing-scout.js";
@@ -75,6 +75,9 @@ export default async function handler(req, res) {
     return res.status(e.status || 500).json({ error: e.message || String(e) });
   }
 }
+
+// The Central-time calendar day of a timestamp.
+const dayOfCt = (iso) => iso ? new Date(iso).toLocaleDateString("en-CA", { timeZone: "America/Chicago" }) : null;
 
 async function getSpotlight(sb, id) {
   const n = Number(id);
@@ -184,7 +187,28 @@ export async function run(sb, { me, name }, b) {
       if (error) throw fail(500, error.message);
       await log(sb, null, "brief", { by: me, week_of: weekOf, instruction, priority_id: priority.id });
       const r = await generateWeek(sb, { weekOf, replaceDrafts: true, instruction, by: me });
-      return { week_of: weekOf, priority, items: r.items, kept: r.kept, removed: r.removed, notes: r.notes, ai: r.ai && { used: r.ai.used, model: r.ai.model, error: r.ai.error, fallbacks: r.ai.fallbacks } };
+      // The programs the brief names get their own post on the day it names
+      // ("Love the Floor ... on Friday"), replacing an untouched draft post there.
+      const feed = await fetchPrograms();
+      const targets = briefTargets(instruction, feed.programs, weekOf, today);
+      // Spots are claimed one at a time (two programs on one Saturday must not
+      // take the same draft), then the posts are written together to stay
+      // inside the function's time limit.
+      const { data: wk } = await sb.from("mkt_items").select("id, channel, kind, scheduled_at, status, revisions, created_at, updated_at, asset_url, program").eq("week_of", weekOf).neq("status", "rejected");
+      const claimed = new Set(), jobs = [];
+      for (const t of targets) {
+        if ((wk || []).some(i => i.channel === "social" && String(i.program?.id || "") === String(t.program.id) && (!t.day || dayOfCt(i.scheduled_at) === t.day))) continue;
+        const spot = t.day && (wk || []).find(i => !claimed.has(i.id) && i.channel === "social" && i.status === "draft" && ["post"].includes(i.kind || "post") && dayOfCt(i.scheduled_at) === t.day && untouched(i) && !targets.some(x => String(x.program.id) === String(i.program?.id || "")));
+        if (spot) { claimed.add(spot.id); await sb.from("mkt_items").delete().eq("id", spot.id).eq("status", "draft"); }
+        jobs.push({ t, spot });
+      }
+      const placed = (await Promise.all(jobs.map(({ t, spot }) =>
+        generateWeek(sb, { weekOf, instruction, by: me, single: { channel: "social", program_id: t.program.id, day: t.day, time: t.time, format: "post", reason: `From the brief: "${t.clause.slice(0, 120)}"` } })
+          .then(g => (g.items || []).map(i => ({ id: i.id, scheduled_at: i.scheduled_at, kind: i.kind, channel: i.channel, headline: i.headline, program: t.program.name, replaced: spot?.id || null })))
+          .catch(() => [])))).flat();
+      const items = [...(r.items || []).filter(i => !placed.some(x => x.replaced === i.id)), ...placed];
+      await log(sb, null, "brief_placed", { by: me, week_of: weekOf, named: targets.map(t => ({ id: t.program.id, name: t.program.name, day: t.day })), placed: placed.map(x => x.id) });
+      return { week_of: weekOf, priority, items, placed, named: targets.map(t => ({ id: t.program.id, name: t.program.name, day: t.day })), kept: r.kept, removed: r.removed, notes: r.notes, ai: r.ai && { used: r.ai.used, model: r.ai.model, error: r.ai.error, fallbacks: r.ai.fallbacks } };
     }
 
     case "update": {

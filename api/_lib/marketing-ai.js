@@ -245,7 +245,7 @@ export function cleanCopy(raw, slot, fallback, rules = []) {
     c.body = noEmoji(stripUrls(c.body)).slice(0, 2000);
     c.email_subject = limitEmoji(c.email_subject, 1).slice(0, 120) || fallback.email_subject;
     c.email_preheader = noEmoji(c.email_preheader).slice(0, 140);
-    c.email_blocks = (Array.isArray(c.email_blocks) ? c.email_blocks : []).map(b => ({ ref: String(b?.ref || ""), blurb: noEmoji(stripUrls(b?.blurb)).slice(0, 400) })).filter(b => b.ref);
+    c.email_blocks = (Array.isArray(c.email_blocks) ? c.email_blocks : []).map(b => ({ ref: String(b?.ref || ""), blurb: noEmoji(stripUrls(b?.blurb)).slice(0, 400), section: noEmoji(stripUrls(b?.section)).replace(/\s+/g, " ").trim().slice(0, 40) })).filter(b => b.ref);
     c.hashtags = [];
   }
   if (slot.channel === "sms") { c.body = asciiize(noEmoji(stripUrls(c.body).replace(/\s*reply stop.*$/i, ""))).slice(0, 280); c.hashtags = []; }
@@ -275,7 +275,7 @@ Facts - the hard rules:
 Output: JSON matching the schema, one object per slot, with "slot" set to the slot number you were given.
 Fields by channel:
 - social: headline = the big words on the graphic, 2 to 5 words; accent = ONE word from the headline to color; sub = a short line under it (dates/times), at most 50 characters; tag = a 1-3 word label (e.g. "CAMP ELEVATE", "LAST CALL", "NEW"); body = the caption, 2 to 5 short sentences, no URL, no hashtags; cta_text = the button words (2 to 5 words, e.g. "Register now", "Book a party"); hashtags = 3 to 5 tags without the # sign (always include DrippingSprings); email_subject, email_preheader = ""; email_blocks = []; photo_tags = 0 to 2 tags describing the ideal photo.
-- email: headline = the email's big headline, 2 to 6 words; accent = one word of it; sub = a short line under the headline; tag = a 1-3 word label; body = the opening, 2 to 4 sentences that lead with the featured program and why it matters this week; cta_text = the main button words; email_subject = under 60 characters, specific (name the featured program and its date); email_preheader = under 90 characters, adds to the subject; email_blocks = one entry per listed program (ref = the program id) and one for the evergreen line if given (ref = the line key), each blurb 1 to 2 sentences built from that program's facts; hashtags = []; photo_tags as above.
+- email: headline = the email's big headline, 2 to 6 words; accent = one word of it; sub = a short line under the headline; tag = a 1-3 word label; body = the opening, 2 to 4 sentences that lead with the featured program and why it matters this week; cta_text = the main button words; email_subject = under 60 characters, specific (name the featured program and its date); email_preheader = under 90 characters, adds to the subject; email_blocks = one entry per listed program (ref = the program id) and one for the evergreen line if given (ref = the line key), each blurb 1 to 2 sentences built from that program's facts, and section = a short heading (1 to 3 words, e.g. "Volleyball", "Court rentals") shown above that block when it starts a new group - give consecutive blocks of the same group the same section, use "" for none; add sections when the email moves between different lines (e.g. from birthday parties to volleyball) or when the director asks for headers or a transition; hashtags = []; photo_tags as above.
 - sms: body = the whole text, under 230 characters, starting with "DSSC:", plain characters only, no URL and no opt-out line (both are added); headline = the program name; accent, sub, tag, email_subject, email_preheader = ""; cta_text = "Register"; email_blocks = []; hashtags = []; photo_tags = [].
 Keep the club's priorities in mind: the request lists what the directors want pushed this week and why each slot was planned. When one slot repeats a line from earlier in the week, take a different angle so the two posts don't read alike.
 
@@ -294,7 +294,7 @@ A slot may carry a "look" - a trend-style graphic - and a "trend" it adapts:
 - look "note": a handwritten note on crumpled paper. headline = the note itself, 1 to 3 short sentences in sentence case, warm and personal; sub = a "P.S. ..." line or ""; tag = the signature - a coach's name only if the facts or theme give it, otherwise "DSSC".
 - trend: keep the trend's format recognizable but make it about the club. Never name a song or quote lyrics, and don't make it depend on a sound - the post has to work as a still image with its caption.`;
 
-const BLOCK = { type: "object", additionalProperties: false, required: ["ref", "blurb"], properties: { ref: { type: "string" }, blurb: { type: "string" } } };
+const BLOCK = { type: "object", additionalProperties: false, required: ["ref", "blurb", "section"], properties: { ref: { type: "string" }, blurb: { type: "string" }, section: { type: "string" } } };
 const ITEM_PROPS = {
   slot: { type: "integer" }, headline: { type: "string" }, accent: { type: "string" }, sub: { type: "string" }, tag: { type: "string" },
   body: { type: "string" }, cta_text: { type: "string" }, hashtags: { type: "array", items: { type: "string" } },
@@ -390,7 +390,7 @@ ${it.graphic?.sub ? `<div style="font-family:${FONT_B};font-size:16px;color:#a9b
 ${paras(it.body)}
 ${it.cta_url ? btn(it.cta_text || "Register", it.cta_url) : ""}
 </td></tr>
-${blocks.map(b => `<tr><td style="background:#F4F0E8;padding:18px 24px 6px;font-family:${FONT_B};font-size:15px;line-height:1.5;color:#061a18">
+${blocks.map((b, i) => `${b.section && b.section !== (blocks[i - 1] || {}).section ? `<tr><td style="background:#F4F0E8;padding:28px 24px 0"><div style="font-family:${FONT_H};font-weight:900;font-size:34px;line-height:1;text-transform:uppercase;color:#104946">${esc(b.section)}</div></td></tr>` : ""}<tr><td style="background:#F4F0E8;padding:18px 24px 6px;font-family:${FONT_B};font-size:15px;line-height:1.5;color:#061a18">
 <div style="border-top:3px solid #0F8B76;padding-top:14px">
 ${b.label ? `<div style="font-family:${FONT_H};font-weight:800;font-size:13px;letter-spacing:2px;text-transform:uppercase;color:#0F8B76">${esc(b.label)}</div>` : ""}
 <div style="font-family:${FONT_H};font-weight:900;font-size:26px;line-height:1;text-transform:uppercase;color:#061a18;margin:4px 0 6px">${esc(b.title)}</div>
@@ -409,7 +409,7 @@ You're getting this because your family has signed up for a program at DSSC. <a 
   const text = [
     String(it.headline || "").toUpperCase(), it.graphic?.sub || "", "", String(it.body || ""), "",
     it.cta_url ? `${it.cta_text || "Register"}: ${it.cta_url}` : "", "",
-    ...blocks.flatMap(b => [String(b.title || "").toUpperCase(), b.date_label || "", b.blurb || "", b.url ? `${b.cta || "Details"}: ${b.url}` : "", ""]),
+    ...blocks.flatMap((b, i) => [...(b.section && b.section !== (blocks[i - 1] || {}).section ? ["== " + String(b.section).toUpperCase() + " ==", ""] : []), String(b.title || "").toUpperCase(), b.date_label || "", b.blurb || "", b.url ? `${b.cta || "Details"}: ${b.url}` : "", ""]),
     "Where Dripping Springs plays.", CLUB_ADDRESS, SITE, "", `Unsubscribe: ${UNSUB_TOKEN}`,
   ].join("\n").replace(/\n{3,}/g, "\n\n").trim();
   return { html, text };
@@ -420,15 +420,17 @@ export const withHero = (html, url) => url ? String(html || "").replace(/(<img d
 // Email blocks from the slot's programs + Claude's (or the template's) blurbs.
 function emailBlocks(slot, copy, feedById) {
   const blurbs = new Map((copy.email_blocks || []).map(b => [String(b.ref), b.blurb]));
+  const sections = new Map((copy.email_blocks || []).map(b => [String(b.ref), b.section || ""]));
   const out = (slot.programs || []).map(r => {
     const p = feedById.get(String(r.id)) || r;
     return {
       program_id: String(r.id), title: shortName(p.name), label: lineLabel(r.line || lineOf(p)),
       date_label: [p.first_date ? (r.angle === "just_started" ? `Started ${fmtDay(p.first_date)}` : `Starts ${fmtDay(p.first_date)}`) : "", scheduleBits(p)].filter(Boolean).join(" · "),
       blurb: blurbs.get(String(r.id)) || templateBlurb(p), url: r.url || programRef(p)?.url || lineUrl(lineOf(p)), cta: lineOf(p) === "camp_elevate" ? "Sign up" : "Details",
+      section: sections.get(String(r.id)) || "",
     };
   });
-  if (slot.evergreen) out.push({ program_id: null, line: slot.evergreen, title: lineLabel(slot.evergreen), label: "Any time", date_label: "", blurb: blurbs.get(slot.evergreen) || LINE_BLURB[slot.evergreen], url: lineUrl(slot.evergreen), cta: LINE_LINKS[slot.evergreen]?.cta || "Details" });
+  if (slot.evergreen) out.push({ program_id: null, line: slot.evergreen, title: lineLabel(slot.evergreen), label: "Any time", date_label: "", blurb: blurbs.get(slot.evergreen) || LINE_BLURB[slot.evergreen], url: lineUrl(slot.evergreen), cta: LINE_LINKS[slot.evergreen]?.cta || "Details", section: sections.get(slot.evergreen) || "" });
   return out;
 }
 
@@ -541,7 +543,7 @@ export async function reviseItem({ item, instruction, programs = [], settings = 
     headline: item.headline, accent: item.graphic?.accent || "", sub: item.graphic?.sub || "", tag: item.graphic?.tag || "",
     body: item.channel === "sms" ? smsCore(item.body) : item.body, cta_text: item.cta_text, hashtags: item.hashtags || [],
     email_subject: item.email_subject || "", email_preheader: item.email_preheader || "",
-    email_blocks: (item.email_blocks || []).map(b => ({ ref: String(b.program_id || b.line || ""), blurb: b.blurb || "" })),
+    email_blocks: (item.email_blocks || []).map(b => ({ ref: String(b.program_id || b.line || ""), blurb: b.blurb || "", section: b.section || "", title: b.title || "" })),
   };
   const req = { director_instruction: String(instruction || "").trim(), slot: slotForAi(slot, 0, feedById), current_draft: current };
   let r;
@@ -561,8 +563,8 @@ export async function reviseItem({ item, instruction, programs = [], settings = 
   if (item.channel === "sms") patch.body = smsBody(copy.body, item.cta_url);
   if (item.channel === "email") {
     patch.email_subject = copy.email_subject; patch.email_preheader = copy.email_preheader;
-    const blurbs = new Map(copy.email_blocks.map(b => [b.ref, b.blurb]));
-    patch.email_blocks = (item.email_blocks || []).map(b => ({ ...b, blurb: blurbs.get(String(b.program_id || b.line || "")) || b.blurb }));
+    const byRef = new Map(copy.email_blocks.map(b => [b.ref, b]));
+    patch.email_blocks = (item.email_blocks || []).map(b => { const n = byRef.get(String(b.program_id || b.line || "")); return { ...b, blurb: n?.blurb || b.blurb, section: n ? n.section : (b.section || "") }; });
     patch.email_html = buildEmail({ ...item, ...patch }).html;
   }
   if (graphic && (graphic.photo_url !== item.graphic?.photo_url || graphic.headline !== item.graphic?.headline)) { patch.asset_url = null; patch.asset_story_url = null; }

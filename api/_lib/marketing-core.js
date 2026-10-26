@@ -106,7 +106,7 @@ export async function syncPhotos(sb, { dry = false } = {}) {
 // ── generate a week ──────────────────────────────────────────────────────────
 // A draft nobody has touched: still a draft, never revised, no graphic
 // rendered, not edited since it was made.
-const untouched = (it) => it.status === "draft" && !(it.revisions || []).length && !it.asset_url
+export const untouched = (it) => it.status === "draft" && !(it.revisions || []).length && !it.asset_url
   && Math.abs(new Date(it.updated_at) - new Date(it.created_at)) < 3000;
 
 // opts: { weekOf, replaceDrafts, instruction, by, single: { program_id?, line?, channel? }, timeoutMs }
@@ -208,3 +208,37 @@ export async function sendDigest(sb, settings, weekOf, items, { reminder = false
 }
 
 export { ctToday, ctIso, EMPTY_FILTERS };
+
+// ── what a brief names ───────────────────────────────────────────────────────
+// "Love the Floor halloween style clinic on Friday. Also launch of Elite tots
+// and Volleyball 101 on Saturday mornings" -> the programs it names (from the
+// feed, running that week) and the day each is mentioned with. A program counts
+// as named when at least two of the distinctive words of its name are in the
+// same sentence (or all of them, for a one-word name); of two that match, the
+// one matching more words wins ("Love the Floor ... Halloween Edition" over
+// plain "Love the Floor").
+const BRIEF_DAYS = { monday: 0, mon: 0, tuesday: 1, tue: 1, tues: 1, wednesday: 2, wed: 2, thursday: 3, thu: 3, thur: 3, thurs: 3, friday: 4, fri: 4, saturday: 5, sat: 5, sunday: 6, sun: 6 };
+const BRIEF_STOP = new Set("the a an and of on in at for to with w coach clinic style launch also new our this week edition all skills grade grades program programs session sessions class classes k th nd rd st kids".split(" "));
+const briefWords = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().split(" ").filter(Boolean);
+export function briefTargets(text, programs, weekOf, today) {
+  const weekEnd = addDays(weekOf, 6);
+  const live = (programs || []).filter(p => p.first_date && p.first_date <= weekEnd && (p.ongoing || (p.last_date || p.first_date) >= weekOf));
+  const out = [];
+  for (const clause of String(text || "").split(/[.;!\n]+|\balso\b/i)) {
+    const words = new Set(briefWords(clause));
+    if (!words.size) continue;
+    const dayWord = [...words].find(w => w in BRIEF_DAYS);
+    let day = dayWord != null ? addDays(weekOf, BRIEF_DAYS[dayWord]) : null;
+    if (day && today && day < today) day = null;
+    const time = /\bmorning/i.test(clause) ? "08:00" : /\b(evening|night|tonight)/i.test(clause) ? "17:00" : null;
+    const hits = live.map(p => {
+      const key = [...new Set(briefWords(p.name).filter(w => !BRIEF_STOP.has(w) && !/^\d{1,2}$/.test(w)))];
+      const matched = key.filter(w => words.has(w));
+      return { p, matched, ok: key.length && (matched.length >= 2 || (key.length === 1 && matched.length === 1)) };
+    }).filter(h => h.ok);
+    // Drop a match whose words are all inside a better match's (plain "Love the Floor" vs its Halloween Edition).
+    const kept = hits.filter(h => !hits.some(o => o !== h && o.matched.length > h.matched.length && h.matched.every(w => o.matched.includes(w))));
+    for (const h of kept) if (!out.some(t => String(t.program.id) === String(h.p.id))) out.push({ program: h.p, day, time, clause: clause.trim() });
+  }
+  return out;
+}

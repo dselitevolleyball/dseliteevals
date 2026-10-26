@@ -34,7 +34,7 @@ const KINDS_ADD = [["post", "📱 Post", "social"], ["story", "📱 Story", "soc
 const DEFAULT_TIME = { post: "18:30", story: "18:30", email: "07:30", text: "17:30" };
 const STATUS_ICON = { draft: "○", approved: "✓", publishing: "…", published: "✓✓", failed: "!", rejected: "✕" };
 
-export default function MarketingCalendar({ narrow, status, onOpenWeek, onChanged }) {
+export default function MarketingCalendar({ narrow, status, focus, onOpenWeek, onChanged }) {
   const [month, setMonth] = useState(() => firstOfMonth(todayIso()));
   const [view, setView] = useState(() => (narrow ? "list" : "month"));
   const [items, setItems] = useState(null);
@@ -52,6 +52,13 @@ export default function MarketingCalendar({ narrow, status, onOpenWeek, onChange
   const [dropDay, setDropDay] = useState(null);
   const dragId = useRef(null);
   useEffect(() => { if (narrow) setView("list"); }, [narrow]);
+  // Opened from somewhere else on one item ("Show on calendar"): go to its week and open it.
+  useEffect(() => {
+    if (!focus?.day) return;
+    setMonth(firstOfMonth(focus.day)); setWeekStart(mondayOf(focus.day));
+    if (!narrow) setView("week");
+    setOpenId(focus.id || null);
+  }, [focus?.n]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The weeks on screen: Monday on/before the 1st through the Sunday on/after
   // month end — or the one week in Week view.
