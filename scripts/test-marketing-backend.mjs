@@ -201,7 +201,11 @@ const again = await runCron(sb, {});
 check(calls.length === n && again.published.length === 0, "second run publishes nothing twice");
 check(live.photos?.skipped || live.photos?.ok, `photos step: ${JSON.stringify(live.photos)}`);
 
-// Auto-generate: a Sunday after 5 pm CT, next week empty.
+// Auto-generate: a Sunday after 5 pm CT, next week empty. The runs above use
+// the real clock, so depending on today's date they may already have drafted
+// (and logged) weeks ahead - clear those so this part doesn't depend on the date.
+sb.db.mkt_items = sb.db.mkt_items.filter(i => !(i.created_by === "auto" && i.week_of >= "2026-11-09"));
+if (sb.db.mkt_log) sb.db.mkt_log = sb.db.mkt_log.filter(l => !(String(l.detail?.week_of || "") >= "2026-11-09"));
 const sunday = new Date("2026-11-08T23:30:00Z"); // Sun Nov 8, 5:30 pm CST
 const autoDry = await runCron(sb, { now: sunday, dry: true });
 check(autoDry.auto && autoDry.auto.week_of === "2026-11-09" && /draft the week of 2026-11-09/.test(autoDry.auto.would || ""), `auto-generate (dry) on Sunday 5:30 pm CT: ${autoDry.auto.would}`);
