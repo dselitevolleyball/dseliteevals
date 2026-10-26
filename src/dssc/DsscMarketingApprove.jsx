@@ -500,17 +500,24 @@ function audienceSummary(a) {
 export function PhotoPicker({ item, narrow, onPick, onClose }) {
   const [photos, setPhotos] = useState(null);
   const [err, setErr] = useState("");
-  const [scope, setScope] = useState(item.line ? "line" : "all");
-  const [tag, setTag] = useState("");
+  // Filter by top-level line (Volleyball, Basketball, Camp Elevate, ...), starting
+  // on the post's own line. Tags are still searchable below (Drew, Oct 26 2026).
+  const [scope, setScope] = useState(item.line || "all");
   const [q, setQ] = useState("");
   useEffect(() => {
     fetchAll(() => supabase.from("mkt_photos").select("*").eq("active", true)).then(setPhotos).catch(e => { setErr(isMissingTable(e) ? MIGRATION_MSG : e.message); setPhotos([]); });
   }, []);
-  const lm = lineMeta(item.line);
-  const sportTag = { volleyball: "volleyball", basketball: "basketball", reach: "reach", camp_elevate: "camp", parties: "parties", rentals: "facility", open_gym: "facility", club: "flagship" }[item.line];
-  const tags = useMemo(() => [...new Set((photos || []).flatMap(p => p.tags || []))].sort(), [photos]);
+  const sportTag = { volleyball: "volleyball", basketball: "basketball", reach: "reach", camp_elevate: "camp", parties: "parties", rentals: "facility", open_gym: "facility", club: "flagship" }[scope];
+  const inLine = (p, k) => p.line === k;
+  // One chip per line that has photos, biggest first; the post's own line always shows.
+  const lines = useMemo(() => {
+    const n = {};
+    for (const p of photos || []) if (p.line && p.release_ok !== false) n[p.line] = (n[p.line] || 0) + 1;
+    if (item.line && !n[item.line]) n[item.line] = 0;
+    return Object.entries(n).sort((a, b) => b[1] - a[1]);
+  }, [photos, item.line]);
   const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  const list = (photos || []).filter(p => p.release_ok !== false && (scope === "all" || p.line === item.line || (sportTag && (p.tags || []).includes(sportTag))) && (!tag || (p.tags || []).includes(tag))
+  const list = (photos || []).filter(p => p.release_ok !== false && (scope === "all" || inLine(p, scope) || (sportTag && (p.tags || []).includes(sportTag)))
       && (!words.length || (h => words.every(w => h.includes(w)))(photoHaystack(p, k => lineMeta(k).label))))
     .sort((a, b) => (b.quality || 3) - (a.quality || 3) || (a.used_count || 0) - (b.used_count || 0));
   return (
@@ -521,9 +528,8 @@ export function PhotoPicker({ item, narrow, onPick, onClose }) {
           <Btn kind="ghost" onClick={onClose} style={{ minHeight: 40 }}>Close</Btn>
         </div>
         <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 6 }}>
-          {item.line && <button onClick={() => setScope("line")} style={chipStyle(scope === "line", lm.color, narrow)}>{lm.label}</button>}
           <button onClick={() => setScope("all")} style={chipStyle(scope === "all", DS.lime, narrow)}>All photos</button>
-          {tags.map(t => <button key={t} onClick={() => setTag(tag === t ? "" : t)} style={chipStyle(tag === t, "#7FD1C3", narrow)}>{t}</button>)}
+          {lines.map(([k, n]) => { const m = lineMeta(k); return <button key={k} onClick={() => setScope(k)} style={chipStyle(scope === k, m.color, narrow)}>{m.label} <span style={{ opacity: 0.6 }}>{n}</span></button>; })}
         </div>
         <input value={q} onChange={e => setQ(e.target.value)} placeholder='Search photos — "girls serving", "party cake"' style={{ ...inputStyle, margin: "4px 0 6px", fontSize: narrow ? 16 : 14 }} />
         {err && <div style={{ color: DS.orange, fontSize: 13, margin: "8px 0" }}>{err}</div>}
