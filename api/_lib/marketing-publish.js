@@ -107,6 +107,18 @@ async function graph(path, params, { method = "POST" } = {}) {
 }
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+// What Facebook / Instagram say about something HQ posted: is it live, still
+// processing, or did it fail after the upload was accepted?
+export async function metaPostStatus(item) {
+  const ext = item.external_ids || {}, out = {};
+  if (ext.facebook) {
+    const fields = item.kind === "reel" ? "id,status,published,permalink_url,created_time,length,post_id" : "id,is_published,permalink_url,created_time";
+    out.facebook = await graph(ext.facebook, { fields }, { method: "GET" }).catch(e => ({ error: e.message }));
+  }
+  if (ext.instagram) out.instagram = await graph(ext.instagram, { fields: "id,permalink,media_type,media_product_type,timestamp" }, { method: "GET" }).catch(e => ({ error: e.message }));
+  return out;
+}
+
 // What the Meta token in the env actually is and may do - when posting fails
 // with a permissions error, this says which permission or which id is wrong.
 // Never returns the token itself.

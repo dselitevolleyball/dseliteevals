@@ -46,7 +46,7 @@ import { planWeek, planFlow, signalsFor, mondayOf, addDays, parseBrief, fmtDay, 
 import { reviseItem, buildEmail, withHero, aiReady, ctToday, interpretRule } from "./_lib/marketing-ai.js";
 import { normRules } from "../shared/marketing-rules.js";
 import { metaHealth } from "./_lib/marketing-alerts.js";
-import { connections, metaCheck, connectMeta, hasStoredMetaToken, publishItem, captionFor, testEmail, testSms } from "./_lib/marketing-publish.js";
+import { connections, metaCheck, metaPostStatus, connectMeta, hasStoredMetaToken, publishItem, captionFor, testEmail, testSms } from "./_lib/marketing-publish.js";
 import { serviceSb, loadSettings, loadPriorities, loadHistory, loadPhotos, fetchPrograms, syncPhotos, generateWeek, log, ruleIssues, briefTargets, untouched } from "./_lib/marketing-core.js";
 import { tagPhotos } from "./_lib/marketing-photos-ai.js";
 import { searchFreeMusic, addFreeTrack } from "./_lib/marketing-music.js";
@@ -114,6 +114,8 @@ export async function run(sb, { me, name }, b) {
 
     case "meta_check":
       return { meta: await metaCheck() };
+    case "post_status":
+      return { id: b.id, ...(await metaPostStatus(await getItem(sb, b.id))) };
     case "meta_connect": {
       const r = await connectMeta(sb, { token: b.token, appSecret: b.app_secret, by: me }).catch(e => { const f = fail(e.status || 500, e.message); f.check = e.check; throw f; });
       await log(sb, null, "meta_connect", { by: me, page: r.check.page?.name || null, expires: r.check.expires, steps: r.steps });
