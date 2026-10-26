@@ -43,7 +43,12 @@ export default function EuropeTrip({ players = [], gcAnswers = [], team = "", co
     if (!a) Object.assign(row, { interest: patch.status === "not_interested" ? "no" : "yes", respondent_name: "Set in HQ by " + who, updated_at: new Date().toISOString() });
     setEdits(e => ({ ...e, [p.id]: { ...(e[p.id] || {}), ...patch } }));
     setSaving(s => ({ ...s, [p.id]: "saving" }));
-    const { error } = await supabase.from("global_challenge_interest").upsert(row, { onConflict: "player_id" });
+    // An answered player gets an update (an upsert would send only these fields
+    // as a new row first, and the database refuses a row without the family's
+    // answer); a player who never answered gets a new row.
+    const { error } = a
+      ? await supabase.from("global_challenge_interest").update(row).eq("player_id", p.id)
+      : await supabase.from("global_challenge_interest").insert(row);
     setSaving(s => ({ ...s, [p.id]: error ? "Didn't save: " + error.message : "saved" }));
     if (!error) { await onSaved?.(); setEdits(e => { const n = { ...e }; delete n[p.id]; return n; }); }
   };
@@ -79,6 +84,8 @@ export default function EuropeTrip({ players = [], gcAnswers = [], team = "", co
         {GC_STATUSES.slice().reverse().map(s => pill(s.key, s.label, count(s.key), s.color))}
         {pill("none", "No answer yet", count("none"), C.mut)}
       </div>
+      {Object.values(saving).some(v => v && v !== "saving" && v !== "saved") && <div style={{ marginTop: 10, padding: "8px 10px", borderRadius: 8, border: "1px solid " + C.red, color: C.red, fontSize: 12 }}>
+        Some changes didn't save ({Object.values(saving).find(v => v && v !== "saving" && v !== "saved")}). Rows marked "Not saved" still show your choice but aren't stored; set them again.</div>}
       {open && <div style={{ marginTop: 10, borderTop: "1px solid " + C.border }}>
         {!shown.length && <div style={{ padding: "12px 0", fontSize: 12, color: C.mut }}>Nobody here{filter !== "all" ? " with that status" : ""}.</div>}
         {shown.map(({ p, a, st }) => {
@@ -110,7 +117,7 @@ export default function EuropeTrip({ players = [], gcAnswers = [], team = "", co
                   onChange={ev => setEdits(x => ({ ...x, [p.id]: { ...(x[p.id] || {}), staff_notes: ev.target.value } }))}
                   onBlur={ev => { const v = ev.target.value.trim() || null; if ((a?.staff_notes ?? null) !== v) save(p, { staff_notes: v }); }}
                   style={{ flex: 1, minWidth: 0, background: C.bg, color: C.text, border: "1px solid " + C.border, borderRadius: 6, padding: "5px 7px", fontFamily: "inherit", fontSize: 12 }} />
-                <span style={{ fontSize: 10, color: sv && sv !== "saving" && sv !== "saved" ? C.red : C.mut, width: 40, flexShrink: 0 }} title={sv || ""}>{sv === "saving" ? "…" : sv === "saved" ? "Saved" : sv ? "Error" : ""}</span>
+                <span style={{ fontSize: 10, color: sv && sv !== "saving" && sv !== "saved" ? C.red : C.mut, width: 40, flexShrink: 0 }} title={sv || ""}>{sv === "saving" ? "…" : sv === "saved" ? "Saved" : sv ? "Not saved" : ""}</span>
               </div>
             </div>
           );
