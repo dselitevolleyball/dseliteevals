@@ -23,6 +23,16 @@ const ct = (iso) => new Date(iso).toLocaleString("en-US", { timeZone: "America/C
 const what = (i) => `${KIND_LABEL[kindOf(i)] || i.channel} · ${lineLabel(i.line)} · ${i.channel === "email" ? i.email_subject || i.headline : i.headline || "(no headline)"}`;
 const wrap = (inner) => `<div style="font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:14px;line-height:1.5;color:#061a18;max-width:640px">${inner}</div>`;
 const button = (href, label) => `<p style="margin:18px 0"><a href="${href}" style="display:inline-block;background:#B2D049;color:#061a18;padding:11px 20px;text-decoration:none;font-weight:700">${esc(label)} →</a></p>`;
+// Can HQ actually post to Facebook / Instagram? Facebook is asked at most
+// every maxAgeMin minutes (the answer is kept in mkt_log 'meta_health').
+export async function metaHealth(sb, { maxAgeMin = 15, check = metaCheck } = {}) {
+  const last = await recently(sb, "meta_health", maxAgeMin / 60);
+  if (last?.detail) return last.detail;
+  const c = await check().catch(e => ({ ok: false, problems: [e.message] }));
+  const health = { ok: !!c.ok, problems: c.problems || [] };
+  await log(sb, null, "meta_health", health);
+  return health;
+}
 const recently = async (sb, kind, hours) => { const { data } = await sb.from("mkt_log").select("id, detail, at").eq("kind", kind).gte("at", new Date(Date.now() - hours * 3600e3).toISOString()).order("at", { ascending: false }).limit(1); return data?.[0] || null; };
 
 export async function metaHeadsUp(sb, settings, { now = new Date(), dry = false, check = metaCheck } = {}) {

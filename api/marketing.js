@@ -45,6 +45,7 @@ import { normalizePhone } from "./_lib/sms.js";
 import { planWeek, planFlow, signalsFor, mondayOf, addDays, parseBrief, fmtDay, normRhythm, LINE_KEYS } from "../shared/marketing-plan.js";
 import { reviseItem, buildEmail, withHero, aiReady, ctToday, interpretRule } from "./_lib/marketing-ai.js";
 import { normRules } from "../shared/marketing-rules.js";
+import { metaHealth } from "./_lib/marketing-alerts.js";
 import { connections, metaCheck, connectMeta, hasStoredMetaToken, publishItem, captionFor, testEmail, testSms } from "./_lib/marketing-publish.js";
 import { serviceSb, loadSettings, loadPriorities, loadHistory, loadPhotos, fetchPrograms, syncPhotos, generateWeek, log, ruleIssues } from "./_lib/marketing-core.js";
 import { tagPhotos } from "./_lib/marketing-photos-ai.js";
@@ -98,7 +99,14 @@ export async function run(sb, { me, name }, b) {
   switch (b.action) {
     case "status": {
       const [settings, priorities, metaStored] = await Promise.all([loadSettings(sb), loadPriorities(sb), hasStoredMetaToken(sb).catch(() => false)]);
-      return { ...connections({ metaStored }), settings, priorities };
+      const c = connections({ metaStored });
+      // Set up isn't the same as working: ask Facebook whether the token can post.
+      let meta_problem = null;
+      if (c.connections.facebook || c.connections.instagram) {
+        const h = await metaHealth(sb).catch(() => null);
+        if (h && !h.ok) { c.connections.facebook = c.connections.instagram = false; meta_problem = String(h.problems[0] || "Facebook refused the token").replace(/\s+/g, " "); }
+      }
+      return { ...c, meta_problem, settings, priorities };
     }
 
     case "meta_check":
@@ -106,6 +114,7 @@ export async function run(sb, { me, name }, b) {
     case "meta_connect": {
       const r = await connectMeta(sb, { token: b.token, appSecret: b.app_secret, by: me }).catch(e => { const f = fail(e.status || 500, e.message); f.check = e.check; throw f; });
       await log(sb, null, "meta_connect", { by: me, page: r.check.page?.name || null, expires: r.check.expires, steps: r.steps });
+      await log(sb, null, "meta_health", { ok: true, problems: [] });
       return { meta: r.check, steps: r.steps };
     }
 

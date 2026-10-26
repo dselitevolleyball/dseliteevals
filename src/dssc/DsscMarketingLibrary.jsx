@@ -388,12 +388,13 @@ export function MarketingSettings({ status, narrow, reloadStatus, onChanged }) {
               <span style={{ width: 22, height: 22, borderRadius: 11, flex: "none", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 900, background: ok ? DS.lime : "transparent", border: "1px solid " + (ok ? DS.lime : DS.orange), color: ok ? DS.bg : DS.orange }}>{ok ? "✓" : "!"}</span>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontWeight: 700, fontSize: 14 }}>{label} <span style={{ fontWeight: 400, fontSize: 12, color: ok ? DS.lime : DS.orange }}>{ok ? "connected" : "not connected"}</span></div>
-                {!ok && <div style={{ fontSize: 12, color: DS.mut, marginTop: 2, lineHeight: 1.5 }}>{hint}{need.length ? <> Add {need.map((n, i) => <span key={n}>{i ? ", " : ""}<code style={{ color: DS.text, background: DS.panel2, padding: "1px 5px", borderRadius: 4, wordBreak: "break-all" }}>{n}</code></span>)} in Vercel → Settings → Environment Variables, then redeploy.</> : null}</div>}
+                {!ok && status.meta_problem && (k === "facebook" || k === "instagram") ? <div style={{ fontSize: 12, color: DS.orange, marginTop: 2, lineHeight: 1.5 }}>Set up, but Facebook won't let HQ post: {status.meta_problem} Use <b>Reconnect</b> below.</div>
+                : !ok && <div style={{ fontSize: 12, color: DS.mut, marginTop: 2, lineHeight: 1.5 }}>{hint}{need.length ? <> Add {need.map((n, i) => <span key={n}>{i ? ", " : ""}<code style={{ color: DS.text, background: DS.panel2, padding: "1px 5px", borderRadius: 4, wordBreak: "break-all" }}>{n}</code></span>)} in Vercel → Settings → Environment Variables, then redeploy.</> : null}</div>}
               </div>
             </div>
           );
         })}
-        {status && <MetaReconnect narrow={narrow} onDone={() => reloadStatus?.()} />}
+        {status && <MetaReconnect narrow={narrow} broken={!!status.meta_problem} onDone={() => reloadStatus?.()} />}
         <div style={{ fontSize: 13, color: DS.mut, marginTop: 10, lineHeight: 1.5 }}>Instagram bio link — set it once (Instagram → Edit profile → Links): <b style={{ color: DS.text, userSelect: "all" }}>{BIO_LINK}</b>. Instagram captions can't hold a tappable link, so posts say "link in bio"; that page shows each post with its own sign-up button.</div>
         {status && <div style={{ fontSize: 12, color: DS.dim, marginTop: 8 }}>Step-by-step setup is in MARKETING_SETUP.md in the HQ repo.</div>}
       </Panel>
@@ -581,8 +582,9 @@ export function MarketingSettings({ status, narrow, reloadStatus, onChanged }) {
 // pasting a token from Graph API Explorer (api/_lib/marketing-publish.js
 // connectMeta finds the club's Page token and keeps it in HQ - no Vercel).
 const META_PERMS = ["pages_show_list", "pages_read_engagement", "pages_manage_posts", "instagram_basic", "instagram_content_publish"];
-function MetaReconnect({ narrow, onDone }) {
-  const [open, setOpen] = useState(false);
+function MetaReconnect({ narrow, broken, onDone }) {
+  const [open, setOpen] = useState(!!broken);
+  useEffect(() => { if (broken) setOpen(true); }, [broken]);
   const [token, setToken] = useState("");
   const [secret, setSecret] = useState("");
   const [busy, setBusy] = useState("");
