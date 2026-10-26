@@ -28,7 +28,7 @@ import { createClient } from "@supabase/supabase-js";
 const APP = "https://dseliteevals.vercel.app";
 const SENDER = { name: "Drew Rose", email: "drew@dselitevolleyball.com" };
 const PLAYER_IDS = [447, 449, 109, 448, 50];   // Harper Kent, Isla Melendez, Lucy Burgoyne, Elizabeth Wolfson, Claire Cox
-const DEADLINE = "Sunday, November 1, at 6:00pm";
+const DEADLINE = "Saturday, October 31, at 6:00pm";
 const WAREHOUSE = "DSSC Warehouse, 15113 Fitzhugh Rd, Suite 1400, Dripping Springs";
 const REG_REGIONAL = "https://dselitevolleyball.sportngin.com/register/form/644251518";
 const REG_RISE = "https://dselitevolleyball.sportngin.com/register/form/029858282";
