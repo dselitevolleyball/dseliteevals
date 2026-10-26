@@ -115,6 +115,28 @@ export async function loadGraphicImages(spec = {}) {
 const up = (s) => String(s || "").replace(/\s+/g, " ").trim().toUpperCase();
 const clean = (s) => String(s || "").replace(/\s+/g, " ").trim();
 const TAN12 = Math.tan(12 * Math.PI / 180);
+// Where each piece of text landed, so the preview can make the words
+// clickable ("click the headline to change it"). Filled only while
+// renderGraphic runs with { hits }; boxes are in canvas pixels, after any
+// rotation (the note) or translation (the burst).
+let HITS = null;
+function mark(ctx, field, x, y, w, h) {
+  if (!HITS || !(w > 0) || !(h > 0)) return;
+  const t = ctx.getTransform();
+  const pts = [[x, y], [x + w, y], [x, y + h], [x + w, y + h]].map(([px, py]) => [t.a * px + t.c * py + t.e, t.b * px + t.d * py + t.f]);
+  const xs = pts.map(q => q[0]), ys = pts.map(q => q[1]);
+  HITS.push({ field, x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) });
+}
+function markBody(ctx, field, fit, x, top, align = "left") {
+  if (!HITS || !fit?.lines?.length) return;
+  ctx.save(); ctx.font = fit.font; const w = Math.max(...fit.lines.map(l => ctx.measureText(l).width)); ctx.restore();
+  mark(ctx, field, align === "center" ? x - w / 2 : x, top, w, fit.height);
+}
+function markHead(ctx, field, fit, x, top, { align = "left", width = 0 } = {}) {
+  if (!HITS || !fit?.lines?.length) return;
+  const w = Math.max(...fit.lines.map(l => l.width));
+  mark(ctx, field, align === "center" ? x + (width - w) / 2 : x, top - fit.size * 0.06, w, fit.height + fit.size * 0.2);
+}
 function setSpacing(ctx, px) { if ("letterSpacing" in ctx) ctx.letterSpacing = (px || 0) + "px"; }
 
 function drawCover(ctx, img, x, y, w, h, fy = 0.38) {
@@ -282,6 +304,7 @@ function drawTag(ctx, text, x, y, u, maxW, { fill = BRAND.lime, color = BRAND.in
   const w = ctx.measureText(t).width + pad * 2;
   ctx.fillStyle = fill;
   ctx.beginPath(); ctx.moveTo(x + off, y); ctx.lineTo(x + w + off, y); ctx.lineTo(x + w, y + h); ctx.lineTo(x, y + h); ctx.closePath(); ctx.fill();
+  mark(ctx, "tag", x, y, w + off, h);
   ctx.fillStyle = color; ctx.textBaseline = "middle";
   ctx.fillText(t, x + pad + off / 2, y + h / 2 + s * 0.04);
   ctx.textBaseline = "alphabetic"; setSpacing(ctx, 0);
@@ -299,6 +322,7 @@ function drawCta(ctx, text, x, y, h, maxW, u) {
   const t = ellipsize(ctx, text, maxW - pad * 2);
   const w = Math.min(maxW, ctx.measureText(t).width + pad * 2);
   ctx.fillStyle = BRAND.orange; clipPath(ctx, x, y, w, h, 20 * u); ctx.fill();
+  mark(ctx, "cta", x, y, w, h);
   ctx.fillStyle = BRAND.ink; ctx.textBaseline = "middle";
   ctx.fillText(t, x + pad, y + h / 2 + s * 0.05);
   ctx.textBaseline = "alphabetic"; setSpacing(ctx, 0);
@@ -320,6 +344,7 @@ function drawLink(ctx, spec, x, y, h, maxW, u) {
   const gap = h * 0.06, top = y + (h - ls - gap - ss) / 2;
   ctx.textBaseline = "top";
   setSpacing(ctx, 1 * u); ctx.font = `800 ${ls}px ${HEAD}`; ctx.fillStyle = BRAND.lime; ctx.fillText(lt, x, top);
+  mark(ctx, "cta", x, top, ctx.measureText(lt).width, ls);
   setSpacing(ctx, 0); ctx.font = `700 ${ss}px ${BODY}`; ctx.fillStyle = "#FFFFFF"; ctx.fillText(st, x, top + ls + gap);
   ctx.textBaseline = "alphabetic";
   return Math.max(ctx.measureText(st).width, maxW);
@@ -370,6 +395,7 @@ function drawBurst(ctx, label, cx, cy, r, u) {
   ctx.closePath(); ctx.fillStyle = BRAND.orange; ctx.fill();
   ctx.lineWidth = 3 * u; ctx.strokeStyle = BRAND.ink; ctx.beginPath(); ctx.arc(0, 0, inner * 0.86, 0, Math.PI * 2); ctx.stroke();
   const text = up(label || "Last call");
+  mark(ctx, "date_label", -r, -r, 2 * r, 2 * r);
   const m = /^(\d{1,3})\s+(.+)$/.exec(text);
   ctx.fillStyle = BRAND.ink; ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
   const box = inner * 1.32;
@@ -429,8 +455,8 @@ function tPhoto(ctx, spec, imgs, F, burst) {
     vScrim(ctx, 0, s0, W, H - s0, [[0, 0], [0.32, 0.72], [0.62, 0.9], [1, 0.96]]);
   }
   drawTag(ctx, spec.tag, m, top, u, colW);
-  drawHead(ctx, head, m, headTop, { accent });
-  drawBody(ctx, sub, m, subTop, BRAND.paper);
+  drawHead(ctx, head, m, headTop, { accent }); markHead(ctx, "headline", head, m, headTop);
+  drawBody(ctx, sub, m, subTop, BRAND.paper); markBody(ctx, "sub", sub, m, subTop);
   drawFooter(ctx, spec, imgs, m, footY, W - 2 * m, footH, u);
   if (burst) {
     const cx = W - m - burstR * 0.95, cy = top + burstR * (land ? 0.95 : 1.02);
@@ -446,6 +472,7 @@ function dateParts(label) {
 }
 function drawDateBlock(ctx, label, x, y, w, h, u) {
   ctx.fillStyle = BRAND.lime; clipPath(ctx, x, y, w, h, 24 * u); ctx.fill();
+  mark(ctx, "date_label", x, y, w, h);
   const p = dateParts(label);
   ctx.fillStyle = BRAND.ink; ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
   const inner = w - 28 * u;
@@ -486,8 +513,8 @@ function tStarts(ctx, spec, imgs, F) {
     const head = fitHead(ctx, headWords(spec.headline, spec.accent), tw, rowH - sub.height - (sub.lines.length ? 22 * u : 0), { max: 130 * u, min: 54 * u, maxLines: 3 });
     const blockH = head.height + (sub.lines.length ? 22 * u + sub.height : 0);
     const t0 = rowTop + (rowH - blockH) / 2;
-    drawHead(ctx, head, tx, t0);
-    drawBody(ctx, sub, tx, t0 + head.height + 22 * u, BRAND.mute);
+    drawHead(ctx, head, tx, t0); markHead(ctx, "headline", head, tx, t0);
+    drawBody(ctx, sub, tx, t0 + head.height + 22 * u, BRAND.mute); markBody(ctx, "sub", sub, tx, t0 + head.height + 22 * u);
     drawFooter(ctx, spec, imgs, x, footY, cw, footH, u);
     return;
   }
@@ -509,8 +536,8 @@ function tStarts(ctx, spec, imgs, F) {
   const head = fitHead(ctx, headWords(spec.headline, spec.accent), tw, rowH - sub.height - (sub.lines.length ? 20 * u : 0), { max: (tall ? 136 : 116) * u, min: 44 * u, maxLines: 3 });
   const blockH = head.height + (sub.lines.length ? 20 * u + sub.height : 0);
   const t0 = rowTop + (rowH - blockH) / 2;
-  drawHead(ctx, head, tx, t0);
-  drawBody(ctx, sub, tx, t0 + head.height + 20 * u, BRAND.mute);
+  drawHead(ctx, head, tx, t0); markHead(ctx, "headline", head, tx, t0);
+  drawBody(ctx, sub, tx, t0 + head.height + 20 * u, BRAND.mute); markBody(ctx, "sub", sub, tx, t0 + head.height + 20 * u);
   drawFooter(ctx, spec, imgs, m, footY, W - 2 * m, footH, u);
 }
 
@@ -522,6 +549,7 @@ function drawRows(ctx, items, x, y, w, rowH, gap, u) {
   // One text size for every row (the smallest any row needs, within reason).
   const textW = x + w - 28 * u - (x + 30 * u + labW);
   const rowSize = Math.min(...split.map(([, t]) => fitBody(ctx, t, textW, { size: rowH * 0.36, min: rowH * 0.3, maxLines: 1, weight: 700 }).size));
+  mark(ctx, "items", x, y, w, items.length * rowH + (items.length - 1) * gap);
   split.forEach(([lab, text], i) => {
     const ry = y + i * (rowH + gap);
     ctx.fillStyle = BRAND.ink2; clipPath(ctx, x, ry, w, rowH, 18 * u); ctx.fill();
@@ -580,8 +608,8 @@ function tList(ctx, spec, imgs, F) {
   const head = fitHead(ctx, headWords(spec.headline, spec.accent), cw, Math.min(headBottom - headLimitTop, H * 0.34), { max: 150 * u, min: 56 * u, maxLines: 3 });
   const headTop = headBottom - head.height;
   drawTag(ctx, spec.tag, m, top, u, cw);
-  drawHead(ctx, head, m, headTop);
-  drawBody(ctx, sub, m, headTop + head.height + 20 * u, BRAND.mute);
+  drawHead(ctx, head, m, headTop); markHead(ctx, "headline", head, m, headTop);
+  drawBody(ctx, sub, m, headTop + head.height + 20 * u, BRAND.mute); markBody(ctx, "sub", sub, m, headTop + head.height + 20 * u);
   if (items.length) drawRows(ctx, items, m, rowsTop, cw, rh, gap, u);
   drawFooter(ctx, spec, imgs, m, footY, W - 2 * m, footH, u);
 }
@@ -623,8 +651,10 @@ function tQuote(ctx, spec, imgs, F) {
   ctx.font = `900 ${markS}px ${HEAD}`; ctx.fillStyle = BRAND.lime; ctx.textBaseline = "alphabetic";
   ctx.fillText("\u201C", m - 8 * u, qTop + markS * 0.72);
   drawBody(ctx, q, m, qText + Math.max(0, Math.min(40 * u, (avail - q.height) / 2)), "#fff");
-  drawHead(ctx, name, m, nameTop, { accent: BRAND.lime });
-  drawBody(ctx, sub, m, nameTop + name.height + 12 * u, BRAND.mute);
+  if (q?.lines.length) markBody(ctx, "quote", q, m, qText + Math.max(0, Math.min(40 * u, (avail - q.height) / 2)));
+  else mark(ctx, "quote", m, qText, cw, Math.max(60 * u, avail * 0.5));
+  drawHead(ctx, name, m, nameTop, { accent: BRAND.lime }); markHead(ctx, "headline", name, m, nameTop);
+  drawBody(ctx, sub, m, nameTop + name.height + 12 * u, BRAND.mute); markBody(ctx, "sub", sub, m, nameTop + name.height + 12 * u);
   drawFooter(ctx, spec, imgs, m, footY, land ? cw : W - 2 * m, footH, u);
 }
 
@@ -636,7 +666,7 @@ function tOverlay(ctx, spec, imgs, F) {
   const headTop = top + (spec.tag ? tagH + 26 * u : 0);
   vScrim(ctx, 0, 0, W, headTop + head.height + 170 * u, [[0, 0.72], [0.62, 0.5], [1, 0]]);
   if (spec.tag) drawTag(ctx, spec.tag, m, top, u, cw);
-  drawHead(ctx, head, m, headTop);
+  drawHead(ctx, head, m, headTop); markHead(ctx, "headline", head, m, headTop);
 }
 function tEndcard(ctx, spec, imgs, F) {
   const { W, H, u, m } = F;
@@ -652,7 +682,7 @@ function tEndcard(ctx, spec, imgs, F) {
   drawLockup(ctx, imgs, (W + Math.min(lw, cw)) / 2, y + logoH / 2, logoH); y += logoH + 90 * u;
   drawHead(ctx, head, m, y); y += head.height + 70 * u;
   const label = fitBody(ctx, up(spec.cta || "See what's coming up"), cw, { size: 64 * u, min: 36 * u, maxLines: 1, weight: 800, family: HEAD });
-  drawBody(ctx, label, m, y + (ctaH - label.height) / 2, BRAND.lime); y += ctaH + 40 * u;
+  drawBody(ctx, label, m, y + (ctaH - label.height) / 2, BRAND.lime); markBody(ctx, "cta", label, m, y + (ctaH - label.height) / 2); y += ctaH + 40 * u;
   drawBody(ctx, site, m, y, "#FFFFFF");
 }
 
@@ -691,11 +721,12 @@ function tPov(ctx, spec, imgs, F) {
   }
   y -= blockH;
   ctx.fillStyle = "#111111";
+  mark(ctx, "headline", cx - Math.max(...cap.lines.map(l => ctx.measureText(l).width)) / 2 - padX, y - padY, Math.max(...cap.lines.map(l => ctx.measureText(l).width)) + padX * 2, blockH + padY * 2);
   for (const l of cap.lines) { ctx.fillText(l, cx, y + lineH / 2); y += lineH; }
   if (clean(spec.sub)) {
     const sub = fitBody(ctx, spec.sub, cw, { size: 34 * u, min: 24 * u, maxLines: 3, weight: 700 });
     ctx.save(); ctx.shadowColor = "rgba(0,0,0,0.75)"; ctx.shadowBlur = 10 * u;
-    drawBody(ctx, sub, cx, y + 26 * u, "#ffffff", "center");
+    drawBody(ctx, sub, cx, y + 26 * u, "#ffffff", "center"); markBody(ctx, "sub", sub, cx, y + 26 * u, "center");
     ctx.restore();
   }
   ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
@@ -748,10 +779,11 @@ function tNote(ctx, spec, imgs, F) {
   const room = ph - pad * 2 - 70 * u - (ps ? ps.height + 24 * u : 0);
   let note = null;
   for (let sz = (land ? 92 : 104) * u; sz >= 44 * u; sz -= 4 * u) { note = fitBody(ctx, spec.headline || "", tw, { size: sz, min: sz, maxLines: 9, weight: 700, lh: 1.02, family: HAND }); if (note.height <= room) break; }
-  drawBody(ctx, note, x0 + pad, y0 + pad, "#1B2B5E");
-  if (ps) drawBody(ctx, ps, x0 + pad, y0 + pad + note.height + 24 * u, "#2E3E73");
+  drawBody(ctx, note, x0 + pad, y0 + pad, "#1B2B5E"); markBody(ctx, "headline", note, x0 + pad, y0 + pad);
+  if (ps) { drawBody(ctx, ps, x0 + pad, y0 + pad + note.height + 24 * u, "#2E3E73"); markBody(ctx, "sub", ps, x0 + pad, y0 + pad + note.height + 24 * u); }
   ctx.font = `700 ${50 * u}px ${HAND}`; ctx.fillStyle = "#1B2B5E"; ctx.textAlign = "right"; ctx.textBaseline = "alphabetic";
   ctx.fillText(sign, x0 + pw - pad, y0 + ph - pad * 0.7);
+  { const sw = ctx.measureText(sign).width; mark(ctx, "tag", x0 + pw - pad - sw, y0 + ph - pad * 0.7 - 50 * u * 0.8, sw, 50 * u); }
   ctx.textAlign = "left";
   ctx.restore();
   drawFooter(ctx, spec, imgs, m, footY, W - 2 * m, footH, u);
@@ -773,7 +805,8 @@ function tCustom(ctx, imgs, F) {
   ctx.drawImage(img, (W - w) / 2, (H - h) / 2, w, h);
 }
 
-export function renderGraphic(canvas, spec = {}, imgs = {}) {
+// opts.hits: an array to fill with the text boxes ({ field, x, y, w, h }).
+export function renderGraphic(canvas, spec = {}, imgs = {}, { hits } = {}) {
   const fmt = FORMATS[spec.format] ? spec.format : "post";
   const F = frame(fmt);
   if (canvas.width !== F.W) canvas.width = F.W;
@@ -785,6 +818,8 @@ export function renderGraphic(canvas, spec = {}, imgs = {}) {
   ctx.textAlign = "left"; ctx.textBaseline = "alphabetic"; setSpacing(ctx, 0);
   const s = { ...spec, tag: spec.tag ?? "", headline: spec.headline || "Where Dripping Springs plays" };
   const t = spec.template;
+  HITS = Array.isArray(hits) ? hits : null;
+  try {
   if (t === "custom") tCustom(ctx, imgs, F);
   else if (t === "pov") tPov(ctx, s, imgs, F);
   else if (t === "note") tNote(ctx, s, imgs, F);
@@ -795,6 +830,7 @@ export function renderGraphic(canvas, spec = {}, imgs = {}) {
   else if (t === "overlay") tOverlay(ctx, s, imgs, F);
   else if (t === "endcard") tEndcard(ctx, s, imgs, F);
   else tPhoto(ctx, s, imgs, F, false);
+  } finally { HITS = null; }
   ctx.restore();
   return canvas;
 }

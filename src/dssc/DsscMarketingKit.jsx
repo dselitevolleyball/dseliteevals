@@ -151,9 +151,18 @@ export const hasGraphic = (item) => item && item.channel !== "sms";
 
 // Live preview of an item's graphic. Draws at full resolution and lets CSS
 // scale it, so what Drew sees is pixel-for-pixel what gets posted.
-export function GraphicPreview({ spec, style, onClick }) {
+// With onEdit, the words on the picture are clickable: click the headline
+// (or the sub line, tag, button, date, rows, quote) and type over it right
+// there. onEdit gets a graphic patch, e.g. { headline, accent }.
+const EDIT_LABEL = { headline: "Headline", sub: "Sub line", tag: "Tag", cta: "Button", date_label: "Date", items: "Rows (one per line)", quote: "Quote" };
+const MULTI = new Set(["items", "quote"]);
+export function GraphicPreview({ spec, style, onClick, onEdit }) {
   const ref = useRef(null);
   const [state, setState] = useState("loading");
+  const [hits, setHits] = useState([]);
+  const [size, setSize] = useState({ W: 1080, H: 1350 });
+  const [hover, setHover] = useState(null);
+  const [editing, setEditing] = useState(null);   // { field, box, value, accent }
   const key = JSON.stringify(spec);
   useEffect(() => {
     let dead = false;
@@ -162,16 +171,56 @@ export function GraphicPreview({ spec, style, onClick }) {
       await ensureFonts();
       const imgs = await loadGraphicImages(spec);
       if (dead || !ref.current) return;
-      renderGraphic(ref.current, spec, imgs);
+      const found = [];
+      renderGraphic(ref.current, spec, imgs, { hits: found });
+      setHits(found); setSize({ W: ref.current.width, H: ref.current.height });
       setState(spec.photo_url && !imgs.photoImg ? "nophoto" : "ok");
     })().catch(() => !dead && setState("err"));
     return () => { dead = true; };
   }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
+  const pct = (v, of) => (v / of) * 100 + "%";
+  const start = (h) => setEditing({ field: h.field, box: h, value: h.field === "items" ? (spec.items || []).join("\n") : String(spec[h.field] || ""), accent: spec.accent || "" });
+  const save = () => {
+    if (!editing) return;
+    const v = editing.value.trim(), f = editing.field;
+    const patch = f === "items" ? { items: v.split("\n").map(x => x.trim()).filter(Boolean).slice(0, 4) } : { [f]: v };
+    if (f === "headline") patch.accent = editing.accent && v.toUpperCase().includes(editing.accent.toUpperCase()) ? editing.accent : "";
+    const same = f === "items" ? JSON.stringify(patch.items) === JSON.stringify(spec.items || []) : v === String(spec[f] || "") && (f !== "headline" || patch.accent === (spec.accent || ""));
+    setEditing(null);
+    if (!same) onEdit(patch);
+  };
+  const words = editing?.field === "headline" ? editing.value.split(/\s+/).filter(Boolean) : [];
   return (
-    <div style={{ position: "relative", ...style }} onClick={onClick}>
-      <canvas ref={ref} width={1080} height={1350} style={{ width: "100%", height: "auto", display: "block", background: "#061a18", cursor: onClick ? "pointer" : "default" }} />
+    <div style={{ position: "relative", ...style }} onClick={onEdit ? undefined : onClick}>
+      <canvas ref={ref} width={1080} height={1350} style={{ width: "100%", height: "auto", display: "block", background: "#061a18", cursor: onClick && !onEdit ? "pointer" : "default" }} />
       {state === "loading" && <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: DS.mut, fontSize: 12, pointerEvents: "none" }}>Drawing…</div>}
       {state === "nophoto" && <div style={{ position: "absolute", left: 6, top: 6, fontSize: 11, background: "rgba(0,0,0,0.6)", color: DS.orange, padding: "2px 6px", borderRadius: 4 }}>Photo couldn't load — swap it</div>}
+      {onEdit && state !== "loading" && !editing && hits.map((h, i) => (
+        <button key={i} type="button" title={"Click to change the " + (EDIT_LABEL[h.field] || h.field).toLowerCase()} onClick={(e) => { e.stopPropagation(); start(h); }}
+          onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)} onFocus={() => setHover(i)} onBlur={() => setHover(null)}
+          style={{ position: "absolute", left: pct(h.x - 8, size.W), top: pct(h.y - 8, size.H), width: pct(h.w + 16, size.W), height: pct(h.h + 16, size.H), background: hover === i ? "rgba(178,208,73,0.12)" : "transparent", border: hover === i ? "2px dashed " + DS.lime : "2px dashed transparent", borderRadius: 6, cursor: "text", padding: 0 }}>
+          {hover === i && <span style={{ position: "absolute", left: 0, top: -22, fontSize: 11, fontWeight: 800, background: DS.lime, color: "#061a18", padding: "2px 7px", borderRadius: 4, whiteSpace: "nowrap", fontFamily: DS.font }}>✎ {EDIT_LABEL[h.field] || h.field}</span>}
+        </button>
+      ))}
+      {onEdit && state === "ok" && !editing && hits.length > 0 && <div style={{ position: "absolute", right: 6, bottom: 6, fontSize: 11, fontWeight: 700, background: "rgba(0,0,0,0.6)", color: "#fff", padding: "3px 8px", borderRadius: 4, pointerEvents: "none", fontFamily: DS.font }}>✎ Click any words to change them</div>}
+      {editing && (
+        <div onClick={(e) => e.stopPropagation()} style={{ position: "absolute", left: "4%", right: "4%", top: `min(${pct(Math.max(0, editing.box.y - 12), size.H)}, calc(100% - ${MULTI.has(editing.field) ? 210 : editing.field === "headline" ? 170 : 120}px))`, background: DS.panel2, border: "2px solid " + DS.lime, borderRadius: 10, padding: 10, boxShadow: "0 10px 30px rgba(0,0,0,0.5)", zIndex: 5, fontFamily: DS.font }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: DS.lime, marginBottom: 6, letterSpacing: "0.03em" }}>{(EDIT_LABEL[editing.field] || editing.field).toUpperCase()}</div>
+          <textarea autoFocus value={editing.value} rows={MULTI.has(editing.field) ? 4 : editing.field === "headline" ? 2 : 1}
+            onChange={e => setEditing(x => ({ ...x, value: e.target.value }))}
+            onKeyDown={e => { if (e.key === "Escape") { e.preventDefault(); setEditing(null); } else if (e.key === "Enter" && (!MULTI.has(editing.field) || e.metaKey || e.ctrlKey)) { e.preventDefault(); save(); } }}
+            style={{ width: "100%", boxSizing: "border-box", resize: "vertical", background: "#061a18", color: "#fff", border: "1px solid " + DS.line, borderRadius: 8, padding: "8px 10px", fontSize: 16, fontFamily: DS.font, lineHeight: 1.35 }} />
+          {words.length > 1 && <div style={{ display: "flex", gap: 5, flexWrap: "wrap", alignItems: "center", marginTop: 6 }}>
+            <span style={{ fontSize: 11, color: DS.mut }}>Color word:</span>
+            {words.map((w, i) => { const on = editing.accent && w.toUpperCase().replace(/[^A-Z0-9]/g, "") === editing.accent.toUpperCase().replace(/[^A-Z0-9]/g, ""); return <button key={i} type="button" onClick={() => setEditing(x => ({ ...x, accent: on ? "" : w.replace(/[^A-Za-z0-9'’-]/g, "") }))} style={{ fontSize: 12, fontWeight: 800, padding: "3px 8px", borderRadius: 999, cursor: "pointer", border: "1px solid " + (on ? DS.lime : DS.line), background: on ? DS.lime : "transparent", color: on ? "#061a18" : "#fff", textTransform: "uppercase" }}>{w}</button>; })}
+          </div>}
+          <div style={{ display: "flex", gap: 6, marginTop: 8, alignItems: "center" }}>
+            <button type="button" onClick={save} style={{ fontWeight: 800, fontSize: 13, padding: "7px 14px", borderRadius: 8, border: "none", background: DS.lime, color: "#061a18", cursor: "pointer" }}>Save</button>
+            <button type="button" onClick={() => setEditing(null)} style={{ fontWeight: 700, fontSize: 13, padding: "7px 12px", borderRadius: 8, border: "1px solid " + DS.line, background: "transparent", color: DS.mut, cursor: "pointer" }}>Cancel</button>
+            <span style={{ fontSize: 11, color: DS.dim }}>{MULTI.has(editing.field) ? "Ctrl+Enter to save" : "Enter to save"} · Esc to cancel</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -345,7 +345,7 @@ export function ItemCard({ item: it, week, narrow, onPatch, onReplace, reload, o
   const isStoryItem = ["story", "follow_up"].includes(kindOf(it));
   const graphicBox = hasGraphic(it) && (
     <div>
-      <GraphicPreview spec={spec} onClick={editable ? () => setShowGraphic(s => !s) : undefined} />
+      <GraphicPreview spec={spec} onEdit={editable && g.template !== "custom" ? (patch) => setG(patch) : undefined} />
       {editable && <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
         {[...TEMPLATES, ...(g.custom_url ? [["custom", "As uploaded"]] : [])].map(([k, l]) => <button key={k} onClick={() => setG(k === "custom" ? { template: "custom", photo_url: g.custom_url } : { template: k, ...(g.template === "custom" && g.photo_url === g.custom_url ? { photo_url: null } : {}) })} style={chipStyle((g.template || "photo") === k, DS.lime, narrow)}>{l}</button>)}
       </div>}
@@ -356,7 +356,7 @@ export function ItemCard({ item: it, week, narrow, onPatch, onReplace, reload, o
         {editable && <button disabled={busy === "upload"} onClick={() => pickFile("photo")} style={chipStyle(false, DS.lime, narrow)} title="Your photo, with the club's headline and logo on top">{busy === "upload" && upMode === "photo" ? "Uploading…" : "⬆ Upload photo"}</button>}
         {editable && <button disabled={busy === "upload"} onClick={() => pickFile("custom")} style={chipStyle(g.template === "custom", "#F5C542", narrow)} title="A finished graphic (Canva, a flyer) — posted exactly as is">{busy === "upload" && upMode === "custom" ? "Uploading…" : "⬆ Use my own graphic"}</button>}
         <input ref={fileRef} type="file" accept="image/*" style={{ display: "none" }} onChange={e => onFile(e.target.files?.[0])} />
-        {editable && g.template !== "custom" && <button onClick={() => setShowGraphic(s => !s)} style={chipStyle(showGraphic, DS.lime, narrow)}>{showGraphic ? "Done with text" : "Edit graphic text"}</button>}
+        {editable && g.template !== "custom" && <button onClick={() => setShowGraphic(s => !s)} style={chipStyle(showGraphic, DS.lime, narrow)}>{showGraphic ? "Done with text" : "All graphic text"}</button>}
       </div>
       {it.asset_url && <div style={{ fontSize: 11, color: DS.dim, marginTop: 6 }}><a href={it.asset_url} target="_blank" rel="noreferrer" style={{ color: DS.mut }}>Uploaded image</a>{it.asset_story_url && <> · <a href={it.asset_story_url} target="_blank" rel="noreferrer" style={{ color: DS.mut }}>story</a></>}</div>}
       {showGraphic && editable && (
