@@ -11,7 +11,9 @@
 // whatever we already hold.
 //
 // Fees, deposits and registration links are the team's invite terms (TERMS) -
-// confirm them before sending. On --send each player is marked Offered
+// confirm them before sending. Kristen and Tionne get a copy of each (CC).
+// Rise emails say nothing about shoes; Regional ones link the club shoe.
+// On --send each player is marked Offered
 // (offer_status 'made', offer_made_at).
 //
 // DRY RUN BY DEFAULT.
@@ -35,6 +37,10 @@ const REG_RISE = "https://dselitevolleyball.sportngin.com/register/form/02985828
 const RISE_CAMP = "https://drippingsports.playbookapi.com/programs/more_info/class_package/77559/";
 const LONESTAR = "https://memberships.sportsengine.com/org/lone-star-region-volleyball/affiliation/ds-elite-volleyball-ds-elite";
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// Each offer is copied to these (send-email has no cc - each gets their own copy).
+const CC = ["kristen@dselitevolleyball.com", "tionne@drippingsportsclub.com"];
+// Regional players buy the club shoe themselves; Rise emails don't mention shoes at all.
+const SHOE_URL = "https://avoli.com/products/avoli-mid-retro-bright-copy";
 
 // Invite terms per team. Regional: the Sept invites. Rise: the Oct 5 13 Rise late invite.
 const REGIONAL = { kind: "regional", level: "Regional", fee: "Season fee: $4,200, paid in quarterly payments - no deposit.", register: REG_REGIONAL };
@@ -136,7 +142,7 @@ function build(p, t, T) {
   const blocks = [
     ["Accepting her spot", [
       T.fee,
-      "It covers practices, coaching, tournament entry fees, court fees and her uniform (shoes not included).",
+      `It covers practices, coaching, tournament entry fees, court fees and her uniform${T.kind === "rise" ? "" : " (shoes not included)"}.`,
       `Register here by ${DEADLINE}: ${T.register}`,
     ]],
     ["Her onboarding form - please fill this in right away", [
@@ -154,7 +160,7 @@ function build(p, t, T) {
     ["Once you've registered", [
       `Lone Star + USAV membership ($55) is required before she can be rostered or play a tournament: ${LONESTAR}`,
       `The DS Elite commitment: ${girl} and a parent each sign it, in your own names. The team went through it together at orientation: ${commit}`,
-      `Shoes: our club shoe is the Avoli Mid Supersonic Pink, out in November - please wait for our word before buying. Any white volleyball shoe works until then.`,
+      ...(T.kind === "rise" ? [] : [`Shoes: our club shoe is the Avoli Mid Supersonic Pink ($180), which families buy on their own from Avoli. It's restocking in November - if it shows sold out, tap "Notify me" for an alert when it's back. Any white volleyball shoe works until then: ${SHOE_URL}`]),
       `Scorekeeping: every player needs to be scorekeeping certified. Coach Kristen has the details in SportsYou - kristen@dselitevolleyball.com.`,
       `Team photos: ${girl}'s own link for sharing photos of ${team} all season: ${photos}`,
     ]],
@@ -189,15 +195,15 @@ const send = async (j, recipients, subject = j.subject) => {
 
 if (htmlOut) {
   writeFileSync(htmlOut, `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DS Elite offers - preview</title><body style="margin:0;background:#f4f4f4;padding:16px">`
-    + jobs.map(j => `<div style="background:#fff;max-width:660px;margin:0 auto 28px;padding:22px;border-radius:10px;box-shadow:0 1px 4px rgba(0,0,0,.08)"><div style="font:13px -apple-system,sans-serif;color:#666;border-bottom:1px solid #eee;padding-bottom:10px;margin-bottom:16px"><b>To:</b> ${esc(j.to.join(", "))}<br><b>Subject:</b> ${esc(j.subject)}</div>${j.html}</div>`).join("") + "</body>");
+    + jobs.map(j => `<div style="background:#fff;max-width:660px;margin:0 auto 28px;padding:22px;border-radius:10px;box-shadow:0 1px 4px rgba(0,0,0,.08)"><div style="font:13px -apple-system,sans-serif;color:#666;border-bottom:1px solid #eee;padding-bottom:10px;margin-bottom:16px"><b>To:</b> ${esc(j.to.join(", "))}<br><b>Copy:</b> ${esc(CC.join(", "))}<br><b>Subject:</b> ${esc(j.subject)}</div>${j.html}</div>`).join("") + "</body>");
   console.log("wrote " + htmlOut);
 }
 if (testTo) { for (const j of jobs) console.log(j.p.first_name, (await send(j, [testTo], "[TEST] " + j.subject)) || "test sent to " + testTo); }
 else if (doSend) {
   for (const j of jobs) {
     if (!j.to.length || !j.p.gear_form_token) { console.log(j.p.first_name, "SKIPPED - no email or form link"); continue; }
-    const e = await send(j, j.to);
+    const e = await send(j, [...j.to, ...CC.filter(c => !j.to.includes(c))]);
     if (!e) await sb.from("players").update({ offer_status: "made", offer_made_at: new Date().toISOString() }).eq("id", j.p.id);
-    console.log(j.p.first_name, "→", j.to.join(", "), e || "sent · marked Offered");
+    console.log(j.p.first_name, "→", j.to.join(", "), "· copy to", CC.join(", "), e || "sent · marked Offered");
   }
 } else if (!htmlOut) for (const j of jobs) console.log("\n" + "═".repeat(72) + `\n${j.p.first_name} ${j.p.last_name} → ${j.to.join(", ")}\nSUBJECT: ${j.subject}\n` + "─".repeat(72) + "\n" + j.text);
