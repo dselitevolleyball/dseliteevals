@@ -9,7 +9,8 @@
 //     weekend (same Fri-Sun rule as the feed)
 //   • regular-season speed & agility dates, and the coaches
 //
-// Audience: families of players on a real (non-event) team with an accepted /
+// Only teams whose times differ from what they were first told (ORIGINAL), unless
+// --all or --team. Audience: families of players on a real (non-event) team with an accepted /
 // locked offer. Pending offers ('made') are left out - their offer email just
 // told them all of this.
 //
@@ -40,10 +41,23 @@ const PLAN = {
     slots: [
       { day: "Sun", slot: "1-3pm" },
       { day: "Mon", slot: "7-9pm", active_to: "2027-01-31" },
-      { day: "Thu", slot: "7-9pm", active_from: "2027-02-01" },
+      { day: "Thu", slot: "5-7pm", active_from: "2027-02-01" },
     ],
-    note: "One change for 14 Sapphire: through January, the weeknight practice is on Monday nights while basketball has the courts on Thursdays. Once basketball season is over, we move to Thursday nights from February 1.",
+    note: "Through January, the weeknight practice is on Monday nights, 7-9pm, while basketball has the courts on Thursdays. Once basketball season is over, we move back to Thursdays, 5-7pm, from February 1.",
   },
+};
+
+// What each team was first told about its regular-season practices (the July 2
+// welcome emails; 16 Diamond's Aug 20 welcome; the Sept 19 Rise invites). Only
+// teams whose schedule differs from this get the email (--all sends everyone).
+const ORIGINAL = {
+  "11 Diamond": "Sun 3-5pm · Wed 5-7pm", "12 Diamond": "Sun 3-5pm · Tue 5-7pm · Thu 5-7pm", "12 Ruby": "Sun 1-3pm · Wed 5-7pm",
+  "13 Diamond": "Sun 3-5pm · Wed 5-7pm · Thu 5-7pm", "13 Emerald": "Sun 5-7pm · Tue 5-7pm", "13 Ruby": "Sun 3-5pm · Tue 5-7pm",
+  "13 Sapphire": "Sun 1-3pm · Mon 7-9pm", "14 Diamond": "Sun 5-7pm · Tue 5-7pm · Thu 7-9pm", "14 Emerald": "Sun 5-7pm · Wed 7-9pm",
+  "14 Ruby": "Sun 5-7pm · Tue 7-9pm · Wed 7-9pm", "14 Sapphire": "Sun 1-3pm · Thu 5-7pm", "14 Topaz": "Sun 3-5pm · Mon 5-7pm",
+  "15 Diamond": "Sun 5-7pm · Tue 7-9pm · Wed 7-9pm", "15 Emerald": "Sun 5-7pm · Wed 7-9pm", "15 Ruby": "Sun 7-9pm · Mon 7-9pm · Thu 7-9pm",
+  "15 Sapphire": "Sun 7-9pm · Wed 5-7pm", "16 Diamond": "Sun 7-9pm · Tue 7-9pm · Thu 7-9pm",
+  "11 Rise 1": "Sun 1-3pm · Thu 5-7pm", "12 Rise 1": "Sun 3-5pm · Mon 5-7pm", "13 Rise 1": "Sun 1-3pm · Mon 7-9pm",
 };
 
 const env = { ...process.env };
@@ -52,7 +66,7 @@ if (existsSync(new URL("../.env", import.meta.url))) for (const line of readFile
 }
 const args = process.argv.slice(2);
 const val = (n) => { const i = args.indexOf("--" + n); return i >= 0 ? args[i + 1] : null; };
-const testTo = val("test"), doSend = args.includes("--send"), htmlOut = val("html"), onlyTeam = val("team");
+const testTo = val("test"), doSend = args.includes("--send"), htmlOut = val("html"), onlyTeam = val("team"), everyone = args.includes("--all");
 const sb = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
 
 const all = async (table, sel, f = (q) => q) => { const out = []; for (let i = 0; ; i += 1000) { const { data, error } = await f(sb.from(table).select(sel)).range(i, i + 999); if (error) throw new Error(table + ": " + error.message); out.push(...data); if (data.length < 1000) break; } return out; };
@@ -90,10 +104,16 @@ const firstOn = (from, day) => { let d = from; while (dow(d) !== day) d = addDay
 const datesOf = (day, from, to) => { const out = []; for (let d = firstOn(from, day); d <= to; d = addDays(d, 7)) out.push(d); return out; };
 const tnById = new Map(tns.map(t => [t.id, t]));
 
+const DOW3 = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const compact = (slots) => { const by = new Map(); for (const a of slots) { const k = a.day + (a.active_from || a.active_to ? "*" : ""); (by.get(k) || by.set(k, []).get(k)).push(a.slot); }
+  return [...by.entries()].sort((a, b) => DOW3.indexOf(a[0].slice(0, 3)) - DOW3.indexOf(b[0].slice(0, 3))).map(([k, l]) => merge(l).map(([s, e]) => `${k.slice(0, 3)} ${clock(s)}-${clock(e)}pm${k.endsWith("*") ? "*" : ""}`).join(" · ")).join(" · "); };
+export const changedFrom = (teamName, slots) => ORIGINAL[teamName] && compact(slots) !== ORIGINAL[teamName] ? ORIGINAL[teamName] : null;
+
 function build(teamName) {
   const t = teams.find(x => x.team_name === teamName), T = label(teamName);
   const plan = PLAN[teamName];
   const slots = plan ? plan.slots : assigns.filter(a => a.team_name === teamName);
+  const was = changedFrom(teamName, slots);
   // Weekly lines: one per day (and per date window), hours merged.
   const byKey = new Map();
   for (const a of slots) { const k = [a.day, a.active_from || "", a.active_to || ""].join("|"); (byKey.get(k) || byKey.set(k, []).get(k)).push(a.slot); }
@@ -138,7 +158,7 @@ function build(teamName) {
   });
   const blocks = [
     ["Weekly practices, from Sunday, November 29", [...weekly, `All at the ${WAREHOUSE}. SportsYou shows the court for each one.`]],
-    ...(plan?.note ? [["What's changed", [plan.note]]] : []),
+    ...(was ? [["What's changed", [`The regular-season practice times we first sent you were ${was.replace(/·/g, "and")}. They've changed - the weekly practices above are the current schedule, and they're what's on SportsYou.`, ...(plan?.note ? [plan.note] : [])]]] : plan?.note ? [["What's changed", [plan.note]]] : []),
     ["No practice on these dates", [
       ...(inHouseLine ? [inHouseLine] : []),
       ...offLines.filter(l => !(inHouseLine && /in-house/.test(l))),
@@ -148,9 +168,10 @@ function build(teamName) {
     [`Your ${T} coaches`, coaches],
   ];
   const intro = [
-    `The regular season starts the weekend after Thanksgiving, and here is ${T}'s practice schedule for it. Everything below is already on the ${T} calendar in SportsYou, which is always the final word if anything changes.`,
+    was ? `${T}'s regular-season practice times have changed since we first sent them, so here is the updated schedule. The regular season starts the weekend after Thanksgiving, and everything below is already on the ${T} calendar in SportsYou, which is always the final word if anything changes.`
+        : `The regular season starts the weekend after Thanksgiving, and here is ${T}'s practice schedule for it. Everything below is already on the ${T} calendar in SportsYou, which is always the final word if anything changes.`,
   ];
-  return { T, blocks, intro, subject: `${T}: regular-season practice schedule`, weekly, offLines, tourneySundays, saDates };
+  return { T, blocks, intro, subject: was ? `${T}: updated regular-season practice schedule` : `${T}: regular-season practice schedule`, weekly, offLines, tourneySundays, saDates, was };
 }
 
 const render = (team, greet) => {
@@ -165,6 +186,7 @@ const render = (team, greet) => {
 
 // ── who gets which email ───────────────────────────────────────────────────
 const realTeams = teams.filter(t => !isEventTeam(t) && (!onlyTeam || t.team_name === onlyTeam)).map(t => t.team_name)
+  .filter(t => everyone || onlyTeam || changedFrom(t, PLAN[t] ? PLAN[t].slots : assigns.filter(a => a.team_name === t)))
   .sort((a, b) => (parseInt(a) || 99) - (parseInt(b) || 99) || a.localeCompare(b));
 const jobs = [];
 for (const teamName of realTeams) {
