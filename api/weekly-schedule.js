@@ -17,6 +17,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { appOrigin } from "../shared/app-origin.js";
+import { activeOn } from "../shared/day-schedule.js";
 import { sendOneSms, normalizePhone, twilioReady } from "./_lib/sms.js";
 
 const OWNERS = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"];
@@ -82,7 +83,7 @@ export default async function handler(req, res) {
 
   const [{ data: teams }, { data: assigns }, { data: sas }, { data: floats }, { data: cover }, { data: reqs }, { data: cancels }, { data: nights }, { data: roster }, { data: accounts }] = await Promise.all([
     sb.from("practice_teams").select("team_name, head_coach, assistant_coach, third_coach, practices_per_week"),
-    sb.from("practice_assignments").select("team_name, phase, day, slot"),
+    sb.from("practice_assignments").select("team_name, phase, day, slot, active_from, active_to"),
     sb.from("sa_sessions").select("team_name, session_date, slot").gte("session_date", start).lte("session_date", end),
     sb.from("coach_floats").select("coach_name, day, slot, phase"),
     sb.from("practice_coverage").select("practice_date, team_name, slot, coach_out, sub_name, combine_with_team, note").gte("practice_date", start).lte("practice_date", end),
@@ -122,7 +123,7 @@ export default async function handler(req, res) {
     if (cancelledDay(d)) continue;
     const blocks = [];   // scheduled team hours, merged later per coach
     if (ph) for (const a of assigns || []) {
-      if ((a.phase || "season") !== ph || a.day !== wd || eventTeams.has(a.team_name) || cancelledTeam(d, a.team_name)) continue;
+      if ((a.phase || "season") !== ph || a.day !== wd || !activeOn(a, d) || eventTeams.has(a.team_name) || cancelledTeam(d, a.team_name)) continue;
       const mv = (moves || []).find(m => m.practice_date === d && m.team_name === a.team_name);
       if (mv && blocks.some(b => b.team === a.team_name && b.slot === mv.slot)) continue;
       blocks.push({ team: a.team_name, slot: mv ? mv.slot : a.slot, sa: false });

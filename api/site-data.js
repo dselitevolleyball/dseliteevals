@@ -237,10 +237,13 @@ export function practiceFor(rows, saRows, today) {
     // then work out each slice's building on its own.
     const cuts = new Set([from]);
     for (const a of mine) {
-      if (!clean(a.venue)) continue;
-      const s = ymd(a.venue_start), e = a.venue_end ? addDays(a.venue_end, 1) : "";
-      if (s > from && s <= to) cuts.add(s);
-      if (e > from && e <= to) cuts.add(e);
+      // ...and wherever a slot that runs for only part of the phase starts or stops.
+      for (const [st, en] of [[a.venue_start, a.venue_end], [a.active_from, a.active_to]]) {
+        if (st === a.venue_start && !clean(a.venue)) continue;
+        const s = ymd(st), e = en ? addDays(ymd(en), 1) : "";
+        if (s > from && s <= to) cuts.add(s);
+        if (e > from && e <= to) cuts.add(e);
+      }
     }
     const starts = [...cuts].sort();
     const slices = starts.map((s, i) => [s, i + 1 < starts.length ? addDays(starts[i + 1], -1) : to]).filter(([, e]) => e >= today);
@@ -249,6 +252,7 @@ export function practiceFor(rows, saRows, today) {
     for (const [sFrom, sTo] of slices) {
       const groups = new Map();                                // day|venue → [[s,e]]
       for (const a of mine) {
+        if ((a.active_from && ymd(a.active_from) > sFrom) || (a.active_to && ymd(a.active_to) < sTo)) continue;
         const day = DAYS.find((d) => d === clean(a.day).slice(0, 3));
         const [s, e] = span(a.slot);
         if (!day || !(s < 99) || !(e > s)) continue;
@@ -383,7 +387,7 @@ export async function buildSiteData(sb, { now = new Date() } = {}) {
   const [playerRows, paRows, saRows, asgRows] = teamNames.length ? await Promise.all([
     pageAll(() => sb.from("players").select("id, team_assignment, first_name, last_name, jersey_number, roster_pos, primary_position, positions")
       .in("offer_status", PUBLIC_OFFER).eq("season", season).eq("site_hidden", false).in("team_assignment", teamNames).order("id"), "players"),
-    pageAll(() => sb.from("practice_assignments").select("team_name, phase, day, slot, court, venue, venue_start, venue_end").in("team_name", teamNames).order("id"), "practice_assignments"),
+    pageAll(() => sb.from("practice_assignments").select("team_name, phase, day, slot, court, venue, venue_start, venue_end, active_from, active_to").in("team_name", teamNames).order("id"), "practice_assignments"),
     pageAll(() => sb.from("sa_sessions").select("team_name, session_date, slot").in("team_name", teamNames).gte("session_date", today).order("id"), "sa_sessions"),
     pageAll(() => sb.from("tournament_assignments").select("tournament_id, team_id, division, status").in("team_id", teamNames).neq("status", "dropped").order("id"), "tournament_assignments"),
   ]) : [[], [], [], []];

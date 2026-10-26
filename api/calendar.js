@@ -17,6 +17,7 @@
 // Env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY (read-only queries).
 
 import { isEventTeam } from "../shared/event-teams.js";
+import { activeOn } from "../shared/day-schedule.js";
 
 const TZ = "America/Chicago";
 const SUMMER_SUNDAYS = ["2026-07-12","2026-07-19","2026-07-26","2026-08-02","2026-08-09","2026-08-16","2026-08-23","2026-08-30","2026-09-06"];
@@ -85,7 +86,7 @@ export default async function handler(req, res) {
 
   const enc = encodeURIComponent(team);
   const [assigns, saRows, cancels, moves, tnAssigns, teamEvents] = await Promise.all([
-    q("practice_assignments?team_name=eq." + enc + "&select=day,slot,phase,court,venue,venue_start,venue_end"),
+    q("practice_assignments?team_name=eq." + enc + "&select=day,slot,phase,court,venue,venue_start,venue_end,active_from,active_to"),
     q("sa_sessions?team_name=eq." + enc + "&select=session_date,slot,block"),
     q("practice_cancellations?select=practice_date,team_name"),
     q("practice_slot_moves?team_name=eq." + enc + "&select=practice_date,slot"),
@@ -183,6 +184,7 @@ export default async function handler(req, res) {
   for (const [phase, dates] of datedPhases) {
     const rows = assigns
       .filter(x => (x.phase || "season") === phase && x.day === "Sun")
+      .filter(x => !x.active_from && !x.active_to || dates.some(d => activeOn(x, d)))
       .map(a => ({ a, t: slotTimes(a.slot) }))
       .filter(x => x.t)
       .sort((x, y) => x.t[0] - y.t[0]);
@@ -190,6 +192,7 @@ export default async function handler(req, res) {
       if (cancelled.has(d) || moveByDate.has(d) || goneSun.has(d)) continue;
       const blocks = [];
       for (const { a, t } of rows) {
+        if (!activeOn(a, d)) continue;
         const loc = locFor(a, d);
         const last = blocks[blocks.length - 1];
         if (last && last.end === t[0] && last.loc === loc) last.end = t[1];
@@ -210,10 +213,13 @@ export default async function handler(req, res) {
   }
   // Weekly: regular season + post season
   const weekly = [["season", SEASON_START, SEASON_END], ["postseason", POST_START, POST_END]];
-  for (const [phase, start, end] of weekly) {
+  for (const [phase, pStart, pEnd] of weekly) {
     for (const a of assigns.filter(x => (x.phase || "season") === phase)) {
       const t = slotTimes(a.slot); const dow = DOW[a.day];
       if (!t || dow == null) continue;
+      // A slot that only runs for part of the phase repeats only across that part.
+      const from = a.active_from ? String(a.active_from).slice(0, 10) : "", to = a.active_to ? String(a.active_to).slice(0, 10) : "";
+      const start = from && from > pStart ? from : pStart, end = to && to < pEnd ? to : pEnd;
       const first = firstOnOrAfter(start, dow);
       if (first > end) continue;
       const exdates = datesBetween(start, end, dow).filter(d => cancelled.has(d) || moveByDate.has(d) || goneSun.has(d));

@@ -40,6 +40,10 @@ export const PHASE_RANGES = [
 ];
 // Same cut-overs as the Daily board.
 export const phaseForDate = (iso) => iso >= "2027-05-07" ? "postseason" : iso >= "2026-11-29" ? "season" : iso >= "2026-10-18" ? "fall2" : iso >= "2026-09-13" ? "fall1" : "summer";
+// A slot can run for only part of its phase (practice_assignments.active_from /
+// active_to, e.g. Mondays through Jan 31 then Thursdays). Empty = the whole phase.
+const d10 = (v) => (v ? String(v).slice(0, 10) : "");
+export const activeOn = (a, iso) => (!a.active_from || iso >= d10(a.active_from)) && (!a.active_to || iso <= d10(a.active_to));
 const isPracticeDay = (iso, ph) => {
   if (ph === "season" || ph === "postseason") return iso >= "2026-11-29" && iso <= "2027-06-15";
   return (PRESEASON_DATES[ph] || []).includes(iso);
@@ -146,7 +150,7 @@ export function buildDaySchedule(f) {
 
   // Which teams practice when today.
   const moveFor = new Map(f.moves.map(m => [m.team_name, m.slot]));
-  const rows = practiceDay ? f.assigns.filter(a => (a.phase || "fall1") === ph && a.day === weekday && !eventTeams.has(a.team_name)) : [];
+  const rows = practiceDay ? f.assigns.filter(a => (a.phase || "fall1") === ph && a.day === weekday && !eventTeams.has(a.team_name) && activeOn(a, date)) : [];
   const byTeam = new Map();
   for (const a of rows) {
     if (!byTeam.has(a.team_name)) byTeam.set(a.team_name, { slots: new Set(), orig: new Set(), venue: a.venue || "", court: a.court });
