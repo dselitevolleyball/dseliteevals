@@ -3224,6 +3224,13 @@ export default function App() {
     const { error } = await supabase.from("practice_slot_moves").upsert(row, { onConflict: "practice_date,team_name" });
     if (error) { window.alert("Couldn't save move: " + error.message); loadSlotMoves(); }
   }, [loadSlotMoves]);
+  // The court for a team moved for ONE date: saved on the move, not the weekly slot.
+  const setMoveCourt = useCallback(async (practice_date, team_name, court) => {
+    const c = court === "" || court == null ? null : parseInt(court, 10);
+    setSlotMoves(prev => prev.map(m => m.practice_date === practice_date && m.team_name === team_name ? { ...m, court: c } : m));
+    const { error } = await supabase.from("practice_slot_moves").update({ court: c, updated_at: new Date().toISOString() }).eq("practice_date", practice_date).eq("team_name", team_name);
+    if (error) { window.alert("Couldn't set court: " + error.message); loadSlotMoves(); }
+  }, [loadSlotMoves]);
   const clearSlotMovesForDate = useCallback(async (practice_date) => {
     setSlotMoves(prev => prev.filter(m => m.practice_date !== practice_date));
     const { error } = await supabase.from("practice_slot_moves").delete().eq("practice_date", practice_date);
@@ -20273,11 +20280,12 @@ export default function App() {
                               title="Drag to another block to move this practice for this day only"
                               style={{padding:"8px 12px",borderBottom:"1px solid "+C.border,background:tCancelled?"rgba(239,68,68,0.06)":"transparent",cursor:"grab",opacity:boardDrag===a.team_name?0.45:1}}>
                               <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:5}}>
-                                <select value={a.court ?? ""} onChange={e=>setTeamCourt(a.team_name, weekday, s.label, dayPhase, e.target.value)}
-                                  title="Court" style={{...inpStyle,padding:"2px 4px",fontSize:12,fontWeight:800,color:a.court?C.gold:C.mut,width:46}}>
+                                {(() => { const mv = slotMoves.find(x => x.practice_date === dailyDate && x.team_name === a.team_name); const cv = mv ? mv.court : a.court; return (
+                                <select value={cv ?? ""} onChange={e => mv ? setMoveCourt(dailyDate, a.team_name, e.target.value) : setTeamCourt(a.team_name, weekday, s.label, dayPhase, e.target.value)}
+                                  title={mv ? "Court for this date (the team is moved here for today only)" : "Court"} style={{...inpStyle,padding:"2px 4px",fontSize:12,fontWeight:800,color:cv?C.gold:C.mut,width:46}}>
                                   <option value="">C—</option>
                                   {[1,2,3,4,5,6].map(n => <option key={n} value={n}>{"C"+n}</option>)}
-                                </select>
+                                </select>); })()}
                                 {(() => { const sc = scrims.find(x => x.practice_date === dailyDate && x.slot === s.label && (x.teams || []).includes(a.team_name));
                                   return sc ? <span title={"Scrimmage vs " + sc.teams.filter(t => t !== a.team_name).join(", ") + (sc.court ? " on court " + sc.court : "")} style={{order:9,fontSize:9,fontWeight:900,color:"#f97316",border:"1px solid #f97316",borderRadius:5,padding:"1px 5px",whiteSpace:"nowrap"}}>⚔ vs {sc.teams.filter(t => t !== a.team_name).join(", ")}{sc.court ? " · C" + sc.court : ""}</span> : null; })()}
                                 <span onClick={()=>setTeamCardName(a.team_name)} style={{fontSize:13,fontWeight:800,color:tCancelled?C.mut:C.gold,cursor:"pointer",textDecoration:tCancelled?"line-through":"none"}}>{a.team_name}</span>

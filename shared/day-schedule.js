@@ -90,7 +90,7 @@ export async function loadDayFacts(sb, date) {
   const [teams, assigns, moves, cancels, cover, reqs, floats, sas, nights, tns] = await Promise.all([
     q(sb.from("practice_teams").select("team_name, head_coach, assistant_coach, third_coach, practices_per_week, level")),
     q(sb.from("practice_assignments").select("team_name, phase, day, slot, court, venue")),
-    q(sb.from("practice_slot_moves").select("practice_date, team_name, slot").eq("practice_date", date)),
+    q(sb.from("practice_slot_moves").select("practice_date, team_name, slot, court").eq("practice_date", date)),
     q(sb.from("practice_cancellations").select("practice_date, team_name, reason").eq("practice_date", date)),
     q(sb.from("practice_coverage").select("practice_date, team_name, slot, phase, coach_out, sub_name, combine_with_team, note").eq("practice_date", date)),
     q(sb.from("coach_requests").select("coach_name, request_date, team_name, status, type, details").gte("request_date", fri).lte("request_date", date)),
@@ -150,6 +150,7 @@ export function buildDaySchedule(f) {
 
   // Which teams practice when today.
   const moveFor = new Map(f.moves.map(m => [m.team_name, m.slot]));
+  const moveCourt = new Map(f.moves.filter(m => m.court).map(m => [m.team_name, Number(m.court)]));
   const rows = practiceDay ? f.assigns.filter(a => (a.phase || "fall1") === ph && a.day === weekday && !eventTeams.has(a.team_name) && activeOn(a, date)) : [];
   const byTeam = new Map();
   for (const a of rows) {
@@ -157,7 +158,8 @@ export function buildDaySchedule(f) {
     byTeam.get(a.team_name).slots.add(moveFor.get(a.team_name) || a.slot);
     // Sundays carry a court per hour (11 Diamond on Court 1 at 3, Court 3 at 4).
     // A moved slot's court no longer applies.
-    if (!moveFor.has(a.team_name) && a.court != null && a.court !== "") { const [s0, e0] = span(a.slot); if (s0 < 99 && e0 > s0) byTeam.get(a.team_name).courtAt.push({ s: s0, e: e0, court: Number(a.court) || null }); }
+    if (moveFor.has(a.team_name) && moveCourt.has(a.team_name)) { const [s0, e0] = span(moveFor.get(a.team_name)); if (s0 < 99 && e0 > s0 && !byTeam.get(a.team_name).courtAt.length) byTeam.get(a.team_name).courtAt.push({ s: s0, e: e0, court: moveCourt.get(a.team_name) }); }
+    else if (!moveFor.has(a.team_name) && a.court != null && a.court !== "") { const [s0, e0] = span(a.slot); if (s0 < 99 && e0 > s0) byTeam.get(a.team_name).courtAt.push({ s: s0, e: e0, court: Number(a.court) || null }); }
     byTeam.get(a.team_name).orig.add(a.slot);
   }
   // Approved call-outs dated today take the coach off. A weekend request
