@@ -200,10 +200,13 @@ export async function run(sb, { me, name }, b) {
         if ((wk || []).some(i => i.channel === "social" && String(i.program?.id || "") === String(t.program.id) && (!t.day || dayOfCt(i.scheduled_at) === t.day))) continue;
         const spot = t.day && (wk || []).find(i => !claimed.has(i.id) && i.channel === "social" && i.status === "draft" && ["post"].includes(i.kind || "post") && dayOfCt(i.scheduled_at) === t.day && untouched(i) && !targets.some(x => String(x.program.id) === String(i.program?.id || "")));
         if (spot) { claimed.add(spot.id); await sb.from("mkt_items").delete().eq("id", spot.id).eq("status", "draft"); }
-        jobs.push({ t, spot });
+        // Two programs on the same morning go out a couple of hours apart.
+        let time = t.time;
+        while (time && jobs.some(j => j.t.day === t.day && j.time === time)) time = String(Number(time.slice(0, 2)) + 2).padStart(2, "0") + time.slice(2);
+        jobs.push({ t, spot, time });
       }
-      const placed = (await Promise.all(jobs.map(({ t, spot }) =>
-        generateWeek(sb, { weekOf, instruction, by: me, single: { channel: "social", program_id: t.program.id, day: t.day, time: t.time, format: "post", reason: `From the brief: "${t.clause.slice(0, 120)}"` } })
+      const placed = (await Promise.all(jobs.map(({ t, spot, time }) =>
+        generateWeek(sb, { weekOf, instruction, by: me, single: { channel: "social", program_id: t.program.id, day: t.day, time, format: "post", reason: `From the brief: "${t.clause.slice(0, 120)}"` } })
           .then(g => (g.items || []).map(i => ({ id: i.id, scheduled_at: i.scheduled_at, kind: i.kind, channel: i.channel, headline: i.headline, program: t.program.name, replaced: spot?.id || null })))
           .catch(() => [])))).flat();
       const items = [...(r.items || []).filter(i => !placed.some(x => x.replaced === i.id)), ...placed];
