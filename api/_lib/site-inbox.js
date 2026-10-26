@@ -61,7 +61,7 @@ export function newMessageId() {
 }
 
 // One Resend send. Returns { ok, id, status, error }.
-export async function sendResend({ from, to, cc, reply_to, subject, html, text, headers }) {
+export async function sendResend({ from, to, cc, bcc, reply_to, subject, html, text, headers }) {
   const key = resendKeyFor(from);
   if (!key) return { ok: false, error: "RESEND_API_KEY is not set" };
   if (!from) return { ok: false, error: "DSSC_FROM_EMAIL / DSE_FROM_EMAIL is not set" };
@@ -71,6 +71,8 @@ export async function sendResend({ from, to, cc, reply_to, subject, html, text, 
   const payload = { from, to: toList, subject: String(subject || "").slice(0, 200), html, text };
   const ccList = list(cc).filter(e => !toList.includes(e));
   if (ccList.length) payload.cc = ccList;
+  const bccList = list(bcc).filter(e => !toList.includes(e) && !ccList.includes(e));
+  if (bccList.length) payload.bcc = bccList;
   if (reply_to) payload.reply_to = reply_to;
   if (headers && Object.keys(headers).length) payload.headers = headers;
   try {

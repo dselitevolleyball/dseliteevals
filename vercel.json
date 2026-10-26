@@ -237,6 +237,10 @@
       "schedule": "*/15 * * * *"
     },
     {
+      "path": "/api/site-inbox-sent-poll",
+      "schedule": "7-59/15 * * * *"
+    },
+    {
       "path": "/api/marketing-cron",
       "schedule": "*/15 * * * *"
     }

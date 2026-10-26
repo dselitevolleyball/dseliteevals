@@ -8,11 +8,14 @@
 //   { inquiry_id, note, status? }   store a 'note' row, no email
 //   200 { ok: true, message, status }
 //
-// The reply goes out as the club (DSSC_FROM_EMAIL) with Reply-To
-// info@drippingsportsclub.com (DSSC_INBOX_ADDRESS), so the family's answer
-// comes back to the mailbox api/site-inbox-poll.js reads and lands on this
-// same thread. A DS Elite website thread (site = 'dselite') is answered from
-// the DS Elite address instead.
+// The reply goes out from the director who wrote it ("Jonathan DelaRosa
+// <jonathan@drippingsportsclub.com>"), with Reply-To that director and
+// info@drippingsportsclub.com (DSSC_INBOX_ADDRESS) and a blind copy to the
+// director. The family's answer reaches the director's mailbox and the one
+// api/site-inbox-poll.js reads, so it lands on this same thread. A director
+// without an @drippingsportsclub.com address, or DSSC_INBOX_REPLY_AS=club,
+// sends as the club (DSSC_FROM_EMAIL). A DS Elite website thread
+// (site = 'dselite') is answered from the DS Elite address.
 //
 // Env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, RESEND_API_KEY, DSSC_FROM_EMAIL
 //      (fallback DSE_FROM_EMAIL), DSSC_INBOX_ADDRESS (optional), DSE_REPLY_TO (optional).
@@ -20,6 +23,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { longStr, str, esc } from "./_lib/site-forms.js";
 import { verifyDirector, sendResend, dsscFrom, addrOf, inboxAddress, newMessageId, threadSubject, canonicalDirectorEmail, STATUSES, isEmailish, nrm } from "./_lib/site-inbox.js";
+import { directorByEmail } from "../shared/dssc-directors.js";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") { res.setHeader("Allow", "POST"); return res.status(405).json({ error: "POST only" }); }
@@ -64,11 +68,20 @@ export default async function handler(req, res) {
   const subject = ("Re: " + threadSubject(inq, firstIn)).slice(0, 180);
 
   const dse = inq.site === "dselite";
-  const from = dse ? (String(process.env.DSE_FROM_EMAIL || "").trim() || dsscFrom()) : dsscFrom();
-  const replyTo = dse ? (nrm(process.env.DSE_REPLY_TO) || addrOf(process.env.DSE_FROM_EMAIL) || inboxAddress()) : inboxAddress();
-  const signature = `${name}\n${dse ? "DS Elite Volleyball" : "Dripping Springs Sports Club"}\n${replyTo}`;
+  // A DSSC reply goes out from the director who wrote it (Drew, Oct 26 2026:
+  // "when Jonathan responds in the HQ inbox it comes from his email"), on the
+  // club's verified domain. The family's answer goes to that director and to
+  // info@, so it still lands on this thread, and the director gets a copy in
+  // their own mailbox. A director without an @drippingsportsclub.com address,
+  // or DSSC_INBOX_REPLY_AS=club, sends as the club as before.
+  const dir = !dse && process.env.DSSC_INBOX_REPLY_AS !== "club" ? directorByEmail(me) : null;
+  const own = dir && /@drippingsportsclub\.com$/i.test(dir.email) ? dir.email : null;
+  const from = dse ? (String(process.env.DSE_FROM_EMAIL || "").trim() || dsscFrom()) : own ? `${dir.name} <${own}>` : dsscFrom();
+  const replyTo = dse ? (nrm(process.env.DSE_REPLY_TO) || addrOf(process.env.DSE_FROM_EMAIL) || inboxAddress()) : own ? [own, inboxAddress()] : inboxAddress();
+  const shownAddr = own || (Array.isArray(replyTo) ? replyTo[0] : replyTo);
+  const signature = `${name}\n${dse ? "DS Elite Volleyball" : "Dripping Springs Sports Club"}\n${shownAddr}`;
   const fullText = `${text}\n\n${signature}`;
-  const html = `<div style="font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:15px;line-height:1.55;color:#191919;max-width:640px">${text.split(/\n{2,}/).map(p => `<p style="margin:0 0 12px;white-space:pre-wrap">${esc(p)}</p>`).join("")}<p style="margin:18px 0 0;color:#333">${esc(name)}<br><span style="color:#667">${esc(dse ? "DS Elite Volleyball" : "Dripping Springs Sports Club")} · <a href="mailto:${esc(replyTo)}" style="color:#0F8B76">${esc(replyTo)}</a></span></p></div>`;
+  const html = `<div style="font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:15px;line-height:1.55;color:#191919;max-width:640px">${text.split(/\n{2,}/).map(p => `<p style="margin:0 0 12px;white-space:pre-wrap">${esc(p)}</p>`).join("")}<p style="margin:18px 0 0;color:#333">${esc(name)}<br><span style="color:#667">${esc(dse ? "DS Elite Volleyball" : "Dripping Springs Sports Club")} · <a href="mailto:${esc(shownAddr)}" style="color:#0F8B76">${esc(shownAddr)}</a></span></p></div>`;
 
   // Threading: our own Message-ID (so the family's answer finds this thread)
   // and, when they emailed us first, a reference to their message so their
@@ -78,7 +91,7 @@ export default async function handler(req, res) {
   const refs = lastWithId ? [...new Set([...(lastWithId.references_ids || []), lastWithId.message_id])].slice(-10) : [];
   if (lastWithId) { headers["In-Reply-To"] = lastWithId.message_id; headers.References = refs.join(" "); }
 
-  const sent = await sendResend({ from, to: [inq.email], reply_to: replyTo, subject, html, text: fullText, headers });
+  const sent = await sendResend({ from, to: [inq.email], bcc: own && own !== nrm(inq.email) ? [own] : [], reply_to: replyTo, subject, html, text: fullText, headers });
   if (!sent.ok) return res.status(502).json({ error: "The email didn't send: " + (sent.error || "unknown error") });
 
   const { data: row, error: mErr } = await sb.from("site_inbox_messages").insert({

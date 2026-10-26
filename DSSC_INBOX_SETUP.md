@@ -3,8 +3,10 @@
 One inbox for all the directors: every form on drippingsportsclub.com and every
 email to **info@drippingsportsclub.com** becomes a thread in **DSSC HQ → Inbox**
 (www.drippingsportsclub.com/hq). The right director is emailed with a link to
-the thread; they reply from HQ (it goes out as the club, Reply-To info@), and the
-family's answer lands back on the same thread. Nothing is lost in anyone's Gmail.
+the thread; they reply from HQ (it goes out from their own @drippingsportsclub.com
+address, Reply-To them and info@, with a copy to them), and the family's answer
+lands back on the same thread. Replies a director sends from their own Gmail
+are read from their Sent folder and filed on the thread too (step 7).
 
 ```
 website form ──► POST /api/site-inbox (x-site-token) ──┐
@@ -104,7 +106,33 @@ is picked up by the poller and appears on thread 123, which goes back to **New**
 - **DSSC HQ → Inbox.** New / Mine / Waiting / Done, sport chips, search. Open a
   thread, "I've got it", reply (four canned replies to start from), add an
   internal note, set the status. The nav badge counts threads nobody has taken.
-- Answering from your own Gmail still works: CC info@ and the poller files your
-  reply on the thread and marks it waiting on the family.
+- Answering from your own Gmail works two ways: CC info@ (no setup), or turn on
+  step 7 and HQ finds the reply in your Sent folder by itself. Either way it
+  shows on the thread, the thread goes to Waiting, and it's assigned to you if
+  nobody had it.
+- Replies sent from HQ come from the person who sent them (Jonathan's say
+  "Jonathan DelaRosa <jonathan@drippingsportsclub.com>"), go to the family with
+  Reply-To that person and info@, and drop a copy in the sender's own inbox.
+  Set `DSSC_INBOX_REPLY_AS=club` to send as the club again.
 - Each director's notification email links straight to the thread
   (`/hq/?view=dsscinbox&inquiry=<id>`).
+
+## 7. Gmail replies show up in HQ (per director, optional)
+
+`/api/site-inbox-sent-poll` (every 15 minutes) reads each listed director's
+**Sent** folder, read-only, and files anything they sent to a family with an
+open thread (or in reply to a message on one): the reply appears on the
+thread, a New thread becomes Waiting, and it's assigned to them if nobody had
+it. Only the envelope of other sent mail is looked at (who it went to); it is
+never fetched, stored, flagged or moved.
+
+For each director who wants it:
+1. They sign in to their Google account → **Security → 2-Step Verification**
+   on → **App passwords** → create one named "DSSC HQ inbox".
+2. Add them to `DSSC_INBOX_SENT_ACCOUNTS` in the HQ Vercel project, a JSON list:
+   `[{"user":"jonathan@drippingsportsclub.com","pass":"abcd efgh ijkl mnop"}]`
+   (add more objects for more directors), mark it Sensitive, redeploy.
+
+Check it by hand: `curl -s "https://dseliteevals.vercel.app/api/site-inbox-sent-poll?token=$CRON_SECRET&dry=1"`
+shows, per account, how many sent messages it looked at and which it would file.
+Tests: `node scripts/test-inbox-sent.mjs`.
