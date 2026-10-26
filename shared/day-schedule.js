@@ -87,10 +87,11 @@ export async function loadDayFacts(sb, date) {
   const ph = phaseForDate(date);
   const fri = (() => { const d = new Date(date + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() - 2); return d.toISOString().slice(0, 10); })();
   const q = (p) => p.then(r => { if (r.error) throw new Error(r.error.message); return r.data || []; });
-  const [teams, assigns, moves, cancels, cover, reqs, floats, sas, nights, tns] = await Promise.all([
+  const [teams, assigns, moves, dcourts, cancels, cover, reqs, floats, sas, nights, tns] = await Promise.all([
     q(sb.from("practice_teams").select("team_name, head_coach, assistant_coach, third_coach, practices_per_week, level")),
     q(sb.from("practice_assignments").select("team_name, phase, day, slot, court, venue")),
     q(sb.from("practice_slot_moves").select("practice_date, team_name, slot, court").eq("practice_date", date)),
+    q(sb.from("practice_date_courts").select("team_name, court").eq("practice_date", date)),
     q(sb.from("practice_cancellations").select("practice_date, team_name, reason").eq("practice_date", date)),
     q(sb.from("practice_coverage").select("practice_date, team_name, slot, phase, coach_out, sub_name, combine_with_team, note").eq("practice_date", date)),
     q(sb.from("coach_requests").select("coach_name, request_date, team_name, status, type, details").gte("request_date", fri).lte("request_date", date)),
@@ -101,7 +102,7 @@ export async function loadDayFacts(sb, date) {
   ]);
   const tnIds = tns.map(t => t.id);
   const tas = tnIds.length ? await q(sb.from("tournament_assignments").select("tournament_id, team_id, status, head_override, asst_override, sub_coach").in("tournament_id", tnIds)) : [];
-  return { date, ph, fri, teams, assigns, moves, cancels, cover, reqs, floats, sas, nights, tns, tas };
+  return { date, ph, fri, teams, assigns, moves, dcourts, cancels, cover, reqs, floats, sas, nights, tns, tas };
 }
 
 export function buildDaySchedule(f) {
@@ -151,6 +152,8 @@ export function buildDaySchedule(f) {
   // Which teams practice when today.
   const moveFor = new Map(f.moves.map(m => [m.team_name, m.slot]));
   const moveCourt = new Map(f.moves.filter(m => m.court).map(m => [m.team_name, Number(m.court)]));
+  // A court set for this date (Sundays, week by week) wins for the team's whole practice.
+  const dateCourt = new Map((f.dcourts || []).filter(x => x.court).map(x => [x.team_name, Number(x.court)]));
   const rows = practiceDay ? f.assigns.filter(a => (a.phase || "fall1") === ph && a.day === weekday && !eventTeams.has(a.team_name) && activeOn(a, date)) : [];
   const byTeam = new Map();
   for (const a of rows) {
@@ -196,7 +199,8 @@ export function buildDaySchedule(f) {
       ...coaches.filter(c => c.sub).map(c => ({ name: c.sub, role: "Sub", forWhom: c.name })),
     ];
     const combined = coaches.find(c => c.combined)?.combined || null;
-    out.teams.push({ team, level: t.level || "", venue: info.venue, court: info.court, courtAt: info.courtAt.sort((x, y) => x.s - y.s), blocks, slots: [...info.slots].sort((a, b) => span(a)[0] - span(b)[0]), movedFrom: moveFor.has(team) ? mergeSpans([...info.orig].map(span).filter(([s, e]) => s < 99 && e > s)) : null, coaches, floor, combined });
+    const courtAt = dateCourt.has(team) ? blocks.map(([s0, e0]) => ({ s: s0, e: e0, court: dateCourt.get(team) })) : info.courtAt.sort((x, y) => x.s - y.s);
+    out.teams.push({ team, level: t.level || "", venue: info.venue, court: dateCourt.get(team) ?? info.court, courtAt, blocks, slots: [...info.slots].sort((a, b) => span(a)[0] - span(b)[0]), movedFrom: moveFor.has(team) ? mergeSpans([...info.orig].map(span).filter(([s, e]) => s < 99 && e > s)) : null, coaches, floor, combined });
   }
 
   // Per-coach timeline (to catch the same person in two places at once).
