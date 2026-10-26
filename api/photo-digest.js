@@ -121,7 +121,8 @@ export default async function handler(req, res) {
     return `<p style="margin:26px 0 4px;font-size:17px;font-weight:800;color:#1a1a1a">${esc(team)} <span style="font-weight:600;color:#999;font-size:13px">&middot; ${n}</span></p>`
       + [...byEvent.entries()].map(([event, list]) => {
         const who = [...new Set(list.map(credit))].join(", ");
-        const captions = list.map(p => String(p.caption || "").trim()).filter(Boolean);
+        // A batch upload stamps its one caption on every photo - show each caption once.
+        const captions = [...new Set(list.map(p => String(p.caption || "").trim()).filter(Boolean))];
         return `<p style="margin:12px 0 4px;font-size:13px;font-weight:700;color:#c2186f;text-transform:uppercase;letter-spacing:.04em">${esc(event)}</p>`
           + `<p style="margin:0 0 6px;font-size:12px;color:#777">From ${esc(who)} &middot; sent ${esc(fmtDay(list[0].created_at))}${list.length > 1 && fmtDay(list[list.length - 1].created_at) !== fmtDay(list[0].created_at) ? "&ndash;" + esc(fmtDay(list[list.length - 1].created_at)) : ""}</p>`
           + (captions.length ? `<p style="margin:0 0 6px;font-size:13px;color:#333;font-style:italic">&ldquo;${captions.map(esc).join("&rdquo; &middot; &ldquo;")}&rdquo;</p>` : "")
