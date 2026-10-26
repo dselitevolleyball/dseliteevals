@@ -7,7 +7,7 @@ import { planRooms, pairCoaches, planRoomsByTeam, UNASSIGNED } from "../shared/r
 import { PLAYER_CLAUSES, PARENT_CLAUSES, isFullySigned } from "../shared/commitment.js";
 import { isEventTeam } from "../shared/event-teams.js";
 import { isAustinArea } from "../shared/austin-area.js";
-import { GC_TEAMS, GC_INTEREST, GC_POSITIONS, GC_TRAVEL, GC_CITIES, GC_WHEN, labelOf as gcLabel } from "../shared/global-challenge.js";
+import { GC_TEAMS, GC_WHEN } from "../shared/global-challenge.js";
 import { NCAA_PRICE, NCAA_REPLY_BY, NCAA_SUBJECT, NCAA_ANSWERS, ncaaEmail, ncaaText, ncaaLabel, families as ncaaFamilies } from "../shared/ncaa-tickets.js";
 import { parseSaleRows, matchInvoicesToPlayers } from "../shared/shoe-invoices.js";
 import { parseSportsEngineRows, matchMembersToPlayers, playerPatchFor } from "../shared/sportsengine.js";
@@ -33,6 +33,7 @@ import TournamentHub from "./TournamentHub.jsx";
 import SiteAdmin from "./SiteAdmin.jsx";
 import RegistrationCheck, { RegBadges, loadRegistrationCheck } from "./RegistrationCheck.jsx";
 import EuropeRsvps from "./EuropeRsvps.jsx";
+import EuropeTrip from "./EuropeTrip.jsx";
 import DsscTexts from "./dssc/DsscTexts.jsx";
 import DsscReachTexts from "./dssc/DsscReachTexts.jsx";
 import NewPlayers from "./NewPlayers.jsx";
@@ -11661,7 +11662,7 @@ export default function App() {
         })()}
         <div style={{fontSize:11,color:C.mut,marginTop:6}}>A nudge is one email, or one text to each parent mobile, from you, with the link they need. Texts come from the club number and replies land in Messages (SMS); anyone who replied STOP is skipped. Every send is remembered here so you can see who has already been asked.</div>
         <EuropeRsvps players={players} gcAnswers={gcAnswers} />
-        {renderGcAnswers()}
+        <EuropeTrip players={players} gcAnswers={gcAnswers} team={waitTeam} coach={coach} onSaved={loadGcAnswers} onOpenPlayer={setProfileId} />
         {renderNcaaAnswers()}
       </div>
     );
@@ -11714,63 +11715,6 @@ export default function App() {
                 {a.answer === "have" && <>{a.tickets ? " · " : ""}{a.party} already going</>}
                 {a.notes && <div style={{color:C.mut,marginTop:2}}>“{a.notes}” — {a.respondent_name}</div>}
                 {!a.notes && a.respondent_name && <span style={{color:C.mut}}>{a.tickets || a.answer === "have" ? " · " : ""}{a.respondent_name}</span>}
-              </span>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  // Girls Global Challenge answers, grouped by interest. Lives under Waiting
-  // on because the chase for non-answers is there; this is the part Hunter
-  // reads to decide whether there's a team.
-  function renderGcAnswers() {
-    const byId = new Map(players.map(p => [p.id, p]));
-    const rows = gcAnswers.map(a => ({ a, p: byId.get(a.player_id) })).filter(r => r.p)
-      .filter(r => !waitTeam || r.p.team_assignment === waitTeam);
-    if (!rows.length) return null;
-    const ORDER = ["yes", "maybe", "no"];
-    const COL = { yes: C.grn, maybe: "#f59e0b", no: C.mut };
-    const going = rows.filter(r => r.a.interest !== "no");
-    const posCount = {}, cityCount = {};
-    for (const r of going) {
-      if (r.a.primary_position) posCount[r.a.primary_position] = (posCount[r.a.primary_position] || 0) + 1;
-      if (r.a.city) cityCount[r.a.city] = (cityCount[r.a.city] || 0) + 1;
-    }
-    const csv = () => {
-      const q = (v) => '"' + String(v ?? "").replace(/"/g, '""') + '"';
-      const lines = [["Player", "Team", "Interest", "Plays", "Also open to", "Just her / family", "Family coming", "City", "Passport", "Answered by", "Questions", "Answered"].map(q).join(",")];
-      for (const { a, p } of rows) lines.push([p.first_name + " " + p.last_name, p.team_assignment, gcLabel(GC_INTEREST, a.interest),
-        gcLabel(GC_POSITIONS, a.primary_position), (a.positions || []).map(k => gcLabel(GC_POSITIONS, k)).join("; "), gcLabel(GC_TRAVEL, a.travel), a.travelers ?? "",
-        gcLabel(GC_CITIES, a.city), a.passport || "", a.respondent_name, a.questions, (a.updated_at || "").slice(0, 10)].map(q).join(","));
-      const el = document.createElement("a");
-      el.href = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv" }));
-      el.download = "global-challenge-interest.csv"; el.click();
-    };
-    return (
-      <div style={{background:C.card,border:"1px solid #2dd4bf",borderRadius:12,marginTop:18,padding:"12px 14px"}}>
-        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
-          <span style={{fontSize:16}}>🌍</span>
-          <div style={{flex:1,minWidth:200}}>
-            <div style={{fontSize:14,fontWeight:800,color:C.text}}>Global Challenge answers</div>
-            <div style={{fontSize:11,color:C.mut,marginTop:1}}>
-              {ORDER.map(k => <span key={k} style={{marginRight:10}}><b style={{color:COL[k]}}>{rows.filter(r => r.a.interest === k).length}</b> {k}</span>)}
-              {Object.keys(posCount).length > 0 && <> · plays: {GC_POSITIONS.filter(o => posCount[o.key]).map(o => o.key + " " + posCount[o.key]).join(", ")}</>}
-              {Object.keys(cityCount).length > 0 && <> · city: {Object.entries(cityCount).sort((x, y) => y[1] - x[1]).map(([k, n]) => gcLabel(GC_CITIES, k).split(",")[0] + " " + n).join(", ")}</>}
-            </div>
-          </div>
-          <button onClick={csv} style={{padding:"6px 10px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.mut,fontFamily:"inherit",fontSize:11,fontWeight:700,cursor:"pointer"}}>⬇ CSV</button>
-        </div>
-        <div style={{marginTop:10,borderTop:"1px solid "+C.border}}>
-          {rows.slice().sort((x, y) => ORDER.indexOf(x.a.interest) - ORDER.indexOf(y.a.interest) || x.p.last_name.localeCompare(y.p.last_name)).map(({ a, p }) => (
-            <div key={p.id} style={{display:"flex",gap:10,padding:"8px 0",borderBottom:"1px solid "+C.border,flexWrap:"wrap",alignItems:"baseline"}}>
-              <span style={{fontSize:11,fontWeight:800,color:COL[a.interest],width:44,textTransform:"uppercase"}}>{a.interest}</span>
-              <button onClick={()=>setProfileId(p.id)} style={{background:"none",border:"none",padding:0,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:700,color:C.text,minWidth:150,textAlign:"left"}}>{p.first_name} {p.last_name}</button>
-              <span style={{fontSize:11,color:C.mut,minWidth:80}}>{p.team_assignment}</span>
-              <span style={{fontSize:11,color:C.text,flex:1,minWidth:220}}>
-                {a.interest !== "no" && <><b>{a.primary_position || "?"}</b>{(a.positions || []).length ? " (also " + a.positions.join(", ") + ")" : ""} · {gcLabel(GC_TRAVEL, a.travel)}{a.travelers ? " (" + a.travelers + ")" : ""}{a.city ? " · " + gcLabel(GC_CITIES, a.city).split(",")[0] : ""}{a.passport ? " · passport " + a.passport : ""}</>}
-                {a.questions && <div style={{color:C.mut,marginTop:2}}>“{a.questions}” — {a.respondent_name}</div>}
               </span>
             </div>
           ))}

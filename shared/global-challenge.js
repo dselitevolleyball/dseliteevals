@@ -68,3 +68,13 @@ export const GC_TRAVEL = [
 ];
 
 export const labelOf = (list, key) => list.find((x) => x.key === key)?.label || key || "";
+
+// Where a player stands on the trip, set by staff in HQ (Waiting on → Europe
+// trip). The family's own answer (interest) is the default until staff set it.
+export const GC_STATUSES = [
+  { key: "not_interested", label: "Not interested", color: "#8b8f98" },
+  { key: "interested", label: "Interested", color: "#60a5fa" },
+  { key: "committed", label: "Committed", color: "#f59e0b" },
+  { key: "paid", label: "Paid", color: "#22c55e" },
+];
+export const gcStatusOf = (a) => a?.status || (!a ? null : a.interest === "no" ? "not_interested" : "interested");
