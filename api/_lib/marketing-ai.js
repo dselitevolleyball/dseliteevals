@@ -563,7 +563,7 @@ export async function reviseItem({ item, instruction, programs = [], settings = 
   const req = { director_instruction: String(instruction || "").trim(), slot: slotForAi(slot, 0, feedById), current_draft: current };
   let r;
   try {
-    r = await callClaude("Rewrite this one draft following the director's instruction. Keep what the instruction doesn't touch. Return exactly one item with slot 0. Request (JSON):\n" + JSON.stringify(req, null, 1), { voice: settings.voice, flair: settings.flair, rules: settings.rules, timeoutMs });
+    r = await callClaude("Rewrite this one draft following the director's instruction. Keep what the instruction doesn't touch. Section headers inside an email are email_blocks[].section: asking for a header or a transition changes those and leaves the headline, subject and opening as they are. Return exactly one item with slot 0. Request (JSON):\n" + JSON.stringify(req, null, 1), { voice: settings.voice, flair: settings.flair, rules: settings.rules, timeoutMs });
   } catch (e) { return { patch: null, error: e?.message || String(e) }; }
   const raw = (r.items || []).find(x => Number(x.slot) === 0) || (r.items || [])[0];
   if (!raw) return { patch: null, model: r.model, error: r.error || "No rewrite came back" };
@@ -580,10 +580,17 @@ export async function reviseItem({ item, instruction, programs = [], settings = 
     patch.email_subject = copy.email_subject; patch.email_preheader = copy.email_preheader;
     const byRef = new Map(copy.email_blocks.map(b => [b.ref, b]));
     const merged = (item.email_blocks || []).map(b => { const n = byRef.get(String(b.program_id || b.line || "")); return { ...b, blurb: n?.blurb || b.blurb, section: n ? n.section : (b.section || "") }; });
-    patch.email_blocks = fillSections(merged, { line: item.line, force: /\b(header|heading|headline|section|transition|title)s?\b/i.test(instruction || "") });
+    const wantsHeaders = /\b(header|heading|section|transition)s?\b/i.test(instruction || "");
+    patch.email_blocks = fillSections(merged, { line: item.line, force: wantsHeaders });
+    // "Add a Volleyball header" once turned a birthday-party email into a
+    // volleyball one. A header request keeps the email's own headline,
+    // subject, opening and graphic unless it names them.
+    if (wantsHeaders && !/\b(subject|headline|intro|opening|first paragraph|body|rewrite|graphic|photo|button)\b/i.test(instruction || "")) {
+      Object.assign(patch, { headline: item.headline, body: item.body, cta_text: item.cta_text, email_subject: item.email_subject, email_preheader: item.email_preheader, graphic: item.graphic });
+    }
     patch.email_html = buildEmail({ ...item, ...patch }).html;
   }
-  if (graphic && (graphic.photo_url !== item.graphic?.photo_url || graphic.headline !== item.graphic?.headline)) { patch.asset_url = null; patch.asset_story_url = null; }
+  if (patch.graphic && (patch.graphic.photo_url !== item.graphic?.photo_url || patch.graphic.headline !== item.graphic?.headline)) { patch.asset_url = null; patch.asset_story_url = null; }
   return { patch, model: r.model, error: null };
 }
 
