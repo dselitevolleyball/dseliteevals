@@ -417,6 +417,21 @@ You're getting this because your family has signed up for a program at DSSC. <a 
 // The hero swaps to the rendered graphic once the UI has made one.
 export const withHero = (html, url) => url ? String(html || "").replace(/(<img data-hero src=")[^"]*(")/, `$1${esc(url)}$2`) : String(html || "");
 
+// Section headers the writer left out. When the email moves between lines
+// (a birthday-party email that goes on to volleyball, then court rentals) or
+// a director asked for headers, a block without one gets its line's name, or
+// the header of the block before it when that block is the same line.
+const groupOf = (b) => b.program_id ? b.label : lineLabel(b.line);
+export function fillSections(blocks, { line, force = false } = {}) {
+  const groups = new Set(blocks.map(groupOf).filter(Boolean));
+  if (!force && !(groups.size > 1 || (line && groups.size && !groups.has(lineLabel(line))))) return blocks;
+  return blocks.reduce((out, b) => {
+    const prev = out[out.length - 1];
+    const section = b.section || (prev && groupOf(prev) === groupOf(b) ? prev.section : groupOf(b)) || "";
+    return [...out, { ...b, section }];
+  }, []);
+}
+
 // Email blocks from the slot's programs + Claude's (or the template's) blurbs.
 function emailBlocks(slot, copy, feedById) {
   const blurbs = new Map((copy.email_blocks || []).map(b => [String(b.ref), b.blurb]));
@@ -431,7 +446,7 @@ function emailBlocks(slot, copy, feedById) {
     };
   });
   if (slot.evergreen) out.push({ program_id: null, line: slot.evergreen, title: lineLabel(slot.evergreen), label: "Any time", date_label: "", blurb: blurbs.get(slot.evergreen) || LINE_BLURB[slot.evergreen], url: lineUrl(slot.evergreen), cta: LINE_LINKS[slot.evergreen]?.cta || "Details", section: sections.get(slot.evergreen) || "" });
-  return out;
+  return fillSections(out, { line: slot.line });
 }
 
 // ── graphic spec ─────────────────────────────────────────────────────────────
@@ -564,7 +579,8 @@ export async function reviseItem({ item, instruction, programs = [], settings = 
   if (item.channel === "email") {
     patch.email_subject = copy.email_subject; patch.email_preheader = copy.email_preheader;
     const byRef = new Map(copy.email_blocks.map(b => [b.ref, b]));
-    patch.email_blocks = (item.email_blocks || []).map(b => { const n = byRef.get(String(b.program_id || b.line || "")); return { ...b, blurb: n?.blurb || b.blurb, section: n ? n.section : (b.section || "") }; });
+    const merged = (item.email_blocks || []).map(b => { const n = byRef.get(String(b.program_id || b.line || "")); return { ...b, blurb: n?.blurb || b.blurb, section: n ? n.section : (b.section || "") }; });
+    patch.email_blocks = fillSections(merged, { line: item.line, force: /\b(header|heading|headline|section|transition|title)s?\b/i.test(instruction || "") });
     patch.email_html = buildEmail({ ...item, ...patch }).html;
   }
   if (graphic && (graphic.photo_url !== item.graphic?.photo_url || graphic.headline !== item.graphic?.headline)) { patch.asset_url = null; patch.asset_story_url = null; }
