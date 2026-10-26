@@ -35,6 +35,7 @@ import RegistrationCheck, { RegBadges, loadRegistrationCheck } from "./Registrat
 import EuropeRsvps from "./EuropeRsvps.jsx";
 import DsscTexts from "./dssc/DsscTexts.jsx";
 import DsscReachTexts from "./dssc/DsscReachTexts.jsx";
+import NewPlayers from "./NewPlayers.jsx";
 import { usE164 } from "../shared/phone.js";
 import { isReachStaff as isReachStaffCoach } from "../shared/campaign-audience.js";
 import DsscCamp from "./dssc/DsscCamp.jsx";
@@ -2249,7 +2250,7 @@ export default function App() {
   // email we send them. Every admin control inside renderDsysa — add/cancel a
   // date, set the lead, remove someone else's signup — is separately gated on
   // isAdmin, so opening the view exposes no admin action.
-  const OPS_VIEWS = new Set(["housing","waiting","privates","school","schoolgames","playergear","kickoff","photos","incidentboard","tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","dayschedule","timecards","gear","staffing","roster","hawaii","travel","finance","dssccal","pods"]);
+  const OPS_VIEWS = new Set(["housing","waiting","newplayers","privates","school","schoolgames","playergear","kickoff","photos","incidentboard","tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","dayschedule","timecards","gear","staffing","roster","hawaii","travel","finance","dssccal","pods"]);
   const canOps    = isAdmin || isOwner;
   // Testing report emails: admins plus the performance coach (keep in step
   // with REPORT_SENDERS in api/stat-report.js).
@@ -33234,6 +33235,7 @@ export default function App() {
         {view==="schoolgames" && renderSchoolGames()}
         {view==="playergear" && renderPlayerGear()}
         {view==="waiting" && renderWaiting()}
+        {view==="newplayers" && <NewPlayers players={players} coach={coach} C={C} upd={upd} narrow={isNarrow} />}
         {view==="privates" && renderPrivates()}
         {view==="checkin" && renderCheckins()}
         {view==="kickoff" && renderKickoffs()}

@@ -66,7 +66,7 @@ const only = (val("only") || "").split(",").map(Number).filter(Boolean);
 const sb = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
 
 const { data: players, error } = await sb.from("players")
-  .select("id, first_name, last_name, team_assignment, parent_name, parent2_name, parent_email, parent_email2, parent_email3, commitment_token, photo_upload_token, gear_form_token")
+  .select("id, first_name, last_name, team_assignment, usav_div, parent_name, parent2_name, parent_email, parent_email2, parent_email3, commitment_token, photo_upload_token, gear_form_token")
   .in("id", only.length ? only : PLAYER_IDS);
 if (error) { console.error(error.message); process.exit(1); }
 const { data: roster } = await sb.from("coach_roster").select("first_name, last_name, email, phone");
@@ -203,7 +203,9 @@ else if (doSend) {
   for (const j of jobs) {
     if (!j.to.length || !j.p.gear_form_token) { console.log(j.p.first_name, "SKIPPED - no email or form link"); continue; }
     const e = await send(j, [...j.to, ...CC.filter(c => !j.to.includes(c))]);
-    if (!e) await sb.from("players").update({ offer_status: "made", offer_made_at: new Date().toISOString() }).eq("id", j.p.id);
+    // status mirrors offer_status for the Status dropdown, and the Teams board files a
+    // player by age division - a new player with no birthday yet needs it from her team.
+    if (!e) await sb.from("players").update({ offer_status: "made", status: "Offered", offer_made_at: new Date().toISOString(), ...(!j.p.usav_div ? { usav_div: "U" + parseInt(j.p.team_assignment) } : {}) }).eq("id", j.p.id);
     console.log(j.p.first_name, "→", j.to.join(", "), "· copy to", CC.join(", "), e || "sent · marked Offered");
   }
 } else if (!htmlOut) for (const j of jobs) console.log("\n" + "═".repeat(72) + `\n${j.p.first_name} ${j.p.last_name} → ${j.to.join(", ")}\nSUBJECT: ${j.subject}\n` + "─".repeat(72) + "\n" + j.text);
