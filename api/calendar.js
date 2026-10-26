@@ -85,14 +85,17 @@ export default async function handler(req, res) {
   }
 
   const enc = encodeURIComponent(team);
-  const [assigns, saRows, cancels, moves, tnAssigns, teamEvents] = await Promise.all([
+  const [assigns, saRows, cancels, moves, tnAssigns, teamEvents, dateCourtRows] = await Promise.all([
     q("practice_assignments?team_name=eq." + enc + "&select=day,slot,phase,court,venue,venue_start,venue_end,active_from,active_to"),
     q("sa_sessions?team_name=eq." + enc + "&select=session_date,slot,block"),
     q("practice_cancellations?select=practice_date,team_name"),
     q("practice_slot_moves?team_name=eq." + enc + "&select=practice_date,slot"),
     q("tournament_assignments?team_id=eq." + enc + "&select=tournament_id,status,division"),
     q("team_events?team_name=eq." + enc + "&select=id,title,event_date,start_time,duration_min,location,description"),
+    q("practice_date_courts?team_name=eq." + enc + "&select=practice_date,court"),
   ]);
+  // Sunday courts set week by week in the Daily view (practice_date_courts).
+  const dateCourt = new Map((Array.isArray(dateCourtRows) ? dateCourtRows : []).filter(r => r.court).map(r => [r.practice_date, Number(r.court)]));
   // This team's tournaments (any status except a cancelled tournament).
   const tnIds = [...new Set((Array.isArray(tnAssigns) ? tnAssigns : []).map(a => a.tournament_id).filter(Boolean))];
   const tnRows = tnIds.length ? await q("tournaments?id=in.(" + tnIds.join(",") + ")&select=id,name,start_date,end_date,location,venue,cancelled,stay_over") : [];
@@ -164,7 +167,8 @@ export default async function handler(req, res) {
   // Undated callers are the weekly RRULE phases: one LOCATION covers the whole
   // recurrence, so a windowed override cannot apply and is ignored there.
   const locFor = (a, date) => {
-    const derivedFlex = (a.phase || "season") === "summer" && Number(a.court) === 5;
+    // Courts 5-6 are Warehouse II (the second building); 1-4 are Warehouse I.
+    const derivedFlex = Number(a.court) >= 5;
     const override = venueOn(a, date);
     const flex = override ? override === "flex" : derivedFlex;
     // Court numbers belong to the building that has them — summer runs 5 courts
@@ -174,6 +178,8 @@ export default async function handler(req, res) {
     return (flex ? FLEX : WAREHOUSE) + (cl ? ", " + cl : "") + ", " + (flex ? FLEX_ADDR : WAREHOUSE_ADDR);
   };
   const WAREHOUSE_LOC = WAREHOUSE + ", " + WAREHOUSE_ADDR; // S&A / orientation (no court)
+  // A court number alone: its building, the court, and that building's address.
+  const courtLoc = (c) => (c >= 5 ? FLEX : WAREHOUSE) + ", Court " + c + ", " + (c >= 5 ? FLEX_ADDR : WAREHOUSE_ADDR);
   // Dated Sundays: summer / fall1 / fall2
   const datedPhases = [["summer", SUMMER_SUNDAYS], ["fall1", FALL1_SUNDAYS], ["fall2", FALL2_SUNDAYS]];
   // One event per continuous block of practice, not one per hour. Dated Sundays
@@ -195,7 +201,7 @@ export default async function handler(req, res) {
       const blocks = [];
       for (const { a, t } of rows) {
         if (!activeOn(a, d)) continue;
-        const loc = locFor(a, d);
+        const loc = dateCourt.has(d) ? courtLoc(dateCourt.get(d)) : locFor(a, d);
         const last = blocks[blocks.length - 1];
         if (last && last.end === t[0] && last.loc === loc) last.end = t[1];
         else blocks.push({ firstSlot: a.slot, start: t[0], end: t[1], loc });
@@ -224,15 +230,20 @@ export default async function handler(req, res) {
       const start = from && from > pStart ? from : pStart, end = to && to < pEnd ? to : pEnd;
       const first = firstOnOrAfter(start, dow);
       if (first > end) continue;
-      const exdates = datesBetween(start, end, dow).filter(d => cancelled.has(d) || moveByDate.has(d) || goneSun.has(d));
+      const all = datesBetween(start, end, dow);
+      // A Sunday with its own court comes out of the weekly series and goes in
+      // as its own event at that court (same time).
+      const ownCourt = all.filter(d => dateCourt.has(d) && !cancelled.has(d) && !moveByDate.has(d) && !goneSun.has(d));
+      const exdates = all.filter(d => cancelled.has(d) || moveByDate.has(d) || goneSun.has(d) || dateCourt.has(d));
       push(`${team}-${phase}-${a.day}-${a.slot}`.replace(/\s+/g, "_"), team + " Practice", first, t[0], t[1], { location: locFor(a), rruleUntil: end, exdates });
+      for (const d of ownCourt) push(`${team}-${phase}-${a.day}-${a.slot}-${d}`.replace(/\s+/g, "_"), team + " Practice", d, t[0], t[1], { location: courtLoc(dateCourt.get(d)) });
     }
   }
   // One-off events at the moved time for each per-date practice move.
   for (const [d, slot] of moveByDate) {
     if (cancelled.has(d) || goneSun.has(d)) continue;
     const t = slotTimes(slot); if (!t) continue;
-    push(`${team}-moved-${d}-${slot}`.replace(/\s+/g, "_"), team + " Practice (time change)", d, t[0], t[1], { location: WAREHOUSE_LOC });
+    push(`${team}-moved-${d}-${slot}`.replace(/\s+/g, "_"), team + " Practice (time change)", d, t[0], t[1], { location: dateCourt.has(d) ? courtLoc(dateCourt.get(d)) : WAREHOUSE_LOC });
   }
   // Orientation Night, 6-10pm. It used to go out as an all-day banner, which
   // tells a parent the date and nothing else — and this is a night with a
