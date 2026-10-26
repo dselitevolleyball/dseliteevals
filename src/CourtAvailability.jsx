@@ -223,7 +223,7 @@ export default function CourtAvailability({ loaders = liveLoaders, onOpenClass }
         <div style={{ overflowX: "auto", border: "1px solid " + C.border, borderRadius: 10 }}>
           <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 620, tableLayout: "fixed" }}>
             <thead>
-              <tr><th style={{ ...th, width: 58 }} rowSpan={2}>Time</th><th style={th} colSpan={4}>Warehouse</th><th style={{ ...th, borderLeft: "2px solid " + C.border }} colSpan={2}>Flex</th></tr>
+              <tr><th style={{ ...th, width: 58 }} rowSpan={2}>Time</th><th style={th} colSpan={4}>Warehouse I</th><th style={{ ...th, borderLeft: "2px solid " + C.border }} colSpan={2}>Warehouse II</th></tr>
               <tr>{COURTS.map((c, i) => <th key={c.id} style={{ ...th, top: 27, borderLeft: i === 4 ? "2px solid " + C.border : undefined }}>{c.label}
                 {resOn[c.id].map((r, j) => <div key={j} title="Playbook reservation - the time isn't on the calendar" style={{ marginTop: 3, padding: "2px 4px", borderRadius: 5, background: KIND.hold.bg, border: "1px dashed " + KIND.hold.bd, color: KIND.hold.fg, fontSize: 10, fontWeight: 700, lineHeight: 1.25 }}>{pub ? "Reserved" : r.who} · time?</div>)}
               </th>)}</tr>

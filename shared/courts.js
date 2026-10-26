@@ -2,17 +2,18 @@
 // and where the open time is. Pure functions - the API route resolves Playbook
 // events to courts, the screen places DS Elite practices and draws the grid.
 //
-// Courts: the Warehouse has V1-V4 (Basketball Court 1 = V1+V2, BB2 = V3+V4);
-// the Flex has V5-V6 (BB3 = V5+V6). A booking on a basketball court or a whole
+// Courts: Warehouse I has V1-V4 (Basketball Court 1 = V1+V2, BB2 = V3+V4);
+// Warehouse II (Playbook still calls it "DSSC Flex"; renamed Oct 26 2026) has
+// V5-V6 (BB3 = V5+V6). A booking on a basketball court or a whole
 // building takes every volleyball court under it.
 
 export const COURTS = [
-  { id: "V1", label: "Court 1", building: "Warehouse" },
-  { id: "V2", label: "Court 2", building: "Warehouse" },
-  { id: "V3", label: "Court 3", building: "Warehouse" },
-  { id: "V4", label: "Court 4", building: "Warehouse" },
-  { id: "V5", label: "Court 5", building: "Flex" },
-  { id: "V6", label: "Court 6", building: "Flex" },
+  { id: "V1", label: "Court 1", building: "Warehouse I" },
+  { id: "V2", label: "Court 2", building: "Warehouse I" },
+  { id: "V3", label: "Court 3", building: "Warehouse I" },
+  { id: "V4", label: "Court 4", building: "Warehouse I" },
+  { id: "V5", label: "Court 5", building: "Warehouse II" },
+  { id: "V6", label: "Court 6", building: "Warehouse II" },
 ];
 const WAREHOUSE = ["V1", "V2", "V3", "V4"], FLEX = ["V5", "V6"];
 
@@ -65,7 +66,7 @@ export function courtsForName(name) {
   const s = String(name || "");
   let m = /volleyball court\s*(\d)/i.exec(s); if (m && +m[1] >= 1 && +m[1] <= 6) return ["V" + m[1]];
   m = /basketball court\s*(\d)/i.exec(s); if (m) return { 1: ["V1", "V2"], 2: ["V3", "V4"], 3: FLEX }[m[1]] || [];
-  if (/dssc flex|^flex$/i.test(s.trim())) return FLEX;
+  if (/dssc flex|^flex$|warehouse\s*(ii|2)\b/i.test(s.trim())) return FLEX;
   if (/warehouse/i.test(s)) return WAREHOUSE;
   return [];
 }

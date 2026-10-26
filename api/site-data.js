@@ -75,8 +75,9 @@ import { loadTraining } from "./_lib/site-training.js";
 const APP = PROD_ORIGIN;
 // Same buildings and addresses as api/calendar.js (the ICS feeds).
 const VENUES = {
-  warehouse: { key: "warehouse", name: "Dripping Springs Sports Club — Warehouse", address: "15113 Fitzhugh Rd, Suite 1400, Dripping Springs, TX" },
-  flex: { key: "flex", name: "Dripping Springs Sports Club — Flex", address: "13673 Fitzhugh Rd, Suite 200, Dripping Springs, TX" },
+  // "flex" is the second building's key; it's Warehouse II since Oct 26 2026.
+  warehouse: { key: "warehouse", name: "Dripping Springs Sports Club — Warehouse I", address: "15113 Fitzhugh Rd, Suite 1400, Dripping Springs, TX" },
+  flex: { key: "flex", name: "Dripping Springs Sports Club — Warehouse II", address: "15113 Fitzhugh Rd, Bldg 400, Austin, TX 78736" },
 };
 const venueOut = (v) => ({ key: v.key, name: v.name, address: v.address, map_url: "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent("Dripping Springs Sports Club, " + v.address) });
 

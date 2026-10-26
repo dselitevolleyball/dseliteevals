@@ -29,8 +29,10 @@ export async function loadDseCourtInputs(sb, dates) {
     // extra Thursdays) take the courts their location names: "Courts 5 & 6", "Court 3".
     for (const e of (evR.data || []).filter(x => x.event_date === d && /^Practice/i.test(x.title || ""))) {
       const m = /^(\d{1,2}):(\d{2})/.exec(e.start_time || ""); if (!m) continue;
-      const cm = /courts?\s*([\d\s,&and-]+)/i.exec(e.location || ""); const nums = cm ? cm[1].match(/\d+/g) || [] : [];
-      const lo = nums.length === 2 && /-/.test(cm[1]) ? Math.min(...nums.map(Number)) : null, hi = lo != null ? Math.max(...nums.map(Number)) : null;
+      // Court numbers are one or two digits; the street address after them
+      // ("Court 2 - 15113 Fitzhugh Rd") is not a range.
+      const cm = /courts?\s*((?:\d{1,2}\b\s*(?:,|&|and|-|–|to)?\s*)+)/i.exec(e.location || ""); const nums = cm ? cm[1].match(/\b\d{1,2}\b/g) || [] : [];
+      const lo = nums.length === 2 && /\d\s*(?:-|–|to)\s*\d/.test(cm[1]) ? Math.min(...nums.map(Number)) : null, hi = lo != null ? Math.max(...nums.map(Number)) : null;
       const courts = (lo != null ? Array.from({ length: hi - lo + 1 }, (_, i) => lo + i) : nums.map(Number)).filter(n => n >= 1 && n <= 6).map(n => "V" + n);
       if (!courts.length) continue;
       const st = +m[1] + +m[2] / 60;

@@ -38,7 +38,7 @@ export default async function handler(req, res) {
     <header><img src="https://dseliteevals.vercel.app/dssc/logo-horizontal-white.png" alt="Dripping Springs Sports Club"><h1>Open court time</h1>
     <p class="sub">When the courts are free for open gym. Booked time is shown in gray.</p></header>
     <div id="app"></div>
-    <p class="foot">Checked at ${esc(checked)}. Courts can be booked after this was checked, so please confirm at the front desk. Courts 1-4 are in the Warehouse, 5-6 in the Flex.</p>
+    <p class="foot">Checked at ${esc(checked)}. Courts can be booked after this was checked, so please confirm at the front desk. Courts 1-4 are in Warehouse I, 5-6 in Warehouse II.</p>
     <script type="application/json" id="data">${json}</script>
     <script>${CLIENT}</script>`));
 }
@@ -66,7 +66,7 @@ const CLIENT = `(function(){
       return '<div class="card"><div class="ct"><b>'+c.label+'</b> <span>&middot; '+c.building+'</span></div><div class="cw'+(o.length?'':' none')+'">'+(o.length?'Open '+o.map(function(w){return sh(w[0])+'&ndash;'+sh(w[1]);}).join(', '):'No open time')+'</div>'+(c.alsoReserved?'<div class="cn">Also reserved at a time not shown</div>':'')+'</div>'; }).join('') + '</div>';
     var slots=[]; for (var h=D.start; h<D.end-1e-9; h+=STEP) slots.push(Math.round(h*100)/100);
     var cols = day.courts.map(function(c){ return slots.map(function(h){ return isBusy(c,h); }); });
-    var t = '<div class="tw"><table><thead><tr><th class="tm" rowspan="2">Time</th><th colspan="4">Warehouse</th><th colspan="2" class="fx">Flex</th></tr><tr>'
+    var t = '<div class="tw"><table><thead><tr><th class="tm" rowspan="2">Time</th><th colspan="4">Warehouse I</th><th colspan="2" class="fx">Warehouse II</th></tr><tr>'
       + day.courts.map(function(c,i){ return '<th'+(i===4?' class="fx"':'')+'>'+c.label+'</th>'; }).join('') + '</tr></thead><tbody>';
     slots.forEach(function(h, si){
       t += '<tr><td class="tm'+(Number.isInteger(h)?' hr':'')+'">'+(Number.isInteger(h)?h12(h):'')+'</td>';

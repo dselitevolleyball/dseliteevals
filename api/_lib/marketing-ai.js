@@ -26,7 +26,7 @@ export const AI_MODEL = "claude-opus-5-5";
 export const aiReady = () => !!process.env.ANTHROPIC_API_KEY;
 
 const SITE = "https://www.drippingsportsclub.com";
-export const CLUB_ADDRESS = "Dripping Springs Sports Club · The Warehouse · 15113 Fitzhugh Rd, Suite 1400, Dripping Springs, TX";
+export const CLUB_ADDRESS = "Dripping Springs Sports Club · Warehouse I · 15113 Fitzhugh Rd, Suite 1400, Dripping Springs, TX";
 export const PHOTO_TAGS = ["volleyball", "basketball", "reach", "kids", "camp", "parties", "facility", "people", "flagship", "community"];
 const LINE_TAGS = {
   volleyball: ["volleyball"], basketball: ["basketball"], reach: ["reach"], camp_elevate: ["camp", "kids"],
@@ -264,7 +264,7 @@ Voice:
 - One clear call to action per piece.
 - Social: 0 to 2 emojis. Email subject: at most one emoji. Text messages: no emojis.
 - Birthday parties are run by party hosts (not coaches).
-- Never mention "the Flex" or any building other than the Warehouse. Only say a program is at the Warehouse if its facts say so; otherwise just say "at DSSC".
+- Never mention "the Flex" (that building is Warehouse II now). The buildings are Warehouse I and Warehouse II. Only say a program is at the Warehouse if its facts say so; otherwise just say "at DSSC".
 
 Facts - the hard rules:
 - Use only the facts provided in the request: program names, dates, days, times, ages/grades, session counts, and the director's priority notes and instructions. Never invent anything else.

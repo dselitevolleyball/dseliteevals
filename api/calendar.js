@@ -142,12 +142,14 @@ export default async function handler(req, res) {
   };
 
   // Venue + court in the LOCATION so it lands on the SportsYou calendar map.
-  // Summer: courts 1-4 at the Warehouse, court 5 at the Flex building.
-  // Fall 1 / Fall 2 / Regular Season / Post Season: all at the Warehouse.
-  const WAREHOUSE = "Dripping Springs Sports Club — Warehouse";
-  const FLEX      = "Dripping Springs Sports Club — Flex";
+  // Summer: courts 1-4 at Warehouse I, court 5 at the second building.
+  // Fall 1 / Fall 2 / Regular Season / Post Season: all at Warehouse I.
+  // The second building was "the Flex"; since Oct 26 2026 teams there practice
+  // at Warehouse II (Drew). The venue key stays "flex" in the data.
+  const WAREHOUSE = "Dripping Springs Sports Club — Warehouse I";
+  const FLEX      = "Dripping Springs Sports Club — Warehouse II";
   const WAREHOUSE_ADDR = "15113 Fitzhugh Rd, Suite 1400, Dripping Springs, TX";
-  const FLEX_ADDR      = "13673 Fitzhugh Rd, Suite 200, Dripping Springs, TX";
+  const FLEX_ADDR      = "15113 Fitzhugh Rd, Bldg 400, Austin, TX 78736";
   const courtLabel = (c) => (c != null && c !== "") ? ("Court " + c) : "";
   // An explicit venue on the assignment wins, but only across the dates it
   // covers. Phases straddle month boundaries — summer ends 9/6 and fall1 runs
