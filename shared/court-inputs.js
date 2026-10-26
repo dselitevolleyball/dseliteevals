@@ -17,7 +17,7 @@ export async function loadDseCourtInputs(sb, dates) {
   const out = {};
   dates.forEach((d, i) => {
     const day = days[i];
-    const teams = (day?.teams || []).map(t => ({ team: t.team, blocks: t.blocks, court: Number(t.court) || null, venue: t.venue || null }));
+    const teams = (day?.teams || []).map(t => ({ team: t.team, blocks: t.blocks, court: Number(t.court) || null, courtAt: t.courtAt || [], venue: t.venue || null }));
     // Scrimmages only on practice days, and only for teams practicing that day.
     const onToday = new Set(teams.map(t => t.team));
     const scrims = (day?.cancelled ? [] : (scrR.data || []).filter(s => s.practice_date === d && (s.teams || []).some(t => onToday.has(t))))

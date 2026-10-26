@@ -17,6 +17,7 @@ const KIND = {
   hold: { bg: "rgba(249,115,22,0.20)", bd: "#f97316", fg: "#fdba74", name: "Hold / rental" },
   dse: { bg: "rgba(233,30,140,0.20)", bd: "#e91e8c", fg: "#f9a8d4", name: "DS Elite" },
   tourn: { bg: "rgba(245,158,11,0.22)", bd: "#f59e0b", fg: "#fcd34d", name: "In-House Tournament" },
+  open: { bg: "rgba(34,197,94,0.07)", bd: "rgba(233,30,140,0.55)", fg: "#4ade80", name: "Open (held for DS Elite, no team)", dash: true },
 };
 const START_H = 7, END_H = 22;
 // Pixels per half hour. Every block is exactly n rows tall (text that doesn't
@@ -64,6 +65,14 @@ export const liveLoaders = {
   // The change log for Playbook, and emailing it to Jonathan.
   changes: async () => postCourts({ action: "changes" }),
   sendChanges: async (keys, note) => postCourts({ action: "send-changes", keys, note }),
+  // DS Elite's court-hours for a month: in use vs held in Playbook.
+  usage: async (month) => {
+    const { data: { session } = {} } = await supabase.auth.getSession();
+    const r = await fetch("/api/court-availability?usage=" + month, { headers: { Authorization: "Bearer " + (session?.access_token || "") } });
+    const o = await r.json().catch(() => ({}));
+    if (!r.ok || o.error) throw new Error(o.error || "Couldn't load the month (" + r.status + ")");
+    return o;
+  },
   // The no-login link for open-gym members (only open vs booked time).
   link: async () => {
     const { data: { session } = {} } = await supabase.auth.getSession();
@@ -98,6 +107,11 @@ export default function CourtAvailability({ loaders = liveLoaders, onOpenClass }
   const [pbPick, setPbPick] = useState({});      // key -> false when unticked
   const [pbNote, setPbNote] = useState("");
   const [pbBusy, setPbBusy] = useState(false);
+  // Month usage: what DS Elite actually uses (and owes DSSC) vs what's held.
+  const [useOpen, setUseOpen] = useState(false);
+  const [useMonth, setUseMonth] = useState(null);
+  const [useData, setUseData] = useState({});    // month -> result | { loading } | { error }
+  const [rate, setRate] = useState(() => { try { return localStorage.getItem("courts.rate") || ""; } catch { return ""; } });
   const loadPb = () => { if (loaders.changes) loaders.changes().then(setPbChanges).catch(() => {}); };
   useEffect(loadPb, []); // eslint-disable-line react-hooks/exhaustive-deps
   const [reload, setReload] = useState(0);
@@ -154,7 +168,7 @@ export default function CourtAvailability({ loaders = liveLoaders, onOpenClass }
     const bookings = shown.bookings.filter(b => (pub || showHolds || b.kind !== "hold") && !(dropEmpty && isEmpty(b)))
       .map(b => ({ courts: b.courts, start: b.start, end: b.end, kind: isEmpty(b) ? "empty" : b.kind, label: b.label, origin: b.origin, change: b.change, detail: (b.signups != null ? b.signups + " signed up this date" + (b.category ? " · " : "") : "") + (b.category || ""), ref: b.clinicId ? { cid: b.clinicId, sid: b.sessionId } : null }))
       .concat(dse.tourn || []);
-    return { ...buildCourtDay({ bookings, teams: dse.teams, scrims: dse.scrims, reserved: shown.reserved, startHour: START_H, endHour: END_H }), cancelled: dse.cancelled, phase: dse.phase };
+    return { ...buildCourtDay({ bookings, teams: dse.teams, scrims: dse.scrims, reserved: shown.reserved, startHour: START_H, endHour: END_H, releaseHeld: !pub }), cancelled: dse.cancelled, phase: dse.phase };
   };
 
   // Court time that only opens up if the empty classes are dropped, per court.
@@ -220,6 +234,9 @@ export default function CourtAvailability({ loaders = liveLoaders, onOpenClass }
         )}
         {!pub && g.cancelled && <div style={{ fontSize: 12, color: "#f59e0b", marginBottom: 8 }}>DS Elite practices are off this day: {g.cancelled}</div>}
         {!pub && g.issues.length > 0 && <div style={{ fontSize: 12, color: "#ef4444", marginBottom: 8 }}>⚠ {g.issues.join(" · ")}</div>}
+        {!pub && (g.usage.used > 0 || g.usage.held > 0) && <div style={{ fontSize: 12, color: C.mut, marginBottom: 8 }}>
+          <b style={{ color: KIND.dse.fg }}>DS Elite today: {g.usage.used} court-hours in use</b>{g.usage.held > 0 ? <> of {g.usage.held} held in Playbook · <b style={{ color: g.usage.heldUnused ? "#4ade80" : C.mut }}>{g.usage.heldUnused} held hours open</b> (not used, so not owed)</> : null}
+        </div>}
         <div style={{ overflowX: "auto", border: "1px solid " + C.border, borderRadius: 10 }}>
           <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 620, tableLayout: "fixed" }}>
             <thead>
@@ -250,7 +267,7 @@ export default function CourtAvailability({ loaders = liveLoaders, onOpenClass }
                           : { boxSizing: "border-box", height: n * ROW - 4, overflow: "hidden", borderRadius: 6, background: "rgba(34,197,94,0.07)", border: resOn[c.id].length ? "1px dashed " + KIND.hold.bd : "1px solid rgba(34,197,94,0.25)", color: "#4ade80", padding: "3px 5px", fontSize: 10, fontWeight: 700 }}>
                           {!pub && cell?.hide && <button onClick={(e) => { e.stopPropagation(); openBlock({ date, hide: cell.hide, label: cell.label, change: cell.change, now: cell.change ? { courts: cell.change.to_courts, start: cell.change.to_start_h, end: cell.change.to_end_h } : null }); }} title="Move or hide this block" aria-label={"Move or hide " + cell.label}
                             style={{ position: "absolute", top: 1, right: 2, width: 20, height: 18, padding: 0, border: "none", borderRadius: 4, background: "rgba(0,0,0,0.35)", color: "inherit", fontSize: 13, lineHeight: "16px", cursor: "pointer", opacity: 0.8 }}>⋯</button>}
-                          {cell && pub ? "Booked" : cell ? <>{conflict ? "⚠ " : ""}{cell.kind === "empty" && n < 2 ? "0 · " : ""}{cell.label}{n >= 2 && cell.detail ? <div style={{ fontWeight: 500, opacity: 0.8 }}>{cell.detail}</div> : null}</> : (n >= 2 ? (pub ? "Open " : "Free ") + short(h) + "–" + short(g.slots[si + n - 1] + 0.5) : "")}{!cell && n >= 2 && resOn[c.id].length ? <div style={{ color: KIND.hold.fg, fontWeight: 600 }}>? reserved sometime today</div> : null}
+                          {cell && pub ? "Booked" : cell?.open ? <>{"Open" + (n >= 2 ? " " + short(h) + "–" + short(g.slots[si + n - 1] + 0.5) : "")}{n >= 2 ? <div style={{ fontWeight: 500, opacity: 0.85, color: "#f9a8d4" }}>held for DS Elite, no team</div> : null}</> : cell ? <>{conflict ? "⚠ " : ""}{cell.kind === "empty" && n < 2 ? "0 · " : ""}{cell.label}{n >= 2 && cell.detail ? <div style={{ fontWeight: 500, opacity: 0.8 }}>{cell.detail}</div> : null}</> : (n >= 2 ? (pub ? "Open " : "Free ") + short(h) + "–" + short(g.slots[si + n - 1] + 0.5) : "")}{!cell && n >= 2 && resOn[c.id].length ? <div style={{ color: KIND.hold.fg, fontWeight: 600 }}>? reserved sometime today</div> : null}
                         </div>
                       </td>);
                   })}
@@ -356,6 +373,53 @@ export default function CourtAvailability({ loaders = liveLoaders, onOpenClass }
     );
   };
 
+  // ── DS Elite usage by month ───────────────────────────────────────────────
+  const loadUsage = (m) => { setUseData(u => ({ ...u, [m]: { loading: true } })); loaders.usage(m).then(o => setUseData(u => ({ ...u, [m]: o }))).catch(e => setUseData(u => ({ ...u, [m]: { error: e.message } }))); };
+  const shiftMonth = (m, k) => { const [y, mo] = m.split("-").map(Number); const d = new Date(y, mo - 1 + k, 1); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0"); };
+  const usagePanel = () => {
+    const m = useMonth, u = useData[m] || {};
+    const go = (k) => { const n = shiftMonth(m, k); setUseMonth(n); if (!useData[n]) loadUsage(n); };
+    const r = Number(String(rate).replace(/[$,\s]/g, "")) || 0;
+    const money = (x) => "$" + Math.round(x).toLocaleString();
+    const td = { padding: "5px 8px", fontSize: 12, borderTop: "1px solid " + C.border, fontVariantNumeric: "tabular-nums" };
+    return (
+      <div onClick={() => setUseOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+        <div onClick={(e) => e.stopPropagation()} style={{ background: C.card, border: "1px solid " + C.border, borderRadius: 12, padding: 16, width: "100%", maxWidth: 620, maxHeight: "90vh", overflowY: "auto" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ fontSize: 16, fontWeight: 800, flex: 1 }}>DS Elite court usage</div>
+            <button onClick={() => go(-1)} aria-label="Previous month" style={{ ...btn(false), border: "1px solid " + C.border, borderRadius: 8 }}>‹</button>
+            <div style={{ fontSize: 14, fontWeight: 800, minWidth: 120, textAlign: "center" }}>{new Date(m + "-15T12:00:00").toLocaleDateString(undefined, { month: "long", year: "numeric" })}</div>
+            <button onClick={() => go(1)} aria-label="Next month" style={{ ...btn(false), border: "1px solid " + C.border, borderRadius: 8 }}>›</button>
+          </div>
+          <div style={{ fontSize: 12, color: C.mut, margin: "6px 0 12px", lineHeight: 1.5 }}>Court-hours DS Elite teams are actually on (from HQ's practice schedule, two teams sharing a court count once), against what's held for DS Elite in Playbook. Held hours with no team are open and not owed.</div>
+          {u.loading && <div style={{ color: C.mut, fontSize: 13 }}>Adding up the month…</div>}
+          {u.error && <div style={{ color: "#ef4444", fontSize: 13 }}>{u.error} <button onClick={() => loadUsage(m)} style={{ ...btn(false), border: "1px solid #ef4444", borderRadius: 8, color: "#ef4444" }}>Retry</button></div>}
+          {u.days && <>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
+              {[["In use", u.total.used + "h", KIND.dse.fg], ["Held in Playbook", u.total.held + "h", C.text], ["Held, no team", u.total.heldUnused + "h", "#4ade80"]].map(([l, v, col]) => (
+                <div key={l} style={{ background: C.bg, border: "1px solid " + C.border, borderRadius: 10, padding: "8px 12px", minWidth: 120 }}><div style={{ fontSize: 22, fontWeight: 900, color: col }}>{v}</div><div style={{ fontSize: 11, color: C.mut, fontWeight: 700 }}>{l}</div></div>))}
+              <label style={{ background: C.bg, border: "1px solid " + C.border, borderRadius: 10, padding: "8px 12px", fontSize: 11, color: C.mut, fontWeight: 700 }}>Rate per court-hour<br />
+                <span style={{ fontSize: 14, color: C.text }}>$ <input value={rate} onChange={e => { setRate(e.target.value); try { localStorage.setItem("courts.rate", e.target.value); } catch { /* private window */ } }} inputMode="decimal" placeholder="0" style={{ width: 70, background: "transparent", color: C.text, border: "none", borderBottom: "1px solid " + C.border, fontFamily: "inherit", fontSize: 14 }} /></span></label>
+              {r > 0 && <div style={{ background: C.bg, border: "1px solid " + KIND.dse.bd, borderRadius: 10, padding: "8px 12px", minWidth: 120 }}><div style={{ fontSize: 22, fontWeight: 900, color: KIND.dse.fg }}>{money(u.total.used * r)}</div><div style={{ fontSize: 11, color: C.mut, fontWeight: 700 }}>owed for hours in use{u.total.heldUnused ? " · " + money(u.total.heldUnused * r) + " held but not used" : ""}</div></div>}
+            </div>
+            <div style={{ overflowX: "auto" }}><table style={{ borderCollapse: "collapse", width: "100%" }}>
+              <thead><tr>{["Date", "Teams", "In use", "Held", "Open"].map(h => <th key={h} style={{ ...td, textAlign: "left", color: C.mut, fontSize: 11, borderTop: "none" }}>{h}</th>)}</tr></thead>
+              <tbody>{u.days.filter(d => d.used || d.held || d.cancelled).map(d => (
+                <tr key={d.date} onClick={() => { setDate(d.date); setMode("day"); setUseOpen(false); }} style={{ cursor: "pointer" }}>
+                  <td style={td}>{fmtDay(d.date)}{d.cancelled ? <span style={{ color: "#f59e0b" }}> · off</span> : null}</td>
+                  <td style={td}>{d.teams || ""}</td>
+                  <td style={{ ...td, color: KIND.dse.fg, fontWeight: 700 }}>{d.used}h</td>
+                  <td style={td}>{d.held}h</td>
+                  <td style={{ ...td, color: d.heldUnused ? "#4ade80" : C.mut }}>{d.heldUnused}h</td>
+                </tr>))}</tbody>
+            </table></div>
+          </>}
+          <button onClick={() => setUseOpen(false)} style={{ width: "100%", marginTop: 12, padding: "9px", borderRadius: 10, border: "1px solid " + C.border, background: "transparent", color: C.text, fontFamily: "inherit", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Close</button>
+        </div>
+      </div>
+    );
+  };
+
   // ── Playbook changes: the list for Jonathan ───────────────────────────────
   const pbPanel = () => {
     const pend = pbChanges?.pending || [], sent = pbChanges?.sent || [];
@@ -419,9 +483,16 @@ export default function CourtAvailability({ loaders = liveLoaders, onOpenClass }
                   </td>); })}
               </tr>
             ))}
+            {!pub && <tr>
+              <td style={{ padding: "8px", fontSize: 12, fontWeight: 800, borderTop: "2px solid " + C.border, color: KIND.dse.fg, whiteSpace: "nowrap" }}>DS Elite<div style={{ fontSize: 10, color: C.mut, fontWeight: 600 }}>used / held</div></td>
+              {dates.map(d => { const u = grids[d].usage; return <td key={d} style={{ padding: "8px", fontSize: 11, borderTop: "2px solid " + C.border, borderLeft: "1px solid #1a1a1a", color: C.mut, lineHeight: 1.6 }}>
+                {u.used || u.held ? <><b style={{ color: KIND.dse.fg }}>{u.used}h</b> of {u.held}h{u.heldUnused ? <div style={{ color: "#4ade80" }}>{u.heldUnused}h open</div> : null}</> : "—"}</td>; })}
+            </tr>}
           </tbody>
         </table>
       </div>
+      {!pub && (() => { const t = dates.reduce((a, d) => { const u = grids[d].usage; return { used: a.used + u.used, held: a.held + u.held, open: a.open + u.heldUnused }; }, { used: 0, held: 0, open: 0 });
+        return <div style={{ fontSize: 12, color: C.mut, marginTop: 8 }}>This week DS Elite uses <b style={{ color: KIND.dse.fg }}>{t.used} court-hours</b> of the {t.held} held in Playbook; <b style={{ color: "#4ade80" }}>{t.open} held hours</b> have no team on them.</div>; })()}
     </>);
   };
 
@@ -439,6 +510,8 @@ export default function CourtAvailability({ loaders = liveLoaders, onOpenClass }
         </div>
         <button onClick={async () => { try { const u = memberLink || await loaders.link(); setMemberLink(u); try { await navigator.clipboard.writeText(u); setCopied(true); } catch { setCopied(false); /* copy blocked: the link shows below */ } } catch (e) { window.alert(e.message); } }}
           title="The no-login link for open-gym members: open court time only, no names" style={{ ...btn(false), border: "1px solid " + C.border, borderRadius: 8 }}>🔗 Members&rsquo; link</button>
+        {!pub && loaders.usage && <button onClick={() => { const m = (useMonth || date.slice(0, 7)); setUseMonth(m); setUseOpen(true); if (!useData[m]) loadUsage(m); }} title="DS Elite court-hours in use vs held, per month" style={{ ...btn(false), border: "1px solid " + C.border, borderRadius: 8 }}>💵 DS Elite usage</button>}
+        {useOpen && usagePanel()}
         {!pub && loaders.changes && <button onClick={() => { loadPb(); setPbOpen(true); }} title="Moves, hides and added rentals to send to Jonathan for Playbook" style={{ ...btn(false), border: "1px solid " + ((pbChanges?.pending || []).length ? C.gold : C.border), borderRadius: 8 }}>📝 Playbook changes{(pbChanges?.pending || []).length ? " (" + pbChanges.pending.length + ")" : ""}</button>}
         {pbOpen && pbPanel()}
         <button onClick={() => setPub(v => !v)} title="Show only open vs booked time - what members would see" style={{ ...btn(pub), border: "1px solid " + (pub ? C.gold : C.border), borderRadius: 8 }}>👁 Client view</button>

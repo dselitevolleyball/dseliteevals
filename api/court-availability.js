@@ -7,6 +7,8 @@
 //        date, start, end, courts:[...] }], reservations:[{ date, courts, who,
 //        internal, name }], offCourt: n }
 //        + hides: court_block_hides rows that can touch the range (shared/courts.js applyHides)
+//   GET /api/court-availability?usage=YYYY-MM -> { days:[{ date, teams, used, held, heldUnused }], total }
+//        DS Elite court-hours in use vs held in Playbook, per day (what DS Elite owes DSSC)
 //   GET /api/court-availability?link=1  -> { url } the members' public link
 //   POST { action: "hide", kind: "booking"|"dse", label, start, end, courts, date, weekly }
 //        -> { id }  takes a block off the chart (one date, or every week on that weekday)
@@ -28,7 +30,8 @@
 import { createClient } from "@supabase/supabase-js";
 import { addDays, centralToday } from "./_lib/playbook-calendar.js";
 import { loadCourtBookings, courtsToken, loadHides } from "./_lib/court-data.js";
-import { COURTS, describeChange, clockHours } from "../shared/courts.js";
+import { COURTS, describeChange, clockHours, buildCourtDay, dseBlock, applyHides } from "../shared/courts.js";
+import { loadDseCourtInputs } from "../shared/court-inputs.js";
 import { sendMail, emailShell } from "./_lib/projects.js";
 import { DSSC_DIRECTORS } from "../shared/dssc-directors.js";
 import { importRentals, rentalsMeta } from "./_lib/court-rentals.js";
@@ -121,6 +124,28 @@ export default async function handler(req, res) {
   // The link families get: the DSSC site (www.drippingsportsclub.com) proxies
   // /opengym to this app's /courts?t=. "direct" is the same page on this domain.
   if (url.searchParams.get("link") === "1") return res.status(200).json({ ok: true, url: "https://www.drippingsportsclub.com/opengym", direct: appOrigin(req) + "/courts?t=" + courtsToken(SUPABASE_SERVICE_ROLE_KEY) });
+
+  // DS Elite's court use for a month, per day: court-hours its teams are on vs
+  // held in Playbook. What DS Elite owes DSSC is the used hours (Drew, Oct 26 2026).
+  const um = url.searchParams.get("usage");
+  if (um) {
+    if (!/^\d{4}-\d{2}$/.test(um)) return res.status(400).json({ error: "usage=YYYY-MM" });
+    const first = um + "-01", [yy, mm] = um.split("-").map(Number), n = new Date(yy, mm, 0).getDate();
+    const dates = Array.from({ length: n }, (_, i) => addDays(first, i)), end = addDays(first, n);
+    try {
+      const bookings = [], reservations = [];
+      for (let s0 = first; s0 < end; s0 = addDays(s0, 14)) { const e0 = addDays(s0, 14) < end ? addDays(s0, 14) : end; const r = await loadCourtBookings(sb, s0, e0); bookings.push(...r.bookings); reservations.push(...r.reservations); }
+      const [dse, hides] = await Promise.all([loadDseCourtInputs(sb, dates), loadHides(sb, first, end)]);
+      const days = dates.map(d => {
+        const x = dse[d] || { teams: [], scrims: [], tourn: [] };
+        const shown = applyHides(d, { bookings: bookings.filter(b => b.date === d), reserved: dseBlock(d, reservations) }, hides);
+        const g = buildCourtDay({ bookings: shown.bookings.map(b => ({ courts: b.courts, start: b.start, end: b.end, kind: b.kind, label: b.label })).concat(x.tourn || []), teams: x.teams, scrims: x.scrims, reserved: shown.reserved });
+        return { date: d, teams: x.teams.length, cancelled: x.cancelled || null, ...g.usage };
+      });
+      const total = days.reduce((a, d) => ({ used: a.used + d.used, held: a.held + d.held, heldUnused: a.heldUnused + d.heldUnused }), { used: 0, held: 0, heldUnused: 0 });
+      return res.status(200).json({ ok: true, month: um, days, total });
+    } catch (e) { return res.status(502).json({ error: "Couldn't add up the month: " + e.message }); }
+  }
 
   const start = /^\d{4}-\d{2}-\d{2}$/.test(url.searchParams.get("start") || "") ? url.searchParams.get("start") : centralToday();
   const days = Math.min(14, Math.max(1, Number(url.searchParams.get("days")) || 1));

@@ -1,7 +1,7 @@
 // DS Elite's own Playbook rentals are courts held for DS Elite on any day, and
 // HQ's practice schedule fills them by team name (shared/courts.js dseBlock).
 // Run: node scripts/test-court-blocks.mjs
-import { buildCourtDay, dseBlock, applyHides, describeChange } from "../shared/courts.js";
+import { buildCourtDay, dseBlock, applyHides, describeChange, COURTS } from "../shared/courts.js";
 
 let bad = 0;
 const check = (ok, msg) => { console.log((ok ? "PASS  " : "FAIL  ") + msg); if (!ok) bad++; };
@@ -62,6 +62,25 @@ check(dm.some(r => r.courts.join() === "V1" && r.start === 19) && dm.some(r => r
 check(describeChange(mv).text === "Volleyball 101: move from Court 4, 5pm-6pm to Court 5, 5pm-6pm" && describeChange(mv).when === "Every Monday from Mon, Dec 7", "change log line for a weekly move: " + JSON.stringify(describeChange(mv)));
 check(describeChange({ action: "add", kind: "booking", label: "DS Storm", renter: "Tressa Aleshire", courts: ["V5", "V6"], start_h: 17, end_h: 19, date: "2027-01-19" }).text === "Add DS Storm (Tressa Aleshire): Courts 5 + 6, 5pm-7pm", "change log line for an added rental");
 check(describeChange(H()).text === "Remove DS Storm: Court 3, 5pm-8pm", "change log line for a hidden booking");
+
+// Sundays: a court per hour, shared courts, a taken court, open held courts, usage.
+const sun2 = "2026-11-01";
+const SUNT = [
+  { team: "11 Diamond", blocks: [[15, 17]], courtAt: [{ s: 15, e: 16, court: 1 }, { s: 16, e: 17, court: 3 }] },
+  { team: "12 Diamond", blocks: [[16, 17]], courtAt: [{ s: 16, e: 17, court: 3 }] },
+  { team: "13 Ruby", blocks: [[15, 17]], courtAt: [{ s: 15, e: 16, court: 3 }, { s: 16, e: 17, court: 1 }] },
+  { team: "14 Topaz", blocks: [[15, 16]], courtAt: [{ s: 15, e: 16, court: 3 }] },
+  { team: "15 Ruby", blocks: [[15, 17]], courtAt: [{ s: 15, e: 17, court: 2 }] },
+];
+const sg = buildCourtDay({ teams: SUNT, reserved: dseBlock(sun2, []), startHour: 7, endHour: 22, releaseHeld: true });
+const cAt = (c, h) => sg.cells[c][sg.slots.indexOf(h)];
+check(cAt("V1", 15).label === "11 Diamond" && cAt("V3", 16).label.includes("11 Diamond"), "11 Diamond is on Court 1 at 3pm and Court 3 at 4pm, hour by hour");
+check(cAt("V3", 15).label === "13 Ruby + 14 Topaz" && cAt("V3", 16).label === "11 Diamond + 12 Diamond", "teams set to the same court share it, both named");
+check(sg.issues.length === 0, "no false overlaps (" + (sg.issues.join("; ") || "none") + ")");
+check(cAt("V4", 15).open === true && sg.free.V4.some(([a, b]) => a <= 15 && b >= 16), "a held court with no team shows as open, and counts as free");
+check(sg.usage.used === 6 && sg.usage.held === 32 && sg.usage.heldUnused === 26, "usage: 6 court-hours used of 32 held (" + JSON.stringify(sg.usage) + ")");
+const blockedG = buildCourtDay({ teams: [{ team: "14 Ruby", blocks: [[18, 19]], courtAt: [{ s: 18, e: 19, court: 3 }] }], bookings: [{ courts: ["V3"], start: 18, end: 19, kind: "dssc", label: "Volleyball 101" }], reserved: dseBlock(sun2, []), startHour: 7, endHour: 22 });
+check(blockedG.issues.length === 1 && /taken|has it/.test(blockedG.issues[0]) && COURTS.some(c => blockedG.cells[c.id][blockedG.slots.indexOf(18)]?.label === "14 Ruby"), "a team whose court is taken still shows, on an open court, with a note");
 
 console.log(bad ? `\n${bad} failed` : "\nall court block checks passed");
 process.exit(bad ? 1 : 0);

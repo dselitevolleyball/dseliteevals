@@ -175,7 +175,7 @@ export const fmtHour = (h) => { const hh = Math.floor(h), mm = Math.round((h - h
 //   scrims   : [{ start, end, teams:[...], court (1-6|null) }]                   (teams sharing a court)
 // Returns { slots:[hour...], cells: { [courtId]: [cell per slot] }, free: { [courtId]: [[s,e]] }, issues:[...] }
 // A cell is null (free) or { kind, label, detail, key, auto?, conflict? }.
-export function buildCourtDay({ bookings = [], teams = [], scrims = [], reserved = [], startHour = 7, endHour = 22, step = 0.5 }) {
+export function buildCourtDay({ bookings = [], teams = [], scrims = [], reserved = [], startHour = 7, endHour = 22, step = 0.5, releaseHeld = false }) {
   const slots = []; for (let h = startHour; h < endHour - 1e-9; h += step) slots.push(Math.round(h * 100) / 100);
   const cells = Object.fromEntries(COURTS.map(c => [c.id, slots.map(() => null)]));
   const issues = [];
@@ -205,7 +205,7 @@ export function buildCourtDay({ bookings = [], teams = [], scrims = [], reserved
   const units = [];
   const scrimsOf = new Map(); // team -> [[start,end]...]
   scrims.forEach((s, n) => {
-    const u = { label: (s.teams || []).join(" vs "), detail: "DS Elite scrimmage", start: s.start, end: s.end, court: s.court, venue: null, key: "s" + n, kind: "dse" };
+    const u = { label: (s.teams || []).join(" vs "), detail: "DS Elite scrimmage", start: s.start, end: s.end, court: s.court || null, venue: null, key: "s" + n, kind: "dse" };
     units.push(u); for (const t of s.teams || []) { if (!scrimsOf.has(t)) scrimsOf.set(t, []); scrimsOf.get(t).push([s.start, s.end]); }
   });
   teams.forEach((t, n) => (t.blocks || []).forEach(([s, e], k) => {
@@ -213,37 +213,70 @@ export function buildCourtDay({ bookings = [], teams = [], scrims = [], reserved
     // every one of the team's scrimmages out of the block, keep what's left.
     let parts = [[s, e]];
     for (const [a, b] of scrimsOf.get(t.team) || []) parts = parts.flatMap(([x, y]) => (b <= x || a >= y) ? [[x, y]] : [[x, Math.max(x, a)], [Math.min(y, b), y]].filter(([p, q]) => q - p > 1e-9));
-    parts.forEach(([x, y], j) => units.push({ label: t.team, detail: "DS Elite practice", start: x, end: y, court: t.court, venue: t.venue, key: "t" + n + "_" + k + "_" + j, kind: "dse" }));
+    // Sundays set a court per hour (courtAt); split the block wherever it changes.
+    const at = (t.courtAt || []).filter(c => c.court >= 1 && c.court <= 6);
+    const courtAt = (h) => (at.find(c => h >= c.s - 1e-9 && h < c.e - 1e-9) || {}).court || null;
+    parts.forEach(([x, y], j) => {
+      const cuts = [...new Set([x, y, ...at.flatMap(c => [c.s, c.e]).filter(h => h > x && h < y)])].sort((a, b) => a - b);
+      const pieces = [];
+      for (let m = 0; m < cuts.length - 1; m++) {
+        const court = at.length ? courtAt(cuts[m]) : (t.court || null), last = pieces[pieces.length - 1];
+        if (last && last.court === court && Math.abs(last.end - cuts[m]) < 1e-9) last.end = cuts[m + 1];
+        else pieces.push({ start: cuts[m], end: cuts[m + 1], court });
+      }
+      pieces.forEach((pc, q) => units.push({ label: t.team, detail: "DS Elite practice", start: pc.start, end: pc.end, court: pc.court, venue: t.venue, key: "t" + n + "_" + k + "_" + j + "_" + q, kind: "dse" }));
+    });
   }));
-  // Fixed courts first, then the rest into whatever is free for the whole block
-  // (Warehouse first; a Flex team tries the Flex first).
+  const heldCells = COURTS.reduce((a, c) => a + cells[c.id].filter(x => x && x.reserved).length, 0);
+  const teamCell = (u, extra = {}) => ({ kind: "dse", label: u.label, detail: u.detail, key: u.key, team: [u.label], ...extra });
+  // Fixed courts first. Two teams set to the same court at the same time share
+  // it ("13 Ruby + 14 Topaz"). A court taken by a class, rental or the
+  // tournament sends the team to an open court instead, and says so.
   const fixed = units.filter(u => u.court >= 1 && u.court <= 6), loose = units.filter(u => !(u.court >= 1 && u.court <= 6));
-  for (const u of fixed) for (const i of idx(u.start, u.end)) {
-    const c = "V" + u.court;
-    if (cells[c][i] && cells[c][i].reserved) cells[c][i] = { kind: "dse", label: u.label, detail: u.detail, key: u.key };
-    else if (!put(c, i, { kind: "dse", label: u.label, detail: u.detail, key: u.key }) && !issues.some(x => x.startsWith(u.label + " on " + c))) issues.push(u.label + " on " + c.replace("V", "Court ") + " at " + fmtHour(slots[i]) + " overlaps " + cells[c][i].label);
+  for (const u of fixed) {
+    const c = "V" + u.court, span = idx(u.start, u.end);
+    const blocker = span.map(i => cells[c][i]).find(x => x && !x.reserved && !x.team);
+    if (blocker) {
+      issues.push(`${u.label} is set to ${c.replace("V", "Court ")} at ${fmtHour(u.start)} but ${blocker.label} has it, so it's shown on an open court`);
+      loose.push({ ...u, court: null, detail: u.detail + " · set to " + c.replace("V", "Court ") + " (taken)" });
+      continue;
+    }
+    for (const i of span) {
+      const cur = cells[c][i];
+      cells[c][i] = !cur || cur.reserved ? teamCell(u)
+        : cur.team.includes(u.label) ? cur
+        : { ...cur, label: cur.label + " + " + u.label, team: [...cur.team, u.label], detail: "DS Elite practice · sharing the court", key: cur.key + "+" + u.key };
+    }
   }
   loose.sort((a, b) => a.start - b.start || b.end - a.end || a.label.localeCompare(b.label));
   for (const u of loose) {
     const span = idx(u.start, u.end); if (!span.length) continue;
     const order = u.venue === "flex" ? [...FLEX, ...WAREHOUSE] : [...WAREHOUSE, ...FLEX];
     const court = order.find(c => span.every(i => openForDse(c, i)));
-    if (court) { for (const i of span) cells[court][i] = { kind: "dse", label: u.label, detail: u.detail + " · court not set, placed on a free court", key: u.key, auto: true }; continue; }
+    if (court) { for (const i of span) cells[court][i] = teamCell(u, { detail: u.detail + (u.court === null && /taken/.test(u.detail) ? "" : " · court not set, placed on a free court"), auto: true }); continue; }
     // No single court free for the whole block: fill hour by hour, and say so.
     let placed = true;
-    for (const i of span) { const c = order.find(x => openForDse(x, i)); if (c) cells[c][i] = { kind: "dse", label: u.label, detail: u.detail + " · court not set", key: u.key + "@" + i, auto: true }; else placed = false; }
+    for (const i of span) { const c = order.find(x => openForDse(x, i)); if (c) cells[c][i] = teamCell(u, { detail: u.detail + " · court not set", key: u.key + "@" + i, auto: true }); else placed = false; }
     if (!placed) issues.push(`${u.label} ${fmtHour(u.start)}-${fmtHour(u.end)}: not enough free courts`);
   }
+
+  // What DS Elite actually uses vs holds, in court-hours: a shared court counts once.
+  const count = (f) => COURTS.reduce((a, c) => a + cells[c.id].filter(f).length, 0) * step;
+  const usage = { used: count(x => x && x.team), held: heldCells * step, heldUnused: count(x => x && x.reserved) };
+  // On the staff chart, held courts no team uses show as open: DS Elite won't
+  // pay for them (Drew, Oct 26 2026). The members' page keeps them booked.
+  if (releaseHeld) for (const c of COURTS) cells[c.id] = cells[c.id].map((x, i) => x && x.reserved
+    ? { kind: "open", open: true, label: "Open", detail: "Held for DS Elite in Playbook, no team on it", key: "o" + x.key, hide: x.hide, change: x.change } : x);
 
   // Free windows per court.
   const free = {};
   for (const c of COURTS) {
     const w = []; let s = null;
-    slots.forEach((h, i) => { if (!cells[c.id][i]) { if (s == null) s = h; } else if (s != null) { w.push([s, h]); s = null; } });
+    slots.forEach((h, i) => { if (!cells[c.id][i] || cells[c.id][i].open) { if (s == null) s = h; } else if (s != null) { w.push([s, h]); s = null; } });
     if (s != null) w.push([s, endHour]);
     free[c.id] = w;
   }
-  return { slots, cells, free, issues };
+  return { slots, cells, free, issues, usage };
 }
 
 // ── Hidden and moved blocks (Drew, Oct 23 2026: "I want to be able to delete
