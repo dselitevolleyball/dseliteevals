@@ -47,16 +47,22 @@ const PLAN = {
   },
 };
 
-// What each team was first told about its regular-season practices (the July 2
-// welcome emails; 16 Diamond's Aug 20 welcome; the Sept 19 Rise invites). Only
-// teams whose schedule differs from this get the email (--all sends everyone).
+// What each team's families were LAST told about regular-season practices: the
+// July 2 welcome emails, updated by the July 27-30 "Important Season Updates"
+// emails (13 Sapphire -> Tue 7-9, 14 Topaz -> Mon 7-9), 16 Diamond's Aug 20
+// welcome and the Sept 19 Rise invites. (The Oct 23 change notices went to
+// coaches only; the family SportsYou posts were never posted.) Only teams whose
+// schedule differs from this get the email (--all sends everyone).
 const ORIGINAL = {
   "11 Diamond": "Sun 3-5pm · Wed 5-7pm", "12 Diamond": "Sun 3-5pm · Tue 5-7pm · Thu 5-7pm", "12 Ruby": "Sun 1-3pm · Wed 5-7pm",
   "13 Diamond": "Sun 3-5pm · Wed 5-7pm · Thu 5-7pm", "13 Emerald": "Sun 5-7pm · Tue 5-7pm", "13 Ruby": "Sun 3-5pm · Tue 5-7pm",
-  "13 Sapphire": "Sun 1-3pm · Mon 7-9pm", "14 Diamond": "Sun 5-7pm · Tue 5-7pm · Thu 7-9pm", "14 Emerald": "Sun 5-7pm · Wed 7-9pm",
-  "14 Ruby": "Sun 5-7pm · Tue 7-9pm · Wed 7-9pm", "14 Sapphire": "Sun 1-3pm · Thu 5-7pm", "14 Topaz": "Sun 3-5pm · Mon 5-7pm",
+  "13 Sapphire": "Sun 1-3pm · Tue 7-9pm", "14 Diamond": "Sun 5-7pm · Tue 5-7pm · Thu 7-9pm", "14 Emerald": "Sun 5-7pm · Wed 7-9pm",
+  "14 Ruby": "Sun 5-7pm · Tue 7-9pm · Wed 7-9pm", "14 Sapphire": "Sun 1-3pm · Thu 5-7pm", "14 Topaz": "Sun 3-5pm · Mon 7-9pm",
   "15 Diamond": "Sun 5-7pm · Tue 7-9pm · Wed 7-9pm", "15 Emerald": "Sun 5-7pm · Wed 7-9pm", "15 Ruby": "Sun 7-9pm · Mon 7-9pm · Thu 7-9pm",
   "15 Sapphire": "Sun 7-9pm · Wed 5-7pm", "16 Diamond": "Sun 7-9pm · Tue 7-9pm · Thu 7-9pm",
+  // 14 Diamond (Tue 5-7 -> 7-9 since Aug 14) and 14 Ruby (Tue -> Thu since Aug 9)
+  // differ too, but have been on their SportsYou calendars since August: held back
+  // unless named with --team or added with --include-held.
   "11 Rise 1": "Sun 1-3pm · Thu 5-7pm", "12 Rise 1": "Sun 3-5pm · Mon 5-7pm", "13 Rise 1": "Sun 1-3pm · Mon 7-9pm",
 };
 
@@ -158,7 +164,7 @@ function build(teamName) {
   });
   const blocks = [
     ["Weekly practices, from Sunday, November 29", [...weekly, `All at the ${WAREHOUSE}. SportsYou shows the court for each one.`]],
-    ...(was ? [["What's changed", [`The regular-season practice times we first sent you were ${was.replace(/·/g, "and")}. They've changed - the weekly practices above are the current schedule, and they're what's on SportsYou.`, ...(plan?.note ? [plan.note] : [])]]] : plan?.note ? [["What's changed", [plan.note]]] : []),
+    ...(was ? [["What's changed", [`The regular-season practice times we last sent you were ${was.replace(/·/g, "and")}. They've changed - the weekly practices above are the current schedule, and they're what's on SportsYou.`, ...(plan?.note ? [plan.note] : [])]]] : plan?.note ? [["What's changed", [plan.note]]] : []),
     ["No practice on these dates", [
       ...(inHouseLine ? [inHouseLine] : []),
       ...offLines.filter(l => !(inHouseLine && /in-house/.test(l))),
@@ -168,7 +174,7 @@ function build(teamName) {
     [`Your ${T} coaches`, coaches],
   ];
   const intro = [
-    was ? `${T}'s regular-season practice times have changed since we first sent them, so here is the updated schedule. The regular season starts the weekend after Thanksgiving, and everything below is already on the ${T} calendar in SportsYou, which is always the final word if anything changes.`
+    was ? `${T}'s regular-season practice times have changed since we last sent them, so here is the updated schedule. The regular season starts the weekend after Thanksgiving, and everything below is already on the ${T} calendar in SportsYou, which is always the final word if anything changes.`
         : `The regular season starts the weekend after Thanksgiving, and here is ${T}'s practice schedule for it. Everything below is already on the ${T} calendar in SportsYou, which is always the final word if anything changes.`,
   ];
   return { T, blocks, intro, subject: was ? `${T}: updated regular-season practice schedule` : `${T}: regular-season practice schedule`, weekly, offLines, tourneySundays, saDates, was };
@@ -185,8 +191,10 @@ const render = (team, greet) => {
 };
 
 // ── who gets which email ───────────────────────────────────────────────────
+const HELD = ["14 Diamond", "14 Ruby"];
 const realTeams = teams.filter(t => !isEventTeam(t) && (!onlyTeam || t.team_name === onlyTeam)).map(t => t.team_name)
   .filter(t => everyone || onlyTeam || changedFrom(t, PLAN[t] ? PLAN[t].slots : assigns.filter(a => a.team_name === t)))
+  .filter(t => everyone || onlyTeam || args.includes("--include-held") || !HELD.includes(t))
   .sort((a, b) => (parseInt(a) || 99) - (parseInt(b) || 99) || a.localeCompare(b));
 const jobs = [];
 for (const teamName of realTeams) {
