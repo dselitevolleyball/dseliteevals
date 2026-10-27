@@ -1815,6 +1815,8 @@ export default function App() {
   const [tcShowZero, setTcShowZero]     = useState(false);  // include coaches with no hours this week
   const [tcEmailing, setTcEmailing]     = useState(false);  // re-sending the weekly payroll email
   const [hoursExcludes, setHoursExcludes] = useState([]);   // coaches excluded from the "didn't clock in" flag
+  const [shiftConfirms, setShiftConfirms] = useState([]);   // "Did you work it? Reply YES or NO" texts (api/shift-confirm.js)
+  const [shiftTexting, setShiftTexting] = useState("");    // coach name being texted, or "__all"
   // Mobile nav: collapse the header buttons into a hamburger under 700px.
   const [isNarrow, setIsNarrow] = useState(() => typeof window !== "undefined" && window.matchMedia("(max-width: 700px)").matches);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -3480,7 +3482,15 @@ export default function App() {
     if (error) { console.error("Load hours_reminder_excludes error:", error); return; }
     setHoursExcludes(data || []);
   }, []);
-  useEffect(() => { if (isApproved && view === "timecards") { loadCheckins(); loadCoachRates(); loadPractice(); loadPracticeCancellations(); loadPracticeCoverage(); loadCoachRequests(); loadHoursExcludes(); } }, [isApproved, view, loadCheckins, loadCoachRates, loadPractice, loadPracticeCancellations, loadPracticeCoverage, loadCoachRequests, loadHoursExcludes]);
+  const loadShiftConfirms = useCallback(async () => {
+    const since = new Date(Date.now() - 120 * 86400000).toISOString();
+    const { data, error } = await supabase.from("shift_confirms").select("*").gte("sent_at", since).order("sent_at", { ascending: false });
+    if (error) { console.error("Load shift_confirms error:", error); return; }
+    setShiftConfirms(data || []);
+  }, []);
+  useEffect(() => { if (isApproved && view === "timecards") { loadCheckins(); loadCoachRates(); loadPractice(); loadPracticeCancellations(); loadPracticeCoverage(); loadCoachRequests(); loadHoursExcludes(); loadShiftConfirms(); } }, [isApproved, view, loadCheckins, loadCoachRates, loadPractice, loadPracticeCancellations, loadPracticeCoverage, loadCoachRequests, loadHoursExcludes, loadShiftConfirms]);
+  // Texts get answered while the screen is open: look again every minute.
+  useEffect(() => { if (!(isApproved && view === "timecards")) return; const t = setInterval(() => { loadShiftConfirms(); loadCheckins(); loadPracticeCoverage(); }, 60000); return () => clearInterval(t); }, [isApproved, view, loadShiftConfirms, loadCheckins, loadPracticeCoverage]);
 
   // Season-plan curriculum progress (dashboard checkboxes).
   const loadCurriculumProgress = useCallback(async () => {
@@ -25562,6 +25572,29 @@ export default function App() {
       if (error) { window.alert("Couldn't record it: " + error.message); return; }
       await loadPracticeCoverage();
     };
+    // "Did you work it? Reply YES or NO, or tap to answer" (api/shift-confirm.js).
+    // A YES logs the shift like "+ Was there", a NO records it like "Called out",
+    // so an answered coach drops off this list by themselves.
+    const askedFor = (m) => shiftConfirms.find(r => norm(r.coach_name) === norm(m.coach) && (r.shifts || []).some(s => m.days.some(d => d.date === s.date && d.team === s.team)));
+    const whenShort = (iso) => new Date(iso).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" });
+    const textConfirm = async (list, key) => {
+      const names = list.map(m => m.coach);
+      if (!window.confirm("Text " + (list.length === 1 ? names[0] : list.length + " coaches") + " from the DS Elite number?\n\n\"Did you work it? Reply YES or NO, or tap to answer\"\n\nA YES logs the shift, a NO records them as out. Hours still wait for Approve & email." + (list.length > 1 ? "\n\n" + names.join(", ") : ""))) return;
+      setShiftTexting(key);
+      try {
+        const { data:{ session } } = await supabase.auth.getSession();
+        const r = await fetch("/api/shift-confirm", { method:"POST", headers:{ "Content-Type":"application/json", Authorization:"Bearer "+(session?.access_token||"") }, body: JSON.stringify({ coaches: list.map(m => ({ coach: m.coach, shifts: m.days.map(d => ({ date: d.date, team: d.team, slot: d.slot || null })) })) }) });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.error || ("HTTP " + r.status));
+        const bad = (d.results || []).filter(x => !x.ok);
+        if (bad.length) window.alert("Texted " + ((d.results || []).length - bad.length) + " of " + (d.results || []).length + ".\n\nNot texted:\n" + bad.map(x => "- " + x.coach + ": " + x.error).join("\n"));
+      } catch (e) { window.alert("Couldn't send: " + (e.message || "error")); }
+      setShiftTexting("");
+      await loadShiftConfirms();
+    };
+    const notAsked = missingList.filter(m => { const a = askedFor(m); return !a || a.status === "failed"; });
+    const answeredThisWeek = shiftConfirms.flatMap(r => (r.shifts || []).filter(s => s.answer && s.date >= wkStart && s.date <= wkEnd).map(s => ({ ...s, coach: r.coach_name, via: r.answered_via, reply: r.reply_text, id: r.id })))
+      .sort((a, b) => a.date.localeCompare(b.date) || a.coach.localeCompare(b.coach));
     const calledOutThisWeek = practiceCoverage.filter(c => c.practice_date >= wkStart && c.practice_date <= wkEnd)
       .sort((a, b) => a.practice_date.localeCompare(b.practice_date) || a.team_name.localeCompare(b.team_name));
 
@@ -25599,11 +25632,14 @@ export default function App() {
         </div>
 
         {/* Expected but didn't clock in + reminder mutes */}
-        {(missingList.length>0 || hoursExcludes.length>0) && (
+        {(missingList.length>0 || hoursExcludes.length>0 || answeredThisWeek.length>0) && (
           <div style={{...St.card, border:"1px solid "+(missingList.length?"#f59e0b":C.border), background:missingList.length?"rgba(245,158,11,0.06)":C.card}}>
             <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:missingList.length?8:0}}>
               <span style={{fontSize:12,fontWeight:800,color:missingList.length?"#f59e0b":C.mut}}>⚠ Expected but didn't clock in{missingList.length?" — "+missingList.length:" — none"}</span>
               <span style={{fontSize:11,color:C.mut}}>· {fmtD(wkStart)} – {fmtD(wkEnd)} · fix before approving</span>
+              <div style={{flex:1}} />
+              {notAsked.length>1 && <button style={{...St.ghost,padding:"3px 10px",color:C.acc,borderColor:C.acc}} disabled={!!shiftTexting} onClick={()=>textConfirm(notAsked, "__all")}
+                title="Text each of them: did you work it? Reply YES or NO, or tap to answer">{shiftTexting==="__all"?"Texting…":"📱 Text all to confirm ("+notAsked.length+")"}</button>}
             </div>
             {missingList.length>0 && (
               <div style={{display:"flex",flexDirection:"column",gap:6}}>
@@ -25617,12 +25653,33 @@ export default function App() {
                         </span>
                       ); })}
                     </span>
+                    {(() => { const a = askedFor(m); return a && a.status !== "failed"
+                      ? <span style={{fontSize:11,fontWeight:700,color:"#f59e0b"}} title={"Texted to "+(a.phone||"")+" by "+(a.sent_by||"")}>📱 Texted {whenShort(a.sent_at)} · waiting</span>
+                      : a && a.status === "failed" ? <span style={{fontSize:11,fontWeight:700,color:C.red||"#ef4444"}} title={a.error||""}>Text failed{a.error?": "+String(a.error).slice(0,60):""}</span> : null; })()}
+                    <button style={{...St.ghost,padding:"3px 10px",color:C.acc,borderColor:C.acc}} disabled={!!shiftTexting} onClick={()=>textConfirm([m], m.coach)}
+                      title="Text them: did you work it? Reply YES or NO, or tap to answer">{shiftTexting===m.coach?"Texting…":askedFor(m)&&askedFor(m).status!=="failed"?"📱 Text again":"📱 Text to confirm"}</button>
                     <button style={{...St.ghost,padding:"3px 10px",color:C.acc,borderColor:C.acc}} onClick={()=>addMissingShifts(m)} title="She was there — log the shift with the right date and hours">+ Was there</button>
                     <button style={{...St.ghost,padding:"3px 10px",color:"#f59e0b",borderColor:"#f59e0b"}} onClick={()=>calledOut(m)} title="She was out — record the absence and who covered, so this stops being flagged">Called out</button>
                     <button style={{...St.ghost,padding:"3px 10px"}} onClick={()=>muteCoach(m.coach, true)} title="Stop flagging this coach in reminders for good (leave, stipend-only). For a one-off absence use Called out.">🔕 Mute</button>
                   </div>
                 ))}
               </div>
+            )}
+            {answeredThisWeek.length > 0 && (
+              <details style={{marginTop:8}} open>
+                <summary style={{fontSize:11,color:C.mut,cursor:"pointer",fontWeight:700}}>Answered by text this week ({answeredThisWeek.length})</summary>
+                <div style={{display:"flex",flexDirection:"column",gap:4,marginTop:6}}>
+                  {answeredThisWeek.map((x, i) => (
+                    <div key={x.id+"-"+i} style={{display:"flex",alignItems:"center",gap:8,fontSize:11,flexWrap:"wrap"}}>
+                      <span style={{fontWeight:800,color:C.text,minWidth:130}}>{x.coach}</span>
+                      <span style={{color:C.mut}}>{new Date(x.date+"T12:00:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"})} · {x.team}{x.slot ? " · " + x.slot : ""}</span>
+                      <span style={{color:x.answer==="yes"?C.grn:"#f59e0b",fontWeight:700}}>{x.answer==="yes" ? "✓ worked — shift logged" : "didn't work — recorded as out"}</span>
+                      <span style={{color:C.mut}}>{x.via==="sms" ? "replied by text" : "answered from the link"}{x.at ? " " + whenShort(x.at) : ""}</span>
+                      {x.via==="sms" && x.reply && <span style={{color:C.mut,fontStyle:"italic"}}>“{x.reply}”</span>}
+                    </div>
+                  ))}
+                </div>
+              </details>
             )}
             {calledOutThisWeek.length > 0 && (
               <details style={{marginTop:8}} open>

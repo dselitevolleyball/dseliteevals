@@ -17,6 +17,7 @@
 
 import crypto from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
+import { handleShiftReply } from "./_lib/shift-confirm.js";
 
 // Parse application/x-www-form-urlencoded body. Vercel's default body parser
 // already handles this — req.body is an object.
@@ -220,6 +221,13 @@ export default async function handler(req, res) {
     unread_count: newUnread,
     updated_at: now,
   }).eq("id", thread.id);
+
+  // A coach answering Time Cards' "Did you work it? Reply YES or NO": log it
+  // and text back what was recorded. The reply stays in the inbox either way.
+  if (brand === "dse") {
+    try { await handleShiftReply(supabase, from, body); }
+    catch (e) { console.error("Shift reply failed:", e.message); }
+  }
 
   // Empty 200 ack — no TwiML auto-reply for now.
   res.setHeader("Content-Type", "text/xml");
