@@ -129,9 +129,18 @@ never fetched, stored, flagged or moved.
 For each director who wants it:
 1. They sign in to their Google account → **Security → 2-Step Verification**
    on → **App passwords** → create one named "DSSC HQ inbox".
-2. Add them to `DSSC_INBOX_SENT_ACCOUNTS` in the HQ Vercel project, a JSON list:
-   `[{"user":"jonathan@drippingsportsclub.com","pass":"abcd efgh ijkl mnop"}]`
-   (add more objects for more directors), mark it Sensitive, redeploy.
+2. In the HQ Vercel project, add one Sensitive variable per director named
+   `DSSC_INBOX_PASS_<FIRSTNAME>` with their App Password as the value, then
+   redeploy. `DSSC_INBOX_PASS_JONATHAN` reads jonathan@drippingsportsclub.com,
+   and `DSSC_INBOX_PASS_HUNTER` reads hunter@drippingsportsclub.com. For a
+   director who answers from another address, also add
+   `DSSC_INBOX_USER_<FIRSTNAME>` with that address. Each one can be changed
+   alone. The older `DSSC_INBOX_SENT_ACCOUNTS` JSON list
+   (`[{"user":"…","pass":"…"}]`) is still read; a separate variable wins for
+   the same address.
+
+Each run's result per account (how many it looked at, filed, or the login
+error) is kept in the `site_inbox_sent_status` table.
 
 Check it by hand: `curl -s "https://dseliteevals.vercel.app/api/site-inbox-sent-poll?token=$CRON_SECRET&dry=1"`
 shows, per account, how many sent messages it looked at and which it would file.

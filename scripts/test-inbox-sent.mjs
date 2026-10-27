@@ -2,7 +2,7 @@
 // Runs fileSent against a fake Sent folder and a fake database.
 // Run: node scripts/test-inbox-sent.mjs
 import { fakeSupabase } from "./lib/fake-supabase.mjs";
-import { fileSent } from "../api/site-inbox-sent-poll.js";
+import { fileSent, sentAccounts } from "../api/site-inbox-sent-poll.js";
 
 let bad = 0;
 const check = (ok, msg) => { console.log((ok ? "PASS  " : "FAIL  ") + msg); if (!ok) bad++; };
@@ -51,6 +51,12 @@ check(t11.assigned_to === "hunter@drippingsportsclub.com" && t11.status === "wai
 const stats2 = { scanned: 0, filed: 0, duplicates: 0, items: [] };
 await fileSent(sb, client, "jonathan@drippingsportsclub.com", byEmail, { since: new Date(0), dry: false, stats: stats2 });
 check(stats2.filed === 0 && stats2.duplicates === 3, "running again files nothing twice");
+
+// A separate token per director; the old JSON list still counts, and the token wins for the same address.
+const accts = sentAccounts({ DSSC_INBOX_PASS_JONATHAN: "aaaa", DSSC_INBOX_PASS_HUNTER: "bbbb", DSSC_INBOX_USER_HUNTER: "Hunter.X@gmail.com", DSSC_INBOX_PASS_EMPTY: " ",
+  DSSC_INBOX_SENT_ACCOUNTS: JSON.stringify([{ user: "jonathan@drippingsportsclub.com", pass: "old" }, { user: "drew@drippingsportsclub.com", pass: "cccc" }]) });
+const pw = Object.fromEntries(accts.map(a => [a.user, a.pass]));
+check(accts.length === 3 && pw["jonathan@drippingsportsclub.com"] === "aaaa" && pw["hunter.x@gmail.com"] === "bbbb" && pw["drew@drippingsportsclub.com"] === "cccc", "one token per director, with an optional address, alongside the old list");
 
 console.log(bad ? `\n${bad} failed` : "\nall inbox sent-mail checks passed");
 process.exit(bad ? 1 : 0);

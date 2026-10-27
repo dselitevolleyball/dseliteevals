@@ -22,8 +22,12 @@
 //
 // Env:
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, CRON_SECRET   required
-//   DSSC_INBOX_SENT_ACCOUNTS   JSON list of the directors to read, each with a
-//                              Google App Password for their own account:
+//   DSSC_INBOX_PASS_<NAME>     one per director: the Google App Password for their
+//                              own account, e.g. DSSC_INBOX_PASS_JONATHAN reads
+//                              jonathan@drippingsportsclub.com (Drew, Oct 27 2026:
+//                              a separate token each, so one can be changed alone)
+//   DSSC_INBOX_USER_<NAME>     optional, the address when it isn't <name>@drippingsportsclub.com
+//   DSSC_INBOX_SENT_ACCOUNTS   older form, still read: a JSON list
 //                              [{"user":"jonathan@drippingsportsclub.com","pass":"abcd efgh ijkl mnop"}]
 //   DSSC_INBOX_IMAP_HOST       optional, default imap.gmail.com
 //   DSSC_INBOX_SENT_SINCE_DAYS optional, default 3 (how far back to look each run)
@@ -45,10 +49,9 @@ export default async function handler(req, res) {
   const bearer = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
   if (!CRON_SECRET || (bearer !== CRON_SECRET && urlToken !== CRON_SECRET)) return res.status(403).json({ error: "Forbidden" });
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return res.status(500).json({ error: "Server not configured" });
-  let accounts = [];
-  try { accounts = JSON.parse(process.env.DSSC_INBOX_SENT_ACCOUNTS || "[]"); } catch { return res.status(500).json({ error: "DSSC_INBOX_SENT_ACCOUNTS isn't valid JSON" }); }
-  accounts = (Array.isArray(accounts) ? accounts : []).filter(a => isEmailish(a?.user) && a?.pass);
-  if (!accounts.length) return res.status(200).json({ ok: true, skipped: "No accounts in DSSC_INBOX_SENT_ACCOUNTS" });
+  let accounts;
+  try { accounts = sentAccounts(process.env); } catch (e) { return res.status(500).json({ error: e.message }); }
+  if (!accounts.length) return res.status(200).json({ ok: true, skipped: "No DSSC_INBOX_PASS_<NAME> (or DSSC_INBOX_SENT_ACCOUNTS) set" });
 
   const dry = new URL(req.url, "https://x").searchParams.get("dry") === "1";
   const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
@@ -91,6 +94,24 @@ export default async function handler(req, res) {
     await sb.from("site_inbox_sent_status").upsert(row, { onConflict: "account" }).then(() => {}, () => {});
   }
   return res.status(200).json(out);
+}
+
+// The directors to read: one DSSC_INBOX_PASS_<NAME> each, plus any in the older
+// DSSC_INBOX_SENT_ACCOUNTS list. A separate token wins over the list for the same address.
+export function sentAccounts(env) {
+  const byUser = new Map();
+  if (env.DSSC_INBOX_SENT_ACCOUNTS) {
+    let list;
+    try { list = JSON.parse(env.DSSC_INBOX_SENT_ACCOUNTS); } catch { throw new Error("DSSC_INBOX_SENT_ACCOUNTS isn't valid JSON"); }
+    for (const a of Array.isArray(list) ? list : []) if (isEmailish(a?.user) && a?.pass) byUser.set(nrm(a.user), { user: nrm(a.user), pass: a.pass });
+  }
+  for (const [k, pass] of Object.entries(env)) {
+    const m = /^DSSC_INBOX_PASS_([A-Z0-9_]+)$/.exec(k);
+    if (!m || !String(pass || "").trim()) continue;
+    const user = nrm(env["DSSC_INBOX_USER_" + m[1]] || m[1].toLowerCase() + "@drippingsportsclub.com");
+    if (isEmailish(user)) byUser.set(user, { user, pass });
+  }
+  return [...byUser.values()];
 }
 
 // One director's Sent folder (already open, read-only): file what went to families with open threads.
