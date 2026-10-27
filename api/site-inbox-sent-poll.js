@@ -79,8 +79,17 @@ export default async function handler(req, res) {
     } catch (e) { stats.error = e.message || String(e); }
     finally { await client.logout().catch(() => {}); }
   }
-  // One line per account in the runtime logs, so a cron run can be checked without the secret.
-  for (const a of out.accounts) console.log(`sent-poll ${a.user}: scanned ${a.scanned}, filed ${a.filed}, duplicates ${a.duplicates}${dry ? " (dry)" : ""}${a.error ? ", error: " + a.error : ""}`);
+  // One line per account in the runtime logs, and the last run in site_inbox_sent_status,
+  // so a cron run can be checked without the secret.
+  const now = new Date().toISOString();
+  for (const a of out.accounts) {
+    console.log(`sent-poll ${a.user}: scanned ${a.scanned}, filed ${a.filed}, duplicates ${a.duplicates}${dry ? " (dry)" : ""}${a.error ? ", error: " + a.error : ""}`);
+    if (dry) continue;
+    const row = { account: a.user, last_run_at: now, scanned: a.scanned, filed: a.filed, duplicates: a.duplicates, error: a.error };
+    if (!a.error) row.last_ok_at = now;
+    if (a.filed) row.last_filed_at = now;
+    await sb.from("site_inbox_sent_status").upsert(row, { onConflict: "account" }).then(() => {}, () => {});
+  }
   return res.status(200).json(out);
 }
 
