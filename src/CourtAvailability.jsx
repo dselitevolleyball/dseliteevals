@@ -111,7 +111,7 @@ export default function CourtAvailability({ loaders = liveLoaders, onOpenClass }
   const [useOpen, setUseOpen] = useState(false);
   const [useMonth, setUseMonth] = useState(null);
   const [useData, setUseData] = useState({});    // month -> result | { loading } | { error }
-  const [rate, setRate] = useState(() => { try { return localStorage.getItem("courts.rate") || ""; } catch { return ""; } });
+  const [rate, setRate] = useState(() => { try { return localStorage.getItem("courts.rate") || "65"; } catch { return "65"; } });   // DS Elite pays $65 a court-hour (Drew, Oct 27 2026)
   const loadPb = () => { if (loaders.changes) loaders.changes().then(setPbChanges).catch(() => {}); };
   useEffect(loadPb, []); // eslint-disable-line react-hooks/exhaustive-deps
   const [reload, setReload] = useState(0);

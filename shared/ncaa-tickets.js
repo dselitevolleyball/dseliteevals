@@ -75,3 +75,20 @@ export const NCAA_SUBJECT = "DS Elite at the NCAA Championship in San Antonio: $
 
 export const ncaaText = ({ link, from = "Drew" }) =>
   `Hi {first}, DS Elite is taking a group to the NCAA volleyball championship match at the Alamodome on Sun, Dec 20 at 2:30pm. They're going for the indoor volleyball attendance record (30,000+)! Group tickets are $${NCAA_PRICE} in the 300 level. Want to come, or already have tickets? Please answer by ${NCAA_REPLY_BY.replace(/^\w+, /, "")}: ${link} - ${from}, DS Elite`;
+
+// The reminder the day before the answer-by date (Drew, Oct 27 2026).
+export const NCAA_REMINDER_SUBJECT = "Reminder: NCAA Championship tickets, please answer by " + NCAA_REPLY_BY.replace(/,.*$/, "");
+export const ncaaReminderEmail = ({ greeting, link, from = "Drew Rose" }) => `${greeting}
+
+Quick reminder: we're putting together DS Elite's group order for the NCAA women's volleyball championship match at ${NCAA_WHERE} on ${NCAA_WHEN} ($${NCAA_PRICE} a ticket, ${NCAA_SEATS}). Please answer by ${NCAA_REPLY_BY} so we can lock in our numbers:
+
+${link}
+
+It takes under a minute: tell us whether you'd like tickets and how many, or whether you already have your own. A "no" helps us too.
+
+Thanks,
+
+${from}
+DS Elite Volleyball`;
+export const ncaaReminderText = ({ link, from = "Drew" }) =>
+  `Hi {first}, reminder: please answer by ${NCAA_REPLY_BY.replace(/^\w+, /, "")} if your family wants $${NCAA_PRICE} DS Elite group tickets for the NCAA volleyball championship at the Alamodome (Sun, Dec 20, 2:30pm). Already have tickets or can't go? Tell us that too: ${link} - ${from}, DS Elite`;

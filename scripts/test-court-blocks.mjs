@@ -82,5 +82,9 @@ check(sg.usage.used === 6 && sg.usage.held === 32 && sg.usage.heldUnused === 26,
 const blockedG = buildCourtDay({ teams: [{ team: "14 Ruby", blocks: [[18, 19]], courtAt: [{ s: 18, e: 19, court: 3 }] }], bookings: [{ courts: ["V3"], start: 18, end: 19, kind: "dssc", label: "Volleyball 101" }], reserved: dseBlock(sun2, []), startHour: 7, endHour: 22 });
 check(blockedG.issues.length === 1 && /taken|has it/.test(blockedG.issues[0]) && COURTS.some(c => blockedG.cells[c.id][blockedG.slots.indexOf(18)]?.label === "14 Ruby"), "a team whose court is taken still shows, on an open court, with a note");
 
+// Saturday DS Elite holds are DS Elite Operations: in use with no team on them, and never shown as open.
+const opsG = buildCourtDay({ reserved: dseBlock("2026-11-07", [{ date: "2026-11-07", internal: true, courts: ["V3", "V4"], start: 12, end: 19, timed: true }]), startHour: 7, endHour: 22, releaseHeld: true });
+check(opsG.usage.used === 14 && opsG.usage.heldUnused === 0 && opsG.cells.V3[opsG.slots.indexOf(12)]?.label === "DS Elite Operations", "Saturday DS Elite hold is DS Elite Operations, counted in use");
+
 console.log(bad ? `\n${bad} failed` : "\nall court block checks passed");
 process.exit(bad ? 1 : 0);

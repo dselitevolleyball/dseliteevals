@@ -12,6 +12,7 @@
 //   node scripts/send-ncaa-tickets.mjs                      # dry run
 //   node scripts/send-ncaa-tickets.mjs --team "15 Diamond"  # dry run, one team
 //   node scripts/send-ncaa-tickets.mjs --player "Emma Blahnik"  # dry run, one family
+//   node scripts/send-ncaa-tickets.mjs --reminder --both --send  # the reminder, to families who haven't answered
 //   node scripts/send-ncaa-tickets.mjs --test drew@dselitevolleyball.com --send
 //                                  # the first family's email, sent only to that address
 //   node scripts/send-ncaa-tickets.mjs --send               # actually send
@@ -25,7 +26,7 @@
 
 import { readFileSync } from "node:fs";
 import { createClient } from "@supabase/supabase-js";
-import { families, ncaaEmail, ncaaText, NCAA_SUBJECT } from "../shared/ncaa-tickets.js";
+import { families, ncaaEmail, ncaaText, NCAA_SUBJECT, ncaaReminderEmail, ncaaReminderText, NCAA_REMINDER_SUBJECT } from "../shared/ncaa-tickets.js";
 import { isEventTeam } from "../shared/event-teams.js";
 
 const APP_URL = "https://dseliteevals.vercel.app";
@@ -52,7 +53,8 @@ const includeDone = flag("all");
 const onlyTeam = value("team");
 const testTo = value("test");
 const testPhone = value("test-phone");
-const onlyPlayer = value("player");   // "First Last": just that player's family
+const onlyPlayer = value("player");
+const reminder = flag("reminder");   // the shorter "please answer by" note, for families who haven't   // "First Last": just that player's family
 const doText = flag("text") || flag("both");
 const doEmail = !flag("text") || flag("both");
 
@@ -99,9 +101,9 @@ const linkOf = (lead) => APP_URL + "/ncaa?t=" + lead.global_token;
 const allJobs = fams.map((fam) => {
   const lead = fam.find((p) => p.global_token);
   return {
-    fam, lead, recipients: emailsOf(fam), phones: phonesOf(fam), subject: NCAA_SUBJECT,
-    body: ncaaEmail({ greeting: greeting(fam), link: linkOf(lead), from: SENDER.name }),
-    text: ncaaText({ link: linkOf(lead), from: SENDER.name.split(" ")[0] }),
+    fam, lead, recipients: emailsOf(fam), phones: phonesOf(fam), subject: reminder ? NCAA_REMINDER_SUBJECT : NCAA_SUBJECT,
+    body: (reminder ? ncaaReminderEmail : ncaaEmail)({ greeting: greeting(fam), link: linkOf(lead), from: SENDER.name }),
+    text: (reminder ? ncaaReminderText : ncaaText)({ link: linkOf(lead), from: SENDER.name.split(" ")[0] }),
   };
 });
 const jobs = allJobs.filter((j) => j.recipients.length);

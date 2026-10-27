@@ -81,11 +81,16 @@ const courtOrder = (cs) => { const order = COURTS.map(c => c.id); return [...new
 // day are courts held for DS Elite, not bookings: HQ's practice schedule places
 // its teams inside them by name, and a team only conflicts when the held courts
 // plus the free ones can't take it. Held courts no team uses stay held.
+//
+// Saturdays hold no practices: DS Elite's courts that day are DS Elite
+// Operations, in use whether or not a team is on them (Drew, Oct 27 2026:
+// "Nov 7 and 14 are for DS Elite Operations").
 export function dseBlock(ymd, reservations = []) {
-  const sunday = new Date(ymd + "T12:00:00").getDay() === 0;
-  const name = sunday ? "DS Elite Sunday block" : "DS Elite courts";
+  const dow = new Date(ymd + "T12:00:00").getDay(), sunday = dow === 0;
+  const name = sunday ? "DS Elite Sunday block" : dow === 6 ? "DS Elite Operations" : "DS Elite courts";
   const mine = reservations.filter(r => r.date === ymd && r.internal);
   const timed = mine.filter(r => r.start != null && r.end != null && r.end > r.start);
+  if (dow === 6) return groupBlocks(timed, name).map(b => ({ ...b, ops: true, detail: "DS Elite Operations, " + fmtHour(b.start) + "-" + fmtHour(b.end) }));
   if (!sunday) return groupBlocks(timed, name);
   if (timed.length) {
     const out = groupBlocks(timed, name);
@@ -193,7 +198,7 @@ export function buildCourtDay({ bookings = [], teams = [], scrims = [], reserved
   // 0. Standing DS Elite reservations (the Sunday Warehouse block).
   // Each held court carries what a "hide" of it would match (applyHides).
   // A moved block carries its original place (origin) and the change row (change).
-  reserved.forEach((r, n) => { const o = r.origin || r; for (const c of r.courts) for (const i of idx(r.start, r.end)) cells[c][i] = { kind: "dse", label: r.label, detail: r.detail || "", key: "r" + n, reserved: true, hide: { kind: "dse", start: o.start, end: o.end, courts: r.origin ? o.courts : [c] }, change: r.change || null }; });
+  reserved.forEach((r, n) => { const o = r.origin || r; for (const c of r.courts) for (const i of idx(r.start, r.end)) cells[c][i] = { kind: "dse", label: r.label, detail: r.detail || "", key: "r" + n, reserved: true, ops: !!r.ops, hide: { kind: "dse", start: o.start, end: o.end, courts: r.origin ? o.courts : [c] }, change: r.change || null }; });
   const heldCells = COURTS.reduce((a, c) => a + cells[c.id].filter(x => x && x.reserved).length, 0);
   // 1. Playbook bookings and the in-house tournament, exactly where they are.
   bookings.forEach((b, n) => {
@@ -262,11 +267,11 @@ export function buildCourtDay({ bookings = [], teams = [], scrims = [], reserved
 
   // What DS Elite actually uses vs holds, in court-hours: a shared court counts once.
   const count = (f) => COURTS.reduce((a, c) => a + cells[c.id].filter(f).length, 0) * step;
-  // In use: DS Elite teams, their extra practices and the in-house tournament.
-  const usage = { used: count(x => x && !x.reserved && !x.open && (x.team || x.kind === "dse" || x.kind === "tourn")), held: heldCells * step, heldUnused: count(x => x && x.reserved) };
+  // In use: DS Elite teams, their extra practices, the in-house tournament and DS Elite Operations.
+  const usage = { used: count(x => x && (x.ops || (!x.reserved && !x.open && (x.team || x.kind === "dse" || x.kind === "tourn")))), held: heldCells * step, heldUnused: count(x => x && x.reserved && !x.ops) };
   // On the staff chart, held courts no team uses show as open: DS Elite won't
   // pay for them (Drew, Oct 26 2026). The members' page keeps them booked.
-  if (releaseHeld) for (const c of COURTS) cells[c.id] = cells[c.id].map((x, i) => x && x.reserved
+  if (releaseHeld) for (const c of COURTS) cells[c.id] = cells[c.id].map((x, i) => x && x.reserved && !x.ops
     ? { kind: "open", open: true, label: "Open", detail: "Held for DS Elite in Playbook, no team on it", key: "o" + x.key, hide: x.hide, change: x.change } : x);
 
   // Free windows per court.
