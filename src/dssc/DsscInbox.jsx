@@ -18,9 +18,11 @@ import { supabase } from "../supabase";
 import { DS, nrm, Btn, Tag, inputStyle, Grow, Field } from "./DsscHub.jsx";
 import { DSSC_DIRECTORS, directorByEmail, directorName, canonicalDirectorEmail, initialsOf, kindLabel, SPORT_LABELS, inquirySport, DSSC_INBOX_ADDRESS } from "../../shared/dssc-directors.js";
 
-const STATUS = { new: ["New", DS.lime], open: ["Open", "#7FD1C3"], waiting: ["Waiting on family", DS.orange], done: ["Done", DS.dim] };
-const STATUS_KEYS = ["new", "open", "waiting", "done"];
-const FILTERS = [["new", "New"], ["mine", "Mine"], ["waiting", "Waiting"], ["done", "Done"], ["all", "All"]];
+const SPAM_RED = "#ef5350";
+const STATUS = { new: ["New", DS.lime], open: ["Open", "#7FD1C3"], waiting: ["Waiting on family", DS.orange], done: ["Done", DS.dim], spam: ["Spam", SPAM_RED] };
+const STATUS_KEYS = ["new", "open", "waiting", "done", "spam"];
+// Spam stays out of every view but its own (Drew, Oct 27 2026).
+const FILTERS = [["new", "New"], ["mine", "Mine"], ["waiting", "Waiting"], ["done", "Done"], ["all", "All"], ["spam", "Spam"]];
 const SPORTS = [["volleyball", "Volleyball"], ["basketball", "Basketball"], ["reach", "Reach"], ["frontdesk", "Front desk"]];
 const SPORT_COLOR = { volleyball: DS.lime, basketball: DS.orange, reach: "#7FD1C3" };
 const DETAIL_LABELS = { date: "Date", time: "Time", group: "Group", sport: "Sport", age: "Age", duration: "Duration", building: "Building", players: "Players", player: "Player", level: "Level", subject: "Subject", program: "Program", budget: "Budget", notes: "Notes" };
@@ -152,6 +154,7 @@ export default function DsscInbox({ coach, initialId, onConsumedInitial, onChang
   const list = useMemo(() => {
     const words = nrm(q).split(/\s+/).filter(Boolean);
     return (rows || []).filter(r => {
+      if ((filter === "spam") !== (r.status === "spam")) return false;
       if (filter === "new" && r.status !== "new") return false;
       if (filter === "mine" && !(isMine(r) && r.status !== "done")) return false;
       if (filter === "waiting" && r.status !== "waiting") return false;
@@ -161,7 +164,7 @@ export default function DsscInbox({ coach, initialId, onConsumedInitial, onChang
       return true;
     });
   }, [rows, filter, sport, q]); // eslint-disable-line react-hooks/exhaustive-deps
-  const counts = useMemo(() => ({ new: (rows || []).filter(r => r.status === "new").length, mine: (rows || []).filter(r => isMine(r) && r.status !== "done").length, waiting: (rows || []).filter(r => r.status === "waiting").length }), [rows]); // eslint-disable-line react-hooks/exhaustive-deps
+  const counts = useMemo(() => ({ new: (rows || []).filter(r => r.status === "new").length, mine: (rows || []).filter(r => isMine(r) && r.status !== "done").length, waiting: (rows || []).filter(r => r.status === "waiting").length, spam: (rows || []).filter(r => r.status === "spam").length }), [rows]); // eslint-disable-line react-hooks/exhaustive-deps
   const open = useMemo(() => (rows || []).find(r => r.id === openId) || null, [rows, openId]);
 
   // ── Writes ───────────────────────────────────────────────────────────────
@@ -170,7 +173,32 @@ export default function DsscInbox({ coach, initialId, onConsumedInitial, onChang
     const { error } = await supabase.from("site_inquiries").update(patch).eq("id", id);
     if (error) { setMsg({ err: error.message }); load(); } else onChanged?.();
   };
-  const setStatus = (r, status) => patchRow(r.id, { status, ...(status === "done" ? { handled: true, handled_at: new Date().toISOString(), handled_by: myName } : { handled: false }) });
+  const setStatus = (r, status) => {
+    // Into or out of Spam also blocks or unblocks the sender.
+    if (status === "spam" && r.status !== "spam") return markSpam(r);
+    if (r.status === "spam" && status !== "spam") return notSpam(r, status);
+    return patchRow(r.id, { status, ...(status === "done" ? { handled: true, handled_at: new Date().toISOString(), handled_by: myName } : { handled: false }) });
+  };
+  // Spam: the thread goes to the Spam filter, and the sender is blocked, so
+  // anything new from them is filed straight to Spam with no email to anyone.
+  // A director's or the club's own address is never blocked.
+  const markSpam = async (r) => {
+    const email = nrm(r.email), blockable = email.includes("@") && !directorByEmail(email) && !/@(drippingsportsclub\.com|dselitevolleyball\.com)$/.test(email);
+    await patchRow(r.id, { status: "spam", handled: true, handled_at: new Date().toISOString(), handled_by: myName });
+    let blocked = false;
+    if (blockable) {
+      const { error } = await supabase.from("site_inbox_blocked").upsert({ email, inquiry_id: r.id, blocked_by: myName, blocked_at: new Date().toISOString() }, { onConflict: "email" });
+      blocked = !error;
+      if (error) console.error("block sender", error.message);
+    }
+    setMsg({ ok: `Marked as spam${blocked ? `. Anything new from ${email} goes straight to Spam` : ""}. "Not spam" undoes it.` });
+    if (openId === r.id && filter !== "spam") { setOpenId(null); setShowList(true); }
+  };
+  const notSpam = async (r, status = "open") => {
+    await patchRow(r.id, { status, handled: status === "done" });
+    await supabase.from("site_inbox_blocked").delete().eq("email", nrm(r.email));
+    setMsg({ ok: `Not spam: back in the inbox as ${STATUS[status]?.[0] || status}, and ${nrm(r.email)} isn't blocked anymore.` });
+  };
   const assign = (r, email) => patchRow(r.id, { assigned_to: email || null, assigned_at: email ? new Date().toISOString() : null, ...(email && r.status === "new" ? { status: "open" } : {}) });
   const token = async () => (await supabase.auth.getSession()).data.session?.access_token || "";
   const callApi = async (body) => {
@@ -213,7 +241,7 @@ export default function DsscInbox({ coach, initialId, onConsumedInitial, onChang
     return (
       <button key={r.id} onClick={() => openThread(r.id)} style={{ display: "block", width: "100%", textAlign: "left", background: sel ? "rgba(178,208,73,0.10)" : "transparent", border: "none", borderBottom: "1px solid " + DS.line, borderLeft: "3px solid " + (sel ? DS.lime : "transparent"), padding: "10px 12px 10px 10px", cursor: "pointer", color: DS.text, fontFamily: DS.font }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ width: 8, height: 8, borderRadius: 4, flex: "none", background: r.status === "new" ? DS.lime : r.status === "waiting" ? DS.orange : "transparent", border: r.status === "open" ? "1px solid " + DS.mut : "1px solid transparent" }} />
+          <span style={{ width: 8, height: 8, borderRadius: 4, flex: "none", background: r.status === "new" ? DS.lime : r.status === "waiting" ? DS.orange : r.status === "spam" ? SPAM_RED : "transparent", border: r.status === "open" ? "1px solid " + DS.mut : "1px solid transparent" }} />
           <b style={{ fontSize: 14, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", opacity: r.status === "done" ? 0.6 : 1 }}>{r.name || r.email}</b>
           {r.assigned_to && <span title={"Assigned to " + directorName(r.assigned_to)} style={{ fontSize: 10, fontWeight: 800, width: 22, height: 22, borderRadius: 11, display: "inline-flex", alignItems: "center", justifyContent: "center", flex: "none", background: mine ? DS.lime : "rgba(255,255,255,0.12)", color: mine ? DS.bg : DS.text }}>{initialsOf(directorName(r.assigned_to))}</span>}
           <span style={{ fontSize: 11, color: DS.dim, flex: "none" }} title={fmtWhen(r.last_message_at || r.created_at)}>{ago(r.last_message_at || r.created_at)}</span>
@@ -231,7 +259,7 @@ export default function DsscInbox({ coach, initialId, onConsumedInitial, onChang
     <div style={{ background: DS.panel, border: "1px solid " + DS.line, borderRadius: 14, overflow: "hidden", position: narrow ? "static" : "sticky", top: 70 }}>
       <div style={{ padding: "10px 10px 8px", borderBottom: "1px solid " + DS.line, display: "flex", flexDirection: "column", gap: 8 }}>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {FILTERS.map(([k, l]) => <button key={k} onClick={() => setFilter(k)} style={chipStyle(filter === k)}>{l}{counts[k] ? ` · ${counts[k]}` : ""}</button>)}
+          {FILTERS.map(([k, l]) => <button key={k} onClick={() => setFilter(k)} style={chipStyle(filter === k, k === "spam" ? SPAM_RED : DS.lime)}>{l}{counts[k] ? ` · ${counts[k]}` : ""}</button>)}
         </div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           {SPORTS.map(([k, l]) => <button key={k} onClick={() => setSport(sport === k ? "" : k)} style={chipStyle(sport === k, SPORT_COLOR[k] || DS.mut)}>{l}</button>)}
@@ -240,7 +268,7 @@ export default function DsscInbox({ coach, initialId, onConsumedInitial, onChang
       </div>
       <div style={{ maxHeight: narrow ? "none" : "calc(100vh - 290px)", overflowY: "auto" }}>
         {rows == null ? <div style={{ padding: 14, color: DS.mut, fontSize: 13 }}>Loading…</div>
-          : !list.length ? <div style={{ padding: 14, color: DS.mut, fontSize: 13 }}>{rows.length ? (filter === "new" ? "Nothing new — everything has been picked up." : "Nothing here.") : "No messages yet. The website's forms and mail to " + DSSC_INBOX_ADDRESS + " will show up here."}</div>
+          : !list.length ? <div style={{ padding: 14, color: DS.mut, fontSize: 13 }}>{rows.length ? (filter === "new" ? "Nothing new — everything has been picked up." : filter === "spam" ? "No spam. Open a thread and press Spam to send it here and block its sender." : "Nothing here.") : "No messages yet. The website's forms and mail to " + DSSC_INBOX_ADDRESS + " will show up here."}</div>
           : list.map(Row)}
       </div>
     </div>
@@ -290,8 +318,12 @@ export default function DsscInbox({ coach, initialId, onConsumedInitial, onChang
               {!assigneeKnown && <option value={canonicalDirectorEmail(open.assigned_to)}>{open.assigned_to}</option>}
             </select>
             {!isMine(open) && <Btn small kind="primary" onClick={() => assign(open, meCanon)}>I've got it</Btn>}
-            {open.status !== "done" && <Btn small kind="quiet" onClick={() => setStatus(open, "done")}>Mark done</Btn>}
+            {open.status !== "done" && open.status !== "spam" && <Btn small kind="quiet" onClick={() => setStatus(open, "done")}>Mark done</Btn>}
+            {open.status !== "spam"
+              ? <Btn small kind="quiet" onClick={() => markSpam(open)} style={{ color: SPAM_RED, borderColor: "rgba(239,83,80,0.4)" }} title="Move to Spam and block this sender: anything new from them goes straight to Spam, with no email to anyone">🚫 Spam</Btn>
+              : <Btn small kind="primary" onClick={() => notSpam(open)} title="Back to the inbox as Open, and unblock the sender">Not spam</Btn>}
           </div>
+          {open.status === "spam" && <div style={{ marginTop: 10, fontSize: 13, color: SPAM_RED, background: "rgba(239,83,80,0.08)", border: "1px solid rgba(239,83,80,0.3)", borderRadius: 10, padding: "8px 10px" }}>Marked as spam. Anything new from {open.email} is filed here, and nobody is emailed about it.</div>}
           <div style={{ marginTop: 10 }}>
             <Field multiline minRows={1} value={open.note || ""} placeholder="Pinned note for the directors (what's agreed, what's pending)…" onSave={(v) => patchRow(open.id, { note: v || null })} style={{ fontSize: 13, padding: "7px 10px", background: "rgba(255,115,0,0.06)", borderColor: "rgba(255,115,0,0.25)" }} />
           </div>

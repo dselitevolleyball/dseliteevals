@@ -35,7 +35,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { ImapFlow } from "imapflow";
 import { simpleParser } from "mailparser";
-import { nrm, isEmailish, isOurAddress, isDirectorEmail, canonicalDirectorEmail, directorName, inboxAddress, notifyDirectors, stripQuoted } from "./_lib/site-inbox.js";
+import { nrm, isEmailish, isOurAddress, isDirectorEmail, canonicalDirectorEmail, directorName, inboxAddress, notifyDirectors, stripQuoted, isBlockedSender } from "./_lib/site-inbox.js";
 
 export const config = { maxDuration: 60 };
 
@@ -182,14 +182,15 @@ export default async function handler(req, res) {
             const { data } = await sb.from("site_inquiries").select("*").ilike("email", fromAddr).neq("status", "done").eq("is_test", false).gte("created_at", new Date(Date.now() - 90 * 86400000).toISOString()).order("last_message_at", { ascending: false }).limit(1);
             inq = data && data[0] || null;
           }
-          // (c) a new thread.
+          // (c) a new thread; from a sender marked as spam, it starts in Spam.
           let created = false;
+          const blocked = !inq && await isBlockedSender(sb, fromAddr);
           if (!inq) {
             if (dry) { item.action = "new-thread"; stats.items.push(item); continue; }
             const name = (fromName || fromAddr.split("@")[0].replace(/[._-]+/g, " ")).slice(0, 120);
             const { data, error } = await sb.from("site_inquiries").insert({
               site: "dssc", kind: "email", topic: "email", sport: null, details: subject ? { subject } : {}, name, email: fromAddr, message: stripQuoted(text).slice(0, 5000),
-              status: "new", is_test: false, last_message_at: new Date().toISOString(),
+              status: blocked ? "spam" : "new", is_test: false, last_message_at: new Date().toISOString(),
             }).select("*").single();
             if (error) { stats.errors.push(error.message); continue; }
             inq = data; created = true;
@@ -211,6 +212,8 @@ export default async function handler(req, res) {
           await flagDone(uid, true);
 
           const fresh = { ...inq, ...patch };
+          // Spam is filed quietly: no email to the directors.
+          if (fresh.status === "spam") continue;
           if (await notifyDirectors(fresh, row, { reason: created ? "new" : "reply" })) { stats.notified++; if (created) await sb.from("site_inquiries").update({ emailed_at: new Date().toISOString() }).eq("id", inq.id); }
         } catch (e) {
           stats.errors.push(`uid ${uid}: ${e.message}`);

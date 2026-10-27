@@ -116,6 +116,11 @@ is picked up by the poller and appears on thread 123, which goes back to **New**
   Set `DSSC_INBOX_REPLY_AS=club` to send as the club again.
 - Each director's notification email links straight to the thread
   (`/hq/?view=dsscinbox&inquiry=<id>`).
+- **🚫 Spam** on a thread moves it to the Spam filter and blocks the sender
+  (`site_inbox_blocked`, migrations/20261105_inbox_spam.sql): anything new from
+  that address, by email or a website form, is filed straight to Spam and
+  nobody is emailed. **Not spam** puts the thread back as Open and unblocks the
+  sender. A director's or the club's own address is never blocked.
 
 ## 7. Gmail replies show up in HQ (per director, optional)
 

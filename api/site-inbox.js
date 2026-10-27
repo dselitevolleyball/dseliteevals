@@ -25,7 +25,7 @@
 //      DSSC_FROM_EMAIL (fallback DSE_FROM_EMAIL), DSSC_INBOX_ROUTES (optional).
 
 import { cors, readBody, str, longStr, isEmail, usPhone, clientIp, serviceClient } from "./_lib/site-forms.js";
-import { safeEqual, KINDS, kindLabel, inquirySport, inboxAddress, notifyDirectors, detailRows } from "./_lib/site-inbox.js";
+import { safeEqual, KINDS, kindLabel, inquirySport, inboxAddress, notifyDirectors, detailRows, isBlockedSender } from "./_lib/site-inbox.js";
 
 const DETAIL_KEYS = ["date", "time", "group", "sport", "age", "duration", "building", "players", "player", "level", "program", "subject", "budget", "notes"];
 const THANKS = "Thanks — we got your message and will get back to you soon.";
@@ -78,10 +78,12 @@ export default async function handler(req, res) {
   // What the first message says when the form had no free-text box.
   const bodyText = message || detailRows(details).map(([k, v]) => `${k}: ${v}`).join("\n");
   let inq;
+  // A sender marked as spam is saved straight to Spam, and nobody is emailed.
+  const spam = await isBlockedSender(sb, email);
   try {
     const { data, error } = await sb.from("site_inquiries").insert({
       site: "dssc", kind, topic: kind, sport, details, source_path: page,
-      name, email, phone, message, ip, is_test: false, status: "new", last_message_at: new Date().toISOString(),
+      name, email, phone, message, ip, is_test: false, status: spam ? "spam" : "new", last_message_at: new Date().toISOString(),
     }).select("*").single();
     if (error) throw new Error(error.message);
     inq = data;
@@ -97,6 +99,7 @@ export default async function handler(req, res) {
   // Saved either way; a failed email only means the directors see it in HQ
   // (and the site, told emailed:false, sends its own).
   let emailed = false;
+  if (spam) return res.status(200).json({ ok: true, id: inq.id, emailed, message: THANKS });
   try {
     emailed = await notifyDirectors(inq, { body_text: bodyText }, { reason: "new" });
     if (emailed) await sb.from("site_inquiries").update({ emailed_at: new Date().toISOString() }).eq("id", inq.id);

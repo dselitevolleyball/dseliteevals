@@ -20,6 +20,7 @@
 //      SITE_CONTACT_TO (optional, default drew@dselitevolleyball.com).
 
 import { cors, readBody, str, longStr, isEmail, usPhone, clientIp, testMode, badTestToken, throttled, serviceClient, esc } from "./_lib/site-forms.js";
+import { isBlockedSender } from "./_lib/site-inbox.js";
 
 const TOPICS = { tryouts: "Tryouts", general: "General question", coaching: "Coaching at DS Elite", other: "Other" };
 const DEFAULT_TO = "drew@dselitevolleyball.com";
@@ -52,8 +53,10 @@ export default async function handler(req, res) {
   const sb = serviceClient();
   if (!sb) return res.status(500).json({ ok: false, error: "The contact form isn't available right now. Please email drew@dselitevolleyball.com." });
   let id;
+  // A sender marked as spam in the Inbox is saved straight to Spam, and Drew isn't emailed.
+  const spam = !test && await isBlockedSender(sb, email);
   try {
-    const row = { name, email, phone, player_name: player, age_group: age, topic, message, ip, is_test: test };
+    const row = { name, email, phone, player_name: player, age_group: age, topic, message, ip, is_test: test, ...(spam ? { status: "spam" } : {}) };
     // The row is also a thread in the shared Inbox (migrations/20261020_site_inbox.sql:
     // site 'dselite', kind = topic, first message). Until that migration has run
     // the extra columns don't exist, so the plain insert is the fallback.
@@ -68,6 +71,7 @@ export default async function handler(req, res) {
     return res.status(500).json({ ok: false, error: "Something went wrong sending that. Please try again, or email drew@dselitevolleyball.com." });
   }
   if (test) return res.status(200).json({ ok: true, test: true, id, message: "Test saved (no email sent)." });
+  if (spam) return res.status(200).json({ ok: true, id, message: "Thanks — we got your message and will get back to you soon." });
 
   // The message is saved either way; a failed email only means Drew sees it in HQ.
   try {

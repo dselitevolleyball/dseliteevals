@@ -60,7 +60,7 @@ export default async function handler(req, res) {
 
   // Families with a thread still open (last 120 days): who a director's mail has to go to, to count.
   const { data: open, error: oErr } = await sb.from("site_inquiries").select("id, email, status, assigned_to, last_message_at")
-    .neq("status", "done").eq("is_test", false).gte("created_at", new Date(Date.now() - 120 * 86400000).toISOString());
+    .not("status", "in", "(done,spam)").eq("is_test", false).gte("created_at", new Date(Date.now() - 120 * 86400000).toISOString());
   if (oErr) return res.status(500).json({ error: oErr.message });
   const byEmail = new Map();
   for (const q of open || []) { const e = nrm(q.email); if (!isEmailish(e)) continue; const cur = byEmail.get(e); if (!cur || String(q.last_message_at) > String(cur.last_message_at)) byEmail.set(e, q); }

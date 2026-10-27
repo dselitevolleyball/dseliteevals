@@ -19,7 +19,17 @@ export { DSSC_DIRECTORS, DSSC_INBOX_ADDRESS, directorByEmail, directorEmails, is
 
 export const nrm = (v) => String(v || "").trim().toLowerCase();
 export const isEmailish = (s) => /^[^\s@<>()]+@[^\s@<>()]+\.[a-z]{2,}$/i.test(String(s || ""));
-export const STATUSES = ["new", "open", "waiting", "done"];
+export const STATUSES = ["new", "open", "waiting", "done", "spam"];
+
+// A sender a director marked as spam (site_inbox_blocked): anything new from
+// them is filed straight to Spam and nobody is emailed (Drew, Oct 27 2026).
+// A missing table or a failed read never blocks real mail.
+export async function isBlockedSender(sb, email) {
+  const e = nrm(email);
+  if (!sb || !isEmailish(e)) return false;
+  const { data, error } = await sb.from("site_inbox_blocked").select("email").eq("email", e).limit(1);
+  return !error && !!(data && data.length);
+}
 
 // Constant-time token compare (pattern: api/expense-inbox.js).
 export function safeEqual(a, b) {
