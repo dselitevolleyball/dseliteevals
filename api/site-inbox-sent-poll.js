@@ -79,6 +79,8 @@ export default async function handler(req, res) {
     } catch (e) { stats.error = e.message || String(e); }
     finally { await client.logout().catch(() => {}); }
   }
+  // One line per account in the runtime logs, so a cron run can be checked without the secret.
+  for (const a of out.accounts) console.log(`sent-poll ${a.user}: scanned ${a.scanned}, filed ${a.filed}, duplicates ${a.duplicates}${dry ? " (dry)" : ""}${a.error ? ", error: " + a.error : ""}`);
   return res.status(200).json(out);
 }
 
