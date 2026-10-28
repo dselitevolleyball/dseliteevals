@@ -2343,7 +2343,8 @@ export default function App() {
   // screen by any route (a push link, the home card) flips it too.
   const DSSC_VIEWS = new Set(["dssc","clinics","dssctexts","reachtexts","dssccrm","dsscinbox","dsscmarketing","reachstats","dssccal","dssctime","pods","privates","dssccamp","courts","dsscplan","staffhours","staffadmin","dsscpeople","dsscpay","projects"]);
   // Screens a DSSC-only login may open: DSSC's own plus the shared basics.
-  const DSSC_ONLY_OK = new Set([...DSSC_VIEWS, "home", "notifications", "activity", "faq"]);
+  // Product (the feature board) serves both businesses: owners and admins open it from drippingsportsclub.com/hq too.
+  const DSSC_ONLY_OK = new Set([...DSSC_VIEWS, "home", "notifications", "activity", "faq", ...(canOps ? ["product"] : [])]);
   const [workspace, setWorkspace] = useState(() => { if (HQ_DSSC) return "dssc"; try { return localStorage.getItem("dse.workspace") === "dssc" ? "dssc" : "dse"; } catch { return "dse"; } });
   useEffect(() => {
     if (dsscOnly) { if (workspace !== "dssc") setWorkspace("dssc"); return; }

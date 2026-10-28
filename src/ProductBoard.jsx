@@ -13,10 +13,13 @@
 
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { supabase } from "./supabase";
+import { HQ_DSSC } from "./hq-base.js";
 import { STATUSES, STATUS_LABEL, KINDS, PRIORITIES, AREAS, REPOS, itemKey } from "../shared/product.js";
 import { MODELS, EFFORTS, priceOf, modelLabel } from "../shared/ai-pricing.js";
 
 const C = { bg: "#0a0a0a", card: "#141414", card2: "#1b1b1b", border: "#2a2a2a", gold: "#e91e8c", text: "#ffffff", mut: "#999999", dim: "#6f6f6f", red: "#ef4444", grn: "#22c55e", amber: "#f59e0b", blue: "#60a5fa" };
+// drippingsportsclub.com/hq wears the DSSC greens, like the rest of that app.
+if (HQ_DSSC) Object.assign(C, { bg: "#082C2A", card: "#0C3A37", card2: "#104946", border: "#1F5A55", gold: "#B2D049", mut: "#A9C7C3", dim: "#7FA39F" });
 const BOARD = ["inbox", "backlog", "planned", "building", "review", "shipped"];
 const statusColor = Object.fromEntries(STATUSES.map(([k, , c]) => [k, c]));
 const PRI_GLYPH = { 0: "—", 1: "!!!", 2: "▲", 3: "■", 4: "▼" };
