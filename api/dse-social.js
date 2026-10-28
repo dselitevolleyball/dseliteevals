@@ -165,6 +165,7 @@ export async function run(sb, { me, name }, b) {
       const { data: rows } = await sb.from("player_photos").select("*").in("id", ids);
       const ordered = ids.map(id => (rows || []).find(r => r.id === id)).filter(Boolean);
       const r = await S.draftPhotoPost(sb, ordered, { by });
+      if (r.skipped && r.broken?.length && !r.reasons) throw fail(400, r.error);
       if (r.skipped) throw fail(400, "Claude didn't find a photo it would post: " + ((r.reasons || []).filter(x => !x.usable).map(x => x.reason).slice(0, 3).join("; ") || r.error || "none usable"));
       return r;
     }

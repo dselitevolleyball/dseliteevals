@@ -217,9 +217,14 @@ export async function draftPhotoPost(sb, rows, { by = "auto", settings = null, n
   const s = settings || await getSettings(sb);
   const list = rows.slice(0, MAX_BATCH);
   if (!list.length) throw fail(400, "No photos");
-  const imgs = await Promise.all(list.map(async p => loadPhoto(await download(sb, p.storage_path)).catch(() => null)));
+  // An upload that never finished is an empty file (22 of the first 153 were):
+  // it's set aside, not sent to Claude as a black square, and marked so the
+  // cron doesn't keep opening it.
+  const imgs = await Promise.all(list.map(async p => { const buf = await download(sb, p.storage_path).catch(() => null); if (!buf?.length) return null; const im = await loadPhoto(buf).catch(() => null); return im?.width ? im : null; }));
+  const broken = list.filter((_, i) => !imgs[i]).map(p => p.id);
+  if (broken.length && !dry) await sb.from("player_photos").update({ social_post_id: 0 }).in("id", broken);
   const ok = list.map((p, i) => ({ p, img: imgs[i] })).filter(x => x.img);
-  if (!ok.length) throw fail(400, "None of those photos could be opened");
+  if (!ok.length) return { skipped: true, error: `None of those ${list.length} photos could be opened - the upload${list.length === 1 ? " is" : "s are"} empty`, broken };
   const team = teamLabel(ok[0].p.team_name);
   const ev = ok.find(x => x.p.event_label && !GENERIC_EVENT.test(x.p.event_label))?.p.event_label || null;
   const day = ok[0].p.taken_on || ctDay(ok[0].p.created_at);
