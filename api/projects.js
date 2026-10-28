@@ -1,6 +1,6 @@
 // DSSC Tasks & Projects. Projects (Drew, Oct 14 2026): projects of task cards -
 // details, checklist, files, comments - assigned to staff, with Slack updates
-// as cards move, a Monday email of what needs an update (api/projects-weekly.js),
+// as cards move, a Monday Slack DM of what needs an update (api/projects-weekly.js),
 // and Claude drafting a whole project from a typed brief.
 // Tasks (Oct 28 2026: "a full task tracking application for all of my team
 // members"): a task no longer needs a project. Tasks repeat daily, weekly or
@@ -36,17 +36,19 @@
 //
 // Slack: new tasks, status changes, blockers, assignments, comments, help
 // requests and files post one line to the webhook in settings (skipped if
-// none), @mentioning people whose Slack member ID is in settings. Email:
-// whoever is assigned a task by someone else gets one email (a new project
-// sends each person one email listing their cards); a help request emails the
-// person asked (or the managers).
+// none), @mentioning people whose Slack member ID is in settings. Personal
+// notices are Slack DMs from the HQ bot, never email (Drew, Oct 28 2026: "task
+// notifications should be sent just via Slack"): whoever is assigned a task by
+// someone else gets one DM (a new project sends each person one DM listing
+// their cards); a help request DMs the person asked (or Drew).
 // Env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, ANTHROPIC_API_KEY, RESEND_API_KEY,
 //      DSSC_FROM_EMAIL (or DSE_FROM_EMAIL), optional SLACK_PROJECTS_WEBHOOK_URL.
 import { createClient } from "@supabase/supabase-js";
+import { dmPerson } from "./_lib/product-slack.js";
 import Anthropic from "@anthropic-ai/sdk";
 import { claudeClient } from "./_lib/ai-client.js";
 import { jsonSchemaOutputFormat } from "@anthropic-ai/sdk/helpers/json-schema";
-import { whoIs, personByEmail, OWNER_EMAILS, people as listPeople, slack, slackHook, slackLine, slackText, SLACK_HOOK, sendMail, emailShell, esc, link, fmtDate,
+import { whoIs, personByEmail, OWNER_EMAILS, people as listPeople, slack, slackHook, slackLine, slackText, slackLink, SLACK_HOOK, link, fmtDate,
   centralToday, addDays, BUCKET, STATUS, STATUS_LABEL, PROJECT_STATUS, APP_URL } from "./_lib/projects.js";
 import { taskLink, mention, taskSlackLine, settingsRow, seriesTaskFields, generateRecurring, generateIfStale } from "./_lib/tasks.js";
 import { HQ_VIEWS } from "../shared/task-meta.js";
@@ -100,7 +102,6 @@ const projectOf = async (sb, t) => (t.project_id ? projectRow(sb, t.project_id) 
 async function logUpdate(sb, me, project_id, task_id, kind, body) {
   await sb.from("dssc_project_updates").insert({ project_id: project_id || null, task_id: task_id || null, kind, body: body || null, author_name: me.name, author_email: me.email });
 }
-const first = (name) => String(name || "").split(/\s+/)[0] || name;
 const isOpen = (t) => t.status !== "done" && t.status !== "skipped";
 
 // ── Field cleaning ──────────────────────────────────────────────────────────
@@ -173,19 +174,15 @@ function cleanProjectFields(p, ppl) {
   return out;
 }
 
-// ── Emails ──────────────────────────────────────────────────────────────────
-const button = (href, text) => `<p><a href="${esc(href)}" style="display:inline-block;background:#B2D049;color:#104946;font-weight:700;padding:9px 14px;border-radius:8px;text-decoration:none">${esc(text)}</a></p>`;
-async function emailAssigned(project, tasks, to, by) {
+// ── Slack DMs ───────────────────────────────────────────────────────────────
+// Through the HQ Slack bot (Product -> Settings). Someone HQ can't find in
+// Slack only sees the channel post.
+const dm = (sb, email, text) => dmPerson(sb, email, { text }).catch(e => ({ ok: false, error: e.message }));
+async function dmAssigned(sb, project, tasks, to, by) {
   if (!to?.email || nrm(to.email) === nrm(by.email)) return;
-  const rows = tasks.map(t => `<li style="margin-bottom:6px"><a href="${esc(taskLink(t))}" style="color:#0F8B76;font-weight:600">${esc(t.title)}</a>${t.due_date ? ` <span style="color:#667">- due ${esc(fmtDate(t.due_date))}</span>` : ""}</li>`).join("");
-  const where = project ? ` on <b>${esc(project.name)}</b>` : "";
-  const html = emailShell(`<p>Hi ${esc(first(to.name))},</p>
-    <p>${esc(by.name)} assigned you ${tasks.length === 1 ? "a task" : tasks.length + " tasks"}${where}:</p>
-    <ul style="padding-left:18px">${rows}</ul>
-    ${button(project ? link(project.id) : taskLink(tasks[0]), project ? "Open the project" : "Open the task")}
-    <p style="color:#667">Open a task to add notes, files and updates, flag a blocker or ask for help. You'll get a Monday email with anything that's due or needs an update.</p>`);
-  const text = `Hi ${first(to.name)},\n\n${by.name} assigned you ${tasks.length === 1 ? "a task" : tasks.length + " tasks"}${project ? " on " + project.name : ""}:\n${tasks.map(t => `- ${t.title}${t.due_date ? " (due " + fmtDate(t.due_date) + ")" : ""}: ${taskLink(t)}`).join("\n")}\n`;
-  await sendMail({ to: to.email, subject: `${project ? project.name + ": " : ""}${tasks.length === 1 ? tasks[0].title : tasks.length + " tasks"} assigned to you`, html, text, replyTo: by.email });
+  const rows = tasks.map(t => `• *${slackLink(taskLink(t), t.title)}*${t.due_date ? ` - due ${fmtDate(t.due_date)}` : ""}`).join("\n");
+  const where = project ? ` on *${slackLink(link(project.id), project.name)}*` : "";
+  await dm(sb, to.email, `👋 ${slackText(by.name)} assigned you ${tasks.length === 1 ? "a task" : tasks.length + " tasks"}${where}:\n${rows}\n_Open a task to add notes, files and updates, flag a blocker or ask for help._`);
 }
 
 // ── Actions ─────────────────────────────────────────────────────────────────
@@ -289,10 +286,10 @@ const ACTIONS = {
     if (me.service && b.quiet) return { project, tasks };
     const lines = [`📌 ${slackText(me.name)} started a new project${project.owner_name ? ` (owner: ${slackText(project.owner_name)})` : ""}${project.due_date ? `, due ${fmtDate(project.due_date)}` : ""} - ${tasks.length} card${tasks.length === 1 ? "" : "s"}.`];
     await slack(sb, slackLine(project, lines.join(" ")));
-    // One email per person with all of their cards.
+    // One DM per person with all of their cards.
     const byPerson = new Map();
     for (const t of tasks) if (t.assignee_email) { if (!byPerson.has(t.assignee_email)) byPerson.set(t.assignee_email, { name: t.assignee_name, list: [] }); byPerson.get(t.assignee_email).list.push(t); }
-    for (const [email, x] of byPerson) await emailAssigned(project, x.list, { email, name: x.name }, me);
+    for (const [email, x] of byPerson) await dmAssigned(sb, project, x.list, { email, name: x.name }, me);
     return { project, tasks };
   },
 
@@ -332,7 +329,7 @@ const ACTIONS = {
       if (me.service && b.quiet) return { task };
       const who = task.assignee_email ? ` for ${mention(st, task.assignee_email, task.assignee_name)}` : "";
       await slack(sb, taskSlackLine(task, project, `🆕 ${slackText(me.name)} added it${who}${task.due_date ? `, due ${fmtDate(task.due_date)}` : ""}${task.category ? ` (${slackText(task.category)})` : ""}.`));
-      if (task.assignee_email) await emailAssigned(project, [task], { email: task.assignee_email, name: task.assignee_name }, me);
+      if (task.assignee_email) await dmAssigned(sb, project, [task], { email: task.assignee_email, name: task.assignee_name }, me);
       return { task };
     }
     const before = await taskRow(sb, t.id);
@@ -362,7 +359,7 @@ const ACTIONS = {
     if ("assignee_email" in fields && fields.assignee_email !== before.assignee_email) {
       await logUpdate(sb, me, task.project_id, task.id, "assigned", fields.assignee_name ? `Assigned to ${fields.assignee_name}.` : "Unassigned.");
       notes.push(fields.assignee_name ? `👤 ${slackText(me.name)} assigned it to ${mention(st, fields.assignee_email, fields.assignee_name)}` : "👤 now unassigned");
-      if (fields.assignee_email) await emailAssigned(project, [task], { email: fields.assignee_email, name: fields.assignee_name }, me);
+      if (fields.assignee_email) await dmAssigned(sb, project, [task], { email: fields.assignee_email, name: fields.assignee_name }, me);
     }
     if ("due_date" in fields && fields.due_date !== before.due_date) {
       await logUpdate(sb, me, task.project_id, task.id, "due", fields.due_date ? `Due ${fmtDate(fields.due_date)}.` : "No due date.");
@@ -405,7 +402,7 @@ const ACTIONS = {
   },
 
   // "The ability to ask for help": flags the task, tells Slack (pinging the
-  // person asked), and emails them - or the managers when it's open to anyone.
+  // person asked), and DMs them - or Drew when it's open to anyone.
   async help(sb, me, b) {
     const task = await taskRow(sb, b.task_id);
     const note = clip(b.note, 2000);
@@ -418,12 +415,9 @@ const ACTIONS = {
     await logUpdate(sb, me, task.project_id, task.id, "help", `Asked ${from ? from.name : "the team"} for help: ${note}`);
     const [st, project] = await Promise.all([settingsRow(sb), projectOf(sb, task)]);
     await slack(sb, taskSlackLine(task, project, `🙋 ${slackText(me.name)} needs help${from ? " from " + mention(st, from.email, from.name) : ""}: "${slackText(note)}"`));
-    // Open to anyone: Slack carries it to the team; Drew gets the email.
+    // Open to anyone: the channel post carries it to the team; Drew gets a DM.
     const to = from ? [from] : ppl.filter(p => OWNER_EMAILS.includes(p.email) && p.email !== me.email).slice(0, 1);
-    for (const p of to) {
-      const html = emailShell(`<p>Hi ${esc(first(p.name))},</p><p><b>${esc(me.name)}</b> asked ${from ? "you" : "the team"} for help on <b>${esc(task.title)}</b>${project ? ` (${esc(project.name)})` : ""}:</p><blockquote style="margin:0 0 12px;padding:8px 12px;border-left:3px solid #B2D049;color:#333">${esc(note)}</blockquote>${button(taskLink(task), "Open the task")}<p style="color:#667">Reply on the task so everyone can see it, and press "Help sorted" when it's done.</p>`);
-      await sendMail({ to: p.email, subject: `${me.name} needs help: ${task.title}`, html, text: `${me.name} asked for help on "${task.title}": ${note}\n\n${taskLink(task)}`, replyTo: me.email });
-    }
+    for (const p of to) await dm(sb, p.email, `🙋 *${slackText(me.name)}* asked ${from ? "you" : "the team"} for help on *${slackLink(taskLink(task), task.title)}*${project ? ` (${slackText(project.name)})` : ""}:\n> ${slackText(note).split("\n").join("\n> ")}\n_Reply on the task so everyone can see it, and press "Help sorted" when it's done._`);
     return { ok: true };
   },
 
@@ -454,9 +448,7 @@ const ACTIONS = {
       if (me.service && b.quiet) return { series, created: gen.created };
       await slack(sb, `🔁 ${slackText(me.name)} set up a repeating task: *${slackText(series.title)}* - ${slackText(describeRepeat(series))}${series.assignee_email ? ` for ${mention(st, series.assignee_email, series.assignee_name)}` : ""}.`);
       if (series.assignee_email && forOther(series.assignee_email)) {
-        const p = { email: series.assignee_email, name: series.assignee_name };
-        const html = emailShell(`<p>Hi ${esc(first(p.name))},</p><p>${esc(me.name)} gave you a repeating task: <b>${esc(series.title)}</b> (${esc(describeRepeat(series))}).</p><p>Each one shows up in HQ ahead of its due date. Mark it done each time.</p>${button(APP_URL + "?view=projects", "Open Tasks")}`);
-        await sendMail({ to: p.email, subject: `Repeating task: ${series.title} (${describeRepeat(series)})`, html, text: `${me.name} gave you a repeating task: ${series.title} (${describeRepeat(series)}).\n${APP_URL}?view=projects`, replyTo: me.email });
+        await dm(sb, series.assignee_email, `🔁 ${slackText(me.name)} gave you a repeating task: *${slackLink(APP_URL + "?view=projects", series.title)}* (${slackText(describeRepeat(series))}).\n_Each one shows up in HQ ahead of its due date. Mark it done each time._`);
       }
       return { series, created: gen.created };
     }

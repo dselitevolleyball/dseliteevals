@@ -1,19 +1,22 @@
-// DSSC Projects - the Monday email (Drew, Oct 14 2026: "reminders that get
-// emailed weekly about tasks that need updates"). Mondays 8am Central.
+// DSSC Projects - the Monday check-in (Drew, Oct 14 2026: "reminders that get
+// emailed weekly about tasks that need updates"; Oct 28: "task notifications
+// should be sent just via Slack"). Mondays 8am Central.
 //
-// Each person with open cards gets one email: overdue, due in the next 7 days,
+// Each person with open cards gets one Slack DM from the HQ bot: overdue, due in the next 7 days,
 // blocked, and anything with no update in 7+ days - project cards and standalone
 // tasks alike (daily repeats are left to the morning Slack digest). Project owners also get a
 // line per project they own (cards done, overdue, blocked). Slack gets a
-// one-message digest. Nothing to report = no email.
+// one-message digest. Nothing to report = no DM. Someone the bot can't find in
+// Slack is listed under "skipped".
 //
 // Auth: Vercel Cron (Authorization: Bearer <CRON_SECRET>) or the service-role key.
 // Query: ?dry=1 (build, send nothing, return what would go out)
-//        ?to=<email> (send every email to that address instead - for a preview)
-//        ?force=1 (run even if the Monday email is switched off in settings)
+//        ?to=<email> (send every DM to that person instead - for a preview)
+//        ?force=1 (run even if the Monday check-in is switched off in settings)
 import { createClient } from "@supabase/supabase-js";
-import { sendMail, emailShell, esc, link, fmtDate, centralToday, addDays, slack, slackLink, slackText, STATUS_LABEL, APP_URL } from "./_lib/projects.js";
+import { link, fmtDate, centralToday, addDays, slack, slackLink, slackText, STATUS_LABEL, APP_URL } from "./_lib/projects.js";
 import { taskLink } from "./_lib/tasks.js";
+import { dmPerson } from "./_lib/product-slack.js";
 
 const nrm = (v) => String(v || "").trim().toLowerCase();
 
@@ -28,7 +31,7 @@ export default async function handler(req, res) {
   const to = nrm(url.searchParams.get("to"));
 
   const { data: st } = await sb.from("dssc_project_settings").select("weekly_email").eq("id", 1).maybeSingle();
-  if (st && st.weekly_email === false && !force && !dry) return res.status(200).json({ ok: true, skipped: "The Monday email is switched off in Projects settings." });
+  if (st && st.weekly_email === false && !force && !dry) return res.status(200).json({ ok: true, skipped: "The Monday check-in is switched off in Projects settings." });
 
   const today = centralToday(), soon = addDays(today, 7), stale = Date.now() - 7 * 864e5;
   const [{ data: projects }, { data: tasks }, { data: coaches }, { data: daily }] = await Promise.all([
@@ -57,22 +60,20 @@ export default async function handler(req, res) {
   const stats = (p) => { const ts = (tasks || []).filter(t => t.project_id === p.id), op = ts.filter(t => !["done", "skipped"].includes(t.status)); return { total: ts.length, done: ts.length - op.length, overdue: op.filter(t => t.due_date && t.due_date < today).length, blocked: op.filter(t => t.status === "blocked").length }; };
   for (const p of projects || []) if (p.owner_email) person(p.owner_email, p.owner_name).owns.push({ p, s: stats(p) });
 
-  const GROUPS = [["overdue", "Overdue", "#c0392b"], ["blocked", "Blocked", "#d9480f"], ["soon", "Due in the next week", "#0F8B76"], ["stale", "No update in a week or more", "#667"]];
+  const GROUPS = [["overdue", "🔴 Overdue"], ["blocked", "⛔ Blocked"], ["soon", "📅 Due in the next week"], ["stale", "💤 No update in a week or more"]];
   const sent = [], skipped = [];
   for (const [email, x] of people) {
     const ownsWithNews = x.owns.filter(o => o.s.total);
     if (!x.cards.length && !ownsWithNews.length) continue;
     const first = String(x.name).split(/\s+/)[0];
-    const row = ({ t, unassigned }) => { const p = proj.get(t.project_id); return `<li style="margin-bottom:6px"><a href="${esc(taskLink(t))}" style="color:#0F8B76;font-weight:600">${esc(t.title)}</a> <span style="color:#667">- ${p ? esc(p.name) + " · " : ""}${esc(STATUS_LABEL[t.status])}${t.due_date ? " · due " + esc(fmtDate(t.due_date)) : ""}${unassigned ? " · not assigned yet" : ""}</span></li>`; };
-    const sections = GROUPS.map(([k, title, color]) => { const list = x.cards.filter(c => c.why === k); return list.length ? `<p style="margin:16px 0 6px;font-weight:700;color:${color}">${title} (${list.length})</p><ul style="padding-left:18px;margin:0">${list.map(row).join("")}</ul>` : ""; }).join("");
-    const owns = ownsWithNews.length ? `<p style="margin:18px 0 6px;font-weight:700">Projects you own</p><ul style="padding-left:18px;margin:0">${ownsWithNews.map(({ p, s }) => `<li style="margin-bottom:6px"><a href="${esc(link(p.id))}" style="color:#0F8B76;font-weight:600">${esc(p.name)}</a> <span style="color:#667">- ${s.done} of ${s.total} done${s.overdue ? ` · <b style="color:#c0392b">${s.overdue} overdue</b>` : ""}${s.blocked ? ` · ${s.blocked} blocked` : ""}${p.due_date ? " · due " + esc(fmtDate(p.due_date)) : ""}</span></li>`).join("")}</ul>` : "";
+    const row = ({ t, unassigned }) => { const p = proj.get(t.project_id); return `• ${slackLink(taskLink(t), t.title)} - ${p ? slackText(p.name) + " · " : ""}${STATUS_LABEL[t.status]}${t.due_date ? " · due " + fmtDate(t.due_date) : ""}${unassigned ? " · _not assigned yet_" : ""}`; };
+    const sections = GROUPS.map(([k, title]) => { const list = x.cards.filter(c => c.why === k); return list.length ? `\n*${title} (${list.length})*\n${list.map(row).join("\n")}` : ""; }).join("\n");
+    const owns = ownsWithNews.length ? `\n\n*Projects you own*\n${ownsWithNews.map(({ p, s }) => `• ${slackLink(link(p.id), p.name)} - ${s.done} of ${s.total} done${s.overdue ? ` · *${s.overdue} overdue*` : ""}${s.blocked ? ` · ${s.blocked} blocked` : ""}${p.due_date ? " · due " + fmtDate(p.due_date) : ""}`).join("\n")}` : "";
     const n = x.cards.length;
-    const subject = n ? `DSSC tasks: ${n} task${n === 1 ? "" : "s"} need${n === 1 ? "s" : ""} an update this week` : "DSSC tasks: your weekly update";
-    const html = emailShell(`<p>Hi ${esc(first)},</p><p>${n ? "Here's what needs your attention on DSSC tasks and projects this week. Open a task to post an update, flag a blocker, ask for help or mark it done." : "Here's where your projects stand this week."}</p>${sections}${owns}<p style="margin-top:18px"><a href="${esc(APP_URL + "?view=projects")}" style="display:inline-block;background:#B2D049;color:#104946;font-weight:700;padding:9px 14px;border-radius:8px;text-decoration:none">Open Tasks &amp; Projects</a></p>`);
-    const text = `Hi ${first},\n\n` + GROUPS.map(([k, title]) => { const list = x.cards.filter(c => c.why === k); return list.length ? `${title}:\n${list.map(({ t }) => `- ${t.title} (${[proj.get(t.project_id)?.name, t.due_date ? "due " + fmtDate(t.due_date) : ""].filter(Boolean).join(", ")}) ${taskLink(t)}`).join("\n")}\n\n` : ""; }).join("") + (ownsWithNews.length ? `Projects you own:\n${ownsWithNews.map(({ p, s }) => `- ${p.name}: ${s.done}/${s.total} done${s.overdue ? ", " + s.overdue + " overdue" : ""}`).join("\n")}\n` : "");
-    if (dry) { sent.push({ to: email, name: x.name, subject, cards: n }); continue; }
-    const r = await sendMail({ to: to || email, subject: (to ? `[for ${x.name}] ` : "") + subject, html, text });
-    (r.ok ? sent : skipped).push({ to: email, subject, error: r.error });
+    const text = `${to ? `_[Preview of ${slackText(x.name)}'s check-in]_\n` : ""}📋 Hi ${slackText(first)}, ${n ? `here's what needs your attention on DSSC tasks this week (${n} task${n === 1 ? "" : "s"}). Open a task to post an update, flag a blocker, ask for help or mark it done.` : "here's where your projects stand this week."}\n${sections}${owns}\n\n${slackLink(APP_URL + "?view=projects", "Open Tasks & Projects")}`;
+    if (dry) { sent.push({ to: email, name: x.name, cards: n, text }); continue; }
+    const r = await dmPerson(sb, to || email, { text }).catch(e => ({ ok: false, error: e.message }));
+    (r.ok ? sent : skipped).push({ to: email, name: x.name, cards: n, error: r.error });
   }
 
   // Slack digest: one line per active project.

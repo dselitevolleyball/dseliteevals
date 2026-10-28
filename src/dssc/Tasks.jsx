@@ -336,7 +336,7 @@ export function TaskForm({ api, boot, preset = {}, series, onClose, onSaved }) {
       {err && <div style={{ color: DS.orange, fontSize: 13, marginTop: 8 }}>{err}</div>}
       <div style={{ display: "flex", gap: 8, marginTop: 14, alignItems: "center", flexWrap: "wrap" }}>
         <Btn kind="primary" disabled={busy || !f.title.trim()} onClick={submit}>{busy ? "Saving…" : series ? "Save the repeat" : rep ? "Create repeating task" : "Add task"}</Btn>
-        <span style={{ fontSize: 12, color: DS.dim }}>{f.assignee_email && f.assignee_email !== me.email ? "They get an email" : ""}{f.assignee_email && f.assignee_email !== me.email && st.slack ? " and a Slack mention" : !f.assignee_email || f.assignee_email === me.email ? (st.slack ? "Slack hears about it" : "") : ""}.</span>
+        <span style={{ fontSize: 12, color: DS.dim }}>{f.assignee_email && f.assignee_email !== me.email ? `They get a Slack message${st.slack ? " and a mention in the channel" : ""}` : st.slack ? "Slack hears about it" : ""}.</span>
         <div style={{ flex: 1 }} />
         <Btn kind="quiet" onClick={onClose}>Cancel</Btn>
       </div>

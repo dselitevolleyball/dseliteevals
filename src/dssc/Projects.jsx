@@ -449,10 +449,10 @@ function Settings({ api, boot, onClose, onSaved }) {
       </label>
       {s.lastDailyAt && <div style={{ fontSize: 12, color: DS.dim, marginTop: 6 }}>Last run {new Date(s.lastDailyAt).toLocaleString()}.</div>}
 
-      <Label style={{ marginTop: 18 }}>Monday email</Label>
+      <Label style={{ marginTop: 18 }}>Monday check-in</Label>
       <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, cursor: "pointer" }}>
-        <input type="checkbox" checked={s.weeklyEmail} disabled={busy} onChange={e => run(() => api("settings", { weekly_email: e.target.checked }), e.target.checked ? "The Monday email is on." : "The Monday email is off.")} style={{ accentColor: DS.lime, width: 16, height: 16 }} />
-        Every Monday at 8am, email each person their tasks that are overdue, due this week, blocked, or haven't had an update in a week, plus a progress line for each project they own.
+        <input type="checkbox" checked={s.weeklyEmail} disabled={busy} onChange={e => run(() => api("settings", { weekly_email: e.target.checked }), e.target.checked ? "The Monday check-in is on." : "The Monday check-in is off.")} style={{ accentColor: DS.lime, width: 16, height: 16 }} />
+        Every Monday at 8am, Slack each person (a DM from the HQ bot) their tasks that are overdue, due this week, blocked, or haven't had an update in a week, plus a progress line for each project they own.
       </label>
       {s.lastWeeklyAt && <div style={{ fontSize: 12, color: DS.dim, marginTop: 6 }}>Last sent {new Date(s.lastWeeklyAt).toLocaleString()}.</div>}
 

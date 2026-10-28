@@ -182,7 +182,7 @@ export function TaskModal({ api, id, boot, sections = [], onClose, onSaved, onDe
           <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center", flexWrap: "wrap" }}>
             <Btn small kind="primary" disabled={!asking.note.trim() || busy === "help"} onClick={askHelp}>{busy === "help" ? "Sending…" : "Ask for help"}</Btn>
             <Btn small kind="quiet" onClick={() => setAsking(null)}>Cancel</Btn>
-            <span style={{ fontSize: 12, color: DS.dim }}>{asking.from ? "They get an email" : "Drew gets an email"}{st.slack ? " and Slack hears about it" : ""}.</span>
+            <span style={{ fontSize: 12, color: DS.dim }}>{asking.from ? "They get a Slack message" : "Drew gets a Slack message"}{st.slack ? " and the channel hears about it" : ""}.</span>
           </div>
         </div>
       ) : null}
