@@ -12,6 +12,11 @@
 // reach everyone DSSC People has a sign-up for (every Playbook registration,
 // Upper Hand history), so a program can be texted long after it ended. Texts default to opted-in numbers
 // only; the sender can include the rest on purpose, same as DS Elite.
+//
+// Lanes (Drew, Oct 28 2026; shared/dssc-lanes.js): each director has their
+// own section - Volleyball (Hunter), Basketball (Adrian), Reach (Brandon) and
+// the front desk - and a family texted by two of them has a conversation in
+// each. Everyone opens on their own lane and can switch to All.
 
 import { useState, useEffect, useMemo, useRef } from "react";
 import { supabase } from "../supabase";
@@ -20,6 +25,7 @@ import { localDateISO } from "../../shared/dssc-clinics.js";
 import { smsPreview } from "../../shared/sms-split.js";
 import { usE164 } from "../../shared/phone.js";
 import DsscCampaigns from "./DsscCampaigns.jsx";
+import { LANES, laneLabel, homeLaneFor } from "../../shared/dssc-lanes.js";
 
 const last10 = (s) => String(s || "").replace(/\D/g, "").slice(-10);
 const e164 = (s) => { const d = String(s || "").replace(/\D/g, ""); if (d.length === 10 || (d.length === 11 && d.startsWith("1"))) return usE164(d) || ""; return d.length > 11 ? "+" + d : ""; };
@@ -30,7 +36,11 @@ const catOf = (c) => /pod/i.test(c?.category || "") || /pod/i.test(c?.name || ""
 export default function DsscTexts({ coach, clinics = [], players = [], coachRoster = [], dsscAvail = [], isDirector, initial, onConsumedInitial }) {
   const today = localDateISO();
   const me = coach?.display_name || coach?.email || "";
-  const [threads, setThreads] = useState([]);
+  const [allThreads, setThreads] = useState([]);
+  const [lane, setLaneState] = useState(() => { try { return localStorage.getItem("dssc.texts.lane:" + (coach?.email || "")) || homeLaneFor(coach); } catch { return homeLaneFor(coach); } });
+  const setLane = (l) => { setLaneState(l); setSelId(null); try { localStorage.setItem("dssc.texts.lane:" + (coach?.email || ""), l); } catch { /* private window */ } };
+  const inLane = (t) => lane === "all" || (t?.lane || "general") === lane;
+  const threads = useMemo(() => allThreads.filter(inLane), [allThreads, lane]); // eslint-disable-line react-hooks/exhaustive-deps
   const [selId, setSelId] = useState(null);
   const [msgs, setMsgs] = useState([]);
   const [roster, setRoster] = useState([]);
@@ -76,7 +86,7 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
   // tied to the latest group text / campaign that went into its thread before
   // it arrived, so "which campaign is this a reply to" reads at a glance.
   const loadReplies = async () => {
-    const { data, error } = await supabase.from("sms_messages").select("id, thread_id, body, media_urls, sent_at, created_at, sms_threads!inner(brand, phone, contact_name, contact_kind, dssc_program, dssc_player)").eq("direction", "inbound").eq("sms_threads.brand", "dssc").order("id", { ascending: false }).limit(200);
+    const { data, error } = await supabase.from("sms_messages").select("id, thread_id, body, media_urls, sent_at, created_at, sms_threads!inner(brand, lane, phone, contact_name, contact_kind, dssc_program, dssc_player)").eq("direction", "inbound").eq("sms_threads.brand", "dssc").order("id", { ascending: false }).limit(200);
     if (error) { setReplies({ error: error.message, list: [] }); return; }
     const list = data || [];
     const tids = [...new Set(list.map(r => r.thread_id))];
@@ -256,6 +266,27 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
   const selected = threads.find(t => t.id === selId) || null;
   const totalUnread = threads.reduce((n, t) => n + (t.unread_count || 0), 0);
   const markRead = async (id) => { await supabase.from("sms_threads").update({ unread_count: 0 }).eq("id", id); loadThreads(); };
+  // Move a conversation to another director's lane. If that family already
+  // has a conversation there, the two become one.
+  const moveLane = async (t, to) => {
+    if (!t || to === (t.lane || "general")) return;
+    const { data: there } = await supabase.from("sms_threads").select("id, unread_count").eq("phone", t.phone).eq("brand", "dssc").eq("lane", to).maybeSingle();
+    if (there) {
+      if (!window.confirm(`${t.contact_name || fmtPhone(t.phone)} already has a ${laneLabel(to)} conversation. Merge this one into it?`)) return;
+      const mv = await supabase.from("sms_messages").update({ thread_id: there.id }).eq("thread_id", t.id);
+      if (mv.error) { window.alert(mv.error.message); return; }
+      const { data: newest } = await supabase.from("sms_messages").select("body, direction, sent_at, created_at").eq("thread_id", there.id).order("id", { ascending: false }).limit(1);
+      const n = newest?.[0];
+      await supabase.from("sms_threads").update({ unread_count: (there.unread_count || 0) + (t.unread_count || 0), ...(n ? { last_message_at: n.sent_at || n.created_at, last_message_preview: String(n.body || "").slice(0, 140), last_message_direction: n.direction } : {}) }).eq("id", there.id);
+      await supabase.from("sms_threads").delete().eq("id", t.id);
+      setSelId(lane === "all" || lane === to ? there.id : null);
+    } else {
+      const { error } = await supabase.from("sms_threads").update({ lane: to }).eq("id", t.id);
+      if (error) { window.alert(error.message); return; }
+      if (lane !== "all" && lane !== to) setSelId(null);
+    }
+    loadThreads();
+  };
   const openThread = (id) => { const t = threads.find(x => x.id === id); setComposer(null); setSelId(id); if (t?.unread_count) markRead(id); };
   const labelOfGroup = (g) => typeof g.audience === "string" && g.audience ? g.audience
     : g.audience?.label && !/^\d+ picked$/.test(g.audience.label) ? g.audience.label
@@ -289,6 +320,15 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
     <div style={narrow ? { flex: 1, minHeight: 0, display: "flex", flexDirection: "column" } : { display: "grid", gridTemplateColumns: "300px 1fr", gap: 14, height: "calc(100vh - 150px)" }}>
       {/* Inbox */}
       <div style={{ background: DS.panel, border: "1px solid " + DS.line, borderRadius: 14, overflowY: "auto", ...(narrow ? { flex: 1, display: (selId || composer) ? "none" : "block" } : {}) }}>
+        <div style={{ display: "flex", gap: 4, padding: "8px 8px 0", flexWrap: "wrap" }}>
+          {[{ key: "all", label: "All", icon: "", who: "every lane" }, ...LANES].map(l => {
+            const n = allThreads.reduce((sum, t) => sum + ((l.key === "all" || (t.lane || "general") === l.key) ? (t.unread_count || 0) : 0), 0);
+            const on = lane === l.key;
+            return <button key={l.key} onClick={() => setLane(l.key)} title={l.key === "all" ? "Every lane" : l.label + " - " + l.who + "'s texts"} style={{ padding: "4px 9px", borderRadius: 999, border: "1px solid " + (on ? DS.lime : DS.line), background: on ? DS.lime : "transparent", color: on ? DS.bg : DS.text, cursor: "pointer", fontFamily: DS.font, fontSize: 11.5, fontWeight: 800, display: "inline-flex", gap: 4, alignItems: "center" }}>
+              {l.icon && <span>{l.icon}</span>}{l.label}{n > 0 && <span style={{ minWidth: 16, padding: "0 4px", borderRadius: 8, background: on ? DS.bg : DS.lime, color: on ? DS.lime : DS.bg, fontSize: 10, lineHeight: "16px", textAlign: "center" }}>{n}</span>}
+            </button>;
+          })}
+        </div>
         <div style={{ display: "flex", padding: 8, borderBottom: "1px solid " + DS.line }}>
           <div style={{ display: "flex", flex: 1, border: "1px solid " + DS.line, borderRadius: 999, overflow: "hidden" }}>
             {[["threads", "Conversations"], ["replies", "All replies"]].map(([k, l]) => <button key={k} onClick={() => setInboxMode(k)} style={{ flex: 1, padding: "5px 10px", border: "none", cursor: "pointer", fontFamily: DS.font, fontSize: 12, fontWeight: 800, background: inboxMode === k ? DS.lime : "transparent", color: inboxMode === k ? DS.bg : DS.mut }}>{l}</button>)}
@@ -299,11 +339,13 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
           if (replies.error) return <div style={{ padding: 20, fontSize: 12, color: DS.orange }}>Couldn't load replies: {replies.error}</div>;
           if (!replies.list.length) return <div style={{ padding: 20, fontSize: 12, color: DS.mut, textAlign: "center" }}>No replies yet. Texts families and coaches send back show up here, one row per person, newest first.</div>;
           const byId = new Map(threads.map(t => [t.id, t]));
+          const inView = replies.list.filter(r => inLane(r.sms_threads));
+          if (!inView.length) return <div style={{ padding: 20, fontSize: 12, color: DS.mut, textAlign: "center" }}>No replies in {laneLabel(lane)} yet.</div>;
           // One row per person, like Messages on a phone (Drew, Oct 23 2026):
           // their newest reply on top, how many they've sent, and the unread
           // count. Opening the row shows the whole conversation.
           const per = new Map();   // thread id -> { r: newest reply, n: replies }
-          for (const r of replies.list) { const g = per.get(r.thread_id); if (g) g.n++; else per.set(r.thread_id, { r, n: 1 }); }
+          for (const r of inView) { const g = per.get(r.thread_id); if (g) g.n++; else per.set(r.thread_id, { r, n: 1 }); }
           return [...per.values()].map(({ r, n }) => {
             const t = { ...r.sms_threads, ...(byId.get(r.thread_id) || {}) };
             const unread = (t.unread_count || 0) > 0;
@@ -329,6 +371,8 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
         {inboxMode === "threads" && !threads.length && <div style={{ padding: 20, fontSize: 12, color: DS.mut, textAlign: "center" }}>No conversations yet. Text a program or a class to start one per family.</div>}
         {inboxMode === "threads" && groups.length > 0 && (() => {
           const byId = new Map(threads.map(t => [t.id, t]));
+          const shown = groups.filter(g => lane === "all" || (groupThreads[g.id] || []).some(id => byId.has(id)));
+          if (!shown.length) return null;
           const textAgain = (g, members) => {
             const to = new Map(members.map(t => [t.phone, { to: t.phone, name: t.contact_name || fmtPhone(t.phone), kind: t.contact_kind || "parent", out: optedOut.has(last10(t.phone)), players: t.dssc_player ? [t.dssc_player] : [], programs: t.dssc_program ? [t.dssc_program] : [], dssc_player: t.dssc_player || null, dssc_program: t.dssc_program || null }]));
             setSelId(null); setComposer(blankComposer({ to }));
@@ -336,7 +380,7 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
           return (
             <div style={{ borderBottom: "2px solid " + DS.line }}>
               <div style={{ padding: "8px 12px", fontSize: 11, fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", color: DS.lime, background: "rgba(178,208,73,0.06)" }}>Groups</div>
-              {groups.map(g => {
+              {shown.map(g => {
                 const members = (groupThreads[g.id] || []).map(id => byId.get(id)).filter(Boolean);
                 const replied = members.filter(t => t.last_message_direction === "inbound" && t.last_message_at > g.created_at);
                 const unread = members.reduce((n, t) => n + (t.unread_count || 0), 0);
@@ -439,7 +483,7 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
             let broadcastId = null, err = null;
             for (let i = 0; i < all.length; i += 150) {
               set({ progress: `Sending ${Math.min(i + 150, all.length)} of ${all.length}…` });
-              const r = await send({ recipients: all.slice(i, i + 150), body: c.body.trim(), media_urls: c.media.map(m => m.url), broadcast_id: broadcastId, total_recipients: all.length, audience: { type: "custom", count: all.length, ...(c.groupLabel ? { label: c.groupLabel } : {}) } });
+              const r = await send({ ...(lane !== "all" ? { lane } : {}), recipients: all.slice(i, i + 150), body: c.body.trim(), media_urls: c.media.map(m => m.url), broadcast_id: broadcastId, total_recipients: all.length, audience: { type: "custom", count: all.length, ...(c.groupLabel ? { label: c.groupLabel } : {}) } });
               if (r.error) { err = r.error + (total.sent ? ` — stopped after ${total.sent} of ${all.length} were sent; don't press Send again for the same people.` : ""); break; }
               broadcastId = r.broadcast_id || broadcastId; total.sent += r.sent || 0; total.failed.push(...(r.failed || []));
             }
@@ -551,7 +595,10 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
           )}
           <div style={{ padding: "12px 16px", borderBottom: "1px solid " + DS.line, display: "flex", alignItems: "flex-start", gap: 10 }}>
             <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}><div style={{ fontSize: 15, fontWeight: 800 }}>{selected.contact_name || fmtPhone(selected.phone)}</div>{selected.dssc_player && <Tag color={DS.lime}>{selected.dssc_player}</Tag>}{selected.dssc_program && <Tag color={DS.mut}>{selected.dssc_program}</Tag>}{selected.contact_kind === "coach" && <Tag color={DS.mut}>coach</Tag>}</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}><div style={{ fontSize: 15, fontWeight: 800 }}>{selected.contact_name || fmtPhone(selected.phone)}</div>{selected.dssc_player && <Tag color={DS.lime}>{selected.dssc_player}</Tag>}{selected.dssc_program && <Tag color={DS.mut}>{selected.dssc_program}</Tag>}{selected.contact_kind === "coach" && <Tag color={DS.mut}>coach</Tag>}
+              <select value={selected.lane || "general"} onChange={e => moveLane(selected, e.target.value)} title="Which director's section this conversation is in. Their replies come back here." style={{ ...inputStyle, width: "auto", padding: "2px 6px", fontSize: 11.5 }}>
+                {LANES.map(l => <option key={l.key} value={l.key}>{l.icon} {l.label}</option>)}
+              </select></div>
             <div style={{ fontSize: 12, color: DS.mut, marginTop: 2 }}>{fmtPhone(selected.phone)}</div>
             </div>
             {!outRow && <Btn small onClick={unsubscribe}>Unsubscribe</Btn>}
@@ -572,7 +619,7 @@ export default function DsscTexts({ coach, clinics = [], players = [], coachRost
           ) : (
           <div style={{ borderTop: "1px solid " + DS.line, padding: "10px 14px", display: "flex", gap: 8, alignItems: "flex-end" }}>
             <textarea value={reply} onChange={e => setReply(e.target.value)} rows={2} placeholder="Type a reply…" onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); } }} style={{ ...inputStyle, flex: 1, resize: "vertical", minHeight: 40, maxHeight: 140 }} />
-            <Btn kind="primary" disabled={sending || !reply.trim()} onClick={async () => { setSending(true); const r = await send({ to: selected.phone, body: reply.trim(), contact_name: selected.contact_name, dssc_program: selected.dssc_program, dssc_player: selected.dssc_player, contact_kind: selected.contact_kind }); setSending(false); if (r.error) window.alert(r.error); else { setReply(""); loadMsgs(selected.id); loadThreads(); } }}>{sending ? "…" : "Send"}</Btn>
+            <Btn kind="primary" disabled={sending || !reply.trim()} onClick={async () => { setSending(true); const r = await send({ to: selected.phone, lane: selected.lane || undefined, body: reply.trim(), contact_name: selected.contact_name, dssc_program: selected.dssc_program, dssc_player: selected.dssc_player, contact_kind: selected.contact_kind }); setSending(false); if (r.error) window.alert(r.error); else { setReply(""); loadMsgs(selected.id); loadThreads(); } }}>{sending ? "…" : "Send"}</Btn>
           </div>
           )}
         </>); })()}

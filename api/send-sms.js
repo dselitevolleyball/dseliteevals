@@ -14,7 +14,7 @@
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY (service role, NOT the anon key)
 //
 // Request body, one of:
-//   { to: "+15551234567", body, player_id?, team_name?, contact_kind?, contact_name?, sent_by_coach_id?, sent_by_label? }
+//   { to: "+15551234567", body, brand?, lane?, player_id?, team_name?, contact_kind?, contact_name?, sent_by_coach_id?, sent_by_label? }
 //   { recipients: [{ to, name?, player_id?, team_name?, kind? }, ...], body, audience?, sent_by_coach_id?, sent_by_label? }
 // Response (single):  { ok, message_id, twilio_sid, status, thread_id }
 // Response (batch):   { ok, broadcast_id, sent, failed: [{ to, name, error }], thread_ids }
@@ -23,6 +23,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { sendOneSms, normalizePhone, twilioReady, brandOf, notReadyMessage } from "./_lib/sms.js";
 import { loadAudienceData, buildPeople, resolveAudience, isReachStaff } from "../shared/campaign-audience.js";
+import { isLane } from "../shared/dssc-lanes.js";
 const DSSC_DIRECTOR_EMAILS = ["hunterhaleysc10@gmail.com", "hunter@drippingsportsclub.com"];
 
 const LANES = 4;   // concurrent Twilio requests; Twilio queues per number anyway
@@ -75,12 +76,16 @@ export default async function handler(req, res) {
   const media_urls = (Array.isArray(b.media_urls) ? b.media_urls : []).filter(u => /^https?:\/\//.test(String(u))).slice(0, 10);
   if (!text && !media_urls.length) return res.status(400).json({ error: "Empty 'body'." });
   const meta = { sent_by_coach_id: b.sent_by_coach_id || null, sent_by_label: b.sent_by_label || null, media_urls };
+  // Club texts go in a lane (shared/dssc-lanes.js): the section they were sent
+  // from; Reach staff only ever text in Reach. No lane: api/_lib/sms.js works
+  // it out from the program, then the sender.
+  const lane = brand !== "dssc" ? undefined : reachOnly ? "reach" : isLane(b.lane) ? b.lane : undefined;
 
   // Normalise the two request shapes into one list.
   const batch = Array.isArray(b.recipients);
   const list = batch
-    ? b.recipients.map(r => ({ brand, to: normalizePhone(r?.to), name: r?.name || null, player_id: r?.player_id || null, team_name: r?.team_name || null, kind: r?.kind || null, dssc_program: r?.dssc_program || null, dssc_player: r?.dssc_player || null }))
-    : [{ brand, to: normalizePhone(b.to), name: b.contact_name || null, player_id: b.player_id || null, team_name: b.team_name || null, kind: b.contact_kind || null, dssc_program: b.dssc_program || null, dssc_player: b.dssc_player || null }];
+    ? b.recipients.map(r => ({ brand, lane, to: normalizePhone(r?.to), name: r?.name || null, player_id: r?.player_id || null, team_name: r?.team_name || null, kind: r?.kind || null, dssc_program: r?.dssc_program || null, dssc_player: r?.dssc_player || null }))
+    : [{ brand, lane, to: normalizePhone(b.to), name: b.contact_name || null, player_id: b.player_id || null, team_name: b.team_name || null, kind: b.contact_kind || null, dssc_program: b.dssc_program || null, dssc_player: b.dssc_player || null }];
   const valid = list.filter(r => /^\+\d{8,15}$/.test(r.to));
   if (!valid.length) return res.status(400).json({ error: batch ? "No valid phone numbers in 'recipients'." : "Invalid 'to' phone number." });
   // One text per number, even if a parent is listed under two players.

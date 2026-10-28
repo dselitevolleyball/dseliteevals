@@ -199,8 +199,10 @@ function Conversations({ reachPhones, me, coach, api, narrow }) {
   const [err, setErr] = useState("");
   const load = async () => {
     if (!reachPhones) return;
-    const { data } = await supabase.from("sms_threads").select("*").eq("brand", "dssc").order("last_message_at", { ascending: false }).limit(1000);
-    setThreads((data || []).filter(t => reachPhones.has(last10(t.phone))));
+    // The Reach lane of the club's texts (shared/dssc-lanes.js): Reach's own
+    // conversations, not what Hunter or Adrian are saying to the same family.
+    const { data } = await supabase.from("sms_threads").select("*").eq("brand", "dssc").eq("lane", "reach").order("last_message_at", { ascending: false }).limit(1000);
+    setThreads(data || []);
   };
   useEffect(() => { load(); }, [reachPhones]); // eslint-disable-line react-hooks/exhaustive-deps
   const open = threads?.find(t => t.id === openId) || null;
@@ -209,7 +211,7 @@ function Conversations({ reachPhones, me, coach, api, narrow }) {
   const send = async () => {
     if (!reply.trim()) return;
     setBusy(true); setErr("");
-    try { await api("/api/send-sms", { brand: "dssc", to: open.phone, body: reply.trim(), contact_name: open.contact_name || open.display_name || null, contact_kind: open.contact_kind || "parent", dssc_program: open.dssc_program || "Reach", dssc_player: open.dssc_player || null, sent_by_coach_id: coach?.id || null, sent_by_label: me }); setReply(""); await loadMsgs(open.id); load(); }
+    try { await api("/api/send-sms", { brand: "dssc", lane: "reach", to: open.phone, body: reply.trim(), contact_name: open.contact_name || open.display_name || null, contact_kind: open.contact_kind || "parent", dssc_program: open.dssc_program || "Reach", dssc_player: open.dssc_player || null, sent_by_coach_id: coach?.id || null, sent_by_label: me }); setReply(""); await loadMsgs(open.id); load(); }
     catch (e) { setErr(e.message); } finally { setBusy(false); }
   };
   if (!threads) return <div style={panel}><span style={{ color: DS.mut }}>Loading conversations…</span></div>;

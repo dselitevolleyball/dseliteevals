@@ -7,12 +7,14 @@
 //
 // Two brands, two numbers. 'dse' is DS Elite Volleyball (TWILIO_FROM_NUMBER);
 // 'dssc' is Dripping Springs Sports Club (DSSC_TWILIO_FROM_NUMBER, or a
-// messaging service SID). Threads are per (phone, brand), so a parent who
-// deals with both has two separate conversations and each screen shows its
-// own.
+// messaging service SID). Threads are per (phone, brand, lane), so a parent
+// who deals with both has two separate conversations and each screen shows its
+// own. Club threads also have a lane (shared/dssc-lanes.js): Volleyball,
+// Basketball, Reach or the front desk, one conversation per lane.
 
 import { splitSms, smsPlain } from "../../shared/sms-split.js";
 import { isUsPhone } from "../../shared/phone.js";
+import { isLane, laneOfText, laneOfPerson } from "../../shared/dssc-lanes.js";
 
 // "" for a US number that can't exist (shared/phone.js), so callers' checks refuse it.
 export const normalizePhone = (raw) => {
@@ -45,15 +47,36 @@ export const notReadyMessage = (brand) => brandOf(brand) === "dssc"
   ? "DSSC texting isn't switched on yet: set DSSC_TWILIO_FROM_NUMBER (the club's Twilio number) in Vercel once the campaign is approved."
   : "Twilio not configured. Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER.";
 
-// Find or create the thread for a phone + brand, filling in who it belongs to
-// when that is known and the thread doesn't say yet.
-export async function threadFor(supabase, r) {
+// The lane a club text goes in: the one asked for; else the program's sport
+// (a Reach program is Reach's even when it's volleyball); else the sender's
+// own lane; else the front desk. DS Elite has no lanes ("").
+export async function laneFor(supabase, r, meta = {}) {
+  if (brandOf(r.brand) !== "dssc") return "";
+  if (isLane(r.lane)) return r.lane;
+  const prog = String(r.dssc_program || "").trim();
+  if (prog) {
+    if (laneOfText(prog) === "reach") return "reach";
+    const { data } = await supabase.from("dssc_clinics").select("sport").eq("name", prog).limit(1);
+    if (isLane(data?.[0]?.sport)) return data[0].sport;
+    if (laneOfText(prog)) return laneOfText(prog);
+  }
+  if (meta.sent_by_coach_id) {
+    const { data: c } = await supabase.from("coaches").select("email, sports, staff_view").eq("id", meta.sent_by_coach_id).maybeSingle();
+    if (laneOfPerson(c)) return laneOfPerson(c);
+  }
+  return "general";
+}
+
+// Find or create the thread for a phone + brand + lane, filling in who it
+// belongs to when that is known and the thread doesn't say yet.
+export async function threadFor(supabase, r, meta = {}) {
   const brand = brandOf(r.brand);
-  let { data: thread, error } = await supabase.from("sms_threads").select("*").eq("phone", r.to).eq("brand", brand).maybeSingle();
+  const lane = await laneFor(supabase, { ...r, brand }, meta);
+  let { data: thread, error } = await supabase.from("sms_threads").select("*").eq("phone", r.to).eq("brand", brand).eq("lane", lane).maybeSingle();
   if (error) throw new Error("Thread lookup failed: " + error.message);
   if (!thread) {
     const ins = await supabase.from("sms_threads").insert({
-      phone: r.to, brand, player_id: r.player_id || null, team_name: r.team_name || null, contact_kind: r.kind || null, contact_name: r.name || null,
+      phone: r.to, brand, lane, player_id: r.player_id || null, team_name: r.team_name || null, contact_kind: r.kind || null, contact_name: r.name || null,
       dssc_program: r.dssc_program || null, dssc_player: r.dssc_player || null,
     }).select().single();
     if (ins.error) throw new Error("Thread create failed: " + ins.error.message);
@@ -70,7 +93,19 @@ export async function threadFor(supabase, r) {
   return thread;
 }
 
-// r: { to (E.164), brand?, name?, kind?, player_id?, team_name?, dssc_program?, dssc_player? }
+// The thread a club reply belongs in: the lane of the last text we sent that
+// number (Adrian's basketball text gets its answer in Basketball), else the
+// thread they last wrote in, else a new front-desk thread (null).
+export async function replyThreadFor(supabase, phone, brand) {
+  const { data: threads } = await supabase.from("sms_threads").select("*").eq("phone", phone).eq("brand", brandOf(brand));
+  if (!threads?.length) return null;
+  if (threads.length === 1) return threads[0];
+  const { data: last } = await supabase.from("sms_messages").select("thread_id").in("thread_id", threads.map(t => t.id)).eq("direction", "outbound").order("id", { ascending: false }).limit(1);
+  return threads.find(t => t.id === last?.[0]?.thread_id)
+    || [...threads].sort((a, b) => String(b.last_message_at || "").localeCompare(String(a.last_message_at || "")))[0];
+}
+
+// r: { to (E.164), brand?, lane?, name?, kind?, player_id?, team_name?, dssc_program?, dssc_player? }
 // meta: { broadcast_id?, sent_by_coach_id?, sent_by_label?, media_urls? }
 // Resolves { message_id, twilio_sid, status, thread_id }; throws with .code / .thread_id on a Twilio refusal.
 // "{first}" in a text becomes the first name of the person THIS text goes to,
@@ -108,7 +143,7 @@ export async function sendOneSms(supabase, r, text, meta = {}) {
     if (!outErr && out && out.length) { const err = new Error("Unsubscribed: this number replied STOP or was unsubscribed in the inbox, so it wasn't texted."); err.code = "opted_out"; throw err; }
   }
   const media = (Array.isArray(meta.media_urls) ? meta.media_urls : []).filter(u => /^https?:\/\//.test(String(u))).slice(0, 10);
-  const thread = await threadFor(supabase, { ...r, brand });
+  const thread = await threadFor(supabase, { ...r, brand }, meta);
   // Insert the message in 'queued' state so the UI can show it immediately
   // even if Twilio is slow to ack.
   const msgInsert = await supabase.from("sms_messages").insert({

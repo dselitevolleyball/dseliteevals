@@ -38,6 +38,7 @@ import RegistrationCheck, { RegBadges, loadRegistrationCheck } from "./Registrat
 import EuropeRsvps from "./EuropeRsvps.jsx";
 import EuropeTrip from "./EuropeTrip.jsx";
 import DsscTexts from "./dssc/DsscTexts.jsx";
+import { laneOfPerson } from "../shared/dssc-lanes.js";
 import DsscReachTexts from "./dssc/DsscReachTexts.jsx";
 import ProductBoard from "./ProductBoard.jsx";
 import FeedbackButton from "./FeedbackButton.jsx";
@@ -4847,12 +4848,18 @@ export default function App() {
   // on. The inboxes only load their threads when opened, so this is its own
   // tiny query, refreshed by the realtime feed below and once a minute.
   const loadSmsUnread = useCallback(async () => {
-    const { data, error } = await supabase.from("sms_threads").select("brand, unread_count").gt("unread_count", 0);
+    const { data, error } = await supabase.from("sms_threads").select("brand, lane, unread_count").gt("unread_count", 0);
     if (error) return;
+    // The DSSC badge counts your own lane (shared/dssc-lanes.js): Hunter's
+    // shows volleyball replies, Adrian's basketball. Drew's counts them all.
+    const myLane = laneOfPerson(coach);
     const out = { dse: 0, dssc: 0 };
-    for (const t of data || []) out[t.brand === "dssc" ? "dssc" : "dse"] += Number(t.unread_count || 0);
+    for (const t of data || []) {
+      if (t.brand === "dssc" && myLane && (t.lane || "general") !== myLane) continue;
+      out[t.brand === "dssc" ? "dssc" : "dse"] += Number(t.unread_count || 0);
+    }
     setSmsUnread(out);
-  }, []);
+  }, [coach?.email]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!isApproved) return;
     loadSmsUnread();
