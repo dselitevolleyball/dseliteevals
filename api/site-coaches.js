@@ -19,7 +19,7 @@ import { createClient } from "@supabase/supabase-js";
 const SPORTS = ["volleyball", "basketball", "reach"];
 const DIRECTORS = [
   { sport: "volleyball", name: "Hunter Haley", emails: ["hunter@drippingsportsclub.com", "hunterhaleysc10@gmail.com"], title: "Director of Volleyball" },
-  { sport: "basketball", name: "Adrian Thomas", emails: ["adrian@4thquarterathlete.com", "adrian@drippingsportsclub.com"], title: "Director of Basketball · 4th Quarter Athlete" },
+  { sport: "basketball", name: "Adrian Thomas", emails: ["adrian@drippingsportsclub.com", "adrian@4thquarterathlete.com"], title: "Director of Basketball · 4th Quarter Athlete" },
   { sport: "reach", name: "Brandon Butler", emails: ["brandon@drippingsportsclub.com"], title: "Reach Performance" },
 ];
 // Never a public coach card, whatever the clinic rows say.

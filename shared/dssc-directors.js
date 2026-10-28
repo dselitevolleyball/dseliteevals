@@ -4,14 +4,14 @@
 // twin is is_dssc_director() in migrations/20261020_site_inbox.sql - keep the
 // three in step.
 //
-// adrian@drippingsportsclub.com does not exist (it bounces) - Adrian is
-// reached at 4thquarterathlete.com.
+// Adrian uses adrian@drippingsportsclub.com (Drew, Oct 28 2026; it was
+// adrian@4thquarterathlete.com from Oct 14 to 28).
 
 export const DSSC_DIRECTORS = [
   { email: "drew@drippingsportsclub.com",     name: "Drew Rose",         role: "Owner",                  also: ["drew@dselitevolleyball.com"] },
   { email: "jonathan@drippingsportsclub.com", name: "Jonathan DelaRosa", role: "Director of Operations" },
   { email: "hunter@drippingsportsclub.com",   name: "Hunter Haley",      role: "Director of Volleyball", also: ["hunterhaleysc10@gmail.com"] },
-  { email: "adrian@4thquarterathlete.com",    name: "Adrian Thomas",     role: "Director of Basketball" },
+  { email: "adrian@drippingsportsclub.com",    name: "Adrian Thomas",     role: "Director of Basketball", also: ["adrian@4thquarterathlete.com"] },
   { email: "brandon@drippingsportsclub.com",  name: "Brandon",           role: "Reach Performance" },
   { email: "deroald@drippingsportsclub.com",  name: "Deroald",           role: "DSSC admin" },
 ];
@@ -58,7 +58,7 @@ export const inquirySport = ({ kind, sport } = {}) => normSport(sport) || (kind 
 // override any entry without a deploy.
 export const DEFAULT_ROUTES = {
   volleyball: "hunter@drippingsportsclub.com",
-  basketball: "adrian@4thquarterathlete.com, jonathan@drippingsportsclub.com",
+  basketball: "adrian@drippingsportsclub.com, jonathan@drippingsportsclub.com",
   reach: "brandon@drippingsportsclub.com",
   rental: "jonathan@drippingsportsclub.com",
   party: "jonathan@drippingsportsclub.com",

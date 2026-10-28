@@ -67,7 +67,7 @@ console.log("\n== 2. scout ==");
 const sb = fakeSupabase({
   mkt_settings: [{ id: 1, ...core.SETTINGS_DEFAULTS, flair: 2 }], mkt_priorities: [], mkt_items: [], mkt_photos: [], mkt_log: [], mkt_ideas: [], mkt_spotlights: [],
   coaches: [{ email: "hunter@drippingsportsclub.com", display_name: "Hunter Haley", dssc_role: "admin", sports: ["volleyball"], is_approved: true }],
-  dssc_people: [], coach_roster: [{ first_name: "Hunter", last_name: "Haley", email: "hunter@drippingsportsclub.com", phone: "(512) 555-0101" }, { first_name: "Adrian", last_name: "Thomas", email: "adrian@4thquarterathlete.com", phone: "512-555-0102" }],
+  dssc_people: [], coach_roster: [{ first_name: "Hunter", last_name: "Haley", email: "hunter@drippingsportsclub.com", phone: "(512) 555-0101" }, { first_name: "Adrian", last_name: "Thomas", email: "adrian@drippingsportsclub.com", phone: "512-555-0102" }],
   sms_threads: [], sms_messages: [], sms_optouts: [],
 });
 const today = "2026-10-24";

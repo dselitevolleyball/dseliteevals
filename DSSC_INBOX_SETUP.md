@@ -62,7 +62,7 @@ drippingsportsclub.com is verified on the DSSC Resend account, so an
 | `DSSC_INBOX_IMAP_HOST` | no | Default `imap.gmail.com`. |
 | `DSSC_INBOX_ADDRESS` | no | Reply-To on replies, default `info@drippingsportsclub.com`. |
 | `DSSC_INBOX_MATCH_TO` | no | Which addresses count as "the inbox", default info@ (comma list ok). |
-| `DSSC_INBOX_ROUTES` | no | JSON overriding who gets what, e.g. `{"basketball":"adrian@4thquarterathlete.com","cc":"drew@drippingsportsclub.com"}`. |
+| `DSSC_INBOX_ROUTES` | no | JSON overriding who gets what, e.g. `{"basketball":"adrian@drippingsportsclub.com","cc":"drew@drippingsportsclub.com"}`. |
 | `DSSC_INBOX_MAX_FETCH`, `DSSC_INBOX_SINCE_DAYS`, `DSSC_INBOX_MARK_SEEN` | no | 25 mails per run · look back 14 days · mark read (1). |
 | `CRON_SECRET`, `RESEND_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | already set | Used as before. |
 

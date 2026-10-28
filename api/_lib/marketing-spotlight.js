@@ -29,7 +29,7 @@ import { rulesText } from "../../shared/marketing-rules.js";
 export const SERIES = "Meet the Coaches";
 const SITE = "https://www.drippingsportsclub.com";
 const RECENT_DAYS = 180;
-const DIRECTOR_LINE = { "hunter@drippingsportsclub.com": "volleyball", "adrian@4thquarterathlete.com": "basketball", "brandon@drippingsportsclub.com": "reach" };
+const DIRECTOR_LINE = { "hunter@drippingsportsclub.com": "volleyball", "adrian@drippingsportsclub.com": "basketball", "brandon@drippingsportsclub.com": "reach" };
 const SPORT_LINE = (s) => /volley/i.test(s) ? "volleyball" : /basket/i.test(s) ? "basketball" : /reach|perform|strength/i.test(s) ? "reach" : null;
 const firstName = (n) => String(n || "").trim().split(/\s+/)[0] || "Coach";
 const OPEN = ["draft", "sent", "answered"];
