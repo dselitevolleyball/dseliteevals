@@ -13,7 +13,7 @@
 import crypto from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { REPOS, WORKFLOW_FILE, itemKey, branchFor, STATUS_LABEL } from "../shared/product.js";
-import { productSlack, cardLink, quote, slackLink } from "./_lib/product-slack.js";
+import { postCard, reviewMessage, failedMessage, shippedMessage } from "./_lib/product-slack.js";
 
 export const config = { maxDuration: 30 };
 const ISS = "https://token.actions.githubusercontent.com";
@@ -140,10 +140,8 @@ export default async function handler(req, res) {
           ...(patch.branch ? { branch: patch.branch } : {}), ...(patch.pr_number ? { pr_number: patch.pr_number } : {}), ...(patch.pr_url ? { pr_url: patch.pr_url } : {}), ...(patch.preview_url ? { preview_url: patch.preview_url } : {}),
         }).eq("id", item.id);
         const cost = num(b.cost_usd) != null ? ` · $${num(b.cost_usd).toFixed(2)}` : "";
-        await productSlack(sb, ok
-          ? (run.kind === "ship" ? `🚀 Shipped *${cardLink(item.id, item.title)}* - it's live once Vercel finishes deploying${cost}`
-            : `🤖 Ready to review: *${cardLink(item.id, item.title)}*${cost}${patch.preview_url ? ` · ${slackLink(patch.preview_url, "open the preview")}` : ""}${patch.summary ? "\n" + quote(patch.summary, 700) : ""}`)
-          : `⚠️ The agent run failed on *${cardLink(item.id, item.title)}*: ${String(b.error || "see the GitHub log").slice(0, 300)}`);
+        await postCard(sb, item, ok ? (run.kind === "ship" ? shippedMessage(item, cost) : reviewMessage(item, { summary: patch.summary || run.summary, preview_url: patch.preview_url || item.preview_url }, cost))
+          : failedMessage(item, String(b.error || "see the GitHub log")), { broadcast: run.kind !== "ship" }).catch(() => {});
         await sb.from("product_events").insert({ item_id: item.id, kind: "run", data: { run_id: run.id, status: b.status },
           body: ok ? (run.kind === "ship" ? `Shipped - merged to main${cost}` : `The agent finished${cost} - ${STATUS_LABEL[status]}${patch.preview_url ? `, preview: ${patch.preview_url}` : ""}`) : `The agent run failed: ${String(b.error || "see the GitHub log").slice(0, 400)}` });
       }

@@ -479,7 +479,6 @@ function Table({ title, rows, cols, empty = "Nothing yet." }) {
 function Settings({ boot, onSaved }) {
   const s = boot.settings;
   const [f, setF] = useState({ budget_monthly: s.budget_monthly, model: s.model, effort: s.effort, max_turns: s.max_turns, max_budget_usd: s.max_budget_usd, notify: (s.notify || []).join(", "), email_requests: !!s.email_requests });
-  const [hook, setHook] = useState("");
   const [tokens, setTokens] = useState({});
   const [admin, setAdmin] = useState("");
   const [msg, setMsg] = useState(null);
@@ -512,18 +511,7 @@ function Settings({ boot, onSaved }) {
         </div>
       </div>
 
-      <div style={box}>
-        <div style={{ fontSize: 15, fontWeight: 800 }}>Slack {s.slack ? <span style={{ color: C.grn, fontSize: 12 }}>✓ connected</span> : null}</div>
-        <div style={{ fontSize: 13, color: C.mut, margin: "6px 0 10px", lineHeight: 1.5 }}>
-          New requests from the 💡 Feedback button, finished or failed agent runs, and ships post to Slack. Make an incoming webhook: <a href="https://api.slack.com/apps?new_app=1" target="_blank" rel="noreferrer" style={{ color: C.blue }}>api.slack.com/apps ↗</a> → <b>Create New App</b> → From scratch → name it "HQ" and pick your workspace → <b>Incoming Webhooks</b> → turn on → <b>Add New Webhook</b> → pick the channel (or your own DM) → copy the URL and paste it here.
-        </div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <input value={hook} onChange={e => setHook(e.target.value)} placeholder={s.slack ? "Paste a new webhook to replace it" : "https://hooks.slack.com/services/…"} style={{ ...input, flex: 1, minWidth: 240, fontSize: 13 }} />
-          <button disabled={!hook.trim()} onClick={() => save({ slack_webhook: hook }, "Saved - press Send a test to check it.").then(() => setHook(""))} style={btn("primary", true)}>Save</button>
-          {s.slack && <button onClick={() => { setMsg(null); api("test_slack").then(() => setMsg({ ok: "Sent - check Slack." })).catch(e => setMsg({ err: e.message })); }} style={btn("ghost", true)}>Send a test</button>}
-          {s.slack && <button onClick={() => window.confirm("Stop posting to Slack?") && save({ slack_webhook: "" }, "Slack disconnected.")} style={btn("ghost", true)}>Remove</button>}
-        </div>
-      </div>
+      <SlackSettings s={s} save={save} setMsg={setMsg} box={box} onSaved={onSaved} />
 
       <div style={box}>
         <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 6 }}>Budget and defaults</div>
@@ -550,6 +538,57 @@ function Settings({ boot, onSaved }) {
           {boot.admin_key && <button onClick={() => save({ admin_key: "" }, "Removed.")} style={btn("ghost", true)}>Remove</button>}
         </div>
       </div>
+    </div>
+  );
+}
+
+// Slack: the webhook (posting only) and the app's bot (buttons + thread replies).
+const SLACK_URL = "https://dseliteevals.vercel.app/api/product-slack";
+const SCOPES = "chat:write, im:write, im:history, channels:history, groups:history, channels:read, groups:read, users:read, users:read.email";
+function SlackSettings({ s, save, setMsg, box }) {
+  const [hook, setHook] = useState("");
+  const [tok, setTok] = useState("");
+  const [sec, setSec] = useState("");
+  const [chans, setChans] = useState(null);
+  const [copied, setCopied] = useState("");
+  useEffect(() => { if (s.slack_bot) api("slack_channels").then(d => setChans(d.channels)).catch(() => setChans([])); }, [s.slack_bot]);
+  const copy = (t, k) => { navigator.clipboard?.writeText(t); setCopied(k); setTimeout(() => setCopied(""), 1500); };
+  const step = { fontSize: 13, color: C.mut, lineHeight: 1.6, margin: "2px 0" };
+  const code = { background: "#0f0f0f", border: "1px solid " + C.border, borderRadius: 6, padding: "1px 6px", color: C.text, fontSize: 12 };
+  return (
+    <div style={box}>
+      <div style={{ fontSize: 15, fontWeight: 800 }}>Slack {s.slack ? <span style={{ color: C.grn, fontSize: 12 }}>✓ connected{s.slack_bot ? ` · buttons and replies on${s.slack_channel ? ` · posting to ${s.slack_channel}` : ""}` : " · posting only"}</span> : null}</div>
+      <div style={{ fontSize: 13, color: C.mut, margin: "6px 0 10px", lineHeight: 1.5 }}>New requests, agent results and ships post to Slack.</div>
+
+      <div style={{ fontSize: 12, fontWeight: 800, color: C.text, margin: "6px 0" }}>1 · Posting (incoming webhook)</div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <input value={hook} onChange={e => setHook(e.target.value)} placeholder={s.slack ? "Saved - paste a new webhook to replace it" : "https://hooks.slack.com/services/…"} style={{ ...input, flex: 1, minWidth: 240, fontSize: 13 }} />
+        <button disabled={!hook.trim()} onClick={() => save({ slack_webhook: hook }, "Saved - press Send a test to check it.").then(() => setHook(""))} style={btn("primary", true)}>Save</button>
+        {s.slack && <button onClick={() => { setMsg(null); api("test_slack").then(() => setMsg({ ok: "Sent - check Slack." })).catch(e => setMsg({ err: e.message })); }} style={btn("ghost", true)}>Send a test</button>}
+      </div>
+
+      <div style={{ fontSize: 12, fontWeight: 800, color: C.text, margin: "16px 0 6px" }}>2 · Buttons and thread replies (the app's bot)</div>
+      <div style={step}>In your HQ app at <a href="https://api.slack.com/apps" target="_blank" rel="noreferrer" style={{ color: C.blue }}>api.slack.com/apps ↗</a>:</div>
+      <div style={step}>a. <b>OAuth & Permissions</b> → Bot Token Scopes → add: <span style={code}>{SCOPES}</span> <button onClick={() => copy(SCOPES, "sc")} style={{ ...btn("ghost", true), padding: "1px 6px" }}>{copied === "sc" ? "Copied" : "Copy"}</button> → <b>Reinstall to Workspace</b> → copy the <b>Bot User OAuth Token</b> (xoxb-…).</div>
+      <div style={step}>b. <b>Basic Information</b> → App Credentials → <b>Signing Secret</b> → Show → copy. Paste both below and Save.</div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "6px 0" }}>
+        <input value={tok} onChange={e => setTok(e.target.value)} placeholder={s.slack_bot ? "Bot token saved - paste to replace" : "xoxb-…"} style={{ ...input, flex: 1, minWidth: 200, fontSize: 13 }} />
+        <input value={sec} onChange={e => setSec(e.target.value)} placeholder={s.slack_secret ? "Signing secret saved - paste to replace" : "Signing secret"} style={{ ...input, flex: 1, minWidth: 200, fontSize: 13 }} />
+        <button disabled={!tok.trim() && !sec.trim()} onClick={() => save({ ...(tok.trim() ? { slack_bot_token: tok } : {}), ...(sec.trim() ? { slack_signing_secret: sec } : {}) }, "Saved.").then(() => { setTok(""); setSec(""); })} style={btn("primary", true)}>Save</button>
+      </div>
+      <div style={step}>c. <b>Interactivity & Shortcuts</b> → On → Request URL: <span style={code}>{SLACK_URL}</span> <button onClick={() => copy(SLACK_URL, "u1")} style={{ ...btn("ghost", true), padding: "1px 6px" }}>{copied === "u1" ? "Copied" : "Copy"}</button> → Save Changes.</div>
+      <div style={step}>d. <b>Event Subscriptions</b> → On → Request URL: the same address (it should say Verified) → Subscribe to bot events: <span style={code}>message.im</span> <span style={code}>message.channels</span> <span style={code}>message.groups</span> → Save Changes (reinstall if Slack asks).</div>
+      <div style={step}>e. <b>App Home</b> → Show Tabs → Messages Tab on, and tick "Allow users to send Slash commands and messages from the messages tab".</div>
+      {s.slack_bot && (
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 10 }}>
+          <span style={{ fontSize: 13 }}>Post to</span>
+          <select value={chans?.find(c => "#" + c.name.replace(/^#/, "") === s.slack_channel)?.id || ""} onChange={e => save({ slack_channel: e.target.value }, e.target.value ? "Saved - new messages go there." : "Saved - messages come to you as DMs from the HQ app.")} style={{ ...input, width: "auto", fontSize: 13 }}>
+            <option value="">A direct message to me (from the HQ app)</option>
+            {(chans || []).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+          <span style={{ fontSize: 12, color: C.dim }}>A channel only shows here after you /invite @HQ to it.</span>
+        </div>
+      )}
     </div>
   );
 }

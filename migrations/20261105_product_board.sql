@@ -154,3 +154,13 @@ returns jsonb language sql stable security definer set search_path = public as $
   );
 $$;
 revoke all on function public.ai_usage_summary(int) from public, anon, authenticated;
+
+-- Slack (Oct 28 2026): one thread per card, so a reply in it means that card.
+create table if not exists public.product_slack_threads (
+  item_id    bigint primary key references public.product_items(id) on delete cascade,
+  channel    text not null,
+  ts         text not null,
+  created_at timestamptz not null default now()
+);
+create unique index if not exists product_slack_threads_ts_idx on public.product_slack_threads (channel, ts);
+alter table public.product_slack_threads enable row level security;

@@ -33,7 +33,7 @@ import { createClient } from "@supabase/supabase-js";
 import { OWNER_EMAILS, sendMail, esc } from "./_lib/projects.js";
 import { STATUSES, KINDS, REPOS, WORKFLOW_FILE, itemKey, repoFor } from "../shared/product.js";
 import { MODELS, EFFORTS } from "../shared/ai-pricing.js";
-import { productSlack, SLACK_HOOK, cardLink, quote } from "./_lib/product-slack.js";
+import { productSlack, SLACK_HOOK, slackCfg, saveSlackCfg, slackApi, slackTarget, postCard, requestMessage } from "./_lib/product-slack.js";
 
 export const config = { maxDuration: 60 };
 const nrm = (v) => String(v || "").trim().toLowerCase();
@@ -186,7 +186,8 @@ export default async function handler(req, res) {
   }
 }
 
-async function act(sb, me, b) {
+// Also used by /api/product-slack (Slack buttons and thread replies act as the person who clicked).
+export async function act(sb, me, b) {
   const approverOnly = () => { if (!me.approver) throw fail(403, "Only Drew and HQ admins can do that"); };
   const s = await settingsOf(sb);
 
@@ -194,7 +195,9 @@ async function act(sb, me, b) {
     case "boot": {
       if (!me.approver) return { me };
       const { github_token, ...pub } = s; // never sent back
-      pub.slack = !!(await kv(sb, "product_slack"))?.url;
+      const sc = await slackCfg(sb);
+      pub.slack = !!(sc.url || sc.bot_token);
+      pub.slack_bot = !!sc.bot_token; pub.slack_secret = !!sc.signing_secret; pub.slack_channel = sc.channel_name || null;
       const tok = await githubTokens(sb);
       return { me, settings: pub, github: Object.keys(tok), owners: [...new Set(Object.keys(REPOS).map(r => r.split("/")[0]))], admin_key: !!((await kv(sb, "anthropic_admin_key"))?.token || process.env.ANTHROPIC_ADMIN_KEY), models: MODELS, efforts: EFFORTS, repos: REPOS };
     }
@@ -215,7 +218,7 @@ async function act(sb, me, b) {
       if (error) throw fail(500, error.message);
       await event(sb, data.id, me, "system", `${me.name} sent this in from ${row.request_context.view_label || row.request_context.view || "HQ"}`);
       const where = row.request_context.view_label ? ` from _${row.request_context.view_label}_ (${row.request_context.app === "dssc" ? "DSSC" : "DS Elite"})` : "";
-      await productSlack(sb, `${row.kind === "bug" ? "🐞 Bug report" : row.kind === "improvement" ? "✨ Improvement" : "💡 New idea"} from *${me.name}*${where}\n*${cardLink(data.id, title)}*${row.body ? "\n" + quote(row.body) : ""}${shot ? "\n📷 has a screenshot" : ""}\nApprove or decline it on the board →`);
+      await postCard(sb, { ...row, id: data.id }, requestMessage({ ...row, id: data.id }, me.name, where, !!shot)).catch(() => {});
       // Email only if it's switched on in Settings (Slack is the default since Oct 28 2026).
       const to = s.email_requests ? (s.notify || []).filter(e => /@/.test(e) && nrm(e) !== me.email) : [];
       for (const addr of to) await sendMail({ to: addr, subject: `💡 New HQ ${row.kind === "bug" ? "bug report" : "request"} from ${me.name}: ${title}`, html: `<div style="font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;max-width:560px"><p><b>${esc(me.name)}</b> sent ${row.kind === "bug" ? "a bug report" : "an idea"} from <i>${esc(row.request_context.view_label || "HQ")}</i>:</p><p style="padding:10px 14px;background:#f4f4f5;border-radius:8px"><b>${esc(title)}</b><br>${esc(row.body).replace(/\n/g, "<br>")}</p><p><a href="${HQ_URL}&item=${data.id}">Approve or decline it in HQ →</a></p></div>`, text: `${me.name}: ${title}\n\n${row.body}\n\n${HQ_URL}&item=${data.id}` }).catch(() => {});
@@ -384,7 +387,31 @@ async function act(sb, me, b) {
       if ("slack_webhook" in p) {
         const url = String(p.slack_webhook || "").trim();
         if (url && !SLACK_HOOK.test(url)) throw fail(400, "That isn't a Slack incoming-webhook address (https://hooks.slack.com/services/...)");
-        await setKv(sb, "product_slack", url ? { url } : null, me.email, true);
+        await saveSlackCfg(sb, { url }, me.email);
+      }
+      // The Slack app's bot (buttons + thread replies): token, signing secret, where to post.
+      if ("slack_bot_token" in p) {
+        const tok = String(p.slack_bot_token || "").trim();
+        if (tok) {
+          if (!/^xoxb-/.test(tok)) throw fail(400, "The Bot User OAuth Token starts with xoxb-");
+          const t = await slackApi(tok, "auth.test", {});
+          if (!t.ok) throw fail(400, `Slack refused that token (${t.error})`);
+          await saveSlackCfg(sb, { bot_token: tok, team: t.team, bot_user: t.user_id, channel: "", channel_name: "" }, me.email);
+        } else await saveSlackCfg(sb, { bot_token: "", channel: "", channel_name: "" }, me.email);
+      }
+      if ("slack_signing_secret" in p) {
+        const sec = String(p.slack_signing_secret || "").trim();
+        if (sec && !/^[a-f0-9]{32}$/i.test(sec)) throw fail(400, "The Signing Secret is 32 letters and numbers (Basic Information -> App Credentials)");
+        await saveSlackCfg(sb, { signing_secret: sec }, me.email);
+      }
+      if ("slack_channel" in p) {
+        const sc = await slackCfg(sb);
+        if (!p.slack_channel) await saveSlackCfg(sb, { channel: "", channel_name: "" }, me.email);
+        else {
+          const info = await slackApi(sc.bot_token, "conversations.info", { channel: String(p.slack_channel) });
+          if (!info.ok) throw fail(400, `Slack can't see that channel (${info.error}) - invite the app to it first: /invite @HQ`);
+          await saveSlackCfg(sb, { channel: info.channel.id, channel_name: "#" + info.channel.name }, me.email);
+        }
       }
       if ("notify" in p) next.notify = (Array.isArray(p.notify) ? p.notify : String(p.notify || "").split(/[\s,;]+/)).map(nrm).filter(e => /@/.test(e)).slice(0, 10);
       await setKv(sb, "product_settings", next, me.email);
@@ -402,6 +429,15 @@ async function act(sb, me, b) {
         await setKv(sb, "anthropic_admin_key", tok ? { token: tok } : null, me.email, true);
       }
       return { settings: next };
+    }
+
+    case "slack_channels": {
+      approverOnly();
+      const sc = await slackCfg(sb);
+      if (!sc.bot_token) return { channels: [] };
+      const r = await slackApi(sc.bot_token, "users.conversations", { types: "public_channel,private_channel", exclude_archived: true, limit: 200 });
+      if (!r.ok) throw fail(400, `Slack: ${r.error}${r.needed ? ` (add the ${r.needed} scope and reinstall the app)` : ""}`);
+      return { channels: (r.channels || []).map(c => ({ id: c.id, name: "#" + c.name })), current: sc.channel || null };
     }
 
     case "test_slack": {
