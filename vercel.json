@@ -4,6 +4,10 @@
   "framework": "vite",
   "rewrites": [
     {
+      "source": "/coach-intro",
+      "destination": "/api/coach-intro-form"
+    },
+    {
       "source": "/hq/api/:path*",
       "destination": "/api/:path*"
     },
@@ -251,6 +255,10 @@
     {
       "path": "/api/marketing-cron",
       "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/dse-social-cron",
+      "schedule": "7,22,37,52 * * * *"
     }
   ],
   "functions": {
@@ -304,6 +312,21 @@
       "maxDuration": 300,
       "memory": 3009,
       "includeFiles": "node_modules/ffmpeg-static/ffmpeg"
+    },
+    "api/dse-social.js": {
+      "maxDuration": 300,
+      "memory": 1769,
+      "includeFiles": "api/_fonts/**"
+    },
+    "api/dse-social-cron.js": {
+      "maxDuration": 300,
+      "memory": 1769,
+      "includeFiles": "api/_fonts/**"
+    },
+    "api/product-slack.js": {
+      "maxDuration": 120,
+      "memory": 1769,
+      "includeFiles": "api/_fonts/**"
     }
   },
   "headers": [
