@@ -15,7 +15,7 @@ import { lineSite } from "../../shared/marketing-plan.js";
 import ReelBox from "./DsscMarketingReel.jsx";
 import {
   mktApi, isMissingTable, MIGRATION_MSG, lineMeta, lineLabel, LineChip, ANGLES, STATUS_META, CHANNEL_META, KIND_LABEL, kindOf,
-  mondayOf, addDays, fmtDate, fmtWhen, timeOf, dayOf, weekLabel, specOf, hasGraphic, GraphicPreview,
+  weekStartOf, addDays, fmtDate, fmtWhen, timeOf, dayOf, weekLabel, specOf, hasGraphic, GraphicPreview,
   approveItem, readyIssue, chipStyle, Msg, Panel, H, uploadImage, isImageFile, URGENT, isUrgent, urgentLabel, useNow,
 } from "./DsscMarketingKit.jsx";
 
@@ -141,7 +141,7 @@ export default function MarketingApprove({ week, setWeek, status, narrow, onChan
         </div>
         <Btn kind="ghost" onClick={() => setWeek(addDays(week, 7))} style={{ padding: "10px 14px", minHeight: 44, fontSize: 16 }} aria-label="Next week">→</Btn>
       </div>
-      {week !== mondayOf() && <div style={{ textAlign: "center", marginTop: -6, marginBottom: 10 }}><Btn kind="link" small onClick={() => setWeek(mondayOf())}>Back to this week</Btn></div>}
+      {week !== weekStartOf() && <div style={{ textAlign: "center", marginTop: -6, marginBottom: 10 }}><Btn kind="link" small onClick={() => setWeek(weekStartOf())}>Back to this week</Btn></div>}
 
       {conn && (!conn.facebook || !conn.instagram || !conn.email) && (
         <div style={{ fontSize: 12, color: DS.mut, background: DS.orangeSoft, border: "1px solid rgba(255,115,0,0.3)", borderRadius: 10, padding: "8px 12px", marginBottom: 12 }}>

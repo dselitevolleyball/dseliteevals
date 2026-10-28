@@ -4,7 +4,7 @@
 // ready" digest email.
 
 import { createClient } from "@supabase/supabase-js";
-import { planWeek, signalsFor, lineOf, programRef, mondayOf, addDays, fmtDay, lineLabel, LINE_KEYS, DEFAULT_WEIGHTS, DEFAULT_CADENCE, KIND_LABEL, normRhythm } from "../../shared/marketing-plan.js";
+import { planWeek, signalsFor, lineOf, programRef, weekStartOf, addDays, fmtDay, lineLabel, LINE_KEYS, DEFAULT_WEIGHTS, DEFAULT_CADENCE, KIND_LABEL, normRhythm, DAY_KEYS } from "../../shared/marketing-plan.js";
 import { composeItems, ctToday, ctIso, kindOf } from "./marketing-ai.js";
 import { sendResend, dsscFrom, isEmailish, esc } from "./site-inbox.js";
 import { EMPTY_FILTERS } from "../../shared/campaign-audience.js";
@@ -57,7 +57,7 @@ export async function loadPriorities(sb) {
 }
 // Items from the 4 weeks before `weekOf` - what the planner calls history.
 export async function loadHistory(sb, weekOf) {
-  const { data, error } = await sb.from("mkt_items").select("week_of, channel, kind, line, status, scheduled_at")
+  const { data, error } = await sb.from("mkt_items").select("week_of, channel, kind, line, status, scheduled_at, program, theme")
     .gte("week_of", addDays(weekOf, -28)).lt("week_of", weekOf).neq("status", "rejected");
   if (error) throw new Error("mkt_items: " + error.message);
   return data || [];
@@ -115,7 +115,7 @@ export const untouched = (it) => it.status === "draft" && !(it.revisions || []).
 // Rules -> Redo): each takes the free planned slot of its channel and kind
 // nearest its old day, and nothing else in the week is added.
 export async function generateWeek(sb, { weekOf, replaceDrafts = false, instruction = "", by = "auto", single = null, refill = null, timeoutMs } = {}) {
-  weekOf = mondayOf(weekOf);
+  weekOf = weekStartOf(weekOf);
   if (!weekOf) throw new Error("week_of must be a date (YYYY-MM-DD)");
   const today = ctToday();
   if (addDays(weekOf, 6) < today) throw new Error("That week is over");
@@ -167,10 +167,9 @@ function singleSlot({ weekOf, today, feed, settings, single, instruction, taken 
   const line = p ? lineOf(p) : (LINE_KEYS.includes(single.line) ? single.line : "club");
   const ref = today > weekOf ? today : weekOf;
   const sig = p ? signalsFor([p], ref)[0] : null;
-  const DAY = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
   const cad = settings.cadence || DEFAULT_CADENCE;
   const postDays = cad.social?.mode === "balance" ? (cad.social?.days || DEFAULT_CADENCE.social.days) : normRhythm(cad.social?.rhythm).filter(e => !e.follow).map(e => e.day);
-  const cands = channel === "social" ? postDays.map(d => addDays(weekOf, DAY.indexOf(d))).filter(d => d >= today) : [];
+  const cands = channel === "social" ? postDays.map(d => addDays(weekOf, DAY_KEYS.indexOf(d))).filter(d => d >= today) : [];
   // An idea brings its own day (in this week, not past) and format.
   const asked = /^\d{4}-\d{2}-\d{2}$/.test(String(single.day || "")) && single.day >= today && single.day >= weekOf && single.day <= addDays(weekOf, 6) ? single.day : null;
   const day = asked || cands.find(d => !taken.has(`social:${d}:post`)) || cands[0] || (today > weekOf ? today : weekOf);

@@ -140,23 +140,30 @@ export const lineUrl = (line) => { const l = LINE_LINKS[line] || LINE_LINKS.club
 
 const EVERGREEN = ["parties", "rentals", "open_gym"];
 const DATED = ["camp_elevate"]; // lines that exist only around their program dates
-export const DAY_KEYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+// Marketing weeks run Tuesday through the next Monday (Drew, Oct 28 2026:
+// "Jonathan does his review on Mondays and kicks off on Tuesdays through the
+// next Monday"). week_of is that Tuesday, and a day's place in the week is its
+// index here - so day N of a week is addDays(weekOf, DAY_KEYS.indexOf(key)).
+export const DAY_KEYS = ["tue", "wed", "thu", "fri", "sat", "sun", "mon"];
+const WEEK_START_DOW = 2;   // Tuesday (getUTCDay)
 
 // ── dates ────────────────────────────────────────────────────────────────────
 const toD = (s) => new Date(String(s).slice(0, 10) + "T00:00:00Z");
 const ymd = (d) => d.toISOString().slice(0, 10);
 export const addDays = (s, n) => { const d = toD(s); d.setUTCDate(d.getUTCDate() + n); return ymd(d); };
+// A scheduled_at (timestamp, or a plain date in a plan) as its Central-time day.
+const ctDayOf = (v) => { const s = String(v || ""); return s.length <= 10 ? s : new Date(s).toLocaleDateString("en-CA", { timeZone: "America/Chicago" }); };
 export const daysBetween = (a, b) => Math.round((toD(b) - toD(a)) / 864e5);
 const isYmd = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || "").slice(0, 10));
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 export const fmtDay = (s) => { if (!isYmd(s)) return ""; const d = toD(s); return `${DOW[d.getUTCDay()]}, ${MON[d.getUTCMonth()]} ${d.getUTCDate()}`; };
 
-// The Monday of the week a date falls in (weeks run Monday-Sunday).
-export function mondayOf(dateStr) {
+// The Tuesday that starts the marketing week a date falls in (Tue-Mon).
+export function weekStartOf(dateStr) {
   const s = dateStr instanceof Date ? ymd(dateStr) : String(dateStr || "").slice(0, 10);
   if (!isYmd(s)) return "";
-  const back = (toD(s).getUTCDay() + 6) % 7;
+  const back = (toD(s).getUTCDay() - WEEK_START_DOW + 7) % 7;
   return addDays(s, -back);
 }
 
@@ -243,8 +250,9 @@ function normSettings(s) {
 
 // A rhythm entry: { day, lines: [line] (empty = any line), format: post|story,
 // time? } or a follow-up story { day, follow: <day of the post it follows>,
-// format: story }. Unknown days / lines are dropped; a follow-up whose post
-// isn't earlier in the week is dropped too.
+// format: story }. Unknown days / lines are dropped. A follow-up of a post
+// later in the week (Tuesday's story after Monday's post) follows the post from
+// the week before.
 export function normRhythm(r) {
   const src = Array.isArray(r) && r.length ? r : DEFAULT_RHYTHM;
   const out = [];
@@ -254,7 +262,7 @@ export function normRhythm(r) {
     const time = /^\d{2}:\d{2}$/.test(String(e?.time || "")) ? e.time : undefined;
     if (e?.follow) {
       const f = String(e.follow).slice(0, 3).toLowerCase();
-      if (DAY_KEYS.indexOf(f) >= 0 && DAY_KEYS.indexOf(f) < DAY_KEYS.indexOf(day)) out.push({ day, follow: f, format: "story", ...(time ? { time } : {}) });
+      if (DAY_KEYS.indexOf(f) >= 0 && f !== day) out.push({ day, follow: f, format: "story", ...(time ? { time } : {}) });
       continue;
     }
     const lines = (Array.isArray(e?.lines) ? e.lines : []).filter(l => LINE_KEYS.includes(l));
@@ -282,7 +290,7 @@ function themeFor(themes, line, weekOf, n = 0) {
 const DAY_NAME = { mon: "Monday", tue: "Tuesday", wed: "Wednesday", thu: "Thursday", fri: "Friday", sat: "Saturday", sun: "Sunday" };
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
-// Priorities in effect for a week (any overlap with Monday-Sunday) on a channel.
+// Priorities in effect for a week (any overlap with its Tuesday-Monday) on a channel.
 function activePriorities(priorities, weekOf, channel) {
   const end = addDays(weekOf, 6);
   return (priorities || []).filter(p => p && p.active !== false
@@ -373,7 +381,7 @@ function socialDays(weekOf, cadence, n, today) {
 // `today` (optional): signals are measured from max(weekOf, today) and slots
 // before today are dropped - pass it when planning the current week.
 export function planWeek({ weekOf, programs = [], priorities = [], settings = {}, history = [], today = null } = {}) {
-  weekOf = mondayOf(weekOf);
+  weekOf = weekStartOf(weekOf);
   if (!weekOf) return { slots: [], scores: {}, notes: ["No week given"] };
   const { weights, cadence, emailOn, themes } = normSettings(settings);
   const rules = settings?.rules || [];
@@ -393,7 +401,7 @@ export function planWeek({ weekOf, programs = [], priorities = [], settings = {}
   for (const pr of sPrios) notes.push(`Priority in effect: "${pr.title}" (weight ${pr.weight}) - ${pr.lines.map(lineLabel).join(", ") || "no lines"}${pr.avoid_lines.length ? `; less ${pr.avoid_lines.map(lineLabel).join(", ")}` : ""}`);
   const { scores, why } = lineScores({ weekOf, ref, programs: live, prios: sPrios, weights, history, channel: "social", signals });
   if (cadence.social.mode === "rhythm") {
-    const r = rhythmSocial({ weekOf, ref, today, live, signals, sPrios, scores, why, cadence, themes, allowedOn, rules });
+    const r = rhythmSocial({ weekOf, ref, today, live, signals, sPrios, scores, why, cadence, themes, allowedOn, rules, history });
     slots.push(...r.slots); notes.push(...r.notes);
   } else balanceSocial();
   function balanceSocial() {
@@ -504,7 +512,7 @@ export function planWeek({ weekOf, programs = [], priorities = [], settings = {}
 // ── the calendar's rhythm ────────────────────────────────────────────────────
 // -> { slots, notes }. Lines are assigned to every post of the week (so a
 // follow-up knows what it follows), but only days from `today` on are planned.
-function rhythmSocial({ weekOf, ref, today, live, signals, sPrios, scores, why, cadence, themes, allowedOn, rules }) {
+function rhythmSocial({ weekOf, ref, today, live, signals, sPrios, scores, why, cadence, themes, allowedOn, rules, history }) {
   const notes = [], slots = [];
   const entries = cadence.social.rhythm.map(e => ({ ...e, date: addDays(weekOf, DAY_KEYS.indexOf(e.day)) }));
   const main = entries.filter(e => !e.follow);
@@ -565,16 +573,23 @@ function rhythmSocial({ weekOf, ref, today, live, signals, sPrios, scores, why, 
     made.set(e.day, slot);
     if (!today || e.date >= today) slots.push(slot);
   }
-  // 4. Follow-up stories: the same line, broken out program by program.
+  // 4. Follow-up stories: the same line, broken out program by program. One
+  //    whose post comes later in the week (Tuesday's story after Monday's
+  //    post) follows last week's post on that day.
+  const lastWeeks = (e) => {
+    const day = addDays(weekOf, DAY_KEYS.indexOf(e.follow) - 7);
+    const h = (history || []).find(h => counted(h) && h.channel === "social" && h.kind !== "follow_up" && h.kind !== "preview" && ctDayOf(h.scheduled_at) === day);
+    return h ? { line: h.line, program: h.program || null, theme: h.theme || null } : null;
+  };
   for (const e of entries.filter(x => x.follow)) {
-    const src = made.get(e.follow);
+    const src = DAY_KEYS.indexOf(e.follow) > DAY_KEYS.indexOf(e.day) ? lastWeeks(e) : made.get(e.follow);
     if (!src || (today && e.date < today)) continue;
     const others = live.filter(p => lineOf(p) === src.line && String(p.id) !== String(src.program?.id || "") && (p.ongoing || (isYmd(p.last_date) ? p.last_date : p.first_date) >= e.date) && (!DATED.includes(src.line) || p.first_date >= e.date))
       .sort((a, b) => String(a.first_date).localeCompare(String(b.first_date))).slice(0, 3);
     slots.push({
       channel: "social", kind: "follow_up", format: "story", platforms: STORY_PLATFORMS.slice(), day: e.date, time: e.time || cadence.social.time,
       line: src.line, program: src.program, programs: [src.program, ...others.map(programRef)].filter(Boolean), angle: "follow_up", follows: e.follow,
-      reason: `Follows up ${DAY_NAME[e.follow]}'s ${lineLabel(src.line)} post - break it out, don't repeat it`, theme: src.theme,
+      reason: `Follows up ${DAY_KEYS.indexOf(e.follow) > DAY_KEYS.indexOf(e.day) ? "last " : ""}${DAY_NAME[e.follow]}'s ${lineLabel(src.line)} post - break it out, don't repeat it`, theme: src.theme,
     });
   }
   // 5. The last week of the month previews the next one.
@@ -684,7 +699,7 @@ function smsSlot({ weekOf, ref, today, live, signals, priorities, history, caden
 export function planFlow({ startWeek, weeks = 6, programs = [], priorities = [], settings = {}, history = [], today = null } = {}) {
   const out = [];
   let hist = (history || []).slice();
-  let w = mondayOf(startWeek);
+  let w = weekStartOf(startWeek);
   if (!w) return out;
   for (let i = 0; i < Math.max(1, Math.min(26, +weeks || 6)); i++, w = addDays(w, 7)) {
     const plan = planWeek({ weekOf: w, programs, priorities, settings, history: hist, today: i === 0 ? today : null });
@@ -697,7 +712,7 @@ export function planFlow({ startWeek, weeks = 6, programs = [], priorities = [],
       sms: plan.slots.find(s => s.channel === "sms")?.line || null,
       slots: plan.slots,
     });
-    hist = hist.concat(plan.slots.map(s => ({ week_of: w, channel: s.channel, kind: s.kind, line: s.line, status: "planned", scheduled_at: s.day })));
+    hist = hist.concat(plan.slots.map(s => ({ week_of: w, channel: s.channel, kind: s.kind, line: s.line, status: "planned", scheduled_at: s.day, program: s.program || null, theme: s.theme || null })));
   }
   return out;
 }

@@ -42,7 +42,7 @@
 import { readBody } from "./_lib/site-forms.js";
 import { verifyDirector, isEmailish, nrm } from "./_lib/site-inbox.js";
 import { normalizePhone } from "./_lib/sms.js";
-import { planWeek, planFlow, signalsFor, mondayOf, addDays, parseBrief, fmtDay, normRhythm, LINE_KEYS } from "../shared/marketing-plan.js";
+import { planWeek, planFlow, signalsFor, weekStartOf, addDays, parseBrief, fmtDay, normRhythm, LINE_KEYS } from "../shared/marketing-plan.js";
 import { reviseItem, buildEmail, withHero, aiReady, ctToday, interpretRule } from "./_lib/marketing-ai.js";
 import { normRules } from "../shared/marketing-rules.js";
 import { metaHealth } from "./_lib/marketing-alerts.js";
@@ -129,28 +129,28 @@ export async function run(sb, { me, name }, b) {
     }
 
     case "plan": {
-      const weekOf = mondayOf(b.week_of || today);
+      const weekOf = weekStartOf(b.week_of || today);
       if (!weekOf) throw fail(400, "week_of must be YYYY-MM-DD");
       const [feed, settings, priorities, history] = await Promise.all([fetchPrograms(), loadSettings(sb), loadPriorities(sb), loadHistory(sb, weekOf)]);
       return { week_of: weekOf, ...planWeek({ weekOf, programs: feed.programs, priorities, settings, history, today: today > weekOf ? today : null }) };
     }
 
     case "flow": {
-      const start = mondayOf(b.start_week || today);
+      const start = weekStartOf(b.start_week || today);
       if (!start) throw fail(400, "start_week must be YYYY-MM-DD");
       const [feed, settings, priorities, history] = await Promise.all([fetchPrograms(), loadSettings(sb), loadPriorities(sb), loadHistory(sb, start)]);
       return { start_week: start, flow: planFlow({ startWeek: start, weeks: Math.max(1, Math.min(12, +b.weeks || 6)), programs: feed.programs, priorities, settings, history, today: today > start ? today : null }) };
     }
 
     case "items": {
-      const weekOf = mondayOf(b.week_of || today);
+      const weekOf = weekStartOf(b.week_of || today);
       const { data, error } = await sb.from("mkt_items").select("*").eq("week_of", weekOf).order("scheduled_at", { ascending: true }).order("id");
       if (error) throw fail(500, error.message);
       return { week_of: weekOf, items: data || [] };
     }
 
     case "generate": {
-      const weekOf = mondayOf(b.week_of || today);
+      const weekOf = weekStartOf(b.week_of || today);
       // One item: a program, a line, or an idea typed on a calendar day (day, time, format, the idea as its theme).
       const ideaLine = !b.line && !b.program_id && b.instruction ? (parseBrief(String(b.instruction)).lines || [])[0] || null : null;
       const single = b.program_id || b.line || b.single || b.day ? { program_id: b.program_id || null, line: b.line || ideaLine, channel: b.channel || "social", day: b.day || null, time: b.time || null, format: b.format || null, theme: b.theme ? String(b.theme).slice(0, 300) : null, reason: b.reason ? String(b.reason).slice(0, 200) : null, template: b.template || null, trend: b.trend || null } : null;
@@ -177,7 +177,7 @@ export async function run(sb, { me, name }, b) {
     }
 
     case "brief": {
-      const weekOf = mondayOf(b.week_of || today);
+      const weekOf = weekStartOf(b.week_of || today);
       const instruction = String(b.instruction || "").trim().slice(0, 1000);
       if (!weekOf || !instruction) throw fail(400, "week_of and instruction are required");
       const { lines, avoid_lines } = parseBrief(instruction);
@@ -224,7 +224,7 @@ export async function run(sb, { me, name }, b) {
       for (const k of EDITABLE) if (k in p) patch[k] = p[k];
       if ("scheduled_at" in patch && patch.scheduled_at && isNaN(new Date(patch.scheduled_at))) throw fail(400, "scheduled_at isn't a date");
       // Moved to another week on the calendar: it belongs to that week now.
-      if (patch.scheduled_at) patch.week_of = mondayOf(new Date(patch.scheduled_at).toLocaleDateString("en-CA", { timeZone: "America/Chicago" }));
+      if (patch.scheduled_at) patch.week_of = weekStartOf(new Date(patch.scheduled_at).toLocaleDateString("en-CA", { timeZone: "America/Chicago" }));
       if ("cta_url" in patch && patch.cta_url && !/^https:\/\/\S+$/.test(patch.cta_url)) throw fail(400, "The link must start with https://");
       if ("hashtags" in patch) patch.hashtags = (Array.isArray(patch.hashtags) ? patch.hashtags : String(patch.hashtags || "").split(/[\s,]+/)).map(h => String(h).replace(/[^A-Za-z0-9_]/g, "")).filter(Boolean).slice(0, 10);
       if ("platforms" in patch) patch.platforms = (patch.platforms || []).filter(x => ["facebook", "instagram", "instagram_story", "facebook_story"].includes(x));
@@ -426,7 +426,7 @@ export async function run(sb, { me, name }, b) {
 
     case "rules_check": {             // drafts and approved items from this week on that break a rule
       const settings = await loadSettings(sb);
-      const { data, error } = await sb.from("mkt_items").select("*").gte("week_of", mondayOf(today)).in("status", ["draft", "approved", "failed"]).order("scheduled_at");
+      const { data, error } = await sb.from("mkt_items").select("*").gte("week_of", weekStartOf(today)).in("status", ["draft", "approved", "failed"]).order("scheduled_at");
       if (error) throw fail(500, error.message);
       return { items: (data || []).map(i => ({ id: i.id, week_of: i.week_of, status: i.status, channel: i.channel, kind: i.kind, line: i.line, headline: i.email_subject || i.headline, scheduled_at: i.scheduled_at, issues: ruleIssues(i, settings.rules) })).filter(i => i.issues.length) };
     }

@@ -98,14 +98,15 @@ export function recommendCadence(heat, cadence) {
   const previewIdx = cad.social.month_preview !== false ? DAY_KEYS.indexOf(String(cad.social.preview_day || "sat")) : -1;
   const used = new Set(previewIdx >= 0 ? [previewIdx] : []);
   const lineVol = (ls) => (ls || []).reduce((s, l) => s + (heat.lines[l]?.total || 0), 0);
-  // Biggest lines pick their days first; a post with a follow-up needs a free day after it.
+  // Biggest lines pick their days first; a post with a follow-up needs a free
+  // day after it (the week wraps: Monday's post can have Tuesday's story).
   const order = posts.map((e, i) => ({ e, i, vol: lineVol(e.lines) })).sort((a, b) => b.vol - a.vol || a.i - b.i);
   const placed = new Map();
   for (const { e } of order) {
     const m = blended(heat, e.lines);
     const sc = dayScores(m);
     const needFollow = follows.some(f => f.follow === e.day);
-    const cands = DAY_KEYS.map((_, d) => d).filter(d => !used.has(d) && (!needFollow || DAY_KEYS.some((_, x) => x > d && !used.has(x)))).sort((a, b) => sc[b] - sc[a]);
+    const cands = DAY_KEYS.map((_, d) => d).filter(d => !used.has(d) && (!needFollow || DAY_KEYS.some((_, x) => x !== d && !used.has(x)))).sort((a, b) => sc[b] - sc[a]);
     const d = cands.length ? cands[0] : DAY_KEYS.indexOf(e.day);
     used.add(d);
     placed.set(e, { d, m });
@@ -121,8 +122,8 @@ export function recommendCadence(heat, cadence) {
     const pd = post ? placed.get(post).d : DAY_KEYS.indexOf(f.follow);
     const m = post ? placed.get(post).m : heat.overall;
     const sc = dayScores(m);
-    const cands = [pd + 1, pd + 2].filter(x => x < 7 && !used.has(x)).sort((a, b) => sc[b] - sc[a]);
-    const d = cands.length ? cands[0] : DAY_KEYS.findIndex((_, x) => x > pd && !used.has(x));
+    const cands = [(pd + 1) % 7, (pd + 2) % 7].filter(x => !used.has(x)).sort((a, b) => sc[b] - sc[a]);
+    const d = cands.length ? cands[0] : ([1, 2, 3, 4, 5, 6].map(k => (pd + k) % 7).find(x => !used.has(x)) ?? -1);
     if (d < 0) { changes.push(`Follow-up story after ${DAY_LABEL[f.follow]}: dropped (no free day after its post)`); continue; }
     used.add(d);
     const n = { day: DAY_KEYS[d], follow: DAY_KEYS[pd], format: "story", time: timeOn(heat, m, d, cad.social.time) };

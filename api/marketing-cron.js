@@ -35,7 +35,7 @@
 import { safeEqual } from "./_lib/site-inbox.js";
 import { syncSiteSubscribers } from "./_lib/site-subscribers.js";
 import { failureAlert, metaHeadsUp } from "./_lib/marketing-alerts.js";
-import { mondayOf, addDays } from "../shared/marketing-plan.js";
+import { weekStartOf, addDays } from "../shared/marketing-plan.js";
 import { publishItem } from "./_lib/marketing-publish.js";
 import { serviceSb, loadSettings, generateWeek, sendDigest, syncPhotos, log } from "./_lib/marketing-core.js";
 import { tagPhotos } from "./_lib/marketing-photos-ai.js";
@@ -143,12 +143,12 @@ export async function runCron(sb, { now = new Date(), dry = false, deadline = Da
   // generate_day after 5 pm, if next week still has drafts waiting, one
   // reminder goes out.
   const ct = centralClock(now);
-  const thisMon = mondayOf(ct.date);
+  const thisWeek = weekStartOf(ct.date);
   const ahead = Math.max(0, Math.min(6, Number.isFinite(+settings.plan_ahead) ? +settings.plan_ahead : 2));
   out.auto = { enabled: !!settings.auto_generate, plan_ahead: ahead, weeks: [], ran: false };
   if (settings.auto_generate) {
     for (let i = 1; i <= ahead; i++) {
-      const wk = addDays(thisMon, 7 * i);
+      const wk = addDays(thisWeek, 7 * i);
       const { count } = await sb.from("mkt_items").select("id", { count: "exact", head: true }).eq("week_of", wk);
       const { data: done } = await sb.from("mkt_log").select("id").eq("kind", "auto_generate").contains("detail", { week_of: wk }).limit(1);
       if (count || done?.length) { out.auto.weeks.push({ week_of: wk, items: count || 0, already: !!done?.length }); continue; }
@@ -162,7 +162,7 @@ export async function runCron(sb, { now = new Date(), dry = false, deadline = Da
       } catch (e) { out.auto.error = e.message; await log(sb, null, "auto_generate_error", { week_of: wk, error: e.message }); }
       break;
     }
-    const nextWeek = addDays(thisMon, 7);
+    const nextWeek = addDays(thisWeek, 7);
     if (ct.dow === String(settings.generate_day || "sun").slice(0, 3) && ct.hour >= 17) {
       const { data: waiting } = await sb.from("mkt_items").select("*").eq("week_of", nextWeek).eq("status", "draft");
       const { data: sent } = await sb.from("mkt_log").select("id").eq("kind", "review_reminder").contains("detail", { week_of: nextWeek }).limit(1);

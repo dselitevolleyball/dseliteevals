@@ -31,7 +31,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import ffmpegPath from "ffmpeg-static";
 import { claudeClient } from "./ai-client.js";
-import { LINE_KEYS, LINE_LINKS, lineLabel, lineUrl, addDays, mondayOf } from "../../shared/marketing-plan.js";
+import { LINE_KEYS, LINE_LINKS, lineLabel, lineUrl, addDays, weekStartOf } from "../../shared/marketing-plan.js";
 import { AI_MODEL, aiReady, flairText, ctIso, ctToday } from "./marketing-ai.js";
 import { rulesText, clash, fits } from "../../shared/marketing-rules.js";
 
@@ -314,7 +314,7 @@ export async function createReel(sb, { picks = null, videoIds = null, line = nul
   const headline = (copy?.headline || defaultHeadline(mainLine)).toUpperCase().slice(0, 50);
   const d = day && day >= today ? day : addDays(today, 2);
   const row = {
-    week_of: mondayOf(d), channel: "social", kind: "reel", theme: "Reel", line: mainLine, program: null, programs: [], angle: "reel", status: "draft",
+    week_of: weekStartOf(d), channel: "social", kind: "reel", theme: "Reel", line: mainLine, program: null, programs: [], angle: "reel", status: "draft",
     platforms: ["instagram", "facebook"], scheduled_at: ctIso(d, settings.cadence?.social?.time || "18:30"),
     reason: `Reel from ${new Set(chosen.map(m => m.video_id)).size} video${new Set(chosen.map(m => m.video_id)).size === 1 ? "" : "s"}: ${chosen.map(m => m.label).join(" · ")}`,
     headline, body: copy?.caption || `${lineLabel(mainLine)} at DSSC - where Dripping Springs plays.`, hashtags: (copy?.hashtags || ["DrippingSprings", "DSSC"]).map(h => String(h).replace(/[^A-Za-z0-9_]/g, "")).filter(Boolean).slice(0, 6),

@@ -13,7 +13,7 @@ import { mktApi, Panel, H, Msg, dayOf, timeOf } from "./DsscMarketingKit.jsx";
 import { DAY_KEYS } from "../../shared/marketing-plan.js";
 import { registrationHeatmap, recommendCadence, bestTimeFor, fmtHour } from "../../shared/marketing-timing.js";
 
-const DLABEL = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const DLABEL = DAY_KEYS.map(k => k[0].toUpperCase() + k.slice(1));   // rows follow DAY_KEYS (Tue ... Mon)
 const HOURS = Array.from({ length: 16 }, (_, i) => i + 7);   // 7 am – 10 pm
 
 export default function MarketingTiming({ cadence, narrow, onApplied }) {
@@ -43,7 +43,7 @@ export default function MarketingTiming({ cadence, narrow, onApplied }) {
       let moved = 0;
       for (const it of data || []) {
         const day = dayOf(it.scheduled_at); if (!day) continue;
-        const key = DAY_KEYS[(new Date(day + "T12:00:00").getDay() + 6) % 7];
+        const key = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"][new Date(day + "T12:00:00").getDay()];
         const t = bestTimeFor(heat, it.line, key, it.channel);
         if (t && t !== timeOf(it.scheduled_at)) { await mktApi("update", { id: it.id, patch: { scheduled_at: new Date(`${day}T${t}:00`).toISOString() } }); moved++; }
       }

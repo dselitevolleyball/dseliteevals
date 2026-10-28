@@ -10,7 +10,7 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { supabase } from "../supabase";
 import { DS, Btn, Tag, inputStyle, Grow } from "./DsscHub.jsx";
-import { mktApi, isMissingTable, MIGRATION_MSG, LINES, lineMeta, lineLabel, LineChip, ANGLES, DEFAULT_WEIGHTS, addDays, fmtDate, mondayOf, isoLocal, chipStyle, Msg, Panel, H } from "./DsscMarketingKit.jsx";
+import { mktApi, isMissingTable, MIGRATION_MSG, LINES, lineMeta, lineLabel, LineChip, ANGLES, DEFAULT_WEIGHTS, addDays, fmtDate, weekStartOf, isoLocal, chipStyle, Msg, Panel, H } from "./DsscMarketingKit.jsx";
 
 const ANGLE_ORDER = ["last_call", "starting_soon", "just_started", "new", "priority", "reminder", "evergreen"];
 const ANGLE_COLOR = { last_call: DS.orange, starting_soon: DS.lime, just_started: "#7FD1C3", new: "#7FD1C3", priority: DS.orange, reminder: DS.mut, evergreen: DS.dim };
@@ -26,7 +26,7 @@ export function MarketingPlan({ week, status, narrow, onOpenWeek }) {
   const [showNotes, setShowNotes] = useState(false);
   const [busy, setBusy] = useState("");
   const [msg, setMsg] = useState(null);
-  const start = week < mondayOf() ? mondayOf() : week;
+  const start = week < weekStartOf() ? weekStartOf() : week;
 
   useEffect(() => {
     setFlow(null); setFlowErr("");
@@ -34,7 +34,7 @@ export function MarketingPlan({ week, status, narrow, onOpenWeek }) {
   }, [start]);
   useEffect(() => {
     mktApi("programs").then(setFeed).catch(e => { setFeedErr(e.message); setFeed({}); });
-    supabase.from("mkt_items").select("id, week_of, channel, line, status").gte("week_of", addDays(mondayOf(), -28)).lt("week_of", mondayOf()).in("status", ["approved", "published", "publishing"])
+    supabase.from("mkt_items").select("id, week_of, channel, line, status").gte("week_of", addDays(weekStartOf(), -28)).lt("week_of", weekStartOf()).in("status", ["approved", "published", "publishing"])
       .then(({ data }) => setHistory(data || []));
   }, []);
 
@@ -164,7 +164,7 @@ function hexA(hex, a) {
 
 // ── Priorities ──────────────────────────────────────────────────────────────
 const CHANNELS = [["social", "Social"], ["email", "Email"], ["sms", "Texts"]];
-const blank = () => ({ title: "", notes: "", lines: [], weight: 3, starts_on: mondayOf(), ends_on: addDays(mondayOf(), 13), channels: ["social", "email", "sms"], active: true });
+const blank = () => ({ title: "", notes: "", lines: [], weight: 3, starts_on: weekStartOf(), ends_on: addDays(weekStartOf(), 13), channels: ["social", "email", "sms"], active: true });
 
 export function MarketingPriorities({ narrow, onChanged }) {
   const [rows, setRows] = useState(null);

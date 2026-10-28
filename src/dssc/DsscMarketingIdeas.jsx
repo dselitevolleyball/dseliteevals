@@ -10,7 +10,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "../supabase";
 import { DS, Btn, Tag, inputStyle, Grow } from "./DsscHub.jsx";
-import { mktApi, isMissingTable, MIGRATION_MSG, LINES, lineMeta, LineChip, chipStyle, Msg, Panel, H, fmtDate, mondayOf } from "./DsscMarketingKit.jsx";
+import { mktApi, isMissingTable, MIGRATION_MSG, LINES, lineMeta, LineChip, chipStyle, Msg, Panel, H, fmtDate, weekStartOf } from "./DsscMarketingKit.jsx";
 
 const KIND = {
   season: ["Season", "#7FD1C3"], holiday: ["Holiday", "#F5C542"], local: ["Local news", "#60A5FA"], club: ["Club news", DS.lime],
@@ -248,7 +248,7 @@ function Spotlight({ sp, narrow, busy, call, onOpenWeek, reload }) {
           <Btn kind="quiet" onClick={() => setAnswering(false)} style={big(narrow)}>Cancel</Btn>
         </>}
         {sp.status === "answered" && <Btn kind="primary" disabled={!!busy} onClick={() => call("spotlight_draft", { id: sp.id }, (d) => `${(d?.items || []).length} drafts made — they're in the Approve tab.`)} style={big(narrow)}>{isBusy("spotlight_draft") ? "Drafting…" : "Make the drafts now"}</Btn>}
-        {sp.status === "drafted" && <Btn kind="ghost" onClick={async () => { const { data } = await supabase.from("mkt_items").select("week_of").in("id", sp.item_ids || []).order("scheduled_at").limit(1); onOpenWeek?.(data?.[0]?.week_of || mondayOf()); }} style={big(narrow)}>Open the drafts →</Btn>}
+        {sp.status === "drafted" && <Btn kind="ghost" onClick={async () => { const { data } = await supabase.from("mkt_items").select("week_of").in("id", sp.item_ids || []).order("scheduled_at").limit(1); onOpenWeek?.(data?.[0]?.week_of || weekStartOf()); }} style={big(narrow)}>Open the drafts →</Btn>}
         {["draft", "sent", "answered"].includes(sp.status) && <Btn kind="quiet" disabled={!!busy} onClick={() => { if (window.confirm(`Cancel ${first(sp.name)}'s spotlight?`)) call("spotlight_cancel", { id: sp.id }, "Cancelled.").then(reload); }} style={big(narrow)}>Cancel</Btn>}
       </div>
     </div>

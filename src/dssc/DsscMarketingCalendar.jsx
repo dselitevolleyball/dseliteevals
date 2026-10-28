@@ -18,7 +18,7 @@ import { supabase } from "../supabase";
 import { DS, Btn, Tag, Grow, inputStyle } from "./DsscHub.jsx";
 import {
   mktApi, isMissingTable, MIGRATION_MSG, lineMeta, lineLabel, LineChip, ANGLES, STATUS_META, CHANNEL_META, KIND_LABEL, kindOf,
-  mondayOf, addDays, fmtDate, timeOf, dayOf, approveItem, readyIssue, chipStyle, Msg, Panel, LINES, GraphicPreview, specOf, hasGraphic, URGENT, URGENT_SOFT, isUrgent, urgentLabel, useNow,
+  weekStartOf, DAYS, DAY_LABEL, addDays, fmtDate, timeOf, dayOf, approveItem, readyIssue, chipStyle, Msg, Panel, LINES, GraphicPreview, specOf, hasGraphic, URGENT, URGENT_SOFT, isUrgent, urgentLabel, useNow,
 } from "./DsscMarketingKit.jsx";
 import { ItemCard, PhotoPicker } from "./DsscMarketingApprove.jsx";
 
@@ -26,7 +26,7 @@ const firstOfMonth = (iso) => iso.slice(0, 8) + "01";
 const monthLabel = (iso) => new Date(iso + "T12:00:00").toLocaleDateString(undefined, { month: "long", year: "numeric" });
 const addMonths = (iso, n) => { const d = new Date(iso + "T12:00:00"); d.setDate(1); d.setMonth(d.getMonth() + n); return d.toISOString().slice(0, 8) + "01"; };
 const todayIso = () => new Date().toLocaleDateString("en-CA");
-const DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const DOW = DAYS.map(d => DAY_LABEL[d]);   // Tue ... Mon
 const titleOf = (it) => (it.channel === "email" ? it.email_subject : it.graphic?.headline) || it.headline || it.program?.name || lineLabel(it.line);
 const thumbOf = (it) => it.asset_url || it.graphic?.custom_url || it.graphic?.photo_url || null;
 const canMove = (it) => !["publishing", "published"].includes(it.status);
@@ -48,7 +48,7 @@ export default function MarketingCalendar({ narrow, status, focus, onOpenWeek, o
   const [sel, setSel] = useState(() => new Set());
   const [chan, setChan] = useState("all");
   const [only, setOnly] = useState("all");      // all | todo
-  const [weekStart, setWeekStart] = useState(() => mondayOf(todayIso()));
+  const [weekStart, setWeekStart] = useState(() => weekStartOf(todayIso()));
   const [addFor, setAddFor] = useState(null);   // the day the "+" was pressed on
   const [dropDay, setDropDay] = useState(null);
   const dragId = useRef(null);
@@ -56,16 +56,16 @@ export default function MarketingCalendar({ narrow, status, focus, onOpenWeek, o
   // Opened from somewhere else on one item ("Show on calendar"): go to its week and open it.
   useEffect(() => {
     if (!focus?.day) return;
-    setMonth(firstOfMonth(focus.day)); setWeekStart(mondayOf(focus.day));
+    setMonth(firstOfMonth(focus.day)); setWeekStart(weekStartOf(focus.day));
     if (!narrow) setView("week");
     setOpenId(focus.id || null);
   }, [focus?.n]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // The weeks on screen: Monday on/before the 1st through the Sunday on/after
+  // The weeks on screen: the Tuesday on/before the 1st through the Monday on/after
   // month end — or the one week in Week view.
   const weeks = useMemo(() => {
     if (view === "week") return [weekStart];
-    const start = mondayOf(month), end = addDays(addMonths(month, 1), -1);
+    const start = weekStartOf(month), end = addDays(addMonths(month, 1), -1);
     const out = []; for (let w = start; w <= end; w = addDays(w, 7)) out.push(w);
     return out;
   }, [month, view, weekStart]);
@@ -200,7 +200,7 @@ export default function MarketingCalendar({ narrow, status, focus, onOpenWeek, o
         <Btn kind="ghost" onClick={() => view === "week" ? setWeekStart(addDays(weekStart, -7)) : setMonth(addMonths(month, -1))} style={{ minHeight: 40 }} aria-label={view === "week" ? "Previous week" : "Previous month"}>←</Btn>
         <div style={{ fontSize: 18, fontWeight: 800, minWidth: 150, textAlign: "center" }}>{view === "week" ? `Week of ${fmtDate(weekStart)}` : monthLabel(month)}</div>
         <Btn kind="ghost" onClick={() => view === "week" ? setWeekStart(addDays(weekStart, 7)) : setMonth(addMonths(month, 1))} style={{ minHeight: 40 }} aria-label={view === "week" ? "Next week" : "Next month"}>→</Btn>
-        {(view === "week" ? weekStart !== mondayOf(today) : month !== firstOfMonth(today)) && <Btn kind="link" small onClick={() => { setMonth(firstOfMonth(today)); setWeekStart(mondayOf(today)); }}>Today</Btn>}
+        {(view === "week" ? weekStart !== weekStartOf(today) : month !== firstOfMonth(today)) && <Btn kind="link" small onClick={() => { setMonth(firstOfMonth(today)); setWeekStart(weekStartOf(today)); }}>Today</Btn>}
         <span style={{ flex: 1 }} />
         {!narrow && [["month", "Month"], ["week", "Week"], ["list", "List"]].map(([k, l]) => <button key={k} onClick={() => setView(k)} style={chipStyle(view === k, DS.lime)}>{l}</button>)}
         <button onClick={() => { setSelecting(s => !s); setSel(new Set()); }} style={chipStyle(selecting, DS.orange, narrow)}>{selecting ? "Done selecting" : "Select"}</button>
@@ -349,7 +349,7 @@ function AddIdea({ day, narrow, onClose, onMade }) {
     setBusy(true); setErr("");
     try {
       const [, , channel] = KINDS_ADD.find(x => x[0] === kind);
-      const r = await mktApi("generate", { week_of: mondayOf(d), day: d, time, channel, format: kind === "story" ? "story" : undefined, line: line || undefined, instruction: text, theme: text, reason: "Added on the calendar" });
+      const r = await mktApi("generate", { week_of: weekStartOf(d), day: d, time, channel, format: kind === "story" ? "story" : undefined, line: line || undefined, instruction: text, theme: text, reason: "Added on the calendar" });
       onMade((r.items || [])[0]);
     } catch (e) { setErr(e.message); setBusy(false); }
   };

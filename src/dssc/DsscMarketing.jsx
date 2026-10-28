@@ -18,7 +18,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "../supabase";
 import { DS, Btn } from "./DsscHub.jsx";
-import { mktApi, isMissingTable, MIGRATION_MSG, mondayOf, useNarrow } from "./DsscMarketingKit.jsx";
+import { mktApi, isMissingTable, MIGRATION_MSG, weekStartOf, useNarrow } from "./DsscMarketingKit.jsx";
 import MarketingApprove from "./DsscMarketingApprove.jsx";
 import { MarketingPlan, MarketingPriorities } from "./DsscMarketingPlan.jsx";
 import { MarketingPhotos, MarketingSettings } from "./DsscMarketingLibrary.jsx";
@@ -35,7 +35,7 @@ export default function DsscMarketing({ coach, initialWeek, initialTab, onConsum
   const [tab, setTabState] = useState(() => { if (TABS.some(([k]) => k === initialTab)) return initialTab; if (initialWeek) return "approve"; try { const t = sessionStorage.getItem(TAB_KEY); return TABS.some(([k]) => k === t) ? t : "calendar"; } catch { return "calendar"; } });
   const setTab = (t) => { setTabState(t); try { sessionStorage.setItem(TAB_KEY, t); } catch { /* ignore */ } };
   const [calFocus, setCalFocus] = useState(null);   // { id, day } - open the Calendar on this item
-  const [week, setWeek] = useState(() => /^\d{4}-\d{2}-\d{2}$/.test(initialWeek || "") ? mondayOf(initialWeek) : mondayOf());
+  const [week, setWeek] = useState(() => /^\d{4}-\d{2}-\d{2}$/.test(initialWeek || "") ? weekStartOf(initialWeek) : weekStartOf());
   const [status, setStatus] = useState(null);
   const [statusErr, setStatusErr] = useState("");
   const [setupErr, setSetupErr] = useState("");
@@ -43,7 +43,7 @@ export default function DsscMarketing({ coach, initialWeek, initialTab, onConsum
   // Deep link from the "drafts ready" email: ?view=dsscmarketing&week=YYYY-MM-DD
   useEffect(() => {
     if (!initialWeek && !initialTab) return;
-    if (/^\d{4}-\d{2}-\d{2}$/.test(initialWeek || "")) { setWeek(mondayOf(initialWeek)); setTab("approve"); }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(initialWeek || "")) { setWeek(weekStartOf(initialWeek)); setTab("approve"); }
     if (TABS.some(([k]) => k === initialTab)) setTab(initialTab);
     onConsumedInitial?.();
   }, [initialWeek, initialTab]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -80,14 +80,14 @@ export default function DsscMarketing({ coach, initialWeek, initialTab, onConsum
           ))}
         </div>
 
-        {tab === "calendar" && <MarketingCalendar narrow={narrow} status={status} focus={calFocus} onOpenWeek={(w) => { setWeek(mondayOf(w)); setTab("approve"); }} onChanged={changed} />}
+        {tab === "calendar" && <MarketingCalendar narrow={narrow} status={status} focus={calFocus} onOpenWeek={(w) => { setWeek(weekStartOf(w)); setTab("approve"); }} onChanged={changed} />}
         {tab === "approve" && <MarketingApprove week={week} setWeek={setWeek} status={status} narrow={narrow} onChanged={changed} coach={coach} onShowOnCalendar={(id, day) => { setCalFocus({ id, day, n: Date.now() }); setTab("calendar"); }} />}
-        {tab === "ideas" && <MarketingIdeas narrow={narrow} onOpenWeek={(w) => { setWeek(mondayOf(w)); setTab("approve"); }} onChanged={changed} />}
-        {tab === "plan" && <MarketingPlan week={week} status={status} narrow={narrow} onOpenWeek={(w) => { setWeek(mondayOf(w)); setTab("approve"); }} />}
+        {tab === "ideas" && <MarketingIdeas narrow={narrow} onOpenWeek={(w) => { setWeek(weekStartOf(w)); setTab("approve"); }} onChanged={changed} />}
+        {tab === "plan" && <MarketingPlan week={week} status={status} narrow={narrow} onOpenWeek={(w) => { setWeek(weekStartOf(w)); setTab("approve"); }} />}
         {tab === "priorities" && <MarketingPriorities narrow={narrow} onChanged={() => { loadStatus(); changed(); }} />}
         {tab === "rules" && <MarketingRules status={status} narrow={narrow} onChanged={() => { loadStatus(); changed(); }} />}
         {tab === "photos" && <MarketingPhotos narrow={narrow} />}
-        {tab === "videos" && <MarketingVideos narrow={narrow} onOpenWeek={(w) => { setWeek(mondayOf(w)); setTab("approve"); }} onChanged={changed} />}
+        {tab === "videos" && <MarketingVideos narrow={narrow} onOpenWeek={(w) => { setWeek(weekStartOf(w)); setTab("approve"); }} onChanged={changed} />}
         {tab === "settings" && <MarketingSettings status={status} narrow={narrow} reloadStatus={loadStatus} onChanged={changed} />}
       </div>
     </div>

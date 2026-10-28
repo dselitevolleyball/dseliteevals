@@ -86,15 +86,15 @@ export const STATUS_META = {
   published: ["Published", "#7FD1C3"], failed: ["Failed", DS.orange], rejected: ["Rejected", DS.dim],
 };
 export const CHANNEL_META = { social: ["Social", "📱"], email: ["Email", "✉️"], sms: ["Text", "💬"] };
-export const DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+export const DAYS = PLAN.DAY_KEYS || ["tue", "wed", "thu", "fri", "sat", "sun", "mon"];   // the marketing week: Tuesday-Monday
 export const DAY_LABEL = { mon: "Mon", tue: "Tue", wed: "Wed", thu: "Thu", fri: "Fri", sat: "Sat", sun: "Sun" };
 
-// ── Dates (weeks start Monday; all local dates as YYYY-MM-DD) ──────────────
+// ── Dates (weeks start Tuesday; all local dates as YYYY-MM-DD) ─────────────
 export const isoLocal = (d) => { const x = new Date(d); return new Date(x.getTime() - x.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
-export const mondayOf = (s) => {
-  if (typeof PLAN.mondayOf === "function") { try { const m = PLAN.mondayOf(s); if (m) return m; } catch { /* fall through */ } }
+export const weekStartOf = (s) => {
+  if (typeof PLAN.weekStartOf === "function") { try { const m = PLAN.weekStartOf(s); if (m) return m; } catch { /* fall through */ } }
   const d = new Date((s || isoLocal(new Date())) + "T12:00:00");
-  d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+  d.setDate(d.getDate() - ((d.getDay() + 5) % 7));
   return isoLocal(d);
 };
 export const addDays = (s, n) => { const d = new Date(s + "T12:00:00"); d.setDate(d.getDate() + n); return isoLocal(d); };
@@ -104,7 +104,7 @@ export const timeOf = (iso) => { if (!iso) return ""; const d = new Date(iso); r
 export const dayOf = (iso) => iso ? isoLocal(new Date(iso)) : "";
 export const withTime = (iso, hhmm, fallbackDay) => { const day = dayOf(iso) || fallbackDay; return new Date(`${day}T${hhmm || "18:30"}:00`).toISOString(); };
 export const weekLabel = (wk) => {
-  const cur = mondayOf();
+  const cur = weekStartOf();
   const rel = wk === cur ? "This week" : wk === addDays(cur, 7) ? "Next week" : wk === addDays(cur, -7) ? "Last week" : "";
   return { rel, range: `${fmtDate(wk)} – ${fmtDate(addDays(wk, 6))}` };
 };

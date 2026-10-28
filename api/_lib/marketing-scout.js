@@ -337,7 +337,7 @@ export async function acceptIdea(sb, id, { by = "a director", instruction = "", 
     return { idea: saved || idea, item };
   }
   const r = await generateWeek(sb, {
-    weekOf: mondayOfDay(day), by,
+    weekOf: weekStartOfDay(day), by,
     single: { line: idea.line, channel: idea.channel, format: idea.format, day, theme: idea.hook ? `${idea.title} - try: ${idea.hook}` : idea.title, reason: `Idea (${KIND_LABEL[idea.kind] || idea.kind}): ${idea.title}`, template: idea.template || null, trend: idea.trend || null },
     instruction: [`Idea: ${idea.title}. ${idea.pitch}`, idea.hook ? `Hook / format to try: ${idea.hook}` : null, (idea.sources || []).length ? `Source: ${idea.sources.map(s => s.title).join("; ")}` : null, String(instruction || "").trim() || null].filter(Boolean).join("\n"),
   });
@@ -347,7 +347,7 @@ export async function acceptIdea(sb, id, { by = "a director", instruction = "", 
   await log(sb, item.id, "idea_accept", { idea: idea.id, by });
   return { idea: saved || idea, item };
 }
-const mondayOfDay = (d) => { const x = new Date(d + "T12:00:00Z"); return addDays(d, -((x.getUTCDay() + 6) % 7)); };
+const weekStartOfDay = (d) => { const x = new Date(d + "T12:00:00Z"); return addDays(d, -((x.getUTCDay() + 5) % 7)); };   // the Tuesday starting its marketing week
 
 export async function dismissIdea(sb, id, { by = "a director", feedback = "" } = {}) {
   const { data, error } = await sb.from("mkt_ideas").update({ status: "dismissed", feedback: String(feedback || "").trim().slice(0, 500) || null, decided_by: by, decided_at: new Date().toISOString() }).eq("id", Number(id)).eq("status", "new").select("*").single();

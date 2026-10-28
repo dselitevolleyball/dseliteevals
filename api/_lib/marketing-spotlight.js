@@ -19,7 +19,7 @@
 
 import { claudeClient } from "./ai-client.js";
 import { DSSC_DIRECTORS } from "../../shared/dssc-directors.js";
-import { LINE_KEYS, LINE_LINKS, lineLabel, lineUrl, addDays, mondayOf, fmtDay } from "../../shared/marketing-plan.js";
+import { LINE_KEYS, LINE_LINKS, lineLabel, lineUrl, addDays, weekStartOf, fmtDay } from "../../shared/marketing-plan.js";
 import { AI_MODEL, aiReady, flairText, ctIso, ctToday, buildEmail } from "./marketing-ai.js";
 import { sendResend, dsscFrom, inboxAddress, isEmailish, nrm, esc } from "./site-inbox.js";
 import { sendOneSms, twilioReady, normalizePhone } from "./sms.js";
@@ -249,11 +249,11 @@ export async function draftSpotlight(sb, sp, { settings = {}, today = ctToday(),
   const base = { channel: "social", kind: "spotlight", theme: `${SERIES} #${ep}`, line: sp.line || "club", program: null, programs: [], angle: "spotlight", status: "draft",
     reason: `${SERIES} #${ep}: Coach ${firstName(sp.name)} answered the interview${sp.answered_at ? ` (${fmtDay(String(sp.answered_at).slice(0, 10))})` : ""}`,
     cta_text: copy.cta_text, cta_url: ctaUrl, audience: null, created_by: by, email_subject: null, email_preheader: null, email_html: null, email_blocks: [] };
-  const post = { ...base, week_of: mondayOf(postDay), platforms: ["facebook", "instagram"], scheduled_at: ctIso(postDay, sTime), headline: `COACH ${first}`, body: copy.caption, hashtags: copy.hashtags,
+  const post = { ...base, week_of: weekStartOf(postDay), platforms: ["facebook", "instagram"], scheduled_at: ctIso(postDay, sTime), headline: `COACH ${first}`, body: copy.caption, hashtags: copy.hashtags,
     graphic: { template: "quote", format: "post", photo_url: photos[0]?.url || null, headline: `COACH ${first}`, accent: first, sub: sp.role || lineLabel(sp.line), tag, quote: copy.quote, date_label: "", items: [] } };
-  const story = { ...base, week_of: mondayOf(storyDay), platforms: ["instagram_story", "facebook_story"], scheduled_at: ctIso(storyDay, sTime), headline: `MEET COACH ${first}`, body: copy.caption, hashtags: copy.hashtags,
+  const story = { ...base, week_of: weekStartOf(storyDay), platforms: ["instagram_story", "facebook_story"], scheduled_at: ctIso(storyDay, sTime), headline: `MEET COACH ${first}`, body: copy.caption, hashtags: copy.hashtags,
     graphic: { template: "photo", format: "story", photo_url: (photos[1] || photos[0])?.url || null, headline: `MEET COACH ${first}`, accent: first, sub: copy.story_sub, tag, date_label: "", items: [] } };
-  const email = { ...base, channel: "email", week_of: mondayOf(emailDay), platforms: [], scheduled_at: ctIso(emailDay, eTime), headline: `MEET COACH ${first}`, body: copy.intro, hashtags: [],
+  const email = { ...base, channel: "email", week_of: weekStartOf(emailDay), platforms: [], scheduled_at: ctIso(emailDay, eTime), headline: `MEET COACH ${first}`, body: copy.intro, hashtags: [],
     graphic: { template: "quote", format: "email", photo_url: photos[0]?.url || null, headline: `COACH ${first}`, accent: first, sub: sp.role || lineLabel(sp.line), tag, quote: copy.quote, date_label: "", items: [] },
     email_subject: copy.subject, email_preheader: copy.preheader,
     email_blocks: copy.qa.map(x => ({ program_id: null, title: x.q, label: "", date_label: "", blurb: x.a, url: null, cta: null })),
