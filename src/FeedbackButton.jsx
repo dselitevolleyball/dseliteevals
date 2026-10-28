@@ -75,8 +75,8 @@ export default function FeedbackButton({ view, workspace, narrow, phoneNav }) {
   return (
     <>
       <button onClick={() => { setOpen(true); setTab("send"); }} title="Send an idea or report a problem with HQ"
-        style={{ position: "fixed", right: narrow ? 12 : 18, bottom: phoneNav ? 78 : 18, zIndex: 60, display: "flex", alignItems: "center", gap: 6, padding: narrow ? "10px 12px" : "9px 14px", borderRadius: 999, border: "1px solid " + C.border, background: C.fab, color: C.text, fontWeight: 800, fontSize: 13, cursor: "pointer", boxShadow: "0 6px 24px rgba(0,0,0,0.45)", fontFamily: "inherit" }}>
-        💡{!narrow && <span>Feedback</span>}
+        style={{ position: "fixed", right: narrow ? 12 : 18, bottom: phoneNav ? 78 : 18, zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, minWidth: 52, minHeight: 52, padding: narrow ? "12px 14px" : "12px 20px", borderRadius: 999, border: "1px solid " + C.border, background: C.fab, color: C.text, fontWeight: 800, fontSize: 16, cursor: "pointer", boxShadow: "0 6px 24px rgba(0,0,0,0.45)", fontFamily: "inherit", boxSizing: "border-box" }}>
+        <span style={{ fontSize: 22, lineHeight: 1 }}>💡</span>{!narrow && <span>Feedback</span>}
       </button>
       {open && (
         <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 90, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: narrow ? "flex-end" : "center", justifyContent: "center" }}>
