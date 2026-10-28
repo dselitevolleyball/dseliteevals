@@ -19,6 +19,17 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { sendOneSms, twilioReady, notReadyMessage, normalizePhone } from "./_lib/sms.js";
+import { isLane } from "../shared/dssc-lanes.js";
+
+// A club campaign's texts (and their replies) go in its lane: Reach's in
+// Reach, one sport's in that sport's; a mixed one goes by each family's
+// program (api/_lib/sms.js laneFor).
+const campaignLane = (camp) => {
+  if (camp.brand !== "dssc") return null;
+  if (camp.filters?.scope === "reach") return "reach";
+  const cats = [...new Set(camp.filters?.categories || [])];
+  return cats.length === 1 && isLane(cats[0]) ? cats[0] : null;
+};
 import { loadAudienceData, buildPeople, resolveAudience, renderBody, isReachStaff } from "../shared/campaign-audience.js";
 
 const OWNERS = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"];
@@ -130,7 +141,7 @@ export async function processCampaign(sb, id, deadline) {
       if (!mine?.length) continue;
       if (opted.has(String(r.phone).replace(/\D/g, "").slice(-10))) { await sb.from("sms_campaign_recipients").update({ status: "skipped", error: "opted out" }).eq("id", r.id); continue; }
       try {
-        const out = await sendOneSms(sb, { to: r.phone, name: r.name, kind: r.kind, brand: camp.brand, team_name: camp.brand === "dse" ? r.team_name : null, dssc_program: camp.brand === "dssc" ? (r.program || camp.name) : null, dssc_player: (r.players || [])[0] || null }, r.body, { broadcast_id: camp.broadcast_id, sent_by_label: camp.created_by || "campaign", media_urls: camp.media_urls || [] });
+        const out = await sendOneSms(sb, { to: r.phone, name: r.name, kind: r.kind, brand: camp.brand, lane: campaignLane(camp), team_name: camp.brand === "dse" ? r.team_name : null, dssc_program: camp.brand === "dssc" ? (r.program || camp.name) : null, dssc_player: (r.players || [])[0] || null }, r.body, { broadcast_id: camp.broadcast_id, sent_by_label: camp.created_by || "campaign", media_urls: camp.media_urls || [] });
         await sb.from("sms_campaign_recipients").update({ message_id: out.message_id }).eq("id", r.id);
       } catch (e) {
         await sb.from("sms_campaign_recipients").update({ status: "failed", error: String(e.message || e).slice(0, 300) }).eq("id", r.id);

@@ -18,6 +18,7 @@
 import crypto from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { handleShiftReply } from "./_lib/shift-confirm.js";
+import { replyThreadFor } from "./_lib/sms.js";
 
 // Parse application/x-www-form-urlencoded body. Vercel's default body parser
 // already handles this — req.body is an object.
@@ -170,18 +171,15 @@ export default async function handler(req, res) {
   // Find or create the thread. A number we've never texted is still very
   // likely a parent, player or coach we know — match it against the roster so
   // the inbox files the reply under her team instead of "Other".
-  let { data: thread } = await supabase
-    .from("sms_threads")
-    .select("*")
-    .eq("phone", from)
-    .eq("brand", brand)
-    .maybeSingle();
+  // A club number can have a thread per lane (shared/dssc-lanes.js): the reply
+  // goes to the lane of the last text we sent them.
+  let thread = await replyThreadFor(supabase, from, brand);
   if (!thread || (!thread.contact_kind && !thread.player_id)) {
     const who = brand === "dssc" ? await whoIsDssc(supabase, from) : await whoIs(supabase, from);
     if (!thread) {
       const ins = await supabase
         .from("sms_threads")
-        .insert({ phone: from, brand, ...who })
+        .insert({ phone: from, brand, lane: brand === "dssc" ? "general" : "", ...who })
         .select()
         .single();
       if (ins.error) {
