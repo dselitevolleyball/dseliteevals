@@ -8,8 +8,14 @@ import { useState, useEffect } from "react";
 import { supabase } from "./supabase";
 import { viewLabel } from "./Nav.jsx";
 import { STATUS_LABEL } from "../shared/product.js";
+import { HQ_DSSC } from "./hq-base.js";
 
-const C = { bg: "#0f0f10", card: "#18181b", border: "#2e2e33", gold: "#e91e8c", text: "#fff", mut: "#a1a1aa", grn: "#22c55e", red: "#ef4444" };
+// Each business's own colors: DS Elite black + pink, DSSC evergreen + lime
+// (the DSSC side of HQ and drippingsportsclub.com/hq).
+const THEMES = {
+  dse: { card: "#141414", field: "#0a0a0a", border: "#2a2a2a", gold: "#e91e8c", soft: "rgba(233,30,140,0.14)", onAccent: "#000", fab: "rgba(20,20,20,0.94)", text: "#fff", mut: "#999999", grn: "#22c55e", red: "#ef4444" },
+  dssc: { card: "#0C3A37", field: "#082C2A", border: "#1F5A55", gold: "#B2D049", soft: "rgba(178,208,73,0.16)", onAccent: "#082C2A", fab: "rgba(12,58,55,0.96)", text: "#fff", mut: "#A9C7C3", grn: "#B2D049", red: "#FF7A59" },
+};
 const KINDS = [["feature", "💡 New idea", "What should HQ do that it doesn't?"], ["improvement", "✨ Make it better", "What's clunky or could be easier?"], ["bug", "🐞 Something's broken", "What happened, and what did you expect?"]];
 const STATUS_TEXT = { inbox: "Waiting for Drew", backlog: "Approved", planned: "Planned", building: "Being built", review: "Almost ready", shipped: "Live ✓", declined: "Not now", canceled: "Canceled" };
 const AREA = (view, app) => /marketing/.test(view) ? "Marketing" : /time|hours|pay|claims|expenses/.test(view) ? "Time cards & pay" : /message|texts|inbox|email/.test(view) ? "Texts & email" : app === "dssc" ? "DSSC HQ" : "DS Elite HQ";
@@ -38,6 +44,7 @@ function shrink(file) {
 }
 
 export default function FeedbackButton({ view, workspace, narrow, phoneNav }) {
+  const C = THEMES[HQ_DSSC || workspace === "dssc" ? "dssc" : "dse"];
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState("send");
   const [kind, setKind] = useState("feature");
@@ -63,19 +70,19 @@ export default function FeedbackButton({ view, workspace, narrow, phoneNav }) {
   };
   const pick = async (f) => { if (!f) return; try { setShot(await shrink(f)); } catch (e) { setMsg({ err: e.message }); } };
   const k = KINDS.find(x => x[0] === kind);
-  const input = { width: "100%", boxSizing: "border-box", background: "#0b0b0c", border: "1px solid " + C.border, borderRadius: 10, color: C.text, fontFamily: "inherit", fontSize: 15, padding: "10px 12px" };
+  const input = { width: "100%", boxSizing: "border-box", background: C.field, border: "1px solid " + C.border, borderRadius: 10, color: C.text, fontFamily: "inherit", fontSize: 15, padding: "10px 12px" };
 
   return (
     <>
       <button onClick={() => { setOpen(true); setTab("send"); }} title="Send an idea or report a problem with HQ"
-        style={{ position: "fixed", right: narrow ? 12 : 18, bottom: phoneNav ? 78 : 18, zIndex: 60, display: "flex", alignItems: "center", gap: 6, padding: narrow ? "10px 12px" : "9px 14px", borderRadius: 999, border: "1px solid " + C.border, background: "rgba(20,20,22,0.92)", color: C.text, fontWeight: 800, fontSize: 13, cursor: "pointer", boxShadow: "0 6px 24px rgba(0,0,0,0.45)", fontFamily: "inherit" }}>
+        style={{ position: "fixed", right: narrow ? 12 : 18, bottom: phoneNav ? 78 : 18, zIndex: 60, display: "flex", alignItems: "center", gap: 6, padding: narrow ? "10px 12px" : "9px 14px", borderRadius: 999, border: "1px solid " + C.border, background: C.fab, color: C.text, fontWeight: 800, fontSize: 13, cursor: "pointer", boxShadow: "0 6px 24px rgba(0,0,0,0.45)", fontFamily: "inherit" }}>
         💡{!narrow && <span>Feedback</span>}
       </button>
       {open && (
         <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 90, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: narrow ? "flex-end" : "center", justifyContent: "center" }}>
           <div onClick={e => e.stopPropagation()} style={{ width: narrow ? "100%" : 520, maxHeight: narrow ? "92vh" : "86vh", overflowY: "auto", background: C.card, border: "1px solid " + C.border, borderRadius: narrow ? "16px 16px 0 0" : 16, padding: 18, color: C.text, boxSizing: "border-box", fontFamily: "inherit" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-              <b style={{ fontSize: 17 }}>Help make HQ better</b>
+              <div><div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 1.2, color: C.gold, textTransform: "uppercase" }}>{HQ_DSSC || workspace === "dssc" ? "Dripping Springs Sports Club" : "DS Elite Volleyball"} · HQ</div><b style={{ fontSize: 17 }}>Help make HQ better</b></div>
               <div style={{ flex: 1 }} />
               {[["send", "Send"], ["mine", "My requests"]].map(([t, l]) => <button key={t} onClick={() => { setTab(t); setMsg(null); }} style={{ padding: "5px 10px", borderRadius: 8, border: "1px solid " + (tab === t ? C.gold : C.border), background: "transparent", color: tab === t ? C.gold : C.text, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>{l}</button>)}
               <button onClick={() => setOpen(false)} aria-label="Close" style={{ background: "none", border: "none", color: C.mut, fontSize: 20, cursor: "pointer" }}>×</button>
@@ -88,13 +95,13 @@ export default function FeedbackButton({ view, workspace, narrow, phoneNav }) {
                 <div style={{ color: C.mut, fontSize: 14, lineHeight: 1.5 }}>Drew will look at it. You'll get an email when it's approved, and you can follow it under My requests.</div>
                 <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 14 }}>
                   <button onClick={reset} style={{ padding: "9px 14px", borderRadius: 10, border: "1px solid " + C.border, background: "transparent", color: C.text, fontWeight: 800, cursor: "pointer" }}>Send another</button>
-                  <button onClick={() => { reset(); setOpen(false); }} style={{ padding: "9px 14px", borderRadius: 10, border: "none", background: C.gold, color: "#000", fontWeight: 800, cursor: "pointer" }}>Done</button>
+                  <button onClick={() => { reset(); setOpen(false); }} style={{ padding: "9px 14px", borderRadius: 10, border: "none", background: C.gold, color: C.onAccent, fontWeight: 800, cursor: "pointer" }}>Done</button>
                 </div>
               </div>
             ) : (
               <>
                 <div style={{ display: "grid", gridTemplateColumns: narrow ? "1fr" : "1fr 1fr 1fr", gap: 6 }}>
-                  {KINDS.map(([v, l]) => <button key={v} onClick={() => setKind(v)} style={{ padding: "10px 8px", borderRadius: 10, border: "1px solid " + (kind === v ? C.gold : C.border), background: kind === v ? "rgba(233,30,140,0.12)" : "transparent", color: C.text, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>{l}</button>)}
+                  {KINDS.map(([v, l]) => <button key={v} onClick={() => setKind(v)} style={{ padding: "10px 8px", borderRadius: 10, border: "1px solid " + (kind === v ? C.gold : C.border), background: kind === v ? C.soft : "transparent", color: C.text, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>{l}</button>)}
                 </div>
                 <input value={title} onChange={e => setTitle(e.target.value)} placeholder={kind === "bug" ? "What's broken? (one line)" : "Your idea in one line"} maxLength={200} style={{ ...input, marginTop: 12, fontWeight: 700 }} />
                 <textarea value={body} onChange={e => setBody(e.target.value)} rows={5} placeholder={k[2] + " The more detail, the better."} style={{ ...input, marginTop: 8, lineHeight: 1.45, resize: "vertical" }} />
@@ -106,7 +113,7 @@ export default function FeedbackButton({ view, workspace, narrow, phoneNav }) {
                 </div>
                 <div style={{ fontSize: 12, color: C.mut, marginTop: 10 }}>From: <b style={{ color: C.text }}>{viewLabel(view)}</b> ({workspace === "dssc" ? "DSSC" : "DS Elite"})</div>
                 {msg?.err && <div style={{ color: C.red, fontSize: 13, marginTop: 8 }}>{msg.err}</div>}
-                <button disabled={busy} onClick={send} style={{ width: "100%", marginTop: 12, padding: 12, borderRadius: 10, border: "none", background: C.gold, color: "#000", fontWeight: 900, fontSize: 15, cursor: "pointer" }}>{busy ? "Sending…" : "Send to Drew"}</button>
+                <button disabled={busy} onClick={send} style={{ width: "100%", marginTop: 12, padding: 12, borderRadius: 10, border: "none", background: C.gold, color: C.onAccent, fontWeight: 900, fontSize: 15, cursor: "pointer" }}>{busy ? "Sending…" : "Send to Drew"}</button>
               </>
             ))}
 
