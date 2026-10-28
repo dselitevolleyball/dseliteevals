@@ -67,7 +67,7 @@ export default async function handler(req, res) {
     if (!x.cards.length && !ownsWithNews.length) continue;
     const first = String(x.name).split(/\s+/)[0];
     const row = ({ t, unassigned }) => { const p = proj.get(t.project_id); return `• ${slackLink(taskLink(t), t.title)} - ${p ? slackText(p.name) + " · " : ""}${STATUS_LABEL[t.status]}${t.due_date ? " · due " + fmtDate(t.due_date) : ""}${unassigned ? " · _not assigned yet_" : ""}`; };
-    const sections = GROUPS.map(([k, title]) => { const list = x.cards.filter(c => c.why === k); return list.length ? `\n*${title} (${list.length})*\n${list.map(row).join("\n")}` : ""; }).join("\n");
+    const sections = GROUPS.map(([k, title]) => { const list = x.cards.filter(c => c.why === k); return list.length ? `\n*${title} (${list.length})*\n${list.map(row).join("\n")}` : ""; }).filter(Boolean).join("\n");
     const owns = ownsWithNews.length ? `\n\n*Projects you own*\n${ownsWithNews.map(({ p, s }) => `• ${slackLink(link(p.id), p.name)} - ${s.done} of ${s.total} done${s.overdue ? ` · *${s.overdue} overdue*` : ""}${s.blocked ? ` · ${s.blocked} blocked` : ""}${p.due_date ? " · due " + fmtDate(p.due_date) : ""}`).join("\n")}` : "";
     const n = x.cards.length;
     const text = `${to ? `_[Preview of ${slackText(x.name)}'s check-in]_\n` : ""}📋 Hi ${slackText(first)}, ${n ? `here's what needs your attention on DSSC tasks this week (${n} task${n === 1 ? "" : "s"}). Open a task to post an update, flag a blocker, ask for help or mark it done.` : "here's where your projects stand this week."}\n${sections}${owns}\n\n${slackLink(APP_URL + "?view=projects", "Open Tasks & Projects")}`;
