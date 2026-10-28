@@ -27,6 +27,10 @@ const REEL_PLAT_TAG = { facebook: ["FB video", "#60A5FA"], instagram: ["IG reel"
 const tagsToArr = (s) => String(s || "").split(/[\s,]+/).map(t => t.trim()).filter(Boolean).map(t => t.startsWith("#") ? t : "#" + t);
 const aiNote = (d) => d?.ai && d.ai.used === false ? ` (Plain template copy — the AI writer wasn't available${d.ai.error ? ": " + d.ai.error : ""}.)` : "";
 const daysOfWeek = (wk) => Array.from({ length: 7 }, (_, i) => addDays(wk, i));
+// Links in the email preview open in a new tab. Without a target they tried to
+// load inside the sandboxed frame, where most sites refuse to show, so they
+// looked dead. The unsubscribe placeholder only becomes a real link at send time.
+const previewHtml = (html) => String(html || "").replace(/<head([^>]*)>/i, '<head$1><base target="_blank">').replace(/ href="\{\{unsubscribe_url\}\}"/g, "");
 
 // What the machine is doing while a brief runs (one request, about a minute).
 const BRIEF_STEPS = [[0, "Saving it as this week's priority…"], [3, "Planning the week around it…"], [15, "Writing the posts and the email…"], [45, "Placing the programs you named on their days…"], [80, "Almost there - finishing the last drafts…"]];
@@ -417,7 +421,7 @@ export function ItemCard({ item: it, week, narrow, onPatch, onReplace, reload, o
   const emailPreview = it.channel === "email" && (it.email_html ? (
     <div style={{ marginTop: 12 }}>
       <H>Email preview</H>
-      <iframe title={"Email " + it.id} srcDoc={it.email_html} sandbox="allow-popups allow-popups-to-escape-sandbox" style={{ width: "100%", height: narrow ? 520 : 640, border: "1px solid " + DS.line, borderRadius: 10, background: "#fff" }} />
+      <iframe title={"Email " + it.id} srcDoc={previewHtml(it.email_html)} sandbox="allow-popups allow-popups-to-escape-sandbox" style={{ width: "100%", height: narrow ? 520 : 640, border: "1px solid " + DS.line, borderRadius: 10, background: "#fff" }} />
     </div>
   ) : <div style={{ fontSize: 12, color: DS.dim, marginTop: 10 }}>No HTML yet — the plain-text version below is what would send.<pre style={{ whiteSpace: "pre-wrap", fontFamily: DS.font, color: DS.mut }}>{it.body}</pre></div>);
 
