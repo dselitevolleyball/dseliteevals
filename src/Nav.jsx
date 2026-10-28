@@ -95,6 +95,7 @@ const IT = {
   activity:      ["Activity Log", "🕓", "all", "history changes", "Activity"],
   faq:           ["FAQ", "❓", "all", "help", "FAQ"],
   askai:         ["Ask AI", "✦", "owner", "ai", "Ask AI"],
+  product:       ["Product", "🧭", "ops", "product board features requests feedback ideas bugs roadmap agents claude usage cost tokens", "Product"],
 };
 
 const DSE_OPS = [
@@ -123,7 +124,9 @@ const DSSC_SECS = [
   ["reach", "Reach Performance", "🏃", ["reachstats"]],
   ["dsscstaff", "Coaches & pay", "🗓", ["dssc", "dssccal", "dssctime", "staffhours", "staffadmin", "dsscpeople", "dsscpay"]],
 ];
-const FOOTER = ["activity", "faq", "askai"];
+const FOOTER = ["activity", "faq", "product", "askai"];
+// A screen's name for people (the 💡 Feedback popup says which screen it came from).
+export const viewLabel = (v) => IT[v]?.[0] || v;
 
 const ACTION_BADGES = { messages: "smsDse", dssctexts: "smsDssc", dsscinbox: "inboxNew", dsscmarketing: "mktDrafts", notifications: "notif", incidentboard: "issuesOpen", incidents: "issuesMine", kickoff: "kickoffs", claims: "claims", requests: "reqs", gear: "gear" };
 const INFO_BADGES = { favorites: "favorites" };

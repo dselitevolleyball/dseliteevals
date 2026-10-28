@@ -16,7 +16,7 @@
 // model rejects them. The system prompt is byte-stable (no dates) and cached;
 // the week, programs and priorities go in the user message.
 
-import Anthropic from "@anthropic-ai/sdk";
+import { claudeClient } from "./ai-client.js";
 import { LINES, LINE_LINKS, lineLabel, lineOf, lineUrl, programRef, addDays, daysBetween, fmtDay, KIND_LABEL } from "../../shared/marketing-plan.js";
 import { EMPTY_FILTERS, asciiize } from "../../shared/campaign-audience.js";
 import { orientationOf } from "../../shared/marketing-photos.js";
@@ -318,7 +318,7 @@ function voiceBlock(voice, flair = 1, rules = []) {
 }
 
 async function callClaude(userText, { voice, flair, rules, timeoutMs = 95000 } = {}) {
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: timeoutMs, maxRetries: 0 });
+  const client = claudeClient("marketing-copy", { apiKey: process.env.ANTHROPIC_API_KEY, timeout: timeoutMs, maxRetries: 0 });
   const msg = await client.beta.messages.create({
     model: AI_MODEL,
     max_tokens: 16000,
@@ -604,7 +604,7 @@ export async function interpretRule(text) {
   if (!t) return null;
   if (!aiReady()) return guessApart(t);
   try {
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 30000, maxRetries: 1 });
+    const client = claudeClient("marketing-copy", { apiKey: process.env.ANTHROPIC_API_KEY, timeout: 30000, maxRetries: 1 });
     const msg = await client.beta.messages.create({
       model: AI_MODEL, max_tokens: 2000, betas: ["server-side-fallback-2026-07-01"], fallbacks: "default",
       output_config: { effort: "low", format: { type: "json_schema", schema: RULE_SCHEMA } },

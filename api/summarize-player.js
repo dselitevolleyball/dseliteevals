@@ -15,7 +15,7 @@
 // Response: { summary: "<plain text>" }  on success
 //           { error:   "<message>"    }  on failure
 
-import Anthropic from "@anthropic-ai/sdk";
+import { claudeClient } from "./_lib/ai-client.js";
 
 const SKILL_LABELS = {
   Serving:        "serving",
@@ -170,7 +170,7 @@ export default async function handler(req, res) {
   const previous_summary = typeof body.previous_summary === "string" ? body.previous_summary.trim() : "";
   const instruction      = typeof body.instruction      === "string" ? body.instruction.trim()      : "";
 
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const client = claudeClient("player-summary", { apiKey: process.env.ANTHROPIC_API_KEY });
 
   // For a refinement pass, replay the prior turn as an assistant message and
   // append the coach's revision request. Keeps the original system prompt's

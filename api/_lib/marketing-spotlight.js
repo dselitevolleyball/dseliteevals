@@ -17,7 +17,7 @@
 // Nothing is published without a director's approval, and the coach's own
 // words are the only source: Claude may tidy typos, never add facts.
 
-import Anthropic from "@anthropic-ai/sdk";
+import { claudeClient } from "./ai-client.js";
 import { DSSC_DIRECTORS } from "../../shared/dssc-directors.js";
 import { LINE_KEYS, LINE_LINKS, lineLabel, lineUrl, addDays, mondayOf, fmtDay } from "../../shared/marketing-plan.js";
 import { AI_MODEL, aiReady, flairText, ctIso, ctToday, buildEmail } from "./marketing-ai.js";
@@ -90,7 +90,7 @@ export function defaultQuestions(p) {
 export const defaultIntro = (p) => `Hi ${firstName(p.name)}! You're up next in DSSC's "${SERIES}" series - families love getting to know the people their kids train with. Answer whatever you like below (short is great), add a few fun photos, and we'll turn it into a post and an email. Nothing goes out until you've said it's OK and a director has approved it.`;
 
 async function claudeJson(system, user, schema, { effort = "low", timeoutMs = 50000, content = null } = {}) {
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: timeoutMs, maxRetries: 1 });
+  const client = claudeClient("marketing-spotlight", { apiKey: process.env.ANTHROPIC_API_KEY, timeout: timeoutMs, maxRetries: 1 });
   const msg = await client.beta.messages.create({
     model: AI_MODEL, max_tokens: 8000, betas: ["server-side-fallback-2026-07-01"], fallbacks: "default",
     output_config: { effort, format: { type: "json_schema", schema } },

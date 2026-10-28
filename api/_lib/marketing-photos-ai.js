@@ -17,7 +17,7 @@
 //   mode "replace" (a director's "Re-run AI"): the AI's line, tags and alt
 //     text replace the old ones.
 
-import Anthropic from "@anthropic-ai/sdk";
+import { claudeClient } from "./ai-client.js";
 import { LINE_KEYS, LINES } from "../../shared/marketing-plan.js";
 import { PHOTO_TAGS_ALL, PHOTO_USES, PEOPLE, SETTINGS, looksLikeFilename } from "../../shared/marketing-photos.js";
 import { AI_MODEL, aiReady } from "./marketing-ai.js";
@@ -55,7 +55,7 @@ const SCHEMA = {
 // -> { ai, model } | { error, model? }
 export async function describePhoto(photo, { timeoutMs = 60000 } = {}) {
   if (!aiReady()) return { error: "ANTHROPIC_API_KEY is not set" };
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: timeoutMs, maxRetries: 1 });
+  const client = claudeClient("marketing-photos", { apiKey: process.env.ANTHROPIC_API_KEY, timeout: timeoutMs, maxRetries: 1 });
   const hint = [photo.filename && !looksLikeFilename(photo.filename) ? `File name: ${photo.filename}` : null, photo.alt && !looksLikeFilename(photo.alt) ? `Current caption: ${photo.alt}` : null].filter(Boolean).join("\n");
   const msg = await client.beta.messages.create({
     model: AI_MODEL,

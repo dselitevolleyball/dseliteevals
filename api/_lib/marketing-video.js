@@ -30,7 +30,7 @@ import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import ffmpegPath from "ffmpeg-static";
-import Anthropic from "@anthropic-ai/sdk";
+import { claudeClient } from "./ai-client.js";
 import { LINE_KEYS, LINE_LINKS, lineLabel, lineUrl, addDays, mondayOf } from "../../shared/marketing-plan.js";
 import { AI_MODEL, aiReady, flairText, ctIso, ctToday } from "./marketing-ai.js";
 import { rulesText, clash, fits } from "../../shared/marketing-rules.js";
@@ -198,7 +198,7 @@ export async function analyzeVideo(sb, video, { deadline = Date.now() + 250000, 
     let ai = null, aiErr = null, model = null;
     if (aiReady() && Date.now() < deadline - 40000) {
       try {
-        const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: Math.min(120000, deadline - Date.now() - 20000), maxRetries: 1 });
+        const client = claudeClient("marketing-video", { apiKey: process.env.ANTHROPIC_API_KEY, timeout: Math.min(120000, deadline - Date.now() - 20000), maxRetries: 1 });
         const total = files.length * PER_SHEET;
         const times = Array.from({ length: total }, (_, k) => +(k / fps).toFixed(2)).filter(t => t <= info.duration);
         const content = [];
@@ -291,7 +291,7 @@ export async function createReel(sb, { picks = null, videoIds = null, line = nul
   let copy = null;
   if (aiReady()) {
     try {
-      const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 60000, maxRetries: 1 });
+      const client = claudeClient("marketing-video", { apiKey: process.env.ANTHROPIC_API_KEY, timeout: 60000, maxRetries: 1 });
       const pool = chosen.slice(0, 24).map(m => ({ key: key(m.video_id, m.id), label: m.label, description: m.description, score: m.score, seconds: +(m.end - m.start).toFixed(1), tags: m.tags, video: m.v.description || m.v.filename }));
       const msg = await client.beta.messages.create({
         model: AI_MODEL, max_tokens: 6000, betas: ["server-side-fallback-2026-07-01"], fallbacks: "default",

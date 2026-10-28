@@ -12,7 +12,7 @@
 // Response: { need_more:boolean, question?:string, note?:string,
 //             entries:[{ entry_type, category, title, body, cues }] }
 
-import Anthropic from "@anthropic-ai/sdk";
+import { claudeClient } from "./_lib/ai-client.js";
 
 const TYPES = ["Technique", "Cue", "System", "Idea", "Drill note", "Other"];
 const CATS = ["Serving", "Passing", "Serve Receive", "Setting", "Hitting", "Blocking", "Defense", "Team play", "Culture", "Conditioning", "General"];
@@ -88,7 +88,7 @@ export default async function handler(req, res) {
   });
   if (messages[messages.length - 1]?.role !== "user") messages.push({ role: "user", content: "Please continue." });
 
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const client = claudeClient("playbook-assist", { apiKey: process.env.ANTHROPIC_API_KEY });
   try {
     const resp = await client.messages.create({
       model: "claude-sonnet-5",

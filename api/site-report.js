@@ -13,7 +13,7 @@
 // Env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, CRON_SECRET, ANTHROPIC_API_KEY, RESEND_API_KEY, DSE_FROM_EMAIL.
 
 import { createClient } from "@supabase/supabase-js";
-import Anthropic from "@anthropic-ai/sdk";
+import { claudeClient } from "./_lib/ai-client.js";
 
 export const config = { maxDuration: 300 };
 const MODELS = ["claude-opus-5-5", "claude-opus-5"];
@@ -56,7 +56,7 @@ async function authorized(req, sb) {
 async function recommend(stats, prev, month, partial) {
   const key = process.env.ANTHROPIC_API_KEY;
   if (!key) return null;
-  const client = new Anthropic({ apiKey: key });
+  const client = claudeClient("website-report", { apiKey: key });
   const prompt = `You advise Drew Rose, founder of DS Elite Volleyball (a girls club volleyball program in Dripping Springs, Texas), on his website.
 
 ${SITE_MAP}

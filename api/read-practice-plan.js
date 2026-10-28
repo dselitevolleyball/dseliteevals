@@ -24,7 +24,7 @@
 // Response: { plan: { name, blocks: [{ name, skill, phase, minutes, desc }], unreadable: [] } }
 //           { error: "<message>" }
 
-import Anthropic from "@anthropic-ai/sdk";
+import { claudeClient } from "./_lib/ai-client.js";
 import { parseUpload } from "./_lib/extract-doc.js";
 
 const SKILLS = ["Serving","Passing","Setting","Hitting","Blocking","Defense","Ball control","Team play","Conditioning"];
@@ -142,7 +142,7 @@ export default async function handler(req, res) {
   content.push({ type: "text", text: buildUserText(body, upload.kind) });
 
   const noun = NOUN[upload.kind] || "file";
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const client = claudeClient("practice-plan-read", { apiKey: process.env.ANTHROPIC_API_KEY });
 
   try {
     const response = await client.messages.create({

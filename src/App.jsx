@@ -36,6 +36,8 @@ import EuropeRsvps from "./EuropeRsvps.jsx";
 import EuropeTrip from "./EuropeTrip.jsx";
 import DsscTexts from "./dssc/DsscTexts.jsx";
 import DsscReachTexts from "./dssc/DsscReachTexts.jsx";
+import ProductBoard from "./ProductBoard.jsx";
+import FeedbackButton from "./FeedbackButton.jsx";
 import NewPlayers from "./NewPlayers.jsx";
 import { usE164 } from "../shared/phone.js";
 import { isReachStaff as isReachStaffCoach } from "../shared/campaign-audience.js";
@@ -2254,7 +2256,7 @@ export default function App() {
   // email we send them. Every admin control inside renderDsysa — add/cancel a
   // date, set the lead, remove someone else's signup — is separately gated on
   // isAdmin, so opening the view exposes no admin action.
-  const OPS_VIEWS = new Set(["housing","waiting","newplayers","privates","school","schoolgames","playergear","kickoff","photos","incidentboard","tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","dayschedule","timecards","gear","staffing","roster","hawaii","travel","finance","dssccal","pods"]);
+  const OPS_VIEWS = new Set(["product","housing","waiting","newplayers","privates","school","schoolgames","playergear","kickoff","photos","incidentboard","tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","dayschedule","timecards","gear","staffing","roster","hawaii","travel","finance","dssccal","pods"]);
   const canOps    = isAdmin || isOwner;
   // Testing report emails: admins plus the performance coach (keep in step
   // with REPORT_SENDERS in api/stat-report.js).
@@ -2345,7 +2347,7 @@ export default function App() {
   const [workspace, setWorkspace] = useState(() => { if (HQ_DSSC) return "dssc"; try { return localStorage.getItem("dse.workspace") === "dssc" ? "dssc" : "dse"; } catch { return "dse"; } });
   useEffect(() => {
     if (dsscOnly) { if (workspace !== "dssc") setWorkspace("dssc"); return; }
-    const ws = DSSC_VIEWS.has(view) ? "dssc" : (view === "home" || view === "askai" || view === "notifications" || view === "activity" || view === "faq") ? null : "dse";
+    const ws = DSSC_VIEWS.has(view) ? "dssc" : (view === "home" || view === "askai" || view === "product" || view === "notifications" || view === "activity" || view === "faq") ? null : "dse";
     if (ws && ws !== workspace) { setWorkspace(ws); try { localStorage.setItem("dse.workspace", ws); } catch {} }
   }, [view, dsscOnly]); // eslint-disable-line react-hooks/exhaustive-deps
   // A DSSC-only login that lands on (or is linked to) a DS Elite screen goes home.
@@ -33324,8 +33326,10 @@ export default function App() {
         {view==="lineups" && renderLineups()}
         {view==="games" && renderGames()}
         {view==="askai" && renderAskAI()}
+        {view==="product" && <ProductBoard narrow={isNarrow} />}
         </>}
         {/* Brandon (Reach) gets Ask HQ for testing numbers only; api/ask-hq.js limits it. */}
+        <FeedbackButton view={view} workspace={workspace} narrow={isNarrow} phoneNav={showPhoneNav} />
         {(canOps || dsscRole === "admin" || canSendReports) && <AskHQ open={askOpen} onClose={()=>setAskOpen(false)} view={view} coach={coach} testing={!canOps && dsscRole !== "admin"} />}
       </div>
       </div>

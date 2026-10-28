@@ -22,7 +22,7 @@
 // so citations from search never mix with the JSON. Without ANTHROPIC_API_KEY
 // the scout still suggests the season's moments from the calendar.
 
-import Anthropic from "@anthropic-ai/sdk";
+import { claudeClient } from "./ai-client.js";
 import { moments } from "../../shared/marketing-seasons.js";
 import { LINE_KEYS, lineLabel, signalsFor, addDays, fmtDay, daysBetween } from "../../shared/marketing-plan.js";
 import { AI_MODEL, aiReady, flairText, ctToday } from "./marketing-ai.js";
@@ -39,7 +39,7 @@ const WINDOW = 35;
 export const SCOUT_DEFAULTS = { enabled: true, day: "sat", web: true, spotlight_every_weeks: 2, via: ["email", "sms"] };
 export const scoutSettings = (s) => ({ ...SCOUT_DEFAULTS, ...(s?.scout && typeof s.scout === "object" ? s.scout : {}) });
 
-const client = (timeoutMs) => new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: timeoutMs, maxRetries: 1 });
+const client = (timeoutMs) => claudeClient("marketing-ideas", { apiKey: process.env.ANTHROPIC_API_KEY, timeout: timeoutMs, maxRetries: 1 });
 
 // ── 1. what's going on locally (web search) ──────────────────────────────────
 // -> { text, sources: [{ title, url }], error }

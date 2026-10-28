@@ -9,7 +9,7 @@
 //   cancelled, easter, threeDay, holidays:[...], committed:[{team,division}] } ] }
 // Response: { answer: "<plain text>" } | { error: "<message>" }
 
-import Anthropic from "@anthropic-ai/sdk";
+import { claudeClient } from "./_lib/ai-client.js";
 
 const SYSTEM_PROMPT = `You are a precise scheduling analyst for DS Elite Volleyball's director. You answer questions about their tournament schedule using ONLY the tournament data provided in the user message.
 
@@ -74,7 +74,7 @@ export default async function handler(req, res) {
   if (!tournaments.length) return res.status(400).json({ error: "No tournament data was provided." });
 
   const dataText = `TOURNAMENT DATA — ${tournaments.length} tournaments:\n` + tournaments.map(fmtTournament).join("\n");
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const client = claudeClient("ask-tournaments", { apiKey: process.env.ANTHROPIC_API_KEY });
 
   try {
     const response = await client.messages.create({

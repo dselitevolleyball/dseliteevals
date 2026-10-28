@@ -31,7 +31,7 @@ import { createClient } from "@supabase/supabase-js";
 import { appOrigin } from "../shared/app-origin.js";
 import { sendOneSms, twilioReady } from "./_lib/sms.js";
 import { resendKeyFor } from "./_lib/resend-key.js";
-import Anthropic from "@anthropic-ai/sdk";
+import { claudeClient } from "./_lib/ai-client.js";
 
 const DRAFT_SYSTEM = `You write the short "note to parents" a Dripping Springs Sports Club (DSSC) volleyball or basketball coach sends the families of one class (a clinic or pod session) about today's practice. Parents are not coaches: turn the coach's practice plan into plain language about what their child will work on and why it helps them.
 
@@ -123,7 +123,7 @@ export default async function handler(req, res) {
     if (previous && feedback) prompt += NL + NL + "Previous draft:" + NL + previous + NL + NL + "Coach's feedback on that draft:" + NL + feedback + NL + NL + "Rewrite the note following the feedback.";
     else prompt += NL + NL + "Write the note to parents.";
     try {
-      const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+      const client = claudeClient("dssc-class-message", { apiKey: process.env.ANTHROPIC_API_KEY });
       const resp = await client.messages.create({ model: "claude-sonnet-5-5", max_tokens: 1200, system: DRAFT_SYSTEM, messages: [{ role: "user", content: prompt }] });
       const draft = (resp.content || []).filter(p => p.type === "text").map(p => p.text).join("").trim();
       if (!draft) return res.status(502).json({ error: "Claude returned an empty draft - try again." });

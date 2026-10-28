@@ -30,6 +30,7 @@
 //      DSSC_FROM_EMAIL (or DSE_FROM_EMAIL), optional SLACK_PROJECTS_WEBHOOK_URL.
 import { createClient } from "@supabase/supabase-js";
 import Anthropic from "@anthropic-ai/sdk";
+import { claudeClient } from "./_lib/ai-client.js";
 import { jsonSchemaOutputFormat } from "@anthropic-ai/sdk/helpers/json-schema";
 import { whoIs, people as listPeople, slack, slackHook, slackLine, slackText, SLACK_HOOK, sendMail, emailShell, esc, link, fmtDate,
   centralToday, BUCKET, STATUS, STATUS_LABEL, PROJECT_STATUS } from "./_lib/projects.js";
@@ -372,7 +373,7 @@ const ACTIONS = {
       context ? `Dates HQ already has:\n${context}` : "",
       `The brief:\n"""\n${brief}\n"""`,
     ].filter(Boolean).join("\n\n");
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const client = claudeClient("projects-draft", { apiKey: process.env.ANTHROPIC_API_KEY });
     let msg;
     try {
       msg = await client.beta.messages.parse({

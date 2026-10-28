@@ -9,7 +9,7 @@
 //   leaving, currentTeam, school } ] }
 // Response: { answer: "<plain text>" } | { error: "<message>" }
 
-import Anthropic from "@anthropic-ai/sdk";
+import { claudeClient } from "./_lib/ai-client.js";
 
 const SYSTEM_PROMPT = `You are a precise data analyst for DS Elite Volleyball's director. You answer questions about their tryout/evaluation players using ONLY the player data provided in the user message.
 
@@ -70,7 +70,7 @@ export default async function handler(req, res) {
   if (!players.length) return res.status(400).json({ error: "No player data was provided." });
 
   const dataText = `PLAYER DATA — ${players.length} players:\n` + players.map(fmtPlayer).join("\n");
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const client = claudeClient("ask-players", { apiKey: process.env.ANTHROPIC_API_KEY });
 
   try {
     const response = await client.messages.create({

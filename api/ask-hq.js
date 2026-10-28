@@ -24,6 +24,7 @@
 // Env: ANTHROPIC_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 
 import Anthropic from "@anthropic-ai/sdk";
+import { claudeClient } from "./_lib/ai-client.js";
 import { createClient } from "@supabase/supabase-js";
 import * as XLSX from "xlsx";
 import { checkChanges, MAX_CHANGES } from "./_lib/hq-changes.js";
@@ -314,7 +315,7 @@ async function handle(req, res) {
 
   const userText = `Today is ${today} (Central). The admin is on the "${view || "home"}" screen.${attachments.length ? " Attached: " + attachments.map(a => a.name).join(", ") + "." : ""}\n\n${question}`;
   const messages = [...history, { role: "user", content: blocks.length ? [...blocks, { type: "text", text: userText }] : userText }];
-  const client = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
+  const client = claudeClient("ask-hq", { apiKey: ANTHROPIC_API_KEY });
   const started = Date.now();
   const trail = [], drafts = [], proposals = [], texts = [];
   const ctx = { who, files: attachments.map(a => ({ name: a.name, path: a.path })), proposals, texts, dsscAdmin, testing };

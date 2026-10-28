@@ -12,7 +12,7 @@
 // Model: Claude Opus 5.5 with server-side fallbacks ("default"), so a declined
 // request is retried on a fallback model inside the same call.
 
-import Anthropic from "@anthropic-ai/sdk";
+import { claudeClient } from "./ai-client.js";
 
 export const AI_MODEL = "claude-opus-5-5";
 
@@ -49,7 +49,7 @@ Rules:
 //          worked_on }
 export async function writeCoachTake(facts, { apiKey = process.env.ANTHROPIC_API_KEY } = {}) {
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY is not set");
-  const client = new Anthropic({ apiKey });
+  const client = claudeClient("stat-reports", { apiKey });
   const msg = await client.beta.messages.create({
     model: AI_MODEL,
     max_tokens: 4000,

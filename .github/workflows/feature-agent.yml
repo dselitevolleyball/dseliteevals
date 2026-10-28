@@ -1,0 +1,173 @@
+# HQ Product board -> coding agent (Drew, Oct 28 2026).
+#
+# HQ (Product board) starts this with workflow_dispatch when a card is handed to
+# the agent ("Build", "Request changes") or shipped. The run asks HQ for one
+# waiting job, proving who it is with a GitHub OIDC token - no secrets live in
+# GitHub; HQ hands over the Anthropic key only to this file on main.
+#   build / revise: Claude Code (the card's model, effort, turn and $ limits)
+#                   edits the branch, then this commits as Drew, pushes, opens or
+#                   updates the PR, waits for the Vercel preview, and reports the
+#                   cost, tokens and the agent's summary back to HQ.
+#   ship:           squash-merges the branch into main as Drew and deletes it.
+# The same file lives in every repo listed in shared/product.js (dseliteevals).
+
+name: Feature agent
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  deployments: read
+  id-token: write
+
+jobs:
+  agent:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      HQ: https://dseliteevals.vercel.app
+    steps:
+      - name: Ask HQ for work
+        id: claim
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/hq.sh" <<'SH'
+          hq() {  # hq '<json body>' -> HQ's reply (a fresh OIDC token every call)
+            local tok
+            tok=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=dssc-hq" | jq -r .value)
+            curl -sS -X POST "$HQ/api/product-agent" -H "Authorization: Bearer $tok" -H "Content-Type: application/json" --data-binary "$1"
+          }
+          SH
+          source "$RUNNER_TEMP/hq.sh"
+          hq '{"action":"claim"}' > "$RUNNER_TEMP/job.json"
+          if jq -e '.error' "$RUNNER_TEMP/job.json" >/dev/null; then echo "HQ said: $(jq -r .error "$RUNNER_TEMP/job.json")"; exit 1; fi
+          if [ "$(jq -r '.job' "$RUNNER_TEMP/job.json")" = "null" ]; then echo "Nothing waiting."; echo "has_job=false" >> "$GITHUB_OUTPUT"; exit 0; fi
+          KEY=$(jq -r '.job.anthropic_api_key // empty' "$RUNNER_TEMP/job.json"); if [ -n "$KEY" ]; then echo "::add-mask::$KEY"; fi
+          {
+            echo "has_job=true"
+            echo "run_id=$(jq -r .job.run_id "$RUNNER_TEMP/job.json")"
+            echo "kind=$(jq -r .job.kind "$RUNNER_TEMP/job.json")"
+            echo "branch=$(jq -r .job.branch "$RUNNER_TEMP/job.json")"
+            echo "node=$(jq -r .job.node "$RUNNER_TEMP/job.json")"
+          } >> "$GITHUB_OUTPUT"
+          echo "Job: $(jq -r '.job | "\(.key) \(.kind) - \(.title) (\(.model), \(.effort) effort)"' "$RUNNER_TEMP/job.json")"
+
+      - uses: actions/checkout@v4
+        if: steps.claim.outputs.has_job == 'true'
+        with:
+          fetch-depth: 0
+
+      - name: Branch and author
+        if: steps.claim.outputs.has_job == 'true'
+        env:
+          BRANCH: ${{ steps.claim.outputs.branch }}
+        run: |
+          set -euo pipefail
+          git config user.name "$(jq -r .job.author.name "$RUNNER_TEMP/job.json")"
+          git config user.email "$(jq -r .job.author.email "$RUNNER_TEMP/job.json")"
+          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null; then
+            git checkout -B "$BRANCH" "origin/$BRANCH"
+          else
+            git checkout -b "$BRANCH"
+          fi
+          source "$RUNNER_TEMP/hq.sh"
+          hq "$(jq -n --argjson id ${{ steps.claim.outputs.run_id }} --arg b "$BRANCH" '{action:"report", run_id:$id, status:"running", branch:$b}')" >/dev/null
+
+      - uses: actions/setup-node@v4
+        if: steps.claim.outputs.has_job == 'true' && steps.claim.outputs.kind != 'ship'
+        with:
+          node-version: ${{ steps.claim.outputs.node }}
+
+      - name: Install
+        if: steps.claim.outputs.has_job == 'true' && steps.claim.outputs.kind != 'ship'
+        run: eval "$(jq -r .job.install "$RUNNER_TEMP/job.json")"
+
+      - name: Claude Code builds it
+        if: steps.claim.outputs.has_job == 'true' && steps.claim.outputs.kind != 'ship'
+        run: |
+          set -uo pipefail
+          jq -r .job.prompt "$RUNNER_TEMP/job.json" > "$RUNNER_TEMP/prompt.md"
+          ANTHROPIC_API_KEY="$(jq -r .job.anthropic_api_key "$RUNNER_TEMP/job.json")" npx -y @anthropic-ai/claude-code@latest \
+            -p "$(cat "$RUNNER_TEMP/prompt.md")" \
+            --model "$(jq -r .job.model "$RUNNER_TEMP/job.json")" \
+            --effort "$(jq -r .job.effort "$RUNNER_TEMP/job.json")" \
+            --max-turns "$(jq -r .job.max_turns "$RUNNER_TEMP/job.json")" \
+            --max-budget-usd "$(jq -r .job.max_budget_usd "$RUNNER_TEMP/job.json")" \
+            --permission-mode bypassPermissions \
+            --output-format json > "$RUNNER_TEMP/result.json" || true
+          jq '{subtype, is_error, num_turns, total_cost_usd, duration_ms}' "$RUNNER_TEMP/result.json" || { echo "Claude Code gave no result:"; cat "$RUNNER_TEMP/result.json"; exit 1; }
+          jq -r '.result // ""' "$RUNNER_TEMP/result.json" > "$RUNNER_TEMP/summary.md"
+          if [ "$(jq -r .is_error "$RUNNER_TEMP/result.json")" = "true" ]; then echo "Claude Code stopped: $(jq -r .subtype "$RUNNER_TEMP/result.json")"; exit 1; fi
+
+      - name: Commit, push, PR, preview
+        if: steps.claim.outputs.has_job == 'true' && steps.claim.outputs.kind != 'ship'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.claim.outputs.branch }}
+        run: |
+          set -euo pipefail
+          KEYTXT=$(jq -r .job.key "$RUNNER_TEMP/job.json"); TITLE=$(jq -r .job.title "$RUNNER_TEMP/job.json")
+          git add -A
+          if git diff --cached --quiet; then echo "The agent didn't change any files."; exit 1; fi
+          git commit -q -m "$KEYTXT: $TITLE" -m "$(head -c 3000 "$RUNNER_TEMP/summary.md")" -m "Co-Authored-By: Claude <noreply@anthropic.com>"
+          git push -q -u origin "$BRANCH"
+          SHA=$(git rev-parse HEAD)
+          PR_NUM=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$PR_NUM" ]; then
+            gh pr comment "$PR_NUM" --body-file "$RUNNER_TEMP/summary.md" || true
+            PR_URL=$(gh pr view "$PR_NUM" --json url --jq .url)
+          else
+            { echo "From the HQ Product board: **$KEYTXT**"; echo; cat "$RUNNER_TEMP/summary.md"; } > "$RUNNER_TEMP/pr.md"
+            if PR_URL=$(gh pr create --base main --head "$BRANCH" --title "$KEYTXT: $TITLE" --body-file "$RUNNER_TEMP/pr.md" 2>"$RUNNER_TEMP/pr.err"); then
+              PR_NUM=$(gh pr view "$BRANCH" --json number --jq .number)
+            else
+              echo "Couldn't open a PR ($(cat "$RUNNER_TEMP/pr.err")) - linking the branch instead."
+              PR_URL="https://github.com/$GITHUB_REPOSITORY/compare/main...$BRANCH?expand=1"; PR_NUM=""
+            fi
+          fi
+          PREVIEW=""
+          for i in $(seq 1 40); do
+            for D in $(gh api "repos/$GITHUB_REPOSITORY/deployments?sha=$SHA" --jq '.[].id' 2>/dev/null); do
+              U=$(gh api "repos/$GITHUB_REPOSITORY/deployments/$D/statuses" --jq '[.[] | select(.state=="success")][0].environment_url // empty' 2>/dev/null || true)
+              if [ -n "$U" ]; then PREVIEW="$U"; break 2; fi
+            done
+            sleep 15
+          done
+          echo "Preview: ${PREVIEW:-none yet}"
+          source "$RUNNER_TEMP/hq.sh"
+          R="$RUNNER_TEMP/result.json"
+          hq "$(jq -n --argjson id ${{ steps.claim.outputs.run_id }} --arg b "$BRANCH" --arg pr "$PR_URL" --arg n "$PR_NUM" --arg pv "$PREVIEW" --rawfile s "$RUNNER_TEMP/summary.md" --slurpfile r "$R" \
+            '{action:"report", run_id:$id, status:"succeeded", branch:$b, pr_url:$pr, pr_number:$n, preview_url:$pv, summary:$s,
+              cost_usd:$r[0].total_cost_usd, usage:$r[0].usage, num_turns:$r[0].num_turns, duration_ms:$r[0].duration_ms}')"
+
+      - name: Ship - squash into main as Drew
+        if: steps.claim.outputs.has_job == 'true' && steps.claim.outputs.kind == 'ship'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.claim.outputs.branch }}
+        run: |
+          set -euo pipefail
+          KEYTXT=$(jq -r .job.key "$RUNNER_TEMP/job.json"); TITLE=$(jq -r .job.title "$RUNNER_TEMP/job.json")
+          git checkout -q main && git pull -q origin main
+          git merge --squash "origin/$BRANCH"
+          if git diff --cached --quiet; then echo "Nothing left to merge - already in main?"; else
+            git commit -q -m "$KEYTXT: $TITLE" -m "Built by the HQ agent on $BRANCH." -m "Co-Authored-By: Claude <noreply@anthropic.com>"
+            git push -q origin main
+          fi
+          PR_NUM=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$PR_NUM" ]; then gh pr close "$PR_NUM" --comment "Shipped to main from the HQ Product board ($(git rev-parse --short HEAD))." || true; fi
+          git push -q origin --delete "$BRANCH" || true
+          source "$RUNNER_TEMP/hq.sh"
+          hq "$(jq -n --argjson id ${{ steps.claim.outputs.run_id }} '{action:"report", run_id:$id, status:"succeeded", summary:"Merged to main."}')"
+
+      - name: Tell HQ it failed
+        if: failure() && steps.claim.outputs.has_job == 'true'
+        run: |
+          source "$RUNNER_TEMP/hq.sh"
+          R="$RUNNER_TEMP/result.json"
+          if [ -s "$R" ] && jq -e . "$R" >/dev/null 2>&1; then
+            hq "$(jq -n --argjson id ${{ steps.claim.outputs.run_id }} --slurpfile r "$R" '{action:"report", run_id:$id, status:"failed", error:("Claude Code: " + ($r[0].subtype // "error") + " - " + (($r[0].result // "") | tostring | .[0:600])), cost_usd:$r[0].total_cost_usd, usage:$r[0].usage, num_turns:$r[0].num_turns, duration_ms:$r[0].duration_ms}')"
+          else
+            hq "$(jq -n --argjson id ${{ steps.claim.outputs.run_id }} --arg u "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" '{action:"report", run_id:$id, status:"failed", error:("A workflow step failed - see " + $u)}')"
+          fi

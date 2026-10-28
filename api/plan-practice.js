@@ -15,7 +15,7 @@
 // Response: { plan: { name, blocks: [{ name, skill, phase, minutes, desc }] } }
 //           { error: "<message>" }
 
-import Anthropic from "@anthropic-ai/sdk";
+import { claudeClient } from "./_lib/ai-client.js";
 
 const SKILLS = ["Serving","Passing","Setting","Hitting","Blocking","Defense","Ball control","Team play","Conditioning"];
 
@@ -114,7 +114,7 @@ export default async function handler(req, res) {
   body.minutes = Math.max(20, Math.min(+body.minutes || 90, 240));
   body.players = Math.max(1, +body.players || 12);
 
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const client = claudeClient("practice-planner", { apiKey: process.env.ANTHROPIC_API_KEY });
 
   try {
     const response = await client.messages.create({
