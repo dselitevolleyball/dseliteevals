@@ -7,13 +7,17 @@
 // It is a plain Anthropic client with a fetch that watches /v1/messages
 // responses: a JSON reply is read from a clone, a streamed one from a tee of
 // the stream, so the caller sees exactly what it would have. Logging never
-// throws and never delays the caller (the database write is not awaited).
+// throws and never delays the caller: the database writes run under Vercel's
+// waitUntil, which keeps the function alive after it has answered (a plain
+// un-awaited write was cut off when the function froze - Oct 28 2026).
 
 import Anthropic from "@anthropic-ai/sdk";
+import { waitUntil } from "@vercel/functions";
 import { costOf } from "../../shared/ai-pricing.js";
 
 const env = () => process.env;
 let lastLimits = 0;
+const later = (p) => { try { waitUntil(p); } catch { /* not on Vercel (scripts): the promise still runs */ } return p; };
 
 async function rest(path, body, prefer = "return=minimal") {
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = env();
@@ -32,7 +36,7 @@ export function logUsage({ feature, model, usage = {}, ms = null, status = 200, 
     cache_read_tokens: usage.cache_read_input_tokens || 0, cache_write_tokens: usage.cache_creation_input_tokens || 0,
     cost_usd: Number(costOf(model, usage).toFixed(6)),
   };
-  return rest("ai_usage", row).catch(() => {});
+  return later(rest("ai_usage", row).catch(() => {}));
 }
 
 function saveLimits(headers, model) {
@@ -40,9 +44,9 @@ function saveLimits(headers, model) {
   const h = {};
   const names = [];
   headers.forEach((v, k) => { names.push(k); if (/ratelimit|retry-after/i.test(k)) h[k.toLowerCase()] = v; });
-  if (!Object.keys(h).length) { lastLimits = Date.now(); rest("hq_kv?on_conflict=key", { key: "anthropic_headers_seen", value: { names, at: new Date().toISOString() } }, "resolution=merge-duplicates,return=minimal"); return; }
+  if (!Object.keys(h).length) { lastLimits = Date.now(); later(rest("hq_kv?on_conflict=key", { key: "anthropic_headers_seen", value: { names, at: new Date().toISOString() } }, "resolution=merge-duplicates,return=minimal")); return; }
   lastLimits = Date.now();
-  rest("hq_kv?on_conflict=key", { key: "anthropic_ratelimit", value: { headers: h, model, at: new Date().toISOString() }, updated_at: new Date().toISOString() }, "resolution=merge-duplicates,return=minimal");
+  later(rest("hq_kv?on_conflict=key", { key: "anthropic_ratelimit", value: { headers: h, model, at: new Date().toISOString() }, updated_at: new Date().toISOString() }, "resolution=merge-duplicates,return=minimal"));
 }
 
 // SSE: usage arrives in message_start (input side) and message_delta (output side).
@@ -81,10 +85,10 @@ function loggingFetch(feature, base) {
       if (!res.ok) { logUsage({ feature, model: null, ms: ms(), status: res.status }); return res; }
       if (/event-stream/.test(res.headers.get("content-type") || "") && res.body) {
         const [mine, theirs] = res.body.tee();
-        readStream(mine, (model, usage) => logUsage({ feature, model, usage, ms: ms(), status: res.status }));
+        later(readStream(mine, (model, usage) => logUsage({ feature, model, usage, ms: ms(), status: res.status })));
         return new Response(theirs, { status: res.status, statusText: res.statusText, headers: res.headers });
       }
-      res.clone().json().then(j => logUsage({ feature, model: j.model, usage: j.usage, ms: ms(), status: res.status })).catch(() => {});
+      later(res.clone().json().then(j => logUsage({ feature, model: j.model, usage: j.usage, ms: ms(), status: res.status })).catch(() => {}));
     } catch { /* never break the call over logging */ }
     return res;
   };

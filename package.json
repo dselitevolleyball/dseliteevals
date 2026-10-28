@@ -12,6 +12,7 @@
     "@anthropic-ai/sdk": "^0.128.0",
     "@dnd-kit/core": "^6.3.1",
     "@supabase/supabase-js": "^2.45.0",
+    "@vercel/functions": "3.10.1",
     "fflate": "^0.8.3",
     "ffmpeg-static": "^5.2.0",
     "imapflow": "^1.4.3",
