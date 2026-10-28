@@ -50,6 +50,39 @@ async function api(action, payload = {}) {
   return d;
 }
 
+// Live board: the database pings the "product-board" broadcast topic on every
+// change to a card, run or note (migrations/20261107_product_live.sql). The
+// ping carries only the card id; we reload through the API. Several pings in
+// a burst (an agent report touches three tables) become one reload. Coming
+// back to the tab reloads too, in case pings were missed while it slept.
+// The board and an open card share one channel.
+const liveHub = { ch: null, subs: new Set(), status: "", timer: null, ids: new Set() };
+function liveJoin(sub) {
+  liveHub.subs.add(sub);
+  if (!liveHub.ch) {
+    const fire = () => { const s = liveHub.ids; liveHub.ids = new Set(); liveHub.timer = null; liveHub.subs.forEach(x => x.change(s)); };
+    liveHub.ch = supabase.channel("product-board")
+      .on("broadcast", { event: "change" }, ({ payload }) => { liveHub.ids.add(Number(payload?.item_id) || 0); clearTimeout(liveHub.timer); liveHub.timer = setTimeout(fire, 400); })
+      .subscribe(s => { liveHub.status = s; liveHub.subs.forEach(x => x.status(s)); });
+  }
+  sub.status(liveHub.status);
+  return () => {
+    liveHub.subs.delete(sub);
+    if (!liveHub.subs.size && liveHub.ch) { clearTimeout(liveHub.timer); supabase.removeChannel(liveHub.ch); Object.assign(liveHub, { ch: null, status: "", timer: null, ids: new Set() }); }
+  };
+}
+function useLive(onChange) {
+  const cb = useRef(onChange); cb.current = onChange;
+  const [live, setLive] = useState(false);
+  useEffect(() => {
+    const leave = liveJoin({ change: (ids) => cb.current(ids), status: (s) => setLive(s === "SUBSCRIBED") });
+    const wake = () => { if (document.visibilityState === "visible") cb.current(null); };
+    document.addEventListener("visibilitychange", wake);
+    return () => { leave(); document.removeEventListener("visibilitychange", wake); };
+  }, []);
+  return live;
+}
+
 export default function ProductBoard({ narrow }) {
   const [tab, setTab] = useState(() => { try { return sessionStorage.getItem("product.tab") || "board"; } catch { return "board"; } });
   const [boot, setBoot] = useState(null);
@@ -93,9 +126,11 @@ function Board({ boot, narrow }) {
   const [adding, setAdding] = useState("");
   const load = useCallback(() => api("items").then(d => setItems(d.items)).catch(e => setErr(e.message)), []);
   useEffect(() => { load(); }, [load]);
-  // Agents report back on their own; look again while something is running.
+  const live = useLive(load);
+  // Polling is only the backstop now - faster when the live link is down or
+  // an agent is running.
   const active = (items || []).some(i => i.last_run && ["queued", "running"].includes(i.last_run.status));
-  useEffect(() => { const t = setInterval(load, active ? 15000 : 60000); return () => clearInterval(t); }, [load, active]);
+  useEffect(() => { const t = setInterval(load, !live ? 15000 : active ? 30000 : 120000); return () => clearInterval(t); }, [load, active, live]);
 
   const shown = useMemo(() => (items || []).filter(i => (!q || (i.title + " " + i.body + " " + itemKey(i.id) + " " + (i.requested_name || "")).toLowerCase().includes(q.toLowerCase())) && (!kind || i.kind === kind)), [items, q, kind]);
   const cols = [...BOARD, ...(showClosed ? ["declined", "canceled"] : [])];
@@ -148,6 +183,10 @@ function Board({ boot, narrow }) {
         </select>
         <label style={{ fontSize: 12, color: C.mut, display: "flex", gap: 6, alignItems: "center", cursor: "pointer" }}><input type="checkbox" checked={showClosed} onChange={e => setShowClosed(e.target.checked)} style={{ accentColor: C.gold }} />Show declined</label>
         {err && <span style={{ color: C.red, fontSize: 12 }}>{err}</span>}
+        <div style={{ flex: 1 }} />
+        <span title={live ? "Cards update by themselves as they change" : "Reconnecting - checking every 15 seconds meanwhile"} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: live ? C.grn : C.mut }}>
+          <span style={{ width: 8, height: 8, borderRadius: 8, background: live ? C.grn : C.dim, boxShadow: live ? "0 0 0 3px " + C.grn + "33" : "none" }} />{live ? "Live" : "Connecting…"}
+        </span>
       </div>
       {narrow ? (
         <>
@@ -197,10 +236,23 @@ function Detail({ id, boot, narrow, onClose, onChanged }) {
   const [change, setChange] = useState("");
   const [comment, setComment] = useState("");
   const [openRun, setOpenRun] = useState(null);
-  const load = useCallback(() => api("item", { id }).then(x => { setD(x); setF(x.item); }).catch(e => setMsg({ err: e.message })), [id]);
+  // A reload keeps whatever is being typed: a field that differs from the last
+  // copy we loaded is a local edit not saved yet, so it stays.
+  const dRef = useRef(null); dRef.current = d;
+  const load = useCallback(() => api("item", { id }).then(x => {
+    const was = dRef.current?.item;
+    setD(x);
+    setF(prev => {
+      if (!prev || !was || prev.id !== x.item.id) return x.item;
+      const n = { ...x.item };
+      for (const k of Object.keys(prev)) if (prev[k] !== was[k] && JSON.stringify(prev[k]) !== JSON.stringify(was[k])) n[k] = prev[k];
+      return n;
+    });
+  }).catch(e => setMsg({ err: e.message })), [id]);
   useEffect(() => { load(); }, [load]);
+  useLive((ids) => { if (!ids || ids.has(id)) load(); });
   const active = d?.runs?.find(r => ["queued", "running"].includes(r.status));
-  useEffect(() => { if (!active) return; const t = setInterval(load, 10000); return () => clearInterval(t); }, [active, load]);
+  useEffect(() => { if (!active) return; const t = setInterval(load, 30000); return () => clearInterval(t); }, [active, load]);
   useEffect(() => { const k = (e) => { if (e.key === "Escape") onClose(); }; window.addEventListener("keydown", k); return () => window.removeEventListener("keydown", k); }, [onClose]);
 
   const save = async (patch) => {
