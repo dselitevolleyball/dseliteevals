@@ -38,8 +38,9 @@ export function logUsage({ feature, model, usage = {}, ms = null, status = 200, 
 function saveLimits(headers, model) {
   if (Date.now() - lastLimits < 60000) return;
   const h = {};
-  headers.forEach((v, k) => { if (/^(anthropic-ratelimit-|x-ratelimit-|retry-after)/i.test(k)) h[k.toLowerCase()] = v; });
-  if (!Object.keys(h).length) return;
+  const names = [];
+  headers.forEach((v, k) => { names.push(k); if (/ratelimit|retry-after/i.test(k)) h[k.toLowerCase()] = v; });
+  if (!Object.keys(h).length) { lastLimits = Date.now(); rest("hq_kv?on_conflict=key", { key: "anthropic_headers_seen", value: { names, at: new Date().toISOString() } }, "resolution=merge-duplicates,return=minimal"); return; }
   lastLimits = Date.now();
   rest("hq_kv?on_conflict=key", { key: "anthropic_ratelimit", value: { headers: h, model, at: new Date().toISOString() }, updated_at: new Date().toISOString() }, "resolution=merge-duplicates,return=minimal");
 }

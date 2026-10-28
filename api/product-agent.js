@@ -24,7 +24,8 @@ let jwks = { at: 0, keys: [] };
 async function verifyGithub(token) {
   const [h, p, sig] = String(token || "").split(".");
   if (!h || !p || !sig) throw fail(401, "No GitHub identity token");
-  const header = JSON.parse(b64(h).toString()), claims = JSON.parse(b64(p).toString());
+  let header, claims;
+  try { header = JSON.parse(b64(h).toString()); claims = JSON.parse(b64(p).toString()); } catch { throw fail(401, "Not a GitHub identity token"); }
   if (header.alg !== "RS256") throw fail(401, "Unexpected token algorithm");
   if (Date.now() - jwks.at > 3600e3 || !jwks.keys.some(k => k.kid === header.kid)) {
     const r = await fetch(`${ISS}/.well-known/jwks`); jwks = { at: Date.now(), keys: (await r.json()).keys || [] };
