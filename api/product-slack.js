@@ -68,7 +68,10 @@ async function onButton(sb, cfg, p) {
       return respond(p.response_url, { replace_original: true, text: "Building", blocks: [{ type: "section", text: { type: "mrkdwn", text: `▶ *${me.name}* handed ${cardLink(id, item.title)} to the agent (${item.model}, ${item.effort} effort).${r.dispatch_error ? `\n⚠️ ${r.dispatch_error}` : " It posts here when it's ready."}` } }] });
     }
     if (a.action_id === "retry") {
-      await act(sb, me, item.branch ? { action: "revise", id, instructions: "The last run failed before finishing. Look at what's on the branch, then finish the item." } : { action: "build", id });
+      const { data: last } = await sb.from("product_runs").select("kind").eq("item_id", id).order("created_at", { ascending: false }).limit(1).maybeSingle();
+      await act(sb, me, !item.branch ? { action: "build", id } : { action: "revise", id, instructions: last?.kind === "ship"
+        ? "Shipping failed because main changed since you built this. The latest main is now merged into the branch - resolve any conflicts so main's newer work stays and this item's change still works, then rebuild. Don't change anything else."
+        : "The last run failed before finishing. Look at what's on the branch, then finish the item." });
       return respond(p.response_url, { replace_original: true, text: "Trying again", blocks: [{ type: "section", text: { type: "mrkdwn", text: `↻ *${me.name}* asked the agent to try again on ${cardLink(id, item.title)}.` } }] });
     }
     if (a.action_id === "ship") {

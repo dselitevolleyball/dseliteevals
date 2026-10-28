@@ -68,6 +68,12 @@ jobs:
           git config user.email "$(jq -r .job.author.email "$RUNNER_TEMP/job.json")"
           if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null; then
             git checkout -B "$BRANCH" "origin/$BRANCH"
+            # Another round on a branch: bring main in first so it ships
+            # cleanly. Conflicts stay in the files for Claude Code to resolve.
+            if [ "${{ steps.claim.outputs.kind }}" != "ship" ] && ! git merge -q --no-edit origin/main; then
+              git diff --name-only --diff-filter=U > "$RUNNER_TEMP/conflicts.txt"
+              echo "main conflicts with this branch in: $(tr '\n' ' ' < "$RUNNER_TEMP/conflicts.txt")"
+            fi
           else
             git checkout -b "$BRANCH"
           fi
@@ -88,6 +94,10 @@ jobs:
         run: |
           set -uo pipefail
           jq -r .job.prompt "$RUNNER_TEMP/job.json" > "$RUNNER_TEMP/prompt.md"
+          if [ -s "$RUNNER_TEMP/conflicts.txt" ]; then
+            { echo; echo "## First: merge conflicts"; echo "main changed since this branch was made. \`git merge origin/main\` is in progress and left conflict markers in:"; sed 's/^/- /' "$RUNNER_TEMP/conflicts.txt"
+              echo "Resolve them before anything else, keeping both sides: main's side is live work by someone else, so keep it and re-apply this item's change on top. Don't run git commit or git merge --abort - the workflow commits the merge."; } >> "$RUNNER_TEMP/prompt.md"
+          fi
           ANTHROPIC_API_KEY="$(jq -r .job.anthropic_api_key "$RUNNER_TEMP/job.json")" npx -y @anthropic-ai/claude-code@latest \
             -p "$(cat "$RUNNER_TEMP/prompt.md")" \
             --model "$(jq -r .job.model "$RUNNER_TEMP/job.json")" \
@@ -108,9 +118,14 @@ jobs:
         run: |
           set -euo pipefail
           KEYTXT=$(jq -r .job.key "$RUNNER_TEMP/job.json"); TITLE=$(jq -r .job.title "$RUNNER_TEMP/job.json")
+          if [ -s "$RUNNER_TEMP/conflicts.txt" ] && xargs grep -lE '^(<<<<<<<|>>>>>>>)( |$)' < "$RUNNER_TEMP/conflicts.txt" 2>/dev/null; then echo "Merge conflicts are still unresolved in those files."; exit 1; fi
           git add -A
-          if git diff --cached --quiet; then echo "The agent didn't change any files."; exit 1; fi
-          git commit -q -m "$KEYTXT: $TITLE" -m "$(head -c 3000 "$RUNNER_TEMP/summary.md")" -m "Co-Authored-By: Claude <noreply@anthropic.com>"
+          MERGING=$(git rev-parse -q --verify MERGE_HEAD || true)
+          if ! git diff --cached --quiet || [ -n "$MERGING" ]; then
+            git commit -q -m "$KEYTXT: $TITLE" -m "$(head -c 3000 "$RUNNER_TEMP/summary.md")" -m "Co-Authored-By: Claude <noreply@anthropic.com>"
+          elif [ "$(git rev-parse HEAD)" = "$(git rev-parse -q --verify "origin/$BRANCH" || git rev-parse origin/main)" ]; then
+            echo "The agent didn't change any files."; exit 1
+          fi
           git push -q -u origin "$BRANCH"
           SHA=$(git rev-parse HEAD)
           PR_NUM=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
@@ -150,7 +165,12 @@ jobs:
           set -euo pipefail
           KEYTXT=$(jq -r .job.key "$RUNNER_TEMP/job.json"); TITLE=$(jq -r .job.title "$RUNNER_TEMP/job.json")
           git checkout -q main && git pull -q origin main
-          git merge --squash "origin/$BRANCH"
+          source "$RUNNER_TEMP/hq.sh"
+          if ! git merge -q --squash "origin/$BRANCH"; then
+            FILES=$(git diff --name-only --diff-filter=U | tr '\n' ' '); git reset -q --hard
+            hq "$(jq -n --argjson id ${{ steps.claim.outputs.run_id }} --arg f "$FILES" '{action:"report", run_id:$id, status:"failed", error:("main changed since the agent built this, and it conflicts in: " + $f + "- press Try again and the agent brings the branch up to date, then ship it.")}')"
+            exit 0
+          fi
           if git diff --cached --quiet; then echo "Nothing left to merge - already in main?"; else
             git commit -q -m "$KEYTXT: $TITLE" -m "Built by the HQ agent on $BRANCH." -m "Co-Authored-By: Claude <noreply@anthropic.com>"
             git push -q origin main
@@ -158,7 +178,6 @@ jobs:
           PR_NUM=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
           if [ -n "$PR_NUM" ]; then gh pr close "$PR_NUM" --comment "Shipped to main from the HQ Product board ($(git rev-parse --short HEAD))." || true; fi
           git push -q origin --delete "$BRANCH" || true
-          source "$RUNNER_TEMP/hq.sh"
           hq "$(jq -n --argjson id ${{ steps.claim.outputs.run_id }} '{action:"report", run_id:$id, status:"succeeded", summary:"Merged to main."}')"
 
       - name: Tell HQ it failed
