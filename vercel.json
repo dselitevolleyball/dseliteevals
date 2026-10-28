@@ -117,6 +117,10 @@
       "schedule": "0 13 * * 1"
     },
     {
+      "path": "/api/tasks-daily",
+      "schedule": "45 12 * * *"
+    },
+    {
       "path": "/api/sportsyou-reminders",
       "schedule": "0 14 * * *"
     },
@@ -251,6 +255,9 @@
     },
     "api/projects-weekly.js": {
       "maxDuration": 120
+    },
+    "api/tasks-daily.js": {
+      "maxDuration": 60
     },
     "api/playbook-calendar.js": {
       "maxDuration": 120

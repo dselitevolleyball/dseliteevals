@@ -1,117 +1,112 @@
-// DSSC Projects (Drew, Oct 14 2026): "a project menu within the DSSC HQ ...
-// to assign projects and track to-dos and completions" - e.g. Heatwave's
-// Inaugural Winter Edition (coach, launch plan, marketing plan, brand/swag
-// order, player selection) and DS Fall Fest Activations (Jonathan).
+// DSSC Tasks & Projects. Projects (Drew, Oct 14 2026): "a project menu within
+// the DSSC HQ ... to assign projects and track to-dos and completions" - e.g.
+// Heatwave's Inaugural Winter Edition and DS Fall Fest Activations (Jonathan).
+// Tasks (Oct 28 2026): "a full task tracking application for all of my team
+// members" - one-off, daily, weekly and monthly tasks in categories, Slack for
+// updates and feedback, notes and details, deadlines, blockers, overdue,
+// on-time tracking, asking for help, views across the team, tasks that cross
+// departments, and links into the HQ screens the work happens in. Projects are
+// the larger one-off items that hold many tasks.
 //
-// Projects hold task cards: details, checklist, files, a comment thread,
-// an assignee and helpers, a due date. Cards sit on a board (To do / In
-// progress / Blocked / Done) or a list by section. "My cards" gathers
-// everything assigned to you. Managers can describe a project in plain words
-// and Claude drafts it (they review it before anything is created).
+//   Tasks       every task (standalone and project cards) - src/dssc/Tasks.jsx
+//   Projects    project cards; one project opens as a board or by section
+//   Repeating   the daily / weekly / monthly tasks
+//   Scorecard   on-time rates and what's open, by person, category, department
 // Everything goes through /api/projects, which posts to Slack and emails
-// assignees; /api/projects-weekly sends the Monday "needs an update" email.
-import { useEffect, useRef, useState } from "react";
-import { supabase } from "../supabase";
+// assignees; /api/tasks-daily makes the repeats and posts the morning digest;
+// /api/projects-weekly sends the Monday "needs an update" email.
+import { useEffect, useState } from "react";
 import { DS, Btn, Card, Label, Tag, inputStyle, Field, Grow } from "./DsscHub.jsx";
+import { realApi, BOARD_STATUS, SMAP, fmtDW, ago, Avatar, Due, Progress, Modal, Seg, TaskModal, sel } from "./taskKit.jsx";
+import { TasksView, TaskForm, RecurringView, Scorecard } from "./Tasks.jsx";
 
-const STATUS = [["todo", "To do", "#A9C7C3"], ["doing", "In progress", "#B2D049"], ["blocked", "Blocked", "#FF7300"], ["done", "Done", "#2fbf9b"]];
-const SMAP = Object.fromEntries(STATUS.map(([k, label, color]) => [k, { label, color }]));
 const PSTATUS = [["planning", "Planning"], ["active", "Active"], ["on_hold", "On hold"], ["done", "Done"], ["archived", "Archived"]];
 const PCOLOR = { planning: "#A9C7C3", active: "#B2D049", on_hold: "#FF7300", done: "#2fbf9b", archived: "#6F9995" };
 const EXAMPLE = "Heatwave - Inaugural Winter Edition. We need to get everything together and launched: lock in a lead coach for each session, a launch plan, a marketing plan, finalize the brand order and swag, select the players, and plan the sessions. Hunter helps with coaches and players, Kristen with the swag order.";
+const TABS = [["tasks", "Tasks"], ["projects", "Projects"], ["repeating", "Repeating"], ["scorecard", "Scorecard"]];
 
-async function realApi(action, payload = {}) {
-  const { data: { session } = {} } = await supabase.auth.getSession();
-  const r = await fetch("/api/projects", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + (session?.access_token || "") }, body: JSON.stringify({ action, ...payload }) });
-  const d = await r.json().catch(() => ({}));
-  if (!r.ok || d.error) throw new Error(d.error || "Request failed (" + r.status + ")");
-  return d;
-}
-
-const fmtD = (ymd) => ymd ? new Date(ymd + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "";
-const fmtDW = (ymd) => ymd ? new Date(ymd + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }) : "";
-const daysBetween = (a, b) => Math.round((Date.parse(b + "T12:00:00Z") - Date.parse(a + "T12:00:00Z")) / 864e5);
-const ago = (iso) => { const s = (Date.now() - Date.parse(iso)) / 1000; if (s < 60) return "just now"; if (s < 3600) return Math.floor(s / 60) + "m ago"; if (s < 86400) return Math.floor(s / 3600) + "h ago"; if (s < 7 * 86400) return Math.floor(s / 86400) + "d ago"; return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" }); };
-const initials = (name) => String(name || "?").split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join("");
-const kb = (n) => n == null ? "" : n < 1024 * 1024 ? Math.max(1, Math.round(n / 1024)) + " KB" : (n / 1024 / 1024).toFixed(1) + " MB";
-const sel = { ...inputStyle, padding: "7px 9px", fontSize: 13, width: "auto", colorScheme: "dark" };
-
-function Avatar({ name, size = 24, title }) {
-  return <span title={title || name} style={{ width: size, height: size, borderRadius: size, background: DS.brier, color: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: size * 0.42, fontWeight: 800, flex: "0 0 auto" }}>{initials(name)}</span>;
-}
-function Due({ date, today, done }) {
-  if (!date) return null;
-  const d = daysBetween(today, date);
-  const late = !done && d < 0, close = !done && d >= 0 && d <= 3;
-  return <span style={{ fontSize: 11, fontWeight: 700, color: late ? "#ff6b5a" : close ? DS.orange : DS.mut, whiteSpace: "nowrap" }}>{late ? `${-d}d late · ` : d === 0 && !done ? "today · " : ""}{fmtD(date)}</span>;
-}
-function Progress({ done, total }) {
-  const pct = total ? Math.round((done / total) * 100) : 0;
-  return <div style={{ height: 6, background: "rgba(255,255,255,0.08)", borderRadius: 4, overflow: "hidden" }}><div style={{ width: pct + "%", height: 6, background: DS.lime }} /></div>;
-}
-function Modal({ onClose, children, width = 760 }) {
-  useEffect(() => { const k = (e) => { if (e.key === "Escape") onClose(); }; window.addEventListener("keydown", k); return () => window.removeEventListener("keydown", k); }, [onClose]);
-  return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 60, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "4vh 10px", overflowY: "auto" }}>
-      <div onClick={e => e.stopPropagation()} style={{ background: DS.panel, border: "1px solid " + DS.lineStrong, borderRadius: 16, width: "100%", maxWidth: width, padding: 18, boxSizing: "border-box", fontFamily: DS.font, color: DS.text }}>{children}</div>
-    </div>
-  );
-}
-
-export default function Projects({ coach, apiFn }) {
+export default function Projects({ coach, apiFn, onOpenView }) {
   const api = apiFn || realApi;
   const [boot, setBoot] = useState(null);
   const [err, setErr] = useState("");
-  const [tab, setTab] = useState("projects");          // projects | mine
+  const [tab, setTab] = useState("tasks");
   const [selId, setSelId] = useState(null);
-  const [openTask, setOpenTask] = useState(null);
-  const [modal, setModal] = useState(null);             // "new" | "settings"
+  const [openTask, setOpenTask] = useState(null);       // a task opened outside a project view
+  const [projTask, setProjTask] = useState(null);       // a card opened inside the project view
+  const [modal, setModal] = useState(null);             // "new" | "settings" | { task: preset } | { series }
   const [showDone, setShowDone] = useState(false);
+  const [narrow, setNarrow] = useState(() => typeof window !== "undefined" && window.innerWidth < 760);
+  const [pick, setPick] = useState({ n: 0, email: "" });   // the Scorecard opens one person's tasks
 
   const load = async () => { try { setBoot(await api("bootstrap", { archived: true })); setErr(""); } catch (e) { setErr(e.message); } };
   useEffect(() => {
-    try { const p = new URLSearchParams(window.location.search); if (p.get("project")) setSelId(Number(p.get("project"))); if (p.get("task")) setOpenTask(Number(p.get("task"))); } catch { /* ignore */ }
+    try {
+      const p = new URLSearchParams(window.location.search);
+      if (p.get("tab") && TABS.some(t => t[0] === p.get("tab"))) setTab(p.get("tab"));
+      if (p.get("project")) { setSelId(Number(p.get("project"))); setTab("projects"); if (p.get("task")) setProjTask(Number(p.get("task"))); }
+      else if (p.get("task")) setOpenTask(Number(p.get("task")));
+    } catch { /* ignore */ }
     load();
+    const f = () => setNarrow(window.innerWidth < 760); window.addEventListener("resize", f); return () => window.removeEventListener("resize", f);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  // Keep the address shareable: ?view=projects&project=..&task=..
+  // Keep the address shareable: ?view=projects&tab=..&project=..&task=..
   useEffect(() => {
-    try { const u = new URL(window.location.href); selId ? u.searchParams.set("project", selId) : u.searchParams.delete("project"); openTask ? u.searchParams.set("task", openTask) : u.searchParams.delete("task"); window.history.replaceState(window.history.state, "", u); } catch { /* ignore */ }
-  }, [selId, openTask]);
+    try {
+      const u = new URL(window.location.href);
+      tab !== "tasks" ? u.searchParams.set("tab", tab) : u.searchParams.delete("tab");
+      selId ? u.searchParams.set("project", selId) : u.searchParams.delete("project");
+      const t = selId ? projTask : openTask;
+      t ? u.searchParams.set("task", t) : u.searchParams.delete("task");
+      window.history.replaceState(window.history.state, "", u);
+    } catch { /* ignore */ }
+  }, [tab, selId, openTask, projTask]);
 
   if (err && !boot) return <div style={{ padding: 24, color: DS.orange, fontFamily: DS.font }}>{err}</div>;
-  if (!boot) return <div style={{ padding: 24, color: DS.mut, fontFamily: DS.font }}>Loading projects…</div>;
+  if (!boot) return <div style={{ padding: 24, color: DS.mut, fontFamily: DS.font }}>Loading tasks…</div>;
   const manager = !!boot.me?.manager;
+  const editSeries = (series) => { setOpenTask(null); setProjTask(null); setModal({ series }); };
+  const modals = (
+    <>
+      {openTask && <TaskModal api={api} id={openTask} boot={boot} onOpenView={onOpenView} onEditSeries={editSeries}
+        onClose={() => { setOpenTask(null); load(); }} onSaved={() => {}} onDeleted={() => { setOpenTask(null); load(); }} />}
+      {modal === "new" && <NewProject api={api} boot={boot} onClose={() => setModal(null)} onCreated={(id) => { setModal(null); load(); setTab("projects"); setSelId(id); }} />}
+      {modal === "settings" && <Settings api={api} boot={boot} onClose={() => setModal(null)} onSaved={load} />}
+      {modal?.task && <TaskForm api={api} boot={boot} preset={modal.task} onClose={() => setModal(null)} onSaved={async () => { setModal(null); await load(); }} />}
+      {modal?.series && <TaskForm api={api} boot={boot} series={modal.series} onClose={() => setModal(null)} onSaved={async () => { setModal(null); await load(); }} />}
+    </>
+  );
 
   if (selId) return (
-    <ProjectView api={api} id={selId} boot={boot} openTask={openTask} setOpenTask={setOpenTask}
-      onBack={() => { setSelId(null); setOpenTask(null); load(); }} onChanged={load} />
+    <>
+      <ProjectView api={api} id={selId} boot={boot} openTask={projTask} setOpenTask={setProjTask} onOpenView={onOpenView} onEditSeries={editSeries}
+        onBack={() => { setSelId(null); setProjTask(null); load(); }} onChanged={load} />
+      {modals}
+    </>
   );
 
   const visible = boot.projects.filter(p => showDone ? true : !["done", "archived"].includes(p.status));
   return (
-    <div style={{ fontFamily: DS.font, color: DS.text, maxWidth: 1200, margin: "0 auto" }}>
+    <div style={{ fontFamily: DS.font, color: DS.text, maxWidth: 1500, margin: "0 auto" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
-        <div style={{ fontSize: 22, fontWeight: 800 }}>📌 Projects</div>
-        <div style={{ display: "inline-flex", border: "1px solid " + DS.lineStrong, borderRadius: 9, overflow: "hidden" }}>
-          {[["projects", "Projects"], ["mine", `My cards${boot.myTasks.length ? " (" + boot.myTasks.length + ")" : ""}`]].map(([k, l]) => (
-            <button key={k} onClick={() => setTab(k)} style={{ padding: "7px 13px", border: "none", background: tab === k ? DS.lime : "transparent", color: tab === k ? DS.bg : DS.mut, fontFamily: DS.font, fontWeight: 800, fontSize: 13, cursor: "pointer" }}>{l}</button>
-          ))}
-        </div>
+        <div style={{ fontSize: 22, fontWeight: 800 }}>✅ Tasks &amp; Projects</div>
+        <Seg value={tab} onChange={setTab} options={TABS.map(([k, l]) => [k, k === "tasks" && boot.myTasks.length ? `${l} · ${boot.myTasks.length} mine` : k === "repeating" && boot.series?.length ? `${l} · ${boot.series.length}` : l])} />
         <div style={{ flex: 1 }} />
-        {manager && <Btn kind="primary" onClick={() => setModal("new")}>✦ New project</Btn>}
-        {manager && <Btn kind="quiet" onClick={() => setModal("settings")} title="Slack updates and the Monday email">⚙ Slack &amp; email</Btn>}
+        <Btn kind="primary" onClick={() => setModal({ task: {} })}>＋ New task</Btn>
+        {manager && <Btn kind="ghost" onClick={() => setModal("new")}>✦ New project</Btn>}
+        {manager && <Btn kind="quiet" onClick={() => setModal("settings")} title="Slack, emails, categories and departments">⚙ Settings</Btn>}
       </div>
 
-      {tab === "mine" ? <MyCards boot={boot} onOpen={(t) => { setSelId(t.project_id); setOpenTask(t.id); }} /> : (<>
+      {tab === "tasks" && <TasksView key={pick.n} initialPerson={pick.email} boot={boot} api={api} narrow={narrow} onChanged={load} onOpen={(t) => setOpenTask(t.id)} onNew={(preset) => setModal({ task: preset })} />}
+      {tab === "repeating" && <RecurringView boot={boot} api={api} onChanged={load} onNew={(preset) => setModal({ task: preset })} onEdit={(s) => setModal({ series: s })} />}
+      {tab === "scorecard" && <Scorecard boot={boot} onPick={(email) => { setPick(x => ({ n: x.n + 1, email })); setTab("tasks"); }} />}
+      {tab === "projects" && (<>
         {!visible.length && <Card><div style={{ color: DS.mut, fontSize: 14 }}>{boot.projects.length ? "No open projects." : manager ? "No projects yet. Tap ✦ New project and describe one - Claude will draft the cards for you." : "No projects yet."}</div></Card>}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 12 }}>
           {visible.map(p => <ProjectCard key={p.id} p={p} today={boot.today} onOpen={() => setSelId(p.id)} />)}
         </div>
         {boot.projects.some(p => ["done", "archived"].includes(p.status)) && <div style={{ marginTop: 12 }}><Btn kind="link" onClick={() => setShowDone(v => !v)}>{showDone ? "Hide finished projects" : "Show finished and archived projects"}</Btn></div>}
       </>)}
-
-      {modal === "new" && <NewProject api={api} boot={boot} onClose={() => setModal(null)} onCreated={(id) => { setModal(null); load(); setSelId(id); }} />}
-      {modal === "settings" && <Settings api={api} boot={boot} onClose={() => setModal(null)} onSaved={load} />}
+      {modals}
     </div>
   );
 }
@@ -139,34 +134,8 @@ function ProjectCard({ p, today, onOpen }) {
   );
 }
 
-function MyCards({ boot, onOpen }) {
-  const today = boot.today, week = new Date(Date.parse(today + "T12:00:00Z") + 7 * 864e5).toISOString().slice(0, 10);
-  const groups = [
-    ["Overdue", boot.myTasks.filter(t => t.due_date && t.due_date < today)],
-    ["This week", boot.myTasks.filter(t => t.due_date && t.due_date >= today && t.due_date <= week)],
-    ["Later", boot.myTasks.filter(t => t.due_date && t.due_date > week)],
-    ["No due date", boot.myTasks.filter(t => !t.due_date)],
-  ].filter(g => g[1].length);
-  if (!groups.length) return <Card><div style={{ color: DS.mut }}>Nothing assigned to you right now. 🎉</div></Card>;
-  return groups.map(([title, list]) => (
-    <Card key={title} style={{ padding: 12 }}>
-      <Label>{title} · {list.length}</Label>
-      {list.map(t => (
-        <div key={t.id} onClick={() => onOpen(t)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 4px", borderTop: "1px solid " + DS.line, cursor: "pointer" }}>
-          <span style={{ width: 9, height: 9, borderRadius: 9, background: SMAP[t.status].color, flex: "0 0 auto" }} title={SMAP[t.status].label} />
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontWeight: 700, fontSize: 14 }}>{t.title}</div>
-            <div style={{ fontSize: 12, color: DS.mut }}>{t.project_name}{t.section ? " · " + t.section : ""} · {SMAP[t.status].label}</div>
-          </div>
-          <Due date={t.due_date} today={today} />
-        </div>
-      ))}
-    </Card>
-  ));
-}
-
 // ── One project: header, board / list, activity ─────────────────────────────
-function ProjectView({ api, id, boot, openTask, setOpenTask, onBack, onChanged }) {
+function ProjectView({ api, id, boot, openTask, setOpenTask, onBack, onChanged, onOpenView, onEditSeries }) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
   const [mode, setMode] = useState("board");
@@ -234,7 +203,7 @@ function ProjectView({ api, id, boot, openTask, setOpenTask, onBack, onChanged }
 
       {mode === "board" ? (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(250px, 1fr))", gap: 10, overflowX: "auto", paddingBottom: 6 }}>
-          {STATUS.map(([k, label, color]) => {
+          {BOARD_STATUS.map(([k, label, color]) => {
             const col = tasks.filter(t => t.status === k);
             return (
               <div key={k} style={{ background: "rgba(0,0,0,0.12)", border: "1px solid " + DS.line, borderRadius: 12, padding: 8, minWidth: 250 }}>
@@ -284,7 +253,7 @@ function ProjectView({ api, id, boot, openTask, setOpenTask, onBack, onChanged }
         </Card>
       )}
 
-      {openTask && <TaskModal api={api} id={openTask} project={p} boot={boot} sections={sections}
+      {openTask && <TaskModal api={api} id={openTask} boot={boot} sections={sections} onOpenView={onOpenView} onEditSeries={onEditSeries}
         onClose={() => { setOpenTask(null); load(); onChanged(); }} onSaved={patchTask}
         onDeleted={(tid) => { setOpenTask(null); setData(x => ({ ...x, tasks: x.tasks.filter(o => o.id !== tid) })); onChanged(); }} />}
     </div>
@@ -318,137 +287,6 @@ function TaskTile({ t, today, onOpen }) {
         {t.assignee_name && <Avatar name={t.assignee_name} size={22} />}
       </div>
     </div>
-  );
-}
-
-// ── The card ────────────────────────────────────────────────────────────────
-function TaskModal({ api, id, project, boot, sections, onClose, onSaved, onDeleted }) {
-  const [d, setD] = useState(null);
-  const [err, setErr] = useState("");
-  const [comment, setComment] = useState("");
-  const [busy, setBusy] = useState("");
-  const [newItem, setNewItem] = useState("");
-  const fileRef = useRef(null);
-  const people = boot.people, me = boot.me, today = boot.today;
-  const load = async () => { try { setD(await api("task", { id })); setErr(""); } catch (e) { setErr(e.message); } };
-  useEffect(() => { load(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
-  if (err) return <Modal onClose={onClose}><div style={{ color: DS.orange }}>{err}</div></Modal>;
-  if (!d) return <Modal onClose={onClose}><div style={{ color: DS.mut }}>Loading the card…</div></Modal>;
-  const t = d.task;
-  const save = async (patch) => {
-    setD(x => ({ ...x, task: { ...x.task, ...patch } }));
-    try { const r = await api("save_task", { task: { id: t.id, ...patch } }); setD(x => ({ ...x, task: { ...x.task, ...r.task } })); onSaved(r.task); if (patch.status || "assignee_email" in patch || "due_date" in patch) load(); }
-    catch (e) { window.alert(e.message); load(); }
-  };
-  const cl = t.checklist || [];
-  const setCl = (next) => save({ checklist: next });
-  const post = async () => { if (!comment.trim()) return; setBusy("comment"); try { await api("comment", { project_id: project.id, task_id: t.id, body: comment }); setComment(""); await load(); } catch (e) { window.alert(e.message); } setBusy(""); };
-  const upload = async (files) => {
-    setBusy("upload");
-    try {
-      for (const f of files) {
-        if (f.size > 25 * 1024 * 1024) { window.alert(f.name + " is over 25 MB."); continue; }
-        const u = await api("upload_url", { project_id: project.id, task_id: t.id, name: f.name, size: f.size, mime: f.type });
-        if (!u.local) {
-          const { error } = await supabase.storage.from("dssc-projects").uploadToSignedUrl(u.path, u.token, f, { contentType: f.type || "application/octet-stream" });
-          if (error) throw new Error(error.message);
-        }
-        await api("file_done", { project_id: project.id, task_id: t.id, name: f.name, path: u.path, size: f.size, mime: f.type });
-      }
-      await load(); onSaved({ id: t.id, files: (d.files.length || 0) + files.length });
-    } catch (e) { window.alert("Upload failed: " + e.message); }
-    if (fileRef.current) fileRef.current.value = "";
-    setBusy("");
-  };
-  const openFile = async (f, download) => { const w = window.open("", "_blank"); try { const { url } = await api("file_url", { id: f.id, download }); if (w) w.location = url; else window.location.href = url; } catch (e) { if (w) w.close(); window.alert(e.message); } };
-  const delFile = async (f) => { if (!window.confirm("Remove " + f.name + "?")) return; try { await api("delete_file", { id: f.id }); await load(); } catch (e) { window.alert(e.message); } };
-  const delCard = async () => { if (!window.confirm("Delete this card and its files? This can't be undone.")) return; try { await api("delete_task", { id: t.id }); onDeleted(t.id); } catch (e) { window.alert(e.message); } };
-  const canDelete = me.manager || t.created_by === me.email;
-  const row = { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 13, color: DS.mut };
-
-  return (
-    <Modal onClose={onClose}>
-      <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 11, color: DS.dim, marginBottom: 2 }}>{project.name}{t.section ? " · " + t.section : ""}</div>
-          <Field value={t.title} onSave={(v) => v.trim() && save({ title: v })} style={{ fontSize: 19, fontWeight: 800, background: "transparent", border: "1px solid transparent", padding: "3px 4px" }} />
-        </div>
-        <button onClick={onClose} aria-label="Close" style={{ background: "none", border: "none", color: DS.mut, fontSize: 20, cursor: "pointer" }}>✕</button>
-      </div>
-
-      <div style={{ display: "flex", gap: 4, flexWrap: "wrap", margin: "10px 0 12px" }}>
-        {STATUS.map(([k, label, color]) => (
-          <button key={k} onClick={() => t.status !== k && save({ status: k })} style={{ padding: "7px 12px", borderRadius: 20, border: "1px solid " + (t.status === k ? color : DS.lineStrong), background: t.status === k ? color : "transparent", color: t.status === k ? DS.bg : DS.mut, fontFamily: DS.font, fontWeight: 800, fontSize: 12, cursor: "pointer" }}>{k === "done" && t.status !== "done" ? "✓ " : ""}{label}</button>
-        ))}
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 10, marginBottom: 12 }}>
-        <label style={{ ...row, flexDirection: "column", alignItems: "stretch", gap: 4 }}>Assigned to
-          <select value={t.assignee_email || ""} onChange={e => save({ assignee_email: e.target.value || null })} style={{ ...sel, width: "100%" }}><option value="">Unassigned</option>{people.map(x => <option key={x.email} value={x.email}>{x.name}</option>)}</select>
-        </label>
-        <label style={{ ...row, flexDirection: "column", alignItems: "stretch", gap: 4 }}>Due
-          <input type="date" value={t.due_date || ""} onChange={e => save({ due_date: e.target.value || null })} style={{ ...sel, width: "100%" }} />
-        </label>
-        <label style={{ ...row, flexDirection: "column", alignItems: "stretch", gap: 4 }}>Priority
-          <select value={t.priority} onChange={e => save({ priority: e.target.value })} style={{ ...sel, width: "100%" }}><option value="low">Low</option><option value="normal">Normal</option><option value="high">🔥 High</option></select>
-        </label>
-        <label style={{ ...row, flexDirection: "column", alignItems: "stretch", gap: 4 }}>Section
-          <input list={"sections-" + project.id} defaultValue={t.section || ""} onBlur={e => (e.target.value.trim() || null) !== (t.section || null) && save({ section: e.target.value.trim() || null })} placeholder="e.g. Marketing" style={{ ...sel, width: "100%" }} />
-          <datalist id={"sections-" + project.id}>{sections.map(s => <option key={s} value={s} />)}</datalist>
-        </label>
-      </div>
-      <div style={{ ...row, marginBottom: 12 }}>Helping
-        {(t.helpers || []).map(h => <span key={h.email} style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "rgba(255,255,255,0.06)", borderRadius: 20, padding: "2px 8px 2px 2px" }}><Avatar name={h.name} size={20} /><span style={{ color: DS.text, fontSize: 12 }}>{h.name}</span><span onClick={() => save({ helpers: (t.helpers || []).filter(x => x.email !== h.email).map(x => x.email) })} style={{ cursor: "pointer", color: DS.dim }}>✕</span></span>)}
-        <select value="" onChange={e => e.target.value && save({ helpers: [...(t.helpers || []).map(x => x.email), e.target.value] })} style={{ ...sel, padding: "4px 6px", fontSize: 12 }}><option value="">+ add</option>{people.filter(x => x.email !== t.assignee_email && !(t.helpers || []).some(h => h.email === x.email)).map(x => <option key={x.email} value={x.email}>{x.name}</option>)}</select>
-      </div>
-
-      <Label>Details</Label>
-      <Field multiline minRows={3} value={t.details || ""} onSave={(v) => save({ details: v })} placeholder="What needs to happen, links, decisions…" />
-
-      <Label style={{ marginTop: 14 }}>Checklist {cl.length ? `· ${cl.filter(x => x.done).length}/${cl.length}` : ""}</Label>
-      {cl.map((c, i) => (
-        <div key={c.id || i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0" }}>
-          <input type="checkbox" checked={!!c.done} onChange={() => setCl(cl.map((x, j) => j === i ? { ...x, done: !x.done } : x))} style={{ accentColor: DS.lime, width: 16, height: 16 }} />
-          <span style={{ flex: 1, fontSize: 14, textDecoration: c.done ? "line-through" : "none", color: c.done ? DS.mut : DS.text }}>{c.text}</span>
-          <span onClick={() => setCl(cl.filter((_, j) => j !== i))} style={{ cursor: "pointer", color: DS.dim, fontSize: 12 }}>✕</span>
-        </div>
-      ))}
-      <input value={newItem} onChange={e => setNewItem(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && newItem.trim()) { setCl([...cl, { id: "c" + Date.now().toString(36), text: newItem.trim(), done: false }]); setNewItem(""); } }} placeholder="+ Add a step (Enter)" style={{ ...inputStyle, fontSize: 13, padding: "7px 9px", marginTop: 4 }} />
-
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 14 }}><Label style={{ marginBottom: 0 }}>Files</Label><div style={{ flex: 1 }} />
-        <input ref={fileRef} type="file" multiple style={{ display: "none" }} onChange={e => e.target.files?.length && upload([...e.target.files])} />
-        <Btn small kind="ghost" disabled={busy === "upload"} onClick={() => fileRef.current?.click()}>{busy === "upload" ? "Uploading…" : "📎 Add files"}</Btn>
-      </div>
-      {d.files.length ? d.files.map(f => (
-        <div key={f.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderTop: "1px solid " + DS.line, fontSize: 13 }}>
-          <span onClick={() => openFile(f)} style={{ color: DS.lime, cursor: "pointer", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</span>
-          <span style={{ color: DS.dim, fontSize: 11, whiteSpace: "nowrap" }}>{kb(f.size)} · {f.uploaded_by} · {ago(f.created_at)}</span>
-          <span onClick={() => openFile(f, true)} title="Download" style={{ cursor: "pointer" }}>⬇</span>
-          {(me.manager || f.uploaded_by === me.name) && <span onClick={() => delFile(f)} title="Remove" style={{ cursor: "pointer", color: DS.dim }}>✕</span>}
-        </div>
-      )) : <div style={{ fontSize: 12, color: DS.dim, marginTop: 4 }}>No files yet - add a plan, a quote, a mockup, a photo…</div>}
-
-      <Label style={{ marginTop: 16 }}>Updates</Label>
-      {d.updates.map(u => u.kind === "comment" ? (
-        <div key={u.id} style={{ display: "flex", gap: 8, padding: "7px 0", borderTop: "1px solid " + DS.line }}>
-          <Avatar name={u.author_name} size={26} />
-          <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 12, color: DS.mut }}><b style={{ color: DS.text }}>{u.author_name}</b> · {ago(u.created_at)}</div><div style={{ fontSize: 14, whiteSpace: "pre-wrap", lineHeight: 1.45 }}>{u.body}</div></div>
-        </div>
-      ) : (
-        <div key={u.id} style={{ fontSize: 12, color: DS.dim, padding: "4px 0 4px 34px" }}>{u.author_name} · {u.body} · {ago(u.created_at)}</div>
-      ))}
-      <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "flex-end" }}>
-        <div style={{ flex: 1 }}><Grow value={comment} onChange={e => setComment(e.target.value)} minRows={2} placeholder="Post an update - where it stands, what's next, what you need" onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) post(); }} /></div>
-        <Btn kind="primary" disabled={!comment.trim() || busy === "comment"} onClick={post}>{busy === "comment" ? "…" : "Post"}</Btn>
-      </div>
-
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 16, fontSize: 11, color: DS.dim }}>
-        <span>{t.created_by ? "Added by " + (people.find(x => x.email === t.created_by)?.name || t.created_by) + " · " : ""}{t.completed_at ? "Done " + ago(t.completed_at) : "Last update " + ago(t.last_activity_at)}</span>
-        <div style={{ flex: 1 }} />
-        {canDelete && <Btn small kind="quiet" onClick={delCard} style={{ color: "#ff6b5a" }}>Delete card</Btn>}
-      </div>
-      {t.due_date && t.status !== "done" && t.due_date < today && <div style={{ marginTop: 8, fontSize: 12, color: "#ff6b5a" }}>This card is past due. Post an update or move the date.</div>}
-    </Modal>
   );
 }
 
@@ -531,19 +369,32 @@ function NewProject({ api, boot, onClose, onCreated }) {
   );
 }
 
-// ── Slack + Monday email ────────────────────────────────────────────────────
+// ── Settings: Slack, the emails, categories and departments ────────────────
+function ListEditor({ label, items, onSave, busy }) {
+  const [v, setV] = useState("");
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <div style={{ fontSize: 13, color: DS.mut, marginBottom: 6 }}>{label}</div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+        {items.map(x => <span key={x} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "rgba(255,255,255,0.06)", borderRadius: 20, padding: "4px 10px", fontSize: 13 }}>{x}<span onClick={() => !busy && items.length > 1 && onSave(items.filter(y => y !== x))} title="Remove" style={{ cursor: "pointer", color: DS.dim }}>✕</span></span>)}
+        <input value={v} onChange={e => setV(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && v.trim() && !items.includes(v.trim())) { onSave([...items, v.trim()]); setV(""); } }} placeholder="+ Add (Enter)" style={{ ...sel, width: 150 }} />
+      </div>
+    </div>
+  );
+}
 function Settings({ api, boot, onClose, onSaved }) {
   const s = boot.settings;
   const [hook, setHook] = useState("");
+  const [ids, setIds] = useState(() => ({ ...(s.slackIds || {}) }));
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
-  const run = async (fn, ok) => { setBusy(true); setMsg(""); try { await fn(); setMsg(ok); onSaved(); } catch (e) { setMsg("⚠ " + e.message); } setBusy(false); };
+  const run = async (fn, ok) => { setBusy(true); setMsg(""); try { await fn(); setMsg(ok); await onSaved(); } catch (e) { setMsg("⚠ " + e.message); } setBusy(false); };
   return (
-    <Modal onClose={onClose} width={620}>
-      <div style={{ fontSize: 19, fontWeight: 800, marginBottom: 12 }}>⚙ Slack &amp; email</div>
+    <Modal onClose={onClose} width={680}>
+      <div style={{ fontSize: 19, fontWeight: 800, marginBottom: 12 }}>⚙ Tasks &amp; Projects settings</div>
       <Label>Slack</Label>
       <div style={{ fontSize: 13, color: DS.mut, lineHeight: 1.55, marginBottom: 8 }}>
-        {s.slack ? <>✅ Connected{s.slackFromEnv ? " (from the server settings)" : ""}. New cards, status changes, assignments, comments and files post one line each, and a weekly digest goes out Monday mornings.</> : <>Not connected yet. In Slack: <b>Apps → search "Incoming Webhooks"</b> (or api.slack.com/apps → your app → Incoming Webhooks) → <b>Add to Slack</b> → pick the channel (for example #dssc-projects) → copy the Webhook URL and paste it here.</>}
+        {s.slack ? <>✅ Connected{s.slackFromEnv ? " (from the server settings)" : ""}. New tasks, status changes, blockers, assignments, comments, help requests and files post one line each; a digest goes out every morning and a project check-in on Mondays.</> : <>Not connected yet. In Slack: <b>Apps → search "Incoming Webhooks"</b> (or api.slack.com/apps → your app → Incoming Webhooks) → <b>Add to Slack</b> → pick the channel (for example #dssc-tasks) → copy the Webhook URL and paste it here.</>}
       </div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         <input value={hook} onChange={e => setHook(e.target.value)} placeholder="https://hooks.slack.com/services/…" style={{ ...inputStyle, flex: "1 1 300px" }} />
@@ -551,12 +402,37 @@ function Settings({ api, boot, onClose, onSaved }) {
         {s.slack && <Btn kind="ghost" disabled={busy} onClick={() => run(() => api("test_slack"), "Sent a test to Slack.")}>Send a test</Btn>}
         {s.slack && !s.slackFromEnv && <Btn kind="quiet" disabled={busy} onClick={() => window.confirm("Stop posting to Slack?") && run(() => api("settings", { slack_webhook: "" }), "Slack disconnected.")}>Disconnect</Btn>}
       </div>
+      <div style={{ fontSize: 13, color: DS.mut, lineHeight: 1.5, margin: "12px 0 6px" }}>
+        <b style={{ color: DS.text }}>@mentions.</b> Add each person's Slack member ID so posts ping them (Slack: click their name → <b>⋮ More → Copy member ID</b>; it looks like U0123ABCD).
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 6 }}>
+        {boot.people.map(p => (
+          <label key={p.email} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+            <Avatar name={p.name} size={22} /><span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
+            <input value={ids[p.email] || ""} onChange={e => setIds(x => ({ ...x, [p.email]: e.target.value.trim() }))} placeholder="U0123ABCD" style={{ ...sel, width: 120 }} />
+          </label>
+        ))}
+      </div>
+      <Btn small kind="ghost" disabled={busy} onClick={() => run(() => api("settings", { slack_ids: ids }), "Slack member IDs saved.")} style={{ marginTop: 8 }}>Save member IDs</Btn>
+
+      <Label style={{ marginTop: 18 }}>Morning Slack digest</Label>
+      <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, cursor: "pointer" }}>
+        <input type="checkbox" checked={s.dailyDigest} disabled={busy} onChange={e => run(() => api("settings", { daily_digest: e.target.checked }), e.target.checked ? "The morning digest is on." : "The morning digest is off.")} style={{ accentColor: DS.lime, width: 16, height: 16 }} />
+        Every morning at 7:45, post each person's tasks due today, overdue and blocked, plus open help requests.
+      </label>
+      {s.lastDailyAt && <div style={{ fontSize: 12, color: DS.dim, marginTop: 6 }}>Last run {new Date(s.lastDailyAt).toLocaleString()}.</div>}
+
       <Label style={{ marginTop: 18 }}>Monday email</Label>
       <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, cursor: "pointer" }}>
         <input type="checkbox" checked={s.weeklyEmail} disabled={busy} onChange={e => run(() => api("settings", { weekly_email: e.target.checked }), e.target.checked ? "The Monday email is on." : "The Monday email is off.")} style={{ accentColor: DS.lime, width: 16, height: 16 }} />
-        Every Monday at 8am, email each person their cards that are overdue, due this week, blocked, or haven't had an update in a week, plus a progress line for each project they own.
+        Every Monday at 8am, email each person their tasks that are overdue, due this week, blocked, or haven't had an update in a week, plus a progress line for each project they own.
       </label>
       {s.lastWeeklyAt && <div style={{ fontSize: 12, color: DS.dim, marginTop: 6 }}>Last sent {new Date(s.lastWeeklyAt).toLocaleString()}.</div>}
+
+      <Label style={{ marginTop: 18 }}>Categories &amp; departments</Label>
+      <ListEditor label="Categories (what kind of work)" items={s.categories || []} busy={busy} onSave={(list) => run(() => api("settings", { categories: list }), "Categories saved.")} />
+      <ListEditor label="Departments (who it touches; a task can be in several)" items={s.departments || []} busy={busy} onSave={(list) => run(() => api("settings", { departments: list }), "Departments saved.")} />
+
       {msg && <div style={{ marginTop: 12, fontSize: 13, color: msg.startsWith("⚠") ? DS.orange : DS.lime }}>{msg}</div>}
       <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 16 }}><Btn kind="quiet" onClick={onClose}>Done</Btn></div>
     </Modal>
