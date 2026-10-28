@@ -24,3 +24,5 @@ create table if not exists public.question_forms (
   notified_at   timestamptz
 );
 alter table public.question_forms enable row level security;   -- service role only
+-- The Tasks & Projects card for answering it; sending the form marks it done.
+alter table public.question_forms add column if not exists task_id bigint references public.dssc_project_tasks(id) on delete set null;

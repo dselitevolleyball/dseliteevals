@@ -7,7 +7,8 @@
 //                                      one not answered
 // POST /questions?t=<token>          → { action: "save", id, text } saves one answer
 //                                      { action: "submit" } finishes it (every
-//                                      question answered) and Slacks Drew
+//                                      question answered), Slacks Drew and marks
+//                                      its Tasks & Projects card (task_id) done
 // GET  /questions?r=<results token>  → Drew's copy: every question and answer
 //
 // Not part of the React app, like /poll and /kickoff: it opens from a Slack or
@@ -116,6 +117,10 @@ export default async function handler(req, res) {
       if (missing.length) return res.status(400).json({ error: `Question${missing.length === 1 ? "" : "s"} ${missing.join(", ")} still need an answer.` });
       const now = new Date().toISOString();
       await sb.from("question_forms").update({ status: "completed", completed_at: now }).eq("id", form.id);
+      if (form.task_id) {
+        const { data: task } = await sb.from("dssc_project_tasks").update({ status: "done", completed_at: now, completed_by: form.recipient_name, last_activity_at: now }).eq("id", form.task_id).neq("status", "done").select("id, project_id").maybeSingle();
+        if (task) await sb.from("dssc_project_updates").insert({ project_id: task.project_id, task_id: task.id, kind: "status", body: "Done - answers sent to Drew.", author_name: form.recipient_name, author_email: form.recipient_email });
+      }
       const link = `${BASE[form.brand] || BASE.dssc}?r=${form.results_token}`;
       const r = await dmPerson(sb, form.notify_email, { text: `✅ *${slackEsc(form.recipient_name)}* answered all ${form.questions.length} questions on *${slackEsc(form.title)}*.\n<${link}|Read the answers>` }).catch(e => ({ ok: false, error: e.message }));
       if (r.ok) await sb.from("question_forms").update({ notified_at: now }).eq("id", form.id);
