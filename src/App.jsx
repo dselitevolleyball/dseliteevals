@@ -38,6 +38,7 @@ import RegistrationCheck, { RegBadges, loadRegistrationCheck } from "./Registrat
 import EuropeRsvps from "./EuropeRsvps.jsx";
 import EuropeTrip from "./EuropeTrip.jsx";
 import DsscTexts from "./dssc/DsscTexts.jsx";
+import DseSocial from "./DseSocial.jsx";
 import { laneOfPerson } from "../shared/dssc-lanes.js";
 import DsscReachTexts from "./dssc/DsscReachTexts.jsx";
 import ProductBoard from "./ProductBoard.jsx";
@@ -2260,7 +2261,7 @@ export default function App() {
   // email we send them. Every admin control inside renderDsysa — add/cancel a
   // date, set the lead, remove someone else's signup — is separately gated on
   // isAdmin, so opening the view exposes no admin action.
-  const OPS_VIEWS = new Set(["product","housing","waiting","newplayers","privates","school","schoolgames","playergear","kickoff","photos","incidentboard","tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","dayschedule","timecards","gear","staffing","roster","hawaii","travel","finance","dssccal","pods"]);
+  const OPS_VIEWS = new Set(["product","housing","waiting","newplayers","privates","school","schoolgames","playergear","kickoff","photos","social","incidentboard","tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","dayschedule","timecards","gear","staffing","roster","hawaii","travel","finance","dssccal","pods"]);
   const canOps    = isAdmin || isOwner;
   // Testing report emails: admins plus the performance coach (keep in step
   // with REPORT_SENDERS in api/stat-report.js).
@@ -33283,6 +33284,7 @@ export default function App() {
         {view==="checkin" && renderCheckins()}
         {view==="kickoff" && renderKickoffs()}
         {view==="photos" && renderTeamPhotos()}
+        {view==="social" && (isAdmin ? <DseSocial /> : <div style={{padding:20,color:C.mut}}>Social is for DS Elite admins.</div>)}
         {view==="incidents" && renderIncidents()}
         {view==="incidentboard" && (canOps ? renderIncidentBoard() : opsDenied)}
         {view==="coachcomms" && renderCoachComms()}

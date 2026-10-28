@@ -37,6 +37,7 @@ const IT = {
   school:        ["School Teams", "🏫", "ops", "high school middle school", "School"],
   schoolgames:   ["School Games", "🗓", "ops", "school schedule", "Games"],
   photos:        ["Team Photos", "📸", "ops", "pictures", "Photos"],
+  social:        ["Social", "📣", "admin", "social media facebook instagram posts collage carousel photos coach intro meet the coach survey poster approve", "Social"],
   waiting:       ["Waiting on", "⏳", "ops", "forms owe owed missing nudges", "Waiting"],
   newplayers:    ["New Players", "🆕", "ops", "new players onboarding late joiners uniforms usav stay to play checklist kristen", "New"],
   tracker:       ["Registration Tracker", "📊", "ops", "tracker registration payments paid sportsengine", "Tracker"],
@@ -102,7 +103,7 @@ const IT = {
 
 const DSE_OPS = [
   ["today", "Today & schedule", "📅", ["home", "dayschedule", "practice", "coverage", "staffing", "sa", "clockin"]],
-  ["talk", "Talk to people", "💬", ["messages", "email", "notifications", "coachcomms", "assignments", "website"]],
+  ["talk", "Talk to people", "💬", ["messages", "email", "notifications", "coachcomms", "assignments", "website", "social"]],
   ["teams", "Teams & players", "🏐", ["teamdir", "roster", "incidentboard", "incidents", "school", "schoolgames", "photos"]],
   ["families", "Families & signups", "👪", ["newplayers", "waiting", "tracker", "kickoff", "playergear", "scholarships"]],
   ["events", "Tournaments & travel", "✈️", ["tournaments", "hub", "workduty", "tournament", "dsysa", "travel", "housing", "hawaii"]],

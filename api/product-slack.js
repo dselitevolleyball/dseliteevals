@@ -1,7 +1,8 @@
 // Slack -> Product board (Drew, Oct 28 2026: "can I respond to Slack
 // messages? - do it"). The Slack app's Interactivity and Event Subscriptions
 // both point here.
-//   Buttons   Approve / Decline on a request, Build it, Ship it, Try again.
+//   Buttons   Approve / Decline on a request, Build it, Ship it, Try again;
+//             DS Elite Social's Approve & post / Skip (dse_social_*).
 //   Replies   in a card's thread (product_slack_threads):
 //             - on a card the agent has built: the reply is the next round of
 //               changes for the agent ("note: ..." is just a note)
@@ -19,8 +20,9 @@ import { waitUntil } from "@vercel/functions";
 import { act } from "./product.js";
 import { OWNER_EMAILS } from "./_lib/projects.js";
 import { slackCfg, slackApi, replyInThread, decidedMessage, cardLink } from "./_lib/product-slack.js";
+import { approvePost, skipPost, publishPost } from "./_lib/dse-social.js";
 
-export const config = { maxDuration: 60 };
+export const config = { maxDuration: 120 };
 const nrm = (v) => String(v || "").trim().toLowerCase();
 const later = (p) => { try { waitUntil(p); } catch { /* local */ } return p; };
 
@@ -52,8 +54,23 @@ const respond = (url, body) => fetch(url, { method: "POST", headers: { "Content-
 const oops = (url, text) => respond(url, { response_type: "ephemeral", replace_original: false, text });
 const card = async (sb, id) => (await sb.from("product_items").select("*").eq("id", Number(id)).single()).data;
 
+// DS Elite Social approvals (api/_lib/dse-social.js): Approve & post / Skip
+// on a draft DMed to an approver. The DM itself is updated by the engine.
+async function onSocialButton(sb, cfg, p, a) {
+  const me = await approverFor(sb, cfg, p.user?.id);
+  if (!me) return oops(p.response_url, "Only Drew and HQ admins can approve DS Elite posts.");
+  const by = String(me.name || me.email).split(/[\s@]/)[0];
+  try {
+    if (a.action_id === "dse_social_skip") return void await skipPost(sb, a.value, by);
+    const r = await approvePost(sb, a.value, by);
+    if (r.due) { const out = await publishPost(sb, a.value); if (out.errors?.length) return oops(p.response_url, "Approved, but posting failed: " + out.errors.join(" · ")); }
+  } catch (e) { return oops(p.response_url, `Couldn't do that: ${e.message}`); }
+}
+
 async function onButton(sb, cfg, p) {
-  const a = p.actions?.[0]; if (!a || !["approve", "decline", "build", "ship", "retry"].includes(a.action_id)) return;
+  const a0 = p.actions?.[0];
+  if (a0 && /^dse_social_(approve|skip)$/.test(a0.action_id)) return onSocialButton(sb, cfg, p, a0);
+  const a = a0; if (!a || !["approve", "decline", "build", "ship", "retry"].includes(a.action_id)) return;
   const me = await approverFor(sb, cfg, p.user?.id);
   if (!me) return oops(p.response_url, "Only Drew and HQ admins can do that from Slack.");
   const id = Number(a.value);
