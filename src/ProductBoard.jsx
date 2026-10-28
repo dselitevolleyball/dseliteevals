@@ -334,7 +334,7 @@ function Detail({ id, boot, narrow, onClose, onChanged }) {
                     <textarea value={change} onChange={e => setChange(e.target.value)} rows={3} placeholder="Ask for changes after looking at the preview - e.g. &quot;Make the button green and move it above the list&quot;" style={{ ...input, fontSize: 13 }} />
                     <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
                       <button disabled={!!busy || !change.trim()} onClick={() => run("revise", async () => { const x = await api("revise", { id, instructions: change }); setChange(""); return x; }, "Sent to the agent.")} style={btn("ghost")}>{busy === "revise" ? "Sending…" : "↻ Send changes to the agent"}</button>
-                      <button disabled={!!busy} onClick={() => { if (window.confirm(`Ship ${itemKey(id)} to the live app?\n\nThis merges the branch into main and Vercel deploys it.${it.preview_url ? "" : "\n\nThere's no preview link yet - make sure you've checked it."}`)) run("ship", () => api("ship", { id }), "Shipping - it merges to main in a minute or two."); }} style={btn("ok")}>🚀 Ship it</button>
+                      <button disabled={!!busy} onClick={() => { if (window.confirm(`Ship ${itemKey(id)} to the live app?\n\nThis merges the branch into main and Vercel deploys it.${it.preview_url ? "" : "\n\nThere's no preview link yet - make sure you've checked it."}`)) run("ship", () => api("ship", { id }), "Shipping - it merges to main, then shows Shipped once Vercel has finished deploying (a few minutes)."); }} style={btn("ok")}>🚀 Ship it</button>
                     </div>
                   </>
                 )}

@@ -125,6 +125,8 @@ export default async function handler(req, res) {
         ...(num(b.duration_ms) != null ? { duration_ms: num(b.duration_ms) } : {}),
       };
       const done = ["succeeded", "failed"].includes(b.status);
+      // A ship that has merged and is waiting on Vercel says so on the card.
+      if (!done && b.stage === "deploying" && run.kind === "ship") await sb.from("product_events").insert({ item_id: run.item_id, kind: "run", data: { run_id: run.id, status: "deploying" }, body: String(b.summary || "Merged to main - waiting for Vercel to deploy it.").slice(0, 400) });
       if (done) Object.assign(patch, { status: b.status, finished_at: new Date().toISOString(), error: b.status === "failed" ? String(b.error || "The run failed - see the GitHub log").slice(0, 2000) : null });
       await sb.from("product_runs").update(patch).eq("id", run.id);
       // Cost lands in Usage once per run.
@@ -143,7 +145,7 @@ export default async function handler(req, res) {
         await postCard(sb, item, ok ? (run.kind === "ship" ? shippedMessage(item, cost) : reviewMessage(item, { summary: patch.summary || run.summary, preview_url: patch.preview_url || item.preview_url }, cost))
           : failedMessage(item, String(b.error || "see the GitHub log")), { broadcast: run.kind !== "ship" }).catch(() => {});
         await sb.from("product_events").insert({ item_id: item.id, kind: "run", data: { run_id: run.id, status: b.status },
-          body: ok ? (run.kind === "ship" ? `Shipped - merged to main${cost}` : `The agent finished${cost} - ${STATUS_LABEL[status]}${patch.preview_url ? `, preview: ${patch.preview_url}` : ""}`) : `The agent run failed: ${String(b.error || "see the GitHub log").slice(0, 400)}` });
+          body: ok ? (run.kind === "ship" ? `Shipped - ${patch.summary && /live/.test(patch.summary) ? "merged to main and live on Vercel" : "merged to main"}${cost}` : `The agent finished${cost} - ${STATUS_LABEL[status]}${patch.preview_url ? `, preview: ${patch.preview_url}` : ""}`) : `The agent run failed: ${String(b.error || "see the GitHub log").slice(0, 400)}` });
       }
       return res.status(200).json({ ok: true });
     }

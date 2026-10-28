@@ -19,6 +19,7 @@ permissions:
   contents: write
   pull-requests: write
   deployments: read
+  statuses: read
   id-token: write
 
 jobs:
@@ -175,10 +176,29 @@ jobs:
             git commit -q -m "$KEYTXT: $TITLE" -m "Built by the HQ agent on $BRANCH." -m "Co-Authored-By: Claude <noreply@anthropic.com>"
             git push -q origin main
           fi
+          SHA=$(git rev-parse HEAD); SHORT=$(git rev-parse --short HEAD)
           PR_NUM=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
-          if [ -n "$PR_NUM" ]; then gh pr close "$PR_NUM" --comment "Shipped to main from the HQ Product board ($(git rev-parse --short HEAD))." || true; fi
+          if [ -n "$PR_NUM" ]; then gh pr close "$PR_NUM" --comment "Shipped to main from the HQ Product board ($SHORT)." || true; fi
           git push -q origin --delete "$BRANCH" || true
-          hq "$(jq -n --argjson id ${{ steps.claim.outputs.run_id }} '{action:"report", run_id:$id, status:"succeeded", summary:"Merged to main."}')"
+          # Not shipped until it's live (Drew, Oct 28 2026): wait for the
+          # "Vercel" status Vercel posts on the merged commit - pending, then
+          # success / failure / error. Up to 15 minutes; a repo with no Vercel
+          # status after 3 minutes doesn't deploy through Vercel.
+          hq "$(jq -n --argjson id ${{ steps.claim.outputs.run_id }} --arg s "$SHORT" '{action:"report", run_id:$id, status:"running", stage:"deploying", summary:("Merged to main (" + $s + ") - waiting for Vercel to deploy it.")}')"
+          STATE=""; DESC=""
+          for i in $(seq 1 90); do
+            J=$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA/statuses" --jq '[.[] | select(.context == "Vercel")][0] // {}' || echo '{}')
+            STATE=$(jq -r '.state // ""' <<<"$J"); DESC=$(jq -r '.description // ""' <<<"$J")
+            case "$STATE" in success|failure|error) break;; esac
+            if [ -z "$STATE" ] && [ "$i" -ge 18 ]; then break; fi
+            sleep 10
+          done
+          case "$STATE" in
+            success) hq "$(jq -n --argjson id ${{ steps.claim.outputs.run_id }} --arg s "$SHORT" '{action:"report", run_id:$id, status:"succeeded", summary:("Merged to main (" + $s + ") and live - Vercel finished deploying it.")}')" ;;
+            failure|error) hq "$(jq -n --argjson id ${{ steps.claim.outputs.run_id }} --arg s "$SHORT" --arg d "$DESC" '{action:"report", run_id:$id, status:"failed", error:("Merged to main (" + $s + "), but the Vercel deploy failed" + (if $d == "" then "" else ": " + $d end) + ". The live app is still on the version before it - check the Vercel build log.")}')" ;;
+            pending) hq "$(jq -n --argjson id ${{ steps.claim.outputs.run_id }} --arg s "$SHORT" '{action:"report", run_id:$id, status:"failed", error:("Merged to main (" + $s + "), but Vercel was still deploying after 15 minutes - check Vercel before calling it live.")}')" ;;
+            *) hq "$(jq -n --argjson id ${{ steps.claim.outputs.run_id }} '{action:"report", run_id:$id, status:"succeeded", summary:"Merged to main."}')" ;;
+          esac
 
       - name: Tell HQ it failed
         if: failure() && steps.claim.outputs.has_job == 'true'
