@@ -95,7 +95,7 @@ async function onReply(sb, cfg, ev) {
     if (m) { await act(sb, me, { action: "comment", id: item.id, body: text.slice(m[0].length) || text }); return say("📝 Added as a note on the card."); }
     if (item.status === "inbox") {
       const d = /^(approve|approved|yes|ok)\b[\s:,\-]*/i.exec(text), n = /^(decline|declined|no|reject)\b[\s:,\-]*/i.exec(text);
-      if (d || n) { await act(sb, me, { action: "decide", id: item.id, approve: !!d, note: text.slice((d || n)[0].length) || null }); return say(d ? "✓ Approved - it's in the Backlog." : "✗ Declined - they've been emailed."); }
+      if (d || n) { await act(sb, me, { action: "decide", id: item.id, approve: !!d, note: text.slice((d || n)[0].length) || null }); return say(d ? "✓ Approved - it's in the Backlog." : "✗ Declined - they've been told in Slack."); }
       await act(sb, me, { action: "comment", id: item.id, body: text }); return say("📝 Added as a note. Reply *approve* or *decline* to decide it.");
     }
     if (item.branch && ["review", "building"].includes(item.status)) {

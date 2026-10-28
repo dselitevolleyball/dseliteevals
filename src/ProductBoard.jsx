@@ -288,8 +288,8 @@ function Detail({ id, boot, narrow, onClose, onChanged }) {
           <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 6 }}>Approve this request?</div>
           <input value={note} onChange={e => setNote(e.target.value)} placeholder="Optional note to the person who sent it" style={{ ...input, fontSize: 13 }} />
           <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-            <button disabled={!!busy} onClick={() => run("decide", () => api("decide", { id, approve: true, note }), "Approved - it's in the Backlog and they've been emailed.")} style={btn("ok")}>✓ Approve</button>
-            <button disabled={!!busy} onClick={() => run("decide", () => api("decide", { id, approve: false, note }), "Declined - they've been emailed.")} style={btn("danger")}>Decline</button>
+            <button disabled={!!busy} onClick={() => run("decide", () => api("decide", { id, approve: true, note }), "Approved - it's in the Backlog and they've been told in Slack (or by email if they're not in Slack).")} style={btn("ok")}>✓ Approve</button>
+            <button disabled={!!busy} onClick={() => run("decide", () => api("decide", { id, approve: false, note }), "Declined - they've been told in Slack (or by email if they're not in Slack).")} style={btn("danger")}>Decline</button>
           </div>
         </div>
       )}

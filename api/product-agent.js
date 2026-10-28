@@ -13,7 +13,7 @@
 import crypto from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { REPOS, WORKFLOW_FILE, itemKey, branchFor, STATUS_LABEL } from "../shared/product.js";
-import { postCard, reviewMessage, failedMessage, shippedMessage } from "./_lib/product-slack.js";
+import { postCard, reviewMessage, failedMessage, shippedMessage, dmPerson, requesterMessage } from "./_lib/product-slack.js";
 
 export const config = { maxDuration: 30 };
 const ISS = "https://token.actions.githubusercontent.com";
@@ -144,6 +144,8 @@ export default async function handler(req, res) {
         const cost = num(b.cost_usd) != null ? ` · $${num(b.cost_usd).toFixed(2)}` : "";
         await postCard(sb, item, ok ? (run.kind === "ship" ? shippedMessage(item, cost) : reviewMessage(item, { summary: patch.summary || run.summary, preview_url: patch.preview_url || item.preview_url }, cost))
           : failedMessage(item, String(b.error || "see the GitHub log")), { broadcast: run.kind !== "ship" }).catch(() => {});
+        // Live: whoever asked for it hears in Slack (not Drew - he shipped it).
+        if (ok && run.kind === "ship" && item.requested_by && !/^drew@/i.test(item.requested_by)) await dmPerson(sb, item.requested_by, requesterMessage(item, "live")).catch(() => {});
         await sb.from("product_events").insert({ item_id: item.id, kind: "run", data: { run_id: run.id, status: b.status },
           body: ok ? (run.kind === "ship" ? `Shipped - ${patch.summary && /live/.test(patch.summary) ? "merged to main and live on Vercel" : "merged to main"}${cost}` : `The agent finished${cost} - ${STATUS_LABEL[status]}${patch.preview_url ? `, preview: ${patch.preview_url}` : ""}`) : `The agent run failed: ${String(b.error || "see the GitHub log").slice(0, 400)}` });
       }

@@ -82,7 +82,7 @@ export function reviewMessage(item, run, cost) {
   ] }, context("Reply in this thread with changes and the agent does another round. Start with *note:* to just leave a note.")] };
 }
 export const failedMessage = (item, err) => ({ text: `Agent run failed: ${item.title}`, blocks: [section(`⚠️ The agent run failed on *${cardLink(item.id, item.title)}*:\n${quote(err, 400)}`), { type: "actions", elements: [btn("↻ Try again", "retry", item.id), openBtn(item.id)] }] });
-export const shippedMessage = (item, cost) => ({ text: `Shipped: ${item.title}`, blocks: [section(`🚀 *Shipped* ${cardLink(item.id, item.title)} - live once Vercel finishes deploying${cost}`)] });
+export const shippedMessage = (item, cost) => ({ text: `Shipped: ${item.title}`, blocks: [section(`🚀 *Shipped* ${cardLink(item.id, item.title)} - merged and live on Vercel${cost}`)] });
 
 // ── posting ────────────────────────────────────────────────────────────────
 // With the bot: the card's first message starts its thread; later ones reply
@@ -110,6 +110,34 @@ export async function replyInThread(sb, channel, thread_ts, text) {
   const cfg = await slackCfg(sb);
   if (!cfg.bot_token) return;
   await slackApi(cfg.bot_token, "chat.postMessage", { channel, thread_ts, text, unfurl_links: false });
+}
+
+// The person who sent a request hears about it in Slack, as a DM from the bot
+// (Drew, Oct 28 2026: "send the feedback updates ... to Slack instead of
+// email"). Their Slack user: the member ID saved in Tasks & Projects settings
+// (dssc_project_settings.slack_ids), else looked up by their HQ email.
+// Returns { ok } or { ok: false, error } - the caller falls back to email.
+export async function dmPerson(sb, email, msg) {
+  const cfg = await slackCfg(sb);
+  if (!cfg.bot_token || !email) return { ok: false, error: "no Slack bot" };
+  const e = String(email).trim().toLowerCase();
+  const { data: st } = await sb.from("dssc_project_settings").select("slack_ids").eq("id", 1).maybeSingle();
+  let user = (st?.slack_ids || {})[e] || null;
+  if (!user) { const u = await slackApi(cfg.bot_token, "users.lookupByEmail", { email: e }); user = u.ok ? u.user.id : null; }
+  if (!user) return { ok: false, error: "not in Slack" };
+  const im = await slackApi(cfg.bot_token, "conversations.open", { users: user });
+  if (!im.ok) return { ok: false, error: im.error };
+  const r = await slackApi(cfg.bot_token, "chat.postMessage", { channel: im.channel.id, ...msg, unfurl_links: false, unfurl_media: false });
+  return r.ok ? { ok: true } : { ok: false, error: r.error };
+}
+// What the requester is told: approved, declined, live.
+export function requesterMessage(item, what, { by, note } = {}) {
+  const first = String(item.requested_name || "").split(/\s+/)[0] || "there";
+  const line = what === "approved" ? `Thanks for the idea - *${esc(item.title)}* has been approved and is on the HQ product board.`
+    : what === "declined" ? `Thanks for sending in *${esc(item.title)}*. We're not going to build it right now.`
+    : `🎉 *${esc(item.title)}* is live in HQ now. Thanks for suggesting it!`;
+  const text = `Hi ${esc(first)}, ${line}${note ? `\n${quote(`${by ? by + ": " : ""}${note}`, 400)}` : ""}\n_You can follow your requests from the 💡 Feedback button in HQ._`;
+  return { text: `${what === "live" ? "Live" : what === "approved" ? "Approved" : "Not now"}: ${item.title}`, blocks: [section(text)] };
 }
 
 // A plain line (tests, simple notices).

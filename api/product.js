@@ -14,7 +14,7 @@
 //   create { item }      a card straight into Backlog
 //   save { item }        edit fields (title, body, kind, priority, area, repo, model, effort...)
 //   move { id, status, sort? }
-//   decide { id, approve, note? }   Inbox -> Backlog (approve) or Declined; the requester is emailed
+//   decide { id, approve, note? }   Inbox -> Backlog (approve) or Declined; the requester hears in Slack (email if not in Slack)
 //   comment { id, body }
 //   build { id }         queue an agent run that builds it on a branch and opens a PR
 //   revise { id, instructions }   another agent round on the same branch
@@ -33,7 +33,7 @@ import { createClient } from "@supabase/supabase-js";
 import { OWNER_EMAILS, sendMail, esc } from "./_lib/projects.js";
 import { STATUSES, KINDS, REPOS, WORKFLOW_FILE, itemKey, repoFor } from "../shared/product.js";
 import { MODELS, EFFORTS } from "../shared/ai-pricing.js";
-import { productSlack, SLACK_HOOK, slackCfg, saveSlackCfg, slackApi, slackTarget, postCard, requestMessage } from "./_lib/product-slack.js";
+import { productSlack, SLACK_HOOK, slackCfg, saveSlackCfg, slackApi, slackTarget, postCard, requestMessage, dmPerson, requesterMessage } from "./_lib/product-slack.js";
 
 export const config = { maxDuration: 60 };
 const nrm = (v) => String(v || "").trim().toLowerCase();
@@ -143,8 +143,12 @@ async function uploadShot(sb, dataUrl, by) {
 }
 const signed = async (sb, path) => path ? (await sb.storage.from("product-media").createSignedUrl(path, 3600)).data?.signedUrl || null : null;
 
-async function tellRequester(item, approve, note, me) {
+// The requester hears about it in Slack (a DM from the Product bot); email
+// only when Slack can't reach them (no bot, or they're not in the workspace).
+async function tellRequester(sb, item, approve, note, me) {
   if (!item.requested_by || nrm(item.requested_by) === nrm(me.email)) return;
+  const dm = await dmPerson(sb, item.requested_by, requesterMessage(item, approve ? "approved" : "declined", { by: me.name, note })).catch(e => ({ ok: false, error: e.message }));
+  if (dm.ok) return;
   const first = String(item.requested_name || "").split(/\s+/)[0] || "there";
   const subject = approve ? `Your HQ idea is on the board: ${item.title}` : `About your HQ request: ${item.title}`;
   const line = approve ? "Thanks for the idea - it's been approved and added to the HQ product board." : "Thanks for sending this in. We're not going to build it right now.";
@@ -300,7 +304,7 @@ export async function act(sb, me, b) {
       const { data, error } = await sb.from("product_items").update({ status: approve ? "backlog" : "declined", decided_by: me.email, decided_at: new Date().toISOString(), decision_note: note, updated_at: new Date().toISOString() }).eq("id", item.id).select("*").single();
       if (error) throw fail(500, error.message);
       await event(sb, item.id, me, "decision", `${me.name} ${approve ? "approved" : "declined"} this${note ? `: ${note}` : ""}`, { approve });
-      await tellRequester(item, approve, note, me);
+      await tellRequester(sb, item, approve, note, me);
       return { item: data };
     }
 
