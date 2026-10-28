@@ -14,6 +14,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 // Gates: all | ops | admin | owner | teams | mine | duty | reports | opsMine | opsTeams | dir | reach (Coach Brandon + directors)
 const IT = {
   home:          ["Home", "🏠", "all", "dashboard start", "Home"],
+  meeting:       ["Weekly Meeting", "🗓", "dir", "weekly meeting agenda critical discuss court discrepancies programming gaps overlaps playbook school days off deadlines", "Meeting"],
   projects:      ["Tasks & Projects", "✅", "staff", "tasks projects to do todos cards daily weekly monthly repeating recurring blocked help overdue scorecard on time launch plan assign heatwave fall fest checklist", "Tasks"],
   courts:        ["Court Availability", "🏟", "dir", "courts open free available gym space playbook rental booked", "Courts"],
   dsscplan:      ["2027 Planning Calendar", "🗓", "dir", "planning calendar 2027 workbook plan courts schedule warehouse flex open", "Plan"],
@@ -118,7 +119,7 @@ const DSE_COACH = [
   ["tryouts", "Tryouts 2026-27", "🎯", ["dashboard", "evaluate", "favorites", "teams", "rankings", "physical", "tryouts"]],
 ];
 const DSSC_SECS = [
-  ["projectsec", "Tasks & Projects", "✅", ["projects"]],
+  ["projectsec", "Tasks & Projects", "✅", ["projects", "meeting"]],
   ["programs", "Programs", "🏕", ["clinics", "courts", "dsscplan", "dssccamp", "pods", "privates"]],
   ["people", "Inbox, texts & people", "💬", ["dsscinbox", "dssctexts", "reachtexts", "dssccrm"]],
   ["marketing", "Marketing", "📣", ["dsscmarketing"]],

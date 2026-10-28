@@ -22,6 +22,9 @@
 //   comment        { project_id?, task_id?, body }
 //   help           { task_id, note, from_email? }   ask for help (from_email: one person, else anyone)
 //   help_done      { task_id }            the help request is sorted
+//   checkin                          -> { questions } a few quick questions about my own tasks
+//                                   (overdue, blocked, due today, gone quiet) for the HQ check-in card
+//   checkin_ok     { task_id, note? }  "on track" / "still on it" (a note becomes a comment)
 //   save_series    { series, quiet? }     add or edit a repeating task (managers; anyone for their own)
 //                  (quiet, scripts only - seeding: no Slack post, no email)
 //   delete_series  { id }                 stop it repeating and drop its open future copies
@@ -477,6 +480,38 @@ const ACTIONS = {
     if (error) throw new Error(error.message);
     await slack(sb, `🛑 ${slackText(me.name)} stopped the repeating task *${slackText(s.title)}*.`);
     return { deleted: s.id };
+  },
+
+  // The check-in card (Drew, Oct 28 2026: "make it easier for people to update
+  // tasks by asking them simple questions about tasks and progress when they
+  // open HQ"). Up to five, most pressing first.
+  async checkin(sb, me) {
+    const today = centralToday();
+    const { data: ts } = await sb.from("dssc_project_tasks").select("id, project_id, series_id, title, status, priority, due_date, blocker, help_requested_at, last_activity_at, created_at")
+      .ilike("assignee_email", me.email).in("status", ["todo", "doing", "blocked"]);
+    const { data: ps } = await sb.from("dssc_projects").select("id, name, status");
+    const live = new Map((ps || []).filter(p => !["done", "archived"].includes(p.status)).map(p => [p.id, p.name]));
+    const mine = (ts || []).filter(t => !t.project_id || live.has(t.project_id)).map(t => ({ ...t, project_name: t.project_id ? live.get(t.project_id) : null }));
+    const weekAgo = Date.now() - 7 * 864e5;
+    const kind = (t) => t.help_requested_at ? null
+      : t.status === "blocked" ? "blocked"
+      : t.due_date && t.due_date < today ? "overdue"
+      : t.due_date === today ? "today"
+      : !t.series_id && Date.parse(t.last_activity_at || t.created_at) < weekAgo ? "quiet" : null;
+    const order = { overdue: 0, blocked: 1, today: 2, quiet: 3 };
+    const questions = mine.map(t => ({ ...t, kind: kind(t) })).filter(t => t.kind)
+      .sort((a, b) => order[a.kind] - order[b.kind] || (b.priority === "high") - (a.priority === "high") || (a.due_date || "9999").localeCompare(b.due_date || "9999"))
+      .slice(0, 5);
+    return { today, questions, total: mine.length };
+  },
+
+  async checkin_ok(sb, me, b) {
+    const task = await taskRow(sb, b.task_id);
+    const note = clip(b.note, 2000);
+    if (note) return ACTIONS.comment(sb, me, { task_id: task.id, body: note });
+    await logUpdate(sb, me, task.project_id, task.id, "checkin", task.status === "blocked" ? "Checked in: still blocked." : "Checked in: on track.");
+    await sb.from("dssc_project_tasks").update({ last_activity_at: new Date().toISOString() }).eq("id", task.id);
+    return { ok: true };
   },
 
   async upload_url(sb, me, b) {

@@ -90,3 +90,34 @@ don't log anything extra. The logic is in `shared/class-comms.js`.
 - **Class table**: every class, and it can be filtered to the ones with no message.
 - **Slack**: the morning digest adds a line on yesterday's classes, naming the coaches whose classes got no
   message.
+
+## Weekly Meeting
+
+DSSC HQ → Tasks & Projects → **Weekly Meeting** (`view=meeting`, `src/dssc/WeeklyMeeting.jsx`, data from
+`api/weekly-meeting.js`) is the agenda for the directors' weekly meeting. It's worked out from HQ's own data.
+Items are ranked critical / high / watch, each with how long is left before it's late:
+
+- **Tasks & projects**: overdue, blocked, asking for help, unassigned and due soon, gone quiet, projects running out
+  of time faster than their cards get done, projects with no deadline, and daily repeats not done.
+- **Court discrepancies**: from the court engine, over the next 14 days. This part loads separately because it reads
+  Playbook's live calendar.
+- **Programming gaps & overlaps**: weeks with far fewer classes than usual, and two classes on one court at once.
+- **Planned but not in Playbook**: the 2027 Planning Calendar against the classes synced from Playbook. A program is
+  due in Playbook 6 weeks before it starts.
+- **School days off**: breaks coming up with no camps scheduled, using `shared/marketing-seasons.js`. These dates
+  are approximate.
+- **Coaches & class plans**: classes in the next 10 days with no coach in HQ, and class plans not approved.
+- **Class comms**: last week's classes whose families didn't hear from the coach.
+
+Each item can be ticked off as discussed (kept per week, on that device), opened, or made into a task.
+"Copy agenda" copies the list as text.
+
+## Check-in questions
+
+When someone with Tasks & Projects opens HQ, `src/dssc/TaskCheckin.jsx` asks up to five one-tap questions
+about their own tasks: overdue, blocked, due today, or quiet for a week (the `checkin` / `checkin_ok`
+actions in `api/projects.js`).
+
+- **When it shows**: once a day. "Later" brings it back on the next visit, and "Skip for today" hides it until tomorrow.
+- **What's quiet**: "On track" and "Still on it" are only logged.
+- **What posts to Slack**: done, new dates, blockers and help requests, like any other change.

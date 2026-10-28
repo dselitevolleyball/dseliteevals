@@ -22,6 +22,8 @@ import CourtAvailability from "./CourtAvailability.jsx";
 import DsscPlanner from "./dssc/DsscPlanner.jsx";
 import Projects from "./dssc/Projects.jsx";
 import ClassComms from "./dssc/ClassComms.jsx";
+import WeeklyMeeting from "./dssc/WeeklyMeeting.jsx";
+import TaskCheckin from "./dssc/TaskCheckin.jsx";
 import { classSport, sportLabel, canWorkClass } from "../shared/dssc-sport.js";
 import { buildNav, navTheme, Sidebar, NavDrawer, BottomBar, SiblingChips } from "./Nav.jsx";
 import DaySchedule from "./DaySchedule.jsx";
@@ -2342,7 +2344,7 @@ export default function App() {
   // colors, navigation, home — between DS Elite and Dripping Springs Sports
   // Club, instead of DSSC living as a tab inside DS Elite. Opening a DSSC
   // screen by any route (a push link, the home card) flips it too.
-  const DSSC_VIEWS = new Set(["dssc","clinics","dssctexts","reachtexts","dssccrm","dsscinbox","dsscmarketing","reachstats","dssccal","dssctime","pods","privates","dssccamp","courts","dsscplan","staffhours","staffadmin","dsscpeople","dsscpay","projects","classcomms"]);
+  const DSSC_VIEWS = new Set(["dssc","clinics","dssctexts","reachtexts","dssccrm","dsscinbox","dsscmarketing","reachstats","dssccal","dssctime","pods","privates","dssccamp","courts","dsscplan","staffhours","staffadmin","dsscpeople","dsscpay","projects","classcomms","meeting"]);
   // Screens a DSSC-only login may open: DSSC's own plus the shared basics.
   // Product (the feature board) serves both businesses: owners and admins open it from drippingsportsclub.com/hq too.
   const DSSC_ONLY_OK = new Set([...DSSC_VIEWS, "home", "notifications", "activity", "faq", ...(canOps ? ["product"] : [])]);
@@ -33032,6 +33034,12 @@ export default function App() {
   const navSec = nav.sectionOf(view);
   const showSidebar = !isNarrow && !isReachOnly;
   const showPhoneNav = isNarrow && !isReachOnly;
+  // Open another HQ screen with its own address bits (Tasks & Projects reads
+  // ?project / ?task / ?tab when it opens; the Weekly Meeting links use them).
+  const openHqView = (v, params) => {
+    try { const u = new URL(window.location.href); for (const k of ["project", "task", "tab", "date"]) u.searchParams.delete(k); for (const [k, val] of Object.entries(params || {})) u.searchParams.set(k, val); window.history.replaceState(window.history.state, "", u); } catch { /* ignore */ }
+    setView(v);
+  };
   const sidebarCollapsed = navCollapsed === null ? isMidWidth : navCollapsed;
   const setSidebarCollapsed = (v) => { setNavCollapsed(v); try { localStorage.setItem("dse.navCollapsed", v ? "1" : "0"); } catch { /* private mode */ } };
   const togglePin = (v) => {
@@ -33286,7 +33294,8 @@ export default function App() {
         {view==="pods" && renderPods()}
         {view==="playereval" && renderPlayerEvals()}
         {view==="passing" && renderPassing()}
-        {view==="projects" && (isDsscDirector || isDsscStaff || dsscRole ? <Projects coach={coach} onOpenView={(v)=>setView(v)} /> : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Tasks & Projects are for DSSC staff.</div>)}
+        {view==="projects" && (isDsscDirector || isDsscStaff || dsscRole ? <Projects coach={coach} onOpenView={openHqView} /> : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Tasks & Projects are for DSSC staff.</div>)}
+        {view==="meeting" && (isDsscDirector ? <WeeklyMeeting onOpenView={openHqView} /> : <div style={{padding:24,color:C.mut,textAlign:"center"}}>The weekly meeting screen is for the DSSC directors.</div>)}
         {view==="dsscplan" && (isDsscDirector ? <DsscPlanner coach={coach} /> : <div style={{padding:24,color:C.mut,textAlign:"center"}}>The planning calendar is for admins and the DSSC directors.</div>)}
         {view==="courts" && (isDsscDirector ? <CourtAvailability onOpenClass={(cid, sid)=>{ setDsscHubSel({ clinicId: cid, sessionId: sid }); setDsscHubBack("courts"); setView("dssc"); }} /> : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Court availability is for admins and the DSSC directors.</div>)}
         {view==="serving" && <ServeGrader coach={coach} players={players}
@@ -33333,6 +33342,7 @@ export default function App() {
         </>}
         {/* Brandon (Reach) gets Ask HQ for testing numbers only; api/ask-hq.js limits it. */}
         <FeedbackButton view={view} workspace={workspace} narrow={isNarrow} phoneNav={showPhoneNav} />
+        {isApproved && (isDsscDirector || isDsscStaff || dsscRole) && coach?.email && <TaskCheckin email={String(coach.email).toLowerCase()} onOpenTasks={() => openHqView("projects")} />}
         {(canOps || dsscRole === "admin" || canSendReports) && <AskHQ open={askOpen} onClose={()=>setAskOpen(false)} view={view} coach={coach} testing={!canOps && dsscRole !== "admin"} />}
       </div>
       </div>
