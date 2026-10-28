@@ -11,8 +11,9 @@ export const OWNER_EMAILS = ["drew@dselitevolleyball.com", "drew@drippingsportsc
 const DIRECTOR_EMAILS = ["hunterhaleysc10@gmail.com", "hunter@drippingsportsclub.com"];
 export const APP_URL = "https://www.drippingsportsclub.com/hq/";
 export const BUCKET = "dssc-projects";
-export const STATUS = ["todo", "doing", "blocked", "done"];
-export const STATUS_LABEL = { todo: "To do", doing: "In progress", blocked: "Blocked", done: "Done" };
+// "skipped": a repeating task's occurrence that was missed or passed over (Oct 28 2026).
+export const STATUS = ["todo", "doing", "blocked", "done", "skipped"];
+export const STATUS_LABEL = { todo: "To do", doing: "In progress", blocked: "Blocked", done: "Done", skipped: "Skipped" };
 export const PROJECT_STATUS = ["planning", "active", "on_hold", "done", "archived"];
 const nrm = (v) => String(v || "").trim().toLowerCase();
 
