@@ -3,7 +3,9 @@
 //   2. closes daily repeats nobody finished two days on (as missed),
 //   3. posts one Slack digest: per person, what's due today, overdue (new
 //      overdue ones called out once), blocked, and open help requests -
-//      @mentioning anyone whose Slack member ID is in settings.
+//      @mentioning anyone whose Slack member ID is in settings - plus a line on
+//      yesterday's classes: how many got a message to families before / after
+//      class, and whose didn't (shared/class-comms.js, the Class Comms screen).
 // Nothing due and nothing late = no Slack post.
 //
 // Auth: Vercel Cron (Authorization: Bearer <CRON_SECRET>) or the service-role key.
@@ -12,6 +14,8 @@
 import { createClient } from "@supabase/supabase-js";
 import { centralToday, fmtDate, slack, slackLink, slackText } from "./_lib/projects.js";
 import { taskLink, mention, settingsRow, generateRecurring, closeMissedDaily } from "./_lib/tasks.js";
+import { classRows, totals } from "../shared/class-comms.js";
+import { addDays } from "../shared/task-recurrence.js";
 
 const nrm = (v) => String(v || "").trim().toLowerCase();
 
@@ -61,7 +65,22 @@ export default async function handler(req, res) {
     return `${who}  ${[p.today.length && `${p.today.length} today`, p.late.length && `${p.late.length} overdue`, p.blocked.length && `${p.blocked.length} blocked`].filter(Boolean).join(" · ")}\n${rows.slice(0, 12).join("\n")}${rows.length > 12 ? `\n   …and ${rows.length - 12} more` : ""}`;
   });
   const helpBlock = help.length ? `\n🙋 *Asking for help*\n${help.map(t => `   ${line(t)} - ${slackText(t.help_note || "")}${t.help_from ? ` → ${mention(st, t.help_from, "")}` : ""}`).join("\n")}` : "";
-  const text = blocks.length || helpBlock ? `☀️ *Today's tasks* - ${fmtDate(today)}\n\n${blocks.join("\n\n")}${helpBlock}` : null;
+  // Yesterday's classes: did families hear from the coach?
+  const yesterday = addDays(today, -1);
+  const [{ data: clinics }, { data: classMsgs }] = await Promise.all([
+    sb.from("dssc_clinics").select("id, name, sport, coach_name, sessions"),
+    sb.from("dssc_class_messages").select("clinic_id, session_id, sent_by, created_at").gte("created_at", addDays(today, -10)),
+  ]);
+  const commsLines = ["volleyball", "basketball"].map(sport => {
+    const rows = classRows({ clinics: clinics || [], messages: classMsgs || [], from: yesterday, to: yesterday, sport });
+    if (!rows.length) return null;
+    const t = totals(rows);
+    const missed = new Map(); for (const r of rows) if (r.state === "none") missed.set(r.lead, (missed.get(r.lead) || 0) + 1);
+    const who = [...missed].map(([n, k]) => `${slackText(n)}${k > 1 ? " (" + k + ")" : ""}`).join(", ");
+    return `   ${sport === "volleyball" ? "🏐" : "🏀"} ${t.messaged} of ${t.classes} ${sport} classes got a message to families (before ${t.before} · after ${t.after})${who ? ` - none from: ${who}` : ""}`;
+  }).filter(Boolean);
+  const commsBlock = commsLines.length ? `\n📣 *Yesterday's class comms* (${slackLink("https://www.drippingsportsclub.com/hq/?view=classcomms", "Class Comms")})\n${commsLines.join("\n")}` : "";
+  const text = blocks.length || helpBlock || commsBlock ? `☀️ *Today's tasks* - ${fmtDate(today)}\n\n${blocks.join("\n\n")}${helpBlock}${commsBlock}` : null;
 
   let posted = null;
   const on = st.daily_digest !== false || force;

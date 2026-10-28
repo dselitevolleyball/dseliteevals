@@ -21,6 +21,7 @@ import ServeGrader from "./ServeGrader.jsx";
 import CourtAvailability from "./CourtAvailability.jsx";
 import DsscPlanner from "./dssc/DsscPlanner.jsx";
 import Projects from "./dssc/Projects.jsx";
+import ClassComms from "./dssc/ClassComms.jsx";
 import { classSport, sportLabel, canWorkClass } from "../shared/dssc-sport.js";
 import { buildNav, navTheme, Sidebar, NavDrawer, BottomBar, SiblingChips } from "./Nav.jsx";
 import DaySchedule from "./DaySchedule.jsx";
@@ -2341,7 +2342,7 @@ export default function App() {
   // colors, navigation, home — between DS Elite and Dripping Springs Sports
   // Club, instead of DSSC living as a tab inside DS Elite. Opening a DSSC
   // screen by any route (a push link, the home card) flips it too.
-  const DSSC_VIEWS = new Set(["dssc","clinics","dssctexts","reachtexts","dssccrm","dsscinbox","dsscmarketing","reachstats","dssccal","dssctime","pods","privates","dssccamp","courts","dsscplan","staffhours","staffadmin","dsscpeople","dsscpay","projects"]);
+  const DSSC_VIEWS = new Set(["dssc","clinics","dssctexts","reachtexts","dssccrm","dsscinbox","dsscmarketing","reachstats","dssccal","dssctime","pods","privates","dssccamp","courts","dsscplan","staffhours","staffadmin","dsscpeople","dsscpay","projects","classcomms"]);
   // Screens a DSSC-only login may open: DSSC's own plus the shared basics.
   // Product (the feature board) serves both businesses: owners and admins open it from drippingsportsclub.com/hq too.
   const DSSC_ONLY_OK = new Set([...DSSC_VIEWS, "home", "notifications", "activity", "faq", ...(canOps ? ["product"] : [])]);
@@ -33301,6 +33302,7 @@ export default function App() {
         {view==="dssccrm" && (isDsscDirector
           ? <DsscCrm coach={coach} isDirector={isDsscDirector} onText={(recipients)=>{ setDsscTextsInit({ recipients }); setView("dssctexts"); }} />
           : <div style={{padding:24,color:C.mut,textAlign:"center"}}>DSSC People is for the club's directors.</div>)}
+        {view==="classcomms" && (isDsscDirector ? <ClassComms onMessageClass={(cid, sid)=>{ setDsscTextsInit({ clinicId: cid, sessionId: sid }); setView("dssctexts"); }} /> : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Class Comms is for the DSSC directors.</div>)}
         {view==="dsscinbox" && (isDsscDirector
           ? <DsscInbox coach={coach} initialId={dsscInboxInit} onConsumedInitial={()=>setDsscInboxInit(null)} onChanged={loadInboxNew} />
           : opsDenied)}

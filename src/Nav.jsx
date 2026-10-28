@@ -85,6 +85,7 @@ const IT = {
   reachstats:    ["Reach Stats", "🏃", "reach", "reach performance stats testing athletes add athlete broad jump sprint speed mph 10 yard vertical approach leaderboard brandon", "Reach"],
   dsscmarketing: ["Marketing", "📣", "dir", "marketing social facebook instagram posts email newsletter campaign graphics approve drafts promote", "Marketing"],
   dssc:          ["Coach Hub", "🏠", "coach", "hub", "Hub"],
+  classcomms:    ["Class Comms", "📣", "dir", "class comms messages families parents coaches before after recap tracking chart volleyball basketball focus practice at home", "Comms"],
   dssccal:       ["Coverage Calendar", "📅", "dir", "coverage calendar shifts assign coaches", "Coverage"],
   dssctime:      ["DSSC Time Cards", "🕒", "coach", "payroll hours approve", "Time"],
   staffhours:    ["My Hours", "⏱", "staff", "clock in clock out shift intern staff hours working on", "Clock"],
@@ -122,7 +123,7 @@ const DSSC_SECS = [
   ["people", "Inbox, texts & people", "💬", ["dsscinbox", "dssctexts", "reachtexts", "dssccrm"]],
   ["marketing", "Marketing", "📣", ["dsscmarketing"]],
   ["reach", "Reach Performance", "🏃", ["reachstats"]],
-  ["dsscstaff", "Coaches & pay", "🗓", ["dssc", "dssccal", "dssctime", "staffhours", "staffadmin", "dsscpeople", "dsscpay"]],
+  ["dsscstaff", "Coaches & pay", "🗓", ["dssc", "classcomms", "dssccal", "dssctime", "staffhours", "staffadmin", "dsscpeople", "dsscpay"]],
 ];
 const FOOTER = ["activity", "faq", "product", "askai"];
 // A screen's name for people (the 💡 Feedback popup says which screen it came from).

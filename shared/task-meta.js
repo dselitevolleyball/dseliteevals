@@ -21,6 +21,7 @@ export const HQ_VIEWS = [
   ["dssccal", "Coverage Calendar", "Staff & pay"],
   ["dsscpay", "Pay rates", "Staff & pay"],
   ["dsscpeople", "Coaches & Staff", "Staff & pay"],
+  ["classcomms", "Class Comms", "Families"],
   ["dsscinbox", "Inbox", "Families"],
   ["dssctexts", "DSSC Texts", "Families"],
   ["reachtexts", "Reach Texts", "Families"],

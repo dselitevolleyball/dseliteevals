@@ -75,3 +75,18 @@ so existing projects and their cards carry over unchanged.
 | Preview | `npm run dev`, then `/?projectspreview`, with sample data and nothing saved. Set `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` to any value. |
 
 Tests: `node scripts/test-task-recurrence.mjs`
+
+## Class Comms
+
+DSSC HQ → Coaches & pay → **Class Comms** (`view=classcomms`, `src/dssc/ClassComms.jsx`) shows whether each
+class's families heard from the coach before class and after it. It's worked out automatically from the
+classes (`dssc_clinics.sessions`) and the messages sent to a class in HQ (`dssc_class_messages`), so coaches
+don't log anything extra. The logic is in `shared/class-comms.js`.
+
+- **Before / after**: whether a message went out before the class started, Central time, or after it started.
+- **Who a class belongs to**: its lead coach.
+- **Charts**: classes held; % messaged before, after and at all; recaps written; a bar per coach; % by week.
+- **Today's list**: today's classes with no message yet, each with "Message the class".
+- **Class table**: every class, and it can be filtered to the ones with no message.
+- **Slack**: the morning digest adds a line on yesterday's classes, naming the coaches whose classes got no
+  message.
