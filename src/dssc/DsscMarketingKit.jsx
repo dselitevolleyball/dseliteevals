@@ -315,6 +315,22 @@ export const readyIssue = (it) => {
   if (it.channel === "sms" && !String(it.body || "").trim()) return "no text";
   return "";
 };
+// Urgent = still a draft and goes out within 24 hours (or its time has passed):
+// shown red everywhere so it gets reviewed first (HQ-6, Jonathan).
+export const URGENT = "#FF4D4F";
+export const URGENT_SOFT = "rgba(255,77,79,0.14)";
+const DAY_MS = 24 * 60 * 60 * 1000;
+export const isUrgent = (it, now = Date.now()) => it?.status === "draft" && !!it.scheduled_at && new Date(it.scheduled_at).getTime() - now < DAY_MS;
+export const urgentLabel = (it, now = Date.now()) => {
+  const h = (new Date(it.scheduled_at).getTime() - now) / 3600000;
+  return h <= 0 ? "Past its time — approve" : h < 1 ? "Goes out within the hour" : `Goes out in ${Math.ceil(h)}h`;
+};
+// Re-renders every minute so drafts turn red on their own while the page is open.
+export function useNow(ms = 60000) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => { const t = setInterval(() => setNow(Date.now()), ms); return () => clearInterval(t); }, [ms]);
+  return now;
+}
 
 // ── Small UI bits ──────────────────────────────────────────────────────────
 export const chipStyle = (on, color = DS.lime, big) => ({ fontFamily: DS.font, fontSize: big ? 14 : 12, fontWeight: 700, padding: big ? "9px 14px" : "5px 11px", minHeight: big ? 40 : undefined, borderRadius: 999, cursor: "pointer", border: "1px solid " + (on ? color : DS.line), background: on ? (color === DS.lime ? DS.limeSoft : color + "22") : "transparent", color: on ? color : DS.mut, whiteSpace: "nowrap" });

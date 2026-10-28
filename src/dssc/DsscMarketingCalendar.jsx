@@ -18,7 +18,7 @@ import { supabase } from "../supabase";
 import { DS, Btn, Tag, Grow, inputStyle } from "./DsscHub.jsx";
 import {
   mktApi, isMissingTable, MIGRATION_MSG, lineMeta, lineLabel, LineChip, ANGLES, STATUS_META, CHANNEL_META, KIND_LABEL, kindOf,
-  mondayOf, addDays, fmtDate, timeOf, dayOf, approveItem, readyIssue, chipStyle, Msg, Panel, LINES, GraphicPreview, specOf, hasGraphic,
+  mondayOf, addDays, fmtDate, timeOf, dayOf, approveItem, readyIssue, chipStyle, Msg, Panel, LINES, GraphicPreview, specOf, hasGraphic, URGENT, URGENT_SOFT, isUrgent, urgentLabel, useNow,
 } from "./DsscMarketingKit.jsx";
 import { ItemCard, PhotoPicker } from "./DsscMarketingApprove.jsx";
 
@@ -38,6 +38,7 @@ export default function MarketingCalendar({ narrow, status, focus, onOpenWeek, o
   const [month, setMonth] = useState(() => firstOfMonth(todayIso()));
   const [view, setView] = useState(() => (narrow ? "list" : "month"));
   const [items, setItems] = useState(null);
+  const now = useNow();
   const [msg, setMsg] = useState(null);
   const [busy, setBusy] = useState("");
   const [progress, setProgress] = useState(null);
@@ -143,22 +144,24 @@ export default function MarketingCalendar({ narrow, status, focus, onOpenWeek, o
   const chip = (it, big) => {
     const lm = lineMeta(it.line); const [sl, sc] = STATUS_META[it.status] || STATUS_META.draft;
     const picked = sel.has(it.id);
+    const urgent = isUrgent(it, now);
     // Readable in the grid: what it is and when on top, the whole title (wrapping), then the start of the copy.
     const isEmail = it.channel === "email";
     const copy = String((isEmail ? it.email_preheader || it.body : it.body) || "").replace(/\s+/g, " ").trim();
     const clamp = (n) => ({ display: "-webkit-box", WebkitLineClamp: n, WebkitBoxOrient: "vertical", overflow: "hidden", overflowWrap: "anywhere" });
     return (
-      <div key={it.id} onClick={() => selecting ? toggleSel(it.id) : setOpenId(it.id)} title={`${KIND_LABEL[kindOf(it)] || it.channel} · ${lm.label} · ${sl}\n${titleOf(it)}${canMove(it) ? "\nDrag to another day to move it" : ""}`}
+      <div key={it.id} onClick={() => selecting ? toggleSel(it.id) : setOpenId(it.id)} title={`${KIND_LABEL[kindOf(it)] || it.channel} · ${lm.label} · ${sl}${urgent ? " · needs approval — " + urgentLabel(it, now) : ""}\n${titleOf(it)}${canMove(it) ? "\nDrag to another day to move it" : ""}`}
         draggable={!selecting && canMove(it)} onDragStart={(e) => { dragId.current = it.id; e.dataTransfer.setData("text/plain", String(it.id)); e.dataTransfer.effectAllowed = "move"; }} onDragEnd={() => { dragId.current = null; setDropDay(null); }}
-        style={{ cursor: "pointer", background: picked ? DS.limeSoft : isEmail ? "rgba(96,165,250,0.12)" : it.status === "draft" ? "rgba(255,255,255,0.02)" : "rgba(255,255,255,0.05)", border: "1px solid " + (picked ? DS.lime : isEmail ? "rgba(96,165,250,0.45)" : DS.line), borderLeft: "4px solid " + lm.color, borderRadius: 6, padding: big ? "7px 9px" : "5px 6px", marginTop: 5, fontSize: big ? 13 : 12, lineHeight: 1.3, minWidth: 0 }}>
+        style={{ cursor: "pointer", background: picked ? DS.limeSoft : urgent ? URGENT_SOFT : isEmail ? "rgba(96,165,250,0.12)" : it.status === "draft" ? "rgba(255,255,255,0.02)" : "rgba(255,255,255,0.05)", border: "1px solid " + (picked ? DS.lime : urgent ? URGENT : isEmail ? "rgba(96,165,250,0.45)" : DS.line), borderLeft: "4px solid " + lm.color, borderRadius: 6, padding: big ? "7px 9px" : "5px 6px", marginTop: 5, fontSize: big ? 13 : 12, lineHeight: 1.3, minWidth: 0 }}>
         <div style={{ display: "flex", gap: 4, alignItems: "center", fontSize: 11, color: DS.mut, minWidth: 0 }}>
           {selecting && <input type="checkbox" readOnly checked={picked} style={{ margin: 0, accentColor: DS.lime }} />}
           <span style={{ flex: "none" }}>{CHANNEL_META[it.channel]?.[1]}</span>
           <span style={{ fontWeight: 800, color: isEmail ? "#93C5FD" : DS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{KIND_LABEL[kindOf(it)] || CHANNEL_META[it.channel]?.[0]}</span>
           {!(big && canMove(it)) && <span style={{ flex: "none" }}>{timeOf(it.scheduled_at)}</span>}
           <span style={{ flex: 1 }} />
-          <span style={{ color: sc, fontWeight: 800, flex: "none" }} title={sl}>{STATUS_ICON[it.status] || ""}</span>
+          <span style={{ color: urgent ? URGENT : sc, fontWeight: 800, flex: "none" }} title={sl}>{urgent ? "!" : STATUS_ICON[it.status] || ""}</span>
         </div>
+        {urgent && <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.04em", textTransform: "uppercase", color: URGENT, marginTop: 3 }}>Approve · {urgentLabel(it, now)}</div>}
         {big && canMove(it) && <input type="time" value={timeOf(it.scheduled_at)} onClick={e => e.stopPropagation()} onChange={e => e.target.value && moveTo(it, dayOf(it.scheduled_at) || it.week_of, e.target.value)} title="Change the time"
           style={{ ...inputStyle, width: "100%", maxWidth: 130, marginTop: 4, padding: "2px 6px", fontSize: 12, colorScheme: "dark" }} />}
         <div style={{ fontWeight: 700, marginTop: 3, color: DS.text, ...clamp(3) }}>{titleOf(it)}</div>
@@ -170,11 +173,13 @@ export default function MarketingCalendar({ narrow, status, focus, onOpenWeek, o
     const list = byWeek.get(wk) || [];
     const c = { draft: 0, approved: 0, published: 0, failed: 0 }; for (const it of list) c[it.status] = (c[it.status] || 0) + 1;
     const ready = readyIn(list);
+    const urgentN = list.filter(it => isUrgent(it, now)).length;
     const future = addDays(wk, 6) >= today;
     return (
       <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", fontSize: 12 }}>
         <b style={{ fontSize: 13 }}>Week of {fmtDate(wk)}</b>
         {list.length ? <>
+          {urgentN > 0 && <Tag color={URGENT} fill>{urgentN} due within 24h</Tag>}
           {c.draft > 0 && <Tag color={DS.mut}>{c.draft} to approve</Tag>}
           {c.approved > 0 && <Tag color={DS.lime}>{c.approved} approved</Tag>}
           {c.published > 0 && <Tag color="#7FD1C3">{c.published} sent</Tag>}
@@ -208,7 +213,7 @@ export default function MarketingCalendar({ narrow, status, focus, onOpenWeek, o
         <span style={{ flex: 1 }} />
         {!narrow && LINES.map(l => <span key={l.key} style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, color: DS.mut }}><span style={{ width: 10, height: 10, borderRadius: 2, background: lineMeta(l.key).color }} />{lineMeta(l.key).label}</span>)}
       </div>
-      {!narrow && <div style={{ fontSize: 11, color: DS.dim, marginBottom: 10 }}>○ draft · ✓ approved · ✓✓ sent · ! failed — the colour bar is what it's promoting. {ahead ? `The machine keeps ${ahead} week${ahead === 1 ? "" : "s"} ahead drafted (Settings).` : ""}</div>}
+      {!narrow && <div style={{ fontSize: 11, color: DS.dim, marginBottom: 10 }}>○ draft · <span style={{ color: URGENT, fontWeight: 800 }}>red: still needs approval and goes out within 24 hours</span> · ✓ approved · ✓✓ sent · ! failed — the colour bar is what it's promoting. {ahead ? `The machine keeps ${ahead} week${ahead === 1 ? "" : "s"} ahead drafted (Settings).` : ""}</div>}
 
       {(selecting && sel.size > 0) && (
         <Panel style={{ position: "sticky", top: 0, zIndex: 5, marginBottom: 10, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -269,7 +274,7 @@ export default function MarketingCalendar({ narrow, status, focus, onOpenWeek, o
             return (
               <Panel key={wk} style={{ marginBottom: 12 }}>
                 {weekBar(wk)}
-                {list.map(it => <ListRow key={it.id} it={it} narrow={narrow} selecting={selecting} picked={sel.has(it.id)} onToggle={() => toggleSel(it.id)} onOpen={() => setOpenId(it.id)} />)}
+                {list.map(it => <ListRow key={it.id} it={it} now={now} narrow={narrow} selecting={selecting} picked={sel.has(it.id)} onToggle={() => toggleSel(it.id)} onOpen={() => setOpenId(it.id)} />)}
               </Panel>
             );
           })
@@ -296,12 +301,13 @@ export default function MarketingCalendar({ narrow, status, focus, onOpenWeek, o
 }
 
 // One item in the List view: the picture, what it is, the copy — readable at a glance.
-function ListRow({ it, narrow, selecting, picked, onToggle, onOpen }) {
+function ListRow({ it, now, narrow, selecting, picked, onToggle, onOpen }) {
   const lm = lineMeta(it.line); const [sl, sc] = STATUS_META[it.status] || STATUS_META.draft;
+  const urgent = isUrgent(it, now);
   const thumb = thumbOf(it);
   const text = it.channel === "email" ? [it.email_preheader, it.body].filter(Boolean).join(" — ") : it.body;
   return (
-    <div onClick={selecting ? onToggle : onOpen} style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "10px 0", borderTop: "1px solid " + DS.line, cursor: "pointer", background: picked ? DS.limeSoft : "transparent" }}>
+    <div onClick={selecting ? onToggle : onOpen} style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "10px 0", borderTop: "1px solid " + DS.line, cursor: "pointer", background: picked ? DS.limeSoft : urgent ? URGENT_SOFT : "transparent", boxShadow: urgent && !picked ? "inset 3px 0 0 " + URGENT : "none" }}>
       {selecting && <input type="checkbox" readOnly checked={picked} style={{ marginTop: 4, width: 18, height: 18, accentColor: DS.lime }} />}
       <div style={{ width: narrow ? 64 : 84, flex: "none", aspectRatio: it.channel === "email" ? "1.9 / 1" : "4 / 5", background: DS.panel2, borderRadius: 6, overflow: "hidden", borderLeft: "4px solid " + lm.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>
         {it.asset_url ? <img src={it.asset_url} alt="" loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
@@ -316,7 +322,7 @@ function ListRow({ it, narrow, selecting, picked, onToggle, onOpen }) {
           <LineChip line={it.line} />
           {it.angle && <span style={{ color: DS.dim }}>{ANGLES[it.angle] || it.angle}</span>}
           <span style={{ flex: 1 }} />
-          <Tag color={sc} fill={it.status === "approved" || it.status === "failed"}>{sl}</Tag>
+          {urgent ? <Tag color={URGENT} fill>Needs approval · {urgentLabel(it, now)}</Tag> : <Tag color={sc} fill={it.status === "approved" || it.status === "failed"}>{sl}</Tag>}
         </div>
         <div style={{ fontSize: 15, fontWeight: 800, marginTop: 4, lineHeight: 1.25 }}>{titleOf(it)}</div>
         {text && <div style={{ fontSize: 13, color: DS.mut, marginTop: 3, lineHeight: 1.45, display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden", whiteSpace: "pre-line" }}>{text}</div>}

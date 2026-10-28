@@ -16,7 +16,7 @@ import ReelBox from "./DsscMarketingReel.jsx";
 import {
   mktApi, isMissingTable, MIGRATION_MSG, lineMeta, lineLabel, LineChip, ANGLES, STATUS_META, CHANNEL_META, KIND_LABEL, kindOf,
   mondayOf, addDays, fmtDate, fmtWhen, timeOf, dayOf, weekLabel, specOf, hasGraphic, GraphicPreview,
-  approveItem, readyIssue, chipStyle, Msg, Panel, H, uploadImage, isImageFile,
+  approveItem, readyIssue, chipStyle, Msg, Panel, H, uploadImage, isImageFile, URGENT, isUrgent, urgentLabel, useNow,
 } from "./DsscMarketingKit.jsx";
 
 const bigBtn = (narrow) => narrow ? { fontSize: 15, padding: "12px 16px", minHeight: 46, borderRadius: 10 } : {};
@@ -33,6 +33,7 @@ const BRIEF_STEPS = [[0, "Saving it as this week's priority…"], [3, "Planning 
 
 export default function MarketingApprove({ week, setWeek, status, narrow, onChanged, onShowOnCalendar }) {
   const [items, setItems] = useState(null);
+  const now = useNow();
   const [msg, setMsg] = useState(null);
   const [busy, setBusy] = useState("");
   const [progress, setProgress] = useState(null);
@@ -152,6 +153,7 @@ export default function MarketingApprove({ week, setWeek, status, narrow, onChan
       <Panel style={{ marginBottom: 14 }}>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
           {items && items.length > 0 && <>
+            {(() => { const n = items.filter(it => isUrgent(it, now)).length; return n > 0 && <Tag color={URGENT} fill>{n} due within 24h</Tag>; })()}
             <Tag color={DS.mut}>{counts.draft} draft{counts.draft === 1 ? "" : "s"}</Tag>
             {counts.approved > 0 && <Tag color={DS.lime}>{counts.approved} approved</Tag>}
             {counts.published > 0 && <Tag color="#7FD1C3">{counts.published} published</Tag>}
@@ -276,6 +278,7 @@ export function ItemCard({ item: it, week, narrow, onPatch, onReplace, reload, o
   const spec = specOf(it, preview ? { format: preview } : {});
   const [sLabel, sColor] = STATUS_META[it.status] || STATUS_META.draft;
   const issue = readyIssue(it);
+  const urgent = isUrgent(it);
   const setG = (patch) => onPatch(it, { graphic: { ...g, ...patch } });
   // Your own image: as the photo behind the club's text (and into the photo
   // library for next time), or a finished graphic posted exactly as is.
@@ -324,6 +327,7 @@ export function ItemCard({ item: it, week, narrow, onPatch, onReplace, reload, o
       <LineChip line={it.line} />
       {it.angle && <span style={{ fontSize: 11, color: DS.mut }}>{ANGLES[it.angle] || it.angle}</span>}
       <span style={{ flex: 1 }} />
+      {urgent && <Tag color={URGENT} fill>Needs approval · {urgentLabel(it)}</Tag>}
       <Tag color={sColor} fill={it.status === "approved" || it.status === "failed"}>{sLabel}</Tag>
     </div>
   );
@@ -464,7 +468,7 @@ export function ItemCard({ item: it, week, narrow, onPatch, onReplace, reload, o
 
   const revs = Array.isArray(it.revisions) ? it.revisions : [];
   return (
-    <div style={{ background: DS.panel, border: "1px solid " + (it.status === "failed" ? "rgba(255,115,0,0.5)" : it.status === "approved" ? "rgba(178,208,73,0.35)" : DS.line), borderRadius: 14, padding: narrow ? 12 : 14, marginBottom: 12, opacity: it.status === "rejected" ? 0.7 : 1 }}>
+    <div style={{ background: DS.panel, border: urgent ? "2px solid " + URGENT : "1px solid " + (it.status === "failed" ? "rgba(255,115,0,0.5)" : it.status === "approved" ? "rgba(178,208,73,0.35)" : DS.line), borderRadius: 14, padding: narrow ? 12 : 14, marginBottom: 12, opacity: it.status === "rejected" ? 0.7 : 1 }}>
       {head}
       <div style={{ fontSize: 17, fontWeight: 800, marginTop: 8, lineHeight: 1.25 }}>{title}</div>
       {it.reason && <div style={{ fontSize: 12, color: DS.mut, marginTop: 4, lineHeight: 1.45 }}><span style={{ color: DS.dim }}>Why: </span>{it.reason}</div>}
