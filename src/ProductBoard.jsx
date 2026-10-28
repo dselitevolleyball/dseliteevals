@@ -114,7 +114,7 @@ function Board({ boot, narrow }) {
     const list = byCol(s);
     return (
       <div key={s} onDragOver={e => { e.preventDefault(); }} onDrop={e => { e.preventDefault(); if (drag) move(drag, s); setDrag(null); }}
-        style={{ flex: narrow ? "1 1 auto" : "0 0 290px", minWidth: 0, background: C.card, border: "1px solid " + C.border, borderRadius: 12, padding: 10, display: "flex", flexDirection: "column", gap: 8, maxHeight: narrow ? "none" : "calc(100vh - 210px)" }}>
+        style={{ flex: narrow ? "1 1 auto" : "1 0 220px", maxWidth: narrow ? "none" : 320, minWidth: 0, background: C.card, border: "1px solid " + C.border, borderRadius: 12, padding: 10, display: "flex", flexDirection: "column", gap: 8, maxHeight: narrow ? "none" : "calc(100vh - 210px)" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <span style={{ width: 9, height: 9, borderRadius: 9, background: statusColor[s] }} />
           <b style={{ fontSize: 13 }}>{STATUS_LABEL[s]}</b>
