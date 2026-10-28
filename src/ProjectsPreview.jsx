@@ -17,7 +17,8 @@ const people = [
   { email: "brandon@example.com", name: "Brandon Butler", role: "staff" },
   { email: "adrian@example.com", name: "Adrian Thomas", role: "admin" },
 ];
-const me = { email: "drew@example.com", name: "Drew Rose", manager: true };
+const realMe = { email: "drew@example.com", name: "Drew Rose", manager: true, owner: true };
+let me = realMe;
 const P = (e) => people.find(p => p.email === e);
 let id = 100;
 const db = {
@@ -57,7 +58,7 @@ const wait = (ms) => new Promise(r => setTimeout(r, ms));
 async function mock(action, b) {
   await wait(150);
   switch (action) {
-    case "bootstrap": return { me, today, people, settings: db.settings, series: db.series, projects: db.projects.map(p => ({ ...p, counts: counts(p) })), tasks: db.tasks.map(named), myTasks: db.tasks.filter(t => !["done", "skipped"].includes(t.status) && t.assignee_email === me.email).map(named) };
+    case "bootstrap": me = b.as_email ? { ...P(b.as_email), manager: P(b.as_email).role === "admin", owner: false, viewAs: true } : realMe; return { me, today, people, settings: db.settings, series: db.series, projects: db.projects.map(p => ({ ...p, counts: counts(p) })), tasks: db.tasks.map(named), myTasks: db.tasks.filter(t => !["done", "skipped"].includes(t.status) && t.assignee_email === me.email).map(named) };
     case "project": { const p = db.projects.find(x => x.id === b.id); if (!p) throw new Error("That project isn't there any more."); return { project: p, tasks: db.tasks.filter(t => t.project_id === p.id).map(t => ({ ...t, files: db.files.filter(f => f.task_id === t.id).length, comments: db.updates.filter(u => u.task_id === t.id && u.kind === "comment").length })), files: [], updates: db.updates.filter(u => u.project_id === p.id).slice().reverse() }; }
     case "task": { const t = db.tasks.find(x => x.id === b.id); return { task: t, project: db.projects.find(p => p.id === t.project_id) || null, series: db.series.find(s => s.id === t.series_id) || null, updates: db.updates.filter(u => u.task_id === t.id), files: db.files.filter(f => f.task_id === t.id) }; }
     case "help": { const t = db.tasks.find(x => x.id === b.task_id); Object.assign(t, { help_requested_at: new Date().toISOString(), help_note: b.note, help_from: b.from_email, help_by: me.email }); db.updates.push({ id: ++id, task_id: t.id, kind: "help", body: "Asked for help: " + b.note, author_name: me.name, created_at: new Date().toISOString() }); return {}; }

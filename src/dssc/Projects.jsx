@@ -24,9 +24,15 @@ const PSTATUS = [["planning", "Planning"], ["active", "Active"], ["on_hold", "On
 const PCOLOR = { planning: "#A9C7C3", active: "#B2D049", on_hold: "#FF7300", done: "#2fbf9b", archived: "#6F9995" };
 const EXAMPLE = "Heatwave - Inaugural Winter Edition. We need to get everything together and launched: lock in a lead coach for each session, a launch plan, a marketing plan, finalize the brand order and swag, select the players, and plan the sessions. Hunter helps with coaches and players, Kristen with the swag order.";
 const TABS = [["tasks", "Tasks"], ["projects", "Projects"], ["repeating", "Repeating"], ["scorecard", "Scorecard"]];
+// While Drew views as someone, only these go through; anything that changes data is stopped.
+const READ_ONLY = new Set(["bootstrap", "project", "task", "file_url"]);
 
 export default function Projects({ coach, apiFn, onOpenView }) {
-  const api = apiFn || realApi;
+  const baseApi = apiFn || realApi;
+  const [asEmail, setAsEmail] = useState("");           // "View as" (Drew): the team member whose screen this is
+  const [realMe, setRealMe] = useState(null);
+  const api = asEmail ? (action, payload) => READ_ONLY.has(action) ? baseApi(action, payload)
+    : Promise.reject(new Error("You're viewing as " + (realMe?.viewingName || "someone else") + ", so nothing can be changed. Press \"Back to my view\" first.")) : baseApi;
   const [boot, setBoot] = useState(null);
   const [err, setErr] = useState("");
   const [tab, setTab] = useState("tasks");
@@ -38,7 +44,14 @@ export default function Projects({ coach, apiFn, onOpenView }) {
   const [narrow, setNarrow] = useState(() => typeof window !== "undefined" && window.innerWidth < 760);
   const [pick, setPick] = useState({ n: 0, email: "" });   // the Scorecard opens one person's tasks
 
-  const load = async () => { try { setBoot(await api("bootstrap", { archived: true })); setErr(""); } catch (e) { setErr(e.message); } };
+  const load = async (as = asEmail) => {
+    try {
+      const d = await baseApi("bootstrap", { archived: true, ...(as ? { as_email: as } : {}) });
+      setBoot(d); setErr("");
+      if (!as) setRealMe(d.me); else setRealMe(r => ({ ...(r || {}), viewingName: d.me.name }));
+    } catch (e) { setErr(e.message); }
+  };
+  const viewAs = (email) => { setAsEmail(email); setSelId(null); setOpenTask(null); setProjTask(null); setModal(null); setTab("tasks"); setBoot(null); load(email); };
   useEffect(() => {
     try {
       const p = new URLSearchParams(window.location.search);
@@ -76,8 +89,17 @@ export default function Projects({ coach, apiFn, onOpenView }) {
     </>
   );
 
+  const viewBanner = asEmail ? (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", background: "rgba(197,139,255,0.12)", border: "1px solid rgba(197,139,255,0.5)", borderRadius: 12, padding: "9px 12px", marginBottom: 12, fontSize: 13, fontFamily: DS.font, color: DS.text, maxWidth: 1500, marginLeft: "auto", marginRight: "auto" }}>
+      <span style={{ fontSize: 16 }}>👁</span>
+      <span style={{ flex: 1, minWidth: 220 }}>You're seeing Tasks &amp; Projects the way <b>{boot.me.name}</b> sees it{boot.me.manager ? " (as a DSSC admin)" : ""}. Read-only: nothing you click here changes anything.</span>
+      <Btn small kind="primary" onClick={() => viewAs("")}>Back to my view</Btn>
+    </div>
+  ) : null;
+
   if (selId) return (
     <>
+      {viewBanner}
       <ProjectView api={api} id={selId} boot={boot} openTask={projTask} setOpenTask={setProjTask} onOpenView={onOpenView} onEditSeries={editSeries}
         onBack={() => { setSelId(null); setProjTask(null); load(); }} onChanged={load} />
       {modals}
@@ -91,12 +113,17 @@ export default function Projects({ coach, apiFn, onOpenView }) {
         <div style={{ fontSize: 22, fontWeight: 800 }}>✅ Tasks &amp; Projects</div>
         <Seg value={tab} onChange={setTab} options={TABS.map(([k, l]) => [k, k === "tasks" && boot.myTasks.length ? `${l} · ${boot.myTasks.length} mine` : k === "repeating" && boot.series?.length ? `${l} · ${boot.series.length}` : l])} />
         <div style={{ flex: 1 }} />
+        {realMe?.owner && <select value={asEmail} onChange={e => viewAs(e.target.value)} title="See Tasks & Projects the way a team member sees it" style={{ ...sel, fontWeight: 700 }}>
+          <option value="">👁 View as…</option>
+          {boot.people.filter(p => p.email !== realMe.email).map(p => <option key={p.email} value={p.email}>{p.name}</option>)}
+        </select>}
         <Btn kind="primary" onClick={() => setModal({ task: {} })}>＋ New task</Btn>
         {manager && <Btn kind="ghost" onClick={() => setModal("new")}>✦ New project</Btn>}
         {manager && <Btn kind="quiet" onClick={() => setModal("settings")} title="Slack, emails, categories and departments">⚙ Settings</Btn>}
       </div>
 
-      {tab === "tasks" && <TasksView key={pick.n} initialPerson={pick.email} boot={boot} api={api} narrow={narrow} onChanged={load} onOpen={(t) => setOpenTask(t.id)} onNew={(preset) => setModal({ task: preset })} />}
+      {viewBanner}
+      {tab === "tasks" && <TasksView key={pick.n + "|" + asEmail} initialPerson={pick.email} boot={boot} api={api} narrow={narrow} onChanged={load} onOpen={(t) => setOpenTask(t.id)} onNew={(preset) => setModal({ task: preset })} />}
       {tab === "repeating" && <RecurringView boot={boot} api={api} onChanged={load} onNew={(preset) => setModal({ task: preset })} onEdit={(s) => setModal({ series: s })} />}
       {tab === "scorecard" && <Scorecard boot={boot} onPick={(email) => { setPick(x => ({ n: x.n + 1, email })); setTab("tasks"); }} />}
       {tab === "projects" && (<>

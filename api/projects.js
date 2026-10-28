@@ -10,7 +10,8 @@
 // the repeats, closes missed daily ones and posts the Slack digest.
 //
 // POST /api/projects  { action, ... }   Authorization: Bearer <session token>
-//   bootstrap                       -> { me, people, projects (with counts), tasks, series, myTasks, settings }
+//   bootstrap { as_email? }         -> { me, people, projects (with counts), tasks, series, myTasks, settings }
+//                                   as_email (Drew only): what that team member sees - "me" is them
 //   project   { id }                -> { project, tasks, files, updates }
 //   task      { id }                -> { task, project, series, updates, files }
 //   create_project { project, tasks[], quiet? }  (managers) one project + its cards
@@ -45,7 +46,7 @@ import { createClient } from "@supabase/supabase-js";
 import Anthropic from "@anthropic-ai/sdk";
 import { claudeClient } from "./_lib/ai-client.js";
 import { jsonSchemaOutputFormat } from "@anthropic-ai/sdk/helpers/json-schema";
-import { whoIs, OWNER_EMAILS, people as listPeople, slack, slackHook, slackLine, slackText, SLACK_HOOK, sendMail, emailShell, esc, link, fmtDate,
+import { whoIs, personByEmail, OWNER_EMAILS, people as listPeople, slack, slackHook, slackLine, slackText, SLACK_HOOK, sendMail, emailShell, esc, link, fmtDate,
   centralToday, addDays, BUCKET, STATUS, STATUS_LABEL, PROJECT_STATUS, APP_URL } from "./_lib/projects.js";
 import { taskLink, mention, taskSlackLine, settingsRow, seriesTaskFields, generateRecurring, generateIfStale } from "./_lib/tasks.js";
 import { HQ_VIEWS } from "../shared/task-meta.js";
@@ -190,6 +191,13 @@ async function emailAssigned(project, tasks, to, by) {
 // ── Actions ─────────────────────────────────────────────────────────────────
 const ACTIONS = {
   async bootstrap(sb, me, b) {
+    // "View as": Drew sees the screen as a team member sees it (Oct 28 2026).
+    if (b.as_email && nrm(b.as_email) !== me.email) {
+      must(me.owner, "Only Drew can view Tasks & Projects as someone else.", 403);
+      const them = await personByEmail(sb, b.as_email);
+      must(them, "They don't have Tasks & Projects.", 404);
+      me = { ...them, viewAs: true, viewer: me.name };
+    }
     const today = centralToday();
     const settings = await settingsRow(sb);
     await generateIfStale(sb, today, settings);

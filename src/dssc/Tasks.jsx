@@ -26,9 +26,10 @@ const mondayOf = (ymd) => plusDays(ymd, -((dowOf(ymd) + 6) % 7));
 // ── Tasks ───────────────────────────────────────────────────────────────────
 export function TasksView({ boot, api, onOpen, onNew, onChanged, narrow, initialPerson }) {
   const me = boot.me, today = boot.today, st = boot.settings || {};
-  const [groupBy, setGroupBy] = useState("person");
+  // Drew opens on the whole team; everyone else on their own tasks by due date.
+  const [groupBy, setGroupBy] = useState(me.owner || initialPerson ? "person" : "due");
   const [layout, setLayout] = useState(narrow ? "list" : "board");
-  const [person, setPerson] = useState(initialPerson || "");
+  const [person, setPerson] = useState(initialPerson || (me.owner ? "" : me.email));
   const [cat, setCat] = useState("");
   const [dept, setDept] = useState("");
   const [quick, setQuick] = useState("");

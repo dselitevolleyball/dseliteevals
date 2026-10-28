@@ -27,9 +27,13 @@ export const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "
 export async function whoIs(sb, req, serviceKey) {
   const bearer = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
   if (!bearer) return null;
-  if (bearer === serviceKey) return { email: "drew@dselitevolleyball.com", name: "Drew Rose", manager: true, service: true };
+  if (bearer === serviceKey) return { email: "drew@dselitevolleyball.com", name: "Drew Rose", manager: true, owner: true, service: true };
   const { data: { user } = {} } = await sb.auth.getUser(bearer).catch(() => ({ data: {} }));
-  const email = nrm(user?.email);
+  return personByEmail(sb, user?.email);
+}
+// Someone's access by their email (also how Drew "views as" a team member).
+export async function personByEmail(sb, rawEmail) {
+  const email = nrm(rawEmail);
   if (!email) return null;
   const { data: c } = await sb.from("coaches").select("display_name, is_admin, is_approved, dssc_role").ilike("email", email).maybeSingle();
   const owner = OWNER_EMAILS.includes(email);
@@ -37,7 +41,7 @@ export async function whoIs(sb, req, serviceKey) {
   const inProjects = owner || (approved && (c?.is_admin || !!c?.dssc_role));
   if (!inProjects) return null;
   const manager = owner || !!c?.is_admin || c?.dssc_role === "admin" || DIRECTOR_EMAILS.includes(email);
-  return { email, name: c?.display_name || email, manager };
+  return { email, name: c?.display_name || email, manager, owner };
 }
 
 // Everyone a card can be assigned to: approved logins with a DSSC role, or HQ admins.
