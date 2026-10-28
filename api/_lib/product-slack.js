@@ -28,11 +28,16 @@ export async function saveSlackCfg(sb, patch, by) {
   return next;
 }
 
+// chat.* take JSON; Slack's read methods (users.lookupByEmail, users.info,
+// conversations.info...) only take form fields and answer JSON with
+// "invalid_arguments".
 export async function slackApi(token, method, body) {
+  const json = /^chat\./.test(method);
+  const form = new URLSearchParams(Object.entries(body || {}).map(([k, v]) => [k, typeof v === "object" ? JSON.stringify(v) : String(v)]));
   const r = await fetch(`https://slack.com/api/${method}`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json; charset=utf-8" },
-    body: JSON.stringify(body || {}),
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": json ? "application/json; charset=utf-8" : "application/x-www-form-urlencoded" },
+    body: json ? JSON.stringify(body || {}) : form.toString(),
   }).catch(e => ({ ok: false, json: async () => ({ ok: false, error: e.message }) }));
   const j = await r.json().catch(() => ({ ok: false, error: "bad reply" }));
   return j;
