@@ -478,7 +478,8 @@ function Table({ title, rows, cols, empty = "Nothing yet." }) {
 // ─────────────────────────────────────────────────────────────── settings
 function Settings({ boot, onSaved }) {
   const s = boot.settings;
-  const [f, setF] = useState({ budget_monthly: s.budget_monthly, model: s.model, effort: s.effort, max_turns: s.max_turns, max_budget_usd: s.max_budget_usd, notify: (s.notify || []).join(", ") });
+  const [f, setF] = useState({ budget_monthly: s.budget_monthly, model: s.model, effort: s.effort, max_turns: s.max_turns, max_budget_usd: s.max_budget_usd, notify: (s.notify || []).join(", "), email_requests: !!s.email_requests });
+  const [hook, setHook] = useState("");
   const [tokens, setTokens] = useState({});
   const [admin, setAdmin] = useState("");
   const [msg, setMsg] = useState(null);
@@ -512,6 +513,19 @@ function Settings({ boot, onSaved }) {
       </div>
 
       <div style={box}>
+        <div style={{ fontSize: 15, fontWeight: 800 }}>Slack {s.slack ? <span style={{ color: C.grn, fontSize: 12 }}>✓ connected</span> : null}</div>
+        <div style={{ fontSize: 13, color: C.mut, margin: "6px 0 10px", lineHeight: 1.5 }}>
+          New requests from the 💡 Feedback button, finished or failed agent runs, and ships post to Slack. Make an incoming webhook: <a href="https://api.slack.com/apps?new_app=1" target="_blank" rel="noreferrer" style={{ color: C.blue }}>api.slack.com/apps ↗</a> → <b>Create New App</b> → From scratch → name it "HQ" and pick your workspace → <b>Incoming Webhooks</b> → turn on → <b>Add New Webhook</b> → pick the channel (or your own DM) → copy the URL and paste it here.
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <input value={hook} onChange={e => setHook(e.target.value)} placeholder={s.slack ? "Paste a new webhook to replace it" : "https://hooks.slack.com/services/…"} style={{ ...input, flex: 1, minWidth: 240, fontSize: 13 }} />
+          <button disabled={!hook.trim()} onClick={() => save({ slack_webhook: hook }, "Saved - press Send a test to check it.").then(() => setHook(""))} style={btn("primary", true)}>Save</button>
+          {s.slack && <button onClick={() => { setMsg(null); api("test_slack").then(() => setMsg({ ok: "Sent - check Slack." })).catch(e => setMsg({ err: e.message })); }} style={btn("ghost", true)}>Send a test</button>}
+          {s.slack && <button onClick={() => window.confirm("Stop posting to Slack?") && save({ slack_webhook: "" }, "Slack disconnected.")} style={btn("ghost", true)}>Remove</button>}
+        </div>
+      </div>
+
+      <div style={box}>
         <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 6 }}>Budget and defaults</div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 10 }}>
           <div><span style={lbl}>Monthly Claude budget ($)</span><input type="number" min={0} value={f.budget_monthly} onChange={e => setF({ ...f, budget_monthly: e.target.value })} style={input} /><div style={{ fontSize: 11, color: C.dim, marginTop: 3 }}>Agents won't start once the month passes it.</div></div>
@@ -520,8 +534,8 @@ function Settings({ boot, onSaved }) {
           <div><span style={lbl}>Default max turns</span><input type="number" value={f.max_turns} onChange={e => setF({ ...f, max_turns: e.target.value })} style={input} /></div>
           <div><span style={lbl}>Default $ cap per run</span><input type="number" step={0.5} value={f.max_budget_usd} onChange={e => setF({ ...f, max_budget_usd: e.target.value })} style={input} /></div>
         </div>
-        <span style={lbl}>Email me about new requests</span>
-        <input value={f.notify} onChange={e => setF({ ...f, notify: e.target.value })} placeholder="drew@…, kristen@…" style={input} />
+        <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, marginTop: 14, cursor: "pointer" }}><input type="checkbox" checked={f.email_requests} onChange={e => setF({ ...f, email_requests: e.target.checked })} style={{ accentColor: C.gold }} />Also email new requests (Slack gets them either way)</label>
+        {f.email_requests && <><span style={lbl}>Email these people</span><input value={f.notify} onChange={e => setF({ ...f, notify: e.target.value })} placeholder="drew@…, kristen@…" style={input} /></>}
         <button onClick={() => save({ ...f })} style={{ ...btn("primary"), marginTop: 12 }}>Save</button>
       </div>
 

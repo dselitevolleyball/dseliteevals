@@ -33,13 +33,14 @@ import { createClient } from "@supabase/supabase-js";
 import { OWNER_EMAILS, sendMail, esc } from "./_lib/projects.js";
 import { STATUSES, KINDS, REPOS, WORKFLOW_FILE, itemKey, repoFor } from "../shared/product.js";
 import { MODELS, EFFORTS } from "../shared/ai-pricing.js";
+import { productSlack, SLACK_HOOK, cardLink, quote } from "./_lib/product-slack.js";
 
 export const config = { maxDuration: 60 };
 const nrm = (v) => String(v || "").trim().toLowerCase();
 const fail = (status, msg) => Object.assign(new Error(msg), { status });
 const STATUS_KEYS = STATUSES.map(([k]) => k);
 const HQ_URL = "https://dseliteevals.vercel.app/?view=product";
-const DEFAULTS = { budget_monthly: 300, model: "claude-opus-5-5", effort: "high", max_turns: 80, max_budget_usd: 10, notify: ["drew@dselitevolleyball.com"] };
+const DEFAULTS = { budget_monthly: 300, model: "claude-opus-5-5", effort: "high", max_turns: 80, max_budget_usd: 10, notify: ["drew@dselitevolleyball.com"], email_requests: false };
 
 async function whoIs(sb, req) {
   const bearer = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
@@ -193,6 +194,7 @@ async function act(sb, me, b) {
     case "boot": {
       if (!me.approver) return { me };
       const { github_token, ...pub } = s; // never sent back
+      pub.slack = !!(await kv(sb, "product_slack"))?.url;
       const tok = await githubTokens(sb);
       return { me, settings: pub, github: Object.keys(tok), owners: [...new Set(Object.keys(REPOS).map(r => r.split("/")[0]))], admin_key: !!((await kv(sb, "anthropic_admin_key"))?.token || process.env.ANTHROPIC_ADMIN_KEY), models: MODELS, efforts: EFFORTS, repos: REPOS };
     }
@@ -212,7 +214,10 @@ async function act(sb, me, b) {
       const { data, error } = await sb.from("product_items").insert(row).select("id, title").single();
       if (error) throw fail(500, error.message);
       await event(sb, data.id, me, "system", `${me.name} sent this in from ${row.request_context.view_label || row.request_context.view || "HQ"}`);
-      const to = (s.notify || []).filter(e => /@/.test(e) && nrm(e) !== me.email);
+      const where = row.request_context.view_label ? ` from _${row.request_context.view_label}_ (${row.request_context.app === "dssc" ? "DSSC" : "DS Elite"})` : "";
+      await productSlack(sb, `${row.kind === "bug" ? "🐞 Bug report" : row.kind === "improvement" ? "✨ Improvement" : "💡 New idea"} from *${me.name}*${where}\n*${cardLink(data.id, title)}*${row.body ? "\n" + quote(row.body) : ""}${shot ? "\n📷 has a screenshot" : ""}\nApprove or decline it on the board →`);
+      // Email only if it's switched on in Settings (Slack is the default since Oct 28 2026).
+      const to = s.email_requests ? (s.notify || []).filter(e => /@/.test(e) && nrm(e) !== me.email) : [];
       for (const addr of to) await sendMail({ to: addr, subject: `💡 New HQ ${row.kind === "bug" ? "bug report" : "request"} from ${me.name}: ${title}`, html: `<div style="font-family:-apple-system,'Segoe UI',Helvetica,Arial,sans-serif;font-size:15px;line-height:1.5;max-width:560px"><p><b>${esc(me.name)}</b> sent ${row.kind === "bug" ? "a bug report" : "an idea"} from <i>${esc(row.request_context.view_label || "HQ")}</i>:</p><p style="padding:10px 14px;background:#f4f4f5;border-radius:8px"><b>${esc(title)}</b><br>${esc(row.body).replace(/\n/g, "<br>")}</p><p><a href="${HQ_URL}&item=${data.id}">Approve or decline it in HQ →</a></p></div>`, text: `${me.name}: ${title}\n\n${row.body}\n\n${HQ_URL}&item=${data.id}` }).catch(() => {});
       return { id: data.id, key: itemKey(data.id) };
     }
@@ -375,6 +380,12 @@ async function act(sb, me, b) {
       if ("effort" in p && EFFORTS.some(([k]) => k === p.effort)) next.effort = p.effort;
       if ("max_turns" in p) next.max_turns = Math.max(5, Math.min(400, Number(p.max_turns) || DEFAULTS.max_turns));
       if ("max_budget_usd" in p) next.max_budget_usd = Math.max(0.5, Math.min(200, Number(p.max_budget_usd) || DEFAULTS.max_budget_usd));
+      if ("email_requests" in p) next.email_requests = !!p.email_requests;
+      if ("slack_webhook" in p) {
+        const url = String(p.slack_webhook || "").trim();
+        if (url && !SLACK_HOOK.test(url)) throw fail(400, "That isn't a Slack incoming-webhook address (https://hooks.slack.com/services/...)");
+        await setKv(sb, "product_slack", url ? { url } : null, me.email, true);
+      }
       if ("notify" in p) next.notify = (Array.isArray(p.notify) ? p.notify : String(p.notify || "").split(/[\s,;]+/)).map(nrm).filter(e => /@/.test(e)).slice(0, 10);
       await setKv(sb, "product_settings", next, me.email);
       if (p.github_token && typeof p.github_token === "object") {
@@ -391,6 +402,14 @@ async function act(sb, me, b) {
         await setKv(sb, "anthropic_admin_key", tok ? { token: tok } : null, me.email, true);
       }
       return { settings: next };
+    }
+
+    case "test_slack": {
+      approverOnly();
+      const r = await productSlack(sb, `👋 HQ Product board is connected - new requests from the 💡 Feedback button, agent results and ships will post here. (Test from ${me.name})`);
+      if (r.skipped) throw fail(400, "Save a Slack webhook first");
+      if (!r.ok) throw fail(502, `Slack said no (${r.status || ""} ${r.error || ""})`);
+      return {};
     }
 
     case "test_github": {
