@@ -20,7 +20,6 @@ import { waitUntil } from "@vercel/functions";
 import { act } from "./product.js";
 import { OWNER_EMAILS } from "./_lib/projects.js";
 import { slackCfg, slackApi, replyInThread, decidedMessage, cardLink } from "./_lib/product-slack.js";
-import { approvePost, skipPost, publishPost } from "./_lib/dse-social.js";
 
 export const config = { maxDuration: 120 };
 const nrm = (v) => String(v || "").trim().toLowerCase();
@@ -61,6 +60,8 @@ async function onSocialButton(sb, cfg, p, a) {
   if (!me) return oops(p.response_url, "Only Drew and HQ admins can approve DS Elite posts.");
   const by = String(me.name || me.email).split(/[\s@]/)[0];
   try {
+    // Loaded only here, so the Product board's buttons never depend on it.
+    const { approvePost, skipPost, publishPost } = await import("./_lib/dse-social.js");
     if (a.action_id === "dse_social_skip") return void await skipPost(sb, a.value, by);
     const r = await approvePost(sb, a.value, by);
     if (r.due) { const out = await publishPost(sb, a.value); if (out.errors?.length) return oops(p.response_url, "Approved, but posting failed: " + out.errors.join(" · ")); }
