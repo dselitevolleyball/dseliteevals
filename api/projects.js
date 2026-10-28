@@ -16,12 +16,13 @@
 //   create_project { project, tasks[], quiet? }  (managers) one project + its cards
 //                  (quiet, scripts only: no Slack post, no assignment emails)
 //   save_project   { project }            (managers) edit name/summary/status/owner/team/dates
-//   save_task      { task }               add or edit a task; no project_id = a standalone task
+//   save_task      { task, quiet? }       add or edit a task; no project_id = a standalone task
 //   delete_task    { id }                 managers, or whoever added it
 //   comment        { project_id?, task_id?, body }
 //   help           { task_id, note, from_email? }   ask for help (from_email: one person, else anyone)
 //   help_done      { task_id }            the help request is sorted
-//   save_series    { series }             add or edit a repeating task (managers; anyone for their own)
+//   save_series    { series, quiet? }     add or edit a repeating task (managers; anyone for their own)
+//                  (quiet, scripts only - seeding: no Slack post, no email)
 //   delete_series  { id }                 stop it repeating and drop its open future copies
 //   upload_url     { project_id?, task_id?, name, size, mime } -> { path, token }  (then the
 //                  browser uploads to the private bucket and calls file_done)
@@ -320,6 +321,7 @@ const ACTIONS = {
       const { data: task, error } = await sb.from("dssc_project_tasks").insert({ ...fields, created_by: me.email }).select().single();
       if (error) throw new Error(error.message);
       await logUpdate(sb, me, project?.id, task.id, "created", "Added this task.");
+      if (me.service && b.quiet) return { task };
       const who = task.assignee_email ? ` for ${mention(st, task.assignee_email, task.assignee_name)}` : "";
       await slack(sb, taskSlackLine(task, project, `🆕 ${slackText(me.name)} added it${who}${task.due_date ? `, due ${fmtDate(task.due_date)}` : ""}${task.category ? ` (${slackText(task.category)})` : ""}.`));
       if (task.assignee_email) await emailAssigned(project, [task], { email: task.assignee_email, name: task.assignee_name }, me);
@@ -441,6 +443,7 @@ const ACTIONS = {
       const { data: series, error } = await sb.from("dssc_task_series").insert({ ...fields, created_by: me.email }).select().single();
       if (error) throw new Error(error.message);
       const gen = await generateRecurring(sb, today, { only: series.id });
+      if (me.service && b.quiet) return { series, created: gen.created };
       await slack(sb, `🔁 ${slackText(me.name)} set up a repeating task: *${slackText(series.title)}* - ${slackText(describeRepeat(series))}${series.assignee_email ? ` for ${mention(st, series.assignee_email, series.assignee_name)}` : ""}.`);
       if (series.assignee_email && forOther(series.assignee_email)) {
         const p = { email: series.assignee_email, name: series.assignee_name };
