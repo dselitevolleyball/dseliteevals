@@ -197,6 +197,10 @@
       "schedule": "15 * * * *"
     },
     {
+      "path": "/api/dssc-birthdays",
+      "schedule": "7 14,20 * * *"
+    },
+    {
       "path": "/api/privates-ask",
       "schedule": "0 15 25 * *"
     },
