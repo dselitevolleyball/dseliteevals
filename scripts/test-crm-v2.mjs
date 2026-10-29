@@ -201,5 +201,39 @@ check(sb2.db.mkt_items.length === 3 && sb2.db.mkt_items[0].headline === "New wor
 const c2 = await run(sb2, who, { action: "cancel", id: 7 });
 check(c2.campaign.status === "cancelled" && c2.removed === 3 && sb2.db.mkt_items.length === 0, "cancel takes the unsent steps off the calendar");
 
+// ── 6. Upper Hand re-import ──────────────────────────────────────────────────
+console.log("== 6. Upper Hand ==");
+const { importUpperHand } = await import("../api/_lib/dssc-crm.js");
+const uhdb = fakeSupabase({
+  dssc_contacts: [
+    { id: 1, email: "jen@example.com", first_name: "Jennifer", last_name: "Smith", phone: "+15125550101", address: null, city: null, sources: ["playbook"] },
+    ...Array.from({ length: 1100 }, (_, i) => ({ id: 100 + i, email: `filler${i}@example.com`, first_name: "Filler", last_name: "N" + i, sources: ["playbook"] })),
+    { id: 2000, email: "late@example.com", first_name: "Lee", last_name: "Late", sources: ["playbook"] },
+  ],
+  dssc_participants: [], dssc_orders: [{ id: "o4", contact_id: 2000, buyer: "Jen Smith", total_cents: 100 }],
+});
+const uh = await importUpperHand(uhdb, {
+  contacts: [
+    { email: "Jen@Example.com", first_name: "Jen", last_name: "Smith", phone_number: "(512) 555-0199", address_line_1: "1 Main St", city: "dripping springs", postal_code: "78620" },
+    { email: "late@example.com", first_name: "Lee", last_name: "Late", phone_number: "" },
+  ],
+  participants: [
+    { email: "jen@example.com", first_name: "Ava", last_name: "Smith", gender: "Female", date_of_birth: "2014-11-10", phone: "" },
+    { email: "jen@example.com", first_name: "Mark", last_name: "Smith", gender: "Male", date_of_birth: "1980-02-02", phone: "" },
+  ],
+  orders: [
+    { Id: "o1", Buyer: "Jen Smith", Total: "7500", "Date & Time": "07/31/2026 3:04 pm" },     // the holder's name in this export
+    { Id: "o2", Buyer: "Mark Smith", Total: "4000", "Date & Time": "07/30/2026 9:00 am" },    // a second parent on the account
+    { Id: "o3", Buyer: "Lee Late", Total: "1000", "Date & Time": "07/29/2026 9:00 am" },      // a family past the first 1,000 rows
+    { Id: "o4", Buyer: "Jen Smith", Total: "100", "Date & Time": "07/28/2026 9:00 am" },      // already linked: stays
+    { Id: "o5", Buyer: "Nobody Known", Total: "0", "Date & Time": "07/27/2026 9:00 am" },
+  ],
+});
+const jen2 = uhdb.db.dssc_contacts.find(c => c.id === 1);
+check(jen2.first_name === "Jennifer" && jen2.phone === "+15125550101" && jen2.address === "1 Main St" && jen2.city === "Dripping Springs" && jen2.zip === "78620" && jen2.sources.join() === "playbook,upperhand", `fills gaps only: name and phone kept, address added (${jen2.first_name}, ${jen2.phone}, ${jen2.address})`);
+check(uhdb.db.dssc_participants.filter(p => p.contact_id === 1).map(p => p.first_name).sort().join() === "Ava,Mark", "people on the account added to the family");
+const oc = Object.fromEntries(uhdb.db.dssc_orders.map(o => [o.id, o.contact_id]));
+check(oc.o1 === 1 && oc.o2 === 1 && oc.o3 === 2000 && oc.o4 === 2000 && oc.o5 === null && uh.ordersMatched === 4, `orders linked by holder, second parent, past 1,000 families; unknown left (${JSON.stringify(oc)})`);
+
 console.log(failed ? `\n${failed} FAILED` : "\nall passed");
 process.exit(failed ? 1 : 0);

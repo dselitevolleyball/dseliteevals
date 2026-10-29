@@ -39,7 +39,9 @@ export function categoryOf(name) {
   return "other";
 }
 
-async function upsertContacts(sb, rows) {
+// fillOnly: an older source (Upper Hand since the move to Playbook) only fills
+// gaps - it never replaces a name, phone or address People already has.
+async function upsertContacts(sb, rows, { fillOnly = false } = {}) {
   // rows: [{ email, first_name, last_name, phone, address, city, state, zip, dob, sources:[..], uh_added_at, uh_last_login }]
   const byEmail = new Map();
   for (const r of rows) { if (!r.email) continue; const cur = byEmail.get(r.email); byEmail.set(r.email, cur ? { ...cur, ...Object.fromEntries(Object.entries(r).filter(([, v]) => v != null && v !== "")), sources: [...new Set([...(cur.sources || []), ...(r.sources || [])])] } : r); }
@@ -47,14 +49,16 @@ async function upsertContacts(sb, rows) {
   // Lookups in chunks — a single .in() with 800 emails overflows the URL and
   // silently returns nothing, which is how the first Upper Hand load reported
   // 0 contacts while inserting 764.
-  const chunked = async (emails) => { const out = []; for (let i = 0; i < emails.length; i += 150) { const { data } = await sb.from("dssc_contacts").select("id, email, phone, first_name, last_name, sources, dob, city").in("email", emails.slice(i, i + 150)); out.push(...(data || [])); } return out; };
+  const chunked = async (emails) => { const out = []; for (let i = 0; i < emails.length; i += 150) { const { data } = await sb.from("dssc_contacts").select("id, email, phone, first_name, last_name, sources, dob, address, city, state, zip").in("email", emails.slice(i, i + 150)); out.push(...(data || [])); } return out; };
   const ex = new Map((await chunked(list.map(r => r.email))).map(e => [e.email, e]));
   // No id in the payload: email is the conflict key, and mixing rows with and
   // without id makes PostgREST send id = null for the ones without.
+  const pick = (mine, theirs) => fillOnly ? (theirs || mine || null) : (mine || theirs || null);
+  const keep = (mine, theirs) => fillOnly && theirs ? theirs : (mine ?? undefined);
   const up = list.map(r => { const e = ex.get(r.email) || {}; return {
     email: r.email,
-    first_name: r.first_name || e.first_name || null, last_name: r.last_name || e.last_name || null,
-    phone: r.phone || e.phone || null, address: r.address ?? undefined, city: r.city ?? undefined, state: r.state ?? undefined, zip: r.zip ?? undefined,
+    first_name: pick(r.first_name, e.first_name), last_name: pick(r.last_name, e.last_name),
+    phone: pick(r.phone, e.phone), address: keep(r.address, e.address), city: keep(r.city, e.city), state: keep(r.state, e.state), zip: keep(r.zip, e.zip),
     dob: r.dob || e.dob || null, sources: [...new Set([...(e.sources || []), ...(r.sources || [])])],
     uh_added_at: r.uh_added_at ?? undefined, uh_last_login: r.uh_last_login ?? undefined, updated_at: new Date().toISOString(),
   }; });
@@ -122,17 +126,30 @@ export async function importUpperHand(sb, { contacts = [], participants = [], or
   const orphanAdults = participants.filter(r => EMAIL_RE.test(lower(r.email)) && !holderEmails.has(lower(r.email)));
   const orphanByEmail = new Map();
   for (const r of orphanAdults) { const e = lower(r.email); if (!orphanByEmail.has(e)) orphanByEmail.set(e, { email: e, first_name: cap(r.first_name), last_name: cap(r.last_name), phone: e164(r.phone), dob: isoDate(r.date_of_birth), sources: ["upperhand"] }); else if (e164(r.phone) && !orphanByEmail.get(e).phone) orphanByEmail.get(e).phone = e164(r.phone); }
-  const ids = await upsertContacts(sb, [...holders, ...orphanByEmail.values()]);
+  const ids = await upsertContacts(sb, [...holders, ...orphanByEmail.values()], { fillOnly: true });
   out.contacts = ids.size;
   // Participants under their contact. A participant that IS the holder (same name) is flagged.
   const holderName = new Map(holders.map(h => [h.email, nameKey(h.first_name, h.last_name)]));
   const prows = participants.map(r => { const e = lower(r.email); const cid = ids.get(e); if (!cid) return null; const nk = nameKey(r.first_name, r.last_name); return { contact_id: cid, first_name: r.first_name, last_name: r.last_name, dob: isoDate(r.date_of_birth), gender: lower(r.gender) || null, is_contact: holderName.get(e) === nk || orphanByEmail.has(e) && nameKey(orphanByEmail.get(e).first_name, orphanByEmail.get(e).last_name) === nk, sources: ["upperhand"] }; }).filter(Boolean);
   const pids = await upsertParticipants(sb, prows);
   out.participants = pids.size;
-  // Orders → spend, matched to a contact by buyer name.
-  const { data: allContacts } = await sb.from("dssc_contacts").select("id, first_name, last_name");
+  // Orders → spend. The buyer is a name: the account holder's (in this
+  // export, or as People knows them), or anyone else on the account - a
+  // second parent, an adult player - when that name belongs to one account.
+  // An order already linked to a family stays with it.
+  const { data: allContacts } = await fetchAll(() => sb.from("dssc_contacts").select("id, first_name, last_name"));
   const byName = new Map(); for (const c of allContacts || []) { const k = nameKey(c.first_name, c.last_name); if (!byName.has(k)) byName.set(k, c.id); }
-  const orows = orders.filter(r => r.Id).map(r => { const cid = byName.get(nameKey(...clean(r.Buyer).split(/\s+(?=\S+$)/))) || null; if (cid) out.ordersMatched++; return { id: r.Id, contact_id: cid, buyer: clean(r.Buyer) || null, order_number: clean(r["Order Number"]) || null, total_cents: Math.round(Number(r.Total) || 0), method: clean(r.Method) || null, sale_source: clean(r["Sale Source"]) || null, ordered_at: isoTs(r["Date & Time"]) }; });
+  const holderByName = new Map(); for (const h of holders) { const k = nameKey(h.first_name, h.last_name); if (!holderByName.has(k)) holderByName.set(k, h.email); }
+  const onAccount = new Map(); for (const r of participants) { const k = nameKey(r.first_name, r.last_name), e = lower(r.email); if (!EMAIL_RE.test(e)) continue; if (!onAccount.has(k)) onAccount.set(k, new Set()); onAccount.get(k).add(e); }
+  const linked = new Map();
+  const oids = orders.map(r => r.Id).filter(Boolean);
+  for (let i = 0; i < oids.length; i += 300) { const { data } = await sb.from("dssc_orders").select("id, contact_id").in("id", oids.slice(i, i + 300)); for (const o of data || []) if (o.contact_id) linked.set(String(o.id), o.contact_id); }
+  const buyerOf = (r) => {
+    const k = nameKey(...clean(r.Buyer).split(/\s+(?=\S+$)/));
+    const acc = onAccount.get(k);
+    return linked.get(String(r.Id)) || ids.get(holderByName.get(k)) || byName.get(k) || (acc?.size === 1 ? ids.get([...acc][0]) : null) || null;
+  };
+  const orows = orders.filter(r => r.Id).map(r => { const cid = buyerOf(r); if (cid) out.ordersMatched++; return { id: r.Id, contact_id: cid, buyer: clean(r.Buyer) || null, order_number: clean(r["Order Number"]) || null, total_cents: Math.round(Number(r.Total) || 0), method: clean(r.Method) || null, sale_source: clean(r["Sale Source"]) || null, ordered_at: isoTs(r["Date & Time"]) }; });
   for (let i = 0; i < orows.length; i += 300) { const { error } = await sb.from("dssc_orders").upsert(orows.slice(i, i + 300), { onConflict: "id" }); if (error) throw new Error("orders: " + error.message); }
   out.orders = orows.length;
   // Attendance/registration export (when available): participant name + event title + date.
