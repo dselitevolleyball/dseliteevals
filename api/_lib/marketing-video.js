@@ -178,9 +178,13 @@ export async function analyzeVideo(sb, video, { deadline = Date.now() + 250000, 
     const info = await probe(url);
     if (!info.duration) return await fail("ffmpeg couldn't read this video");
     const fps = sampleFps(info.duration);
-    // Contact sheets + a poster, in one pass over the file.
+    // Contact sheets + a poster, in one pass over the file. Bigger than 1080p
+    // (a phone's 4K/60, Drew Oct 29 2026) decodes only the keyframes: every
+    // frame of 5 minutes of 4K takes longer than the function has, and the
+    // sheets are a frame every few seconds anyway (a keyframe is ~1 s apart).
+    const heavy = (info.width || 0) * (info.height || 0) > 2200000;
     const posterAt = Math.min(info.duration / 3, 2);
-    const r = await ffmpeg(["-i", url, "-filter_complex", `[0:v]split=2[a][b];[a]fps=${fps.toFixed(4)},scale=${TILE_W}:-2,tile=${COLS}x${ROWS}[s];[b]trim=start=${posterAt.toFixed(2)}:duration=0.5,setpts=PTS-STARTPTS,scale=720:-2[p]`,
+    const r = await ffmpeg([...(heavy ? ["-skip_frame", "nokey"] : []), "-i", url, "-filter_complex", `[0:v]split=2[a][b];[a]fps=${fps.toFixed(4)},scale=${TILE_W}:-2,tile=${COLS}x${ROWS}[s];[b]trim=start=${posterAt.toFixed(2)}:duration=${heavy ? 3 : 0.5},setpts=PTS-STARTPTS,scale=720:-2[p]`,
       "-map", "[s]", "-q:v", "4", join(dir, "sheet-%02d.jpg"), "-map", "[p]", "-frames:v", "1", "-q:v", "3", join(dir, "poster.jpg")], { timeoutMs: Math.max(30000, deadline - Date.now() - 60000) });
     const files = (await readdir(dir)).filter(f => /^sheet-\d+\.jpg$/.test(f)).sort();
     if (!files.length) return await fail("Couldn't read frames: " + tail(r.stderr));

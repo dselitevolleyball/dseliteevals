@@ -36,7 +36,17 @@ function tusUpload(file, path, token, onPct) {
       removeFingerprintOnSuccess: true,
       metadata: { bucketName: RAW, objectName: path, contentType: file.type || (/\.mov$/i.test(file.name) ? "video/quicktime" : "video/mp4"), cacheControl: "3600" },
       chunkSize: 6 * 1024 * 1024,   // Supabase's resumable uploads take 6 MB chunks
-      onError: (e) => reject(new Error(/413|too large|exceeded|maximum/i.test(String(e?.message || e)) ? "Too big for the current storage plan - upgrade Supabase (Pro) to upload large videos" : String(e?.message || e).split("\n")[0].slice(0, 200))),
+      // A big video on gym wifi can outlast the 1-hour sign-in: each request gets the current one.
+      onBeforeRequest: async (req) => { const { data: { session } } = await supabase.auth.getSession(); if (session?.access_token) req.setHeader("authorization", `Bearer ${session.access_token}`); },
+      // Say what the storage server said (status + its message), not tus's long request dump.
+      onError: (e) => {
+        const status = e?.originalResponse?.getStatus?.(), body = String(e?.originalResponse?.getBody?.() || "").slice(0, 160);
+        const raw = String(e?.message || e);
+        reject(new Error(status === 413 || /maximum size|too large/i.test(body + raw) ? "This video is over the 10 GB upload limit - record at 1080p or 4K at 30 fps, or trim it"
+          : status === 401 || /jwt|exp/i.test(body) ? "Your sign-in ran out - refresh HQ and upload again (it picks up where it stopped)"
+          : status ? `Storage said ${status}${body ? `: ${body}` : ""}`
+          : /network|failed to fetch|offline|timeout/i.test(raw) ? "The connection dropped - upload again and it picks up where it stopped" : raw.split("\n")[0].slice(0, 200)));
+      },
       onProgress: (sent, total) => onPct(Math.round((sent / total) * 100)),
       onSuccess: () => resolve(),
     });
