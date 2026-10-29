@@ -20,13 +20,27 @@ const KINDS = [["feature", "💡 New idea", "What should HQ do that it doesn't?"
 const STATUS_TEXT = { inbox: "Waiting for Drew", backlog: "Approved", planned: "Planned", building: "Being built", review: "Almost ready", shipped: "Live ✓", declined: "Not now", canceled: "Canceled" };
 const AREA = (view, app) => /marketing/.test(view) ? "Marketing" : /time|hours|pay|claims|expenses/.test(view) ? "Time cards & pay" : /message|texts|inbox|email/.test(view) ? "Texts & email" : app === "dssc" ? "DSSC HQ" : "DS Elite HQ";
 
+// Time-limited so Send never just sits there (Jonathan, Oct 29 2026: "the send
+// button is a dead button"): a tab left open overnight can stall on refreshing
+// its sign-in.
+const within = (p, ms, msg) => Promise.race([p, new Promise((_, no) => setTimeout(() => no(new Error(msg)), ms))]);
 async function api(action, payload = {}) {
-  const { data: { session } } = await supabase.auth.getSession();
-  const r = await fetch("/api/product", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + (session?.access_token || "") }, body: JSON.stringify({ action, ...payload }) });
+  const { data: { session } } = await within(supabase.auth.getSession(), 10000, "HQ couldn't check your sign-in. Refresh the page and try again (your text is kept).");
+  const r = await fetch("/api/product", { method: "POST", signal: AbortSignal.timeout(45000), headers: { "Content-Type": "application/json", Authorization: "Bearer " + (session?.access_token || "") }, body: JSON.stringify({ action, ...payload }) })
+    .catch(e => { throw new Error(e.name === "TimeoutError" ? "That took too long. Try again in a minute." : "Couldn't reach HQ. Check your connection and try again."); });
   const d = await r.json().catch(() => ({}));
+  if (r.status === 401) throw new Error("You've been signed out. Refresh the page, sign in, and try again.");
   if (!r.ok) throw new Error(d.error || "HTTP " + r.status);
   return d;
 }
+// No title? Use the first line of what they wrote rather than refuse to send.
+const titleFrom = (title, body) => {
+  const t = title.trim();
+  if (t.length >= 3) return t;
+  const first = body.trim().split(/\n|(?<=[.?!])\s/)[0].trim();
+  return first.length > 90 ? first.slice(0, 87).replace(/\s+\S*$/, "") + "…" : first;
+};
+const DRAFT = "hq-feedback-draft";
 
 // A picture shrunk to 1600px and re-encoded as JPEG (drops EXIF, keeps it small).
 function shrink(file) {
@@ -59,11 +73,15 @@ export default function FeedbackButton({ view, workspace, narrow, phoneNav }) {
   useEffect(() => { if (!open) return; const k = (e) => { if (e.key === "Escape") setOpen(false); }; window.addEventListener("keydown", k); return () => window.removeEventListener("keydown", k); }, [open]);
 
   const reset = () => { setTitle(""); setBody(""); setShot(null); setMsg(null); setSent(null); setKind("feature"); };
+  // Keep what they've typed if the page is refreshed or the popup closed.
+  useEffect(() => { try { const d = JSON.parse(localStorage.getItem(DRAFT) || "null"); if (d) { setTitle(d.title || ""); setBody(d.body || ""); if (d.kind) setKind(d.kind); } } catch { /* no storage */ } }, []);
+  useEffect(() => { try { title || body ? localStorage.setItem(DRAFT, JSON.stringify({ title, body, kind })) : localStorage.removeItem(DRAFT); } catch { /* no storage */ } }, [title, body, kind]);
   const send = async () => {
-    if (title.trim().length < 3) { setMsg({ err: "Give it a short title." }); return; }
+    const t = titleFrom(title, body);
+    if (t.length < 3) { setMsg({ err: "Type your idea first - a line in the top box is enough." }); return; }
     setBusy(true); setMsg(null);
     try {
-      const d = await api("request", { title, body, kind, area: AREA(view || "", workspace), screenshot: shot, context: { view, view_label: viewLabel(view), app: workspace, url: location.pathname + location.search, ua: navigator.userAgent } });
+      const d = await api("request", { title: t, body, kind, area: AREA(view || "", workspace), screenshot: shot, context: { view, view_label: viewLabel(view), app: workspace, url: location.pathname + location.search, ua: navigator.userAgent } });
       setSent(d.key); setTitle(""); setBody(""); setShot(null);
     } catch (e) { setMsg({ err: e.message }); }
     setBusy(false);
@@ -112,7 +130,7 @@ export default function FeedbackButton({ view, workspace, narrow, phoneNav }) {
                   {shot && <><img src={shot} alt="" style={{ height: 44, borderRadius: 6, border: "1px solid " + C.border }} /><button onClick={() => setShot(null)} style={{ background: "none", border: "none", color: C.mut, cursor: "pointer", fontSize: 12 }}>remove</button></>}
                 </div>
                 <div style={{ fontSize: 12, color: C.mut, marginTop: 10 }}>From: <b style={{ color: C.text }}>{viewLabel(view)}</b> ({workspace === "dssc" ? "DSSC" : "DS Elite"})</div>
-                {msg?.err && <div style={{ color: C.red, fontSize: 13, marginTop: 8 }}>{msg.err}</div>}
+                {msg?.err && <div role="alert" style={{ color: C.text, background: "rgba(239,68,68,0.16)", border: "1px solid " + C.red, borderRadius: 10, padding: "9px 12px", fontSize: 14, fontWeight: 700, marginTop: 10 }}>{msg.err}</div>}
                 <button disabled={busy} onClick={send} style={{ width: "100%", marginTop: 12, padding: 12, borderRadius: 10, border: "none", background: C.gold, color: C.onAccent, fontWeight: 900, fontSize: 15, cursor: "pointer" }}>{busy ? "Sending…" : "Send to Drew"}</button>
               </>
             ))}
