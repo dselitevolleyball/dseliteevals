@@ -38,6 +38,8 @@ export default async function handler(req, res) {
     }
     if (url.searchParams.get("error")) return send(res, 400, `<h1>Facebook didn't connect</h1><p>${esc(url.searchParams.get("error_description") || url.searchParams.get("error"))}</p><a class="b" href="${HQ}">Back to HQ</a>`);
     const state = url.searchParams.get("state"), code = url.searchParams.get("code");
+    // Opened directly (not on the way back from Facebook): say what this page is.
+    if (!state && !code) return send(res, 200, `<h1>This is where Facebook sends you back</h1><p>Connecting starts in HQ: <b>Social → Settings → Connect Facebook</b>. Facebook asks you to sign in and pick DS Elite's Page, then brings you back here to finish.</p>${M.appReady() ? "" : `<p class="bad">The Connect button is off until <b>META_APP_ID</b> and <b>META_APP_SECRET</b> are added to the dseliteevals project in Vercel (Settings → Environment Variables) and it's redeployed. Until then you can paste a token instead (Settings → "Or paste a token").</p>`}<a class="b" href="${HQ}">Go to HQ → Social</a>`);
     const st = M.readState(state);
     if (!st || !code) return send(res, 400, `<h1>That link has run out</h1><p>Start again from HQ → Social → Settings → Connect Facebook.</p><a class="b" href="${HQ}">Back to HQ</a>`);
     const user = await M.codeToUserToken(code);
