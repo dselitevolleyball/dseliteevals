@@ -139,6 +139,14 @@ const PICK_SCHEMA = {
   },
 };
 
+// A copy no bigger than `max` px on its long side (a canvas draws like an image).
+function shrink(img, max) {
+  const s = Math.min(1, max / Math.max(img.width, img.height));
+  if (s === 1) return img;
+  const c = createCanvas(Math.round(img.width * s), Math.round(img.height * s));
+  c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+  return c;
+}
 // A small JPEG for Claude to look at (and a photo object to draw from).
 async function thumbB64(img, max = 768) {
   const s = Math.min(1, max / Math.max(img.width, img.height));
@@ -198,7 +206,8 @@ async function download(sb, path) {
 export async function renderPost(sb, post, imgs = null) {
   const folder = post.ai?.folder || randomUUID();
   const picks = post.photos || [];
-  const loaded = imgs || await Promise.all(picks.map(async p => p.path ? loadPhoto(await download(sb, p.path)) : loadPhoto(p.url)));
+  let loaded = imgs;
+  if (!loaded) { loaded = []; for (const p of picks) loaded.push(shrink(p.path ? await loadPhoto(await download(sb, p.path)) : await loadPhoto(p.url), 2000)); }
   const stamp = Date.now().toString(36);
   const out = { ai: { ...(post.ai || {}), folder } };
   if (post.format === "collage") {
@@ -221,7 +230,19 @@ export async function draftPhotoPost(sb, rows, { by = "auto", settings = null, n
   // An upload that never finished is an empty file (22 of the first 153 were),
   // and one was an iPhone HEIC the decoder can't open: they're set aside, not
   // sent to Claude, and marked so the cron doesn't keep opening them.
-  const imgs = await Promise.all(list.map(async p => { const buf = await download(sb, p.storage_path).catch(() => null); if (!buf?.length) return null; const im = await loadPhoto(buf).catch(() => null); return im?.width ? im : null; }));
+  // Four at a time, each shrunk to 2000px as soon as it's open: sixteen
+  // full-size phone photos at once (~50 MB each decoded) ran the function out
+  // of memory on Oct 29.
+  const imgs = new Array(list.length).fill(null);
+  let next = 0;
+  await Promise.all(Array.from({ length: 4 }, async () => {
+    while (next < list.length) {
+      const k = next++, buf = await download(sb, list[k].storage_path).catch(() => null);
+      if (!buf?.length) continue;
+      const im = await loadPhoto(buf).catch(() => null);
+      if (im?.width) imgs[k] = shrink(im, 2000);
+    }
+  }));
   const broken = list.filter((_, i) => !imgs[i]).map(p => p.id);
   if (broken.length && !dry) await sb.from("player_photos").update({ social_post_id: 0 }).in("id", broken);
   let ok = list.map((p, i) => ({ p, img: imgs[i] })).filter(x => x.img);
@@ -268,6 +289,10 @@ title: the team as written ("${team}"). sub: a short line for under it, like the
     scheduled_at: (plannedAt ? new Date(plannedAt) : await nextSlot(sb, s)).toISOString(),
     ai: { model, error: aiErr, verdicts: (ai.photos || []).map(p => ({ photo_id: ok[p.i]?.p.id, usable: p.usable, reason: p.reason, score: p.score })) },
   };
+  // Two drafts racing for the same photos (the cron and "Make the draft"
+  // within a second, Oct 29): whoever is second stops here.
+  const { data: taken } = await sb.from("player_photos").select("id").in("id", considered).not("social_post_id", "is", null);
+  if (taken?.length) return { skipped: true, error: `${taken.length} of these photos were just put in another draft` };
   Object.assign(draft, await renderPost(sb, draft, plan.picks.map(i => ok[i].img)));
   const { data: post, error } = await sb.from("dse_social_posts").insert(draft).select().single();
   if (error) throw fail(500, error.message);
