@@ -631,6 +631,10 @@ function MailAssistantSettings({ box }) {
         </div>
       ))}
       {st && st.accounts.some(a => a.connected) && <button disabled={!!busy} onClick={go("poll", () => call("poll"))} style={{ ...btn("ghost", true), marginTop: 8 }}>{busy === "poll" ? "Checking…" : "Check now"}</button>}
+      {st && <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 10, fontSize: 12.5, color: C.mut }}>
+        📬 Roundup of no-reply and automated mail in Slack at {(st.digest?.hours || [8, 17]).map(h => (h % 12 || 12) + (h < 12 ? "am" : "pm")).join(" and ")} Central{st.digest?.last_at ? ` · last ${ago(st.digest.last_at)}` : ""}
+        <button disabled={!!busy} onClick={go("dg", async () => { const r = await call("digest_now"); if (r.digest?.error) throw new Error(r.digest.error); window.alert(r.digest?.sent ? "Sent - check DSSC Mail in Slack." : "Nothing new since the last roundup."); })} style={btn("ghost", true)}>{busy === "dg" ? "Sending…" : "Send roundup now"}</button>
+      </div>}
       {st && <MailSlackApp slack={st.slack} call={call} busy={busy} go={go} />}
       {st?.recent?.length > 0 && <div style={{ marginTop: 12 }}>
         <span style={lbl}>Lately</span>

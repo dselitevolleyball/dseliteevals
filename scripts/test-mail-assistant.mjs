@@ -174,5 +174,40 @@ const ts = String(Math.floor(Date.now() / 1000)), rawBody = "payload=%7B%7D";
 const sig = "v0=" + crypto.createHmac("sha256", "mailsecret").update(`v0:${ts}:${rawBody}`).digest("hex");
 check(signed({ "x-slack-request-timestamp": ts, "x-slack-signature": sig }, rawBody, "mailsecret") && !signed({ "x-slack-request-timestamp": ts, "x-slack-signature": sig }, rawBody, "s1") && !signed({ "x-slack-request-timestamp": String(+ts - 600), "x-slack-signature": sig }, rawBody, "mailsecret"), "DSSC Mail's requests must carry its own signature, and be fresh");
 
+// ── 5. the twice-a-day roundup ───────────────────────────────────────────────
+console.log("== 5. roundup ==");
+check(M.digestSlot(new Date("2026-10-29T13:05:00Z")) === "2026-10-29@8" && M.digestSlot(new Date("2026-10-29T22:10:00Z")) === "2026-10-29@17" && M.digestSlot(new Date("2026-10-29T11:00:00Z")) === null && M.digestSlot(new Date("2026-11-02T14:05:00Z")) === "2026-11-02@8", "8am and 5pm Central, through the clock change");
+const dms = [];
+globalThis.fetch = async (url, o = {}) => {
+  const u = String(url);
+  if (u.startsWith("https://slack.com/api/")) { const m = u.split("/").pop(); if (m === "chat.postMessage") dms.push(JSON.parse(o.body)); return { ok: true, status: 200, json: async () => m === "users.lookupByEmail" ? { ok: true, user: { id: "UD" } } : m === "conversations.open" ? { ok: true, channel: { id: "DM1" } } : { ok: true, ts: "1.2" } }; }
+  return fakeFetch(url, o);
+};
+const t0 = "2026-10-29T12:00:00Z";
+const sbd = fakeSupabase({ hq_kv: [{ key: "mail_slack", value: { bot_token: "xoxb-mail", signing_secret: "x" } }], mail_drafts: [
+  { id: 1, account: "drew@drippingsportsclub.com", thread_id: "a", from_email: "pat@gmail.com", from_name: "Pat Lee", subject: "Thanks!", body: "Thanks so much for Saturday, Ava loved it.", status: "ignored", reason: "No reply needed: just a thank-you", created_at: "2026-10-29T12:30:00Z" },
+  { id: 2, account: "drew@drippingsportsclub.com", thread_id: "b", from_email: "news@playbook.com", from_name: "Playbook", subject: "Weekly", body: "", status: "ignored", reason: "mailing list", created_at: "2026-10-29T12:40:00Z" },
+  { id: 3, account: "drew@drippingsportsclub.com", thread_id: "c", from_email: "news@playbook.com", from_name: "Playbook", subject: "Tips", body: "", status: "ignored", reason: "mailing list", created_at: "2026-10-29T12:41:00Z" },
+  { id: 4, account: "drew@drippingsportsclub.com", thread_id: "d", from_email: "drew@dselitevolleyball.com", subject: "fwd", body: "", status: "ignored", reason: "from you", created_at: "2026-10-29T12:42:00Z" },
+  { id: 5, account: "drew@drippingsportsclub.com", thread_id: "e", from_email: "kim@x.com", from_name: "Kim", subject: "Court?", body: "", status: "pending", slack_channel: "DM1", slack_ts: "5.5", created_at: "2026-10-29T12:43:00Z" },
+  { id: 6, account: "drew@drippingsportsclub.com", thread_id: "f", from_email: "old@x.com", subject: "Old", body: "", status: "ignored", reason: "No reply needed: fyi", created_at: "2026-10-28T09:00:00Z" },
+] });
+const gistClient = { beta: { messages: { create: async (req) => ({ content: [{ type: "text", text: JSON.stringify({ items: [{ id: 1, line: "Thanked you for Saturday - Ava loved it" }] }) }] }) } } };
+const d1 = await M.sendDigest(sbd, { now: new Date("2026-10-29T22:05:00Z"), client: gistClient });
+const txt = JSON.stringify(dms[0]?.blocks || []);
+check(d1.sent && d1.quiet === 1 && d1.auto === 2 && d1.waiting === 1, `5pm: 1 no-reply, 2 automated, 1 waiting (${JSON.stringify(d1)})`);
+check(/Pat Lee\* - Thanked you for Saturday - Ava loved it/.test(txt) && /mail\.google\.com/.test(txt), "one line per email: who, Claude's one-line gist, a Gmail link");
+check(/Playbook ×2/.test(txt) && !/fwd/.test(txt), "automated mail counted by sender; Drew's own mail left out");
+check(/Still waiting on you\* \(1\)/.test(txt) && /archives\/DM1\/p55/.test(txt), "a reminder of drafts still waiting, linked to their cards");
+const d2 = await M.sendDigest(sbd, { now: new Date("2026-10-29T22:40:00Z"), client: gistClient });
+check(d2.skipped && dms.length === 1, "once per slot: the 5-minute runs after it don't send again");
+const d3 = await M.sendDigest(sbd, { now: new Date("2026-10-30T13:05:00Z"), client: gistClient });
+check(d3.sent && d3.quiet === 0 && d3.auto === 0 && d3.waiting === 1, "next morning: only what's new since the last roundup (plus what's still waiting)");
+sbd.db.mail_drafts.find(r => r.id === 5).status = "sent";
+const d4 = await M.sendDigest(sbd, { now: new Date("2026-10-30T22:05:00Z"), client: gistClient });
+check(d4.empty && dms.length === 2, "nothing new and nothing waiting: no message at all");
+const d5 = await M.sendDigest(sbd, { force: true, now: new Date("2026-10-30T22:06:00Z"), client: gistClient });
+check(d5.empty, "Send roundup now with nothing to say sends nothing");
+
 console.log(failed ? `\n${failed} FAILED` : "\nall passed");
 process.exit(failed ? 1 : 0);

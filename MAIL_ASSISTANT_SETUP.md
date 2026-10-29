@@ -39,6 +39,16 @@ they're needed.
 
 Archived mail is still in All Mail and in search.
 
+**The roundup.** At **8am and 5pm Central**, DSSC Mail DMs you one message covering everything
+since the last roundup:
+
+- **No reply needed:** one line per email (who, Claude's one-line gist, a Gmail link).
+- **Newsletters & automated:** counted by sender.
+- **Still waiting on you:** links to draft cards you haven't answered.
+
+It skips the message when there's nothing new. Product → Settings → Email assistant has **Send
+roundup now**.
+
 ## One-time setup (about 10 minutes)
 
 ### 1. A Google OAuth client — as an **Internal** app

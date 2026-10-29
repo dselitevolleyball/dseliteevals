@@ -444,3 +444,73 @@ export async function pollAll(sb, opts = {}) {
   return res;
 }
 export const isOwner = (email) => OWNER_EMAILS.includes(nrm(email));
+
+// ── the roundup (Drew, Oct 29 2026: "summarize all of the thank yous, FYIs
+// and what not into a line item I can review 2x a day") ─────────────────────
+// At 8am and 5pm Central, a DM from the email Slack app: one line per email
+// that needed no reply (Claude's one-line gist + Gmail link), newsletters and
+// automated mail counted by sender, and drafts still waiting in Slack. Only
+// sent when there's something in it. State in hq_kv "mail_digest".
+export const DIGEST_HOURS = [8, 17];
+const ct = (d) => { const p = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: "America/Chicago", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23" }).formatToParts(d).map(x => [x.type, x.value])); return { date: `${p.year}-${p.month}-${p.day}`, hour: +p.hour }; };
+// The roundup slot now falls in ("2026-10-29@17"), or null before the first one.
+export function digestSlot(now = new Date(), hours = DIGEST_HOURS) {
+  const { date, hour } = ct(now);
+  const h = [...hours].sort((a, b) => a - b).filter(x => x <= hour).pop();
+  return h == null ? null : `${date}@${h}`;
+}
+const AUTO_NAME = (r) => (r.from_name || r.from_email.split("@")[1] || r.from_email).replace(/\s*\(.*\)$/, "").slice(0, 40);
+const GIST_SCHEMA = { type: "object", additionalProperties: false, required: ["items"], properties: { items: { type: "array", items: { type: "object", additionalProperties: false, required: ["id", "line"], properties: { id: { type: "integer" }, line: { type: "string" } } } } } };
+async function gists(rows, client) {
+  if (!rows.length) return new Map();
+  if (!client && !env().ANTHROPIC_API_KEY) return new Map(rows.map(r => [r.id, r.subject || "(no subject)"]));
+  const c = client || claudeClient("mail-digest", { timeout: 60000, maxRetries: 1 });
+  const msg = await c.beta.messages.create({
+    model: MODEL, max_tokens: 3000, betas: ["server-side-fallback-2026-07-01"], fallbacks: "default",
+    output_config: { effort: "low", format: { type: "json_schema", schema: GIST_SCHEMA } },
+    system: "Summarize each email for a busy club owner in one line of at most 14 words: what it says or asks, with any date, amount or name that matters. Plain words, no quotes, no 'This email'.",
+    messages: [{ role: "user", content: rows.map(r => `id ${r.id}\nFrom: ${r.from_name || ""} <${r.from_email}>\nSubject: ${r.subject || ""}\n${String(r.body || "").slice(0, 700)}`).join("\n\n---\n\n") }],
+  }).catch(() => null);
+  let j = null; try { j = JSON.parse((msg?.content || []).filter(b => b.type === "text").map(b => b.text).join("")); } catch { /* fall back to subjects */ }
+  const m = new Map((j?.items || []).map(x => [Number(x.id), String(x.line || "").trim()]));
+  for (const r of rows) if (!m.get(r.id)) m.set(r.id, r.subject || "(no subject)");
+  return m;
+}
+export function digestBlocks({ quiet, auto, waiting, since, gist }) {
+  const esc2 = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const blocks = [{ type: "section", text: { type: "mrkdwn", text: `📬 *Email roundup* · since ${when(since)}` } }];
+  const byAcct = (list) => [...new Set(list.map(r => r.account))];
+  if (quiet.length) for (const a of byAcct(quiet)) {
+    const lines = quiet.filter(r => r.account === a).map(r => `• *${esc2(r.from_name || r.from_email)}* - ${esc2(gist.get(r.id) || r.subject)} · <${gmailLink(r.account, r.thread_id)}|open>`);
+    for (let i = 0; i < lines.length; i += 20) blocks.push({ type: "section", text: { type: "mrkdwn", text: (i ? "" : `*No reply needed · ${esc2(a)}* (${lines.length})\n`) + lines.slice(i, i + 20).join("\n") } });
+  }
+  if (auto.length) {
+    const counts = {}; for (const r of auto) { const k = `${AUTO_NAME(r)}`; counts[k] = (counts[k] || 0) + 1; }
+    const list = Object.entries(counts).sort((x, y) => y[1] - x[1]).map(([k, n]) => esc2(k) + (n > 1 ? ` ×${n}` : "")).join(", ");
+    blocks.push({ type: "context", elements: [{ type: "mrkdwn", text: `🗞 *Newsletters & automated* (${auto.length}, marked read): ${list}`.slice(0, 2900) }] });
+  }
+  if (waiting.length) blocks.push({ type: "section", text: { type: "mrkdwn", text: `⏳ *Still waiting on you* (${waiting.length}): ` + waiting.slice(0, 15).map(r => r.slack_channel && r.slack_ts ? `<https://slack.com/archives/${r.slack_channel}/p${String(r.slack_ts).replace(".", "")}|${esc2(r.from_name || r.from_email)}>` : esc2(r.from_name || r.from_email)).join(", ") } });
+  return { text: `Email roundup: ${quiet.length} no reply needed, ${auto.length} automated, ${waiting.length} waiting`, blocks };
+}
+export async function sendDigest(sb, { force = false, now = new Date(), client = null } = {}) {
+  const { data: kv } = await sb.from("hq_kv").select("value").eq("key", "mail_digest").maybeSingle();
+  const state = kv?.value || {};
+  const slot = digestSlot(now, state.hours || DIGEST_HOURS);
+  if (!force && (!slot || state.last_slot === slot)) return { skipped: true, slot };
+  const since = state.last_at || new Date(now.getTime() - 24 * 3600e3).toISOString();
+  const { data: rows } = await sb.from("mail_drafts").select("id, account, thread_id, from_email, from_name, subject, body, status, reason, created_at, slack_channel, slack_ts").gt("created_at", since).eq("status", "ignored").order("created_at");
+  const { data: waiting } = await sb.from("mail_drafts").select("id, from_email, from_name, slack_channel, slack_ts").eq("status", "pending").order("created_at");
+  const quiet = (rows || []).filter(r => /^No reply needed/.test(r.reason || ""));
+  const auto = (rows || []).filter(r => !/^No reply needed/.test(r.reason || "") && r.reason !== "from you" && r.reason !== "no sender");
+  const save = (extra = {}) => sb.from("hq_kv").upsert({ key: "mail_digest", value: { ...state, last_slot: slot || state.last_slot, last_at: now.toISOString(), ...extra }, secret: true, updated_at: now.toISOString(), updated_by: "mail-digest" }, { onConflict: "key" });
+  if (!quiet.length && !auto.length && !(waiting || []).length) { await save(); return { sent: false, empty: true, slot }; }
+  const cfg = await mailSlackCfg(sb);
+  if (!cfg.bot_token) return { sent: false, error: "No Slack app" };
+  const channel = await ownerDm(cfg);
+  if (!channel) return { sent: false, error: "Couldn't DM Drew in Slack" };
+  const gist = await gists(quiet, client);
+  const r = await slackApi(cfg.bot_token, "chat.postMessage", { channel, ...digestBlocks({ quiet, auto, waiting: waiting || [], since, gist }), unfurl_links: false, unfurl_media: false });
+  if (!r.ok) return { sent: false, error: "Slack: " + r.error };
+  await save();
+  return { sent: true, slot, quiet: quiet.length, auto: auto.length, waiting: (waiting || []).length };
+}
