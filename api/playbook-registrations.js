@@ -23,7 +23,7 @@
 import { createClient } from "@supabase/supabase-js";
 import Papa from "papaparse";
 import { importRoster } from "./_lib/dssc-roster-import.js";
-import { importPlaybookRegistrations, pruneDeletedReservations } from "./_lib/dssc-crm.js";
+import { importPlaybookRegistrations, pruneDeletedReservations, importPlaybookSpend, isPlaybookSpendExport } from "./_lib/dssc-crm.js";
 import { appOrigin } from "../shared/app-origin.js";
 
 const BASE = "https://drippingsports.playbookapi.com";
@@ -110,6 +110,12 @@ export default async function handler(req, res) {
   // is reported in the summary but never fails the roster pull.
   let people = null;
   if (!dry) { try { people = await importPlaybookRegistrations(sb, rows); } catch (e) { people = { error: e.message }; } }
+  // Spend: prices come from the Registrations report (invoice_number +
+  // registration_base_price), uploaded in People. If this export ever carries
+  // those columns too, spend keeps itself current from here.
+  const cols = Object.keys(rows[0] || {});
+  let spend = null;
+  if (!dry && isPlaybookSpendExport(cols)) { try { spend = await importPlaybookSpend(sb, rows); } catch (e) { spend = { error: e.message }; } }
   // Court bookings deleted in Playbook come off Court Availability.
   let reservations = null;
   try { reservations = await pruneDeletedReservations(sb, rows, { dry }); } catch (e) { reservations = { error: e.message }; }
@@ -117,7 +123,7 @@ export default async function handler(req, res) {
   // beforeHq = sign-ups for dates before HQ had the class (they'll never attach);
   // counted, never alerted on.
   const summary = { added: out.added, matched: out.matched, rows: out.rows, noSession: out.noSession.length, beforeHq: (out.beforeHq || []).length,
-    waiting: [...new Set(out.noSession.map(x => x.program + " " + x.date))].slice(0, 12), people, reservations };
+    waiting: [...new Set(out.noSession.map(x => x.program + " " + x.date))].slice(0, 12), people, reservations, spend, columns: cols };
   if (!dry) {
     await sb.from("dssc_sync").upsert({ id: 1, registrations_at: now, registrations_summary: summary, registrations_error: null, registrations_error_at: null }, { onConflict: "id" });
     // Tell the director once when registrations are piling up for classes HQ
