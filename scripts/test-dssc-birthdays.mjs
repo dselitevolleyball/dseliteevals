@@ -104,7 +104,10 @@ check(pe.subject === "Celebrate Ava's birthday at DSSC ($50 off)", pe.subject);
 check(/BDAY50/.test(pe.html) && /\$50 off/i.test(pe.html) && /one per family/.test(pe.html) && /Warehouse II/.test(pe.html), "the $50 code, one per family, Warehouse II");
 check(/Saturday, December 12/.test(pe.html) && /9-11am  ·  2-4pm/.test(pe.html) && /Saturday, December 19/.test(pe.html) && !/Sunday, December 13/.test(pe.html), "open times by day; a full day is left out");
 check(/resource_group_pks=175,176/.test(pe.html) && /\{\{unsubscribe_url\}\}/.test(pe.html), "book links to Playbook's party page; an unsubscribe link");
-check((pe.html.match(/x\/p\d\.jpg/g) || []).length === 5 && !/vb\.jpg/.test(pe.html), "a party photo up top and four in the gallery, party photos only");
+check((pe.html.match(/x\/p\d\.jpg/g) || []).length === 5 && !/vb\.jpg/.test(pe.html), "no older-kids photo in the library: a party photo up top and four in the gallery, party photos only");
+check(!B.partyPhotos([...photos, { url: "https://x/tall.jpg", line: "parties", quality: 9, width: 800, height: 1200 }]).includes("https://x/tall.jpg"), "portrait photos stay out of the gallery");
+const pe2 = B.partyEmail(g, S, { today: "2026-10-02", slots: new Map(), photos: [...photos, { id: B.PARTY_HERO_ID, url: "https://x/older.jpg", line: "basketball", quality: 4 }] });
+check(/data-hero src="https:\/\/x\/older\.jpg"/.test(pe2.html) && (pe2.html.match(/x\/p\d\.jpg/g) || []).length === 4, "the older-kids photo up top, four party photos below");
 const notYet = B.partyEmail(g, S, { today: "2026-10-02", slots: new Map([["2026-12-12", []], ["2026-12-13", []], ["2026-12-19", []], ["2026-12-20", []]]), photos });
 check(/Booking opens soon/.test(notYet.html) && /mailto:/.test(notYet.html) && /Hold a date/.test(notYet.html) && !/are booked/.test(notYet.html), "no times on any day = not open in Playbook yet: hold a date by reply");
 const booked = B.partyEmail(g, S, { today: "2026-10-02", slots: new Map([["2026-12-12", []], ["2026-12-13", []], ["2026-12-19", []]]), photos });
@@ -115,6 +118,7 @@ const be = B.birthdayEmail({ ...g, kind: "birthday", birthday: TODAY, turns: 16,
 check(be.subject === "Happy birthday, Leo! 🎉 A gift from DSSC" && /BDAY35/.test(be.html) && /never expires/.test(be.html) && /anything at DSSC/.test(be.html), "birthday: $35 off anything, BDAY35, never expires");
 check(/>16<\/div>/.test(be.html) && /today!/.test(be.html) && /It's your day, Leo!/.test(be.html.replace(/&#39;/g, "'")), "a big age badge and the kid's name");
 check(/\{\{unsubscribe_url\}\}/.test(be.html) && /BDAY35/.test(be.text) && /Unsubscribe:/.test(be.text), "an unsubscribe link, and a plain-text version");
+check(!/<img[^>]+x\/p\d\.jpg/.test(be.html) && (be.html.match(/<img/g) || []).length === 1, "birthday email: no photo, just the logo");
 const tw = B.birthdayEmail({ ...g, kind: "birthday", birthday: TODAY, turns: 7, kids: [{ pid: 51, first: "Tia" }, { pid: 52, first: "Tom" }] }, S, { today: TODAY, photos });
 check(/Tia and Tom!/.test(tw.html) && /for both of you/.test(tw.html) && /you two/.test(tw.html), "twins: both names, written to both");
 

@@ -188,9 +188,15 @@ export function upcomingPlan(d, s, today, horizon = 30) {
   return out.sort((a, b) => a.on.localeCompare(b.on) || a.kind.localeCompare(b.kind) || a.first.localeCompare(b.first));
 }
 
+// The party invite's top photo: older kids (tweens and young teens jumping for a
+// rebound), so it speaks to families of 10-13 year olds too (Drew, Oct 29 2026).
+// mkt_photos id; if it's gone, the first party photo is used.
+export const PARTY_HERO_ID = 75;
+
 // Party photos for the hero and the gallery, a different set per family.
 export function partyPhotos(photos, seed = 0) {
-  const p = (photos || []).filter(x => x.url && (x.line === "parties" || (x.tags || []).includes("parties"))).sort((a, b) => (b.quality || 0) - (a.quality || 0) || String(a.url).localeCompare(String(b.url)));
+  // Landscape only, so the gallery's 2x2 grid lines up (a size we don't know counts as landscape).
+  const p = (photos || []).filter(x => x.url && (x.line === "parties" || (x.tags || []).includes("parties")) && !(x.width && x.height && x.height > x.width)).sort((a, b) => (b.quality || 0) - (a.quality || 0) || String(a.url).localeCompare(String(b.url)));
   if (!p.length) return [];
   const n = p.length, start = Math.abs(Number(seed) || 0) % n;
   return [...p.slice(start), ...p.slice(0, start)].map(x => x.url);
@@ -220,10 +226,11 @@ export function partyEmail(g, s, { today, slots = new Map(), photos = [] }) {
     for (const w of weekends) blocks.push({ section: "Party dates", label: w.label, title: w.days.map(day => fmtDay(day, { weekday: "short", month: "short", day: "numeric" })).join(" or "), date_label: "Booking opens soon", blurb: `Reply to this email with the day and time you'd like and we'll hold it for ${plural ? "them" : first}.`, url: hold, cta: "Hold a date" });
   } else if (!anyOpen) blocks.push({ section: "Open party times", label: "Filling up", title: "Those weekends are booked", blurb: "The weekends right around the birthday are taken, but there are plenty of other open dates.", url: book, cta: "See every open date" });
   const pics = partyPhotos(photos, g.kids[0]?.pid);
+  const hero = (photos || []).find(x => x.id === PARTY_HERO_ID)?.url || pics[0] || "";
   const item = {
     email_subject: `Celebrate ${who}'s birthday at DSSC ($${s.party_off} off)`,
     email_preheader: `${who} ${plural ? "turn" : "turns"} ${g.turns} on ${fmtDay(g.birthday, { month: "long", day: "numeric" })}. Party times around it are open now.`,
-    headline: "Party at the Warehouse", hero_url: pics[0] || "",
+    headline: "Party at the Warehouse", hero_url: hero,
     graphic: { tag: "Birthday", accent: "Warehouse", sub: `${who} ${plural ? "turn" : "turns"} ${g.turns} on ${fmtDay(g.birthday)}` },
     body: [
       `${who}'s birthday is coming up on ${fmtDay(g.birthday)}, and we'd love to throw the party.`,
@@ -233,7 +240,7 @@ export function partyEmail(g, s, { today, slots = new Map(), photos = [] }) {
     coupon: { amount: `$${s.party_off} off`, what: "any party package at DSSC", code: s.party_code, note: bookBy ? `Book by ${fmtDay(bookBy, { month: "long", day: "numeric" })} · one per family` : "Enter it when you book · one per family" },
     cta_url: book, cta_text: "Book the party",
     email_blocks: anyOpen && !notOpenYet ? [{ ...blocks[0], blurb: `What's open right now - weekends go fast.${blocks[0].blurb ? " " + blocks[0].blurb : ""}` }, ...blocks.slice(1)] : blocks,
-    gallery: pics.slice(1, 5),
+    gallery: pics.filter(u => u !== hero).slice(0, 4),
   };
   return { ...buildEmail(item), subject: item.email_subject, slotsShown: Object.fromEntries(weekends.flatMap(w => w.days).map(day => [day, slots.get(day) ?? null])) };
 }
@@ -241,8 +248,8 @@ export function partyEmail(g, s, { today, slots = new Map(), photos = [] }) {
 // The birthday email is its own bright card, not the club's dark newsletter
 // look (Drew, Oct 29 2026: "make it more fun - bright, live!") - in DSSC's own
 // colors, never DS Elite's pink ("the branding should be DSSC"): lime,
-// evergreen, orange, teal and cream, confetti, a big age badge, a party photo,
-// a gift ticket.
+// evergreen, orange, teal and cream, confetti, a big age badge and a gift
+// ticket - no photo (Drew: "lets not use a picture for happy birthday").
 // Plain tables and inline styles, so it holds up in Gmail, Apple Mail and Outlook.
 const SITE = "https://www.drippingsportsclub.com";
 const esc = (v) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -251,10 +258,9 @@ const F = "'Schibsted Grotesk',Helvetica,Arial,sans-serif";
 const EVER = "#082C2A", TEAL = "#0F8B76", INK = "#061a18", LIME = "#B2D049", ORANGE = "#FF7300", CREAM = "#F4F0E8", MINT = "#7FD1C3";
 const confetti = (n = 26, size = 18) => { const c = [LIME, ORANGE, MINT, CREAM, "#ffffff", TEAL], ch = ["&#9679;", "&#9650;", "&#9632;", "&#9733;", "&#9670;"]; return Array.from({ length: n }, (_, i) => `<span style="color:${c[(i * 7) % c.length]};font-size:${size - (i % 3) * 4}px;line-height:1">${ch[(i * 3) % ch.length]}</span>`).join("&nbsp;"); };
 
-export function birthdayEmail(g, s, { today, photos = [] }) {
+export function birthdayEmail(g, s, { today }) {
   const who = names(g.kids), plural = g.kids.length > 1, first = g.kids[0]?.first || who;
   const until = s.birthday_valid_days > 0 ? addDays(today, s.birthday_valid_days) : null;
-  const pics = partyPhotos(photos, (g.kids[0]?.pid || 0) + 7);
   const shop = LINE_LINKS.club.book;
   const subject = `Happy birthday, ${who}! 🎉 A gift from DSSC`;
   const pre = `It's party time! $${s.birthday_off} off anything at DSSC, just for ${plural ? "you two" : "you"}.`;
@@ -280,9 +286,8 @@ export function birthdayEmail(g, s, { today, photos = [] }) {
     <div style="font-family:${H};font-weight:900;font-size:60px;line-height:.9;color:#ffffff">${g.turns}</div>
     <div style="font-family:${H};font-weight:900;font-size:16px;letter-spacing:2px;text-transform:uppercase;color:${INK}">today!</div>
   </td></tr></table>
-  <div style="text-align:center;padding:10px 0 14px">${confetti(22, 16)}</div>
+  <div style="text-align:center;padding:10px 0 22px">${confetti(22, 16)}</div>
 </td></tr>
-${pics[0] ? `<tr><td style="background:${EVER};padding:0 24px 24px"><a href="${esc(shop)}" style="display:block"><img src="${esc(pics[0])}" width="552" alt="Kids celebrating at DSSC" style="display:block;width:100%;height:auto;border:6px solid ${LIME};border-radius:14px"></a></td></tr>` : ""}
 <tr><td style="background:${CREAM};padding:28px 26px 8px;font-family:${F};font-size:17px;line-height:1.55;color:${INK}">
   <div style="font-family:${H};font-weight:900;font-size:30px;line-height:1;text-transform:uppercase;color:${TEAL};margin-bottom:12px">It's your day, ${esc(first)}! 🥳</div>
   ${lines.map(l => `<p style="margin:0 0 14px">${l}</p>`).join("")}
