@@ -187,6 +187,36 @@ export async function draftFor(p, { account, thread = [], voice = [], instructio
 }
 
 // ── Slack ───────────────────────────────────────────────────────────────────
+// The email assistant's own Slack app ("DSSC Mail", hq_kv "mail_slack":
+// { bot_token, signing_secret, bot_user, team }) when it's set up - its own DM
+// conversation, apart from the HQ bot's - else the HQ bot (Product -> Settings).
+export async function mailSlackCfg(sb) {
+  const { data } = await sb.from("hq_kv").select("value").eq("key", "mail_slack").maybeSingle();
+  if (data?.value?.bot_token) return { ...data.value, app: "mail" };
+  return { ...(await slackCfg(sb)), app: "hq" };
+}
+export async function saveMailSlack(sb, { bot_token, signing_secret }, by) {
+  const cur = (await sb.from("hq_kv").select("value").eq("key", "mail_slack").maybeSingle()).data?.value || {};
+  const next = { ...cur };
+  if (bot_token !== undefined) {
+    const t = String(bot_token || "").trim();
+    if (t && !/^xoxb-/.test(t)) throw fail(400, "That's not a bot token - it starts with xoxb- (OAuth & Permissions -> Bot User OAuth Token)");
+    if (t) { const a = await slackApi(t, "auth.test", {}); if (!a.ok) throw fail(400, "Slack didn't accept that token: " + a.error); next.bot_token = t; next.bot_user = a.user_id; next.team = a.team; }
+    else { delete next.bot_token; delete next.bot_user; delete next.team; }
+  }
+  if (signing_secret !== undefined) { const s = String(signing_secret || "").trim(); if (s) next.signing_secret = s; else delete next.signing_secret; }
+  await sb.from("hq_kv").upsert({ key: "mail_slack", value: Object.keys(next).length ? next : null, secret: true, updated_at: new Date().toISOString(), updated_by: by }, { onConflict: "key" });
+  return { connected: !!next.bot_token, signing: !!next.signing_secret, team: next.team || null };
+}
+export async function testMailSlack(sb) {
+  const cfg = await mailSlackCfg(sb);
+  if (!cfg.bot_token) throw fail(400, "Save the bot token first");
+  const channel = await ownerDm(cfg);
+  if (!channel) throw fail(400, "Couldn't find you in Slack - is the app installed in your workspace?");
+  const r = await slackApi(cfg.bot_token, "chat.postMessage", { channel, text: "✉️ DSSC Mail is connected. Drafted replies to your email will show up here with Send / Edit / Skip." });
+  if (!r.ok) throw fail(400, "Slack: " + r.error);
+  return { app: cfg.app };
+}
 const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const quote = (s, n = 900) => { const t = String(s || "").trim(); return (t.length > n ? t.slice(0, n) + " …" : t).split("\n").map(l => "> " + esc(l)).join("\n"); };
 const when = (iso) => iso ? new Date(iso).toLocaleString("en-US", { timeZone: "America/Chicago", weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
@@ -227,10 +257,16 @@ async function postCard(sb, cfg, d) {
   await sb.from("mail_drafts").update({ slack_channel: r.channel, slack_ts: r.ts, updated_at: new Date().toISOString() }).eq("id", d.id);
   return r;
 }
+// The card is updated through whichever app posted it: DSSC Mail first, the
+// HQ bot for cards from before DSSC Mail was set up.
 export async function refreshCard(sb, d, opts = {}) {
   if (!d.slack_channel || !d.slack_ts) return;
-  const cfg = await slackCfg(sb);
-  if (cfg.bot_token) await slackApi(cfg.bot_token, "chat.update", { channel: d.slack_channel, ts: d.slack_ts, ...card(d, opts) });
+  const body = { channel: d.slack_channel, ts: d.slack_ts, ...card(d, opts) };
+  const mail = await mailSlackCfg(sb);
+  const r = mail.bot_token ? await slackApi(mail.bot_token, "chat.update", body) : { ok: false };
+  if (r.ok || mail.app === "hq") return;
+  const hq = await slackCfg(sb);
+  if (hq.bot_token) await slackApi(hq.bot_token, "chat.update", body);
 }
 
 // ── sending ─────────────────────────────────────────────────────────────────
@@ -318,7 +354,7 @@ async function voiceSamples(token, fetchImpl) {
 export async function pollAccount(sb, acct, { fetchImpl = fetch, client = null, max = 8, cfg = null } = {}) {
   const out = { account: acct.email, looked: 0, ignored: 0, drafted: 0, no_reply: 0, answered: 0, errors: [] };
   const token = await accessToken(sb, acct, { fetchImpl });
-  cfg = cfg || await slackCfg(sb);
+  cfg = cfg || await mailSlackCfg(sb);
   const since = Math.max(Date.parse(acct.connected_at || 0) || 0, Date.now() - 2 * 864e5);
   const list = await gmail(token, "messages", { query: { q: `in:inbox -from:me after:${Math.floor(since / 1000)}`, maxResults: 25 } }, fetchImpl);
   const ids = (list.messages || []).map(m => m.id);
@@ -341,7 +377,7 @@ export async function pollAccount(sb, acct, { fetchImpl = fetch, client = null, 
       const r = await draftFor(p, { account: acct.email, ...ctx }, { client });
       if (!r.needs_reply || !r.draft) { out.no_reply++; await sb.from("mail_drafts").update({ status: "ignored", reason: "No reply needed: " + (r.reason || "") }).eq("id", row.id); continue; }
       const { data: d } = await sb.from("mail_drafts").update({ status: "pending", draft: r.draft, reason: r.note ? "Needs: " + r.note : r.reason, updated_at: new Date().toISOString() }).eq("id", row.id).select().single();
-      if (cfg.bot_token) await postCard(sb, cfg, d); else out.errors.push("No Slack bot - set it up in Product -> Settings");
+      if (cfg.bot_token) await postCard(sb, cfg, d); else out.errors.push("No Slack app - set up DSSC Mail (or the HQ bot) in Product -> Settings");
       out.drafted++;
     } catch (e) {
       out.errors.push(`${id}: ${e.message}`);
@@ -363,7 +399,7 @@ export async function pollAccount(sb, acct, { fetchImpl = fetch, client = null, 
 }
 export async function pollAll(sb, opts = {}) {
   const { data: accts } = await sb.from("mail_accounts").select("*").eq("enabled", true).not("refresh_token", "is", null);
-  const cfg = await slackCfg(sb);
+  const cfg = await mailSlackCfg(sb);
   const res = [];
   for (const a of accts || []) res.push(await pollAccount(sb, a, { ...opts, cfg }).catch(e => ({ account: a.email, errors: [e.message] })));
   return res;

@@ -631,6 +631,7 @@ function MailAssistantSettings({ box }) {
         </div>
       ))}
       {st && st.accounts.some(a => a.connected) && <button disabled={!!busy} onClick={go("poll", () => call("poll"))} style={{ ...btn("ghost", true), marginTop: 8 }}>{busy === "poll" ? "Checking…" : "Check now"}</button>}
+      {st && <MailSlackApp slack={st.slack} call={call} busy={busy} go={go} />}
       {st?.recent?.length > 0 && <div style={{ marginTop: 12 }}>
         <span style={lbl}>Lately</span>
         {st.recent.map(r => { const [l, c] = MAIL_STATUS[r.status] || [r.status, C.mut]; return (
@@ -641,6 +642,29 @@ function MailAssistantSettings({ box }) {
             <span style={{ color: c, fontWeight: 700 }} title={r.reason || ""}>{l}</span>
           </div>); })}
       </div>}
+    </div>
+  );
+}
+
+// The email assistant's own Slack app, "DSSC Mail" - its own DM conversation,
+// apart from the HQ bot's (MAIL_ASSISTANT_SETUP.md has the manifest).
+function MailSlackApp({ slack, call, busy, go }) {
+  const [tok, setTok] = useState(""), [sec, setSec] = useState(""), [note, setNote] = useState(null);
+  const on = slack?.app === "mail";
+  return (
+    <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid " + C.border }}>
+      <div style={{ fontSize: 14, fontWeight: 800 }}>Slack app: {on ? <span style={{ color: C.grn }}>✓ DSSC Mail{slack.team ? ` · ${slack.team}` : ""}{slack.signing ? "" : <span style={{ color: C.amber }}> · add the Signing Secret so the buttons work</span>}</span> : <span style={{ color: C.mut, fontWeight: 400 }}>using the HQ bot (set up DSSC Mail for its own conversation)</span>}</div>
+      <div style={{ fontSize: 12, color: C.mut, margin: "4px 0 8px", lineHeight: 1.5 }}>Create it at api.slack.com/apps → Create New App → From a manifest (MAIL_ASSISTANT_SETUP.md), install it, then paste its <b>Bot User OAuth Token</b> (OAuth &amp; Permissions) and <b>Signing Secret</b> (Basic Information). Its request URL: <code>{slack?.url}</code></div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(240px, 100%), 1fr))", gap: 8 }}>
+        <input value={tok} onChange={e => setTok(e.target.value)} placeholder={on ? "Bot token saved - paste a new one to replace" : "xoxb-… bot token"} style={{ ...input, fontSize: 13 }} />
+        <input value={sec} onChange={e => setSec(e.target.value)} placeholder={slack?.signing ? "Signing secret saved" : "Signing secret"} style={{ ...input, fontSize: 13 }} />
+      </div>
+      <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <button disabled={!!busy || (!tok.trim() && !sec.trim())} onClick={go("slack", async () => { await call("save_slack", { ...(tok.trim() ? { bot_token: tok } : {}), ...(sec.trim() ? { signing_secret: sec } : {}) }); setTok(""); setSec(""); setNote("Saved."); })} style={btn("primary", true)}>Save</button>
+        <button disabled={!!busy} onClick={go("stest", async () => { const r = await call("test_slack"); setNote(`Sent - check Slack (${r.app === "mail" ? "DSSC Mail" : "HQ bot"}).`); })} style={btn("ghost", true)}>Send a test</button>
+        {on && <button disabled={!!busy} onClick={() => window.confirm("Stop using DSSC Mail? Email drafts go back to the HQ bot.") && go("srm", () => call("save_slack", { bot_token: "", signing_secret: "" }))()} style={btn("ghost", true)}>Remove</button>}
+        {note && <span style={{ fontSize: 12, color: C.grn }}>{note}</span>}
+      </div>
     </div>
   );
 }

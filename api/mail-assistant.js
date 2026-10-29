@@ -7,9 +7,11 @@
 //     toggle { email, enabled }    pause / resume a mailbox
 //     disconnect { email }         forget its token
 //     poll                         check now
+//     save_slack { bot_token?, signing_secret? }   the "DSSC Mail" Slack app (blank = remove)
+//     test_slack                   a DM from whichever Slack app email uses
 
 import { createClient } from "@supabase/supabase-js";
-import { pollAll, authUrl, googleReady, redirectUri, ACCOUNTS, isOwner } from "./_lib/mail-assistant.js";
+import { pollAll, authUrl, googleReady, redirectUri, ACCOUNTS, isOwner, mailSlackCfg, saveMailSlack, testMailSlack } from "./_lib/mail-assistant.js";
 
 export const config = { maxDuration: 300 };
 const fail = (status, msg) => Object.assign(new Error(msg), { status });
@@ -47,7 +49,9 @@ export async function run(sb, me, b) {
       const { data: accts, error } = await sb.from("mail_accounts").select("email, enabled, connected_at, connected_by, last_poll_at, last_error, refresh_token");
       if (error) throw fail(500, /mail_accounts|schema cache/.test(error.message) ? "Run migrations/20261112_mail_assistant.sql first" : error.message);
       const { data: recent } = await sb.from("mail_drafts").select("id, account, from_email, from_name, subject, received_at, status, reason, decided_by, decided_at, created_at").order("created_at", { ascending: false }).limit(30);
+      const sl = await mailSlackCfg(sb);
       return {
+        slack: { app: sl.app, connected: !!sl.bot_token, signing: !!sl.signing_secret, team: sl.team || null, url: "https://dseliteevals.vercel.app/api/mail-slack" },
         google_ready: ACCOUNTS.some(e => googleReady(e)), redirect_uri: redirectUri(),
         accounts: ACCOUNTS.map(e => { const a = (accts || []).find(x => x.email === e); return { email: e, google_ready: googleReady(e), connected: !!a?.refresh_token, enabled: a ? a.enabled : false, connected_at: a?.connected_at || null, last_poll_at: a?.last_poll_at || null, last_error: a?.last_error || null }; }),
         recent: recent || [],
@@ -57,6 +61,8 @@ export async function run(sb, me, b) {
     case "toggle": { await sb.from("mail_accounts").update({ enabled: !!b.enabled, updated_at: new Date().toISOString() }).eq("email", okAccount(b.email)); return {}; }
     case "disconnect": { await sb.from("mail_accounts").update({ refresh_token: null, enabled: false, updated_at: new Date().toISOString() }).eq("email", okAccount(b.email)); return {}; }
     case "poll": return { accounts: await pollAll(sb) };
+    case "save_slack": return { slack: await saveMailSlack(sb, { bot_token: b.bot_token, signing_secret: b.signing_secret }, me) };
+    case "test_slack": return await testMailSlack(sb);
     default: throw fail(400, "Unknown action");
   }
 }

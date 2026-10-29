@@ -130,5 +130,38 @@ const con = await M.finishConnect(sbc, { code: "c", state: M.signState({ a: "dre
 check(con.email === "drew@dselitevolleyball.com" && sbc.db.mail_accounts[0].refresh_token === "rt" && sbc.db.mail_accounts[0].connected_at, "connecting saves the mailbox's lasting token");
 await M.finishConnect(sbc, { code: "c", state: "bad.sig" }, { fetchImpl: fakeFetch }).then(() => check(false, "bad state"), e => check(/run out/.test(e.message), "a forged or old sign-in link is refused"));
 
+// ── 4. its own Slack app ("DSSC Mail") ───────────────────────────────────────
+console.log("== 4. DSSC Mail app ==");
+const calls = [];
+globalThis.fetch = async (url, o = {}) => {
+  const u = String(url);
+  if (u.startsWith("https://slack.com/api/")) {
+    const m = u.split("/").pop(), auth = o.headers?.Authorization || "";
+    calls.push({ m, auth, body: o.body });
+    if (m === "auth.test") return { ok: true, status: 200, json: async () => auth.includes("xoxb-good") ? { ok: true, user_id: "UMAIL", team: "DSSC" } : { ok: false, error: "invalid_auth" } };
+    if (m === "chat.update") return { ok: true, status: 200, json: async () => auth.includes("xoxb-good") && JSON.parse(o.body).channel === "DOLD" ? { ok: false, error: "channel_not_found" } : { ok: true } };
+    return { ok: true, status: 200, json: async () => m === "users.lookupByEmail" ? { ok: true, user: { id: "UDREW" } } : m === "conversations.open" ? { ok: true, channel: { id: auth.includes("xoxb-good") ? "DMAIL" : "DHQ" } } : { ok: true, channel: "DMAIL", ts: "9.1" } };
+  }
+  return fakeFetch(url, o);
+};
+const sbs = fakeSupabase({ hq_kv: [{ key: "product_slack", value: { bot_token: "xoxb-hq", signing_secret: "s1" } }] });
+check((await M.mailSlackCfg(sbs)).app === "hq", "until DSSC Mail is set up, email goes through the HQ bot");
+await M.saveMailSlack(sbs, { bot_token: "nope" }, "drew").then(() => check(false, "bad token"), e => check(/xoxb-/.test(e.message), "a token that isn't a bot token is refused"));
+await M.saveMailSlack(sbs, { bot_token: "xoxb-bad" }, "drew").then(() => check(false, "slack refused"), e => check(/invalid_auth/.test(e.message), "a token Slack rejects is refused"));
+const saved = await M.saveMailSlack(sbs, { bot_token: "xoxb-good", signing_secret: "mailsecret" }, "drew");
+const mc = await M.mailSlackCfg(sbs);
+check(saved.connected && saved.signing && mc.app === "mail" && mc.bot_user === "UMAIL" && mc.team === "DSSC", "saving DSSC Mail's token and secret switches email over to it");
+check((await M.testMailSlack(sbs)).app === "mail" && calls.some(c => c.m === "chat.postMessage" && c.auth.includes("xoxb-good")), "the test DM comes from DSSC Mail");
+calls.length = 0;
+await M.refreshCard(sbs, { id: 1, account: "drew@dselitevolleyball.com", from_email: "a@b.com", subject: "x", slack_channel: "DOLD", slack_ts: "1.1", status: "sent", draft: "hi" }, { done: "Sent" });
+check(calls.filter(c => c.m === "chat.update").map(c => c.auth.includes("good") ? "mail" : "hq").join() === "mail,hq", "an older card the HQ bot posted is still updated through the HQ bot");
+await M.saveMailSlack(sbs, { bot_token: "", signing_secret: "" }, "drew");
+check((await M.mailSlackCfg(sbs)).app === "hq", "Remove: back to the HQ bot");
+const { signed } = await import("../api/mail-slack.js");
+const crypto = await import("node:crypto");
+const ts = String(Math.floor(Date.now() / 1000)), rawBody = "payload=%7B%7D";
+const sig = "v0=" + crypto.createHmac("sha256", "mailsecret").update(`v0:${ts}:${rawBody}`).digest("hex");
+check(signed({ "x-slack-request-timestamp": ts, "x-slack-signature": sig }, rawBody, "mailsecret") && !signed({ "x-slack-request-timestamp": ts, "x-slack-signature": sig }, rawBody, "s1") && !signed({ "x-slack-request-timestamp": String(+ts - 600), "x-slack-signature": sig }, rawBody, "mailsecret"), "DSSC Mail's requests must carry its own signature, and be fresh");
+
 console.log(failed ? `\n${failed} FAILED` : "\nall passed");
 process.exit(failed ? 1 : 0);
