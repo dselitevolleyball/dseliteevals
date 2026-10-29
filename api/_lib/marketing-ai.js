@@ -394,7 +394,8 @@ export function buildEmail(it) {
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#061a18"><tr><td align="center" style="padding:0">
 <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px">
 <tr><td style="padding:22px 24px 18px"><a href="${SITE}"><img src="${SITE}/brand/logo-light.png" width="190" alt="Dripping Springs Sports Club" style="display:block;width:190px;height:auto;border:0"></a></td></tr>
-${hero ? `<tr><td style="padding:0">${it.cta_url ? `<a href="${esc(it.cta_url)}" style="display:block">` : ""}<img data-hero src="${esc(hero)}" width="600" alt="${esc(it.headline)}" style="display:block;width:100%;max-width:600px;height:auto;border:0">${it.cta_url ? "</a>" : ""}</td></tr>` : ""}
+${it.hero_html ? `<tr><td style="padding:0">${it.hero_html}</td></tr>` : ""}
+${!it.hero_html && hero ? `<tr><td style="padding:0">${it.cta_url ? `<a href="${esc(it.cta_url)}" style="display:block">` : ""}<img data-hero src="${esc(hero)}" width="600" alt="${esc(it.headline)}" style="display:block;width:100%;max-width:600px;height:auto;border:0">${it.cta_url ? "</a>" : ""}</td></tr>` : ""}
 <tr><td style="background:#061a18;padding:26px 24px 18px">
 ${it.graphic?.tag ? `<div style="font-family:${FONT_H};font-weight:800;font-size:14px;letter-spacing:2px;text-transform:uppercase;color:#061a18;background:#B2D049;display:inline-block;padding:4px 10px;margin-bottom:12px">${esc(it.graphic.tag)}</div>` : ""}
 <div style="font-family:${FONT_H};font-weight:900;font-size:46px;line-height:.95;text-transform:uppercase;color:#F4F0E8">${accentHtml(it.headline, it.graphic?.accent)}</div>
