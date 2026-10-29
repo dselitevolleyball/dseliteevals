@@ -31,13 +31,15 @@ function tusUpload(file, path, token, onPct) {
     const up = new tus.Upload(file, {
       endpoint: `${base}/storage/v1/upload/resumable`,
       retryDelays: [0, 3000, 5000, 10000, 20000],
-      headers: { authorization: `Bearer ${token}`, "x-upsert": "false" },
+      // No authorization here: onBeforeRequest sets it, and a header set twice is sent as
+      // "Bearer a, Bearer a", which storage rejects ("Invalid Compact JWS").
+      headers: { "x-upsert": "false" },
       uploadDataDuringCreation: true,
       removeFingerprintOnSuccess: true,
       metadata: { bucketName: RAW, objectName: path, contentType: file.type || (/\.mov$/i.test(file.name) ? "video/quicktime" : "video/mp4"), cacheControl: "3600" },
       chunkSize: 6 * 1024 * 1024,   // Supabase's resumable uploads take 6 MB chunks
       // A big video on gym wifi can outlast the 1-hour sign-in: each request gets the current one.
-      onBeforeRequest: async (req) => { const { data: { session } } = await supabase.auth.getSession(); if (session?.access_token) req.setHeader("authorization", `Bearer ${session.access_token}`); },
+      onBeforeRequest: async (req) => { const { data: { session } } = await supabase.auth.getSession(); req.setHeader("authorization", `Bearer ${session?.access_token || token}`); },
       // Say what the storage server said (status + its message), not tus's long request dump.
       onError: (e) => {
         const status = e?.originalResponse?.getStatus?.(), body = String(e?.originalResponse?.getBody?.() || "").slice(0, 160);
