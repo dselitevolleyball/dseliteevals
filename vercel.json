@@ -201,6 +201,10 @@
       "schedule": "7 14,20 * * *"
     },
     {
+      "path": "/api/mail-assistant",
+      "schedule": "*/5 * * * *"
+    },
+    {
       "path": "/api/privates-ask",
       "schedule": "0 15 25 * *"
     },

@@ -564,6 +564,7 @@ function Settings({ boot, onSaved }) {
       </div>
 
       <SlackSettings s={s} save={save} setMsg={setMsg} box={box} onSaved={onSaved} />
+      <MailAssistantSettings box={box} />
 
       <div style={box}>
         <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 6 }}>Budget and defaults</div>
@@ -590,6 +591,56 @@ function Settings({ boot, onSaved }) {
           {boot.admin_key && <button onClick={() => save({ admin_key: "" }, "Removed.")} style={btn("ghost", true)}>Remove</button>}
         </div>
       </div>
+    </div>
+  );
+}
+
+// The email assistant (api/mail-assistant.js): Drew's two Gmails, read every
+// 5 minutes; replies drafted by Claude come to his Slack DMs with Send / Edit /
+// Skip. Shown only to owners (the API refuses anyone else).
+const MAIL_STATUS = { pending: ["In Slack", C.blue], sent: ["Sent", C.grn], skipped: ["Skipped", C.dim], answered: ["Answered in Gmail", C.grn], ignored: ["No reply needed", C.dim], failed: ["Failed", C.red], drafting: ["Drafting", C.amber], sending: ["Sending", C.amber] };
+function MailAssistantSettings({ box }) {
+  const [st, setSt] = useState(null), [err, setErr] = useState(null), [busy, setBusy] = useState("");
+  const call = async (action, body = {}) => {
+    const { data: { session } } = await supabase.auth.getSession();
+    const r = await fetch("/api/mail-assistant", { method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + (session?.access_token || "") }, body: JSON.stringify({ action, ...body }) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || d.error) throw new Error(d.error || r.statusText);
+    return d;
+  };
+  const load = () => call("status").then(d => { setSt(d); setErr(null); }).catch(e => setErr(e.message));
+  useEffect(() => { load(); }, []);
+  const go = (k, fn) => async () => { setBusy(k); setErr(null); try { await fn(); await load(); } catch (e) { setErr(e.message); } setBusy(""); };
+  if (err === "The email assistant is Drew's") return null;
+  const ago = (iso) => { if (!iso) return "never"; const m = Math.round((Date.now() - Date.parse(iso)) / 60000); return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : new Date(iso).toLocaleDateString(); };
+  return (
+    <div style={box}>
+      <div style={{ fontSize: 15, fontWeight: 800 }}>Email assistant</div>
+      <div style={{ fontSize: 13, color: C.mut, margin: "6px 0 10px", lineHeight: 1.5 }}>Reads your Gmail every 5 minutes. When an email needs an answer, Claude drafts one and the HQ Slack bot DMs it to you with <b>Send</b> / <b>Edit</b> / <b>Skip</b> - reply in that thread to change it. Nothing is sent until you press Send. Newsletters, receipts and automated mail are left alone.</div>
+      {err && <div style={{ fontSize: 13, color: C.red, marginBottom: 8 }}>{err}</div>}
+      {st && !st.google_ready && <div style={{ fontSize: 13, color: C.amber, marginBottom: 8 }}>Needs a Google OAuth client first: <code>GOOGLE_CLIENT_ID</code> and <code>GOOGLE_CLIENT_SECRET</code> in Vercel, with <code>{st.redirect_uri}</code> as a redirect URI (MAIL_ASSISTANT_SETUP.md).</div>}
+      {st && st.accounts.map(a => (
+        <div key={a.email} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", padding: "8px 0", borderTop: "1px solid " + C.border }}>
+          <div style={{ flex: 1, minWidth: 220 }}>
+            <div style={{ fontWeight: 700, fontSize: 14 }}>{a.email}</div>
+            <div style={{ fontSize: 12, color: a.last_error ? C.red : a.connected ? (a.enabled ? C.grn : C.amber) : C.mut }}>{a.last_error ? a.last_error : a.connected ? (a.enabled ? `✓ On · checked ${ago(a.last_poll_at)}` : "Paused") : "Not connected"}</div>
+          </div>
+          {st.google_ready && <button disabled={!!busy} onClick={go("c" + a.email, async () => { const { url } = await call("connect_url", { email: a.email }); window.location.href = url; })} style={btn(a.connected ? "ghost" : "primary", true)}>{a.connected ? "Reconnect" : "Connect"}</button>}
+          {a.connected && <button disabled={!!busy} onClick={go("t" + a.email, () => call("toggle", { email: a.email, enabled: !a.enabled }))} style={btn("ghost", true)}>{a.enabled ? "Pause" : "Resume"}</button>}
+          {a.connected && <button disabled={!!busy} onClick={() => window.confirm(`Disconnect ${a.email}? The assistant stops reading it.`) && go("d" + a.email, () => call("disconnect", { email: a.email }))()} style={btn("ghost", true)}>Disconnect</button>}
+        </div>
+      ))}
+      {st && st.accounts.some(a => a.connected) && <button disabled={!!busy} onClick={go("poll", () => call("poll"))} style={{ ...btn("ghost", true), marginTop: 8 }}>{busy === "poll" ? "Checking…" : "Check now"}</button>}
+      {st?.recent?.length > 0 && <div style={{ marginTop: 12 }}>
+        <span style={lbl}>Lately</span>
+        {st.recent.map(r => { const [l, c] = MAIL_STATUS[r.status] || [r.status, C.mut]; return (
+          <div key={r.id} style={{ display: "flex", gap: 8, fontSize: 12.5, padding: "4px 0", borderBottom: "1px solid " + C.border, alignItems: "baseline", flexWrap: "wrap" }}>
+            <span style={{ color: C.dim, minWidth: 64 }}>{ago(r.received_at || r.created_at)}</span>
+            <b style={{ minWidth: 120 }}>{r.from_name || r.from_email}</b>
+            <span style={{ flex: 1, minWidth: 140, color: C.mut, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.subject}</span>
+            <span style={{ color: c, fontWeight: 700 }} title={r.reason || ""}>{l}</span>
+          </div>); })}
+      </div>}
     </div>
   );
 }

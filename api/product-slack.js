@@ -2,7 +2,9 @@
 // messages? - do it"). The Slack app's Interactivity and Event Subscriptions
 // both point here.
 //   Buttons   Approve / Decline on a request, Build it, Ship it, Try again;
-//             DS Elite Social's Approve & post / Skip (dse_social_*).
+//             DS Elite Social's Approve & post / Skip (dse_social_*);
+//             the email assistant's Send / Edit / Skip (mail_*, Drew only),
+//             Edit opening a box to change the reply and send it.
 //   Replies   in a card's thread (product_slack_threads):
 //             - on a card the agent has built: the reply is the next round of
 //               changes for the agent ("note: ..." is just a note)
@@ -68,9 +70,70 @@ async function onSocialButton(sb, cfg, p, a) {
   } catch (e) { return oops(p.response_url, `Couldn't do that: ${e.message}`); }
 }
 
+// Email assistant (api/_lib/mail-assistant.js): Send / Edit / Skip on a
+// drafted reply DMed to Drew, the Edit box, and replies in the card's thread.
+// Only Drew (an owner) - it's his mail.
+const mailLib = () => import("./_lib/mail-assistant.js");
+async function mailOwner(sb, cfg, slackUserId) {
+  const me = await approverFor(sb, cfg, slackUserId);
+  return me && OWNER_EMAILS.includes(me.email) ? me : null;
+}
+async function onMailButton(sb, cfg, p, a) {
+  if (a.action_id === "mail_edit") {
+    // The box has to open within 3 seconds of the click, so it opens first;
+    // who pressed Send in it is checked on submit.
+    const { data: d } = await sb.from("mail_drafts").select("id, draft, from_name, from_email, subject").eq("id", Number(a.value)).maybeSingle();
+    if (!d) return oops(p.response_url, "That email is gone.");
+    const r = await slackApi(cfg.bot_token, "views.open", { trigger_id: p.trigger_id, view: {
+      type: "modal", callback_id: "mail_edit", private_metadata: String(d.id),
+      title: { type: "plain_text", text: "Edit reply" }, submit: { type: "plain_text", text: "Send" }, close: { type: "plain_text", text: "Cancel" },
+      blocks: [
+        { type: "context", elements: [{ type: "mrkdwn", text: `To ${(d.from_name || d.from_email).replace(/[<>&]/g, "")} · ${String(d.subject || "").replace(/[<>&]/g, "").slice(0, 120)}` }] },
+        { type: "input", block_id: "reply", label: { type: "plain_text", text: "Your reply" }, element: { type: "plain_text_input", action_id: "text", multiline: true, initial_value: String(d.draft || "").slice(0, 2900) } },
+      ] } });
+    if (!r.ok) return oops(p.response_url, "Couldn't open the editor: " + r.error);
+    return;
+  }
+  const me = await mailOwner(sb, cfg, p.user?.id);
+  if (!me) return oops(p.response_url, "Only Drew can answer his email from here.");
+  const by = String(me.name || me.email).split(/[\s@]/)[0];
+  try {
+    const { sendDraft, skipDraft } = await mailLib();
+    if (a.action_id === "mail_send") await sendDraft(sb, a.value, by);
+    if (a.action_id === "mail_skip") await skipDraft(sb, a.value, by);
+  } catch (e) { return oops(p.response_url, `Couldn't do that: ${e.message}`); }
+}
+async function onMailEditSubmit(sb, cfg, p) {
+  const me = await mailOwner(sb, cfg, p.user?.id);
+  if (!me) return;
+  const text = p.view?.state?.values?.reply?.text?.value || "";
+  const { sendDraft } = await mailLib();
+  await sendDraft(sb, p.view.private_metadata, String(me.name || me.email).split(/[\s@]/)[0], { text }).catch(async (e) => {
+    const { data: d } = await sb.from("mail_drafts").select("slack_channel, slack_ts").eq("id", Number(p.view.private_metadata)).maybeSingle();
+    if (d?.slack_channel) await replyInThread(sb, d.slack_channel, d.slack_ts, `Couldn't send: ${e.message}`);
+  });
+}
+async function onMailReply(sb, cfg, ev, d) {
+  const say = (text) => slackApi(cfg.bot_token, "chat.postMessage", { channel: ev.channel, thread_ts: ev.thread_ts, text });
+  const me = await mailOwner(sb, cfg, ev.user);
+  if (!me) return say("Only Drew can change his replies.");
+  const text = String(ev.text || "").trim();
+  if (!text) return;
+  const by = String(me.name || me.email).split(/[\s@]/)[0];
+  try {
+    const { sendDraft, skipDraft, reviseDraft } = await mailLib();
+    if (/^(send|send it|yes|approve)[.!]*$/i.test(text)) { await sendDraft(sb, d.id, by); return say("✅ Sent."); }
+    if (/^(skip|no|don'?t send)[.!]*$/i.test(text)) { await skipDraft(sb, d.id, by); return say("⏭ Skipped."); }
+    await say("✏️ Rewriting…");
+    await reviseDraft(sb, d.id, text);
+    return say("Updated the draft above ↑ - press Send when it's right.");
+  } catch (e) { return say(`Couldn't do that: ${e.message}`); }
+}
+
 async function onButton(sb, cfg, p) {
   const a0 = p.actions?.[0];
   if (a0 && /^dse_social_(approve|skip|now)$/.test(a0.action_id)) return onSocialButton(sb, cfg, p, a0);
+  if (a0 && /^mail_(send|edit|skip)$/.test(a0.action_id)) return onMailButton(sb, cfg, p, a0);
   const a = a0; if (!a || !["approve", "decline", "build", "ship", "retry"].includes(a.action_id)) return;
   const me = await approverFor(sb, cfg, p.user?.id);
   if (!me) return oops(p.response_url, "Only Drew and HQ admins can do that from Slack.");
@@ -100,6 +163,8 @@ async function onButton(sb, cfg, p) {
 }
 
 async function onReply(sb, cfg, ev) {
+  const { data: mail } = await sb.from("mail_drafts").select("id").eq("slack_channel", ev.channel).eq("slack_ts", ev.thread_ts).maybeSingle().then(r => r, () => ({ data: null }));
+  if (mail) return onMailReply(sb, cfg, ev, mail);
   const { data: th } = await sb.from("product_slack_threads").select("item_id").eq("channel", ev.channel).eq("ts", ev.thread_ts).maybeSingle();
   if (!th) return;
   const say = (text) => replyInThread(sb, ev.channel, ev.thread_ts, text);
@@ -141,6 +206,10 @@ export default async function handler(req, res) {
   if (/^payload=/.test(raw)) {
     const p = JSON.parse(new URLSearchParams(raw).get("payload") || "{}");
     if (p.type === "block_actions") later(onButton(sb, cfg, p).catch(e => console.error("slack button", e)));
+    if (p.type === "view_submission" && p.view?.callback_id === "mail_edit") {
+      if (!String(p.view?.state?.values?.reply?.text?.value || "").trim()) return res.status(200).json({ response_action: "errors", errors: { reply: "Write the reply first" } });
+      later(onMailEditSubmit(sb, cfg, p).catch(e => console.error("mail edit", e)));
+    }
     return res.status(200).send("");
   }
   const body = JSON.parse(raw || "{}");
