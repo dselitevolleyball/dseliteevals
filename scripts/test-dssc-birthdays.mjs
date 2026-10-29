@@ -112,8 +112,11 @@ check(!/Booking opens soon/.test(booked.html) && /Sunday, December 20/.test(book
 const twins = B.partyEmail({ ...g, kids: [{ pid: 51, first: "Tia" }, { pid: 52, first: "Tom" }] }, S, { today: "2026-10-02", slots: new Map(), photos });
 check(twins.subject === "Celebrate Tia and Tom's birthday at DSSC ($50 off)" && /Tia and Tom turn 9/.test(twins.html), "twins: one email, both names");
 const be = B.birthdayEmail({ ...g, kind: "birthday", birthday: TODAY, turns: 16, kids: [{ pid: 13, first: "Leo" }] }, S, { today: TODAY, photos });
-check(be.subject === "Happy birthday, Leo! A gift from DSSC" && /BDAY35/.test(be.html) && /no expiration/.test(be.html) && /anything at DSSC/.test(be.html), "birthday: $35 off anything, BDAY35, no expiration");
-check(/16 today/.test(be.html), "says how old");
+check(be.subject === "Happy birthday, Leo! 🎉 A gift from DSSC" && /BDAY35/.test(be.html) && /never expires/.test(be.html) && /anything at DSSC/.test(be.html), "birthday: $35 off anything, BDAY35, never expires");
+check(/>16<\/div>/.test(be.html) && /today!/.test(be.html) && /It's your day, Leo!/.test(be.html.replace(/&#39;/g, "'")), "a big age badge and the kid's name");
+check(/\{\{unsubscribe_url\}\}/.test(be.html) && /BDAY35/.test(be.text) && /Unsubscribe:/.test(be.text), "an unsubscribe link, and a plain-text version");
+const tw = B.birthdayEmail({ ...g, kind: "birthday", birthday: TODAY, turns: 7, kids: [{ pid: 51, first: "Tia" }, { pid: 52, first: "Tom" }] }, S, { today: TODAY, photos });
+check(/Tia and Tom!/.test(tw.html) && /for both of you/.test(tw.html) && /you two/.test(tw.html), "twins: both names, written to both");
 
 // ── 4. the daily run ─────────────────────────────────────────────────────────
 console.log("== 4. the daily run ==");

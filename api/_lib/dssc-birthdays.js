@@ -238,23 +238,78 @@ export function partyEmail(g, s, { today, slots = new Map(), photos = [] }) {
   return { ...buildEmail(item), subject: item.email_subject, slotsShown: Object.fromEntries(weekends.flatMap(w => w.days).map(day => [day, slots.get(day) ?? null])) };
 }
 
+// The birthday email is its own bright card, not the club's dark newsletter
+// look (Drew, Oct 29 2026: "make it more fun - bright, live!"): hot pink and
+// sunshine yellow, confetti, a big age badge, a party photo, a gift ticket.
+// Plain tables and inline styles, so it holds up in Gmail, Apple Mail and Outlook.
+const SITE = "https://www.drippingsportsclub.com";
+const esc = (v) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+const H = "'Barlow Condensed','Arial Narrow',Impact,'Helvetica Neue',Arial,sans-serif";
+const F = "'Schibsted Grotesk',Helvetica,Arial,sans-serif";
+const PINK = "#FF3D8B", SUN = "#FFE14D", TEAL = "#0F8B76", INK = "#061a18", LIME = "#B2D049", ORANGE = "#FF7300", SKY = "#3EC6FF";
+const confetti = (n = 26, size = 18) => { const c = [SUN, LIME, SKY, "#ffffff", ORANGE, "#C77DFF"], ch = ["&#9679;", "&#9650;", "&#9632;", "&#9733;", "&#9670;"]; return Array.from({ length: n }, (_, i) => `<span style="color:${c[(i * 7) % c.length]};font-size:${size - (i % 3) * 4}px;line-height:1">${ch[(i * 3) % ch.length]}</span>`).join("&nbsp;"); };
+
 export function birthdayEmail(g, s, { today, photos = [] }) {
-  const who = names(g.kids), plural = g.kids.length > 1;
+  const who = names(g.kids), plural = g.kids.length > 1, first = g.kids[0]?.first || who;
   const until = s.birthday_valid_days > 0 ? addDays(today, s.birthday_valid_days) : null;
   const pics = partyPhotos(photos, (g.kids[0]?.pid || 0) + 7);
-  const item = {
-    email_subject: `Happy birthday, ${who}! A gift from DSSC`,
-    email_preheader: `$${s.birthday_off} off anything at DSSC, from all of us.`,
-    headline: `Happy birthday, ${who}!`, hero_url: pics[0] || "",
-    graphic: { tag: "Birthday", accent: who.split(/,| and /)[0], sub: plural ? `Turning ${g.turns} today` : `${g.turns} today` },
-    body: [
-      `Happy birthday, ${who}! Everyone at Dripping Springs Sports Club hopes ${g.turns} is your best year yet, on the court and off it.`,
-      `Here's a birthday gift from us: $${s.birthday_off} off anything at DSSC. Classes, camps, pods, privates, Reach or open gym - it's yours to use.`,
-    ].join("\n\n"),
-    coupon: { amount: `$${s.birthday_off} off`, what: "anything at DSSC", code: s.birthday_code, note: until ? `Good through ${fmtDay(until, { month: "long", day: "numeric" })} · one per family` : "One per family · no expiration" },
-    cta_url: LINE_LINKS.club.book, cta_text: "Find something fun",
-  };
-  return { ...buildEmail(item), subject: item.email_subject };
+  const shop = LINE_LINKS.club.book;
+  const subject = `Happy birthday, ${who}! 🎉 A gift from DSSC`;
+  const pre = `It's party time! $${s.birthday_off} off anything at DSSC, just for ${plural ? "you two" : "you"}.`;
+  const note = until ? `Good through ${fmtDay(until, { month: "long", day: "numeric" })} · one per family` : "One per family · it never expires";
+  const lines = [
+    `${plural ? "Another trip around the sun for both of you" : "One more trip around the sun"} - and we think that deserves a party. Everyone at Dripping Springs Sports Club hopes ${g.turns} is your biggest, boldest, most fun year yet, on the court and off it.`,
+    `So here's a present from all of us: <b>$${s.birthday_off} off anything at DSSC</b>. A class, a camp, a pod, a private, Reach, open gym - you pick!`,
+  ];
+  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light only"><title>${esc(subject)}</title>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@800;900&family=Schibsted+Grotesk:wght@400;700&display=swap" rel="stylesheet"></head>
+<body style="margin:0;padding:0;background:${SUN}">
+<div style="display:none;max-height:0;overflow:hidden;opacity:0">${esc(pre)}&#8199;&#65279;&#847;&#8199;&#65279;&#847;&#8199;&#65279;&#847;</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${SUN}"><tr><td align="center" style="padding:18px 10px 28px">
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:600px">
+<tr><td align="center" style="padding:0 0 12px;font-size:30px;line-height:1">🎈 🎉 🎂 🎁 🎈</td></tr>
+<tr><td style="background:${PINK};border-radius:22px 22px 0 0;padding:22px 24px 8px" align="center">
+  <a href="${SITE}"><img src="${SITE}/brand/logo-light.png" width="150" alt="Dripping Springs Sports Club" style="display:block;width:150px;height:auto;border:0;margin:0 auto 14px"></a>
+  <div style="text-align:center">${confetti(22, 16)}</div>
+  <div style="font-family:${H};font-weight:900;font-size:64px;line-height:.9;text-transform:uppercase;color:#ffffff;margin-top:14px;letter-spacing:1px">Happy</div>
+  <div style="font-family:${H};font-weight:900;font-size:64px;line-height:.9;text-transform:uppercase;color:${SUN};letter-spacing:1px">Birthday,</div>
+  <div style="font-family:${H};font-weight:900;font-size:${who.length > 14 ? 44 : 64}px;line-height:.95;text-transform:uppercase;color:#ffffff;letter-spacing:1px">${esc(who)}!</div>
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin:18px auto 6px"><tr><td align="center" width="120" height="120" style="width:120px;height:120px;background:${SUN};border:6px solid #ffffff;border-radius:999px;text-align:center;vertical-align:middle">
+    <div style="font-family:${H};font-weight:900;font-size:60px;line-height:.9;color:${PINK}">${g.turns}</div>
+    <div style="font-family:${H};font-weight:900;font-size:16px;letter-spacing:2px;text-transform:uppercase;color:${INK}">today!</div>
+  </td></tr></table>
+  <div style="text-align:center;padding:10px 0 14px">${confetti(22, 16)}</div>
+</td></tr>
+${pics[0] ? `<tr><td style="background:${PINK};padding:0 24px 24px"><a href="${esc(shop)}" style="display:block"><img src="${esc(pics[0])}" width="552" alt="Kids celebrating at DSSC" style="display:block;width:100%;height:auto;border:6px solid #ffffff;border-radius:14px"></a></td></tr>` : ""}
+<tr><td style="background:#ffffff;padding:28px 26px 8px;font-family:${F};font-size:17px;line-height:1.55;color:${INK}">
+  <div style="font-family:${H};font-weight:900;font-size:30px;line-height:1;text-transform:uppercase;color:${TEAL};margin-bottom:12px">It's your day, ${esc(first)}! 🥳</div>
+  ${lines.map(l => `<p style="margin:0 0 14px">${l}</p>`).join("")}
+</td></tr>
+<tr><td style="background:#ffffff;padding:6px 26px 10px">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="background:${SUN};border:4px dashed ${PINK};border-radius:16px;padding:20px 18px;text-align:center">
+    <div style="font-family:${H};font-weight:900;font-size:18px;letter-spacing:3px;text-transform:uppercase;color:${INK}">🎁 Your birthday gift 🎁</div>
+    <div style="font-family:${H};font-weight:900;font-size:68px;line-height:1;text-transform:uppercase;color:${PINK};margin-top:4px">$${s.birthday_off} off</div>
+    <div style="font-family:${F};font-weight:700;font-size:17px;color:${INK}">anything at DSSC</div>
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin:14px auto 6px"><tr><td style="background:${TEAL};border-radius:10px;padding:8px 18px;font-family:${H};font-weight:900;font-size:26px;letter-spacing:4px;color:#ffffff">${esc(s.birthday_code)}</td></tr></table>
+    <div style="font-family:${F};font-size:13px;color:${INK}">Enter the code at checkout · ${esc(note)}</div>
+  </td></tr></table>
+</td></tr>
+<tr><td align="center" style="background:#ffffff;padding:14px 26px 30px">
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td style="background:${ORANGE};border-radius:999px;padding:15px 30px"><a href="${esc(shop)}" style="font-family:${H};font-weight:900;font-size:22px;letter-spacing:.5px;text-transform:uppercase;color:#ffffff;text-decoration:none">Pick your present &rarr;</a></td></tr></table>
+</td></tr>
+<tr><td style="background:${PINK};border-radius:0 0 22px 22px;padding:16px 24px;text-align:center">
+  <div>${confetti(18, 14)}</div>
+  <div style="font-family:${H};font-weight:900;font-size:22px;text-transform:uppercase;color:#ffffff;margin-top:8px">Where Dripping Springs <span style="color:${SUN}">plays.</span></div>
+</td></tr>
+<tr><td style="padding:16px 18px 0;font-family:${F};font-size:12px;line-height:1.6;color:#5b4a00;text-align:center">
+  Dripping Springs Sports Club · Warehouse I · 15113 Fitzhugh Rd, Suite 1400, Dripping Springs, TX<br>
+  <a href="${SITE}" style="color:#5b4a00">drippingsportsclub.com</a> · You're getting this because your family has signed up for a program at DSSC. <a href="${UNSUB_TOKEN}" style="color:#5b4a00;text-decoration:underline">Unsubscribe</a>.
+</td></tr>
+</table></td></tr></table></body></html>`;
+  const text = [`HAPPY BIRTHDAY, ${who.toUpperCase()}!`, `${g.turns} today!`, "", ...lines.map(l => l.replace(/<[^>]+>/g, "")), "",
+    `YOUR BIRTHDAY GIFT: $${s.birthday_off} off anything at DSSC`, `Code: ${s.birthday_code} (${note})`, `Pick your present: ${shop}`, "",
+    "Where Dripping Springs plays.", "Dripping Springs Sports Club · Warehouse I · 15113 Fitzhugh Rd, Suite 1400, Dripping Springs, TX", SITE, "", `Unsubscribe: ${UNSUB_TOKEN}`].join("\n");
+  return { html, text, subject };
 }
 
 const personalize = (s, email) => String(s).split(UNSUB_TOKEN).join(unsubUrl(email));

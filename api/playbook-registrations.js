@@ -135,7 +135,10 @@ export default async function handler(req, res) {
   const shape = ({ r, text, pr }) => {
     const pcols = pr.meta?.fields || [];
     const range = Object.fromEntries(pcols.filter(c => /date|created|time|_at$/i.test(c)).map(c => { const t = pr.data.map(x => Date.parse(String(x[c] || "").replace(/,/, ""))).filter(Number.isFinite).sort((a, b) => a - b); return [c, t.length ? [new Date(t[0]).toISOString().slice(0, 10), new Date(t[t.length - 1]).toISOString().slice(0, 10)] : null]; }));
-    return { status: r.status, type: r.headers.get("content-type"), columns: pcols.slice(0, 60), rows: pr.data.length, range, csv: !/<html/i.test(text.slice(0, 500)) };
+    const isHtml = /<html|<!doctype/i.test(text.slice(0, 500));
+    // A page instead of a file: its title and opening words say what Playbook did (page chrome, not family data).
+    const page = isHtml ? { title: ((/<title>([^<]*)/i.exec(text) || [])[1] || "").trim().slice(0, 120), says: text.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 240), url: r.url, redirected: r.redirected } : null;
+    return { status: r.status, type: r.headers.get("content-type"), columns: isHtml ? [] : pcols.slice(0, 60), rows: isHtml ? 0 : pr.data.length, range: isHtml ? {} : range, csv: !isHtml, page };
   };
   let payments = null, spendReport = null;
   try { payments = shape(await fetchCsv(PAYMENTS)); } catch (e) { payments = { error: e.message }; }
