@@ -369,7 +369,7 @@ const accentHtml = (headline, accent) => {
 // Optional extras (birthday emails, api/_lib/dssc-birthdays.js): a coupon
 // box { amount: "$50 OFF", code, note } and a gallery of up to 4 photo urls.
 const couponBox = (c) => `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:4px 0 16px"><tr><td style="border:3px dashed #0F8B76;background:#ffffff;padding:16px 18px;text-align:center">
-<div style="font-family:${FONT_H};font-weight:900;font-size:40px;line-height:1;text-transform:uppercase;color:#E86FA6">${esc(c.amount)}</div>
+<div style="font-family:${FONT_H};font-weight:900;font-size:40px;line-height:1;text-transform:uppercase;color:#FF7300">${esc(c.amount)}</div>
 ${c.what ? `<div style="font-family:${FONT_B};font-size:15px;color:#061a18;margin-top:4px">${esc(c.what)}</div>` : ""}
 ${c.code ? `<div style="font-family:${FONT_H};font-weight:800;font-size:22px;letter-spacing:3px;color:#061a18;margin-top:10px">CODE: <span style="background:#B2D049;padding:2px 10px">${esc(c.code)}</span></div>` : ""}
 ${c.note ? `<div style="font-family:${FONT_B};font-size:13px;color:#104946;margin-top:8px">${esc(c.note)}</div>` : ""}

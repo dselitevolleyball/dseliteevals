@@ -15,7 +15,7 @@ const api = async (action, body = {}) => {
   return d;
 };
 const fmtD = (iso, o = { weekday: "short", month: "short", day: "numeric" }) => iso ? new Date(String(iso).slice(0, 10) + "T12:00:00").toLocaleDateString(undefined, o) : "";
-const KIND = { party: ["🎉", "Party invite", "#E86FA6"], birthday: ["🎂", "Birthday", DS.lime] };
+const KIND = { party: ["🎉", "Party invite", DS.orange], birthday: ["🎂", "Birthday", DS.lime] };
 const STATUS = { sent: [DS.lime, "Sent"], sending: ["#7FD1C3", "Sending"], failed: [DS.orange, "Failed - retries"], skipped: [DS.mut, "Skipped"] };
 const num = { ...inputStyle, width: 70, padding: "6px 8px" };
 const code = { ...inputStyle, width: 120, padding: "6px 8px", textTransform: "uppercase", fontWeight: 800 };
