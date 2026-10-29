@@ -218,7 +218,7 @@ export async function brainstorm(sb, { count = 6, today = ctToday(), by = "auto"
     dataIdeas(sb, today),
     sb.from("dse_social_posts").select("title, caption, published_at").eq("status", "published").order("published_at", { ascending: false }).limit(15),
     sb.from("dse_social_ideas").select("title, post_on").in("status", ["new", "drafted"]).gte("post_on", today),
-    trends ? trendScan(today, { timeoutMs: 55000 }).catch(e => ({ text: "", sources: [], error: e.message })) : Promise.resolve({ text: "", sources: [] }),
+    trends ? trendScan(today, { timeoutMs: 100000 }).catch(e => ({ text: "", sources: [], error: e.message })) : Promise.resolve({ text: "", sources: [] }),
   ]);
   const ctx = [
     `Today is ${fmt(today, { weekday: "long", month: "long", day: "numeric", year: "numeric" })}. Window for post_on: ${today} to ${end}. Give ${count} ideas.`,
