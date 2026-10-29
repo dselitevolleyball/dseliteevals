@@ -76,7 +76,7 @@ export default async function handler(req, res) {
   res.setHeader("Cache-Control", "no-store");
   const q = req.query || {};
   if (q.preview === "1") {
-    const r = { title: "NCAA Championship tickets", description: "The DS Elite group at the NCAA women's volleyball championship match, Alamodome, Sun, Dec 20 at 2:30pm. Seats in the 300 level.", unit_label: "ticket", unit_amount_cents: 5200, allow_qty_change: true, status: "open", due_date: null };
+    const r = { title: "NCAA Championship tickets", description: "The DS Elite group at the NCAA women's volleyball championship match, Alamodome, Sun, Dec 20 at 2:30pm. Seats in the 300 level.", unit_label: "ticket", unit_amount_cents: 5500, allow_qty_change: true, status: "open", due_date: null };
     return res.status(200).send(page(body(r, { family_label: "Ava & Mia Smith (12 Rise, 15 Ruby)", qty: 4, status: "unpaid" }).replace("<form method=\"post\">", "<form onsubmit=\"return false\">")));
   }
   const tok = String(q.t || "").trim();

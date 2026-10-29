@@ -124,12 +124,9 @@ export async function run(sb, { me, name }, b) {
       const patch = { updated_at: nowIso() };
       if (typeof b.title === "string" && b.title.trim()) patch.title = b.title.trim().slice(0, 140);
       if (typeof b.description === "string") patch.description = b.description.trim().slice(0, 1500) || null;
-      if (b.unit_amount !== undefined) {
-        const { count } = await sb.from("pay_items").select("id", { count: "exact", head: true }).eq("request_id", r.id).in("status", ["paid", "pending"]);
-        const c = cents(b.unit_amount);
-        if (count && c !== r.unit_amount_cents) throw fail(400, "Families have already paid at the current price - make a new request for a different price");
-        patch.unit_amount_cents = c;
-      }
+      // A new price applies to families who haven't paid; anyone already paid
+      // keeps what they paid (their paid_cents), so the totals stay true.
+      if (b.unit_amount !== undefined) patch.unit_amount_cents = cents(b.unit_amount);
       if (typeof b.unit_label === "string" && b.unit_label.trim()) patch.unit_label = b.unit_label.trim().slice(0, 30);
       if (typeof b.allow_qty_change === "boolean") patch.allow_qty_change = b.allow_qty_change;
       if (b.max_qty !== undefined) patch.max_qty = Math.max(1, Math.min(99, Number(b.max_qty) || 30));

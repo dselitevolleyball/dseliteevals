@@ -7,7 +7,7 @@
 // One answer per family: brothers and sisters share parent emails, so the form
 // saves on whichever player's link was used and clears the siblings' rows.
 
-export const NCAA_PRICE = 52;
+export const NCAA_PRICE = 55;   // was $52 until Oct 29 2026
 export const NCAA_WHEN = "Sunday, December 20 at 2:30pm";
 export const NCAA_WHERE = "the Alamodome in San Antonio";
 export const NCAA_SEATS = "the 300 level";
