@@ -26,12 +26,18 @@ import { importRoster } from "./_lib/dssc-roster-import.js";
 import { importPlaybookRegistrations, pruneDeletedReservations, importPlaybookSpend, isPlaybookSpendExport } from "./_lib/dssc-crm.js";
 import { appOrigin } from "../shared/app-origin.js";
 
+// Three Playbook exports and the spend import: give it room (the People upload uses the same).
+export const config = { maxDuration: 300 };
+
 const BASE = "https://drippingsports.playbookapi.com";
 const SIGNIN = BASE + "/account/signin/";
 const REPORT = BASE + "/control_panel/dashboards/all_registrations_report/?action=export-all-pages&results_per_page=50&min_age=0&max_age=65";
 // Payments (what families actually paid): Drew, Oct 29 2026. Being looked at
 // first - only its shape is recorded until the spend importer reads it.
 const PAYMENTS = BASE + "/control_panel/export_all_pages/?model_name=PaymentTransaction";
+// The Registrations report with prices (invoice_number, registration_base_price):
+// spend in People keeps itself current from this when it has those columns.
+const SPEND = BASE + "/control_panel/export_all_registrations_report/";
 const NOTIFY = ["drew@dselitevolleyball.com", "hunterhaleysc10@gmail.com", "hunter@drippingsportsclub.com"];
 const UA = "Mozilla/5.0 (DS Elite HQ registrations sync)";
 
@@ -117,19 +123,27 @@ export default async function handler(req, res) {
   // registration_base_price), uploaded in People. If this export ever carries
   // those columns too, spend keeps itself current from here.
   const cols = Object.keys(rows[0] || {});
-  // The payments export's shape: columns, row count, and the range of any date column. No rows are kept.
-  let payments = null;
-  try {
-    const r = await fetch(PAYMENTS, { headers: { "User-Agent": UA, Cookie: j.header(), Referer: BASE + "/control_panel/" } });
-    const text = await r.text();
-    const pr = Papa.parse(text, { header: true, skipEmptyLines: true });
-    const pcols = pr.meta?.fields || [];
-    const dateCols = pcols.filter(c => /date|created|time|_at$/i.test(c));
-    const range = Object.fromEntries(dateCols.map(c => { const v = pr.data.map(x => String(x[c] || "")).filter(Boolean); const t = v.map(x => Date.parse(x.replace(/,/, ""))).filter(Number.isFinite).sort((a, b) => a - b); return [c, t.length ? [new Date(t[0]).toISOString().slice(0, 10), new Date(t[t.length - 1]).toISOString().slice(0, 10)] : v.slice(0, 1).map(x => x.replace(/\d/g, "9"))]; }));
-    payments = { status: r.status, type: r.headers.get("content-type"), columns: pcols.slice(0, 60), rows: pr.data.length, range, csv: /,/.test(text.split("\n")[0] || "") && !/<html/i.test(text.slice(0, 500)) };
-  } catch (e) { payments = { error: e.message }; }
   let spend = null;
   if (!dry && isPlaybookSpendExport(cols)) { try { spend = await importPlaybookSpend(sb, rows); } catch (e) { spend = { error: e.message }; } }
+  // An export's shape: columns, row count, and the range of any date column. No rows are kept.
+  const fetchCsv = async (url) => {
+    const r = await fetch(url, { headers: { "User-Agent": UA, Cookie: j.header(), Referer: BASE + "/control_panel/" } });
+    const text = await r.text();
+    const pr = Papa.parse(text, { header: true, skipEmptyLines: true });
+    return { r, text, pr };
+  };
+  const shape = ({ r, text, pr }) => {
+    const pcols = pr.meta?.fields || [];
+    const range = Object.fromEntries(pcols.filter(c => /date|created|time|_at$/i.test(c)).map(c => { const t = pr.data.map(x => Date.parse(String(x[c] || "").replace(/,/, ""))).filter(Number.isFinite).sort((a, b) => a - b); return [c, t.length ? [new Date(t[0]).toISOString().slice(0, 10), new Date(t[t.length - 1]).toISOString().slice(0, 10)] : null]; }));
+    return { status: r.status, type: r.headers.get("content-type"), columns: pcols.slice(0, 60), rows: pr.data.length, range, csv: !/<html/i.test(text.slice(0, 500)) };
+  };
+  let payments = null, spendReport = null;
+  try { payments = shape(await fetchCsv(PAYMENTS)); } catch (e) { payments = { error: e.message }; }
+  try {
+    const got = await fetchCsv(SPEND);
+    spendReport = shape(got);
+    if (!dry && !spend && isPlaybookSpendExport(spendReport.columns)) { try { spend = await importPlaybookSpend(sb, got.pr.data); } catch (e) { spend = { error: e.message }; } }
+  } catch (e) { spendReport = { error: e.message }; }
   // Court bookings deleted in Playbook come off Court Availability.
   let reservations = null;
   try { reservations = await pruneDeletedReservations(sb, rows, { dry }); } catch (e) { reservations = { error: e.message }; }
@@ -137,7 +151,7 @@ export default async function handler(req, res) {
   // beforeHq = sign-ups for dates before HQ had the class (they'll never attach);
   // counted, never alerted on.
   const summary = { added: out.added, matched: out.matched, rows: out.rows, noSession: out.noSession.length, beforeHq: (out.beforeHq || []).length,
-    waiting: [...new Set(out.noSession.map(x => x.program + " " + x.date))].slice(0, 12), people, reservations, spend, columns: cols, payments };
+    waiting: [...new Set(out.noSession.map(x => x.program + " " + x.date))].slice(0, 12), people, reservations, spend, columns: cols, payments, spendReport };
   if (!dry) {
     await sb.from("dssc_sync").upsert({ id: 1, registrations_at: now, registrations_summary: summary, registrations_error: null, registrations_error_at: null }, { onConflict: "id" });
     // Tell the director once when registrations are piling up for classes HQ
