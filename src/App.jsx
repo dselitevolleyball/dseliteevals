@@ -445,7 +445,9 @@ if (HQ_DSSC) Object.assign(C, { bg:"#082C2A", card:"#0C3A37", border:"#1F5A55", 
 // Only these owner emails may open the Coaches management screen. UI-level gate.
 const OWNER_EMAILS = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"];
 // DSSC clinic directors — schedule/assign/oversee clinics alongside admins.
-const DSSC_DIRECTOR_EMAILS = ["hunterhaleysc10@gmail.com", "hunter@drippingsportsclub.com"];
+// Brandon (Reach) too since Oct 29 2026: People, campaigns, Marketing (Drew).
+// His staff hours stay Reach-only (coaches.staff_view) and he can't edit pay.
+const DSSC_DIRECTOR_EMAILS = ["hunterhaleysc10@gmail.com", "hunter@drippingsportsclub.com", "brandon@drippingsportsclub.com"];
 // Reach Performance's coach: his testing home in DS Elite, Reach Stats in DSSC HQ.
 const REACH_COACH_EMAILS = ["brandon@drippingsportsclub.com"];
 
