@@ -216,3 +216,106 @@ export async function renderPoster(d) {
 }
 const firstName = (n) => String(n || "").trim().replace(/^coach\s+/i, "").split(/\s+/)[0] || "";
 const initials = (n) => String(n || "").trim().split(/\s+/).map(w => w[0] || "").join("").slice(0, 2).toUpperCase();
+
+// ── idea cards (api/_lib/dse-social-ideas.js) ───────────────────────────────
+// One renderer for the "fun" posts, all in the same DS Elite look:
+//   birthday / holiday   photo on top, tag, big headline, a line under it
+//   tournament / schedule  tag, the event as the headline, dates · place, then
+//                          the teams going (a list of up to 12)
+//   text                 no photo: a pink field with the words (POV, This or
+//                        That, a question for the comments)
+//   meme                 the photo full-bleed with top and bottom captions
+// d: { style, tag, headline, sub, lines: [text], img?, focus?, top?, bottom? }
+// Canvas has no emoji font, so emoji are stripped from anything drawn.
+const noEmoji = (s) => String(s || "").replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{200D}]/gu, "").replace(/\s+/g, " ").trim();
+function skewTag(ctx, text, x, y) {
+  ctx.save(); ctx.translate(x, y); ctx.transform(1, 0, -0.2, 1, 0, 0);
+  ctx.font = archivo(34); const t = noEmoji(text).toUpperCase(); const tw = ctx.measureText(t).width;
+  ctx.fillStyle = PINK; ctx.fillRect(0, 0, tw + 44, 62); ctx.fillStyle = WHITE; ctx.fillText(t, 22, 45); ctx.restore();
+}
+async function memeCard(d) {
+  const c = createCanvas(W, H), ctx = c.getContext("2d");
+  ctx.fillStyle = INK; ctx.fillRect(0, 0, W, H);
+  if (d.img) cover(ctx, d.img, 0, 0, W, H, d.focus || { x: 0.5, y: 0.4 });
+  const shade = (y0, y1, a0, a1) => { const g = ctx.createLinearGradient(0, y0, 0, y1); g.addColorStop(0, `rgba(0,0,0,${a0})`); g.addColorStop(1, `rgba(0,0,0,${a1})`); ctx.fillStyle = g; ctx.fillRect(0, y0, W, y1 - y0); };
+  shade(0, 360, 0.55, 0); shade(H - 420, H, 0, 0.6);
+  const block = (text, top) => {
+    const t = noEmoji(text).toUpperCase(); if (!t) return;
+    ctx.font = archivo(84); let lines = wrap(ctx, t, W - 96, 3);
+    if (lines.length === 3) { ctx.font = archivo(68); lines = wrap(ctx, t, W - 96, 3); }
+    const lh = parseInt(ctx.font.split(" ")[1], 10) * 1.05;
+    ctx.textAlign = "center"; ctx.lineJoin = "round"; ctx.lineWidth = 12; ctx.strokeStyle = "rgba(0,0,0,0.9)"; ctx.fillStyle = WHITE;
+    lines.forEach((l, i) => { const y = top ? 120 + i * lh : H - 110 - (lines.length - 1 - i) * lh; ctx.strokeText(l, W / 2, y); ctx.fillText(l, W / 2, y); });
+    ctx.textAlign = "left";
+  };
+  block(d.top, true); block(d.bottom, false);
+  await drawLogo(ctx, W - 48 - 170, H - 48 - 40, 170, 0.85);
+  return jpeg(c);
+}
+export async function renderCard(d) {
+  ensureFonts();
+  if (d.style === "meme") return memeCard(d);
+  const c = createCanvas(W, H), ctx = c.getContext("2d");
+  ctx.fillStyle = INK; ctx.fillRect(0, 0, W, H);
+  const lines = (d.lines || []).map(noEmoji).filter(Boolean).slice(0, 12);
+  const ph = d.img ? (lines.length > 4 ? 560 : lines.length ? 680 : 960) : 0;
+  if (d.img) {
+    cover(ctx, d.img, 0, 0, W, ph, d.focus || { x: 0.5, y: 0.35 });
+    const fade = ctx.createLinearGradient(0, ph - 320, 0, ph);
+    fade.addColorStop(0, "rgba(10,10,10,0)"); fade.addColorStop(1, "rgba(10,10,10,1)");
+    ctx.fillStyle = fade; ctx.fillRect(0, ph - 320, W, 320);
+  } else {
+    const g = ctx.createLinearGradient(0, 0, W, H); g.addColorStop(0, d.style === "text" ? PINK : "#3a0a24"); g.addColorStop(1, INK);
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    // a court line motif: the attack line and the net, faint
+    ctx.strokeStyle = "rgba(255,255,255,0.08)"; ctx.lineWidth = 6;
+    ctx.beginPath(); ctx.moveTo(0, 250); ctx.lineTo(W, 250); ctx.moveTo(0, 262); ctx.lineTo(W, 262); ctx.stroke();
+  }
+  if (d.tag) skewTag(ctx, d.tag, 48, 52);
+  // headline
+  const footer = H - 120;
+  const head = noEmoji(d.headline).toUpperCase();
+  ctx.fillStyle = WHITE;
+  let y;
+  if (d.img) {
+    ctx.font = archivo(116); let hl = wrap(ctx, head, W - 96, 2);
+    if (hl.length > 1) { ctx.font = archivo(92); hl = wrap(ctx, head, W - 96, 2); }
+    const lh = parseInt(ctx.font.split(" ")[1], 10);
+    y = ph - 40 - (hl.length - 1) * lh;
+    hl.forEach((l, i) => ctx.fillText(l, 48, y + i * lh));
+    y += (hl.length - 1) * lh;
+  } else {
+    const size = d.style === "text" ? 120 : 104;
+    ctx.font = archivo(size); let hl = wrap(ctx, head, W - 96, 4);
+    if (hl.length > 3) { ctx.font = archivo(size - 24); hl = wrap(ctx, head, W - 96, 4); }
+    const lh = parseInt(ctx.font.split(" ")[1], 10) * 1.02;
+    // a text post sits in the middle of the card; one with a list starts high
+    const subH = d.sub ? 64 + 50 * 2 : 0;
+    y = lines.length ? 240 + lh : Math.max(200 + lh, Math.round((H - 120 - (hl.length * lh + subH)) / 2 + lh * 0.8));
+    hl.forEach((l, i) => ctx.fillText(l, 48, y + i * lh));
+    y += (hl.length - 1) * lh;
+  }
+  // the line under it
+  if (d.sub) {
+    y += 64; ctx.fillStyle = d.style === "text" && !d.img ? WHITE : HOT;
+    ctx.font = outfit(700)(40); const sl = wrap(ctx, noEmoji(d.sub), W - 96, 3);
+    sl.forEach((l, i) => ctx.fillText(l, 48, y + i * 50)); y += (sl.length - 1) * 50;
+  }
+  // the list (teams), one or two columns
+  if (lines.length) {
+    y += 40;
+    const two = lines.length > 5, colW = two ? (W - 96 - 40) / 2 : W - 96, rows = two ? Math.ceil(lines.length / 2) : lines.length;
+    const rowH = Math.min(64, Math.floor((footer - 30 - y) / Math.max(1, rows)));
+    ctx.font = outfit(700)(Math.min(40, rowH - 14));
+    lines.forEach((l, i) => {
+      const col = two ? Math.floor(i / rows) : 0, row = two ? i % rows : i;
+      const x = 48 + col * (colW + 40), yy = y + row * rowH + rowH * 0.7;
+      ctx.fillStyle = PINK; ctx.fillRect(x, yy - 24, 16, 16);
+      ctx.fillStyle = WHITE; ctx.fillText(wrap(ctx, l, colW - 34, 1)[0] || "", x + 32, yy - 6);
+    });
+  }
+  ctx.fillStyle = PINK; ctx.fillRect(48, footer, W - 96, 4);
+  await drawLogo(ctx, 48, footer + 28, 250);
+  ctx.fillStyle = MUT; ctx.font = outfit(600)(28); ctx.textAlign = "right"; ctx.fillText(d.site || "dselitevolleyball.com", W - 48, footer + 72); ctx.textAlign = "left";
+  return jpeg(c);
+}

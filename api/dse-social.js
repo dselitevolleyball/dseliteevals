@@ -21,12 +21,17 @@
 //   coaches                     every coach, their teams and intro status
 //   intro_send {coach_ids, via} start + send surveys
 //   intro_remind {id} · intro_cancel {id} · intro_draft {id} · intro_answers {id, answers}
+//   ideas                       fun ideas: the data ones (birthdays, game weeks,
+//                               posted schedules, holidays) + Claude's memes/trends
+//   ideas_sync · ideas_brainstorm {count?, trends?} · idea_draft {id}
+//   idea_dismiss {id} · idea_restore {id} · idea_update {id, title?, caption?, card?, post_on?}
 //   settings_save {...}
 
 import { createClient } from "@supabase/supabase-js";
 import { waitUntil } from "@vercel/functions";
 import * as S from "./_lib/dse-social.js";
 import * as M from "./_lib/dse-social-meta.js";
+import * as I from "./_lib/dse-social-ideas.js";
 
 export const config = { maxDuration: 300 };
 const OWNERS = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"];
@@ -106,10 +111,11 @@ export async function run(sb, { me, name }, b) {
         redraw = true;
       }
       if (b.design && typeof b.design === "object") { patch.design = { ...(post.design || {}), ...b.design }; redraw = true; }
+      if (b.another_photo && post.kind === "idea") { patch.design = { ...(patch.design || post.design || {}), photo_index: (Number((patch.design || post.design || {}).photo_index) || 0) + 1 }; redraw = true; }
       const next = { ...post, ...patch };
       if (next.kind === "photos" && next.format === "collage" && (next.photos || []).length > 6) throw fail(400, "A collage holds up to 6 photos - remove some, or make it a carousel");
       if (next.kind === "photos" && next.format === "single") next.photos = next.photos.slice(0, 1), patch.photos = next.photos;
-      if (redraw) Object.assign(patch, next.kind === "coach_intro" ? { asset_url: await S.rerenderPoster(sb, next) } : await S.renderPost(sb, next));
+      if (redraw) Object.assign(patch, next.kind === "coach_intro" ? { asset_url: await S.rerenderPoster(sb, next) } : next.kind === "idea" ? await I.rerenderIdea(sb, { ...next, design: patch.design || next.design }) : await S.renderPost(sb, next));
       // A change to an approved post needs approving again.
       // (A new planned time alone keeps the approval.)
       const onlyTime = Object.keys(patch).every(k => ["scheduled_at", "updated_at"].includes(k));
@@ -219,6 +225,29 @@ export async function run(sb, { me, name }, b) {
       return await S.draftIntroPost(sb, i, { by });
     }
 
+    case "ideas": {
+      const { data, error } = await sb.from("dse_social_ideas").select("*").gte("post_on", I.ctToday(new Date(Date.now() - 2 * 86400e3))).order("post_on").order("id").limit(200);
+      if (error) throw fail(500, error.message);
+      return { ideas: data || [] };
+    }
+    case "ideas_sync": return await I.syncIdeas(sb);
+    case "ideas_brainstorm": return await I.brainstorm(sb, { count: Math.max(1, Math.min(10, Number(b.count) || 6)), by, trends: b.trends !== false });
+    case "idea_draft": return await I.draftIdea(sb, b.id, { by });
+    case "idea_dismiss": case "idea_restore": {
+      const { data, error } = await sb.from("dse_social_ideas").update({ status: b.action === "idea_dismiss" ? "dismissed" : "new", updated_at: new Date().toISOString() }).eq("id", Number(b.id)).neq("status", "drafted").select().maybeSingle();
+      if (error) throw fail(500, error.message);
+      return { idea: data };
+    }
+    case "idea_update": {
+      const patch = { updated_at: new Date().toISOString() };
+      if (typeof b.title === "string") patch.title = b.title.slice(0, 120);
+      if (typeof b.caption === "string") patch.caption = b.caption.slice(0, 1500);
+      if (typeof b.post_on === "string" && /^\d{4}-\d{2}-\d{2}$/.test(b.post_on)) patch.post_on = b.post_on;
+      if (b.card && typeof b.card === "object") { const { data: cur } = await sb.from("dse_social_ideas").select("card").eq("id", Number(b.id)).maybeSingle(); patch.card = { ...(cur?.card || {}), ...b.card }; }
+      const { data, error } = await sb.from("dse_social_ideas").update(patch).eq("id", Number(b.id)).select().maybeSingle();
+      if (error) throw fail(500, error.message);
+      return { idea: data };
+    }
     case "settings_save": {
       const p = b.settings || {};
       const patch = { updated_at: new Date().toISOString() };
@@ -229,6 +258,7 @@ export async function run(sb, { me, name }, b) {
       if (Array.isArray(p.hashtags)) patch.hashtags = p.hashtags.map(h => String(h).replace(/^#+/, "").trim()).filter(Boolean).slice(0, 10);
       if (Array.isArray(p.intro_questions)) patch.intro_questions = p.intro_questions.map(q => String(q).trim()).filter(Boolean).slice(0, 10);
       if (typeof p.intro_time === "string" && /^\d{1,2}:\d{2}$/.test(p.intro_time)) patch.intro_time = p.intro_time;
+      if (typeof p.auto_ideas === "boolean") patch.auto_ideas = p.auto_ideas;
       const { error } = await sb.from("dse_social_settings").update(patch).eq("id", 1);
       if (error) throw fail(500, error.message);
       return { settings: await S.getSettings(sb) };

@@ -34,6 +34,7 @@ import { slackCfg, slackApi } from "./product-slack.js";
 import { feedIndex, photoHashes, matchFeed, recordFeedMatches } from "./dse-social-feed.js";
 import { sendOneSms, normalizePhone } from "./sms.js";
 import { resendKeyFor } from "./resend-key.js";
+import { ideasCron } from "./dse-social-ideas.js";
 
 export const AI_MODEL = "claude-opus-5-5";
 export const IN_BUCKET = "team-photos", OUT_BUCKET = "dse-social";
@@ -69,6 +70,7 @@ export async function getSettings(sb) {
     approvers: s.approvers?.length ? s.approvers : ["drew@dselitevolleyball.com"],
     hashtags: s.hashtags || [], intro_questions: Array.isArray(s.intro_questions) && s.intro_questions.length ? s.intro_questions : DEFAULT_QUESTIONS,
     intro_time: /^\d{1,2}:\d{2}$/.test(s.intro_time || "") ? s.intro_time : "18:30", last_scan_at: s.last_scan_at || null,
+    auto_ideas: s.auto_ideas !== false, ideas_synced_at: s.ideas_synced_at || null, ideas_brainstormed_at: s.ideas_brainstormed_at || null,
   };
 }
 
@@ -190,7 +192,7 @@ export function planFrom(ai, n) {
 }
 
 // ── making a photo post ─────────────────────────────────────────────────────
-async function upload(sb, path, buf) {
+export async function upload(sb, path, buf) {
   const { error } = await sb.storage.from(OUT_BUCKET).upload(path, buf, { contentType: "image/jpeg", upsert: true });
   if (error) throw new Error("Saving the image: " + error.message);
   return sb.storage.from(OUT_BUCKET).getPublicUrl(path).data.publicUrl;
@@ -308,7 +310,7 @@ export function approvalMessage(post, { done = null } = {}) {
   const imgs = post.format === "carousel" ? (post.photos || []).map(p => p.url).filter(Boolean).slice(0, 4) : [post.asset_url].filter(Boolean);
   const where = (post.platforms || []).map(p => p === "facebook" ? "Facebook" : "Instagram").join(" + ");
   const blocks = [
-    { type: "section", text: { type: "mrkdwn", text: `*${KIND_LABEL[post.format] || "Post"} ready for DS Elite* · ${post.title || ""}\n${post.format === "carousel" ? `${(post.photos || []).length} photos · ` : ""}${where}${post.scheduled_at && !done ? ` · planned for *${ctWhen(post.scheduled_at)}*` : ""}` } },
+    { type: "section", text: { type: "mrkdwn", text: `*${(post.kind === "idea" ? "Fun post" : KIND_LABEL[post.format] || "Post")} ready for DS Elite* · ${post.title || ""}\n${post.format === "carousel" ? `${(post.photos || []).length} photos · ` : ""}${where}${post.scheduled_at && !done ? ` · planned for *${ctWhen(post.scheduled_at)}*` : ""}` } },
     ...imgs.map((url, i) => ({ type: "image", image_url: url, alt_text: `Photo ${i + 1}` })),
     { type: "section", text: { type: "mrkdwn", text: captionFor(post).split("\n").map(l => "> " + l.replace(/[<>&]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" })[c])).join("\n") } },
   ];
@@ -319,7 +321,7 @@ export function approvalMessage(post, { done = null } = {}) {
     { type: "button", text: { type: "plain_text", text: "Skip" }, action_id: "dse_social_skip", value: String(post.id) },
     { type: "button", text: { type: "plain_text", text: "Edit in HQ" }, url: `${HQ_URL}&post=${post.id}`, action_id: "dse_social_open" },
   ] });
-  return { text: `${KIND_LABEL[post.format] || "Post"} ready for DS Elite: ${post.title || ""}`, blocks };
+  return { text: `${(post.kind === "idea" ? "Fun post" : KIND_LABEL[post.format] || "Post")} ready for DS Elite: ${post.title || ""}`, blocks };
 }
 export async function notifyApprovers(sb, post, s = null) {
   const cfg = await slackCfg(sb);
@@ -620,5 +622,7 @@ export async function runCron(sb, { now = new Date(), dry = false, deadline = Da
       await sb.from("dse_social_settings").update({ last_scan_at: now.toISOString() }).eq("id", 1);
     }
   }
+  // 5. fun ideas: once a day (birthdays, game weeks, posted schedules, holidays; Claude's memes on Mondays)
+  if (Date.now() < deadline - 120e3) out.ideas = await ideasCron(sb, s, { now, dry }).catch(e => ({ error: e.message }));
   return out;
 }

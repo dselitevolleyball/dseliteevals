@@ -31,6 +31,7 @@ const fmtWhen = (iso) => iso ? new Date(iso).toLocaleString(undefined, { weekday
 const fmtDay = (iso) => iso ? new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "";
 const teamLabel = (t) => String(t || "").replace(/^(\d+ Rise) 1$/, "$1");
 const FORMAT = { collage: "Collage", carousel: "Carousel", single: "Single photo", poster: "Poster" };
+const IDEA_KIND = { birthday: "🎂 Coach birthday", tournament: "🏐 Game week", schedule: "📅 Schedules posted", holiday: "🎉 Holiday", meme: "😂 Meme", trend: "🔥 Trend", engagement: "💬 Engagement", throwback: "📸 Throwback" };
 const STATUS = { draft: [T.hot, "Draft"], approved: [T.ok, "Scheduled"], publishing: [T.warn, "Posting…"], published: [T.ok, "Posted"], failed: [T.bad, "Failed"], skipped: [T.mut, "Skipped"] };
 
 export default function DseSocial({ api = realApi }) {
@@ -46,7 +47,7 @@ export default function DseSocial({ api = realApi }) {
   const by = (sts) => (posts || []).filter(p => sts.includes(p.status));
   const drafts = by(["draft", "failed"]), sched = by(["approved", "publishing"]), done = by(["published", "skipped"]);
   const meta = status?.meta;
-  const tabs = [["drafts", "Drafts", drafts.length], ["scheduled", "Scheduled", sched.length], ["posted", "Posted", 0], ["photos", "Photos", 0], ["coaches", "Coach intros", 0], ["settings", "Settings", 0]];
+  const tabs = [["drafts", "Drafts", drafts.length], ["scheduled", "Scheduled", sched.length], ["posted", "Posted", 0], ["ideas", "Ideas", 0], ["photos", "Photos", 0], ["coaches", "Coach intros", 0], ["settings", "Settings", 0]];
 
   return (
     <div style={{ margin: "-14px -18px", padding: "16px 16px 40px", background: T.bg, minHeight: "calc(100vh - 56px)", color: T.text, fontFamily: "inherit" }}>
@@ -67,6 +68,7 @@ export default function DseSocial({ api = realApi }) {
         {tab === "drafts" && <PostList api={api} posts={drafts} loading={!posts} focusId={focusId} onChange={refresh} empty={<>No drafts right now. New family photos become drafts on their own (every half hour, once a batch has gone quiet for 2 hours) - or make one from <button style={link} onClick={() => setTab("photos")}>Photos</button>.</>} />}
         {tab === "scheduled" && <PostList api={api} posts={sched} loading={!posts} onChange={refresh} empty="Nothing waiting. Approved photo posts go out right away; coach intros take the next free evening." />}
         {tab === "posted" && <PostList api={api} posts={done} loading={!posts} onChange={refresh} compact empty="Nothing posted yet." />}
+        {tab === "ideas" && <Ideas api={api} onDrafted={() => { loadPosts(); setTab("drafts"); }} />}
         {tab === "photos" && <Photos api={api} onMade={() => { loadPosts(); setTab("drafts"); }} />}
         {tab === "coaches" && <Coaches api={api} onDrafted={() => { loadPosts(); setTab("drafts"); }} />}
         {tab === "settings" && <Settings api={api} status={status} onChange={loadStatus} />}
@@ -128,7 +130,7 @@ function PostCard({ api, post, onChange, focus, compact }) {
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 6 }}>
           <Pill color={st}>{stLabel}</Pill>
           <span style={{ fontWeight: 800 }}>{post.title}</span>
-          <span style={{ fontSize: 12, color: T.mut }}>{FORMAT[post.format]} · {fmtDay(post.created_at)}</span>
+          <span style={{ fontSize: 12, color: T.mut }}>{post.kind === "idea" ? (IDEA_KIND[post.design?.idea_kind] || "Idea") : FORMAT[post.format]} · {fmtDay(post.created_at)}</span>
         </div>
         {post.status === "approved" && post.scheduled_at && <div style={{ fontSize: 13, color: T.ok, marginBottom: 6 }}>Goes out {fmtWhen(post.scheduled_at)}{post.approved_by ? ` · approved by ${post.approved_by}` : ""}</div>}
         {["draft", "failed", "approved"].includes(post.status) && !compact && <PlannedTime post={post} busy={busy} onSave={(iso) => go("time", "update_post", { scheduled_at: iso })} />}
@@ -147,6 +149,26 @@ function PostCard({ api, post, onChange, focus, compact }) {
                   <input value={design.facts?.[i]?.value || ""} onChange={e => setDesign(d => { const f = [...(d.facts || [])]; f[i] = { ...(f[i] || {}), value: e.target.value }; return { ...d, facts: f }; })} placeholder="Value" style={{ ...input, flex: 1 }} />
                 </div>)}
                 <Btn small disabled={!!busy} onClick={() => go("design", "update_post", { design: { ...design, facts: (design.facts || []).filter(f => f?.label && f?.value) } })}>{busy === "design" ? "Redrawing…" : "Redraw the poster"}</Btn>
+              </div>
+            </details>
+          )}
+          {post.kind === "idea" && editable && (
+            <details style={{ marginTop: 8 }}>
+              <summary style={{ cursor: "pointer", fontSize: 13, color: T.mut }}>Edit the graphic</summary>
+              <div style={{ display: "grid", gap: 6, marginTop: 6 }}>
+                {design.style === "meme" ? <>
+                  <input value={design.top || ""} onChange={e => setDesign(d => ({ ...d, top: e.target.value }))} placeholder="Top line" style={input} />
+                  <input value={design.bottom || ""} onChange={e => setDesign(d => ({ ...d, bottom: e.target.value }))} placeholder="Bottom line" style={input} />
+                </> : <>
+                  <input value={design.tag || ""} onChange={e => setDesign(d => ({ ...d, tag: e.target.value }))} placeholder="Tag (the pink label)" style={input} />
+                  <input value={design.headline || ""} onChange={e => setDesign(d => ({ ...d, headline: e.target.value }))} placeholder="Headline" style={input} />
+                  <input value={design.sub || ""} onChange={e => setDesign(d => ({ ...d, sub: e.target.value }))} placeholder="Line under it" style={input} />
+                  {Array.isArray(design.lines) && <textarea value={(design.lines || []).join("\n")} onChange={e => setDesign(d => ({ ...d, lines: e.target.value.split("\n") }))} rows={4} placeholder="One per line (teams)" style={input} />}
+                </>}
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <Btn small disabled={!!busy} onClick={() => go("design", "update_post", { design: { ...design, lines: Array.isArray(design.lines) ? design.lines.map(l => l.trim()).filter(Boolean) : design.lines } })}>{busy === "design" ? "Redrawing…" : "Redraw"}</Btn>
+                  {design.style !== "text" && design.idea_kind !== "birthday" && <Btn small disabled={!!busy} onClick={() => go("design", "update_post", { another_photo: true })}>Try another photo</Btn>}
+                </div>
               </div>
             </details>
           )}
@@ -193,6 +215,70 @@ function PlannedTime({ post, busy, onSave }) {
       📅 {future(post.scheduled_at) ? <>Planned for <b style={{ color: T.text }}>{fmtWhen(post.scheduled_at)}</b></> : post.scheduled_at ? <>Its planned time has passed - approving posts it now</> : "No planned time - approving posts it now"}
       <input type="datetime-local" value={v} onChange={e => setV(e.target.value)} style={{ ...input, width: "auto", padding: "3px 6px", fontSize: 12, colorScheme: "dark" }} />
       {changed && <Btn small disabled={!!busy} onClick={() => onSave(v ? new Date(v).toISOString() : null)}>{busy === "time" ? "…" : "Move it"}</Btn>}
+    </div>
+  );
+}
+
+// ── ideas ───────────────────────────────────────────────────────────────────
+// Fun ideas: coach birthdays, game weeks, posted schedules and holidays from
+// the club's own data, plus Claude's memes, trends and engagement posts.
+function Ideas({ api, onDrafted }) {
+  const [ideas, setIdeas] = useState(null);
+  const [busy, setBusy] = useState("");
+  const [msg, setMsg] = useState("");
+  const [showAll, setShowAll] = useState(false);
+  const load = () => api("ideas").then(d => setIdeas(d.ideas)).catch(e => setMsg(e.message));
+  useEffect(() => { api("ideas_sync").catch(() => {}).finally(load); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const run = async (key, fn, ok) => { setBusy(key); setMsg(""); try { const r = await fn(); if (ok) setMsg(typeof ok === "function" ? ok(r) : ok); await load(); return r; } catch (e) { setMsg(e.message); } finally { setBusy(""); } };
+  const shown = (ideas || []).filter(i => showAll || i.status !== "dismissed");
+  const days = [...new Set(shown.map(i => i.post_on || ""))].sort();
+  const dayLabel = (d) => d ? new Date(d + "T12:00:00").toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" }) : "Any day";
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
+        <Btn primary disabled={!!busy} onClick={() => run("brain", () => api("ideas_brainstorm", { count: 6 }), (r) => `${r.added} new idea${r.added === 1 ? "" : "s"}${r.trend_error ? " (the trend search didn't work this time, so these are evergreen)" : ""}`)}>{busy === "brain" ? "Thinking… (about a minute)" : "✨ New fun ideas"}</Btn>
+        <Btn disabled={!!busy} onClick={() => run("sync", () => api("ideas_sync"), (r) => r.added ? `${r.added} new from the calendar` : "Up to date")}>{busy === "sync" ? "Checking…" : "Check birthdays & tournaments"}</Btn>
+        <label style={{ fontSize: 13, color: T.mut, display: "inline-flex", gap: 6, alignItems: "center" }}><input type="checkbox" checked={showAll} onChange={e => setShowAll(e.target.checked)} />Show dismissed</label>
+        {msg && <span style={{ fontSize: 13, color: T.mut }}>{msg}</span>}
+      </div>
+      <div style={{ fontSize: 12, color: T.mut, marginBottom: 12 }}>Coach birthdays, game weeks, posted schedules and holidays come from HQ's own data every morning. Memes, trends and comment posts are Claude's, a fresh batch every Monday. "Make it a post" draws the graphic and puts it in Drafts for approval.</div>
+      {!ideas ? <Muted>Loading…</Muted> : !shown.length ? <Box><Muted>No ideas for the next few weeks yet. Press "✨ New fun ideas".</Muted></Box> : (
+        <div style={{ display: "grid", gap: 16 }}>
+          {days.map(d => (
+            <div key={d}>
+              <div style={{ fontSize: 12, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.06em", color: T.hot, marginBottom: 6 }}>{dayLabel(d)}</div>
+              <div style={{ display: "grid", gap: 8 }}>{shown.filter(i => (i.post_on || "") === d).map(i => <IdeaCard key={i.id + ":" + i.updated_at} api={api} idea={i} busy={busy} run={run} onDrafted={onDrafted} />)}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+function IdeaCard({ api, idea, busy, run, onDrafted }) {
+  const [caption, setCaption] = useState(idea.caption || "");
+  const c = idea.card || {};
+  const look = c.style === "meme" ? `Meme on a team photo: "${c.top || ""}" / "${c.bottom || ""}"` : c.style === "text" ? `Text card: "${c.headline || ""}"${c.sub ? ` · ${c.sub}` : ""}` : `${c.tag ? c.tag + " · " : ""}${c.headline || ""}${c.lines?.length ? ` · ${c.lines.length} teams` : ""}`;
+  const dirty = caption !== (idea.caption || "");
+  return (
+    <div style={{ background: T.card, border: "1px solid " + T.line, borderRadius: 12, padding: 12, opacity: idea.status === "dismissed" ? 0.55 : 1 }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 4 }}>
+        <Pill color={T.hot}>{IDEA_KIND[idea.kind] || idea.kind}</Pill>
+        <b>{idea.title}</b>
+        {idea.status === "drafted" && <Pill color={T.ok}>In drafts</Pill>}
+      </div>
+      {idea.pitch && <div style={{ fontSize: 13, color: T.mut, marginBottom: 6 }}>{idea.pitch}</div>}
+      <div style={{ fontSize: 12, color: T.mut, marginBottom: 6 }}>🖼 {look}</div>
+      {idea.status !== "drafted" ? <textarea value={caption} onChange={e => setCaption(e.target.value)} rows={2} style={{ ...input, width: "100%", resize: "vertical", fontSize: 13 }} /> : <div style={{ fontSize: 13, whiteSpace: "pre-wrap" }}>{idea.caption}</div>}
+      {idea.sources?.length > 0 && <div style={{ fontSize: 11, color: T.mut, marginTop: 4 }}>Trend: {idea.sources.slice(0, 2).map((s, k) => <a key={k} href={s.url} target="_blank" rel="noreferrer" style={{ color: T.mut, marginRight: 8 }}>{s.title} ↗</a>)}</div>}
+      {idea.status !== "drafted" && (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+          {idea.status === "new" && <Btn primary small disabled={!!busy} onClick={async () => { if (dirty) await api("idea_update", { id: idea.id, caption }); const r = await run("draft" + idea.id, () => api("idea_draft", { id: idea.id })); if (r?.post || r?.already) onDrafted(); }}>{busy === "draft" + idea.id ? "Drawing it…" : "Make it a post"}</Btn>}
+          {dirty && idea.status === "new" && <Btn small disabled={!!busy} onClick={() => run("save" + idea.id, () => api("idea_update", { id: idea.id, caption }), "Saved")}>Save caption</Btn>}
+          {idea.status === "new" && <Btn small disabled={!!busy} onClick={() => run("x" + idea.id, () => api("idea_dismiss", { id: idea.id }))}>Dismiss</Btn>}
+          {idea.status === "dismissed" && <Btn small disabled={!!busy} onClick={() => run("x" + idea.id, () => api("idea_restore", { id: idea.id }))}>Bring back</Btn>}
+        </div>
+      )}
     </div>
   );
 }
@@ -411,6 +497,7 @@ function Settings({ api, status, onChange }) {
         <div style={{ fontWeight: 800, marginBottom: 8 }}>How it runs</div>
         <div style={{ display: "grid", gap: 10, fontSize: 14 }}>
           <label style={{ display: "flex", gap: 8, alignItems: "center" }}><input type="checkbox" checked={f.auto_photos} onChange={e => setF({ ...f, auto_photos: e.target.checked })} />Draft photo posts from new family uploads by itself</label>
+          <label style={{ display: "flex", gap: 8, alignItems: "center" }}><input type="checkbox" checked={f.auto_ideas} onChange={e => setF({ ...f, auto_ideas: e.target.checked })} />Draft coach birthdays, game weeks and posted schedules by themselves (2 days ahead)</label>
           <label>A batch needs at least <input type="number" min={1} max={10} value={f.min_photos} onChange={e => setF({ ...f, min_photos: e.target.value })} style={{ ...input, width: 60 }} /> photos</label>
           <div style={{ display: "flex", gap: 12 }}>Post to {["facebook", "instagram"].map(p => <label key={p} style={{ display: "inline-flex", gap: 4 }}><input type="checkbox" checked={f.platforms.includes(p)} onChange={e => setF({ ...f, platforms: e.target.checked ? [...f.platforms, p] : f.platforms.filter(x => x !== p) })} />{p === "facebook" ? "Facebook" : "Instagram"}</label>)}</div>
           <label>Approvals go to (Slack DM, by email) <input value={f.approvers} onChange={e => setF({ ...f, approvers: e.target.value })} style={{ ...input, width: "100%" }} /></label>
@@ -419,7 +506,7 @@ function Settings({ api, status, onChange }) {
           <label>Survey questions (one per line)<textarea value={f.intro_questions} onChange={e => setF({ ...f, intro_questions: e.target.value })} rows={7} style={{ ...input, width: "100%", marginTop: 2 }} /></label>
         </div>
         <div style={{ marginTop: 10, display: "flex", gap: 8, alignItems: "center" }}>
-          <Btn primary disabled={!!busy} onClick={() => run("save", async () => { await api("settings_save", { settings: { auto_photos: f.auto_photos, min_photos: Number(f.min_photos), platforms: f.platforms, approvers: f.approvers.split(/[\s,;]+/).filter(Boolean), hashtags: f.hashtags.split(/[\s,]+/).filter(Boolean), intro_time: f.intro_time, intro_questions: f.intro_questions.split("\n") } }); onChange(); setMsg("Saved"); })}>{busy === "save" ? "Saving…" : "Save settings"}</Btn>
+          <Btn primary disabled={!!busy} onClick={() => run("save", async () => { await api("settings_save", { settings: { auto_photos: f.auto_photos, auto_ideas: f.auto_ideas, min_photos: Number(f.min_photos), platforms: f.platforms, approvers: f.approvers.split(/[\s,;]+/).filter(Boolean), hashtags: f.hashtags.split(/[\s,]+/).filter(Boolean), intro_time: f.intro_time, intro_questions: f.intro_questions.split("\n") } }); onChange(); setMsg("Saved"); })}>{busy === "save" ? "Saving…" : "Save settings"}</Btn>
           {msg && <span style={{ fontSize: 13, color: /saved|connected/i.test(msg) ? T.ok : T.bad }}>{msg}</span>}
         </div>
       </Box>
