@@ -48,7 +48,8 @@ export function fakeSupabase(seed = {}, { rpc = {} } = {}) {
         out = [];
         for (const r of payload) {
           const hit = rows.find(x => keys.every(k => x[k] != null && String(x[k]) === String(r[k])));
-          if (hit) { if (!opts.ignoreDuplicates) Object.assign(hit, r); out.push(hit); }
+          // Like PostgREST: ignoreDuplicates (ON CONFLICT DO NOTHING) returns only the rows it inserted.
+          if (hit) { if (!opts.ignoreDuplicates) { Object.assign(hit, r); out.push(hit); } }
           else { const row = { id: nextId(t), ...r }; rows.push(row); out.push(row); }
         }
       } else if (op === "update") { out = rows.filter(r => filters.every(f => f(r))); out.forEach(r => Object.assign(r, payload)); }

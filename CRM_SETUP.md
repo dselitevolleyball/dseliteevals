@@ -192,6 +192,53 @@ audience is the same families with a textable phone, minus opt-outs and "do not 
 **Offers:** offer codes aren't created automatically. Create the code (e.g. `COMEBACK50`) in
 Playbook before the first step goes out. HQ reminds you when you schedule.
 
+## Birthday emails (People → Birthdays)
+
+Two automatic emails to the parent of every kid in People with a birthday on file:
+
+| Email | When | Who | Offer |
+|---|---|---|---|
+| 🎉 **Party invite** | 75 days before the birthday | kids turning 3–13 | **BDAY50**: $50 off one party package. Once per customer; expires Dec 1, 2027. |
+| 🎂 **Happy birthday** | on the birthday | kids turning up to 18 | **BDAY35**: $35 off anything. Once per customer; no expiration. |
+
+**The party invite** shows the open party times for the weekends around the birthday. They come
+live from Playbook's public party page, which lists the 12 and 20 kid packages:
+
+- **Weekday birthday:** the weekend before and the weekend after.
+- **Weekend birthday:** the weekend before and the birthday weekend itself.
+
+It also shows party photos from the Marketing photo library (the `parties` line or tag).
+
+**If Playbook has no party times set up yet** for those dates, the email doesn't say "booked". It
+says "booking opens soon" and has a **Hold a date** button that replies to info@. Playbook's
+party times currently only go to Dec 27, 2026. Add 2027 times in Playbook (the party packages'
+schedule) so invites can show real times.
+
+**Rules:**
+
+- **Timing:** sent at 9am and 3pm Central. The 3pm run only picks up new ones and retries
+  failures.
+- **Never twice:** each email is claimed in `dssc_birthday_sends` before it goes, so no child
+  gets the same email twice.
+- **Twins** get one email.
+- **One child on two parents' accounts** gets one email, sent to the parent seen most recently.
+- **Left out:** families unsubscribed or bounced, staff and Playbook accounts, and test records.
+- **Party invite only:** a family with a party already booked within 120 days of the birthday
+  isn't invited.
+- **Catch-up:** a kid added late still gets the party invite, up to 14 days after day 75.
+  When the party invite is first turned on, kids whose day 75 was in the last two weeks get
+  theirs on the next run.
+
+**The Birthdays tab:**
+
+- Each email has an **On/Off** switch, and both start off.
+- **Send me a preview** builds the next real email and sends it to you, marked [Preview].
+- You can edit ages, days, amounts and codes.
+- **Next 30 days** shows who gets what and when. **Skip** stops one of those emails.
+- **Sent lately** shows what went out.
+
+**Setup:** run `migrations/20261111_dssc_birthdays.sql`. The codes must exist in Playbook.
+
 ## Files
 
 | File | What it does |
@@ -212,3 +259,5 @@ Playbook before the first step goes out. HQ reminds you when you schedule.
 | `api/_lib/crm-campaigns.js`, `api/crm-campaigns.js` | campaign drafting (Claude), scheduling onto the calendar, results |
 | `src/dssc/DsscCrmPulse.jsx`, `src/dssc/DsscCrmCampaigns.jsx` | the Pulse and Campaigns tabs |
 | `scripts/test-crm-v2.mjs` | offline tests: `node scripts/test-crm-v2.mjs` |
+| `migrations/20261111_dssc_birthdays.sql`, `api/_lib/dssc-birthdays.js`, `api/dssc-birthdays.js`, `src/dssc/DsscCrmBirthdays.jsx` | birthday emails |
+| `scripts/test-dssc-birthdays.mjs` | offline tests: `node scripts/test-dssc-birthdays.mjs` |

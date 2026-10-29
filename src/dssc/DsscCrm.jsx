@@ -26,6 +26,7 @@ import Papa from "papaparse";
 import DsscCrmSegments from "./DsscCrmSegments.jsx";
 import DsscCrmPulse from "./DsscCrmPulse.jsx";
 import DsscCrmCampaigns from "./DsscCrmCampaigns.jsx";
+import DsscCrmBirthdays from "./DsscCrmBirthdays.jsx";
 import { loadSegmentData, buildFamilies, familyMatches, describeSegment, EMPTY_SEGMENT } from "../../shared/crm-segments.js";
 import { stageMeta, PRODUCTS, hasProduct } from "../../shared/crm-profile.js";
 import { revenueIdeas, nextBestFor } from "../../shared/crm-ideas.js";
@@ -260,7 +261,7 @@ export default function DsscCrm({ coach, onText, isDirector, onOpenView }) {
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
           <img src={import.meta.env.BASE_URL + "dssc/logo-horizontal-white.png"} alt="Dripping Springs Sports Club" style={{ height: 30 }} />
           <Tag color={DS.lime}>People</Tag>
-          {tab("pulse", "Pulse")}{tab("people", "People")}{tab("segments", "Segments")}{tab("campaigns", "Campaigns")}
+          {tab("pulse", "Pulse")}{tab("people", "People")}{tab("segments", "Segments")}{tab("campaigns", "Campaigns")}{tab("birthdays", "Birthdays")}
           <div style={{ flex: 1 }} />
           <span style={{ fontSize: 12, color: DS.mut }}>{contacts.length.toLocaleString()} families · {parts.length.toLocaleString()} players</span>
           <input ref={fileRef} type="file" accept=".csv" multiple style={{ display: "none" }} onChange={e => upload(e.target.files)} />
@@ -272,6 +273,7 @@ export default function DsscCrm({ coach, onText, isDirector, onOpenView }) {
 
         {view === "pulse" && <DsscCrmPulse index={index} ideas={ideas} loading={loading} onPeople={showPeople} onCampaign={startCampaign} onOpen={setOpenId} />}
         {view === "segments" && <DsscCrmSegments coach={coach} data={data} index={index} onCampaign={startCampaign} onPeople={showPeople} />}
+        {view === "birthdays" && <DsscCrmBirthdays />}
         {view === "campaigns" && <DsscCrmCampaigns index={index} ideas={ideas} prefill={campaignDraft} onPeople={showPeople} onOpenMarketing={() => onOpenView?.("dsscmarketing")} />}
 
         {view === "people" && <>

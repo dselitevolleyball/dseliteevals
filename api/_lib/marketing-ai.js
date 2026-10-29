@@ -366,6 +366,20 @@ const accentHtml = (headline, accent) => {
   const i = h.indexOf(esc(a));
   return i < 0 ? h : `${h.slice(0, i)}<span style="color:#B2D049">${esc(a)}</span>${h.slice(i + esc(a).length)}`;
 };
+// Optional extras (birthday emails, api/_lib/dssc-birthdays.js): a coupon
+// box { amount: "$50 OFF", code, note } and a gallery of up to 4 photo urls.
+const couponBox = (c) => `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:4px 0 16px"><tr><td style="border:3px dashed #0F8B76;background:#ffffff;padding:16px 18px;text-align:center">
+<div style="font-family:${FONT_H};font-weight:900;font-size:40px;line-height:1;text-transform:uppercase;color:#E86FA6">${esc(c.amount)}</div>
+${c.what ? `<div style="font-family:${FONT_B};font-size:15px;color:#061a18;margin-top:4px">${esc(c.what)}</div>` : ""}
+${c.code ? `<div style="font-family:${FONT_H};font-weight:800;font-size:22px;letter-spacing:3px;color:#061a18;margin-top:10px">CODE: <span style="background:#B2D049;padding:2px 10px">${esc(c.code)}</span></div>` : ""}
+${c.note ? `<div style="font-family:${FONT_B};font-size:13px;color:#104946;margin-top:8px">${esc(c.note)}</div>` : ""}
+</td></tr></table>`;
+const galleryRow = (urls) => {
+  const u = (Array.isArray(urls) ? urls : []).filter(Boolean).slice(0, 4);
+  if (!u.length) return "";
+  const rows = []; for (let i = 0; i < u.length; i += 2) rows.push(u.slice(i, i + 2));
+  return `<tr><td style="background:#F4F0E8;padding:18px 18px 0"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">${rows.map(r => `<tr>${r.map(x => `<td width="${r.length === 1 ? 100 : 50}%" style="padding:6px"><img src="${esc(x)}" width="${r.length === 1 ? 552 : 270}" alt="A birthday party at DSSC" style="display:block;width:100%;height:auto;border:0"></td>`).join("")}</tr>`).join("")}</table></td></tr>`;
+};
 const paras = (t) => String(t || "").split(/\n{2,}/).map(p => p.trim()).filter(Boolean).map(p => `<p style="margin:0 0 14px">${esc(p).replace(/\n/g, "<br>")}</p>`).join("");
 
 // item-ish: { email_subject, email_preheader, headline, graphic:{accent, sub}, body, cta_text, cta_url, email_blocks, hero_url }
@@ -388,6 +402,7 @@ ${it.graphic?.sub ? `<div style="font-family:${FONT_B};font-size:16px;color:#a9b
 </td></tr>
 <tr><td style="background:#F4F0E8;padding:26px 24px 10px;font-family:${FONT_B};font-size:16px;line-height:1.55;color:#061a18">
 ${paras(it.body)}
+${it.coupon ? couponBox(it.coupon) : ""}
 ${it.cta_url ? btn(it.cta_text || "Register", it.cta_url) : ""}
 </td></tr>
 ${blocks.map((b, i) => `${b.section && b.section !== (blocks[i - 1] || {}).section ? `<tr><td style="background:#F4F0E8;padding:28px 24px 0"><div style="font-family:${FONT_H};font-weight:900;font-size:34px;line-height:1;text-transform:uppercase;color:#104946">${esc(b.section)}</div></td></tr>` : ""}<tr><td style="background:#F4F0E8;padding:18px 24px 6px;font-family:${FONT_B};font-size:15px;line-height:1.5;color:#061a18">
@@ -398,6 +413,7 @@ ${b.date_label ? `<div style="font-weight:700;color:#104946;margin-bottom:6px">$
 ${b.blurb ? `<div style="margin-bottom:8px">${esc(b.blurb)}</div>` : ""}
 ${b.url ? `<a href="${esc(b.url)}" style="font-family:${FONT_H};font-weight:900;font-size:17px;letter-spacing:.5px;text-transform:uppercase;color:#0F8B76;text-decoration:none">${esc(b.cta || "Details")} &rarr;</a>` : ""}
 </div></td></tr>`).join("\n")}
+${galleryRow(it.gallery)}
 <tr><td style="background:#F4F0E8;padding:8px 24px 26px"></td></tr>
 <tr><td style="background:#061a18;padding:24px;font-family:${FONT_B};font-size:13px;line-height:1.6;color:#a9b7b1">
 <div style="font-family:${FONT_H};font-weight:900;font-size:22px;text-transform:uppercase;color:#F4F0E8;margin-bottom:6px">Where Dripping Springs <span style="color:#B2D049">plays.</span></div>
@@ -408,6 +424,7 @@ You're getting this because your family has signed up for a program at DSSC. <a 
 </table></td></tr></table></body></html>`;
   const text = [
     String(it.headline || "").toUpperCase(), it.graphic?.sub || "", "", String(it.body || ""), "",
+    ...(it.coupon ? [`${it.coupon.amount}${it.coupon.code ? " - code " + it.coupon.code : ""}${it.coupon.note ? " (" + it.coupon.note + ")" : ""}`, ""] : []),
     it.cta_url ? `${it.cta_text || "Register"}: ${it.cta_url}` : "", "",
     ...blocks.flatMap((b, i) => [...(b.section && b.section !== (blocks[i - 1] || {}).section ? ["== " + String(b.section).toUpperCase() + " ==", ""] : []), String(b.title || "").toUpperCase(), b.date_label || "", b.blurb || "", b.url ? `${b.cta || "Details"}: ${b.url}` : "", ""]),
     "Where Dripping Springs plays.", CLUB_ADDRESS, SITE, "", `Unsubscribe: ${UNSUB_TOKEN}`,
