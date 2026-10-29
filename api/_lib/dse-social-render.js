@@ -34,13 +34,28 @@ export function ensureFonts() {
 let logoP = null;
 const logo = () => (logoP ||= (async () => { const d = assetDir(); return d ? loadImage(join(d, "ds-elite-white-logo.png")).catch(() => null) : null; })());
 
+// What a file really is, from its first bytes. The decoder crashes the whole
+// function on an iPhone HEIC (one family upload was a HEIC named ".jpeg"), so
+// only JPEG, PNG and WebP are ever opened.
+export function imageKind(buf) {
+  if (!buf || buf.length < 12) return null;
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return "jpeg";
+  if (buf.slice(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "png";
+  if (buf.toString("ascii", 0, 4) === "RIFF" && buf.toString("ascii", 8, 12) === "WEBP") return "webp";
+  if (buf.toString("ascii", 4, 8) === "ftyp") return "heic";
+  return null;
+}
 // A photo from a URL or a Buffer.
 export async function photo(src) {
   if (!src) return null;
-  if (Buffer.isBuffer(src)) return loadImage(src);
-  const r = await fetch(src, { signal: AbortSignal.timeout(30000) });
-  if (!r.ok) throw new Error(`Couldn't load a photo (HTTP ${r.status})`);
-  return loadImage(Buffer.from(await r.arrayBuffer()));
+  const buf = Buffer.isBuffer(src) ? src : await (async () => {
+    const r = await fetch(src, { signal: AbortSignal.timeout(30000) });
+    if (!r.ok) throw new Error(`Couldn't load a photo (HTTP ${r.status})`);
+    return Buffer.from(await r.arrayBuffer());
+  })();
+  const kind = imageKind(buf);
+  if (!["jpeg", "png", "webp"].includes(kind)) throw new Error(kind === "heic" ? "It's an iPhone HEIC file, which can't be opened here" : buf.length ? "Not a JPEG, PNG or WebP image" : "The file is empty");
+  return loadImage(buf);
 }
 
 // Draw `img` to fill the box, cropping around the focus point.

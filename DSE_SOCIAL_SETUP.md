@@ -15,9 +15,17 @@ Instagram from two things the club already has:
 
 Every draft comes to you as a **Slack DM with the picture, the caption and Approve & post / Skip**,
 and it's in HQ → Social to edit: the caption, the hashtags, the photo order, collage or carousel,
-Facebook and/or Instagram. Approved photo posts go out right away. Approved coach intros go out
-one an evening at 6:30 pm Central, so ten answers don't land on one night. **Nothing posts
-without an approval.**
+Facebook and/or Instagram, and the planned time. **Every draft is planned for the next free
+evening** (6:30 pm Central, one DS Elite post a day, so a week of drafts becomes a week of posts).
+Approving it keeps that time; **Post now** sends it straight away. **Nothing posts without an
+approval.**
+
+**Already posted?** The club also posts family photos by hand. Before a batch becomes a draft,
+every photo is compared with DS Elite's Facebook and Instagram from the last 75 days
+(`api/_lib/dse-social-feed.js`: a visual fingerprint, so a resized copy still matches). A photo
+already there is recorded as used, under an "already on Facebook" entry in Posted linked to that
+post, and left out. On the first scan (Oct 29 2026) it found 94 of 151 uploads already posted,
+with no false matches. Near-blank images (screenshots, text slides) are never matched.
 
 ```
 /photos uploads ──► cron (every 15 min): batch quiet 2 h ──► Claude picks + caption ──► render ──► Slack DM ─┐
@@ -123,6 +131,10 @@ Other actions:
 
 Preview the survey page: `https://dseliteevals.vercel.app/coach-intro?preview=1`.
 
+**Files it can't open:** empty files (an upload that never finished) and iPhone HEIC photos saved
+as ".jpeg" are set aside. Each file is checked by its first bytes before it's opened, because a HEIC
+crashes the image decoder.
+
 ## 5. Kids' privacy
 - **Claude is told to reject when unsure.** Anything a parent could reasonably not want public is
   left out, and it's fine for Claude to reject a whole batch. The draft shows which photos it left
@@ -135,6 +147,10 @@ Preview the survey page: `https://dseliteevals.vercel.app/coach-intro?preview=1`
 - **Every post is approved by a person** before it goes out.
 
 ## How it runs
+- **Instagram** goes to whichever Instagram is linked to the Page. If posts land on the wrong
+  account, turn Instagram off in Settings, link the right account to the Page (Meta Business Suite
+  → Settings → Accounts → Instagram accounts), press Connect Facebook again, check that Settings
+  shows the right @handle, and turn Instagram back on.
 - **`/api/dse-social-cron`** runs at :07, :22, :37 and :52 past the hour. Each run:
   1. posts approved posts whose time has come (and retries any stuck one);
   2. sends 3-day reminders;

@@ -127,6 +127,7 @@ function PostCard({ api, post, onChange, focus, compact }) {
           <span style={{ fontSize: 12, color: T.mut }}>{FORMAT[post.format]} · {fmtDay(post.created_at)}</span>
         </div>
         {post.status === "approved" && post.scheduled_at && <div style={{ fontSize: 13, color: T.ok, marginBottom: 6 }}>Goes out {fmtWhen(post.scheduled_at)}{post.approved_by ? ` · approved by ${post.approved_by}` : ""}</div>}
+        {["draft", "failed", "approved"].includes(post.status) && !compact && <PlannedTime post={post} busy={busy} onSave={(iso) => go("time", "update_post", { scheduled_at: iso })} />}
         {post.status === "published" && <div style={{ fontSize: 13, marginBottom: 6 }}>Posted {fmtWhen(post.published_at)} {links.facebook && <a href={links.facebook} target="_blank" rel="noreferrer" style={{ color: T.hot }}>Facebook ↗</a>} {links.instagram && <a href={links.instagram} target="_blank" rel="noreferrer" style={{ color: T.hot }}>Instagram ↗</a>}{post.error && <span style={{ color: T.mut }}> · {post.error}</span>}</div>}
         {compact ? <div style={{ fontSize: 13, color: T.mut, whiteSpace: "pre-wrap" }}>{post.caption}</div> : (<>
           <textarea value={caption} disabled={!editable} onChange={e => setCaption(e.target.value)} rows={5} style={{ ...input, width: "100%", resize: "vertical", lineHeight: 1.45 }} />
@@ -163,8 +164,8 @@ function PostCard({ api, post, onChange, focus, compact }) {
           {err && <div style={{ color: T.bad, fontSize: 13, marginTop: 8 }}>{err}</div>}
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
             {dirty && <Btn primary disabled={!!busy} onClick={save}>{busy === "save" ? "Saving…" : "Save changes"}</Btn>}
-            {["draft", "failed"].includes(post.status) && !dirty && <Btn primary disabled={!!busy} onClick={() => go("approve", post.status === "failed" ? "publish_now" : "approve")}>{busy === "approve" ? "Working…" : post.status === "failed" ? "↻ Try posting again" : post.kind === "coach_intro" ? "✓ Approve (next free evening)" : "✓ Approve & post"}</Btn>}
-            {post.kind === "coach_intro" && post.status === "draft" && !dirty && <Btn disabled={!!busy} onClick={() => go("approve", "approve", { now: true })}>Approve & post now</Btn>}
+            {["draft", "failed"].includes(post.status) && !dirty && <Btn primary disabled={!!busy} onClick={() => go("approve", post.status === "failed" ? "publish_now" : "approve")}>{busy === "approve" ? "Working…" : post.status === "failed" ? "↻ Try posting again" : future(post.scheduled_at) ? `✓ Approve for ${fmtWhen(post.scheduled_at)}` : "✓ Approve & post"}</Btn>}
+            {post.status === "draft" && !dirty && future(post.scheduled_at) && <Btn disabled={!!busy} onClick={() => go("approve", "approve", { now: true })}>Approve & post now</Btn>}
             {post.status === "approved" && <Btn primary disabled={!!busy} onClick={() => go("now", "publish_now")}>{busy === "now" ? "Posting…" : "Post now"}</Btn>}
             {post.status === "approved" && <Btn disabled={!!busy} onClick={() => go("back", "unapprove")}>Back to draft</Btn>}
             {["draft", "failed", "approved"].includes(post.status) && <Btn disabled={!!busy} onClick={() => go("skip", "skip")}>Skip</Btn>}
@@ -172,6 +173,22 @@ function PostCard({ api, post, onChange, focus, compact }) {
           </div>
         </>)}
       </div>
+    </div>
+  );
+}
+
+const future = (iso) => !!iso && Date.parse(iso) > Date.now() + 5 * 60e3;
+// The planned time, and a way to move it (a local date + time picker).
+function PlannedTime({ post, busy, onSave }) {
+  const toLocal = (iso) => { if (!iso) return ""; const d = new Date(iso); const z = (n) => String(n).padStart(2, "0"); return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}T${z(d.getHours())}:${z(d.getMinutes())}`; };
+  const [v, setV] = useState(toLocal(post.scheduled_at));
+  const changed = v !== toLocal(post.scheduled_at);
+  if (post.status === "approved") return null;
+  return (
+    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", fontSize: 13, color: T.mut, marginBottom: 8 }}>
+      📅 {future(post.scheduled_at) ? <>Planned for <b style={{ color: T.text }}>{fmtWhen(post.scheduled_at)}</b></> : post.scheduled_at ? <>Its planned time has passed - approving posts it now</> : "No planned time - approving posts it now"}
+      <input type="datetime-local" value={v} onChange={e => setV(e.target.value)} style={{ ...input, width: "auto", padding: "3px 6px", fontSize: 12, colorScheme: "dark" }} />
+      {changed && <Btn small disabled={!!busy} onClick={() => onSave(v ? new Date(v).toISOString() : null)}>{busy === "time" ? "…" : "Move it"}</Btn>}
     </div>
   );
 }
@@ -394,7 +411,7 @@ function Settings({ api, status, onChange }) {
           <div style={{ display: "flex", gap: 12 }}>Post to {["facebook", "instagram"].map(p => <label key={p} style={{ display: "inline-flex", gap: 4 }}><input type="checkbox" checked={f.platforms.includes(p)} onChange={e => setF({ ...f, platforms: e.target.checked ? [...f.platforms, p] : f.platforms.filter(x => x !== p) })} />{p === "facebook" ? "Facebook" : "Instagram"}</label>)}</div>
           <label>Approvals go to (Slack DM, by email) <input value={f.approvers} onChange={e => setF({ ...f, approvers: e.target.value })} style={{ ...input, width: "100%" }} /></label>
           <label>Hashtags on every post <input value={f.hashtags} onChange={e => setF({ ...f, hashtags: e.target.value })} style={{ ...input, width: "100%", color: T.hot }} /></label>
-          <label>Coach intros go out at <input type="time" value={f.intro_time} onChange={e => setF({ ...f, intro_time: e.target.value })} style={{ ...input, width: 120, colorScheme: "dark" }} /> Central, one an evening</label>
+          <label>Posts go out at <input type="time" value={f.intro_time} onChange={e => setF({ ...f, intro_time: e.target.value })} style={{ ...input, width: 120, colorScheme: "dark" }} /> Central, one a day: each draft is planned for the next free day (photo posts and coach intros alike)</label>
           <label>Survey questions (one per line)<textarea value={f.intro_questions} onChange={e => setF({ ...f, intro_questions: e.target.value })} rows={7} style={{ ...input, width: "100%", marginTop: 2 }} /></label>
         </div>
         <div style={{ marginTop: 10, display: "flex", gap: 8, alignItems: "center" }}>

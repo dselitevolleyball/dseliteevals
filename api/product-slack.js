@@ -63,14 +63,14 @@ async function onSocialButton(sb, cfg, p, a) {
     // Loaded only here, so the Product board's buttons never depend on it.
     const { approvePost, skipPost, publishPost } = await import("./_lib/dse-social.js");
     if (a.action_id === "dse_social_skip") return void await skipPost(sb, a.value, by);
-    const r = await approvePost(sb, a.value, by);
+    const r = await approvePost(sb, a.value, by, { now: a.action_id === "dse_social_now" });
     if (r.due) { const out = await publishPost(sb, a.value); if (out.errors?.length) return oops(p.response_url, "Approved, but posting failed: " + out.errors.join(" · ")); }
   } catch (e) { return oops(p.response_url, `Couldn't do that: ${e.message}`); }
 }
 
 async function onButton(sb, cfg, p) {
   const a0 = p.actions?.[0];
-  if (a0 && /^dse_social_(approve|skip)$/.test(a0.action_id)) return onSocialButton(sb, cfg, p, a0);
+  if (a0 && /^dse_social_(approve|skip|now)$/.test(a0.action_id)) return onSocialButton(sb, cfg, p, a0);
   const a = a0; if (!a || !["approve", "decline", "build", "ship", "retry"].includes(a.action_id)) return;
   const me = await approverFor(sb, cfg, p.user?.id);
   if (!me) return oops(p.response_url, "Only Drew and HQ admins can do that from Slack.");

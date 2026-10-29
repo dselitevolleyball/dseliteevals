@@ -95,6 +95,7 @@ export async function run(sb, { me, name }, b) {
       if (Array.isArray(b.hashtags)) patch.hashtags = b.hashtags.map(h => String(h).replace(/^#+/, "").trim()).filter(Boolean).slice(0, 15);
       if (Array.isArray(b.platforms)) patch.platforms = b.platforms.filter(p => ["facebook", "instagram"].includes(p));
       if (Array.isArray(b.platforms) && !patch.platforms.length) throw fail(400, "Pick Facebook, Instagram or both");
+      if (b.scheduled_at !== undefined) { const t = b.scheduled_at ? Date.parse(b.scheduled_at) : null; if (t !== null && !Number.isFinite(t)) throw fail(400, "That time isn't a date"); patch.scheduled_at = t === null ? null : new Date(t).toISOString(); }
       let redraw = false;
       if (b.format && b.format !== post.format && post.kind === "photos") { if (!["collage", "carousel", "single"].includes(b.format)) throw fail(400, "Unknown format"); patch.format = b.format; redraw = true; }
       if (Array.isArray(b.photos) && post.kind === "photos") {
@@ -110,7 +111,9 @@ export async function run(sb, { me, name }, b) {
       if (next.kind === "photos" && next.format === "single") next.photos = next.photos.slice(0, 1), patch.photos = next.photos;
       if (redraw) Object.assign(patch, next.kind === "coach_intro" ? { asset_url: await S.rerenderPoster(sb, next) } : await S.renderPost(sb, next));
       // A change to an approved post needs approving again.
-      if (post.status === "approved") Object.assign(patch, { status: "draft", approved_by: null, approved_at: null, scheduled_at: null });
+      // (A new planned time alone keeps the approval.)
+      const onlyTime = Object.keys(patch).every(k => ["scheduled_at", "updated_at"].includes(k));
+      if (post.status === "approved" && !onlyTime) Object.assign(patch, { status: "draft", approved_by: null, approved_at: null });
       const { data, error } = await sb.from("dse_social_posts").update(patch).eq("id", post.id).select().single();
       if (error) throw fail(500, error.message);
       return { post: data };
@@ -127,7 +130,7 @@ export async function run(sb, { me, name }, b) {
       return await S.publishPost(sb, b.id);
     }
     case "unapprove": {
-      const { data } = await sb.from("dse_social_posts").update({ status: "draft", approved_by: null, approved_at: null, scheduled_at: null }).eq("id", Number(b.id)).in("status", ["approved", "failed", "skipped"]).select().maybeSingle();
+      const { data } = await sb.from("dse_social_posts").update({ status: "draft", approved_by: null, approved_at: null }).eq("id", Number(b.id)).in("status", ["approved", "failed", "skipped"]).select().maybeSingle();
       if (!data) throw fail(400, "Only an approved, failed or skipped post can go back to draft");
       return { post: data };
     }
@@ -164,8 +167,8 @@ export async function run(sb, { me, name }, b) {
       const ids = (b.photo_ids || []).map(Number).filter(Boolean).slice(0, 20);
       const { data: rows } = await sb.from("player_photos").select("*").in("id", ids);
       const ordered = ids.map(id => (rows || []).find(r => r.id === id)).filter(Boolean);
-      const r = await S.draftPhotoPost(sb, ordered, { by });
-      if (r.skipped && r.broken?.length && !r.reasons) throw fail(400, r.error);
+      const r = await S.draftPhotoPost(sb, ordered, { by, plannedAt: b.planned_at || null });
+      if (r.skipped && !r.reasons) throw fail(400, r.error);
       if (r.skipped) throw fail(400, "Claude didn't find a photo it would post: " + ((r.reasons || []).filter(x => !x.usable).map(x => x.reason).slice(0, 3).join("; ") || r.error || "none usable"));
       return r;
     }

@@ -80,7 +80,9 @@ const ok = (name) => { n++; console.log("  ✓ " + name); };
   assert.equal(m.blocks.filter(b => b.type === "image").length, 4, "a carousel shows up to 4 photos");
   assert.ok(m.blocks.some(b => b.type === "section" && /&lt;energy&gt; &amp;/.test(b.text.text)), "the caption is escaped for Slack");
   const actions = m.blocks.find(b => b.type === "actions").elements.map(e => e.action_id);
-  assert.deepEqual(actions, ["dse_social_approve", "dse_social_skip", "dse_social_open"]);
+  assert.deepEqual(actions, ["dse_social_approve", "dse_social_now", "dse_social_skip", "dse_social_open"]);
+  const planned = S.approvalMessage({ ...post, scheduled_at: new Date(Date.now() + 86400e3).toISOString() });
+  assert.match(planned.blocks[0].text.text, /planned for/); assert.match(planned.blocks.find(b => b.type === "actions").elements[0].text.text, /^✓ Approve for /);
   const done = S.approvalMessage(post, { done: "Posted" });
   assert.ok(!done.blocks.some(b => b.type === "actions") && done.blocks.some(b => b.type === "context"), "a decided card loses its buttons");
   ok("captions, and the Slack approval card");
@@ -176,6 +178,56 @@ const ok = (name) => { n++; console.log("  ✓ " + name); };
   ok("publishing: carousel to both, a failed platform retried alone, never twice");
 }
 
+// ── what a file really is; the feed check ──────────────────────────────────
+{
+  const { imageKind } = await import("../api/_lib/dse-social-render.js");
+  const { matchFeed, isFlat, MATCH_MAX } = await import("../api/_lib/dse-social-feed.js");
+  assert.equal(imageKind(Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0, 0, 0, 0, 0])), "jpeg");
+  assert.equal(imageKind(Buffer.from("\0\0\0\x18ftypheicmif1", "binary")), "heic", "the HEIC named .jpeg");
+  assert.equal(imageKind(Buffer.alloc(0)), null);
+  const { photo } = await import("../api/_lib/dse-social-render.js");
+  await assert.rejects(photo(Buffer.from("\0\0\0\x18ftypheicmif1\0\0\0\0", "binary")), /HEIC/, "a HEIC is refused, not decoded");
+  const rnd = (seed) => { let x = seed, s = ""; for (let i = 0; i < 256; i++) { x = (x * 1103515245 + 12345) % 2147483648; s += (x >> 16) & 1 ? "1" : "0"; } return s; };
+  const a = rnd(7), b = rnd(99), flip = (h, k) => h.split("").map((c, i) => i < k ? (c === "1" ? "0" : "1") : c).join("");
+  const feed = [{ src: "x", hash: b }, { src: "same", hash: flip(a, 30) }, { src: "flat", hash: "0".repeat(250) + "1".repeat(6) }];
+  assert.equal(matchFeed([a], feed)?.src, "same", "a recompressed copy matches");
+  assert.equal(matchFeed([a], [{ src: "x", hash: b }]), null, "a different photo doesn't");
+  assert.equal(matchFeed([flip(a, MATCH_MAX + 10)], [{ src: "far", hash: a }]), null);
+  assert.ok(isFlat("0".repeat(250) + "1".repeat(6)) && !isFlat(a));
+  assert.equal(matchFeed(["0".repeat(256)], [{ src: "flat", hash: "0".repeat(256) }]), null, "near-blank images never match");
+  // the real scan of Oct 29: every confirmed repeat matches, the screenshot doesn't
+  const fs = await import("node:fs"), dir = "/tmp/claude-0/-home-user-dseliteevals/f5b50e17-f915-5571-a07a-ef7a927e74aa/scratchpad/feed/";
+  if (fs.existsSync(dir + "matches.json")) {
+    const feedReal = JSON.parse(fs.readFileSync(dir + "feedhash.json")).map(f => ({ ...f, aspect: f.w / f.h }));
+    const used = new Set(JSON.parse(fs.readFileSync(dir + "used.json")).filter(u => !u.sibling).map(u => u.id));
+    let hit = 0, miss = 0, wrong = 0;
+    for (const f of fs.readdirSync(dir).filter(f => /^p\d+\.json$/.test(f))) {
+      const p = JSON.parse(fs.readFileSync(dir + f)), m = matchFeed([p.hash, ...p.crops], feedReal, p.w / p.h);
+      if (used.has(p.id)) m ? hit++ : miss++; else if (m) wrong++;
+    }
+    assert.equal(miss, 0, "every confirmed repeat is caught"); assert.equal(wrong, 0, "nothing else is");
+    console.log(`    (real feed: ${hit} repeats caught, 0 missed, 0 false)`);
+  }
+  ok("files are sniffed before decoding; the feed check matches repeats, not look-alikes");
+}
+
+// ── planned times ──────────────────────────────────────────────────────────
+{
+  const later = new Date(Date.now() + 2 * 86400e3).toISOString(), past = new Date(Date.now() - 3600e3).toISOString();
+  const sb = fakeDb({ dse_social_posts: [
+    { id: 1, kind: "photos", status: "draft", scheduled_at: later, slack: {} },
+    { id: 2, kind: "photos", status: "draft", scheduled_at: later, slack: {} },
+    { id: 3, kind: "photos", status: "draft", scheduled_at: past, slack: {} },
+  ], dse_social_settings: [{ id: 1, intro_time: "18:30" }], hq_kv: [] });
+  let r = await S.approvePost(sb, 1, "Drew");
+  assert.equal(r.post.scheduled_at, later, "approving keeps the planned evening"); assert.equal(r.due, false);
+  r = await S.approvePost(sb, 2, "Drew", { now: true });
+  assert.ok(r.due, "post now overrides it");
+  r = await S.approvePost(sb, 3, "Drew");
+  assert.ok(r.due, "a photo post whose evening passed goes out now");
+  ok("approval keeps the planned time; post now and passed times go now");
+}
+
 console.log(`dse social: ${n} groups passed`);
 
 // ── stand-ins ──────────────────────────────────────────────────────────────
@@ -201,6 +253,7 @@ function fakeDb(tables) {
       eq(k, v) { filters.push(r => r[k] === v); return q; },
       in(k, vs) { filters.push(r => vs.includes(r[k])); return q; },
       is(k, v) { filters.push(r => (r[k] ?? null) === v); return q; },
+      gte(k, v) { filters.push(r => r[k] == null || r[k] >= v); return q; },
       run() {
         if (op === "insert") { const row = { id: rows.length + 1, ...payload }; rows.push(row); return [row]; }
         const hit = rows.filter(match);

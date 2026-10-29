@@ -31,6 +31,7 @@ import { claudeClient } from "./ai-client.js";
 import { renderCollage, renderFrame, renderPoster, photo as loadPhoto } from "./dse-social-render.js";
 import { fbPhoto, fbMultiPhoto, igImage, igCarousel, dseMeta, permalinks } from "./dse-social-meta.js";
 import { slackCfg, slackApi } from "./product-slack.js";
+import { feedIndex, photoHashes, matchFeed, recordFeedMatches } from "./dse-social-feed.js";
 import { sendOneSms, normalizePhone } from "./sms.js";
 import { resendKeyFor } from "./resend-key.js";
 
@@ -213,18 +214,26 @@ export async function renderPost(sb, post, imgs = null) {
 
 // rows: player_photos (one batch, or a hand-picked set). Returns the post, or
 // { skipped } when nothing was usable.
-export async function draftPhotoPost(sb, rows, { by = "auto", settings = null, notify = true, dry = false } = {}) {
+export async function draftPhotoPost(sb, rows, { by = "auto", settings = null, notify = true, dry = false, plannedAt = null } = {}) {
   const s = settings || await getSettings(sb);
   const list = rows.slice(0, MAX_BATCH);
   if (!list.length) throw fail(400, "No photos");
-  // An upload that never finished is an empty file (22 of the first 153 were):
-  // it's set aside, not sent to Claude as a black square, and marked so the
-  // cron doesn't keep opening it.
+  // An upload that never finished is an empty file (22 of the first 153 were),
+  // and one was an iPhone HEIC the decoder can't open: they're set aside, not
+  // sent to Claude, and marked so the cron doesn't keep opening them.
   const imgs = await Promise.all(list.map(async p => { const buf = await download(sb, p.storage_path).catch(() => null); if (!buf?.length) return null; const im = await loadPhoto(buf).catch(() => null); return im?.width ? im : null; }));
   const broken = list.filter((_, i) => !imgs[i]).map(p => p.id);
   if (broken.length && !dry) await sb.from("player_photos").update({ social_post_id: 0 }).in("id", broken);
-  const ok = list.map((p, i) => ({ p, img: imgs[i] })).filter(x => x.img);
-  if (!ok.length) return { skipped: true, error: `None of those ${list.length} photos could be opened - the upload${list.length === 1 ? " is" : "s are"} empty`, broken };
+  let ok = list.map((p, i) => ({ p, img: imgs[i] })).filter(x => x.img);
+  if (!ok.length) return { skipped: true, error: `None of those ${list.length} photos could be opened (empty uploads or iPhone HEIC files)`, broken };
+  // Already on the Page or Instagram (the club posts by hand too): recorded
+  // as used and left out (api/_lib/dse-social-feed.js).
+  const feed = await feedIndex(sb).catch(e => { console.error("dse social feed", e.message); return []; });
+  const already = [];
+  if (feed.length) ok = ok.filter(x => { const m = matchFeed(photoHashes(x.img), feed, x.img.width / x.img.height); if (m) already.push({ photo: x.p, item: m }); return !m; });
+  const recorded = already.length && !dry ? await recordFeedMatches(sb, already) : [];
+  const alreadyOut = already.map(h => ({ photo_id: h.photo.id, where: h.item.where, at: h.item.at, link: h.item.link }));
+  if (!ok.length) return { skipped: true, already: alreadyOut, recorded, error: `All ${already.length} of these are already on ${[...new Set(already.map(h => h.item.where === "facebook" ? "Facebook" : "Instagram"))].join(" / ")}` };
   const team = teamLabel(ok[0].p.team_name);
   const ev = ok.find(x => x.p.event_label && !GENERIC_EVENT.test(x.p.event_label))?.p.event_label || null;
   const day = ok[0].p.taken_on || ctDay(ok[0].p.created_at);
@@ -245,10 +254,10 @@ title: the team as written ("${team}"). sub: a short line for under it, like the
   }
   const plan = planFrom(ai, ok.length);
   // A look without saving anything: what Claude thought of each photo.
-  if (dry) return { dry: true, model, error: aiErr, format: plan.format, picks: plan.picks.map(i => ok[i].p.id), title: ai.title, sub: ai.sub, caption: ai.caption, hashtags: ai.hashtags, verdicts: (ai.photos || []).map(p => ({ photo_id: ok[p.i]?.p.id, usable: p.usable, reason: p.reason, score: p.score })) };
-  const considered = list.map(p => p.id);
+  if (dry) return { dry: true, already: alreadyOut, model, error: aiErr, format: plan.format, picks: plan.picks.map(i => ok[i].p.id), title: ai.title, sub: ai.sub, caption: ai.caption, hashtags: ai.hashtags, verdicts: (ai.photos || []).map(p => ({ photo_id: ok[p.i]?.p.id, usable: p.usable, reason: p.reason, score: p.score })) };
+  const considered = ok.map(x => x.p.id);
   if (plan.format === "none") {
-    await sb.from("player_photos").update({ social_post_id: 0 }).in("id", considered);
+    await sb.from("player_photos").update({ social_post_id: 0 }).in("id", considered).is("social_post_id", null);
     return { skipped: true, reasons: (ai.photos || []).map(p => ({ id: ok[p.i]?.p.id, usable: p.usable, reason: p.reason })) };
   }
   const picks = plan.picks.map(i => { const a = plan.usable.get(i) || {}; return { photo_id: ok[i].p.id, path: ok[i].p.storage_path, focus: { x: a.focus_x ?? 0.5, y: a.focus_y ?? 0.4 }, note: a.reason || "" }; });
@@ -256,29 +265,32 @@ title: the team as written ("${team}"). sub: a short line for under it, like the
     kind: "photos", format: plan.format, status: "draft", team_name: ok[0].p.team_name, event_label: ev, title: `${team}${ev ? " · " + ev : ""} · ${fmtDay(day)}`,
     photo_ids: considered, photos: picks, caption: String(ai.caption || "").trim(), hashtags: [...(ai.hashtags || []).slice(0, 4), ...s.hashtags],
     design: { title: String(ai.title || team).trim() || team, sub: String(ai.sub || "").trim() }, platforms: s.platforms, created_by: by,
+    scheduled_at: (plannedAt ? new Date(plannedAt) : await nextSlot(sb, s)).toISOString(),
     ai: { model, error: aiErr, verdicts: (ai.photos || []).map(p => ({ photo_id: ok[p.i]?.p.id, usable: p.usable, reason: p.reason, score: p.score })) },
   };
   Object.assign(draft, await renderPost(sb, draft, plan.picks.map(i => ok[i].img)));
   const { data: post, error } = await sb.from("dse_social_posts").insert(draft).select().single();
   if (error) throw fail(500, error.message);
-  await sb.from("player_photos").update({ social_post_id: post.id }).in("id", considered);
+  await sb.from("player_photos").update({ social_post_id: post.id }).in("id", considered).is("social_post_id", null);
   if (notify) await notifyApprovers(sb, post, s).catch(e => console.error("dse social slack", e.message));
-  return { post };
+  return { post, already: alreadyOut };
 }
 
 // ── Slack: the quick approval ───────────────────────────────────────────────
 const KIND_LABEL = { collage: "Collage", carousel: "Photo carousel", single: "Photo post", poster: "Coach intro poster" };
+export const ctWhen = (iso) => new Date(iso).toLocaleString("en-US", { timeZone: "America/Chicago", weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 export function approvalMessage(post, { done = null } = {}) {
   const imgs = post.format === "carousel" ? (post.photos || []).map(p => p.url).filter(Boolean).slice(0, 4) : [post.asset_url].filter(Boolean);
   const where = (post.platforms || []).map(p => p === "facebook" ? "Facebook" : "Instagram").join(" + ");
   const blocks = [
-    { type: "section", text: { type: "mrkdwn", text: `*${KIND_LABEL[post.format] || "Post"} ready for DS Elite* · ${post.title || ""}\n${post.format === "carousel" ? `${(post.photos || []).length} photos · ` : ""}${where}` } },
+    { type: "section", text: { type: "mrkdwn", text: `*${KIND_LABEL[post.format] || "Post"} ready for DS Elite* · ${post.title || ""}\n${post.format === "carousel" ? `${(post.photos || []).length} photos · ` : ""}${where}${post.scheduled_at && !done ? ` · planned for *${ctWhen(post.scheduled_at)}*` : ""}` } },
     ...imgs.map((url, i) => ({ type: "image", image_url: url, alt_text: `Photo ${i + 1}` })),
     { type: "section", text: { type: "mrkdwn", text: captionFor(post).split("\n").map(l => "> " + l.replace(/[<>&]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" })[c])).join("\n") } },
   ];
   if (done) blocks.push({ type: "context", elements: [{ type: "mrkdwn", text: done }] });
   else blocks.push({ type: "actions", elements: [
-    { type: "button", style: "primary", text: { type: "plain_text", text: post.kind === "coach_intro" ? "✓ Approve" : "✓ Approve & post" }, action_id: "dse_social_approve", value: String(post.id) },
+    { type: "button", style: "primary", text: { type: "plain_text", text: post.scheduled_at && Date.parse(post.scheduled_at) > Date.now() ? "✓ Approve for " + ctWhen(post.scheduled_at).replace(/^\w+, /, "") : "✓ Approve & post" }, action_id: "dse_social_approve", value: String(post.id) },
+    { type: "button", text: { type: "plain_text", text: "Post now" }, action_id: "dse_social_now", value: String(post.id) },
     { type: "button", text: { type: "plain_text", text: "Skip" }, action_id: "dse_social_skip", value: String(post.id) },
     { type: "button", text: { type: "plain_text", text: "Edit in HQ" }, url: `${HQ_URL}&post=${post.id}`, action_id: "dse_social_open" },
   ] });
@@ -323,10 +335,13 @@ export function ctInstant(ymd, hhmm) {
   }
   return new Date(t);
 }
-// The next evening with no coach intro on it.
-export async function nextIntroSlot(sb, s, now = new Date()) {
-  const { data } = await sb.from("dse_social_posts").select("scheduled_at, published_at").eq("kind", "coach_intro").in("status", ["approved", "publishing", "published"]);
-  const taken = new Set((data || []).map(p => p.scheduled_at || p.published_at).filter(Boolean).map(ctDay));
+// The next evening with nothing planned on it: one DS Elite post a day, at
+// settings.intro_time (Central). Drafts hold their planned evening too, so a
+// week of drafts lands on a week of evenings. Posts the club made by hand
+// count, so HQ doesn't post on top of them the same day.
+export async function nextSlot(sb, s, now = new Date(), { exceptId = null } = {}) {
+  const { data } = await sb.from("dse_social_posts").select("id, status, scheduled_at, published_at").in("status", ["draft", "approved", "publishing", "published"]).gte("created_at", new Date(now.getTime() - 120 * 86400e3).toISOString());
+  const taken = new Set((data || []).filter(p => p.id !== exceptId).map(p => p.status === "published" ? (p.published_at || p.scheduled_at) : p.scheduled_at).filter(Boolean).map(ctDay));
   for (let i = 0; i < 60; i++) {
     const day = ctDay(new Date(now.getTime() + i * 86400e3).toISOString());
     const at = ctInstant(day, s.intro_time);
@@ -334,6 +349,7 @@ export async function nextIntroSlot(sb, s, now = new Date()) {
   }
   return new Date(now.getTime() + 3600e3);
 }
+export const nextIntroSlot = nextSlot;
 
 export async function getPost(sb, id) {
   const { data } = await sb.from("dse_social_posts").select("*").eq("id", Number(id)).maybeSingle();
@@ -346,10 +362,13 @@ export async function approvePost(sb, id, by, { now = false } = {}) {
   const post = await getPost(sb, id);
   if (["published", "publishing"].includes(post.status)) return { post, already: true };
   const s = await getSettings(sb);
-  const at = post.kind === "coach_intro" && !now ? await nextIntroSlot(sb, s) : new Date();
+  // Keep the planned evening if it's still ahead; "post now" overrides it. A
+  // photo post whose evening has passed goes out now; an intro takes the next free one.
+  const planned = post.scheduled_at && Date.parse(post.scheduled_at) > Date.now() + 5 * 60e3 ? new Date(post.scheduled_at) : null;
+  const at = now ? new Date() : planned || (post.kind === "coach_intro" ? await nextSlot(sb, s, new Date(), { exceptId: post.id }) : new Date());
   const { data, error } = await sb.from("dse_social_posts").update({ status: "approved", approved_by: by, approved_at: new Date().toISOString(), scheduled_at: at.toISOString(), error: null, updated_at: new Date().toISOString() }).eq("id", post.id).select().single();
   if (error) throw fail(500, error.message);
-  const when = at.getTime() - Date.now() > 5 * 60e3 ? `goes out ${at.toLocaleString("en-US", { timeZone: "America/Chicago", weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : "posting now";
+  const when = at.getTime() - Date.now() > 5 * 60e3 ? `goes out ${ctWhen(at.toISOString())}` : "posting now";
   await refreshSlack(sb, data, `✓ Approved by ${by} - ${when}`);
   return { post: data, due: at.getTime() <= Date.now() + 60e3 };
 }
@@ -519,6 +538,7 @@ export async function draftIntroPost(sb, intro, { by = "auto", notify = true } =
   const { data: post, error } = await sb.from("dse_social_posts").insert({
     kind: "coach_intro", format: "poster", status: "draft", title: `Meet Coach ${first}`, intro_id: intro.id, caption: String(ai.caption || "").trim(),
     hashtags: [...(ai.hashtags || []).slice(0, 3), ...s.hashtags], design, asset_url, platforms: s.platforms, created_by: by,
+    scheduled_at: (await nextSlot(sb, s)).toISOString(),
     photos: pi >= 0 ? [{ url: usable[pi].p.url, focus: design.focus }] : [], ai: { model: r.model || null, error: r.error || null, folder },
   }).select().single();
   if (error) throw fail(500, error.message);
