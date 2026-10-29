@@ -92,13 +92,13 @@ function Create({ onMade }) {
   const [f, setF] = useState({ title: "", unit_amount: "", unit_label: "ticket", description: "", due_date: "", allow_qty_change: true, ncaa: false });
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
-  const ncaa = () => setF({ ...f, ncaa: !f.ncaa, ...(!f.ncaa ? { title: f.title || "NCAA Championship tickets", unit_amount: f.unit_amount || "52", unit_label: "ticket", description: f.description || "The DS Elite group at the NCAA women's volleyball championship match at the Alamodome in San Antonio, Sunday, December 20 at 2:30pm. Seats in the 300 level." } : {}) });
+  const ncaa = () => setF({ ...f, ncaa: !f.ncaa, ...(!f.ncaa ? { title: f.title || "NCAA Championship tickets", unit_amount: f.unit_amount || "55", unit_label: "ticket", description: f.description || "The DS Elite group at the NCAA women's volleyball championship match at the Alamodome in San Antonio, Sunday, December 20 at 2:30pm. Seats in the 300 level." } : {}) });
   return (
     <Box style={{ marginBottom: 14 }}>
       <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 14, marginBottom: 10 }}><input type="checkbox" checked={f.ncaa} onChange={ncaa} />Start from the NCAA form (adds every family who said yes, with the number of tickets they asked for)</label>
       <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
         <Field label="What is it?"><input value={f.title} onChange={e => setF({ ...f, title: e.target.value })} placeholder="NCAA Championship tickets" style={input} /></Field>
-        <Field label="Price each ($)"><input value={f.unit_amount} onChange={e => setF({ ...f, unit_amount: e.target.value })} inputMode="decimal" placeholder="52" style={input} /></Field>
+        <Field label="Price each ($)"><input value={f.unit_amount} onChange={e => setF({ ...f, unit_amount: e.target.value })} inputMode="decimal" placeholder="55" style={input} /></Field>
         <Field label="Unit"><input value={f.unit_label} onChange={e => setF({ ...f, unit_label: e.target.value })} placeholder="ticket" style={input} /></Field>
         <Field label="Pay by (optional)"><input type="date" value={f.due_date} onChange={e => setF({ ...f, due_date: e.target.value })} style={{ ...input, colorScheme: "dark" }} /></Field>
       </div>
@@ -149,8 +149,9 @@ function Request({ id, onBack, narrow, stripeOk }) {
         <Btn disabled={!!busy} onClick={() => run("st", () => api("update", { id, status: r.status === "open" ? "closed" : "open" }), r.status === "open" ? "Closed - links now say payments are closed" : "Reopened")}>{r.status === "open" ? "Close" : "Reopen"}</Btn>
       </div>
       {send && <SendPanel id={id} send={send} setSend={setSend} onSent={(x) => { setSend(null); setMsg({ ok: `Sent to ${x.families} famil${x.families === 1 ? "y" : "ies"} (${x.emailed} emails${x.texted ? `, ${x.texted} texts` : ""})${x.failed.length ? ` · ${x.failed.length} problem${x.failed.length === 1 ? "" : "s"}: ${x.failed.slice(0, 3).map(f => `${f.family} (${f.error})`).join("; ")}` : ""}` }); load(); }} />}
+      <Details key={r.updated_at} r={r} onSaved={load} />
       <Words r={r} onSaved={load} />
-      {msg && <div style={{ fontSize: 13, margin: "8px 0", color: msg.err ? T.bad : T.ok }}>{msg.err || msg.ok}</div>}
+      {msg &&<div style={{ fontSize: 13, margin: "8px 0", color: msg.err ? T.bad : T.ok }}>{msg.err || msg.ok}</div>}
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", margin: "12px 0 8px" }}>
         <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search families…" style={{ ...input, width: narrow ? "100%" : 220 }} />
         {["all", "unpaid", "paid", "pending", "refunded", "canceled"].map(k => <button key={k} onClick={() => setFilter(k)} style={chip(filter === k)}>{k === "all" ? "All" : STATUS[k][1]}</button>)}
@@ -180,6 +181,31 @@ function SendPanel({ id, send, setSend, onSent }) {
         <Btn disabled={busy} onClick={() => setSend(null)}>Cancel</Btn>
       </div>
     </Box>
+  );
+}
+
+// Price, name, pay-by date, how many a family can pick. A new price shows on
+// every unpaid family's link right away; families who already paid keep theirs.
+function Details({ r, onSaved }) {
+  const [f, setF] = useState({ title: r.title, unit_amount: (r.unit_amount_cents / 100).toString(), unit_label: r.unit_label, description: r.description || "", due_date: r.due_date || "", max_qty: r.max_qty || 30, allow_qty_change: !!r.allow_qty_change });
+  const [busy, setBusy] = useState(false);
+  const [ok, setOk] = useState("");
+  const price = Number(String(f.unit_amount).replace(/[$,]/g, ""));
+  return (
+    <details style={{ margin: "6px 0" }}>
+      <summary style={{ cursor: "pointer", fontSize: 13, color: T.mut }}>Edit price and details</summary>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 8, marginTop: 8 }}>
+        <Field label="Name"><input value={f.title} onChange={e => setF({ ...f, title: e.target.value })} style={input} /></Field>
+        <Field label="Price each ($)"><input value={f.unit_amount} onChange={e => setF({ ...f, unit_amount: e.target.value })} inputMode="decimal" style={input} /></Field>
+        <Field label="Called a"><input value={f.unit_label} onChange={e => setF({ ...f, unit_label: e.target.value })} style={input} /></Field>
+        <Field label="Pay by"><input type="date" value={f.due_date} onChange={e => setF({ ...f, due_date: e.target.value })} style={input} /></Field>
+        <Field label="Most a family can pick"><input type="number" min={1} max={99} value={f.max_qty} onChange={e => setF({ ...f, max_qty: e.target.value })} style={input} /></Field>
+      </div>
+      <Field label="Description"><textarea value={f.description} onChange={e => setF({ ...f, description: e.target.value })} rows={3} style={{ ...input, width: "100%" }} /></Field>
+      <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, color: T.mut, margin: "6px 0" }}><input type="checkbox" checked={f.allow_qty_change} onChange={e => setF({ ...f, allow_qty_change: e.target.checked })} />Families can change the number before paying</label>
+      {price > 0 && Math.round(price * 100) !== r.unit_amount_cents && <div style={{ fontSize: 12, color: T.warn, marginBottom: 6 }}>{usd(r.unit_amount_cents)} → {usd(Math.round(price * 100))} for every family who hasn't paid yet. Anyone already paid keeps what they paid.</div>}
+      <Btn small disabled={busy || !f.title.trim() || !(price > 0)} onClick={async () => { setBusy(true); setOk(""); try { await api("update", { id: r.id, ...f, unit_amount: price, max_qty: Number(f.max_qty) }); setOk("Saved"); onSaved(); } catch (e) { setOk(e.message); } setBusy(false); }}>{busy ? "Saving…" : "Save"}</Btn> <span style={{ fontSize: 12, color: T.mut }}>{ok}</span>
+    </details>
   );
 }
 

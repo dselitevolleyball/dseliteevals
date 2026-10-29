@@ -37,6 +37,8 @@ const page = (inner, title = "DS Elite Volleyball · Payment") => `<!doctype htm
   .total b { font-size:1.6rem; }
   .pay { width:100%; margin-top:16px; padding:17px; font:inherit; font-weight:800; font-size:19px; cursor:pointer; background:var(--pink); color:#fff; border:none; border-radius:12px; }
   .note { color:var(--mut); font-size:14px; margin-top:12px; }
+  .change { margin:14px 0 0; padding:12px 14px; border-radius:10px; background:rgba(233,30,140,.12); border:1px solid rgba(233,30,140,.35); font-size:15px; }
+  .change b { color:var(--ink); }
   .ok h2 { color:var(--grn); margin:0 0 6px; } .warn h2 { color:var(--warn); margin:0 0 6px; }
   .err { color:var(--err); font-weight:700; }
 </style></head><body><div class="wrap">
@@ -66,8 +68,8 @@ ${req.description ? `<p class="sub">${esc(req.description)}</p>` : ""}
   <div class="row total"><span>Total</span><b>${usd(total)}</b></div>
   ${req.due_date ? `<p class="note" style="margin-top:6px">Please pay by ${esc(fmtDue(req.due_date))}.</p>` : ""}
   ${error ? `<p class="err">${esc(error)}</p>` : ""}
+  ${req.allow_qty_change ? `<p class="change"><b>Need more or fewer ${esc(req.unit_label)}s?</b> Tap Pay, then change the number on the next screen before you pay. Your total updates there.</p>` : ""}
   <form method="post"><button class="pay" type="submit">Pay ${usd(total)}</button></form>
-  ${req.allow_qty_change ? `<p class="note">Need a different number of ${esc(req.unit_label)}s? You can change it on the next page before you pay.</p>` : ""}
   <p class="note">Card, Apple Pay or Google Pay. You'll get a receipt by email.</p>
 </div>`;
 }
