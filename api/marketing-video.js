@@ -11,6 +11,9 @@
 //   reel_update  { id, video }                                       the cut: clips (order, in/out),
 //                music, volumes; it needs a new render (an approved reel goes back to draft)
 //   reel_render  { id, cards: { intro, outro, overlay } }            ffmpeg renders the MP4
+//   collection_plan { id, count?, instruction? }                    Claude reads every moment across a
+//                collection's videos and plans `count` reels (plan.ideas)
+//   collection_reel { id, idea_id }                                 one planned idea -> a reel draft
 //
 // The heavy lifting is api/_lib/marketing-video.js (ffmpeg-static). 300 s, 3 GB.
 // Env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, ANTHROPIC_API_KEY.
@@ -18,7 +21,7 @@
 import { readBody } from "./_lib/site-forms.js";
 import { verifyDirector } from "./_lib/site-inbox.js";
 import { serviceSb, loadSettings, log } from "./_lib/marketing-core.js";
-import { analyzeVideo, createReel, renderReel, RAW_BUCKET } from "./_lib/marketing-video.js";
+import { analyzeVideo, createReel, renderReel, planCollection, RAW_BUCKET } from "./_lib/marketing-video.js";
 
 const fail = (status, error) => Object.assign(new Error(error), { status });
 
@@ -69,6 +72,31 @@ export async function runVideo(sb, { me }, b, { deadline = Date.now() + 280000 }
         .catch(e => { throw fail(400, e.message); });
       await log(sb, item.id, "reel_create", { by: me, clips: item.video.clips.length });
       return { item };
+    }
+
+    // A collection (several videos from one session): Claude plans a few reels
+    // across all of them; each idea then becomes a reel draft like any other.
+    case "collection_plan": {
+      const { data: coll } = await sb.from("mkt_video_collections").select("*").eq("id", Number(b.id)).maybeSingle();
+      if (!coll) throw fail(404, "That collection is gone");
+      const settings = await loadSettings(sb);
+      const collection = await planCollection(sb, coll, { count: b.count, instruction: String(b.instruction || "").slice(0, 500), settings }).catch(e => { throw fail(400, e.message); });
+      return { collection };
+    }
+    case "collection_reel": {
+      const { data: coll } = await sb.from("mkt_video_collections").select("*").eq("id", Number(b.id)).maybeSingle();
+      if (!coll) throw fail(404, "That collection is gone");
+      const idea = (coll.plan?.ideas || []).find(x => x.id === b.idea_id);
+      if (!idea) throw fail(404, "That reel idea is gone - plan again");
+      const settings = await loadSettings(sb);
+      const item = await createReel(sb, { picks: idea.picks.map(p => ({ video_id: p.video_id, moment_id: p.moment_id })), line: coll.line || null, instruction: `${idea.title}: ${idea.angle}`.slice(0, 500), by: me, settings })
+        .catch(e => { throw fail(400, e.message); });
+      await log(sb, item.id, "reel_create", { by: me, clips: item.video.clips.length, collection: coll.id });
+      // Re-read so two ideas made at once don't overwrite each other's reel_id.
+      const { data: now } = await sb.from("mkt_video_collections").select("plan").eq("id", coll.id).single();
+      const plan = { ...(now?.plan || coll.plan), ideas: (now?.plan?.ideas || coll.plan.ideas).map(x => x.id === idea.id ? { ...x, reel_id: item.id, week_of: item.week_of } : x) };
+      await sb.from("mkt_video_collections").update({ plan }).eq("id", coll.id);
+      return { item, plan };
     }
 
     case "reel_update": {

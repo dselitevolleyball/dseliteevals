@@ -328,6 +328,60 @@ export async function createReel(sb, { picks = null, videoIds = null, line = nul
   if (e2) throw new Error("Saving the reel: " + e2.message);
   return item;
 }
+// ── collections ──────────────────────────────────────────────────────────────
+// A collection is a few videos from one session (six from a Hitting Pod).
+// Claude looks at every moment across them, thumbnails included, and plans
+// `count` reels that each tell a different story, no moment used twice.
+const C_SCHEMA = {
+  type: "object", additionalProperties: false, required: ["summary", "ideas"],
+  properties: {
+    summary: { type: "string" },
+    ideas: { type: "array", items: { type: "object", additionalProperties: false, required: ["title", "angle", "moments"], properties: {
+      title: { type: "string" }, angle: { type: "string" }, moments: { type: "array", items: { type: "string" } },
+    } } },
+  },
+};
+// -> the updated mkt_video_collections row
+export async function planCollection(sb, coll, { count = 2, instruction = "", settings = {} } = {}) {
+  const { data: vids, error } = await sb.from("mkt_videos").select("*").in("id", coll.video_ids || []).eq("active", true);
+  if (error) throw new Error(error.message);
+  const ready = (vids || []).filter(v => v.status === "ready" && v.release_ok !== false);
+  if (!ready.length) throw new Error((vids || []).some(v => v.status !== "ready") ? "The videos are still being sorted - try again in a minute" : "Add some videos first");
+  const all = ready.flatMap(v => (v.moments || []).filter(m => !m.skip).map(m => ({ ...m, video_id: v.id, v })));
+  if (all.length < 3) throw new Error("Not enough moments across these videos for a reel yet");
+  if (!aiReady()) throw new Error("ANTHROPIC_API_KEY is not set");
+  const n = Math.max(1, Math.min(4, Number(count) || 2));
+  const pool = all.slice().sort((a, b) => b.score - a.score).slice(0, 48);
+  const content = [{ type: "text", text: `Collection "${coll.name}" - ${ready.length} videos from the same session.${coll.notes ? `\nDirector's notes: ${coll.notes}` : ""}${instruction ? `\nThis time: ${instruction}` : ""}\n\nThe videos:\n${ready.map((v, i) => `Video ${i + 1} (${Math.round(v.duration || 0)}s): ${v.description || v.filename}`).join("\n")}\n\nThe moments, each with its thumbnail:` }];
+  for (const m of pool) {
+    content.push({ type: "text", text: `${key(m.video_id, m.id)} · video ${ready.indexOf(m.v) + 1} · ${m.label} (${(m.end - m.start).toFixed(1)}s, score ${m.score}): ${m.description}` });
+    if (m.thumb_url) content.push({ type: "image", source: { type: "url", url: m.thumb_url } });
+  }
+  content.push({ type: "text", text: `Plan ${n} reel${n === 1 ? "" : "s"}.` });
+  const client = claudeClient("marketing-video", { apiKey: process.env.ANTHROPIC_API_KEY, timeout: 150000, maxRetries: 1 });
+  const msg = await client.beta.messages.create({
+    model: AI_MODEL, max_tokens: 8000, betas: ["server-side-fallback-2026-07-01"], fallbacks: "default",
+    output_config: { effort: "medium", format: { type: "json_schema", schema: C_SCHEMA } },
+    system: `You plan short social reels (15-30 seconds, vertical) for Dripping Springs Sports Club from a collection of videos shot at one session. Look across every video, not one at a time. First write a summary: 2-3 sentences on what the session shows and what's strongest. Then plan the reels you're asked for. Each reel tells a different story (for example: the best reps back to back; one skill progressing from drill to game-speed; the energy and celebrations; a coach's teaching moment), uses 4 to 8 moment keys in the order they should play (open with the strongest, end on a celebration or a smile), and draws from more than one video where it can. No moment in two reels. title: 2-5 words; angle: one sentence a director would read to choose. Describe only what the moments show; never name people.${rulesText(settings.rules) ? `\n\n${rulesText(settings.rules)}` : ""}`,
+    messages: [{ role: "user", content }],
+  });
+  if (msg.stop_reason === "refusal") throw new Error("Claude declined to plan these");
+  const out = JSON.parse((msg.content || []).filter(b => b.type === "text").map(b => b.text).join(""));
+  const byKey = new Map(all.map(m => [key(m.video_id, m.id), m]));
+  const used = new Set();
+  const ideas = (out.ideas || []).slice(0, n).map((idea, i) => {
+    const picks = (idea.moments || []).filter(k => byKey.has(k) && !used.has(k)).slice(0, 8);
+    picks.forEach(k => used.add(k));
+    return { id: `i${Date.now().toString(36)}${i}`, title: String(idea.title || `Reel ${i + 1}`).slice(0, 60), angle: String(idea.angle || "").slice(0, 300),
+      picks: picks.map(k => { const m = byKey.get(k); return { video_id: m.video_id, moment_id: m.id, label: m.label, thumb_url: m.thumb_url || null }; }), reel_id: null };
+  }).filter(x => x.picks.length);
+  if (!ideas.length) throw new Error("Claude didn't find a reel in these - try again or pick the moments yourself");
+  const line = coll.line || mostCommon(ready.map(v => v.line).filter(Boolean));
+  const { data, error: e2 } = await sb.from("mkt_video_collections").update({ plan: { summary: String(out.summary || "").slice(0, 800), ideas }, plan_at: new Date().toISOString(), line }).eq("id", coll.id).select("*").single();
+  if (e2) throw new Error(e2.message);
+  return data;
+}
+
 const mostCommon = (xs) => { const c = {}; for (const x of xs) c[x] = (c[x] || 0) + 1; return Object.entries(c).sort((a, b) => b[1] - a[1])[0]?.[0] || null; };
 const defaultHeadline = (line) => ({ volleyball: "VOLLEYBALL AT DSSC", basketball: "BUCKETS AT DSSC", reach: "TRAIN WITH REACH", camp_elevate: "CAMP ELEVATE", parties: "PARTY TIME", open_gym: "OPEN GYM", rentals: "GAME ON", club: "THIS WEEK AT DSSC" }[line] || "THIS WEEK AT DSSC");
 

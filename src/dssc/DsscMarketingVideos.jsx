@@ -5,6 +5,11 @@
 // like (across videos) and "Make a reel", or let the machine cut "the best of
 // the last 3 weeks". Kids-visible videos wait for a release OK. The music
 // library holds tracks the club has the rights to.
+//
+// Collections (Drew, Oct 29 2026): group the videos from one session (six
+// from a Hitting Pod) and have Claude plan a couple of reels across all of
+// them - each idea is a set of moments from any of the videos, made into a
+// reel draft with one press (api/marketing-video.js collection_plan / _reel).
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import * as tus from "tus-js-client";
@@ -48,18 +53,49 @@ export default function MarketingVideos({ narrow, onOpenWeek, onChanged }) {
   const [busy, setBusy] = useState("");
   const [drag, setDrag] = useState(false);
   const [glasses, setGlasses] = useState(true);
+  const [colls, setColls] = useState(null);
+  const [collId, setCollId] = useState(null);      // the open collection
+  const [adding, setAdding] = useState(false);     // tapping a video adds it to the open collection
   const fileRef = useRef(null);
+  const upInto = useRef(null);                     // collection the next upload goes into
 
   const load = useCallback(async () => {
     const { data, error } = await supabase.from("mkt_videos").select("*").order("created_at", { ascending: false }).limit(200);
     if (error) { setMsg({ err: isMissingTable(error) || /mkt_videos/.test(error.message) ? "The video tables aren't set up yet — run migrations/20261025_marketing_video.sql." : error.message }); setVideos([]); return; }
     setVideos(data || []);
   }, []);
-  useEffect(() => { load(); }, [load]);
+  const loadColls = useCallback(async () => {
+    const { data, error } = await supabase.from("mkt_video_collections").select("*").eq("active", true).order("created_at", { ascending: false });
+    setColls(error ? [] : data || []);
+  }, []);
+  useEffect(() => { load(); loadColls(); }, [load, loadColls]);
+  const coll = (colls || []).find(c => c.id === collId) || null;
+  const mergeColl = (c) => setColls(cs => (cs || []).some(x => x.id === c.id) ? cs.map(x => x.id === c.id ? c : x) : [c, ...(cs || [])]);
+  const patchColl = async (c, ch) => {
+    mergeColl({ ...c, ...ch });
+    const { data, error } = await supabase.from("mkt_video_collections").update(ch).eq("id", c.id).select("*").single();
+    if (error) { setMsg({ err: error.message }); loadColls(); } else mergeColl(data);
+  };
+  // Add or take out videos; reads the row first so an upload finishing in the
+  // background doesn't lose one.
+  const setMembers = async (id, fn) => {
+    const { data: c } = await supabase.from("mkt_video_collections").select("*").eq("id", id).single();
+    if (!c) return;
+    const ids = [...new Set(fn((c.video_ids || []).map(Number)))];
+    const { data, error } = await supabase.from("mkt_video_collections").update({ video_ids: ids }).eq("id", id).select("*").single();
+    if (error) setMsg({ err: error.message }); else mergeColl(data);
+  };
+  const newColl = async () => {
+    const name = `Session ${new Date().toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
+    const { data, error } = await supabase.from("mkt_video_collections").insert({ name }).select("*").single();
+    if (error) { setMsg({ err: /mkt_video_collections/.test(error.message) ? "Run migrations/20261113_video_collections.sql first." : error.message }); return; }
+    mergeColl(data); setCollId(data.id); setAdding(false);
+  };
   const merge = (v) => setVideos(vs => vs.some(x => x.id === v.id) ? vs.map(x => x.id === v.id ? v : x) : [v, ...(vs || [])]);
   const setUp = (key, ch) => setUps(us => us.map(u => u.key === key ? { ...u, ...ch } : u));
 
   const upload = async (files) => {
+    const into = upInto.current; upInto.current = null;
     files = [...(files || [])].filter(isVideo);
     if (!files.length) { setMsg({ err: "Those aren't videos — drop MP4 or MOV files." }); return; }
     const { data: { session } } = await supabase.auth.getSession();
@@ -76,7 +112,7 @@ export default function MarketingVideos({ narrow, onOpenWeek, onChanged }) {
         await tusUpload(f, path, session.access_token, (pct) => setUp(key, { pct }));
         setUp(key, { state: "sorting", pct: 100 });
         const d = await videoApi("upload_done", { path, filename: f.name, bytes: f.size, content_type: f.type, source: glasses ? "glasses" : undefined });
-        if (d.video) merge(d.video);
+        if (d.video) { merge(d.video); if (into) await setMembers(into, ids => [...ids, d.video.id]); }
         setUp(key, { state: d.video?.status === "ready" ? "done" : "failed", error: d.error || d.video?.ai_error || null });
       } catch (e) { setUp(key, { state: "failed", error: e.message }); }
     }
@@ -98,13 +134,14 @@ export default function MarketingVideos({ narrow, onOpenWeek, onChanged }) {
     } catch (e) { setMsg({ err: e.message }); }
     setBusy("");
   };
+  const uploadInto = (id) => { upInto.current = id; fileRef.current?.click(); };
 
   const open = (videos || []).find(v => v.id === openId) || null;
   const live = (videos || []).filter(v => v.active !== false);
   const sorting = ups.some(u => ["uploading", "sorting", "waiting"].includes(u.state));
   return (
-    <div onDragOver={e => { if ([...(e.dataTransfer?.types || [])].includes("Files")) { e.preventDefault(); setDrag(true); } }} onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setDrag(false); }} onDrop={e => { e.preventDefault(); setDrag(false); upload(e.dataTransfer?.files); }} style={{ position: "relative" }}>
-      {drag && <div style={{ position: "absolute", inset: -6, zIndex: 20, border: "3px dashed " + DS.lime, borderRadius: 14, background: "rgba(16,73,70,0.9)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, fontWeight: 800, color: DS.lime, pointerEvents: "none" }}>Drop videos — AI finds the best moments</div>}
+    <div onDragOver={e => { if ([...(e.dataTransfer?.types || [])].includes("Files")) { e.preventDefault(); setDrag(true); } }} onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setDrag(false); }} onDrop={e => { e.preventDefault(); setDrag(false); if (collId) upInto.current = collId; upload(e.dataTransfer?.files); }} style={{ position: "relative" }}>
+      {drag && <div style={{ position: "absolute", inset: -6, zIndex: 20, border: "3px dashed " + DS.lime, borderRadius: 14, background: "rgba(16,73,70,0.9)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, fontWeight: 800, color: DS.lime, pointerEvents: "none" }}>{coll ? `Drop videos into "${coll.name}"` : "Drop videos — AI finds the best moments"}</div>}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
         <div style={{ fontSize: 13, color: DS.mut, flex: 1, minWidth: 240, lineHeight: 1.5 }}>Upload videos from the Meta glasses or a phone. Each one is sorted by AI into its best moments — play them, tick the ones you like and make a reel. Nothing posts until you approve it.</div>
         <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 13, color: DS.mut, cursor: "pointer" }}><input type="checkbox" checked={glasses} onChange={e => setGlasses(e.target.checked)} style={{ accentColor: DS.lime }} /> From the Meta glasses</label>
@@ -125,6 +162,11 @@ export default function MarketingVideos({ narrow, onOpenWeek, onChanged }) {
         {ups.filter(u => u.error).slice(0, 3).map(u => <div key={u.key + "e"} style={{ fontSize: 12, color: DS.orange }}>{u.name}: {u.error}</div>)}
         {sorting && <div style={{ fontSize: 12, color: DS.dim, marginTop: 4 }}>Keep this page open until the uploads finish. Sorting takes about a minute a video; if you leave, it finishes on its own within 15 minutes.</div>}
       </Panel>}
+
+      <Collections colls={colls} coll={coll} videos={videos || []} narrow={narrow} adding={adding} setAdding={setAdding}
+        onOpen={(id) => { setCollId(id === collId ? null : id); setAdding(false); }} onNew={newColl} onPatch={patchColl} onMembers={setMembers}
+        onUpload={uploadInto} onOpenVideo={(id) => setOpenId(id)} onPicks={(ps) => { setPicks(ps); setMsg({ ok: `${ps.length} clips are in the tray below - reorder by removing and re-adding, then press Make a reel.` }); }}
+        onOpenWeek={onOpenWeek} onChanged={onChanged} mergeColl={mergeColl} />
 
       {/* The clip tray */}
       <Panel style={{ marginBottom: 12, borderColor: picks.length ? DS.lime : DS.line }}>
@@ -150,10 +192,11 @@ export default function MarketingVideos({ narrow, onOpenWeek, onChanged }) {
         : !live.length ? <Panel style={{ color: DS.mut, borderStyle: "dashed", textAlign: "center", padding: 28 }}>No videos yet. Drag some here or press <b>Upload videos</b>.</Panel>
         : <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fill, minmax(${narrow ? 150 : 190}px, 1fr))`, gap: 10 }}>
             {live.map(v => (
-              <button key={v.id} onClick={() => setOpenId(v.id === openId ? null : v.id)} style={{ padding: 0, textAlign: "left", border: "2px solid " + (v.id === openId ? DS.lime : needsRelease(v) ? DS.orange : "transparent"), background: DS.panel2, borderRadius: 10, overflow: "hidden", cursor: "pointer", color: DS.text }}>
+              <button key={v.id} onClick={() => adding && coll ? setMembers(coll.id, ids => ids.includes(v.id) ? ids.filter(x => x !== v.id) : [...ids, v.id]) : setOpenId(v.id === openId ? null : v.id)} style={{ padding: 0, textAlign: "left", border: "2px solid " + (adding && coll?.video_ids?.map(Number).includes(v.id) ? DS.lime : v.id === openId ? DS.lime : needsRelease(v) ? DS.orange : "transparent"), background: DS.panel2, borderRadius: 10, overflow: "hidden", cursor: "pointer", color: DS.text }}>
                 <div style={{ position: "relative", aspectRatio: "3 / 4", background: "#000" }}>
                   {v.poster_url && <img src={v.poster_url} alt="" loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />}
                   <span style={{ position: "absolute", right: 6, bottom: 6, fontSize: 11, fontWeight: 700, background: "rgba(0,0,0,0.75)", color: "#fff", padding: "1px 6px", borderRadius: 4 }}>{fmtT(v.duration)}</span>
+                  {adding && coll && <span style={{ position: "absolute", right: 6, top: 6, fontSize: 11, fontWeight: 800, background: coll.video_ids?.map(Number).includes(v.id) ? DS.lime : "rgba(0,0,0,0.75)", color: coll.video_ids?.map(Number).includes(v.id) ? DS.bg : "#fff", padding: "2px 7px", borderRadius: 4 }}>{coll.video_ids?.map(Number).includes(v.id) ? "✓ In" : "+ Add"}</span>}
                   {needsRelease(v) && <span style={{ position: "absolute", left: 6, top: 6, fontSize: 10, fontWeight: 700, background: "rgba(6,26,24,0.85)", color: DS.orange, padding: "1px 6px", borderRadius: 4 }}>kids — release?</span>}
                 </div>
                 <div style={{ padding: "7px 8px" }}>
@@ -169,6 +212,112 @@ export default function MarketingVideos({ narrow, onOpenWeek, onChanged }) {
 
       <MusicLibrary narrow={narrow} />
     </div>
+  );
+}
+
+function Collections({ colls, coll, videos, narrow, adding, setAdding, onOpen, onNew, onPatch, onMembers, onUpload, onOpenVideo, onPicks, onOpenWeek, onChanged, mergeColl }) {
+  const [count, setCount] = useState(2);
+  const [instruction, setInstruction] = useState("");
+  const [busy, setBusy] = useState("");
+  const [err, setErr] = useState("");
+  const [name, setName] = useState("");
+  const [notes, setNotes] = useState("");
+  useEffect(() => { setName(coll?.name || ""); setNotes(coll?.notes || ""); setErr(""); }, [coll?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const byId = new Map(videos.map(v => [v.id, v]));
+  const members = coll ? (coll.video_ids || []).map(Number).map(id => byId.get(id)).filter(v => v && v.active !== false) : [];
+  const sorting = members.filter(v => v.status !== "ready").length;
+  const moments = members.reduce((n, v) => n + (v.moments || []).filter(m => !m.skip).length, 0);
+  const plan = coll?.plan, ideas = plan?.ideas || [];
+  const doPlan = async () => {
+    setBusy("plan"); setErr("");
+    try { const d = await videoApi("collection_plan", { id: coll.id, count, instruction }); mergeColl(d.collection); }
+    catch (e) { setErr(e.message); }
+    setBusy("");
+  };
+  const make = async (idea) => {
+    setBusy(b => b || idea.id); setErr("");
+    try { const d = await videoApi("collection_reel", { id: coll.id, idea_id: idea.id }); mergeColl({ ...coll, plan: d.plan }); onChanged?.(); return d; }
+    catch (e) { setErr(`${idea.title}: ${e.message}`); }
+    finally { setBusy(b => b === idea.id ? "" : b); }
+  };
+  const makeAll = async () => {
+    setBusy("all"); setErr("");
+    const todo = ideas.filter(i => !i.reel_id);
+    const res = await Promise.all(todo.map(i => videoApi("collection_reel", { id: coll.id, idea_id: i.id }).then(d => d, e => ({ error: `${i.title}: ${e.message}` }))));
+    const { data } = await supabase.from("mkt_video_collections").select("*").eq("id", coll.id).single();
+    if (data) mergeColl(data);
+    const bad = res.filter(r => r.error);
+    if (bad.length) setErr(bad.map(r => r.error).join(" · "));
+    onChanged?.(); setBusy("");
+  };
+  return (
+    <Panel style={{ marginBottom: 12, borderColor: coll ? DS.lime : DS.line }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <H style={{ margin: 0, flex: 1 }}>Collections</H>
+        <Btn small kind="ghost" onClick={onNew} style={big(narrow)}>+ New collection</Btn>
+      </div>
+      <div style={{ fontSize: 12, color: DS.mut, margin: "4px 0 8px" }}>Group the videos from one session (a Hitting Pod, a game, a camp day). AI looks across all of them and plans a couple of different reels.</div>
+      {colls == null ? null : !colls.length ? <div style={{ fontSize: 13, color: DS.dim }}>No collections yet.</div>
+        : <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{colls.map(c => <button key={c.id} onClick={() => onOpen(c.id)} style={chipStyle(coll?.id === c.id, DS.lime, narrow)}>{c.name} · {(c.video_ids || []).length}</button>)}</div>}
+      {coll && <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid " + DS.line }}>
+        <div style={{ display: "grid", gridTemplateColumns: narrow ? "1fr" : "1fr 2fr", gap: 8 }}>
+          <input value={name} onChange={e => setName(e.target.value)} onBlur={() => name.trim() && name.trim() !== coll.name && onPatch(coll, { name: name.trim().slice(0, 80) })} placeholder="Name, e.g. Hitting Pod Oct 28" style={{ ...inputStyle, fontWeight: 700, fontSize: narrow ? 16 : 14 }} />
+          <input value={notes} onChange={e => setNotes(e.target.value)} onBlur={() => notes !== (coll.notes || "") && onPatch(coll, { notes: notes.trim().slice(0, 500) || null })} placeholder='What the reels should show (optional), e.g. "the arm swing and approach footwork"' style={{ ...inputStyle, fontSize: narrow ? 16 : 14 }} />
+        </div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", margin: "10px 0 6px" }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: DS.mut, flex: 1 }}>{members.length} video{members.length === 1 ? "" : "s"} · {moments} moments{sorting ? ` · ${sorting} still sorting…` : ""}</span>
+          <Btn small kind="primary" onClick={() => onUpload(coll.id)} style={big(narrow)}>Upload into this collection</Btn>
+          <Btn small kind={adding ? "primary" : "ghost"} onClick={() => setAdding(!adding)} style={big(narrow)}>{adding ? "Done adding" : "Add from your videos"}</Btn>
+          <Btn small kind="quiet" onClick={() => { if (confirm(`Delete the collection "${coll.name}"? The videos stay.`)) { onPatch(coll, { active: false }); onOpen(coll.id); } }} style={big(narrow)}>Delete</Btn>
+        </div>
+        {adding && <div style={{ fontSize: 12, color: DS.lime, marginBottom: 6 }}>Tap videos below to add them to or take them out of "{coll.name}".</div>}
+        {members.length > 0 && <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 4 }}>{members.map(v => (
+          <div key={v.id} style={{ flex: "none", width: 84, position: "relative" }}>
+            <button onClick={() => onOpenVideo(v.id)} title="Open this video's moments" style={{ display: "block", width: "100%", padding: 0, border: "1px solid " + DS.line, borderRadius: 6, overflow: "hidden", background: "#000", cursor: "pointer" }}>
+              {v.poster_url ? <img src={v.poster_url} alt="" style={{ width: "100%", aspectRatio: "3 / 4", objectFit: "cover", display: "block" }} /> : <div style={{ aspectRatio: "3 / 4" }} />}
+            </button>
+            <div style={{ fontSize: 10, color: v.status === "ready" ? DS.mut : DS.orange, marginTop: 2 }}>{v.status === "ready" ? `${fmtT(v.duration)} · ${(v.moments || []).length} moments` : v.status === "failed" ? "couldn't sort" : "sorting…"}</div>
+            <button onClick={() => onMembers(coll.id, ids => ids.filter(x => x !== v.id))} title="Take out of this collection" style={{ position: "absolute", right: 3, top: 3, width: 22, height: 22, borderRadius: 11, border: 0, background: "rgba(0,0,0,0.75)", color: "#fff", cursor: "pointer", fontSize: 13, lineHeight: "22px", padding: 0 }}>×</button>
+          </div>))}</div>}
+
+        {members.length > 0 && <div style={{ marginTop: 10, background: DS.panel2, borderRadius: 10, padding: 12 }}>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+            <span style={{ fontSize: 13, fontWeight: 700 }}>Plan</span>
+            {[1, 2, 3, 4].map(n => <button key={n} onClick={() => setCount(n)} style={chipStyle(count === n, DS.lime, narrow)}>{n} reel{n === 1 ? "" : "s"}</button>)}
+          </div>
+          <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: narrow ? "wrap" : "nowrap" }}>
+            <input value={instruction} onChange={e => setInstruction(e.target.value)} placeholder='Anything specific? e.g. "one of just the best swings, one about the coaching"' style={{ ...inputStyle, flex: 1, minWidth: 0, fontSize: narrow ? 16 : 14 }} />
+            <Btn kind="primary" disabled={!!busy || !moments || sorting === members.length} onClick={doPlan} style={big(narrow)}>{busy === "plan" ? "AI is watching… (about a minute)" : ideas.length ? "Plan again" : `Plan ${count} reel${count === 1 ? "" : "s"} with AI`}</Btn>
+          </div>
+          {sorting > 0 && <div style={{ fontSize: 12, color: DS.mut, marginTop: 6 }}>Wait for the videos to finish sorting so every one is in the plan.</div>}
+        </div>}
+        {err && <div style={{ fontSize: 13, color: DS.orange, marginTop: 8 }}>{err}</div>}
+
+        {plan && <div style={{ marginTop: 10 }}>
+          {plan.summary && <div style={{ fontSize: 13, color: DS.text, lineHeight: 1.5, marginBottom: 8 }}>{plan.summary}</div>}
+          <div style={{ display: "grid", gridTemplateColumns: narrow ? "1fr" : "repeat(auto-fill, minmax(300px, 1fr))", gap: 8 }}>
+            {ideas.map((idea, n) => (
+              <div key={idea.id} style={{ border: "1px solid " + (idea.reel_id ? DS.lime : DS.line), borderRadius: 10, padding: 10, background: DS.panel2 }}>
+                <div style={{ fontSize: 14, fontWeight: 800 }}>{n + 1}. {idea.title}</div>
+                <div style={{ fontSize: 12, color: DS.mut, margin: "2px 0 8px" }}>{idea.angle}</div>
+                <div style={{ display: "flex", gap: 4, overflowX: "auto" }}>{idea.picks.map((p, i) => (
+                  <div key={i} title={p.label} style={{ flex: "none", width: 52 }}>
+                    {p.thumb_url ? <img src={p.thumb_url} alt="" style={{ width: "100%", aspectRatio: "3 / 4", objectFit: "cover", borderRadius: 4, display: "block" }} /> : <div style={{ aspectRatio: "3 / 4", background: "#000", borderRadius: 4 }} />}
+                    <div style={{ fontSize: 9, color: DS.dim, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.label}</div>
+                  </div>))}</div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+                  {idea.reel_id
+                    ? <Btn small kind="link" onClick={() => onOpenWeek?.(idea.week_of)} style={big(narrow)}>✓ Reel drafted - open in Approve →</Btn>
+                    : <Btn small kind="primary" disabled={!!busy} onClick={() => make(idea)} style={big(narrow)}>{busy === idea.id ? "Cutting… (about 30 s)" : "Make this reel"}</Btn>}
+                  <Btn small kind="ghost" onClick={() => onPicks(idea.picks)} style={big(narrow)}>Change the clips</Btn>
+                </div>
+              </div>
+            ))}
+          </div>
+          {ideas.filter(i => !i.reel_id).length > 1 && <Btn kind="primary" disabled={!!busy} onClick={makeAll} style={{ marginTop: 8, ...big(narrow) }}>{busy === "all" ? "Cutting them all…" : `Make all ${ideas.filter(i => !i.reel_id).length} reels`}</Btn>}
+        </div>}
+      </div>}
+    </Panel>
   );
 }
 
