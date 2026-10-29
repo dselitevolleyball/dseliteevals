@@ -120,12 +120,13 @@ export async function generateWeek(sb, { weekOf, replaceDrafts = false, instruct
   const today = ctToday();
   if (addDays(weekOf, 6) < today) throw new Error("That week is over");
   const [feed, settings, priorities, history, photos] = await Promise.all([fetchPrograms(), loadSettings(sb), loadPriorities(sb), loadHistory(sb, weekOf), loadPhotos(sb)]);
-  const { data: existing, error: exErr } = await sb.from("mkt_items").select("id, channel, kind, scheduled_at, status, revisions, asset_url, created_at, updated_at").eq("week_of", weekOf).neq("status", "rejected");
+  const { data: existing, error: exErr } = await sb.from("mkt_items").select("id, channel, kind, scheduled_at, status, revisions, asset_url, created_at, updated_at, crm_campaign_id").eq("week_of", weekOf).neq("status", "rejected");
   if (exErr) throw new Error("mkt_items: " + exErr.message);
   let keep = existing || [];
   let removed = 0;
   if (replaceDrafts && !single) {
-    const drop = keep.filter(untouched).map(i => i.id);
+    // A CRM campaign's steps (People -> Campaigns) are never swept away with the week's drafts.
+    const drop = keep.filter(i => untouched(i) && !i.crm_campaign_id).map(i => i.id);
     if (drop.length) {
       const { error } = await sb.from("mkt_items").delete().in("id", drop).eq("status", "draft");
       if (error) throw new Error("Removing old drafts: " + error.message);

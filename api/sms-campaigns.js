@@ -31,6 +31,7 @@ const campaignLane = (camp) => {
   return cats.length === 1 && isLane(cats[0]) ? cats[0] : null;
 };
 import { loadAudienceData, buildPeople, resolveAudience, renderBody, isReachStaff } from "../shared/campaign-audience.js";
+import { loadSegmentData, buildFamilies, resolveSegmentPhones } from "../shared/crm-segments.js";
 
 const OWNERS = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"];
 const DIRECTORS = ["hunterhaleysc10@gmail.com", "hunter@drippingsportsclub.com"];
@@ -84,6 +85,14 @@ export default async function handler(req, res) {
 
 async function resolve(sb, camp) {
   const people = buildPeople(await loadAudienceData(sb), centralToday());
+  // A DSSC People campaign's text step (api/_lib/crm-campaigns.js): its
+  // segment, worked out now, so anyone who booked since the campaign began
+  // is dropped from a "hasn't booked yet" follow-up.
+  if (camp.filters?.target === "crm") {
+    const index = buildFamilies(await loadSegmentData(sb), centralToday());
+    const { recipients } = resolveSegmentPhones(index, camp.filters.segment || {});
+    return resolveAudience(people, { target: "list", list: recipients }, camp.brand);
+  }
   return resolveAudience(people, camp.filters || {}, camp.brand);
 }
 

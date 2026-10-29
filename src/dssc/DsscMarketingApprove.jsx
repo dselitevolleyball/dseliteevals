@@ -8,6 +8,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { supabase } from "../supabase";
 import { DS, Btn, Tag, inputStyle, Grow, Field, fetchAll } from "./DsscHub.jsx";
 import { segmentsOf } from "../../shared/campaign-audience.js";
+import { describeSegment } from "../../shared/crm-segments.js";
 import EmailAudiencePicker, { emailAudienceLabel, useSegments } from "./DsscEmailAudience.jsx";
 import { TEMPLATES, FORMATS } from "../../shared/marketing-graphics.js";
 import { photoHaystack } from "../../shared/marketing-photos.js";
@@ -498,6 +499,7 @@ export function ItemCard({ item: it, week, narrow, onPatch, onReplace, reload, o
 
 function audienceSummary(a) {
   if (!a || typeof a !== "object" || !Object.keys(a).length) return "the default text audience (Settings)";
+  if (a.target === "crm") return `Campaign audience: ${describeSegment(a.segment || {})} - families who can be texted`;
   const who = { parents: "Parents", players: "Players", both: "Parents + players", coaches: "Coaches" }[a.target] || "Parents";
   const cats = Array.isArray(a.categories) && a.categories.length ? " of " + a.categories.join(", ") + " families" : "";
   const prog = a.program ? ` in "${a.program}"` : "";

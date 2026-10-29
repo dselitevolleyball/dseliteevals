@@ -33318,7 +33318,7 @@ export default function App() {
         {view==="clinics" && (isDsscDirector ? ((clinicOpenId || dsscAdminLegacy) ? renderClinics() : renderDsscAdmin()) : renderDsscHub())}
         {view==="dssc" && renderDsscHub()}
         {view==="dssccrm" && (isDsscDirector
-          ? <DsscCrm coach={coach} isDirector={isDsscDirector} onText={(recipients)=>{ setDsscTextsInit({ recipients }); setView("dssctexts"); }} />
+          ? <DsscCrm coach={coach} isDirector={isDsscDirector} onOpenView={(v)=>openHqView(v)} onText={(recipients)=>{ setDsscTextsInit({ recipients }); setView("dssctexts"); }} />
           : <div style={{padding:24,color:C.mut,textAlign:"center"}}>DSSC People is for the club's directors.</div>)}
         {view==="classcomms" && (isDsscDirector ? <ClassComms onMessageClass={(cid, sid)=>{ setDsscTextsInit({ clinicId: cid, sessionId: sid }); setView("dssctexts"); }} /> : <div style={{padding:24,color:C.mut,textAlign:"center"}}>Class Comms is for the DSSC directors.</div>)}
         {view==="dsscinbox" && (isDsscDirector

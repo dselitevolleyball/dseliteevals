@@ -204,7 +204,11 @@ export function resolveAudience(people, filters, brand = "dssc") {
     const prog = (progs.find(p => (!f.categories?.length || f.categories.includes(p.category)) && (!q || nrm(p.program).includes(q))) || progs[0] || {}).program || "";
     return { team, program: prog };
   };
-  if (f.target === "coaches") {
+  if (f.target === "list") {
+    // A ready list (a CRM campaign's audience, api/sms-campaigns.js): still
+    // goes through the opt-out and "do not text" checks above.
+    for (const r of f.list || []) if (r?.to) add({ to: r.to, name: r.name || "Family", first: r.first || "", kind: r.kind || "parent", players: r.players || [], team: r.team || "", program: r.program || "", doNotText: !!r.doNotText });
+  } else if (f.target === "coaches") {
     for (const c of people.coaches) {
       if (f.teams?.length && !c.teams.some(t => f.teams.includes(t))) continue;
       if (f.levels?.length && !c.teams.some(t => f.levels.includes(people.teamInfo.get(t)?.level))) continue;
