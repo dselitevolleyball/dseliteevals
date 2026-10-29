@@ -13,7 +13,11 @@
 //            (In-Reply-To / References), with their message quoted below.
 //   answered if Drew replies in Gmail himself first, the Slack card says so.
 //
-// Google: an OAuth client (GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET) with the
+// Google: an "Internal" OAuth client per Google Workspace - an internal app
+// needs no Google review and its access doesn't expire, but only works for its
+// own Workspace. GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET (drippingsportsclub.com)
+// and, if DS Elite is a separate Workspace, GOOGLE_DSE_CLIENT_ID /
+// GOOGLE_DSE_CLIENT_SECRET for @dselitevolleyball.com. Each has the
 // Gmail API on; each account signs in once (HQ -> Product -> Settings -> Email
 // assistant) and its refresh token is kept in mail_accounts (server only).
 // Setup: MAIL_ASSISTANT_SETUP.md.
@@ -30,7 +34,12 @@ export const SCOPES = ["openid", "email", "https://www.googleapis.com/auth/gmail
 export const MODEL = "claude-opus-5-5";
 const nrm = (s) => String(s || "").trim().toLowerCase();
 const fail = (status, msg) => Object.assign(new Error(msg), { status });
-export const googleReady = () => !!(env().GOOGLE_CLIENT_ID && env().GOOGLE_CLIENT_SECRET);
+// The OAuth client for a mailbox: DS Elite's own when it has one, else the main one.
+export function clientFor(account) {
+  const dse = /@dselitevolleyball\.com$/i.test(String(account || "")) && env().GOOGLE_DSE_CLIENT_ID && env().GOOGLE_DSE_CLIENT_SECRET;
+  return dse ? { id: env().GOOGLE_DSE_CLIENT_ID, secret: env().GOOGLE_DSE_CLIENT_SECRET } : { id: env().GOOGLE_CLIENT_ID, secret: env().GOOGLE_CLIENT_SECRET };
+}
+export const googleReady = (account = ACCOUNTS[1]) => { const c = clientFor(account); return !!(c.id && c.secret); };
 // On drippingsportsclub.com, not vercel.app: a published Google app may only
 // send people back to its "authorized domains", and vercel.app can't be one.
 export const redirectUri = () => (env().MAIL_PUBLIC_BASE || "https://www.drippingsportsclub.com/hq").replace(/\/+$/, "") + "/api/mail-connect";
@@ -50,13 +59,14 @@ export function readState(state, now = Date.now()) {
   try { const j = JSON.parse(Buffer.from(body, "base64url").toString()); return now - j.t < 30 * 60e3 ? j : null; } catch { return null; }
 }
 export function authUrl(account, by) {
-  if (!googleReady()) throw fail(400, "Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in Vercel first (MAIL_ASSISTANT_SETUP.md)");
+  if (!googleReady(account)) throw fail(400, "Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in Vercel first (MAIL_ASSISTANT_SETUP.md)");
   const u = new URL("https://accounts.google.com/o/oauth2/v2/auth");
-  for (const [k, v] of Object.entries({ client_id: env().GOOGLE_CLIENT_ID, redirect_uri: redirectUri(), response_type: "code", scope: SCOPES.join(" "), access_type: "offline", prompt: "consent", include_granted_scopes: "true", login_hint: account, state: signState({ a: account, by }) })) u.searchParams.set(k, v);
+  for (const [k, v] of Object.entries({ client_id: clientFor(account).id, redirect_uri: redirectUri(), response_type: "code", scope: SCOPES.join(" "), access_type: "offline", prompt: "consent", include_granted_scopes: "true", login_hint: account, state: signState({ a: account, by }) })) u.searchParams.set(k, v);
   return u.toString();
 }
-async function tokenCall(params, fetchImpl = fetch) {
-  const r = await fetchImpl("https://oauth2.googleapis.com/token", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ client_id: env().GOOGLE_CLIENT_ID, client_secret: env().GOOGLE_CLIENT_SECRET, ...params }) });
+async function tokenCall(account, params, fetchImpl = fetch) {
+  const c = clientFor(account);
+  const r = await fetchImpl("https://oauth2.googleapis.com/token", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ client_id: c.id, client_secret: c.secret, ...params }) });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw fail(r.status, j.error_description || j.error || "Google said no (" + r.status + ")");
   return j;
@@ -65,11 +75,12 @@ async function tokenCall(params, fetchImpl = fetch) {
 export async function finishConnect(sb, { code, state }, { fetchImpl = fetch } = {}) {
   const st = readState(state);
   if (!st) throw fail(400, "That sign-in link has run out - start again from HQ");
-  const t = await tokenCall({ code, grant_type: "authorization_code", redirect_uri: redirectUri() }, fetchImpl);
+  const t = await tokenCall(st.a, { code, grant_type: "authorization_code", redirect_uri: redirectUri() }, fetchImpl);
   if (!t.refresh_token) throw fail(400, "Google didn't give HQ lasting access - remove DSSC HQ at myaccount.google.com/permissions and connect again");
   const prof = await gmail(t.access_token, "profile", {}, fetchImpl);
   const email = nrm(prof.emailAddress);
   if (!ACCOUNTS.includes(email)) throw fail(400, `${email} isn't one of the mailboxes the assistant reads (${ACCOUNTS.join(", ")})`);
+  if (clientFor(email).id !== clientFor(st.a).id) throw fail(400, `You signed in as ${email} - connect it with its own Connect button`);
   const { error } = await sb.from("mail_accounts").upsert({ email, refresh_token: t.refresh_token, enabled: true, connected_at: new Date().toISOString(), connected_by: st.by || null, last_error: null, updated_at: new Date().toISOString() }, { onConflict: "email" });
   if (error) throw fail(500, error.message);
   return { email, asked: st.a };
@@ -79,7 +90,7 @@ export async function accessToken(sb, acct, { fetchImpl = fetch } = {}) {
   const c = tokens.get(acct.email);
   if (c && c.exp > Date.now() + 60e3) return c.token;
   try {
-    const t = await tokenCall({ refresh_token: acct.refresh_token, grant_type: "refresh_token" }, fetchImpl);
+    const t = await tokenCall(acct.email, { refresh_token: acct.refresh_token, grant_type: "refresh_token" }, fetchImpl);
     tokens.set(acct.email, { token: t.access_token, exp: Date.now() + (t.expires_in || 3000) * 1000 });
     return t.access_token;
   } catch (e) {

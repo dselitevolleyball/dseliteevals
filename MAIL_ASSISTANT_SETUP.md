@@ -26,48 +26,49 @@ Only Drew can press the buttons; the API and Slack both check.
 
 ## One-time setup (about 10 minutes)
 
-### 1. A Google OAuth client
+### 1. A Google OAuth client — as an **Internal** app
 
-Do this at [console.cloud.google.com](https://console.cloud.google.com), signed in as
-drew@drippingsportsclub.com:
+Make it **Internal**: no Google review, no demo video, no "unverified app" screen, and access
+that never expires. An internal app only works for accounts in its own Google Workspace. If
+drippingsportsclub.com and dselitevolleyball.com are separate Workspaces, do this once in each
+(step 1b). Don't publish the app, and don't fill in the verification questions; they're only for
+public apps.
 
-1. **Create a project:** project picker → New project → name it `DSSC HQ`.
+**1a. drippingsportsclub.com** (signed in as drew@drippingsportsclub.com at
+[console.cloud.google.com](https://console.cloud.google.com)):
+
+1. **Create a project:** New project → name it `DSSC HQ`, in the drippingsportsclub.com
+   organization.
 2. **Turn on Gmail:** APIs & Services → Library → **Gmail API** → Enable.
-3. **Set up the consent screen:** Google Auth Platform → Get started.
-   - App name `DSSC HQ`, support email yours.
-   - Audience: **External**. It has to be External because the two mailboxes are on different
-     domains.
-4. **Add the permissions:** Google Auth Platform → Data access → Add or remove scopes. Add:
-   - `.../auth/gmail.modify`
-   - `openid`
-   - `.../auth/userinfo.email`
-5. **Fill in Branding:** Google Auth Platform → Branding. Google won't publish without it.
-   - App home page: `https://www.drippingsportsclub.com`
-   - Privacy policy: `https://www.drippingsportsclub.com/privacy`
-   - Authorized domains: `drippingsportsclub.com`
-   - Developer contact: your email. Then Save.
-6. **Publish the app:** Google Auth Platform → Audience → **Publish app** ("In production").
-   - **Why:** while it says "Testing", Google cuts the access every 7 days.
-   - **The warning screen:** since it's your own app and not reviewed by Google, you'll see
-     "Google hasn't verified this app" when you connect. Click **Advanced → Go to DSSC HQ**.
-     That's expected; it's limited to 100 users and only you use it.
-7. **Create the client:** Google Auth Platform → Clients → Create client.
+3. **Set up the consent screen:** Google Auth Platform → Get started. App name `DSSC HQ`, support
+   email, Audience **Internal**. If you already picked External, go to Audience and press
+   **Make internal**.
+4. **Add the permissions:** Google Auth Platform → Data access → Add or remove scopes:
+   `.../auth/gmail.modify`, `openid`, `.../auth/userinfo.email`. Save.
+5. **Create the client:** Google Auth Platform → Clients → Create client.
    - Type **Web application**.
    - **Authorized redirect URI:** `https://www.drippingsportsclub.com/hq/api/mail-connect`.
-8. **Copy the keys:** copy the **Client ID** and **Client secret**.
+6. **Copy the keys:** Client ID and Client secret go into Vercel as `GOOGLE_CLIENT_ID` and
+   `GOOGLE_CLIENT_SECRET`.
+
+**1b. dselitevolleyball.com**, only if connecting drew@dselitevolleyball.com says the app is
+"restricted to users within its organization":
+
+1. Sign in to Google Cloud as drew@dselitevolleyball.com.
+2. Repeat 1a in a project under the dselitevolleyball.com organization, with the same redirect
+   URI.
+3. Put its keys in Vercel as `GOOGLE_DSE_CLIENT_ID` and `GOOGLE_DSE_CLIENT_SECRET`. HQ uses them
+   for that mailbox automatically.
 
 ### 2. Vercel
 
-In Vercel, open the dseliteevals project → Settings → Environment Variables (Production):
-
-1. Add `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`.
-2. Redeploy, or tell Claude to.
+Add the keys above in Environment Variables (Production), then redeploy (or tell Claude to).
 
 ### 3. Connect each Gmail
 
 1. In HQ, open **Product → Settings → Email assistant**.
 2. Press **Connect** next to a mailbox.
-3. Sign in as **that** account, then click through the "unverified" screen.
+3. Sign in as **that** account.
 4. Allow Gmail access.
 5. Repeat for the other mailbox.
 

@@ -48,8 +48,8 @@ export async function run(sb, me, b) {
       if (error) throw fail(500, /mail_accounts|schema cache/.test(error.message) ? "Run migrations/20261112_mail_assistant.sql first" : error.message);
       const { data: recent } = await sb.from("mail_drafts").select("id, account, from_email, from_name, subject, received_at, status, reason, decided_by, decided_at, created_at").order("created_at", { ascending: false }).limit(30);
       return {
-        google_ready: googleReady(), redirect_uri: redirectUri(),
-        accounts: ACCOUNTS.map(e => { const a = (accts || []).find(x => x.email === e); return { email: e, connected: !!a?.refresh_token, enabled: a ? a.enabled : false, connected_at: a?.connected_at || null, last_poll_at: a?.last_poll_at || null, last_error: a?.last_error || null }; }),
+        google_ready: ACCOUNTS.some(e => googleReady(e)), redirect_uri: redirectUri(),
+        accounts: ACCOUNTS.map(e => { const a = (accts || []).find(x => x.email === e); return { email: e, google_ready: googleReady(e), connected: !!a?.refresh_token, enabled: a ? a.enabled : false, connected_at: a?.connected_at || null, last_poll_at: a?.last_poll_at || null, last_error: a?.last_error || null }; }),
         recent: recent || [],
       };
     }

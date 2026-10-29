@@ -625,7 +625,7 @@ function MailAssistantSettings({ box }) {
             <div style={{ fontWeight: 700, fontSize: 14 }}>{a.email}</div>
             <div style={{ fontSize: 12, color: a.last_error ? C.red : a.connected ? (a.enabled ? C.grn : C.amber) : C.mut }}>{a.last_error ? a.last_error : a.connected ? (a.enabled ? `✓ On · checked ${ago(a.last_poll_at)}` : "Paused") : "Not connected"}</div>
           </div>
-          {st.google_ready && <button disabled={!!busy} onClick={go("c" + a.email, async () => { const { url } = await call("connect_url", { email: a.email }); window.location.href = url; })} style={btn(a.connected ? "ghost" : "primary", true)}>{a.connected ? "Reconnect" : "Connect"}</button>}
+          {a.google_ready && <button disabled={!!busy} onClick={go("c" + a.email, async () => { const { url } = await call("connect_url", { email: a.email }); window.location.href = url; })} style={btn(a.connected ? "ghost" : "primary", true)}>{a.connected ? "Reconnect" : "Connect"}</button>}
           {a.connected && <button disabled={!!busy} onClick={go("t" + a.email, () => call("toggle", { email: a.email, enabled: !a.enabled }))} style={btn("ghost", true)}>{a.enabled ? "Pause" : "Resume"}</button>}
           {a.connected && <button disabled={!!busy} onClick={() => window.confirm(`Disconnect ${a.email}? The assistant stops reading it.`) && go("d" + a.email, () => call("disconnect", { email: a.email }))()} style={btn("ghost", true)}>Disconnect</button>}
         </div>

@@ -118,6 +118,12 @@ await M.sendDraft(sb, k4.id, "Drew", { fetchImpl: failing }).then(() => check(fa
 await M.sendDraft(sb, k4.id, "Drew", { fetchImpl: fakeFetch });
 check(sb.db.mail_drafts.find(r => r.id === k4.id).status === "sent", "…and Send again works");
 
+// Two Workspaces: DS Elite's mailbox uses its own client when it has one.
+check(M.clientFor("drew@dselitevolleyball.com").id === "cid" && M.clientFor("drew@drippingsportsclub.com").id === "cid", "one client for both mailboxes until DS Elite has its own");
+process.env.GOOGLE_DSE_CLIENT_ID = "dse-cid"; process.env.GOOGLE_DSE_CLIENT_SECRET = "dse-sec";
+check(M.clientFor("drew@dselitevolleyball.com").id === "dse-cid" && M.clientFor("drew@drippingsportsclub.com").id === "cid" && /client_id=dse-cid/.test(M.authUrl("drew@dselitevolleyball.com", "drew")), "DS Elite's own client for its mailbox, the main one for DSSC's");
+delete process.env.GOOGLE_DSE_CLIENT_ID; delete process.env.GOOGLE_DSE_CLIENT_SECRET;
+
 // Connecting: the mailbox must be one of Drew's.
 const sbc = fakeSupabase({ mail_accounts: [] });
 const con = await M.finishConnect(sbc, { code: "c", state: M.signState({ a: "drew@dselitevolleyball.com", by: "drew" }) }, { fetchImpl: fakeFetch });
