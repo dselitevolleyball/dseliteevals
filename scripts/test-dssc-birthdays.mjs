@@ -101,7 +101,14 @@ const photos = [1, 2, 3, 4, 5, 6].map(i => ({ url: `https://x/p${i}.jpg`, line: 
 const g = { kind: "party", email: "jen@example.com", contact: { id: 1 }, birthday: "2026-12-16", turns: 9, kids: [{ pid: 11, first: "Ava" }] };
 const pe = B.partyEmail(g, S, { today: "2026-10-02", slots: new Map([["2026-12-12", ["9-11am", "2-4pm"]], ["2026-12-13", []], ["2026-12-19", ["7-9pm"]], ["2026-12-20", []]]), photos });
 check(pe.subject === "Celebrate Ava's birthday at DSSC ($50 off)", pe.subject);
-check(/BDAY50/.test(pe.html) && /\$50 off/i.test(pe.html) && /one per family/.test(pe.html) && /Warehouse II/.test(pe.html), "the $50 code, one per family, Warehouse II");
+check(/BDAY50/.test(pe.html) && /\$50 off/i.test(pe.html) && /one per family/.test(pe.html) && /at the Warehouse/.test(pe.html) && !/Warehouse II/.test(pe.html), "the $50 code, one per family, at the Warehouse (either building)");
+check(/What(&#39;|')s in every party/.test(pe.html) && /A DSSC party host on the floor the whole time/.test(pe.html) && /The birthday kid picks the last game/.test(pe.html) && /You bring the food, cake and decorations/.test(pe.html), "what every party includes");
+check(/12 kids/.test(pe.html) && />\$350</.test(pe.html) && />\$300</.test(pe.html) && />\$450</.test(pe.html) && />\$400</.test(pe.html), "both packages, price and price with the code (2 hours at $175 / $225 an hour)");
+check(/Up to 12 kids: \$350, \$300 with code BDAY50/.test(pe.text), "the plain-text version lists them too");
+const pk = B.parsePackages('<div class="rg"><h6>Birthday Parties (20 kid package)</h6><span>$225.00/hour</span></div><div><h6>Birthday Parties (12 kid package)</h6><span>$175.00/hour</span></div>');
+check(JSON.stringify(pk) === '[{"kids":12,"hourly":175},{"kids":20,"hourly":225}]', "prices read from Playbook's package list");
+const pricier = B.partyEmail(g, S, { today: "2026-10-02", slots: new Map(), photos, packages: [{ kids: 12, hourly: 200 }, { kids: 20, hourly: 250 }] });
+check(/>\$400</.test(pricier.html) && />\$500</.test(pricier.html) && />\$450</.test(pricier.html), "a price change in Playbook shows up in the email");
 check(/Saturday, December 12/.test(pe.html) && /9-11am  ·  2-4pm/.test(pe.html) && /Saturday, December 19/.test(pe.html) && !/Sunday, December 13/.test(pe.html), "open times by day; a full day is left out");
 check(/resource_group_pks=175,176/.test(pe.html) && /\{\{unsubscribe_url\}\}/.test(pe.html), "book links to Playbook's party page; an unsubscribe link");
 check((pe.html.match(/x\/p\d\.jpg/g) || []).length === 4 && !/vb\.jpg/.test(pe.html) && !/data-hero/.test(pe.html), "no photo up top; four party photos in the gallery, party photos only");

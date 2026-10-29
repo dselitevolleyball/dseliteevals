@@ -403,6 +403,7 @@ ${it.graphic?.sub ? `<div style="font-family:${FONT_B};font-size:16px;color:#a9b
 </td></tr>
 <tr><td style="background:#F4F0E8;padding:26px 24px 10px;font-family:${FONT_B};font-size:16px;line-height:1.55;color:#061a18">
 ${paras(it.body)}
+${it.extra_html || ""}
 ${it.coupon ? couponBox(it.coupon) : ""}
 ${it.cta_url ? btn(it.cta_text || "Register", it.cta_url) : ""}
 </td></tr>

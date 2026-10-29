@@ -98,6 +98,35 @@ export async function partySlots(days, { fetchImpl = fetch } = {}) {
   return out;
 }
 
+// The party packages and their prices, from the same public page (it lists them
+// over a websocket: "Birthday Parties (12 kid package) | $175.00/hour"). A party
+// is two hours. If Playbook doesn't answer, the prices as of Oct 29 2026.
+export const PARTY_HOURS = 2;
+export const PACKAGES_FALLBACK = [{ kids: 12, hourly: 175 }, { kids: 20, hourly: 225 }];
+export function parsePackages(html) {
+  const text = String(html || "").replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, "\n");
+  const out = [];
+  for (const m of text.matchAll(/Birthday Part[^\n]*?\((\d+)\s*kid[^)]*\)[\s\S]{0,80}?\$\s*([\d,]+(?:\.\d+)?)\s*\/\s*hour/gi)) out.push({ kids: +m[1], hourly: +m[2].replace(/,/g, "") });
+  return out.sort((a, b) => a.kids - b.kids);
+}
+export async function partyPackages({ fetchImpl = fetch, WS = globalThis.WebSocket } = {}) {
+  try {
+    if (!WS) return PACKAGES_FALLBACK;
+    const r0 = await fetchImpl(PB + PARTY_PAGE, { headers: { "User-Agent": "Mozilla/5.0 (DSSC HQ birthday emails)" } });
+    const cookies = (r0.headers.getSetCookie?.() || []).map(c => c.split(";")[0]).join("; ");
+    const csrf = (/'csrfmiddlewaretoken': '([^']+)'/.exec(await r0.text()) || [])[1];
+    const html = await new Promise((res, rej) => {
+      const ws = new WS("wss://drippingsports.playbookapi.com" + PARTY_PAGE, { headers: { Cookie: cookies, Origin: PB } });
+      const t = setTimeout(() => { try { ws.close(); } catch { /* */ } rej(new Error("timeout")); }, 12000);
+      ws.onopen = () => ws.send(JSON.stringify({ csrf_token: csrf, action: "load_rental_resources", date: "", location_pk: "", staff_pk: "", resource_type: "resource_group", initial_load: false, selected_passes_have_future_location_based_rentals: "True", selected_participant: "[]" }));
+      ws.onmessage = (e) => { clearTimeout(t); try { ws.close(); } catch { /* */ } try { res(JSON.parse(e.data).rentals_table_html || ""); } catch (er) { rej(er); } };
+      ws.onerror = () => { clearTimeout(t); rej(new Error("websocket")); };
+    });
+    const p = parsePackages(html);
+    return p.length ? p : PACKAGES_FALLBACK;
+  } catch { return PACKAGES_FALLBACK; }
+}
+
 // Everyone the emails could go to, and what's already been sent.
 export async function loadBirthdayData(sb, today) {
   const page = async (t, sel, f) => { const out = []; for (let i = 0; ; i += 1000) { let q = sb.from(t).select(sel).order("id").range(i, i + 999); if (f) q = f(q); const { data, error } = await q; if (error) throw new Error(t + ": " + error.message); out.push(...(data || [])); if (!data || data.length < 1000) break; } return out; };
@@ -198,7 +227,7 @@ export function partyPhotos(photos, seed = 0) {
 }
 
 // ── the emails ──────────────────────────────────────────────────────────────
-export function partyEmail(g, s, { today, slots = new Map(), photos = [] }) {
+export function partyEmail(g, s, { today, slots = new Map(), photos = [], packages = PACKAGES_FALLBACK }) {
   const who = names(g.kids), first = g.kids[0]?.first || "";
   const plural = g.kids.length > 1;
   const book = LINE_LINKS.parties.book;
@@ -228,15 +257,17 @@ export function partyEmail(g, s, { today, slots = new Map(), photos = [] }) {
     graphic: { tag: "Birthday", accent: "Warehouse", sub: `${who} ${plural ? "turn" : "turns"} ${g.turns} on ${fmtDay(g.birthday)}` },
     body: [
       `${who}'s birthday is coming up on ${fmtDay(g.birthday)}, and we'd love to throw the party.`,
-      `Our party hosts run the games on the courts at Warehouse II, so the kids play hard and you get to enjoy the day. Pick a two-hour time, choose the 12 or 20 kid package, and we take care of the rest.`,
-      `As an early birthday gift from DSSC, take $${s.party_off} off any party package.`,
+      `A DSSC party is two hours on a court of your own at the Warehouse, with our party hosts running the games - so the kids play hard and you get to enjoy the day.`,
     ].join("\n\n"),
+    extra_html: partyDetails(s, packages),
     coupon: { amount: `$${s.party_off} off`, what: "any party package at DSSC", code: s.party_code, note: bookBy ? `Book by ${fmtDay(bookBy, { month: "long", day: "numeric" })} · one per family` : "Enter it when you book · one per family" },
     cta_url: book, cta_text: "Book the party",
     email_blocks: anyOpen && !notOpenYet ? [{ ...blocks[0], blurb: `What's open right now - weekends go fast.${blocks[0].blurb ? " " + blocks[0].blurb : ""}` }, ...blocks.slice(1)] : blocks,
     gallery: pics.slice(0, 4),
   };
-  return { ...buildEmail(item), subject: item.email_subject, slotsShown: Object.fromEntries(weekends.flatMap(w => w.days).map(day => [day, slots.get(day) ?? null])) };
+  const built = buildEmail(item);
+  const text = built.text.replace(/\n\n(\$\d+ off - code)/, `\n\n${partyDetailsText(s, packages)}\n\n$1`);
+  return { ...built, text, subject: item.email_subject, slotsShown: Object.fromEntries(weekends.flatMap(w => w.days).map(day => [day, slots.get(day) ?? null])) };
 }
 
 // The birthday email is its own bright card, not the club's dark newsletter
@@ -251,6 +282,38 @@ const H = "'Barlow Condensed','Arial Narrow',Impact,'Helvetica Neue',Arial,sans-
 const F = "'Schibsted Grotesk',Helvetica,Arial,sans-serif";
 const EVER = "#082C2A", TEAL = "#0F8B76", INK = "#061a18", LIME = "#B2D049", ORANGE = "#FF7300", CREAM = "#F4F0E8", MINT = "#7FD1C3";
 const confetti = (n = 26, size = 18) => { const c = [LIME, ORANGE, MINT, CREAM, "#ffffff", TEAL], ch = ["&#9679;", "&#9650;", "&#9632;", "&#9733;", "&#9670;"]; return Array.from({ length: n }, (_, i) => `<span style="color:${c[(i * 7) % c.length]};font-size:${size - (i % 3) * 4}px;line-height:1">${ch[(i * 3) % ch.length]}</span>`).join("&nbsp;"); };
+
+// What every party includes (from drippingsportsclub.com/parties) and the two
+// packages with their prices, before and after the code.
+const INCLUDED = [
+  ["🎈", "A court of your own for two hours"],
+  ["🙌", "A DSSC party host on the floor the whole time"],
+  ["🏃", "Warm-ups, relays and games built for the ages in the room - running, throwing and catching for younger kids, real games for older kids"],
+  ["⭐", "The birthday kid picks the last game"],
+  ["👨‍👩‍👧", "Parents watch from the side or jump in for the last game"],
+  ["🎂", "You bring the food, cake and decorations"],
+];
+const money = (n) => "$" + (Math.round(n * 100) / 100).toLocaleString("en-US", { minimumFractionDigits: n % 1 ? 2 : 0 });
+function partyDetails(s, packages) {
+  const pk = (packages?.length ? packages : PACKAGES_FALLBACK).map(p => ({ ...p, price: p.hourly * PARTY_HOURS }));
+  const card = (p) => `<td width="50%" valign="top" style="padding:6px"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="background:${EVER};border-radius:14px;padding:16px 12px;text-align:center">
+    <div style="font-family:${H};font-weight:900;font-size:15px;letter-spacing:2px;text-transform:uppercase;color:${LIME}">Up to</div>
+    <div style="font-family:${H};font-weight:900;font-size:44px;line-height:1;color:#ffffff">${p.kids} kids</div>
+    <div style="font-family:${F};font-size:15px;color:${CREAM};margin-top:6px"><span style="text-decoration:line-through;opacity:.7">${money(p.price)}</span> &nbsp;<b style="color:${ORANGE};font-size:22px">${money(Math.max(0, p.price - s.party_off))}</b></div>
+    <div style="font-family:${F};font-size:12px;color:${MINT};margin-top:2px">${PARTY_HOURS} hours, with code ${esc(s.party_code)}</div>
+  </td></tr></table></td>`;
+  const rows = []; for (let i = 0; i < pk.length; i += 2) rows.push(pk.slice(i, i + 2));
+  return `<div style="font-family:${H};font-weight:900;font-size:28px;line-height:1;text-transform:uppercase;color:${TEAL};margin:8px 0 10px">What's in every party</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 14px">${INCLUDED.map(([ic, t]) => `<tr><td width="34" valign="top" style="font-size:20px;line-height:1.4;padding:3px 0">${ic}</td><td style="font-family:${F};font-size:16px;line-height:1.45;color:${INK};padding:3px 0">${esc(t)}</td></tr>`).join("")}</table>
+<div style="font-family:${H};font-weight:900;font-size:28px;line-height:1;text-transform:uppercase;color:${TEAL};margin:18px 0 6px">Pick your package</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 12px">${rows.map(r => `<tr>${r.map(card).join("")}</tr>`).join("")}</table>
+<p style="margin:0 0 14px">As an early birthday gift from DSSC, take <b>$${s.party_off} off either package</b>:</p>`;
+}
+function partyDetailsText(s, packages) {
+  const pk = (packages?.length ? packages : PACKAGES_FALLBACK);
+  return ["WHAT'S IN EVERY PARTY", ...INCLUDED.map(([, t]) => "- " + t), "", "PACKAGES (" + PARTY_HOURS + " hours)",
+    ...pk.map(p => `- Up to ${p.kids} kids: ${money(p.hourly * PARTY_HOURS)}, ${money(Math.max(0, p.hourly * PARTY_HOURS - s.party_off))} with code ${s.party_code}`)].join("\n");
+}
 
 // The party invite's top: a party banner, not a photo - the library's photos of
 // older kids are all of them playing a sport (Drew, Oct 29 2026: "I dont want a
@@ -346,6 +409,7 @@ export async function runBirthdays(sb, { today = ctToday(), dry = false, send = 
   const photos = await loadPhotos(sb).catch(() => []);
   const days = plan.party.flatMap(g => weekendsAround(g.birthday, today).flatMap(w => w.days));
   const slots = days.length ? await partySlots(days, { fetchImpl }).catch(e => { out.errors.push("party times: " + e.message); return new Map(); }) : new Map();
+  const packages = plan.party.length ? await partyPackages({ fetchImpl }) : PACKAGES_FALLBACK;
   const from = dsscFrom(), reply_to = inboxAddress();
   for (const g of [...plan.party, ...plan.birthday]) {
     // Claim it (a failed one from an earlier day is cleared first so it can go again).
@@ -353,7 +417,7 @@ export async function runBirthdays(sb, { today = ctToday(), dry = false, send = 
     const { data: claimed } = await sb.from("dssc_birthday_sends").upsert(g.kids.map(k => ({ participant_id: k.pid, contact_id: g.contact.id, kind: g.kind, birthday: g.birthday, turns: g.turns, email: g.email, status: "sending" })), { onConflict: "participant_id,kind,birthday", ignoreDuplicates: true }).select("id");
     if (!claimed?.length) continue;
     const ids = claimed.map(x => x.id);
-    const e = g.kind === "party" ? partyEmail(g, s, { today, slots, photos }) : birthdayEmail(g, s, { today, photos });
+    const e = g.kind === "party" ? partyEmail(g, s, { today, slots, photos, packages }) : birthdayEmail(g, s, { today });
     const u = unsubUrl(g.email);
     const r = await send({ from, to: g.email, reply_to, subject: e.subject, html: personalize(e.html, g.email), text: personalize(e.text, g.email), headers: { "List-Unsubscribe": `<${u}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" } });
     if (r.ok) {
@@ -380,7 +444,8 @@ export async function sendPreview(sb, { kind, to, today = ctToday(), send = send
   const photos = await loadPhotos(sb).catch(() => []);
   const sendDay = kind === "party" ? addDays(g.birthday, -s.party_days) < today ? today : addDays(g.birthday, -s.party_days) : g.birthday;
   const slots = kind === "party" ? await partySlots(weekendsAround(g.birthday, sendDay).flatMap(w => w.days), { fetchImpl }).catch(() => new Map()) : new Map();
-  const e = kind === "party" ? partyEmail(g, s, { today: sendDay, slots, photos }) : birthdayEmail(g, s, { today: sendDay, photos });
+  const packages = kind === "party" ? await partyPackages({ fetchImpl }) : null;
+  const e = kind === "party" ? partyEmail(g, s, { today: sendDay, slots, photos, packages }) : birthdayEmail(g, s, { today: sendDay });
   const r = await send({ from: dsscFrom(), to, reply_to: inboxAddress(), subject: "[Preview] " + e.subject, html: personalize(e.html, to), text: personalize(e.text, to) });
   if (!r.ok) throw new Error(r.error || "Couldn't send the preview");
   return { to, subject: e.subject, for: pick ? `${pick.first} ${pick.last}, turning ${pick.turns} on ${pick.birthday}` : "a sample kid", sends_on: sendDay };
