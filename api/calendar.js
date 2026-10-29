@@ -235,7 +235,12 @@ export default async function handler(req, res) {
       // as its own event at that court (same time).
       const ownCourt = all.filter(d => dateCourt.has(d) && !cancelled.has(d) && !moveByDate.has(d) && !goneSun.has(d));
       const exdates = all.filter(d => cancelled.has(d) || moveByDate.has(d) || goneSun.has(d) || dateCourt.has(d));
-      push(`${team}-${phase}-${a.day}-${a.slot}`.replace(/\s+/g, "_"), team + " Practice", first, t[0], t[1], { location: locFor(a), rruleUntil: end, exdates });
+      // Start the series on its first REAL practice: a DTSTART that is also an
+      // EXDATE (Nov 29 2026, the in-house tournament) still showed up in some
+      // calendar apps next to that date's own court event.
+      const firstReal = all.find(d => !exdates.includes(d));
+      if (!firstReal) { for (const d of ownCourt) push(`${team}-${phase}-${a.day}-${a.slot}-${d}`.replace(/\s+/g, "_"), team + " Practice", d, t[0], t[1], { location: courtLoc(dateCourt.get(d)) }); continue; }
+      push(`${team}-${phase}-${a.day}-${a.slot}`.replace(/\s+/g, "_"), team + " Practice", firstReal, t[0], t[1], { location: locFor(a), rruleUntil: end, exdates: exdates.filter(d => d > firstReal) });
       for (const d of ownCourt) push(`${team}-${phase}-${a.day}-${a.slot}-${d}`.replace(/\s+/g, "_"), team + " Practice", d, t[0], t[1], { location: courtLoc(dateCourt.get(d)) });
     }
   }
