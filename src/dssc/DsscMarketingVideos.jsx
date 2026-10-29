@@ -104,6 +104,11 @@ export default function MarketingVideos({ narrow, onOpenWeek, onChanged }) {
     const month = new Date().toISOString().slice(0, 7);
     const list = files.map(f => ({ f, key: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}` }));
     setUps(us => [...list.map(x => ({ key: x.key, name: x.f.name, size: x.f.size, pct: 0, state: "waiting" })), ...us]);
+    // Keep a phone's screen on while it uploads: a locked iPhone pauses the
+    // upload (it picks up where it left off, but only once the page is back).
+    let lock = null;
+    try { lock = await navigator.wakeLock?.request("screen"); } catch { /* not supported */ }
+    try {
     for (const { f, key } of list) {   // one at a time: phones on gym wifi
       const ext = (f.name.match(/\.(mp4|mov|m4v|webm)$/i) || [, "mp4"])[1].toLowerCase();
       const path = `raw/${month}/${key}.${ext}`;
@@ -116,6 +121,7 @@ export default function MarketingVideos({ narrow, onOpenWeek, onChanged }) {
         setUp(key, { state: d.video?.status === "ready" ? "done" : "failed", error: d.error || d.video?.ai_error || null });
       } catch (e) { setUp(key, { state: "failed", error: e.message }); }
     }
+    } finally { lock?.release?.().catch(() => {}); }
     load();
   };
 
@@ -160,7 +166,7 @@ export default function MarketingVideos({ narrow, onOpenWeek, onChanged }) {
           </div>
         ))}
         {ups.filter(u => u.error).slice(0, 3).map(u => <div key={u.key + "e"} style={{ fontSize: 12, color: DS.orange }}>{u.name}: {u.error}</div>)}
-        {sorting && <div style={{ fontSize: 12, color: DS.dim, marginTop: 4 }}>Keep this page open until the uploads finish. Sorting takes about a minute a video; if you leave, it finishes on its own within 15 minutes.</div>}
+        {sorting && <div style={{ fontSize: 12, color: DS.dim, marginTop: 4 }}>Keep this page open (on a phone, keep HQ on screen) until the uploads finish. Sorting takes about a minute a video; if you leave, it finishes on its own within 15 minutes.</div>}
       </Panel>}
 
       <Collections colls={colls} coll={coll} videos={videos || []} narrow={narrow} adding={adding} setAdding={setAdding}
