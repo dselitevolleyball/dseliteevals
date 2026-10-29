@@ -101,6 +101,9 @@ export async function checkoutUrl(sb, item, req) {
   const fam = await familyOf(sb, item);
   const s = await stripe(k.key, "POST", "checkout/sessions", {
     mode: "payment",
+    // Cards only (Apple Pay and Google Pay ride on "card"): DS Elite covers the
+    // fees, and Klarna / Afterpay / Cash App cost several times what a card does.
+    payment_method_types: ["card"],
     line_items: [{
       price_data: { currency: "usd", unit_amount: req.unit_amount_cents, product_data: { name: req.title, ...(req.description ? { description: String(req.description).slice(0, 500) } : {}) } },
       quantity: item.qty,
