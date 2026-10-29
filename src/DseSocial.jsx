@@ -476,7 +476,7 @@ function Settings({ api, status, onChange }) {
           : <div style={{ fontSize: 14, color: T.warn }}>Not connected yet. Connect DS Elite's Page once and HQ keeps a token that doesn't expire.</div>}
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
           <Btn primary disabled={!!busy || !meta.oauth} title={meta.oauth ? "" : "Needs META_APP_ID and META_APP_SECRET in Vercel"} onClick={() => run("oauth", async () => { const { url } = await api("connect_url"); window.location.href = url; })}>{meta.connected ? "Reconnect Facebook" : "Connect Facebook"}</Btn>
-          {meta.connected && <Btn disabled={!!busy} onClick={() => run("check", async () => setCheck((await api("meta_check")).meta))}>{busy === "check" ? "Checking…" : "Check the connection"}</Btn>}
+          {meta.connected && <Btn disabled={!!busy} onClick={() => run("check", async () => { setCheck((await api("meta_check")).meta); onChange?.(); })}>{busy === "check" ? "Checking…" : "Check the connection"}</Btn>}
           {meta.connected && <Btn disabled={!!busy} onClick={() => window.confirm("Disconnect DS Elite's Facebook? Nothing can post until it's connected again.") && run("dis", async () => { await api("disconnect"); onChange(); })}>Disconnect</Btn>}
         </div>
         {!meta.oauth && <div style={{ fontSize: 12, color: T.mut, marginTop: 6 }}>The Connect button needs <code>META_APP_ID</code> and <code>META_APP_SECRET</code> in Vercel, and <code>{status.redirect_uri}</code> listed as a Valid OAuth Redirect URI in the Meta app (DSE_SOCIAL_SETUP.md). Or paste a token below.</div>}

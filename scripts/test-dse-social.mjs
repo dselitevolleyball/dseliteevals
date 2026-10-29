@@ -154,7 +154,7 @@ const ok = (name) => { n++; console.log("  ✓ " + name); };
     return J({});
   };
   const post = { id: 1, kind: "photos", format: "carousel", status: "approved", caption: "Hi", hashtags: [], platforms: ["facebook", "instagram"], photos: [{ url: "https://x/1.jpg" }, { url: "https://x/2.jpg" }], external_ids: {} };
-  const sb = fakeDb({ dse_social_posts: [post], mkt_secrets: [{ key: "dse_meta_page_token", value: "tok", meta: { page_id: "page1", page_name: "DS Elite Volleyball", ig_id: "ig1" } }], hq_kv: [] });
+  const sb = fakeDb({ dse_social_posts: [post], mkt_secrets: [{ key: "dse_meta_page_token", value: "tok", meta: { page_id: "page1", page_name: "DS Elite Volleyball", ig_id: "ig1", ig_username: "dselitevb" } }], hq_kv: [] });
   let r = await S.publishPost(sb, 1);
   assert.equal(r.post.status, "failed"); assert.equal(r.post.external_ids.facebook, "page_multi", "Facebook went out as one multi-photo post");
   assert.match(r.post.error, /Instagram: .*hiccup/);
