@@ -29,7 +29,7 @@ import { randomUUID } from "node:crypto";
 import { createCanvas } from "@napi-rs/canvas";
 import { claudeClient } from "./ai-client.js";
 import { renderCollage, renderFrame, renderPoster, photo as loadPhoto } from "./dse-social-render.js";
-import { fbPhoto, fbMultiPhoto, igImage, igCarousel, dseMeta, permalinks } from "./dse-social-meta.js";
+import { fbPhoto, fbMultiPhoto, igImage, igCarousel, dseMeta, dseInstagram, permalinks } from "./dse-social-meta.js";
 import { slackCfg, slackApi } from "./product-slack.js";
 import { feedIndex, photoHashes, matchFeed, recordFeedMatches } from "./dse-social-feed.js";
 import { sendOneSms, normalizePhone } from "./sms.js";
@@ -422,7 +422,7 @@ export async function publishPost(sb, id) {
     if (!meta) throw new Error("Facebook isn't connected - HQ -> Social -> Settings");
     for (const platform of post.platforms || []) {
       if (ext[platform]) continue;
-      if (platform === "instagram" && !meta.igId) { notes.push("No Instagram is linked to the Page, so it went to Facebook only"); continue; }
+      if (platform === "instagram") { const ig = await dseInstagram(sb, meta); if (!ig.ok) { notes.push(ig.reason); continue; } }
       try {
         ext[platform] = platform === "facebook"
           ? (urls.length > 1 ? await fbMultiPhoto(sb, urls, caption) : await fbPhoto(sb, urls[0], caption))

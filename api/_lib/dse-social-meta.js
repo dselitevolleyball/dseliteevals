@@ -52,6 +52,28 @@ export async function dseMeta(sb) {
 }
 export const appReady = () => !!(env().META_APP_ID && env().META_APP_SECRET);
 
+// DS Elite's own Instagram. The Page's linked Instagram is read live from
+// Facebook (it can be relinked in Meta at any time) and DS Elite only ever
+// posts to this one: on Oct 29 2026 the DS Elite Page was linked to the
+// club's @drippingspringssportsclub and a team post landed there.
+export const DSE_IG = String(env().DSE_IG_USERNAME || "dselitevb").replace(/^@/, "").toLowerCase();
+export async function dseInstagram(sb, m) {
+  m = m || await dseMeta(sb);
+  if (!m) return { ok: false, reason: "Facebook isn't connected" };
+  let id = m.igId, username = m.igUsername || null;
+  const page = await getJson(m.pageId, { fields: "instagram_business_account{id,username}", access_token: m.token }).catch(() => ({}));
+  if (page.id && !page.error) {   // read fine: trust it over what was saved
+    id = page.instagram_business_account?.id || null; username = page.instagram_business_account?.username || null;
+    if (m.source === "hq" && (id !== m.igId || username !== m.igUsername)) {
+      const { data } = await sb.from("mkt_secrets").select("meta").eq("key", SECRET_KEY).maybeSingle();
+      await sb.from("mkt_secrets").update({ meta: { ...(data?.meta || {}), ig_id: id, ig_username: username } }).eq("key", SECRET_KEY);
+    }
+  }
+  if (!id) return { ok: false, id: null, username: null, reason: `No Instagram is linked to ${m.pageName || "the Page"}, so it went to Facebook only` };
+  if (String(username || "").toLowerCase() !== DSE_IG) return { ok: false, id, username, reason: `The Instagram linked to ${m.pageName || "the Page"} is @${username}, not @${DSE_IG} - nothing went to Instagram. Link @${DSE_IG} to the Page in Meta Business Suite` };
+  return { ok: true, id, username };
+}
+
 // What HQ shows under Settings: connected or not, to which Page, and what's
 // wrong if it can't post. Never returns the token.
 export async function metaStatus(sb, { deep = false } = {}) {
@@ -66,7 +88,12 @@ export async function metaStatus(sb, { deep = false } = {}) {
   const missing = (dbg.scopes || []).length ? ["pages_manage_posts", "pages_read_engagement"].filter(s => !dbg.scopes.includes(s)) : [];
   if (missing.length) out.problems.push("Missing permissions: " + missing.join(", "));
   if (page.error) out.problems.push("Can't read the Page: " + page.error.message);
-  else { out.page = { id: page.id, name: page.name }; if (page.instagram_business_account) out.instagram = { id: page.instagram_business_account.id, username: page.instagram_business_account.username }; }
+  else {
+    out.page = { id: page.id, name: page.name };
+    const ig = await dseInstagram(sb, m);
+    out.instagram = ig.id ? { id: ig.id, username: ig.username, ok: ig.ok } : null;
+    if (ig.id && !ig.ok) out.problems.push(ig.reason);
+  }
   out.expires = dbg.expires_at ? new Date(dbg.expires_at * 1000).toISOString().slice(0, 10) : "never";
   out.app = dbg.application || null;
   return out;
@@ -172,7 +199,11 @@ export async function pickPage(sb, pageId, by) {
 async function need(sb, platform) {
   const m = await dseMeta(sb);
   if (!m) throw new Error("Facebook isn't connected - HQ -> Social -> Settings -> Connect Facebook");
-  if (platform === "instagram" && !m.igId) throw new Error(`No Instagram is linked to ${m.pageName || "the Page"} (Instagram must be a professional account linked to the Page)`);
+  if (platform === "instagram") {
+    const ig = await dseInstagram(sb, m);
+    if (!ig.ok) throw new Error(ig.reason);
+    return { ...m, igId: ig.id, igUsername: ig.username };
+  }
   return m;
 }
 // One image on the Page.

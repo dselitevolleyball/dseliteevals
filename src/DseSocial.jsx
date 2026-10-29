@@ -15,6 +15,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "./supabase";
 
+// DS Elite posts only to its own Instagram (api/_lib/dse-social-meta.js DSE_IG).
+const DSE_IG = "dselitevb";
+const wrongIg = (m) => !!m?.instagram && String(m.instagram.username || "").toLowerCase() !== DSE_IG;
+
 const T = { bg: "#0a0a0a", card: "#141414", card2: "#1b1b1b", line: "#2a2a2a", pink: "#e91e8c", hot: "#ff69b4", text: "#fff", mut: "#999", ok: "#22c55e", bad: "#ff8a7a", warn: "#f59e0b" };
 const realApi = async (action, body = {}) => {
   const { data: { session } } = await supabase.auth.getSession();
@@ -53,7 +57,7 @@ export default function DseSocial({ api = realApi }) {
           <span style={{ fontSize: 12, color: T.mut }}>DS Elite's Facebook & Instagram · nothing posts until it's approved</span>
           <div style={{ flex: 1 }} />
           {meta && (meta.connected
-            ? <Pill color={T.ok}>● {meta.page?.name || "Facebook"}{meta.instagram ? " + IG" : ""}</Pill>
+            ? <Pill color={T.ok}>● {meta.page?.name || "Facebook"}{meta.instagram && !wrongIg(meta) ? " + IG" : ""}</Pill>
             : <button onClick={() => setTab("settings")} style={pillBtn(T.warn)}>⚠ Facebook not connected</button>)}
         </div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
@@ -382,7 +386,7 @@ function Settings({ api, status, onChange }) {
       <Box>
         <div style={{ fontWeight: 800, marginBottom: 6 }}>Facebook & Instagram</div>
         {meta.connected
-          ? <div style={{ fontSize: 14 }}>Posting to <b>{meta.page?.name || meta.page?.id}</b>{meta.instagram ? <> and Instagram <b>@{meta.instagram.username || meta.instagram.id}</b></> : <span style={{ color: T.warn }}> - no Instagram linked to this Page</span>}{meta.since ? <span style={{ color: T.mut, fontSize: 12 }}> · since {fmtDay(meta.since)}{meta.by ? " by " + meta.by : ""}</span> : null}</div>
+          ? <div style={{ fontSize: 14 }}>Posting to <b>{meta.page?.name || meta.page?.id}</b>{meta.instagram && wrongIg(meta) ? <span style={{ color: T.bad }}> - the Instagram linked to this Page is <b>@{meta.instagram.username}</b>, not @{DSE_IG}, so nothing goes to Instagram until @{DSE_IG} is linked to the Page in Meta Business Suite</span> : meta.instagram ? <> and Instagram <b>@{meta.instagram.username || meta.instagram.id}</b></> : <span style={{ color: T.warn }}> - no Instagram linked to this Page</span>}{meta.since ? <span style={{ color: T.mut, fontSize: 12 }}> · since {fmtDay(meta.since)}{meta.by ? " by " + meta.by : ""}</span> : null}</div>
           : <div style={{ fontSize: 14, color: T.warn }}>Not connected yet. Connect DS Elite's Page once and HQ keeps a token that doesn't expire.</div>}
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
           <Btn primary disabled={!!busy || !meta.oauth} title={meta.oauth ? "" : "Needs META_APP_ID and META_APP_SECRET in Vercel"} onClick={() => run("oauth", async () => { const { url } = await api("connect_url"); window.location.href = url; })}>{meta.connected ? "Reconnect Facebook" : "Connect Facebook"}</Btn>
