@@ -56,7 +56,7 @@ export const SMART_GROUPS = [
   ["vip", "VIP", p => p.tier === "vip"],
   ["open_gym", "Open gym members", p => hasProduct(p, "open_gym_active")],
   ["privates", "Privates", p => hasProduct(p, "privates")],
-  ["reach_member", "Reach members", p => hasProduct(p, "reach_member_active")],
+  ["reach_member", "Reach", p => hasProduct(p, "reach")],
   ["rentals", "Renters", p => hasProduct(p, "rentals")],
   ["parties", "Parties", p => hasProduct(p, "parties")],
   ["bday", "Birthday in 30 days", p => p.birthdays.some(b => b.days <= 30)],

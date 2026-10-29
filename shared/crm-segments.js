@@ -73,7 +73,7 @@ export async function loadSegmentData(sb) {
   // The v2 extras (texts, email events, touches) are optional: before
   // migrations/20261110_crm_v2.sql they're simply empty.
   const opt = (p) => p.catch(() => []);
-  const [contacts, participants, participation, purchases, orders, unsubscribes, smsStats, emailStats, optouts, touches] = await Promise.all([
+  const [contacts, participants, participation, purchases, orders, unsubscribes, smsStats, emailStats, optouts, touches, clinics] = await Promise.all([
     page("dssc_contacts", "*"),
     page("dssc_participants", "*"),
     page("dssc_participation", "id, contact_id, participant_id, program, category, event_date, source"),
@@ -84,8 +84,9 @@ export async function loadSegmentData(sb) {
     opt(page("dssc_email_stats", "email, opens, clicks, last_open_at, last_click_at", "email")),
     opt((async () => { const { data, error } = await sb.from("sms_optouts").select("phone").eq("brand", "dssc"); if (error) throw error; return data || []; })()),
     opt(page("dssc_touches", "id, contact_id, kind, source, detail, at")),
+    opt(page("dssc_clinics", "id, name, category")),
   ]);
-  return { contacts, participants, participation, purchases, orders, unsubscribes, smsStats, emailStats, optouts, touches };
+  return { contacts, participants, participation, purchases, orders, unsubscribes, smsStats, emailStats, optouts, touches, clinics };
 }
 
 // Index once; evaluate many filters against it.
@@ -95,7 +96,17 @@ export function buildFamilies(d, today = new Date().toISOString().slice(0, 10)) 
   const fams = new Map();
   for (const c of d.contacts || []) fams.set(c.id, { c, kids: [], acts: [], spend: { all: 0, "12m": 0, ytd: 0 }, last: "", buyDates: [], orderDates: [] });
   for (const p of d.participants || []) { const f = fams.get(p.contact_id); if (f) f.kids.push({ ...p, age: ageOn(p.dob, today), grade: gradeOf(p.dob, today) }); }
-  const act = (f, a) => { f.acts.push(a); if (a.date && a.date > f.last) f.last = a.date; };
+  // Each class's Playbook category ("Volleyball PODs", "Basketball Clinic"…), by
+  // name: "U13-15 National Pins" is a pod, and "Point Guard POD" is basketball
+  // even when a purchase row filed it under volleyball. A "- S3" suffix is the same class.
+  const clinics = (d.clinics || []).filter(c => c.name && c.category).map(c => [nrm(c.name), c.category]).sort((a, b) => b[0].length - a[0].length);
+  const groupMemo = new Map();
+  const groupOf = (program) => { const k = nrm(program); if (!groupMemo.has(k)) groupMemo.set(k, (clinics.find(([n]) => k === n || k.startsWith(n + " ")) || [])[1] || null); return groupMemo.get(k); };
+  const act = (f, a) => {
+    a.group = groupOf(a.program);
+    if (a.group && ["volleyball", "basketball", "other"].includes(a.category)) { const sp = /basketball/i.test(a.group) ? "basketball" : /volleyball/i.test(a.group) ? "volleyball" : null; if (sp) a.category = sp; }
+    f.acts.push(a); if (a.date && a.date > f.last) f.last = a.date;
+  };
   const spend = (f, cents, date) => { f.spend.all += cents; if (date >= y12) f.spend["12m"] += cents; if (date >= ytd) f.spend.ytd += cents; };
   for (const r of d.participation || []) { const f = fams.get(r.contact_id); if (f) act(f, { program: r.program || "", category: r.category || "other", date: day(r.event_date), pid: r.participant_id || null }); }
   for (const r of d.purchases || []) { const f = fams.get(r.contact_id); if (!f) continue; const dt = day(r.purchased_at); act(f, { program: r.program || "", category: r.category || "other", kind: r.kind || null, date: dt, pid: r.participant_id || null, cents: r.amount_cents || 0 }); spend(f, r.amount_cents || 0, dt); if (dt) f.buyDates.push(dt); }

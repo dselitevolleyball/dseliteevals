@@ -92,6 +92,15 @@ check(nextBirthday("2012-02-29", "2027-03-01")?.date === "2028-02-28" && nextBir
 check(P(2).dse === true && P(3).dse === false, "DS Elite family");
 check(P(9).tier === "vip" && P(1).tier === null, `tiers: biggest spender VIP, prospects none (${P(9).tier}, ${P(1).tier})`);
 check(channelLine(P(3)) === "✉ opens (5) · 💬 replies (2)", channelLine(P(3)));
+// Pods by Playbook class category; Reach memberships and Reach+ Vball as one Reach.
+const pdx = buildFamilies({ contacts: [contact(1), contact(2), contact(3)], participants: [],
+  clinics: [{ id: 1, name: "U13-15 National Pins", category: "Volleyball PODs" }, { id: 2, name: "Point Guard POD", category: "Basketball PODs" }, { id: 3, name: "Reach+ Vball", category: "Volleyball Clinic" }],
+  participation: [{ id: 1, contact_id: 1, program: "U13-15 National Pins - S3", category: "volleyball", event_date: "2026-10-01" }],
+  purchases: [buy(1, 2, "Point Guard POD", "2026-10-02", 8000), buy(2, 3, "Reach+ Vball", "2026-10-03", 5000), buy(3, 1, "Reach Monthly", "2026-10-04", 9000, { category: "reach", kind: "UserSubscription" })] }, TODAY);
+const pp = (id) => pdx.fams.get(id).profile;
+check(hasProduct(pp(1), "pods") && pp(1).products.pods.sports.join() === "volleyball" && hasProduct(pp(2), "pods") && pp(2).products.pods.sports.join() === "basketball" && !hasProduct(pp(3), "pods"), "pods from the class category, volleyball or basketball (a '- S3' class too)");
+check(pp(2).sports.join() === "basketball", "a basketball pod filed under volleyball counts as basketball");
+check(hasProduct(pp(1), "reach") && hasProduct(pp(3), "reach") && hasProduct(pp(3), "reach_member_active") && !hasProduct(pp(2), "reach"), "Reach: memberships and Reach+ Vball together; old 'Reach member' segments still work");
 
 // ── 2. segment filters ───────────────────────────────────────────────────────
 console.log("== 2. segment filters ==");

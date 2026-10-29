@@ -33,18 +33,21 @@ export const TIERS = [["vip", "VIP", "Top 10% by lifetime spend"], ["high", "Hig
 // Memberships renew monthly: "active" when the latest is within 35 days.
 export const PRODUCTS = [
   { key: "open_gym", label: "Open gym", icon: "🏟", membership: true, test: (a) => /open gym/i.test(a.program) },
-  { key: "reach_member", label: "Reach membership", icon: "⚡", membership: true, test: (a) => a.category === "reach" && (a.kind === "UserSubscription" || /member|unlimited|monthly/i.test(a.program)) },
+  // Reach: memberships, sessions and Reach+ Vball (filed under volleyball in Playbook), as one (Drew, Oct 29 2026).
+  { key: "reach_member", label: "Reach", icon: "⚡", membership: true, test: (a) => isReach(a) },
   { key: "privates", label: "Privates", icon: "🤝", test: (a) => /private/i.test(a.program) },
   { key: "rentals", label: "Court rentals", icon: "🏐", test: (a) => /rental|\bcourts?\b/i.test(a.program) && !/private/i.test(a.program) },
   { key: "parties", label: "Birthday party", icon: "🎉", test: (a) => /birthday|party/i.test(a.program) && !/viewing/i.test(a.program) },
   { key: "camps", label: "Camps", icon: "🏕", test: (a) => /camp/i.test(a.program) },
-  { key: "pods", label: "Skill pods", icon: "🧠", test: (a) => /\bpods?\b/i.test(a.program) },
+  // Pods are a Playbook class category ("Volleyball PODs", "Basketball PODs"); most don't say "pod" in the name.
+  { key: "pods", label: "Skill pods", icon: "🧠", test: (a) => /\bpods?\b/i.test(a.program) || /\bpods?\b/i.test(a.group || "") },
 ];
 export const PRODUCT_FILTERS = [
-  ["open_gym_active", "Open gym member"], ["open_gym_lapsed", "Open gym (lapsed)"], ["privates", "Privates"], ["reach_member_active", "Reach member"],
+  ["open_gym_active", "Open gym member"], ["open_gym_lapsed", "Open gym (lapsed)"], ["privates", "Privates"], ["reach", "Reach"],
   ["rentals", "Rents courts"], ["parties", "Had a party"], ["camps", "Camps"], ["pods", "Pods"], ["dse", "DS Elite family"],
-  ["volleyball", "Volleyball"], ["basketball", "Basketball"], ["reach", "Reach"],
+  ["volleyball", "Volleyball"], ["basketball", "Basketball"],
 ];
+const isReach = (a) => a.category === "reach" || /\breach\b/i.test(a.program || "");
 const DAY = 864e5;
 const day = (v) => String(v || "").slice(0, 10);
 const daysBetween = (a, b) => Math.round((Date.parse(b + "T12:00:00Z") - Date.parse(a + "T12:00:00Z")) / DAY);
@@ -100,9 +103,10 @@ export function profileOf(f, ctx) {
     const entry = { count: hits.length, last: lastP };
     if (p.membership) entry.active = !!lastP && daysBetween(lastP > today ? today : lastP, today) <= 35;
     if (p.key === "privates") entry.coaches = [...new Set(hits.map(a => privateCoach(a.program)).filter(Boolean))];
+    if (p.key === "pods") entry.sports = [...new Set(hits.map(a => a.category).filter(k => ["volleyball", "basketball"].includes(k)))];
     products[p.key] = entry;
   }
-  const sports = [...new Set(acts.map(a => a.category).filter(k => ["volleyball", "basketball", "reach"].includes(k)))];
+  const sports = [...new Set([...acts.map(a => a.category).filter(k => ["volleyball", "basketball", "reach"].includes(k)), ...(acts.some(isReach) ? ["reach"] : [])])];
   const dse = (f.kids || []).some(k => k.dse_level);
 
   // Channels.
@@ -144,7 +148,7 @@ export function hasProduct(p, key) {
   if (!p) return false;
   if (key === "open_gym_active") return !!p.products.open_gym?.active;
   if (key === "open_gym_lapsed") return !!p.products.open_gym && !p.products.open_gym.active;
-  if (key === "reach_member_active") return !!p.products.reach_member?.active;
+  if (key === "reach_member_active") key = "reach";   // "Reach member" was folded into Reach
   if (key === "dse") return p.dse;
   if (["volleyball", "basketball", "reach"].includes(key)) return p.sports.includes(key);
   return !!p.products[key];
