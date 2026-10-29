@@ -59,6 +59,7 @@ const IT = {
   claims:        ["Coach Claims", "🧾", "ops", "payroll expenses reimburse", "Claims"],
   myexpenses:    ["My Expenses", "💳", "all", "expenses receipts", "Expenses"],
   finance:       ["Finance", "💵", "admin", "money budget", "Finance"],
+  payments:      ["Payments", "💳", "admin", "stripe pay payment collect money tickets ncaa refund", "Payments"],
   lineups:       ["Lineups", "📋", "all", "rotations", "Lineups"],
   practiceplan:  ["Playbook", "📖", "all", "practice plans drills", "Playbook"],
   checkin:       ["Quick Check-in", "✅", "mine", "check in", "Check-in"],
@@ -107,7 +108,7 @@ const DSE_OPS = [
   ["teams", "Teams & players", "🏐", ["teamdir", "roster", "incidentboard", "incidents", "school", "schoolgames", "photos"]],
   ["families", "Families & signups", "👪", ["newplayers", "waiting", "tracker", "kickoff", "playergear", "scholarships"]],
   ["events", "Tournaments & travel", "✈️", ["tournaments", "hub", "workduty", "tournament", "dsysa", "travel", "housing", "hawaii"]],
-  ["staff", "Staff, pay & finance", "💵", ["coaches", "requests", "gear", "timecards", "claims", "myexpenses", "finance"]],
+  ["staff", "Staff, pay & finance", "💵", ["coaches", "requests", "gear", "timecards", "claims", "myexpenses", "finance", "payments"]],
   ["court", "On the court", "📖", ["lineups", "practiceplan", "checkin", "playereval", "passing", "serving", "testreports", "testboard", "games"]],
   ["tryouts", "Tryouts 2026-27", "🎯", ["dashboard", "evaluate", "favorites", "teams", "rankings", "physical", "tryouts"]],
 ];

@@ -42,6 +42,7 @@ import DseSocial from "./DseSocial.jsx";
 import { laneOfPerson } from "../shared/dssc-lanes.js";
 import DsscReachTexts from "./dssc/DsscReachTexts.jsx";
 import ProductBoard from "./ProductBoard.jsx";
+import Payments from "./Payments.jsx";
 import FeedbackButton from "./FeedbackButton.jsx";
 import NewPlayers from "./NewPlayers.jsx";
 import { usE164 } from "../shared/phone.js";
@@ -2263,7 +2264,7 @@ export default function App() {
   // email we send them. Every admin control inside renderDsysa — add/cancel a
   // date, set the lead, remove someone else's signup — is separately gated on
   // isAdmin, so opening the view exposes no admin action.
-  const OPS_VIEWS = new Set(["product","housing","waiting","newplayers","privates","school","schoolgames","playergear","kickoff","photos","social","incidentboard","tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","dayschedule","timecards","gear","staffing","roster","hawaii","travel","finance","dssccal","pods"]);
+  const OPS_VIEWS = new Set(["product","housing","waiting","newplayers","privates","school","schoolgames","playergear","kickoff","photos","social","incidentboard","tracker","teamdir","coaches","practice","sa","email","messages","scholarships","notifications","requests","coachcomms","assignments","coverage","dayschedule","timecards","gear","staffing","roster","hawaii","travel","finance","payments","dssccal","pods"]);
   const canOps    = isAdmin || isOwner;
   // Testing report emails: admins plus the performance coach (keep in step
   // with REPORT_SENDERS in api/stat-report.js).
@@ -33300,6 +33301,7 @@ export default function App() {
         {view==="hawaii" && renderHawaii()}
         {view==="dsysa" && renderDsysa()}
         {view==="finance" && renderFinance()}
+        {view==="payments" && <Payments narrow={isNarrow} />}
         {view==="dssccal" && renderDsscCal()}
         {view==="dssctime" && renderDsscTime()}
         {view==="pods" && renderPods()}

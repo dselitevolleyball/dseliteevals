@@ -64,6 +64,10 @@
       "destination": "/api/questions-form"
     },
     {
+      "source": "/pay",
+      "destination": "/api/pay-form"
+    },
+    {
       "source": "/coach-guide",
       "destination": "/coach-guide.html"
     },
