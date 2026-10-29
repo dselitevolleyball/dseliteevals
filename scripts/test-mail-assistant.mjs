@@ -174,6 +174,20 @@ const ts = String(Math.floor(Date.now() / 1000)), rawBody = "payload=%7B%7D";
 const sig = "v0=" + crypto.createHmac("sha256", "mailsecret").update(`v0:${ts}:${rawBody}`).digest("hex");
 check(signed({ "x-slack-request-timestamp": ts, "x-slack-signature": sig }, rawBody, "mailsecret") && !signed({ "x-slack-request-timestamp": ts, "x-slack-signature": sig }, rawBody, "s1") && !signed({ "x-slack-request-timestamp": String(+ts - 600), "x-slack-signature": sig }, rawBody, "mailsecret"), "DSSC Mail's requests must carry its own signature, and be fresh");
 
+// Mail sorted before tidying existed is tidied once, the same way.
+{
+  const before = mods.length;
+  const sbt = fakeSupabase({ hq_kv: [], mail_drafts: [
+    { account: "drew@dselitevolleyball.com", gmail_id: "q1", thread_id: "tq1", status: "ignored", reason: "Gmail updates", created_at: "2026-10-29T21:00:00Z" },
+    { account: "drew@dselitevolleyball.com", gmail_id: "m1", thread_id: "tm1", status: "sent", created_at: "2026-10-29T21:00:00Z" },
+    { account: "drew@dselitevolleyball.com", gmail_id: "f1", thread_id: "tf1", status: "ignored", reason: "from you", created_at: "2026-10-29T21:00:00Z" },
+  ] });
+  const n1 = await M.tidyEarlier(sbt, { email: "drew@dselitevolleyball.com" }, "tok", fakeFetch);
+  const n2 = await M.tidyEarlier(sbt, { email: "drew@dselitevolleyball.com" }, "tok", fakeFetch);
+  const got = mods.slice(before).map(m => m.on + " " + m.add.join("+") + " -" + m.remove.join("-"));
+  check(n1 === 2 && n2 === 0 && got.join(" | ") === "messages/q1 Mail Assistant/Newsletters & automated -UNREAD | threads/tm1 Mail Assistant/Replied -Mail Assistant/Needs reply-UNREAD-INBOX", "earlier mail is tidied once: the automated one marked read, the replied one archived; Drew's own left alone - " + got.join(" | "));
+}
+
 // ── 5. the twice-a-day roundup ───────────────────────────────────────────────
 console.log("== 5. roundup ==");
 check(M.digestSlot(new Date("2026-10-29T13:05:00Z")) === "2026-10-29@8" && M.digestSlot(new Date("2026-10-29T22:10:00Z")) === "2026-10-29@17" && M.digestSlot(new Date("2026-10-29T11:00:00Z")) === null && M.digestSlot(new Date("2026-11-02T14:05:00Z")) === "2026-11-02@8", "8am and 5pm Central, through the clock change");

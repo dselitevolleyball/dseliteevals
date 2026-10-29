@@ -433,9 +433,31 @@ export async function pollAccount(sb, acct, { fetchImpl = fetch, client = null, 
     await tidy(token, { id: d.thread_id, thread: true, add: ["replied"], remove: ["needs"] }, fetchImpl);
     await refreshCard(sb, done, { done: "✓ *Answered in Gmail* - nothing sent from here" });
   }
+  await tidyEarlier(sb, acct, token, fetchImpl).catch(() => {});
   await sb.from("mail_accounts").update({ last_poll_at: new Date().toISOString(), last_error: out.errors.length ? out.errors[0].slice(0, 300) : null, updated_at: new Date().toISOString() }).eq("email", acct.email);
   return out;
 }
+// Once per mailbox: tidy what was sorted before tidying existed (Oct 29 2026),
+// the same way it's done now. Remembered in hq_kv "mail_tidied:<email>".
+export const TIDY_FROM = "2026-10-29T21:45:00Z";   // when tidying went live; later mail was tidied as it came in
+export async function tidyEarlier(sb, acct, token, fetchImpl = fetch) {
+  const key = "mail_tidied:" + acct.email;
+  const { data: done } = await sb.from("hq_kv").select("key").eq("key", key).maybeSingle();
+  if (done) return 0;
+  const { data: rows } = await sb.from("mail_drafts").select("gmail_id, thread_id, status, reason").eq("account", acct.email).in("status", ["ignored", "sent", "skipped", "answered"]).lt("created_at", TIDY_FROM).limit(200);
+  let n = 0;
+  for (const r of rows || []) {
+    let ok = false;
+    if (r.status === "sent") ok = await settle(token, r, "replied", fetchImpl);
+    else if (r.status === "skipped") ok = await settle(token, r, "skipped", fetchImpl);
+    else if (r.status === "answered") ok = await tidy(token, { id: r.thread_id, thread: true, add: ["replied"] }, fetchImpl);
+    else if (r.reason !== "from you" && r.reason !== "no sender") ok = await tidy(token, { id: r.gmail_id, add: [/^No reply needed/.test(r.reason || "") ? "noreply" : "auto"], remove: ["UNREAD"] }, fetchImpl);
+    if (ok) n++;
+  }
+  await sb.from("hq_kv").upsert({ key, value: { at: new Date().toISOString(), tidied: n }, secret: true, updated_at: new Date().toISOString(), updated_by: "mail-assistant" }, { onConflict: "key" });
+  return n;
+}
+
 export async function pollAll(sb, opts = {}) {
   const { data: accts } = await sb.from("mail_accounts").select("*").eq("enabled", true).not("refresh_token", "is", null);
   const cfg = await mailSlackCfg(sb);
