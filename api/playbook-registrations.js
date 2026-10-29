@@ -29,6 +29,9 @@ import { appOrigin } from "../shared/app-origin.js";
 const BASE = "https://drippingsports.playbookapi.com";
 const SIGNIN = BASE + "/account/signin/";
 const REPORT = BASE + "/control_panel/dashboards/all_registrations_report/?action=export-all-pages&results_per_page=50&min_age=0&max_age=65";
+// Payments (what families actually paid): Drew, Oct 29 2026. Being looked at
+// first - only its shape is recorded until the spend importer reads it.
+const PAYMENTS = BASE + "/control_panel/export_all_pages/?model_name=PaymentTransaction";
 const NOTIFY = ["drew@dselitevolleyball.com", "hunterhaleysc10@gmail.com", "hunter@drippingsportsclub.com"];
 const UA = "Mozilla/5.0 (DS Elite HQ registrations sync)";
 
@@ -92,9 +95,9 @@ export default async function handler(req, res) {
 
   if (!PLAYBOOK_SYNC_EMAIL || !PLAYBOOK_SYNC_PASSWORD) return fail("PLAYBOOK_SYNC_EMAIL / PLAYBOOK_SYNC_PASSWORD aren't set in Vercel, so HQ can't sign in to Playbook.");
 
-  let csv;
+  let csv, j;
   try {
-    const j = await signIn(PLAYBOOK_SYNC_EMAIL, PLAYBOOK_SYNC_PASSWORD);
+    j = await signIn(PLAYBOOK_SYNC_EMAIL, PLAYBOOK_SYNC_PASSWORD);
     const r = await fetch(REPORT, { headers: { "User-Agent": UA, Cookie: j.header(), Referer: BASE + "/control_panel/dashboards/all_registrations_report/" } });
     csv = await r.text();
     if (!r.ok) throw new Error("Report fetch returned HTTP " + r.status);
@@ -114,6 +117,17 @@ export default async function handler(req, res) {
   // registration_base_price), uploaded in People. If this export ever carries
   // those columns too, spend keeps itself current from here.
   const cols = Object.keys(rows[0] || {});
+  // The payments export's shape: columns, row count, and the range of any date column. No rows are kept.
+  let payments = null;
+  try {
+    const r = await fetch(PAYMENTS, { headers: { "User-Agent": UA, Cookie: j.header(), Referer: BASE + "/control_panel/" } });
+    const text = await r.text();
+    const pr = Papa.parse(text, { header: true, skipEmptyLines: true });
+    const pcols = pr.meta?.fields || [];
+    const dateCols = pcols.filter(c => /date|created|time|_at$/i.test(c));
+    const range = Object.fromEntries(dateCols.map(c => { const v = pr.data.map(x => String(x[c] || "")).filter(Boolean); const t = v.map(x => Date.parse(x.replace(/,/, ""))).filter(Number.isFinite).sort((a, b) => a - b); return [c, t.length ? [new Date(t[0]).toISOString().slice(0, 10), new Date(t[t.length - 1]).toISOString().slice(0, 10)] : v.slice(0, 1).map(x => x.replace(/\d/g, "9"))]; }));
+    payments = { status: r.status, type: r.headers.get("content-type"), columns: pcols.slice(0, 60), rows: pr.data.length, range, csv: /,/.test(text.split("\n")[0] || "") && !/<html/i.test(text.slice(0, 500)) };
+  } catch (e) { payments = { error: e.message }; }
   let spend = null;
   if (!dry && isPlaybookSpendExport(cols)) { try { spend = await importPlaybookSpend(sb, rows); } catch (e) { spend = { error: e.message }; } }
   // Court bookings deleted in Playbook come off Court Availability.
@@ -123,7 +137,7 @@ export default async function handler(req, res) {
   // beforeHq = sign-ups for dates before HQ had the class (they'll never attach);
   // counted, never alerted on.
   const summary = { added: out.added, matched: out.matched, rows: out.rows, noSession: out.noSession.length, beforeHq: (out.beforeHq || []).length,
-    waiting: [...new Set(out.noSession.map(x => x.program + " " + x.date))].slice(0, 12), people, reservations, spend, columns: cols };
+    waiting: [...new Set(out.noSession.map(x => x.program + " " + x.date))].slice(0, 12), people, reservations, spend, columns: cols, payments };
   if (!dry) {
     await sb.from("dssc_sync").upsert({ id: 1, registrations_at: now, registrations_summary: summary, registrations_error: null, registrations_error_at: null }, { onConflict: "id" });
     // Tell the director once when registrations are piling up for classes HQ
