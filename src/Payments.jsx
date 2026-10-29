@@ -35,11 +35,11 @@ export default function Payments({ narrow }) {
           <div style={{ fontSize: 22, fontWeight: 900 }}>💳 Payments</div>
           <span style={{ fontSize: 12, color: T.mut }}>Families pay by card, Apple Pay or Google Pay through Stripe · DS Elite covers the fees</span>
           <div style={{ flex: 1 }} />
-          {stripe && (stripe.connected && stripe.ok ? <Pill c={T.ok}>● Stripe: {stripe.account}{stripe.livemode ? "" : " (test mode)"}</Pill> : <Pill c={T.warn}>⚠ {stripe.connected ? stripe.problem || "Stripe needs attention" : "Stripe not connected"}</Pill>)}
+          {stripe && (stripe.connected && stripe.ok && stripe.livemode ? <Pill c={T.ok}>● Stripe: {stripe.account}</Pill> : <Pill c={T.warn}>⚠ {!stripe.connected ? "Stripe not connected" : !stripe.livemode ? `Test sandbox only (${stripe.account})` : stripe.problem || "Stripe needs attention"}</Pill>)}
         </div>
         {err && <div style={{ color: T.bad, fontSize: 13, marginBottom: 10 }}>{err}</div>}
-        {stripe && (!stripe.connected || !stripe.ok) && <Connect onDone={() => { loadStatus(); }} stripe={stripe} />}
-        {openId ? <Request id={openId} narrow={narrow} onBack={() => { setOpenId(null); loadReqs(); }} stripeOk={!!stripe?.ok} /> : (
+        {stripe && (!stripe.connected || !stripe.ok || !stripe.livemode) && <Connect onDone={() => { loadStatus(); }} stripe={stripe} />}
+        {openId ? <Request id={openId} narrow={narrow} onBack={() => { setOpenId(null); loadReqs(); }} stripeOk={!!(stripe?.ok && stripe?.livemode)} /> : (
           <>
             <div style={{ display: "flex", gap: 8, margin: "4px 0 12px" }}>
               <Btn primary onClick={() => setCreating(c => !c)}>{creating ? "Close" : "+ New payment request"}</Btn>
@@ -77,7 +77,8 @@ function Connect({ onDone, stripe }) {
         <li>Under <b>Secret key</b>, click <b>Reveal live key</b> and copy it (it starts with <code>sk_live_</code>).</li>
         <li>Paste it here and press Connect. HQ checks it with Stripe, sets up the payment notifications, and keeps the key on the server - it's never shown again.</li>
       </ol>
-      {stripe?.problem && stripe.connected && <div style={{ color: T.warn, fontSize: 13, marginBottom: 6 }}>{stripe.problem}</div>}
+      {stripe?.connected && !stripe.livemode && <div style={{ color: T.warn, fontSize: 13, marginBottom: 6 }}>Right now HQ only has a test key ({stripe.account}), which can't take real payments. Connect DS Elite's live key to send links.</div>}
+      {stripe?.problem && stripe.connected && stripe.livemode && <div style={{ color: T.warn, fontSize: 13, marginBottom: 6 }}>{stripe.problem}</div>}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         <input type="password" value={key} onChange={e => setKey(e.target.value)} placeholder="sk_live_…" autoComplete="off" style={{ ...input, flex: 1, minWidth: 220 }} />
         <Btn primary disabled={busy || !key.trim()} onClick={async () => { setBusy(true); setMsg(""); try { const d = await api("connect", { key: key.trim() }); setKey(""); setMsg(`Connected to ${d.stripe.account}${d.stripe.livemode ? "" : " (test mode)"}`); onDone(); } catch (e) { setMsg(e.message); } setBusy(false); }}>{busy ? "Checking…" : "Connect"}</Btn>
