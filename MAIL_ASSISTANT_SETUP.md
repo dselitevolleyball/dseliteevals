@@ -24,6 +24,21 @@ Replying **in that Slack thread** changes the draft:
 
 Only Drew can press the buttons; the API and Slack both check.
 
+**Gmail tidying.** Labels go under one **Mail Assistant** folder and are created the first time
+they're needed.
+
+| What happened | In Gmail |
+|---|---|
+| Drafted, waiting in Slack | labelled **Needs reply**, stays unread in the inbox |
+| You pressed **Send** | the conversation is marked read, archived, labelled **Replied** |
+| You pressed **Skip** | marked read, archived, labelled **Skipped** |
+| You answered in Gmail yourself | labelled **Replied**, left where you put it |
+| Newsletter, receipt, no-reply, Promotions/Social/Updates/Forums | marked read, labelled **Newsletters & automated**, left in the inbox |
+| Claude: no reply needed (thanks, FYI…) | marked read, labelled **No reply needed**, left in the inbox |
+| Spam | never read: the assistant only looks at the inbox |
+
+Archived mail is still in All Mail and in search.
+
 ## One-time setup (about 10 minutes)
 
 ### 1. A Google OAuth client — as an **Internal** app

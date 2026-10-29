@@ -12,6 +12,10 @@
 //   send     only on Drew's press: from that Gmail, in the same thread
 //            (In-Reply-To / References), with their message quoted below.
 //   answered if Drew replies in Gmail himself first, the Slack card says so.
+//   tidy     Gmail labels under "Mail Assistant/": Needs reply while it waits;
+//            after Send / Skip the conversation is marked read, archived and
+//            labelled Replied / Skipped; mail that needs no reply is marked
+//            read and labelled (left in the inbox). Spam is never read.
 //
 // Google: an "Internal" OAuth client per Google Workspace - an internal app
 // needs no Google review and its access doesn't expire, but only works for its
@@ -283,6 +287,36 @@ export function buildMime(d, text) {
   ];
   return Buffer.from(lines.join("\r\n")).toString("base64url");
 }
+// ── tidying Gmail (Drew, Oct 29 2026: mark read + archive after Send / Skip,
+// label everything it sorts, mark unimportant mail read) ──────────────────
+// Labels sit under one "Mail Assistant" folder; they're made the first time
+// they're needed. Tidying never stops a send or a poll - a failure is ignored.
+export const LABELS = { needs: "Mail Assistant/Needs reply", replied: "Mail Assistant/Replied", skipped: "Mail Assistant/Skipped", noreply: "Mail Assistant/No reply needed", auto: "Mail Assistant/Newsletters & automated" };
+const labelMemo = new Map();
+async function labelId(token, key, fetchImpl) {
+  const name = LABELS[key];
+  let m = labelMemo.get(token);
+  if (!m) { const j = await gmail(token, "labels", {}, fetchImpl); m = new Map((j.labels || []).map(l => [l.name, l.id])); labelMemo.set(token, m); }
+  if (!m.has(name)) {
+    const c = await gmail(token, "labels", { method: "POST", body: { name, labelListVisibility: "labelShow", messageListVisibility: "show" } }, fetchImpl).catch(async () => {
+      const j = await gmail(token, "labels", {}, fetchImpl); return (j.labels || []).find(l => l.name === name) || {};   // made by another run meanwhile
+    });
+    if (c.id) m.set(name, c.id);
+  }
+  return m.get(name);
+}
+// add / remove: label keys (LABELS) or Gmail's own (UNREAD, INBOX). thread: the whole conversation.
+export async function tidy(token, { id, thread = false, add = [], remove = [] }, fetchImpl = fetch) {
+  try {
+    const ids = async (list) => (await Promise.all(list.map(k => LABELS[k] ? labelId(token, k, fetchImpl) : k))).filter(Boolean);
+    const body = { addLabelIds: await ids(add), removeLabelIds: await ids(remove) };
+    await gmail(token, `${thread ? "threads" : "messages"}/${id}/modify`, { method: "POST", body }, fetchImpl);
+    return true;
+  } catch { return false; }
+}
+// After Send or Skip: read, out of the inbox, labelled.
+const settle = (token, d, key, fetchImpl) => d.thread_id ? tidy(token, { id: d.thread_id, thread: true, add: [key], remove: ["needs", "UNREAD", "INBOX"] }, fetchImpl) : null;
+
 const getDraft = async (sb, id) => { const { data } = await sb.from("mail_drafts").select("*").eq("id", Number(id)).maybeSingle(); if (!data) throw fail(404, "That email is gone"); return data; };
 const getAccount = async (sb, email) => { const { data } = await sb.from("mail_accounts").select("*").eq("email", email).maybeSingle(); if (!data?.refresh_token) throw fail(400, `${email} isn't connected - connect it in HQ -> Product -> Settings`); return data; };
 
@@ -299,7 +333,8 @@ export async function sendDraft(sb, id, by, { text = null, fetchImpl = fetch } =
     const token = await accessToken(sb, await getAccount(sb, d.account), { fetchImpl });
     const r = await gmail(token, "messages/send", { method: "POST", body: { raw: buildMime(d, body), threadId: d.thread_id } }, fetchImpl);
     const { data: out } = await sb.from("mail_drafts").update({ status: "sent", sent_gmail_id: r.id, decided_by: by, decided_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", d.id).select().single();
-    await refreshCard(sb, out, { done: `✅ *Sent* by ${esc(by)} · ${when(new Date().toISOString())}` });
+    await settle(token, d, "replied", fetchImpl);
+    await refreshCard(sb, out, { done: `✅ *Sent* by ${esc(by)} · ${when(new Date().toISOString())} · marked read and archived in Gmail` });
     return out;
   } catch (e) {
     const { data: out } = await sb.from("mail_drafts").update({ status: "failed", reason: String(e.message).slice(0, 300), updated_at: new Date().toISOString() }).eq("id", d.id).select().single();
@@ -307,11 +342,13 @@ export async function sendDraft(sb, id, by, { text = null, fetchImpl = fetch } =
     throw e;
   }
 }
-export async function skipDraft(sb, id, by) {
+export async function skipDraft(sb, id, by, { fetchImpl = fetch } = {}) {
   const d = await getDraft(sb, id);
   if (!["pending", "failed"].includes(d.status)) return d;
   const { data: out } = await sb.from("mail_drafts").update({ status: "skipped", decided_by: by, decided_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", d.id).select().single();
-  await refreshCard(sb, out, { done: `⏭ *Skipped* by ${esc(by)} - no reply sent` });
+  const token = await accessToken(sb, await getAccount(sb, d.account), { fetchImpl }).catch(() => null);
+  const ok = token ? await settle(token, d, "skipped", fetchImpl) : false;
+  await refreshCard(sb, out, { done: `⏭ *Skipped* by ${esc(by)} - no reply sent${ok ? " · marked read and archived in Gmail" : ""}` });
   return out;
 }
 // A reply in the Slack thread: "reply: <exact text>" replaces the draft;
@@ -372,12 +409,13 @@ export async function pollAccount(sb, acct, { fetchImpl = fetch, client = null, 
       if (!claimed?.length) continue;
       const row = claimed[0];
       const why = ignoreReason(p, acct.email);
-      if (why) { out.ignored++; await sb.from("mail_drafts").update({ status: "ignored", reason: why }).eq("id", row.id); continue; }
+      if (why) { out.ignored++; await sb.from("mail_drafts").update({ status: "ignored", reason: why }).eq("id", row.id); if (why !== "from you") await tidy(token, { id: p.gmail_id, add: ["auto"], remove: ["UNREAD"] }, fetchImpl); continue; }
       const ctx = await threadContext(sb, row, { fetchImpl, token });
       const r = await draftFor(p, { account: acct.email, ...ctx }, { client });
-      if (!r.needs_reply || !r.draft) { out.no_reply++; await sb.from("mail_drafts").update({ status: "ignored", reason: "No reply needed: " + (r.reason || "") }).eq("id", row.id); continue; }
+      if (!r.needs_reply || !r.draft) { out.no_reply++; await sb.from("mail_drafts").update({ status: "ignored", reason: "No reply needed: " + (r.reason || "") }).eq("id", row.id); await tidy(token, { id: p.gmail_id, add: ["noreply"], remove: ["UNREAD"] }, fetchImpl); continue; }
       const { data: d } = await sb.from("mail_drafts").update({ status: "pending", draft: r.draft, reason: r.note ? "Needs: " + r.note : r.reason, updated_at: new Date().toISOString() }).eq("id", row.id).select().single();
       if (cfg.bot_token) await postCard(sb, cfg, d); else out.errors.push("No Slack app - set up DSSC Mail (or the HQ bot) in Product -> Settings");
+      await tidy(token, { id: p.gmail_id, add: ["needs"] }, fetchImpl);
       out.drafted++;
     } catch (e) {
       out.errors.push(`${id}: ${e.message}`);
@@ -392,6 +430,7 @@ export async function pollAccount(sb, acct, { fetchImpl = fetch, client = null, 
     if (!mine) continue;
     out.answered++;
     const { data: done } = await sb.from("mail_drafts").update({ status: "answered", decided_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", d.id).select().single();
+    await tidy(token, { id: d.thread_id, thread: true, add: ["replied"], remove: ["needs"] }, fetchImpl);
     await refreshCard(sb, done, { done: "✓ *Answered in Gmail* - nothing sent from here" });
   }
   await sb.from("mail_accounts").update({ last_poll_at: new Date().toISOString(), last_error: out.errors.length ? out.errors[0].slice(0, 300) : null, updated_at: new Date().toISOString() }).eq("email", acct.email);

@@ -616,7 +616,7 @@ function MailAssistantSettings({ box }) {
   return (
     <div style={box}>
       <div style={{ fontSize: 15, fontWeight: 800 }}>Email assistant</div>
-      <div style={{ fontSize: 13, color: C.mut, margin: "6px 0 10px", lineHeight: 1.5 }}>Reads your Gmail every 5 minutes. When an email needs an answer, Claude drafts one and the HQ Slack bot DMs it to you with <b>Send</b> / <b>Edit</b> / <b>Skip</b> - reply in that thread to change it. Nothing is sent until you press Send. Newsletters, receipts and automated mail are left alone.</div>
+      <div style={{ fontSize: 13, color: C.mut, margin: "6px 0 10px", lineHeight: 1.5 }}>Reads your Gmail every 5 minutes. When an email needs an answer, Claude drafts one and the HQ Slack bot DMs it to you with <b>Send</b> / <b>Edit</b> / <b>Skip</b> - reply in that thread to change it. Nothing is sent until you press Send. In Gmail: after Send or Skip the email is marked read and archived; newsletters, receipts and mail that needs no reply are marked read; everything gets a "Mail Assistant" label. Spam is never read.</div>
       {err && <div style={{ fontSize: 13, color: C.red, marginBottom: 8 }}>{err}</div>}
       {st && !st.google_ready && <div style={{ fontSize: 13, color: C.amber, marginBottom: 8 }}>Needs a Google OAuth client first: <code>GOOGLE_CLIENT_ID</code> and <code>GOOGLE_CLIENT_SECRET</code> in Vercel, with <code>{st.redirect_uri}</code> as a redirect URI (MAIL_ASSISTANT_SETUP.md).</div>}
       {st && st.accounts.map(a => (

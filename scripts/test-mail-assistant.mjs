@@ -55,7 +55,8 @@ const inbox = new Map([
   ["old", msg("old", { at: now - 5 * 864e5 })],
 ]);
 const threads = new Map();
-const sent = [], slack = [], claude = [];
+const sent = [], slack = [], claude = [], mods = [];
+const gLabels = [{ id: "INBOX", name: "INBOX" }, { id: "UNREAD", name: "UNREAD" }];
 const fakeFetch = async (url, o = {}) => {
   const u = String(url), J = (j, status = 200) => ({ ok: status < 400, status, json: async () => j });
   if (u.startsWith("https://oauth2.googleapis.com/token")) return J({ access_token: "at-" + new URLSearchParams(o.body).get("grant_type"), expires_in: 3600, refresh_token: "rt" });
@@ -63,6 +64,8 @@ const fakeFetch = async (url, o = {}) => {
   const g = /gmail\/v1\/users\/me\/(.+?)(\?|$)/.exec(u)?.[1];
   if (g === "profile") return J({ emailAddress: "Drew@DSEliteVolleyball.com" });
   if (g === "messages" && (o.method || "GET") === "GET") { const q = new URL(u).searchParams.get("q"); return J({ messages: /in:sent/.test(q) ? [] : [...inbox.keys()].reverse().map(id => ({ id })) }); }
+  if (g === "labels") { if ((o.method || "GET") === "POST") { const l = { id: "L" + gLabels.length, name: JSON.parse(o.body).name }; gLabels.push(l); return J(l); } return J({ labels: gLabels }); }
+  if (/\/modify$/.test(g || "")) { const b = JSON.parse(o.body); const nm = (ids) => ids.map(i => (gLabels.find(l => l.id === i) || {}).name || i); mods.push({ on: g.replace("/modify", ""), add: nm(b.addLabelIds || []), remove: nm(b.removeLabelIds || []) }); return J({}); }
   if (g === "messages/send") { const b = JSON.parse(o.body); sent.push(b); return J({ id: "sent" + sent.length, threadId: b.threadId }); }
   if (g?.startsWith("messages/")) return J(inbox.get(g.split("/")[1]));
   if (g?.startsWith("threads/")) { const id = g.split("/")[1]; return J({ messages: threads.get(id) || [inbox.get(id.slice(1))].filter(Boolean) }); }
@@ -79,6 +82,11 @@ check(rows.n1.status === "ignored" && rows.n1.reason === "mailing list" && claud
 check(rows.t1.status === "ignored" && /thank-you/.test(rows.t1.reason), "Claude: a thank-you needs no reply");
 const posted = slack.find(s => s.m === "chat.postMessage");
 check(rows.k1.status === "pending" && rows.k1.slack_channel === "DDREW" && posted && JSON.stringify(posted.b.blocks).includes("mail_send") && JSON.stringify(posted.b.blocks).includes("RSVP"), "the draft is in Drew's Slack DMs with Send / Edit / Skip and their email");
+const modOf = (on) => mods.filter(m => m.on === on).map(m => `+${m.add.join("+")} -${m.remove.join("-")}`).join(" | ");
+check(modOf("messages/n1") === "+Mail Assistant/Newsletters & automated -UNREAD", "the newsletter is marked read and labelled, left in the inbox - " + modOf("messages/n1"));
+check(modOf("messages/t1") === "+Mail Assistant/No reply needed -UNREAD", "the thank-you is marked read and labelled No reply needed");
+check(modOf("messages/k1") === "+Mail Assistant/Needs reply -", "the one waiting on Drew is labelled Needs reply and stays unread");
+check(gLabels.filter(l => l.name.startsWith("Mail Assistant/")).length === 3, "labels are made once, under Mail Assistant");
 check(/drew@dselitevolleyball\.com/.test(claude[0].messages[0].content) && /I actually RSVP/.test(claude[0].messages[0].content), "Claude sees which mailbox and their email");
 const r2 = await M.pollAccount(sb, sb.db.mail_accounts[0], { fetchImpl: fakeFetch, client });
 check(r2.looked === 0 && sb.db.mail_drafts.length === 3 && claude.length === 2, "the next check doesn't look at them again");
@@ -93,6 +101,7 @@ const s1 = await M.sendDraft(sb, id, "Drew", { fetchImpl: fakeFetch });
 check(s1.status === "sent" && sent.length === 1 && sent[0].threadId === "tk1" && Buffer.from(sent[0].raw, "base64url").toString().includes("In-Reply-To: <k1@mail.yahoo.com>"), "Send: from Gmail, in the thread");
 const upd = slack.filter(s => s.m === "chat.update").pop();
 check(/Sent/.test(JSON.stringify(upd.b.blocks)) && !JSON.stringify(upd.b.blocks).includes("mail_send"), "the card says Sent, buttons gone");
+check(modOf("threads/tk1") === "+Mail Assistant/Replied -Mail Assistant/Needs reply-UNREAD-INBOX", "after Send the conversation is marked read, archived and labelled Replied - " + modOf("threads/tk1"));
 await M.sendDraft(sb, id, "Drew", { fetchImpl: fakeFetch });
 check(sent.length === 1, "pressing Send twice sends once");
 await M.skipDraft(sb, id, "Drew");
@@ -103,12 +112,14 @@ inbox.set("k2", msg("k2", { subject: "Practice?", at: now - 30e3 }));
 await M.pollAccount(sb, sb.db.mail_accounts[0], { fetchImpl: fakeFetch, client });
 threads.set("tk2", [inbox.get("k2"), { id: "mine", labelIds: ["SENT"], internalDate: String(now) }]);
 const r3 = await M.pollAccount(sb, sb.db.mail_accounts[0], { fetchImpl: fakeFetch, client });
+check(modOf("threads/tk2") === "+Mail Assistant/Replied -Mail Assistant/Needs reply", "answered in Gmail: labelled Replied, left where Drew put it");
 check(r3.answered === 1 && sb.db.mail_drafts.find(r => r.gmail_id === "k2").status === "answered" && /Answered in Gmail/.test(JSON.stringify(slack.filter(s => s.m === "chat.update").pop().b.blocks)), "answered in Gmail first: the card says so, nothing sent");
 inbox.set("k3", msg("k3", { subject: "Uniforms", at: now - 20e3 }));
 await M.pollAccount(sb, sb.db.mail_accounts[0], { fetchImpl: fakeFetch, client });
 const k3 = sb.db.mail_drafts.find(r => r.gmail_id === "k3");
 await M.skipDraft(sb, k3.id, "Drew");
 check(sb.db.mail_drafts.find(r => r.id === k3.id).status === "skipped" && sent.length === 1, "Skip: nothing sent");
+check(modOf("threads/tk3") === "+Mail Assistant/Skipped -Mail Assistant/Needs reply-UNREAD-INBOX", "after Skip it's marked read, archived and labelled Skipped");
 inbox.set("k4", msg("k4", { subject: "Court", at: now - 10e3 }));
 await M.pollAccount(sb, sb.db.mail_accounts[0], { fetchImpl: fakeFetch, client });
 const k4 = sb.db.mail_drafts.find(r => r.gmail_id === "k4");
