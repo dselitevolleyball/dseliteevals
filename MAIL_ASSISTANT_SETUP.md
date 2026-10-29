@@ -41,15 +41,20 @@ drew@drippingsportsclub.com:
    - `.../auth/gmail.modify`
    - `openid`
    - `.../auth/userinfo.email`
-5. **Publish the app:** Google Auth Platform → Audience → **Publish app** ("In production").
+5. **Fill in Branding:** Google Auth Platform → Branding. Google won't publish without it.
+   - App home page: `https://www.drippingsportsclub.com`
+   - Privacy policy: `https://www.drippingsportsclub.com/privacy`
+   - Authorized domains: `drippingsportsclub.com`
+   - Developer contact: your email. Then Save.
+6. **Publish the app:** Google Auth Platform → Audience → **Publish app** ("In production").
    - **Why:** while it says "Testing", Google cuts the access every 7 days.
    - **The warning screen:** since it's your own app and not reviewed by Google, you'll see
      "Google hasn't verified this app" when you connect. Click **Advanced → Go to DSSC HQ**.
      That's expected; it's limited to 100 users and only you use it.
-6. **Create the client:** Google Auth Platform → Clients → Create client.
+7. **Create the client:** Google Auth Platform → Clients → Create client.
    - Type **Web application**.
-   - **Authorized redirect URI:** `https://dseliteevals.vercel.app/api/mail-connect`.
-7. **Copy the keys:** copy the **Client ID** and **Client secret**.
+   - **Authorized redirect URI:** `https://www.drippingsportsclub.com/hq/api/mail-connect`.
+8. **Copy the keys:** copy the **Client ID** and **Client secret**.
 
 ### 2. Vercel
 

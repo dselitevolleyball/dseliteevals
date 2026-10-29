@@ -31,7 +31,9 @@ export const MODEL = "claude-opus-5-5";
 const nrm = (s) => String(s || "").trim().toLowerCase();
 const fail = (status, msg) => Object.assign(new Error(msg), { status });
 export const googleReady = () => !!(env().GOOGLE_CLIENT_ID && env().GOOGLE_CLIENT_SECRET);
-export const redirectUri = () => (env().MAIL_PUBLIC_BASE || "https://dseliteevals.vercel.app").replace(/\/+$/, "") + "/api/mail-connect";
+// On drippingsportsclub.com, not vercel.app: a published Google app may only
+// send people back to its "authorized domains", and vercel.app can't be one.
+export const redirectUri = () => (env().MAIL_PUBLIC_BASE || "https://www.drippingsportsclub.com/hq").replace(/\/+$/, "") + "/api/mail-connect";
 export const gmailLink = (account, threadId) => `https://mail.google.com/mail/u/?authuser=${encodeURIComponent(account)}#all/${threadId || ""}`;
 
 // ── Google sign-in ──────────────────────────────────────────────────────────
