@@ -1,6 +1,17 @@
-# DSSC CRM — spend, email segments, old lists
+# DSSC CRM — spend, email segments, old lists, campaigns
 
-Everything lives in **DSSC → People**:
+Everything lives in **DSSC → People**. Since v2 (Oct 29 2026) it has four tabs:
+
+- **Pulse:** the club at a glance. It shows families, revenue, who can be texted or emailed, and
+  where every family is in its lifecycle. It also lists **revenue ideas**: ready-made campaigns,
+  each with its audience and a rough dollar figure.
+- **People:** every family with its stage, what they have (open gym, privates, Reach, rentals…),
+  how they answer texts and emails, and when they were last in. Click a family for its profile
+  and timeline.
+- **Segments:** the audience builder (below), now with the v2 filters.
+- **Campaigns:** AI-written campaigns of one to three steps that land on the Marketing calendar.
+
+Before v2:
 
 - **Families:** the existing filter screen. Spend now includes Playbook purchases, and there's a filter for each mailing list.
 - **Email segments:** build an audience from everything People knows, see the live count, and save it.
@@ -93,6 +104,94 @@ The same engine (`shared/crm-segments.js`) gives the live count in People and pi
 recipients when the email sends, so the count you see is who gets it. A saved segment is
 re-evaluated at send time.
 
+## v2: profiles, intake, campaigns
+
+### One-time setup
+
+Run `migrations/20261110_crm_v2.sql`
+(`node scripts/run-sql.mjs migrations/20261110_crm_v2.sql`, or paste it into the SQL Editor).
+It is safe to run twice. It adds:
+
+- `dssc_touches` (every time someone reached out);
+- `interests` and `last_touch_at` on `dssc_contacts`;
+- the intake triggers;
+- the `dssc_sms_stats` / `dssc_email_stats` views;
+- `crm_campaigns` and `mkt_items.crm_campaign_id`.
+
+It also backfills everyone who has already filled a form, emailed info@ or opted in to texts.
+**Run it before deploying the code:** the Marketing week planner reads `crm_campaign_id`.
+
+### Everyone who writes in lands in People
+
+Database triggers do this, so it doesn't depend on which page or function took the message:
+
+| They… | Trigger | Logged as |
+|---|---|---|
+| fill a website form, or email info@ (a new thread) | `site_inquiries` insert | `form` / `email`, with what they asked about as an **interest** |
+| reply on an existing info@ thread | `site_inbox_messages` (inbound) | `email` |
+| sign up for club texts (/dssc-texts) | `sms_consents` (brand dssc) | `text_optin` |
+| sign up for the newsletter | the subscriber sync | `newsletter` |
+
+How the intake (`dssc_intake()`) treats each person:
+
+- **Matching:** by email first, then by phone.
+- **New people** become a family with source `inquiry` / `texts-form`.
+- **Existing families:** a name, phone or email we already have is never overwritten. Only gaps
+  are filled, and the touch is added to their timeline.
+- **Test and spam:** test inquiries are skipped. Marking an inquiry **spam** removes its touch,
+  and removes the person too if that inquiry was all we had on them.
+
+### The profile (`shared/crm-profile.js`)
+
+| | |
+|---|---|
+| **Stage** | Prospect (never bought) · New (first sign-up in 60 days) · Active (last 90 days) · Cooling (3–6 months) · Lapsed (6–12 months) · Lost (over a year). A booking ahead counts as now. |
+| **Tier** | VIP (top 10% lifetime spend) · High (next 20%) · Regular · Light (bottom 30%) |
+| **Buys** | purchase days in the last 12 months, and the usual gap between them |
+| **Has** | open gym (member = paid in the last 35 days, otherwise lapsed), privates (and with which coach), Reach membership, court rentals, birthday party, camps, pods, DS Elite. Read from program names, so a program named differently in Playbook may need a pattern added to `PRODUCTS`. |
+| **Texts** | can text / opted out / no phone; texts sent, replies; *answers* / *never answers* / *untested* |
+| **Email** | ok / unsubscribed / bounced / none; opens and clicks (once Resend open tracking is on) |
+| **Reached out** | forms, emails, opt-ins, with what they asked about |
+| **Birthdays** | each kid's next birthday |
+
+### New segment filters
+
+Stage, tier, has / doesn't have (product), texts (can / answers / never answers), reached out,
+asked about, a kid's birthday within N days, number of kids, purchases a year, hand-picked
+families, and "no booking since" a date. A segment can be texted as well as emailed: the text
+audience is the same families with a textable phone, minus opt-outs and "do not text".
+
+### Campaigns
+
+**Build one:** from a revenue idea, from a selection in People, or from a segment.
+
+1. Choose **who**, the **goal** and the **offer**.
+2. Choose **how and when:**
+   - one email;
+   - email, then a text on day 3;
+   - email, a text on day 3, and a last-call email on day 7;
+   - or one text.
+3. Press **✨ Write it.** Claude writes every step in the club's voice from the Marketing
+   settings. It keeps the offer, code and end date exactly as given.
+4. Edit anything.
+5. Press **Put it on the Marketing calendar.**
+
+**On the calendar:**
+
+- Each step becomes an ordinary draft in Marketing: a dedicated email at 7:30 or a text at
+  10:30. Nothing goes out until it's approved there.
+- A follow-up step only reaches families who **haven't booked since the campaign started**.
+  This is re-checked when it sends.
+- Editing a scheduled or live campaign refreshes its unsent drafts. A step that has gone out
+  is locked.
+- **Cancel** takes the unsent steps off the calendar.
+
+**Results:** what each step sent, replies to its texts, and who in the audience booked within
+45 days of the start, with what they spent.
+
+**Offers:** offer codes aren't created automatically. Create the code (e.g. `COMEBACK50`) in
+Playbook before the first step goes out. HQ reminds you when you schedule.
+
 ## Files
 
 | File | What it does |
@@ -107,3 +206,9 @@ re-evaluated at send time.
 | `src/dssc/DsscCrmSegments.jsx` | the segment builder |
 | `src/dssc/DsscEmailAudience.jsx` | the audience picker in Marketing |
 | `scripts/test-crm.mjs` | offline tests: `node scripts/test-crm.mjs` |
+| `migrations/20261110_crm_v2.sql` | v2 schema, intake triggers, stats views, campaigns, backfill |
+| `shared/crm-profile.js` | the profile: stage, tier, products, texts / email, birthdays |
+| `shared/crm-ideas.js` | revenue ideas, typical prices, offer wording |
+| `api/_lib/crm-campaigns.js`, `api/crm-campaigns.js` | campaign drafting (Claude), scheduling onto the calendar, results |
+| `src/dssc/DsscCrmPulse.jsx`, `src/dssc/DsscCrmCampaigns.jsx` | the Pulse and Campaigns tabs |
+| `scripts/test-crm-v2.mjs` | offline tests: `node scripts/test-crm-v2.mjs` |

@@ -4,11 +4,24 @@
 // save it, and pick it as the audience of any marketing email (Marketing →
 // an email → To, or Settings → weekly email). Same engine as the sender
 // (shared/crm-segments.js), so the count here is who gets it.
+//
+// v2 (Oct 29 2026): also by stage, value tier, what they have (open gym,
+// privates, Reach, rentals, parties…), whether they answer texts, whether they
+// wrote to us and about what, upcoming birthdays, siblings, how often they buy.
+// A segment can start a campaign or open in People.
 
 import { useState, useEffect, useMemo } from "react";
 import { supabase } from "../supabase";
 import { DS, Btn, Card, Label, Tag, inputStyle } from "./DsscHub.jsx";
-import { EMPTY_SEGMENT, SEGMENT_CATEGORIES, GRADES, loadSegmentData, buildFamilies, resolveSegment, describeSegment } from "../../shared/crm-segments.js";
+import { EMPTY_SEGMENT, SEGMENT_CATEGORIES, GRADES, loadSegmentData, buildFamilies, resolveSegment, resolveSegmentPhones, describeSegment } from "../../shared/crm-segments.js";
+import { STAGES, TIERS, PRODUCT_FILTERS } from "../../shared/crm-profile.js";
+
+// Quick audiences (also offered in the campaign builder).
+export const SMART_SEGMENTS = [
+  ["everyone", "Everyone", {}], ["new", "New families", { stages: ["new"] }], ["active", "Active", { stages: ["new", "active"] }],
+  ["cooling", "Cooling", { stages: ["cooling"] }], ["lapsed", "Lapsed", { stages: ["lapsed", "lost"] }], ["prospect", "Prospects", { stages: ["prospect"] }],
+  ["vip", "VIP", { tiers: ["vip"] }], ["open_gym", "Open gym members", { products: ["open_gym_active"] }], ["privates", "Privates families", { products: ["privates"] }],
+];
 
 const today = () => new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
 const chip = (on, color = DS.lime) => ({ fontFamily: DS.font, fontSize: 13, fontWeight: 800, padding: "5px 11px", borderRadius: 999, cursor: "pointer", border: "1px solid " + (on ? color : DS.lineStrong), background: on ? color : "transparent", color: on ? DS.bg : DS.text });
@@ -16,17 +29,20 @@ const lbl = { fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", textTransf
 const sel = { ...inputStyle, width: "auto", padding: "6px 9px", fontSize: 13 };
 const csvEsc = (v) => { const s = v == null ? "" : String(v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
 
-export default function DsscCrmSegments({ coach }) {
-  const [data, setData] = useState(null);
+export default function DsscCrmSegments({ coach, data: given, index: givenIndex, onCampaign, onPeople }) {
+  const [loaded, setData] = useState(null);
+  const data = given || loaded;
   const [err, setErr] = useState("");
   const [segs, setSegs] = useState([]);
   const [cur, setCur] = useState({ id: null, name: "", filters: { ...EMPTY_SEGMENT } });
   const [saving, setSaving] = useState(false);
 
   const loadSegs = async () => { const { data: s, error } = await supabase.from("dssc_segments").select("*").order("name"); if (error) setErr(/dssc_segments|schema cache|does not exist/i.test(error.message) ? "Run migrations/20261025_dssc_crm_spend_segments.sql to turn on segments." : error.message); else setSegs(s || []); };
-  useEffect(() => { loadSegmentData(supabase).then(setData).catch(e => setErr(/dssc_purchases|mkt_unsubscribes|schema cache|does not exist|lists|email_status/i.test(e.message) ? "Run migrations/20261025_dssc_crm_spend_segments.sql to turn on segments." : e.message)); loadSegs(); }, []);
+  useEffect(() => { if (!given) loadSegmentData(supabase).then(setData).catch(e => setErr(/dssc_purchases|mkt_unsubscribes|schema cache|does not exist|lists|email_status/i.test(e.message) ? "Run migrations/20261025_dssc_crm_spend_segments.sql to turn on segments." : e.message)); loadSegs(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const index = useMemo(() => data ? buildFamilies(data, today()) : null, [data]);
+  const index = useMemo(() => givenIndex || (data ? buildFamilies(data, today()) : null), [givenIndex, data]);
+  const phones = useMemo(() => index ? resolveSegmentPhones(index, cur.filters) : null, [index, cur.filters]);
+  const interests = useMemo(() => [...new Set((data?.contacts || []).flatMap(c => c.interests || []))].sort(), [data]);
   const f = cur.filters;
   const res = useMemo(() => index ? resolveSegment(index, f) : null, [index, f]);
   const lists = useMemo(() => [...new Set((data?.contacts || []).flatMap(c => c.lists || []))].sort(), [data]);
@@ -100,6 +116,38 @@ export default function DsscCrmSegments({ coach }) {
           {GRADES.map(([g, l]) => <button key={g} onClick={() => tog("grades", g)} style={{ ...chip((f.grades || []).includes(g), "#7FD1C3"), padding: "4px 9px" }}>{l}</button>)}
         </div>
 
+        <div style={lbl}>Quick start</div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{SMART_SEGMENTS.map(([k, l, x]) => <button key={k} onClick={() => setCur(c => ({ ...c, filters: { ...EMPTY_SEGMENT, ...x } }))} style={chip(false, DS.mut)}>{l}</button>)}</div>
+
+        <div style={lbl}>Where they are</div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+          {STAGES.map(([k, l, d]) => <button key={k} title={d} onClick={() => tog("stages", k)} style={chip((f.stages || []).includes(k))}>{l}</button>)}
+          <span style={{ fontSize: 12, color: DS.mut, marginLeft: 8 }}>spender</span>
+          {TIERS.map(([k, l, d]) => <button key={k} title={d} onClick={() => tog("tiers", k)} style={chip((f.tiers || []).includes(k), "#F2C230")}>{l}</button>)}
+        </div>
+
+        <div style={lbl}>Has · doesn't have</div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+          <span style={{ fontSize: 12, color: DS.mut }}>has any of</span>
+          {PRODUCT_FILTERS.map(([k, l]) => <button key={k} onClick={() => tog("products", k)} style={chip((f.products || []).includes(k))}>{l}</button>)}
+        </div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginTop: 6 }}>
+          <span style={{ fontSize: 12, color: DS.mut }}>but not</span>
+          {PRODUCT_FILTERS.map(([k, l]) => <button key={k} onClick={() => tog("noProducts", k)} style={chip((f.noProducts || []).includes(k), DS.orange)}>{l}</button>)}
+        </div>
+
+        <div style={lbl}>Reaching them</div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <select value={f.texts} onChange={e => set("texts", e.target.value)} style={sel}><option value="any">texts: any</option><option value="can">can be texted</option><option value="replies">answers our texts</option><option value="silent">texted, never answered</option></select>
+          <select value={f.reached} onChange={e => set("reached", e.target.value)} style={sel}><option value="any">wrote to us: any</option><option value="yes">filled a form / emailed us</option><option value="no">never wrote to us</option></select>
+          {interests.length > 0 && <><span style={{ fontSize: 12, color: DS.mut }}>asked about</span>{interests.map(i => <button key={i} onClick={() => tog("interests", i)} style={chip((f.interests || []).includes(i), "#7FD1C3")}>{i}</button>)}</>}
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 8 }}>
+          <span style={{ fontSize: 12, color: DS.mut }}>a kid's birthday within</span><input type="number" min="1" max="365" value={f.birthdayDays} onChange={e => set("birthdayDays", e.target.value)} placeholder="days" style={{ ...sel, width: 70 }} />
+          <span style={{ fontSize: 12, color: DS.mut }}>at least</span><input type="number" min="1" max="8" value={f.minKids} onChange={e => set("minKids", e.target.value)} placeholder="#" style={{ ...sel, width: 60 }} /><span style={{ fontSize: 12, color: DS.mut }}>kids</span>
+          <span style={{ fontSize: 12, color: DS.mut, marginLeft: 8 }}>purchases in 12 months</span><input type="number" min="0" value={f.minBuys} onChange={e => set("minBuys", e.target.value)} placeholder="min" style={{ ...sel, width: 64 }} /><input type="number" min="0" value={f.maxBuys} onChange={e => set("maxBuys", e.target.value)} placeholder="max" style={{ ...sel, width: 64 }} />
+        </div>
+
         <div style={lbl}>Spend &amp; history</div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
           <span style={{ fontSize: 12, color: DS.mut }}>spent $</span>
@@ -128,8 +176,11 @@ export default function DsscCrmSegments({ coach }) {
         <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
           <span style={{ fontSize: 28, fontWeight: 900, color: DS.lime }}>{res.recipients.length.toLocaleString()}</span>
           <span style={{ fontSize: 14, fontWeight: 700 }}>will get the email</span>
+          {phones && <span style={{ fontSize: 14, fontWeight: 700 }}>· <span style={{ color: DS.lime }}>{phones.recipients.length.toLocaleString()}</span> can be texted</span>}
           <span style={{ fontSize: 12, color: DS.mut }}>{res.matched.toLocaleString()} families match{res.suppressed.unsubscribed ? ` · ${res.suppressed.unsubscribed} unsubscribed` : ""}{res.suppressed.bounced ? ` · ${res.suppressed.bounced} bounced / complained` : ""}{res.suppressed.no_email ? ` · ${res.suppressed.no_email} no email` : ""}{cold ? ` · ${cold} new to our email (old lists)` : ""}</span>
           <div style={{ flex: 1 }} />
+          {onPeople && <Btn small onClick={() => onPeople(f, cur.name || describeSegment(f))} disabled={!res.matched}>See in People</Btn>}
+          {onCampaign && <Btn small onClick={() => onCampaign({ segment: f, label: cur.name || describeSegment(f) })} disabled={!res.matched}>📣 Campaign</Btn>}
           <Btn small onClick={exportCsv} disabled={!res.recipients.length}>⬇ CSV</Btn>
           {cur.id && <Btn small onClick={() => save(true)} disabled={saving}>Save as new</Btn>}
           <Btn small kind="primary" onClick={() => save(false)} disabled={saving}>{saving ? "Saving…" : cur.id ? "Save changes" : "Save segment"}</Btn>

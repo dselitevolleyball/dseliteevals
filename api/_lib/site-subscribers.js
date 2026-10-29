@@ -50,6 +50,14 @@ export async function syncSiteSubscribers(sb, { dry = false, env = process.env }
     const { error } = await sb.rpc("dssc_add_list", { p_emails: fresh.map(r => r.email), p_list: SITE_LIST });
     if (error) throw new Error("list: " + error.message);
   }
+  // On their People timeline (dssc_touches, migrations/20261110_crm_v2.sql); skipped before that migration.
+  const at = new Map(fresh.map(r => [r.email, r.last_signup_at]));
+  for (const c of chunks(fresh.map(r => r.email))) {
+    try {
+      const { data: ids } = await sb.from("dssc_contacts").select("id, email").in("email", c);
+      if (ids?.length) await sb.from("dssc_touches").upsert(ids.map(x => ({ contact_id: x.id, kind: "newsletter", source: "website", detail: "Signed up for the newsletter", ref: "news:" + x.email, at: at.get(nrm(x.email)) || new Date().toISOString() })), { onConflict: "ref", ignoreDuplicates: true });
+    } catch { /* the timeline is extra; the sign-up itself is already saved */ }
+  }
   if (leaving.length) {
     const { error } = await sb.from("mkt_unsubscribes").upsert(leaving.map(r => ({ email: r.email })), { onConflict: "email", ignoreDuplicates: true });
     if (error) throw new Error("unsubscribes: " + error.message);
