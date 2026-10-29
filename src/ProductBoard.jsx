@@ -624,6 +624,7 @@ function MailAssistantSettings({ box }) {
           <div style={{ flex: 1, minWidth: 220 }}>
             <div style={{ fontWeight: 700, fontSize: 14 }}>{a.email}</div>
             <div style={{ fontSize: 12, color: a.last_error ? C.red : a.connected ? (a.enabled ? C.grn : C.amber) : C.mut }}>{a.last_error ? a.last_error : a.connected ? (a.enabled ? `✓ On · checked ${ago(a.last_poll_at)}` : "Paused") : "Not connected"}</div>
+            {st.cleanup?.[a.email]?.requested && (() => { const cl = st.cleanup[a.email], c = cl.counts || {}; const n = (c.automated || 0) + (c.no_reply || 0) + (c.archived_old || 0) + (c.needs_recent || 0) + (c.needs_old || 0) + (c.look || 0); return <div style={{ fontSize: 12, color: cl.done ? C.grn : C.amber }}>🧹 Inbox cleanup {cl.done ? "done" : "in progress"} · {n.toLocaleString()} sorted{n ? ` (${(c.automated || 0).toLocaleString()} automated archived, ${((c.needs_recent || 0) + (c.needs_old || 0)).toLocaleString()} may need a reply)` : ""}</div>; })()}
           </div>
           {a.google_ready && <button disabled={!!busy} onClick={go("c" + a.email, async () => { const { url } = await call("connect_url", { email: a.email }); window.location.href = url; })} style={btn(a.connected ? "ghost" : "primary", true)}>{a.connected ? "Reconnect" : "Connect"}</button>}
           {a.connected && <button disabled={!!busy} onClick={go("t" + a.email, () => call("toggle", { email: a.email, enabled: !a.enabled }))} style={btn("ghost", true)}>{a.enabled ? "Pause" : "Resume"}</button>}

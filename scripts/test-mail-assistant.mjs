@@ -188,6 +188,64 @@ check(signed({ "x-slack-request-timestamp": ts, "x-slack-signature": sig }, rawB
   check(n1 === 2 && n2 === 0 && got.join(" | ") === "messages/q1 Mail Assistant/Newsletters & automated -UNREAD | threads/tm1 Mail Assistant/Replied -Mail Assistant/Needs reply-UNREAD-INBOX", "earlier mail is tidied once: the automated one marked read, the replied one archived; Drew's own left alone - " + got.join(" | "));
 }
 
+// ── 4b. the one-time inbox cleanup ───────────────────────────────────────────
+console.log("== 4b. inbox cleanup ==");
+{
+  const NOW = Date.parse("2026-10-29T21:00:00Z"), day = 864e5;
+  const box = new Map();   // id -> message with labelIds
+  const add = (id, o) => box.set(id, msg(id, { at: NOW - 3 * day, ...o }));
+  add("a1", { from: "Playbook <no-reply@playbookapi.com>", subject: "Receipt" });
+  add("a2", { from: "News <news@x.com>", headers: { "List-Unsubscribe": "<x>" } });
+  add("a3", { from: "Store <hi@shop.com>", labels: ["INBOX", "UNREAD", "CATEGORY_PROMOTIONS"] });
+  add("p1", { from: "Pat Lee <pat@gmail.com>", subject: "Can Ava join Saturday?", text: "Is there room?" });
+  add("p2", { from: "Kim <kim@gmail.com>", subject: "Thanks!", text: "Thanks so much" });
+  add("p3", { from: "Old Parent <old@gmail.com>", subject: "Spring question", at: NOW - 90 * day, text: "Will you run spring?" });
+  add("p4", { from: "Old Friend <of@gmail.com>", subject: "Great game", at: NOW - 60 * day, text: "Great game!" });
+  add("me1", { from: "Drew <drew@dselitevolleyball.com>", subject: "note to self" });
+  add("new1", { from: "Late <late@gmail.com>", at: NOW + 3600e3 });                   // after connecting: not the cleanup's job
+  const ids2names = new Map(), names = [];
+  const lab = (id) => ids2names.get(id) || id;
+  const clean = async (url, o = {}) => {
+    const u = String(url), J = (j) => ({ ok: true, status: 200, json: async () => j });
+    if (u.startsWith("https://oauth2.googleapis.com/token")) return J({ access_token: "tok-clean", expires_in: 3600 });
+    const g = /gmail\/v1\/users\/me\/(.+?)(\?|$)/.exec(u)?.[1];
+    if (g === "labels") { if ((o.method || "GET") === "POST") { const name = JSON.parse(o.body).name, id = "CL" + names.length; names.push(name); ids2names.set(id, name); return J({ id, name }); } return J({ labels: [...ids2names].map(([id, name]) => ({ id, name })) }); }
+    if (g === "messages/batchModify") { const b = JSON.parse(o.body); for (const id of b.ids) { const m = box.get(id); m.labelIds = [...new Set([...m.labelIds.filter(l => !(b.removeLabelIds || []).map(lab).includes(lab(l))), ...(b.addLabelIds || [])])]; } return J({}); }
+    if (g === "messages" && (o.method || "GET") === "GET") {
+      const q = new URL(u).searchParams.get("q"), before = +/before:(\d+)/.exec(q)[1] * 1000;
+      const ok = [...box.values()].filter(m => m.labelIds.includes("INBOX") && +m.internalDate < before && !/drew@/.test(m.payload.headers[0].value) && !m.labelIds.map(lab).some(n => /^Mail Assistant\/(Needs reply|No reply needed|Needs a look|Replied|Skipped)$/.test(n)));
+      return J({ messages: ok.slice(0, +new URL(u).searchParams.get("maxResults")).map(m => ({ id: m.id })) });
+    }
+    if (g?.startsWith("messages/")) { const m = box.get(g.split("/")[1]); return J({ ...m, snippet: "snippet of " + m.id }); }
+    return { ok: false, status: 404, json: async () => ({}) };
+  };
+  const sortClient = { beta: { messages: { create: async (req) => { const t = req.messages[0].content; const ids = [...t.matchAll(/id (\d+)\nDate: [^\n]*\nFrom: [^<]*<([^>]+)>/g)];
+    return { content: [{ type: "text", text: JSON.stringify({ items: ids.map(([, i, e]) => ({ id: +i, needs_reply: /pat@|old@/.test(e), gist: e.startsWith("pat") ? "Asks if Ava can join Saturday" : "x" })) }) }] }; } } } };
+  const sbc2 = fakeSupabase({ hq_kv: [{ key: "mail_cleanup:cleanup@dselitevolleyball.com", value: { requested: true } }, { key: "mail_slack", value: { bot_token: "xoxb-mail" } }], mail_drafts: [], mail_accounts: [] });
+  const acct = { email: "cleanup@dselitevolleyball.com", refresh_token: "rt", connected_at: new Date(NOW).toISOString() };   // its own sign-in, apart from the tests above
+  const posted = [];
+  globalThis.fetch = async (url, o = {}) => { const u = String(url); if (u.startsWith("https://slack.com/api/")) { const m = u.split("/").pop(); if (m === "chat.postMessage") posted.push(JSON.parse(o.body)); return { ok: true, status: 200, json: async () => m === "users.lookupByEmail" ? { ok: true, user: { id: "U" } } : m === "conversations.open" ? { ok: true, channel: { id: "D" } } : { ok: true, ts: "1" } }; } return clean(url, o); };
+  const res = await M.cleanupAccount(sbc2, acct, { fetchImpl: clean, client: sortClient, now: NOW });
+  const L = (id) => box.get(id).labelIds.map(lab);
+  check(res.done && JSON.stringify(res.counts) === JSON.stringify({ automated: 3, archived_old: 1, no_reply: 1, needs_recent: 1, needs_old: 1, look: 0 }), "sorted: 3 automated, 2 no reply (1 old, archived), 2 may need a reply - " + JSON.stringify(res.counts));
+  check(["a1", "a2", "a3"].every(id => !L(id).includes("INBOX") && !L(id).includes("UNREAD") && L(id).includes("Mail Assistant/Newsletters & automated")), "automated: labelled, read, archived");
+  check(L("p1").includes("INBOX") && L("p1").includes("UNREAD") && L("p1").includes("Mail Assistant/Needs reply"), "needs a reply: labelled, still unread in the inbox");
+  check(L("p2").includes("INBOX") && !L("p2").includes("UNREAD") && !L("p4").includes("INBOX") && L("p4").includes("Mail Assistant/No reply needed"), "no reply needed: read; older than 30 days also archived");
+  check(L("me1").includes("INBOX") && L("me1").length === 2 && L("new1").length === 2, "Drew's own mail and mail after connecting are left alone");
+  const listed = sbc2.db.mail_drafts.filter(r => r.status === "listed");
+  check(listed.length === 2 && listed.find(r => r.gmail_id === "p1").reason === "Asks if Ava can join Saturday", "the ones that may need a reply are kept for the list");
+  const sum = JSON.stringify(posted[0]?.blocks || []);
+  check(/Inbox cleanup done/.test(sum) && /mail_draft_now/.test(sum) && /Pat Lee/.test(sum) && /Asks if Ava can join Saturday/.test(sum) && /Old Parent/.test(sum) && /label\/Mail\+Assistant%2FNeeds\+reply/.test(sum), "one Slack summary: counts, the recent ones with Draft a reply, the older ones linked");
+  const again = await M.cleanupAccount(sbc2, acct, { fetchImpl: clean, client: sortClient, now: NOW });
+  check(again === null && posted.length === 1, "done once: later runs leave it");
+  // Draft a reply from the list: the full email, Claude's draft, a card.
+  sbc2.db.mail_accounts.push(acct);
+  const p1row = listed.find(r => r.gmail_id === "p1");
+  const draftClient = { beta: { messages: { create: async () => ({ content: [{ type: "text", text: JSON.stringify({ needs_reply: true, reason: "a question", draft: "Hi Pat - yes, there's room!\n\n-Drew", note: "" }) }] }) } } };
+  const d = await M.draftListed(sbc2, p1row.id, { fetchImpl: clean, client: draftClient });
+  check(d.status === "pending" && /there's room/.test(d.draft) && d.message_id === "<p1@mail.yahoo.com>" && JSON.stringify(posted[1]?.blocks || []).includes("mail_send"), "Draft a reply: a draft card like new mail, ready to Send");
+}
+
 // ── 5. the twice-a-day roundup ───────────────────────────────────────────────
 console.log("== 5. roundup ==");
 check(M.digestSlot(new Date("2026-10-29T13:05:00Z")) === "2026-10-29@8" && M.digestSlot(new Date("2026-10-29T22:10:00Z")) === "2026-10-29@17" && M.digestSlot(new Date("2026-10-29T11:00:00Z")) === null && M.digestSlot(new Date("2026-11-02T14:05:00Z")) === "2026-11-02@8", "8am and 5pm Central, through the clock change");

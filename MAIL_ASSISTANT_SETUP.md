@@ -39,6 +39,21 @@ they're needed.
 
 Archived mail is still in All Mail and in search.
 
+**The one-time inbox cleanup** (started Oct 29 2026, both mailboxes). It works through
+everything that was in the inbox before the mailbox was connected, a few hundred emails per
+5-minute run:
+
+| Kind of mail | What happens |
+|---|---|
+| Automated (the same rules as new mail) | labelled, read, archived; no Claude |
+| Real people, may need a reply | labelled **Needs reply**, still unread |
+| Real people, no reply needed | labelled and marked read; older than 30 days also archived |
+| Couldn't be sorted | labelled **Needs a look** |
+
+When a mailbox is done, DSSC Mail sends one summary. It lists the recent emails that may need a
+reply, each with a **Draft a reply** button that makes a draft card like new mail. Nothing is
+sent or deleted. Progress shows in Product → Settings → Email assistant.
+
 **The roundup.** At **8am and 5pm Central**, DSSC Mail DMs you one message covering everything
 since the last roundup:
 

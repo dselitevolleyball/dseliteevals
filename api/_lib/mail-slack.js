@@ -12,7 +12,7 @@ const lib = () => import("./mail-assistant.js");
 const respond = (url, body) => url ? fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).catch(() => {}) : null;
 const oops = (url, text) => respond(url, { response_type: "ephemeral", replace_original: false, text });
 const firstName = (me) => String(me.name || me.email).split(/[\s@]/)[0];
-export const isMailAction = (id) => /^mail_(send|edit|skip)$/.test(String(id || ""));
+export const isMailAction = (id) => /^mail_(send|edit|skip|draft_now)$/.test(String(id || ""));
 
 // Drew, by his Slack profile email.
 export async function mailOwner(cfg, slackUserId) {
@@ -40,6 +40,8 @@ export async function onMailButton(sb, cfg, p, a) {
   const me = await mailOwner(cfg, p.user?.id);
   if (!me) return oops(p.response_url, "Only Drew can answer his email from here.");
   try {
+    // From the inbox cleanup's list: draft it now, as a card like new mail.
+    if (a.action_id === "mail_draft_now") { const { draftListed } = await lib(); await draftListed(sb, a.value); return oops(p.response_url, "✏️ Drafted - the card is in this conversation."); }
     const { sendDraft, skipDraft } = await lib();
     if (a.action_id === "mail_send") await sendDraft(sb, a.value, firstName(me));
     if (a.action_id === "mail_skip") await skipDraft(sb, a.value, firstName(me));

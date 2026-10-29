@@ -291,7 +291,7 @@ export function buildMime(d, text) {
 // label everything it sorts, mark unimportant mail read) ──────────────────
 // Labels sit under one "Mail Assistant" folder; they're made the first time
 // they're needed. Tidying never stops a send or a poll - a failure is ignored.
-export const LABELS = { needs: "Mail Assistant/Needs reply", replied: "Mail Assistant/Replied", skipped: "Mail Assistant/Skipped", noreply: "Mail Assistant/No reply needed", auto: "Mail Assistant/Newsletters & automated" };
+export const LABELS = { needs: "Mail Assistant/Needs reply", replied: "Mail Assistant/Replied", skipped: "Mail Assistant/Skipped", noreply: "Mail Assistant/No reply needed", auto: "Mail Assistant/Newsletters & automated", look: "Mail Assistant/Needs a look" };
 const labelMemo = new Map();
 async function labelId(token, key, fetchImpl) {
   const name = LABELS[key];
@@ -535,4 +535,146 @@ export async function sendDigest(sb, { force = false, now = new Date(), client =
   if (!r.ok) return { sent: false, error: "Slack: " + r.error };
   await save();
   return { sent: true, slot, quiet: quiet.length, auto: auto.length, waiting: (waiting || []).length };
+}
+
+// ── the one-time inbox cleanup (Drew, Oct 29 2026: "go through my entire
+// mailbox and organize it correctly") ───────────────────────────────────────
+// Everything in the inbox from before the mailbox was connected (newer mail is
+// handled as it arrives), a few hundred per 5-minute run until it's empty:
+//   automated (the same rules as new mail)   labelled, read, archived - no Claude
+//   real people                              Claude sorts them in batches:
+//     needs a reply    labelled Needs reply, left unread; listed in one Slack
+//                      message with a "Draft a reply" button each
+//     no reply needed  labelled, marked read; older than 30 days also archived
+//     Claude couldn't  labelled Needs a look
+// Nothing is sent and nothing is deleted. Progress: hq_kv "mail_cleanup:<email>"
+// { requested, done, counts, started_at, finished_at }. The query skips what's
+// been labelled, archived or sent by Drew, so each run picks up where the last
+// stopped.
+const RECENT_DAYS = 30;
+const CLEAN_Q = (before) => `in:inbox -from:me before:${before} -label:mail-assistant-needs-reply -label:mail-assistant-no-reply-needed -label:mail-assistant-needs-a-look -label:mail-assistant-replied -label:mail-assistant-skipped`;
+const SORT_SCHEMA = { type: "object", additionalProperties: false, required: ["items"], properties: { items: { type: "array", items: { type: "object", additionalProperties: false, required: ["id", "needs_reply", "gist"], properties: { id: { type: "integer" }, needs_reply: { type: "boolean" }, gist: { type: "string" } } } } } };
+export async function sortBatch(rows, account, client = null) {
+  const c = client || claudeClient("mail-cleanup", { timeout: 90000, maxRetries: 1 });
+  const msg = await c.beta.messages.create({
+    model: MODEL, max_tokens: 4000, betas: ["server-side-fallback-2026-07-01"], fallbacks: "default",
+    output_config: { effort: "low", format: { type: "json_schema", schema: SORT_SCHEMA } },
+    system: `You sort old email in ${account}, the inbox of Drew Rose (owner of DS Elite Volleyball and Dripping Springs Sports Club). For each email: needs_reply = true only if a real person is asking Drew something or waiting on him and it plausibly still matters; false for thank-yous, FYIs, finished conversations, confirmations, announcements, sales pitches and anything automated. gist = one line, at most 14 words, of what it says or asks.`,
+    messages: [{ role: "user", content: rows.map((r, i) => `id ${i}\nDate: ${r.received_at || ""}\nFrom: ${r.from_name || ""} <${r.from_email}>\nSubject: ${r.subject || ""}\n${String(r.snippet || "").slice(0, 400)}`).join("\n\n---\n\n") }],
+  });
+  const j = JSON.parse((msg.content || []).filter(b => b.type === "text").map(b => b.text).join("") || "{}");
+  return new Map((j.items || []).map(x => [Number(x.id), { needs: !!x.needs_reply, gist: String(x.gist || "").trim() }]));
+}
+async function batchModify(token, ids, add, remove, fetchImpl) {
+  if (!ids.length) return 0;
+  const toIds = async (list) => (await Promise.all(list.map(k => LABELS[k] ? labelId(token, k, fetchImpl) : k))).filter(Boolean);
+  const body = { addLabelIds: await toIds(add), removeLabelIds: await toIds(remove) };
+  for (let i = 0; i < ids.length; i += 1000) await gmail(token, "messages/batchModify", { method: "POST", body: { ids: ids.slice(i, i + 1000), ...body } }, fetchImpl);
+  return ids.length;
+}
+export async function cleanupAccount(sb, acct, { deadline = Date.now() + 200e3, fetchImpl = fetch, client = null, now = Date.now() } = {}) {
+  const key = "mail_cleanup:" + acct.email;
+  const { data: kv } = await sb.from("hq_kv").select("value").eq("key", key).maybeSingle();
+  const st = kv?.value;
+  if (!st?.requested || st.done) return null;
+  const c = { automated: 0, archived_old: 0, no_reply: 0, needs_recent: 0, needs_old: 0, look: 0, ...(st.counts || {}) };
+  const save = (extra = {}) => sb.from("hq_kv").upsert({ key, value: { ...st, started_at: st.started_at || new Date(now).toISOString(), counts: c, ...extra }, secret: true, updated_at: new Date().toISOString(), updated_by: "mail-cleanup" }, { onConflict: "key" });
+  const token = await accessToken(sb, acct, { fetchImpl });
+  const before = Math.floor(Date.parse(acct.connected_at || new Date(now).toISOString()) / 1000);
+  const recentFrom = now - RECENT_DAYS * 864e5;
+  let emptied = false;
+  const seen = new Set();
+  while (Date.now() < deadline) {
+    const list = await gmail(token, "messages", { query: { q: CLEAN_Q(before), maxResults: 200 } }, fetchImpl);
+    const all = (list.messages || []).map(m => m.id);
+    if (!all.length) { emptied = true; break; }
+    // Gmail's search can lag a moment behind a label change: never handle one twice in a run.
+    const ids = all.filter(id => !seen.has(id));
+    if (!ids.length) break;
+    ids.forEach(id => seen.add(id));
+    const metas = [];
+    for (let i = 0; i < ids.length; i += 10) metas.push(...await Promise.all(ids.slice(i, i + 10).map(id => gmail(token, `messages/${id}`, { query: { format: "metadata", metadataHeaders: ["From", "Subject", "Reply-To", "Message-ID", "References", "In-Reply-To", "List-Unsubscribe", "List-Id", "Precedence", "Auto-Submitted"] } }, fetchImpl).catch(() => null))));
+    const autoIds = [], people = [];
+    for (const m of metas.filter(Boolean)) {
+      const p = { ...parseMessage(m), snippet: (m.snippet || "").replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, "&") };
+      const why = ignoreReason(p, acct.email);
+      if (why) autoIds.push(p.gmail_id); else people.push(p);
+    }
+    c.automated += await batchModify(token, autoIds, ["auto"], ["UNREAD", "INBOX"], fetchImpl);
+    const look = [], noRecent = [], noOld = [], needs = [];
+    for (let i = 0; i < people.length; i += 12) {
+      if (Date.now() > deadline - 20e3) break;
+      const batch = people.slice(i, i + 12);
+      const sorted = await sortBatch(batch, acct.email, client).catch(() => new Map());
+      batch.forEach((p, k) => {
+        const r = sorted.get(k);
+        if (!r) look.push(p.gmail_id);
+        else if (r.needs) needs.push({ ...p, gist: r.gist });
+        else (Date.parse(p.received_at || 0) >= recentFrom ? noRecent : noOld).push(p.gmail_id);
+      });
+    }
+    c.look += await batchModify(token, look, ["look"], [], fetchImpl);
+    c.no_reply += await batchModify(token, noRecent, ["noreply"], ["UNREAD"], fetchImpl);
+    c.archived_old += await batchModify(token, noOld, ["noreply"], ["UNREAD", "INBOX"], fetchImpl);
+    if (needs.length) {
+      await batchModify(token, needs.map(p => p.gmail_id), ["needs"], [], fetchImpl);
+      const rows = needs.map(p => ({ account: acct.email, gmail_id: p.gmail_id, thread_id: p.thread_id, message_id: p.message_id, references_ids: p.references_ids, from_email: p.from_email, from_name: p.from_name, reply_to: p.reply_to, subject: String(p.subject || "").slice(0, 300), received_at: p.received_at, body: p.snippet, status: "listed", reason: p.gist }));
+      await sb.from("mail_drafts").upsert(rows, { onConflict: "account,gmail_id", ignoreDuplicates: true });
+      for (const p of needs) Date.parse(p.received_at || 0) >= recentFrom ? c.needs_recent++ : c.needs_old++;
+    }
+    await save();
+  }
+  if (!emptied) return { account: acct.email, counts: c, done: false };
+  await save({ done: true, finished_at: new Date().toISOString() });
+  await cleanupSummary(sb, acct.email, c, recentFrom).catch(() => {});
+  return { account: acct.email, counts: c, done: true };
+}
+const labelLink = (account, key) => `https://mail.google.com/mail/u/?authuser=${encodeURIComponent(account)}#label/${encodeURIComponent(LABELS[key]).replace(/%20/g, "+")}`;
+export function cleanupBlocks(account, c, recent, older) {
+  const esc2 = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const blocks = [{ type: "section", text: { type: "mrkdwn", text: `🧹 *Inbox cleanup done · ${esc2(account)}*\n• ${c.automated} newsletters & automated - marked read and archived (<${labelLink(account, "auto")}|see them>)\n• ${c.no_reply + c.archived_old} needed no reply - marked read${c.archived_old ? `, ${c.archived_old} older than ${RECENT_DAYS} days archived` : ""} (<${labelLink(account, "noreply")}|see them>)\n• *${c.needs_recent + c.needs_old} may need a reply* - labelled Needs reply, still unread (<${labelLink(account, "needs")}|see them>)${c.look ? `\n• ${c.look} couldn't be sorted - labelled Needs a look (<${labelLink(account, "look")}|see them>)` : ""}` } }];
+  if (recent.length) {
+    blocks.push({ type: "section", text: { type: "mrkdwn", text: `*From the last ${RECENT_DAYS} days* - press Draft a reply and a draft card comes here like new mail:` } });
+    for (const r of recent.slice(0, 40)) blocks.push({ type: "section", text: { type: "mrkdwn", text: `*${esc2(r.from_name || r.from_email)}* · ${new Date(r.received_at).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/Chicago" })} - ${esc2(r.reason || r.subject)} · <${gmailLink(account, r.thread_id)}|open>` }, accessory: { type: "button", text: { type: "plain_text", text: "Draft a reply" }, action_id: "mail_draft_now", value: String(r.id) } });
+    if (recent.length > 40) blocks.push({ type: "context", elements: [{ type: "mrkdwn", text: `…and ${recent.length - 40} more under Needs reply in Gmail.` }] });
+  }
+  if (older.length) blocks.push({ type: "context", elements: [{ type: "mrkdwn", text: `Older than ${RECENT_DAYS} days and maybe still open (${older.length}): ` + older.slice(0, 12).map(r => `<${gmailLink(account, r.thread_id)}|${esc2(r.from_name || r.from_email)}>`).join(", ") + (older.length > 12 ? "…" : "") }] });
+  return { text: `Inbox cleanup done: ${account}`, blocks: blocks.slice(0, 49) };
+}
+async function cleanupSummary(sb, account, c, recentFrom) {
+  const cfg = await mailSlackCfg(sb);
+  if (!cfg.bot_token) return;
+  const channel = await ownerDm(cfg);
+  if (!channel) return;
+  const { data: listed } = await sb.from("mail_drafts").select("id, from_email, from_name, subject, received_at, thread_id, reason").eq("account", account).eq("status", "listed").order("received_at", { ascending: false }).limit(300);
+  const recent = (listed || []).filter(r => Date.parse(r.received_at || 0) >= recentFrom), older = (listed || []).filter(r => Date.parse(r.received_at || 0) < recentFrom);
+  await slackApi(cfg.bot_token, "chat.postMessage", { channel, ...cleanupBlocks(account, c, recent, older), unfurl_links: false, unfurl_media: false });
+}
+// "Draft a reply" on a cleaned-up email: the full email, Claude's draft, a card - like new mail.
+export async function draftListed(sb, id, { fetchImpl = fetch, client = null } = {}) {
+  const { data: row } = await sb.from("mail_drafts").select("*").eq("id", Number(id)).maybeSingle();
+  if (!row) throw fail(404, "That email is gone");
+  if (row.status !== "listed") return row;
+  const { data: claimed } = await sb.from("mail_drafts").update({ status: "drafting" }).eq("id", row.id).eq("status", "listed").select("id");
+  if (!claimed?.length) return row;
+  try {
+    const acct = await getAccount(sb, row.account);
+    const token = await accessToken(sb, acct, { fetchImpl });
+    const p = parseMessage(await gmail(token, `messages/${row.gmail_id}`, { query: { format: "full" } }, fetchImpl));
+    const ctx = await threadContext(sb, { ...row, gmail_id: p.gmail_id }, { fetchImpl, token });
+    const r = await draftFor(p, { account: row.account, ...ctx }, { client });
+    const { data: d } = await sb.from("mail_drafts").update({ status: "pending", body: p.latest.slice(0, 6000), message_id: p.message_id, references_ids: p.references_ids, reply_to: p.reply_to, draft: r.draft || "", reason: r.note ? "Needs: " + r.note : r.reason, updated_at: new Date().toISOString() }).eq("id", row.id).select().single();
+    const cfg = await mailSlackCfg(sb);
+    if (cfg.bot_token) await postCard(sb, cfg, d);
+    return d;
+  } catch (e) {
+    await sb.from("mail_drafts").update({ status: "listed" }).eq("id", row.id);
+    throw e;
+  }
+}
+export async function cleanupAll(sb, opts = {}) {
+  const { data: accts } = await sb.from("mail_accounts").select("*").eq("enabled", true).not("refresh_token", "is", null);
+  const out = [];
+  for (const a of accts || []) { const r = await cleanupAccount(sb, a, opts).catch(e => ({ account: a.email, error: e.message })); if (r) out.push(r); }
+  return out;
 }

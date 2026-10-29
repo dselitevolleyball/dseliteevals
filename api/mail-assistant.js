@@ -12,7 +12,7 @@
 //     digest_now                   send the email roundup now (it also goes at 8am and 5pm CT)
 
 import { createClient } from "@supabase/supabase-js";
-import { pollAll, authUrl, googleReady, redirectUri, ACCOUNTS, isOwner, mailSlackCfg, saveMailSlack, testMailSlack, sendDigest, DIGEST_HOURS } from "./_lib/mail-assistant.js";
+import { pollAll, authUrl, googleReady, redirectUri, ACCOUNTS, isOwner, mailSlackCfg, saveMailSlack, testMailSlack, sendDigest, DIGEST_HOURS, cleanupAll } from "./_lib/mail-assistant.js";
 
 export const config = { maxDuration: 300 };
 const fail = (status, msg) => Object.assign(new Error(msg), { status });
@@ -29,7 +29,9 @@ export default async function handler(req, res) {
       const accounts = await pollAll(sb);
       // The twice-a-day roundup rides on the same 5-minute run.
       const digest = await sendDigest(sb).catch(e => ({ error: e.message }));
-      return res.status(200).json({ ok: true, accounts, digest });
+      // The one-time inbox cleanup, a few hundred emails per run until each inbox is done.
+      const cleanup = await cleanupAll(sb, { deadline: Date.now() + 180e3 }).catch(e => ({ error: e.message }));
+      return res.status(200).json({ ok: true, accounts, digest, cleanup });
     }
     if (req.method !== "POST") { res.setHeader("Allow", "GET, POST"); return res.status(405).json({ error: "GET or POST" }); }
     const bearer = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "").trim();
@@ -55,7 +57,9 @@ export async function run(sb, me, b) {
       const { data: recent } = await sb.from("mail_drafts").select("id, account, from_email, from_name, subject, received_at, status, reason, decided_by, decided_at, created_at").order("created_at", { ascending: false }).limit(30);
       const sl = await mailSlackCfg(sb);
       const dg = (await sb.from("hq_kv").select("value").eq("key", "mail_digest").maybeSingle()).data?.value || {};
+      const { data: cl } = await sb.from("hq_kv").select("key, value").like("key", "mail_cleanup:%");
       return {
+        cleanup: Object.fromEntries((cl || []).map(r => [r.key.replace("mail_cleanup:", ""), r.value])),
         digest: { hours: dg.hours || DIGEST_HOURS, last_at: dg.last_at || null },
         slack: { app: sl.app, connected: !!sl.bot_token, signing: !!sl.signing_secret, team: sl.team || null, url: "https://dseliteevals.vercel.app/api/mail-slack" },
         google_ready: ACCOUNTS.some(e => googleReady(e)), redirect_uri: redirectUri(),
@@ -70,6 +74,10 @@ export async function run(sb, me, b) {
     case "save_slack": return { slack: await saveMailSlack(sb, { bot_token: b.bot_token, signing_secret: b.signing_secret }, me) };
     case "test_slack": return await testMailSlack(sb);
     case "digest_now": return { digest: await sendDigest(sb, { force: true }) };
+    case "cleanup": {   // start (or restart) the one-time inbox cleanup for both mailboxes
+      for (const e of ACCOUNTS) await sb.from("hq_kv").upsert({ key: "mail_cleanup:" + e, value: { requested: true, by: me }, secret: true, updated_at: new Date().toISOString(), updated_by: me }, { onConflict: "key" });
+      return {};
+    }
     default: throw fail(400, "Unknown action");
   }
 }
