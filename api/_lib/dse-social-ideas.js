@@ -467,7 +467,8 @@ const REVISE_SYSTEM = `You revise one draft social media post for DS Elite Volle
 Facts: use ONLY the club facts given; never invent a price, date, time, coach, result or promise. If he asks for a fact that isn't in the facts, write it exactly as he states it; if he asks for something you can't know, leave it out and say so in "changed". Team names exactly as listed ("11 Rise", never "11 Rise 1"). Never name, describe or picture a specific child. At most 4 emoji. Hashtags without '#', 0-4 (the club's standard tags are added separately).
 The graphic (idea posts only; for other posts return the current values unchanged and style "keep"): style holiday = a photo with a small TAG line, a big HEADLINE (under 40 characters) and a SUB line (under 70); text = no photo, HEADLINE under 60 and SUB under 80 on a pink field; meme = a photo with TOP and BOTTOM lines. Return the full set of words even if unchanged; style "keep" to keep the current style.
 photo_id: when he asks for a different picture (or the change calls for one), the stock photo id from the list that best fits what he asked for and the post - right team or club-wide, right moment, room for the headline, not over-used, and not the current photo. 0 keeps the current photo.
-changed: one short sentence telling Drew what you changed (and anything you couldn't do).`;
+When shortening, cut wording before facts; never drop a fact Drew asked for in his original request (cost, payment plan, schedule, contact...) unless he says to.
+changed: one or two short sentences telling Drew exactly what you changed - name every fact or detail you removed (e.g. "dropped the payment schedule") and anything you couldn't do. Never claim nothing was removed when something was.`;
 
 export async function revisePost(sb, post, { feedback, by = "Drew", today = ctToday() } = {}) {
   if (!process.env.ANTHROPIC_API_KEY) throw fail(500, "ANTHROPIC_API_KEY isn't set");
