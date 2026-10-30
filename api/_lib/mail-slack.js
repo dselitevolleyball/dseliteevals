@@ -41,7 +41,11 @@ export async function onMailButton(sb, cfg, p, a) {
   if (!me) return oops(p.response_url, "Only Drew can answer his email from here.");
   try {
     // From the inbox cleanup's list: draft it now, as a card like new mail.
-    if (a.action_id === "mail_draft_now") { const { draftListed } = await lib(); await draftListed(sb, a.value); return oops(p.response_url, "✏️ Drafted - the card is in this conversation."); }
+    if (a.action_id === "mail_draft_now") {
+      const { draftListed } = await lib();
+      const d = await draftListed(sb, a.value);
+      return oops(p.response_url, d?.status === "answered" ? "✓ You already answered this one in Gmail - moved it to Replied." : "✏️ Drafted - the card is in this conversation.");
+    }
     const { sendDraft, skipDraft } = await lib();
     if (a.action_id === "mail_send") await sendDraft(sb, a.value, firstName(me));
     if (a.action_id === "mail_skip") await skipDraft(sb, a.value, firstName(me));

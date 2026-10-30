@@ -322,6 +322,10 @@ export async function tidy(token, { id, thread = false, add = [], remove = [] },
 }
 // After Send or Skip: read, out of the inbox, labelled.
 const settle = (token, d, key, fetchImpl) => d.thread_id ? tidy(token, { id: d.thread_id, thread: true, add: [key], remove: ["needs", "UNREAD", "INBOX"] }, fetchImpl) : null;
+// Did Drew write in the conversation after this email came in? He answers from
+// his phone and Gmail too, not only from Slack.
+const threadMsgs = async (token, id, fetchImpl) => (await gmail(token, `threads/${id}`, { query: { format: "minimal" } }, fetchImpl)).messages || [];
+export const sentAfter = (msgs, at) => { const t = Date.parse(at || 0) || 0; return msgs.some(m => (m.labelIds || []).includes("SENT") && +m.internalDate > t); };
 
 const getDraft = async (sb, id) => { const { data } = await sb.from("mail_drafts").select("*").eq("id", Number(id)).maybeSingle(); if (!data) throw fail(404, "That email is gone"); return data; };
 const getAccount = async (sb, email) => { const { data } = await sb.from("mail_accounts").select("*").eq("email", email).maybeSingle(); if (!data?.refresh_token) throw fail(400, `${email} isn't connected - connect it in HQ -> Product -> Settings`); return data; };
@@ -607,7 +611,8 @@ export async function cleanupAccount(sb, acct, { deadline = Date.now() + 200e3, 
       if (why) autoIds.push(p.gmail_id); else people.push(p);
     }
     c.automated += await batchModify(token, autoIds, ["auto"], ["UNREAD", "INBOX"], fetchImpl);
-    const look = [], noRecent = [], noOld = [], needs = [];
+    const look = [], noRecent = [], noOld = [];
+    let needs = [];
     for (let i = 0; i < people.length; i += 12) {
       if (Date.now() > deadline - 20e3) break;
       const batch = people.slice(i, i + 12);
@@ -622,6 +627,10 @@ export async function cleanupAccount(sb, acct, { deadline = Date.now() + 200e3, 
     c.look += await batchModify(token, look, ["look"], [], fetchImpl);
     c.no_reply += await batchModify(token, noRecent, ["noreply"], ["UNREAD"], fetchImpl);
     c.archived_old += await batchModify(token, noOld, ["noreply"], ["UNREAD", "INBOX"], fetchImpl);
+    // Answered later in the same conversation: done, not waiting on him.
+    const answered = new Set();
+    for (let i = 0; i < needs.length; i += 5) await Promise.all(needs.slice(i, i + 5).map(async p => { if (p.thread_id && sentAfter(await threadMsgs(token, p.thread_id, fetchImpl).catch(() => []), p.received_at)) answered.add(p.gmail_id); }));
+    if (answered.size) { c.answered = (c.answered || 0) + await batchModify(token, [...answered], ["replied"], ["UNREAD", "INBOX"], fetchImpl); needs = needs.filter(p => !answered.has(p.gmail_id)); }
     if (needs.length) {
       await batchModify(token, needs.map(p => p.gmail_id), ["needs"], [], fetchImpl);
       const rows = needs.map(p => ({ account: acct.email, gmail_id: p.gmail_id, thread_id: p.thread_id, message_id: p.message_id, references_ids: p.references_ids, from_email: p.from_email, from_name: p.from_name, reply_to: p.reply_to, subject: String(p.subject || "").slice(0, 300), received_at: p.received_at, body: p.snippet, status: "listed", reason: p.gist }));
@@ -636,25 +645,95 @@ export async function cleanupAccount(sb, acct, { deadline = Date.now() + 200e3, 
   return { account: acct.email, counts: c, done: true };
 }
 const labelLink = (account, key) => `https://mail.google.com/mail/u/?authuser=${encodeURIComponent(account)}#label/${encodeURIComponent(LABELS[key]).replace(/%20/g, "+")}`;
+const esc2 = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 export function cleanupBlocks(account, c, recent, older) {
-  const esc2 = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  const blocks = [{ type: "section", text: { type: "mrkdwn", text: `🧹 *Inbox cleanup done · ${esc2(account)}*\n• ${c.automated} newsletters & automated - marked read and archived (<${labelLink(account, "auto")}|see them>)\n• ${c.no_reply + c.archived_old} needed no reply - marked read${c.archived_old ? `, ${c.archived_old} older than ${RECENT_DAYS} days archived` : ""} (<${labelLink(account, "noreply")}|see them>)\n• *${c.needs_recent + c.needs_old} may need a reply* - labelled Needs reply, still unread (<${labelLink(account, "needs")}|see them>)${c.look ? `\n• ${c.look} couldn't be sorted - labelled Needs a look (<${labelLink(account, "look")}|see them>)` : ""}` } }];
+  const blocks = [{ type: "section", text: { type: "mrkdwn", text: `🧹 *Inbox cleanup done · ${esc2(account)}*\n• ${c.automated} newsletters & automated - marked read and archived (<${labelLink(account, "auto")}|see them>)\n• ${c.no_reply + c.archived_old} needed no reply - marked read${c.archived_old ? `, ${c.archived_old} older than ${RECENT_DAYS} days archived` : ""} (<${labelLink(account, "noreply")}|see them>)${c.answered ? `\n• ${c.answered} you'd already answered - moved to Replied, read and archived (<${labelLink(account, "replied")}|see them>)` : ""}\n• *${c.needs_recent + c.needs_old} may need a reply* - labelled Needs reply, still unread (<${labelLink(account, "needs")}|see them>)${c.look ? `\n• ${c.look} couldn't be sorted - labelled Needs a look (<${labelLink(account, "look")}|see them>)` : ""}` } }];
+  return { text: `Inbox cleanup done: ${account}`, blocks: [...blocks, ...listBlocks(account, recent, older)].slice(0, 49) };
+}
+// The ones that may still need a reply: recent with Draft a reply, older linked.
+function listBlocks(account, recent, older) {
+  const blocks = [];
   if (recent.length) {
     blocks.push({ type: "section", text: { type: "mrkdwn", text: `*From the last ${RECENT_DAYS} days* - press Draft a reply and a draft card comes here like new mail:` } });
     for (const r of recent.slice(0, 40)) blocks.push({ type: "section", text: { type: "mrkdwn", text: `*${esc2(r.from_name || r.from_email)}* · ${new Date(r.received_at).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/Chicago" })} - ${esc2(r.reason || r.subject)} · <${gmailLink(account, r.thread_id)}|open>` }, accessory: { type: "button", text: { type: "plain_text", text: "Draft a reply" }, action_id: "mail_draft_now", value: String(r.id) } });
     if (recent.length > 40) blocks.push({ type: "context", elements: [{ type: "mrkdwn", text: `…and ${recent.length - 40} more under Needs reply in Gmail.` }] });
   }
   if (older.length) blocks.push({ type: "context", elements: [{ type: "mrkdwn", text: `Older than ${RECENT_DAYS} days and maybe still open (${older.length}): ` + older.slice(0, 12).map(r => `<${gmailLink(account, r.thread_id)}|${esc2(r.from_name || r.from_email)}>`).join(", ") + (older.length > 12 ? "…" : "") }] });
-  return { text: `Inbox cleanup done: ${account}`, blocks: blocks.slice(0, 49) };
+  return blocks;
 }
-async function cleanupSummary(sb, account, c, recentFrom) {
+async function listedNow(sb, account, recentFrom) {
+  const { data: listed } = await sb.from("mail_drafts").select("id, from_email, from_name, subject, received_at, thread_id, reason").eq("account", account).eq("status", "listed").order("received_at", { ascending: false }).limit(300);
+  return { recent: (listed || []).filter(r => Date.parse(r.received_at || 0) >= recentFrom), older: (listed || []).filter(r => Date.parse(r.received_at || 0) < recentFrom) };
+}
+async function dmOwner(sb, msg) {
   const cfg = await mailSlackCfg(sb);
   if (!cfg.bot_token) return;
   const channel = await ownerDm(cfg);
-  if (!channel) return;
-  const { data: listed } = await sb.from("mail_drafts").select("id, from_email, from_name, subject, received_at, thread_id, reason").eq("account", account).eq("status", "listed").order("received_at", { ascending: false }).limit(300);
-  const recent = (listed || []).filter(r => Date.parse(r.received_at || 0) >= recentFrom), older = (listed || []).filter(r => Date.parse(r.received_at || 0) < recentFrom);
-  await slackApi(cfg.bot_token, "chat.postMessage", { channel, ...cleanupBlocks(account, c, recent, older), unfurl_links: false, unfurl_media: false });
+  if (channel) await slackApi(cfg.bot_token, "chat.postMessage", { channel, ...msg, unfurl_links: false, unfurl_media: false });
+}
+async function cleanupSummary(sb, account, c, recentFrom) {
+  const { recent, older } = await listedNow(sb, account, recentFrom);
+  await dmOwner(sb, cleanupBlocks(account, c, recent, older));
+}
+
+// The first cleanup (Oct 29-30 2026) judged each email on its own, so ones Drew
+// had already answered later in the conversation were listed as needing a reply
+// (Drew, Oct 30: "a bunch of emails are showing up not me responding to them,
+// but I actually have"). One pass over each mailbox's list: answered -> Replied,
+// read and archived; earlier emails in a conversation that's still open fold
+// into its latest one; then a corrected list in Slack. A few hundred
+// conversations per run; hq_kv "mail_recheck:<email>".
+export async function recheckListed(sb, acct, { deadline = Date.now() + 150e3, fetchImpl = fetch, now = Date.now() } = {}) {
+  const key = "mail_recheck:" + acct.email;
+  const { data: kv } = await sb.from("hq_kv").select("value").eq("key", key).maybeSingle();
+  const st = { ...(kv?.value || {}) };
+  if (st.done) return null;
+  const c = { answered: 0, folded: 0, gone: 0, ...(st.counts || {}) };
+  const save = (extra = {}) => sb.from("hq_kv").upsert({ key, value: { ...st, counts: c, ...extra }, secret: true, updated_at: new Date().toISOString(), updated_by: "mail-recheck" }, { onConflict: "key" });
+  const token = await accessToken(sb, acct, { fetchImpl });
+  const stamp = () => new Date().toISOString();
+  const doThread = async (tid) => {
+    const { data: rows } = await sb.from("mail_drafts").select("id, received_at").eq("account", acct.email).eq("thread_id", tid).eq("status", "listed").order("received_at");
+    if (!rows?.length) return;
+    let msgs;
+    try { msgs = await threadMsgs(token, tid, fetchImpl); }
+    catch (e) {
+      if (e.status !== 404) throw e;   // rate limits and outages: this page again next run
+      c.gone += rows.length;
+      await sb.from("mail_drafts").update({ status: "ignored", reason: "Gone from Gmail", updated_at: stamp() }).in("id", rows.map(r => r.id));
+      return;
+    }
+    const last = rows[rows.length - 1];
+    if (sentAfter(msgs, last.received_at)) {
+      c.answered += rows.length;
+      await sb.from("mail_drafts").update({ status: "answered", reason: "Answered in Gmail", decided_at: stamp(), updated_at: stamp() }).in("id", rows.map(r => r.id));
+      await tidy(token, { id: tid, thread: true, add: ["replied"], remove: ["needs", "UNREAD", "INBOX"] }, fetchImpl);
+    } else if (rows.length > 1) {
+      c.folded += rows.length - 1;
+      await sb.from("mail_drafts").update({ status: "ignored", reason: "Earlier email in the same conversation", updated_at: stamp() }).in("id", rows.slice(0, -1).map(r => r.id));
+    }
+  };
+  while (Date.now() < deadline) {
+    const { data: page } = await sb.from("mail_drafts").select("id, thread_id").eq("account", acct.email).eq("status", "listed").gt("id", st.after_id || 0).order("id").limit(100);
+    if (!page?.length) {
+      await save({ done: true, finished_at: stamp() });
+      const { recent, older } = await listedNow(sb, acct.email, now - RECENT_DAYS * 864e5);
+      const total = c.answered + c.folded + c.gone + recent.length + older.length;
+      if (st.after_id) await dmOwner(sb, recheckBlocks(acct.email, total, c, recent, older)).catch(() => {});   // nothing was listed: nothing to say
+      return { account: acct.email, counts: c, done: true };
+    }
+    const tids = [...new Set(page.map(r => r.thread_id).filter(Boolean))];
+    try { for (let i = 0; i < tids.length; i += 5) await Promise.all(tids.slice(i, i + 5).map(doThread)); }
+    catch (e) { await save(); throw e; }   // what's done stays done; the rest of this page next run
+    st.after_id = page[page.length - 1].id;
+    await save();
+  }
+  return { account: acct.email, counts: c, done: false };
+}
+export function recheckBlocks(account, total, c, recent, older) {
+  const left = recent.length + older.length;
+  const head = { type: "section", text: { type: "mrkdwn", text: `🔁 *Rechecked the Needs reply list · ${esc2(account)}*\nThe cleanup listed ${total} emails without checking whether you'd answered later in the conversation. Now:\n• *${c.answered} you'd already answered* - moved to Replied, read and archived (<${labelLink(account, "replied")}|see them>)${c.folded ? `\n• ${c.folded} were earlier emails in a conversation - each conversation is listed once now` : ""}${c.gone ? `\n• ${c.gone} are no longer in Gmail` : ""}\n• *${left} may still need a reply* (<${labelLink(account, "needs")}|see them>)` } };
+  return { text: `Rechecked Needs reply: ${account}`, blocks: [head, ...listBlocks(account, recent, older)].slice(0, 49) };
 }
 // "Draft a reply" on a cleaned-up email: the full email, Claude's draft, a card - like new mail.
 export async function draftListed(sb, id, { fetchImpl = fetch, client = null } = {}) {
@@ -666,6 +745,11 @@ export async function draftListed(sb, id, { fetchImpl = fetch, client = null } =
   try {
     const acct = await getAccount(sb, row.account);
     const token = await accessToken(sb, acct, { fetchImpl });
+    if (row.thread_id && sentAfter(await threadMsgs(token, row.thread_id, fetchImpl).catch(() => []), row.received_at)) {
+      const { data: d } = await sb.from("mail_drafts").update({ status: "answered", reason: "Answered in Gmail", decided_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", row.id).select().single();
+      await settle(token, row, "replied", fetchImpl);
+      return d;
+    }
     const p = parseMessage(await gmail(token, `messages/${row.gmail_id}`, { query: { format: "full" } }, fetchImpl));
     const ctx = await threadContext(sb, { ...row, gmail_id: p.gmail_id }, { fetchImpl, token });
     const r = await draftFor(p, { account: row.account, ...ctx }, { client });
@@ -681,6 +765,10 @@ export async function draftListed(sb, id, { fetchImpl = fetch, client = null } =
 export async function cleanupAll(sb, opts = {}) {
   const { data: accts } = await sb.from("mail_accounts").select("*").eq("enabled", true).not("refresh_token", "is", null);
   const out = [];
-  for (const a of accts || []) { const r = await cleanupAccount(sb, a, opts).catch(e => ({ account: a.email, error: e.message })); if (r) out.push(r); }
+  for (const a of accts || []) {
+    const r = await cleanupAccount(sb, a, opts).catch(e => ({ account: a.email, error: e.message }));
+    if (r) out.push(r);
+    if (!r || r.done) { const k = await recheckListed(sb, a, opts).catch(e => ({ account: a.email, error: e.message })); if (k) out.push({ recheck: k }); }
+  }
   return out;
 }
