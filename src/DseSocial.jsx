@@ -572,14 +572,14 @@ function StockPicker({ api, busy, onPick, teams = [], current = null }) {
   if (!data) return <Muted>Loading stock photos…</Muted>;
   const live = data.photos.filter(p => !p.hidden);
   if (!live.length) return <Muted>No stock photos yet - add some in the Stock photos tab.</Muted>;
-  const teams = [...new Set(live.map(p => p.team_name).filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const teamList = [...new Set(live.map(p => p.team_name).filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   const mine = (p) => teams.includes(p.team_name) ? 1 : 0;
   const shown = live.filter(p => filter === "all" || (filter === "club" ? !p.team_name : p.team_name === filter)).sort((a, b) => mine(b) - mine(a) || (b.ai?.social_score || 0) - (a.ai?.social_score || 0));
   return (
     <div style={{ display: "grid", gap: 6 }}>
       <select value={filter} onChange={e => setFilter(e.target.value)} style={{ ...input, padding: "4px 6px", fontSize: 12 }}>
         <option value="all">All teams</option><option value="club">Club-wide</option>
-        {teams.map(t => <option key={t} value={t}>{teamLabel(t)}</option>)}
+        {teamList.map(t => <option key={t} value={t}>{teamLabel(t)}</option>)}
       </select>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(72px, 1fr))", gap: 4, maxHeight: 260, overflowY: "auto" }}>
         {shown.map(p => <button key={p.id} disabled={!!busy} title={[teamLabel(p.team_name), p.note, p.ai && `social ${p.ai.social_score}/10 - ${p.ai.description}`].filter(Boolean).join(" - ")} onClick={() => onPick(p)} style={{ padding: 0, border: "none", background: "none", cursor: "pointer" }}>
