@@ -24,10 +24,11 @@ import { MarketingPlan, MarketingPriorities } from "./DsscMarketingPlan.jsx";
 import { MarketingPhotos, MarketingSettings } from "./DsscMarketingLibrary.jsx";
 import MarketingIdeas from "./DsscMarketingIdeas.jsx";
 import MarketingVideos from "./DsscMarketingVideos.jsx";
+import MarketingReels from "./DsscMarketingReels.jsx";
 import MarketingRules from "./DsscMarketingRules.jsx";
 import MarketingCalendar from "./DsscMarketingCalendar.jsx";
 
-const TABS = [["calendar", "Calendar"], ["approve", "Week"], ["ideas", "Ideas"], ["plan", "Plan & flow"], ["priorities", "Priorities"], ["rules", "Rules"], ["photos", "Photos"], ["videos", "Videos"], ["settings", "Settings"]];
+const TABS = [["calendar", "Calendar"], ["approve", "Week"], ["ideas", "Ideas"], ["plan", "Plan & flow"], ["priorities", "Priorities"], ["rules", "Rules"], ["photos", "Photos"], ["videos", "Videos"], ["reels", "Reels"], ["settings", "Settings"]];
 const TAB_KEY = "dssc.marketing.tab";
 
 export default function DsscMarketing({ coach, initialWeek, initialTab, onConsumedInitial, onChanged }) {
@@ -87,7 +88,8 @@ export default function DsscMarketing({ coach, initialWeek, initialTab, onConsum
         {tab === "priorities" && <MarketingPriorities narrow={narrow} onChanged={() => { loadStatus(); changed(); }} />}
         {tab === "rules" && <MarketingRules status={status} narrow={narrow} onChanged={() => { loadStatus(); changed(); }} />}
         {tab === "photos" && <MarketingPhotos narrow={narrow} />}
-        {tab === "videos" && <MarketingVideos narrow={narrow} onOpenWeek={(w) => { setWeek(weekStartOf(w)); setTab("approve"); }} onChanged={changed} />}
+        {tab === "videos" && <MarketingVideos narrow={narrow} onOpenWeek={(w) => { setWeek(weekStartOf(w)); setTab("approve"); }} onOpenReels={() => setTab("reels")} onChanged={changed} />}
+        {tab === "reels" && <MarketingReels narrow={narrow} onOpenWeek={(w) => { setWeek(weekStartOf(w)); setTab("approve"); }} onOpenVideos={() => setTab("videos")} onChanged={changed} />}
         {tab === "settings" && <MarketingSettings status={status} narrow={narrow} reloadStatus={loadStatus} onChanged={changed} />}
       </div>
     </div>

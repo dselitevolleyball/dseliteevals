@@ -14,6 +14,10 @@
 //   collection_plan { id, count?, instruction? }                    Claude reads every moment across a
 //                collection's videos and plans `count` reels (plan.ideas)
 //   collection_reel { id, idea_id }                                 one planned idea -> a reel draft
+//   New reels go to the Reels shelf (no date) unless reel_create is given a day:
+//   reel_schedule { id, day, time? }   shelf -> the calendar, as a draft to approve that week
+//   reel_shelve   { id }               the calendar -> back to the shelf (not once it's posted)
+//   reel_delete   { id }               throw a shelf reel away
 //
 // The heavy lifting is api/_lib/marketing-video.js (ffmpeg-static). 300 s, 3 GB.
 // Env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, ANTHROPIC_API_KEY.
@@ -21,6 +25,8 @@
 import { readBody } from "./_lib/site-forms.js";
 import { verifyDirector } from "./_lib/site-inbox.js";
 import { serviceSb, loadSettings, log } from "./_lib/marketing-core.js";
+import { SHELF_WEEK, weekStartOf } from "../shared/marketing-plan.js";
+import { ctIso, ctToday } from "./_lib/marketing-ai.js";
 import { analyzeVideo, createReel, renderReel, planCollection, RAW_BUCKET } from "./_lib/marketing-video.js";
 
 const fail = (status, error) => Object.assign(new Error(error), { status });
@@ -41,6 +47,7 @@ export default async function handler(req, res) {
   }
 }
 
+const reelById = async (sb, id) => { const { data } = await sb.from("mkt_items").select("*").eq("id", Number(id)).maybeSingle(); if (!data || data.kind !== "reel") throw fail(404, "That reel is gone"); return data; };
 const isHttpsOk = (u) => /^https:\/\/\S+$/.test(String(u || ""));
 
 export async function runVideo(sb, { me }, b, { deadline = Date.now() + 280000 } = {}) {
@@ -68,7 +75,8 @@ export async function runVideo(sb, { me }, b, { deadline = Date.now() + 280000 }
     case "reel_create": {
       const settings = await loadSettings(sb);
       const picks = Array.isArray(b.picks) ? b.picks.filter(p => p && Number(p.video_id) > 0 && /^m\d+$/.test(String(p.moment_id))).slice(0, 12) : null;
-      const item = await createReel(sb, { picks, videoIds: Array.isArray(b.video_ids) ? b.video_ids.map(Number).filter(Boolean) : null, line: b.line || null, instruction: String(b.instruction || "").slice(0, 500), day: /^\d{4}-\d{2}-\d{2}$/.test(b.day || "") ? b.day : null, by: me, settings })
+      const day = /^\d{4}-\d{2}-\d{2}$/.test(b.day || "") ? b.day : null;
+      const item = await createReel(sb, { picks, videoIds: Array.isArray(b.video_ids) ? b.video_ids.map(Number).filter(Boolean) : null, line: b.line || null, instruction: String(b.instruction || "").slice(0, 500), day, shelf: !day, by: me, settings })
         .catch(e => { throw fail(400, e.message); });
       await log(sb, item.id, "reel_create", { by: me, clips: item.video.clips.length });
       return { item };
@@ -89,7 +97,7 @@ export async function runVideo(sb, { me }, b, { deadline = Date.now() + 280000 }
       const idea = (coll.plan?.ideas || []).find(x => x.id === b.idea_id);
       if (!idea) throw fail(404, "That reel idea is gone - plan again");
       const settings = await loadSettings(sb);
-      const item = await createReel(sb, { picks: idea.picks.map(p => ({ video_id: p.video_id, moment_id: p.moment_id })), line: coll.line || null, instruction: `${idea.title}: ${idea.angle}`.slice(0, 500), by: me, settings })
+      const item = await createReel(sb, { picks: idea.picks.map(p => ({ video_id: p.video_id, moment_id: p.moment_id })), line: coll.line || null, instruction: `${idea.title}: ${idea.angle}`.slice(0, 500), shelf: true, by: me, settings })
         .catch(e => { throw fail(400, e.message); });
       await log(sb, item.id, "reel_create", { by: me, clips: item.video.clips.length, collection: coll.id });
       // Re-read so two ideas made at once don't overwrite each other's reel_id.
@@ -116,6 +124,32 @@ export async function runVideo(sb, { me }, b, { deadline = Date.now() + 280000 }
       const { data, error } = await sb.from("mkt_items").update(patch).eq("id", item.id).select("*").single();
       if (error) throw fail(500, error.message);
       return { item: data };
+    }
+
+    case "reel_schedule": {
+      const item = await reelById(sb, b.id);
+      if (["publishing", "published"].includes(item.status)) throw fail(409, `Already ${item.status}`);
+      const day = String(b.day || "");
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || day < ctToday()) throw fail(400, "Pick today or a later day");
+      const time = /^\d{1,2}:\d{2}$/.test(b.time || "") ? b.time : (await loadSettings(sb)).cadence?.social?.time || "18:30";
+      const { data, error } = await sb.from("mkt_items").update({ week_of: weekStartOf(day), scheduled_at: ctIso(day, time), status: "draft", approved_by: null, approved_at: null }).eq("id", item.id).select("*").single();
+      if (error) throw fail(500, error.message);
+      await log(sb, item.id, "reel_schedule", { by: me, day, time });
+      return { item: data };
+    }
+    case "reel_shelve": {
+      const item = await reelById(sb, b.id);
+      if (["publishing", "published"].includes(item.status)) throw fail(409, `Already ${item.status}`);
+      const { data, error } = await sb.from("mkt_items").update({ week_of: SHELF_WEEK, scheduled_at: null, status: "draft", approved_by: null, approved_at: null }).eq("id", item.id).select("*").single();
+      if (error) throw fail(500, error.message);
+      await log(sb, item.id, "reel_shelve", { by: me });
+      return { item: data };
+    }
+    case "reel_delete": {
+      const item = await reelById(sb, b.id);
+      if (item.week_of !== SHELF_WEEK) throw fail(400, "Take it off the calendar first (Back to the shelf)");
+      await sb.from("mkt_items").delete().eq("id", item.id);
+      return {};
     }
 
     case "reel_render": {

@@ -159,6 +159,13 @@ const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct
 const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 export const fmtDay = (s) => { if (!isYmd(s)) return ""; const d = toD(s); return `${DOW[d.getUTCDay()]}, ${MON[d.getUTCMonth()]} ${d.getUTCDate()}`; };
 
+// The Reels shelf (Drew, Oct 29 2026: "a better spot to put reels before
+// plugging them right into planning"): a reel that isn't on the calendar yet
+// sits in this week, which no calendar shows, with no time. It goes on the
+// calendar only when a director picks a day (api/marketing-video.js reel_schedule).
+export const SHELF_WEEK = "1999-12-28";
+export const onShelf = (it) => it?.week_of === SHELF_WEEK;
+
 // The Tuesday that starts the marketing week a date falls in (Tue-Mon).
 export function weekStartOf(dateStr) {
   const s = dateStr instanceof Date ? ymd(dateStr) : String(dateStr || "").slice(0, 10);

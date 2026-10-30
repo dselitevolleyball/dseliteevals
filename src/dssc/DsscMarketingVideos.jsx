@@ -2,7 +2,8 @@
 // uploads resumably straight to the private marketing-video bucket, then the
 // server sorts it - contact sheets, and Claude picks the moments worth posting
 // (api/marketing-video.js upload_done). Play any moment, tick the ones you
-// like (across videos) and "Make a reel", or let the machine cut "the best of
+// like (across videos) and "Make a reel" - it goes to the Reels shelf
+// (DsscMarketingReels.jsx), not the calendar - or let the machine cut "the best of
 // the last 3 weeks". Kids-visible videos wait for a release OK. The music
 // library holds tracks the club has the rights to.
 //
@@ -56,7 +57,7 @@ function tusUpload(file, path, token, onPct) {
   });
 }
 
-export default function MarketingVideos({ narrow, onOpenWeek, onChanged }) {
+export default function MarketingVideos({ narrow, onOpenWeek, onOpenReels, onChanged }) {
   const [videos, setVideos] = useState(null);
   const [ups, setUps] = useState([]);              // [{ key, name, pct, state, error }]
   const [openId, setOpenId] = useState(null);
@@ -147,7 +148,7 @@ export default function MarketingVideos({ narrow, onOpenWeek, onChanged }) {
     setBusy("reel"); setMsg({ ok: `${label}… Claude is picking the order and writing the words.` });
     try {
       const d = await videoApi("reel_create", payload);
-      setMsg({ ok: `Reel drafted: "${d.item.headline}" — ${d.item.video.clips.length} clips. Open it to render and approve.`, week: d.item.week_of });
+      setMsg({ ok: `Reel made: "${d.item.headline}" — ${d.item.video.clips.length} clips. It's on the Reels shelf: render it, watch it, then put it on the calendar.`, reels: true });
       setPicks([]); onChanged?.();
     } catch (e) { setMsg({ err: e.message }); }
     setBusy("");
@@ -167,7 +168,7 @@ export default function MarketingVideos({ narrow, onOpenWeek, onChanged }) {
         <input ref={fileRef} type="file" accept="video/*,.mov,.mp4" multiple style={{ display: "none" }} onChange={e => { upload(e.target.files); e.target.value = ""; }} />
       </div>
       <Msg msg={msg} style={{ marginBottom: 6 }} />
-      {msg?.week && <Btn small kind="link" onClick={() => onOpenWeek?.(msg.week)} style={{ marginBottom: 10 }}>Open it in Approve →</Btn>}
+      {msg?.reels && <Btn small kind="link" onClick={() => onOpenReels?.()} style={{ marginBottom: 10 }}>Open the Reels shelf →</Btn>}
 
       {ups.length > 0 && <Panel style={{ marginBottom: 12 }}>
         {ups.slice(0, 8).map(u => (
@@ -184,7 +185,7 @@ export default function MarketingVideos({ narrow, onOpenWeek, onChanged }) {
       <Collections colls={colls} coll={coll} videos={videos || []} narrow={narrow} adding={adding} setAdding={setAdding}
         onOpen={(id) => { setCollId(id === collId ? null : id); setAdding(false); }} onNew={newColl} onPatch={patchColl} onMembers={setMembers}
         onUpload={uploadInto} onOpenVideo={(id) => setOpenId(id)} onPicks={(ps) => { setPicks(ps); setMsg({ ok: `${ps.length} clips are in the tray below - reorder by removing and re-adding, then press Make a reel.` }); }}
-        onOpenWeek={onOpenWeek} onChanged={onChanged} mergeColl={mergeColl} />
+        onOpenWeek={onOpenWeek} onOpenReels={onOpenReels} onChanged={onChanged} mergeColl={mergeColl} />
 
       {/* The clip tray */}
       <Panel style={{ marginBottom: 12, borderColor: picks.length ? DS.lime : DS.line }}>
@@ -233,7 +234,7 @@ export default function MarketingVideos({ narrow, onOpenWeek, onChanged }) {
   );
 }
 
-function Collections({ colls, coll, videos, narrow, adding, setAdding, onOpen, onNew, onPatch, onMembers, onUpload, onOpenVideo, onPicks, onOpenWeek, onChanged, mergeColl }) {
+function Collections({ colls, coll, videos, narrow, adding, setAdding, onOpen, onNew, onPatch, onMembers, onUpload, onOpenVideo, onPicks, onOpenWeek, onOpenReels, onChanged, mergeColl }) {
   const [count, setCount] = useState(2);
   const [instruction, setInstruction] = useState("");
   const [busy, setBusy] = useState("");
@@ -325,7 +326,7 @@ function Collections({ colls, coll, videos, narrow, adding, setAdding, onOpen, o
                   </div>))}</div>
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
                   {idea.reel_id
-                    ? <Btn small kind="link" onClick={() => onOpenWeek?.(idea.week_of)} style={big(narrow)}>✓ Reel drafted - open in Approve →</Btn>
+                    ? <Btn small kind="link" onClick={() => onOpenReels?.()} style={big(narrow)}>✓ Reel made - on the Reels shelf →</Btn>
                     : <Btn small kind="primary" disabled={!!busy} onClick={() => make(idea)} style={big(narrow)}>{busy === idea.id ? "Cutting… (about 30 s)" : "Make this reel"}</Btn>}
                   <Btn small kind="ghost" onClick={() => onPicks(idea.picks)} style={big(narrow)}>Change the clips</Btn>
                 </div>

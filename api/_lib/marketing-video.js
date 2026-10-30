@@ -31,7 +31,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import ffmpegPath from "ffmpeg-static";
 import { claudeClient } from "./ai-client.js";
-import { LINE_KEYS, LINE_LINKS, lineLabel, lineUrl, addDays, weekStartOf } from "../../shared/marketing-plan.js";
+import { LINE_KEYS, LINE_LINKS, lineLabel, lineUrl, addDays, weekStartOf, SHELF_WEEK } from "../../shared/marketing-plan.js";
 import { AI_MODEL, aiReady, flairText, ctIso, ctToday } from "./marketing-ai.js";
 import { rulesText, clash, fits } from "../../shared/marketing-rules.js";
 
@@ -274,7 +274,9 @@ export function clipsFrom(moments, { maxLen = 5, maxTotal = 30 } = {}) {
 
 // opts: { picks: [{ video_id, moment_id }] (in order) | videoIds | line, instruction, day, by, settings }
 // -> the new mkt_items row (kind 'reel', needs_render)
-export async function createReel(sb, { picks = null, videoIds = null, line = null, instruction = "", day = null, by = "auto", settings = {}, today = ctToday() } = {}) {
+// shelf: onto the Reels shelf (no date) instead of the calendar - the default
+// for reels people make; a day puts it straight on the calendar.
+export async function createReel(sb, { picks = null, videoIds = null, line = null, instruction = "", day = null, shelf = false, by = "auto", settings = {}, today = ctToday() } = {}) {
   let q = sb.from("mkt_videos").select("*").eq("status", "ready").eq("active", true);
   const ids = picks?.length ? [...new Set(picks.map(p => Number(p.video_id)))] : videoIds?.length ? videoIds.map(Number) : null;
   if (ids) q = q.in("id", ids); else q = q.gte("created_at", addDays(today, -21)).order("created_at", { ascending: false }).limit(20);
@@ -318,8 +320,8 @@ export async function createReel(sb, { picks = null, videoIds = null, line = nul
   const headline = (copy?.headline || defaultHeadline(mainLine)).toUpperCase().slice(0, 50);
   const d = day && day >= today ? day : addDays(today, 2);
   const row = {
-    week_of: weekStartOf(d), channel: "social", kind: "reel", theme: "Reel", line: mainLine, program: null, programs: [], angle: "reel", status: "draft",
-    platforms: ["instagram", "facebook"], scheduled_at: ctIso(d, settings.cadence?.social?.time || "18:30"),
+    week_of: shelf ? SHELF_WEEK : weekStartOf(d), channel: "social", kind: "reel", theme: "Reel", line: mainLine, program: null, programs: [], angle: "reel", status: "draft",
+    platforms: ["instagram", "facebook"], scheduled_at: shelf ? null : ctIso(d, settings.cadence?.social?.time || "18:30"),
     reason: `Reel from ${new Set(chosen.map(m => m.video_id)).size} video${new Set(chosen.map(m => m.video_id)).size === 1 ? "" : "s"}: ${chosen.map(m => m.label).join(" · ")}`,
     headline, body: copy?.caption || `${lineLabel(mainLine)} at DSSC - where Dripping Springs plays.`, hashtags: (copy?.hashtags || ["DrippingSprings", "DSSC"]).map(h => String(h).replace(/[^A-Za-z0-9_]/g, "")).filter(Boolean).slice(0, 6),
     cta_text: LINE_LINKS[mainLine]?.cta || "See what's coming up", cta_url: lineUrl(mainLine), audience: null, created_by: by,
