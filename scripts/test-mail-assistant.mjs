@@ -159,7 +159,8 @@ const sbs = fakeSupabase({ hq_kv: [{ key: "product_slack", value: { bot_token: "
 check((await M.mailSlackCfg(sbs)).app === "hq", "until DSSC Mail is set up, email goes through the HQ bot");
 await M.saveMailSlack(sbs, { bot_token: "nope" }, "drew").then(() => check(false, "bad token"), e => check(/xoxb-/.test(e.message), "a token that isn't a bot token is refused"));
 await M.saveMailSlack(sbs, { bot_token: "xoxb-bad" }, "drew").then(() => check(false, "slack refused"), e => check(/invalid_auth/.test(e.message), "a token Slack rejects is refused"));
-const saved = await M.saveMailSlack(sbs, { bot_token: "xoxb-good", signing_secret: "mailsecret" }, "drew");
+await M.saveMailSlack(sbs, { signing_secret: "xapp-1-A0CD-123-abcdef" }, "drew").then(() => check(false, "xapp saved"), e => check(e.status === 400 && /App-Level token/.test(e.message), "an xapp- App-Level Token is refused as the Signing Secret"));
+const saved = await M.saveMailSlack(sbs, { bot_token: "xoxb-good", signing_secret: "8f14e45fceea167a5a36dedd4bea2543" }, "drew");
 const mc = await M.mailSlackCfg(sbs);
 check(saved.connected && saved.signing && mc.app === "mail" && mc.bot_user === "UMAIL" && mc.team === "DSSC", "saving DSSC Mail's token and secret switches email over to it");
 check((await M.testMailSlack(sbs)).app === "mail" && calls.some(c => c.m === "chat.postMessage" && c.auth.includes("xoxb-good")), "the test DM comes from DSSC Mail");

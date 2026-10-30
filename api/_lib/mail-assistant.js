@@ -208,7 +208,13 @@ export async function saveMailSlack(sb, { bot_token, signing_secret }, by) {
     if (t) { const a = await slackApi(t, "auth.test", {}); if (!a.ok) throw fail(400, "Slack didn't accept that token: " + a.error); next.bot_token = t; next.bot_user = a.user_id; next.team = a.team; }
     else { delete next.bot_token; delete next.bot_user; delete next.team; }
   }
-  if (signing_secret !== undefined) { const s = String(signing_secret || "").trim(); if (s) next.signing_secret = s; else delete next.signing_secret; }
+  if (signing_secret !== undefined) {
+    const s = String(signing_secret || "").trim();
+    // The Signing Secret is a short hex string. An xapp- App-Level Token sits on
+    // the same Slack page and got saved here once - every click then got a 401.
+    if (s && !/^[0-9a-f]{20,64}$/i.test(s)) throw fail(400, `That's not the Signing Secret${/^x(app|ox[a-z])-/i.test(s) ? ` - it's a${/^xapp-/i.test(s) ? "n App-Level" : ""} token` : ""}. In api.slack.com/apps -> DSSC Mail -> Basic Information -> App Credentials, press Show next to Signing Secret and copy that (32 letters and numbers).`);
+    if (s) next.signing_secret = s; else delete next.signing_secret;
+  }
   await sb.from("hq_kv").upsert({ key: "mail_slack", value: Object.keys(next).length ? next : null, secret: true, updated_at: new Date().toISOString(), updated_by: by }, { onConflict: "key" });
   return { connected: !!next.bot_token, signing: !!next.signing_secret, team: next.team || null };
 }
