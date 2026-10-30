@@ -724,7 +724,7 @@ export async function recheckListed(sb, acct, { deadline = Date.now() + 150e3, f
     }
     const tids = [...new Set(page.map(r => r.thread_id).filter(Boolean))];
     try { for (let i = 0; i < tids.length; i += 5) await Promise.all(tids.slice(i, i + 5).map(doThread)); }
-    catch (e) { await save(); throw e; }   // what's done stays done; the rest of this page next run
+    catch (e) { await save({ last_error: String(e.message).slice(0, 200), last_error_at: stamp() }); throw e; }   // what's done stays done; the rest of this page next run
     st.after_id = page[page.length - 1].id;
     await save();
   }

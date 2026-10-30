@@ -26,12 +26,16 @@ export default async function handler(req, res) {
       const url = new URL(req.url, "http://x");
       const token = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "") || url.searchParams.get("token") || "";
       if (!CRON_SECRET || token !== CRON_SECRET) return res.status(401).json({ error: "Unauthorized" });
+      // The one-time inbox cleanup and its recheck run on their own (?job=cleanup,
+      // two minutes after the mail run): drafting new mail can take most of a run.
+      if (url.searchParams.get("job") === "cleanup") {
+        const cleanup = await cleanupAll(sb, { deadline: Date.now() + 240e3 }).catch(e => ({ error: e.message }));
+        return res.status(200).json({ ok: true, cleanup });
+      }
       const accounts = await pollAll(sb);
       // The twice-a-day roundup rides on the same 5-minute run.
       const digest = await sendDigest(sb).catch(e => ({ error: e.message }));
-      // The one-time inbox cleanup, a few hundred emails per run until each inbox is done.
-      const cleanup = await cleanupAll(sb, { deadline: Date.now() + 180e3 }).catch(e => ({ error: e.message }));
-      return res.status(200).json({ ok: true, accounts, digest, cleanup });
+      return res.status(200).json({ ok: true, accounts, digest });
     }
     if (req.method !== "POST") { res.setHeader("Allow", "GET, POST"); return res.status(405).json({ error: "GET or POST" }); }
     const bearer = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "").trim();

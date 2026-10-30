@@ -205,6 +205,10 @@
       "schedule": "*/5 * * * *"
     },
     {
+      "path": "/api/mail-assistant?job=cleanup",
+      "schedule": "2-59/5 * * * *"
+    },
+    {
       "path": "/api/privates-ask",
       "schedule": "0 15 25 * *"
     },
