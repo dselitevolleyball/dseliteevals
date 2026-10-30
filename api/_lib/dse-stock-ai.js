@@ -79,7 +79,7 @@ export async function analyzeOne(row) {
 // later read clears it).
 export async function analyzeStock(sb, { ids = null, limit = 12, force = false } = {}) {
   if (!process.env.ANTHROPIC_API_KEY) throw Object.assign(new Error("ANTHROPIC_API_KEY isn't set"), { status: 500 });
-  let q = sb.from("dse_social_stock").select("id, url, team_name, note, width, height, ai_at, ai, hidden").order("created_at", { ascending: false }).limit(Math.min(40, limit));
+  let q = sb.from("dse_social_stock").select("id, url, team_name, note, width, height, ai_at, ai, hidden").order("created_at", { ascending: false }).limit(Math.min(40, ids?.length || limit));
   if (ids?.length) q = q.in("id", ids.map(Number)); else if (!force) q = q.is("ai_at", null).is("ai_error", null);
   const { data: rows, error } = await q;
   if (error) throw Object.assign(new Error(error.message), { status: 500 });
