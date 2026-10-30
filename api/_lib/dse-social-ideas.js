@@ -360,17 +360,24 @@ The post's image is one graphic the club draws, in one of three styles:
 - meme: a team photo with TOP and BOTTOM lines in meme lettering, for humor only.
 teams: the exact team names from the facts the post is about (used to pick the photo); [] if none. photo_id: the stock photo from the list that best fits this post (right team or club-wide, right moment, strong score, room for the headline, not over-used), or 0 if none fits better than a random photo of the team. title: a short name for the post in the planner. pitch: one sentence on what the post does.`;
 
+// The stock photos Claude can choose from, described (Drew's note + Claude's
+// read), best social score first; the given teams' own photos lead the list.
+async function stockMenu(sb, teams = []) {
+  const { data: stock } = await sb.from("dse_social_stock").select("id, url, team_name, note, ai, used_count").eq("hidden", false).order("created_at", { ascending: false }).limit(400);
+  const about = (s) => [s.note, s.ai?.description].map(x => String(x || "").trim()).filter(Boolean).join(" | ");
+  const want = new Set(teams.map(nrm));
+  const described = (stock || []).filter(s => about(s))
+    .sort((a, b) => (want.has(nrm(b.team_name)) - want.has(nrm(a.team_name))) || (b.ai?.social_score || 0) - (a.ai?.social_score || 0)).slice(0, 120);
+  const photoList = described.length ? `\n\nStock photos (id: team - what's in it [social score /10, good for, headline space, times used]):\n${described.map(s => `${s.id}: ${s.team_name ? DISPLAY(s.team_name) : "club"} - ${about(s).slice(0, 260)}${s.ai ? ` [${s.ai.social_score}/10; ${(s.ai.best_for || []).join(", ") || "-"}; space ${s.ai.text_space}; used ${s.used_count || 0}x]` : ""}`).join("\n")}` : "\n\n(No described stock photos; photo_id 0.)";
+  return { described, photoList, about };
+}
+const stockDesign = (p) => ({ photo_url: p.url, focus: p.ai ? { x: p.ai.focal_x / 100, y: p.ai.focal_y / 100 } : null });
+
 export async function customIdea(sb, { prompt, post_on = null, today = ctToday(), by = "Drew" } = {}) {
   if (!process.env.ANTHROPIC_API_KEY) throw fail(500, "ANTHROPIC_API_KEY isn't set");
   const ask = String(prompt || "").trim();
   if (ask.length < 5) throw fail(400, "Tell Claude what the post should be about.");
-  const [facts, { data: stock }] = await Promise.all([
-    clubFacts(sb, today),
-    sb.from("dse_social_stock").select("id, url, team_name, note, ai, used_count").eq("hidden", false).order("created_at", { ascending: false }).limit(300),
-  ]);
-  const about = (s) => [s.note, s.ai?.description].map(x => String(x || "").trim()).filter(Boolean).join(" | ");
-  const described = (stock || []).filter(s => about(s)).sort((a, b) => (b.ai?.social_score || 0) - (a.ai?.social_score || 0)).slice(0, 120);
-  const photoList = described.length ? `\n\nStock photos (id: team - what's in it [social score /10, good for, headline space, times used]):\n${described.map(s => `${s.id}: ${s.team_name ? DISPLAY(s.team_name) : "club"} - ${about(s).slice(0, 260)}${s.ai ? ` [${s.ai.social_score}/10; ${(s.ai.best_for || []).join(", ") || "-"}; space ${s.ai.text_space}; used ${s.used_count || 0}x]` : ""}`).join("\n")}` : "\n\n(No described stock photos; photo_id 0.)";
+  const [facts, { described, photoList }] = await Promise.all([clubFacts(sb, today), stockMenu(sb)]);
   const ai = await askJson(CUSTOM_SYSTEM, `Club facts:\n${facts}${photoList}\n\nDrew's request:\n${ask}`, CUSTOM_SCHEMA, "dse-social-custom");
   const picked = ai.style !== "text" && described.find(s => s.id === Number(ai.photo_id));
   const known = new Map(((await sb.from("practice_teams").select("team_name")).data || []).map(t => [DISPLAY(t.team_name).toLowerCase(), t.team_name]));
@@ -379,7 +386,7 @@ export async function customIdea(sb, { prompt, post_on = null, today = ctToday()
   const { data: idea, error } = await sb.from("dse_social_ideas").insert({
     kind: "custom", post_on: day, title: String(ai.title || ask).slice(0, 120), pitch: String(ai.pitch || "").slice(0, 600),
     caption: String(ai.caption || "").slice(0, 2000), hashtags: (ai.hashtags || []).map(h => String(h).replace(/^#+/, "")).filter(Boolean).slice(0, 4),
-    card: { style: ai.style, tag: ai.tag || "", headline: ai.headline || ai.title, sub: ai.sub || "", top: ai.top || "", bottom: ai.bottom || "", ...(picked ? { photo_url: picked.url, ...(picked.ai ? { focus: { x: picked.ai.focal_x / 100, y: picked.ai.focal_y / 100 } } : {}) } : {}) },
+    card: { style: ai.style, tag: ai.tag || "", headline: ai.headline || ai.title, sub: ai.sub || "", top: ai.top || "", bottom: ai.bottom || "", ...(picked ? stockDesign(picked) : {}), teams },
     created_by: by, data: { prompt: ask, teams },
   }).select("*").single();
   if (error) throw fail(500, error.message);
@@ -412,7 +419,7 @@ export async function draftIdea(sb, id, { by = "auto", notify = true } = {}) {
   if (!idea) throw fail(404, "No such idea");
   if (idea.status === "drafted" && idea.post_id) return { post_id: idea.post_id, already: true };
   const s = await getSettings(sb);
-  const design = { ...(idea.card || {}), idea_id: idea.id, photo_index: 0 };
+  const design = { ...(idea.card || {}), idea_id: idea.id, photo_index: 0, teams: idea.data?.teams || idea.card?.teams || [] };
   const { asset_url, photo } = await renderIdea(sb, idea, design);
   const at = ctInstant(idea.post_on || ctToday(), TIME[idea.kind] || s.intro_time);
   const scheduled_at = at.getTime() > Date.now() + 10 * 60e3 ? at : await nextSlot(sb, s);
@@ -438,6 +445,74 @@ export async function rerenderIdea(sb, post) {
   const { data: idea } = await sb.from("dse_social_ideas").select("*").eq("id", Number(d.idea_id)).maybeSingle();
   const r = await renderIdea(sb, idea || { id: d.idea_id || "x", kind: d.idea_kind, data: {} }, d);
   return { asset_url: r.asset_url, photos: r.photo ? [{ url: r.photo }] : [] };
+}
+
+// ── Drew's feedback on a draft ──────────────────────────────────────────────
+// Drew, Oct 30 2026: "I want to be able to pick new pictures and provide
+// feedback on how to update drafted social media posts." He writes what to
+// change; Claude rewrites the caption (and, for an idea post, the graphic's
+// words and photo) from the club's facts, the stock photo descriptions and
+// his earlier notes on this post. Every round is kept in post.ai.revisions.
+const REVISE_SCHEMA = {
+  type: "object", additionalProperties: false,
+  required: ["caption", "hashtags", "style", "tag", "headline", "sub", "top", "bottom", "photo_id", "changed"],
+  properties: {
+    caption: { type: "string" }, hashtags: { type: "array", items: { type: "string" } },
+    style: { type: "string", enum: ["holiday", "text", "meme", "keep"] },
+    tag: { type: "string" }, headline: { type: "string" }, sub: { type: "string" }, top: { type: "string" }, bottom: { type: "string" },
+    photo_id: { type: "integer" }, changed: { type: "string" },
+  },
+};
+const REVISE_SYSTEM = `You revise one draft social media post for DS Elite Volleyball, a girls' club volleyball program (players about 10-18) at the Dripping Springs Sports Club in Texas, for its Facebook Page and Instagram. Drew, the director, read the draft and says what to change. Make exactly the changes he asks for and keep everything else as it is - same voice, same facts, same structure - unless his note implies otherwise.
+Facts: use ONLY the club facts given; never invent a price, date, time, coach, result or promise. If he asks for a fact that isn't in the facts, write it exactly as he states it; if he asks for something you can't know, leave it out and say so in "changed". Team names exactly as listed ("11 Rise", never "11 Rise 1"). Never name, describe or picture a specific child. At most 4 emoji. Hashtags without '#', 0-4 (the club's standard tags are added separately).
+The graphic (idea posts only; for other posts return the current values unchanged and style "keep"): style holiday = a photo with a small TAG line, a big HEADLINE (under 40 characters) and a SUB line (under 70); text = no photo, HEADLINE under 60 and SUB under 80 on a pink field; meme = a photo with TOP and BOTTOM lines. Return the full set of words even if unchanged; style "keep" to keep the current style.
+photo_id: when he asks for a different picture (or the change calls for one), the stock photo id from the list that best fits what he asked for and the post - right team or club-wide, right moment, room for the headline, not over-used, and not the current photo. 0 keeps the current photo.
+changed: one short sentence telling Drew what you changed (and anything you couldn't do).`;
+
+export async function revisePost(sb, post, { feedback, by = "Drew", today = ctToday() } = {}) {
+  if (!process.env.ANTHROPIC_API_KEY) throw fail(500, "ANTHROPIC_API_KEY isn't set");
+  const note = String(feedback || "").trim();
+  if (note.length < 3) throw fail(400, "Tell Claude what to change.");
+  if (["published", "publishing"].includes(post.status)) throw fail(400, "It's already posted");
+  const d = post.design || {};
+  const isIdea = post.kind === "idea";
+  const { data: idea } = isIdea && d.idea_id ? await sb.from("dse_social_ideas").select("kind, data").eq("id", Number(d.idea_id)).maybeSingle() : { data: null };
+  const teams = d.teams || idea?.data?.teams || (post.team_name ? [post.team_name] : []);
+  const [facts, menu, s] = await Promise.all([clubFacts(sb, today), isIdea ? stockMenu(sb, teams) : { described: [], photoList: "" }, getSettings(sb)]);
+  const cur = d.photo_url ? (await sb.from("dse_social_stock").select("id, note, ai").eq("url", d.photo_url).maybeSingle()).data : null;
+  const std = new Set((s.hashtags || []).map(h => h.toLowerCase()));
+  const history = (post.ai?.revisions || []).slice(-5);
+  const text = [
+    `Club facts:\n${facts}`,
+    isIdea ? menu.photoList : "",
+    `\n\nTHE DRAFT (${isIdea ? `idea post${idea?.kind ? ", " + idea.kind : ""}` : post.kind === "coach_intro" ? "coach intro poster" : "photo post of family photos"}):`,
+    idea?.data?.prompt ? `Drew's original request: ${idea.data.prompt}` : "",
+    `Caption:\n${post.caption || ""}`,
+    `Hashtags: ${(post.hashtags || []).filter(h => !std.has(String(h).toLowerCase())).join(" ") || "(none)"}`,
+    isIdea ? `Graphic: style ${d.style || "?"}; tag "${d.tag || ""}"; headline "${d.headline || ""}"; sub "${d.sub || ""}"; top "${d.top || ""}"; bottom "${d.bottom || ""}"` : "",
+    isIdea ? `Current photo: ${cur ? `stock #${cur.id} - ${menu.about ? menu.about(cur) : cur.ai?.description || ""}` : d.style === "text" ? "none (text card)" : "a photo from an earlier club post (no description)"}` : "",
+    history.length ? `Drew's earlier notes on this post (already done): ${history.map(h => `"${h.feedback}"`).join("; ")}` : "",
+    `\nDREW'S NOTE NOW:\n${note}`,
+  ].filter(Boolean).join("\n");
+  const ai = await askJson(REVISE_SYSTEM, text, REVISE_SCHEMA, "dse-social-revise");
+
+  const patch = { caption: String(ai.caption || post.caption || "").slice(0, 2000), updated_at: new Date().toISOString() };
+  patch.hashtags = [...(ai.hashtags || []).map(h => String(h).replace(/^#+/, "").trim()).filter(Boolean).slice(0, 4), ...(s.hashtags || [])].filter((h, i, a) => a.findIndex(x => x.toLowerCase() === h.toLowerCase()) === i).slice(0, 8);
+  let newPhoto = null;
+  if (isIdea) {
+    const style = ai.style === "keep" ? d.style : ai.style;
+    const design = { ...d, style, tag: ai.tag, headline: ai.headline || d.headline, sub: ai.sub, top: ai.top, bottom: ai.bottom };
+    const pick = style !== "text" && Number(ai.photo_id) ? menu.described.find(x => x.id === Number(ai.photo_id) && x.url !== d.photo_url) : null;
+    if (pick) { Object.assign(design, stockDesign(pick)); newPhoto = pick; }
+    patch.design = design;
+    Object.assign(patch, await rerenderIdea(sb, { ...post, design }));
+    if (pick) await markStockUsed(sb, pick.url);
+  }
+  if (post.status === "approved") Object.assign(patch, { status: "draft", approved_by: null, approved_at: null });
+  patch.ai = { ...(post.ai || {}), revisions: [...(post.ai?.revisions || []), { at: new Date().toISOString(), by, feedback: note.slice(0, 1000), changed: String(ai.changed || "").slice(0, 400), photo: newPhoto?.id || null }] };
+  const { data, error } = await sb.from("dse_social_posts").update(patch).eq("id", post.id).select().single();
+  if (error) throw fail(500, error.message);
+  return { post: data, changed: ai.changed || "" };
 }
 
 // ── the daily run (from dse-social runCron) ─────────────────────────────────

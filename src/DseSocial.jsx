@@ -111,6 +111,15 @@ function PostCard({ api, post, onChange, focus, compact }) {
           {images.map((u, i) => <a key={i} href={u} target="_blank" rel="noreferrer" style={{ flex: "0 0 " + (images.length > 1 ? "85%" : "100%"), scrollSnapAlign: "start" }}><img src={u} alt="" style={{ width: "100%", aspectRatio: "4/5", objectFit: "cover", borderRadius: 10, display: "block", background: T.card2 }} /></a>)}
           {!images.length && <div style={{ width: "100%", aspectRatio: "4/5", background: T.card2, borderRadius: 10 }} />}
         </div>
+        {!compact && post.kind === "idea" && editable && (
+          <div style={{ marginTop: 8, display: "grid", gap: 6 }}>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <Btn small primary={!picking} disabled={!!busy} onClick={() => setPicking(p => !p)}>{picking ? "Close photos" : design.style === "text" ? "📷 Add a photo" : "📷 Change photo"}</Btn>
+              {design.style !== "text" && design.idea_kind !== "birthday" && <Btn small disabled={!!busy} onClick={() => go("design", "update_post", { another_photo: true })}>{busy === "design" ? "Redrawing…" : "Shuffle"}</Btn>}
+            </div>
+            {picking && <StockPicker api={api} busy={busy} teams={design.teams || []} current={design.photo_url} onPick={(p) => { setPicking(false); go("design", "update_post", { design: { photo_url: p.url, focus: p.ai ? { x: p.ai.focal_x / 100, y: p.ai.focal_y / 100 } : null, ...(design.style === "text" ? { style: "holiday" } : {}) } }); }} />}
+          </div>
+        )}
         {!compact && post.kind === "photos" && editable && photos.length > 0 && (
           <div style={{ marginTop: 8 }}>
             <div style={{ fontSize: 11, color: T.mut, marginBottom: 4 }}>{photos.length} photo{photos.length === 1 ? "" : "s"} - order & remove</div>
@@ -155,6 +164,7 @@ function PostCard({ api, post, onChange, focus, compact }) {
               </div>
             </details>
           )}
+          {editable && <Feedback post={post} busy={busy} onSend={async (text) => { if (dirty) await api("update_post", { id: post.id, caption, hashtags: tags.split(/[\s,]+/).filter(Boolean) }); await go("revise", "revise_post", { feedback: text }); }} />}
           {post.kind === "idea" && editable && (
             <details style={{ marginTop: 8 }}>
               <summary style={{ cursor: "pointer", fontSize: 13, color: T.mut }}>Edit the graphic</summary>
@@ -170,10 +180,7 @@ function PostCard({ api, post, onChange, focus, compact }) {
                 </>}
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   <Btn small disabled={!!busy} onClick={() => go("design", "update_post", { design: { ...design, lines: Array.isArray(design.lines) ? design.lines.map(l => l.trim()).filter(Boolean) : design.lines } })}>{busy === "design" ? "Redrawing…" : "Redraw"}</Btn>
-                  {design.style !== "text" && design.idea_kind !== "birthday" && <Btn small disabled={!!busy} onClick={() => go("design", "update_post", { another_photo: true })}>Try another photo</Btn>}
-                  {design.style !== "text" && <Btn small disabled={!!busy} onClick={() => setPicking(p => !p)}>{picking ? "Close stock photos" : "Choose a stock photo"}</Btn>}
                 </div>
-                {picking && <StockPicker api={api} busy={busy} onPick={(p) => { setPicking(false); go("design", "update_post", { design: { photo_url: p.url, focus: p.ai ? { x: p.ai.focal_x / 100, y: p.ai.focal_y / 100 } : null } }); }} />}
               </div>
             </details>
           )}
@@ -534,8 +541,31 @@ function StockAi({ p }) {
     </div>
   );
 }
-// In a draft's "Edit the graphic": pick the photo it's drawn on.
-function StockPicker({ api, busy, onPick }) {
+// "Tell Claude what to change" on a draft (api revise_post). The last round's
+// summary comes from post.ai.revisions, since the card remounts on every change.
+const FEEDBACK_HINTS = ["Use a court action photo", "Shorter caption", "Make the headline punchier", "Add that tryouts are this Saturday"];
+function Feedback({ post, busy, onSend }) {
+  const [text, setText] = useState("");
+  const revs = post.ai?.revisions || [];
+  const last = revs[revs.length - 1];
+  const working = busy === "revise";
+  return (
+    <div style={{ marginTop: 10, background: T.card2, border: "1px solid " + T.line, borderRadius: 10, padding: 10 }}>
+      <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 6 }}>✨ Tell Claude what to change</div>
+      {last && <div style={{ fontSize: 12, color: T.ok, marginBottom: 6 }}>Last change: {last.changed || "updated"} <span style={{ color: T.mut }}>(you asked: "{last.feedback.slice(0, 90)}{last.feedback.length > 90 ? "…" : ""}")</span></div>}
+      <textarea value={text} onChange={e => setText(e.target.value)} disabled={working} rows={2} placeholder={post.kind === "idea" ? "e.g. use a photo of the team celebrating, make it shorter, lead with the cost, change the headline to…" : "e.g. make it shorter, mention the tournament name, more excited…"} style={{ ...input, width: "100%", resize: "vertical", fontSize: 13 }} />
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginTop: 6 }}>
+        <Btn small primary disabled={!!busy || text.trim().length < 3} onClick={() => onSend(text.trim())}>{working ? "Claude is rewriting… (~30s)" : "Update the draft"}</Btn>
+        {!text && !working && FEEDBACK_HINTS.filter(h => post.kind === "idea" || !/photo|headline/i.test(h)).map(h => <button key={h} onClick={() => setText(h)} style={{ ...pillBtn(T.mut), background: "transparent" }}>{h}</button>)}
+        {revs.length > 1 && <span style={{ fontSize: 11, color: T.mut }}>{revs.length} rounds so far</span>}
+      </div>
+    </div>
+  );
+}
+
+// On a draft: pick the photo its graphic is drawn on. The post's own teams
+// lead, then Claude's social score; the current photo is marked.
+function StockPicker({ api, busy, onPick, teams = [], current = null }) {
   const [data, setData] = useState(null);
   const [filter, setFilter] = useState("all");
   useEffect(() => { api("stock").then(setData).catch(() => setData({ photos: [], teams: [] })); }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -543,7 +573,8 @@ function StockPicker({ api, busy, onPick }) {
   const live = data.photos.filter(p => !p.hidden);
   if (!live.length) return <Muted>No stock photos yet - add some in the Stock photos tab.</Muted>;
   const teams = [...new Set(live.map(p => p.team_name).filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-  const shown = live.filter(p => filter === "all" || (filter === "club" ? !p.team_name : p.team_name === filter)).sort((a, b) => (b.ai?.social_score || 0) - (a.ai?.social_score || 0));
+  const mine = (p) => teams.includes(p.team_name) ? 1 : 0;
+  const shown = live.filter(p => filter === "all" || (filter === "club" ? !p.team_name : p.team_name === filter)).sort((a, b) => mine(b) - mine(a) || (b.ai?.social_score || 0) - (a.ai?.social_score || 0));
   return (
     <div style={{ display: "grid", gap: 6 }}>
       <select value={filter} onChange={e => setFilter(e.target.value)} style={{ ...input, padding: "4px 6px", fontSize: 12 }}>
@@ -552,7 +583,7 @@ function StockPicker({ api, busy, onPick }) {
       </select>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(72px, 1fr))", gap: 4, maxHeight: 260, overflowY: "auto" }}>
         {shown.map(p => <button key={p.id} disabled={!!busy} title={[teamLabel(p.team_name), p.note, p.ai && `social ${p.ai.social_score}/10 - ${p.ai.description}`].filter(Boolean).join(" - ")} onClick={() => onPick(p)} style={{ padding: 0, border: "none", background: "none", cursor: "pointer" }}>
-          <img src={p.thumb_url || p.url} alt="" loading="lazy" style={{ width: "100%", aspectRatio: "4/5", objectFit: "cover", borderRadius: 6, display: "block" }} />
+          <img src={p.thumb_url || p.url} alt="" loading="lazy" style={{ width: "100%", aspectRatio: "4/5", objectFit: "cover", borderRadius: 6, display: "block", outline: p.url === current ? "3px solid " + T.pink : "none", outlineOffset: -3 }} />
         </button>)}
       </div>
     </div>

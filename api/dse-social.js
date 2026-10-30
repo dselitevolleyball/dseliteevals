@@ -11,6 +11,7 @@
 //   disconnect
 //   posts {status?}             drafts / queue / history
 //   update_post {id, caption?, hashtags?, platforms?, format?, photos?, design?}
+//   revise_post {id, feedback}  Claude rewrites the draft (caption; idea posts: graphic words + stock photo) from Drew's note
 //   approve {id, now?} · skip {id} · publish_now {id} · unapprove {id}
 //   photos {days?, team?}       the family photo pool, with thumbnails
 //   hide_photo {id, hidden}     keep one photo off social
@@ -130,6 +131,7 @@ export async function run(sb, { me, name }, b) {
       if (error) throw fail(500, error.message);
       return { post: data };
     }
+    case "revise_post": return await I.revisePost(sb, await S.getPost(sb, b.id), { feedback: String(b.feedback || "").slice(0, 2000), by });
     case "approve": {
       const r = await S.approvePost(sb, b.id, by, { now: !!b.now });
       if (r.due) return { ...(await S.publishPost(sb, b.id)), approved: true };
