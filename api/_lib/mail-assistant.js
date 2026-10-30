@@ -724,8 +724,10 @@ export async function recheckListed(sb, acct, { deadline = Date.now() + 150e3, f
       return { account: acct.email, counts: c, done: true };
     }
     const tids = [...new Set(page.map(r => r.thread_id).filter(Boolean))];
-    // Gmail allows about 15,000 units a minute per mailbox (a conversation is
-    // 10-20): five conversations a second, and a pause if it still says slow down.
+    // Gmail limits units a minute per mailbox (a conversation is 10-20), lower
+    // in practice than its published 15,000: five conversations per `pace` ms,
+    // and each time it says slow down, a pause and half the speed from then on
+    // (remembered in the state for later runs).
     let i = 0;
     while (i < tids.length && Date.now() < deadline) {
       const t0 = Date.now();
@@ -733,10 +735,11 @@ export async function recheckListed(sb, acct, { deadline = Date.now() + 150e3, f
       catch (e) {
         await save({ last_error: String(e.message).slice(0, 200), last_error_at: stamp() });
         if (e.status !== 429) throw e;   // what's done stays done; the rest of this page next run
+        if (pace) { st.pace = Math.min(16e3, (st.pace || pace) * 2); await save(); }
         await sleep(Math.min(backoff, Math.max(0, deadline - Date.now())));
         continue;
       }
-      if (pace) await sleep(Math.max(0, pace - (Date.now() - t0)));
+      if (pace) await sleep(Math.max(0, (st.pace || pace) - (Date.now() - t0)));
     }
     if (i < tids.length) { await save(); break; }   // out of time: this page again next run
     st.after_id = page[page.length - 1].id;
