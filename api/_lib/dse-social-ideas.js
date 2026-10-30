@@ -83,11 +83,15 @@ async function postedPhotos(sb, teams = []) {
   for (const p of data || []) for (const ph of p.photos || []) if (ph?.url) all.push({ url: ph.url, focus: ph.focus || null, team: p.team_name || null });
   return [...all.filter(p => want.has(nrm(p.team))), ...all.filter(p => !want.has(nrm(p.team)))];
 }
-// Drew's stock photos (HQ -> Social -> Stock photos), least-used first.
+// Drew's stock photos (HQ -> Social -> Stock photos): least-used first, then
+// Claude's social score (api/_lib/dse-stock-ai.js); its focal point crops the card.
+// Hidden ones (Drew's call, or Claude's safety flag) never come back here.
 async function stockPhotos(sb) {
-  const { data } = await sb.from("dse_social_stock").select("id, url, team_name, used_count, created_at").eq("hidden", false)
+  const { data } = await sb.from("dse_social_stock").select("id, url, team_name, used_count, created_at, ai").eq("hidden", false)
     .order("used_count").order("created_at", { ascending: false }).limit(500);
-  return (data || []).map(s => ({ url: s.url, focus: null, team: s.team_name || null, stock_id: s.id }));
+  const score = (s) => s.ai?.social_score ?? 6;
+  return (data || []).sort((a, b) => (a.used_count || 0) - (b.used_count || 0) || score(b) - score(a))
+    .map(s => ({ url: s.url, focus: s.ai ? { x: s.ai.focal_x / 100, y: s.ai.focal_y / 100 } : null, team: s.team_name || null, stock_id: s.id }));
 }
 // What an idea card can be drawn on: the team's stock photos, the team's
 // posted photos, then club-wide stock, then everything else posted.
@@ -354,7 +358,7 @@ The post's image is one graphic the club draws, in one of three styles:
 - holiday: one of the team's own action photos with a small TAG line on top (e.g. "NOW RECRUITING"), a big HEADLINE (under 40 characters) and a SUB line under it (under 70 characters). Best for announcements and recruiting.
 - text: no photo; big words on a pink field: HEADLINE (under 60 characters) and SUB (under 80).
 - meme: a team photo with TOP and BOTTOM lines in meme lettering, for humor only.
-teams: the exact team names from the facts the post is about (used to pick the photo); [] if none. photo_id: if a stock photo described in the list fits the post clearly better than a random team photo would, its id; otherwise 0. title: a short name for the post in the planner. pitch: one sentence on what the post does.`;
+teams: the exact team names from the facts the post is about (used to pick the photo); [] if none. photo_id: the stock photo from the list that best fits this post (right team or club-wide, right moment, strong score, room for the headline, not over-used), or 0 if none fits better than a random photo of the team. title: a short name for the post in the planner. pitch: one sentence on what the post does.`;
 
 export async function customIdea(sb, { prompt, post_on = null, today = ctToday(), by = "Drew" } = {}) {
   if (!process.env.ANTHROPIC_API_KEY) throw fail(500, "ANTHROPIC_API_KEY isn't set");
@@ -362,10 +366,11 @@ export async function customIdea(sb, { prompt, post_on = null, today = ctToday()
   if (ask.length < 5) throw fail(400, "Tell Claude what the post should be about.");
   const [facts, { data: stock }] = await Promise.all([
     clubFacts(sb, today),
-    sb.from("dse_social_stock").select("id, url, team_name, note").eq("hidden", false).not("note", "is", null).order("created_at", { ascending: false }).limit(150),
+    sb.from("dse_social_stock").select("id, url, team_name, note, ai, used_count").eq("hidden", false).order("created_at", { ascending: false }).limit(300),
   ]);
-  const described = (stock || []).filter(s => String(s.note || "").trim());
-  const photoList = described.length ? `\n\nStock photos with descriptions (id: team - what's in it):\n${described.map(s => `${s.id}: ${s.team_name ? DISPLAY(s.team_name) : "club"} - ${String(s.note).slice(0, 160)}`).join("\n")}` : "\n\n(No described stock photos; photo_id 0.)";
+  const about = (s) => [s.note, s.ai?.description].map(x => String(x || "").trim()).filter(Boolean).join(" | ");
+  const described = (stock || []).filter(s => about(s)).sort((a, b) => (b.ai?.social_score || 0) - (a.ai?.social_score || 0)).slice(0, 120);
+  const photoList = described.length ? `\n\nStock photos (id: team - what's in it [social score /10, good for, headline space, times used]):\n${described.map(s => `${s.id}: ${s.team_name ? DISPLAY(s.team_name) : "club"} - ${about(s).slice(0, 260)}${s.ai ? ` [${s.ai.social_score}/10; ${(s.ai.best_for || []).join(", ") || "-"}; space ${s.ai.text_space}; used ${s.used_count || 0}x]` : ""}`).join("\n")}` : "\n\n(No described stock photos; photo_id 0.)";
   const ai = await askJson(CUSTOM_SYSTEM, `Club facts:\n${facts}${photoList}\n\nDrew's request:\n${ask}`, CUSTOM_SCHEMA, "dse-social-custom");
   const picked = ai.style !== "text" && described.find(s => s.id === Number(ai.photo_id));
   const known = new Map(((await sb.from("practice_teams").select("team_name")).data || []).map(t => [DISPLAY(t.team_name).toLowerCase(), t.team_name]));
@@ -374,7 +379,7 @@ export async function customIdea(sb, { prompt, post_on = null, today = ctToday()
   const { data: idea, error } = await sb.from("dse_social_ideas").insert({
     kind: "custom", post_on: day, title: String(ai.title || ask).slice(0, 120), pitch: String(ai.pitch || "").slice(0, 600),
     caption: String(ai.caption || "").slice(0, 2000), hashtags: (ai.hashtags || []).map(h => String(h).replace(/^#+/, "")).filter(Boolean).slice(0, 4),
-    card: { style: ai.style, tag: ai.tag || "", headline: ai.headline || ai.title, sub: ai.sub || "", top: ai.top || "", bottom: ai.bottom || "", ...(picked ? { photo_url: picked.url } : {}) },
+    card: { style: ai.style, tag: ai.tag || "", headline: ai.headline || ai.title, sub: ai.sub || "", top: ai.top || "", bottom: ai.bottom || "", ...(picked ? { photo_url: picked.url, ...(picked.ai ? { focus: { x: picked.ai.focal_x / 100, y: picked.ai.focal_y / 100 } } : {}) } : {}) },
     created_by: by, data: { prompt: ask, teams },
   }).select("*").single();
   if (error) throw fail(500, error.message);

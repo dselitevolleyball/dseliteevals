@@ -27,7 +27,8 @@
 //   idea_custom {prompt, post_on?}  Drew's own idea, written by Claude from the club's facts -> draft post
 //   idea_dismiss {id} · idea_restore {id} · idea_update {id, title?, caption?, card?, post_on?}
 //   stock                       Drew's stock photos + the team list
-//   stock_upload_urls {count} · stock_add {items} · stock_update {id, team_name?, note?, hidden?} · stock_delete {id}
+//   stock_upload_urls {count} · stock_add {items} (Claude analyzes them after) · stock_delete {id}
+//   stock_update {id, team_name?, note?, hidden?, website?} · stock_analyze {ids?, force?}  Claude's read (api/_lib/dse-stock-ai.js)
 //   settings_save {...}
 
 import { createClient } from "@supabase/supabase-js";
@@ -35,6 +36,7 @@ import { waitUntil } from "@vercel/functions";
 import * as S from "./_lib/dse-social.js";
 import * as M from "./_lib/dse-social-meta.js";
 import * as I from "./_lib/dse-social-ideas.js";
+import * as A from "./_lib/dse-stock-ai.js";
 
 export const config = { maxDuration: 300 };
 const OWNERS = ["drew@dselitevolleyball.com", "drew@drippingsportsclub.com"];
@@ -278,13 +280,16 @@ export async function run(sb, { me, name }, b) {
       if (!rows.length) throw fail(400, "Nothing to add");
       const { data, error } = await sb.from("dse_social_stock").upsert(rows, { onConflict: "storage_path" }).select();
       if (error) throw fail(500, error.message);
+      later(A.analyzeStock(sb, { ids: data.map(r => r.id) }).catch(e => console.error("stock ai", e.message)));   // Claude reads them in the background
       return { photos: data };
     }
+    case "stock_analyze": return await A.analyzeStock(sb, { ids: Array.isArray(b.ids) ? b.ids : null, force: !!b.force, limit: Math.min(24, Number(b.limit) || 12) });
     case "stock_update": {
       const patch = {};
       if (b.team_name !== undefined) patch.team_name = b.team_name || null;
       if (typeof b.note === "string") patch.note = b.note.trim().slice(0, 300) || null;
       if (typeof b.hidden === "boolean") patch.hidden = b.hidden;
+      if (typeof b.website === "boolean") Object.assign(patch, { website: b.website, website_at: b.website ? new Date().toISOString() : null });
       const { data, error } = await sb.from("dse_social_stock").update(patch).eq("id", Number(b.id)).select().maybeSingle();
       if (error) throw fail(500, error.message);
       return { photo: data };

@@ -173,7 +173,7 @@ function PostCard({ api, post, onChange, focus, compact }) {
                   {design.style !== "text" && design.idea_kind !== "birthday" && <Btn small disabled={!!busy} onClick={() => go("design", "update_post", { another_photo: true })}>Try another photo</Btn>}
                   {design.style !== "text" && <Btn small disabled={!!busy} onClick={() => setPicking(p => !p)}>{picking ? "Close stock photos" : "Choose a stock photo"}</Btn>}
                 </div>
-                {picking && <StockPicker api={api} busy={busy} onPick={(url) => { setPicking(false); go("design", "update_post", { design: { photo_url: url } }); }} />}
+                {picking && <StockPicker api={api} busy={busy} onPick={(p) => { setPicking(false); go("design", "update_post", { design: { photo_url: p.url, focus: p.ai ? { x: p.ai.focal_x / 100, y: p.ai.focal_y / 100 } : null } }); }} />}
               </div>
             </details>
           )}
@@ -405,8 +405,14 @@ function Stock({ api }) {
   const [fails, setFails] = useState([]);
   const [err, setErr] = useState("");
   const [over, setOver] = useState(false);
+  const [sort, setSort] = useState("new");
+  const [busy, setBusy] = useState("");
   const load = () => api("stock").then(setData).catch(e => setErr(e.message));
   useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // Claude reads new uploads in the background; refresh until it has.
+  const unread = (data?.photos || []).filter(p => !p.ai_at && !p.ai_error).length;
+  useEffect(() => { if (!unread || prog) return; const t = setTimeout(load, 8000); return () => clearTimeout(t); }, [data, prog]); // eslint-disable-line react-hooks/exhaustive-deps
+  const analyze = async (body, label) => { setBusy(label); setErr(""); try { await api("stock_analyze", body); await load(); } catch (e) { setErr(e.message); } setBusy(""); };
   const uploadAll = async (fileList) => {
     const files = [...fileList].filter(f => /^image\//.test(f.type) || /\.(heic|heif|jpe?g|png|webp)$/i.test(f.name));
     if (!files.length) return;
@@ -439,7 +445,8 @@ function Stock({ api }) {
   const patch = async (id, body) => { try { await api("stock_update", { id, ...body }); load(); } catch (e) { setErr(e.message); } };
   const del = async (p) => { if (!window.confirm("Delete this photo from the stock library? (Posts already made keep their graphic.)")) return; try { await api("stock_delete", { id: p.id }); load(); } catch (e) { setErr(e.message); } };
   const teams = data?.teams || [];
-  const shown = (data?.photos || []).filter(p => (showHidden || !p.hidden) && (filter === "all" || (filter === "club" ? !p.team_name : p.team_name === filter)));
+  const SORTS = { new: () => 0, social: (a, b) => (b.ai?.social_score || 0) - (a.ai?.social_score || 0), website: (a, b) => (b.ai?.website_score || 0) - (a.ai?.website_score || 0) };
+  const shown = (data?.photos || []).filter(p => (showHidden || !p.hidden) && (filter === "all" || (filter === "web" ? p.website : filter === "club" ? !p.team_name : p.team_name === filter))).sort(SORTS[sort]);
   const counts = (data?.photos || []).filter(p => !p.hidden).reduce((m, p) => { const k = p.team_name || "club"; m[k] = (m[k] || 0) + 1; return m; }, {});
 
   return (
@@ -466,8 +473,14 @@ function Stock({ api }) {
         <button onClick={() => setFilter("all")} style={chip(filter === "all")}>All {(data?.photos || []).filter(p => !p.hidden).length}</button>
         <button onClick={() => setFilter("club")} style={chip(filter === "club")}>Club-wide {counts.club || 0}</button>
         {teams.filter(t => counts[t]).map(t => <button key={t} onClick={() => setFilter(t)} style={chip(filter === t)}>{teamLabel(t)} {counts[t]}</button>)}
+        <button onClick={() => setFilter("web")} style={chip(filter === "web")}>🌐 Website {(data?.photos || []).filter(p => p.website).length}</button>
+        <select value={sort} onChange={e => setSort(e.target.value)} style={{ ...input, padding: "5px 8px", fontSize: 13 }}>
+          <option value="new">Newest first</option><option value="social">Best for social</option><option value="website">Best for website</option>
+        </select>
         <label style={{ fontSize: 13, color: T.mut, display: "inline-flex", gap: 6, alignItems: "center", marginLeft: 6 }}><input type="checkbox" checked={showHidden} onChange={e => setShowHidden(e.target.checked)} />Show hidden</label>
+        {unread > 0 && <span style={{ fontSize: 12, color: T.warn }}>Claude is reading {unread} photo{unread === 1 ? "" : "s"}… <button style={link} disabled={!!busy} onClick={() => analyze({}, "all")}>{busy === "all" ? "working…" : "nudge it"}</button></span>}
       </div>
+      <div style={{ fontSize: 12, color: T.mut }}>Claude reads every photo: what's in it, a 1-10 score for social and for the website, the website role (hero banner / section / gallery) and alt text, where the subject is (so crops keep it), where a headline fits, and a safety check - anything that shouldn't be public is hidden with the reason. 🌐 marks a photo for dselitevolleyball.com; ask Claude to "pull the website photos" to add them to the site.</div>
       {!data ? <Muted>Loading…</Muted> : !shown.length ? <Box><Muted>No stock photos here yet.</Muted></Box> : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(170px, 1fr))", gap: 10 }}>
           {shown.map(p => (
@@ -479,9 +492,12 @@ function Stock({ api }) {
                   {teams.map(t => <option key={t} value={t}>{teamLabel(t)}</option>)}
                 </select>
                 <input defaultValue={p.note || ""} placeholder="Note" onBlur={e => e.target.value !== (p.note || "") && patch(p.id, { note: e.target.value })} style={{ ...input, padding: "4px 6px", fontSize: 12 }} />
+                <StockAi p={p} />
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11, color: T.mut }}>
                   <span>{p.used_count ? `used ${p.used_count}×` : "not used yet"}</span>
                   <span>
+                    <button onClick={() => patch(p.id, { website: !p.website })} title={p.website ? "On the website list - click to remove" : "Use on the website"} style={{ ...tiny, color: p.website ? T.ok : T.mut }}>🌐{p.website ? "✓" : ""}</button>
+                    <button disabled={!!busy} onClick={() => analyze({ ids: [p.id] }, "a" + p.id)} title="Have Claude look again" style={tiny}>{busy === "a" + p.id ? "…" : "↻"}</button>
                     <button onClick={() => patch(p.id, { hidden: !p.hidden })} style={tiny}>{p.hidden ? "Unhide" : "Hide"}</button>
                     <button onClick={() => del(p)} style={{ ...tiny, color: T.bad }}>Delete</button>
                   </span>
@@ -494,6 +510,30 @@ function Stock({ api }) {
     </div>
   );
 }
+// Claude's read of one stock photo (api/_lib/dse-stock-ai.js), compact.
+const ROLE = { hero: "hero banner", section: "section", gallery: "gallery", none: "not for site" };
+function StockAi({ p }) {
+  const a = p.ai;
+  if (!a) return <div style={{ fontSize: 11, color: p.ai_error ? T.bad : T.mut }}>{p.ai_error ? `Claude couldn't read it: ${p.ai_error}` : "Claude is reading it…"}</div>;
+  const sc = (n) => n >= 8 ? T.ok : n >= 5 ? T.text : T.mut;
+  return (
+    <div style={{ fontSize: 11, lineHeight: 1.4 }}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <span>Social <b style={{ color: sc(a.social_score) }}>{a.social_score}</b>/10</span>
+        <span>Web <b style={{ color: sc(a.website_score) }}>{a.website_score}</b>/10</span>
+        <span style={{ color: T.mut }}>{ROLE[a.website_role] || a.website_role}</span>
+      </div>
+      {!a.social_ok && <div style={{ color: T.bad }}>⚠ {a.social_concern || "not for a public post"}</div>}
+      <details>
+        <summary style={{ cursor: "pointer", color: T.mut }}>{a.description.slice(0, 60)}{a.description.length > 60 ? "…" : ""}</summary>
+        <div style={{ color: T.mut, marginTop: 2 }}>{a.description}</div>
+        <div style={{ color: T.mut, marginTop: 2 }}><b>Alt:</b> {a.alt}</div>
+        <div style={{ color: T.mut, marginTop: 2 }}><b>Good for:</b> {(a.best_for || []).join(", ").replace(/_/g, " ") || "-"} · <b>headline room:</b> {a.text_space} · <b>quality</b> {a.quality}/10{a.dse_gear ? " · DS Elite gear" : ""}</div>
+        <div style={{ color: T.hot, marginTop: 2 }}>{(a.tags || []).map(t => "#" + t.replace(/\s+/g, "")).join(" ")}</div>
+      </details>
+    </div>
+  );
+}
 // In a draft's "Edit the graphic": pick the photo it's drawn on.
 function StockPicker({ api, busy, onPick }) {
   const [data, setData] = useState(null);
@@ -503,7 +543,7 @@ function StockPicker({ api, busy, onPick }) {
   const live = data.photos.filter(p => !p.hidden);
   if (!live.length) return <Muted>No stock photos yet - add some in the Stock photos tab.</Muted>;
   const teams = [...new Set(live.map(p => p.team_name).filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-  const shown = live.filter(p => filter === "all" || (filter === "club" ? !p.team_name : p.team_name === filter));
+  const shown = live.filter(p => filter === "all" || (filter === "club" ? !p.team_name : p.team_name === filter)).sort((a, b) => (b.ai?.social_score || 0) - (a.ai?.social_score || 0));
   return (
     <div style={{ display: "grid", gap: 6 }}>
       <select value={filter} onChange={e => setFilter(e.target.value)} style={{ ...input, padding: "4px 6px", fontSize: 12 }}>
@@ -511,7 +551,7 @@ function StockPicker({ api, busy, onPick }) {
         {teams.map(t => <option key={t} value={t}>{teamLabel(t)}</option>)}
       </select>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(72px, 1fr))", gap: 4, maxHeight: 260, overflowY: "auto" }}>
-        {shown.map(p => <button key={p.id} disabled={!!busy} title={[teamLabel(p.team_name), p.note].filter(Boolean).join(" - ")} onClick={() => onPick(p.url)} style={{ padding: 0, border: "none", background: "none", cursor: "pointer" }}>
+        {shown.map(p => <button key={p.id} disabled={!!busy} title={[teamLabel(p.team_name), p.note, p.ai && `social ${p.ai.social_score}/10 - ${p.ai.description}`].filter(Boolean).join(" - ")} onClick={() => onPick(p)} style={{ padding: 0, border: "none", background: "none", cursor: "pointer" }}>
           <img src={p.thumb_url || p.url} alt="" loading="lazy" style={{ width: "100%", aspectRatio: "4/5", objectFit: "cover", borderRadius: 6, display: "block" }} />
         </button>)}
       </div>
