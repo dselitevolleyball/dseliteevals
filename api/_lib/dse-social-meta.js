@@ -14,6 +14,7 @@
 // The DSSC Page's connection (api/_lib/marketing-publish.js) is separate.
 
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { igPublish } from "./ig-publish.js";
 
 const env = () => process.env;
 export const graphVersion = () => env().META_GRAPH_VERSION || "v26.0";
@@ -226,8 +227,9 @@ export async function fbMultiPhoto(sb, urls, caption) {
 async function waitContainer(token, id, waitMs = 40000) {
   const until = Date.now() + waitMs;
   for (;;) {
-    const s = await graph(token, id, { fields: "status_code" }, { method: "GET" }).catch(() => ({}));
-    if (!s.status_code || s.status_code === "FINISHED") return;
+    // A status check that fails isn't "ready" - publishing too early is "Media ID is not available".
+    const s = await graph(token, id, { fields: "status_code" }, { method: "GET" }).catch(() => ({ failed: true }));
+    if (!s.failed && (!s.status_code || s.status_code === "FINISHED")) return;
     if (s.status_code === "ERROR" || s.status_code === "EXPIRED") throw new Error(`Instagram couldn't process the image (${s.status_code})`);
     if (Date.now() > until) throw new Error("Instagram is still processing - try again in a minute");
     await sleep(2000);
@@ -239,7 +241,7 @@ export async function igImage(sb, url, caption) {
   const m = await need(sb, "instagram");
   const c = await graph(m.token, `${m.igId}/media`, { image_url: url, caption });
   await waitContainer(m.token, c.id);
-  return (await graph(m.token, `${m.igId}/media_publish`, { creation_id: c.id })).id;
+  return (await igPublish(() => graph(m.token, `${m.igId}/media_publish`, { creation_id: c.id }))).id;
 }
 // Up to 10 images as one Instagram carousel.
 export async function igCarousel(sb, urls, caption) {
@@ -250,7 +252,7 @@ export async function igCarousel(sb, urls, caption) {
   for (const k of kids) await waitContainer(m.token, k);
   const c = await graph(m.token, `${m.igId}/media`, { media_type: "CAROUSEL", children: kids.join(","), caption });
   await waitContainer(m.token, c.id);
-  return (await graph(m.token, `${m.igId}/media_publish`, { creation_id: c.id })).id;
+  return (await igPublish(() => graph(m.token, `${m.igId}/media_publish`, { creation_id: c.id }))).id;
 }
 // Where a published post can be seen.
 export async function permalinks(sb, ext = {}) {

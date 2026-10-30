@@ -26,6 +26,7 @@
 //      https://www.drippingsportsclub.com/hq); TWILIO_* / DSSC_TWILIO_* (sms).
 
 import { createHmac } from "node:crypto";
+import { igPublish } from "./ig-publish.js";
 import { createClient } from "@supabase/supabase-js";
 import { sendResend, dsscFrom, resendKey, nrm, isEmailish, safeEqual, inboxAddress, DSSC_DIRECTORS } from "./site-inbox.js";
 import { twilioReady, notReadyMessage, sendOneSms } from "./sms.js";
@@ -208,15 +209,16 @@ export async function postInstagram(item, { story = false } = {}) {
   if (!META_PAGE_ACCESS_TOKEN || !META_IG_USER_ID) throw new Error("Instagram isn't connected (META_PAGE_ACCESS_TOKEN, META_IG_USER_ID)");
   const params = story ? { image_url: item.asset_story_url, media_type: "STORIES" } : { image_url: item.asset_url, caption: captionFor(item, "instagram") };
   const c = await graph(`${META_IG_USER_ID}/media`, params);
-  // The container is usually ready at once for a photo; give it up to ~20s.
-  for (let i = 0; i < 10; i++) {
-    const s = await graph(c.id, { fields: "status_code" }, { method: "GET" }).catch(() => ({}));
-    if (!s.status_code || s.status_code === "FINISHED") break;
+  // The container is usually ready at once for a photo; give it up to ~40s. A
+  // status check that fails isn't "ready": publishing too early is "Media ID is
+  // not available" (Oct 30 2026, "Tiny Hitters, Big Fun").
+  for (let i = 0; i < 20; i++) {
+    const s = await graph(c.id, { fields: "status_code" }, { method: "GET" }).catch(() => ({ failed: true }));
+    if (!s.failed && (!s.status_code || s.status_code === "FINISHED")) break;
     if (s.status_code === "ERROR" || s.status_code === "EXPIRED") throw new Error(`Instagram couldn't process the image (${s.status_code})`);
     await sleep(2000);
   }
-  const p = await graph(`${META_IG_USER_ID}/media_publish`, { creation_id: c.id });
-  return p.id;
+  return (await igPublish(() => graph(`${META_IG_USER_ID}/media_publish`, { creation_id: c.id }))).id;
 }
 
 // A reel. Instagram: a REELS container from the rendered MP4 (cover = the
@@ -241,7 +243,7 @@ export async function postInstagramReel(item, { containerId = null, waitMs = 450
     if (Date.now() > until) return { pending: id };
     await sleep(3000);
   }
-  return { id: (await graph(`${META_IG_USER_ID}/media_publish`, { creation_id: id })).id };
+  return { id: (await igPublish(() => graph(`${META_IG_USER_ID}/media_publish`, { creation_id: id }))).id };
 }
 // Facebook: the Page posts the MP4 by URL (vertical video shows as a reel).
 export async function postFacebookVideo(item) {
