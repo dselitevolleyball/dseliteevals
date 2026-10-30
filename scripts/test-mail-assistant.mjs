@@ -266,6 +266,7 @@ console.log("== 4c. recheck the Needs reply list ==");
     row(1, "a1", "tA", NOW - 5 * day, "Answered"), row(2, "b1", "tB", NOW - 6 * day, "Earlier"), row(3, "b2", "tB", NOW - 3 * day, "Latest"),
     row(4, "c1", "tC", NOW - 2 * day, "Open"), row(5, "g1", "tGone", NOW - 9 * day, "Gone"), row(6, "d1", "tD", NOW - 60 * day, "OldAnswered") ] });
   const mods = [], posted = [];
+  let slowed = 0;   // Gmail says slow down once
   const gm = async (url, o = {}) => {
     const u = String(url), J = (j) => ({ ok: true, status: 200, json: async () => j });
     if (u.startsWith("https://oauth2.googleapis.com/token")) return J({ access_token: "tok-re", expires_in: 3600 });
@@ -273,14 +274,16 @@ console.log("== 4c. recheck the Needs reply list ==");
     const g = /gmail\/v1\/users\/me\/(.+?)(\?|$)/.exec(u)?.[1] || "";
     if (g === "labels") return (o.method || "GET") === "POST" ? J({ id: "L-" + JSON.parse(o.body).name, name: JSON.parse(o.body).name }) : J({ labels: [] });
     if (/^threads\/[^/]+\/modify$/.test(g)) { mods.push({ t: g.split("/")[1], ...JSON.parse(o.body) }); return J({}); }
+    if (g === "threads/tB" && !slowed++) return { ok: false, status: 429, json: async () => ({ error: { message: "Quota exceeded for quota metric 'Total Query Cost'" } }) };
     if (g.startsWith("threads/") && threads[g.split("/")[1]]) return J({ messages: threads[g.split("/")[1]] });
     return { ok: false, status: 404, json: async () => ({ error: { message: "Not Found" } }) };
   };
   globalThis.fetch = gm;
   const acct = { email: "re@dselitevolleyball.com", refresh_token: "rt" };
-  const r = await M.recheckListed(sbr, acct, { fetchImpl: gm, now: NOW });
+  const r = await M.recheckListed(sbr, acct, { fetchImpl: gm, now: NOW, pace: 0, backoff: 10 });
   const st = (id) => sbr.db.mail_drafts.find(x => x.id === id).status;
   check(r.done && st(1) === "answered" && st(6) === "answered", "answered later in Gmail (last week, or two months ago): marked answered");
+  check(slowed > 1 && r.done, "Gmail's rate limit: it waits, asks again and finishes in the same run");
   check(st(2) === "ignored" && st(3) === "listed", "two emails in one open conversation: listed once, as the latest");
   check(st(4) === "listed", "Drew wrote before their latest email: still waiting on him");
   check(st(5) === "ignored" && sbr.db.mail_drafts.find(x => x.id === 5).reason === "Gone from Gmail", "a conversation that's gone from Gmail drops off");
@@ -288,7 +291,7 @@ console.log("== 4c. recheck the Needs reply list ==");
   check(mA && mA.addLabelIds.includes("L-Mail Assistant/Replied") && ["UNREAD", "INBOX"].every(l => mA.removeLabelIds.includes(l)) && mods.length === 2, "in Gmail: Replied, read, archived");
   const sum = JSON.stringify(posted[0] || {});
   check(/Rechecked the Needs reply list/.test(sum) && /6 emails/.test(sum) && /2 you'd already answered/.test(sum) && /1 were earlier emails/.test(sum) && /2 may still need a reply/.test(sum) && /Latest/.test(sum) && /Open/.test(sum) && !/Answered asks/.test(sum), "one corrected list in Slack: counts, and only the ones still open");
-  check(await M.recheckListed(sbr, acct, { fetchImpl: gm, now: NOW }) === null && posted.length === 1, "done once");
+  check(await M.recheckListed(sbr, acct, { fetchImpl: gm, now: NOW, pace: 0 }) === null && posted.length === 1, "done once");
 
   // Draft a reply on one he's since answered: no draft, it's filed.
   sbr.db.mail_accounts.push(acct);

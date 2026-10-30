@@ -324,6 +324,7 @@ export async function tidy(token, { id, thread = false, add = [], remove = [] },
 const settle = (token, d, key, fetchImpl) => d.thread_id ? tidy(token, { id: d.thread_id, thread: true, add: [key], remove: ["needs", "UNREAD", "INBOX"] }, fetchImpl) : null;
 // Did Drew write in the conversation after this email came in? He answers from
 // his phone and Gmail too, not only from Slack.
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const threadMsgs = async (token, id, fetchImpl) => (await gmail(token, `threads/${id}`, { query: { format: "minimal" } }, fetchImpl)).messages || [];
 export const sentAfter = (msgs, at) => { const t = Date.parse(at || 0) || 0; return msgs.some(m => (m.labelIds || []).includes("SENT") && +m.internalDate > t); };
 
@@ -683,7 +684,7 @@ async function cleanupSummary(sb, account, c, recentFrom) {
 // read and archived; earlier emails in a conversation that's still open fold
 // into its latest one; then a corrected list in Slack. A few hundred
 // conversations per run; hq_kv "mail_recheck:<email>".
-export async function recheckListed(sb, acct, { deadline = Date.now() + 150e3, fetchImpl = fetch, now = Date.now() } = {}) {
+export async function recheckListed(sb, acct, { deadline = Date.now() + 150e3, fetchImpl = fetch, now = Date.now(), pace = 1000, backoff = 30e3 } = {}) {
   const key = "mail_recheck:" + acct.email;
   const { data: kv } = await sb.from("hq_kv").select("value").eq("key", key).maybeSingle();
   const st = { ...(kv?.value || {}) };
@@ -723,8 +724,21 @@ export async function recheckListed(sb, acct, { deadline = Date.now() + 150e3, f
       return { account: acct.email, counts: c, done: true };
     }
     const tids = [...new Set(page.map(r => r.thread_id).filter(Boolean))];
-    try { for (let i = 0; i < tids.length; i += 5) await Promise.all(tids.slice(i, i + 5).map(doThread)); }
-    catch (e) { await save({ last_error: String(e.message).slice(0, 200), last_error_at: stamp() }); throw e; }   // what's done stays done; the rest of this page next run
+    // Gmail allows about 15,000 units a minute per mailbox (a conversation is
+    // 10-20): five conversations a second, and a pause if it still says slow down.
+    let i = 0;
+    while (i < tids.length && Date.now() < deadline) {
+      const t0 = Date.now();
+      try { await Promise.all(tids.slice(i, i + 5).map(doThread)); i += 5; }
+      catch (e) {
+        await save({ last_error: String(e.message).slice(0, 200), last_error_at: stamp() });
+        if (e.status !== 429) throw e;   // what's done stays done; the rest of this page next run
+        await sleep(Math.min(backoff, Math.max(0, deadline - Date.now())));
+        continue;
+      }
+      if (pace) await sleep(Math.max(0, pace - (Date.now() - t0)));
+    }
+    if (i < tids.length) { await save(); break; }   // out of time: this page again next run
     st.after_id = page[page.length - 1].id;
     await save();
   }
