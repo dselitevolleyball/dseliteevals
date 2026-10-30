@@ -31,7 +31,7 @@ const fmtWhen = (iso) => iso ? new Date(iso).toLocaleString(undefined, { weekday
 const fmtDay = (iso) => iso ? new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "";
 const teamLabel = (t) => String(t || "").replace(/^(\d+ Rise) 1$/, "$1");
 const FORMAT = { collage: "Collage", carousel: "Carousel", single: "Single photo", poster: "Poster" };
-const IDEA_KIND = { birthday: "🎂 Coach birthday", tournament: "🏐 Game week", schedule: "📅 Schedules posted", holiday: "🎉 Holiday", meme: "😂 Meme", trend: "🔥 Trend", engagement: "💬 Engagement", throwback: "📸 Throwback" };
+const IDEA_KIND = { birthday: "🎂 Coach birthday", tournament: "🏐 Game week", schedule: "📅 Schedules posted", holiday: "🎉 Holiday", meme: "😂 Meme", trend: "🔥 Trend", engagement: "💬 Engagement", throwback: "📸 Throwback", custom: "✍️ Your idea" };
 const STATUS = { draft: [T.hot, "Draft"], approved: [T.ok, "Scheduled"], publishing: [T.warn, "Posting…"], published: [T.ok, "Posted"], failed: [T.bad, "Failed"], skipped: [T.mut, "Skipped"] };
 
 export default function DseSocial({ api = realApi }) {
@@ -227,6 +227,8 @@ function Ideas({ api, onDrafted }) {
   const [busy, setBusy] = useState("");
   const [msg, setMsg] = useState("");
   const [showAll, setShowAll] = useState(false);
+  const [own, setOwn] = useState("");
+  const [ownDay, setOwnDay] = useState("");
   const load = () => api("ideas").then(d => setIdeas(d.ideas)).catch(e => setMsg(e.message));
   useEffect(() => { api("ideas_sync").catch(() => {}).finally(load); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const run = async (key, fn, ok) => { setBusy(key); setMsg(""); try { const r = await fn(); if (ok) setMsg(typeof ok === "function" ? ok(r) : ok); await load(); return r; } catch (e) { setMsg(e.message); } finally { setBusy(""); } };
@@ -235,6 +237,18 @@ function Ideas({ api, onDrafted }) {
   const dayLabel = (d) => d ? new Date(d + "T12:00:00").toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" }) : "Any day";
   return (
     <div>
+      <div style={{ marginBottom: 16 }}>
+        <Box>
+          <div style={{ fontWeight: 800, marginBottom: 4 }}>✍️ Your idea</div>
+          <div style={{ fontSize: 12, color: T.mut, marginBottom: 8 }}>Say what you want in plain words. Claude writes it from HQ's real teams, coaches, practices, tournaments, fees and the commitment's expectations, draws the graphic and puts it in Drafts for approval.</div>
+          <textarea value={own} onChange={e => setOwn(e.target.value)} rows={3} placeholder="e.g. Make me a post looking for players for our 11 Regional team. Include the cost, the schedule, the practices and the expectations." style={{ ...input, width: "100%", resize: "vertical", fontSize: 14 }} />
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 8 }}>
+            <Btn primary disabled={!!busy || own.trim().length < 5} onClick={async () => { const r = await run("own", () => api("idea_custom", { prompt: own, post_on: ownDay || null })); if (r?.post) { setOwn(""); setOwnDay(""); onDrafted(); } }}>{busy === "own" ? "Writing it… (about a minute)" : "Write it"}</Btn>
+            <label style={{ fontSize: 13, color: T.mut, display: "inline-flex", gap: 6, alignItems: "center" }}>Post on <input type="date" value={ownDay} onChange={e => setOwnDay(e.target.value)} style={{ ...input, padding: "4px 8px", fontSize: 13 }} /></label>
+            <span style={{ fontSize: 12, color: T.mut }}>{ownDay ? "" : "(blank = the next open slot)"}</span>
+          </div>
+        </Box>
+      </div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
         <Btn primary disabled={!!busy} onClick={() => run("brain", () => api("ideas_brainstorm", { count: 6 }), (r) => `${r.added} new idea${r.added === 1 ? "" : "s"}${r.trend_error ? " (the trend search didn't work this time, so these are evergreen)" : ""}`)}>{busy === "brain" ? "Thinking… (about a minute)" : "✨ New fun ideas"}</Btn>
         <Btn disabled={!!busy} onClick={() => run("sync", () => api("ideas_sync"), (r) => r.added ? `${r.added} new from the calendar` : "Up to date")}>{busy === "sync" ? "Checking…" : "Check birthdays & tournaments"}</Btn>

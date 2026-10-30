@@ -28,6 +28,7 @@ import { claudeClient } from "./ai-client.js";
 import { renderCard, photo as loadPhoto } from "./dse-social-render.js";
 import { getSettings, teamLabel, upload, notifyApprovers, ctInstant, nextSlot, coachList, AI_MODEL } from "./dse-social.js";
 import { trendScan } from "./marketing-scout.js";
+import { isEventTeam } from "../../shared/event-teams.js";
 
 const fail = (status, msg) => Object.assign(new Error(msg), { status });
 export const ctToday = (d = new Date()) => d.toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
@@ -247,6 +248,117 @@ export async function brainstorm(sb, { count = 6, today = ctToday(), by = "auto"
   if (error) throw fail(500, error.message);
   await sb.from("dse_social_settings").update({ ideas_brainstormed_at: new Date().toISOString() }).eq("id", 1);
   return { added: saved.length, ideas: saved, trend_error: trend.error || null };
+}
+
+// ── Drew's own ideas ────────────────────────────────────────────────────────
+// Drew, Oct 30 2026: "I need to be able to add my own ideas for the social post
+// ... Make me a post looking for players for our 11 Regional Team, include the
+// cost, the schedule, the practice, and the expectations." He types the
+// request; Claude writes the post from the club's real facts (teams, coaches,
+// practices, tournaments, rosters, fees, the commitment's expectations), and
+// it becomes a draft for approval like any other idea.
+const DISPLAY = (t) => teamLabel(t);   // "11 Rise 1" -> "11 Rise" in anything people read
+const LEVEL_NAME = { National: "National", Regional: "Regional", Developmental: "Rise (development)" };
+const FEES = [
+  "Season fees 2026-27 (all levels: a $600 non-refundable deposit when a spot is accepted, then installments):",
+  "- National: $5,400 (July 2026 - June 2027). $600 deposit + 4 x $1,200 (Oct 1, Dec 1, Feb 1, Apr 1). Includes national qualifier entry fees.",
+  "- Regional: $4,200 (July 2026 - May 2027). $600 deposit + 4 x $900 (Oct 1, Dec 1, Feb 1, Apr 1).",
+  "- Rise: $2,500 (December 2026 - May 2027). $600 deposit + 2 x $950 (Oct 1, Jan 1).",
+  "- Every level includes: a guaranteed spot on the team, coaching, practice facility and equipment, entry fees for all scheduled regular-season tournaments, team uniforms.",
+  "- Not included: travel, hotels, meals, the club team shoe (Regional and National buy it; Rise doesn't need it), USAV / Lone Star membership ($55).",
+  "- A family joining now: payments already past due are due when they register.",
+].join("\n");
+// "3-4pm" + "4-5pm" on the same day read as one "3-5pm" practice.
+const slotMins = (slot) => {
+  const m = String(slot || "").replace(/\s+/g, "").toLowerCase().match(/^(\d{1,2})(?::(\d\d))?-(\d{1,2})(?::(\d\d))?(am|pm)$/);
+  if (!m) return null;
+  let e = (+m[3] % 12) * 60 + (+m[4] || 0) + (m[5] === "pm" ? 720 : 0), s = (+m[1] % 12) * 60 + (+m[2] || 0);
+  if (m[5] === "pm" && s + 720 < e) s += 720;
+  return { s, e };
+};
+const hm = (x, ap) => `${(Math.floor(x / 60) % 12) || 12}${x % 60 ? ":" + String(x % 60).padStart(2, "0") : ""}${ap ? (x >= 720 ? "pm" : "am") : ""}`;
+const joinSlots = (slots) => {
+  const ts = slots.map(slotMins);
+  if (ts.some(t => !t)) return slots.map(x => String(x).replace(/\s+/g, ""));
+  const out = [];
+  for (const t of ts.sort((a, b) => a.s - b.s)) { const last = out[out.length - 1]; if (last && last.e >= t.s) last.e = Math.max(last.e, t.e); else out.push({ ...t }); }
+  return out.map(t => `${hm(t.s, (t.s >= 720) !== (t.e >= 720))}-${hm(t.e, true)}`);
+};
+export async function clubFacts(sb, today = ctToday()) {
+  const [{ data: teams }, { data: pa }, { data: players }, { data: ta }, { data: tn }, { PLAYER_CLAUSES, PARENT_CLAUSES }] = await Promise.all([
+    sb.from("practice_teams").select("team_name, level, head_coach, assistant_coach, third_coach, practices_per_week"),
+    sb.from("practice_assignments").select("team_name, phase, day, slot"),
+    sb.from("players").select("team_assignment, offer_status").eq("season", "2026-27"),
+    sb.from("tournament_assignments").select("team_id, tournament_id, status"),
+    sb.from("tournaments").select("id, name, start_date, end_date, location, cancelled").gte("end_date", today).order("start_date"),
+    import("../../shared/commitment.js"),
+  ]);
+  const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const sched = (team, phase) => DAYS.flatMap(d => joinSlots((pa || []).filter(a => a.team_name === team && a.phase === phase && a.day === d).map(a => a.slot)).map(x => `${d} ${x}`));
+  const lines = [];
+  for (const t of (teams || []).filter(x => !isEventTeam(x)).sort((a, b) => a.team_name.localeCompare(b.team_name, undefined, { numeric: true }))) {
+    const n = (players || []).filter(p => p.team_assignment === t.team_name && ["accepted", "locked"].includes(p.offer_status)).length;
+    const tours = (ta || []).filter(a => a.team_id === t.team_name && !/drop/i.test(a.status || "")).map(a => (tn || []).find(x => x.id === a.tournament_id)).filter(x => x && !x.cancelled)
+      .sort((a, b) => a.start_date.localeCompare(b.start_date)).map(x => `${fmt(x.start_date)}${x.end_date && x.end_date !== x.start_date ? "-" + fmt(x.end_date) : ""} ${x.name.replace(/\s+/g, " ").trim()} (${x.location || ""})`);
+    lines.push([
+      `TEAM ${DISPLAY(t.team_name)} - level: ${LEVEL_NAME[t.level] || t.level || "?"} - ${n} players committed`,
+      `  coaches: ${[t.head_coach && "head " + t.head_coach, t.assistant_coach && "assistant " + t.assistant_coach, t.third_coach && "also " + t.third_coach].filter(Boolean).join(", ") || "TBD"}`,
+      sched(t.team_name, "fall2").length ? `  fall practices now (until the regular season):${sched(t.team_name, "fall2").join(", ")}` : "",
+      `  regular-season practices (from the weekend after Thanksgiving, Nov 29): ${sched(t.team_name, "season").join(", ") || "TBD"}`,
+      tours.length ? `  tournaments: ${tours.join("; ")}` : "  tournaments: TBD",
+    ].filter(Boolean).join("\n"));
+  }
+  const expect = (cl) => cl.map(c => `- ${c.title}: ${c.points.slice(0, 2).join(" ")}`).join("\n");
+  return [
+    `Today: ${fmt(today, { weekday: "long", month: "long", day: "numeric", year: "numeric" })}. Season 2026-27.`,
+    "Levels: National (top teams, 3 practices a week in season, national qualifiers), Regional (competitive club season, 2 practices a week), Rise (development level for players newer to club, season Dec-May, 2 practices a week). The team names use gems: Diamond is National at most ages; Ruby, Sapphire, Emerald, Topaz are Regional (14 and 15 Ruby are National) - always go by the level listed per team. Ages: 11s = born on or after July 1 2015, 12s = July 1 2014, 13s = July 1 2013, and so on.",
+    "Where: DSSC (Dripping Springs Sports Club) Warehouse I, 15113 Fitzhugh Rd, Suite 1400, Dripping Springs, TX, and Warehouse II next door (Courts 5-6).",
+    "Contact: Drew Rose, Director - drew@dselitevolleyball.com, (512) 202-9099. Website: dselitevolleyball.com (fees and how teams form: dselitevolleyball.com/pricing).",
+    FEES,
+    "Teams:\n" + lines.join("\n"),
+    "What we expect of players (the DS Elite commitment every player signs):\n" + expect(PLAYER_CLAUSES),
+    "What we expect of parents:\n" + expect(PARENT_CLAUSES),
+  ].join("\n\n");
+}
+
+const CUSTOM_SCHEMA = {
+  type: "object", additionalProperties: false,
+  required: ["title", "pitch", "caption", "hashtags", "style", "tag", "headline", "sub", "top", "bottom", "teams"],
+  properties: {
+    title: { type: "string" }, pitch: { type: "string" }, caption: { type: "string" },
+    hashtags: { type: "array", items: { type: "string" } },
+    style: { type: "string", enum: ["holiday", "text", "meme"] },
+    tag: { type: "string" }, headline: { type: "string" }, sub: { type: "string" }, top: { type: "string" }, bottom: { type: "string" },
+    teams: { type: "array", items: { type: "string" } },
+  },
+};
+const CUSTOM_SYSTEM = `You write one social media post for DS Elite Volleyball, a girls' club volleyball program (players about 10-18) at the Dripping Springs Sports Club in Texas, for its Facebook Page and Instagram. The club's director, Drew, tells you what he wants; write exactly that post. He approves it before it goes out.
+Use ONLY the club facts given (teams, levels, coaches, practice days and times, tournaments, fees, expectations, contact). Never invent a price, date, time, coach, player count or promise. If he asks for something the facts don't cover, leave it out rather than guess. Team names exactly as listed (say "11 Rise", never "11 Rise 1"). When he says "the 11 Regional team" etc., find the team at that age whose level is Regional.
+Caption: the club's warm, upbeat, confident voice, written for parents. Short paragraphs or short labeled lines (e.g. "Cost:", "Practices:", "Tournaments:") so it scans on a phone; up to about 1,200 characters when he asks for details, shorter otherwise; at most 4 emoji. End with a clear call to action using the contact in the facts (email / phone / website) when the post wants a response, like recruiting. Never name, describe or picture a specific child. Hashtags: 0-4, no '#'.
+The post's image is one graphic the club draws, in one of three styles:
+- holiday: one of the team's own action photos with a small TAG line on top (e.g. "NOW RECRUITING"), a big HEADLINE (under 40 characters) and a SUB line under it (under 70 characters). Best for announcements and recruiting.
+- text: no photo; big words on a pink field: HEADLINE (under 60 characters) and SUB (under 80).
+- meme: a team photo with TOP and BOTTOM lines in meme lettering, for humor only.
+teams: the exact team names from the facts the post is about (used to pick the photo); [] if none. title: a short name for the post in the planner. pitch: one sentence on what the post does.`;
+
+export async function customIdea(sb, { prompt, post_on = null, today = ctToday(), by = "Drew" } = {}) {
+  if (!process.env.ANTHROPIC_API_KEY) throw fail(500, "ANTHROPIC_API_KEY isn't set");
+  const ask = String(prompt || "").trim();
+  if (ask.length < 5) throw fail(400, "Tell Claude what the post should be about.");
+  const facts = await clubFacts(sb, today);
+  const ai = await askJson(CUSTOM_SYSTEM, `Club facts:\n${facts}\n\nDrew's request:\n${ask}`, CUSTOM_SCHEMA, "dse-social-custom");
+  const known = new Map(((await sb.from("practice_teams").select("team_name")).data || []).map(t => [DISPLAY(t.team_name).toLowerCase(), t.team_name]));
+  const teams = (ai.teams || []).map(t => known.get(String(t).toLowerCase().trim()) || known.get(DISPLAY(t).toLowerCase())).filter(Boolean);
+  const day = /^\d{4}-\d{2}-\d{2}$/.test(String(post_on || "")) && post_on >= today ? post_on : today;
+  const { data: idea, error } = await sb.from("dse_social_ideas").insert({
+    kind: "custom", post_on: day, title: String(ai.title || ask).slice(0, 120), pitch: String(ai.pitch || "").slice(0, 600),
+    caption: String(ai.caption || "").slice(0, 2000), hashtags: (ai.hashtags || []).map(h => String(h).replace(/^#+/, "")).filter(Boolean).slice(0, 4),
+    card: { style: ai.style, tag: ai.tag || "", headline: ai.headline || ai.title, sub: ai.sub || "", top: ai.top || "", bottom: ai.bottom || "" },
+    created_by: by, data: { prompt: ask, teams },
+  }).select("*").single();
+  if (error) throw fail(500, error.message);
+  const r = await draftIdea(sb, idea.id, { by });
+  return { idea, post: r.post };
 }
 
 // ── idea -> draft post ──────────────────────────────────────────────────────

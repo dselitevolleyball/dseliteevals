@@ -24,6 +24,7 @@
 //   ideas                       fun ideas: the data ones (birthdays, game weeks,
 //                               posted schedules, holidays) + Claude's memes/trends
 //   ideas_sync · ideas_brainstorm {count?, trends?} · idea_draft {id}
+//   idea_custom {prompt, post_on?}  Drew's own idea, written by Claude from the club's facts -> draft post
 //   idea_dismiss {id} · idea_restore {id} · idea_update {id, title?, caption?, card?, post_on?}
 //   settings_save {...}
 
@@ -233,6 +234,7 @@ export async function run(sb, { me, name }, b) {
     case "ideas_sync": return await I.syncIdeas(sb);
     case "ideas_brainstorm": return await I.brainstorm(sb, { count: Math.max(1, Math.min(10, Number(b.count) || 6)), by, trends: b.trends !== false });
     case "idea_draft": return await I.draftIdea(sb, b.id, { by });
+    case "idea_custom": return await I.customIdea(sb, { prompt: String(b.prompt || "").slice(0, 2000), post_on: b.post_on || null, by });
     case "idea_dismiss": case "idea_restore": {
       const { data, error } = await sb.from("dse_social_ideas").update({ status: b.action === "idea_dismiss" ? "dismissed" : "new", updated_at: new Date().toISOString() }).eq("id", Number(b.id)).neq("status", "drafted").select().maybeSingle();
       if (error) throw fail(500, error.message);
