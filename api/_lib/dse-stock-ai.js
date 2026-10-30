@@ -75,10 +75,11 @@ export async function analyzeOne(row) {
 }
 
 // Analyze these ids (or the next unread ones), a few at a time. A photo Claude
-// calls unsafe for social is hidden from the library too.
+// calls unsafe for social is hidden from the library too (and un-hidden if a
+// later read clears it).
 export async function analyzeStock(sb, { ids = null, limit = 12, force = false } = {}) {
   if (!process.env.ANTHROPIC_API_KEY) throw Object.assign(new Error("ANTHROPIC_API_KEY isn't set"), { status: 500 });
-  let q = sb.from("dse_social_stock").select("id, url, team_name, note, width, height, ai_at").order("created_at", { ascending: false }).limit(Math.min(40, limit));
+  let q = sb.from("dse_social_stock").select("id, url, team_name, note, width, height, ai_at, ai, hidden").order("created_at", { ascending: false }).limit(Math.min(40, limit));
   if (ids?.length) q = q.in("id", ids.map(Number)); else if (!force) q = q.is("ai_at", null).is("ai_error", null);
   const { data: rows, error } = await q;
   if (error) throw Object.assign(new Error(error.message), { status: 500 });
@@ -88,7 +89,9 @@ export async function analyzeStock(sb, { ids = null, limit = 12, force = false }
     await Promise.all(todo.slice(i, i + 4).map(async (r) => {
       try {
         const ai = await analyzeOne(r);
-        const patch = { ai, ai_at: new Date().toISOString(), ai_error: null, ...(ai.social_ok ? {} : { hidden: true }) };
+        // Claude's flag hides it; a re-read that clears it un-hides only what Claude hid (not Drew's own hides).
+        const claudeHid = r.hidden && r.ai?.social_ok === false;
+        const patch = { ai, ai_at: new Date().toISOString(), ai_error: null, ...(ai.social_ok ? (claudeHid ? { hidden: false } : {}) : { hidden: true }) };
         await sb.from("dse_social_stock").update(patch).eq("id", r.id);
         out.done++; if (!ai.social_ok) out.flagged++;
       } catch (e) {
