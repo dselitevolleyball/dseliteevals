@@ -83,6 +83,20 @@ async function postedPhotos(sb, teams = []) {
   for (const p of data || []) for (const ph of p.photos || []) if (ph?.url) all.push({ url: ph.url, focus: ph.focus || null, team: p.team_name || null });
   return [...all.filter(p => want.has(nrm(p.team))), ...all.filter(p => !want.has(nrm(p.team)))];
 }
+// Drew's stock photos (HQ -> Social -> Stock photos), least-used first.
+async function stockPhotos(sb) {
+  const { data } = await sb.from("dse_social_stock").select("id, url, team_name, used_count, created_at").eq("hidden", false)
+    .order("used_count").order("created_at", { ascending: false }).limit(500);
+  return (data || []).map(s => ({ url: s.url, focus: null, team: s.team_name || null, stock_id: s.id }));
+}
+// What an idea card can be drawn on: the team's stock photos, the team's
+// posted photos, then club-wide stock, then everything else posted.
+async function cardPool(sb, teams = []) {
+  const want = new Set(teams.map(nrm));
+  const [stock, posted] = await Promise.all([stockPhotos(sb), postedPhotos(sb, teams)]);
+  const mine = (l) => l.filter(p => want.has(nrm(p.team))), rest = (l) => l.filter(p => !want.has(nrm(p.team)));
+  return [...mine(stock), ...mine(posted), ...rest(stock).sort((a, b) => (a.team ? 1 : 0) - (b.team ? 1 : 0)), ...rest(posted)];
+}
 async function staffPhoto(sb, name) {
   const { data } = await sb.from("site_staff").select("name, photo_url").ilike("name", String(name || "").trim()).maybeSingle();
   return data?.photo_url || null;
@@ -323,13 +337,14 @@ export async function clubFacts(sb, today = ctToday()) {
 
 const CUSTOM_SCHEMA = {
   type: "object", additionalProperties: false,
-  required: ["title", "pitch", "caption", "hashtags", "style", "tag", "headline", "sub", "top", "bottom", "teams"],
+  required: ["title", "pitch", "caption", "hashtags", "style", "tag", "headline", "sub", "top", "bottom", "teams", "photo_id"],
   properties: {
     title: { type: "string" }, pitch: { type: "string" }, caption: { type: "string" },
     hashtags: { type: "array", items: { type: "string" } },
     style: { type: "string", enum: ["holiday", "text", "meme"] },
     tag: { type: "string" }, headline: { type: "string" }, sub: { type: "string" }, top: { type: "string" }, bottom: { type: "string" },
     teams: { type: "array", items: { type: "string" } },
+    photo_id: { type: "integer" },
   },
 };
 const CUSTOM_SYSTEM = `You write one social media post for DS Elite Volleyball, a girls' club volleyball program (players about 10-18) at the Dripping Springs Sports Club in Texas, for its Facebook Page and Instagram. The club's director, Drew, tells you what he wants; write exactly that post. He approves it before it goes out.
@@ -339,21 +354,27 @@ The post's image is one graphic the club draws, in one of three styles:
 - holiday: one of the team's own action photos with a small TAG line on top (e.g. "NOW RECRUITING"), a big HEADLINE (under 40 characters) and a SUB line under it (under 70 characters). Best for announcements and recruiting.
 - text: no photo; big words on a pink field: HEADLINE (under 60 characters) and SUB (under 80).
 - meme: a team photo with TOP and BOTTOM lines in meme lettering, for humor only.
-teams: the exact team names from the facts the post is about (used to pick the photo); [] if none. title: a short name for the post in the planner. pitch: one sentence on what the post does.`;
+teams: the exact team names from the facts the post is about (used to pick the photo); [] if none. photo_id: if a stock photo described in the list fits the post clearly better than a random team photo would, its id; otherwise 0. title: a short name for the post in the planner. pitch: one sentence on what the post does.`;
 
 export async function customIdea(sb, { prompt, post_on = null, today = ctToday(), by = "Drew" } = {}) {
   if (!process.env.ANTHROPIC_API_KEY) throw fail(500, "ANTHROPIC_API_KEY isn't set");
   const ask = String(prompt || "").trim();
   if (ask.length < 5) throw fail(400, "Tell Claude what the post should be about.");
-  const facts = await clubFacts(sb, today);
-  const ai = await askJson(CUSTOM_SYSTEM, `Club facts:\n${facts}\n\nDrew's request:\n${ask}`, CUSTOM_SCHEMA, "dse-social-custom");
+  const [facts, { data: stock }] = await Promise.all([
+    clubFacts(sb, today),
+    sb.from("dse_social_stock").select("id, url, team_name, note").eq("hidden", false).not("note", "is", null).order("created_at", { ascending: false }).limit(150),
+  ]);
+  const described = (stock || []).filter(s => String(s.note || "").trim());
+  const photoList = described.length ? `\n\nStock photos with descriptions (id: team - what's in it):\n${described.map(s => `${s.id}: ${s.team_name ? DISPLAY(s.team_name) : "club"} - ${String(s.note).slice(0, 160)}`).join("\n")}` : "\n\n(No described stock photos; photo_id 0.)";
+  const ai = await askJson(CUSTOM_SYSTEM, `Club facts:\n${facts}${photoList}\n\nDrew's request:\n${ask}`, CUSTOM_SCHEMA, "dse-social-custom");
+  const picked = ai.style !== "text" && described.find(s => s.id === Number(ai.photo_id));
   const known = new Map(((await sb.from("practice_teams").select("team_name")).data || []).map(t => [DISPLAY(t.team_name).toLowerCase(), t.team_name]));
   const teams = (ai.teams || []).map(t => known.get(String(t).toLowerCase().trim()) || known.get(DISPLAY(t).toLowerCase())).filter(Boolean);
   const day = /^\d{4}-\d{2}-\d{2}$/.test(String(post_on || "")) && post_on >= today ? post_on : today;
   const { data: idea, error } = await sb.from("dse_social_ideas").insert({
     kind: "custom", post_on: day, title: String(ai.title || ask).slice(0, 120), pitch: String(ai.pitch || "").slice(0, 600),
     caption: String(ai.caption || "").slice(0, 2000), hashtags: (ai.hashtags || []).map(h => String(h).replace(/^#+/, "")).filter(Boolean).slice(0, 4),
-    card: { style: ai.style, tag: ai.tag || "", headline: ai.headline || ai.title, sub: ai.sub || "", top: ai.top || "", bottom: ai.bottom || "" },
+    card: { style: ai.style, tag: ai.tag || "", headline: ai.headline || ai.title, sub: ai.sub || "", top: ai.top || "", bottom: ai.bottom || "", ...(picked ? { photo_url: picked.url } : {}) },
     created_by: by, data: { prompt: ask, teams },
   }).select("*").single();
   if (error) throw fail(500, error.message);
@@ -366,9 +387,10 @@ export async function customIdea(sb, { prompt, post_on = null, today = ctToday()
 // club has already posted (that team's first for a tournament). photo_index
 // steps through the pool ("Try another photo").
 async function cardPhoto(sb, idea, design) {
+  if (design.photo_url) return { url: design.photo_url, focus: design.focus || null };   // picked in Drafts
   if (idea.kind === "birthday") { const url = design.photo || await staffPhoto(sb, idea.data?.coach); return url ? { url, focus: { x: 0.5, y: 0.3 } } : null; }
   if (design.style === "text") return null;
-  const pool = await postedPhotos(sb, idea.data?.teams || []);
+  const pool = await cardPool(sb, idea.data?.teams || []);
   if (!pool.length) return null;
   const n = Number(design.photo_index) || 0;
   return pool[((n % pool.length) + pool.length) % pool.length];
@@ -396,8 +418,14 @@ export async function draftIdea(sb, id, { by = "auto", notify = true } = {}) {
   }).select().single();
   if (error) throw fail(500, error.message);
   await sb.from("dse_social_ideas").update({ status: "drafted", post_id: post.id, updated_at: new Date().toISOString() }).eq("id", idea.id);
+  if (photo) await markStockUsed(sb, photo);
   if (notify) await notifyApprovers(sb, post, s).catch(e => console.error("dse ideas slack", e.message));
   return { post };
+}
+// Count a stock photo's use, so the next card reaches for a different one.
+export async function markStockUsed(sb, url) {
+  const { data: s } = await sb.from("dse_social_stock").select("id, used_count").eq("url", url).maybeSingle();
+  if (s) await sb.from("dse_social_stock").update({ used_count: (s.used_count || 0) + 1, last_used_at: new Date().toISOString() }).eq("id", s.id);
 }
 // Redraw an idea post after its words changed in HQ, or "Try another photo".
 export async function rerenderIdea(sb, post) {

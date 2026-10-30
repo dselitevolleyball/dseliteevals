@@ -26,6 +26,8 @@
 //   ideas_sync · ideas_brainstorm {count?, trends?} · idea_draft {id}
 //   idea_custom {prompt, post_on?}  Drew's own idea, written by Claude from the club's facts -> draft post
 //   idea_dismiss {id} · idea_restore {id} · idea_update {id, title?, caption?, card?, post_on?}
+//   stock                       Drew's stock photos + the team list
+//   stock_upload_urls {count} · stock_add {items} · stock_update {id, team_name?, note?, hidden?} · stock_delete {id}
 //   settings_save {...}
 
 import { createClient } from "@supabase/supabase-js";
@@ -112,7 +114,8 @@ export async function run(sb, { me, name }, b) {
         redraw = true;
       }
       if (b.design && typeof b.design === "object") { patch.design = { ...(post.design || {}), ...b.design }; redraw = true; }
-      if (b.another_photo && post.kind === "idea") { patch.design = { ...(patch.design || post.design || {}), photo_index: (Number((patch.design || post.design || {}).photo_index) || 0) + 1 }; redraw = true; }
+      if (b.another_photo && post.kind === "idea") { patch.design = { ...(patch.design || post.design || {}), photo_url: null, photo_index: (Number((patch.design || post.design || {}).photo_index) || 0) + 1 }; redraw = true; }
+      if (b.design?.photo_url && b.design.photo_url !== post.design?.photo_url) await I.markStockUsed(sb, b.design.photo_url);
       const next = { ...post, ...patch };
       if (next.kind === "photos" && next.format === "collage" && (next.photos || []).length > 6) throw fail(400, "A collage holds up to 6 photos - remove some, or make it a carousel");
       if (next.kind === "photos" && next.format === "single") next.photos = next.photos.slice(0, 1), patch.photos = next.photos;
@@ -239,6 +242,59 @@ export async function run(sb, { me, name }, b) {
       const { data, error } = await sb.from("dse_social_ideas").update({ status: b.action === "idea_dismiss" ? "dismissed" : "new", updated_at: new Date().toISOString() }).eq("id", Number(b.id)).neq("status", "drafted").select().maybeSingle();
       if (error) throw fail(500, error.message);
       return { idea: data };
+    }
+    // Stock photos: the browser shrinks each picture, asks for signed upload
+    // slots, uploads straight to storage (no 4.5 MB function limit), then adds them.
+    case "stock": {
+      const [{ data, error }, { data: teams }] = await Promise.all([
+        sb.from("dse_social_stock").select("*").order("created_at", { ascending: false }).limit(2000),
+        sb.from("practice_teams").select("team_name"),
+      ]);
+      if (error) throw fail(500, error.message);
+      return { photos: data || [], teams: (teams || []).map(t => t.team_name).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })) };
+    }
+    case "stock_upload_urls": {
+      const n = Math.max(1, Math.min(20, Number(b.count) || 1));
+      const month = new Date().toISOString().slice(0, 7);
+      const slots = [];
+      for (let i = 0; i < n; i++) {
+        const key = `stock/${month}/${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+        const [full, thumb] = await Promise.all([`${key}.jpg`, `${key}-thumb.jpg`].map(p => sb.storage.from(S.OUT_BUCKET).createSignedUploadUrl(p)));
+        if (full.error || thumb.error) throw fail(500, (full.error || thumb.error).message);
+        slots.push({ path: full.data.path, token: full.data.token, thumb_path: thumb.data.path, thumb_token: thumb.data.token });
+      }
+      return { bucket: S.OUT_BUCKET, slots };
+    }
+    case "stock_add": {
+      const pub = (p) => sb.storage.from(S.OUT_BUCKET).getPublicUrl(p).data.publicUrl;
+      const rows = (b.items || []).slice(0, 20).filter(x => /^stock\/[\w./-]+\.jpg$/.test(String(x.path || ""))).map(x => ({
+        storage_path: x.path, url: pub(x.path),
+        thumb_path: /^stock\/[\w./-]+\.jpg$/.test(String(x.thumb_path || "")) ? x.thumb_path : null,
+        thumb_url: /^stock\/[\w./-]+\.jpg$/.test(String(x.thumb_path || "")) ? pub(x.thumb_path) : null,
+        width: Number(x.width) || null, height: Number(x.height) || null,
+        team_name: x.team_name || null, note: String(x.note || "").trim().slice(0, 300) || null,
+        original_name: String(x.original_name || "").slice(0, 200) || null, uploaded_by: by,
+      }));
+      if (!rows.length) throw fail(400, "Nothing to add");
+      const { data, error } = await sb.from("dse_social_stock").upsert(rows, { onConflict: "storage_path" }).select();
+      if (error) throw fail(500, error.message);
+      return { photos: data };
+    }
+    case "stock_update": {
+      const patch = {};
+      if (b.team_name !== undefined) patch.team_name = b.team_name || null;
+      if (typeof b.note === "string") patch.note = b.note.trim().slice(0, 300) || null;
+      if (typeof b.hidden === "boolean") patch.hidden = b.hidden;
+      const { data, error } = await sb.from("dse_social_stock").update(patch).eq("id", Number(b.id)).select().maybeSingle();
+      if (error) throw fail(500, error.message);
+      return { photo: data };
+    }
+    case "stock_delete": {
+      const { data: s } = await sb.from("dse_social_stock").select("storage_path, thumb_path").eq("id", Number(b.id)).maybeSingle();
+      if (!s) return {};
+      await sb.storage.from(S.OUT_BUCKET).remove([s.storage_path, s.thumb_path].filter(Boolean));
+      await sb.from("dse_social_stock").delete().eq("id", Number(b.id));
+      return {};
     }
     case "idea_update": {
       const patch = { updated_at: new Date().toISOString() };

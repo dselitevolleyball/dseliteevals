@@ -9,6 +9,7 @@
 //   Posted     what went out, with links
 //   Photos     the family uploads: batches, "preview with Claude", make a post
 //              from hand-picked photos, hide a photo, keep a family off social
+//   Stock      Drew's own photos for graphics: bulk upload, tag a team, notes
 //   Coaches    send the "Meet the Coach" survey, follow answers, make posters
 //   Settings   the Facebook connection, auto-drafting, approvers, hashtags,
 //              the survey questions
@@ -47,7 +48,7 @@ export default function DseSocial({ api = realApi }) {
   const by = (sts) => (posts || []).filter(p => sts.includes(p.status));
   const drafts = by(["draft", "failed"]), sched = by(["approved", "publishing"]), done = by(["published", "skipped"]);
   const meta = status?.meta;
-  const tabs = [["drafts", "Drafts", drafts.length], ["scheduled", "Scheduled", sched.length], ["posted", "Posted", 0], ["ideas", "Ideas", 0], ["photos", "Photos", 0], ["coaches", "Coach intros", 0], ["settings", "Settings", 0]];
+  const tabs = [["drafts", "Drafts", drafts.length], ["scheduled", "Scheduled", sched.length], ["posted", "Posted", 0], ["ideas", "Ideas", 0], ["photos", "Photos", 0], ["stock", "Stock photos", 0], ["coaches", "Coach intros", 0], ["settings", "Settings", 0]];
 
   return (
     <div style={{ margin: "-14px -18px", padding: "16px 16px 40px", background: T.bg, minHeight: "calc(100vh - 56px)", color: T.text, fontFamily: "inherit" }}>
@@ -70,6 +71,7 @@ export default function DseSocial({ api = realApi }) {
         {tab === "posted" && <PostList api={api} posts={done} loading={!posts} onChange={refresh} compact empty="Nothing posted yet." />}
         {tab === "ideas" && <Ideas api={api} onDrafted={() => { loadPosts(); setTab("drafts"); }} />}
         {tab === "photos" && <Photos api={api} onMade={() => { loadPosts(); setTab("drafts"); }} />}
+        {tab === "stock" && <Stock api={api} />}
         {tab === "coaches" && <Coaches api={api} onDrafted={() => { loadPosts(); setTab("drafts"); }} />}
         {tab === "settings" && <Settings api={api} status={status} onChange={loadStatus} />}
       </div>
@@ -90,6 +92,7 @@ function PostCard({ api, post, onChange, focus, compact }) {
   const [busy, setBusy] = useState("");
   const [err, setErr] = useState(post.status === "failed" ? post.error : "");
   const [design, setDesign] = useState(post.design || {});
+  const [picking, setPicking] = useState(false);
   const editable = ["draft", "failed", "approved"].includes(post.status);
   const dirty = caption !== (post.caption || "") || tags !== (post.hashtags || []).map(h => "#" + h).join(" ");
   const go = async (label, action, body = {}) => { setBusy(label); setErr(""); try { const r = await api(action, { id: post.id, ...body }); if (r.errors?.length) setErr(r.errors.join(" · ")); onChange(); } catch (e) { setErr(e.message); } setBusy(""); };
@@ -168,7 +171,9 @@ function PostCard({ api, post, onChange, focus, compact }) {
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   <Btn small disabled={!!busy} onClick={() => go("design", "update_post", { design: { ...design, lines: Array.isArray(design.lines) ? design.lines.map(l => l.trim()).filter(Boolean) : design.lines } })}>{busy === "design" ? "Redrawing…" : "Redraw"}</Btn>
                   {design.style !== "text" && design.idea_kind !== "birthday" && <Btn small disabled={!!busy} onClick={() => go("design", "update_post", { another_photo: true })}>Try another photo</Btn>}
+                  {design.style !== "text" && <Btn small disabled={!!busy} onClick={() => setPicking(p => !p)}>{picking ? "Close stock photos" : "Choose a stock photo"}</Btn>}
                 </div>
+                {picking && <StockPicker api={api} busy={busy} onPick={(url) => { setPicking(false); go("design", "update_post", { design: { photo_url: url } }); }} />}
               </div>
             </details>
           )}
@@ -365,6 +370,151 @@ function Photos({ api, onMade }) {
         </div>
       )}
       <OptOuts api={api} list={data?.no_social || []} onChange={load} />
+    </div>
+  );
+}
+
+// ── stock photos ────────────────────────────────────────────────────────────
+// Drew's own pictures for graphics (Oct 30 2026). Each is shrunk here (2400px
+// long side, JPEG; drawing to a canvas also drops EXIF/GPS) with a 480px
+// thumbnail, then uploaded straight to storage through signed slots.
+function shrinkTo(file, max, quality) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+      const w = Math.max(1, Math.round(img.naturalWidth * scale)), h = Math.max(1, Math.round(img.naturalHeight * scale));
+      const cv = document.createElement("canvas");
+      cv.width = w; cv.height = h;
+      cv.getContext("2d").drawImage(img, 0, 0, w, h);
+      URL.revokeObjectURL(url);
+      cv.toBlob(b => b ? resolve({ blob: b, width: w, height: h }) : reject(new Error("couldn't encode it")), "image/jpeg", quality);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error(/heic|heif/i.test(file.type + file.name) ? "iPhone HEIC - this browser can't open it; export it as JPG (or upload from the iPhone itself)" : "not a picture this browser can open")); };
+    img.src = url;
+  });
+}
+function Stock({ api }) {
+  const [data, setData] = useState(null);
+  const [team, setTeam] = useState("");          // the team new uploads get
+  const [note, setNote] = useState("");          // and their note
+  const [filter, setFilter] = useState("all");
+  const [showHidden, setShowHidden] = useState(false);
+  const [prog, setProg] = useState(null);        // { done, total }
+  const [fails, setFails] = useState([]);
+  const [err, setErr] = useState("");
+  const [over, setOver] = useState(false);
+  const load = () => api("stock").then(setData).catch(e => setErr(e.message));
+  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const uploadAll = async (fileList) => {
+    const files = [...fileList].filter(f => /^image\//.test(f.type) || /\.(heic|heif|jpe?g|png|webp)$/i.test(f.name));
+    if (!files.length) return;
+    setErr(""); setFails([]); setProg({ done: 0, total: files.length });
+    const bad = [];
+    for (let i = 0; i < files.length; i += 5) {
+      const chunk = files.slice(i, i + 5);
+      try {
+        const { bucket, slots } = await api("stock_upload_urls", { count: chunk.length });
+        const items = (await Promise.all(chunk.map(async (f, k) => {
+          try {
+            const [full, thumb] = [await shrinkTo(f, 2400, 0.88), await shrinkTo(f, 480, 0.8)];
+            const s = slots[k];
+            const [a, b] = await Promise.all([
+              supabase.storage.from(bucket).uploadToSignedUrl(s.path, s.token, full.blob, { contentType: "image/jpeg" }),
+              supabase.storage.from(bucket).uploadToSignedUrl(s.thumb_path, s.thumb_token, thumb.blob, { contentType: "image/jpeg" }),
+            ]);
+            if (a.error || b.error) throw new Error((a.error || b.error).message);
+            return { path: s.path, thumb_path: s.thumb_path, width: full.width, height: full.height, team_name: team || null, note, original_name: f.name };
+          } catch (e) { bad.push({ name: f.name, why: e.message }); return null; }
+        }))).filter(Boolean);
+        if (items.length) await api("stock_add", { items });
+      } catch (e) { chunk.forEach(f => bad.push({ name: f.name, why: e.message })); }
+      setProg({ done: Math.min(files.length, i + chunk.length), total: files.length });
+      setFails([...bad]);
+    }
+    setProg(null);
+    load();
+  };
+  const patch = async (id, body) => { try { await api("stock_update", { id, ...body }); load(); } catch (e) { setErr(e.message); } };
+  const del = async (p) => { if (!window.confirm("Delete this photo from the stock library? (Posts already made keep their graphic.)")) return; try { await api("stock_delete", { id: p.id }); load(); } catch (e) { setErr(e.message); } };
+  const teams = data?.teams || [];
+  const shown = (data?.photos || []).filter(p => (showHidden || !p.hidden) && (filter === "all" || (filter === "club" ? !p.team_name : p.team_name === filter)));
+  const counts = (data?.photos || []).filter(p => !p.hidden).reduce((m, p) => { const k = p.team_name || "club"; m[k] = (m[k] || 0) + 1; return m; }, {});
+
+  return (
+    <div style={{ display: "grid", gap: 14 }}>
+      <Box>
+        <div style={{ fontWeight: 800, marginBottom: 4 }}>Add photos</div>
+        <div style={{ fontSize: 12, color: T.mut, marginBottom: 10 }}>Pick a team (or leave it club-wide) and an optional note, then drop in as many photos as you like. Idea and "Your idea" graphics use these first - the team's own, least-used first - and every draft has "Choose a stock photo". A note ("13 Diamond huddle at CTPL", "tryouts sign-in") helps Claude pick the right one.</div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+          <select value={team} onChange={e => setTeam(e.target.value)} style={input}>
+            <option value="">Club-wide (no team)</option>
+            {teams.map(t => <option key={t} value={t}>{teamLabel(t)}</option>)}
+          </select>
+          <input value={note} onChange={e => setNote(e.target.value)} placeholder="Note for this batch (optional)" style={{ ...input, flex: "1 1 240px" }} />
+        </div>
+        <label onDragOver={e => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)} onDrop={e => { e.preventDefault(); setOver(false); if (!prog) uploadAll(e.dataTransfer.files); }}
+          style={{ display: "block", border: "2px dashed " + (over ? T.pink : T.line), borderRadius: 12, padding: "26px 14px", textAlign: "center", cursor: prog ? "default" : "pointer", background: over ? "#1f0f18" : T.card2 }}>
+          <input type="file" accept="image/*,.heic,.heif" multiple disabled={!!prog} onChange={e => { uploadAll(e.target.files); e.target.value = ""; }} style={{ display: "none" }} />
+          {prog ? <b>Uploading {prog.done} of {prog.total}…</b> : <><b>Drop photos here</b><div style={{ fontSize: 12, color: T.mut, marginTop: 4 }}>or click to choose · JPG, PNG, WebP (iPhone photos work from the phone)</div></>}
+        </label>
+        {fails.length > 0 && <div style={{ marginTop: 8, fontSize: 12, color: T.bad }}>{fails.length} didn't upload: {fails.slice(0, 6).map(f => `${f.name} (${f.why})`).join("; ")}{fails.length > 6 ? "…" : ""}</div>}
+        {err && <div style={{ marginTop: 8, fontSize: 13, color: T.bad }}>{err}</div>}
+      </Box>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+        <button onClick={() => setFilter("all")} style={chip(filter === "all")}>All {(data?.photos || []).filter(p => !p.hidden).length}</button>
+        <button onClick={() => setFilter("club")} style={chip(filter === "club")}>Club-wide {counts.club || 0}</button>
+        {teams.filter(t => counts[t]).map(t => <button key={t} onClick={() => setFilter(t)} style={chip(filter === t)}>{teamLabel(t)} {counts[t]}</button>)}
+        <label style={{ fontSize: 13, color: T.mut, display: "inline-flex", gap: 6, alignItems: "center", marginLeft: 6 }}><input type="checkbox" checked={showHidden} onChange={e => setShowHidden(e.target.checked)} />Show hidden</label>
+      </div>
+      {!data ? <Muted>Loading…</Muted> : !shown.length ? <Box><Muted>No stock photos here yet.</Muted></Box> : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(170px, 1fr))", gap: 10 }}>
+          {shown.map(p => (
+            <div key={p.id} style={{ background: T.card, border: "1px solid " + T.line, borderRadius: 10, overflow: "hidden", opacity: p.hidden ? 0.5 : 1 }}>
+              <a href={p.url} target="_blank" rel="noreferrer"><img src={p.thumb_url || p.url} alt={p.note || ""} loading="lazy" style={{ width: "100%", aspectRatio: "4/5", objectFit: "cover", display: "block", background: T.card2 }} /></a>
+              <div style={{ padding: 6, display: "grid", gap: 4 }}>
+                <select value={p.team_name || ""} onChange={e => patch(p.id, { team_name: e.target.value })} style={{ ...input, padding: "4px 6px", fontSize: 12 }}>
+                  <option value="">Club-wide</option>
+                  {teams.map(t => <option key={t} value={t}>{teamLabel(t)}</option>)}
+                </select>
+                <input defaultValue={p.note || ""} placeholder="Note" onBlur={e => e.target.value !== (p.note || "") && patch(p.id, { note: e.target.value })} style={{ ...input, padding: "4px 6px", fontSize: 12 }} />
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11, color: T.mut }}>
+                  <span>{p.used_count ? `used ${p.used_count}×` : "not used yet"}</span>
+                  <span>
+                    <button onClick={() => patch(p.id, { hidden: !p.hidden })} style={tiny}>{p.hidden ? "Unhide" : "Hide"}</button>
+                    <button onClick={() => del(p)} style={{ ...tiny, color: T.bad }}>Delete</button>
+                  </span>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+// In a draft's "Edit the graphic": pick the photo it's drawn on.
+function StockPicker({ api, busy, onPick }) {
+  const [data, setData] = useState(null);
+  const [filter, setFilter] = useState("all");
+  useEffect(() => { api("stock").then(setData).catch(() => setData({ photos: [], teams: [] })); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!data) return <Muted>Loading stock photos…</Muted>;
+  const live = data.photos.filter(p => !p.hidden);
+  if (!live.length) return <Muted>No stock photos yet - add some in the Stock photos tab.</Muted>;
+  const teams = [...new Set(live.map(p => p.team_name).filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const shown = live.filter(p => filter === "all" || (filter === "club" ? !p.team_name : p.team_name === filter));
+  return (
+    <div style={{ display: "grid", gap: 6 }}>
+      <select value={filter} onChange={e => setFilter(e.target.value)} style={{ ...input, padding: "4px 6px", fontSize: 12 }}>
+        <option value="all">All teams</option><option value="club">Club-wide</option>
+        {teams.map(t => <option key={t} value={t}>{teamLabel(t)}</option>)}
+      </select>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(72px, 1fr))", gap: 4, maxHeight: 260, overflowY: "auto" }}>
+        {shown.map(p => <button key={p.id} disabled={!!busy} title={[teamLabel(p.team_name), p.note].filter(Boolean).join(" - ")} onClick={() => onPick(p.url)} style={{ padding: 0, border: "none", background: "none", cursor: "pointer" }}>
+          <img src={p.thumb_url || p.url} alt="" loading="lazy" style={{ width: "100%", aspectRatio: "4/5", objectFit: "cover", borderRadius: 6, display: "block" }} />
+        </button>)}
+      </div>
     </div>
   );
 }
